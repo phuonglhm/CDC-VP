@@ -1,0 +1,15 @@
+platform: mini_tlm
+
+memory_map:
+  uart:
+    base: 0x10000000
+    size: 0x1000
+  timer:
+    base: 0x10001000
+    size: 0x1000
+  ram:
+    base: 0x80000000
+    size: 0x1000
+
+timer:
+  irq_after_ms: 10

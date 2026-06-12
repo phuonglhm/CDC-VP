@@ -1,0 +1,44 @@
+@PACKAGE_INIT@
+
+# cdc-components package config.
+#
+# Provides the cdc::components::* TLM component libraries plus the SystemC::systemc
+# imported target they were built against, and the cdc_make_portable /
+# cdc_package_platform packaging helpers. A standalone platform consumes this via
+# find_package(cdc-components REQUIRED).
+
+# 1. Re-create the SystemC::systemc imported target the components link against.
+#    SYSTEMC_HOME may be overridden by the consumer; otherwise the value baked in
+#    at install time is used.
+if(NOT TARGET SystemC::systemc)
+    if(NOT DEFINED SYSTEMC_HOME)
+        set(SYSTEMC_HOME "@SYSTEMC_HOME@")
+    endif()
+
+    find_path(SYSTEMC_INCLUDE_DIR
+        NAMES systemc systemc.h
+        HINTS "${SYSTEMC_HOME}/include")
+    find_library(SYSTEMC_LIBRARY
+        NAMES systemc
+        HINTS "${SYSTEMC_HOME}/lib64" "${SYSTEMC_HOME}/lib")
+
+    if(NOT SYSTEMC_INCLUDE_DIR OR NOT SYSTEMC_LIBRARY)
+        set(cdc-components_FOUND FALSE)
+        set(cdc-components_NOT_FOUND_MESSAGE
+            "SystemC not found. Set SYSTEMC_HOME to an Accellera SystemC prefix.")
+        return()
+    endif()
+
+    add_library(SystemC::systemc UNKNOWN IMPORTED)
+    set_target_properties(SystemC::systemc PROPERTIES
+        IMPORTED_LOCATION "${SYSTEMC_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SYSTEMC_INCLUDE_DIR}")
+endif()
+
+# 2. The component targets (cdc::components::*).
+include("${CMAKE_CURRENT_LIST_DIR}/cdc-components-targets.cmake")
+
+# 3. Packaging helpers (cdc_make_portable / cdc_package_platform).
+include("${CMAKE_CURRENT_LIST_DIR}/CdcPortable.cmake")
+
+check_required_components(cdc-components)

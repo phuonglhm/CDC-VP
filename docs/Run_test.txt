@@ -1,0 +1,73 @@
+0. Mỗi terminal mới — set môi trường trước
+export SHLVL=1
+export CC=/usr/bin/gcc CXX=/usr/bin/g++
+export PATH=/opt/toolchains/riscv-none-elf/bin:/usr/bin:/bin:$PATH
+cd /home/duyptt_HW/Documents/cdc-vp
+which cmake   # phải ra /usr/bin/cmake
+
+1. Build firmware RISC-V (3 cái)
+make -C fw/hello_baremetal_riscv     # hello.elf
+make -C fw/timer_irq_riscv           # timer_irq.elf (Gate 2)
+make -C fw/bench_riscv               # bench.elf (benchmark)
+
+2. Build VP — 2 backend
+# mariusmm (mặc định, preset debug) -> build/debug/
+cmake --preset debug
+cmake --build --preset debug
+
+# Bremen (build dir riêng) -> build/bremen/
+cmake -S . -B build/bremen -G Ninja \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+  -DCDC_CPU_BACKEND=riscv_vp
+cmake --build build/bremen --target riscv_cpu_eval
+
+3. Chạy các platform
+Step 1 — TLM thuần (CPU giả):
+./build/debug/platforms/mini_tlm/mini_tlm -c platforms/mini_tlm/configs/default.yaml
+./build/debug/platforms/mini_soc/mini_soc -c platforms/mini_soc/configs/default.yaml
+
+Step 2 — CPU RISC-V thật:
+# hello trên mariusmm
+./build/debug/platforms/riscv_cpu_eval/riscv_cpu_eval \
+  -c platforms/riscv_cpu_eval/configs/default.yaml \
+  --fw fw/hello_baremetal_riscv/hello.elf
+
+# Gate 2 — timer IRQ (mariusmm)
+./build/debug/platforms/riscv_cpu_eval/riscv_cpu_eval \
+  -c platforms/riscv_cpu_eval/configs/default.yaml \
+  --fw fw/timer_irq_riscv/timer_irq.elf
+
+# hello trên Bremen
+./build/bremen/platforms/riscv_cpu_eval/riscv_cpu_eval \
+  -c platforms/riscv_cpu_eval/configs/default.yaml \
+  --fw fw/hello_baremetal_riscv/hello.elf
+  
+# Chạy custom SoC Bremen TIMER + EXT IRQ:  
+./build/bremen/platforms/riscv_custom_soc/riscv_custom_soc \
+  -c platforms/riscv_custom_soc/configs/default.yaml \
+  --fw fw/soc_irq_riscv/soc_irq.elf
+
+4. Benchmark quantum-keeper
+# mariusmm (1 điểm)
+./build/debug/platforms/riscv_cpu_eval/riscv_cpu_eval \
+  --bench --sim-ms 20 --fw fw/bench_riscv/bench.elf
+
+# Bremen — quét quantum (sync / 1ms / 10ms)
+for q in 10 1000000 10000000; do
+  ./build/bremen/platforms/riscv_cpu_eval/riscv_cpu_eval \
+    --bench --sim-ms 20 --quantum $q --fw fw/bench_riscv/bench.elf
+done
+
+5. Test
+# Tầng 1 — unit test C++ component (ctest)
+ctest --test-dir build/debug --output-on-failure          # 5/5
+ctest --test-dir build/debug -N                           # liệt kê
+
+# Tầng 2 — system smoke (pytest, cả 4 platform-firmware)
+python3 -m pytest tests/system -v                         # 4/4
+python3 -m pytest tests/system/test_riscv_cpu_eval_boot.py -v   # chỉ RISC-V
+
+6. Đóng gói "copy là chạy" (tùy chọn)
+cmake --build --preset debug --target mini_soc_package    # -> out/mini_soc/ (binary + .so + configs)
+
+

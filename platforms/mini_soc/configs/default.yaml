@@ -1,0 +1,15 @@
+platform: mini_soc
+
+memory_map:
+  uart:
+    base: 0x10000000
+    size: 0x1000
+  i2c:
+    base: 0x10010000
+    size: 0x1000
+  ram:
+    base: 0x80000000
+    size: 0x10000
+
+i2c:
+  irq_after_ms: 10

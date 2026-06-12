@@ -1,0 +1,18 @@
+platform: riscv_custom_soc
+
+cpu:
+  backend: riscv_vp          # primary (Bremen); swap at build time via CDC_CPU_BACKEND
+
+memory_map:
+  ram:
+    base: 0x80000000
+    size: 0x10000
+  uart:
+    base: 0x10000000
+    size: 0x1000
+  clint:
+    base: 0x02000000         # RISC-V CLINT: msip / mtimecmp / mtime
+    size: 0x10000
+
+interrupts:
+  clint: timer (MTIP) + software (MSIP)

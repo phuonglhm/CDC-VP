@@ -1,0 +1,15 @@
+platform: riscv_cpu_eval
+
+cpu:
+  backend: riscv_tlm        # mariusmm RV32IMAC (set at build time via CDC_CPU_BACKEND)
+
+memory_map:
+  ram:
+    base: 0x80000000
+    size: 0x10000          # 64 KiB — firmware text/data/stack
+  uart:
+    base: 0x10000000
+    size: 0x1000
+
+firmware:
+  default: fw/hello_baremetal_riscv/hello.elf
