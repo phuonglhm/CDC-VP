@@ -12,7 +12,6 @@ target_link_libraries(riscv_custom_soc PRIVATE
     cdc::components::uart_tlm
     cdc::components::clint_tlm
     cdc::components::plic_tlm
-    cdc::components::i2c_tlm
     cdc::cpu::${CDC_CPU_BACKEND})
 
 add_custom_command(TARGET riscv_custom_soc POST_BUILD
