@@ -1,6 +1,6 @@
-# CDC-VP ADC Interrupt Demo
+# CDC-VP WDT Interrupt Demo
 
-This demo verifies the ADC TLM peripheral inside a small RISC-V virtual
+This demo verifies the WDT (Watchdog Timer) TLM peripheral inside a small RISC-V virtual
 platform. The test uses the Bremen `riscv-vp` CPU backend and open-source
 Accellera SystemC 2.3.4.
 
@@ -10,8 +10,8 @@ The verified path is:
 RISC-V firmware
   -> CPU TLM initiator
   -> bus_router
-  -> ADC MMIO registers
-  -> ADC interrupt output
+  -> WDT MMIO registers
+  -> WDT interrupt output
   -> PLIC source 1
   -> CPU machine external interrupt
   -> firmware trap handler
@@ -34,18 +34,17 @@ host compilers and adds the RISC-V bare-metal toolchain to `PATH`.
 
 ## Build And Run
 
-
 Build the bare-metal RISC-V firmware:
 
 ```bash
-make -C fw/adc_irq_riscv
+make -C fw/wdt_irq_riscv
 ```
 
 This produces:
 
 ```text
-fw/adc_irq_riscv/adc_irq.elf
-fw/adc_irq_riscv/adc_irq.dis
+fw/wdt_irq_riscv/wdt_irq.elf
+fw/wdt_irq_riscv/wdt_irq.dis
 ```
 
 Configure the virtual platform build:
@@ -62,24 +61,24 @@ cmake -S . -B build/bremen -G Ninja \
   -DSYSTEMC_LIBRARY=/opt/systemc-2.3.4/lib-linux64/libsystemc.so
 ```
 
-Build the ADC platform executable:
+Build the WDT platform executable:
 
 ```bash
-cmake --build build/bremen --target adc_platform
+cmake --build build/bremen --target wdt_platform
 ```
 
 Run the simulation:
 
 ```bash
-./build/bremen/platforms/tests/adc_platform/adc_platform \
-  -c platforms/tests/adc_platform/configs/default.yaml \
-  --fw fw/adc_irq_riscv/adc_irq.elf \
+./build/bremen/platforms/tests/wdt_platform/wdt_platform \
+  -c platforms/tests/wdt_platform/configs/default.yaml \
+  --fw fw/wdt_irq_riscv/wdt_irq.elf \
   --sim-ms 5
 ```
 
 ## What The Demo Builds
 
-The `adc_platform` executable is a SystemC virtual platform containing:
+The `wdt_platform` executable is a SystemC virtual platform containing:
 
 ```text
 Bremen RISC-V CPU
@@ -87,7 +86,7 @@ RAM
 UART
 CLINT
 PLIC
-ADC TLM model
+WDT TLM model (wdt_tlm)
 bus_router
 ```
 
@@ -99,32 +98,47 @@ The platform memory map is:
 | UART | `0x1000_0000` | Firmware console output |
 | CLINT | `0x0200_0000` | Local timer/software interrupts |
 | PLIC | `0x0C00_0000` | External interrupt controller |
-| ADC | `0x1006_0000` | ADC MMIO register window |
+| WDT | `0x1004_0000` | WDT MMIO register window |
 
-The ADC interrupt line is connected to PLIC source 1, and the PLIC raises the
+The WDT interrupt line is connected to PLIC source 1, and the PLIC raises the
 CPU machine external interrupt.
 
 ## What The Firmware Does
 
-`fw/adc_irq_riscv/src/main.c` runs on the simulated RISC-V CPU. It:
+`fw/wdt_irq_riscv/src/main.c` runs on the simulated RISC-V CPU. It:
 
 1. Sets the machine trap vector.
-2. Configures PLIC source 1 for the ADC interrupt.
+2. Configures PLIC source 1 for the WDT interrupt.
 3. Enables machine external interrupts.
-4. Enables the ADC end-of-conversion interrupt.
-5. Starts an ADC conversion by writing the ADC control register.
-6. Waits for interrupt using `wfi`.
-7. Handles the interrupt, claims PLIC source 1, reads ADC data, and completes
-   the interrupt.
-8. Prints `ADC PASS` if the ADC status/data result is valid.
+4. **Tests Lock Mechanism**: Verifies that `WDT_LOAD` is read-only when locked.
+5. **Unlocks and Loads**: Unlocks the registers and sets a timeout value (10,000 ticks).
+6. **Verifies Countdown**: Polls `WDT_VALUE` to confirm the timer is decrementing.
+7. **Waits for Interrupt**: Uses `wfi` to wait for the watchdog timeout.
+8. **Handles the Interrupt**: Claims PLIC source 1, clears the WDT interrupt at the source (`WDT_INTCLR`), and completes the PLIC interrupt.
+9. Prints `WDT TEST PASS` if the interrupt was successfully triggered and cleared.
 
 Expected successful output includes:
 
 ```text
-ADC platform start
-ADC IRQ
-ADC sample=...
-ADC PASS
+WDT platform start
+--- Testing Lock Mechanism ---
+SUCCESS: WDT_LOAD write blocked while locked.
+--- Unlocking and Loading ---
+SUCCESS: WDT_LOAD write allowed after unlock.
+--- Starting WDT ---
+Waiting for WDT Interrupt...
+WDT IRQ triggered!
+WDT TEST PASS
+```
+
+The will continue to run even after the test has passed because as to model watchdog's continuous
+behaviour. To quickly verify if the test has passed, do:
+
+```bash
+./build/bremen/platforms/tests/wdt_platform/wdt_platform \
+  -c platforms/tests/wdt_platform/configs/default.yaml \
+  --fw fw/wdt_irq_riscv/wdt_irq.elf \
+  --sim-ms 5 | grep "PASS"
 ```
 
 ## Notes
@@ -135,6 +149,4 @@ Use open-source Accellera SystemC 2.3.4 for this demo:
 /opt/systemc-2.3.4
 ```
 
-Do not use the Arm Fast Models SystemC library for this build. Also avoid
-SystemC 3.x for the Bremen backend in this repo because the pinned Bremen
-`riscv-vp` code uses older SystemC process macros.
+The `wdt_tlm` component is a standardized model of the DesignWare APB Watchdog Timer, adapted to match the project's TLM conventions.
