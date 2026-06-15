@@ -1,11 +1,13 @@
 #include "test.h"
 
-#include "watchdog.h"
+#include "wdt_tlm.h"
 
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+
+using namespace cdc::components;
 
 namespace {
 
@@ -43,24 +45,24 @@ void Testbench::run()
 
     unsigned int errors_before = m_errors;
     std::cout << "[TB] Test 1: load=5, INTEN -> first timeout asserts IRQ\n";
-    write32(watchdog::WDOG_LOAD, 5);
-    write32(watchdog::WDOG_CONTROL, watchdog::CTRL_INTEN);
+    write32(wdt_tlm::WDOG_LOAD, 5);
+    write32(wdt_tlm::WDOG_CONTROL, wdt_tlm::CTRL_INTEN);
     wait_ticks(6);
     settle_outputs();
     expect_signal("IRQ after first timeout", irq.read(), true);
     expect_signal("RESET after first timeout", reset_i.read(), false);
-    expect_eq("WdogRIS", read32(watchdog::WDOG_RIS), 1);
-    expect_eq("WdogMIS", read32(watchdog::WDOG_MIS), 1);
+    expect_eq("WdogRIS", read32(wdt_tlm::WDOG_RIS), 1);
+    expect_eq("WdogMIS", read32(wdt_tlm::WDOG_MIS), 1);
     print_test_result("Test 1", errors_before);
 
     errors_before = m_errors;
     std::cout << "\n[TB] Test 2: WdogIntClr clears IRQ and reloads counter\n";
-    write32(watchdog::WDOG_INTCLR, 0xABCD1234u);
+    write32(wdt_tlm::WDOG_INTCLR, 0xABCD1234u);
     settle_outputs();
     expect_signal("IRQ after WdogIntClr", irq.read(), false);
-    expect_eq("WdogRIS after WdogIntClr", read32(watchdog::WDOG_RIS), 0);
-    expect_eq("WdogMIS after WdogIntClr", read32(watchdog::WDOG_MIS), 0);
-    expect_eq("WdogValue after WdogIntClr", read32(watchdog::WDOG_VALUE), 5);
+    expect_eq("WdogRIS after WdogIntClr", read32(wdt_tlm::WDOG_RIS), 0);
+    expect_eq("WdogMIS after WdogIntClr", read32(wdt_tlm::WDOG_MIS), 0);
+    expect_eq("WdogValue after WdogIntClr", read32(wdt_tlm::WDOG_VALUE), 5);
     print_test_result("Test 2", errors_before);
 
     errors_before = m_errors;
@@ -69,49 +71,49 @@ void Testbench::run()
     settle_outputs();
     expect_signal("IRQ after first timeout with INTEN", irq.read(), true);
     expect_signal("RESET after first timeout with INTEN", reset_i.read(), false);
-    expect_eq("WdogRIS after first timeout with INTEN", read32(watchdog::WDOG_RIS), 1);
-    expect_eq("WdogMIS after first timeout with INTEN", read32(watchdog::WDOG_MIS), 1);
+    expect_eq("WdogRIS after first timeout with INTEN", read32(wdt_tlm::WDOG_RIS), 1);
+    expect_eq("WdogMIS after first timeout with INTEN", read32(wdt_tlm::WDOG_MIS), 1);
 
-    write32(watchdog::WDOG_CONTROL, watchdog::CTRL_INTEN | watchdog::CTRL_RESEN);
+    write32(wdt_tlm::WDOG_CONTROL, wdt_tlm::CTRL_INTEN | wdt_tlm::CTRL_RESEN);
     settle_outputs();
     expect_signal("IRQ after enabling RESEN", irq.read(), true);
     expect_signal("RESET after enabling RESEN", reset_i.read(), false);
-    expect_eq("WdogRIS after enabling RESEN", read32(watchdog::WDOG_RIS), 1);
-    expect_eq("WdogMIS after enabling RESEN", read32(watchdog::WDOG_MIS), 1);
+    expect_eq("WdogRIS after enabling RESEN", read32(wdt_tlm::WDOG_RIS), 1);
+    expect_eq("WdogMIS after enabling RESEN", read32(wdt_tlm::WDOG_MIS), 1);
 
     wait_ticks(6);
     settle_outputs();
     expect_signal("RESET after second timeout", reset_i.read(), true);
-    const uint32_t stopped_value = read32(watchdog::WDOG_VALUE);
+    const uint32_t stopped_value = read32(wdt_tlm::WDOG_VALUE);
     wait_ticks(2);
     settle_outputs();
-    expect_eq("counter stopped after RESET", read32(watchdog::WDOG_VALUE), stopped_value);
+    expect_eq("counter stopped after RESET", read32(wdt_tlm::WDOG_VALUE), stopped_value);
     print_test_result("Test 3", errors_before);
 
     errors_before = m_errors;
     std::cout << "\n[TB] Test 4: WdogLock blocks writes except unlock key\n";
-    write32(watchdog::WDOG_LOAD, 0x22);
-    expect_eq("WdogLoad before lock", read32(watchdog::WDOG_LOAD), 0x22);
-    write32(watchdog::WDOG_LOCK, 0);
-    expect_eq("WdogLock locked status", read32(watchdog::WDOG_LOCK), 1);
-    write32(watchdog::WDOG_LOAD, 0x12345678u);
-    expect_eq("WdogLoad write ignored while locked", read32(watchdog::WDOG_LOAD), 0x22);
-    write32(watchdog::WDOG_LOCK, watchdog::LOCK_UNLOCK_VALUE);
-    expect_eq("WdogLock unlocked status", read32(watchdog::WDOG_LOCK), 0);
-    write32(watchdog::WDOG_LOAD, 0x12345678u);
-    expect_eq("WdogLoad write accepted after unlock", read32(watchdog::WDOG_LOAD), 0x12345678u);
+    write32(wdt_tlm::WDOG_LOAD, 0x22);
+    expect_eq("WdogLoad before lock", read32(wdt_tlm::WDOG_LOAD), 0x22);
+    write32(wdt_tlm::WDOG_LOCK, 0);
+    expect_eq("WdogLock locked status", read32(wdt_tlm::WDOG_LOCK), 1);
+    write32(wdt_tlm::WDOG_LOAD, 0x12345678u);
+    expect_eq("WdogLoad write ignored while locked", read32(wdt_tlm::WDOG_LOAD), 0x22);
+    write32(wdt_tlm::WDOG_LOCK, wdt_tlm::LOCK_UNLOCK_VALUE);
+    expect_eq("WdogLock unlocked status", read32(wdt_tlm::WDOG_LOCK), 0);
+    write32(wdt_tlm::WDOG_LOAD, 0x12345678u);
+    expect_eq("WdogLoad write accepted after unlock", read32(wdt_tlm::WDOG_LOAD), 0x12345678u);
     print_test_result("Test 4", errors_before);
 
     errors_before = m_errors;
     std::cout << "\n[TB] Test 5: ID registers read expected SP805 values\n";
-    expect_eq("WdogPeriphID0", read32(watchdog::WDOG_PERIPHID0), watchdog::PERIPHID0_VALUE);
-    expect_eq("WdogPeriphID1", read32(watchdog::WDOG_PERIPHID1), watchdog::PERIPHID1_VALUE);
-    expect_eq("WdogPeriphID2", read32(watchdog::WDOG_PERIPHID2), watchdog::PERIPHID2_VALUE);
-    expect_eq("WdogPeriphID3", read32(watchdog::WDOG_PERIPHID3), watchdog::PERIPHID3_VALUE);
-    expect_eq("WdogPCellID0", read32(watchdog::WDOG_PCELLID0), watchdog::PCELLID0_VALUE);
-    expect_eq("WdogPCellID1", read32(watchdog::WDOG_PCELLID1), watchdog::PCELLID1_VALUE);
-    expect_eq("WdogPCellID2", read32(watchdog::WDOG_PCELLID2), watchdog::PCELLID2_VALUE);
-    expect_eq("WdogPCellID3", read32(watchdog::WDOG_PCELLID3), watchdog::PCELLID3_VALUE);
+    expect_eq("WdogPeriphID0", read32(wdt_tlm::WDOG_PERIPHID0), wdt_tlm::PERIPHID0_VALUE);
+    expect_eq("WdogPeriphID1", read32(wdt_tlm::WDOG_PERIPHID1), wdt_tlm::PERIPHID1_VALUE);
+    expect_eq("WdogPeriphID2", read32(wdt_tlm::WDOG_PERIPHID2), wdt_tlm::PERIPHID2_VALUE);
+    expect_eq("WdogPeriphID3", read32(wdt_tlm::WDOG_PERIPHID3), wdt_tlm::PERIPHID3_VALUE);
+    expect_eq("WdogPCellID0", read32(wdt_tlm::WDOG_PCELLID0), wdt_tlm::PCELLID0_VALUE);
+    expect_eq("WdogPCellID1", read32(wdt_tlm::WDOG_PCELLID1), wdt_tlm::PCELLID1_VALUE);
+    expect_eq("WdogPCellID2", read32(wdt_tlm::WDOG_PCELLID2), wdt_tlm::PCELLID2_VALUE);
+    expect_eq("WdogPCellID3", read32(wdt_tlm::WDOG_PCELLID3), wdt_tlm::PCELLID3_VALUE);
     print_test_result("Test 5", errors_before);
 
     std::cout << "\n[TB] Result: " << (passed() ? "PASS" : "FAIL")

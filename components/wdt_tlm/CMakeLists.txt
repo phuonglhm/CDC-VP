@@ -1,6 +1,5 @@
 add_library(wdt_tlm STATIC
-    src/wdt_tlm.cpp
-    src/wdt_model.cpp)
+    src/wdt_tlm.cpp)
 add_library(cdc::components::wdt_tlm ALIAS wdt_tlm)
 
 target_include_directories(wdt_tlm

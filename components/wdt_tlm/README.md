@@ -20,8 +20,8 @@ watchdog_1st_LT/
 ├── main.cpp       # Top-level module binding the DUT and testbench
 ├── test.cpp       # Testbench implementation
 ├── test.h         # Testbench class definition
-├── watchdog.cpp   # SP805 Watchdog TLM model implementation
-└── watchdog.h     # SP805 Watchdog TLM model class definition
+wdt_tlm.cpp   # SP805 Watchdog TLM model implementation
+wdt_tlm.h     # SP805 Watchdog TLM model class definition
 ```
 
 ## Requirements
@@ -41,7 +41,7 @@ To run the simulation and tests:
 ```bash
 make run
 ```
-This will execute the functional tests and generate a `watchdog_wave.vcd` waveform file.
+This will execute the functional tests and generate a `wdt_tlm_wave.vcd` waveform file.
 
 ## Testbench Details
 

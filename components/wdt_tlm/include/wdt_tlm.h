@@ -1,5 +1,5 @@
-#ifndef WATCHDOG_H
-#define WATCHDOG_H
+#ifndef WDT_TLM_H
+#define WDT_TLM_H
 
 #include <cstdint>
 
@@ -7,9 +7,11 @@
 #include <tlm>
 #include <tlm_utils/simple_target_socket.h>
 
-class watchdog : public sc_core::sc_module {
+namespace cdc::components {
+
+class wdt_tlm : public sc_core::sc_module {
 public:
-    tlm_utils::simple_target_socket<watchdog> target_socket;
+    tlm_utils::simple_target_socket<wdt_tlm> target_socket;
     sc_core::sc_out<bool> irq;
     sc_core::sc_out<bool> reset_o;
 
@@ -44,9 +46,9 @@ public:
     static const uint32_t PCELLID2_VALUE  = 0x05;
     static const uint32_t PCELLID3_VALUE  = 0xB1;
 
-    SC_HAS_PROCESS(watchdog);
+    SC_HAS_PROCESS(wdt_tlm);
 
-    watchdog(sc_core::sc_module_name name, sc_core::sc_time tick_period);
+    wdt_tlm(sc_core::sc_module_name name, sc_core::sc_time tick_period);
     void trace(sc_core::sc_trace_file* tf) const;
 
 private:
@@ -81,5 +83,7 @@ private:
     bool interrupt_enabled() const;
     bool reset_enabled() const;
 };
+
+} // namespace cdc::components
 
 #endif

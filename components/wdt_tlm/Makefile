@@ -9,10 +9,10 @@ ifeq ($(strip $(SYSTEMC_LIBS)),)
 SYSTEMC_LIBS := -lsystemc
 endif
 
-TARGET := watchdog_lt
-SRCS := main.cpp watchdog.cpp test.cpp
+TARGET := wdt_tlm_lt
+SRCS := main.cpp wdt_tlm.cpp test.cpp
 OBJS := $(SRCS:.cpp=.o)
-DEPS := watchdog.h test.h
+DEPS := wdt_tlm.h test.h
 
 .PHONY: all run clean
 
@@ -28,4 +28,4 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET) $(OBJS) watchdog_wave.vcd
+	rm -f $(TARGET) $(OBJS) wdt_tlm_wave.vcd
