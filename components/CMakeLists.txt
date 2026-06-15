@@ -6,14 +6,15 @@ add_subdirectory(bus_router)
 add_subdirectory(memory_tlm)
 add_subdirectory(uart_tlm)
 if(EXISTS "/timer_tlm/CMakeLists.txt")
-    add_subdirectory(timer_tlm)
+   add_subdirectory(timer_tlm)
 endif()
 if(EXISTS "/i2c_tlm/CMakeLists.txt")
-    add_subdirectory(i2c_tlm)
+   add_subdirectory(i2c_tlm)
 endif()
 add_subdirectory(adc_tlm)
 add_subdirectory(clint_tlm)
 add_subdirectory(plic_tlm)
+add_subdirectory(wdt_tlm)
 
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
 # Mirrors how a Fast Models .sgproj references prebuilt IP libs by path.
