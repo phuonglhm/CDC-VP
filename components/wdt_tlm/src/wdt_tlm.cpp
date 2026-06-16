@@ -1,3 +1,7 @@
+//Author: QuanNH107
+//Verified by: HoangV11
+
+
 #include "wdt_tlm.h"
 
 #include <cstring>

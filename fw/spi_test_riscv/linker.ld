@@ -1,3 +1,6 @@
+//Author: QuanNH107
+//Verified by: HoangV11
+
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 

@@ -1,3 +1,6 @@
+#Author: QuanNH107
+#Verified by: HoangV11
+
 add_executable(test_wdt_tlm
     test_wdt_tlm.cpp
     test.cpp)

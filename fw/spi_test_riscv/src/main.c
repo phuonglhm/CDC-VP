@@ -1,3 +1,7 @@
+//Author: QuanNH107
+//Verified by: HoangV11
+
+
 /* SPI SoC integration firmware.
  *
  * Expected path:

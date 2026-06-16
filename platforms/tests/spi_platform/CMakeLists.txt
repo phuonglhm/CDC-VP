@@ -1,3 +1,6 @@
+#Author: QuanNH107
+#Verified by: HoangV11
+
 add_executable(spi_platform
     src/main.cpp
     src/spi_platform_top.cpp)

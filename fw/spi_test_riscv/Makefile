@@ -1,4 +1,7 @@
 # Cross-compile the SPI SoC interrupt verification firmware.
+#Author: QuanNH107
+#Verified by: HoangV11
+
 
 CROSS   ?= riscv-none-elf-
 CC      := $(CROSS)gcc

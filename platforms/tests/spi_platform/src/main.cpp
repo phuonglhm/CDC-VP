@@ -1,3 +1,6 @@
+//Author: QuanNH107
+//Verified by: HoangV11
+
 #include "spi_platform_top.h"
 
 #include <cstdint>

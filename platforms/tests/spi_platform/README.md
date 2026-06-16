@@ -1,3 +1,7 @@
+//Author: QuanNH107
+//Verified by: HoangV11
+
+
 # spi_platform
 
 ## Overview & Memory Map

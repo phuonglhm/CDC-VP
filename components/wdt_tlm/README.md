@@ -1,3 +1,8 @@
+
+//Author: QuanNH107
+//Verified by: HoangV11
+
+
 # wdt_tlm
 
 SystemC/TLM-2.0 model of an ARM SP805-style watchdog timer. The component

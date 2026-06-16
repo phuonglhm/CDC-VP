@@ -1,3 +1,6 @@
+//Author: QuanNH107
+//Verified by: HoangV11
+
 #ifndef WDT_TLM_H
 #define WDT_TLM_H
 
