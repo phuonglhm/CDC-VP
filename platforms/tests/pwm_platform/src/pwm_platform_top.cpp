@@ -49,6 +49,12 @@ struct pwm_platform_top::impl : public sc_core::sc_module {
     PWM                        pwm;
     sc_core::sc_signal<bool>   pwm_out_sig;
 
+    unsigned high_count_ = 0;
+    unsigned low_count_  = 0;
+    bool     last_val_   = false;
+
+    SC_HAS_PROCESS(impl);
+
     impl(sc_core::sc_module_name name, const std::string& config_path)
         : sc_core::sc_module(name)
         , cpu("cpu")
@@ -75,6 +81,8 @@ struct pwm_platform_top::impl : public sc_core::sc_module {
 
         pwm.pwm_out(pwm_out_sig);
 
+        SC_THREAD(monitor_pwm_out);
+
         if (!config_path.empty()) {
             std::cout << "pwm_platform config: " << config_path << '\n';
             std::cout << "cpu backend: " << cpu.backend_name() << '\n';
@@ -82,7 +90,26 @@ struct pwm_platform_top::impl : public sc_core::sc_module {
                       << "CLINT=0x02000000 PLIC=0x0C000000 PWM=0x10060000\n";
         }
     }
+
+    void monitor_pwm_out() {
+        while (true) {
+            wait(pwm_out_sig.value_changed_event());
+            bool val = pwm_out_sig.read();
+
+            if (val) {
+                high_count_++;
+                std::cout << "[PWM_MONITOR] " << sc_core::sc_time_stamp()
+                            << " pwm_out -> HIGH (#" << high_count_ << ")\n";
+            } else {
+                low_count_++;
+                std::cout << "[PWM_MONITOR] " << sc_core::sc_time_stamp()
+                            << " pwm_out -> LOW  (#" << low_count_ << ")\n";
+            
+            }
+        }
+    }
 };
+
 
 pwm_platform_top::pwm_platform_top(sc_core::sc_module_name name, std::string config_path)
     : sc_core::sc_module(name)
