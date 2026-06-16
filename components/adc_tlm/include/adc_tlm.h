@@ -14,7 +14,10 @@ namespace cdc::components {
 // region-local because bus_router subtracts the peripheral base before forwarding.
 class adc_tlm : public sc_core::sc_module {
 public:
+    SC_HAS_PROCESS(adc_tlm);
+
     tlm_utils::simple_target_socket<adc_tlm> socket;
+    sc_core::sc_in<bool> reset_n;
     sc_core::sc_out<bool> irq_out;
 
     explicit adc_tlm(sc_core::sc_module_name name,
@@ -25,10 +28,13 @@ private:
     unsigned int transport_dbg(tlm::tlm_generic_payload& trans);
 
     void start_of_simulation() override;
+    void drive_outputs();
     void update_irq();
 
     ADC_Model core_;
     sc_core::sc_time access_latency_;
+    sc_core::sc_event irq_update_event_;
+    bool irq_level_ = false;
 };
 
 } // namespace cdc::components

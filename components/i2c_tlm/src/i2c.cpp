@@ -309,8 +309,20 @@ void i2c::update_status() {
 }
 
 void i2c::fire_interrupt(uint32_t intr_bits) {
-    intr_state |= intr_bits;
+intr_state |= intr_bits;
+
+    std::cout
+        << "[I2C] fire_interrupt bits=0x"
+        << std::hex << intr_bits
+        << " intr_state=0x"
+        << intr_state
+        << " intr_enable=0x"
+        << intr_enable
+        << std::dec
+        << std::endl;
+
     if (intr_state & intr_enable) {
+        std::cout << "[I2C] IRQ asserted" << std::endl;
         irq.write(true);
     }
 }
