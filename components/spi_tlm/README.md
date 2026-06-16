@@ -1,3 +1,6 @@
+// Author: hoangv11
+// Verified by: quannh107
+
 # ARM PrimeCell SSP (PL022)-based SPI Controller TLM-2.0 Model
 
 This project provides a **Programmer's View (PV)** model of a **SPI controller**, implemented using **SystemC** and **TLM-2.0**. The controller follows the ARM PrimeCell SSP (PL022 r1p4) specification.

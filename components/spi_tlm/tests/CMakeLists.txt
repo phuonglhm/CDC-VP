@@ -1,3 +1,5 @@
+# Author: hoangv11
+# Verified by: quannh107
 add_executable(test_spi_tlm test_spi_tlm.cpp)
 target_link_libraries(test_spi_tlm PRIVATE
     cdc::components::spi_tlm

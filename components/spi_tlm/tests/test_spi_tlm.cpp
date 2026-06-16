@@ -1,3 +1,6 @@
+// Author: hoangv11
+// Verified by: quannh107
+
 #include "systemc"
 #include "tlm.h"
 #include "spi_tlm.h"
@@ -105,13 +108,16 @@ SC_MODULE(Tester) {
 
       cout << "\n--- STRESS TEST 4: INTERRUPT CLEARING (ICR) ---" << endl;
       // Reset to clear RX FIFO from Test 3
-      reset_out.write(false); wait(20, SC_NS); reset_out.write(true); wait(10, SC_NS);
+      reset_out.write(false);
+      wait(20, SC_NS);
+      reset_out.write(true);
+      wait(10, SC_NS);
 
-      data = 0x01; do_transaction(tlm::TLM_WRITE_COMMAND, 0x14, data);
+      data = 0x01;
+      do_transaction(tlm::TLM_WRITE_COMMAND, 0x14, data);
       do_transaction(tlm::TLM_READ_COMMAND, 0x08, data);
       wait(1, SC_NS);
       cout << "   IRQ Pin state after error: " << irq_in.read() << endl;
-
 
       data = 0x01;
       do_transaction(tlm::TLM_WRITE_COMMAND, 0x20, data);

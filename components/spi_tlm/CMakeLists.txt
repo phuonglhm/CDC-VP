@@ -1,3 +1,6 @@
+# Author: hoangv11
+# Verified by: quannh107
+
 add_library(spi_tlm STATIC
     src/spi_tlm.cpp)
 add_library(cdc::components::spi_tlm ALIAS spi_tlm)

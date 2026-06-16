@@ -1,3 +1,6 @@
+// Author: hoangv11
+// Verified by: quannh107
+
 #include "wdt_platform_top.h"
 
 #include <cstdint>
@@ -37,7 +40,7 @@ constexpr std::uint64_t kMmioSize = 0x1000;
 constexpr std::uint64_t kRamBase = 0x8000'0000;
 constexpr std::uint64_t kRamSize = 0x0010'0000;
 
-constexpr unsigned kNumPlicSources = 1;
+constexpr unsigned kNumPlicSources = 5;
 
 } // namespace
 
@@ -57,6 +60,11 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
    sc_core::sc_signal<bool> wdt_irq;
    sc_core::sc_signal<bool> wdt_reset_o;
 
+   sc_core::sc_event warm_reset_event;
+
+   // Dummy signals to tie off unused PLIC inputs
+   sc_core::sc_signal<bool> dummy_irq[kNumPlicSources - 1];
+
    impl(sc_core::sc_module_name name, const std::string &config_path)
        : sc_core::sc_module(name)
        , cpu("cpu")
@@ -71,11 +79,14 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
        , wdt_reset_o("wdt_reset_o") {
 
       SC_THREAD(reset_sequence);
+      sensitive << warm_reset_event;
 
       // reset method when watchdog issues a reset
-      // SC_METHOD(handle_wdt_reset);
-      // sensitive << wdt_reset_o;
-      // dont_initialize();
+
+      // reset method when watchdog issues a reset
+      SC_METHOD(handle_wdt_reset);
+      sensitive << wdt_reset_o;
+      dont_initialize();
 
       // Nối (các) initiator socket của CPU vào upstream port của bus.
       //   - Bremen (riscv_vp): 1 bus chung cho cả lệnh lẫn dữ liệu -> 1 port.
@@ -100,10 +111,17 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
       wdt.reset_n(reset_n);
       wdt.irq(wdt_irq);
       wdt.reset_o(wdt_reset_o);
-      // PLIC nhận tín hiệu này ở irq_in[0]. Lưu ý: irq_in[index] tương ứng
+
+      // Tie off unused PLIC ports (0, 1, 2, 3)
+      for (unsigned i = 0; i < kNumPlicSources - 1; ++i) {
+         dummy_irq[i].write(false); // Tie to ground
+         plic.irq_in[i](dummy_irq[i]);
+      }
+
+      // PLIC nhận tín hiệu này ở irq_in[4]. Lưu ý: irq_in[index] tương ứng
       // PLIC source id = index + 1 (source 0 bị reserve theo chuẩn RISC-V),
-      // nên đây là PLIC source 1. PLIC sẽ báo external interrupt (MEIP) về CPU.
-      plic.irq_in[0](wdt_irq);
+      // nên đây là PLIC source 5. PLIC sẽ báo external interrupt (MEIP) về CPU.
+      plic.irq_in[4](wdt_irq);
 
       if (!config_path.empty()) {
          std::cout << "wdt_platform config: " << config_path << '\n';
@@ -116,18 +134,20 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
    }
 
    void reset_sequence() {
-      reset_n.write(false);
-      wait(sc_core::sc_time(100, sc_core::SC_NS));
-      reset_n.write(true);
+      while (true) {
+         // Reset active-low cho WDT và các IP khác.
+         reset_n.write(false);
+         wait(sc_core::sc_time(100, sc_core::SC_NS));
+         reset_n.write(true);
+      }
    }
 
-   // void handle_wdt_reset() {
-   //    if (wdt_reset_o.read() == true) {
-   //       std::cout << sc_core::sc_time_stamp()
-   //                 << " [PLATFORM] Watchdog barked (RESET) -> Resetting CPU core\n";
-   //       cpu.reset_cpu();
-   //    }
-   // }
+   void handle_wdt_reset() {
+      if (wdt_reset_o.read() == true) {
+         std::cout << sc_core::sc_time_stamp() << " [PLATFORM] Watchdog IRQ not clear -> Resetting System\n";
+         cpu.reset_cpu();
+      }
+   }
 };
 
 wdt_platform_top::wdt_platform_top(sc_core::sc_module_name name, std::string config_path)

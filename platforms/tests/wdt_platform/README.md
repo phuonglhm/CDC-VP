@@ -1,3 +1,6 @@
+// Author: hoangv11
+// Verified by: quannh107
+
 # wdt_platform
 
 Small SoC platform for WDT IP verification with a Bremen `riscv-vp` RV32 CPU.
@@ -16,17 +19,22 @@ Small SoC platform for WDT IP verification with a Bremen `riscv-vp` RV32 CPU.
 
 | Source | Signal | Destination |
 |---:|---|---|
-| 5 | `wdt.irq_out` | PLIC source 1 -> CPU MEIP |
+| 5 | `wdt.irq` | PLIC source 5 -> CPU MEIP |
 
 ## Run
 
 ```bash
 cd /CDC-VP
 
-export SHLVL=1
-export CC=/usr/bin/gcc
-export CXX=/usr/bin/g++
-export PATH=/opt/toolchains/riscv-none-elf/bin:/usr/bin:/bin:$PATH
+# export SHLVL=1
+# export CC=/usr/bin/gcc
+# export CXX=/usr/bin/g++
+# export PATH=/opt/toolchains/riscv-none-elf/bin:/usr/bin:/bin:$PATH
+
+./tools/third_party/setup_third_party.sh
+source ./tools/third_party/setup_env.sh
+ 
+make -C fw/wdt_irq_riscv
 
 cmake -S . -B build/bremen -G Ninja \
   -DCMAKE_C_COMPILER=/usr/bin/gcc \

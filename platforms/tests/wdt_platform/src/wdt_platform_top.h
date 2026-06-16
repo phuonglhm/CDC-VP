@@ -7,8 +7,8 @@
 
 namespace cdc::platforms::tests::wdt_platform {
 
-// Small Bremen/RISC-V SoC for wdt IP verification:
-// CPU -> bus_router -> RAM/UART/CLINT/PLIC/wdt, with wdt external IRQ via PLIC.
+// Small Bremen/RISC-V SoC for WDT IP verification:
+// CPU -> bus_router -> RAM/UART/CLINT/PLIC/WDT, with WDT external IRQ via PLIC.
 class wdt_platform_top : public sc_core::sc_module {
 public:
    wdt_platform_top(sc_core::sc_module_name name, std::string config_path);

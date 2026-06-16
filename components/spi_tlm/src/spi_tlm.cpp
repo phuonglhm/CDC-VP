@@ -1,3 +1,5 @@
+// Author: hoangv11
+// Verified by: quannh107
 #include "spi_tlm.h"
 
 #include <algorithm>
@@ -95,7 +97,7 @@ void spi_tlm::transmit() {
       double ssp_clk = (double)clk / (cpsr * (1 + scr));
       double transmission_time = (double)bits_per_frame / ssp_clk;
       sc_core::sc_time delay = sc_core::sc_time(transmission_time, sc_core::SC_SEC);
-      
+
       // 4. Peripheral interaction
       tlm::tlm_generic_payload trans;
       trans.set_write();

@@ -1,3 +1,5 @@
+// Author: hoangv11
+// Verified by: quannh107
 #ifndef SPI_TLM_H
 #define SPI_TLM_H
 
@@ -22,7 +24,7 @@ public:
    SC_HAS_PROCESS(spi_tlm);
    explicit spi_tlm(sc_core::sc_module_name name);
 
-   void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
+   void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
 
 private:
    static constexpr int FIFO_SIZE = 8; // 8-location deep, as specified by arm
