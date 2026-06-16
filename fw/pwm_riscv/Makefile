@@ -1,0 +1,23 @@
+# Cross-compile the PWM SoC verification firmware.
+
+CROSS   ?= riscv-none-elf-
+CC      := $(CROSS)gcc
+OBJDUMP := $(CROSS)objdump
+
+ARCH    := -march=rv32imac_zicsr -mabi=ilp32
+CFLAGS  := $(ARCH) -Os -ffreestanding -nostdlib -fno-pic -Wall -Wextra
+LDFLAGS := -T linker.ld -Wl,--gc-sections
+
+SRCS   := startup.S src/main.c
+TARGET := pwm_test.elf
+
+all: $(TARGET)
+
+$(TARGET): $(SRCS) linker.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) startup.S src/main.c -o $@
+	$(OBJDUMP) -d $@ > pwm_test.dis
+
+clean:
+	rm -f $(TARGET) pwm_test.dis
+
+.PHONY: all clean
