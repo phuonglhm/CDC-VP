@@ -42,6 +42,8 @@ constexpr unsigned kNumPlicSources = 1;
 } // namespace
 
 struct wdt_platform_top::impl : public sc_core::sc_module {
+   SC_HAS_PROCESS(impl);
+
    // Các module phần cứng của platform: CPU + bus + các IP memory-mapped
    // + một dây tín hiệu cho ngắt của wdt.
    cpu_backend_t cpu;
@@ -51,6 +53,7 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
    cdc::components::clint_tlm clint;
    cdc::components::plic_tlm plic;
    cdc::components::wdt_tlm wdt;
+   sc_core::sc_signal<bool> reset_n;
    sc_core::sc_signal<bool> wdt_irq;
    sc_core::sc_signal<bool> wdt_reset_o;
 
@@ -63,7 +66,17 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
        , clint("clint", cpu)
        , plic("plic", cpu, kNumPlicSources)
        , wdt("wdt", sc_core::sc_time(10, sc_core::SC_NS))
-       , wdt_irq("wdt_irq") {
+       , reset_n("reset_n")
+       , wdt_irq("wdt_irq")
+       , wdt_reset_o("wdt_reset_o") {
+
+      SC_THREAD(reset_sequence);
+
+      // reset method when watchdog issues a reset
+      // SC_METHOD(handle_wdt_reset);
+      // sensitive << wdt_reset_o;
+      // dont_initialize();
+
       // Nối (các) initiator socket của CPU vào upstream port của bus.
       //   - Bremen (riscv_vp): 1 bus chung cho cả lệnh lẫn dữ liệu -> 1 port.
       //   - mariusmm (riscv_tlm): tách bus instr và data -> 2 port.
@@ -84,7 +97,9 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
 
       // Đường ngắt của wdt: wdt -> PLIC -> CPU.
       // wdt kéo wdt_irq lên mức 1 khi có sự kiện ngắt.
+      wdt.reset_n(reset_n);
       wdt.irq(wdt_irq);
+      wdt.reset_o(wdt_reset_o);
       // PLIC nhận tín hiệu này ở irq_in[0]. Lưu ý: irq_in[index] tương ứng
       // PLIC source id = index + 1 (source 0 bị reserve theo chuẩn RISC-V),
       // nên đây là PLIC source 1. PLIC sẽ báo external interrupt (MEIP) về CPU.
@@ -96,8 +111,23 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
          std::cout << "memory map: RAM=0x80000000 UART=0x10000000 "
                    << "CLINT=0x02000000 PLIC=0x0C000000 wdt=0x10040000\n";
          std::cout << "irq map: wdt0 -> PLIC source 5 -> MEIP\n";
+         std::cout << "reset map: WDT reset_n active-low, assert at 0ns, release at 100ns\n";
       }
    }
+
+   void reset_sequence() {
+      reset_n.write(false);
+      wait(sc_core::sc_time(100, sc_core::SC_NS));
+      reset_n.write(true);
+   }
+
+   // void handle_wdt_reset() {
+   //    if (wdt_reset_o.read() == true) {
+   //       std::cout << sc_core::sc_time_stamp()
+   //                 << " [PLATFORM] Watchdog barked (RESET) -> Resetting CPU core\n";
+   //       cpu.reset_cpu();
+   //    }
+   // }
 };
 
 wdt_platform_top::wdt_platform_top(sc_core::sc_module_name name, std::string config_path)
