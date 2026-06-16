@@ -8,21 +8,40 @@ namespace cdc::components {
 adc_tlm::adc_tlm(sc_core::sc_module_name name, sc_core::sc_time access_latency)
     : sc_core::sc_module(name)
     , socket("socket")
+    , reset_n("reset_n")
     , irq_out("irq_out")
     , access_latency_(access_latency)
 {
     socket.register_b_transport(this, &adc_tlm::b_transport);
     socket.register_transport_dbg(this, &adc_tlm::transport_dbg);
+
+    SC_METHOD(drive_outputs);
+    sensitive << reset_n << irq_update_event_;
+    dont_initialize();
 }
 
 void adc_tlm::start_of_simulation()
 {
+    if (!reset_n.read()) {
+        core_.reset();
+    }
+    irq_level_ = false;
     irq_out.write(false);
+}
+
+void adc_tlm::drive_outputs()
+{
+    if (!reset_n.read()) {
+        core_.reset();
+        irq_level_ = false;
+    }
+    irq_out.write(irq_level_);
 }
 
 void adc_tlm::update_irq()
 {
-    irq_out.write(core_.hasInterrupt());
+    irq_level_ = core_.hasInterrupt();
+    irq_update_event_.notify(sc_core::SC_ZERO_TIME);
 }
 
 void adc_tlm::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)

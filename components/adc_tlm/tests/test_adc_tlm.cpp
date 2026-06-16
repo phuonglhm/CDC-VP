@@ -23,16 +23,26 @@ constexpr std::uint32_t INTR_EOC = 1u << 0;
 int sc_main(int, char*[])
 {
     cdc::components::adc_tlm adc("adc");
+    sc_core::sc_signal<bool> reset_n("reset_n");
     sc_core::sc_signal<bool> irq("irq");
+    adc.reset_n(reset_n);
     adc.irq_out(irq);
 
     cdc::test::tlm_probe probe("probe");
     probe.socket.bind(adc.socket);
 
     sc_core::sc_spawn([&] {
+        auto settle_irq = [] {
+            wait(sc_core::SC_ZERO_TIME);
+            wait(sc_core::SC_ZERO_TIME);
+        };
+
+        reset_n.write(true);
+        settle_irq();
+
         std::uint32_t value = INTR_EOC;
         CDC_CHECK(probe.write(REG_INTR_ENABLE, &value, 4) == tlm::TLM_OK_RESPONSE);
-        wait(sc_core::SC_ZERO_TIME);
+        settle_irq();
         CDC_CHECK(irq.read() == false);
 
         // START is ignored while ADC_EN is clear.
@@ -41,13 +51,13 @@ int sc_main(int, char*[])
         std::uint32_t status = 0xFFFFFFFFu;
         CDC_CHECK(probe.read(REG_STATUS, &status, 4) == tlm::TLM_OK_RESPONSE);
         CDC_CHECK(status == 0u);
-        wait(sc_core::SC_ZERO_TIME);
+        settle_irq();
         CDC_CHECK(irq.read() == false);
 
         // Enable ADC and start a conversion. The model completes immediately.
         value = CTRL_ADC_EN | CTRL_START;
         CDC_CHECK(probe.write(REG_CONTROL, &value, 4) == tlm::TLM_OK_RESPONSE);
-        wait(sc_core::SC_ZERO_TIME);
+        settle_irq();
         CDC_CHECK(irq.read() == true);
 
         CDC_CHECK(probe.read(REG_STATUS, &status, 4) == tlm::TLM_OK_RESPONSE);
@@ -56,7 +66,7 @@ int sc_main(int, char*[])
         std::uint32_t data = 0;
         CDC_CHECK(probe.read(REG_DATA, &data, 4) == tlm::TLM_OK_RESPONSE);
         CDC_CHECK(data <= 0x0FFFu);
-        wait(sc_core::SC_ZERO_TIME);
+        settle_irq();
         CDC_CHECK(irq.read() == false);
 
         // Bad accesses are rejected.
@@ -73,6 +83,16 @@ int sc_main(int, char*[])
         status = 0;
         CDC_CHECK(probe.debug(tlm::TLM_READ_COMMAND, REG_STATUS, &status, 4) == 4);
         CDC_CHECK((status & STATUS_EOC) != 0u);
+
+        // Reset active-low clears registers and deasserts IRQ.
+        reset_n.write(false);
+        settle_irq();
+        reset_n.write(true);
+        settle_irq();
+        status = 0xFFFFFFFFu;
+        CDC_CHECK(probe.read(REG_STATUS, &status, 4) == tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(status == 0u);
+        CDC_CHECK(irq.read() == false);
 
         sc_core::sc_stop();
     });

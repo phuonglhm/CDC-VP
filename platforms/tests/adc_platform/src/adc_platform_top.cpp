@@ -42,6 +42,8 @@ constexpr unsigned kNumPlicSources = 1;
 } // namespace
 
 struct adc_platform_top::impl : public sc_core::sc_module {
+    SC_HAS_PROCESS(impl);
+
     // Các module phần cứng của platform: CPU + bus + các IP memory-mapped
     // + một dây tín hiệu cho ngắt của ADC.
     cpu_backend_t cpu;
@@ -51,6 +53,7 @@ struct adc_platform_top::impl : public sc_core::sc_module {
     cdc::components::clint_tlm clint;
     cdc::components::plic_tlm plic;
     cdc::components::adc_tlm adc;
+    sc_core::sc_signal<bool> reset_n;
     sc_core::sc_signal<bool> adc_irq;
 
     impl(sc_core::sc_module_name name, const std::string& config_path)
@@ -62,8 +65,11 @@ struct adc_platform_top::impl : public sc_core::sc_module {
         , clint("clint", cpu)
         , plic("plic", cpu, kNumPlicSources)
         , adc("adc")
+        , reset_n("reset_n")
         , adc_irq("adc_irq")
     {
+        SC_THREAD(reset_sequence);
+
         // Nối (các) initiator socket của CPU vào upstream port của bus.
         //   - Bremen (riscv_vp): 1 bus chung cho cả lệnh lẫn dữ liệu -> 1 port.
         //   - mariusmm (riscv_tlm): tách bus instr và data -> 2 port.
@@ -84,6 +90,7 @@ struct adc_platform_top::impl : public sc_core::sc_module {
 
         // Đường ngắt của ADC: ADC -> PLIC -> CPU.
         // ADC kéo adc_irq lên mức 1 khi có sự kiện ngắt.
+        adc.reset_n(reset_n);
         adc.irq_out(adc_irq);
         // PLIC nhận tín hiệu này ở irq_in[0]. Lưu ý: irq_in[index] tương ứng
         // PLIC source id = index + 1 (source 0 bị reserve theo chuẩn RISC-V),
@@ -96,7 +103,17 @@ struct adc_platform_top::impl : public sc_core::sc_module {
             std::cout << "memory map: RAM=0x80000000 UART=0x10000000 "
                       << "CLINT=0x02000000 PLIC=0x0C000000 ADC=0x10060000\n";
             std::cout << "irq map: ADC0 -> PLIC source 1 -> MEIP\n";
+            std::cout << "reset map: ADC reset_n active-low, assert at 0ns, release at 100ns\n";
         }
+    }
+
+    void reset_sequence()
+    {
+        // Reset active-low cho ADC.
+        // Lúc đầu kéo reset_n = 0 để reset register trong ADC, sau 100ns nhả reset.
+        reset_n.write(false);
+        wait(sc_core::sc_time(100, sc_core::SC_NS));
+        reset_n.write(true);
     }
 };
 
