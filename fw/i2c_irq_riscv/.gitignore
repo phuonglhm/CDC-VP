@@ -1,4 +1,4 @@
-# Build outputs
+# Firmware build outputs
 *.elf
 *.dis
 *.o

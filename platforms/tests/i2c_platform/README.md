@@ -2,11 +2,11 @@
 
 ## Overview
 
-This platform is used to verify the I2C TLM IP integrated into the CDC-VP framework.
+This platform verifies the I2C TLM IP integrated into CDC-VP.
 
-The test platform instantiates:
+The platform contains:
 
-* RISC-V CPU (Bremen rv32 backend)
+* RISC-V CPU (Bremen RV32 backend)
 * Bus Router
 * RAM
 * UART
@@ -14,7 +14,32 @@ The test platform instantiates:
 * PLIC
 * I2C TLM IP
 
-The firmware accesses I2C registers through MMIO and verifies the basic functionality of the I2C peripheral.
+Firmware accesses the I2C registers through MMIO and verifies the basic functionality of the IP.
+
+---
+
+## Requirements
+
+The platform was tested with:
+
+* SystemC 2.3.4
+* Ninja
+* GCC / G++
+* RISC-V bare-metal toolchain (`riscv64-unknown-elf-gcc`)
+
+Before building:
+
+```bash
+export SYSTEMC_HOME=/path/to/systemc-2.3.4
+```
+
+Example:
+
+```bash
+export SYSTEMC_HOME=/opt/systemc-2.3.4
+```
+
+No SystemC path is hard-coded in the build commands below.
 
 ---
 
@@ -32,47 +57,41 @@ The firmware accesses I2C registers through MMIO and verifies the basic function
 
 ## Tested Features
 
-The firmware verifies:
-
 ### Test 1: CTRL / STATUS Register Access
 
 * Enable I2C host mode
-* Read back CTRL register
+* Read CTRL register
 * Read STATUS register
-* Verify correct MMIO operation
+* Verify MMIO access
 
-Expected result:
+Expected:
 
 ```text
 [PASS] CTRL/STATUS
 ```
 
----
-
 ### Test 2: Interrupt State Generation
 
 * Enable CMD_COMPLETE interrupt
-* Send I2C command sequence through FDATA FIFO
-* Verify interrupt state is generated
-* Verify interrupt status can be cleared
+* Send commands through FDATA FIFO
+* Verify interrupt generation
+* Verify interrupt clear operation
 
-Expected result:
+Expected:
 
 ```text
 [PASS] I2C INTR_STATE / IRQ POLL
 ```
 
----
-
 ### Test 3: FDATA FIFO Command Path
 
-* Push START command
-* Push DATA byte
-* Push STOP command
+* Send START command
+* Send DATA byte
+* Send STOP command
 * Verify command processing
-* Verify CMD_COMPLETE interrupt generation
+* Verify CMD_COMPLETE interrupt
 
-Expected result:
+Expected:
 
 ```text
 [PASS] FDATA FIFO COMMAND
@@ -82,9 +101,11 @@ Expected result:
 
 ## Build Platform
 
-From CDC-VP root directory:
+From CDC-VP root:
 
 ```bash
+export SYSTEMC_HOME=/opt/systemc-2.3.4
+
 rm -rf build/bremen
 
 cmake -S . -B build/bremen -G Ninja \
@@ -94,8 +115,8 @@ cmake -S . -B build/bremen -G Ninja \
   -DCDC_BUILD_MINI_TLM=OFF \
   -DCDC_BUILD_CPU_EVAL=OFF \
   -DCDC_BUILD_CUSTOM_SOC=ON \
-  -DSYSTEMC_INCLUDE_DIR=/opt/systemc-2.3.4/include \
-  -DSYSTEMC_LIBRARY=/opt/systemc-2.3.4/lib/libsystemc.so
+  -DSYSTEMC_INCLUDE_DIR=${SYSTEMC_HOME}/include \
+  -DSYSTEMC_LIBRARY=${SYSTEMC_HOME}/lib/libsystemc.so
 
 cmake --build build/bremen --target i2c_platform
 ```
@@ -122,7 +143,7 @@ i2c_irq.dis
 
 ## Run Test
 
-From CDC-VP root directory:
+From CDC-VP root:
 
 ```bash
 ./build/bremen/platforms/tests/i2c_platform/i2c_platform \
@@ -133,7 +154,7 @@ From CDC-VP root directory:
 
 ---
 
-## Expected Output
+## Expected Result
 
 ```text
 [PASS] CTRL/STATUS
@@ -147,11 +168,13 @@ I2C FULL PASS
 
 ## Notes
 
-The I2C IP successfully:
+The verification confirms:
 
-* Handles MMIO register accesses
-* Processes FDATA FIFO commands
-* Generates CMD_COMPLETE interrupt status
-* Supports interrupt enable and clear operations
+* MMIO register access
+* CTRL register functionality
+* STATUS register functionality
+* FDATA FIFO command handling
+* Interrupt generation
+* Interrupt clear behavior
 
-The current verification flow validates the interrupt state through polling and confirms correct I2C IP functionality.
+The current test validates interrupt generation through interrupt-state polling and confirms correct I2C IP functionality.
