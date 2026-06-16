@@ -1,31 +1,19 @@
-# Compiler and flags
-CXX := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iincludes -g
+CXX      := g++
+CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
 
-# SystemC detection: prefer pkg-config, fall back to SYSTEMC_HOME
-SYSTEMC_HOME ?= /usr/local/systemc
-PKG_CFLAGS := $(shell pkg-config --cflags systemc 2>/dev/null)
-PKG_LIBS := $(shell pkg-config --libs systemc 2>/dev/null)
+# Hardcoded paths to your working C++17 SystemC installation
+SYSTEMC_HOME := /usr/local/systemc-2.3.4
+CXXFLAGS     += -isystem $(SYSTEMC_HOME)/include
+LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
 
-ifeq ($(strip $(PKG_CFLAGS)),)
-	SYSTEMC_INC := $(SYSTEMC_HOME)/include
-	CXXFLAGS += -I$(SYSTEMC_INC)
-else
-	CXXFLAGS += $(PKG_CFLAGS)
-endif
-
-ifeq ($(strip $(PKG_LIBS)),)
-	SYSTEMC_LIB := $(SYSTEMC_HOME)/lib
-	LDFLAGS := -L$(SYSTEMC_LIB) -lsystemc -Wl,-rpath,$(SYSTEMC_LIB)
-else
-	LDFLAGS := $(PKG_LIBS)
-endif
+# Target library
+LIBS := -lsystemc
 
 # Directories and target
 SRC_DIR := src
 OBJ_DIR := build
 BIN_DIR := out
-TARGET := $(BIN_DIR)/main
+TARGET  := $(BIN_DIR)/main
 
 SRCS := $(wildcard $(SRC_DIR)/*.cpp)
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
@@ -41,11 +29,13 @@ $(BIN_DIR):
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
+# Compile source files into object files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
 
+# Link object files into final executable (Objects MUST precede -lsystemc)
 $(TARGET): $(OBJS) | $(BIN_DIR)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
 -include $(DEPS)
 

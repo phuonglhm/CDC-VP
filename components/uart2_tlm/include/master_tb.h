@@ -7,7 +7,7 @@
 using namespace sc_core;
 
 
-#define ADDR_HOST_UART0 0x1A510000
+#define ADDR_HOST_UART0 0x10000000
 
 class MasterTB : public sc_module {
 public:
@@ -15,7 +15,7 @@ public:
 
     sc_in<unsigned char> host0_tx_mon;
     sc_core::sc_out<unsigned char> host0_rx_drv;
-    // SC_HAS_PROCESS(MasterTB);
+    SC_HAS_PROCESS(MasterTB);
     MasterTB(sc_module_name name);
 
 private:
