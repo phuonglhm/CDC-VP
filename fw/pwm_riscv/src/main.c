@@ -114,19 +114,7 @@ int main(void)
     MMIO32(PWM_PERIOD_ADDR) = 0xFFFFu;
     pass &= check("period=0xFFFF", MMIO32(PWM_PERIOD_ADDR), 0xFFFFu);
 
-    /* ── Test 6: CFG bit 31 — counter enable gate ── [NEW]
-     *
-     * In pwm_thread(), the model checks ((cfg >> 31) & 1) each tick.
-     * If that bit is 0 the counter is frozen and the loop just continues.
-     * If it is 1 the counter increments normally.
-     *
-     * From the CPU side we can only verify the register stores and returns
-     * the correct bit pattern — we cannot observe the counter directly.
-     * We check three values:
-     *   - 0x00000000  bit 31 = 0, counter disabled
-     *   - 0x80000000  bit 31 = 1, counter enabled
-     *   - 0x7FFFFFFF  bit 31 = 0 again, all lower bits set (checks no masking)
-     */
+    /* ── Test 6: CFG bit 31 — counter enable gate ── */
     uart_puts("\n[6] CFG bit 31 (counter enable gate)\n");
     MMIO32(PWM_CFG_ADDR) = 0x00000000u;
     pass &= check("cfg=0x00000000 (counter off)", MMIO32(PWM_CFG_ADDR), 0x00000000u);
@@ -139,18 +127,7 @@ int main(void)
  
     MMIO32(PWM_CFG_ADDR) = 0u; /* restore: leave counter disabled for remaining tests */
  
-    /* ── Test 7: Phase delay (param0) register ── [NEW]
-     *
-     * param0 maps to phase_delay in the model. The thread uses it as:
-     *   shifted = (counter + period - phase_delay) % period
-     * so the register must store arbitrary 32-bit values without truncation.
-     *
-     * We test:
-     *   - Zero (default / no delay)
-     *   - A mid-range value (25, i.e. quarter-period with period=100)
-     *   - Maximum value we'd realistically use (period - 1 = 99)
-     *   - A large value beyond a typical period to confirm no silent clamping
-     */
+    /* ── Test 7: Phase delay (param0) register ── */
     uart_puts("\n[7] Phase delay (param0) register\n");
     MMIO32(PWM_PARAM0_ADDR) = 0u;
     pass &= check("phase_delay=0",    MMIO32(PWM_PARAM0_ADDR), 0u);
@@ -166,18 +143,7 @@ int main(void)
  
     MMIO32(PWM_PARAM0_ADDR) = 0u; /* restore */
  
-    /* ── Test 8: Period = 0 edge case ── [NEW]
-     *
-     * In pwm_thread(), counter is updated as:
-     *   counter = (counter + 1) % period
-     * If period == 0 this is a modulo-by-zero, which is undefined behaviour
-     * in C++ and will crash or produce garbage in most implementations.
-     *
-     * We only verify the register accepts and returns 0 — the actual crash
-     * would only happen once cfg bit 31 is set and the thread ticks, which
-     * is a tb.cpp concern. This test flags the risky configuration so the
-     * reviewer knows to add a guard in pwm_thread().
-     */
+    /* ── Test 8: Period = 0 edge case ── */
     uart_puts("\n[8] Period = 0 edge case (register only)\n");
     MMIO32(PWM_PERIOD_ADDR) = 0u;
     uart_puts("  INFO period=0 readback=");
@@ -186,22 +152,7 @@ int main(void)
  
     MMIO32(PWM_PERIOD_ADDR) = 100u; /* restore to safe value */
  
-    /* ── Test 9: Multi-register isolation (no crosstalk) ── [NEW]
-     *
-     * Writes a distinct sentinel value to every register, then reads them
-     * all back in one pass. If any two registers share storage (a bug where
-     * two case labels write the same variable, for example) this will catch
-     * it because each sentinel is unique.
-     *
-     * Sentinels chosen to be visually distinct in hex output:
-     *   CFG        0xC0000000  (bit 31 set so counter would be enabled,
-     *                           but we read back immediately — no tick gap)
-     *   PWM_EN     0x00000001
-     *   INVERT     0x00000002  (different from EN to catch EN/INVERT alias)
-     *   PARAM0     0x00000019  (25 — a plausible phase delay)
-     *   DUTY0      0x00000032  (50)
-     *   PERIOD     0x00000064  (100)
-     */
+    /* ── Test 9: Multi-register isolation (no crosstalk) ── */
     uart_puts("\n[9] Multi-register isolation (no crosstalk)\n");
     MMIO32(PWM_CFG_ADDR)    = 0xC0000000u;
     MMIO32(PWM_EN_ADDR)     = 0x00000001u;
