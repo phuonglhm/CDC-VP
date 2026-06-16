@@ -32,7 +32,7 @@ constexpr std::uint64_t kClintSize = 0x0001'0000;
 constexpr std::uint64_t kPlicBase = 0x0C00'0000;
 constexpr std::uint64_t kPlicSize = 0x0040'0000;
 constexpr std::uint64_t kUartBase = 0x1000'0000;
-constexpr std::uint64_t kwdtBase = 0x1004'0000;
+constexpr std::uint64_t kWdtBase = 0x1004'0000;
 constexpr std::uint64_t kMmioSize = 0x1000;
 constexpr std::uint64_t kRamBase = 0x8000'0000;
 constexpr std::uint64_t kRamSize = 0x0010'0000;
@@ -80,13 +80,11 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
       bus.add_target(kUartBase, kMmioSize).bind(uart.socket);
       bus.add_target(kClintBase, kClintSize).bind(clint.socket);
       bus.add_target(kPlicBase, kPlicSize).bind(plic.socket);
-      bus.add_target(kwdtBase, kMmioSize).bind(wdt.target_socket);
+      bus.add_target(kWdtBase, kMmioSize).bind(wdt.target_socket);
 
       // Đường ngắt của wdt: wdt -> PLIC -> CPU.
       // wdt kéo wdt_irq lên mức 1 khi có sự kiện ngắt.
       wdt.irq(wdt_irq);
-      // reset output from wdt_tlm
-      wdt.reset_o(wdt_reset_o);
       // PLIC nhận tín hiệu này ở irq_in[0]. Lưu ý: irq_in[index] tương ứng
       // PLIC source id = index + 1 (source 0 bị reserve theo chuẩn RISC-V),
       // nên đây là PLIC source 1. PLIC sẽ báo external interrupt (MEIP) về CPU.

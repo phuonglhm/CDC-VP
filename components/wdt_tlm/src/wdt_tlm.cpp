@@ -23,6 +23,7 @@ void store_u32_le(unsigned char *data, uint32_t value) {
 wdt_tlm::wdt_tlm(sc_core::sc_module_name name, sc_core::sc_time tick_period)
     : sc_core::sc_module(name)
     , target_socket("target_socket")
+    , reset_n("reset_n")
     , irq("irq")
     , reset_o("reset_o")
     , m_load(0xFFFFFFFFu)
@@ -39,8 +40,9 @@ wdt_tlm::wdt_tlm(sc_core::sc_module_name name, sc_core::sc_time tick_period)
 
    SC_THREAD(counter_thread);
    SC_METHOD(drive_outputs);
-   sensitive << m_output_changed;
-}
+   sensitive << m_output_changed << reset_n;
+   dont_initialize();
+   }
 
 void wdt_tlm::trace(sc_core::sc_trace_file *tf) const {
    if (tf == nullptr) {
@@ -237,9 +239,22 @@ void wdt_tlm::handle_timeout() {
    std::cout << sc_core::sc_time_stamp() << " [WDT] first timeout: IRQ asserted, counter reloaded\n";
 }
 
-void wdt_tlm::drive_outputs() {
-   irq.write(m_irq_level);
-   reset_o.write(m_reset_level);
+void wdt_tlm::drive_outputs()
+{
+    if (reset_n.valid() && !reset_n.read()) {
+        m_load = 0xFFFFFFFFu;
+        m_counter = 0xFFFFFFFFu;
+        m_control = 0;
+        m_ris = 0;
+        m_mis = 0;
+        m_locked = false;
+        m_reset_asserted = false;
+        m_irq_level = false;
+        m_reset_level = false;
+    }
+
+    irq.write(m_irq_level);
+    reset_o.write(m_reset_level);
 }
 
 void wdt_tlm::reload_counter() {

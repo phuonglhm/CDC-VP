@@ -1,3 +1,4 @@
+# TODO: update this file to reflect current structure
 # ARM Watchdog Module (SP805) Virtual Platform
 
 This project provides a SystemC TLM-2.0 Loosely Timed (LT) model of the ARM Watchdog Module (SP805), along with a testbench to verify its functional behavior.
