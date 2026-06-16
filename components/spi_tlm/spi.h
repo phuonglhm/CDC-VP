@@ -16,7 +16,8 @@ SC_MODULE(spi_controller) {
    tlm_utils::simple_target_socket<spi_controller> from_apb_socket;
    tlm_utils::simple_initiator_socket<spi_controller> to_peri_socket;
 
-   SC_CTOR(spi_controller);
+   SC_HAS_PROCESS(spi_controller);
+   spi_controller(sc_core::sc_module_name name);
 
    void b_transport(tlm::tlm_generic_payload & trans, sc_time & delay);
 

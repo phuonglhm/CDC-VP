@@ -1,0 +1,32 @@
+platform: spi_platform
+
+cpu:
+  backend: riscv_vp
+  xlen: 32
+
+memory_map:
+  clint:
+    base: 0x02000000
+    size: 0x10000
+    irq: MSIP/MTIP
+  plic:
+    base: 0x0C000000
+    size: 0x400000
+    irq: MEIP
+  uart0:
+    base: 0x10000000
+    size: 0x1000
+    irq: none
+  spi0:
+    base: 0x10020000
+    size: 0x1000
+    irq:
+      controller: plic
+      source: 3
+  ram:
+    base: 0x80000000
+    size: 0x100000
+
+interrupts:
+  plic_sources:
+    3: spi0.intr

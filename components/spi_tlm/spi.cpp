@@ -7,8 +7,9 @@
 #include <iterator>
 #include <spi.h>
 
-spi_controller::SC_CTOR(spi_controller)
-    : from_apb_socket("from_apb_socket")
+spi_controller::spi_controller(sc_core::sc_module_name name)
+    : sc_core::sc_module(name)
+    , from_apb_socket("from_apb_socket")
     , to_peri_socket("to_peri_socket")
     , rx_fifo(FIFO_SIZE)
     , tx_fifo(FIFO_SIZE) {
@@ -56,7 +57,7 @@ void spi_controller::b_transport(tlm::tlm_generic_payload &trans, sc_time &delay
 
    case tlm::TLM_READ_COMMAND: {
       uint16_t rd_data = read_reg(addr);
-      memcpy(ptr, &rd_data, min((unsigned int)sizeof(rd_data), len));
+      std::memcpy(ptr, &rd_data, std::min((unsigned int)sizeof(rd_data), len));
       trans.set_response_status(tlm::TLM_OK_RESPONSE);
       break;
    }
