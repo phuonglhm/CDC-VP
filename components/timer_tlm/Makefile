@@ -1,15 +1,18 @@
 TARGET = timer_tb
 SRCS = timer.cpp testbench.cpp
+CXXFLAGS = -Wall
 
-.PHONY all run clean
+OBJS = $(SRCS:.cpp=.o)
+
+.PHONY: all run clean
 
 all: $(TARGET)
 
-$(TARGET): $(SRCS) timer.h
-	$(CXX) $(LDFLAGS) $^ -o $@ $(SYSTEMC_LIBS)
+$(TARGET): $(OBJS)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(SYSTEMC_LIBS)
 
-%.o: %.cpp $(DEPS)
-	$(CXX) $(CXXFLAGS) $(SYSTEMC_CFLAGS) (SRCS) -c $< -o $@
+%.o: %.cpp include/timer.h
+	$(CXX) $(CXXFLAGS) $(SYSTEMC_CFLAGS) -c $< -o $@
 
 run: $(TARGET)
 	./$(TARGET)

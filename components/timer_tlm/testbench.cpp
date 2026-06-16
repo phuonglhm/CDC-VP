@@ -9,6 +9,7 @@ using namespace std;
 using namespace sc_core;
 using namespace sc_dt;
 
+namespace cdc::components {
 SC_MODULE(Testbench) {
     tlm_utils::simple_initiator_socket<Testbench> socket;
     sc_out<bool> prstn;
@@ -273,4 +274,5 @@ int sc_main(int argc, char* argv[]) {
     delete tb;
     delete timer;
     return 0;
+}
 }

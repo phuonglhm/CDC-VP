@@ -20,6 +20,7 @@ add_subdirectory(pwm_tlm)
 add_subdirectory(wdt_tlm)
 add_subdirectory(trng_tlm)
 
+add_subdirectory(timer_tlm)
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
 install(EXPORT cdc-components-targets
     NAMESPACE cdc::components::
