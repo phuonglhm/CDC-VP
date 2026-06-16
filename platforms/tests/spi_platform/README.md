@@ -2,13 +2,15 @@
 
 ## Overview & Memory Map
 
-`spi_platform` is a SystemC/TLM virtual prototype test platform for the SPI
-peripheral. It uses a Bremen `riscv-vp` RV32 CPU, a shared TLM bus router, RAM,
-CLINT, PLIC, UART0 for firmware logging, and the cleaned-up upstream
-`cdc::components::spi_tlm` peripheral model.
+`spi_platform` is a SystemC/TLM virtual prototype integration test platform for
+the SPI peripheral. It uses a Bremen RV32 RISC-V CPU, a shared TLM bus router,
+RAM, CLINT, PLIC, UART0 for firmware logging, and the upstream
+`cdc::components::spi_tlm` model.
 
-The SPI interrupt output is routed to PLIC source ID 3. UART0 is preserved at
+The SPI interrupt output is routed through PLIC source ID 3. UART0 remains at
 `0x1000_0000` so bare-metal firmware can print progress and pass/fail messages.
+The SPI `reset_n` pin is actively driven low at simulation time 0 and released
+after 100 ns, matching the reset style used by the ADC reference platform.
 
 | Region | Base | Size | End | Notes |
 |---|---:|---:|---:|---|
@@ -20,66 +22,61 @@ The SPI interrupt output is routed to PLIC source ID 3. UART0 is preserved at
 
 ## Build and Run Instructions
 
-Run these commands from this directory:
+Run these commands from the repository root.
+
+### 1. Source the toolchain environment
 
 ```bash
-cd /home/hoangquan/workspace/CDC-VP/platforms/tests/spi_platform
+source tools/third_party/setup_env.sh
 ```
 
-Before building, source the repository toolchain environment in the current
-terminal:
+### 2. Build the bare-metal firmware
 
 ```bash
-source ../../../tools/third_party/setup_env.sh
-```
-
-### Step 1: Build the bare-metal firmware
-
-```bash
-make -C ../../../fw/spi_test_riscv clean
-make -C ../../../fw/spi_test_riscv
+make -C fw/spi_test_riscv clean
+make -C fw/spi_test_riscv
 ```
 
 This produces:
 
 ```text
-../../../fw/spi_test_riscv/spi_test.elf
+fw/spi_test_riscv/spi_test.elf
 ```
 
-### Step 2: Build the hardware platform
+### 3. Build the hardware platform
+
+#### Step 3a: Configure the project
+
+SystemC version 2.3.4 is strictly required for this project. If `SYSTEMC_HOME`
+is already set, CMake uses it; otherwise the command defaults to
+`/opt/systemc-2.3.4`.
 
 ```bash
-cmake --build ../../../build/bremen --target spi_platform
-```
-
-If the `build/bremen` tree has not been configured yet, configure it once from
-the repository root:
-
-```bash
-cd /home/hoangquan/workspace/CDC-VP
- cmake -S . -B build/bremen -G Ninja \                     
-  -DCMAKE_C_COMPILER=/usr/bin/gcc \
-  -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+cmake -S . -B build/bremen -G Ninja \
   -DCDC_CPU_BACKEND=riscv_vp \
   -DCDC_BUILD_MINI_TLM=OFF \
   -DCDC_BUILD_CPU_EVAL=OFF \
   -DCDC_BUILD_CUSTOM_SOC=ON \
-  -DSYSTEMC_INCLUDE_DIR=/opt/systemc-2.3.4/include \
-  -DSYSTEMC_LIBRARY=/opt/systemc-2.3.4/lib/libsystemc.so
+  -DSYSTEMC_INCLUDE_DIR="${SYSTEMC_HOME:-/opt/systemc-2.3.4}/include" \
+  -DSYSTEMC_LIBRARY="${SYSTEMC_HOME:-/opt/systemc-2.3.4}/lib/libsystemc.so"
 ```
 
-Then return to this directory before using the run command below.
-
-### Step 3: Run the simulation
+#### Step 3b: Compile the target
 
 ```bash
-./../../../build/bremen/platforms/tests/spi_platform/spi_platform \
-  -c configs/default.yaml \
-  --fw ../../../fw/spi_test_riscv/spi_test.elf \
+cmake --build build/bremen --target spi_platform
+```
+
+### 4. Run the simulation
+
+```bash
+./build/bremen/platforms/tests/spi_platform/spi_platform \
+  -c platforms/tests/spi_platform/configs/default.yaml \
+  --fw fw/spi_test_riscv/spi_test.elf \
   --sim-ms 5
 ```
 
-Expected firmware output includes UART log lines ending with either:
+Expected firmware output includes phase logs ending with either:
 
 ```text
 SPI PASS
@@ -91,95 +88,99 @@ or:
 SPI FAIL
 ```
 
-## Test Explanation
+## Test Scenarios
 
-### Hardware Loopback
+### Phase 1: Power-On Reset Defaults
 
-The SPI IP exposes two TLM sockets:
+Before configuring the SPI controller, firmware reads these registers:
 
-| Socket | Direction | Platform Binding |
-|---|---|---|
-| `from_apb_socket` | target | Connected to the bus router at `0x1002_0000` |
-| `to_peri_socket` | initiator | Connected to a local `spi_loopback_target` |
+- `CR0`
+- `CR1`
+- `SR`
+- `IMSC`
+- `RIS`
+- `MIS`
+
+The expected reset defaults come from the current `spi_tlm` model:
+
+| Register | Expected Value | Meaning |
+|---|---:|---|
+| `CR0` | `0x0000` | Serial format disabled/default |
+| `CR1` | `0x0000` | SPI disabled |
+| `SR` | `0x0003` | TX FIFO empty and not full (`TFE | TNF`) |
+| `IMSC` | `0x0000` | All SPI interrupt masks disabled |
+| `RIS` | `0x0008` | TX raw status is level-sensitive while TX FIFO is empty |
+| `MIS` | `0x0000` | No masked interrupt is visible to the PLIC |
+
+The firmware prints `PHASE 1 PASS` only if all reset checks match.
+
+### Phase 2: Loopback Data Test
 
 There is no physical SPI slave model in this platform yet. To keep the test
-self-contained, `spi.to_peri_socket` is bound to a local loopback placeholder
-called `spi_loopback_target`.
+self-contained, the SPI initiator socket `to_peri_socket` is connected to a
+local target called `spi_loopback_target`.
 
-When firmware writes data to the SPI data register, the SPI model moves that
-data through its TX path and sends a TLM transaction through `to_peri_socket`.
-The loopback target accepts the transaction and leaves the payload unchanged.
-From the firmware point of view, data transmitted on MOSI is echoed back on
-MISO and becomes available in the SPI RX FIFO.
-
-This makes the platform useful for checking the basic integration path:
-
-- CPU MMIO access to SPI registers
-- SPI TX FIFO behavior
-- SPI RX FIFO behavior
-- SPI interrupt assertion
-- PLIC routing to the RISC-V CPU
-- UART0 reporting from bare-metal firmware
-
-### The "Queue 4 Words" Mechanism
-
-The upstream SPI IP has an RX FIFO depth of 8 entries. Its RX interrupt logic
-asserts the RX interrupt condition only when the RX FIFO is at least half full:
+The data path is:
 
 ```text
-rx_fifo.num_available() >= FIFO_SIZE / 2
+firmware write to SPI_DR
+  -> SPI TX FIFO
+  -> spi_tlm to_peri_socket
+  -> spi_loopback_target
+  -> unchanged data returned as MISO
+  -> SPI RX FIFO
 ```
 
-With `FIFO_SIZE = 8`, the RX threshold is 4 entries. For that reason, the
-firmware intentionally writes 4 words to the SPI data register instead of only
-one. The current test pattern starts at `0xAA`, so the transmitted values are:
+The upstream SPI IP has an RX FIFO depth of 8 entries. Its RX raw interrupt bit
+is asserted when the RX FIFO is at least half full, so the firmware writes four
+8-bit test words:
 
 ```text
 0xAA, 0xAB, 0xAC, 0xAD
 ```
 
-Each write enters the SPI TX FIFO. The SPI model transmits each value through
-the loopback target and places the echoed value into the RX FIFO. When the RX
-FIFO reaches 4 items, the SPI interrupt line is asserted.
+When the fourth looped-back word reaches the RX FIFO, SPI asserts its `irq`
+output. The platform wires this signal to PLIC source ID 3. The RISC-V trap
+handler claims source 3, drains the four RX words, and compares them with the
+transmitted pattern.
 
-The firmware uses 16-bit MMIO accesses for SPI registers because the SPI model
-accepts register transactions up to 2 bytes wide.
+The firmware prints `PHASE 2 PASS` only if:
 
-### Interrupt & Verification Flow
+- PLIC claim returns source ID 3.
+- Four RX words are available.
+- The RX data exactly matches `0xAA`, `0xAB`, `0xAC`, and `0xAD`.
+- The ISR sees no SPI-side error flags.
 
-The firmware configures PLIC source ID 3 for SPI:
+### Phase 3: IRQ Clear and Status Verification
 
-- It sets the priority for source 3.
-- It enables bit 3 in the PLIC enable register.
-- It sets the PLIC threshold to `0`.
-- It enables machine external interrupts through `mie.MEIE`.
-- It enables global machine interrupts through `mstatus.MIE`.
+After the ISR drains the RX FIFO, it writes `RORIC | RTIC` to the SPI `ICR`
+register and completes the PLIC interrupt by writing source ID 3 back to the
+PLIC claim/complete register.
 
-After SPI is configured, firmware writes the 4-word test pattern to the SPI
-data register. Once the RX FIFO threshold is reached, SPI asserts `intr`. The
-platform wires this signal to PLIC source ID 3, so the PLIC raises MEIP to the
-CPU.
+The main loop then verifies the post-ISR state:
 
-The CPU trap handler then:
+- `MIS == 0x0000`, proving no masked SPI interrupt remains asserted to the PLIC.
+- `RIS == 0x0008`, the model's idle raw status with only TX raw status set.
+- The RX/error raw bits in `RIS` are clear.
+- `SR.RNE == 0`, proving the RX FIFO was drained by the ISR.
 
-1. Reads `mcause` and checks for machine external interrupt, `mcause == 11`.
-2. Reads the PLIC claim register.
-3. Verifies that the claimed interrupt ID is `3`.
-4. Reads the SPI status register `SR`.
-5. Reads the SPI data register `DR` if RX-not-empty is set.
-6. Compares the looped-back RX value against the expected TX value.
-7. Clears SPI interrupt state through the `ICR` register.
-8. Completes the PLIC interrupt by writing claim ID `3` back to the claim/complete register.
-9. Sets a volatile completion flag so `main` can print the final result.
+Note that `RIS` is not expected to become literal zero in the current upstream
+SPI model. The TX raw interrupt bit is level-sensitive and remains set whenever
+the TX FIFO is empty or at/below the TX threshold. Because the firmware does not
+enable the TX interrupt mask, this raw TX status does not assert the external
+interrupt line. The key deassertion check is therefore `MIS == 0`.
 
-If the looped-back data matches the expected value, firmware prints:
+## Interrupt Flow
 
-```text
-SPI PASS
-```
+The firmware configures PLIC source ID 3 as follows:
 
-Otherwise it prints:
+- Set source 3 priority to `1`.
+- Enable source 3 in the PLIC enable register.
+- Set the PLIC threshold to `0`.
+- Enable machine external interrupts through `mie.MEIE`.
+- Enable global machine interrupts through `mstatus.MIE`.
 
-```text
-SPI FAIL
-```
+When SPI asserts `irq`, the PLIC raises MEIP to the CPU. The machine trap
+handler checks `mcause == 11`, claims the interrupt, handles source ID 3, clears
+the SPI-side interrupt state, completes the PLIC interrupt, and returns to
+`main`.

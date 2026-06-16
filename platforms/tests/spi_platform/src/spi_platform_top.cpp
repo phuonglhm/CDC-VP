@@ -7,7 +7,7 @@
 #include <clint_tlm.h>
 #include <memory_tlm.h>
 #include <plic_tlm.h>
-#include <spi.h>
+#include <spi_tlm.h>
 #include <tlm_utils/simple_target_socket.h>
 #include <uart_tlm.h>
 
@@ -65,13 +65,15 @@ private:
 } // namespace
 
 struct spi_platform_top::impl : public sc_core::sc_module {
+    SC_HAS_PROCESS(impl);
+
     cpu_backend_t cpu;
     cdc::components::bus_router bus;
     cdc::components::memory_tlm ram;
     cdc::components::uart_tlm uart;
     cdc::components::clint_tlm clint;
     cdc::components::plic_tlm plic;
-    ::spi_controller spi;
+    cdc::components::spi_tlm spi;
     spi_loopback_target spi_loopback;
     sc_core::sc_signal<bool> plic_source_1_unused;
     sc_core::sc_signal<bool> plic_source_2_unused;
@@ -93,6 +95,8 @@ struct spi_platform_top::impl : public sc_core::sc_module {
         , spi_irq("spi_irq")
         , spi_reset_n("spi_reset_n")
     {
+        SC_THREAD(reset_sequence);
+
         if (cpu.has_unified_bus()) {
             cpu.data_bus().bind(bus.cpu_port(0));
         } else {
@@ -110,16 +114,14 @@ struct spi_platform_top::impl : public sc_core::sc_module {
 
         plic_source_1_unused.write(false);
         plic_source_2_unused.write(false);
-        spi_reset_n.write(true);
 
         plic.irq_in[0](plic_source_1_unused);
         plic.irq_in[1](plic_source_2_unused);
-        spi.intr(spi_irq);
+        spi.irq(spi_irq);
         plic.irq_in[kSpiPlicSource - 1](spi_irq);
 
-        // The SPI model reset port is active low. Keep reset deasserted here;
-        // the model also performs its own power-on initialization.
-        spi.reset(spi_reset_n);
+        // The SPI model reset port is active-low.
+        spi.reset_n(spi_reset_n);
 
         if (!config_path.empty()) {
             std::cout << "spi_platform config: " << config_path << '\n';
@@ -127,8 +129,16 @@ struct spi_platform_top::impl : public sc_core::sc_module {
             std::cout << "memory map: RAM=0x80000000 UART=0x10000000 "
                       << "CLINT=0x02000000 PLIC=0x0C000000 SPI0=0x10020000\n";
             std::cout << "irq map: SPI0 -> PLIC source 3 -> MEIP\n";
+            std::cout << "reset map: SPI reset_n active-low, assert at 0ns, release at 100ns\n";
             std::cout << "spi peripheral: local loopback placeholder bound to to_peri_socket\n";
         }
+    }
+
+    void reset_sequence()
+    {
+        spi_reset_n.write(false);
+        wait(sc_core::sc_time(100, sc_core::SC_NS));
+        spi_reset_n.write(true);
     }
 };
 
