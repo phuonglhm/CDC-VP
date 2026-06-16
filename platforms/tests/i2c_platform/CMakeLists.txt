@@ -1,7 +1,7 @@
 add_executable(i2c_platform
     src/main.cpp
     src/i2c_platform_top.cpp
-    ${CMAKE_SOURCE_DIR}/components/i2c_tlm/i2c.cpp)
+    ${CMAKE_SOURCE_DIR}/components/i2c_tlm/src/i2c.cpp)
 
 target_include_directories(i2c_platform PRIVATE
     src
