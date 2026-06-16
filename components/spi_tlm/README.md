@@ -31,7 +31,7 @@ This component uses **CMake** for its build and verification.
 ### 1. Configure the Build
 
 ```bash
-cmake -S . -B build -G Ninja \
+cmake -S . -B build/bremen -G Ninja \
   -DCDC_BUILD_TESTS=ON \
   -DSYSTEMC_HOME=/opt/systemc-2.3.4
 ```
@@ -39,13 +39,13 @@ cmake -S . -B build -G Ninja \
 ### 2. Build the Unit Test
 
 ```bash
-cmake --build build/tests --target test_spi_tlm
+cmake --build build/bremen --target test_spi_tlm
 ```
 
 ### 3. Run the Unit Test
 
 ```bash
-./build/tests/components/spi_tlm/tests/test_spi_tlm
+./build/bremen/components/spi_tlm/tests/test_spi_tlm
 ```
 
 ## Verification Details
