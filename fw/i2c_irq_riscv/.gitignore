@@ -1,0 +1,7 @@
+# Firmware build outputs
+*.elf
+*.dis
+*.o
+*.map
+*.bin
+*.hex

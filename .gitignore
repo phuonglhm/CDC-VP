@@ -1,3 +1,27 @@
+# Build directories
 build/
 third_party/*
 compile_commands.json
+build-*/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+build.ninja
+.ninja_*
+*.elf
+*.dis
+*.o
+*.a
+*.so
+*.bin
+*.hex
+*.map
+*.log
+*.out
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
