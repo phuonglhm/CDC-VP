@@ -33,7 +33,7 @@ LDLIBS += $(PKG_LIBS) -lm
 endif
 
 TARGET := i2c_sim
-SRCS := i2c.cpp main.cpp
+SRCS := src/i2c.cpp main.cpp
 OBJS := $(SRCS:.cpp=.o)
 
 all: $(TARGET)

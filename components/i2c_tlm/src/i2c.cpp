@@ -1,4 +1,4 @@
-#include "i2c.h"
+#include "../include/i2c.h"
 #include <iostream>
 
 void i2c::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
