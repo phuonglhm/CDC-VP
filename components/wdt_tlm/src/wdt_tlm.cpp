@@ -39,8 +39,11 @@ wdt_tlm::wdt_tlm(sc_core::sc_module_name name, sc_core::sc_time tick_period)
    target_socket.register_b_transport(this, &wdt_tlm::b_transport);
 
    SC_THREAD(counter_thread);
+   SC_METHOD(handle_reset);
+   sensitive << reset_n.neg();
+
    SC_METHOD(drive_outputs);
-   sensitive << m_output_changed << reset_n;
+   sensitive << m_output_changed;
    dont_initialize();
 }
 
@@ -205,7 +208,7 @@ void wdt_tlm::counter_thread() {
    while (true) {
       wait(m_tick_period);
 
-      if (!interrupt_enabled() || m_reset_asserted) {
+      if (!reset_n.read() || !interrupt_enabled() || m_reset_asserted) {
          continue;
       }
 
@@ -239,21 +242,26 @@ void wdt_tlm::handle_timeout() {
    std::cout << sc_core::sc_time_stamp() << " [WDT] first timeout: IRQ asserted, counter reloaded\n";
 }
 
-void wdt_tlm::drive_outputs() {
-   if (!reset_n.read()) {
-      m_load = 0xFFFFFFFFu;
-      m_counter = 0xFFFFFFFFu;
-      m_control = 0;
-      m_ris = 0;
-      m_mis = 0;
-      m_locked = false;
-      m_reset_asserted = false;
-      m_irq_level = false;
-      m_reset_level = false;
-   }
+void wdt_tlm::handle_reset() {
+   reset_state();
+   update_outputs();
+}
 
+void wdt_tlm::drive_outputs() {
    irq.write(m_irq_level);
    reset_o.write(m_reset_level);
+}
+
+void wdt_tlm::reset_state() {
+   m_load = 0xFFFFFFFFu;
+   m_counter = 0xFFFFFFFFu;
+   m_control = 0;
+   m_ris = 0;
+   m_mis = 0;
+   m_locked = false;
+   m_reset_asserted = false;
+   m_irq_level = false;
+   m_reset_level = false;
 }
 
 void wdt_tlm::reload_counter() {

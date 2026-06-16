@@ -1,4 +1,6 @@
-add_executable(test_wdt_tlm test_wdt_tlm.cpp)
+add_executable(test_wdt_tlm
+    test_wdt_tlm.cpp
+    test.cpp)
 target_link_libraries(test_wdt_tlm PRIVATE
     cdc::components::wdt_tlm
     SystemC::systemc)

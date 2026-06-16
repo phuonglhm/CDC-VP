@@ -75,8 +75,10 @@ private:
 
    void counter_thread();
    void handle_timeout();
+   void handle_reset();
    void drive_outputs();
 
+   void reset_state();
    void reload_counter();
    void clear_interrupt();
    void update_outputs();

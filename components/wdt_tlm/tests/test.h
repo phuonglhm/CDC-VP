@@ -10,6 +10,7 @@
 class Testbench : public sc_core::sc_module {
 public:
     tlm_utils::simple_initiator_socket<Testbench> initiator_socket;
+    sc_core::sc_in<bool> reset_n;
     sc_core::sc_in<bool> irq;
     sc_core::sc_in<bool> reset_i;
 

@@ -23,6 +23,7 @@ std::string hex32(uint32_t value)
 Testbench::Testbench(sc_core::sc_module_name name, sc_core::sc_time tick_period)
     : sc_core::sc_module(name)
     , initiator_socket("initiator_socket")
+    , reset_n("reset_n")
     , irq("irq")
     , reset_i("reset_i")
     , m_tick_period(tick_period)
@@ -38,6 +39,9 @@ bool Testbench::passed() const
 
 void Testbench::run()
 {
+    while (!reset_n.read()) {
+        wait(reset_n.posedge_event());
+    }
     wait(sc_core::SC_ZERO_TIME);
 
     std::cout << "\n[TB] SP805 Watchdog LT functional tests begin\n";
