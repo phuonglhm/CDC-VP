@@ -60,8 +60,6 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
    sc_core::sc_signal<bool> wdt_irq;
    sc_core::sc_signal<bool> wdt_reset_o;
 
-   sc_core::sc_event warm_reset_event;
-
    // Dummy signals to tie off unused PLIC inputs
    sc_core::sc_signal<bool> dummy_irq[kNumPlicSources - 1];
 
@@ -79,7 +77,6 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
        , wdt_reset_o("wdt_reset_o") {
 
       SC_THREAD(reset_sequence);
-      sensitive << warm_reset_event;
 
       // reset method when watchdog issues a reset
 
@@ -118,9 +115,6 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
          plic.irq_in[i](dummy_irq[i]);
       }
 
-      // PLIC nhận tín hiệu này ở irq_in[4]. Lưu ý: irq_in[index] tương ứng
-      // PLIC source id = index + 1 (source 0 bị reserve theo chuẩn RISC-V),
-      // nên đây là PLIC source 5. PLIC sẽ báo external interrupt (MEIP) về CPU.
       plic.irq_in[4](wdt_irq);
 
       if (!config_path.empty()) {
@@ -134,12 +128,10 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
    }
 
    void reset_sequence() {
-      while (true) {
-         // Reset active-low cho WDT và các IP khác.
-         reset_n.write(false);
-         wait(sc_core::sc_time(100, sc_core::SC_NS));
-         reset_n.write(true);
-      }
+      // Reset active-low cho WDT và các IP khác.
+      reset_n.write(false);
+      wait(sc_core::sc_time(100, sc_core::SC_NS));
+      reset_n.write(true);
    }
 
    void handle_wdt_reset() {
