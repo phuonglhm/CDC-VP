@@ -1,21 +1,23 @@
-#include "sysc/kernel/sc_module.h"
-#include "sysc/kernel/sc_time.h"
-#include "tlm_core/tlm_2/tlm_generic_payload/tlm_gp.h"
+#include "spi_tlm.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <iterator>
-#include <spi.h>
+#include <iostream>
 
-spi_controller::spi_controller(sc_core::sc_module_name name)
+namespace cdc::components {
+
+spi_tlm::spi_tlm(sc_core::sc_module_name name)
     : sc_core::sc_module(name)
     , from_apb_socket("from_apb_socket")
     , to_peri_socket("to_peri_socket")
+    , irq("irq")
+    , reset_n("reset_n")
     , rx_fifo(FIFO_SIZE)
     , tx_fifo(FIFO_SIZE) {
 
    // register the callback function
-   from_apb_socket.register_b_transport(this, &spi_controller::b_transport);
+   from_apb_socket.register_b_transport(this, &spi_tlm::b_transport);
 
    SC_THREAD(transmit);
 
@@ -28,25 +30,27 @@ spi_controller::spi_controller(sc_core::sc_module_name name)
    dont_initialize();
 
    SC_METHOD(handle_reset);
-   sensitive << reset.neg();
+   sensitive << reset_n.neg();
    // no dont_initialize() to reset at start time. neat, huh?
 }
 
-void spi_controller::b_transport(tlm::tlm_generic_payload &trans, sc_time &delay) {
+void spi_tlm::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay) {
    tlm::tlm_command cmd = trans.get_command();
    sc_dt::uint64 addr = trans.get_address();
    unsigned char *ptr = trans.get_data_ptr();
    unsigned int len = trans.get_data_length();
-   // unsigned char *byt = trans.get_byte_enable_ptr();
-   // unsigned int wid = trans.get_streaming_width();
 
    // msg.len should be at most 2 bytes
-   if (addr > 0xffc || len > 2)
+   if (addr > 0xffc || len > 2) {
       SC_REPORT_ERROR("TLM-2", "Target does not support given generic payload transaction");
+      return;
+   }
 
    switch (cmd) {
    case tlm::TLM_WRITE_COMMAND: {
-      bool wr_success = write_reg(addr - base_addr, *reinterpret_cast<uint16_t *>(ptr));
+      std::uint16_t val = 0;
+      std::memcpy(&val, ptr, std::min(len, (unsigned int)sizeof(val)));
+      bool wr_success = write_reg(static_cast<std::uint8_t>(addr - base_addr), val);
       if (!wr_success) {
          trans.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
          break;
@@ -56,8 +60,8 @@ void spi_controller::b_transport(tlm::tlm_generic_payload &trans, sc_time &delay
    }
 
    case tlm::TLM_READ_COMMAND: {
-      uint16_t rd_data = read_reg(addr);
-      std::memcpy(ptr, &rd_data, std::min((unsigned int)sizeof(rd_data), len));
+      std::uint16_t rd_data = read_reg(static_cast<std::uint16_t>(addr));
+      std::memcpy(ptr, &rd_data, std::min(len, (unsigned int)sizeof(rd_data)));
       trans.set_response_status(tlm::TLM_OK_RESPONSE);
       break;
    }
@@ -67,30 +71,31 @@ void spi_controller::b_transport(tlm::tlm_generic_payload &trans, sc_time &delay
       break;
    }
 
-   delay += sc_time(20, SC_NS); // add negligible time since read/write is fast
+   delay += sc_core::sc_time(20, sc_core::SC_NS); // add negligible time since read/write is fast
 }
 
-void spi_controller::transmit() {
+void spi_tlm::transmit() {
    while (true) {
       if (tx_fifo.num_available() == 0 || !(reg_cr1 & 0x2)) {
          is_transmitting = false;
-         status_event.notify(SC_ZERO_TIME);
+         status_event.notify(sc_core::SC_ZERO_TIME);
          wait(transmission_event);
          continue;
       }
 
       is_transmitting = true;
-      status_event.notify(SC_ZERO_TIME);
+      status_event.notify(sc_core::SC_ZERO_TIME);
 
-      uint16_t data_buffer = tx_fifo.read();
+      std::uint16_t data_buffer = tx_fifo.read();
 
       int bits_per_frame = (reg_cr0 & 0xF) + 1;
-      uint16_t mask = (bits_per_frame == 16) ? 0xFFFF : (1 << bits_per_frame) - 1;
-      uint32_t cpsr = (reg_cpsr > 0) ? reg_cpsr : 2;
-      uint32_t scr = (reg_cr0 >> 8) & 0xFF;
+      std::uint16_t mask = (bits_per_frame == 16) ? 0xFFFF : (1 << bits_per_frame) - 1;
+      std::uint32_t cpsr = (reg_cpsr > 0) ? reg_cpsr : 2;
+      std::uint32_t scr = (reg_cr0 >> 8) & 0xFF;
       double ssp_clk = (double)clk / (cpsr * (1 + scr));
       double transmission_time = (double)bits_per_frame / ssp_clk;
-      sc_time delay = sc_time(transmission_time, SC_SEC);
+      sc_core::sc_time delay = sc_core::sc_time(transmission_time, sc_core::SC_SEC);
+      
       // 4. Peripheral interaction
       tlm::tlm_generic_payload trans;
       trans.set_write();
@@ -103,43 +108,35 @@ void spi_controller::transmit() {
 
       // 6. Store result and update status
       if (rx_fifo.num_free() == 0) {
-
          reg_ris |= 0x1;
       } else {
          rx_fifo.write(data_buffer & mask);
       }
 
-      wait(SC_ZERO_TIME);
-      status_event.notify(SC_ZERO_TIME);
-      possible_intr_event.notify(SC_ZERO_TIME);
+      wait(sc_core::SC_ZERO_TIME);
+      status_event.notify(sc_core::SC_ZERO_TIME);
+      possible_intr_event.notify(sc_core::SC_ZERO_TIME);
    }
 }
 
-bool spi_controller::write_reg(uint8_t offset, uint16_t value) {
+bool spi_tlm::write_reg(std::uint8_t offset, std::uint16_t value) {
    switch (offset) {
    case 0x00:
       reg_cr0 = value;
       return true;
-      break;
 
    case 0x04:
       reg_cr1 = value & 0xf;
-
-      // wakes up transmit thread if SSE bit is on (its the enable
-      // bit)
       if (reg_cr1 & 0x2)
-         transmission_event.notify(SC_ZERO_TIME);
-
+         transmission_event.notify(sc_core::SC_ZERO_TIME);
       return true;
-      break;
 
    case 0x08: {
       reg_dr = value;
-
       if (tx_fifo.num_free()) {
          tx_fifo.write(value);
-         possible_intr_event.notify(SC_ZERO_TIME);
-         transmission_event.notify(SC_ZERO_TIME); // wake up the transmit thread
+         possible_intr_event.notify(sc_core::SC_ZERO_TIME);
+         transmission_event.notify(sc_core::SC_ZERO_TIME); // wake up the transmit thread
          update_status_reg();
          return true;
       } else {
@@ -148,9 +145,7 @@ bool spi_controller::write_reg(uint8_t offset, uint16_t value) {
    }
 
    case 0x0c:
-      // reg_sr is Read-Only
       SC_REPORT_WARNING("TLM-2", "Write attempt to Read-Only reg_sr at offset 0x0C.");
-
       return false;
 
    case 0x10:
@@ -159,7 +154,7 @@ bool spi_controller::write_reg(uint8_t offset, uint16_t value) {
 
    case 0x14:
       reg_imsc = value & 0xf;
-      possible_intr_event.notify(SC_ZERO_TIME);
+      possible_intr_event.notify(sc_core::SC_ZERO_TIME);
       return true;
 
    case 0x18:
@@ -173,7 +168,7 @@ bool spi_controller::write_reg(uint8_t offset, uint16_t value) {
    case 0x20:
       reg_icr = ~(value & 0x3) & 0x3; // the second & 0x3 is to keep the other bits zero
       reg_ris &= ~(value & 0x03);
-      possible_intr_event.notify(SC_ZERO_TIME);
+      possible_intr_event.notify(sc_core::SC_ZERO_TIME);
       return true;
 
    case 0x24:
@@ -184,7 +179,7 @@ bool spi_controller::write_reg(uint8_t offset, uint16_t value) {
    return false;
 }
 
-uint16_t spi_controller::read_reg(uint16_t offset) {
+std::uint16_t spi_tlm::read_reg(std::uint16_t offset) {
    switch (offset) {
    case 0x00:
       return reg_cr0;
@@ -196,18 +191,16 @@ uint16_t spi_controller::read_reg(uint16_t offset) {
       if (rx_fifo.num_available() == 0) {
          SC_REPORT_WARNING("TLM-2", "Reading from empty Receive FIFO");
          reg_ris |= 0x1;
-         possible_intr_event.notify(SC_ZERO_TIME);
+         possible_intr_event.notify(sc_core::SC_ZERO_TIME);
          return 0; // return stale data
       } else {
-         uint16_t data = rx_fifo.read();
-         uint16_t word_size = (reg_cr0 & 0xf) + 1;
-         uint16_t mask = (word_size == 16) ? 0xFFFF : (1 << word_size) - 1;
-         possible_intr_event.notify(SC_ZERO_TIME);
-         status_event.notify(SC_ZERO_TIME);
+         std::uint16_t data = rx_fifo.read();
+         std::uint16_t word_size = (reg_cr0 & 0xf) + 1;
+         std::uint16_t mask = (word_size == 16) ? 0xFFFF : (1 << word_size) - 1;
+         possible_intr_event.notify(sc_core::SC_ZERO_TIME);
+         status_event.notify(sc_core::SC_ZERO_TIME);
          return data & mask;
       }
-
-      break;
 
    case 0x0c:
       return reg_sr & 0x1f;
@@ -251,8 +244,8 @@ uint16_t spi_controller::read_reg(uint16_t offset) {
    return 0;
 }
 
-void spi_controller::update_intr() {
-   uint16_t mask = reg_imsc & 0x0F;
+void spi_tlm::update_intr() {
+   std::uint16_t mask = reg_imsc & 0x0F;
 
    if (tx_fifo.num_available() <= (FIFO_SIZE / 2)) {
       reg_ris |= 0x08;
@@ -268,10 +261,10 @@ void spi_controller::update_intr() {
 
    reg_mis = reg_ris & mask;
 
-   intr.write((reg_mis & 0xf) != 0);
+   irq.write((reg_mis & 0xf) != 0);
 }
 
-void spi_controller::update_status_reg() {
+void spi_tlm::update_status_reg() {
    if (rx_fifo.num_available() == FIFO_SIZE)
       reg_sr |= 0x8;
    else
@@ -298,10 +291,9 @@ void spi_controller::update_status_reg() {
       reg_sr &= ~(0x10);
 }
 
-void spi_controller::handle_reset() {
+void spi_tlm::handle_reset() {
    reg_cr0 = 0x0;
    reg_cr1 = 0x0;
-   // reg_dr; // reset to 0x____
    reg_sr = 0x03;
    reg_cpsr = 0x00;
    reg_imsc = 0x0;
@@ -310,7 +302,7 @@ void spi_controller::handle_reset() {
    reg_icr = 0x0;
    reg_dmacr = 0x0;
 
-   uint16_t dump_buffer;
+   std::uint16_t dump_buffer;
    while (rx_fifo.nb_read(dump_buffer))
       ;
 
@@ -319,6 +311,8 @@ void spi_controller::handle_reset() {
 
    is_transmitting = false;
 
-   possible_intr_event.notify(SC_ZERO_TIME);
+   possible_intr_event.notify(sc_core::SC_ZERO_TIME);
    update_status_reg();
 }
+
+} // namespace cdc::components

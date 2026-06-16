@@ -1,33 +1,34 @@
 #include "systemc"
 #include "tlm.h"
-#include "spi.h"
+#include "spi_tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
 
 using namespace sc_core;
 using namespace std;
+using namespace cdc::components;
 
 SC_MODULE(Tester) {
    tlm_utils::simple_initiator_socket<Tester> socket;
    sc_out<bool> reset_out;
-   sc_in<bool> intr_in;
+   sc_in<bool> irq_in;
 
    SC_CTOR(Tester)
        : socket("socket") {
       SC_THREAD(run_test);
-      SC_METHOD(intr_monitor);
-      sensitive << intr_in;
+      SC_METHOD(irq_monitor);
+      sensitive << irq_in;
    }
 
-   void intr_monitor() {
-      cout << "@" << sc_time_stamp() << " [Tester] Interrupt signal changed to: " << intr_in.read() << endl;
+   void irq_monitor() {
+      cout << "@" << sc_time_stamp() << " [Tester] IRQ signal changed to: " << irq_in.read() << endl;
    }
 
    void run_test() {
       uint16_t data;
       tlm::tlm_response_status status;
 
-      // 1. Initial Reset
+      // 1. Initial Reset (active low)
       reset_out.write(true);
       wait(10, SC_NS);
       reset_out.write(false);
@@ -73,6 +74,7 @@ SC_MODULE(Tester) {
       wait(500, SC_NS);
       do_transaction(tlm::TLM_READ_COMMAND, 0x08, data);
       cout << "   Sent 0xFF in 4-bit mode, Read back: 0x" << hex << data << dec << endl;
+
       cout << "\n--- STRESS TEST 3: TX FIFO OVERRUN (ERROR CHECK) ---" << endl;
       reset_out.write(false);
       wait(20, SC_NS);
@@ -108,13 +110,13 @@ SC_MODULE(Tester) {
       data = 0x01; do_transaction(tlm::TLM_WRITE_COMMAND, 0x14, data);
       do_transaction(tlm::TLM_READ_COMMAND, 0x08, data);
       wait(1, SC_NS);
-      cout << "   Interrupt Pin state after error: " << intr_in.read() << endl;
+      cout << "   IRQ Pin state after error: " << irq_in.read() << endl;
 
 
       data = 0x01;
       do_transaction(tlm::TLM_WRITE_COMMAND, 0x20, data);
       wait(1, SC_NS);
-      cout << "   Interrupt Pin state after ICR clear: " << intr_in.read() << endl;
+      cout << "   IRQ Pin state after ICR clear: " << irq_in.read() << endl;
 
       cout << "\n--- ALL STRESS TESTS FINISHED ---" << endl;
       sc_stop();
@@ -150,19 +152,19 @@ SC_MODULE(DummyPeripheral) {
 
 int sc_main(int argc, char *argv[]) {
    Tester tester("tester");
-   spi_controller spi("spi");
+   spi_tlm spi("spi");
    DummyPeripheral peri("peri");
 
    sc_signal<bool> reset_sig;
-   sc_signal<bool> intr_sig;
+   sc_signal<bool> irq_sig;
 
    tester.socket.bind(spi.from_apb_socket);
    spi.to_peri_socket.bind(peri.socket);
 
    tester.reset_out(reset_sig);
-   spi.reset(reset_sig);
-   spi.intr(intr_sig);
-   tester.intr_in(intr_sig);
+   spi.reset_n(reset_sig);
+   spi.irq(irq_sig);
+   tester.irq_in(irq_sig);
 
    sc_start();
    return 0;
