@@ -145,12 +145,12 @@ void PWM::pwm_thread()
 
         pwm_out.write(pwm);
 
-        std::cout
-            << sc_time_stamp()
-            << " counter="
-            << counter
-            << " pwm="
-            << pwm
-            << std::endl;
+        // std::cout
+        //     << sc_time_stamp()
+        //     << " counter="
+        //     << counter
+        //     << " pwm="
+        //     << pwm
+        //     << std::endl;
     }
 }
