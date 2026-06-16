@@ -2,6 +2,7 @@ CXX ?= g++
 
 SYSTEMC_HOME ?= /opt/systemc-2.3.4
 CXXSTD ?= c++17
+USE_PKG_CONFIG ?= 0
 
 PKG_CFLAGS := $(shell pkg-config --cflags systemc 2>/dev/null)
 PKG_LIBS := $(shell pkg-config --libs systemc 2>/dev/null)
@@ -17,19 +18,16 @@ endif
 endif
 
 CXXFLAGS ?= -std=$(CXXSTD) -g -O0 -Wall
-ifeq ($(strip $(PKG_CFLAGS)),)
-CXXFLAGS += -I$(SYSTEMC_HOME)/include
-else
-CXXFLAGS += $(PKG_CFLAGS)
-endif
+CXXFLAGS += -Iinclude
 
-ifeq ($(strip $(PKG_LIBS)),)
+ifeq ($(USE_PKG_CONFIG),1)
+CXXFLAGS += $(PKG_CFLAGS)
+LDLIBS += $(PKG_LIBS) -lm
+else
+CXXFLAGS += -I$(SYSTEMC_HOME)/include
 LDFLAGS += -L$(SYSTEMC_LIB_DIR)
 LDFLAGS += -Wl,-rpath,$(SYSTEMC_LIB_DIR)
-
 LDLIBS += -lsystemc -lm
-else
-LDLIBS += $(PKG_LIBS) -lm
 endif
 
 TARGET := i2c_sim

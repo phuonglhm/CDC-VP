@@ -1,5 +1,5 @@
 # Cross-compile the ADC SoC interrupt verification firmware.
-
+#hieuhd13
 CROSS   ?= riscv64-unknown-elf-
 CC      := $(CROSS)gcc
 OBJDUMP := $(CROSS)objdump
