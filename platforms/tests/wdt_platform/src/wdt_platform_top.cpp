@@ -79,8 +79,6 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
       SC_THREAD(reset_sequence);
 
       // reset method when watchdog issues a reset
-
-      // reset method when watchdog issues a reset
       SC_METHOD(handle_wdt_reset);
       sensitive << wdt_reset_o;
       dont_initialize();
