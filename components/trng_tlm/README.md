@@ -1,6 +1,6 @@
-# adc_tlm
+# trng_tlm
 
-Memory-mapped TLM-2.0 ADC model ported from the FU2 ADC register model.
+Memory-mapped TLM-2.0 TRNG model based on the specification of ARM TrustZone TRNG True Random Number Generator.
 
 ## Register Map
 
@@ -25,3 +25,8 @@ bus.add_target(0x10060000, 0x1000).bind(adc.socket);
 adc.irq_out(adc_irq);
 plic.irq_in[source_id - 1](adc_irq);
 ```
+
+## Note
+- TRNG's scan mode is not supported for this tlm, so there is no scan signal input.
+- This TLM uses rand() for simple modelling since simulating real inverters is slow, and thus
+defeats the point of  using TLM in the first place.
