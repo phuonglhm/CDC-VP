@@ -1,3 +1,5 @@
+#author: linhtk55-fpt
+
 add_executable(timer_platform
     src/main.cpp
     src/timer_platform_top.cpp)

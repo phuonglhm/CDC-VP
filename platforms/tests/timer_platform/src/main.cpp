@@ -1,3 +1,5 @@
+//author: linhtk55-fpt
+
 #include "timer_platform_top.h"
 
 #include <cstdint>

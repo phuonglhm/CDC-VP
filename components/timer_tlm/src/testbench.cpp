@@ -1,3 +1,6 @@
+//author: Viet Hoang
+//verified: linhtk55-fpt
+
 #include <systemc>
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
@@ -254,10 +257,11 @@ SC_MODULE(Testbench) {
         SC_THREAD(run);
     }
 };
- 
+} // namespace cdc::components
+
 int sc_main(int argc, char* argv[]) {
-    Testbench* tb    = new Testbench("tb");
-    Timer*     timer = new Timer("timer");
+    cdc::components::Testbench* tb    = new cdc::components::Testbench("tb");
+    cdc::components::Timer*     timer = new cdc::components::Timer("timer");
  
     sc_signal<bool> sig_prstn, sig_extin, sig_timerint;
  
@@ -274,5 +278,4 @@ int sc_main(int argc, char* argv[]) {
     delete tb;
     delete timer;
     return 0;
-}
 }

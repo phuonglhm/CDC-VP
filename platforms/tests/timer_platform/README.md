@@ -1,6 +1,7 @@
-# wdt_platform
+author: linhtk55-fpt
 
-Small SoC platform for WDT IP verification with a Bremen `riscv-vp` RV32 CPU.
+# timer_platform
+Small SoC platform for Timer IP verification with a Bremen `riscv-vp` RV32 CPU.
 
 ## Memory Map
 
@@ -9,25 +10,20 @@ Small SoC platform for WDT IP verification with a Bremen `riscv-vp` RV32 CPU.
 | CLINT | `0x0200_0000` | `0x0001_0000` | `0x0200_FFFF` | local MSIP/MTIP |
 | PLIC | `0x0C00_0000` | `0x0040_0000` | `0x0C3F_FFFF` | external IRQ to MEIP |
 | UART0 | `0x1000_0000` | `0x0000_1000` | `0x1000_0FFF` | UART TX console |
-| WDT0 | `0x1004_0000` | `0x0000_1000` | `0x1004_0FFF` | WDT register window |
+| TIMER0 | `0x1003_0000` | `0x0000_1000` | `0x1003_0FFF` | Timer MMIO register window |
 | RAM | `0x8000_0000` | `0x0010_0000` | `0x800F_FFFF` | firmware text/data/heap/stack |
 
 ## IRQ Map
 
 | Source | Signal | Destination |
 |---:|---|---|
-| 5 | `wdt.irq_out` | PLIC source 1 -> CPU MEIP |
+| 1 | `timer.timerint` | PLIC source 1 -> CPU MEIP |
 
 ## Run
 
+From the repository root, configure the build (adjust SystemC paths as needed):
+
 ```bash
-cd /CDC-VP
-
-export SHLVL=1
-export CC=/usr/bin/gcc
-export CXX=/usr/bin/g++
-export PATH=/opt/toolchains/riscv-none-elf/bin:/usr/bin:/bin:$PATH
-
 cmake -S . -B build/bremen -G Ninja \
   -DCMAKE_C_COMPILER=/usr/bin/gcc \
   -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
@@ -37,11 +33,45 @@ cmake -S . -B build/bremen -G Ninja \
   -DCDC_BUILD_CUSTOM_SOC=ON \
   -DSYSTEMC_INCLUDE_DIR=/opt/systemc-2.3.4/include \
   -DSYSTEMC_LIBRARY=/opt/systemc-2.3.4/lib-linux64/libsystemc.so
+```
 
-cmake --build build/bremen --target wdt_platform
+Build the platform executable:
 
-./build/bremen/platforms/tests/wdt_platform/wdt_platform \
-  -c platforms/tests/wdt_platform/configs/default.yaml \
-  --fw fw/wdt_irq_riscv/wdt_irq.elf \
+```bash
+cmake --build build/bremen --target timer_platform
+```
+
+Run the simulation using the timer firmware ELF:
+
+```bash
+./build/bremen/platforms/tests/timer_platform/timer_platform \
+  -c platforms/tests/timer_platform/configs/default.yaml \
+  --fw fw/timer2_irq_riscv/timer_irq.elf \
   --sim-ms 5
 ```
+
+Expected runtime output (successful test):
+
+```text
+Timer initiated.
+timer_platform config: platforms/tests/timer_platform/configs/default.yaml
+cpu backend: riscv_vp (Bremen rv32)
+memory map: RAM=0x80000000 UART=0x10000000 CLINT=0x02000000 PLIC=0x0C000000 timer=0x10030000
+Starting generic timer testing...
+Arming timer with 50,000 ticks...
+Waiting for interrupt (WFI)...
+[TRAP] mcause=0x8000000B claim=0x00000001
+[TRAP] Timer interrupt received!
+SUCCESS: Timer test passed!
+```
+
+To quickly check for success, filter the run output for `SUCCESS`:
+
+```bash
+./build/bremen/platforms/tests/timer_platform/timer_platform \
+  -c platforms/tests/timer_platform/configs/default.yaml \
+  --fw fw/timer2_irq_riscv/timer_irq.elf \
+  --sim-ms 5 | grep "SUCCESS"
+```
+
+Adjust paths and toolchain variables above to match your environment.

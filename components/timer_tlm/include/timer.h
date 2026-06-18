@@ -1,3 +1,6 @@
+//author: Viet Hoang
+//verified: linhtk55-fpt
+
 #pragma once
 #include "systemc"
 #include "tlm.h"

@@ -1,3 +1,6 @@
+//author: Viet Hoang
+//verified: linhtk55-fpt
+
 #include "timer.h"
 
 namespace cdc::components
@@ -10,14 +13,16 @@ namespace cdc::components
         unsigned int len = trans.get_data_length();
         unsigned char *byt = trans.get_byte_enable_ptr();
         unsigned int wid = trans.get_streaming_width();
-
-        if (len != 4)
+        if (len != 4 && len != 8)
         {
+            std::cerr << "[Timer] unsupported transfer length: " << len << " addr=0x" << std::hex << adr << std::dec << "\n";
             trans.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
             return;
         }
-        if (byt != 0 || wid < len)
+        // Some initiators set streaming width to 0 to indicate 'no restriction'.
+        if (byt != 0 || (wid != 0 && wid < len))
         {
+            std::cerr << "[Timer] byte-enable or streaming width issue: byt=" << (void*)byt << " wid=" << wid << " len=" << len << " addr=0x" << std::hex << adr << std::dec << "\n";
             trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
             return;
         }
@@ -27,7 +32,7 @@ namespace cdc::components
             switch (adr)
             {
             case ADDR::CTRL:
-                *reinterpret_cast<uint32_t *>(ptr) = ctrl_reg;
+            *reinterpret_cast<uint32_t *>(ptr) = ctrl_reg;
                 break;
             case ADDR::VALUE:
                 *reinterpret_cast<uint32_t *>(ptr) = value_reg;
@@ -45,6 +50,8 @@ namespace cdc::components
         }
         else
         {
+            // If the initiator performed an 8-byte transfer, only use the
+            // lower 32-bits which contain the intended 32-bit MMIO write.
             uint32_t data = *reinterpret_cast<uint32_t *>(ptr);
             switch (adr)
             {

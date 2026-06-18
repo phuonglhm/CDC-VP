@@ -1,21 +1,43 @@
-TARGET = timer_tb
-SRCS = timer.cpp testbench.cpp
-CXXFLAGS = -Wall
+#author: Viet Hoang
+#verified: linhtk55-fpt
+CXX      := g++
+CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
 
-OBJS = $(SRCS:.cpp=.o)
+SYSTEMC_HOME := /usr/local/systemc-2.3.4
+CXXFLAGS     += -isystem $(SYSTEMC_HOME)/include
+LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
 
-.PHONY: all run clean
+SYSTEMC_LIBS := -lsystemc
+
+SRC_DIR := src
+OBJ_DIR := build
+TARGET  := tb
+
+SRCS := $(wildcard $(SRC_DIR)/*.cpp)
+OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
+DEPS := $(OBJS:.o=.d)
+
+.PHONY: all tb run clean
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(SYSTEMC_LIBS)
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
 
-%.o: %.cpp include/timer.h
-	$(CXX) $(CXXFLAGS) $(SYSTEMC_CFLAGS) -c $< -o $@
+# Compile source files into object files
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+# Link object files into final executable (output `tb` per README)
+$(TARGET): $(OBJS) | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(SYSTEMC_LIBS) -o $@
+
+-include $(DEPS)
 
 run: $(TARGET)
 	./$(TARGET)
 
+tb: $(TARGET)
+
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -rf $(OBJ_DIR) $(BIN_DIR)

@@ -1,3 +1,5 @@
+//author: linhtk55-fpt
+
 #include "timer_platform_top.h"
 
 #include <cstdint>
@@ -11,7 +13,7 @@
 #include <uart_tlm.h>
 
 #if defined(CDC_CPU_BACKEND_riscv_vp)
-// #include <riscv_vp_wrapper.h>
+#include <riscv_vp_wrapper.h>
 #else
 #include <riscv_tlm_wrapper.h>
 #endif
@@ -20,7 +22,7 @@ namespace cdc::platforms::tests::timer_platform {
 namespace {
 
 #if defined(CDC_CPU_BACKEND_riscv_vp)
-// using cpu_backend_t = cdc::cpu::riscv_vp_cpu;
+using cpu_backend_t = cdc::cpu::riscv_vp_cpu;
 #else
 using cpu_backend_t = cdc::cpu::riscv_tlm_cpu;
 #endif

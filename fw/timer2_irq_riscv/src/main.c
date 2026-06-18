@@ -1,3 +1,5 @@
+//author: linhtk55-fpt
+
 #define UART_TX (*(volatile unsigned char *)0x10000000u)
 
 #define PLIC_PRIORITY1_ADDR (*(volatile unsigned int*)(0x0C000004u))
@@ -79,20 +81,44 @@ static volatile int timer_fired = 0;
 
 void __attribute__((interrupt("machine"))) trap_handler(void)
 {
-   unsigned int claim_id = PLIC_CLAIM_ADDR;
-   // __asm__ volatile("csrr %0, mcause" : "=r"(mcause));
+   unsigned int mcause;
+   __asm__ volatile("csrr %0, mcause" : "=r"(mcause));
+   unsigned int stval = 0u;
+   __asm__ volatile("csrr %0, stval" : "=r"(stval));
+      unsigned int mepc = 0u;
+      __asm__ volatile("csrr %0, mepc" : "=r"(mepc));
 
-   if (claim_id == TIMER_PLIC_SOURCE)
-   {
-      uart_puts("[TRAP] Timer interrupt received!\n");
-      TIMER_INTSTATUS = TIMER_INT_CLEAR;
-      timer_fired = 1;
+   unsigned int claim_id = PLIC_CLAIM_ADDR;
+
+   uart_puts("[TRAP] mcause=");
+   uart_put_hex32(mcause);
+   uart_puts(" claim=");
+   uart_put_hex32(claim_id);
+   uart_puts("\n");
+
+   if (((mcause >> 31) & 1u) && ((mcause & 0x7FFFFFFFu) == 11u)) {
+      if (claim_id == TIMER_PLIC_SOURCE)
+      {
+         uart_puts("[TRAP] Timer interrupt received!\n");
+         TIMER_INTSTATUS = TIMER_INT_CLEAR;
+         timer_fired = 1;
+      }
+      else
+      {
+         uart_puts("[TRAP] Unknown interrupt received!\n");
+      }
+
+      PLIC_CLAIM_ADDR = claim_id;
+   } else {
+      uart_puts("[TRAP] Non-external trap\n");
+      if ((mcause & 0x7FFFFFFFu) == 15u) {
+         uart_puts("[TRAP] Store page fault stval=");
+         uart_put_hex32(stval);
+         uart_puts(" mepc=");
+         uart_put_hex32(mepc);
+         uart_puts("\n");
+      }
    }
-   else
-   {
-      uart_puts("[TRAP] Unknown interrupt received!\n");
-   }
-   PLIC_CLAIM_ADDR = claim_id;
 }
 
 int main(void)
@@ -101,10 +127,9 @@ int main(void)
 
    __asm__ volatile("csrw mtvec, %0" ::"r"(trap_handler));
 
-   // Configure PLIC for source 1
-   PLIC_PRIORITY1_ADDR = 1u;   // Set priority > 0
+   PLIC_PRIORITY1_ADDR = 1u; 
    PLIC_ENABLE_ADDR |= (1u << TIMER_PLIC_SOURCE); // Unmask Source 1
-   PLIC_THRESHOLD_ADDR = 0u;                      // Allow all priorities to pass through
+   PLIC_THRESHOLD_ADDR = 0u;// Allow all priorities to pass through
 
    // Enable CPU interrupts
    unsigned tmp;
@@ -113,23 +138,23 @@ int main(void)
 
    uart_puts("Arming timer with 50,000 ticks...\n");
 
-   // First, load the countdown value. This automatically updates VALUE as well.
    TIMER_RELOAD = 50000u;
 
    // Write to CTRL to enable the countdown and allow it to assert the IRQ pin
    TIMER_CTRL = TIMER_CTRL_ENABLE | TIMER_CTRL_INTEN;
 
-   // 5. Wait for the hardware to do its job
+   //Wait for the hardware to do its job
    uart_puts("Waiting for interrupt (WFI)...\n");
    while (!timer_fired)
    {
-      // Wait For Interrupt instruction puts the CPU to sleep until the trap handler fires
+   // Wait For Interrupt instruction puts the CPU to sleep until the trap handler fires
       __asm__ volatile("wfi");
    }
 
    // 6. Test Passed
    uart_puts("SUCCESS: Timer test passed!\n");
-
+   TIMER_CTRL = 0;               // disable timer
+   PLIC_CLAIM_ADDR = TIMER_PLIC_SOURCE; 
    // Park the CPU
    for (;;)
    {
