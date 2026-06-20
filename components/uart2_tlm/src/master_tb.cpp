@@ -53,7 +53,7 @@ void MasterTB::do_transaction(tlm::tlm_command cmd, sc_dt::uint64 addr, uint32_t
 void MasterTB::test_thread()
 {
     uint32_t data;
-    sc_dt::uint64 host0_base = 0x1A510000ULL;
+    sc_dt::uint64 host0_base = ADDR_HOST_UART0; // use canonical test base
     cout << "@" << sc_time_stamp() << " Starting Host UART0 Tests..." << endl;
 
     // Test 1: RX Half-Full Raw Interrupt Status (UARTRIS)
