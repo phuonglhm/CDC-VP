@@ -70,7 +70,7 @@ uint32_t TRNG_Model::readReg(uint32_t offset) {
    case REG_ISR:
       return reg_isr;
    case REG_ICR: // WO
-      return reg_icr;
+      return 0;
    case REG_CONFIG:
       return reg_config;
    case REG_VALID:
@@ -96,11 +96,11 @@ uint32_t TRNG_Model::readReg(uint32_t offset) {
    case REG_DBG_CONTROL:
       return reg_dbg_control;
    case REG_SW_RESET: // WO
-      return reg_sw_reset;
+      return 0;
    case REG_BUSY:
       return reg_busy;
    case REG_RESET_BITS_COUNTER: // WO
-      return reg_reset_bits_counter;
+      return 0;
    case REG_BIST_CNTR0:
       return reg_bist_cntr[0];
    case REG_BIST_CNTR1:
@@ -115,41 +115,120 @@ uint32_t TRNG_Model::readReg(uint32_t offset) {
 
 void TRNG_Model::writeReg(uint32_t offset, uint32_t data) {
    switch (offset) {
-   case REG_CONTROL:
-      reg_control = data & CTRL_MASK;
-      if ((reg_control & CTRL_TRNG_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-         reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-         reg_status |= STATUS_EOC;
-         reg_control &= ~CTRL_START; // START is self-clearing
+   case REG_IMR:
+      reg_imr = data & 0xfu;
+      return;
+   case REG_ISR: // RO
+      return;
+   case REG_ICR: // WO
+      reg_icr = data & 0xfu;
+      return;
+   case REG_CONFIG:
+      reg_icr = data & 0x3u;
+      return;
+   case REG_VALID: // RO
+      return;
+   case REG_EHR_DATA0: // RO
+      return;
+   case REG_EHR_DATA1: // RO
+      return;
+   case REG_EHR_DATA2: // RO
+      return;
+   case REG_EHR_DATA3: // RO
+      return;
+   case REG_EHR_DATA4: // RO
+      return;
+   case REG_EHR_DATA5: // RO
+      return;
+   case REG_SRC_EN:
+      reg_src_en = data & 0x1u;
+      // generate random data
+      for (int i = 0; i < 6; ++i) {
+         reg_ehr_data[i] = rand();
       }
-      break;
-   case REG_STATUS:
-      if ((data & STATUS_EOC) != 0u) {
-         reg_status &= ~STATUS_EOC; // W1C
+      reg_valid |= 0x1u;
+      reg_isr |= 0x1u;
+      return;
+   case REG_SAMPLE_CNT1:
+      reg_sample_cnt1 = data;
+      return;
+   case REG_AUTOCORR_STAT:
+      reg_autocorr_stat = 0x0u;
+      return;
+   case REG_DBG_CONTROL: // RO
+      return;
+   case REG_SW_RESET: // WO
+      if (data == 0x1u)
+         reset();
+      return;
+   case REG_BUSY: // RO
+      return;
+   case REG_RESET_BITS_COUNTER: // WO
+      if (!(reg_src_en & 0x1u)) {
+         reg_valid &= 0x0u;
+         reg_isr &= ~0x1u;
       }
-      break;
-   case REG_INTR_ENABLE:
-      reg_intr_enable = data & INTR_EOC;
-      break;
+      return;
+   case REG_BIST_CNTR0: // RO
+      return;
+   case REG_BIST_CNTR1: // RO
+      return;
+   case REG_BIST_CNTR2: // RO
+      return;
    default:
       break;
    }
 }
 
 bool TRNG_Model::hasInterrupt() const {
-   return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
+   return !(((reg_isr & reg_imr) & 0xfu) == 0);
 }
 
 uint32_t TRNG_Model::debugReadReg(uint32_t offset) const {
    switch (offset) {
-   case REG_CONTROL:
-      return reg_control;
-   case REG_STATUS:
-      return reg_status;
-   case REG_DATA:
-      return reg_data;
-   case REG_INTR_ENABLE:
-      return reg_intr_enable;
+   case REG_IMR:
+      return reg_imr;
+   case REG_ISR:
+      return reg_isr;
+   case REG_ICR: // WO
+      return 0;
+   case REG_CONFIG:
+      return reg_config;
+   case REG_VALID:
+      return reg_valid;
+   case REG_EHR_DATA0:
+      return reg_ehr_data[0];
+   case REG_EHR_DATA1:
+      return reg_ehr_data[1];
+   case REG_EHR_DATA2:
+      return reg_ehr_data[2];
+   case REG_EHR_DATA3:
+      return reg_ehr_data[3];
+   case REG_EHR_DATA4:
+      return reg_ehr_data[4];
+   case REG_EHR_DATA5:
+      return reg_ehr_data[5];
+   case REG_SRC_EN:
+      return reg_src_en;
+   case REG_SAMPLE_CNT1:
+      return reg_sample_cnt1;
+   case REG_AUTOCORR_STAT:
+      return reg_autocorr_stat;
+   case REG_DBG_CONTROL:
+      return reg_dbg_control;
+   case REG_SW_RESET: // WO
+      return 0;
+   case REG_BUSY:
+      return reg_busy;
+   case REG_RESET_BITS_COUNTER: // WO
+      return 0;
+   case REG_BIST_CNTR0:
+      return reg_bist_cntr[0];
+   case REG_BIST_CNTR1:
+      return reg_bist_cntr[1];
+   case REG_BIST_CNTR2:
+      return reg_bist_cntr[2];
+
    default:
       return 0;
    }
@@ -157,18 +236,56 @@ uint32_t TRNG_Model::debugReadReg(uint32_t offset) const {
 
 void TRNG_Model::debugWriteReg(uint32_t offset, uint32_t data) {
    switch (offset) {
-   case REG_CONTROL:
-      reg_control = data & CTRL_MASK;
-      break;
-   case REG_STATUS:
-      reg_status = data & STATUS_EOC;
-      break;
-   case REG_DATA:
-      reg_data = data & 0x0FFFu;
-      break;
-   case REG_INTR_ENABLE:
-      reg_intr_enable = data & INTR_EOC;
-      break;
+   case REG_IMR:
+      reg_imr = data & 0xfu;
+      return;
+   case REG_ISR: // RO
+      return;
+   case REG_ICR: // WO
+      reg_icr = data & 0xfu;
+      return;
+   case REG_CONFIG:
+      reg_icr = data & 0x3u;
+      return;
+   case REG_VALID: // RO
+      return;
+   case REG_EHR_DATA0: // RO
+      return;
+   case REG_EHR_DATA1: // RO
+      return;
+   case REG_EHR_DATA2: // RO
+      return;
+   case REG_EHR_DATA3: // RO
+      return;
+   case REG_EHR_DATA4: // RO
+      return;
+   case REG_EHR_DATA5: // RO
+      return;
+   case REG_SRC_EN:
+      reg_src_en = data & 0x1u;
+      return;
+   case REG_SAMPLE_CNT1:
+      reg_sample_cnt1 = data;
+      return;
+   case REG_AUTOCORR_STAT:
+      reg_autocorr_stat = 0x0u;
+      return;
+   case REG_DBG_CONTROL: // RO
+      return;
+   case REG_SW_RESET: // WO
+      reg_sw_reset = data & 0x1u;
+      return;
+   case REG_BUSY: // RO
+      return;
+   case REG_RESET_BITS_COUNTER: // WO
+      reg_reset_bits_counter = data & 0x1u;
+      return;
+   case REG_BIST_CNTR0: // RO
+      return;
+   case REG_BIST_CNTR1: // RO
+      return;
+   case REG_BIST_CNTR2: // RO
+      return;
    default:
       break;
    }
