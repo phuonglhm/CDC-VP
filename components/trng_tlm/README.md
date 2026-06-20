@@ -30,3 +30,4 @@ plic.irq_in[source_id - 1](adc_irq);
 - TRNG's scan mode is not supported for this tlm, so there is no scan signal input.
 - This TLM uses rand() for simple modelling since simulating real inverters is slow, and thus
 defeats the point of  using TLM in the first place.
+- This TLm uses loosely-timed coding style, so reg_busy is never true due to temporal decoupling.
