@@ -3,6 +3,7 @@
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_target_socket.h>
+#include <cstdint>
 
 #include "trng_model.h"
 
@@ -10,7 +11,7 @@ namespace cdc::components {
 
 // SystemC/TLM wrapper around the pure-C++ TRNG_Model register logic.
 //
-// Register window: 32-bit aligned accesses, offsets 0x00..0x0C. Addresses are
+// Register window: 32-bit aligned accesses, offsets 0x100..0x1E8. Addresses are
 // region-local because bus_router subtracts the peripheral base before forwarding.
 class trng_tlm : public sc_core::sc_module {
 public:
@@ -36,6 +37,8 @@ private:
    sc_core::sc_time access_latency_;
    sc_core::sc_event irq_update_event_;
    bool irq_level_ = false;
+
+   bool check_valid_offset(std::uint32_t offset);
 };
 
 } // namespace cdc::components

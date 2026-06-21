@@ -26,13 +26,6 @@ constexpr uint32_t REG_BIST_CNTR0 = 0x1e0;
 constexpr uint32_t REG_BIST_CNTR1 = 0x1e4;
 constexpr uint32_t REG_BIST_CNTR2 = 0x1e8;
 
-// constexpr uint32_t CTRL_START = 1u << 0;
-// constexpr uint32_t CTRL_TRNG_EN = 1u << 1;
-// constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_TRNG_EN;
-//
-// constexpr uint32_t STATUS_EOC = 1u << 0;
-// constexpr uint32_t INTR_EOC = 1u << 0;
-
 } // namespace
 
 TRNG_Model::TRNG_Model() {
@@ -122,9 +115,13 @@ void TRNG_Model::writeReg(uint32_t offset, uint32_t data) {
       return;
    case REG_ICR: // WO
       reg_icr = data & 0xfu;
+      reg_isr &= ~reg_icr;
+      if (data & 0x1u) {
+         reg_valid = 0u;
+      }
       return;
    case REG_CONFIG:
-      reg_icr = data & 0x3u;
+      reg_config = data & 0x3u;
       return;
    case REG_VALID: // RO
       return;
@@ -142,12 +139,14 @@ void TRNG_Model::writeReg(uint32_t offset, uint32_t data) {
       return;
    case REG_SRC_EN:
       reg_src_en = data & 0x1u;
-      // generate random data
-      for (int i = 0; i < 6; ++i) {
-         reg_ehr_data[i] = rand();
+      if (reg_src_en & 0x1u) {
+         // generate random data
+         for (int i = 0; i < 6; ++i) {
+            reg_ehr_data[i] = rand();
+         }
+         reg_valid |= 0x1u;
+         reg_isr |= 0x1u;
       }
-      reg_valid |= 0x1u;
-      reg_isr |= 0x1u;
       return;
    case REG_SAMPLE_CNT1:
       reg_sample_cnt1 = data;
@@ -181,7 +180,7 @@ void TRNG_Model::writeReg(uint32_t offset, uint32_t data) {
 }
 
 bool TRNG_Model::hasInterrupt() const {
-   return !(((reg_isr & reg_imr) & 0xfu) == 0);
+   return ((reg_isr & ~reg_imr) & 0xfu) != 0u;
 }
 
 uint32_t TRNG_Model::debugReadReg(uint32_t offset) const {
@@ -268,7 +267,7 @@ void TRNG_Model::debugWriteReg(uint32_t offset, uint32_t data) {
       reg_sample_cnt1 = data;
       return;
    case REG_AUTOCORR_STAT:
-      reg_autocorr_stat = 0x0u;
+      reg_autocorr_stat = data;
       return;
    case REG_DBG_CONTROL: // RO
       return;
