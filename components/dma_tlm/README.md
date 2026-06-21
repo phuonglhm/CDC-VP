@@ -111,7 +111,7 @@ workspace, so no firmware build step is required for this component test.
 Step 1: Source environments from the CDC-VP repository root:
 
 ```bash
-cd /home/hoangquan/workspace/CDC-VP
+cd YourPath.../CDC-VP
 ./tools/third_party/setup_third_party.sh
 source ./tools/third_party/setup_env.sh
 ```
