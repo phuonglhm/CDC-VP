@@ -18,6 +18,7 @@ add_subdirectory(clint_tlm)
 add_subdirectory(plic_tlm)
 add_subdirectory(pwm_tlm)
 add_subdirectory(wdt_tlm)
+add_subdirectory(dma_tlm)
 add_subdirectory(trng_tlm)
 
 add_subdirectory(timer_tlm)
