@@ -43,6 +43,42 @@ namespace cdc::components
             case ADDR::INTSTATUS:
                 *reinterpret_cast<uint32_t *>(ptr) = intr_status;
                 break;
+            case ADDR::PID0:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID0;
+                break;
+            case ADDR::PID1:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID1;
+                break;
+            case ADDR::PID2:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID2;
+                break;
+            case ADDR::PID3:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID3;
+                break;
+            case ADDR::PID4:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID4;
+                break;
+            case ADDR::PID5:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID5;
+                break;
+            case ADDR::PID6:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID6;
+                break;
+            case ADDR::PID7:
+                *reinterpret_cast<uint32_t*>(ptr) = regPID7;
+                break;
+            case ADDR::CID0:
+                *reinterpret_cast<uint32_t*>(ptr) = regCID0;
+                break;
+            case ADDR::CID1:
+                *reinterpret_cast<uint32_t*>(ptr) = regCID1;
+                break;
+            case ADDR::CID2:
+                *reinterpret_cast<uint32_t*>(ptr) = regCID2;
+                break;
+            case ADDR::CID3:
+                *reinterpret_cast<uint32_t*>(ptr) = regCID3;
+                break;
             default:
                 trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
                 return;

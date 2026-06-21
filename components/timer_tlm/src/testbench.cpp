@@ -261,7 +261,9 @@ SC_MODULE(Testbench) {
 
 int sc_main(int argc, char* argv[]) {
     cdc::components::Testbench* tb    = new cdc::components::Testbench("tb");
-    cdc::components::Timer*     timer = new cdc::components::Timer("timer");
+    cdc::components::Timer*     timer = new cdc::components::Timer("timer", 
+    1, 2, 3, 4, 5, 6, 7, 8,
+    1, 2, 3, 4);
  
     sc_signal<bool> sig_prstn, sig_extin, sig_timerint;
  
