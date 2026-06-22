@@ -1,4 +1,5 @@
 #Author: QuanNH107
+#Verified: trangmn20
 
 add_library(dma_tlm STATIC
     src/dma_tlm.cpp)

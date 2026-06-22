@@ -1,3 +1,5 @@
+#Author: trangmn20
+
 add_executable(dma_platform
     src/main.cpp
     src/dma_platform_top.cpp)

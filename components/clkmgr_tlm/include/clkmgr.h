@@ -1,3 +1,4 @@
+//Author: trangnm20
 #ifndef CLKMGR_H
 #define CLKMGR_H
 

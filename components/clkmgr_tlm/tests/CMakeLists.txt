@@ -1,3 +1,4 @@
+#Author: trangnm20
 add_executable(test_clkmgr_tlm
     test_clkmgr_tlm.cpp)
 target_link_libraries(test_clkmgr_tlm PRIVATE

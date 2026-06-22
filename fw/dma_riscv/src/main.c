@@ -1,3 +1,5 @@
+//Author: trangmn20
+
 /* DMA-330 SoC verification firmware.
  *
  * Builds a DMA-330 channel program in RAM, launches it via the debug

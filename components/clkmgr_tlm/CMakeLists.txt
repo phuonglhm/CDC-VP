@@ -1,3 +1,4 @@
+#Author: trangnm20
 add_library(clkmgr_tlm STATIC
     src/clkmgr.cpp)
 add_library(cdc::components::clkmgr_tlm ALIAS clkmgr_tlm)

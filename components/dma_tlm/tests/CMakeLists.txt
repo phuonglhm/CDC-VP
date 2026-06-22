@@ -1,4 +1,5 @@
 #Author: QuanNH107
+#Verified: trangmn20
 
 add_executable(test_dma_tlm
     test_dma_tlm.cpp)

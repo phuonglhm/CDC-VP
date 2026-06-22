@@ -1,3 +1,4 @@
+//Author: trangnm20
 #include "clkmgr.h"
 #include <iostream>
 #include <cstring>
