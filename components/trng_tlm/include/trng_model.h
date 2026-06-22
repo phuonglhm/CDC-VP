@@ -1,3 +1,5 @@
+// Author: hoangv11
+
 #ifndef TRNG_MODEL_H
 #define TRNG_MODEL_H
 

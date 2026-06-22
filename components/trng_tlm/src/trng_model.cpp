@@ -1,3 +1,5 @@
+// Author: hoangv11
+
 #include "trng_model.h"
 
 #include <cstdlib>

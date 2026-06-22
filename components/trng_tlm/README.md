@@ -1,3 +1,5 @@
+// Author: hoangv11
+
 # ARM TrustZone-based True Random Number Generator (TRNG) TLM-2.0 Model
 
 This repository contains a **Programmer's View (PV)** model of a **True Random Number Generator (TRNG)**, implemented using **SystemC** and **TLM-2.0**. The model is based on the specification of the ARM TrustZone TRNG.

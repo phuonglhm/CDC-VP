@@ -1,3 +1,5 @@
+// Author: hoangv11
+
 #pragma once
 
 #include <systemc>

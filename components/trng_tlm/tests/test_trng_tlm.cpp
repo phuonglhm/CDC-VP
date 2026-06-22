@@ -1,3 +1,5 @@
+// Author: hoangv11
+
 #include <cstdint>
 
 #include <systemc>
