@@ -1,10 +1,13 @@
-#author: linhtk55-fpt
-
+# Compiler
 CXX      := g++
 CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
 
-# Hardcoded paths to your working C++17 SystemC installation
-SYSTEMC_HOME := /usr/local/systemc-2.3.4
+SYSTEMC_HOME := $(HOME)/.local
+
+ifeq ($(wildcard $(SYSTEMC_HOME)/include/systemc.h),)
+$(error SystemC header not found in $(SYSTEMC_HOME)/include. Build/install SystemC 2.3.4 into $(SYSTEMC_HOME) or change this Makefile.)
+endif
+
 CXXFLAGS     += -isystem $(SYSTEMC_HOME)/include
 LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
 
