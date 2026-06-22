@@ -3,6 +3,7 @@
 CXX      := g++
 CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
 
+#NO HARD CODE
 SYSTEMC_HOME := /usr/local/systemc-2.3.4
 CXXFLAGS     += -isystem $(SYSTEMC_HOME)/include
 LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
