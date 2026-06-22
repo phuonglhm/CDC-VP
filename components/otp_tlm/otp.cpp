@@ -26,25 +26,44 @@ otp::otp(sc_module_name name,
 
     mem.resize(otp_words, 0x00000000);
 
-    reg_ctrl        = 0;
-    reg_status      = 0;
-    reg_addr        = 0;
-    reg_wdata       = 0;
-    reg_rdata       = 0;
-    reg_lock        = 0;
-    reg_read_lock   = 0;
-    reg_err_status  = ERR_NONE;
-    reg_intr_enable = 0;
-    reg_intr_state  = 0;
+    intr_state = 0;
+    intr_enable = 0;
+    intr_test = 0;
+    alert_test = 0;
+
+    status = STATUS_DAI_IDLE;
+    partition_status_0 = 0;
+
+    err_code.fill(ERR_NO_ERROR);
+
+    direct_access_regwen = 1;
+    direct_access_cmd = 0;
+    direct_access_address = 0;
+    direct_access_wdata_0 = 0;
+    direct_access_wdata_1 = 0;
+    direct_access_rdata_0 = 0;
+    direct_access_rdata_1 = 0;
+
+    check_trigger_regwen = 1;
+    check_trigger = 0;
+    check_regwen = 1;
+    check_timeout = 0x1000;
+    integrity_check_period = 0;
+    consistency_check_period = 0;
+
+    // 1 = readable, 0 = locked
+    read_lock_regs.fill(1);
+
+    // Non-zero digest means partition write-locked in this simplified model.
+    digest_regs.fill(0);
 
     socket.register_b_transport(this, &otp::b_transport);
     irq_out.initialize(false);
 
-    std::cout << "[OTP] Created OTP TLM model" << std::endl;
-    std::cout << "[OTP] words = " << otp_words
-              << ", partition_words = " << partition_words
-              << ", partitions = " << num_partitions
-              << std::endl;
+    std::cout << "[OTP] OpenTitan-like OTP TLM model created\n";
+    std::cout << "[OTP] words=" << otp_words
+              << ", partition_words=" << partition_words
+              << ", partitions=" << num_partitions << "\n";
 }
 
 void otp::b_transport(tlm::tlm_generic_payload& trans,
@@ -59,13 +78,13 @@ void otp::b_transport(tlm::tlm_generic_payload& trans,
 
     if (data_ptr == nullptr || len != 4) {
         trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
-        set_error(ERR_BAD_ACCESS);
+        set_error(ERR_ACCESS_ERROR);
         return;
     }
 
     if (trans.get_byte_enable_ptr() != nullptr) {
         trans.set_response_status(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
-        set_error(ERR_BYTE_ENABLE);
+        set_error(ERR_ACCESS_ERROR);
         return;
     }
 
@@ -82,242 +101,481 @@ void otp::b_transport(tlm::tlm_generic_payload& trans,
         trans.set_response_status(tlm::TLM_OK_RESPONSE);
     } else {
         trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
-        set_error(ERR_BAD_ACCESS);
+        set_error(ERR_ACCESS_ERROR);
     }
+}
+
+bool otp::is_err_code_reg(uint32_t offset) const
+{
+    return offset >= REG_ERR_CODE_BASE &&
+           offset <= REG_ERR_CODE_LAST &&
+           ((offset - REG_ERR_CODE_BASE) % 4 == 0);
+}
+
+uint32_t otp::err_code_index(uint32_t offset) const
+{
+    return (offset - REG_ERR_CODE_BASE) / 4;
+}
+
+bool otp::is_read_lock_reg(uint32_t offset) const
+{
+    return offset >= REG_READ_LOCK_BASE &&
+           offset <= REG_ROM_PATCH_READ_LOCK &&
+           ((offset - REG_READ_LOCK_BASE) % 4 == 0);
+}
+
+uint32_t otp::read_lock_index(uint32_t offset) const
+{
+    return (offset - REG_READ_LOCK_BASE) / 4;
+}
+
+bool otp::is_digest_reg(uint32_t offset) const
+{
+    return offset >= REG_DIGEST_BASE &&
+           offset <= REG_DIGEST_LAST &&
+           ((offset - REG_DIGEST_BASE) % 4 == 0);
+}
+
+uint32_t otp::digest_index(uint32_t offset) const
+{
+    return (offset - REG_DIGEST_BASE) / 4;
 }
 
 uint32_t otp::read_reg(uint32_t offset)
 {
+    if (is_err_code_reg(offset)) {
+        return err_code[err_code_index(offset)] & 0x7;
+    }
+
+    if (is_read_lock_reg(offset)) {
+        return read_lock_regs[read_lock_index(offset)] & 0x1;
+    }
+
+    if (is_digest_reg(offset)) {
+        return digest_regs[digest_index(offset)];
+    }
+
     switch (offset) {
-    case REG_CTRL:
-        return reg_ctrl;
-
-    case REG_STATUS:
-        return reg_status;
-
-    case REG_ADDR:
-        return reg_addr;
-
-    case REG_WDATA:
-        return reg_wdata;
-
-    case REG_RDATA:
-        return reg_rdata;
-
-    case REG_LOCK:
-        return reg_lock;
-
-    case REG_READ_LOCK:
-        return reg_read_lock;
-
-    case REG_ERR_STATUS:
-        return reg_err_status;
+    case REG_INTR_STATE:
+        return intr_state;
 
     case REG_INTR_ENABLE:
-        return reg_intr_enable;
+        return intr_enable;
 
-    case REG_INTR_STATE:
-        return reg_intr_state;
+    case REG_INTR_TEST:
+        return intr_test;
 
-    case REG_SIZE_WORDS:
+    case REG_ALERT_TEST:
+        return alert_test;
+
+    case REG_STATUS:
+        return status;
+
+    case REG_PARTITION_STATUS_0:
+        update_partition_status();
+        return partition_status_0;
+
+    case REG_DIRECT_ACCESS_REGWEN:
+        return direct_access_regwen;
+
+    case REG_DIRECT_ACCESS_CMD:
+        return direct_access_cmd;
+
+    case REG_DIRECT_ACCESS_ADDRESS:
+        return direct_access_address;
+
+    case REG_DIRECT_ACCESS_WDATA_0:
+        return direct_access_wdata_0;
+
+    case REG_DIRECT_ACCESS_WDATA_1:
+        return direct_access_wdata_1;
+
+    case REG_DIRECT_ACCESS_RDATA_0:
+        return direct_access_rdata_0;
+
+    case REG_DIRECT_ACCESS_RDATA_1:
+        return direct_access_rdata_1;
+
+    case REG_CHECK_TRIGGER_REGWEN:
+        return check_trigger_regwen;
+
+    case REG_CHECK_TRIGGER:
+        return check_trigger;
+
+    case REG_CHECK_REGWEN:
+        return check_regwen;
+
+    case REG_CHECK_TIMEOUT:
+        return check_timeout;
+
+    case REG_INTEGRITY_CHECK_PERIOD:
+        return integrity_check_period;
+
+    case REG_CONSISTENCY_CHECK_PERIOD:
+        return consistency_check_period;
+
+    case REG_MODEL_SIZE_WORDS:
         return otp_words;
 
-    case REG_PARTITION_SIZE:
+    case REG_MODEL_PARTITION_SIZE:
         return partition_words;
 
     default:
-        set_error(ERR_BAD_ACCESS);
+        set_error(ERR_ACCESS_ERROR);
         return 0;
     }
 }
 
 void otp::write_reg(uint32_t offset, uint32_t value)
 {
+    if (is_err_code_reg(offset)) {
+        // OpenTitan ERR_CODE registers are read-only.
+        // This model ignores writes to them.
+        return;
+    }
+
+    if (is_read_lock_reg(offset)) {
+        // Runtime read lock registers.
+        // Simplified behavior:
+        // 1 = readable, 0 = locked.
+        // Once cleared to 0, it remains locked.
+        uint32_t idx = read_lock_index(offset);
+        read_lock_regs[idx] &= (value & 0x1);
+        return;
+    }
+
+    if (is_digest_reg(offset)) {
+        // Simplified digest storage.
+        // Real OpenTitan digest is computed/used for integrity and lock.
+        digest_regs[digest_index(offset)] = value;
+        update_partition_status();
+        return;
+    }
+
     switch (offset) {
-    case REG_CTRL:
-        reg_ctrl = value;
-
-        if (value & CTRL_CLEAR_IRQ) {
-            reg_intr_state = 0;
-            reg_status &= ~STATUS_IRQ;
-            update_irq();
-        }
-
-        if (value & CTRL_READ_START) {
-            do_read();
-        }
-
-        if (value & CTRL_PROG_START) {
-            do_program();
-        }
-
-        break;
-
-    case REG_ADDR:
-        reg_addr = value;
-        break;
-
-    case REG_WDATA:
-        reg_wdata = value;
-        break;
-
-    case REG_LOCK:
-        /*
-         * Sticky write lock.
-         * Once a partition lock bit is set, it cannot be cleared.
-         */
-        reg_lock |= value;
-        break;
-
-    case REG_READ_LOCK:
-        /*
-         * Sticky read lock.
-         */
-        reg_read_lock |= value;
-        break;
-
-    case REG_ERR_STATUS:
-        /*
-         * Write non-zero to clear error.
-         */
-        if (value != 0) {
-            reg_err_status = ERR_NONE;
-            reg_status &= ~STATUS_ERROR;
-        }
+    case REG_INTR_STATE:
+        // W1C behavior.
+        clear_interrupts(value);
         break;
 
     case REG_INTR_ENABLE:
-        reg_intr_enable = value & 0x1;
+        intr_enable = value & (INTR_OTP_OPERATION_DONE | INTR_OTP_ERROR);
         update_irq();
         break;
 
-    case REG_INTR_STATE:
-        /*
-         * Write 1 to clear interrupt.
-         */
-        if (value & 0x1) {
-            reg_intr_state = 0;
-            reg_status &= ~STATUS_IRQ;
-            update_irq();
-        }
+    case REG_INTR_TEST:
+        intr_test = value & (INTR_OTP_OPERATION_DONE | INTR_OTP_ERROR);
+        intr_state |= intr_test;
+        update_irq();
+        break;
+
+    case REG_ALERT_TEST:
+        // Stub: store only. No alert pin in this TLM model.
+        alert_test = value;
         break;
 
     case REG_STATUS:
-    case REG_RDATA:
-    case REG_SIZE_WORDS:
-    case REG_PARTITION_SIZE:
-        set_error(ERR_BAD_ACCESS);
+    case REG_PARTITION_STATUS_0:
+        // Read-only registers.
+        set_error(ERR_ACCESS_ERROR);
+        break;
+
+    case REG_DIRECT_ACCESS_REGWEN:
+        // Simplified RW0C behavior.
+        // Writing 0 locks, writing 1 does not unlock.
+        if ((value & 0x1) == 0) {
+            direct_access_regwen = 0;
+        }
+        break;
+
+    case REG_DIRECT_ACCESS_CMD:
+        if (direct_access_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        direct_access_cmd = value;
+        execute_dai_command(value);
+        break;
+
+    case REG_DIRECT_ACCESS_ADDRESS:
+        if (direct_access_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        direct_access_address = value;
+        break;
+
+    case REG_DIRECT_ACCESS_WDATA_0:
+        if (direct_access_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        direct_access_wdata_0 = value;
+        break;
+
+    case REG_DIRECT_ACCESS_WDATA_1:
+        if (direct_access_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        direct_access_wdata_1 = value;
+        break;
+
+    case REG_DIRECT_ACCESS_RDATA_0:
+    case REG_DIRECT_ACCESS_RDATA_1:
+        // Read-only registers.
+        set_error(ERR_ACCESS_ERROR);
+        break;
+
+    case REG_CHECK_TRIGGER_REGWEN:
+        if ((value & 0x1) == 0) {
+            check_trigger_regwen = 0;
+        }
+        break;
+
+    case REG_CHECK_TRIGGER:
+        if (check_trigger_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        check_trigger = value;
+        trigger_checks(value);
+        break;
+
+    case REG_CHECK_REGWEN:
+        if ((value & 0x1) == 0) {
+            check_regwen = 0;
+        }
+        break;
+
+    case REG_CHECK_TIMEOUT:
+        if (check_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        check_timeout = value;
+        break;
+
+    case REG_INTEGRITY_CHECK_PERIOD:
+        if (check_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        integrity_check_period = value;
+        break;
+
+    case REG_CONSISTENCY_CHECK_PERIOD:
+        if (check_regwen == 0) {
+            set_error(ERR_ACCESS_ERROR);
+            break;
+        }
+        consistency_check_period = value;
+        break;
+
+    case REG_MODEL_SIZE_WORDS:
+    case REG_MODEL_PARTITION_SIZE:
+        set_error(ERR_ACCESS_ERROR);
         break;
 
     default:
-        set_error(ERR_BAD_ACCESS);
+        set_error(ERR_ACCESS_ERROR);
         break;
     }
 }
 
-void otp::do_read()
+void otp::execute_dai_command(uint32_t cmd)
 {
-    clear_done_error();
-
-    if (reg_status & STATUS_BUSY) {
-        set_error(ERR_BUSY);
+    if ((status & STATUS_DAI_IDLE) == 0) {
+        set_error(ERR_FSM_STATE_ERROR);
         return;
     }
 
-    reg_status |= STATUS_BUSY;
+    clear_error_status();
 
-    uint32_t word_addr = reg_addr;
+    status &= ~STATUS_DAI_IDLE;
+    direct_access_regwen = 0;
+
+    if (cmd == DAI_CMD_READ) {
+        dai_read();
+    } else if (cmd == DAI_CMD_WRITE) {
+        dai_write();
+    } else if (cmd == DAI_CMD_DIGEST) {
+        dai_digest();
+    } else {
+        set_error(ERR_ACCESS_ERROR);
+    }
+
+    direct_access_regwen = 1;
+    status |= STATUS_DAI_IDLE;
+}
+
+void otp::dai_read()
+{
+    uint32_t word_addr = byte_addr_to_word_addr(direct_access_address);
 
     if (!addr_valid(word_addr)) {
-        reg_status &= ~STATUS_BUSY;
-        set_error(ERR_ADDR_OUT_OF_RANGE);
+        direct_access_rdata_0 = 0;
+        direct_access_rdata_1 = 0;
+        set_error(ERR_ACCESS_ERROR);
         return;
     }
 
-    if (read_locked(word_addr)) {
-        reg_status &= ~STATUS_BUSY;
-        set_error(ERR_READ_LOCKED);
+    if (partition_read_locked(word_addr)) {
+        direct_access_rdata_0 = 0;
+        direct_access_rdata_1 = 0;
+        set_error(ERR_ACCESS_ERROR);
         return;
     }
 
     wait(sc_time(100, SC_NS));
 
-    reg_rdata = mem[word_addr];
+    direct_access_rdata_0 = mem[word_addr];
 
-    std::cout << "[OTP] READ addr=" << word_addr
-              << " data=0x" << std::hex << reg_rdata << std::dec
-              << std::endl;
+    if (addr_valid(word_addr + 1)) {
+        direct_access_rdata_1 = mem[word_addr + 1];
+    } else {
+        direct_access_rdata_1 = 0;
+    }
 
-    reg_status &= ~STATUS_BUSY;
+    std::cout << "[OTP] DAI READ byte_addr=0x"
+              << std::hex << direct_access_address
+              << " word=" << std::dec << word_addr
+              << " rdata0=0x" << std::hex << direct_access_rdata_0
+              << " rdata1=0x" << direct_access_rdata_1
+              << std::dec << "\n";
+
     set_done();
 }
 
-void otp::do_program()
+void otp::dai_write()
 {
-    clear_done_error();
-
-    if (reg_status & STATUS_BUSY) {
-        set_error(ERR_BUSY);
-        return;
-    }
-
-    reg_status |= STATUS_BUSY;
-
-    uint32_t word_addr = reg_addr;
+    uint32_t word_addr = byte_addr_to_word_addr(direct_access_address);
 
     if (!addr_valid(word_addr)) {
-        reg_status &= ~STATUS_BUSY;
-        set_error(ERR_ADDR_OUT_OF_RANGE);
+        set_error(ERR_ACCESS_ERROR);
         return;
     }
 
-    if (write_locked(word_addr)) {
-        reg_status &= ~STATUS_BUSY;
-        set_error(ERR_WRITE_LOCKED);
+    if (partition_write_locked_by_digest(word_addr)) {
+        set_error(ERR_ACCESS_ERROR);
         return;
     }
 
-    uint32_t old_value = mem[word_addr];
-    uint32_t new_value = reg_wdata;
+    uint32_t old0 = mem[word_addr];
+    uint32_t new0 = direct_access_wdata_0;
 
-    /*
-     * OTP rule:
-     * erased bit = 0
-     * programmed bit = 1
-     *
-     * So only 0 -> 1 is allowed.
-     * 1 -> 0 is illegal.
-     */
-    if ((old_value & ~new_value) != 0) {
-        reg_status &= ~STATUS_BUSY;
-        set_error(ERR_PROGRAM_1_TO_0);
+    // Simplified OTP rule:
+    // erased bit = 0, programmed bit = 1.
+    // Only 0 -> 1 is allowed.
+    if ((old0 & ~new0) != 0) {
+        set_error(ERR_MACRO_WRITE_BLANK_ERROR);
         return;
     }
 
     wait(sc_time(1, SC_US));
 
-    mem[word_addr] = old_value | new_value;
+    mem[word_addr] = old0 | new0;
 
-    /*
-     * Read-back verify.
-     */
-    if (mem[word_addr] != new_value) {
-        reg_status &= ~STATUS_BUSY;
-        set_error(ERR_PROGRAM_1_TO_0);
-        return;
+    // Optional second word write if address+1 exists and WDATA1 is nonzero.
+    if (direct_access_wdata_1 != 0 && addr_valid(word_addr + 1)) {
+        uint32_t old1 = mem[word_addr + 1];
+        uint32_t new1 = direct_access_wdata_1;
+
+        if ((old1 & ~new1) != 0) {
+            set_error(ERR_MACRO_WRITE_BLANK_ERROR);
+            return;
+        }
+
+        mem[word_addr + 1] = old1 | new1;
     }
 
-    std::cout << "[OTP] PROGRAM addr=" << word_addr
-              << " data=0x" << std::hex << new_value << std::dec
-              << std::endl;
+    std::cout << "[OTP] DAI WRITE byte_addr=0x"
+              << std::hex << direct_access_address
+              << " word=" << std::dec << word_addr
+              << " wdata0=0x" << std::hex << direct_access_wdata_0
+              << " wdata1=0x" << direct_access_wdata_1
+              << std::dec << "\n";
 
-    reg_status &= ~STATUS_BUSY;
     set_done();
 }
 
-bool otp::addr_valid(uint32_t word_addr) const
+void otp::dai_digest()
 {
-    return word_addr < otp_words;
+    uint32_t word_addr = byte_addr_to_word_addr(direct_access_address);
+    uint32_t part = get_partition(word_addr);
+
+    if (part >= num_partitions) {
+        set_error(ERR_ACCESS_ERROR);
+        return;
+    }
+
+    wait(sc_time(500, SC_NS));
+
+    // Simplified fake digest:
+    // digest[2*part] and digest[2*part+1] become nonzero.
+    // Nonzero digest is treated as write-lock for that partition.
+    uint32_t di = part * 2;
+    if (di + 1 < NUM_DIGEST_REGS) {
+        digest_regs[di] = 0xD1650000u | part;
+        digest_regs[di + 1] = 0xA5A50000u | part;
+    }
+
+    update_partition_status();
+
+    std::cout << "[OTP] DAI DIGEST partition=" << part << "\n";
+
+    set_done();
+}
+
+void otp::trigger_checks(uint32_t value)
+{
+    clear_error_status();
+
+    // Stub behavior:
+    // bit0: integrity check
+    // bit1: consistency check
+    // bit31: inject failure
+    if (value & (1u << 31)) {
+        status |= STATUS_CHECK_ERROR;
+        set_error(ERR_CHECK_FAIL_ERROR);
+        return;
+    }
+
+    wait(sc_time(200, SC_NS));
+
+    std::cout << "[OTP] CHECK_TRIGGER value=0x"
+              << std::hex << value << std::dec
+              << " PASS\n";
+
+    set_done();
+}
+
+void otp::update_partition_status()
+{
+    partition_status_0 = 0;
+
+    for (uint32_t p = 0; p < num_partitions && p < 16; ++p) {
+        uint32_t di = p * 2;
+
+        // Simplified:
+        // bit p = digest/lock status
+        // bit p+16 = error status
+        if (di + 1 < NUM_DIGEST_REGS &&
+            (digest_regs[di] != 0 || digest_regs[di + 1] != 0)) {
+            partition_status_0 |= (1u << p);
+        }
+
+        if (p < NUM_ERR_CODE_REGS && err_code[p] != ERR_NO_ERROR) {
+            partition_status_0 |= (1u << (p + 16));
+        }
+    }
+}
+
+uint32_t otp::byte_addr_to_word_addr(uint32_t byte_addr) const
+{
+    // OpenTitan DAI address is byte address.
+    // This simplified model uses 32-bit granule.
+    return byte_addr >> 2;
 }
 
 uint32_t otp::get_partition(uint32_t word_addr) const
@@ -325,63 +583,88 @@ uint32_t otp::get_partition(uint32_t word_addr) const
     return word_addr / partition_words;
 }
 
-bool otp::write_locked(uint32_t word_addr) const
+bool otp::addr_valid(uint32_t word_addr) const
+{
+    return word_addr < otp_words;
+}
+
+bool otp::partition_read_locked(uint32_t word_addr) const
 {
     uint32_t part = get_partition(word_addr);
 
-    if (part >= 32) {
-        return true;
+    if (part >= NUM_PARTITION_LOCK_REGS) {
+        return false;
     }
 
-    return (reg_lock & (1u << part)) != 0;
+    // 1 = readable, 0 = locked.
+    return (read_lock_regs[part] & 0x1) == 0;
 }
 
-bool otp::read_locked(uint32_t word_addr) const
+bool otp::partition_write_locked_by_digest(uint32_t word_addr) const
 {
     uint32_t part = get_partition(word_addr);
+    uint32_t di = part * 2;
 
-    if (part >= 32) {
-        return true;
+    if (di + 1 >= NUM_DIGEST_REGS) {
+        return false;
     }
 
-    return (reg_read_lock & (1u << part)) != 0;
+    // Simplified digest lock:
+    // nonzero digest means partition write-locked.
+    return digest_regs[di] != 0 || digest_regs[di + 1] != 0;
 }
 
-void otp::clear_done_error()
+void otp::clear_error_status()
 {
-    reg_status &= ~STATUS_DONE;
-    reg_status &= ~STATUS_ERROR;
-    reg_err_status = ERR_NONE;
+    status &= ~STATUS_DAI_ERROR;
+    status &= ~STATUS_CHECK_ERROR;
+    status &= ~STATUS_FSM_ERROR;
+
+    err_code[0] = ERR_NO_ERROR;
+
+    update_partition_status();
+}
+
+void otp::set_error(ErrorCode code, uint32_t agent_index)
+{
+    if (agent_index >= NUM_ERR_CODE_REGS) {
+        agent_index = 0;
+    }
+
+    err_code[agent_index] = static_cast<uint32_t>(code) & 0x7;
+
+    if (code == ERR_CHECK_FAIL_ERROR) {
+        status |= STATUS_CHECK_ERROR;
+    } else if (code == ERR_FSM_STATE_ERROR) {
+        status |= STATUS_FSM_ERROR;
+    } else {
+        status |= STATUS_DAI_ERROR;
+    }
+
+    intr_state |= INTR_OTP_ERROR;
+
+    update_partition_status();
+    update_irq();
+
+    std::cout << "[OTP] ERROR code=0x"
+              << std::hex << static_cast<uint32_t>(code)
+              << std::dec << "\n";
 }
 
 void otp::set_done()
 {
-    reg_status |= STATUS_DONE;
-
-    reg_intr_state = 1;
-    reg_status |= STATUS_IRQ;
-
+    intr_state |= INTR_OTP_OPERATION_DONE;
     update_irq();
 }
 
-void otp::set_error(ErrorCode err)
+void otp::clear_interrupts(uint32_t value)
 {
-    reg_err_status = static_cast<uint32_t>(err);
-    reg_status |= STATUS_ERROR;
-
-    reg_intr_state = 1;
-    reg_status |= STATUS_IRQ;
-
-    std::cout << "[OTP] ERROR code=" << static_cast<uint32_t>(err)
-              << std::endl;
-
+    intr_state &= ~value;
     update_irq();
 }
 
 void otp::update_irq()
 {
-    bool irq = ((reg_intr_enable & 0x1) != 0) &&
-               ((reg_intr_state & 0x1) != 0);
-
+    bool irq = (intr_state & intr_enable) != 0;
     irq_out.write(irq);
 }
