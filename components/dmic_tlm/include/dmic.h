@@ -32,35 +32,37 @@
 #define DMIC_INT_CLR_OE (1 << 0) // clear Overrun
 #define DMIC_INT_CLR_WM (1 << 1)
 
-namespace cdc::components
-{
-    class DmicTLM : public sc_core::sc_module
-    {
-    public:
-        DmicTLM(sc_core::sc_module_name name);
-        tlm_utils::simple_target_socket<DmicTLM> pdm_target_socket;
-        tlm_utils::simple_target_socket<DmicTLM> bus_target_socket;
+namespace cdc::components {
+class DmicTLM : public sc_core::sc_module {
+public:
+   DmicTLM(sc_core::sc_module_name name);
+   tlm_utils::simple_target_socket<DmicTLM> pdm_target_socket;
+   tlm_utils::simple_target_socket<DmicTLM> bus_target_socket;
 
-        sc_core::sc_out<bool> irq_out;
+   sc_core::sc_in<bool> reset_n;
+   sc_core::sc_out<bool> irq_out;
 
-    private:
-        uint32_t ctrl_reg;
-        uint32_t fifo_wm_reg;
-        bool overrun_flag;
-        bool watermark_flag;
+private:
+   uint32_t ctrl_reg;
+   uint32_t fifo_wm_reg;
+   bool overrun_flag;
+   bool watermark_flag;
 
-        std::queue<int> pcm_fifo;
-        const size_t FIFO_MAX_DEPTH = 64;
+   std::queue<int> pcm_fifo;
+   const size_t FIFO_MAX_DEPTH = 64;
 
-        // CIC State
-        long integrator;
-        long prev_integrator;
-        int counter;
+   // CIC State
+   long integrator;
+   long prev_integrator;
+   int counter;
 
-        void evaluate_interrupts();
-        uint32_t get_status_reg();
-        void pdm_b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
-        void bus_b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
-    };
-}
-#endif DMIC_H
+   void reset();
+   void handle_reset();
+   void start_of_simulation() override;
+   void evaluate_interrupts();
+   uint32_t get_status_reg();
+   void pdm_b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
+   void bus_b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
+};
+} // namespace cdc::components
+#endif
