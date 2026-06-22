@@ -1,26 +1,16 @@
-#author: linhtk55-fpt
+add_library(dmic_tlm STATIC
+    src/dmic.cpp)
+add_library(cdc::components::dmic_tlm ALIAS dmic_tlm)
 
-add_library(timer_tlm STATIC
-    src/timer.cpp)
-add_library(cdc::components::timer_tlm ALIAS timer_tlm)
-add_library(cdc::components::timer2_tlm ALIAS timer_tlm)
-
-target_include_directories(timer_tlm
+target_include_directories(dmic_tlm
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE src)
 
-target_link_libraries(timer_tlm PUBLIC SystemC::systemc)
+target_link_libraries(dmic_tlm PUBLIC SystemC::systemc)
 
-# Testbench executable (matches README: 'tb')
-add_executable(tb src/testbench.cpp)
-target_include_directories(tb PRIVATE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(tb PRIVATE cdc::components::timer_tlm SystemC::systemc)
-
-install(TARGETS timer_tlm EXPORT cdc-components-targets
+install(TARGETS dmic_tlm EXPORT cdc-components-targets
     ARCHIVE DESTINATION lib
     INCLUDES DESTINATION include)
 install(DIRECTORY include/ DESTINATION include)

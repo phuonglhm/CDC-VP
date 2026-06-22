@@ -45,13 +45,23 @@ uint32_t Clkmgr::read_reg(sc_dt::uint64 addr) {
             return static_cast<uint32_t>(clk_hints_);
         case REG_CLK_HINTS_STATUS:
             return static_cast<uint32_t>(clk_hints_status_);
+        case REG_EXTCLK_CTRL_REGWEN:
+            return static_cast<uint32_t>(extclk_ctrl_regwen_);
         default:
             return 0; 
     }
 }
 void Clkmgr::write_reg(sc_dt::uint64 addr, uint32_t data) {
     switch (addr) {
+        case REG_EXTCLK_CTRL_REGWEN:
+            if ((data & 0x1) == 0) {
+                extclk_ctrl_regwen_ = 0;
+            }
+            break;
         case REG_EXTCLK_CTRL:
+            if (!extclk_ctrl_regwen_) {
+                break;
+            }
             handle_extclk_ctrl_write(data);
             break;
         case REG_EXTCLK_STATUS:
@@ -71,19 +81,34 @@ void Clkmgr::write_reg(sc_dt::uint64 addr, uint32_t data) {
 void Clkmgr::handle_extclk_ctrl_write(uint32_t data) {
     uint8_t new_sel = static_cast<uint8_t>(data & 0xf);
     uint8_t new_hispeed = static_cast<uint8_t>((data >> 4) & 0xf);
+
+    // EXTCLK_CTRL is always programmable, but only takes effect
+    // when debug functions are enabled in life cycle TEST/DEV/RMA.
+    if (!lc_debug_enabled()) {
+        std::cout << "[CLKMGR] EXTCLK_CTRL write accepted but has no "
+                  << "effect — life cycle state does not allow debug "
+                  << "(current state is PROD)" << std::endl;
+        return;
+    }
+
     extclk_ctrl_hispeed_ = new_hispeed;
-    bool currently_external = mubi4::test_true_strict(extclk_ctrl_sel);
+    bool currently_external = mubi4::test_true_strict(extclk_ctrl_sel_);
     bool requesting_external = mubi4::test_true_strict(new_sel);
+
     if (!currently_external && requesting_external) {
-        extclk_ctrl_sel_ = mubi4::True;
+        extclk_ctrl_sel_   = mubi4::True;
         extclk_status_ack_ = mubi4::True;
-    } else if (currently_external && new_sel == mubi4::False) {
-        extclk_ctrl_sel_ = mubi4::False;
+        std::cout << "[CLKMGR] External clock ENABLED, ack=True" << std::endl;
+    } else if (currently_external && !requesting_external) {
+        extclk_ctrl_sel_   = mubi4::False;
         extclk_status_ack_ = mubi4::False;
+        std::cout << "[CLKMGR] External clock DISABLED, ack=False" << std::endl;
     } else {
-        std::cout << "not a valid transition from current state"<< std::endl;
+        std::cout << "[CLKMGR] EXTCLK_CTRL write ignored — no valid transition"
+                  << std::endl;
     }
 }
+
 void Clkmgr::handle_clk_hints_write(uint32_t data) {
     clk_hints_ = static_cast<uint8_t>(data & 0xf);
     recompute_hints_status();

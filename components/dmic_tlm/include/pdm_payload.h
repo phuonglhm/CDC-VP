@@ -1,5 +1,3 @@
-//author: linhtk55-fpt
-
 #ifndef PDM_PAYLOAD_H
 #define PDM_PAYLOAD_H
 

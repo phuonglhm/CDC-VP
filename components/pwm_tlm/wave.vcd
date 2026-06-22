@@ -1,0 +1,80 @@
+$date
+     Jun 22, 2026       10:21:56
+$end
+
+$version
+ SystemC 2.3.4-Accellera --- Jun 15 2026 14:20:22
+$end
+
+$timescale
+     1 ps
+$end
+
+$scope module SystemC $end
+$var wire    1  aaaaa  pwm_out       $end
+$upscope $end
+$enddefinitions  $end
+
+$comment
+All initial values are dumped below at time 0 sec = 0 timescale units.
+$end
+
+$dumpvars
+0aaaaa
+$end
+
+#1160000
+1aaaaa
+
+#2170000
+0aaaaa
+
+#3710000
+1aaaaa
+
+#5630000
+0aaaaa
+
+#6270000
+1aaaaa
+
+#8700000
+0aaaaa
+
+#9340000
+1aaaaa
+
+#10220000
+0aaaaa
+
+#11260000
+1aaaaa
+
+#11900000
+0aaaaa
+
+#13230000
+1aaaaa
+
+#13250000
+0aaaaa
+
+#16260000
+1aaaaa
+
+#16500000
+0aaaaa
+
+#16510000
+1aaaaa
+
+#19060000
+0aaaaa
+
+#19070000
+1aaaaa
+
+#19270000
+0aaaaa
+
+#20280000

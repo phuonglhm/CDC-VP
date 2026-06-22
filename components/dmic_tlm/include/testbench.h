@@ -1,5 +1,3 @@
-//author: linhtk55-fpt
-
 #ifndef DMIC_TESTBENCH_H
 #define DMIC_TESTBENCH_H
 
@@ -9,15 +7,18 @@
 #include <cmath>
 #include <iostream>
 #include "pdm_payload.h"
+#include "dmic.h"
 using namespace sc_core;
 
-class TestBench : public sc_module
+#define DMIC_BASE_ADDR 0x004200000ULL //40-bit
+
+class PDM_Source : public sc_module
 {
 public:
-    tlm_utils::simple_initiator_socket<TestBench> initiator_socket;
+    tlm_utils::simple_initiator_socket<PDM_Source> initiator_socket;
 
-    SC_HAS_PROCESS(TestBench);
-    TestBench(sc_module_name name) : sc_module(name)
+    SC_HAS_PROCESS(PDM_Source);
+    PDM_Source(sc_module_name name) : sc_module(name)
     {
         SC_THREAD(stimulus_process);
     }
@@ -26,19 +27,20 @@ private:
     void stimulus_process();
 };
 
-class PCM_Monitor : public sc_module
-{
+class Host_CPU : public sc_module {
 public:
-    sc_port<sc_fifo_in_if<int>> pcm_in_port;
+    tlm_utils::simple_initiator_socket<Host_CPU> bus_socket;
+    sc_in<bool> irq_in; // Interrupt from GIC
 
-    SC_HAS_PROCESS(PCM_Monitor);
-    PCM_Monitor(sc_module_name name) : sc_module(name)
-    {
-        SC_THREAD(monitor_process);
+    SC_HAS_PROCESS(Host_CPU);
+    Host_CPU(sc_module_name name) : sc_module(name) {
+        SC_THREAD(cpu_firmware);
     }
 
 private:
-    void monitor_process();
+    uint32_t read_reg(uint64_t addr);
+    void write_reg(uint64_t addr, uint32_t data);
+    void cpu_firmware();
 };
 
 #endif

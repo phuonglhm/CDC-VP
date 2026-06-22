@@ -1,5 +1,3 @@
-//author: linhtk55-fpt
-
 #include <systemc>
 #include <iostream>
 #include "dmic.h"
@@ -7,15 +5,19 @@
 using namespace sc_core;
 
 int sc_main(int argc, char* argv[]) {
-    TestBench mic("microphone");
-    DmicTLM dmic("dmic", 64);//decimate by 64
-    PCM_Monitor monitor("monitor");
-    sc_fifo<int> pcm_fifo("pcm_buffer", 128);
-    mic.initiator_socket.bind(dmic.target_socket);
-    dmic.pcm_out_port.bind(pcm_fifo);
-    monitor.pcm_in_port.bind(pcm_fifo);
-    std::cout << "Starting simulation" << std::endl;
+    PDM_Source mic("microphone");
+    DmicTLM    dmic("dmic_peripheral");
+    Host_CPU   cpu("host_processor");
+
+    sc_signal<bool, SC_MANY_WRITERS> dmic_irq_line("dmic_irq");
+    mic.initiator_socket.bind(dmic.pdm_target_socket);
+    cpu.bus_socket.bind(dmic.bus_target_socket);
+    dmic.irq_out.bind(dmic_irq_line);
+    cpu.irq_in.bind(dmic_irq_line);
+
+    std::cout << "Starting DMIC Simulation...\n\n";
     sc_start();
-    std::cout << "Simulation done" << std::endl;
+    std::cout << "\nSimulation finished successfully.\n";
+
     return 0;
 }
