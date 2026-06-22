@@ -28,8 +28,7 @@ find_library(SYSTEMC_LIBRARY
     HINTS "${SYSTEMC_HOME}/lib64" "${SYSTEMC_HOME}/lib")
 
 if(NOT SYSTEMC_INCLUDE_DIR OR NOT SYSTEMC_LIBRARY)
-    message(FATAL_ERROR
-        "SystemC was not found. Set SYSTEMC_HOME to an Accellera SystemC install prefix.")
+    message(FATAL_ERROR "SystemC was not found. Set SYSTEMC_HOME to an Accellera SystemC install prefix.")
 endif()
 
 add_library(SystemC::systemc UNKNOWN IMPORTED GLOBAL)

@@ -1,3 +1,6 @@
+//author: linhtk55-fpt
+//verified: hoangv11
+
 # dmic_tlm
 
 DMIC TLM model — a TLM-2.0 component that models a digital microphone (PDM/DMIC) interface for SystemC simulations. This repository contains a lightweight model and a testbench to exercise it. It uses Cascaded Integrator Comb (CIC) to filter PDM signals to PCM.

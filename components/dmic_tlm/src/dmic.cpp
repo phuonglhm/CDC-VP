@@ -1,3 +1,6 @@
+//author: linhtk55-fpt
+//verified: hoangv11
+
 #include "dmic.h"
 using namespace sc_core;
 

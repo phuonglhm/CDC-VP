@@ -1,3 +1,6 @@
+//author: linhtk55-fpt
+//verified: hoangv11
+
 #ifndef DMIC_H
 #define DMIC_H
 

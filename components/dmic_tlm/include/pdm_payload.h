@@ -1,3 +1,6 @@
+//author: linhtk55-fpt
+//verified: hoangv11
+
 #ifndef PDM_PAYLOAD_H
 #define PDM_PAYLOAD_H
 

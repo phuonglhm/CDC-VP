@@ -1,3 +1,6 @@
+//author: linhtk55-fpt
+//verified: hoangv11
+
 #include <systemc>
 #include <iostream>
 #include "dmic.h"
