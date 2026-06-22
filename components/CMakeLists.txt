@@ -7,13 +7,15 @@ add_subdirectory(memory_tlm)
 add_subdirectory(uart_tlm)
 add_subdirectory(uart2_tlm)
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/timer_tlm/CMakeLists.txt")
-   add_subdirectory(timer_tlm)
-endif()
-
+# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/timer_tlm/CMakeLists.txt")
+#    add_subdirectory(timer_tlm)
+# endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/i2c_tlm/CMakeLists.txt")
    add_subdirectory(i2c_tlm)
+endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/timer_tlm/CMakeLists.txt")
+   add_subdirectory(timer_tlm)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/otp_tlm/CMakeLists.txt")
@@ -29,7 +31,6 @@ add_subdirectory(wdt_tlm)
 add_subdirectory(dma_tlm)
 add_subdirectory(trng_tlm)
 add_subdirectory(dmic_tlm)
-
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
 install(EXPORT cdc-components-targets
     NAMESPACE cdc::components::
