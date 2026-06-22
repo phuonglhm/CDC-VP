@@ -45,13 +45,23 @@ uint32_t Clkmgr::read_reg(sc_dt::uint64 addr) {
             return static_cast<uint32_t>(clk_hints_);
         case REG_CLK_HINTS_STATUS:
             return static_cast<uint32_t>(clk_hints_status_);
+        case REG_EXTCLK_CTRL_REGWEN:
+            return static_cast<uint32_t>(extclk_ctrl_regwen_);
         default:
             return 0; 
     }
 }
 void Clkmgr::write_reg(sc_dt::uint64 addr, uint32_t data) {
     switch (addr) {
+        case REG_EXTCLK_CTRL_REGWEN:
+            if ((data & 0x1) == 0) {
+                extclk_ctrl_regwen_ = 0;
+            }
+            break;
         case REG_EXTCLK_CTRL:
+            if (!extclk_ctrl_regwen_) {
+                break;
+            }
             handle_extclk_ctrl_write(data);
             break;
         case REG_EXTCLK_STATUS:
@@ -72,7 +82,7 @@ void Clkmgr::handle_extclk_ctrl_write(uint32_t data) {
     uint8_t new_sel = static_cast<uint8_t>(data & 0xf);
     uint8_t new_hispeed = static_cast<uint8_t>((data >> 4) & 0xf);
     extclk_ctrl_hispeed_ = new_hispeed;
-    bool currently_external = mubi4::test_true_strict(extclk_ctrl_sel);
+    bool currently_external = mubi4::test_true_strict(extclk_ctrl_sel_);
     bool requesting_external = mubi4::test_true_strict(new_sel);
     bool requesting_internal = !requesting_external;
     if (!currently_external && requesting_external) {

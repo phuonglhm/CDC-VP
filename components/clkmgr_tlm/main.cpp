@@ -53,6 +53,36 @@ SC_MODULE(testbench) {
         status = do_read(0xc);
         std::cout << "EXTCLK_STATUS = 0x" << std::hex << status << std::endl;
 
+        std::cout << "\n--- Test 2.5: EXTCLK_CTRL_REGWEN lock ---" << std::endl;
+
+        // Read initial regwen — should be 1 (unlocked) at reset
+        uint32_t regwen = do_read(0x4); // REG_EXTCLK_CTRL_REGWEN offset
+        std::cout << "EXTCLK_CTRL_REGWEN (before lock) = 0x"
+                  << std::hex << regwen << std::endl;
+
+        // Lock it by writing 0
+        do_write(0x4, 0x0);
+        regwen = do_read(0x4);
+        std::cout << "EXTCLK_CTRL_REGWEN (after lock) = 0x"
+                  << std::hex << regwen << std::endl;
+
+        // Try to enable external clock again — should be ignored now
+        std::cout << "Attempting to re-enable external clock (should be blocked)"
+                  << std::endl;
+        uint32_t blocked_val = (0x6 << 4) | 0x6;
+        do_write(0x8, blocked_val); // REG_EXTCLK_CTRL offset
+        status = do_read(0xc);      // REG_EXTCLK_STATUS offset
+        std::cout << "EXTCLK_STATUS (should be unchanged, still locked out) = 0x"
+                  << std::hex << status << std::endl;
+
+        // Confirm writing 1 to regwen has no effect (rw0c — can't unlock via SW)
+        do_write(0x4, 0x1);
+        regwen = do_read(0x4);
+        std::cout << "EXTCLK_CTRL_REGWEN (after attempting to write 1) = 0x"
+                  << std::hex << regwen
+                  << " (should still be 0 — rw0c cannot be unlocked by SW)"
+                  << std::endl;
+
         std::cout << "\n--- Test 3: CLK_ENABLES write/read ---" << std::endl;
         do_write(0x18, 0x5); // arbitrary pattern: enable bits 0,2 only
         uint32_t enables = do_read(0x18);

@@ -45,11 +45,13 @@ private:
         REG_CLK_ENABLES = 0x18,
         REG_CLK_HINTS = 0x1c,
         REG_CLK_HINTS_STATUS = 0x20,
+        REG_EXTCLK_CTRL_REGWEN = 0x4,
     };
 
     uint8_t extclk_ctrl_sel_ = mubi4::False;
     uint8_t extclk_ctrl_hispeed_ = mubi4::False;
     uint8_t extclk_status_ack_ = mubi4::False;
+    uint8_t extclk_ctrl_regwen_ = 0x1;
 
     uint8_t clk_enables_ = 0xf;
     uint8_t clk_hints_ = 0xf;
