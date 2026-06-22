@@ -9,7 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CDC_BUILD_TESTS "Build tests" OFF)
 
 # SystemC
-set(SYSTEMC_HOME "/usr/local/systemc-2.3.4")
+set(SYSTEMC_HOME "/opt/systemc-2.3.4")
 
 add_library(SystemC::systemc UNKNOWN IMPORTED)
 set_target_properties(SystemC::systemc PROPERTIES
