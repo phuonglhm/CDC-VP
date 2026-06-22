@@ -15,6 +15,6 @@ install(TARGETS dmic_tlm EXPORT cdc-components-targets
     INCLUDES DESTINATION include)
 install(DIRECTORY include/ DESTINATION include)
 
-# if(CDC_BUILD_TESTS)
-#    add_subdirectory(tests)
-# endif()
+if(CDC_BUILD_TESTS)
+   add_subdirectory(src)
+endif()

@@ -64,6 +64,12 @@ void Host_CPU::write_reg(uint64_t addr, uint32_t data)
 
 void Host_CPU::cpu_firmware()
 {
+    std::cout << "[CPU] Initializing DMIC Reset...\n";
+    reset_n.write(false);
+    wait(1, SC_US);
+    reset_n.write(true);
+    wait(1, SC_US);
+
     std::cout << "[CPU] Initializing DMIC Firmware...\n";
 
     // 1. Setup Watermark to 16

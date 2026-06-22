@@ -31,6 +31,7 @@ class Host_CPU : public sc_module {
 public:
     tlm_utils::simple_initiator_socket<Host_CPU> bus_socket;
     sc_in<bool> irq_in; // Interrupt from GIC
+    sc_out<bool> reset_n; // Reset output to components
 
     SC_HAS_PROCESS(Host_CPU);
     Host_CPU(sc_module_name name) : sc_module(name) {
