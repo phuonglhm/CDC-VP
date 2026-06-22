@@ -1,4 +1,5 @@
 // Author: hoangv11
+//verified: linhtk55-fpt
 
 # ARM TrustZone-based True Random Number Generator (TRNG) TLM-2.0 Model
 

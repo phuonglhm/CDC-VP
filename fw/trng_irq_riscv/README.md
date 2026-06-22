@@ -1,7 +1,6 @@
 author: linhtk55-fpt
-# CDC-VP Timer Interrupt Demo
-
-This demo verifies the Timer TLM peripheral inside a small RISC-V virtual
+# CDC-VP TRNG Interrupt Demo
+This demo verifies the TRNG inside a small RISC-V virtual
 platform. The test uses the Bremen `riscv-vp` CPU backend and Accellera
 SystemC 2.3.4.
 
@@ -11,8 +10,8 @@ The verified path is:
 RISC-V firmware
   -> CPU TLM initiator
   -> bus_router
-  -> Timer MMIO registers (0x1003_0000)
-  -> Timer interrupt output
+  -> TRNG MMIO registers (0x1470_0000)
+  -> TRNG interrupt output
   -> PLIC source 1
   -> CPU machine external interrupt
   -> firmware trap handler
@@ -38,13 +37,13 @@ host compilers and adds the RISC-V bare-metal toolchain to `PATH`.
 Build the bare-metal RISC-V firmware:
 
 ```bash
-make -C fw/timer2_irq_riscv
+make -C fw/trng_irq_riscv
 ```
 This produces:
 
 ```text
-fw/timer2_irq_riscv/timer_irq.elf
-fw/timer2_irq_riscv/timer_irq.dis
+fw/trng_irq_riscv/timer_irq.elf
+fw/trng_irq_riscv/timer_irq.dis
 ```
 
 Configure the virtual platform build:
@@ -72,7 +71,7 @@ Run the simulation:
 ```bash
 ./build/bremen/platforms/tests/timer_platform/timer_platform \
   -c platforms/tests/timer_platform/configs/default.yaml \
-  --fw fw/timer2_irq_riscv/timer_irq.elf \
+  --fw fw/trng_irq_riscv/timer_irq.elf \
   --sim-ms 5
 ```
 
@@ -106,35 +105,29 @@ CPU machine external interrupt.
 
 ## What The Firmware Does
 
-`fw/timer2_irq_riscv/src/main.c` runs on the simulated RISC-V CPU. It:
+`fw/trng_irq_riscv/src/main.c` runs on the simulated RISC-V CPU. It:
 
 1. Sets the machine trap vector.
 2. Configures PLIC source 1 for the timer interrupt and enables it.
 3. Enables machine external interrupts.
-4. Loads `TIMER_RELOAD` with a countdown value (50,000 ticks).
-5. Enables the timer (start + interrupt enable).
+4. Unmasks the TRNG's internal interrupt logic by writing 0 to the Interrupt Mask Register (TRNG_IMR).
+5. Triggers the entropy generation engine by writing 1 to the Source Enable register (TRNG_SRC_EN).
 6. Waits for the interrupt using `wfi`.
-7. In the trap handler, claims the PLIC source, clears the timer interrupt status, and reports success.
-8. After reporting success, the firmware disables the timer and parks the CPU.
+7. In the trap handler, claims the PLIC source 1, clears the TRNG interrupt status thought the Interrupt Clear Register (TRNG_ICR), and reports success.
+8. After reporting success, the firmware parks the CPU.
 
 Expected successful output includes:
 
 ```text
-Starting generic timer testing...
-Arming timer with 50,000 ticks...
-Waiting for interrupt (WFI)...
-[TRAP] mcause=0x8000000B claim=0x00000001
-[TRAP] Timer interrupt received!
-SUCCESS: Timer test passed!
-```
-
-To quickly verify if the test has passed, run and filter for `SUCCESS`:
-
-```bash
-./build/bremen/platforms/tests/timer_platform/timer_platform \
-  -c platforms/tests/timer_platform/configs/default.yaml \
-  --fw fw/timer2_irq_riscv/timer_irq.elf \
-  --sim-ms 5 | grep "SUCCESS"
+trng_platform config: platforms/tests/trng_platform/configs/default.yaml
+cpu backend: riscv_vp (Bremen rv32)
+memory map: RAM=0x80000000 UART=0x10000000 CLINT=0x02000000 PLIC=0x0C000000 trng=0x14700000
+irq map: trng -> PLIC source 1 -> MEIP
+Starting TRNG generation testing... 
+Triggering TRNG random number generation...
+W[TRAP] mcause=0x8000000B claim=0x00000001
+[TRAP] TRNG interrupt received!
+aiting for TRNG interrupt (WFI)...
 ```
 
 ## Notes
@@ -142,5 +135,5 @@ To quickly verify if the test has passed, run and filter for `SUCCESS`:
 Use Accellera SystemC 2.3.4 for this demo. Adjust `SYSTEMC_INCLUDE_DIR` and
 `SYSTEMC_LIBRARY` in the CMake command above to match your SystemC installation.
 
-The `timer_tlm` component is a simple timer model used by the demo and
-exposes a 4-register MMIO window at `0x1003_0000` (CTRL, VALUE, RELOAD, INTSTATUS).
+The `trng_tlm` component is a TRNG model used by the demo and
+exposes a 4-register MMIO window at `0x1470_0000`

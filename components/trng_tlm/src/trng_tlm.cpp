@@ -1,4 +1,5 @@
 // Author: hoangv11
+//verified: linhtk55-fpt
 
 #include "trng_tlm.h"
 

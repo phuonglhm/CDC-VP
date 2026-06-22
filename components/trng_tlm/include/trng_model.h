@@ -1,4 +1,5 @@
 // Author: hoangv11
+//verified: linhtk55-fpt
 
 #ifndef TRNG_MODEL_H
 #define TRNG_MODEL_H
