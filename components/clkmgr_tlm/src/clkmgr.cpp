@@ -3,8 +3,20 @@
 #include <iostream>
 #include <cstring>
 
-Clkmgr::Clkmgr(sc_core::sc_module_name name) : sc_module(name), socket("socket") {
+Clkmgr::Clkmgr(sc_core::sc_module_name name)
+    : sc_module(name)
+    , socket("socket")
+    , idle_i("idle_i", 4)
+    , io_clk_byp_req_o("io_clk_byp_req_o")
+    , io_clk_byp_ack_i("io_clk_byp_ack_i")
+{
     socket.register_b_transport(this, &Clkmgr::b_transport);
+
+    SC_THREAD(idle_qualifier_thread);
+
+    SC_METHOD(on_ast_ack_change);
+    sensitive << io_clk_byp_ack_i;
+    dont_initialize();
 }
 
 void Clkmgr::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time & delay) {
@@ -31,7 +43,7 @@ void Clkmgr::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time & del
     }
 
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
-    delay = sc_core::SC_ZERO_TIME;
+    delay += sc_core::sc_time(10, sc_core::SC_NS);
 }
 
 uint32_t Clkmgr::read_reg(sc_dt::uint64 addr) {
@@ -98,12 +110,14 @@ void Clkmgr::handle_extclk_ctrl_write(uint32_t data) {
 
     if (!currently_external && requesting_external) {
         extclk_ctrl_sel_   = mubi4::True;
-        extclk_status_ack_ = mubi4::True;
-        std::cout << "[CLKMGR] External clock ENABLED, ack=True" << std::endl;
+        io_clk_byp_req_o.write(true);
+        on_ast_ack_change();
+        std::cout << "[CLKMGR] External clock requested" << std::endl;
     } else if (currently_external && !requesting_external) {
         extclk_ctrl_sel_   = mubi4::False;
-        extclk_status_ack_ = mubi4::False;
-        std::cout << "[CLKMGR] External clock DISABLED, ack=False" << std::endl;
+        io_clk_byp_req_o.write(false);
+        on_ast_ack_change();
+        std::cout << "[CLKMGR] Internal clock requested" << std::endl;
     } else {
         std::cout << "[CLKMGR] EXTCLK_CTRL write ignored — no valid transition"
                   << std::endl;
@@ -114,23 +128,45 @@ void Clkmgr::handle_clk_hints_write(uint32_t data) {
     clk_hints_ = static_cast<uint8_t>(data & 0xf);
     recompute_hints_status();
 }
-void Clkmgr::recompute_hints_status() {
-    struct Block { int bit; const char* name; bool idle; };
-    Block blocks[4] = {
-        {0, "AES", aes_idle_},
-        {1, "HMAC", hmac_idle_},
-        {2, "KMAC", kmac_idle_},
-        {3, "OTBN", otbn_idle_},
-    };
-    for (const auto& b : blocks) {
-        bool hint_enable = (clk_hints_ >> b.bit) & 0x1;
-        if (hint_enable) {
-            clk_hints_status_ |= (1u << b.bit);
-        } else {
-            if (b.idle) {
-                clk_hints_status_ &= ~(1u << b.bit);
+
+void Clkmgr::on_ast_ack_change() {
+    extclk_status_ack_ = io_clk_byp_ack_i.read() ? mubi4::True : mubi4::False;
+}
+
+void Clkmgr::idle_qualifier_thread() {
+    for (;;) {
+        wait(sc_core::sc_time(10, sc_core::SC_NS));
+
+        bool changed = false;
+        for (int bit = 0; bit < 4; ++bit) {
+            if (idle_i[bit].read()) {
+                if (idle_high_counts_[bit] < 10) {
+                    ++idle_high_counts_[bit];
+                }
+            } else {
+                idle_high_counts_[bit] = 0;
             }
+
+            const bool qualified = idle_high_counts_[bit] >= 10;
+            if (qualified_idle_[bit] != qualified) {
+                qualified_idle_[bit] = qualified;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            recompute_hints_status();
         }
     }
 }
 
+void Clkmgr::recompute_hints_status() {
+    for (int bit = 0; bit < 4; ++bit) {
+        bool hint_enable = (clk_hints_ >> bit) & 0x1;
+        if (hint_enable) {
+            clk_hints_status_ |= (1u << bit);
+        } else if (qualified_idle_[bit]) {
+            clk_hints_status_ &= ~(1u << bit);
+        }
+    }
+}

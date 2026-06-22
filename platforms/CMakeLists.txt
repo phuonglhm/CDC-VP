@@ -28,6 +28,13 @@ if(CDC_BUILD_CUSTOM_SOC)
    endif()
 
    add_subdirectory(tests/adc_platform)
+
+   if(TARGET cdc::components::clkmgr_tlm)
+      add_subdirectory(tests/clkmgr_platform)
+   else()
+      message(STATUS "Skipping clkmgr_platform: cdc::components::clkmgr_tlm is not available")
+   endif()
+
    add_subdirectory(tests/wdt_platform)
    add_subdirectory(tests/spi_platform)
    add_subdirectory(tests/i2c_platform)

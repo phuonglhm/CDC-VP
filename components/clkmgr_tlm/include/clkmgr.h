@@ -2,6 +2,9 @@
 #ifndef CLKMGR_H
 #define CLKMGR_H
 
+#include <array>
+#include <cstdint>
+
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_target_socket.h>
@@ -18,6 +21,9 @@ namespace mubi4 {
 class Clkmgr : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<Clkmgr> socket;
+    sc_core::sc_vector<sc_core::sc_in<bool>> idle_i;
+    sc_core::sc_out<bool> io_clk_byp_req_o;
+    sc_core::sc_in<bool> io_clk_byp_ack_i;
 
     enum class LcState {
         Prod,
@@ -31,23 +37,6 @@ public:
 
     void b_transport(tlm::tlm_generic_payload& trans,
                      sc_core::sc_time& delay);
-
-    void set_aes_idle(bool idle) {
-        aes_idle_ = idle;
-        recompute_hints_status();
-    }
-    void set_hmac_idle(bool idle) {
-        hmac_idle_ = idle;
-        recompute_hints_status();
-    }
-    void set_kmac_idle(bool idle) {
-        kmac_idle_ = idle;
-        recompute_hints_status();
-    }
-    void set_otbn_idle(bool idle) {
-        otbn_idle_ = idle;
-        recompute_hints_status();
-    }
 
     void set_lc_state(LcState state) {
         lc_state_ = state;
@@ -75,11 +64,6 @@ private:
     uint8_t clk_hints_        = 0xf;
     uint8_t clk_hints_status_ = 0xf;
 
-    bool aes_idle_  = true;
-    bool hmac_idle_ = true;
-    bool kmac_idle_ = true;
-    bool otbn_idle_ = true;
-
     bool lc_debug_enabled() const {
         return lc_state_ == LcState::Test ||
                lc_state_ == LcState::Dev  ||
@@ -91,7 +75,12 @@ private:
 
     void handle_extclk_ctrl_write(uint32_t data);
     void handle_clk_hints_write(uint32_t data);
+    void on_ast_ack_change();
+    void idle_qualifier_thread();
     void recompute_hints_status();
+
+    std::array<unsigned, 4> idle_high_counts_ = {};
+    std::array<bool, 4> qualified_idle_ = {};
 };
 
 #endif
