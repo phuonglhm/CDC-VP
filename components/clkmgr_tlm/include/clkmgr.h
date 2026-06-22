@@ -47,7 +47,7 @@ private:
         REG_CLK_HINTS_STATUS = 0x20,
     };
 
-    uint8_t extclk_ctrl_sel = mubi4::False;
+    uint8_t extclk_ctrl_sel_ = mubi4::False;
     uint8_t extclk_ctrl_hispeed_ = mubi4::False;
     uint8_t extclk_status_ack_ = mubi4::False;
 

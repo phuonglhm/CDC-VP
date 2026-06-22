@@ -74,10 +74,11 @@ void Clkmgr::handle_extclk_ctrl_write(uint32_t data) {
     extclk_ctrl_hispeed_ = new_hispeed;
     bool currently_external = mubi4::test_true_strict(extclk_ctrl_sel);
     bool requesting_external = mubi4::test_true_strict(new_sel);
+    bool requesting_internal = !requesting_external;
     if (!currently_external && requesting_external) {
         extclk_ctrl_sel_ = mubi4::True;
         extclk_status_ack_ = mubi4::True;
-    } else if (currently_external && new_sel == mubi4::False) {
+    } else if (currently_external && requesting_internal) {
         extclk_ctrl_sel_ = mubi4::False;
         extclk_status_ack_ = mubi4::False;
     } else {
