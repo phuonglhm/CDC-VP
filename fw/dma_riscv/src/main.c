@@ -161,6 +161,61 @@ int main(void)
     MMIO32(DMA_INTCLR) = (1u << EVENT_DONE);
     pass &= check("INTMIS clear after INTCLR", MMIO32(DMA_INTMIS), 0u);
 
+    /* ── DMAKILL stops a running channel ── */
+    uart_puts("\n[6] DMAKILL stops a running channel\n");
+    {
+        /* Build a slow program on channel 0: infinite loop (DMALPEND forever)
+         * so the channel stays EXECUTING long enough for us to kill it. */
+        unsigned kill_pc = RAM_BASE + 0x80300u;
+        unsigned p = kill_pc;
+        MMIO8(p) = 0x18u; p += 1;             /* DMANOP */
+        unsigned loop_body = p;
+        MMIO8(p) = 0x18u; p += 1;             /* DMANOP (loop body) */
+        unsigned loop_end = p;
+        MMIO8(p) = 0x28u;                     /* DMALPEND forever, backwards jump */
+        MMIO8(p + 1) = (unsigned char)(loop_end - loop_body + 1u);
+        p += 2;
+
+        /* Launch channel 0 again (it's STOPPED from test 3-5, so this is OK) */
+        MMIO32(DMA_DBGINST0) = (0xA0u << 16) | (0x00u << 24);
+        MMIO32(DMA_DBGINST1) = kill_pc;
+        MMIO32(DMA_DBGCMD)   = 0u;
+
+        unsigned csr_running = MMIO32(DMA_CSR0);
+        pass &= check("channel running before kill", csr_running & 0xFu, 0x1u /* STATUS_EXECUTING */);
+
+        /* DBGINST0 for DMAKILL: channel_thread=1, channel=0, opcode=0x01 in byte0 */
+        MMIO32(DMA_DBGINST0) = (0x01u << 16) | (0x00u << 24) | (0u << 8) | 1u;
+        MMIO32(DMA_DBGINST1) = 0u;
+        MMIO32(DMA_DBGCMD)   = 0u;
+
+        unsigned csr_after_kill = MMIO32(DMA_CSR0);
+        pass &= check("channel stopped after DMAKILL", csr_after_kill & 0xFu, STATUS_STOPPED);
+    }
+
+    /* ── undefined opcode triggers a fault ── */
+    uart_puts("\n[7] Undefined opcode triggers a fault on channel 1\n");
+    {
+        const unsigned DMA_CSR1 = DMA_BASE + 0x108u;  /* CSR0 + 1*stride(0x008) */
+        const unsigned DMA_FTR1 = DMA_BASE + 0x044u;  /* FTR0 + 1*4 */
+        const unsigned FTR_UNDEF_INSTR = (1u << 0);
+
+        unsigned bad_pc = RAM_BASE + 0x80400u;
+        MMIO8(bad_pc) = 0xFFu; /* not a valid DMA-330 opcode */
+
+        /* Launch channel 1 (byte1 channel field, DBGINST0 bits[10:8]) */
+        MMIO32(DMA_DBGINST0) = (0xA0u << 16) | (0x01u << 24);
+        MMIO32(DMA_DBGINST1) = bad_pc;
+        MMIO32(DMA_DBGCMD)   = 0u;
+
+        for (volatile int i = 0; i < 1000; i++) { }  
+        unsigned csr1 = MMIO32(DMA_CSR1);
+        pass &= check("channel 1 faulting", csr1 & 0xFu, 0xFu /* STATUS_FAULTING */);
+
+        unsigned ftr1 = MMIO32(DMA_FTR1);
+        pass &= check("FTR1 has UNDEF_INSTR bit", ftr1 & FTR_UNDEF_INSTR, FTR_UNDEF_INSTR);
+    }
+
     /* ── Result ── */
     uart_puts("\n");
     uart_puts(pass ? "DMA PASS\n" : "DMA FAIL\n");
