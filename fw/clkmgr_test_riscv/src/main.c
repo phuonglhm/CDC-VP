@@ -1,4 +1,5 @@
 //Author: QuanNH107
+//Verified: trangmn20
 
 /* OpenTitan clkmgr behavioral firmware for clkmgr_platform.
  *

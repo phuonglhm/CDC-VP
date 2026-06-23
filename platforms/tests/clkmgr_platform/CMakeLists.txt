@@ -1,4 +1,5 @@
 #Author: QuanNH107
+#Verified: trangnm20
 
 add_executable(clkmgr_platform
     src/main.cpp
