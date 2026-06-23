@@ -1,4 +1,6 @@
 //Author: trangnm20
+//Verified: QuanNH107
+
 #include "clkmgr.h"
 #include <iostream>
 #include <cstring>

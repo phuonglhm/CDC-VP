@@ -1,4 +1,5 @@
 //Author: trangnm20
+//Verified: QuanNH107
 #ifndef CLKMGR_H
 #define CLKMGR_H
 
