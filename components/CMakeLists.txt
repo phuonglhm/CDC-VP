@@ -25,6 +25,11 @@ add_subdirectory(spi_tlm)
 add_subdirectory(clint_tlm)
 add_subdirectory(plic_tlm)
 add_subdirectory(pwm_tlm)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pmu_tlm/CMakeLists.txt")
+   add_subdirectory(pmu_tlm)
+endif()
+
 add_subdirectory(wdt_tlm)
 add_subdirectory(dma_tlm)
 add_subdirectory(trng_tlm)
