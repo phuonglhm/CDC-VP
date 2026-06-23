@@ -1,23 +1,3 @@
-cmake_minimum_required(VERSION 3.16)
-project(pmu_tlm LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-# Optional: tests toggle like in your example
-option(CDC_BUILD_TESTS "Build tests" OFF)
-
-# SystemC
-set(SYSTEMC_HOME "/opt/systemc-2.3.4")
-
-add_library(SystemC::systemc UNKNOWN IMPORTED)
-set_target_properties(SystemC::systemc PROPERTIES
-    IMPORTED_LOCATION "${SYSTEMC_HOME}/lib/libsystemc.so"
-    INTERFACE_INCLUDE_DIRECTORIES "${SYSTEMC_HOME}/include"
-)
-
-# Main library
 add_library(pmu_tlm STATIC
     src/pmu.cpp
 )
@@ -37,30 +17,22 @@ target_link_libraries(pmu_tlm
         SystemC::systemc
 )
 
-# Testbench executable
-add_executable(tb
-    src/testbench.cpp
-)
+# Optional standalone PMU testbench.
+# Use pmu_tb instead of tb to avoid target name conflict with other components.
+if(CDC_BUILD_TESTS)
+    add_executable(pmu_tb
+        src/testbench.cpp
+    )
 
-target_link_libraries(tb
-    PRIVATE
-        pmu_tlm
-)
+    target_link_libraries(pmu_tb
+        PRIVATE
+            pmu_tlm
+    )
+endif()
 
-# Runtime search path for libsystemc.so
-set_target_properties(tb PROPERTIES
-    BUILD_RPATH "${SYSTEMC_HOME}/lib"
-)
-
-# Install rules
 install(TARGETS pmu_tlm EXPORT cdc-components-targets
     ARCHIVE DESTINATION lib
     INCLUDES DESTINATION include
 )
 
 install(DIRECTORY include/ DESTINATION include)
-
-# Optional tests folder
-if(CDC_BUILD_TESTS)
-    add_subdirectory(tests)
-endif()

@@ -1,0 +1,53 @@
+platform: pmu_platform
+
+cpu:
+  backend: riscv_vp
+  xlen: 32
+
+memory_map:
+  clint:
+    base: 0x02000000
+    size: 0x10000
+    irq: MSIP/MTIP
+
+  plic:
+    base: 0x0C000000
+    size: 0x400000
+    irq: MEIP
+
+  uart0:
+    base: 0x10000000
+    size: 0x1000
+    irq: none
+
+  pmu0:
+    base: 0x10070000
+    size: 0x1000
+    irq:
+      controller: plic
+      source: 1
+
+  ram:
+    base: 0x80000000
+    size: 0x100000
+
+interrupts:
+  plic_sources:
+    1: pmu0.wakeup_irq
+
+pmu_boot_env:
+  por_rst_n:
+    reset_value: 0
+    release_after_ns: 100
+
+  boot_done_sequence:
+    otp_done_after_ns: 150
+    lc_done_after_ns: 170
+    rom_done_after_ns: 220
+
+  fixed_inputs:
+    rom_good: true
+    flash_idle: true
+    lc_test_state: true
+    main_pok: true
+    esc_clk_alive: true

@@ -41,6 +41,12 @@ if(CDC_BUILD_CUSTOM_SOC)
    add_subdirectory(tests/dma_platform)
    add_subdirectory(tests/dmic_platform)
 
+   if(TARGET cdc::components::pmu_tlm)
+      add_subdirectory(tests/pmu_platform)
+   else()
+      message(STATUS "Skipping pmu_platform: cdc::components::pmu_tlm is not available")
+   endif()
+
    if(TARGET cdc::components::timer_tlm)
       add_subdirectory(tests/timer_platform)
    else()
