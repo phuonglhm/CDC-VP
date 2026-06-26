@@ -5,7 +5,7 @@
 
 #include <bus_router.h>
 #include <clint_tlm.h>
-#include <i2c_tlm.h>
+#include <i2c.h>
 #include <memory_tlm.h>
 #include <plic_tlm.h>
 #include <uart_tlm.h>
@@ -48,7 +48,7 @@ struct riscv_custom_soc_top::impl : public sc_core::sc_module {
     cdc::components::uart_tlm uart;
     cdc::components::clint_tlm clint;
     cdc::components::plic_tlm plic;
-    cdc::components::i2c_tlm i2c;
+    i2c i2c0;
     sc_core::sc_signal<bool> i2c_irq;
 
     impl(sc_core::sc_module_name name, const std::string& config_path)
@@ -59,7 +59,7 @@ struct riscv_custom_soc_top::impl : public sc_core::sc_module {
         , uart("uart")
         , clint("clint", cpu)   // CLINT drives timer/software interrupts (MTIP/MSIP)
         , plic("plic", cpu, kNumPlicSources)  // PLIC drives external interrupts (MEIP)
-        , i2c("i2c")
+        , i2c0("i2c0")
         , i2c_irq("i2c_irq")
     {
         if (cpu.has_unified_bus()) {
@@ -73,10 +73,10 @@ struct riscv_custom_soc_top::impl : public sc_core::sc_module {
         bus.add_target(kUartBase, kRegionSize).bind(uart.socket);
         bus.add_target(kClintBase, kClintSize).bind(clint.socket);
         bus.add_target(kPlicBase, kPlicSize).bind(plic.socket);
-        bus.add_target(kI2cBase, kRegionSize).bind(i2c.socket);
+        bus.add_target(kI2cBase, kRegionSize).bind(i2c0.socket);
 
         // I2C interrupt line -> PLIC source 1.
-        i2c.irq_out(i2c_irq);
+        i2c0.irq(i2c_irq);
         plic.irq_in[0](i2c_irq);
 
         if (!config_path.empty()) {

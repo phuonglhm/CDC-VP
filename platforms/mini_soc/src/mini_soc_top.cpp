@@ -12,8 +12,8 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include <bus_router.h>
+#include <i2c.h>
 #include <memory_tlm.h>
-#include <i2c_tlm.h>
 #include <uart_tlm.h>
 
 namespace cdc::platforms::mini_soc {
@@ -52,7 +52,7 @@ namespace cdc::platforms::mini_soc {
                 write32(ki2cBase + 0x4C, 0x1U);  // IIER  : bật interrupt enable cho TRANSFER_DONE (bit0)
                 write32(ki2cBase + 0x00, 0x1U);  // IER   : bật nguồn IP
                 write32(ki2cBase + 0x04, 0x1U);  // ICTLR : START -> serviceController() set TRANSFER_DONE
-                // sau write này hasInterrupt()==true -> i2c_tlm.update_irq() kéo irq_out lên
+                // sau write này hasInterrupt()==true -> I2C kéo irq lên
                 wait(i2c_irq.posedge_event());
                 write_uart("I2C IRQ fired\n");   // sửa luôn chữ "at 10ms" (I2C không có 10ms)
 
@@ -132,7 +132,7 @@ namespace cdc::platforms::mini_soc {
     cpu_stub cpu;
     cdc::components::bus_router bus;
     cdc::components::uart_tlm uart;
-    cdc::components::i2c_tlm i2c;
+    i2c i2c0;
     cdc::components::memory_tlm ram;
     sc_core::sc_signal<bool> i2c_irq; // sợi dây vật lý
 
@@ -141,7 +141,7 @@ namespace cdc::platforms::mini_soc {
         , cpu("cpu")
         , bus("bus", 3)
         , uart("uart")
-        , i2c("i2c")
+        , i2c0("i2c0")
         , ram("ram", kRegionSize_ram)
         , i2c_irq("i2c_irq")
     {
@@ -150,11 +150,11 @@ namespace cdc::platforms::mini_soc {
 
         // duyptt note: nối day và memory map
         bus.add_target(kUartBase, kRegionSize).bind(uart.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho uart 
-        bus.add_target(ki2cBase, kRegionSize).bind(i2c.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho i2c
+        bus.add_target(ki2cBase, kRegionSize).bind(i2c0.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho i2c
         bus.add_target(kRamBase, kRegionSize_ram).bind(ram.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho ram 
 
         // dây tín hiệu IRQ 
-        i2c.irq_out(i2c_irq); // đầu ra của i2c hàn vào dây.
+        i2c0.irq(i2c_irq); // đầu ra của i2c hàn vào dây.
         cpu.i2c_irq(i2c_irq); // đầu vào của CPU hàn vào cùng dây đó
 
         if (!config_path.empty()) {
