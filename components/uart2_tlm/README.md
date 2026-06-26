@@ -1,9 +1,9 @@
 **Model Overview:**
 UART TlM for ARM PrimeCell PL011 UART.
-Structure: master_tb.h for testing, top.h for future expansion (not important rn), uart.h for behavior
+Structure: `include/uart.h` for behavior, `tests/master_tb.h` for testing, and `tests/top.h` for the test harness.
 
 **Run instructions:**
-Type 'make main' in terminal. (make clean to clean outputs)
+Type `make` in terminal, then run `./test_uart2_tlm`. Use `make clean` to clean outputs.
 
 **Note**
 - See implemented flags in uart.h, if you don't see a flag (OERIS overrun error, LBE loopback empty, etc.), i did not implement it.

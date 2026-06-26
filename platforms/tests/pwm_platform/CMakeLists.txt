@@ -1,9 +1,7 @@
 add_executable(pwm_platform
     src/main.cpp
     src/pwm_platform_top.cpp)
-target_include_directories(pwm_platform PRIVATE
-    src
-    ${CMAKE_SOURCE_DIR}/components/pwm_tlm)
+target_include_directories(pwm_platform PRIVATE src)
 target_compile_definitions(pwm_platform PRIVATE CDC_CPU_BACKEND_${CDC_CPU_BACKEND})
 target_link_libraries(pwm_platform PRIVATE
     SystemC::systemc

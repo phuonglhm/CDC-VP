@@ -2,7 +2,8 @@
 # Builds the needed upstream core sources (NOT its Memory/BusCtrl/Simulator/Trace/
 # Timer — we use our own components) together with the thin wrapper.
 
-set(MARIUSMM_DIR ${CMAKE_SOURCE_DIR}/third_party/RISC-V-TLM)
+set(MARIUSMM_DIR "${CMAKE_SOURCE_DIR}/third_party/RISC-V-TLM"
+    CACHE PATH "Path to mariusmm RISC-V-TLM checkout")
 
 if(NOT EXISTS "${MARIUSMM_DIR}/src/CPU.cpp")
     message(FATAL_ERROR

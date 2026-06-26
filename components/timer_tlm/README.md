@@ -8,9 +8,9 @@ A SystemC/TLM-2.0 model of a programmable APB timer, used in the SSE-100 subsyst
 
 | File | Description |
 |---|---|
-| `timer.h` | Timer module declaration, register offsets, control bit masks |
-| `timer.cpp` | Timer implementation — register access and countdown thread |
-| `main.cpp` | Testbench — programs the timer and runs the simulation |
+| `include/timer.h` | Timer module declaration, register offsets, control bit masks |
+| `src/timer.cpp` | Timer implementation — register access and countdown thread |
+| `tests/test_timer_tlm.cpp` | Testbench — programs the timer and runs the simulation |
 
 ---
 
@@ -52,8 +52,8 @@ A SystemC/TLM-2.0 model of a programmable APB timer, used in the SSE-100 subsyst
 ## Build
 
 ```bash
-make tb
-./tb
+make
+./test_timer_tlm
 ```
 
 ---

@@ -14,22 +14,27 @@ This is not a full OpenTitan RTL implementation. It is a functional TLM abstract
 
 ```text
 otp_tlm/
-├── otp.h
-├── otp.cpp
-├── tb.cpp
+├── include/
+│   └── otp.h
+├── src/
+│   └── otp.cpp
+├── tests/
+│   ├── CMakeLists.txt
+│   └── tb.cpp
 ├── Makefile
 ├── CMakeLists.txt
 └── README.md
 ```
 
-| File             | Description                       |
-| ---------------- | --------------------------------- |
-| `otp.h`          | Header file for the OTP TLM model |
-| `otp.cpp`        | OTP controller implementation     |
-| `tb.cpp`         | SystemC/TLM testbench             |
-| `Makefile`       | Build script using `make`         |
-| `CMakeLists.txt` | Build script using CMake          |
-| `README.md`      | Documentation                     |
+| File                         | Description                       |
+| ---------------------------- | --------------------------------- |
+| `include/otp.h`              | Header file for the OTP TLM model |
+| `src/otp.cpp`                | OTP controller implementation     |
+| `tests/tb.cpp`               | SystemC/TLM testbench             |
+| `tests/CMakeLists.txt`       | CMake test target                 |
+| `Makefile`                   | Build script using `make`         |
+| `CMakeLists.txt`             | Build script using CMake          |
+| `README.md`                  | Documentation                     |
 
 ---
 

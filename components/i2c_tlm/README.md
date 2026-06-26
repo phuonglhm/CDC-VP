@@ -56,9 +56,14 @@ The peripheral exposes a memory-mapped register interface through a TLM target s
 
 ```text
 components/i2c_tlm/
-├── i2c.h
-├── i2c.cpp
-├── main.cpp
+├── include/
+│   └── i2c.h
+├── src/
+│   └── i2c.cpp
+├── tests/
+│   ├── CMakeLists.txt
+│   └── test_i2c_tlm.cpp
+├── CMakeLists.txt
 ├── Makefile
 └── README.md
 ```

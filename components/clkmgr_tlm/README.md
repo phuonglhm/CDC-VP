@@ -83,8 +83,9 @@ make
 clkmgr_tlm/
 ├── include/clkmgr.h
 ├── src/clkmgr.cpp
+├── tests/CMakeLists.txt
+├── tests/clkmgr_sim.cpp
 ├── tests/test_clkmgr_tlm.cpp
-├── main.cpp
 ├── Makefile
 └── CMakeLists.txt
 

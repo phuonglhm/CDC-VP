@@ -14,6 +14,7 @@ namespace {
 // Top of the riscv_cpu_eval RAM region (0x80000000 + 64 KiB). Used as the initial
 // stack pointer; the bare-metal startup overwrites SP anyway.
 constexpr std::uint32_t kInitialSp = 0x8001'0000u;
+constexpr std::uint32_t kResetPc = 0x8000'0000u;
 
 // Single-core bus lock: there is never contention, so locking is trivial.
 struct trivial_bus_lock : public bus_lock_if {
@@ -111,6 +112,9 @@ void riscv_vp_cpu::load_elf(const std::string& path)
 void riscv_vp_cpu::start_of_simulation()
 {
     if (elf_path_.empty()) {
+        entry_pc_ = kResetPc;
+        impl_->iss.init(&impl_->mem_if, &impl_->mem_if, &impl_->clint,
+                        static_cast<std::uint32_t>(entry_pc_), kInitialSp);
         return;
     }
     // Load the image into memory via the (now-bound) bus, then point the ISS at it.

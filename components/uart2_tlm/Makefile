@@ -1,49 +1,40 @@
-CXX      := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
+CXX ?= g++
 
-# Hardcoded paths to your working C++17 SystemC installation
-# NO HARD CODE
-SYSTEMC_HOME := /usr/local/systemc-2.3.4
-CXXFLAGS     += -isystem $(SYSTEMC_HOME)/include
-LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
+SYSTEMC_HOME ?= /opt/systemc-2.3.4
+CXXSTD ?= c++17
 
-# Target library
-LIBS := -lsystemc
+SYSTEMC_INC := $(SYSTEMC_HOME)/include
+SYSTEMC_LIB := $(firstword \
+	$(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-11.5/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-12.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-10.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-9.3/libsystemc.so*) \
+)
 
-# Directories and target
-SRC_DIR := src
-OBJ_DIR := build
-BIN_DIR := out
-TARGET  := $(BIN_DIR)/main
+ifeq ($(SYSTEMC_LIB),)
+$(error Cannot find libsystemc.so under $(SYSTEMC_HOME))
+endif
 
-SRCS := $(wildcard $(SRC_DIR)/*.cpp)
-OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
-DEPS := $(OBJS:.o=.d)
+SYSTEMC_LIB_DIR := $(dir $(SYSTEMC_LIB))
 
-.PHONY: all main run clean
+TARGET := test_uart2_tlm
+SRCS := src/uart.cpp tests/test_uart2_tlm.cpp tests/master_tb.cpp tests/top.cpp
+
+CXXFLAGS := -std=$(CXXSTD) -g -O0 -Wall -Wextra -I$(SYSTEMC_INC) -Iinclude -Itests
+LDFLAGS := $(SYSTEMC_LIB) -Wl,-rpath,$(SYSTEMC_LIB_DIR)
 
 all: $(TARGET)
 
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
-
-$(OBJ_DIR):
-	mkdir -p $(OBJ_DIR)
-
-# Compile source files into object files
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
-
-# Link object files into final executable (Objects MUST precede -lsystemc)
-$(TARGET): $(OBJS) | $(BIN_DIR)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
-
--include $(DEPS)
+$(TARGET): $(SRCS) include/uart.h tests/master_tb.h tests/top.h
+	$(CXX) $(CXXFLAGS) -o $@ $(SRCS) $(LDFLAGS)
 
 run: $(TARGET)
 	./$(TARGET)
 
-main: run
-
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -f $(TARGET) *.o src/*.o tests/*.o *.vcd
+
+.PHONY: all run clean

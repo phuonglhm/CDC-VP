@@ -5,30 +5,38 @@ CXXSTD ?= c++17
 
 TARGET := otp_tlm
 
-SRCS := otp.cpp tb.cpp
+SRCS := src/otp.cpp tests/tb.cpp
 OBJS := $(SRCS:.cpp=.o)
 
 SYSTEMC_INCLUDE_DIR := $(SYSTEMC_HOME)/include
 
-ifeq ($(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.so),$(SYSTEMC_HOME)/lib-linux64/libsystemc.so)
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib-linux64
-else ifeq ($(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.so),$(SYSTEMC_HOME)/lib64/libsystemc.so)
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib64
-else
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib
+SYSTEMC_LIB := $(firstword \
+	$(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-11.5/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-12.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-10.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-9.3/libsystemc.so*) \
+)
+
+ifeq ($(SYSTEMC_LIB),)
+$(error Cannot find libsystemc.so under $(SYSTEMC_HOME))
 endif
 
-CXXFLAGS := -std=$(CXXSTD) -g -O0 -Wall -Wextra -I$(SYSTEMC_INCLUDE_DIR)
+SYSTEMC_LIB_DIR := $(dir $(SYSTEMC_LIB))
 
-LDFLAGS := -L$(SYSTEMC_LIB_DIR) -Wl,-rpath,$(SYSTEMC_LIB_DIR)
-LDLIBS := -lsystemc -lm -pthread
+CXXFLAGS := -std=$(CXXSTD) -g -O0 -Wall -Wextra -I$(SYSTEMC_INCLUDE_DIR) -Iinclude
+
+LDFLAGS := $(SYSTEMC_LIB) -Wl,-rpath,$(SYSTEMC_LIB_DIR)
+LDLIBS := -lm -pthread
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-%.o: %.cpp otp.h
+%.o: %.cpp include/otp.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 run: $(TARGET)

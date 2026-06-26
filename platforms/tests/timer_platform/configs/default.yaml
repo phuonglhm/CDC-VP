@@ -1,4 +1,4 @@
-platform: adc_platform
+platform: timer_platform
 
 cpu:
   backend: riscv_vp
@@ -17,12 +17,6 @@ memory_map:
     base: 0x10000000
     size: 0x1000
     irq: none
-  # adc0:
-  #   base: 0x10060000
-  #   size: 0x1000
-  #   irq:
-  #     controller: plic
-  #     source: 1
   timer0:
     base: 0x10030000
     size: 0x1000
@@ -37,4 +31,4 @@ memory_map:
 
 interrupts:
   plic_sources:
-    2: timer0.irq_out
+    1: timer0.irq_out

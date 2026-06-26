@@ -2,47 +2,39 @@ CXX ?= g++
 
 SYSTEMC_HOME ?= /opt/systemc-2.3.4
 CXXSTD ?= c++17
-USE_PKG_CONFIG ?= 0
 
-PKG_CFLAGS := $(shell pkg-config --cflags systemc 2>/dev/null)
-PKG_LIBS := $(shell pkg-config --libs systemc 2>/dev/null)
+SYSTEMC_INC := $(SYSTEMC_HOME)/include
+SYSTEMC_LIB := $(firstword \
+	$(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-11.5/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-12.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-10.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-9.3/libsystemc.so*) \
+)
 
-ifndef SYSTEMC_LIB_DIR
-ifneq ($(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.*),)
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib-linux64
-else ifneq ($(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.*),)
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib64
-else
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib
+ifeq ($(SYSTEMC_LIB),)
+$(error Cannot find libsystemc.so under $(SYSTEMC_HOME))
 endif
-endif
 
-CXXFLAGS ?= -std=$(CXXSTD) -g -O0 -Wall
-CXXFLAGS += -Iinclude
-
-ifeq ($(USE_PKG_CONFIG),1)
-CXXFLAGS += $(PKG_CFLAGS)
-LDLIBS += $(PKG_LIBS) -lm
-else
-CXXFLAGS += -I$(SYSTEMC_HOME)/include
-LDFLAGS += -L$(SYSTEMC_LIB_DIR)
-LDFLAGS += -Wl,-rpath,$(SYSTEMC_LIB_DIR)
-LDLIBS += -lsystemc -lm
-endif
+SYSTEMC_LIB_DIR := $(dir $(SYSTEMC_LIB))
 
 TARGET := i2c_sim
-SRCS := src/i2c.cpp main.cpp
-OBJS := $(SRCS:.cpp=.o)
+SRCS := src/i2c.cpp tests/test_i2c_tlm.cpp
+
+CXXFLAGS := -std=$(CXXSTD) -g -O0 -Wall -Wextra -I$(SYSTEMC_INC) -Iinclude
+LDFLAGS := $(SYSTEMC_LIB) -Wl,-rpath,$(SYSTEMC_LIB_DIR) -lm
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+$(TARGET): $(SRCS) include/i2c.h
+	$(CXX) $(CXXFLAGS) -o $@ $(SRCS) $(LDFLAGS)
 
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+run: $(TARGET)
+	./$(TARGET)
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(TARGET) *.o src/*.o tests/*.o
 
-.PHONY: all clean
+.PHONY: all run clean

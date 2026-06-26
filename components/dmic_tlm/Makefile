@@ -1,53 +1,40 @@
-# Compiler
-CXX      := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
+CXX ?= g++
 
-SYSTEMC_HOME := $(HOME)/.local
+SYSTEMC_HOME ?= /opt/systemc-2.3.4
+CXXSTD ?= c++17
 
-ifeq ($(wildcard $(SYSTEMC_HOME)/include/systemc.h),)
-$(error SystemC header not found in $(SYSTEMC_HOME)/include. Build/install SystemC 2.3.4 into $(SYSTEMC_HOME) or change this Makefile.)
+SYSTEMC_INC := $(SYSTEMC_HOME)/include
+SYSTEMC_LIB := $(firstword \
+	$(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-11.5/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-12.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-10.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-9.3/libsystemc.so*) \
+)
+
+ifeq ($(SYSTEMC_LIB),)
+$(error Cannot find libsystemc.so under $(SYSTEMC_HOME))
 endif
 
-CXXFLAGS     += -isystem $(SYSTEMC_HOME)/include
-LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
+SYSTEMC_LIB_DIR := $(dir $(SYSTEMC_LIB))
 
-# Target library
-LIBS := -lsystemc
+TARGET := test_dmic_tlm
+SRCS := src/dmic.cpp tests/test_dmic_tlm.cpp tests/testbench.cpp
 
-# Directories and target
-SRC_DIR := src
-OBJ_DIR := build
-BIN_DIR := out
-TARGET  := $(BIN_DIR)/main
-
-SRCS := $(wildcard $(SRC_DIR)/*.cpp)
-OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
-DEPS := $(OBJS:.o=.d)
-
-.PHONY: all main run clean
+CXXFLAGS := -std=$(CXXSTD) -g -O0 -Wall -Wextra -I$(SYSTEMC_INC) -Iinclude -Itests
+LDFLAGS := $(SYSTEMC_LIB) -Wl,-rpath,$(SYSTEMC_LIB_DIR)
 
 all: $(TARGET)
 
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
-
-$(OBJ_DIR):
-	mkdir -p $(OBJ_DIR)
-
-# Compile source files into object files
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
-
-# Link object files into final executable (Objects MUST precede -lsystemc)
-$(TARGET): $(OBJS) | $(BIN_DIR)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
-
--include $(DEPS)
+$(TARGET): $(SRCS) include/dmic.h include/pdm_payload.h tests/testbench.h
+	$(CXX) $(CXXFLAGS) -o $@ $(SRCS) $(LDFLAGS)
 
 run: $(TARGET)
 	./$(TARGET)
 
-main: run
-
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -f $(TARGET) *.o src/*.o tests/*.o *.vcd
+
+.PHONY: all run clean

@@ -17,22 +17,13 @@ target_link_libraries(pmu_tlm
         SystemC::systemc
 )
 
-# Optional standalone PMU testbench.
-# Use pmu_tb instead of tb to avoid target name conflict with other components.
-if(CDC_BUILD_TESTS)
-    add_executable(pmu_tb
-        src/testbench.cpp
-    )
-
-    target_link_libraries(pmu_tb
-        PRIVATE
-            pmu_tlm
-    )
-endif()
-
 install(TARGETS pmu_tlm EXPORT cdc-components-targets
     ARCHIVE DESTINATION lib
     INCLUDES DESTINATION include
 )
 
 install(DIRECTORY include/ DESTINATION include)
+
+if(CDC_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

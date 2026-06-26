@@ -25,7 +25,7 @@ memory_map:
     size: 0x1000
     irq:
       controller: plic
-      source: 2
+      source: 1
 
   ram:
     base: 0x80000000
@@ -33,4 +33,4 @@ memory_map:
 
 interrupts:
   plic_sources:
-    2: i2c0.irq
+    1: i2c0.irq

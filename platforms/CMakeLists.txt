@@ -40,6 +40,7 @@ if(CDC_BUILD_CUSTOM_SOC)
    add_subdirectory(tests/i2c_platform)
    add_subdirectory(tests/dma_platform)
    add_subdirectory(tests/dmic_platform)
+   add_subdirectory(tests/pwm_platform)
 
    if(TARGET cdc::components::pmu_tlm)
       add_subdirectory(tests/pmu_platform)

@@ -278,9 +278,14 @@ DUTY_CYCLE_0 = 0x0000FFFF; // almost 100%
 
 ```text
 pwm_tlm/
-├── pwm.h
-├── pwm.cpp
-├── tb.cpp
+├── include/
+│   └── pwm.h
+├── src/
+│   └── pwm.cpp
+├── tests/
+│   ├── CMakeLists.txt
+│   └── tb.cpp
+├── CMakeLists.txt
 ├── Makefile
 ├── README.md
 └── wave.vcd
@@ -292,7 +297,7 @@ pwm_tlm/
 
 ## File Description
 
-### pwm.h
+### include/pwm.h
 
 Contains:
 
@@ -303,7 +308,7 @@ Contains:
 * Internal register storage
 * PWM thread declaration
 
-### pwm.cpp
+### src/pwm.cpp
 
 Contains:
 
@@ -314,7 +319,7 @@ Contains:
 * PWM period calculation from `CFG`
 * Channel 0 waveform generation
 
-### tb.cpp
+### tests/tb.cpp
 
 Contains:
 
@@ -349,8 +354,9 @@ Check SystemC installation:
 
 ```bash
 ls -l /opt/systemc-2.3.4/include
-ls -l /opt/systemc-2.3.4/lib/libsystemc.so
-ls -l /opt/systemc-2.3.4/lib-linux64/libsystemc.so
+ls -l /opt/systemc-2.3.4/lib64/libsystemc.so*
+ls -l /opt/systemc-2.3.4/lib/libsystemc.so*
+ls -l /opt/systemc-2.3.4/lib-linux64/libsystemc.so*
 ```
 
 Depending on the machine, `libsystemc.so` may be located in:
@@ -359,6 +365,7 @@ Depending on the machine, `libsystemc.so` may be located in:
 /opt/systemc-2.3.4/lib
 /opt/systemc-2.3.4/lib-linux64
 /opt/systemc-2.3.4/lib64
+/opt/arm/fastmodels/SystemC/Accellera/SystemC/dynlib/Linux64_GCC-*
 ```
 
 The Makefile can auto-detect these common locations.
@@ -394,7 +401,7 @@ Or run directly:
 Expected build command example:
 
 ```text
-g++ -std=c++17 -g -O0 -Wall -I/opt/systemc-2.3.4/include -o pwm_tb tb.cpp pwm.cpp /opt/systemc-2.3.4/lib/libsystemc.so -Wl,-rpath,/opt/systemc-2.3.4/lib/
+g++ -std=c++17 -g -O0 -Wall -I/opt/systemc-2.3.4/include -Iinclude -o pwm_tb tests/tb.cpp src/pwm.cpp /opt/systemc-2.3.4/lib64/libsystemc.so.2.3.4 -Wl,-rpath,/opt/systemc-2.3.4/lib64/
 ```
 
 ---

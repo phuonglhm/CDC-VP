@@ -22,7 +22,7 @@ std::string get_opt(int argc, char *argv[], const std::string &name, const std::
 } // namespace
 
 int sc_main(int argc, char *argv[]) {
-   const std::string config = get_opt(argc, argv, "-c", "platforms/tests/wdt_platform/configs/default.yaml");
+   const std::string config = get_opt(argc, argv, "-c", "platforms/tests/trng_platform/configs/default.yaml");
    const std::string fw = get_opt(argc, argv, "--fw", "");
 
    const std::uint64_t quantum_ns = std::stoull(get_opt(argc, argv, "--quantum", "1000"));

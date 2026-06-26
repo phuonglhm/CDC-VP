@@ -1,4 +1,4 @@
-platform: adc_platform
+platform: trng_platform
 
 cpu:
   backend: riscv_vp

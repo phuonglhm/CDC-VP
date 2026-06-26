@@ -1,11 +1,8 @@
 add_executable(i2c_platform
     src/main.cpp
-    src/i2c_platform_top.cpp
-    ${CMAKE_SOURCE_DIR}/components/i2c_tlm/src/i2c.cpp)
+    src/i2c_platform_top.cpp)
 
-target_include_directories(i2c_platform PRIVATE
-    src
-    ${CMAKE_SOURCE_DIR}/components/i2c_tlm)
+target_include_directories(i2c_platform PRIVATE src)
 
 target_compile_definitions(i2c_platform PRIVATE CDC_CPU_BACKEND_${CDC_CPU_BACKEND})
 
@@ -17,6 +14,7 @@ target_link_libraries(i2c_platform PRIVATE
     cdc::components::uart_tlm
     cdc::components::clint_tlm
     cdc::components::plic_tlm
+    cdc::components::i2c_tlm
     cdc::cpu::${CDC_CPU_BACKEND})
 
 add_custom_command(TARGET i2c_platform POST_BUILD

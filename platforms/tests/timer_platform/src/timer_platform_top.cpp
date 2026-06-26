@@ -61,7 +61,10 @@ struct timer_platform_top::impl : public sc_core::sc_module {
        , uart("uart")
        , clint("clint", cpu)
        , plic("plic", cpu, kNumPlicSources)
-       , timer("timer", sc_core::sc_time(10, sc_core::SC_NS))
+       , timer("timer",
+               1, 2, 3, 4, 5, 6, 7, 8,
+               1, 2, 3, 4,
+               sc_core::sc_time(10, sc_core::SC_NS))
        , timer_irq("timer_irq") {
       
       if (cpu.has_unified_bus()) {

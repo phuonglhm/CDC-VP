@@ -5,64 +5,38 @@ CXX ?= g++
 SYSTEMC_HOME ?= /opt/systemc-2.3.4
 CXXSTD ?= c++17
 
-TARGET := pmu_tb
-BUILD_DIR := build
+SYSTEMC_INC := $(SYSTEMC_HOME)/include
+SYSTEMC_LIB := $(firstword \
+	$(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/lib/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-11.5/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-12.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-10.3/libsystemc.so*) \
+	$(wildcard $(SYSTEMC_HOME)/dynlib/Linux64_GCC-9.3/libsystemc.so*) \
+)
 
-SRC_DIR := src
-INC_DIR := include
-
-SRCS := \
-	$(SRC_DIR)/pmu.cpp \
-	$(SRC_DIR)/testbench.cpp
-
-OBJS := \
-	$(BUILD_DIR)/pmu.o \
-	$(BUILD_DIR)/testbench.o
-
-# Detect SystemC library directory
-ifndef SYSTEMC_LIB_DIR
-ifneq ($(wildcard $(SYSTEMC_HOME)/lib-linux64/libsystemc.*),)
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib-linux64
-else ifneq ($(wildcard $(SYSTEMC_HOME)/lib64/libsystemc.*),)
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib64
-else
-SYSTEMC_LIB_DIR := $(SYSTEMC_HOME)/lib
-endif
+ifeq ($(SYSTEMC_LIB),)
+$(error Cannot find libsystemc.so under $(SYSTEMC_HOME))
 endif
 
-CXXFLAGS ?= -std=$(CXXSTD) -g -O0 -Wall -Wextra
-CXXFLAGS += -I$(INC_DIR)
-CXXFLAGS += -I$(SYSTEMC_HOME)/include
+SYSTEMC_LIB_DIR := $(dir $(SYSTEMC_LIB))
 
-LDFLAGS += -L$(SYSTEMC_LIB_DIR)
-LDFLAGS += -Wl,-rpath,$(SYSTEMC_LIB_DIR)
+TARGET := test_pmu_tlm
+SRCS := src/pmu.cpp tests/test_pmu_tlm.cpp
 
-LDLIBS += -lsystemc
-
-.PHONY: all run clean info
+CXXFLAGS := -std=$(CXXSTD) -g -O0 -Wall -Wextra -I$(SYSTEMC_INC) -Iinclude
+LDFLAGS := $(SYSTEMC_LIB) -Wl,-rpath,$(SYSTEMC_LIB_DIR)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
+$(TARGET): $(SRCS) include/pmu.h
+	$(CXX) $(CXXFLAGS) -o $@ $(SRCS) $(LDFLAGS)
 
-$(BUILD_DIR)/pmu.o: $(SRC_DIR)/pmu.cpp $(INC_DIR)/pmu.h | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/testbench.o: $(SRC_DIR)/testbench.cpp $(INC_DIR)/pmu.h | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
-
-run: all
+run: $(TARGET)
 	./$(TARGET)
 
-info:
-	@echo "CXX              = $(CXX)"
-	@echo "SYSTEMC_HOME     = $(SYSTEMC_HOME)"
-	@echo "SYSTEMC_LIB_DIR  = $(SYSTEMC_LIB_DIR)"
-	@echo "TARGET           = $(TARGET)"
-
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) *.vcd
+	rm -f $(TARGET) *.o src/*.o tests/*.o *.vcd
+
+.PHONY: all run clean

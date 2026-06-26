@@ -1,7 +1,7 @@
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_initiator_socket.h>
-#include "include/i2c.h"
+#include "i2c.h"
 
 using namespace sc_core;
 

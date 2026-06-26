@@ -1,4 +1,4 @@
-platform: adc_platform
+platform: uart_platform
 
 cpu:
   backend: riscv_vp
@@ -22,5 +22,4 @@ memory_map:
     size: 0x100000
 
 interrupts:
-  plic_sources:
-    1: adc0.irq_out
+  plic_sources: {}

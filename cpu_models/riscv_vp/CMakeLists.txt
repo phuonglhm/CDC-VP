@@ -3,7 +3,9 @@
 # sources + rv32 (iss, syscall). Deliberately avoids gdb-mc / platforms / boost
 # iostreams (we use our own elf_loader, not Bremen's).
 
-set(BREMEN ${CMAKE_SOURCE_DIR}/third_party/riscv-vp/vp/src)
+set(RISCV_VP_DIR "${CMAKE_SOURCE_DIR}/third_party/riscv-vp"
+    CACHE PATH "Path to Bremen riscv-vp checkout")
+set(BREMEN "${RISCV_VP_DIR}/vp/src")
 
 if(NOT EXISTS "${BREMEN}/core/rv32/iss.cpp")
     message(FATAL_ERROR
