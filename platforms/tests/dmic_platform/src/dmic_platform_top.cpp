@@ -33,12 +33,12 @@ constexpr std::uint64_t kClintSize = 0x0001'0000;
 constexpr std::uint64_t kPlicBase = 0x0C00'0000;
 constexpr std::uint64_t kPlicSize = 0x0040'0000;
 constexpr std::uint64_t kUartBase = 0x1000'0000;
-constexpr std::uint64_t kdmicBase = 0x1006'0000;
+constexpr std::uint64_t kdmicBase = 0x100A'0000;
 constexpr std::uint64_t kMmioSize = 0x1000;
 constexpr std::uint64_t kRamBase = 0x8000'0000;
 constexpr std::uint64_t kRamSize = 0x0010'0000;
 
-constexpr unsigned kNumPlicSources = 1;
+constexpr unsigned kNumPlicSources = 12;
 
 } // namespace
 
@@ -56,6 +56,7 @@ struct dmic_platform_top::impl : public sc_core::sc_module {
    cdc::components::DmicTLM dmic;
    sc_core::sc_signal<bool> reset_n;
    sc_core::sc_signal<bool, sc_core::SC_MANY_WRITERS> dmic_irq;
+   sc_core::sc_signal<bool> dummy_irq;
    tlm_utils::simple_initiator_socket<impl> pdm_dummy_socket;
 
    impl(sc_core::sc_module_name name, const std::string &config_path)
@@ -97,17 +98,20 @@ struct dmic_platform_top::impl : public sc_core::sc_module {
       // dmic kéo dmic_irq lên mức 1 khi có sự kiện ngắt.
       dmic.reset_n(reset_n);
       dmic.irq_out(dmic_irq);
-      // PLIC nhận tín hiệu này ở irq_in[0]. Lưu ý: irq_in[index] tương ứng
-      // PLIC source id = index + 1 (source 0 bị reserve theo chuẩn RISC-V),
-      // nên đây là PLIC source 1. PLIC sẽ báo external interrupt (MEIP) về CPU.
-      plic.irq_in[0](dmic_irq);
+      for (unsigned i = 0; i < kNumPlicSources; ++i) {
+         if (i == 11) {
+            plic.irq_in[i](dmic_irq);
+         } else {
+            plic.irq_in[i](dummy_irq);
+         }
+      }
 
       if (!config_path.empty()) {
          std::cout << "dmic_platform config: " << config_path << '\n';
          std::cout << "cpu backend: " << cpu.backend_name() << '\n';
          std::cout << "memory map: RAM=0x80000000 UART=0x10000000 "
-                   << "CLINT=0x02000000 PLIC=0x0C000000 dmic=0x10060000\n";
-         std::cout << "irq map: dmic0 -> PLIC source 1 -> MEIP\n";
+                   << "CLINT=0x02000000 PLIC=0x0C000000 dmic=0x100A0000\n";
+         std::cout << "irq map: dmic0 -> PLIC source 12 -> MEIP\n";
          std::cout << "reset map: DMIC reset_n active-low, assert at 0ns, release at 100ns\n";
       }
    }

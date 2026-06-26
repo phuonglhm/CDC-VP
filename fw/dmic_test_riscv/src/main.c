@@ -9,12 +9,12 @@
 
 #define UART_TX (*(volatile unsigned char *)0x10000000u)
 
-#define PLIC_PRIORITY1_ADDR 0x0C000004u
+#define PLIC_PRIORITY12_ADDR 0x0C000030u
 #define PLIC_ENABLE_ADDR 0x0C002000u
 #define PLIC_THRESHOLD_ADDR 0x0C200000u
 #define PLIC_CLAIM_ADDR 0x0C200004u
 
-#define DMIC_BASE_ADDR 0x10060000u
+#define DMIC_BASE_ADDR 0x100A0000u
 #define DMIC_CTRL_ADDR (DMIC_BASE_ADDR + 0x00u)
 #define DMIC_STATUS_ADDR (DMIC_BASE_ADDR + 0x04u)
 #define DMIC_DATA_ADDR (DMIC_BASE_ADDR + 0x08u)
@@ -96,7 +96,7 @@ void __attribute__((interrupt("machine"))) trap_handler(void) {
 
    if ((mcause & 0x7FFFFFFFu) == 11u) {
       const unsigned id = mmio_read32("PLIC_CLAIM", PLIC_CLAIM_ADDR);
-      if (id == 1u) {
+      if (id == 12u) {
          dmic_sample = mmio_read32("DMIC_DATA", DMIC_DATA_ADDR);
          dmic_irq_done = 1u;
          uart_puts("DMIC IRQ triggered\n");
@@ -118,8 +118,8 @@ int main(void) {
 
    __asm__ volatile("csrw mtvec, %0" ::"r"(trap_handler));
 
-   mmio_write32("PLIC_PRIORITY1", PLIC_PRIORITY1_ADDR, 1u);
-   mmio_write32("PLIC_ENABLE", PLIC_ENABLE_ADDR, (1u << 1));
+   mmio_write32("PLIC_PRIORITY12", PLIC_PRIORITY12_ADDR, 1u);
+   mmio_write32("PLIC_ENABLE", PLIC_ENABLE_ADDR, (1u << 12));
    mmio_write32("PLIC_THRESHOLD", PLIC_THRESHOLD_ADDR, 0u);
 
    unsigned tmp;

@@ -18,15 +18,15 @@ memory_map:
     size: 0x1000
     irq: none
   dmic:
-    base: 0x10060000
+    base: 0x100A0000
     size: 0x1000
     irq:
       controller: plic
-      source: 1
+      source: 12
   ram:
     base: 0x80000000
     size: 0x100000
 
 interrupts:
   plic_sources:
-    1: dmic.irq_out
+    12: dmic.irq_out
