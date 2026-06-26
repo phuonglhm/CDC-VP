@@ -1,5 +1,5 @@
 #Author: trangmn20
-
+#Verified by: QuanNH107
 add_executable(dma_platform
     src/main.cpp
     src/dma_platform_top.cpp)

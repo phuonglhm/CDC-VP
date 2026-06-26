@@ -1,4 +1,5 @@
 //Author: trangmn20
+//Verified by: QuanNH107 
 
 #include "dma_platform_top.h"
 
