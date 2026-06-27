@@ -14,7 +14,7 @@
 #include <bus_router.h>
 #include <i2c.h>
 #include <memory_tlm.h>
-#include <uart_tlm.h>
+#include <uart.h>
 
 namespace cdc::platforms::mini_soc {
     namespace {
@@ -131,7 +131,9 @@ namespace cdc::platforms::mini_soc {
     struct mini_soc_top::impl : public sc_core::sc_module {
     cpu_stub cpu;
     cdc::components::bus_router bus;
-    cdc::components::uart_tlm uart;
+    UartTLM uart;
+   sc_core::sc_buffer<unsigned char> uart_tx;
+   sc_core::sc_signal<bool> uart_irq;
     i2c i2c0;
     cdc::components::memory_tlm ram;
     sc_core::sc_signal<bool> i2c_irq; // sợi dây vật lý
@@ -141,6 +143,8 @@ namespace cdc::platforms::mini_soc {
         , cpu("cpu")
         , bus("bus", 3)
         , uart("uart")
+       , uart_tx("uart_tx")
+       , uart_irq("uart_irq")
         , i2c0("i2c0")
         , ram("ram", kRegionSize_ram)
         , i2c_irq("i2c_irq")
@@ -149,7 +153,9 @@ namespace cdc::platforms::mini_soc {
         cpu.bus_socket.bind(bus.target_socket); 
 
         // duyptt note: nối day và memory map
-        bus.add_target(kUartBase, kRegionSize).bind(uart.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho uart 
+        bus.add_target(kUartBase, kRegionSize).bind(uart.bus);
+      uart.tx(uart_tx);
+      uart.irq(uart_irq); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho uart 
         bus.add_target(ki2cBase, kRegionSize).bind(i2c0.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho i2c
         bus.add_target(kRamBase, kRegionSize_ram).bind(ram.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho ram 
 

@@ -11,9 +11,10 @@ int sc_main(int argc, char* argv[]) {
     master.host0_tx_mon.bind(top.host0_tx_sig);
     // bind master driver to top UART rx channel
     master.host0_rx_drv.bind(top.host_uart0.rx);
+    master.host0_irq_mon.bind(top.host0_irq_sig);
 
     std::cout << "Starting simulation" << std::endl;
     sc_start();
     std::cout << "Simulation done" << std::endl;
-    return 0;
+    return MasterTB::failure_count() == 0 ? 0 : 1;
 }

@@ -29,6 +29,8 @@ public:
         dont_initialize();
     }
 
+    int fails = 0; // non-zero -> test failed
+
 private:
     static constexpr uint32_t REG_INTR_STATE               = 0x000;
     static constexpr uint32_t REG_INTR_ENABLE              = 0x004;
@@ -81,6 +83,7 @@ private:
         if (rdata == 0x12345678) {
             std::cout << "[TB] PASS: read data matched\n";
         } else {
+            ++fails;
             std::cout << "[TB] FAIL: read data mismatch\n";
         }
 
@@ -197,6 +200,7 @@ private:
         if (err == 0 && (status & 0xE) == 0) {
             std::cout << "[TB] PASS: no error\n";
         } else {
+            ++fails;
             std::cout << "[TB] FAIL: unexpected error, STATUS=0x"
                       << std::hex << status
                       << " ERR_CODE_0=0x" << err
@@ -213,6 +217,7 @@ private:
                       << " detected, ERR_CODE_0=0x"
                       << std::hex << err << std::dec << "\n";
         } else {
+            ++fails;
             std::cout << "[TB] FAIL: expected ERR_CODE_0=0x"
                       << std::hex << expected
                       << ", got 0x" << err << std::dec << "\n";
@@ -303,5 +308,6 @@ int sc_main(int argc, char* argv[])
 
     sc_start();
 
-    return 0;
+    std::cout << "\n[TB] OTP failures: " << tb0.fails << "\n";
+    return tb0.fails == 0 ? 0 : 1;
 }

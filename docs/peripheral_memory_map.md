@@ -60,7 +60,7 @@ KiB later without changing its base address.
 | BOOTROM0 | `0x0000_0000` | `0x0001_0000` | `0x0000_FFFF` | optional ROM | Optional first-stage boot image. Not required when loading firmware ELF directly to RAM. |
 | CLINT0 | `0x0200_0000` | `0x0001_0000` | `0x0200_FFFF` | MMIO | RISC-V local MSIP/MTIP source. |
 | PLIC0 | `0x0C00_0000` | `0x0040_0000` | `0x0C3F_FFFF` | MMIO | External interrupt controller, hart0 M-mode context. |
-| UART0 | `0x1000_0000` | `0x0000_1000` | `0x1000_0FFF` | MMIO | Console UART. Selected model is `uart2_tlm` (PL011-style). IRQ output port must be added to the model (see PLIC IRQ Map). |
+| UART0 | `0x1000_0000` | `0x0000_1000` | `0x1000_0FFF` | MMIO | Console UART. Selected model is `uart2_tlm` (PL011-style). Exposes `sc_out<bool> irq` (combined UARTINTR) for the PLIC. |
 | I2C0 | `0x1001_0000` | `0x0000_1000` | `0x1001_0FFF` | MMIO | I2C controller. |
 | SPI0 | `0x1002_0000` | `0x0000_1000` | `0x1002_0FFF` | MMIO | SPI controller. |
 | TIMER0 | `0x1003_0000` | `0x0000_1000` | `0x1003_0FFF` | MMIO | Peripheral timer, separate from CLINT `mtime/mtimecmp`. |
@@ -180,7 +180,7 @@ architecture and must not be assigned.
 
 | PLIC Source | Signal | Status | Notes |
 |---:|---|---|---|
-| 1 | `uart0.irq` | assigned (pending IRQ port) | UART0 (`uart2_tlm`, PL011). Register-level interrupt logic exists; `uart2_tlm` must add an `sc_out<bool> irq` output before this can bind to the PLIC. |
+| 1 | `uart0.irq` | assigned | UART0 (`uart2_tlm`, PL011). Level-sensitive combined UARTINTR via `sc_out<bool> irq`. |
 | 2 | `i2c0.irq` | assigned | Current I2C model output is `irq`. |
 | 3 | `spi0.irq` / `spi0.intr` | assigned | Existing SPI tests already use source 3. |
 | 4 | `timer0.irq_out` | assigned | Peripheral timer interrupt. |
@@ -197,7 +197,7 @@ architecture and must not be assigned.
 | 15 | `isp0.irq` | reserved | Planned ISP interrupt. Tie low until the ISP model exposes an IRQ output. |
 | 16 | `vpu0.irq` | reserved | Planned VPU interrupt. Tie low until the VPU model exposes an IRQ output. |
 | 17 | `npu0.irq` | reserved | Planned NPU interrupt. Tie low until the NPU model exposes an IRQ output. |
-| 18 | `uart1.irq` | assigned (pending IRQ port) | Second UART (`uart2_tlm`, PL011). Same IRQ-port dependency as UART0. |
+| 18 | `uart1.irq` | assigned | Second UART (`uart2_tlm`, PL011). Same `sc_out<bool> irq` contract as UART0. |
 | 19 | `i2c1.irq` | assigned | Second I2C interrupt. |
 | 20 | `spi1.irq` | assigned | Second SPI interrupt. |
 | 21 | `timer1.irq_out` | assigned | Second peripheral timer interrupt. |
@@ -219,7 +219,7 @@ handles default-low signals safely.
 
 | IP | Bus socket | IRQ/reset notes |
 |---|---|---|
-| UART0 | `UartTLM::bus` (`uart2_tlm`) | Selected model: `uart2_tlm` (PL011). TX via `sc_out<unsigned char> tx`. Needs an `sc_out<bool> irq` added to drive the PLIC. |
+| UART0 | `UartTLM::bus` (`uart2_tlm`) | Selected model: `uart2_tlm` (PL011). TX via `sc_out<unsigned char> tx`. IRQ port is `irq` (level-sensitive UARTINTR) to the PLIC. |
 | I2C0 | `i2c::socket` | IRQ port is `irq`. |
 | SPI0 | `spi_tlm::socket` | IRQ port is `irq` in the component implementation; platform logs may call it `intr`. |
 | TIMER0 | `Timer::socket` | IRQ port is `irq_out`. |
@@ -236,7 +236,7 @@ handles default-low signals safely.
 | ISP0 | planned target + master sockets | Planned IP. MMIO controls the job; master socket reads RAW_IN0 and writes ISP_OUT0. |
 | VPU0 | planned target + master sockets | Planned IP. MMIO controls the job; master socket reads ISP_OUT0 and writes VPU_OUT0. |
 | NPU0 | planned target + master sockets | Planned IP. MMIO controls the job; master socket reads VPU_OUT0 and NPU_WEIGHTS0, then writes tensors/results to NPU_WORK0. |
-| UART1 | `UartTLM::bus` (`uart2_tlm`) | Second instance; identical socket/IRQ contract to UART0. |
+| UART1 | `UartTLM::bus` (`uart2_tlm`) | Second instance; identical socket/IRQ contract to UART0 (`irq` port). |
 | I2C1 | `i2c::socket` | IRQ port is `irq`. |
 | SPI1 | `spi_tlm::socket` | IRQ port is `irq`. |
 | TIMER1 | `Timer::socket` | IRQ port is `irq_out`. |
@@ -294,7 +294,7 @@ Use these constants in firmware headers and platform top-level code:
 ```
 
 ```c
-#define CDC_IRQ_UART0       1u  /* uart2_tlm; needs sc_out<bool> irq added */
+#define CDC_IRQ_UART0       1u  /* uart2_tlm irq (combined UARTINTR) */
 #define CDC_IRQ_I2C0        2u
 #define CDC_IRQ_SPI0        3u
 #define CDC_IRQ_TIMER0      4u
@@ -311,7 +311,7 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_IRQ_ISP0       15u  /* reserved until ISP IRQ is modeled */
 #define CDC_IRQ_VPU0       16u  /* reserved until VPU IRQ is modeled */
 #define CDC_IRQ_NPU0       17u  /* reserved until NPU IRQ is modeled */
-#define CDC_IRQ_UART1      18u  /* uart2_tlm; needs sc_out<bool> irq added */
+#define CDC_IRQ_UART1      18u  /* uart2_tlm irq (combined UARTINTR) */
 #define CDC_IRQ_I2C1       19u
 #define CDC_IRQ_SPI1       20u
 #define CDC_IRQ_TIMER1     21u

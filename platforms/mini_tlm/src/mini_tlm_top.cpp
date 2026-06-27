@@ -13,8 +13,8 @@
 
 #include <bus_router.h>
 #include <memory_tlm.h>
-#include <timer_tlm.h>
-#include <uart_tlm.h>
+#include <timer.h>
+#include <uart.h>
 
 namespace cdc::platforms::mini_tlm {
 namespace {
@@ -146,7 +146,9 @@ private:
 struct mini_tlm_top::impl : public sc_core::sc_module {
     cpu_stub cpu;
     cdc::components::bus_router bus;
-    cdc::components::uart_tlm uart;
+    UartTLM uart;
+   sc_core::sc_buffer<unsigned char> uart_tx;
+   sc_core::sc_signal<bool> uart_irq;
     cdc::components::timer_tlm timer;
     cdc::components::memory_tlm ram;
     sc_core::sc_signal<bool> timer_irq; // sợi dây vật lý
@@ -156,6 +158,8 @@ struct mini_tlm_top::impl : public sc_core::sc_module {
         , cpu("cpu")
         , bus("bus", 3)
         , uart("uart")
+       , uart_tx("uart_tx")
+       , uart_irq("uart_irq")
         , timer("timer")
         , ram("ram", kRegionSize)
         , timer_irq("timer_irq")
@@ -164,7 +168,9 @@ struct mini_tlm_top::impl : public sc_core::sc_module {
         cpu.bus_socket.bind(bus.target_socket); 
 
         // duyptt note: nối day và memory map
-        bus.add_target(kUartBase, kRegionSize).bind(uart.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho uart 
+        bus.add_target(kUartBase, kRegionSize).bind(uart.bus);
+      uart.tx(uart_tx);
+      uart.irq(uart_irq); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho uart 
         bus.add_target(kTimerBase, kRegionSize).bind(timer.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho timer
         bus.add_target(kRamBase, kRegionSize).bind(ram.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho ram 
 

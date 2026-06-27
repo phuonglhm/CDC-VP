@@ -43,9 +43,9 @@ namespace cdc::components {
     SC_MODULE(Timer) {
         public:
             tlm_utils::simple_target_socket<Timer> socket;
-            sc_in<bool> prstn;
+            sc_in<bool> reset_n;
             sc_in<bool> extin;
-            sc_out<bool> timerint;
+            sc_out<bool> irq_out;
 
             void b_transport(tlm::tlm_generic_payload& trans, sc_time& delay);
             SC_HAS_PROCESS(Timer);

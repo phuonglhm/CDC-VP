@@ -5,8 +5,8 @@
 
 #include <bus_router.h>
 #include <memory_tlm.h>
-#include <timer_tlm.h>
-#include <uart_tlm.h>
+#include <timer.h>
+#include <uart.h>
 
 // Select the concrete CPU backend at build time (CDC_CPU_BACKEND via CMake).
 #if defined(CDC_CPU_BACKEND_riscv_vp)
@@ -39,9 +39,13 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
     cpu_backend_t cpu;
     cdc::components::bus_router bus;
     cdc::components::memory_tlm ram;
-    cdc::components::uart_tlm uart;
-    cdc::components::timer_tlm timer;
+    UartTLM uart;
+   sc_core::sc_buffer<unsigned char> uart_tx;
+   sc_core::sc_signal<bool> uart_irq;
+    cdc::components::Timer timer;
     sc_core::sc_signal<bool> timer_irq;
+    sc_core::sc_signal<bool> timer_rst_n;
+    sc_core::sc_signal<bool> timer_extin;
 
     impl(sc_core::sc_module_name name, const std::string& config_path)
         : sc_core::sc_module(name)
@@ -49,8 +53,15 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
         , bus("bus", /*num_targets=*/3, cpu.has_unified_bus() ? 1u : 2u)
         , ram("ram", kRamSize)
         , uart("uart")
-        , timer("timer", sc_core::sc_time(50, sc_core::SC_US))
+       , uart_tx("uart_tx")
+       , uart_irq("uart_irq")
+        , timer("timer",
+                1, 2, 3, 4, 5, 6, 7, 8,
+                1, 2, 3, 4,
+                sc_core::sc_time(50, sc_core::SC_US))
         , timer_irq("timer_irq")
+        , timer_rst_n("timer_rst_n")
+        , timer_extin("timer_extin")
     {
         // Bremen exposes one combined bus; mariusmm has separate instr/data buses.
         if (cpu.has_unified_bus()) {
@@ -61,8 +72,17 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
         }
 
         bus.add_target(kRamBase, kRamSize).bind(ram.socket);
-        bus.add_target(kUartBase, kRegionSize).bind(uart.socket);
+        bus.add_target(kUartBase, kRegionSize).bind(uart.bus);
+      uart.tx(uart_tx);
+      uart.irq(uart_irq);
         bus.add_target(kTimerBase, kRegionSize).bind(timer.socket);
+
+        // Timer also has reset_n (active-low) and external-clock inputs that must
+        // be bound: hold reset de-asserted, leave the external clock low.
+        timer.reset_n(timer_rst_n);
+        timer.extin(timer_extin);
+        timer_rst_n.write(true);
+        timer_extin.write(false);
 
         // IRQ bridge: convert the timer's signal edge into a machine-timer
         // interrupt injected into the real CPU.

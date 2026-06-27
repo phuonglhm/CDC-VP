@@ -82,15 +82,26 @@ void Host_CPU::cpu_firmware()
     uint32_t ctrl_setup = (64 << DMIC_CTRL_DEC_SHIFT) | DMIC_CTRL_INT_EN | DMIC_CTRL_EN;
     write_reg(DMIC_CTRL_REG, ctrl_setup);
 
+    // Verify the control register reflects enable, interrupt-enable and the
+    // programmed decimation factor.
+    uint32_t ctrl_rb = read_reg(DMIC_CTRL_REG);
+    ctrl_ok = (ctrl_rb & DMIC_CTRL_EN) && (ctrl_rb & DMIC_CTRL_INT_EN) &&
+              (((ctrl_rb & DMIC_CTRL_DEC_MASK) >> DMIC_CTRL_DEC_SHIFT) == 64);
+
     // 3. Main Operating Loop
     while (true)
     {
         wait(irq_in->posedge_event());
+        ++irq_count;
 
         std::cout << "\n[CPU] Hardware Interrupt fired at " << sc_time_stamp() << "\n";
 
         // Read Status Register
         uint32_t status = read_reg(DMIC_STATUS_REG);
+
+        // Every interrupt must carry a watermark or overrun cause.
+        if (!(status & (DMIC_STATUS_WM | DMIC_STATUS_OE)))
+            irq_status_ok = false;
 
         if (status & DMIC_STATUS_OE)
         { // Check Overrun Error
@@ -101,12 +112,14 @@ void Host_CPU::cpu_firmware()
 
         if (status & DMIC_STATUS_WM)
         { // Check Watermark
+            ++wm_events;
             std::cout << "[CPU] Watermark Reached. Offloading FIFO...\n";
 
             // Read out the 16 samples
             for (int i = 0; i < 16; i++)
             {
                 int32_t sample = read_reg(DMIC_FIFO_DATA_REG);
+                ++samples_read;
                 std::cout << "      PCM[" << i << "]: " << sample << "\n";
             }
         }

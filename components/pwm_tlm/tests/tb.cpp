@@ -13,6 +13,7 @@ class TB : public sc_module
 {
 public:
     tlm_utils::simple_initiator_socket<TB> socket;
+    int fails = 0; // counts TLM response errors on valid accesses
 
     SC_HAS_PROCESS(TB);
 
@@ -49,6 +50,7 @@ public:
 
         if(trans.get_response_status() != TLM_OK_RESPONSE)
         {
+            ++fails;
             std::cout
                 << "WRITE ERROR addr=0x"
                 << std::hex
@@ -90,6 +92,7 @@ public:
 
         if(trans.get_response_status() != TLM_OK_RESPONSE)
         {
+            ++fails;
             std::cout
                 << "READ ERROR addr=0x"
                 << std::hex
@@ -238,5 +241,6 @@ int sc_main(int argc, char* argv[])
         tf
     );
 
-    return 0;
+    std::cout << "\n[TB] PWM TLM response errors: " << tb.fails << std::endl;
+    return tb.fails == 0 ? 0 : 1;
 }

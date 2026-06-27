@@ -135,6 +135,8 @@ public:
       SC_THREAD(run);
    }
 
+   unsigned int errors() const { return m_errors; }
+
 private:
    static const uint32_t PROGRAM_ADDR = 0x00000100;
    static const uint32_t SRC_ADDR = 0x00000200;
@@ -368,5 +370,5 @@ int sc_main(int argc, char *argv[]) {
    rst_n_sig.write(true);
    sc_core::sc_start();
 
-   return 0;
+   return tb.errors() == 0 ? 0 : 1;
 }

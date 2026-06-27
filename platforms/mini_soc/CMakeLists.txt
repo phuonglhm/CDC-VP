@@ -21,7 +21,7 @@ target_link_libraries(mini_soc PRIVATE
     cdc::components::common
     cdc::components::bus_router
     cdc::components::memory_tlm
-    cdc::components::uart_tlm
+    cdc::components::uart2_tlm
     cdc::components::i2c_tlm)
 
 add_custom_command(TARGET mini_soc POST_BUILD

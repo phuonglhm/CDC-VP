@@ -8,7 +8,7 @@ target_link_libraries(mini_tlm PRIVATE
     cdc::components::common
     cdc::components::bus_router
     cdc::components::memory_tlm
-    cdc::components::uart_tlm
+    cdc::components::uart2_tlm
     cdc::components::timer_tlm)
 
 add_custom_command(TARGET mini_tlm POST_BUILD

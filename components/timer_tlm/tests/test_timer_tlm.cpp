@@ -15,9 +15,9 @@ using namespace sc_dt;
 namespace cdc::components {
 SC_MODULE(Testbench) {
     tlm_utils::simple_initiator_socket<Testbench> socket;
-    sc_out<bool> prstn;
+    sc_out<bool> reset_n;
     sc_out<bool> extin;
-    sc_in<bool>  timerint;
+    sc_in<bool>  irq_out;
  
     void write_reg(uint32_t addr, uint32_t data) {
         tlm::tlm_generic_payload trans;
@@ -82,21 +82,22 @@ SC_MODULE(Testbench) {
     }
  
     void do_reset() {
-        prstn.write(false);
+        reset_n.write(false);
         wait(SC_ZERO_TIME);
-        prstn.write(true);
+        reset_n.write(true);
         wait(SC_ZERO_TIME);
     }
  
+    int failures = 0;
     void pass(const char* name) { cout << "[PASS] " << name << " @ " << sc_time_stamp() << endl; }
-    void fail(const char* name) { cout << "[FAIL] " << name << " @ " << sc_time_stamp() << endl; }
+    void fail(const char* name) { ++failures; cout << "[FAIL] " << name << " @ " << sc_time_stamp() << endl; }
  
     //RUN ALL TESTS
     void run() {
-        // bring prstn high so timer leaves reset
-        prstn.write(false);
+        // bring reset_n high so timer leaves reset
+        reset_n.write(false);
         wait(SC_ZERO_TIME);
-        prstn.write(true);
+        reset_n.write(true);
         wait(SC_ZERO_TIME);
         extin.write(false);
         wait(SC_ZERO_TIME);
@@ -105,8 +106,8 @@ SC_MODULE(Testbench) {
         cout << "\n=== TEST 1: basic interrupt ===" << endl;
         write_reg(ADDR::RELOAD, 5);
         write_reg(ADDR::CTRL,   OPS::ENABLE | OPS::INTR_EN);
-        wait(timerint.posedge_event());
-        if (timerint.read())
+        wait(irq_out.posedge_event());
+        if (irq_out.read())
             pass("basic interrupt fired");
         else
             fail("basic interrupt fired");
@@ -116,7 +117,7 @@ SC_MODULE(Testbench) {
         // clear interrupt
         write_reg(ADDR::INTSTATUS, 0x1);
         wait(SC_ZERO_TIME);
-        if (!timerint.read()) pass("interrupt cleared"); else fail("interrupt cleared");
+        if (!irq_out.read()) pass("interrupt cleared"); else fail("interrupt cleared");
         // disable timer
         write_reg(ADDR::CTRL, 0);
  
@@ -127,8 +128,8 @@ SC_MODULE(Testbench) {
         write_reg(ADDR::CTRL, OPS::ENABLE);   // no INTR_EN
         // wait long enough for the counter to expire
         wait(5 * sc_time(20, SC_NS));
-        if (!timerint.read()) pass("timerint not asserted without INTR_EN");
-        else                   fail("timerint not asserted without INTR_EN");
+        if (!irq_out.read()) pass("irq_out not asserted without INTR_EN");
+        else                   fail("irq_out not asserted without INTR_EN");
         uint32_t status = read_reg(ADDR::INTSTATUS);
         if (status) pass("intr_status set without INTR_EN"); else fail("intr_status set without INTR_EN");
         write_reg(ADDR::CTRL, 0);
@@ -168,11 +169,11 @@ SC_MODULE(Testbench) {
         write_reg(ADDR::RELOAD, 50);
         write_reg(ADDR::CTRL, OPS::ENABLE | OPS::INTR_EN);
         wait(3 * sc_time(20, SC_NS));
-        prstn.write(false);
+        reset_n.write(false);
         wait(SC_ZERO_TIME);
         // registers should be cleared
         // (timer_thread is now in reset(), blocked on posedge)
-        prstn.write(true);
+        reset_n.write(true);
         wait(SC_ZERO_TIME);
         uint32_t ctrl_after = read_reg(ADDR::CTRL);
         uint32_t val_after2 = read_reg(ADDR::VALUE);
@@ -194,7 +195,7 @@ SC_MODULE(Testbench) {
         else                   fail("timer paused with EXT_EN and extin=0");
         // now let it run
         extin.write(true);
-        wait(timerint.posedge_event());
+        wait(irq_out.posedge_event());
         pass("timer ran after extin=1 with EXT_EN");
         write_reg(ADDR::INTSTATUS, 0x1);
         write_reg(ADDR::CTRL, 0);
@@ -213,7 +214,7 @@ SC_MODULE(Testbench) {
             extin.write(false);
             wait(SC_ZERO_TIME);
         }
-        if (timerint.read()) pass("EXT_CLK interrupt after 4 edges");
+        if (irq_out.read()) pass("EXT_CLK interrupt after 4 edges");
         else                  fail("EXT_CLK interrupt after 4 edges");
         write_reg(ADDR::INTSTATUS, 0x1);
         write_reg(ADDR::CTRL, 0);
@@ -225,7 +226,7 @@ SC_MODULE(Testbench) {
         write_reg(ADDR::CTRL, OPS::ENABLE | OPS::INTR_EN);
         int count = 0;
         while (count < 3) {
-            wait(timerint.posedge_event());
+            wait(irq_out.posedge_event());
             count++;
             write_reg(ADDR::INTSTATUS, 0x1);
             wait(SC_ZERO_TIME);
@@ -265,19 +266,21 @@ int sc_main(int argc, char* argv[]) {
     1, 2, 3, 4, 5, 6, 7, 8,
     1, 2, 3, 4);
  
-    sc_signal<bool> sig_prstn, sig_extin, sig_timerint;
+    sc_signal<bool> sig_reset_n, sig_extin, sig_irq_out;
  
     tb->socket.bind(timer->socket);
-    tb->prstn.bind(sig_prstn);
+    tb->reset_n.bind(sig_reset_n);
     tb->extin.bind(sig_extin);
-    tb->timerint.bind(sig_timerint);
-    timer->prstn.bind(sig_prstn);
+    tb->irq_out.bind(sig_irq_out);
+    timer->reset_n.bind(sig_reset_n);
     timer->extin.bind(sig_extin);
-    timer->timerint.bind(sig_timerint);
+    timer->irq_out.bind(sig_irq_out);
  
     sc_start();
- 
+
+    int rc = tb->failures;
+    cout << "\n=== Timer test failures: " << rc << " ===" << endl;
     delete tb;
     delete timer;
-    return 0;
+    return rc == 0 ? 0 : 1;
 }

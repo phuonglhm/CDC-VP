@@ -17,7 +17,7 @@ Small SoC platform for Timer IP verification with a Bremen `riscv-vp` RV32 CPU.
 
 | Source | Signal | Destination |
 |---:|---|---|
-| 1 | `timer.timerint` | PLIC source 1 -> CPU MEIP |
+| 1 | `timer.irq_out` | PLIC source 1 -> CPU MEIP |
 
 ## Run
 

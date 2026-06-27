@@ -12,6 +12,7 @@ class Top : public sc_module {
     UartTLM host_uart0;
 
     sc_signal<unsigned char> host0_tx_sig;
+    sc_signal<bool> host0_irq_sig;
 
     // SC_HAS_PROCESS(Top);
     Top(sc_module_name name);
