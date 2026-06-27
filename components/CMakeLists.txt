@@ -36,6 +36,7 @@ add_subdirectory(trng_tlm)
 add_subdirectory(dmic_tlm)
 add_subdirectory(flash_nor_tlm)
 add_subdirectory(qspi_tlm)
+add_subdirectory(rtc_tlm)
 
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
 install(EXPORT cdc-components-targets
