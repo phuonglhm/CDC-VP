@@ -5,9 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 THIRD_PARTY_DIR="${REPO_ROOT}/third_party"
 
-RISCV_TLM_URL="https://github.com/mariusmm/RISC-V-TLM.git"
-RISCV_TLM_COMMIT="4b949664194799ac5d3331d0ed408445f81accc8"
-
 RISCV_VP_URL="https://github.com/agra-uni-bremen/riscv-vp.git"
 RISCV_VP_COMMIT="48b2f5877b2368cc466fb0da155db349e676c0b0"
 
@@ -62,9 +59,6 @@ setup_repo() {
 }
 
 mkdir -p "${THIRD_PARTY_DIR}"
-
-setup_repo "RISC-V-TLM" "${RISCV_TLM_URL}" "${RISCV_TLM_COMMIT}" \
-    "${THIRD_PARTY_DIR}/RISC-V-TLM"
 
 setup_repo "Bremen riscv-vp" "${RISCV_VP_URL}" "${RISCV_VP_COMMIT}" \
     "${THIRD_PARTY_DIR}/riscv-vp"

@@ -15,8 +15,8 @@ option(CDC_BUILD_CPU_EVAL "Build RISC-V CPU evaluation platform (Step 2)" ON)
 option(CDC_BUILD_CUSTOM_SOC "Build RISC-V custom SoC platform (Step 3)" ON)
 option(CDC_BUILD_TESTS "Build component/platform tests" ON)
 
-set(CDC_CPU_BACKEND "riscv_tlm" CACHE STRING "CPU backend: riscv_tlm (mariusmm), riscv_vp (Bremen)")
-set_property(CACHE CDC_CPU_BACKEND PROPERTY STRINGS riscv_tlm riscv_vp)
+set(CDC_CPU_BACKEND "riscv_vp" CACHE STRING "CPU backend: riscv_vp (Bremen riscv-vp, MIT)")
+set_property(CACHE CDC_CPU_BACKEND PROPERTY STRINGS riscv_vp)
 
 set(SYSTEMC_HOME "/opt/systemc-2.3.4" CACHE PATH "SystemC installation prefix")
 

@@ -13,20 +13,12 @@
 #include <plic_tlm.h>
 #include <uart.h>
 
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 #include <riscv_vp_wrapper.h>
-#else
-#include <riscv_tlm_wrapper.h>
-#endif
 
 namespace cdc::platforms::tests::wdt_platform {
 namespace {
 
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 using cpu_backend_t = cdc::cpu::riscv_vp_cpu;
-#else
-using cpu_backend_t = cdc::cpu::riscv_tlm_cpu;
-#endif
 // Memory map của platform: base address + size cho từng vùng.
 // Hardcode tại đây (chưa đọc từ YAML). CPU truy cập một địa chỉ ->
 // bus_router decode xem nó rơi vào vùng nào -> chuyển tới IP tương ứng.
@@ -89,7 +81,6 @@ struct wdt_platform_top::impl : public sc_core::sc_module {
 
       // Nối (các) initiator socket của CPU vào upstream port của bus.
       //   - Bremen (riscv_vp): 1 bus chung cho cả lệnh lẫn dữ liệu -> 1 port.
-      //   - mariusmm (riscv_tlm): tách bus instr và data -> 2 port.
       if (cpu.has_unified_bus()) {
          cpu.data_bus().bind(bus.cpu_port(0));
       } else {
