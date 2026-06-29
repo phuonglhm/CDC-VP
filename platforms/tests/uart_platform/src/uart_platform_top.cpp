@@ -47,6 +47,7 @@ struct uart_platform_top::impl : public sc_core::sc_module {
     cdc::components::clint_tlm clint;
     cdc::components::plic_tlm plic;
     sc_core::sc_buffer<unsigned char> uart_tx;
+    sc_core::sc_signal<bool> uart_irq;
     sc_core::sc_signal<bool> plic_dummy;
 
     impl(sc_core::sc_module_name name, const std::string& config_path)
@@ -58,6 +59,7 @@ struct uart_platform_top::impl : public sc_core::sc_module {
         , clint("clint", cpu)
         , plic("plic", cpu, kNumPlicSources)
         , uart_tx("uart_tx")
+        , uart_irq("uart_irq")
         , plic_dummy("plic_dummy")
     {
         SC_METHOD(monitor_tx);  
@@ -77,6 +79,7 @@ struct uart_platform_top::impl : public sc_core::sc_module {
         bus.add_target(kPlicBase,  kPlicSize).bind(plic.socket);
 
         uart.tx(uart_tx);
+        uart.irq(uart_irq);
         plic.irq_in[0](plic_dummy);
         plic_dummy.write(false);
 

@@ -23,7 +23,19 @@ int sc_main(int argc, char *argv[]) {
 
    std::cout << "Starting DMIC Simulation...\n\n";
    sc_start();
-   std::cout << "\nSimulation finished successfully.\n";
+   std::cout << "\nSimulation finished.\n";
 
-   return 0;
+   int fails = 0;
+   auto chk = [&](const char* name, bool ok) {
+      std::cout << (ok ? "[PASS] " : "[FAIL] ") << name << "\n";
+      if (!ok) ++fails;
+   };
+   chk("CTRL readback (EN|INT_EN|DEC=64)", cpu.ctrl_ok);
+   chk("at least one IRQ fired", cpu.irq_count > 0);
+   chk("watermark event(s) occurred", cpu.wm_events > 0);
+   chk("16 samples read per watermark", cpu.samples_read == cpu.wm_events * 16);
+   chk("every IRQ had WM/OE cause", cpu.irq_status_ok);
+
+   std::cout << "\n[TB] DMIC failures: " << fails << "\n";
+   return fails == 0 ? 0 : 1;
 }

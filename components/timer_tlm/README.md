@@ -40,7 +40,7 @@ A SystemC/TLM-2.0 model of a programmable APB timer, used in the SSE-100 subsyst
 | 3 | Disable mid-count | Writes `CTRL=0` partway through; reads VALUE twice and confirms it stopped changing |
 | 4 | RELOAD sets VALUE | Writing RELOAD immediately updates the VALUE register |
 | 5 | CTRL read-back | Writes a CTRL value and reads it back to confirm register retention |
-| 6 | Reset mid-count | Pulses `prstn` low during a count; confirms CTRL and VALUE both clear to 0 |
+| 6 | Reset mid-count | Pulses `reset_n` low during a count; confirms CTRL and VALUE both clear to 0 |
 | 7 | EXT_EN pause | Sets EXT_EN, drives `extin` LOW; confirms timer does not count, then releases and waits for IRQ |
 | 8 | EXT_CLK | Sets EXT_CLK, manually pulses `extin` 4 times; confirms IRQ fires after 4 edges with `RELOAD=3` |
 | 9 | Multiple interrupts | Clears and re-arms 3 consecutive interrupts with `RELOAD=2` |

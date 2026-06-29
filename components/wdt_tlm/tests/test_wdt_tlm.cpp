@@ -32,5 +32,5 @@ int sc_main(int argc, char* argv[])
     rst_n_sig.write(true);
     sc_core::sc_start();
 
-    return 0;
+    return tb.passed() ? 0 : 1;
 }

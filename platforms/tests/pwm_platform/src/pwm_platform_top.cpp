@@ -7,7 +7,7 @@
 #include <clint_tlm.h>
 #include <memory_tlm.h>
 #include <plic_tlm.h>
-#include <uart_tlm.h>
+#include <uart.h>
 #include "pwm.h"
 
 #if defined(CDC_CPU_BACKEND_riscv_vp)
@@ -43,7 +43,9 @@ struct pwm_platform_top::impl : public sc_core::sc_module {
     cpu_backend_t              cpu;
     cdc::components::bus_router bus;
     cdc::components::memory_tlm ram;
-    cdc::components::uart_tlm  uart;
+    UartTLM uart;
+   sc_core::sc_buffer<unsigned char> uart_tx;
+   sc_core::sc_signal<bool> uart_irq;
     cdc::components::clint_tlm clint;
     cdc::components::plic_tlm  plic;
     PWM                        pwm;
@@ -61,6 +63,8 @@ struct pwm_platform_top::impl : public sc_core::sc_module {
         , bus("bus", /*num_targets=*/5, /*num_initiators=*/cpu.has_unified_bus() ? 1u : 2u)
         , ram("ram", kRamSize)
         , uart("uart")
+       , uart_tx("uart_tx")
+       , uart_irq("uart_irq")
         , clint("clint", cpu)
         , plic("plic", cpu, kNumPlicSources)
         , pwm("pwm")
@@ -74,7 +78,9 @@ struct pwm_platform_top::impl : public sc_core::sc_module {
         }
 
         bus.add_target(kRamBase,  kRamSize).bind(ram.socket);
-        bus.add_target(kUartBase, kMmioSize).bind(uart.socket);
+        bus.add_target(kUartBase, kMmioSize).bind(uart.bus);
+      uart.tx(uart_tx);
+      uart.irq(uart_irq);
         bus.add_target(kClintBase, kClintSize).bind(clint.socket);
         bus.add_target(kPlicBase, kPlicSize).bind(plic.socket);
         bus.add_target(kPwmBase,  kMmioSize).bind(pwm.socket);

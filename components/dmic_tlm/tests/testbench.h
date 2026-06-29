@@ -41,6 +41,13 @@ public:
         SC_THREAD(cpu_firmware);
     }
 
+    // Test observability (checked in sc_main after the run).
+    int  irq_count    = 0;
+    int  wm_events    = 0;
+    int  samples_read = 0;
+    bool ctrl_ok      = false;
+    bool irq_status_ok = true; // every IRQ had a WM or OE cause
+
 private:
     uint32_t read_reg(uint64_t addr);
     void write_reg(uint64_t addr, uint32_t data);

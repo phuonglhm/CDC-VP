@@ -17,19 +17,24 @@ wrapped RISC-V backends, and the effect of the TLM quantum-keeper on the Bremen 
 
 ## Results (T = 20 ms simulated)
 
+Re-measured 2026-06-27 (Debug build). Retired-instruction counts are exact and
+reproducible; MIPS varies run-to-run (~±10%) with host load.
+
 | Backend                  | Quantum        | Retired instr | Host time (s) | **MIPS** |
 |--------------------------|----------------|--------------:|--------------:|---------:|
-| mariusmm (riscv_tlm)     | n/a (fixed 10ns/instr) | 2,000,000 | 0.487 | **4.10** |
-| Bremen (riscv_vp)        | 10 ns (sync/cycle)     |   482,765 | 0.101 | **4.78** |
-| Bremen (riscv_vp)        | 1 ms                   |   482,765 | 0.061 | **7.86** |
-| Bremen (riscv_vp)        | 10 ms                  |   482,765 | 0.059 | **8.19** |
+| mariusmm (riscv_tlm)     | n/a (fixed 10ns/instr) | 2,000,000 | 0.482 | **4.15** |
+| Bremen (riscv_vp)        | 10 ns (sync/cycle)     |   482,765 | 0.108 | **4.48** |
+| Bremen (riscv_vp)        | 1 ms                   |   482,765 | 0.060 | **7.98** |
+| Bremen (riscv_vp)        | 10 ms                  |   482,765 | 0.060 | **7.99** |
 
 ## Interpretation
 
 - **Quantum-keeper works (Bremen):** raising the quantum from sync-every-cycle to 1 ms lifts host
-  throughput ~1.7× (4.78 → 7.86 MIPS); 10 ms adds little more (diminishing returns). Larger quanta
-  batch the SystemC time-sync, eliminating per-cycle `wait()`/context-switches.
-- **Bremen is faster than mariusmm** at host level (8.19 vs 4.10 MIPS, ~2×) and is runtime-tunable.
+  throughput ~1.8× (4.48 → 7.98 MIPS); 10 ms adds nothing more (diminishing returns past ~1 ms).
+  Larger quanta batch the SystemC time-sync, eliminating per-cycle `wait()`/context-switches.
+- **Bremen vs mariusmm:** best-case Bremen (10 ms quantum) is ~1.9× mariusmm host throughput
+  (7.99 vs 4.15 MIPS); at the same sync rate (10 ns) they are close (4.48 vs 4.15, ~1.08×). Bremen's
+  advantage is that it is **runtime-tunable** via the quantum, while mariusmm is a single fixed point.
 - **mariusmm has no runtime quantum** — its core advances a fixed `wait(10ns)` per instruction, so
   `--quantum` does not affect it; it is a single baseline point. (Its retired-instr count is higher
   because it models 1 instr / 10ns cycle, whereas Bremen's instruction timing is multi-cycle.)
@@ -41,19 +46,23 @@ wrapped RISC-V backends, and the effect of the TLM quantum-keeper on the Bremen 
 ## Reproduce
 
 ```bash
-source tools/setup_env.sh            # or export CC/CXX + RISC-V toolchain on PATH
-make -C fw/bench_riscv               # -> fw/bench_riscv/bench.elf
+source tools/third_party/setup_env.sh   # sets CC/CXX + RISC-V toolchain (riscv-none-elf) on PATH
+make -C fw/bench_riscv                   # -> fw/bench_riscv/bench.elf
 
-# mariusmm (default preset)
-cmake --build --preset debug --target riscv_cpu_eval
-./build/debug/platforms/riscv_cpu_eval/riscv_cpu_eval --bench --sim-ms 20 --fw fw/bench_riscv/bench.elf
-
-# Bremen, sweep the quantum
-cmake -S . -B build/bremen -G Ninja -DCMAKE_C_COMPILER=/usr/bin/gcc \
-  -DCMAKE_CXX_COMPILER=/usr/bin/g++ -DCDC_CPU_BACKEND=riscv_vp
-cmake --build build/bremen --target riscv_cpu_eval
+# Bremen (riscv_vp) — the quantum sweep
+cmake -S . -B build-bench-vp -DCMAKE_BUILD_TYPE=Debug -DCDC_CPU_BACKEND=riscv_vp \
+  -DCDC_BUILD_CPU_EVAL=ON -DCDC_BUILD_CUSTOM_SOC=OFF -DCDC_BUILD_MINI_TLM=OFF -DCDC_BUILD_TESTS=OFF
+cmake --build build-bench-vp --target riscv_cpu_eval -j"$(nproc)"
+EXE=build-bench-vp/platforms/riscv_cpu_eval/riscv_cpu_eval
 for q in 10 1000000 10000000; do
-  ./build/bremen/platforms/riscv_cpu_eval/riscv_cpu_eval \
-     --bench --sim-ms 20 --quantum $q --fw fw/bench_riscv/bench.elf
+  "$EXE" --bench --sim-ms 20 --quantum "$q" --fw fw/bench_riscv/bench.elf
 done
+
+# mariusmm (riscv_tlm) — single baseline point
+#   Requires the spdlog headers under third_party/RISC-V-TLM/spdlog/include
+#   (a RISC-V-TLM submodule; run tools/third_party/setup_third_party.sh to fetch).
+cmake -S . -B build-bench-tlm -DCMAKE_BUILD_TYPE=Debug -DCDC_CPU_BACKEND=riscv_tlm \
+  -DCDC_BUILD_CPU_EVAL=ON -DCDC_BUILD_CUSTOM_SOC=OFF -DCDC_BUILD_MINI_TLM=OFF -DCDC_BUILD_TESTS=OFF
+cmake --build build-bench-tlm --target riscv_cpu_eval -j"$(nproc)"
+build-bench-tlm/platforms/riscv_cpu_eval/riscv_cpu_eval --bench --sim-ms 20 --fw fw/bench_riscv/bench.elf
 ```

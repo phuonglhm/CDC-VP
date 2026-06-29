@@ -8,7 +8,7 @@
 #include <i2c.h>
 #include <memory_tlm.h>
 #include <plic_tlm.h>
-#include <uart_tlm.h>
+#include <uart.h>
 
 // Select the concrete CPU backend at build time (CDC_CPU_BACKEND via CMake).
 #if defined(CDC_CPU_BACKEND_riscv_vp)
@@ -45,7 +45,9 @@ struct riscv_custom_soc_top::impl : public sc_core::sc_module {
     cpu_backend_t cpu;
     cdc::components::bus_router bus;
     cdc::components::memory_tlm ram;
-    cdc::components::uart_tlm uart;
+    UartTLM uart;
+   sc_core::sc_buffer<unsigned char> uart_tx;
+   sc_core::sc_signal<bool> uart_irq;
     cdc::components::clint_tlm clint;
     cdc::components::plic_tlm plic;
     i2c i2c0;
@@ -57,6 +59,8 @@ struct riscv_custom_soc_top::impl : public sc_core::sc_module {
         , bus("bus", /*num_targets=*/5, cpu.has_unified_bus() ? 1u : 2u)
         , ram("ram", kRamSize)
         , uart("uart")
+       , uart_tx("uart_tx")
+       , uart_irq("uart_irq")
         , clint("clint", cpu)   // CLINT drives timer/software interrupts (MTIP/MSIP)
         , plic("plic", cpu, kNumPlicSources)  // PLIC drives external interrupts (MEIP)
         , i2c0("i2c0")
@@ -70,7 +74,9 @@ struct riscv_custom_soc_top::impl : public sc_core::sc_module {
         }
 
         bus.add_target(kRamBase, kRamSize).bind(ram.socket);
-        bus.add_target(kUartBase, kRegionSize).bind(uart.socket);
+        bus.add_target(kUartBase, kRegionSize).bind(uart.bus);
+      uart.tx(uart_tx);
+      uart.irq(uart_irq);
         bus.add_target(kClintBase, kClintSize).bind(clint.socket);
         bus.add_target(kPlicBase, kPlicSize).bind(plic.socket);
         bus.add_target(kI2cBase, kRegionSize).bind(i2c0.socket);

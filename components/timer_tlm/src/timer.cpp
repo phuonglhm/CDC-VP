@@ -125,7 +125,7 @@ namespace cdc::components
     {
         while (true)
         {
-            if (!prstn.read())
+            if (!reset_n.read())
             {
                 reset();
                 continue;
@@ -133,19 +133,19 @@ namespace cdc::components
 
             if (!(ctrl_reg & OPS::ENABLE))
             {
-                wait(update_reg | prstn.negedge_event());
+                wait(update_reg | reset_n.negedge_event());
                 continue;
             }
 
             if (ctrl_reg & OPS::EX_CLK)
-                wait(extin.posedge_event() | update_reg | prstn.negedge_event() | intr_clear);
+                wait(extin.posedge_event() | update_reg | reset_n.negedge_event() | intr_clear);
             else
-                wait(tick_period, update_reg | prstn.negedge_event() | intr_clear);
+                wait(tick_period, update_reg | reset_n.negedge_event() | intr_clear);
 
             if (intr_clear_inc)
             {
                 intr_clear_inc = false;
-                timerint.write(false);
+                irq_out.write(false);
                 continue;
             }
 
@@ -157,7 +157,7 @@ namespace cdc::components
                 value_reg = reload_reg;
                 intr_status = true;
                 if (ctrl_reg & OPS::INTR_EN)
-                    timerint.write(true);
+                    irq_out.write(true);
             }
             else
                 value_reg--;
@@ -170,7 +170,7 @@ namespace cdc::components
         value_reg = 0;
         reload_reg = 0;
         intr_status = false;
-        timerint.write(false);
-        wait(prstn.posedge_event());
+        irq_out.write(false);
+        wait(reset_n.posedge_event());
     }
 }

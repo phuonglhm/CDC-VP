@@ -13,6 +13,12 @@ SC_MODULE(testbench) {
         SC_THREAD(run_tests);
     }
 
+    int fails = 0;
+    void chk(const char* name, bool ok) {
+        std::cout << (ok ? "[PASS] " : "[FAIL] ") << name << std::endl;
+        if (!ok) ++fails;
+    }
+
     void do_write(uint32_t offset, uint32_t value) {
         tlm::tlm_generic_payload trans;
         sc_time delay = SC_ZERO_TIME;
@@ -46,6 +52,7 @@ SC_MODULE(testbench) {
         do_write(I2C_CTRL, CTRL_ENABLEHOST);
         uint32_t ctrl = do_read(I2C_CTRL);
         std::cout << "CTRL = 0x" << std::hex << ctrl << std::endl;
+        chk("CTRL readback = ENABLEHOST", ctrl == CTRL_ENABLEHOST);
 
         std::cout << "\n--- Test 2: Initial STATUS ---" << std::endl;
         uint32_t status = do_read(I2C_STATUS);
@@ -81,6 +88,8 @@ SC_MODULE(testbench) {
 
         std::cout << "\n--- Test 8: Enable target mode ---" << std::endl;
         do_write(I2C_CTRL, CTRL_ENABLEHOST | CTRL_ENABLETARGET);
+        chk("CTRL readback = ENABLEHOST|ENABLETARGET",
+            do_read(I2C_CTRL) == (CTRL_ENABLEHOST | CTRL_ENABLETARGET));
         do_write(I2C_TARGET_ID, 0x3C); // listen on address 0x3C
         std::cout << "TARGET_ID = 0x3C" << std::endl;
 
@@ -99,15 +108,21 @@ SC_MODULE(testbench) {
         // START entry
         uint32_t acq = do_read(I2C_ACQDATA);
         std::cout << "ACQDATA (START) = 0x" << std::hex << acq << std::endl;
+        // START entry: signal=START, data = (addr<<1)|R/W = (0x3C<<1)|0 = 0x78
+        chk("ACQ[0] START signal", (acq >> 8) == ACQDATA_SIGNAL_START);
+        chk("ACQ[0] START addr byte 0x78", (acq & 0xFF) == 0x78);
         // data byte 0xAA
         acq = do_read(I2C_ACQDATA);
         std::cout << "ACQDATA (0xAA) = 0x" << std::hex << acq << std::endl;
+        chk("ACQ[1] data 0xAA", acq == 0xAA);
         // data byte 0xBB
         acq = do_read(I2C_ACQDATA);
         std::cout << "ACQDATA (0xBB) = 0x" << std::hex << acq << std::endl;
+        chk("ACQ[2] data 0xBB", acq == 0xBB);
         // STOP entry
         acq = do_read(I2C_ACQDATA);
         std::cout << "ACQDATA (STOP) = 0x" << std::hex << acq << std::endl;
+        chk("ACQ[3] STOP signal", (acq >> 8) == ACQDATA_SIGNAL_STOP);
 
         std::cout << "\n--- Test 11: Target read transaction ---" << std::endl;
         std::cout << "CPU loads TX FIFO with 0xCD, 0xEF" << std::endl;
@@ -123,6 +138,8 @@ SC_MODULE(testbench) {
         for (uint8_t b : read_data2) {
             std::cout << "  0x" << std::hex << (int)b << std::endl;
         }
+        chk("target read returned TX FIFO {0xCD,0xEF}",
+            read_data2.size() == 2 && read_data2[0] == 0xCD && read_data2[1] == 0xEF);
 
         std::cout << "\n--- Test 12: TARGET_FIFO_STATUS ---" << std::endl;
         uint32_t tfifo = do_read(I2C_TARGET_FIFO_STATUS);
@@ -154,5 +171,6 @@ int sc_main(int argc, char* argv[]) {
     tb.socket.bind(i2c_model.socket);
 
     sc_start();
-    return 0;
+    std::cout << "\n[TB] I2C failures: " << std::dec << tb.fails << std::endl;
+    return tb.fails == 0 ? 0 : 1;
 }

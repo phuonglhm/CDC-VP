@@ -9,7 +9,7 @@ target_link_libraries(riscv_cpu_eval PRIVATE
     cdc::components::common
     cdc::components::bus_router
     cdc::components::memory_tlm
-    cdc::components::uart_tlm
+    cdc::components::uart2_tlm
     cdc::components::timer_tlm
     cdc::cpu::${CDC_CPU_BACKEND})   # swap CPU backend via CMake flag
 

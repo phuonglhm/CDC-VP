@@ -15,8 +15,11 @@ public:
 
     sc_in<unsigned char> host0_tx_mon;
     sc_core::sc_out<unsigned char> host0_rx_drv;
+    sc_in<bool> host0_irq_mon; // observe the UART -> PLIC interrupt line
     SC_HAS_PROCESS(MasterTB);
     MasterTB(sc_module_name name);
+
+    static int failure_count(); // non-zero -> the test must fail
 
 private:
     void test_thread();

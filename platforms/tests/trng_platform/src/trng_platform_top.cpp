@@ -10,7 +10,7 @@
 #include <clint_tlm.h>
 #include <memory_tlm.h>
 #include <plic_tlm.h>
-#include <uart_tlm.h>
+#include <uart.h>
 // Ensure trng_tlm type is visible
 #include <trng_tlm.h>
 
@@ -47,7 +47,9 @@ struct trng_platform_top::impl : public sc_core::sc_module {
    cpu_backend_t cpu;
    cdc::components::bus_router bus;
    cdc::components::memory_tlm ram;
-   cdc::components::uart_tlm uart;
+   UartTLM uart;
+   sc_core::sc_buffer<unsigned char> uart_tx;
+   sc_core::sc_signal<bool> uart_irq;
    cdc::components::clint_tlm clint;
    cdc::components::plic_tlm plic;
    cdc::components::trng_tlm trng;
@@ -61,6 +63,8 @@ struct trng_platform_top::impl : public sc_core::sc_module {
        , bus("bus", /*num_targets=*/5, /*num_initiators=*/cpu.has_unified_bus() ? 1u : 2u)
        , ram("ram", kRamSize)
        , uart("uart")
+       , uart_tx("uart_tx")
+       , uart_irq("uart_irq")
        , clint("clint", cpu)
        , plic("plic", cpu, kNumPlicSources)
        , trng("trng", sc_core::sc_time(10, sc_core::SC_NS))
@@ -76,7 +80,9 @@ struct trng_platform_top::impl : public sc_core::sc_module {
       }
      
       bus.add_target(kRamBase, kRamSize).bind(ram.socket);
-      bus.add_target(kUartBase, kMmioSize).bind(uart.socket);
+      bus.add_target(kUartBase, kMmioSize).bind(uart.bus);
+      uart.tx(uart_tx);
+      uart.irq(uart_irq);
       bus.add_target(kClintBase, kClintSize).bind(clint.socket);
       bus.add_target(kPlicBase, kPlicSize).bind(plic.socket);
       bus.add_target(ktrngBase, kMmioSize).bind(trng.socket);

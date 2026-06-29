@@ -15,6 +15,7 @@ SC_MODULE(Tester) {
    tlm_utils::simple_initiator_socket<Tester> socket;
    sc_out<bool> reset_out;
    sc_in<bool> irq_in;
+   int fails = 0; // non-zero -> test failed
 
    SC_CTOR(Tester)
        : socket("socket") {
@@ -98,6 +99,7 @@ SC_MODULE(Tester) {
       if (status == tlm::TLM_GENERIC_ERROR_RESPONSE) {
          cout << "   SUCCESS: System correctly rejected 9th write to full FIFO" << endl;
       } else {
+         ++fails;
          cout << "   FAILURE: System accepted 9th write to full FIFO" << endl;
       }
 
@@ -173,5 +175,6 @@ int sc_main(int argc, char *argv[]) {
    tester.irq_in(irq_sig);
 
    sc_start();
-   return 0;
+   cout << "\n[TB] SPI failures: " << tester.fails << endl;
+   return tester.fails == 0 ? 0 : 1;
 }

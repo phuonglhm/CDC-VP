@@ -8,6 +8,7 @@ using namespace pwrmgr_reg;
 namespace cdc::components {
     class Testbench : public sc_module {
     public:
+        bool ok = false; // set true at end of run() if all checks passed
         tlm_utils::simple_initiator_socket<Testbench> tl_socket;
 
         sc_signal<bool> por_rst_n;
@@ -171,6 +172,7 @@ namespace cdc::components {
                 pass = false;
             }
 
+            ok = pass;
             if (pass) {
                 std::cout << "TEST PASSED" << std::endl;
             } else {
@@ -216,5 +218,5 @@ int sc_main(int argc, char* argv[])
 
     sc_start();
 
-    return 0;
+    return tb.ok ? 0 : 1;
 }

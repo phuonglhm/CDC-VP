@@ -9,7 +9,7 @@ target_link_libraries(riscv_custom_soc PRIVATE
     cdc::components::common
     cdc::components::bus_router
     cdc::components::memory_tlm
-    cdc::components::uart_tlm
+    cdc::components::uart2_tlm
     cdc::components::clint_tlm
     cdc::components::plic_tlm
     cdc::components::i2c_tlm
