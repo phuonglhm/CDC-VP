@@ -1,27 +1,305 @@
-# adc_tlm
+# ISP 3-Tier Architecture Class Diagram (Snake Case)
 
-Memory-mapped TLM-2.0 ADC model ported from the FU2 ADC register model.
+This document contains the updated class diagram conforming to your requested naming conventions: SystemC wrapper as `isp_tlm`, pipeline coordinator as `isp_pipeline`, configuration structs as `xxx_config`, and functional blocks as `xxx_block` (all lowercase, snake_case).
 
-## Register Map
+---
 
-| Offset | Name | Access | Description |
-|---:|---|---|---|
-| `0x00` | CONTROL | R/W | bit0 START, bit1 ADC_EN. START self-clears after conversion. |
-| `0x04` | STATUS | R/W1C | bit0 EOC. Cleared by DATA read or W1C. |
-| `0x08` | DATA | R | 12-bit conversion sample. Reading clears EOC. |
-| `0x0C` | INTR_ENABLE | R/W | bit0 enables EOC interrupt. |
+## Class Diagram
 
-`irq_out` is asserted when `STATUS.EOC && INTR_ENABLE.EOC`.
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'flowchart': { 'useMaxWidth': false, 'htmlLabels': true },
+  'themeVariables': { 'fontSize': '22px' }
+}}%%
+classDiagram
+  direction TB
 
-## Usage
+  %% Tier 1: SystemC/TLM Wrapper
+  class isp_tlm {
+    <<sc_module>>
+    +reg_socket : simple_target_socket
+    +irq_out : sc_out~bool~
+    +pipeline : isp_pipeline
+    +active_regs : isp_config
+    -b_transport()
+    -processing_thread()
+  }
 
-```cpp
-#include <adc_tlm.h>
+  %% Tier 2: Pure C++ Pipeline Controller
+  class isp_pipeline {
+    <<class>>
+    +width : uint32_t
+    +height : uint32_t
+    -blc_out : std::vector~uint16_t~
+    -dpc_out : std::vector~uint16_t~
+    -lsc_out : std::vector~uint16_t~
+    -blc : blc_block
+    -dpc : dpc_block
+    -lsc : lsc_block
+    -dg : dg_block
+    -bnr : bnr_block
+    -demosaic : demosaic_block
+    -wb : wb_block
+    -ccm : ccm_block
+    -gc : gc_block
+    -csc : csc_block
+    -cse : cse_block
+    -sharpen : sharpen_block
+    -twodnr : twodnr_block
+    -fmt : format_block
+    -aec : aec_block
+    -awb : awb_block
+    +set_dimensions(w, h)
+    +run(raw_in, yuv_out, cfg)
+  }
 
-cdc::components::adc_tlm adc("adc");
-sc_core::sc_signal<bool> adc_irq;
+  %% Tier 3: Pure C++ Block Algorithms
+  class blc_block {
+    +process(in, out, w, h, cfg)
+  }
+  class dpc_block {
+    +process(in, out, w, h, cfg)
+  }
+  class lsc_block {
+    +process(in, out, w, h, cfg, lsc_mem_ptr)
+  }
+  class dg_block {
+    +process(in, out, w, h, cfg)
+  }
+  class bnr_block {
+    +process(in, out, w, h, cfg)
+  }
+  class demosaic_block {
+    +process(in, out, w, h, cfg)
+  }
+  class wb_block {
+    +process(in, out, w, h, cfg)
+  }
+  class ccm_block {
+    +process(in, out, w, h, cfg)
+  }
+  class gc_block {
+    +process(in, out, w, h, cfg, gc_mem_ptr)
+  }
+  class csc_block {
+    +process(in, out, w, h, cfg)
+  }
+  class cse_block {
+    +process(in, out, w, h, cfg)
+  }
+  class sharpen_block {
+    +process(in, out, w, h, cfg)
+  }
+  class twodnr_block {
+    +process(in, out, w, h, cfg)
+  }
+  class format_block {
+    +process(in, out, w, h, cfg)
+  }
+  class aec_block {
+    +process(in, w, h, cfg)
+  }
+  class awb_block {
+    +process(in, w, h, cfg)
+  }
 
-bus.add_target(0x10060000, 0x1000).bind(adc.socket);
-adc.irq_out(adc_irq);
-plic.irq_in[source_id - 1](adc_irq);
+  %% Configuration Structs
+  class isp_config {
+    <<struct>>
+    +global : global_config
+    +blc : blc_config
+    +dpc : dpc_config
+    +lsc : lsc_config
+    +dg : dg_config
+    +bnr : bnr_config
+    +demosaic : demosaic_config
+    +wb : wb_config
+    +ccm : ccm_config
+    +gc : gc_config
+    +csc : csc_config
+    +cse : cse_config
+    +sharpen : sharpen_config
+    +twodnr : twodnr_config
+    +fmt : format_config
+    +aec : aec_config
+    +awb : awb_config
+  }
+
+  class global_config {
+    <<struct>>
+    +enable : bool
+    +start : bool
+  }
+
+  class blc_config {
+    <<struct>>
+    +is_enable : bool
+    +is_linear : bool
+    +bayer_pattern : uint8_t
+    +bit_depth : uint8_t
+    +r_offset : uint16_t
+    +gr_offset : uint16_t
+    +gb_offset : uint16_t
+    +b_offset : uint16_t
+    +r_sat : uint16_t
+    +gr_sat : uint16_t
+    +gb_sat : uint16_t
+    +b_sat : uint16_t
+  }
+
+  class dpc_config {
+    <<struct>>
+    +is_enable : bool
+    +dp_threshold : uint16_t
+  }
+
+  class lsc_config {
+    <<struct>>
+    +is_enable : bool
+    +grid_width : uint16_t
+    +grid_height : uint16_t
+  }
+
+  class dg_config {
+    <<struct>>
+    +is_auto : bool
+    +current_gain : uint16_t
+    +ae_feedback : int32_t
+  }
+
+  class bnr_config {
+    <<struct>>
+    +is_enable : bool
+    +filter_window : uint8_t
+    +r_std_dev_s : float
+    +r_std_dev_r : float
+    +g_std_dev_s : float
+    +g_std_dev_r : float
+    +b_std_dev_s : float
+    +b_std_dev_r : float
+  }
+
+  class demosaic_config {
+    <<struct>>
+    +is_enable : bool
+  }
+
+  class wb_config {
+    <<struct>>
+    +is_enable : bool
+    +is_auto : bool
+    +bayer_pattern : uint8_t
+    +bit_depth : uint8_t
+    +r_gain : float
+    +b_gain : float
+  }
+
+  class ccm_config {
+    <<struct>>
+    +is_enable : bool
+    +bit_depth : uint8_t
+    +matrix : float[3][3]
+  }
+
+  class gc_config {
+    <<struct>>
+    +is_enable : bool
+    +lut_select : uint8_t
+  }
+
+  class csc_config {
+    <<struct>>
+    +conv_standard : uint8_t
+    +bit_depth : uint8_t
+  }
+
+  class cse_config {
+    <<struct>>
+    +is_enable : bool
+    +saturation_gain : float
+  }
+
+  class sharpen_config {
+    <<struct>>
+    +is_enable : bool
+    +sharpen_sigma : uint8_t
+    +sharpen_strength : uint16_t
+  }
+
+  class twodnr_config {
+    <<struct>>
+    +is_enable : bool
+    +window_size : uint8_t
+    +patch_size : uint8_t
+    +wts : uint16_t
+  }
+
+  class format_config {
+    <<struct>>
+    +scale_enable : bool
+    +yuv420_enable : bool
+    +in_width : uint16_t
+    +in_height : uint16_t
+    +out_width : uint16_t
+    +out_height : uint16_t
+  }
+
+  class aec_config {
+    <<struct>>
+    +is_enable : bool
+    +center_illuminance : uint8_t
+    +histogram_skewness : float
+    +ae_feedback : int32_t
+  }
+
+  class awb_config {
+    <<struct>>
+    +is_enable : bool
+    +algorithm : uint8_t
+    +underexposed_percentage : float
+    +overexposed_percentage : float
+    +percentage : float
+    +r_gain_out : float
+    +b_gain_out : float
+  }
+
+  %% Relationships
+  isp_tlm *-- isp_pipeline
+  isp_tlm *-- isp_config
+
+  isp_pipeline *-- blc_block
+  isp_pipeline *-- dpc_block
+  isp_pipeline *-- lsc_block
+  isp_pipeline *-- dg_block
+  isp_pipeline *-- bnr_block
+  isp_pipeline *-- demosaic_block
+  isp_pipeline *-- wb_block
+  isp_pipeline *-- ccm_block
+  isp_pipeline *-- gc_block
+  isp_pipeline *-- csc_block
+  isp_pipeline *-- cse_block
+  isp_pipeline *-- sharpen_block
+  isp_pipeline *-- twodnr_block
+  isp_pipeline *-- format_block
+  isp_pipeline *-- aec_block
+  isp_pipeline *-- awb_block
+
+  isp_config *-- global_config
+  isp_config *-- blc_config
+  isp_config *-- dpc_config
+  isp_config *-- lsc_config
+  isp_config *-- dg_config
+  isp_config *-- bnr_config
+  isp_config *-- demosaic_config
+  isp_config *-- wb_config
+  isp_config *-- ccm_config
+  isp_config *-- gc_config
+  isp_config *-- csc_config
+  isp_config *-- cse_config
+  isp_config *-- sharpen_config
+  isp_config *-- twodnr_config
+  isp_config *-- format_config
+  isp_config *-- aec_config
+  isp_config *-- awb_config
 ```
