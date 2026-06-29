@@ -4,7 +4,7 @@
 
 `uart_platform` is a SystemC/TLM virtual prototype integration test platform for
 the UART peripheral. It uses a Bremen RV32 RISC-V CPU, a shared TLM bus router,
-RAM, CLINT, PLIC, and the `uart2_tlm` (PL011-compatible) UART model.
+RAM, CLINT, PLIC, and the `uart2_tlm` UART model.
 
 | Region | Base | Size | End | Notes |
 |---|---:|---:|---:|---|

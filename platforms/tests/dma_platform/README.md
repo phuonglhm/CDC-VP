@@ -1,4 +1,4 @@
-# DMA-330 Platform
+# DMA Platform
 
 Small Bremen/RISC-V SoC for verifying the `dma_tlm` TLM peripheral, following
 the same structure as `adc_platform`.
@@ -7,9 +7,9 @@ The verified path is:
 
 ```text
 RISC-V firmware
-  -> writes a DMA-330 channel program into RAM
+  -> writes a DMA channel program into RAM
   -> writes DBGINST0/DBGINST1/DBGCMD to launch the channel
-  -> CPU TLM initiator        -> bus_router -> DMA APB registers (0x10070000)
+  -> CPU TLM initiator        -> bus_router -> DMA registers (0x10070000)
   -> DMA master_socket (bus master, shares the same bus_router as the CPU)
                                -> bus_router -> RAM (fetch instructions, read/write data)
   -> DMA raises completion event -> INTEN/INT_EVENT_RIS/INTMIS -> irq
@@ -18,12 +18,12 @@ RISC-V firmware
 
 ## Why the DMA Shares the CPU's Bus
 
-Unlike simpler peripherals (UART, ADC, PWM), the DMA-330 is itself a **bus
+Unlike simpler peripherals (UART, ADC, PWM), the DMA is itself a **bus
 master** — it doesn't just expose registers for the CPU to poke, it actively
 reads/writes memory on its own to perform transfers. To model this, `dma_tlm`
 exposes two sockets:
 
-- `target_socket` — APB register interface, the CPU writes control registers
+- `target_socket` — register interface, the CPU writes control registers
   here (bound to the bus as a normal peripheral at `0x10070000`).
 - `master_socket` — the DMA's own initiator port, used to fetch its program
   and move data. This is bound to an **extra upstream port** on the same
@@ -94,7 +94,7 @@ RAM
 UART
 CLINT
 PLIC
-DMA-330 TLM model (dma_tlm)
+DMA TLM model (dma_tlm)
 bus_router (2 upstream ports: CPU + DMA master, 5 downstream targets)
 ```
 
@@ -106,7 +106,7 @@ The platform memory map is:
 | UART | `0x1000_0000` | Firmware console output |
 | CLINT | `0x0200_0000` | Local timer/software interrupts |
 | PLIC | `0x0C00_0000` | External interrupt controller (unused by this test) |
-| DMA | `0x1007_0000` | DMA-330 APB register window |
+| DMA | `0x1007_0000` | DMA register window |
 
 > **Note:** The `configs/default.yaml` file is currently informational only
 > — it is printed to the console at startup but its contents are not parsed
@@ -119,7 +119,7 @@ The platform memory map is:
 
 `fw/dma_riscv/src/main.c` runs on the simulated RISC-V CPU. See
 `fw/dma_riscv/README.md` for the full breakdown of what each test section
-verifies (buffer setup, DMA-330 program build, debug launch, completion
+verifies (buffer setup, DMA program build, debug launch, completion
 wait, result verification, DMAKILL, and undefined-opcode fault handling).
 
 Expected successful output ends with:

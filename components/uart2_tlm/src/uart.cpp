@@ -57,7 +57,7 @@ void UartTLM::rxMethod()
         unsigned char data = rx.read();
         if (rx_buffer.size() >= UART_FIFO_DEPTH)
         {
-            // PL011 overrun: FIFO full, the new character is discarded and the
+            // Overrun: FIFO full, the new character is discarded and the
             // overrun flag/interrupt is raised.
             set(regs.uartrsr, UART_RSR_OE);
             genIntr(UART_OERIS);
@@ -168,7 +168,7 @@ void UartTLM::busWrite(uint32_t uaddr, uint32_t wdata)
         break;
     }
     case UARTICR: {
-        // Write-1-to-clear any raw interrupt bit (PL011 UARTICR).
+        // Write-1-to-clear any raw interrupt bit (UARTICR).
         clr(regs.uartris, wdata & UART_INT_ALL);
         setIntrFlags();
         break;
@@ -194,7 +194,7 @@ void UartTLM::busReadWrite(tlm::tlm_generic_payload &trans, sc_core::sc_time &de
     uint32_t uaddr = static_cast<uint32_t>(addr);
     switch (cmd)
     {
-        //pl011 is 32bit, copy result to 4byte payload
+        // registers are 32-bit; copy result to 4-byte payload
     case tlm::TLM_READ_COMMAND: {
         uint32_t val = busRead(uaddr);
         memcpy(dataPtr, &val, 4);
@@ -223,13 +223,13 @@ void UartTLM::setIntrFlags() {
     irq_event.notify(SC_ZERO_TIME);
 }
 
-// Drive the combined PL011 interrupt as a level: high while any masked
+// Drive the combined interrupt as a level: high while any masked
 // interrupt source is pending.
 void UartTLM::updateIrq() {
     irq.write(regs.uartmis != 0);
 }
 
-// PL011 transmit interrupt: asserted while the TX FIFO level is at or below the
+// Transmit interrupt: asserted while the TX FIFO level is at or below the
 // programmed trigger level (level-sensitive in FIFO mode).
 void UartTLM::updateTxIntr() {
     if (tx_hold.size() <= txTrigEntries())
@@ -245,7 +245,7 @@ static unsigned ifls_entries(uint32_t sel) {
     static const unsigned tbl[5] = {UART_FIFO_DEPTH / 8, UART_FIFO_DEPTH / 4,
                                     UART_FIFO_DEPTH / 2, (UART_FIFO_DEPTH * 3) / 4,
                                     (UART_FIFO_DEPTH * 7) / 8};
-    if (sel > 4) sel = 4; // reserved encodings behave as 7/8 on PL011
+    if (sel > 4) sel = 4; // reserved encodings behave as 7/8
     return tbl[sel];
 }
 
@@ -257,7 +257,7 @@ unsigned UartTLM::txTrigEntries() const {
     return ifls_entries(regs.uartifls & 0x7); // TXIFLSEL[2:0]
 }
 
-// PL011 receive-timeout interrupt: the timer expired with RX data still in the
+// Receive-timeout interrupt: the timer expired with RX data still in the
 // FIFO and no new data received in the meantime.
 void UartTLM::rxTimeout() {
     if (!rx_buffer.empty()) {

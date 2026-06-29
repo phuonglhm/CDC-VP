@@ -1,17 +1,17 @@
 **Model Overview:**
-UART TlM for ARM PrimeCell PL011 UART.
+Memory-mapped UART TLM model.
 Structure: `include/uart.h` for behavior, `tests/master_tb.h` for testing, and `tests/top.h` for the test harness.
 
 **Run instructions:**
 Type `make` in terminal, then run `./test_uart2_tlm`. Use `make clean` to clean outputs.
 
-**Interrupts (PL011-style):**
+**Interrupts:**
 - `sc_out<bool> irq` is the combined level-sensitive `UARTINTR` to the PLIC,
   high whenever `UARTMIS != 0`.
 - Implemented raw-interrupt sources (UARTRIS/UARTMIS/UARTIMSC/UARTICR):
   - `UART_RXRIS` (bit4): RX FIFO reached the programmed trigger level.
   - `UART_TXRIS` (bit5): TX FIFO at/below the programmed trigger level
-    (level-sensitive, asserted when the TX FIFO is empty, as on real PL011).
+    (level-sensitive, asserted when the TX FIFO is empty).
   - `UART_RTRIS` (bit6): RX timeout - RX data sat idle for `rx_timeout`
     (constructor arg, default 1 ms; real hardware uses 32 baud clocks). Cleared
     by draining the RX FIFO or by `UARTICR`.

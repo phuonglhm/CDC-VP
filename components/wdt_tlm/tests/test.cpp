@@ -48,7 +48,7 @@ void Testbench::run()
     }
     wait(sc_core::SC_ZERO_TIME);
 
-    std::cout << "\n[TB] SP805 Watchdog LT functional tests begin\n";
+    std::cout << "\n[TB] Watchdog LT functional tests begin\n";
     std::cout << "[TB] tick_period = " << m_tick_period << "\n\n";
 
     unsigned int errors_before = m_errors;
@@ -113,7 +113,7 @@ void Testbench::run()
     print_test_result("Test 4", errors_before);
 
     errors_before = m_errors;
-    std::cout << "\n[TB] Test 5: ID registers read expected SP805 values\n";
+    std::cout << "\n[TB] Test 5: ID registers read expected ID values\n";
     expect_eq("WdogPeriphID0", read32(wdt_tlm::WDOG_PERIPHID0), wdt_tlm::PERIPHID0_VALUE);
     expect_eq("WdogPeriphID1", read32(wdt_tlm::WDOG_PERIPHID1), wdt_tlm::PERIPHID1_VALUE);
     expect_eq("WdogPeriphID2", read32(wdt_tlm::WDOG_PERIPHID2), wdt_tlm::PERIPHID2_VALUE);

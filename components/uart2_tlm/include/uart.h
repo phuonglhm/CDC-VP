@@ -28,7 +28,7 @@
 #define UART_RXFE 0x10
 #define UART_RXFF 0x40
 
-// UARTRIS/UARTMIS/UARTIMSC/UARTICR interrupt bits (PL011)
+// UARTRIS/UARTMIS/UARTIMSC/UARTICR interrupt bits
 #define UART_RXRIS 0x10  //bit4 receive interrupt
 #define UART_TXRIS 0x20  //bit5 transmit interrupt
 #define UART_RTRIS 0x40  //bit6 receive-timeout interrupt
@@ -51,14 +51,14 @@
 
 class UartTLM : public sc_core::sc_module {
     public:
-    // rx_timeout models the PL011 receive-timeout period (real hardware uses
+    // rx_timeout models the receive-timeout period (real hardware uses
     // 32 baud clocks). It is abstract here (no baud model) and configurable.
     UartTLM (sc_core::sc_module_name name,
              sc_core::sc_time rx_timeout = sc_core::sc_time(1, sc_core::SC_MS));
     tlm_utils::simple_target_socket<UartTLM> bus;
     sc_core::sc_buffer<unsigned char> rx;
     sc_core::sc_out<unsigned char> tx;
-    // PL011 UARTINTR: level-sensitive combined interrupt to the PLIC.
+    // Combined interrupt (UARTINTR): level-sensitive combined interrupt to the PLIC.
     // High whenever any masked interrupt is pending (UARTMIS != 0).
     sc_core::sc_out<bool> irq;
 

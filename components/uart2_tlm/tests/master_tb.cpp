@@ -68,7 +68,7 @@ void MasterTB::test_thread()
         wait(1, sc_core::SC_NS); // Allow rxMethod evaluation time
     }
     // Read UARTRIS: the RXRIS bit must be set. (TXRIS is also raw-set here
-    // because the TX FIFO is empty, which is correct PL011 behaviour, so test
+    // because the TX FIFO is empty, which is correct behaviour, so test
     // the RX bit specifically.)
     do_transaction(tlm::TLM_READ_COMMAND, host0_base + UARTRIS, data);
     assert_equal("CASE 1: RX Half-Full Raw Interrupt (UARTRIS)", UART_RXRIS, (data & UART_RXRIS));

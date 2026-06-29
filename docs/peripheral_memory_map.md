@@ -25,7 +25,7 @@ Baseline instance counts for the integrated SoC (an edge media/AI profile):
 | WDT, TRNG, ADC, DMIC, OTP, CMU, PMU, QSPI, RTC | 1 | Single instance / architectural singletons. |
 | ISP, VPU, NPU | 1 | Single-stream pipeline `RAW -> ISP -> VPU -> NPU`. |
 
-UART model selected for the integrated SoC is `uart2_tlm` (PL011-style).
+UART model selected for the integrated SoC is `uart2_tlm`.
 
 Second instances are appended at the end of the peripheral region; existing
 instance-0 bases and their already-locked PLIC source IDs are kept fixed so
@@ -60,7 +60,7 @@ KiB later without changing its base address.
 | BOOTROM0 | `0x0000_0000` | `0x0001_0000` | `0x0000_FFFF` | optional ROM | Optional first-stage boot image. Not required when loading firmware ELF directly to RAM. |
 | CLINT0 | `0x0200_0000` | `0x0001_0000` | `0x0200_FFFF` | MMIO | RISC-V local MSIP/MTIP source. |
 | PLIC0 | `0x0C00_0000` | `0x0040_0000` | `0x0C3F_FFFF` | MMIO | External interrupt controller, hart0 M-mode context. |
-| UART0 | `0x1000_0000` | `0x0000_1000` | `0x1000_0FFF` | MMIO | Console UART. Selected model is `uart2_tlm` (PL011-style). Exposes `sc_out<bool> irq` (combined UARTINTR) for the PLIC. |
+| UART0 | `0x1000_0000` | `0x0000_1000` | `0x1000_0FFF` | MMIO | Console UART. Selected model is `uart2_tlm`. Exposes `sc_out<bool> irq` (combined UARTINTR) for the PLIC. |
 | I2C0 | `0x1001_0000` | `0x0000_1000` | `0x1001_0FFF` | MMIO | I2C controller. |
 | SPI0 | `0x1002_0000` | `0x0000_1000` | `0x1002_0FFF` | MMIO | SPI controller. |
 | TIMER0 | `0x1003_0000` | `0x0000_1000` | `0x1003_0FFF` | MMIO | Peripheral timer, separate from CLINT `mtime/mtimecmp`. |
@@ -80,7 +80,7 @@ KiB later without changing its base address.
 | I2C1 | `0x1011_0000` | `0x0000_1000` | `0x1011_0FFF` | MMIO | Second I2C controller. |
 | SPI1 | `0x1012_0000` | `0x0000_1000` | `0x1012_0FFF` | MMIO | Second SPI controller. |
 | TIMER1 | `0x1013_0000` | `0x0000_1000` | `0x1013_0FFF` | MMIO | Second peripheral timer, separate from CLINT and TIMER0. |
-| RTC0 | `0x1014_0000` | `0x0000_1000` | `0x1014_0FFF` | MMIO | Real-time clock with alarm. Implemented by `rtc_tlm` (PL031-style). May also drive a PMU wakeup line in future. |
+| RTC0 | `0x1014_0000` | `0x0000_1000` | `0x1014_0FFF` | MMIO | Real-time clock with alarm. Implemented by `rtc_tlm`. May also drive a PMU wakeup line in future. |
 | RAM0 | `0x8000_0000` | `0x1000_0000` | `0x8FFF_FFFF` | RAM/DDR | Firmware, heap/stack, frame buffers, tensors, weights, and accelerator scratch space. Final integrated SoC target is 256 MiB. |
 
 ## Accelerator Pipeline Buffer Plan
@@ -180,7 +180,7 @@ architecture and must not be assigned.
 
 | PLIC Source | Signal | Status | Notes |
 |---:|---|---|---|
-| 1 | `uart0.irq` | assigned | UART0 (`uart2_tlm`, PL011). Level-sensitive combined UARTINTR via `sc_out<bool> irq`. |
+| 1 | `uart0.irq` | assigned | UART0 (`uart2_tlm`). Level-sensitive combined UARTINTR via `sc_out<bool> irq`. |
 | 2 | `i2c0.irq` | assigned | Current I2C model output is `irq`. |
 | 3 | `spi0.irq` / `spi0.intr` | assigned | Existing SPI tests already use source 3. |
 | 4 | `timer0.irq_out` | assigned | Peripheral timer interrupt. |
@@ -197,7 +197,7 @@ architecture and must not be assigned.
 | 15 | `isp0.irq` | reserved | Planned ISP interrupt. Tie low until the ISP model exposes an IRQ output. |
 | 16 | `vpu0.irq` | reserved | Planned VPU interrupt. Tie low until the VPU model exposes an IRQ output. |
 | 17 | `npu0.irq` | reserved | Planned NPU interrupt. Tie low until the NPU model exposes an IRQ output. |
-| 18 | `uart1.irq` | assigned | Second UART (`uart2_tlm`, PL011). Same `sc_out<bool> irq` contract as UART0. |
+| 18 | `uart1.irq` | assigned | Second UART (`uart2_tlm`). Same `sc_out<bool> irq` contract as UART0. |
 | 19 | `i2c1.irq` | assigned | Second I2C interrupt. |
 | 20 | `spi1.irq` | assigned | Second SPI interrupt. |
 | 21 | `timer1.irq_out` | assigned | Second peripheral timer interrupt. |
@@ -219,7 +219,7 @@ handles default-low signals safely.
 
 | IP | Bus socket | IRQ/reset notes |
 |---|---|---|
-| UART0 | `UartTLM::bus` (`uart2_tlm`) | Selected model: `uart2_tlm` (PL011). TX via `sc_out<unsigned char> tx`. IRQ port is `irq` (level-sensitive UARTINTR) to the PLIC. |
+| UART0 | `UartTLM::bus` (`uart2_tlm`) | Selected model: `uart2_tlm`. TX via `sc_out<unsigned char> tx`. IRQ port is `irq` (level-sensitive UARTINTR) to the PLIC. |
 | I2C0 | `i2c::socket` | IRQ port is `irq`. |
 | SPI0 | `spi_tlm::socket` | IRQ port is `irq` in the component implementation; platform logs may call it `intr`. |
 | TIMER0 | `Timer::socket` | IRQ port is `irq_out`. |
@@ -240,7 +240,7 @@ handles default-low signals safely.
 | I2C1 | `i2c::socket` | IRQ port is `irq`. |
 | SPI1 | `spi_tlm::socket` | IRQ port is `irq`. |
 | TIMER1 | `Timer::socket` | IRQ port is `irq_out`. |
-| RTC0 | `rtc_tlm::socket` | Implemented (`rtc_tlm`, PL031-style). Bind `reset_n`; IRQ port is `irq_out` to the PLIC. Optional future wakeup line to PMU. |
+| RTC0 | `rtc_tlm::socket` | Implemented (`rtc_tlm`). Bind `reset_n`; IRQ port is `irq_out` to the PLIC. Optional future wakeup line to PMU. |
 
 ## C/C++ Address Defines
 
@@ -315,7 +315,7 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_IRQ_I2C1       19u
 #define CDC_IRQ_SPI1       20u
 #define CDC_IRQ_TIMER1     21u
-#define CDC_IRQ_RTC0       22u  /* rtc_tlm irq_out (PL031-style RTC alarm) */
+#define CDC_IRQ_RTC0       22u  /* rtc_tlm irq_out (RTC alarm) */
 ```
 
 ## Platform Build Checklist

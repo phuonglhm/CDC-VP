@@ -3,7 +3,7 @@
 ## Overview
 
 `qspi_tlm` is a simplified SystemC/TLM model of a memory-mapped QSPI controller.
-It exposes a CPU-facing APB-like register target socket and drives a serial flash
+It exposes a CPU-facing register target socket and drives a serial flash
 device through an initiator socket.
 
 The intended integration is:

@@ -1,8 +1,8 @@
 //Author: trangmn20
 //Verified by: QuanNH107
-/* DMA-330 SoC verification firmware.
+/* DMA SoC verification firmware.
  *
- * Builds a DMA-330 channel program in RAM, launches it via the debug
+ * Builds a DMA channel program in RAM, launches it via the debug
  * register interface (DBGINST0/DBGINST1/DBGCMD), and verifies the
  * transfer completed and copied the expected bytes.
  *
@@ -16,7 +16,7 @@
 #define RAM_BASE          0x80000000u
 #define DMA_BASE          0x10070000u
 
-/* DMA APB register offsets (from dma_tlm.h) */
+/* DMA register offsets (from dma_tlm.h) */
 #define DMA_DSR           (DMA_BASE + 0x000u)
 #define DMA_INTEN         (DMA_BASE + 0x020u)
 #define DMA_INT_EVENT_RIS (DMA_BASE + 0x024u)
@@ -88,8 +88,8 @@ int main(void)
     pass &= check("src[0]==0x40", MMIO8(SRC_ADDR), 0x40u);
     pass &= check("dst[0]==0",    MMIO8(DST_ADDR), 0u);
 
-    /* ── Build a minimal DMA-330 program ── */
-    uart_puts("\n[2] Build DMA-330 channel program in RAM\n");
+    /* ── Build a minimal DMA program ── */
+    uart_puts("\n[2] Build DMA channel program in RAM\n");
     unsigned pc = PROGRAM_ADDR;
     /* CCR: src/dst increment, burst size = 4 bytes (encoded 2), burst len = 4 beats (encoded 3) */
     unsigned ccr = (1u << 0) | (2u << 1) | (3u << 4) |     /* src: inc, size=4B, len=4 */
@@ -203,7 +203,7 @@ int main(void)
         const unsigned FTR_UNDEF_INSTR = (1u << 0);
 
         unsigned bad_pc = RAM_BASE + 0x80400u;
-        MMIO8(bad_pc) = 0xFFu; /* not a valid DMA-330 opcode */
+        MMIO8(bad_pc) = 0xFFu; /* not a valid DMA opcode */
 
         /* Launch channel 1 (byte1 channel field, DBGINST0 bits[10:8]) */
         MMIO32(DMA_DBGINST0) = (0xA0u << 16) | (0x01u << 24);

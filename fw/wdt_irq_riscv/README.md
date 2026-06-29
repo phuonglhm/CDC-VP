@@ -149,4 +149,4 @@ Use open-source Accellera SystemC 2.3.4 for this demo:
 /opt/systemc-2.3.4
 ```
 
-The `wdt_tlm` component is a standardized model of the DesignWare APB Watchdog Timer, adapted to match the project's TLM conventions.
+The `wdt_tlm` component is a standardized model of the DesignWare Watchdog Timer, adapted to match the project's TLM conventions.

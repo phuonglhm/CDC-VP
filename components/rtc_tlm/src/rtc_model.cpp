@@ -83,7 +83,7 @@ void RTC_Model::writeReg(uint32_t offset, uint32_t data)
             reg_data = data; // load immediately seeds the counter
             break;
         case REG_CR:
-            // PL031 RTCEN is write-once: software can enable the RTC but cannot
+            // RTCEN is write-once: software can enable the RTC but cannot
             // disable it again. Only a reset clears it.
             if ((data & CR_EN) != 0u) {
                 reg_control |= CR_EN;

@@ -1,14 +1,14 @@
 // Author: hoangv11
 //verified: linhtk55-fpt
 
-# ARM TrustZone-based True Random Number Generator (TRNG) TLM-2.0 Model
+# True Random Number Generator (TRNG) TLM-2.0 Model
 
-This repository contains a **Programmer's View (PV)** model of a **True Random Number Generator (TRNG)**, implemented using **SystemC** and **TLM-2.0**. The model is based on the specification of the ARM TrustZone TRNG.
+This repository contains a **Programmer's View (PV)** model of a **True Random Number Generator (TRNG)**, implemented using **SystemC** and **TLM-2.0**. The model is based on a standard TRNG register specification.
 
 ## Features
 - **TLM-2.0 Blocking Transport:** Supports register access via a 32-bit aligned target socket with configurable access latency.
 - **Backdoor Debug Interface:** Provides side-effect-free backdoor access using `transport_dbg` for testbench inspection.
-- **Comprehensive Register Interface:** Implements the full register map of the ARM TrustZone TRNG, including configuration, control, data, and BIST counters.
+- **Comprehensive Register Interface:** Implements the full register map of the TRNG, including configuration, control, data, and BIST counters.
 - **Interrupt Handling:** Models the unmasked/masked interrupt status and clear operations via `RNG_IMR`, `RNG_ISR`, and `RNG_ICR` registers.
 - **Reset Logic:** Supports asynchronous hardware reset via `reset_n` and software-triggered resets via `TRNG_SW_RESET` and `RST_BITS_COUNTER` registers.
 
@@ -27,7 +27,7 @@ This repository contains a **Programmer's View (PV)** model of a **True Random N
 | `irq_out` | Output | `sc_out<bool>` | High when a masked interrupt condition (e.g. EHR_VALID) is met. |
 
 ## Register Map
-The model implements the standard ARM TrustZone TRNG register offsets:
+The model implements the standard TRNG register offsets:
 - `0x100 (RNG_IMR)`: Interrupt Mask Register (R/Ws)
 - `0x104 (RNG_ISR)`: Interrupt Status Register (RO)
 - `0x108 (RNG_ICR)`: Interrupt Clear Register (WO)

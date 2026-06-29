@@ -27,7 +27,7 @@ public:
    void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
 
 private:
-   static constexpr int FIFO_SIZE = 8; // 8-location deep, as specified by arm
+   static constexpr int FIFO_SIZE = 8; // 8-location deep
    const std::uint64_t base_addr = 0x0;
    const std::uint32_t clk = 100 * 1000000; // 100 MHz
 

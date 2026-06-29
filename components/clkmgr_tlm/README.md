@@ -1,6 +1,6 @@
 # FX1 SoC — Clock Manager (clkmgr) TLM Model
 
-A SystemC/TLM-2.0 functional model of the OpenTitan Clock Manager (clkmgr) IP used in the FX1 SoC (ARM Corstone-1000 based design).
+A SystemC/TLM-2.0 functional model of the OpenTitan Clock Manager (clkmgr) IP used in the FX1 SoC.
 
 This model provides register-level clock control behavior for software verification in a TLM simulation environment.
 

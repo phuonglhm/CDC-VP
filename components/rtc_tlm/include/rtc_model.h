@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// Pure-C++ register/behaviour model for a PL031-style real-time clock.
+// Pure-C++ register/behaviour model for a real-time clock.
 //
 // The counter advances one LSB per call to tick() while counting is enabled.
 // The SystemC wrapper is responsible for deciding how often tick() is called
@@ -15,7 +15,7 @@ private:
     uint32_t reg_data;     // 0x00 DR   current counter value (free-running)
     uint32_t reg_match;    // 0x04 MR   alarm compare value
     uint32_t reg_load;     // 0x08 LR   last value written to load the counter
-    uint32_t reg_control;  // 0x0C CR   bit0 = counter enable (write-once, PL031 RTCEN)
+    uint32_t reg_control;  // 0x0C CR   bit0 = counter enable (write-once, RTCEN)
     uint32_t reg_imsc;     // 0x10 IMSC bit0 = alarm interrupt mask (1 = enabled)
     uint32_t reg_ris;      // 0x14 RIS  bit0 = raw alarm interrupt status
 

@@ -1,13 +1,13 @@
-# DMA-330 Firmware Test
+# DMA Firmware Test
 
-Bare-metal RISC-V firmware that verifies the DMA-330 TLM peripheral inside
+Bare-metal RISC-V firmware that verifies the DMA TLM peripheral inside
 the Bremen virtual platform, by driving real memory-to-memory transfers
 through the debug launch interface.
 
 ## Test Path
 RISC-V firmware
 
--> writes DMA-330 program bytes into RAM
+-> writes DMA program bytes into RAM
 
 -> writes DBGINST0/DBGINST1/DBGCMD to launch a channel
 
@@ -54,7 +54,7 @@ Produces `fw/dma_riscv/dma_test.elf`.
 
 1. **Buffer setup** — writes a 32-byte source pattern, clears a 32-byte
    destination buffer.
-2. **Program build** — writes a DMA-330 channel program into RAM:
+2. **Program build** — writes a DMA channel program into RAM:
    `DMAMOV CCR/SAR/DAR`, two `DMALD`/`DMAST` bursts (16 bytes each),
    `DMASEV` event 3, `DMAEND`.
 3. **Debug launch** — starts the program on channel 0 via `DBGINST0`,
@@ -83,7 +83,7 @@ PASS src[0]==0x40
 
 PASS dst[0]==0
 
-[2] Build DMA-330 channel program in RAM
+[2] Build DMA channel program in RAM
 
 [3] Launch channel 0 via DBGINST/DBGCMD
 

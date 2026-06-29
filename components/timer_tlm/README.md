@@ -1,6 +1,6 @@
-# SSE-100 Timer Model & Testbench
+# Timer Model & Testbench
 
-A SystemC/TLM-2.0 model of a programmable APB timer, used in the SSE-100 subsystem.
+A SystemC/TLM-2.0 model of a programmable peripheral timer.
 
 ---
 

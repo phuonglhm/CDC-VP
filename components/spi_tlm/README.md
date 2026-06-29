@@ -1,12 +1,12 @@
 // Author: hoangv11
 // Verified by: quannh107
 
-# ARM PrimeCell SSP (PL022)-based SPI Controller TLM-2.0 Model
+# SPI Controller TLM-2.0 Model
 
-This project provides a **Programmer's View (PV)** model of a **SPI controller**, implemented using **SystemC** and **TLM-2.0**. The controller follows the ARM PrimeCell SSP (PL022 r1p4) specification.
+This project provides a **Programmer's View (PV)** model of a **SPI controller**, implemented using **SystemC** and **TLM-2.0**. The controller follows a standard SSP-style register specification.
 
 ## Features
-- **TLM-2.0 Blocking Transport:** Supports 20ns decoupled register access via an APB-compatible target socket.
+- **TLM-2.0 Blocking Transport:** Supports 20ns decoupled register access via a register-bus target socket.
 - **Full-Duplex Simulation:** Models concurrent bit-shifting timing based on `CPSR` and `SCR` register settings.
 - **Hardware FIFOs:** Includes 8-location deep TX and RX FIFOs with accurate Status Register (`SR`) behavior.
 - **Bit-Perfect Masking:** Automatically masks data to the configured word size (4 to 16 bits).

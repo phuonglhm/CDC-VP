@@ -152,7 +152,7 @@ private:
       }
       wait(sc_core::SC_ZERO_TIME);
 
-      std::cout << "\n[TB] ARM CoreLink DMA-330 LT functional tests begin\n\n";
+      std::cout << "\n[TB] DMA controller LT functional tests begin\n\n";
 
       unsigned int errors_before = m_errors;
       std::cout << "[TB] Test 1: reset and ID/configuration registers\n";
@@ -193,7 +193,7 @@ private:
       print_test_result("Test 2", errors_before);
 
       errors_before = m_errors;
-      std::cout << "\n[TB] Test 3: read-only channel registers ignore APB writes\n";
+      std::cout << "\n[TB] Test 3: read-only channel registers ignore register-bus writes\n";
       write32(dma_tlm::SAR0, 0xAAAAAAAAu);
       expect_eq("SAR0 remains architectural value", read32(dma_tlm::SAR0), SRC_ADDR + 32);
       write32(dma_tlm::CCR0, 0);

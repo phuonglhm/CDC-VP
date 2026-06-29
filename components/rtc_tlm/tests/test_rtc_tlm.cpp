@@ -89,7 +89,7 @@ int sc_main(int, char*[])
         CDC_CHECK((rd & INT_ALARM) == 0u);
         CDC_CHECK(irq.read() == false);
 
-        // PL031 RTCEN is write-once: writing 0 must NOT disable the counter.
+        // RTCEN is write-once: writing 0 must NOT disable the counter.
         value = 0u;
         CDC_CHECK(probe.write(REG_CR, &value, 4) == tlm::TLM_OK_RESPONSE);
         CDC_CHECK(probe.read(REG_CR, &rd, 4) == tlm::TLM_OK_RESPONSE);

@@ -53,8 +53,8 @@ Ví dụ phía cdc-vp lấy từ Step 1: [`platforms/mini_tlm`](../platforms/min
 ```lisa
 // Fast Models — top .lisa
 composition {
-    cpu0      : ARMCortexM55CT();
-    uart0     : PL011_Uart();
+    cpu0      : MCU_CPU();
+    uart0     : UART_Model();
     timer_clk : SP804_Timer();
     ext_dram  : RAMDevice();
     axi_inner : PVBusDecoder();
@@ -63,9 +63,9 @@ composition {
 
 ```cpp
 // cdc-vp — mini_tlm_top.cpp, struct impl
-cpu_stub                   cpu;    // ARMCortexM55CT()
+cpu_stub                   cpu;    // CPU model
 cdc::components::bus_router bus;    // PVBusDecoder()
-cdc::components::uart_tlm   uart;   // PL011_Uart()
+cdc::components::uart_tlm   uart;   // UART model
 cdc::components::timer_tlm  timer;  // SP804_Timer()
 cdc::components::memory_tlm ram;    // RAMDevice()
 ```

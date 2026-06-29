@@ -5,7 +5,7 @@
 
 # wdt_tlm
 
-SystemC/TLM-2.0 model of an ARM SP805-style watchdog timer. The component
+SystemC/TLM-2.0 model of a standard watchdog timer. The component
 provides a memory-mapped target socket, an interrupt output, a watchdog reset
 output, and an active-low hardware reset input.
 
@@ -53,7 +53,7 @@ state.
 
 ## Register Behavior
 
-The model implements the key SP805 watchdog registers:
+The model implements the key watchdog registers:
 
 - `WDOG_LOAD`
 - `WDOG_VALUE`
@@ -62,7 +62,7 @@ The model implements the key SP805 watchdog registers:
 - `WDOG_RIS`
 - `WDOG_MIS`
 - `WDOG_LOCK`
-- Peripheral ID and PrimeCell ID registers
+- Peripheral ID and component ID registers
 
 The watchdog follows the usual two-stage timeout behavior:
 
@@ -156,7 +156,7 @@ After reset is released, the functional test runs five checks:
    - Confirms writes are accepted again.
 
 5. **Peripheral ID Registers**
-   - Reads the SP805 peripheral ID and PrimeCell ID registers.
+   - Reads the peripheral ID and component ID registers.
    - Verifies each register returns the expected constant value.
 
 The test ends by printing:
