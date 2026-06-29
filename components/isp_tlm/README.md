@@ -104,6 +104,15 @@ classDiagram
     +process(in, w, h, cfg, bayer_pattern, bit_depth)
   }
 
+  %% Shared Types
+  class cfa_types {
+    <<enum>>
+    RGGB
+    GRBG
+    BGGR
+    GBRG
+  }
+
   %% Configuration Structs
   class isp_config {
     <<struct>>
@@ -130,7 +139,7 @@ classDiagram
     <<struct>>
     +enable : bool
     +start : bool
-    +bayer_pattern : uint8_t
+    +bayer_pattern : cfa_types
     +bit_depth : uint8_t
   }
 
@@ -298,4 +307,6 @@ classDiagram
   isp_config *-- format_config
   isp_config *-- aec_config
   isp_config *-- awb_config
+
+  global_config ..> cfa_types : uses
 ```

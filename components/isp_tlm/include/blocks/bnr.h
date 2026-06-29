@@ -2,6 +2,7 @@
 #define BNR_BLOCK_H
 
 #include <stdint.h>
+#include "isp_types.h"
 
 struct bnr_config {
     bool is_enable;
@@ -16,7 +17,7 @@ struct bnr_config {
 
 class bnr_block {
 public:
-    void process(const uint16_t* in, uint16_t* out, uint32_t w, uint32_t h, const bnr_config& cfg, uint8_t bayer_pattern, uint8_t bit_depth);
+    void process(const uint16_t* in, uint16_t* out, uint32_t w, uint32_t h, const bnr_config& cfg, cfa_types bayer_pattern, uint8_t bit_depth);
 };
 
 #endif // BNR_BLOCK_H
