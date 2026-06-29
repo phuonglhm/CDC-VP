@@ -9,16 +9,6 @@
 
 namespace cdc::components {
 
-namespace {
-
-constexpr std::uint64_t REG_CONTROL = 0x00;
-constexpr std::uint64_t REG_STATUS = 0x04;
-constexpr std::uint64_t REG_OUTPUT_SIZE = 0x08;
-
-constexpr std::uint32_t CONTROL_START = 1u << 0;
-constexpr std::uint32_t STATUS_DONE = 1u << 0;
-
-} // namespace
 
 video_encoder_tlm::video_encoder_tlm(sc_core::sc_module_name name, sc_core::sc_time access_latency)
     : sc_core::sc_module(name)
