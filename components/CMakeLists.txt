@@ -37,6 +37,8 @@ add_subdirectory(flash_nor_tlm)
 add_subdirectory(qspi_tlm)
 add_subdirectory(rtc_tlm)
 
+add_subdirectory(isp_tlm)
+
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
 install(EXPORT cdc-components-targets
     NAMESPACE cdc::components::
