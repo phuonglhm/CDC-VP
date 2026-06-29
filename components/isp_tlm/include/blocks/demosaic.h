@@ -1,25 +1,23 @@
-#ifndef ADC_MODEL_H
-#define ADC_MODEL_H
+#ifndef DEMOSAIC_BLOCK_H
+#define DEMOSAIC_BLOCK_H
 
 #include <stdint.h>
-#include <stdbool.h>
 
-class ADC_Model {
-private:
-    uint32_t reg_control;      // 0x00
-    uint32_t reg_status;       // 0x04
-    uint32_t reg_data;         // 0x08
-    uint32_t reg_intr_enable;  // 0x0C
-
-public:
-    ADC_Model();
-    void reset();
-    uint32_t readReg(uint32_t offset);
-    void writeReg(uint32_t offset, uint32_t data);
-    bool hasInterrupt() const;
-
-    uint32_t debugReadReg(uint32_t offset) const;
-    void debugWriteReg(uint32_t offset, uint32_t data);
+struct demosaic_config {
+   bool is_enable;
 };
 
-#endif
+class demosaic_block {
+public:
+   // out points to a contiguous 3-channel buffer RGB of size 3 * w * h.
+   // formatted as followed: R0, G0, B0, R1, G1, B1,...
+   void process(const uint16_t *in,
+                uint16_t *out,
+                uint32_t w,
+                uint32_t h,
+                const demosaic_config &cfg,
+                uint8_t bayer_pattern,
+                uint8_t bit_depth);
+};
+
+#endif // DEMOSAIC_BLOCK_H

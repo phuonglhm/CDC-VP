@@ -1,25 +1,22 @@
-#ifndef ADC_MODEL_H
-#define ADC_MODEL_H
+#ifndef BNR_BLOCK_H
+#define BNR_BLOCK_H
 
 #include <stdint.h>
-#include <stdbool.h>
 
-class ADC_Model {
-private:
-    uint32_t reg_control;      // 0x00
-    uint32_t reg_status;       // 0x04
-    uint32_t reg_data;         // 0x08
-    uint32_t reg_intr_enable;  // 0x0C
-
-public:
-    ADC_Model();
-    void reset();
-    uint32_t readReg(uint32_t offset);
-    void writeReg(uint32_t offset, uint32_t data);
-    bool hasInterrupt() const;
-
-    uint32_t debugReadReg(uint32_t offset) const;
-    void debugWriteReg(uint32_t offset, uint32_t data);
+struct bnr_config {
+    bool is_enable;
+    uint8_t filter_window;
+    float r_std_dev_s;
+    float r_std_dev_r;
+    float g_std_dev_s;
+    float g_std_dev_r;
+    float b_std_dev_s;
+    float b_std_dev_r;
 };
 
-#endif
+class bnr_block {
+public:
+    void process(const uint16_t* in, uint16_t* out, uint32_t w, uint32_t h, const bnr_config& cfg, uint8_t bayer_pattern, uint8_t bit_depth);
+};
+
+#endif // BNR_BLOCK_H

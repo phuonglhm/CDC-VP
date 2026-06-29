@@ -1,25 +1,24 @@
-#ifndef ADC_MODEL_H
-#define ADC_MODEL_H
+#ifndef BLC_BLOCK_H
+#define BLC_BLOCK_H
 
 #include <stdint.h>
-#include <stdbool.h>
 
-class ADC_Model {
-private:
-    uint32_t reg_control;      // 0x00
-    uint32_t reg_status;       // 0x04
-    uint32_t reg_data;         // 0x08
-    uint32_t reg_intr_enable;  // 0x0C
-
-public:
-    ADC_Model();
-    void reset();
-    uint32_t readReg(uint32_t offset);
-    void writeReg(uint32_t offset, uint32_t data);
-    bool hasInterrupt() const;
-
-    uint32_t debugReadReg(uint32_t offset) const;
-    void debugWriteReg(uint32_t offset, uint32_t data);
+struct blc_config {
+    bool is_enable;
+    bool is_linear;
+    uint16_t r_offset;
+    uint16_t gr_offset;
+    uint16_t gb_offset;
+    uint16_t b_offset;
+    uint16_t r_sat;
+    uint16_t gr_sat;
+    uint16_t gb_sat;
+    uint16_t b_sat;
 };
 
-#endif
+class blc_block {
+public:
+    void process(const uint16_t* in, uint16_t* out, uint32_t w, uint32_t h, const blc_config& cfg, uint8_t bayer_pattern, uint8_t bit_depth);
+};
+
+#endif // BLC_BLOCK_H
