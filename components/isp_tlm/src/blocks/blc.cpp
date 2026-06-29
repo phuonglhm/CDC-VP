@@ -1,109 +1,129 @@
 #include "blc.h"
-
+#include "isp_types.h"
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 
-namespace {
+void blc_block::process(const uint16_t *in,
+                        uint16_t *out,
+                        uint32_t w,
+                        uint32_t h,
+                        const blc_config &cfg,
+                        cfa_types bayer_pattern,
+                        uint8_t bit_depth) {
+   if (!cfg.is_enable)
+      return;
 
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
+   uint32_t bit_range = pow(2, bit_depth) - 1;
 
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
+   uint16_t b_sat_diff = (cfg.b_sat > cfg.b_offset) ? (cfg.b_sat - cfg.b_offset) : 1;
+   uint16_t gb_sat_diff = (cfg.gb_sat > cfg.gb_offset) ? (cfg.gb_sat - cfg.gb_offset) : 1;
+   uint16_t r_sat_diff = (cfg.r_sat > cfg.r_offset) ? (cfg.r_sat - cfg.r_offset) : 1;
+   uint16_t gr_sat_diff = (cfg.gr_sat > cfg.gr_offset) ? (cfg.gr_sat - cfg.gr_offset) : 1;
 
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
+   for (uint32_t i = 0; i < h; ++i) {
+      bool is_even_row = (i & 1) == 0;
+      for (uint32_t j = 0; j < w; ++j) {
+         bool is_even_col = (j & 1) == 0;
+         uint32_t ind = i * w + j;
 
-} // namespace
+         uint16_t offset = 0;
+         uint16_t sat_diff = 1;
 
-ADC_Model::ADC_Model() {
-   reset();
-}
+         switch (bayer_pattern) {
+         case cfa_types::BGGR:
+            if (is_even_row) {
+               if (is_even_col) {
+                  offset = cfg.b_offset;
+                  sat_diff = b_sat_diff;
+               } else {
+                  offset = cfg.gb_offset;
+                  sat_diff = gb_sat_diff;
+               }
+            } else {
+               if (is_even_col) {
+                  offset = cfg.gr_offset;
+                  sat_diff = gr_sat_diff;
+               } else {
+                  offset = cfg.r_offset;
+                  sat_diff = r_sat_diff;
+               }
+            }
+            break;
 
-void ADC_Model::reset() {
-   reg_control = 0;
-   reg_status = 0;
-   reg_data = 0;
-   reg_intr_enable = 0;
-}
+         case cfa_types::GBRG:
+            if (is_even_row) {
+               if (is_even_col) {
+                  offset = cfg.gb_offset;
+                  sat_diff = gb_sat_diff;
+               } else {
+                  offset = cfg.b_offset;
+                  sat_diff = b_sat_diff;
+               }
+            } else {
+               if (is_even_col) {
+                  offset = cfg.r_offset;
+                  sat_diff = r_sat_diff;
+               } else {
+                  offset = cfg.gr_offset;
+                  sat_diff = gr_sat_diff;
+               }
+            }
+            break;
 
-uint32_t ADC_Model::readReg(uint32_t offset) {
-   switch (offset) {
-   case REG_CONTROL:
-      return reg_control;
-   case REG_STATUS:
-      return reg_status;
-   case REG_DATA: {
-      const uint32_t data = reg_data;
-      reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-      return data;
-   }
-   case REG_INTR_ENABLE:
-      return reg_intr_enable;
-   default:
-      return 0;
-   }
-}
+         case cfa_types::GRBG:
+            if (is_even_row) {
+               if (is_even_col) {
+                  offset = cfg.gr_offset;
+                  sat_diff = gr_sat_diff;
+               } else {
+                  offset = cfg.r_offset;
+                  sat_diff = r_sat_diff;
+               }
+            } else {
+               if (is_even_col) {
+                  offset = cfg.b_offset;
+                  sat_diff = b_sat_diff;
+               } else {
+                  offset = cfg.gb_offset;
+                  sat_diff = gb_sat_diff;
+               }
+            }
+            break;
 
-void ADC_Model::writeReg(uint32_t offset, uint32_t data) {
-   switch (offset) {
-   case REG_CONTROL:
-      reg_control = data & CTRL_MASK;
-      if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-         reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-         reg_status |= STATUS_EOC;
-         reg_control &= ~CTRL_START; // START is self-clearing
+         case cfa_types::RGGB:
+            if (is_even_row) {
+               if (is_even_col) {
+                  offset = cfg.r_offset;
+                  sat_diff = r_sat_diff;
+               } else {
+                  offset = cfg.gr_offset;
+                  sat_diff = gr_sat_diff;
+               }
+            } else {
+               if (is_even_col) {
+                  offset = cfg.gb_offset;
+                  sat_diff = gb_sat_diff;
+               } else {
+                  offset = cfg.b_offset;
+                  sat_diff = b_sat_diff;
+               }
+            }
+            break;
+         }
+
+         int32_t val = (int32_t)in[ind] - offset;
+         if (val < 0)
+            val = 0;
+
+         if (cfg.is_linear) {
+            val = (double)val / sat_diff * bit_range;
+         }
+
+         if (val > (int32_t)bit_range)
+            val = bit_range;
+
+         out[ind] = (uint16_t)val;
       }
-      break;
-   case REG_STATUS:
-      if ((data & STATUS_EOC) != 0u) {
-         reg_status &= ~STATUS_EOC; // W1C
-      }
-      break;
-   case REG_INTR_ENABLE:
-      reg_intr_enable = data & INTR_EOC;
-      break;
-   default:
-      break;
-   }
-}
-
-bool ADC_Model::hasInterrupt() const {
-   return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
-
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const {
-   switch (offset) {
-   case REG_CONTROL:
-      return reg_control;
-   case REG_STATUS:
-      return reg_status;
-   case REG_DATA:
-      return reg_data;
-   case REG_INTR_ENABLE:
-      return reg_intr_enable;
-   default:
-      return 0;
-   }
-}
-
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data) {
-   switch (offset) {
-   case REG_CONTROL:
-      reg_control = data & CTRL_MASK;
-      break;
-   case REG_STATUS:
-      reg_status = data & STATUS_EOC;
-      break;
-   case REG_DATA:
-      reg_data = data & 0x0FFFu;
-      break;
-   case REG_INTR_ENABLE:
-      reg_intr_enable = data & INTR_EOC;
-      break;
-   default:
-      break;
    }
 }
