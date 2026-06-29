@@ -56,34 +56,34 @@ classDiagram
 
   %% Tier 3: Pure C++ Block Algorithms
   class blc_block {
-    +process(in, out, w, h, cfg)
+    +process(in, out, w, h, cfg, bayer_pattern, bit_depth)
   }
   class dpc_block {
     +process(in, out, w, h, cfg)
   }
   class lsc_block {
-    +process(in, out, w, h, cfg, lsc_mem_ptr)
+    +process(in, out, w, h, cfg, lsc_mem_ptr, bayer_pattern)
   }
   class dg_block {
-    +process(in, out, w, h, cfg)
+    +process(in, out, w, h, cfg, bit_depth)
   }
   class bnr_block {
-    +process(in, out, w, h, cfg)
+    +process(in, out, w, h, cfg, bayer_pattern, bit_depth)
   }
   class demosaic_block {
-    +process(in, out, w, h, cfg)
+    +process(in, out, w, h, cfg, bayer_pattern, bit_depth)
   }
   class wb_block {
     +process(in, out, w, h, cfg)
   }
   class ccm_block {
-    +process(in, out, w, h, cfg)
+    +process(in, out, w, h, cfg, bit_depth)
   }
   class gc_block {
-    +process(in, out, w, h, cfg, gc_mem_ptr)
+    +process(in, out, w, h, gc_mem_ptr, bit_depth)
   }
   class csc_block {
-    +process(in, out, w, h, cfg)
+    +process(in, out, w, h, cfg, bit_depth)
   }
   class cse_block {
     +process(in, out, w, h, cfg)
@@ -101,7 +101,7 @@ classDiagram
     +process(in, w, h, cfg)
   }
   class awb_block {
-    +process(in, w, h, cfg)
+    +process(in, w, h, cfg, bayer_pattern, bit_depth)
   }
 
   %% Configuration Structs
@@ -130,14 +130,14 @@ classDiagram
     <<struct>>
     +enable : bool
     +start : bool
+    +bayer_pattern : uint8_t
+    +bit_depth : uint8_t
   }
 
   class blc_config {
     <<struct>>
     +is_enable : bool
     +is_linear : bool
-    +bayer_pattern : uint8_t
-    +bit_depth : uint8_t
     +r_offset : uint16_t
     +gr_offset : uint16_t
     +gb_offset : uint16_t
@@ -189,8 +189,6 @@ classDiagram
     <<struct>>
     +is_enable : bool
     +is_auto : bool
-    +bayer_pattern : uint8_t
-    +bit_depth : uint8_t
     +r_gain : float
     +b_gain : float
   }
@@ -198,7 +196,6 @@ classDiagram
   class ccm_config {
     <<struct>>
     +is_enable : bool
-    +bit_depth : uint8_t
     +matrix : float[3][3]
   }
 
@@ -211,7 +208,6 @@ classDiagram
   class csc_config {
     <<struct>>
     +conv_standard : uint8_t
-    +bit_depth : uint8_t
   }
 
   class cse_config {
