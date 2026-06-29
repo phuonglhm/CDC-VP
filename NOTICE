@@ -1,0 +1,9 @@
+CDC-VP — Virtual SoC Platform
+Copyright 2026 The CDC-VP Authors
+
+This product includes software developed by the CDC-VP Authors, licensed under
+the Apache License, Version 2.0 (see LICENSE).
+
+This repository does NOT bundle its external CPU core. The Bremen riscv-vp core
+(MIT) is fetched separately into third_party/ (gitignored) by
+tools/third_party/setup_third_party.sh. See THIRD_PARTY.md.

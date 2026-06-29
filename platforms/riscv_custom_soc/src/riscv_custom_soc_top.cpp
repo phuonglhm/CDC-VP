@@ -11,20 +11,12 @@
 #include <uart.h>
 
 // Select the concrete CPU backend at build time (CDC_CPU_BACKEND via CMake).
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 #include <riscv_vp_wrapper.h>
-#else
-#include <riscv_tlm_wrapper.h>
-#endif
 
 namespace cdc::platforms::riscv_custom_soc {
 namespace {
 
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 using cpu_backend_t = cdc::cpu::riscv_vp_cpu;
-#else
-using cpu_backend_t = cdc::cpu::riscv_tlm_cpu;
-#endif
 
 constexpr std::uint64_t kRamBase = 0x8000'0000;   // firmware text/data/stack
 constexpr std::uint64_t kRamSize = 0x1'0000;      // 64 KiB

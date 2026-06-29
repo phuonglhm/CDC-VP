@@ -10,20 +10,12 @@
 #include <uart.h>
 #include "pwm.h"
 
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 #include <riscv_vp_wrapper.h>
-#else
-#include <riscv_tlm_wrapper.h>
-#endif
 
 namespace cdc::platforms::tests::pwm_platform {
 namespace {
 
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 using cpu_backend_t = cdc::cpu::riscv_vp_cpu;
-#else
-using cpu_backend_t = cdc::cpu::riscv_tlm_cpu;
-#endif
 
 constexpr std::uint64_t kClintBase = 0x0200'0000;
 constexpr std::uint64_t kClintSize = 0x0001'0000;

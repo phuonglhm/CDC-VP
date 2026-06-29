@@ -10,20 +10,12 @@
 #include <pmu.h>
 #include <uart.h>
 
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 #include <riscv_vp_wrapper.h>
-#else
-#include <riscv_tlm_wrapper.h>
-#endif
 
 namespace cdc::platforms::tests::pmu_platform {
 namespace {
 
-#if defined(CDC_CPU_BACKEND_riscv_vp)
 using cpu_backend_t = cdc::cpu::riscv_vp_cpu;
-#else
-using cpu_backend_t = cdc::cpu::riscv_tlm_cpu;
-#endif
 
 // Memory map của platform.
 // CPU truy cập địa chỉ -> bus_router decode -> chuyển tới IP tương ứng.
@@ -130,7 +122,6 @@ struct pmu_platform_top::impl : public sc_core::sc_module {
 
         // Nối CPU vào bus.
         // riscv_vp: unified bus -> 1 port.
-        // riscv_tlm: instr/data bus riêng -> 2 port.
         if (cpu.has_unified_bus()) {
             cpu.data_bus().bind(bus.cpu_port(0));
         } else {
