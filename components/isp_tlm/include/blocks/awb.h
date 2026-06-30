@@ -1,25 +1,22 @@
-#ifndef ADC_MODEL_H
-#define ADC_MODEL_H
+#ifndef AWB_BLOCK_H
+#define AWB_BLOCK_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "isp_types.h"
 
-class ADC_Model {
-private:
-    uint32_t reg_control;      // 0x00
-    uint32_t reg_status;       // 0x04
-    uint32_t reg_data;         // 0x08
-    uint32_t reg_intr_enable;  // 0x0C
-
-public:
-    ADC_Model();
-    void reset();
-    uint32_t readReg(uint32_t offset);
-    void writeReg(uint32_t offset, uint32_t data);
-    bool hasInterrupt() const;
-
-    uint32_t debugReadReg(uint32_t offset) const;
-    void debugWriteReg(uint32_t offset, uint32_t data);
+struct awb_config {
+    bool is_enable;
+    uint8_t algorithm;
+    float underexposed_percentage;
+    float overexposed_percentage;
+    float percentage;
+    float r_gain_out;
+    float b_gain_out;
 };
 
-#endif
+class awb_block {
+public:
+    void process(const uint16_t* in, uint32_t w, uint32_t h, const awb_config& cfg, cfa_types bayer_pattern, uint8_t bit_depth);
+};
+
+#endif // AWB_BLOCK_H
