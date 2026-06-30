@@ -62,7 +62,7 @@ classDiagram
     +process(in, out, w, h, cfg)
   }
   class lsc_block {
-    +process(in, out, w, h, cfg, lsc_mem_ptr, bayer_pattern)
+    +process(in, out, w, h, cfg, lsc_mem_ptr, bayer_pattern, bit_depth)
   }
   class dg_block {
     +process(in, out, w, h, cfg, bit_depth)
@@ -172,6 +172,7 @@ classDiagram
 
   class dg_config {
     <<struct>>
+    +is_enable : bool
     +is_auto : bool
     +current_gain : uint16_t
     +ae_feedback : int32_t
