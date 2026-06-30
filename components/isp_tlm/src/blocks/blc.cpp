@@ -17,7 +17,7 @@ void blc_block::process(const uint16_t *in,
       return;
    }
 
-   uint32_t bit_range = pow(2, bit_depth) - 1;
+   uint32_t bit_range = (1u << bit_depth) - 1;
 
    uint16_t b_sat_diff = (cfg.b_sat > cfg.b_offset) ? (cfg.b_sat - cfg.b_offset) : 1;
    uint16_t gb_sat_diff = (cfg.gb_sat > cfg.gb_offset) ? (cfg.gb_sat - cfg.gb_offset) : 1;

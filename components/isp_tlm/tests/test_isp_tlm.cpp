@@ -145,7 +145,7 @@ void test_lsc_block() {
     lsc_mem[4] = 1.5f; lsc_mem[5] = 1.5f;
     lsc_mem[6] = 1.5f; lsc_mem[7] = 1.5f;
 
-    block.process(in.data(), out.data(), w, h, cfg, lsc_mem.data(), cfa_types::RGGB);
+    block.process(in.data(), out.data(), w, h, cfg, lsc_mem.data(), cfa_types::RGGB, 12);
 
     // For RGGB pattern:
     // Row 0 Col 0 is R -> should be scaled by 2.0 -> 200
@@ -155,7 +155,7 @@ void test_lsc_block() {
 
     // Test LSC bypass
     cfg.is_enable = false;
-    block.process(in.data(), out.data(), w, h, cfg, lsc_mem.data(), cfa_types::RGGB);
+    block.process(in.data(), out.data(), w, h, cfg, lsc_mem.data(), cfa_types::RGGB, 12);
     ASSERT_EQUAL(out[0 * w + 0], 100);
 
     std::cout << "[Test] LSC Block Unit Test Passed." << std::endl;
