@@ -4,15 +4,15 @@
 #include <stdint.h>
 
 struct aec_config {
-    bool is_enable;
-    uint8_t center_illuminance;
-    float histogram_skewness;
-    int32_t ae_feedback;
+   bool is_enable;
+   uint8_t center_illuminance;
+   float histogram_skewness;
+   int32_t ae_feedback;
 };
 
 class aec_block {
 public:
-    void process(const uint16_t* in, uint32_t w, uint32_t h, const aec_config& cfg);
+   void process(const uint16_t *in, uint32_t w, uint32_t h, aec_config &cfg, uint8_t bit_depth);
 };
 
 #endif // AEC_BLOCK_H

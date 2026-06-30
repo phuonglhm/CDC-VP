@@ -98,7 +98,7 @@ classDiagram
     +process(in, out, w, h, cfg)
   }
   class aec_block {
-    +process(in, w, h, cfg)
+    +process(in, w, h, cfg, bit_depth)
   }
   class awb_block {
     +process(in, w, h, cfg, bayer_pattern, bit_depth)
