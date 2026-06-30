@@ -4,8 +4,6 @@
 #include <cstring>
 #include <iostream>
 
-enum class bayer_channel { R = 0, GR = 1, GB = 2, B = 3 };
-
 static inline float bilinear_interpolate(float G00, float G10, float G01, float G11, float dx, float dy) {
    return (1.0f - dx) * (1.0f - dy) * G00 + dx * (1.0f - dy) * G10 + (1.0f - dx) * dy * G01 + dx * dy * G11;
 }
