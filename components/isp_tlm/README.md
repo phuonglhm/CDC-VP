@@ -101,7 +101,7 @@ classDiagram
     +process(in, w, h, cfg, bit_depth)
   }
   class awb_block {
-    +process(in, w, h, cfg, bayer_pattern, bit_depth)
+    +process(in, w, h, cfg, bit_depth)
   }
 
   %% Shared Types
