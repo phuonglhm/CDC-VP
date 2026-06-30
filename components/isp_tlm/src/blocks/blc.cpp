@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 void blc_block::process(const uint16_t *in,
                         uint16_t *out,
@@ -11,8 +12,10 @@ void blc_block::process(const uint16_t *in,
                         const blc_config &cfg,
                         cfa_types bayer_pattern,
                         uint8_t bit_depth) {
-   if (!cfg.is_enable)
+   if (!cfg.is_enable) {
+      std::memcpy(out, in, w * h * sizeof(uint16_t));
       return;
+   }
 
    uint32_t bit_range = pow(2, bit_depth) - 1;
 
