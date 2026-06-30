@@ -1,116 +1,119 @@
-#include "adc_model.h"
+#include "dpc.h"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 
-#include <cstdlib>
+void dpc_block::process(const uint16_t *in, uint16_t *out, uint32_t w, uint32_t h, const dpc_config &cfg) {
+   if (!cfg.is_enable) {
+      std::memcpy(out, in, w * h * sizeof(uint16_t));
+      return;
+   }
 
-namespace {
+   auto get_pixel = [&](int r, int c) -> uint16_t {
+      // edge padding
+      if (r < 0) {
+         r = -r;
+      } else if (r >= static_cast<int>(h)) {
+         r = 2 * static_cast<int>(h) - 2 - r;
+      }
 
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
+      if (c < 0) {
+         c = -c;
+      } else if (c >= static_cast<int>(w)) {
+         c = 2 * static_cast<int>(w) - 2 - c;
+      }
 
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
+      return in[r * w + c];
+   };
 
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
+   for (int i = 0; i < static_cast<int>(h); ++i) {
+      for (int j = 0; j < static_cast<int>(w); ++j) {
+         uint16_t P = in[i * w + j];
 
-} // namespace
+         uint16_t N0 = get_pixel(i - 2, j - 2); // top left
+         uint16_t N1 = get_pixel(i - 2, j);     // top center
+         uint16_t N2 = get_pixel(i - 2, j + 2); // top right
+         uint16_t N3 = get_pixel(i, j - 2);     // left center
+         uint16_t N4 = get_pixel(i, j + 2);     // right center
+         uint16_t N5 = get_pixel(i + 2, j - 2); // bot left
+         uint16_t N6 = get_pixel(i + 2, j);     // bot center
+         uint16_t N7 = get_pixel(i + 2, j + 2); // bot right
 
-ADC_Model::ADC_Model()
-{
-    reset();
-}
+         // range check
+         uint16_t n_min = N0;
+         if (N1 < n_min)
+            n_min = N1;
+         if (N2 < n_min)
+            n_min = N2;
+         if (N3 < n_min)
+            n_min = N3;
+         if (N4 < n_min)
+            n_min = N4;
+         if (N5 < n_min)
+            n_min = N5;
+         if (N6 < n_min)
+            n_min = N6;
+         if (N7 < n_min)
+            n_min = N7;
 
-void ADC_Model::reset()
-{
-    reg_control = 0;
-    reg_status = 0;
-    reg_data = 0;
-    reg_intr_enable = 0;
-}
+         uint16_t n_max = N0;
+         if (N1 > n_max)
+            n_max = N1;
+         if (N2 > n_max)
+            n_max = N2;
+         if (N3 > n_max)
+            n_max = N3;
+         if (N4 > n_max)
+            n_max = N4;
+         if (N5 > n_max)
+            n_max = N5;
+         if (N6 > n_max)
+            n_max = N6;
+         if (N7 > n_max)
+            n_max = N7;
 
-uint32_t ADC_Model::readReg(uint32_t offset)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA: {
-            const uint32_t data = reg_data;
-            reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-            return data;
-        }
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
-    }
-}
+         bool cond1 = (P < n_min) || (P > n_max);
 
-void ADC_Model::writeReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-                reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-                reg_status |= STATUS_EOC;
-                reg_control &= ~CTRL_START; // START is self-clearing
+         // threshold check
+         bool cond2 = (std::abs(static_cast<int>(P) - N0) > cfg.dp_threshold) &&
+                      (std::abs(static_cast<int>(P) - N1) > cfg.dp_threshold) &&
+                      (std::abs(static_cast<int>(P) - N2) > cfg.dp_threshold) &&
+                      (std::abs(static_cast<int>(P) - N3) > cfg.dp_threshold) &&
+                      (std::abs(static_cast<int>(P) - N4) > cfg.dp_threshold) &&
+                      (std::abs(static_cast<int>(P) - N5) > cfg.dp_threshold) &&
+                      (std::abs(static_cast<int>(P) - N6) > cfg.dp_threshold) &&
+                      (std::abs(static_cast<int>(P) - N7) > cfg.dp_threshold);
+
+         // dead pixel correction
+         if (cond1 && cond2) {
+            int32_t G_v = std::abs(2 * static_cast<int32_t>(P) - N1 - N6);  // vertical
+            int32_t G_h = std::abs(2 * static_cast<int32_t>(P) - N3 - N4);  // horizontal
+            int32_t G_ld = std::abs(2 * static_cast<int32_t>(P) - N2 - N5); // left diagonal
+            int32_t G_rd = std::abs(2 * static_cast<int32_t>(P) - N0 - N7); // right diagonal
+
+            int32_t min_grad = G_v;
+            if (G_h < min_grad)
+               min_grad = G_h;
+            if (G_ld < min_grad)
+               min_grad = G_ld;
+            if (G_rd < min_grad)
+               min_grad = G_rd;
+
+            // tie breaking
+            uint16_t corrected = P;
+            if (min_grad == G_v) {
+               corrected = (static_cast<uint32_t>(N1) + N6) / 2;
+            } else if (min_grad == G_h) {
+               corrected = (static_cast<uint32_t>(N3) + N4) / 2;
+            } else if (min_grad == G_ld) {
+               corrected = (static_cast<uint32_t>(N2) + N5) / 2;
+            } else if (min_grad == G_rd) {
+               corrected = (static_cast<uint32_t>(N0) + N7) / 2;
             }
-            break;
-        case REG_STATUS:
-            if ((data & STATUS_EOC) != 0u) {
-                reg_status &= ~STATUS_EOC; // W1C
-            }
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
-}
-
-bool ADC_Model::hasInterrupt() const
-{
-    return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
-
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA:
-            return reg_data;
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
-    }
-}
-
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            break;
-        case REG_STATUS:
-            reg_status = data & STATUS_EOC;
-            break;
-        case REG_DATA:
-            reg_data = data & 0x0FFFu;
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
+            out[i * w + j] = corrected;
+         } else {
+            out[i * w + j] = P;
+         }
+      }
+   }
 }
