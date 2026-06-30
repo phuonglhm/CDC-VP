@@ -81,6 +81,7 @@ KiB later without changing its base address.
 | SPI1 | `0x1012_0000` | `0x0000_1000` | `0x1012_0FFF` | MMIO | Second SPI controller. |
 | TIMER1 | `0x1013_0000` | `0x0000_1000` | `0x1013_0FFF` | MMIO | Second peripheral timer, separate from CLINT and TIMER0. |
 | RTC0 | `0x1014_0000` | `0x0000_1000` | `0x1014_0FFF` | MMIO | Real-time clock with alarm. Implemented by `rtc_tlm`. May also drive a PMU wakeup line in future. |
+| ADC0 | `0x1015_0000` | `0x0000_1000` | `0x1015_0FFF` | MMIO | ADC controller (`adc_tlm`). Assigned in the VP_FX1 full SoC (resolves the earlier ADC base TBD). |
 | RAM0 | `0x8000_0000` | `0x1000_0000` | `0x8FFF_FFFF` | RAM/DDR | Firmware, heap/stack, frame buffers, tensors, weights, and accelerator scratch space. Final integrated SoC target is 256 MiB. |
 
 ## Accelerator Pipeline Buffer Plan
@@ -202,7 +203,8 @@ architecture and must not be assigned.
 | 20 | `spi1.irq` | assigned | Second SPI interrupt. |
 | 21 | `timer1.irq_out` | assigned | Second peripheral timer interrupt. |
 | 22 | `rtc0.irq_out` | assigned | RTC alarm interrupt. `rtc_tlm` exposes `sc_out<bool> irq_out`. |
-| 23-31 | reserved | reserved | Keep free for GPIO, ADC, AES, additional instances, or future platform IP. |
+| 23 | `adc0.irq_out` | assigned | ADC0 interrupt (VP_FX1 full SoC). |
+| 24-31 | reserved | reserved | Keep free for GPIO, AES, additional instances, or future platform IP. |
 
 Recommended PLIC construction for the integrated platform:
 
@@ -273,6 +275,7 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_SPI1_BASE     0x10120000u
 #define CDC_TIMER1_BASE   0x10130000u
 #define CDC_RTC0_BASE     0x10140000u
+#define CDC_ADC0_BASE     0x10150000u
 
 #define CDC_ACCEL_MMIO_SIZE 0x00010000u
 
@@ -316,6 +319,7 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_IRQ_SPI1       20u
 #define CDC_IRQ_TIMER1     21u
 #define CDC_IRQ_RTC0       22u  /* rtc_tlm irq_out (RTC alarm) */
+#define CDC_IRQ_ADC0       23u  /* adc_tlm irq_out */
 ```
 
 ## Platform Build Checklist

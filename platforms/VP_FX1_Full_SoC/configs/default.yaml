@@ -1,0 +1,31 @@
+platform: vp_fx1_full_soc
+
+cpu:
+  backend: riscv_vp            # Bremen RV32 (application-class)
+
+memory_map:
+  ram:    { base: 0x80000000, size: 0x10000000 }   # 256 MiB
+  clint:  { base: 0x02000000, size: 0x10000 }
+  plic:   { base: 0x0C000000, size: 0x400000 }
+  uart0:  { base: 0x10000000, size: 0x1000 }
+  i2c0:   { base: 0x10010000, size: 0x1000 }
+  spi0:   { base: 0x10020000, size: 0x1000 }
+  timer0: { base: 0x10030000, size: 0x1000 }
+  wdt0:   { base: 0x10040000, size: 0x1000 }
+  pwm0:   { base: 0x10050000, size: 0x1000 }
+  dma0:   { base: 0x10060000, size: 0x1000 }
+  trng0:  { base: 0x10070000, size: 0x1000 }
+  cmu0:   { base: 0x10080000, size: 0x1000 }
+  pmu0:   { base: 0x10090000, size: 0x1000 }
+  dmic0:  { base: 0x100A0000, size: 0x1000 }
+  otp0:   { base: 0x100B0000, size: 0x1000 }
+  qspi0:  { base: 0x100C0000, size: 0x1000 }
+  uart1:  { base: 0x10100000, size: 0x1000 }
+  i2c1:   { base: 0x10110000, size: 0x1000 }
+  spi1:   { base: 0x10120000, size: 0x1000 }
+  timer1: { base: 0x10130000, size: 0x1000 }
+  rtc0:   { base: 0x10140000, size: 0x1000 }
+  # ISP0 0x100D0000 / VPU0 0x100E0000 / NPU0 0x100F0000 reserved (planned)
+
+interrupts:
+  controller: PLIC (31 sources) + CLINT (MTIP/MSIP)

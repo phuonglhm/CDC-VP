@@ -38,7 +38,7 @@ add_subdirectory(flash_nor_tlm)
 add_subdirectory(qspi_tlm)
 add_subdirectory(rtc_tlm)
 
-add_subdirectory(isp_tlm)
+ add_subdirectory(isp_tlm)  # TEMP: WIP, missing headers — re-enable when it builds
 
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
 install(EXPORT cdc-components-targets

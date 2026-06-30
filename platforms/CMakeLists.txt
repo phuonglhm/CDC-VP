@@ -27,6 +27,8 @@ if(CDC_BUILD_CUSTOM_SOC)
       message(STATUS "Skipping riscv_custom_soc: cdc::components::i2c_tlm is not available")
    endif()
 
+   add_subdirectory(VP_FX1_Full_SoC)
+
    add_subdirectory(tests/adc_platform)
 
    if(TARGET cdc::components::clkmgr_tlm)
