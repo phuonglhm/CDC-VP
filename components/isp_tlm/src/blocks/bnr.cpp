@@ -41,13 +41,13 @@ static void joint_bilateral_filter(const std::vector<float> &in_img,
    auto get_pixel_mirror = [&](const std::vector<float> &buf, int r, int c) -> float {
       if (r < 0)
          r = -r;
-      else if (r >= h)
-         r = 2 * h - 2 - r;
+      else if (r >= static_cast<int>(h))
+         r = 2 * static_cast<int>(h) - 2 - r;
       if (c < 0)
          c = -c;
-      else if (c >= w)
-         c = 2 * w - 2 - c;
-      return buf[r * w + c];
+      else if (c >= static_cast<int>(w))
+         c = 2 * static_cast<int>(w) - 2 - c;
+      return static_cast<float>(buf[r * w + c]);
    };
 
    for (int r = 0; r < static_cast<int>(h); ++r) {
