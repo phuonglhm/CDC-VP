@@ -1,116 +1,128 @@
-#include "adc_model.h"
+#include "blocks/demosaic.h"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <vector>
 
-#include <cstdlib>
+void demosaic_block::process(const uint16_t *in,
+                             uint16_t *out,
+                             uint32_t w,
+                             uint32_t h,
+                             const demosaic_config &cfg,
+                             cfa_types bayer_pattern,
+                             uint8_t bit_depth) {
+   if (!cfg.is_enable) {
+      // bypass mode: copy raw values directly into r, g, b channels
+      for (uint32_t idx = 0; idx < w * h; ++idx) {
+         out[3 * idx + 0] = in[idx];
+         out[3 * idx + 1] = in[idx];
+         out[3 * idx + 2] = in[idx];
+      }
+      return;
+   }
 
-namespace {
+   uint32_t bit_range = (1u << bit_depth) - 1;
 
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
+   auto get_pixel_mirror = [&](int r, int c) -> float {
+      if (r < 0)
+         r = -r;
+      else if (r >= static_cast<int>(h))
+         r = 2 * static_cast<int>(h) - 2 - r;
+      if (c < 0)
+         c = -c;
+      else if (c >= static_cast<int>(w))
+         c = 2 * static_cast<int>(w) - 2 - c;
+      return static_cast<float>(in[r * w + c]);
+   };
 
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
+   for (int r = 0; r < static_cast<int>(h); ++r) {
+      bool is_even_row = (r & 1) == 0;
+      for (int c = 0; c < static_cast<int>(w); ++c) {
+         bool is_even_col = (c & 1) == 0;
+         uint32_t out_idx = 3 * (r * w + c);
 
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
+         float W[5][5];
+         for (int i = 0; i < 5; ++i) {
+            for (int j = 0; j < 5; ++j) {
+               W[i][j] = get_pixel_mirror(r + i - 2, c + j - 2);
+            }
+         }
 
-} // namespace
-
-ADC_Model::ADC_Model()
-{
-    reset();
-}
-
-void ADC_Model::reset()
-{
-    reg_control = 0;
-    reg_status = 0;
-    reg_data = 0;
-    reg_intr_enable = 0;
-}
-
-uint32_t ADC_Model::readReg(uint32_t offset)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA: {
-            const uint32_t data = reg_data;
-            reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-            return data;
-        }
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
-    }
-}
-
-void ADC_Model::writeReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-                reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-                reg_status |= STATUS_EOC;
-                reg_control &= ~CTRL_START; // START is self-clearing
+         bayer_channel channel = bayer_channel::R;
+         switch (bayer_pattern) {
+         case cfa_types::RGGB:
+            if (is_even_row) {
+               channel = is_even_col ? bayer_channel::R : bayer_channel::GR;
+            } else {
+               channel = is_even_col ? bayer_channel::GB : bayer_channel::B;
             }
             break;
-        case REG_STATUS:
-            if ((data & STATUS_EOC) != 0u) {
-                reg_status &= ~STATUS_EOC; // W1C
+         case cfa_types::GRBG:
+            if (is_even_row) {
+               channel = is_even_col ? bayer_channel::GR : bayer_channel::R;
+            } else {
+               channel = is_even_col ? bayer_channel::B : bayer_channel::GB;
             }
             break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
+         case cfa_types::BGGR:
+            if (is_even_row) {
+               channel = is_even_col ? bayer_channel::B : bayer_channel::GB;
+            } else {
+               channel = is_even_col ? bayer_channel::GR : bayer_channel::R;
+            }
             break;
-        default:
+         case cfa_types::GBRG:
+            if (is_even_row) {
+               channel = is_even_col ? bayer_channel::GB : bayer_channel::B;
+            } else {
+               channel = is_even_col ? bayer_channel::R : bayer_channel::GR;
+            }
             break;
-    }
-}
+         }
 
-bool ADC_Model::hasInterrupt() const
-{
-    return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
+         float rout = 0.0f, gout = 0.0f, bout = 0.0f;
 
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA:
-            return reg_data;
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
-    }
-}
+         if (channel == bayer_channel::R) {
+            // red center pixel
+            rout = W[2][2];
+            gout = (4.0f * W[2][2] - W[0][2] - W[2][0] - W[4][2] - W[2][4] +
+                    2.0f * (W[1][2] + W[3][2] + W[2][1] + W[2][3])) /
+                   8.0f;
+            bout = (6.0f * W[2][2] - 1.5f * (W[0][2] + W[2][0] + W[4][2] + W[2][4]) +
+                    2.0f * (W[1][1] + W[1][3] + W[3][1] + W[3][3])) /
+                   8.0f;
+         } else if (channel == bayer_channel::B) {
+            // blue center pixel
+            bout = W[2][2];
+            gout = (4.0f * W[2][2] - W[0][2] - W[2][0] - W[4][2] - W[2][4] +
+                    2.0f * (W[1][2] + W[3][2] + W[2][1] + W[2][3])) /
+                   8.0f;
+            rout = (6.0f * W[2][2] - 1.5f * (W[0][2] + W[2][0] + W[4][2] + W[2][4]) +
+                    2.0f * (W[1][1] + W[1][3] + W[3][1] + W[3][3])) /
+                   8.0f;
+         } else if (channel == bayer_channel::GR) {
+            // green center pixel on red row (gr)
+            gout = W[2][2];
+            rout = (5.0f * W[2][2] - W[2][0] - W[1][1] - W[3][1] - W[1][3] - W[3][3] - W[2][4] +
+                    0.5f * (W[0][2] + W[4][2]) + 4.0f * (W[2][1] + W[2][3])) /
+                   8.0f;
+            bout = (5.0f * W[2][2] - W[0][2] - W[1][1] - W[1][3] - W[4][2] - W[3][1] - W[3][3] +
+                    0.5f * (W[2][0] + W[2][4]) + 4.0f * (W[1][2] + W[3][2])) /
+                   8.0f;
+         } else if (channel == bayer_channel::GB) {
+            // green center pixel on blue row (gb)
+            gout = W[2][2];
+            bout = (5.0f * W[2][2] - W[2][0] - W[1][1] - W[3][1] - W[1][3] - W[3][3] - W[2][4] +
+                    0.5f * (W[0][2] + W[4][2]) + 4.0f * (W[2][1] + W[2][3])) /
+                   8.0f;
+            rout = (5.0f * W[2][2] - W[0][2] - W[1][1] - W[1][3] - W[4][2] - W[3][1] - W[3][3] +
+                    0.5f * (W[2][0] + W[2][4]) + 4.0f * (W[1][2] + W[3][2])) /
+                   8.0f;
+         }
 
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            break;
-        case REG_STATUS:
-            reg_status = data & STATUS_EOC;
-            break;
-        case REG_DATA:
-            reg_data = data & 0x0FFFu;
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
+         out[out_idx + 0] = static_cast<uint16_t>(std::clamp(rout, 0.0f, static_cast<float>(bit_range)));
+         out[out_idx + 1] = static_cast<uint16_t>(std::clamp(gout, 0.0f, static_cast<float>(bit_range)));
+         out[out_idx + 2] = static_cast<uint16_t>(std::clamp(bout, 0.0f, static_cast<float>(bit_range)));
+      }
+   }
 }
