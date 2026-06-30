@@ -1,4 +1,5 @@
 #include "dpc.h"
+#include "isp_utils.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -9,35 +10,19 @@ void dpc_block::process(const uint16_t *in, uint16_t *out, uint32_t w, uint32_t 
       return;
    }
 
-   auto get_pixel = [&](int r, int c) -> uint16_t {
-      // edge padding
-      if (r < 0) {
-         r = -r;
-      } else if (r >= static_cast<int>(h)) {
-         r = 2 * static_cast<int>(h) - 2 - r;
-      }
-
-      if (c < 0) {
-         c = -c;
-      } else if (c >= static_cast<int>(w)) {
-         c = 2 * static_cast<int>(w) - 2 - c;
-      }
-
-      return in[r * w + c];
-   };
-
    for (int i = 0; i < static_cast<int>(h); ++i) {
       for (int j = 0; j < static_cast<int>(w); ++j) {
          uint16_t P = in[i * w + j];
 
-         uint16_t N0 = get_pixel(i - 2, j - 2); // top left
-         uint16_t N1 = get_pixel(i - 2, j);     // top center
-         uint16_t N2 = get_pixel(i - 2, j + 2); // top right
-         uint16_t N3 = get_pixel(i, j - 2);     // left center
-         uint16_t N4 = get_pixel(i, j + 2);     // right center
-         uint16_t N5 = get_pixel(i + 2, j - 2); // bot left
-         uint16_t N6 = get_pixel(i + 2, j);     // bot center
-         uint16_t N7 = get_pixel(i + 2, j + 2); // bot right
+         // fetch neighbor pixels using global mirror padding
+         uint16_t N0 = isp_utils::get_pixel_mirror(in, i - 2, j - 2, w, h); // top left
+         uint16_t N1 = isp_utils::get_pixel_mirror(in, i - 2, j, w, h);     // top center
+         uint16_t N2 = isp_utils::get_pixel_mirror(in, i - 2, j + 2, w, h); // top right
+         uint16_t N3 = isp_utils::get_pixel_mirror(in, i, j - 2, w, h);     // left center
+         uint16_t N4 = isp_utils::get_pixel_mirror(in, i, j + 2, w, h);     // right center
+         uint16_t N5 = isp_utils::get_pixel_mirror(in, i + 2, j - 2, w, h); // bot left
+         uint16_t N6 = isp_utils::get_pixel_mirror(in, i + 2, j, w, h);     // bot center
+         uint16_t N7 = isp_utils::get_pixel_mirror(in, i + 2, j + 2, w, h); // bot right
 
          // range check
          uint16_t n_min = N0;

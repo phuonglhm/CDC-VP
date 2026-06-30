@@ -1,4 +1,5 @@
 #include "blocks/demosaic.h"
+#include "isp_utils.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -23,18 +24,6 @@ void demosaic_block::process(const uint16_t *in,
 
    uint32_t bit_range = (1u << bit_depth) - 1;
 
-   auto get_pixel_mirror = [&](int r, int c) -> float {
-      if (r < 0)
-         r = -r;
-      else if (r >= static_cast<int>(h))
-         r = 2 * static_cast<int>(h) - 2 - r;
-      if (c < 0)
-         c = -c;
-      else if (c >= static_cast<int>(w))
-         c = 2 * static_cast<int>(w) - 2 - c;
-      return static_cast<float>(in[r * w + c]);
-   };
-
    for (int r = 0; r < static_cast<int>(h); ++r) {
       bool is_even_row = (r & 1) == 0;
       for (int c = 0; c < static_cast<int>(w); ++c) {
@@ -44,10 +33,11 @@ void demosaic_block::process(const uint16_t *in,
          float W[5][5];
          for (int i = 0; i < 5; ++i) {
             for (int j = 0; j < 5; ++j) {
-               W[i][j] = get_pixel_mirror(r + i - 2, c + j - 2);
+               W[i][j] = isp_utils::get_pixel_mirror(in, r + i - 2, c + j - 2, w, h);
             }
          }
 
+         // determine bayer channel at center pixel W[2][2]
          bayer_channel channel = bayer_channel::R;
          switch (bayer_pattern) {
          case cfa_types::RGGB:
