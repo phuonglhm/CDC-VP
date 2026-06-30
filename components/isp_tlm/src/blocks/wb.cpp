@@ -1,116 +1,72 @@
-#include "adc_model.h"
+#include "blocks/wb.h"
 
-#include <cstdlib>
+#include <algorithm>
+#include <cmath>
 
 namespace {
 
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
+std::uint16_t max_for_bit_depth(std::uint8_t bit_depth)
+{
+    if (bit_depth == 0) {
+        bit_depth = 8;
+    }
+    if (bit_depth >= 16) {
+        return 0xFFFFu;
+    }
+    return static_cast<std::uint16_t>((1u << bit_depth) - 1u);
+}
 
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
-
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
+std::uint16_t scale_and_clip(std::uint16_t value, float gain, std::uint16_t max_value)
+{
+    const float scaled = static_cast<float>(value) * gain;
+    if (scaled <= 0.0f) {
+        return 0;
+    }
+    if (scaled >= static_cast<float>(max_value)) {
+        return max_value;
+    }
+    return static_cast<std::uint16_t>(std::lround(scaled));
+}
 
 } // namespace
 
-ADC_Model::ADC_Model()
+void wb_block::process(const std::uint16_t* in,
+                       std::uint16_t* out,
+                       std::uint32_t width,
+                       std::uint32_t height,
+                       const wb_config& cfg) const
 {
-    reset();
-}
+    const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
+    if (in == nullptr || out == nullptr || samples == 0u) {
+        return;
+    }
 
-void ADC_Model::reset()
-{
-    reg_control = 0;
-    reg_status = 0;
-    reg_data = 0;
-    reg_intr_enable = 0;
-}
-
-uint32_t ADC_Model::readReg(uint32_t offset)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA: {
-            const uint32_t data = reg_data;
-            reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-            return data;
+    if (!cfg.is_enable) {
+        if (in != out) {
+            std::copy(in, in + samples, out);
         }
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
+        return;
+    }
+
+    const std::uint16_t max_value = max_for_bit_depth(cfg.bit_depth);
+    for (std::size_t i = 0; i < samples; i += 3u) {
+        out[i] = scale_and_clip(in[i], cfg.r_gain, max_value);
+        out[i + 1u] = std::min(in[i + 1u], max_value);
+        out[i + 2u] = scale_and_clip(in[i + 2u], cfg.b_gain, max_value);
     }
 }
 
-void ADC_Model::writeReg(uint32_t offset, uint32_t data)
+void wb_block::process(const std::vector<std::uint16_t>& in,
+                       std::vector<std::uint16_t>& out,
+                       std::uint32_t width,
+                       std::uint32_t height,
+                       const wb_config& cfg) const
 {
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-                reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-                reg_status |= STATUS_EOC;
-                reg_control &= ~CTRL_START; // START is self-clearing
-            }
-            break;
-        case REG_STATUS:
-            if ((data & STATUS_EOC) != 0u) {
-                reg_status &= ~STATUS_EOC; // W1C
-            }
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
+    const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
+    out.resize(samples);
+    if (in.size() < samples) {
+        std::fill(out.begin(), out.end(), 0u);
+        return;
     }
-}
-
-bool ADC_Model::hasInterrupt() const
-{
-    return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
-
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA:
-            return reg_data;
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
-    }
-}
-
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            break;
-        case REG_STATUS:
-            reg_status = data & STATUS_EOC;
-            break;
-        case REG_DATA:
-            reg_data = data & 0x0FFFu;
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
+    process(in.data(), out.data(), width, height, cfg);
 }
