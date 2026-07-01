@@ -1,32 +1,20 @@
-# VPU TLM Model
+# VPU TLM Prediction Blocks
 
 ## Overview
 
-This directory contains a functional SystemC/TLM model of a simplified H.265/HEVC Video Processing Unit (VPU).
+This directory contains the functional SystemC/TLM model for the prediction part of a simplified VPU / video encoder.
 
-The component directory was renamed from:
-
-```text
-components/video_encoder_tlm
-```
-
-to:
+The current model focuses on four main prediction blocks:
 
 ```text
-components/vpu_tlm
+PREI  -> Pre-Intra Estimation
+POSI  -> Post-Intra Prediction
+IME   -> Integer Motion Estimation
+FME   -> Fractional Motion Estimation
 ```
 
-The model focuses on the prediction path of a video encoder:
-
-```text
-TOP
- ├── PREI
- ├── POSI
- ├── IME
- └── FME
-```
-
-This is a **functional TLM model**, not a cycle-accurate RTL model.
+The model is a **functional TLM model**, not a cycle-accurate RTL model.  
+It focuses on block-level behavior, dataflow, input/output structures, and unit testing.
 
 ---
 
@@ -34,155 +22,237 @@ This is a **functional TLM model**, not a cycle-accurate RTL model.
 
 ```text
 components/vpu_tlm/
-├── CMakeLists.txt
-├── Makefile
 ├── README.md
-├── include/
-│   ├── block.h
-│   ├── encoder_defs.h
-│   ├── frame.h
-│   ├── prediction_result.h
-│   ├── prei.h
-│   ├── prei_result.h
-│   ├── posi.h
-│   ├── ime.h
-│   ├── ime_result.h
-│   ├── fme.h
-│   ├── fme_result.h
-│   └── video_encoder_tlm.h
-├── src/
-│   ├── frame.cpp
-│   ├── prei.cpp
-│   ├── posi.cpp
-│   ├── ime.cpp
-│   ├── fme.cpp
-│   └── video_encoder_tlm.cpp
-└── tests/
-    ├── CMakeLists.txt
-    └── test_video_encoder_tlm.cpp
+├── CMakeLists.txt
+├── common/
+│   ├── include/
+│   │   ├── block.h
+│   │   ├── encoder_defs.h
+│   │   ├── frame.h
+│   │   └── prediction_result.h
+│   └── src/
+│       └── frame.cpp
+├── prei/
+│   ├── include/
+│   │   ├── prei.h
+│   │   └── prei_result.h
+│   ├── src/
+│   │   └── prei.cpp
+│   └── test/
+│       ├── CMakeLists.txt
+│       └── test_prei.cpp
+├── posi/
+│   ├── include/
+│   │   └── posi.h
+│   ├── src/
+│   │   └── posi.cpp
+│   └── test/
+│       ├── CMakeLists.txt
+│       └── test_posi.cpp
+├── ime/
+│   ├── include/
+│   │   ├── ime.h
+│   │   └── ime_result.h
+│   ├── src/
+│   │   └── ime.cpp
+│   └── test/
+│       ├── CMakeLists.txt
+│       └── test_ime.cpp
+└── fme/
+    ├── include/
+    │   ├── fme.h
+    │   └── fme_result.h
+    ├── src/
+    │   └── fme.cpp
+    └── test/
+        ├── CMakeLists.txt
+        └── test_fme.cpp
 ```
-
-Note: The directory is now named `vpu_tlm`, but some class names, headers, and test names may still keep the old compatibility name `video_encoder_tlm`.
 
 ---
 
-# Block Description
+## Common Files
 
-## 1. TOP Block
+The `common/` folder contains data structures and definitions shared by all prediction blocks.
 
-Files:
+### `block.h`
 
-```text
-include/video_encoder_tlm.h
-src/video_encoder_tlm.cpp
-```
+Defines a generic coding block region.
 
-The TOP block is the high-level SystemC/TLM wrapper of the VPU model.
-
-Main responsibilities:
+It can represent:
 
 ```text
-- Represent the VPU as a SystemC module
-- Provide the TLM socket interface
-- Act as the top-level container of the encoder model
-- Allow the VPU component to be instantiated and connected in a virtual platform
+CTU: Coding Tree Unit
+CU : Coding Unit
+PU : Prediction Unit
+TU : Transform Unit
 ```
 
-In the current model, TOP is mainly used to verify that:
+Important fields:
 
 ```text
-- The VPU TLM module can be created
-- The TLM socket can be bound
-- The SystemC simulation can start successfully
+x, y          block position
+width, height block size
+size          compatibility size field
+type          block type
+depth         partition depth
 ```
-
-The TOP block does not model exact RTL timing. It is used as the functional wrapper for the VPU TLM component.
 
 ---
 
-## 2. PREI Block
+### `frame.h` / `frame.cpp`
 
-Files:
+Defines the input and reference frame container.
+
+The current frame model supports:
 
 ```text
-include/prei.h
-include/prei_result.h
-src/prei.cpp
+- 8-bit luma plane
+- YUV 4:2:0 chroma planes
+- get/set functions for luma and chroma pixels
 ```
 
-PREI means **Pre-Intra Estimation**.
+The prediction blocks mainly use the luma plane.
 
-PREI models the first stage of the intra prediction path. Its job is to analyze the current block and find good intra prediction mode candidates.
+---
 
-Main responsibilities:
+### `prediction_result.h`
+
+Defines the common result format used by intra and inter prediction blocks.
+
+Important fields:
 
 ```text
+valid
+mode
+cost
+rate
+distortion
+qp
+partition
+intra_mode
+mv
+skip
+merge
+i_in_p
+predicted_luma
+residual_luma
+```
+
+Both POSI and FME finally generate a `prediction_result`.
+
+---
+
+# Block Descriptions
+
+## 1. PREI Block
+
+### Meaning
+
+PREI stands for **Pre-Intra Estimation**.
+
+PREI is the first stage of the intra prediction path.  
+It analyzes the current block and searches for good intra prediction mode candidates.
+
+### Files
+
+```text
+prei/include/prei.h
+prei/include/prei_result.h
+prei/src/prei.cpp
+prei/test/test_prei.cpp
+```
+
+### Main Responsibilities
+
+```text
+- Receive input frame and CTU/CU block
 - Evaluate HEVC intra prediction modes 0..34
-- Analyze the current CTU/CU
-- Estimate the cost of different intra modes
-- Generate candidate mode information
-- Output PREI result for POSI
+- Estimate intra prediction cost
+- Generate intra mode candidates
+- Produce PREI result for POSI
 ```
 
-Main API:
+### Main API
 
 ```cpp
 prei_result run(const frame& input,
                 const block& ctu) const;
 ```
 
-Simplified flow:
+### Simplified Flow
 
 ```text
 Input frame + CTU
       ↓
 Build CU list
       ↓
-Evaluate intra modes
+Evaluate intra modes 0..34
       ↓
-Estimate cost
+Estimate mode cost
       ↓
-Select best intra candidates
+Select candidate intra modes
       ↓
-Generate prei_result
+Output prei_result
 ```
 
-Output:
+### Output
 
 ```text
 prei_result
 ```
 
-This result is used by POSI to generate the actual intra prediction pixels.
+The PREI result contains intra mode information that will be used by POSI to generate actual predicted pixels.
+
+### Unit Test
+
+The PREI test checks:
+
+```text
+- PREI can run on a test frame
+- PREI output is valid
+```
+
+Run:
+
+```bash
+cmake --build build --target test_prei
+./build/components/vpu_tlm/prei/test/test_prei
+```
 
 ---
 
-## 3. POSI Block
+## 2. POSI Block
 
-Files:
+### Meaning
+
+POSI stands for **Post-Intra Prediction**.
+
+POSI is the second stage of the intra prediction path.  
+It receives the mode candidates from PREI and generates the actual intra prediction pixels.
+
+### Files
 
 ```text
-include/posi.h
-src/posi.cpp
+posi/include/posi.h
+posi/src/posi.cpp
+posi/test/test_posi.cpp
 ```
 
-POSI means **Post-Intra Prediction**.
-
-POSI receives the mode candidates from PREI and generates the actual intra prediction result.
-
-Main responsibilities:
+### Main Responsibilities
 
 ```text
-- Read PREI mode candidates
-- Fetch top and left reference pixels
-- Generate intra prediction pixels
+- Receive input frame
+- Receive reconstructed reference frame
+- Receive PREI result
+- Select intra mode candidate
+- Generate planar / DC / angular prediction
 - Compute residual = original - predicted
-- Estimate rate
-- Compute cost
-- Output final intra prediction_result
+- Estimate rate and cost
+- Output intra prediction_result
 ```
 
-Main API:
+### Main API
 
 ```cpp
 prediction_result run(const frame& input,
@@ -192,62 +262,85 @@ prediction_result run(const frame& input,
                       std::uint32_t qp = INIT_QP) const;
 ```
 
-Simplified flow:
+### Simplified Flow
 
 ```text
-Input frame
-Reconstructed reference frame
-PREI result
+Input frame + reconstructed frame + PREI result
       ↓
-Select intra mode candidate
+Select intra mode
       ↓
-Generate planar / DC / angular prediction
+Generate intra prediction pixels
       ↓
 Compute residual
       ↓
-Estimate rate and cost
+Estimate rate
       ↓
-Generate intra prediction_result
+Compute cost
+      ↓
+Output intra prediction_result
 ```
 
-Output:
+### Output
 
 ```text
 prediction_result with mode = intra
 ```
 
-POSI provides the intra candidate for the later mode decision stage.
+The POSI output is the final intra prediction candidate.
+
+### Unit Test
+
+The POSI test checks:
+
+```text
+- PREI result is valid
+- POSI output is valid
+- Output mode is intra
+- predicted_luma size matches block area
+- residual_luma size matches block area
+```
+
+Run:
+
+```bash
+cmake --build build --target test_posi
+./build/components/vpu_tlm/posi/test/test_posi
+```
 
 ---
 
-## 4. IME Block
+## 3. IME Block
 
-Files:
+### Meaning
+
+IME stands for **Integer Motion Estimation**.
+
+IME is the first stage of the inter prediction path.  
+It searches for the best integer-pixel motion vector between the current frame and the reference frame.
+
+### Files
 
 ```text
-include/ime.h
-include/ime_result.h
-src/ime.cpp
+ime/include/ime.h
+ime/include/ime_result.h
+ime/src/ime.cpp
+ime/test/test_ime.cpp
 ```
 
-IME means **Integer Motion Estimation**.
-
-IME is the first stage of the inter prediction path. It searches for the best integer-pixel motion vector between the current frame and the reference frame.
-
-Main responsibilities:
+### Main Responsibilities
 
 ```text
+- Receive current frame and reference frame
 - Generate integer-pixel search points
-- Read current block pixels
-- Read reference block pixels
-- Compute SAD for each candidate motion vector
-- Estimate motion vector rate
-- Compute motion estimation cost
+- Fetch current block and reference block pixels
+- Compute SAD for each motion vector candidate
+- Estimate motion vector coding rate
+- Compute cost
 - Select best integer motion vector
-- Output IME result for FME
+- Generate IME result for FME
 ```
 
-Main API:
+### Main API
 
 ```cpp
 ime_result run(const frame& input,
@@ -256,7 +349,7 @@ ime_result run(const frame& input,
                std::uint32_t qp = INIT_QP) const;
 ```
 
-Simplified flow:
+### Simplified Flow
 
 ```text
 Current frame + reference frame + CTU
@@ -265,18 +358,18 @@ Build search window
       ↓
 Generate integer MV candidates
       ↓
-For each MV:
-    - fetch reference block
+For each candidate MV:
+    - read reference block
     - compute SAD
-    - estimate rate
+    - estimate MV rate
     - compute cost
       ↓
 Select best integer MV
       ↓
-Generate ime_result
+Output ime_result
 ```
 
-Output:
+### Output
 
 ```text
 ime_result
@@ -297,6 +390,8 @@ candidates
 best_inter_result
 ```
 
+### Motion Vector Unit
+
 Motion vectors are stored in quarter-pel units.
 
 Example:
@@ -308,42 +403,69 @@ mv.x = 1   means +1/4 pixel
 mv.x = 2   means +1/2 pixel
 ```
 
-For IME, the generated motion vectors are integer-pixel vectors, so they are multiples of 4.
+Since IME only searches integer-pixel positions, IME motion vectors are usually multiples of 4.
+
+### Unit Test
+
+The IME test uses identical current and reference frames.
+
+The test checks:
+
+```text
+- IME output is valid
+- best_inter_result is valid
+- Output mode is inter
+- predicted_luma size matches block area
+- residual_luma size matches block area
+- Best MV is near zero for identical frames
+```
+
+Run:
+
+```bash
+cmake --build build --target test_ime
+./build/components/vpu_tlm/ime/test/test_ime
+```
 
 ---
 
-## 5. FME Block
+## 4. FME Block
 
-Files:
+### Meaning
+
+FME stands for **Fractional Motion Estimation**.
+
+FME is the second stage of the inter prediction path.  
+It refines the integer motion vector generated by IME using half-pixel and quarter-pixel search.
+
+### Files
 
 ```text
-include/fme.h
-include/fme_result.h
-src/fme.cpp
+fme/include/fme.h
+fme/include/fme_result.h
+fme/src/fme.cpp
+fme/test/test_fme.cpp
 ```
 
-FME means **Fractional Motion Estimation**.
-
-FME refines the integer motion vector generated by IME. It searches around the IME motion vector using half-pixel and quarter-pixel positions.
-
-Main responsibilities:
+### Main Responsibilities
 
 ```text
-- Receive integer MV from IME
-- Generate half-pel candidate motion vectors
-- Generate quarter-pel candidate motion vectors
+- Receive IME result
+- Use IME integer MV as the search center
+- Generate half-pel candidates
+- Generate quarter-pel candidates
 - Interpolate reference pixels
 - Generate fractional-pixel prediction
 - Compute residual
 - Compute SATD
-- Estimate motion vector rate
+- Estimate MV rate
 - Compute RD-like cost
 - Select best refined fractional MV
-- Optionally detect skip candidate
-- Output final inter prediction_result
+- Optionally detect skip
+- Output FME result
 ```
 
-Main API:
+### Main API
 
 ```cpp
 fme_result run(const frame& input,
@@ -352,7 +474,7 @@ fme_result run(const frame& input,
                std::uint32_t qp = INIT_QP) const;
 ```
 
-Simplified flow:
+### Simplified Flow
 
 ```text
 IME integer MV
@@ -365,14 +487,14 @@ Generate fractional prediction
       ↓
 Compute SATD
       ↓
-Compute cost = SATD + lambda * MV bit cost
+Cost = SATD + lambda * MV bit cost
       ↓
 Select best fractional MV
       ↓
-Generate fme_result
+Output fme_result
 ```
 
-Output:
+### Output
 
 ```text
 fme_result
@@ -400,13 +522,33 @@ The final inter prediction candidate is:
 fme_result.best_inter_result
 ```
 
-This result is later compared against the intra prediction result.
+### Unit Test
+
+The FME test first runs IME, then passes the IME result into FME.
+
+The test checks:
+
+```text
+- IME output is valid
+- FME output is valid
+- FME best_inter_result is valid
+- Output mode is inter
+- predicted_luma size matches block area
+- Refined MV is near zero for identical frames
+```
+
+Run:
+
+```bash
+cmake --build build --target test_fme
+./build/components/vpu_tlm/fme/test/test_fme
+```
 
 ---
 
-## Prediction Flow
+# Prediction Paths
 
-### Intra Path
+## Intra Path
 
 ```text
 Input frame
@@ -418,7 +560,7 @@ POSI
 Intra prediction_result
 ```
 
-### Inter Path
+## Inter Path
 
 ```text
 Current frame + reference frame
@@ -430,114 +572,61 @@ FME
 Inter prediction_result
 ```
 
-### Overall Prediction Flow
-
-```text
-                 ┌──────── PREI ──────── POSI ──────── Intra result
-Input frame ─────┤
-                 └──────── IME ───────── FME ───────── Inter result
-```
-
 ---
 
-## Unit Tests
+# Build and Run All Tests
 
-The test file is:
-
-```text
-components/vpu_tlm/tests/test_video_encoder_tlm.cpp
-```
-
-Current tests cover:
-
-```text
-- TOP module instantiation
-- TLM socket binding
-- PREI basic intra analysis
-- POSI intra prediction from PREI result
-- IME integer motion estimation
-- FME fractional refinement from IME result
-```
-
-The tests check functional behavior, not bit-exact RTL equivalence.
-
----
-
-## How to Build and Run Tests
-
-From the repository root:
+From repository root:
 
 ```bash
 cd ~/CDC-VP
 ```
 
-Build the test target:
+Configure:
 
 ```bash
-cmake --build build --target test_video_encoder_tlm
+cmake -S . -B build
 ```
 
-Run the test executable:
+Build all prediction block tests:
 
 ```bash
-./build/components/vpu_tlm/tests/test_video_encoder_tlm
+cmake --build build --target test_prei
+cmake --build build --target test_posi
+cmake --build build --target test_ime
+cmake --build build --target test_fme
+```
+
+Run all tests:
+
+```bash
+./build/components/vpu_tlm/prei/test/test_prei
+./build/components/vpu_tlm/posi/test/test_posi
+./build/components/vpu_tlm/ime/test/test_ime
+./build/components/vpu_tlm/fme/test/test_fme
 ```
 
 Expected result:
 
 ```text
-Video Encoder TLM Unit Tests PASSED
+PREI test PASSED
+POSI test PASSED
+IME test PASSED
+FME test PASSED
 ```
 
 ---
 
-## Rename Note
+# Summary
 
-The old directory name was:
-
-```text
-components/video_encoder_tlm
-```
-
-The new directory name is:
+The current VPU TLM prediction model is organized by block:
 
 ```text
-components/vpu_tlm
-```
-
-Therefore, the top-level `components/CMakeLists.txt` should use:
-
-```cmake
-add_subdirectory(vpu_tlm)
-```
-
-instead of:
-
-```cmake
-add_subdirectory(video_encoder_tlm)
-```
-
----
-
-## Summary
-
-This VPU TLM model currently focuses on the prediction pipeline.
-
-Implemented main blocks:
-
-```text
-TOP  : SystemC/TLM wrapper
 PREI : Pre-intra mode estimation
 POSI : Intra prediction generation
 IME  : Integer motion estimation
 FME  : Fractional motion estimation
 ```
 
-The model is suitable for:
+This structure makes each block easier to understand, test, and maintain independently.
 
-```text
-- Understanding VPU prediction dataflow
-- Testing block-level encoder behavior
-- Building a virtual platform level VPU model
-- Connecting video encoder behavior with other SystemC/TLM components
-```
