@@ -6,6 +6,7 @@
 #include "rec_intra.h"
 #include "rec_mc.h"
 #include "rec_mc.h"
+#include "rec_mv.h"
 #include "rec_tq.h"
 #include "rec_inv_tq.h"
 #include "res_buffer.h"
@@ -19,6 +20,7 @@ class Top : public sc_module {
     RecTQ rec_tq;
     InvTQ inv_tq;
     ResBuffer res_buffer;
+    SimpleRecMvMem rec_mv;
     RecMemory rec_mem;
 
     Top(sc_module_name name);

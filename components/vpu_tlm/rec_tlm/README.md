@@ -7,11 +7,8 @@ This is a SystemC TLM 2.3.4 model of the Reconstruction block in a VPU. It serve
 - In parallel, perform Inverse Transform / Quantize and forward to the Deblocking block
 
 # Note
-- All modules in test is for testing and wiring up dangling sockets
+- All modules in /test folder is for testing and wiring up dangling sockets
 - Uses custom payload struct rec_packet (in rec_packet.h)
-
-# Progress
-- Rec_Intra donex
 
 # Run
 - make testbench

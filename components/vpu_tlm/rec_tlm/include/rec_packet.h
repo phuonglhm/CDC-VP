@@ -25,7 +25,10 @@ struct RecPacket {
         uint8_t size;             // RTL: 2 bits (0:4x4,1:8x8,2:16x16,3:32x32)
         uint8_t sel;              // RTL: 2 bits (TYPE_Y/U/V)
         uint8_t qp;               // RTL: 6 bits
-        bool    type;             // RTL: 1 bit (INTRA/INTER)
+        // NOTE: `type` (single-bit INTRA/INTER) was removed and merged with
+        // `pred_type`. The TLM header now stores `pred_type` at byte offset 7
+        // (previously occupied by the legacy `type` bit), and the extended
+        // header no longer contains `pred_type`.
         uint8_t pred_type;        // engine/prediction type: PredType
         uint8_t mode;             // RTL: 6-bit mode id (planar=0,DC=1,angular..)
         uint8_t pre_sel;          // RTL: 2-bit pre_sel
@@ -36,7 +39,7 @@ struct RecPacket {
 
         RecPacket()
             : cmd(RecCmd::RESIDUAL), block_idx(0), x(0), y(0),
-                size(0), sel(0), qp(0), type(false), pred_type(static_cast<uint8_t>(PredType::INTRA)),
+                size(0), sel(0), qp(0), pred_type(static_cast<uint8_t>(PredType::INTRA)),
                 mode(1), pre_sel(0), i4x4_x(0), i4x4_y(0), cbf_mask(), data() {}
 };
 
@@ -63,9 +66,8 @@ inline std::ostream& operator<<(std::ostream& os, const RecPacket& p) {
         case 3: os << "32x32"; break;
         default: os << static_cast<int>(p.size); break;
     }
-     os << ", sel: " << static_cast<int>(p.sel)
-         << ", qp: " << static_cast<int>(p.qp)
-         << ", type: " << (p.type ? "INTER" : "INTRA") << std::endl;
+        os << ", sel: " << static_cast<int>(p.sel)
+            << ", qp: " << static_cast<int>(p.qp) << std::endl;
 
      os << "  pred_type: ";
      switch (static_cast<PredType>(p.pred_type)) {
@@ -118,7 +120,10 @@ inline std::ostream& operator<<(std::ostream& os, const RecPacket& p) {
 inline std::vector<uint8_t> packRecPacket(const RecPacket &p) {
     std::vector<uint8_t> buf;
     // header: original 8 bytes + 5 extended bytes
-    buf.reserve(13 + p.data.size());
+    // header: original 8 bytes (pred_type reused at byte 7) + 4 extended bytes
+    // encode cbf_mask as 32 bytes (256 bits) when present; reserve accordingly
+    const size_t cbf_bytes = 32;
+    buf.reserve(12 + cbf_bytes + p.data.size());
     buf.push_back(static_cast<uint8_t>(p.cmd));
     buf.push_back(p.block_idx);
     buf.push_back(p.x);
@@ -126,13 +131,23 @@ inline std::vector<uint8_t> packRecPacket(const RecPacket &p) {
     buf.push_back(p.size);
     buf.push_back(p.sel);
     buf.push_back(p.qp);
-    buf.push_back(p.type ? 1 : 0);
-    // extended
+    // reuse legacy 8th byte to encode `pred_type`
     buf.push_back(p.pred_type);
+    // extended header now contains: mode, pre_sel, i4x4_x, i4x4_y
     buf.push_back(p.mode);
     buf.push_back(p.pre_sel);
     buf.push_back(p.i4x4_x);
     buf.push_back(p.i4x4_y);
+    // Serialize cbf_mask as 32 bytes, little-bit-order within each byte
+    for (size_t byte = 0; byte < 32; ++byte) {
+        uint8_t val = 0;
+        for (size_t bit = 0; bit < 8; ++bit) {
+            size_t idx = byte * 8 + bit;
+            if (p.cbf_mask.test(idx)) val |= static_cast<uint8_t>(1u << bit);
+        }
+        buf.push_back(val);
+    }
+
     if (!p.data.empty()) buf.insert(buf.end(), p.data.begin(), p.data.end());
     return buf;
 }
@@ -147,16 +162,34 @@ inline RecPacket unpackRecPacket(const uint8_t *buf, size_t len) {
     p.size = buf[4];
     p.sel = buf[5];
     p.qp = buf[6];
-    p.type = (buf[7] != 0);
-    // extended header: present if length >= 13
-    if (len >= 13) {
-        p.pred_type = buf[8];
-        p.mode = buf[9];
-        p.pre_sel = buf[10];
-        p.i4x4_x = buf[11];
-        p.i4x4_y = buf[12];
-        size_t payload_len = (len > 13) ? (len - 13) : 0;
-        if (payload_len) p.data.assign(buf + 13, buf + 13 + payload_len);
+    // pred_type now occupies the legacy byte-7 slot
+    p.pred_type = buf[7];
+    // extended header: present if length >= 12 (8 + 4)
+    if (len >= 12) {
+        p.mode = buf[8];
+        p.pre_sel = buf[9];
+        p.i4x4_x = buf[10];
+        p.i4x4_y = buf[11];
+        // if we have at least 32 more bytes, treat them as cbf_mask
+        const size_t cbf_bytes = 32;
+        if (len >= 12 + cbf_bytes) {
+            // parse cbf_mask from bytes [12 .. 12+31]
+            for (size_t byte = 0; byte < cbf_bytes; ++byte) {
+                uint8_t val = buf[12 + byte];
+                for (size_t bit = 0; bit < 8; ++bit) {
+                    size_t idx = byte * 8 + bit;
+                    bool bitset = ((val >> bit) & 0x1u) != 0;
+                    if (bitset) p.cbf_mask.set(idx);
+                    else p.cbf_mask.reset(idx);
+                }
+            }
+            size_t payload_len = (len > 12 + cbf_bytes) ? (len - (12 + cbf_bytes)) : 0;
+            if (payload_len) p.data.assign(buf + 12 + cbf_bytes, buf + 12 + cbf_bytes + payload_len);
+        } else {
+            // no cbf_mask serialized, payload starts at offset 12
+            size_t payload_len = (len > 12) ? (len - 12) : 0;
+            if (payload_len) p.data.assign(buf + 12, buf + 12 + payload_len);
+        }
     } else {
         // backward-compat: no extended header, payload starts at offset 8
         size_t payload_len = (len > 8) ? (len - 8) : 0;

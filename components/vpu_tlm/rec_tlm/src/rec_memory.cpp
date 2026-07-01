@@ -20,6 +20,26 @@ RecMemory::RecMemory(sc_core::sc_module_name name, uint32_t width, uint32_t heig
     }
 }
 
+void RecMemory::setUseDummy(bool use_dummy, uint8_t dummy_value) {
+    use_dummy_ = use_dummy;
+    dummy_value_ = dummy_value;
+    if (use_dummy_) {
+        // fill entire buffers with dummy
+        std::fill(buf_y_.begin(), buf_y_.end(), dummy_value_);
+        std::fill(buf_u_.begin(), buf_u_.end(), dummy_value_);
+        std::fill(buf_v_.begin(), buf_v_.end(), dummy_value_);
+    } else {
+        // populate deterministic patterns (same as constructor non-dummy branch)
+        for (uint32_t y = 0; y < height_; ++y) {
+            for (uint32_t x = 0; x < width_; ++x) {
+                buf_y_[y * width_ + x] = static_cast<uint8_t>((x + y) & 0xFF);
+                buf_u_[y * width_ + x] = static_cast<uint8_t>((x * 3 + y * 7) & 0xFF);
+                buf_v_[y * width_ + x] = static_cast<uint8_t>((x * 11 + y * 5) & 0xFF);
+            }
+        }
+    }
+}
+
 static inline uint8_t read_plane_sample(const std::vector<uint8_t> &buf, uint32_t w, uint32_t h, int32_t sx, int32_t sy, PaddingMode pad) {
     if (sx >= 0 && sy >= 0 && static_cast<uint32_t>(sx) < w && static_cast<uint32_t>(sy) < h) {
         return buf[static_cast<size_t>(sy) * w + sx];

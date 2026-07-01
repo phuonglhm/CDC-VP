@@ -7,6 +7,7 @@ Top::Top(sc_module_name name) :
     rec_tq ("rec_tq"),
     inv_tq ("inv_tq"),
     res_buffer("res_buffer"),
+    rec_mv(1024),
     rec_mem("rec_mem", 256, 256, true, 128)
 
 {
@@ -17,5 +18,10 @@ Top::Top(sc_module_name name) :
 
     // Bind in-repo RecMemory to RecIntra so it can pull reference pixels
     rec_intra.bindMemory(rec_mem);
+    // Bind RecMemory and MV memory to RecMc
+    rec_mc.bindMemory(rec_mem);
+    // Bind RecMemory to ResBuffer so it can compute residual = original - prediction
+    res_buffer.bindMemory(rec_mem);
+    rec_mc.bindMvMemory(rec_mv);
 
 }

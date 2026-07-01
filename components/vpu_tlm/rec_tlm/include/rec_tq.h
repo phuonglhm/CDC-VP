@@ -17,5 +17,8 @@ class RecTQ : sc_core::sc_module {
 
     private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
+    void dct(uint8_t size4x4, const std::vector<int16_t>& in, std::vector<int32_t>& out);
+    void quantize(uint8_t size4x4, const std::vector<int32_t>& in, uint8_t qp, bool type_i, std::vector<int16_t>& out);
+
 };
 #endif

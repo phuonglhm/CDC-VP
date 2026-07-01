@@ -51,7 +51,6 @@ void RecIntra::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& de
                 pkt.size = in.size;
                 pkt.sel = in.sel;
                 pkt.qp = in.qp;
-                pkt.type = in.type;
                 pkt.pred_type = in.pred_type;
                 pkt.mode = in.mode;
                 pkt.pre_sel = in.pre_sel;

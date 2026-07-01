@@ -99,6 +99,12 @@ public:
                      PaddingMode pad,
                      RefBlock &out) override;
 
+    // Toggle runtime dummy mode. When `use_dummy` is false, internal
+    // buffers are filled with deterministic patterns (same as constructor
+    // non-dummy behavior). When true, returned blocks are filled with
+    // `dummy_value`.
+    void setUseDummy(bool use_dummy, uint8_t dummy_value = 128);
+
 private:
     uint32_t width_;
     uint32_t height_;

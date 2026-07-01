@@ -13,6 +13,8 @@ class InvTQ : sc_core::sc_module {
     SC_HAS_PROCESS(InvTQ);
     tlm_utils::simple_initiator_socket<InvTQ> db_socket;
     tlm_utils::simple_target_socket<InvTQ> tq_socket;
+    // Inverse quantization multiplier table (matches RTL data_mux values)
+    static const int inverse_data_mux[6];
 
     // Test helper: allow direct invocation of the transport handler
     void invoke_b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
@@ -21,5 +23,7 @@ class InvTQ : sc_core::sc_module {
 
     private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
+    void inv_quantize(uint8_t size4x4, const std::vector<int32_t>& in, uint8_t qp, bool type_i, std::vector<int16_t>& out);
+    void inv_DCT(uint8_t size4x4, const std::vector<int16_t>& in, std::vector<int32_t>& out);
 };
-#endif
+#endif  
