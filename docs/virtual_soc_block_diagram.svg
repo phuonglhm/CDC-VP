@@ -1,0 +1,238 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1000" viewBox="0 0 1800 1000">
+  <defs>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .title { font: 800 30px Arial, sans-serif; fill: #101828; }
+      .sub { font: 600 15px Arial, sans-serif; fill: #667085; }
+      .panel-title { font: 800 22px Arial, sans-serif; fill: #101828; }
+      .label { font: 700 18px Arial, sans-serif; fill: #101828; }
+      .txt { font: 600 14px Arial, sans-serif; fill: #344054; }
+      .tiny { font: 600 12.5px Arial, sans-serif; fill: #475467; }
+      .addr { font: 700 13.5px Arial, sans-serif; fill: #344054; }
+      .panel-sys { fill: #eaf4ff; stroke: #6b8bb0; stroke-width: 2.5; rx: 16; }
+      .panel-core { fill: #fff2dc; stroke: #c98a1c; stroke-width: 2.5; rx: 16; }
+      .panel-mem { fill: #eaf7e4; stroke: #78a765; stroke-width: 2.5; rx: 16; }
+      .panel-io { fill: #f2e6f6; stroke: #9b70a9; stroke-width: 2.5; rx: 16; }
+      .panel-ser { fill: #fff4cc; stroke: #caa03b; stroke-width: 2.5; rx: 16; }
+      .panel-ai { fill: #ffe8e6; stroke: #c85b55; stroke-width: 2.5; rx: 16; }
+      .panel-dbg { fill: #f3f5f8; stroke: #667085; stroke-width: 2.5; rx: 16; }
+      .box-sys { fill: #edf7ff; stroke: #6b8bb0; stroke-width: 2; rx: 10; }
+      .box-core { fill: #fff8ec; stroke: #c98a1c; stroke-width: 2; rx: 10; }
+      .box-active { fill: #fde9c8; stroke: #c98a1c; stroke-width: 3; rx: 10; }
+      .box-plan { fill: #fffaf2; stroke: #c98a1c; stroke-width: 2; stroke-dasharray: 8 6; rx: 10; }
+      .box-mem { fill: #f1faed; stroke: #78a765; stroke-width: 2; rx: 10; }
+      .box-mem-plan { fill: #f7fbf5; stroke: #78a765; stroke-width: 2; stroke-dasharray: 8 6; rx: 10; }
+      .box-io { fill: #f7eefb; stroke: #9b70a9; stroke-width: 2; rx: 10; }
+      .box-warn { fill: #fff5e0; stroke: #c98a1c; stroke-width: 2; stroke-dasharray: 8 6; rx: 10; }
+      .box-ser { fill: #fff8df; stroke: #caa03b; stroke-width: 2; rx: 10; }
+      .box-ai { fill: #fff0ef; stroke: #c85b55; stroke-width: 2; rx: 10; }
+      .box-buf { fill: #f1faed; stroke: #78a765; stroke-width: 2; rx: 10; }
+      .box-dbg { fill: #ffffff; stroke: #667085; stroke-width: 2; rx: 10; }
+      .box-dbg-plan { fill: #ffffff; stroke: #667085; stroke-width: 2; stroke-dasharray: 8 6; rx: 10; }
+      .bus { fill: url(#busGrad); stroke: #101828; stroke-width: 3; }
+      .bus-txt { font: 800 28px Arial, sans-serif; fill: #ffffff; }
+      .bus-sub { font: 700 15px Arial, sans-serif; fill: #e4e7ec; }
+      .link { stroke: #101828; stroke-width: 2.6; fill: none; marker-end: url(#aEnd); }
+      .pipe { stroke: #101828; stroke-width: 2.6; fill: none; marker-end: url(#aEnd); }
+      .irq { stroke: #c0392b; stroke-width: 2.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#aIrq); }
+      .badge { fill: #c0392b; }
+      .badge-txt { font: 800 13px Arial, sans-serif; fill: #ffffff; }
+    </style>
+    <linearGradient id="busGrad" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#40464c"/>
+      <stop offset="50%" stop-color="#646b72"/>
+      <stop offset="100%" stop-color="#40464c"/>
+    </linearGradient>
+    <marker id="aEnd" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto">
+      <polygon points="0 0, 13 5, 0 10" fill="#101828"/>
+    </marker>
+    <marker id="aStart" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="2" refY="5" orient="auto">
+      <polygon points="13 0, 0 5, 13 10" fill="#101828"/>
+    </marker>
+    <marker id="aIrq" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto">
+      <polygon points="0 0, 13 5, 0 10" fill="#c0392b"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1800" height="1000"/>
+  <text class="title" x="900" y="46" text-anchor="middle">CDC-VP VIRTUAL SoC PLATFORM</text>
+  <text class="sub" x="900" y="72" text-anchor="middle">SystemC / TLM-2.0 / C++17  -  RTOS bring-up, per-IP verification, and RAW - ISP - VPU - NPU media/AI pipeline</text>
+
+  <!-- ===================== ROW 1 ===================== -->
+  <!-- SYSTEM / POWER -->
+  <rect class="panel-sys" x="30" y="92" width="740" height="182"/>
+  <text class="panel-title" x="400" y="124" text-anchor="middle">SYSTEM / POWER</text>
+  <rect class="box-sys" x="55" y="150" width="220" height="98"/>
+  <text class="label" x="165" y="186" text-anchor="middle">CMU0</text>
+  <text class="txt" x="165" y="210" text-anchor="middle">clock manager</text>
+  <text class="addr" x="165" y="234" text-anchor="middle">0x1008_0000</text>
+  <rect class="box-sys" x="290" y="150" width="220" height="98"/>
+  <text class="label" x="400" y="186" text-anchor="middle">PMU0</text>
+  <text class="txt" x="400" y="210" text-anchor="middle">power / wakeup</text>
+  <text class="addr" x="400" y="234" text-anchor="middle">0x1009_0000</text>
+  <rect class="box-sys" x="525" y="150" width="220" height="98"/>
+  <text class="label" x="635" y="186" text-anchor="middle">TRNG0</text>
+  <text class="txt" x="635" y="210" text-anchor="middle">entropy source</text>
+  <text class="addr" x="635" y="234" text-anchor="middle">0x1007_0000</text>
+
+  <!-- CORE SUBSYSTEM -->
+  <rect class="panel-core" x="800" y="92" width="970" height="182"/>
+  <text class="panel-title" x="1285" y="124" text-anchor="middle">CORE SUBSYSTEM</text>
+  <rect class="box-core" x="820" y="150" width="210" height="98"/>
+  <text class="label" x="925" y="184" text-anchor="middle">CPU Backend</text>
+  <text class="txt" x="925" y="208" text-anchor="middle">one active backend</text>
+  <text class="tiny" x="925" y="230" text-anchor="middle">selected at build time</text>
+
+  <text class="tiny" x="1170" y="144" text-anchor="middle">build-time select</text>
+  <rect class="box-plan" x="1050" y="150" width="240" height="46"/>
+  <text class="label" x="1170" y="170" text-anchor="middle">riscv_tlm</text>
+  <text class="tiny" x="1170" y="188" text-anchor="middle">MCU-style RISC-V (alt)</text>
+  <rect class="box-active" x="1050" y="202" width="240" height="46"/>
+  <text class="label" x="1170" y="222" text-anchor="middle">riscv_vp  -  ACTIVE</text>
+  <text class="tiny" x="1170" y="240" text-anchor="middle">Bremen RV32 ISS</text>
+  <path class="pipe" d="M1030 178 L1050 173"/>
+  <path class="pipe" d="M1030 214 L1050 222"/>
+
+  <rect class="box-core" x="1310" y="150" width="440" height="98"/>
+  <text class="label" x="1530" y="180" text-anchor="middle">Interrupt Control</text>
+  <rect class="box-sys" x="1330" y="192" width="190" height="44" style="fill:#fff8ec;stroke:#c98a1c"/>
+  <text class="addr" x="1425" y="210" text-anchor="middle">CLINT  0x0200_0000</text>
+  <text class="tiny" x="1425" y="228" text-anchor="middle">MTIP / MSIP (local)</text>
+  <rect class="box-sys" x="1540" y="192" width="190" height="44" style="fill:#fff8ec;stroke:#c98a1c"/>
+  <text class="addr" x="1635" y="210" text-anchor="middle">PLIC  0x0C00_0000</text>
+  <text class="tiny" x="1635" y="228" text-anchor="middle">MEIP (external)</text>
+  <!-- IRQ from interrupt controllers into the active CPU -->
+  <path class="irq" d="M1310 224 L1290 224"/>
+  <text class="tiny" x="1300" y="262" text-anchor="middle">IRQ - MEIP / MTIP / MSIP to CPU</text>
+
+  <!-- ===================== BUS ===================== -->
+  <polygon class="bus" points="70,322 1730,322 1772,382 1730,442 70,442 28,382"/>
+  <text class="bus-txt" x="900" y="374" text-anchor="middle">SYSTEM BUS  /  TLM INTERCONNECT (bus_router)</text>
+  <text class="bus-sub" x="900" y="402" text-anchor="middle">MMIO @ 0x1000_0000 region   -   BootROM @ 0x0000_0000   -   CLINT @ 0x0200_0000   -   PLIC @ 0x0C00_0000   -   RAM @ 0x8000_0000</text>
+
+  <!-- row1 to bus -->
+  <path class="link" d="M400 274 L400 322"/>
+  <path class="link" d="M1170 248 L1170 322"/>
+  <path class="link" d="M1530 248 L1530 322"/>
+
+  <!-- ===================== ROW 2 ===================== -->
+  <!-- MEMORY / BOOT -->
+  <rect class="panel-mem" x="30" y="480" width="336" height="446"/>
+  <text class="panel-title" x="198" y="514" text-anchor="middle">MEMORY / BOOT</text>
+  <rect class="box-mem" x="56" y="536" width="284" height="58"/>
+  <text class="label" x="198" y="561" text-anchor="middle">RAM0</text>
+  <text class="addr" x="198" y="583" text-anchor="middle">256 MiB @ 0x8000_0000</text>
+  <rect class="box-mem-plan" x="56" y="606" width="284" height="58"/>
+  <text class="label" x="198" y="631" text-anchor="middle">BOOTROM0  (optional)</text>
+  <text class="addr" x="198" y="653" text-anchor="middle">@ 0x0000_0000</text>
+  <rect class="box-mem" x="56" y="676" width="284" height="58"/>
+  <text class="label" x="198" y="701" text-anchor="middle">OTP / eFUSE</text>
+  <text class="addr" x="198" y="723" text-anchor="middle">0x100B_0000</text>
+  <rect class="box-mem" x="56" y="746" width="284" height="58"/>
+  <text class="label" x="198" y="771" text-anchor="middle">NOR Flash0</text>
+  <text class="addr" x="198" y="793" text-anchor="middle">16 MiB - behind QSPI0</text>
+  <rect class="box-mem-plan" x="56" y="816" width="284" height="50"/>
+  <text class="label" x="198" y="840" text-anchor="middle">XIP aperture  (planned)</text>
+  <text class="addr" x="198" y="858" text-anchor="middle">@ 0x2000_0000</text>
+
+  <!-- GENERAL I/O -->
+  <rect class="panel-io" x="381" y="480" width="336" height="446"/>
+  <text class="panel-title" x="549" y="514" text-anchor="middle">GENERAL I/O</text>
+  <rect class="box-io" x="407" y="536" width="284" height="54"/>
+  <text class="label" x="549" y="558" text-anchor="middle">Timer x2</text>
+  <text class="addr" x="549" y="579" text-anchor="middle">0x1003_0000 / 0x1013_0000</text>
+  <rect class="box-io" x="407" y="600" width="284" height="54"/>
+  <text class="label" x="549" y="622" text-anchor="middle">PWM0</text>
+  <text class="addr" x="549" y="643" text-anchor="middle">0x1005_0000</text>
+  <rect class="box-io" x="407" y="664" width="284" height="54"/>
+  <text class="label" x="549" y="686" text-anchor="middle">WDT0</text>
+  <text class="addr" x="549" y="707" text-anchor="middle">0x1004_0000</text>
+  <rect class="box-io" x="407" y="728" width="284" height="54"/>
+  <text class="label" x="549" y="750" text-anchor="middle">DMA0</text>
+  <text class="addr" x="549" y="771" text-anchor="middle">0x1006_0000  -  MMIO + master</text>
+  <rect class="badge" x="663" y="732" width="22" height="20" rx="5"/>
+  <text class="badge-txt" x="674" y="747" text-anchor="middle">M</text>
+  <rect class="box-warn" x="407" y="792" width="284" height="54"/>
+  <text class="label" x="549" y="814" text-anchor="middle">ADC0  (planned)</text>
+  <text class="addr" x="549" y="835" text-anchor="middle">base / IRQ TBD</text>
+  <rect class="box-io" x="407" y="856" width="284" height="54"/>
+  <text class="label" x="549" y="878" text-anchor="middle">RTC0</text>
+  <text class="addr" x="549" y="899" text-anchor="middle">0x1014_0000</text>
+
+  <!-- SERIAL / AUDIO -->
+  <rect class="panel-ser" x="732" y="480" width="336" height="446"/>
+  <text class="panel-title" x="900" y="514" text-anchor="middle">SERIAL / AUDIO</text>
+  <rect class="box-ser" x="758" y="536" width="284" height="64"/>
+  <text class="label" x="900" y="561" text-anchor="middle">UART x2  (PL011)</text>
+  <text class="addr" x="900" y="585" text-anchor="middle">0x1000_0000 / 0x1010_0000</text>
+  <rect class="box-ser" x="758" y="612" width="284" height="64"/>
+  <text class="label" x="900" y="637" text-anchor="middle">I2C x2</text>
+  <text class="addr" x="900" y="661" text-anchor="middle">0x1001_0000 / 0x1011_0000</text>
+  <rect class="box-ser" x="758" y="688" width="284" height="64"/>
+  <text class="label" x="900" y="713" text-anchor="middle">SPI x2</text>
+  <text class="addr" x="900" y="737" text-anchor="middle">0x1002_0000 / 0x1012_0000</text>
+  <rect class="box-ser" x="758" y="764" width="284" height="64"/>
+  <text class="label" x="900" y="789" text-anchor="middle">QSPI0</text>
+  <text class="addr" x="900" y="813" text-anchor="middle">0x100C_0000  ->  NOR Flash0</text>
+  <rect class="box-ser" x="758" y="840" width="284" height="64"/>
+  <text class="label" x="900" y="865" text-anchor="middle">DMIC0</text>
+  <text class="addr" x="900" y="889" text-anchor="middle">0x100A_0000</text>
+
+  <!-- MEDIA / AI -->
+  <rect class="panel-ai" x="1083" y="480" width="336" height="446"/>
+  <text class="panel-title" x="1251" y="514" text-anchor="middle">MEDIA / AI PIPELINE</text>
+  <rect class="box-buf" x="1111" y="536" width="280" height="48"/>
+  <text class="label" x="1251" y="557" text-anchor="middle">RAW_IN0 buffer</text>
+  <text class="addr" x="1251" y="576" text-anchor="middle">0x8100_0000 (RAM)</text>
+  <rect class="box-ai" x="1111" y="602" width="280" height="48"/>
+  <text class="label" x="1251" y="623" text-anchor="middle">ISP0</text>
+  <text class="addr" x="1251" y="642" text-anchor="middle">MMIO 0x100D_0000</text>
+  <rect class="badge" x="1369" y="606" width="22" height="20" rx="5"/>
+  <text class="badge-txt" x="1380" y="621" text-anchor="middle">M</text>
+  <rect class="box-ai" x="1111" y="668" width="280" height="48"/>
+  <text class="label" x="1251" y="689" text-anchor="middle">VPU0</text>
+  <text class="addr" x="1251" y="708" text-anchor="middle">MMIO 0x100E_0000</text>
+  <rect class="badge" x="1369" y="672" width="22" height="20" rx="5"/>
+  <text class="badge-txt" x="1380" y="687" text-anchor="middle">M</text>
+  <rect class="box-ai" x="1111" y="734" width="280" height="48"/>
+  <text class="label" x="1251" y="755" text-anchor="middle">NPU0</text>
+  <text class="addr" x="1251" y="774" text-anchor="middle">MMIO 0x100F_0000</text>
+  <rect class="badge" x="1369" y="738" width="22" height="20" rx="5"/>
+  <text class="badge-txt" x="1380" y="753" text-anchor="middle">M</text>
+  <path class="pipe" d="M1251 584 L1251 602"/>
+  <path class="pipe" d="M1251 650 L1251 668"/>
+  <path class="pipe" d="M1251 716 L1251 734"/>
+  <text class="tiny" x="1251" y="806" text-anchor="middle">RAM buffers (pipeline output):</text>
+  <text class="tiny" x="1251" y="826" text-anchor="middle">ISP_OUT0 0x8200_0000  -  VPU_OUT0 0x8400_0000</text>
+  <text class="tiny" x="1251" y="846" text-anchor="middle">NPU_WEIGHTS0 0x8600_0000  -  NPU_WORK0 0x8800_0000</text>
+
+  <!-- DEBUG -->
+  <rect class="panel-dbg" x="1434" y="480" width="336" height="446"/>
+  <text class="panel-title" x="1602" y="514" text-anchor="middle">DEBUG / BOOT FLOW</text>
+  <rect class="box-dbg" x="1462" y="536" width="280" height="76"/>
+  <text class="label" x="1602" y="566" text-anchor="middle">ELF load to RAM</text>
+  <text class="addr" x="1602" y="590" text-anchor="middle">RTOS @ 0x8000_0000</text>
+  <rect class="box-dbg" x="1462" y="628" width="280" height="76"/>
+  <text class="label" x="1602" y="658" text-anchor="middle">ISS debug backend</text>
+  <text class="addr" x="1602" y="682" text-anchor="middle">not MMIO mapped</text>
+  <rect class="box-dbg-plan" x="1462" y="720" width="280" height="76"/>
+  <text class="label" x="1602" y="750" text-anchor="middle">BootROM  (planned)</text>
+  <text class="addr" x="1602" y="774" text-anchor="middle">QSPI boot path</text>
+
+  <!-- bus to row2 -->
+  <path class="link" d="M198 442 L198 480"/>
+  <path class="link" d="M549 442 L549 480"/>
+  <path class="link" d="M900 442 L900 480"/>
+  <path class="link" d="M1251 442 L1251 480"/>
+  <path class="link" d="M1602 442 L1602 480"/>
+
+  <!-- ===================== LEGEND ===================== -->
+  <rect class="badge" x="36" y="944" width="22" height="20" rx="5"/>
+  <text class="badge-txt" x="47" y="959" text-anchor="middle">M</text>
+  <text class="tiny" x="68" y="959">bus master: reads/writes RAM0 through the system bus (DMA0, ISP0, VPU0, NPU0)</text>
+  <rect class="box-mem-plan" x="690" y="944" width="34" height="20"/>
+  <text class="tiny" x="732" y="959">dashed = planned / optional</text>
+  <line x1="980" y1="954" x2="1016" y2="954" stroke="#101828" stroke-width="2.6" marker-end="url(#aEnd)"/>
+  <text class="tiny" x="1026" y="959">bus attach (MMIO / data)</text>
+  <text class="tiny" x="1764" y="959" text-anchor="end">Verified against docs/peripheral_memory_map.md</text>
+</svg>

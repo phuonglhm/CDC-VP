@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="900" viewBox="0 0 1680 900">
+  <defs>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .title { font: 800 28px Arial, sans-serif; fill: #101828; }
+      .sub { font: 600 15px Arial, sans-serif; fill: #667085; }
+      .panel-title { font: 800 19px Arial, sans-serif; fill: #101828; }
+      .label { font: 800 18px Arial, sans-serif; fill: #101828; }
+      .label-sm { font: 700 15px Arial, sans-serif; fill: #101828; }
+      .txt { font: 600 14px Arial, sans-serif; fill: #344054; }
+      .tiny { font: 600 12.5px Arial, sans-serif; fill: #475467; }
+      .mono { font: 700 13.5px "Courier New", monospace; fill: #344054; }
+      .iface { fill: #eef2ff; stroke: #5b6bb0; stroke-width: 2.6; rx: 14; }
+      .box-if { fill: #f7f9ff; stroke: #5b6bb0; stroke-width: 1.8; rx: 9; }
+      .card-active { fill: #fde9c8; stroke: #c98a1c; stroke-width: 3; rx: 14; }
+      .card-alt { fill: #fff8ec; stroke: #c98a1c; stroke-width: 2.4; stroke-dasharray: 9 6; rx: 14; }
+      .irqpanel { fill: #ffece9; stroke: #c65048; stroke-width: 2.6; rx: 14; }
+      .box-irq { fill: #fff3f1; stroke: #c65048; stroke-width: 1.8; rx: 9; }
+      .mem { fill: #eef8ea; stroke: #5f9b62; stroke-width: 2.4; rx: 12; }
+      .dbg { fill: #ffffff; stroke: #667085; stroke-width: 2; rx: 12; }
+      .bus { fill: url(#busGrad); stroke: #101828; stroke-width: 2.6; rx: 8; }
+      .bus-title { font: 800 21px Arial, sans-serif; fill: #ffffff; }
+      .bus-sub { font: 600 13px Arial, sans-serif; fill: #d0d5dd; }
+      .impl { stroke: #5b6bb0; stroke-width: 2.4; fill: none; marker-end: url(#aImpl); }
+      .data { stroke: #1d2939; stroke-width: 3; fill: none; marker-end: url(#aEnd); }
+      .data-alt { stroke: #98a2b3; stroke-width: 2.4; fill: none; stroke-dasharray: 8 5; marker-end: url(#aAlt); }
+      .irq { stroke: #c65048; stroke-width: 2.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#aIrq); }
+      .back { stroke: #5f9b62; stroke-width: 2.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#aBack); }
+    </style>
+    <linearGradient id="busGrad" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#40464c"/>
+      <stop offset="50%" stop-color="#646b72"/>
+      <stop offset="100%" stop-color="#40464c"/>
+    </linearGradient>
+    <marker id="aEnd" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto"><polygon points="0 0, 13 5, 0 10" fill="#1d2939"/></marker>
+    <marker id="aAlt" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto"><polygon points="0 0, 13 5, 0 10" fill="#98a2b3"/></marker>
+    <marker id="aImpl" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto"><polygon points="0 0, 13 5, 0 10" fill="#5b6bb0"/></marker>
+    <marker id="aIrq" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto"><polygon points="0 0, 13 5, 0 10" fill="#c65048"/></marker>
+    <marker id="aBack" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto"><polygon points="0 0, 13 5, 0 10" fill="#5f9b62"/></marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1680" height="900"/>
+  <text class="title" x="840" y="46" text-anchor="middle">CDC-VP CPU SUBSYSTEM</text>
+  <text class="sub" x="840" y="72" text-anchor="middle">Backend-agnostic cpu_base interface  -  build-time selectable RISC-V core (CDC_CPU_BACKEND)</text>
+
+  <!-- cpu_base interface -->
+  <rect class="iface" x="120" y="100" width="1000" height="158"/>
+  <text class="panel-title" x="620" y="128" text-anchor="middle">cpu_base  -  backend-agnostic CPU interface (cpu_base.h)</text>
+  <rect class="box-if" x="142" y="142" width="475" height="48"/>
+  <text class="mono" x="160" y="162">instr_bus() / data_bus()  -  has_unified_bus()</text>
+  <text class="mono" x="160" y="182">load_elf()  -  reset_cpu()</text>
+  <rect class="box-if" x="627" y="142" width="475" height="48"/>
+  <text class="mono" x="645" y="162">set_irq(cause, level)  -  raise_irq(cause)</text>
+  <text class="mono" x="645" y="182">get_pc()  -  get_instret()  -  backend_name()</text>
+  <rect class="box-if" x="142" y="200" width="960" height="42"/>
+  <text class="mono" x="160" y="226">cpu_config { xlen = 32/64;  num_irq;  has_mmu = false;  has_smp = false; }   //  RV32, single-hart by default</text>
+
+  <text class="tiny" x="620" y="290" text-anchor="middle">implemented by one backend, selected at build time</text>
+  <path class="impl" d="M360 258 L360 318"/>
+  <path class="impl" d="M880 258 L880 318"/>
+
+  <!-- riscv_vp (active) -->
+  <rect class="card-active" x="120" y="320" width="480" height="248"/>
+  <text class="label" x="360" y="352" text-anchor="middle">riscv_vp  -  Bremen rv32   [ ACTIVE ]</text>
+  <text class="txt" x="360" y="378" text-anchor="middle">Application core - boots RTOS  (= ARM Cortex-A class)</text>
+  <line x1="150" y1="392" x2="570" y2="392" stroke="#c98a1c" stroke-width="1.2"/>
+  <text class="label-sm" x="142" y="418">ISA: RV32IMAC  (core RV32GC-capable)</text>
+  <text class="label-sm" x="142" y="444">Privilege: M / S / U + CSRs,  Sv32 MMU-capable</text>
+  <text class="label-sm" x="142" y="470">Bus: UNIFIED instr+data  ->  1 upstream port</text>
+  <text class="tiny" x="142" y="498">Wrapper internals:</text>
+  <text class="mono" x="142" y="520">ISS + CombinedMemoryInterface + DirectCoreRunner</text>
+  <text class="tiny" x="142" y="548">IRQ: set_irq() maps cause 3/7/11 -> MSIP/MTIP/MEIP</text>
+
+  <!-- riscv_tlm (alt) -->
+  <rect class="card-alt" x="640" y="320" width="480" height="248"/>
+  <text class="label" x="880" y="352" text-anchor="middle">riscv_tlm  -  mariusmm RV32IMAC</text>
+  <text class="txt" x="880" y="378" text-anchor="middle">MCU-class core  (= ARM Cortex-M class)</text>
+  <line x1="670" y1="392" x2="1090" y2="392" stroke="#c98a1c" stroke-width="1.2"/>
+  <text class="label-sm" x="662" y="418">ISA: RV32IMAC</text>
+  <text class="label-sm" x="662" y="444">Privilege: machine-mode (minimal)</text>
+  <text class="label-sm" x="662" y="470">Bus: SPLIT instruction + data  ->  2 upstream ports</text>
+  <text class="tiny" x="662" y="498">Wrapper internals:</text>
+  <text class="mono" x="662" y="520">CPURV32 core + irq_line_socket</text>
+  <text class="tiny" x="662" y="548">IRQ: set_irq() / raise_irq(cause)</text>
+
+  <!-- interrupt sources -->
+  <rect class="irqpanel" x="1160" y="100" width="400" height="248"/>
+  <text class="panel-title" x="1360" y="128" text-anchor="middle">INTERRUPT SOURCES</text>
+  <rect class="box-irq" x="1182" y="146" width="356" height="64"/>
+  <text class="label-sm" x="1360" y="172" text-anchor="middle">CLINT  @ 0x0200_0000</text>
+  <text class="tiny" x="1360" y="194" text-anchor="middle">MTIP cause 7  -  MSIP cause 3  (local)</text>
+  <rect class="box-irq" x="1182" y="222" width="356" height="64"/>
+  <text class="label-sm" x="1360" y="248" text-anchor="middle">PLIC  @ 0x0C00_0000</text>
+  <text class="tiny" x="1360" y="270" text-anchor="middle">MEIP cause 11  (external, &lt;= 31 sources)</text>
+  <text class="tiny" x="1360" y="314" text-anchor="middle">-> cpu.set_irq(cause, level), level-triggered</text>
+  <path class="irq" d="M1300 348 C1300 430, 1180 444, 1120 444"/>
+  <text class="tiny" x="1230" y="404" text-anchor="middle">set_irq()</text>
+
+  <!-- ELF loader -->
+  <rect class="dbg" x="1160" y="392" width="400" height="92"/>
+  <text class="panel-title" x="1360" y="420" text-anchor="middle">ELF LOADER / DEBUG</text>
+  <text class="tiny" x="1360" y="446" text-anchor="middle">load_elf() -> backdoor write to RAM (transport_dbg)</text>
+  <text class="tiny" x="1360" y="466" text-anchor="middle">reset PC = ELF entry  -  no-ELF fallback 0x8000_0000</text>
+
+  <!-- system bus -->
+  <rect class="bus" x="120" y="640" width="1440" height="70"/>
+  <text class="bus-title" x="840" y="675" text-anchor="middle">SYSTEM BUS / TLM INTERCONNECT (bus_router)</text>
+  <text class="bus-sub" x="840" y="696" text-anchor="middle">CPU upstream port(s) bound here; same physical address map for all initiators</text>
+
+  <!-- CPU -> bus -->
+  <path class="data" d="M360 568 L360 640"/>
+  <text class="tiny" x="392" y="606" text-anchor="middle">1 unified port</text>
+  <path class="data-alt" d="M820 568 L820 640"/>
+  <path class="data-alt" d="M940 568 L940 640"/>
+  <text class="tiny" x="880" y="606" text-anchor="middle">instr + data (2 ports, when selected)</text>
+
+  <!-- bus -> RAM, ELF backdoor -->
+  <rect class="mem" x="120" y="772" width="430" height="74"/>
+  <text class="label-sm" x="335" y="804" text-anchor="middle">RAM0</text>
+  <text class="tiny" x="335" y="826" text-anchor="middle">256 MiB @ 0x8000_0000 (firmware / RTOS image)</text>
+  <path class="data" d="M335 710 L335 772"/>
+
+  <path class="back" d="M1360 484 C1360 740, 760 809, 552 809"/>
+  <text class="tiny" x="980" y="770" text-anchor="middle">ELF backdoor load + set reset PC</text>
+
+  <!-- legend -->
+  <line x1="120" y1="872" x2="156" y2="872" class="impl"/>
+  <text class="tiny" x="164" y="877">implemented-by (build-time select)</text>
+  <line x1="430" y1="872" x2="466" y2="872" class="data"/>
+  <text class="tiny" x="474" y="877">active CPU bus</text>
+  <line x1="640" y1="872" x2="676" y2="872" class="data-alt"/>
+  <text class="tiny" x="684" y="877">alternate backend bus</text>
+  <line x1="930" y1="872" x2="966" y2="872" class="irq"/>
+  <text class="tiny" x="974" y="877">interrupt (set_irq)</text>
+  <line x1="1180" y1="872" x2="1216" y2="872" class="back"/>
+  <text class="tiny" x="1224" y="877">ELF backdoor load</text>
+  <text class="tiny" x="1554" y="74" text-anchor="end">Verified against cpu_base.h / wrappers</text>
+</svg>

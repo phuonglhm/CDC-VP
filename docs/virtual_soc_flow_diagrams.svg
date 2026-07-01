@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="820" viewBox="0 0 1700 820">
+  <defs>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .frame { fill: #ffffff; stroke: #1d2939; stroke-width: 3; rx: 18; }
+      .title { font: 800 28px Arial, sans-serif; fill: #101828; }
+      .subtitle { font: 500 15px Arial, sans-serif; fill: #344054; }
+      .panel-title { font: 800 18px Arial, sans-serif; fill: #101828; }
+      .label { font: 800 17px Arial, sans-serif; fill: #101828; }
+      .label-sm { font: 700 14px Arial, sans-serif; fill: #101828; }
+      .txt { font: 500 13px Arial, sans-serif; fill: #344054; }
+      .tiny { font: 600 12px Arial, sans-serif; fill: #475467; }
+      .addr { font: 700 12.5px Arial, sans-serif; fill: #344054; }
+      .cpu-panel { fill: #fffaf0; stroke: #b69227; stroke-width: 2.4; rx: 12; }
+      .box-cpu { fill: #fff7dd; stroke: #b69227; stroke-width: 1.8; rx: 8; }
+      .box-src { fill: #eef2f6; stroke: #667085; stroke-width: 2; rx: 9; }
+      .box-acc { fill: #fff0ef; stroke: #c65048; stroke-width: 2.4; rx: 9; }
+      .box-buf { fill: #eef8ea; stroke: #5f9b62; stroke-width: 2.2; rx: 9; }
+      .box-rsvd { fill: #f4f7fa; stroke: #667085; stroke-width: 1.8; stroke-dasharray: 7 5; rx: 8; }
+      .bus { fill: url(#busGrad); stroke: #101828; stroke-width: 2.6; rx: 8; }
+      .bus-title { font: 800 22px Arial, sans-serif; fill: #ffffff; }
+      .bus-sub { font: 500 13px Arial, sans-serif; fill: #d0d5dd; }
+      .data { stroke: #1d2939; stroke-width: 3; fill: none; marker-end: url(#aEnd); }
+      .prog { stroke: #7a5af8; stroke-width: 2.4; fill: none; stroke-dasharray: 7 5; marker-end: url(#aProg); }
+      .feed { stroke: #5f9b62; stroke-width: 2.6; fill: none; marker-end: url(#aFeed); }
+      .conn { stroke: #1d2939; stroke-width: 2.6; fill: none; marker-end: url(#aEnd); }
+      .badge { fill: #c0392b; }
+      .badge-txt { font: 800 12px Arial, sans-serif; fill: #ffffff; }
+    </style>
+    <linearGradient id="busGrad" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#1f2a44"/>
+      <stop offset="50%" stop-color="#344054"/>
+      <stop offset="100%" stop-color="#1f2a44"/>
+    </linearGradient>
+    <marker id="aEnd" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto">
+      <polygon points="0 0, 13 5, 0 10" fill="#1d2939"/>
+    </marker>
+    <marker id="aStart" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="2" refY="5" orient="auto">
+      <polygon points="13 0, 0 5, 13 10" fill="#1d2939"/>
+    </marker>
+    <marker id="aProg" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto">
+      <polygon points="0 0, 13 5, 0 10" fill="#7a5af8"/>
+    </marker>
+    <marker id="aFeed" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="10" refX="11" refY="5" orient="auto">
+      <polygon points="0 0, 13 5, 0 10" fill="#5f9b62"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1700" height="820"/>
+  <rect class="frame" x="12" y="10" width="1676" height="800"/>
+
+  <text class="title" x="850" y="48" text-anchor="middle">CDC-VP Virtual SoC  -  Media/AI Pipeline Execution &amp; Data Flow</text>
+  <text class="subtitle" x="850" y="74" text-anchor="middle">CPU programs MMIO descriptors + START; accelerators stream RAW - ISP - VPU - NPU through RAM0 windows as bus masters.</text>
+
+  <!-- CPU control subsystem -->
+  <rect class="cpu-panel" x="470" y="108" width="760" height="100"/>
+  <text class="panel-title" x="850" y="132" text-anchor="middle">CPU CONTROL SUBSYSTEM</text>
+  <rect class="box-cpu" x="492" y="142" width="236" height="56"/>
+  <text class="label-sm" x="610" y="166" text-anchor="middle">riscv_vp CPU</text>
+  <text class="tiny" x="610" y="186" text-anchor="middle">Bremen RV32 ISS</text>
+  <rect class="box-cpu" x="744" y="142" width="230" height="56"/>
+  <text class="label-sm" x="859" y="166" text-anchor="middle">CLINT  0x0200_0000</text>
+  <text class="tiny" x="859" y="186" text-anchor="middle">MTIP / MSIP</text>
+  <rect class="box-cpu" x="990" y="142" width="220" height="56"/>
+  <text class="label-sm" x="1100" y="166" text-anchor="middle">PLIC  0x0C00_0000</text>
+  <text class="tiny" x="1100" y="186" text-anchor="middle">MEIP (DONE/ERROR IRQ)</text>
+
+  <!-- Bus -->
+  <rect class="bus" x="40" y="242" width="1620" height="64"/>
+  <text class="bus-title" x="850" y="276" text-anchor="middle">SYSTEM BUS / TLM INTERCONNECT (bus_router)</text>
+  <text class="bus-sub" x="850" y="296" text-anchor="middle">routes CPU MMIO to peripherals and accelerator master transactions to the RAM0 physical address map</text>
+  <path class="conn" d="M850 208 L850 242"/>
+
+  <!-- CPU MMIO programming to accelerators -->
+  <path class="prog" d="M505 306 L505 360"/>
+  <path class="prog" d="M895 306 L895 360"/>
+  <path class="prog" d="M1285 306 L1285 360"/>
+  <text class="tiny" x="505" y="330" text-anchor="middle">MMIO + START</text>
+  <text class="tiny" x="895" y="330" text-anchor="middle">MMIO + START</text>
+  <text class="tiny" x="1285" y="330" text-anchor="middle">MMIO + START</text>
+
+  <!-- ===== Pipeline chain (single row) ===== -->
+  <!-- gap labels -->
+  <text class="tiny" x="212" y="352" text-anchor="middle">stream</text>
+  <text class="tiny" x="407" y="352" text-anchor="middle">ISP read</text>
+  <text class="tiny" x="602" y="352" text-anchor="middle">ISP write</text>
+  <text class="tiny" x="797" y="352" text-anchor="middle">VPU read</text>
+  <text class="tiny" x="992" y="352" text-anchor="middle">VPU write</text>
+  <text class="tiny" x="1187" y="352" text-anchor="middle">NPU read</text>
+  <text class="tiny" x="1382" y="352" text-anchor="middle">NPU write</text>
+
+  <rect class="box-src" x="40" y="360" width="150" height="92"/>
+  <text class="label-sm" x="115" y="398" text-anchor="middle">External</text>
+  <text class="label-sm" x="115" y="418" text-anchor="middle">Sensor</text>
+  <text class="tiny" x="115" y="438" text-anchor="middle">or testbench</text>
+
+  <rect class="box-buf" x="235" y="360" width="150" height="92"/>
+  <text class="label-sm" x="310" y="400" text-anchor="middle">RAW_IN0</text>
+  <text class="tiny" x="310" y="420" text-anchor="middle">RAM window</text>
+  <text class="addr" x="310" y="438" text-anchor="middle">0x8100_0000</text>
+
+  <rect class="box-acc" x="430" y="360" width="150" height="92"/>
+  <text class="label" x="505" y="398" text-anchor="middle">ISP0</text>
+  <text class="tiny" x="505" y="418" text-anchor="middle">image processing</text>
+  <text class="addr" x="505" y="438" text-anchor="middle">MMIO 0x100D_0000</text>
+  <rect class="badge" x="556" y="366" width="20" height="18" rx="5"/>
+  <text class="badge-txt" x="566" y="380" text-anchor="middle">M</text>
+
+  <rect class="box-buf" x="625" y="360" width="150" height="92"/>
+  <text class="label-sm" x="700" y="400" text-anchor="middle">ISP_OUT0</text>
+  <text class="tiny" x="700" y="420" text-anchor="middle">RAM window</text>
+  <text class="addr" x="700" y="438" text-anchor="middle">0x8200_0000</text>
+
+  <rect class="box-acc" x="820" y="360" width="150" height="92"/>
+  <text class="label" x="895" y="398" text-anchor="middle">VPU0</text>
+  <text class="tiny" x="895" y="418" text-anchor="middle">preprocess / convert</text>
+  <text class="addr" x="895" y="438" text-anchor="middle">MMIO 0x100E_0000</text>
+  <rect class="badge" x="946" y="366" width="20" height="18" rx="5"/>
+  <text class="badge-txt" x="956" y="380" text-anchor="middle">M</text>
+
+  <rect class="box-buf" x="1015" y="360" width="150" height="92"/>
+  <text class="label-sm" x="1090" y="400" text-anchor="middle">VPU_OUT0</text>
+  <text class="tiny" x="1090" y="420" text-anchor="middle">RAM window</text>
+  <text class="addr" x="1090" y="438" text-anchor="middle">0x8400_0000</text>
+
+  <rect class="box-acc" x="1210" y="360" width="150" height="92"/>
+  <text class="label" x="1285" y="398" text-anchor="middle">NPU0</text>
+  <text class="tiny" x="1285" y="418" text-anchor="middle">AI inference</text>
+  <text class="addr" x="1285" y="438" text-anchor="middle">MMIO 0x100F_0000</text>
+  <rect class="badge" x="1336" y="366" width="20" height="18" rx="5"/>
+  <text class="badge-txt" x="1346" y="380" text-anchor="middle">M</text>
+
+  <rect class="box-buf" x="1405" y="360" width="150" height="92"/>
+  <text class="label-sm" x="1480" y="400" text-anchor="middle">NPU_WORK0</text>
+  <text class="tiny" x="1480" y="420" text-anchor="middle">RAM window</text>
+  <text class="addr" x="1480" y="438" text-anchor="middle">0x8800_0000</text>
+
+  <!-- data-flow arrows in the gaps (mid-height) -->
+  <path class="data" d="M190 406 L235 406"/>
+  <path class="data" d="M385 406 L430 406"/>
+  <path class="data" d="M580 406 L625 406"/>
+  <path class="data" d="M775 406 L820 406"/>
+  <path class="data" d="M970 406 L1015 406"/>
+  <path class="data" d="M1165 406 L1210 406"/>
+  <path class="data" d="M1360 406 L1405 406"/>
+
+  <!-- NPU weights feed -->
+  <rect class="box-buf" x="1210" y="500" width="150" height="58"/>
+  <text class="label-sm" x="1285" y="524" text-anchor="middle">NPU_WEIGHTS0</text>
+  <text class="addr" x="1285" y="544" text-anchor="middle">0x8600_0000</text>
+  <path class="feed" d="M1285 500 L1285 452"/>
+  <text class="tiny" x="1372" y="478" text-anchor="middle">reads weights</text>
+
+  <!-- master / irq note -->
+  <text class="tiny" x="115" y="486">Bus masters (M): ISP0 / VPU0 / NPU0 read+write their RAM0 windows through bus_router.</text>
+  <text class="tiny" x="115" y="504">On completion each sets DONE/ERROR and raises its PLIC interrupt to the CPU.</text>
+
+  <!-- ===== RAM0 buffer plan strip ===== -->
+  <text class="panel-title" x="850" y="600" text-anchor="middle">RAM0 BUFFER PLAN   -   256 MiB @ 0x8000_0000 - 0x8FFF_FFFF</text>
+  <rect class="box-buf" x="40"   y="616" width="220" height="74"/>
+  <text class="label-sm" x="150" y="648" text-anchor="middle">FW / RTOS</text>
+  <text class="addr" x="150" y="670" text-anchor="middle">0x8000_0000 - 0x80FF_FFFF</text>
+  <rect class="box-buf" x="270"  y="616" width="220" height="74"/>
+  <text class="label-sm" x="380" y="648" text-anchor="middle">RAW_IN0</text>
+  <text class="addr" x="380" y="670" text-anchor="middle">0x8100_0000 - 0x81FF_FFFF</text>
+  <rect class="box-buf" x="500"  y="616" width="220" height="74"/>
+  <text class="label-sm" x="610" y="648" text-anchor="middle">ISP_OUT0</text>
+  <text class="addr" x="610" y="670" text-anchor="middle">0x8200_0000 - 0x83FF_FFFF</text>
+  <rect class="box-buf" x="730"  y="616" width="220" height="74"/>
+  <text class="label-sm" x="840" y="648" text-anchor="middle">VPU_OUT0</text>
+  <text class="addr" x="840" y="670" text-anchor="middle">0x8400_0000 - 0x85FF_FFFF</text>
+  <rect class="box-buf" x="960"  y="616" width="220" height="74"/>
+  <text class="label-sm" x="1070" y="648" text-anchor="middle">NPU_WEIGHTS0</text>
+  <text class="addr" x="1070" y="670" text-anchor="middle">0x8600_0000 - 0x87FF_FFFF</text>
+  <rect class="box-buf" x="1190" y="616" width="220" height="74"/>
+  <text class="label-sm" x="1300" y="648" text-anchor="middle">NPU_WORK0</text>
+  <text class="addr" x="1300" y="670" text-anchor="middle">0x8800_0000 - 0x8BFF_FFFF</text>
+  <rect class="box-rsvd" x="1420" y="616" width="220" height="74"/>
+  <text class="label-sm" x="1530" y="648" text-anchor="middle">PIPELINE_RSVD</text>
+  <text class="addr" x="1530" y="670" text-anchor="middle">0x8C00_0000 - 0x8FFF_FFFF</text>
+
+  <!-- legend -->
+  <rect class="badge" x="40" y="726" width="20" height="18" rx="5"/>
+  <text class="badge-txt" x="50" y="740" text-anchor="middle">M</text>
+  <text class="tiny" x="68" y="740">bus master to RAM0</text>
+  <line x1="240" y1="735" x2="280" y2="735" class="data"/>
+  <text class="tiny" x="288" y="740">data flow</text>
+  <line x1="400" y1="735" x2="440" y2="735" class="prog"/>
+  <text class="tiny" x="448" y="740">CPU MMIO programming</text>
+  <line x1="660" y1="735" x2="700" y2="735" class="feed"/>
+  <text class="tiny" x="708" y="740">weights feed</text>
+  <rect class="box-acc" x="900" y="728" width="30" height="16"/>
+  <text class="tiny" x="938" y="740">accelerator (MMIO)</text>
+  <rect class="box-buf" x="1100" y="728" width="30" height="16"/>
+  <text class="tiny" x="1138" y="740">RAM0 window</text>
+  <text class="tiny" x="1648" y="740" text-anchor="end">Verified against docs/peripheral_memory_map.md</text>
+</svg>
