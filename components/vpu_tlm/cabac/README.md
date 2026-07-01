@@ -1,0 +1,18 @@
+# vpu_tlm / rec block
+
+This is a SystemC TLM 2.3.4 model of the Reconstruction block in a VPU. It serves to:
+- Perform the predictions based on mode decision's mode selection. (rec_intra / rec_mc)
+- Calculate the residual from those predictions
+- Perform Transform / Quantize on the residual and forward to CABAC block
+- In parallel, perform Inverse Transform / Quantize and forward to the Deblocking block
+
+# Note
+- All modules in test is for testing and wiring up dangling sockets
+- Uses custom payload struct rec_packet (in rec_packet.h)
+
+# Progress
+- Rec_Intra donex
+
+# Run
+- make testbench
+- (to clean build) make clean
