@@ -1,174 +1,543 @@
-# H.265 / HEVC Video Encoder TLM Model
+# VPU TLM Model
 
 ## Overview
 
-This component provides an initial SystemC/TLM skeleton for an H.265/HEVC video encoder model.
+This directory contains a functional SystemC/TLM model of a simplified H.265/HEVC Video Processing Unit (VPU).
 
-The structure is based on the main RTL block organization of the open-source `xk265` encoder. The current implementation focuses on defining the high-level encoder architecture, common data structures, and block-level interfaces before implementing the full encoding algorithms.
+The component directory was renamed from:
 
-This is not yet a bitstream-compliant H.265 encoder. It is an early TLM model intended for architectural modeling, integration, and step-by-step functional development.
+```text
+components/video_encoder_tlm
+```
 
-## Reference RTL Structure
+to:
 
-The TLM skeleton maps to the main blocks in the original xk265 RTL structure:
+```text
+components/vpu_tlm
+```
 
-| xk265 RTL Block     | TLM File                   |
-| ------------------- | -------------------------- |
-| `rtl/enc_defines.v` | `encoder_defs.h`           |
-| `rtl/top`           | `video_encoder_tlm.h/.cpp` |
-| `rtl/prei`          | `prei.h/.cpp`              |
-| `rtl/posi`          | `posi.h/.cpp`              |
-| `rtl/ime`           | `ime.h/.cpp`               |
-| `rtl/fme`           | `fme.h/.cpp`               |
-| `rtl/rec`           | `rec.h/.cpp`               |
-| `rtl/db`            | `db.h/.cpp`                |
-| `rtl/cabac`         | `cabac.h/.cpp`             |
-| `rtl/fetch`         | `fetch.h/.cpp`             |
-| `rtl/mem`           | `mem.h/.cpp`               |
+The model focuses on the prediction path of a video encoder:
+
+```text
+TOP
+ ├── PREI
+ ├── POSI
+ ├── IME
+ └── FME
+```
+
+This is a **functional TLM model**, not a cycle-accurate RTL model.
+
+---
 
 ## Directory Structure
 
 ```text
-components/video_encoder_tlm/
+components/vpu_tlm/
+├── CMakeLists.txt
+├── Makefile
+├── README.md
 ├── include/
-│   ├── encoder_defs.h
-│   ├── video_encoder_tlm.h
-│   ├── frame.h
 │   ├── block.h
+│   ├── encoder_defs.h
+│   ├── frame.h
 │   ├── prediction_result.h
-│   ├── fetch.h
-│   ├── mem.h
 │   ├── prei.h
+│   ├── prei_result.h
 │   ├── posi.h
 │   ├── ime.h
+│   ├── ime_result.h
 │   ├── fme.h
-│   ├── mode_decision.h
-│   ├── rec.h
-│   ├── db.h
-│   └── cabac.h
-│
+│   ├── fme_result.h
+│   └── video_encoder_tlm.h
 ├── src/
-│   ├── video_encoder_tlm.cpp
 │   ├── frame.cpp
-│   ├── fetch.cpp
-│   ├── mem.cpp
 │   ├── prei.cpp
 │   ├── posi.cpp
 │   ├── ime.cpp
 │   ├── fme.cpp
-│   ├── mode_decision.cpp
-│   ├── rec.cpp
-│   ├── db.cpp
-│   └── cabac.cpp
-│
+│   └── video_encoder_tlm.cpp
 └── tests/
     ├── CMakeLists.txt
     └── test_video_encoder_tlm.cpp
 ```
 
-## Current Status
+Note: The directory is now named `vpu_tlm`, but some class names, headers, and test names may still keep the old compatibility name `video_encoder_tlm`.
 
-The current version provides:
+---
 
-* Initial H.265/HEVC encoder block structure
-* Common encoder definitions in `encoder_defs.h`
-* Frame data structure with YUV 4:2:0 support
-* Block description for CTU/CU/PU/TU-level modeling
-* Prediction result structure for intra/inter prediction, motion vector, cost, QP, residual, skip, and merge information
-* Initial TOP block header for `video_encoder_tlm`
-* Basic SystemC/TLM integration structure
+# Block Description
 
-The following parts are still under development:
+## 1. TOP Block
 
-* Full TOP pipeline implementation
-* PREI algorithm
-* POSI algorithm
-* IME algorithm
-* FME algorithm
-* Mode decision algorithm
-* Reconstruction path
-* Deblocking and SAO
-* CABAC functional modeling
-* Fetch and memory model integration
-* Full encoder-level testbench
-
-## Intended Encoder Flow
-
-The final TLM flow is expected to follow this sequence:
+Files:
 
 ```text
-Input Frame
-   ↓
-Fetch Current Block
-   ↓
-PREI: Pre-intra mode estimation and QP preparation
-   ↓
-POSI: Intra prediction and intra cost calculation
-   ↓
-IME: Integer motion estimation
-   ↓
-FME: Fractional motion estimation and inter prediction
-   ↓
-Mode Decision: Select best intra/inter result
-   ↓
-REC: Reconstruct selected block
-   ↓
-DB/SAO: In-loop filtering
-   ↓
-CABAC: Entropy coding / bitstream generation
-   ↓
-Update Reference Frame
+include/video_encoder_tlm.h
+src/video_encoder_tlm.cpp
 ```
 
-## Build
+The TOP block is the high-level SystemC/TLM wrapper of the VPU model.
+
+Main responsibilities:
+
+```text
+- Represent the VPU as a SystemC module
+- Provide the TLM socket interface
+- Act as the top-level container of the encoder model
+- Allow the VPU component to be instantiated and connected in a virtual platform
+```
+
+In the current model, TOP is mainly used to verify that:
+
+```text
+- The VPU TLM module can be created
+- The TLM socket can be bound
+- The SystemC simulation can start successfully
+```
+
+The TOP block does not model exact RTL timing. It is used as the functional wrapper for the VPU TLM component.
+
+---
+
+## 2. PREI Block
+
+Files:
+
+```text
+include/prei.h
+include/prei_result.h
+src/prei.cpp
+```
+
+PREI means **Pre-Intra Estimation**.
+
+PREI models the first stage of the intra prediction path. Its job is to analyze the current block and find good intra prediction mode candidates.
+
+Main responsibilities:
+
+```text
+- Evaluate HEVC intra prediction modes 0..34
+- Analyze the current CTU/CU
+- Estimate the cost of different intra modes
+- Generate candidate mode information
+- Output PREI result for POSI
+```
+
+Main API:
+
+```cpp
+prei_result run(const frame& input,
+                const block& ctu) const;
+```
+
+Simplified flow:
+
+```text
+Input frame + CTU
+      ↓
+Build CU list
+      ↓
+Evaluate intra modes
+      ↓
+Estimate cost
+      ↓
+Select best intra candidates
+      ↓
+Generate prei_result
+```
+
+Output:
+
+```text
+prei_result
+```
+
+This result is used by POSI to generate the actual intra prediction pixels.
+
+---
+
+## 3. POSI Block
+
+Files:
+
+```text
+include/posi.h
+src/posi.cpp
+```
+
+POSI means **Post-Intra Prediction**.
+
+POSI receives the mode candidates from PREI and generates the actual intra prediction result.
+
+Main responsibilities:
+
+```text
+- Read PREI mode candidates
+- Fetch top and left reference pixels
+- Generate intra prediction pixels
+- Compute residual = original - predicted
+- Estimate rate
+- Compute cost
+- Output final intra prediction_result
+```
+
+Main API:
+
+```cpp
+prediction_result run(const frame& input,
+                      const frame& reconstructed,
+                      const block& region,
+                      const prei_result& prei_info,
+                      std::uint32_t qp = INIT_QP) const;
+```
+
+Simplified flow:
+
+```text
+Input frame
+Reconstructed reference frame
+PREI result
+      ↓
+Select intra mode candidate
+      ↓
+Generate planar / DC / angular prediction
+      ↓
+Compute residual
+      ↓
+Estimate rate and cost
+      ↓
+Generate intra prediction_result
+```
+
+Output:
+
+```text
+prediction_result with mode = intra
+```
+
+POSI provides the intra candidate for the later mode decision stage.
+
+---
+
+## 4. IME Block
+
+Files:
+
+```text
+include/ime.h
+include/ime_result.h
+src/ime.cpp
+```
+
+IME means **Integer Motion Estimation**.
+
+IME is the first stage of the inter prediction path. It searches for the best integer-pixel motion vector between the current frame and the reference frame.
+
+Main responsibilities:
+
+```text
+- Generate integer-pixel search points
+- Read current block pixels
+- Read reference block pixels
+- Compute SAD for each candidate motion vector
+- Estimate motion vector rate
+- Compute motion estimation cost
+- Select best integer motion vector
+- Output IME result for FME
+```
+
+Main API:
+
+```cpp
+ime_result run(const frame& input,
+               const frame& reference,
+               const block& ctu,
+               std::uint32_t qp = INIT_QP) const;
+```
+
+Simplified flow:
+
+```text
+Current frame + reference frame + CTU
+      ↓
+Build search window
+      ↓
+Generate integer MV candidates
+      ↓
+For each MV:
+    - fetch reference block
+    - compute SAD
+    - estimate rate
+    - compute cost
+      ↓
+Select best integer MV
+      ↓
+Generate ime_result
+```
+
+Output:
+
+```text
+ime_result
+```
+
+Important output fields:
+
+```text
+valid
+ctu
+qp
+best_partition
+best_mv
+best_sad
+best_rate
+best_cost
+candidates
+best_inter_result
+```
+
+Motion vectors are stored in quarter-pel units.
+
+Example:
+
+```text
+mv.x = 4   means +1 integer pixel
+mv.x = -4  means -1 integer pixel
+mv.x = 1   means +1/4 pixel
+mv.x = 2   means +1/2 pixel
+```
+
+For IME, the generated motion vectors are integer-pixel vectors, so they are multiples of 4.
+
+---
+
+## 5. FME Block
+
+Files:
+
+```text
+include/fme.h
+include/fme_result.h
+src/fme.cpp
+```
+
+FME means **Fractional Motion Estimation**.
+
+FME refines the integer motion vector generated by IME. It searches around the IME motion vector using half-pixel and quarter-pixel positions.
+
+Main responsibilities:
+
+```text
+- Receive integer MV from IME
+- Generate half-pel candidate motion vectors
+- Generate quarter-pel candidate motion vectors
+- Interpolate reference pixels
+- Generate fractional-pixel prediction
+- Compute residual
+- Compute SATD
+- Estimate motion vector rate
+- Compute RD-like cost
+- Select best refined fractional MV
+- Optionally detect skip candidate
+- Output final inter prediction_result
+```
+
+Main API:
+
+```cpp
+fme_result run(const frame& input,
+               const frame& reference,
+               const ime_result& ime_info,
+               std::uint32_t qp = INIT_QP) const;
+```
+
+Simplified flow:
+
+```text
+IME integer MV
+      ↓
+Half-pel refinement
+      ↓
+Quarter-pel refinement
+      ↓
+Generate fractional prediction
+      ↓
+Compute SATD
+      ↓
+Compute cost = SATD + lambda * MV bit cost
+      ↓
+Select best fractional MV
+      ↓
+Generate fme_result
+```
+
+Output:
+
+```text
+fme_result
+```
+
+Important output fields:
+
+```text
+valid
+ctu
+qp
+best_partition
+best_mv
+best_satd
+best_rate
+best_cost
+skip
+candidates
+best_inter_result
+```
+
+The final inter prediction candidate is:
+
+```cpp
+fme_result.best_inter_result
+```
+
+This result is later compared against the intra prediction result.
+
+---
+
+## Prediction Flow
+
+### Intra Path
+
+```text
+Input frame
+   ↓
+PREI
+   ↓
+POSI
+   ↓
+Intra prediction_result
+```
+
+### Inter Path
+
+```text
+Current frame + reference frame
+   ↓
+IME
+   ↓
+FME
+   ↓
+Inter prediction_result
+```
+
+### Overall Prediction Flow
+
+```text
+                 ┌──────── PREI ──────── POSI ──────── Intra result
+Input frame ─────┤
+                 └──────── IME ───────── FME ───────── Inter result
+```
+
+---
+
+## Unit Tests
+
+The test file is:
+
+```text
+components/vpu_tlm/tests/test_video_encoder_tlm.cpp
+```
+
+Current tests cover:
+
+```text
+- TOP module instantiation
+- TLM socket binding
+- PREI basic intra analysis
+- POSI intra prediction from PREI result
+- IME integer motion estimation
+- FME fractional refinement from IME result
+```
+
+The tests check functional behavior, not bit-exact RTL equivalence.
+
+---
+
+## How to Build and Run Tests
 
 From the repository root:
 
 ```bash
 cd ~/CDC-VP
+```
 
-cmake -S . -B build -G Ninja \
-  -DCMAKE_C_COMPILER=/usr/bin/gcc \
-  -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
-  -DCDC_CPU_BACKEND=riscv_vp \
-  -DCDC_BUILD_MINI_TLM=OFF \
-  -DCDC_BUILD_CPU_EVAL=OFF \
-  -DCDC_BUILD_CUSTOM_SOC=ON \
-  -DSYSTEMC_INCLUDE_DIR=/opt/systemc-2.3.4/include \
-  -DSYSTEMC_LIBRARY=/opt/systemc-2.3.4/lib/libsystemc.so
+Build the test target:
 
+```bash
 cmake --build build --target test_video_encoder_tlm
 ```
 
-## Run Test
+Run the test executable:
 
 ```bash
-./build/components/video_encoder_tlm/tests/test_video_encoder_tlm
+./build/components/vpu_tlm/tests/test_video_encoder_tlm
 ```
 
-Or from the component directory:
-
-```bash
-cd ~/CDC-VP/components/video_encoder_tlm
-make run
-```
-
-## Notes
-
-This component is currently an architectural TLM skeleton. The goal is to first stabilize the block structure and interfaces, then implement each encoder block step by step.
-
-Recommended development order:
+Expected result:
 
 ```text
-1. encoder_defs
-2. frame / block / prediction_result
-3. block interfaces
-4. TOP pipeline
-5. PREI / POSI
-6. IME / FME
-7. Mode Decision
-8. REC
-9. DB/SAO
-10. CABAC
-11. Full encoder test
+Video Encoder TLM Unit Tests PASSED
+```
+
+---
+
+## Rename Note
+
+The old directory name was:
+
+```text
+components/video_encoder_tlm
+```
+
+The new directory name is:
+
+```text
+components/vpu_tlm
+```
+
+Therefore, the top-level `components/CMakeLists.txt` should use:
+
+```cmake
+add_subdirectory(vpu_tlm)
+```
+
+instead of:
+
+```cmake
+add_subdirectory(video_encoder_tlm)
+```
+
+---
+
+## Summary
+
+This VPU TLM model currently focuses on the prediction pipeline.
+
+Implemented main blocks:
+
+```text
+TOP  : SystemC/TLM wrapper
+PREI : Pre-intra mode estimation
+POSI : Intra prediction generation
+IME  : Integer motion estimation
+FME  : Fractional motion estimation
+```
+
+The model is suitable for:
+
+```text
+- Understanding VPU prediction dataflow
+- Testing block-level encoder behavior
+- Building a virtual platform level VPU model
+- Connecting video encoder behavior with other SystemC/TLM components
 ```
