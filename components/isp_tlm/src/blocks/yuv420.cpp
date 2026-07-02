@@ -1,116 +1,78 @@
-#include "adc_model.h"
+#include "blocks/yuv420.h"
 
-#include <cstdlib>
+#include <algorithm>
+#include <cstdint>
 
-namespace {
-
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
-
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
-
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
-
-} // namespace
-
-ADC_Model::ADC_Model()
+std::size_t yuv420_block::get_yuv420_size(std::uint32_t width, std::uint32_t height) const
 {
-    reset();
+    return static_cast<std::size_t>(width) * height +
+           2 * ((width + 1) / 2) * ((height + 1) / 2);
 }
 
-void ADC_Model::reset()
+void yuv420_block::process(const std::uint8_t* in,
+                           std::uint8_t* out,
+                           std::uint32_t width,
+                           std::uint32_t height,
+                           const yuv420_config& cfg) const
 {
-    reg_control = 0;
-    reg_status = 0;
-    reg_data = 0;
-    reg_intr_enable = 0;
-}
+    if (in == nullptr || out == nullptr) {
+        return;
+    }
 
-uint32_t ADC_Model::readReg(uint32_t offset)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA: {
-            const uint32_t data = reg_data;
-            reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-            return data;
+    if (!cfg.is_enable) {
+        const std::size_t size = static_cast<std::size_t>(width) * height * 3u;
+        std::copy(in, in + size, out);
+        return;
+    }
+
+    const std::uint32_t half_width = (width + 1) / 2;
+    const std::uint32_t half_height = (height + 1) / 2;
+
+    std::size_t out_offset = 0;
+
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            out[out_offset++] = in[(y * width + x) * 3u];
         }
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
     }
-}
 
-void ADC_Model::writeReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-                reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-                reg_status |= STATUS_EOC;
-                reg_control &= ~CTRL_START; // START is self-clearing
+    for (std::uint32_t y = 0; y < half_height; ++y) {
+        for (std::uint32_t x = 0; x < half_width; ++x) {
+            std::uint32_t src_y = y * 2;
+            std::uint32_t src_x = x * 2;
+
+            std::uint32_t sum_u = 0;
+            std::uint32_t sum_v = 0;
+            std::uint32_t count = 0;
+
+            for (std::uint32_t dy = 0; dy < 2 && src_y + dy < height; ++dy) {
+                for (std::uint32_t dx = 0; dx < 2 && src_x + dx < width; ++dx) {
+                    std::size_t idx = ((src_y + dy) * width + (src_x + dx)) * 3u;
+                    sum_u += in[idx + 1u];
+                    sum_v += in[idx + 2u];
+                    ++count;
+                }
             }
-            break;
-        case REG_STATUS:
-            if ((data & STATUS_EOC) != 0u) {
-                reg_status &= ~STATUS_EOC; // W1C
-            }
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
+
+            out[out_offset++] = static_cast<std::uint8_t>(sum_u / count);
+            out[out_offset++] = static_cast<std::uint8_t>(sum_v / count);
+        }
     }
 }
 
-bool ADC_Model::hasInterrupt() const
+void yuv420_block::process(const std::vector<std::uint8_t>& in,
+                           std::vector<std::uint8_t>& out,
+                           std::uint32_t width,
+                           std::uint32_t height,
+                           const yuv420_config& cfg) const
 {
-    return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
+    const std::size_t out_size = get_yuv420_size(width, height);
+    out.resize(out_size);
 
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA:
-            return reg_data;
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
+    const std::size_t required_in = static_cast<std::size_t>(width) * height * 3u;
+    if (in.size() < required_in) {
+        std::fill(out.begin(), out.end(), 0u);
+        return;
     }
-}
-
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            break;
-        case REG_STATUS:
-            reg_status = data & STATUS_EOC;
-            break;
-        case REG_DATA:
-            reg_data = data & 0x0FFFu;
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
+    process(in.data(), out.data(), width, height, cfg);
 }

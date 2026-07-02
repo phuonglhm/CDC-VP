@@ -5,17 +5,6 @@
 
 namespace {
 
-std::uint16_t max_for_bit_depth(std::uint8_t bit_depth)
-{
-    if (bit_depth == 0) {
-        bit_depth = 8;
-    }
-    if (bit_depth >= 16) {
-        return 0xFFFFu;
-    }
-    return static_cast<std::uint16_t>((1u << bit_depth) - 1u);
-}
-
 std::uint16_t scale_and_clip(std::uint16_t value, float gain, std::uint16_t max_value)
 {
     const float scaled = static_cast<float>(value) * gain;
@@ -36,23 +25,24 @@ void wb_block::process(const std::uint16_t* in,
                        std::uint32_t height,
                        const wb_config& cfg) const
 {
-    const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
-    if (in == nullptr || out == nullptr || samples == 0u) {
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
+    if (in == nullptr || out == nullptr || pixels == 0u) {
         return;
     }
 
     if (!cfg.is_enable) {
+        const std::size_t samples = pixels * 3u;
         if (in != out) {
             std::copy(in, in + samples, out);
         }
         return;
     }
 
-    const std::uint16_t max_value = max_for_bit_depth(cfg.bit_depth);
-    for (std::size_t i = 0; i < samples; i += 3u) {
-        out[i] = scale_and_clip(in[i], cfg.r_gain, max_value);
-        out[i + 1u] = std::min(in[i + 1u], max_value);
-        out[i + 2u] = scale_and_clip(in[i + 2u], cfg.b_gain, max_value);
+    for (std::size_t p = 0; p < pixels; ++p) {
+        const std::size_t i = p * 3u;
+        out[i]     = scale_and_clip(in[i],     cfg.r_gain, 4095);
+        out[i + 1u] = in[i + 1u];
+        out[i + 2u] = scale_and_clip(in[i + 2u], cfg.b_gain, 4095);
     }
 }
 
@@ -62,7 +52,8 @@ void wb_block::process(const std::vector<std::uint16_t>& in,
                        std::uint32_t height,
                        const wb_config& cfg) const
 {
-    const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
+    const std::size_t samples = pixels * 3u;
     out.resize(samples);
     if (in.size() < samples) {
         std::fill(out.begin(), out.end(), 0u);

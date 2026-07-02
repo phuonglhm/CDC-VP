@@ -1,22 +1,31 @@
-#ifndef AWB_BLOCK_H
-#define AWB_BLOCK_H
+#pragma once
 
-#include <stdint.h>
+#include <cstdint>
+#include <vector>
+
 #include "isp_types.h"
 
 struct awb_config {
-   bool is_enable;
-   uint8_t algorithm;
-   float underexposed_percentage;
-   float overexposed_percentage;
-   float percentage;
-   float r_gain_out;
-   float b_gain_out;
+    bool is_enable = false;
+    std::uint8_t algorithm = 0;
+    float underexposed_percentage = 0.01f;
+    float overexposed_percentage = 0.01f;
+    float percentage = 0.5f;
+    float r_gain_out = 1.0f;
+    float b_gain_out = 1.0f;
 };
 
 class awb_block {
 public:
-   void process(const uint16_t *in, uint32_t w, uint32_t h, awb_config &cfg, uint8_t bit_depth);
-};
+    void process(const std::uint16_t* in,
+                 std::uint32_t width,
+                 std::uint32_t height,
+                 awb_config& cfg,
+                 std::uint8_t bit_depth) const;
 
-#endif // AWB_BLOCK_H
+    void process(const std::vector<std::uint16_t>& in,
+                 std::uint32_t width,
+                 std::uint32_t height,
+                 awb_config& cfg,
+                 std::uint8_t bit_depth) const;
+};

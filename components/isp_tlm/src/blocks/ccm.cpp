@@ -57,12 +57,15 @@ void ccm_block::process(const std::uint16_t* in,
             static_cast<float>(std::min(in[i + 2u], max_value)) * inv_max,
         };
 
-        for (std::size_t row = 0; row < 3u; ++row) {
-            const float corrected = cfg.matrix[row][0] * rgb[0] +
-                                    cfg.matrix[row][1] * rgb[1] +
-                                    cfg.matrix[row][2] * rgb[2];
-            out[i + row] = quantize(corrected, max_value);
-        }
+        out[i]     = quantize(cfg.corrected_red[0]   * rgb[0] +
+                             cfg.corrected_red[1]   * rgb[1] +
+                             cfg.corrected_red[2]   * rgb[2], max_value);
+        out[i + 1u] = quantize(cfg.corrected_green[0] * rgb[0] +
+                              cfg.corrected_green[1] * rgb[1] +
+                              cfg.corrected_green[2] * rgb[2], max_value);
+        out[i + 2u] = quantize(cfg.corrected_blue[0]  * rgb[0] +
+                              cfg.corrected_blue[1]  * rgb[1] +
+                              cfg.corrected_blue[2]  * rgb[2], max_value);
     }
 }
 

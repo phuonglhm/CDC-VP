@@ -6,11 +6,9 @@
 struct ccm_config {
     bool is_enable = false;
     std::uint8_t bit_depth = 12;
-    float matrix[3][3] = {
-        {1.0f, 0.0f, 0.0f},
-        {0.0f, 1.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f},
-    };
+    float corrected_red[3] = {1.0f, 0.0f, 0.0f};
+    float corrected_green[3] = {0.0f, 1.0f, 0.0f};
+    float corrected_blue[3] = {0.0f, 0.0f, 1.0f};
 };
 
 class ccm_block {

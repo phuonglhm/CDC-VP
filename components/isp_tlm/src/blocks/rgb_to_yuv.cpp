@@ -1,116 +1,70 @@
-#include "adc_model.h"
+#include "blocks/rgb_to_yuv.h"
 
-#include <cstdlib>
+#include <algorithm>
+#include <cstdint>
 
 namespace {
 
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
+constexpr std::int32_t LUMA_OFFSET = 0;
+constexpr std::int32_t CHROMA_OFFSET = 128;
 
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
-
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
+std::uint8_t clip_to_uint8(std::int32_t value)
+{
+    if (value < 0) return 0;
+    if (value > 255) return 255;
+    return static_cast<std::uint8_t>(value);
+}
 
 } // namespace
 
-ADC_Model::ADC_Model()
+void csc_block::process(const std::uint16_t* in,
+                        std::uint8_t* out,
+                        std::uint32_t width,
+                        std::uint32_t height,
+                        const csc_config& cfg) const
 {
-    reset();
-}
+    if (in == nullptr || out == nullptr || width == 0 || height == 0) {
+        return;
+    }
 
-void ADC_Model::reset()
-{
-    reg_control = 0;
-    reg_status = 0;
-    reg_data = 0;
-    reg_intr_enable = 0;
-}
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
 
-uint32_t ADC_Model::readReg(uint32_t offset)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA: {
-            const uint32_t data = reg_data;
-            reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-            return data;
+    for (std::size_t p = 0; p < pixels; ++p) {
+        const std::size_t i = p * 3u;
+        const std::int32_t r = static_cast<std::int32_t>(in[i]);
+        const std::int32_t g = static_cast<std::int32_t>(in[i + 1u]);
+        const std::int32_t b = static_cast<std::int32_t>(in[i + 2u]);
+
+        std::int32_t y_raw, u_raw, v_raw;
+
+        if (cfg.conv_standard == 1) {
+            y_raw = (54 * r + 183 * g + 18 * b) >> 8;
+            u_raw = (-29 * r - 99 * g + 128 * b) >> 8;
+            v_raw = (128 * r - 116 * g - 12 * b) >> 8;
+        } else {
+            y_raw = (77 * r + 150 * g + 29 * b) >> 8;
+            u_raw = (-43 * r - 84 * g + 128 * b) >> 8;
+            v_raw = (128 * r - 107 * g - 21 * b) >> 8;
         }
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
+
+        out[p * 3u]     = clip_to_uint8(y_raw + LUMA_OFFSET);
+        out[p * 3u + 1u] = clip_to_uint8(u_raw + CHROMA_OFFSET);
+        out[p * 3u + 2u] = clip_to_uint8(v_raw + CHROMA_OFFSET);
     }
 }
 
-void ADC_Model::writeReg(uint32_t offset, uint32_t data)
+void csc_block::process(const std::vector<std::uint16_t>& in,
+                        std::vector<std::uint8_t>& out,
+                        std::uint32_t width,
+                        std::uint32_t height,
+                        const csc_config& cfg) const
 {
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-                reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-                reg_status |= STATUS_EOC;
-                reg_control &= ~CTRL_START; // START is self-clearing
-            }
-            break;
-        case REG_STATUS:
-            if ((data & STATUS_EOC) != 0u) {
-                reg_status &= ~STATUS_EOC; // W1C
-            }
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
-}
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
+    out.resize(pixels * 3u);
 
-bool ADC_Model::hasInterrupt() const
-{
-    return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
-
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA:
-            return reg_data;
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
+    if (in.size() < pixels * 3u) {
+        std::fill(out.begin(), out.end(), 0u);
+        return;
     }
-}
-
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            break;
-        case REG_STATUS:
-            reg_status = data & STATUS_EOC;
-            break;
-        case REG_DATA:
-            reg_data = data & 0x0FFFu;
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
+    process(in.data(), out.data(), width, height, cfg);
 }

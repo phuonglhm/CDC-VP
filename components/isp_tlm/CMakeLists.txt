@@ -13,7 +13,7 @@ add_library(isp_tlm STATIC
     src/blocks/dpc.cpp
     src/blocks/gc.cpp
     src/blocks/lsc.cpp
-    src/blocks/osd.cpp
+
     src/blocks/rgb_to_yuv.cpp
     src/blocks/scale.cpp
     src/blocks/sharpen.cpp

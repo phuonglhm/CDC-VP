@@ -1,25 +1,24 @@
-#ifndef ADC_MODEL_H
-#define ADC_MODEL_H
+#pragma once
 
-#include <stdint.h>
-#include <stdbool.h>
+#include <cstdint>
+#include <vector>
 
-class ADC_Model {
-private:
-    uint32_t reg_control;      // 0x00
-    uint32_t reg_status;       // 0x04
-    uint32_t reg_data;         // 0x08
-    uint32_t reg_intr_enable;  // 0x0C
-
-public:
-    ADC_Model();
-    void reset();
-    uint32_t readReg(uint32_t offset);
-    void writeReg(uint32_t offset, uint32_t data);
-    bool hasInterrupt() const;
-
-    uint32_t debugReadReg(uint32_t offset) const;
-    void debugWriteReg(uint32_t offset, uint32_t data);
+struct cse_config {
+    bool is_enable = false;
+    float saturation_gain = 1.0f;
 };
 
-#endif
+class cse_block {
+public:
+    void process(const std::uint8_t* in,
+                 std::uint8_t* out,
+                 std::uint32_t width,
+                 std::uint32_t height,
+                 const cse_config& cfg) const;
+
+    void process(const std::vector<std::uint8_t>& in,
+                 std::vector<std::uint8_t>& out,
+                 std::uint32_t width,
+                 std::uint32_t height,
+                 const cse_config& cfg) const;
+};

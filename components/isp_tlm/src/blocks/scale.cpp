@@ -1,116 +1,97 @@
-#include "adc_model.h"
+#include "blocks/scale.h"
 
-#include <cstdlib>
+#include <algorithm>
+#include <cstdint>
 
 namespace {
 
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
+std::uint8_t clip_to_uint8(int value)
+{
+    if (value < 0) return 0;
+    if (value > 255) return 255;
+    return static_cast<std::uint8_t>(value);
+}
 
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
+std::uint8_t interpolate_bilinear_yuv(const std::uint8_t* data,
+                                       std::uint32_t width,
+                                       std::uint32_t height,
+                                       float x,
+                                       float y,
+                                       std::uint32_t channel)
+{
+    const int x0 = static_cast<int>(x);
+    const int y0 = static_cast<int>(y);
+    const int x1 = std::min(x0 + 1, static_cast<int>(width) - 1);
+    const int y1 = std::min(y0 + 1, static_cast<int>(height) - 1);
 
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
+    const float x_frac = x - x0;
+    const float y_frac = y - y0;
+
+    const std::size_t stride = width * 3u;
+    const std::size_t offset_c = channel;
+
+    const std::uint8_t p00 = data[y0 * stride + x0 * 3u + offset_c];
+    const std::uint8_t p10 = data[y0 * stride + x1 * 3u + offset_c];
+    const std::uint8_t p01 = data[y1 * stride + x0 * 3u + offset_c];
+    const std::uint8_t p11 = data[y1 * stride + x1 * 3u + offset_c];
+
+    const float top = p00 * (1.0f - x_frac) + p10 * x_frac;
+    const float bottom = p01 * (1.0f - x_frac) + p11 * x_frac;
+
+    return clip_to_uint8(static_cast<int>(top * (1.0f - y_frac) + bottom * y_frac));
+}
 
 } // namespace
 
-ADC_Model::ADC_Model()
+void scale_block::process(const std::uint8_t* in,
+                          std::uint8_t* out,
+                          std::uint32_t in_width,
+                          std::uint32_t in_height,
+                          std::uint32_t out_width,
+                          std::uint32_t out_height,
+                          const scale_config& cfg) const
 {
-    reset();
-}
+    if (in == nullptr || out == nullptr) {
+        return;
+    }
 
-void ADC_Model::reset()
-{
-    reg_control = 0;
-    reg_status = 0;
-    reg_data = 0;
-    reg_intr_enable = 0;
-}
+    if (!cfg.is_enable || (in_width == out_width && in_height == out_height)) {
+        const std::size_t size = static_cast<std::size_t>(in_width) * in_height * 3u;
+        std::copy(in, in + size, out);
+        return;
+    }
 
-uint32_t ADC_Model::readReg(uint32_t offset)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA: {
-            const uint32_t data = reg_data;
-            reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-            return data;
+    const float x_scale = static_cast<float>(in_width) / static_cast<float>(out_width);
+    const float y_scale = static_cast<float>(in_height) / static_cast<float>(out_height);
+
+    for (std::uint32_t dy = 0; dy < out_height; ++dy) {
+        for (std::uint32_t dx = 0; dx < out_width; ++dx) {
+            const float src_x = dx * x_scale;
+            const float src_y = dy * y_scale;
+
+            for (std::uint32_t c = 0; c < 3; ++c) {
+                const std::size_t dst_idx = (dy * out_width + dx) * 3u + c;
+                out[dst_idx] = interpolate_bilinear_yuv(in, in_width, in_height, src_x, src_y, c);
+            }
         }
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
     }
 }
 
-void ADC_Model::writeReg(uint32_t offset, uint32_t data)
+void scale_block::process(const std::vector<std::uint8_t>& in,
+                          std::vector<std::uint8_t>& out,
+                          std::uint32_t in_width,
+                          std::uint32_t in_height,
+                          std::uint32_t out_width,
+                          std::uint32_t out_height,
+                          const scale_config& cfg) const
 {
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-                reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-                reg_status |= STATUS_EOC;
-                reg_control &= ~CTRL_START; // START is self-clearing
-            }
-            break;
-        case REG_STATUS:
-            if ((data & STATUS_EOC) != 0u) {
-                reg_status &= ~STATUS_EOC; // W1C
-            }
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
-}
+    const std::size_t out_pixels = static_cast<std::size_t>(out_width) * out_height;
+    out.resize(out_pixels * 3u);
 
-bool ADC_Model::hasInterrupt() const
-{
-    return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
-
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA:
-            return reg_data;
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
+    const std::size_t required_in = static_cast<std::size_t>(in_width) * in_height * 3u;
+    if (in.size() < required_in) {
+        std::fill(out.begin(), out.end(), 0u);
+        return;
     }
-}
-
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            break;
-        case REG_STATUS:
-            reg_status = data & STATUS_EOC;
-            break;
-        case REG_DATA:
-            reg_data = data & 0x0FFFu;
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
+    process(in.data(), out.data(), in_width, in_height, out_width, out_height, cfg);
 }

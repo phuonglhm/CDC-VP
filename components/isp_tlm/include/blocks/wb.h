@@ -5,9 +5,6 @@
 
 struct wb_config {
     bool is_enable = false;
-    bool is_auto = false;
-    std::uint8_t bayer_pattern = 0;
-    std::uint8_t bit_depth = 12;
     float r_gain = 1.0f;
     float b_gain = 1.0f;
 };

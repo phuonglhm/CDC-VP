@@ -1,116 +1,139 @@
-#include "adc_model.h"
+#include "blocks/sharpen.h"
 
-#include <cstdlib>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace {
 
-constexpr uint32_t REG_CONTROL = 0x00;
-constexpr uint32_t REG_STATUS = 0x04;
-constexpr uint32_t REG_DATA = 0x08;
-constexpr uint32_t REG_INTR_ENABLE = 0x0C;
+constexpr std::int32_t CHROMA_OFFSET = 128;
 
-constexpr uint32_t CTRL_START = 1u << 0;
-constexpr uint32_t CTRL_ADC_EN = 1u << 1;
-constexpr uint32_t CTRL_MASK = CTRL_START | CTRL_ADC_EN;
+std::uint8_t clip_to_uint8(std::int32_t value)
+{
+    if (value < 0) return 0;
+    if (value > 255) return 255;
+    return static_cast<std::uint8_t>(value);
+}
 
-constexpr uint32_t STATUS_EOC = 1u << 0;
-constexpr uint32_t INTR_EOC = 1u << 0;
+std::uint8_t clip_to_uint8(float value)
+{
+    if (value <= 0.0f) return 0;
+    if (value >= 255.0f) return 255;
+    return static_cast<std::uint8_t>(std::lround(value));
+}
+
+std::vector<float> create_gaussian_kernel(std::uint8_t sigma)
+{
+    const int radius = static_cast<int>((sigma > 0) ? std::ceil(sigma * 3.0) : 1);
+    const int size = 2 * radius + 1;
+    std::vector<float> kernel(static_cast<std::size_t>(size * size));
+
+    const float sigma_sq = static_cast<float>(sigma * sigma);
+    float sum = 0.0f;
+
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            const float value = std::exp(-static_cast<float>(dx * dx + dy * dy) / (2.0f * sigma_sq));
+            kernel[static_cast<std::size_t>((dy + radius) * size + (dx + radius))] = value;
+            sum += value;
+        }
+    }
+
+    for (float& k : kernel) {
+        k /= sum;
+    }
+
+    return kernel;
+}
+
+float apply_gaussian_at(const std::uint8_t* y_plane,
+                        std::uint32_t width,
+                        std::uint32_t height,
+                        int center_y,
+                        int center_x,
+                        const std::vector<float>& kernel,
+                        int radius)
+{
+    const int size = 2 * radius + 1;
+    float sum = 0.0f;
+
+    for (int dy = -radius; dy <= radius; ++dy) {
+        int sy = center_y + dy;
+        sy = std::max(0, std::min(static_cast<int>(height) - 1, sy));
+
+        for (int dx = -radius; dx <= radius; ++dx) {
+            int sx = center_x + dx;
+            sx = std::max(0, std::min(static_cast<int>(width) - 1, sx));
+
+            const float k = kernel[static_cast<std::size_t>((dy + radius) * size + (dx + radius))];
+            sum += static_cast<float>(y_plane[static_cast<std::size_t>(sy) * width + static_cast<std::size_t>(sx)]) * k;
+        }
+    }
+
+    return sum;
+}
 
 } // namespace
 
-ADC_Model::ADC_Model()
+void sharpen_block::process(const std::uint8_t* in,
+                           std::uint8_t* out,
+                           std::uint32_t width,
+                           std::uint32_t height,
+                           const sharpen_config& cfg) const
 {
-    reset();
-}
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
+    if (in == nullptr || out == nullptr || pixels == 0u) {
+        return;
+    }
 
-void ADC_Model::reset()
-{
-    reg_control = 0;
-    reg_status = 0;
-    reg_data = 0;
-    reg_intr_enable = 0;
-}
-
-uint32_t ADC_Model::readReg(uint32_t offset)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA: {
-            const uint32_t data = reg_data;
-            reg_status &= ~STATUS_EOC; // clear EOC when DATA is read
-            return data;
+    if (!cfg.is_enable) {
+        if (in != out) {
+            std::copy(in, in + pixels * 3u, out);
         }
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
+        return;
+    }
+
+    if (cfg.sharpen_strength == 0) {
+        if (in != out) {
+            std::copy(in, in + pixels * 3u, out);
+        }
+        return;
+    }
+
+    const std::vector<float> kernel = create_gaussian_kernel(cfg.sharpen_sigma);
+    const int radius = static_cast<int>((cfg.sharpen_sigma > 0) ? std::ceil(cfg.sharpen_sigma * 3.0) : 1);
+
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const std::size_t p = static_cast<std::size_t>(y) * width + x;
+            const std::size_t i = p * 3u;
+
+            const float y_lp = apply_gaussian_at(in, width, height,
+                                                 static_cast<int>(y), static_cast<int>(x),
+                                                 kernel, radius);
+            const float y_in = static_cast<float>(in[i]);
+            const float y_sharp = y_in + (y_in - y_lp) * static_cast<float>(cfg.sharpen_strength);
+
+            out[i] = clip_to_uint8(y_sharp);
+            out[i + 1u] = in[i + 1u];
+            out[i + 2u] = in[i + 2u];
+        }
     }
 }
 
-void ADC_Model::writeReg(uint32_t offset, uint32_t data)
+void sharpen_block::process(const std::vector<std::uint8_t>& in,
+                           std::vector<std::uint8_t>& out,
+                           std::uint32_t width,
+                           std::uint32_t height,
+                           const sharpen_config& cfg) const
 {
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            if ((reg_control & CTRL_ADC_EN) != 0u && (reg_control & CTRL_START) != 0u) {
-                reg_data = static_cast<uint32_t>(std::rand()) & 0x0FFFu;
-                reg_status |= STATUS_EOC;
-                reg_control &= ~CTRL_START; // START is self-clearing
-            }
-            break;
-        case REG_STATUS:
-            if ((data & STATUS_EOC) != 0u) {
-                reg_status &= ~STATUS_EOC; // W1C
-            }
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
-}
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
+    out.resize(pixels * 3u);
 
-bool ADC_Model::hasInterrupt() const
-{
-    return ((reg_status & STATUS_EOC) != 0u) && ((reg_intr_enable & INTR_EOC) != 0u);
-}
-
-uint32_t ADC_Model::debugReadReg(uint32_t offset) const
-{
-    switch (offset) {
-        case REG_CONTROL:
-            return reg_control;
-        case REG_STATUS:
-            return reg_status;
-        case REG_DATA:
-            return reg_data;
-        case REG_INTR_ENABLE:
-            return reg_intr_enable;
-        default:
-            return 0;
+    if (in.size() < pixels * 3u) {
+        std::fill(out.begin(), out.end(), 0u);
+        return;
     }
-}
-
-void ADC_Model::debugWriteReg(uint32_t offset, uint32_t data)
-{
-    switch (offset) {
-        case REG_CONTROL:
-            reg_control = data & CTRL_MASK;
-            break;
-        case REG_STATUS:
-            reg_status = data & STATUS_EOC;
-            break;
-        case REG_DATA:
-            reg_data = data & 0x0FFFu;
-            break;
-        case REG_INTR_ENABLE:
-            reg_intr_enable = data & INTR_EOC;
-            break;
-        default:
-            break;
-    }
+    process(in.data(), out.data(), width, height, cfg);
 }
