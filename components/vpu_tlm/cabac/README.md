@@ -1,17 +1,26 @@
-# vpu_tlm / rec block
+# vpu_tlm / cabac block
 
-This is a SystemC TLM 2.3.4 model of the Reconstruction block in a VPU. It serves to:
-- Perform the predictions based on mode decision's mode selection. (rec_intra / rec_mc)
-- Calculate the residual from those predictions
-- Perform Transform / Quantize on the residual and forward to CABAC block
-- In parallel, perform Inverse Transform / Quantize and forward to the Deblocking block
+This repository contains a SystemC TLM 2.3.4 model of the CABAC (Context-Adaptive Binary Arithmetic Coding) block in VPU. It serves to
+- Perform CABAC encoding (binarization, context management, renormalization) with HM/JM-style buffered byte emission aimed at bit-exactness vs RTL.
+- Ship CABAC tables as a header-only resource so the model builds and runs without external table files.
 
 # Note
 - All modules in test is for testing and wiring up dangling sockets
-- Uses custom payload struct rec_packet (in rec_packet.h)
+- Uses custom payload struct custom_packet (in custom_packet.h) (will be pushed to external)
 
-# Progress
-- Rec_Intra donex
+# Specs
+- Memory map (addresses used)
+	- **0x10000000**: CABAC context / coefficient base
+		- Embedded context tables (loaded by SimpleMemory from include/cabac_tables.h):
+			- `cabac_ctx_islice` (186 bytes) at 0x10000000
+			- `cabac_ctx_init2` (186 bytes) at 0x10000100
+			- `cabac_ctx_init1` (186 bytes) at 0x10000200
+		- Context read/write:
+			- contexts are accessed at `0x10000000 + ctx_idx` (one byte per context; packed as [mps<<6 | state])
+		- Coefficients source:
+			- Cabac reads coefficient data for a block via `0x10000000 | block_idx` (reads 16 bytes per block in tests)
+	- **0x20000000**: CABAC emitted byte-stream base
+		- Encoded bytes for a block are written to `0x20000000 | block_idx` (stream length varies per block)
 
 # Run
 - make testbench

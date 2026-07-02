@@ -15,14 +15,7 @@ LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
 # Target library
 LIBS := -lsystemc
 
-# Precompiled header (speeds up repeated inclusion of heavy headers like SystemC)
-PCH_HEADER := include/pch.h
-PCH_GCH := $(PCH_HEADER).gch
-
-# Toggle precompiled header usage (0 = disabled, 1 = enabled)
-USE_PCH ?= 0
-
-# Directories and target
+# Directories and targets
 SRC_DIR := src
 OBJ_DIR := build
 BIN_DIR := out
@@ -33,6 +26,9 @@ OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 
 .PHONY: all main run clean testbench
+
+# Default build target: build the testbench by default
+all: $(TEST_TARGET)
 
 # Testbench dirs/targets
 TEST_DIR := test
@@ -49,27 +45,13 @@ $(BIN_DIR):
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
-ifeq ($(USE_PCH),1)
-# Build the precompiled header (placed next to the header so the compiler can find the .gch)
-$(PCH_GCH): $(PCH_HEADER) | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -x c++-header $< -o $@
-
-# Compile source files into object files (use the PCH)
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR) $(PCH_GCH)
-	$(CXX) $(CXXFLAGS) -include $(PCH_HEADER) -MMD -c $< -o $@
-
-# Compile test sources into object files (use the PCH)
-$(OBJ_DIR)/test_%.o: $(TEST_DIR)/%.cpp | $(OBJ_DIR) $(PCH_GCH)
-	$(CXX) $(CXXFLAGS) -include $(PCH_HEADER) -MMD -c $< -o $@
-else
-# Compile source files into object files (no PCH)
+# Compile source files into object files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
 
-# Compile test sources into object files (no PCH)
+# Compile test sources into object files
 $(OBJ_DIR)/test_%.o: $(TEST_DIR)/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
-endif
 
 # Link object files into final executable (Objects MUST precede -lsystemc)
 $(TARGET): $(OBJS) | $(BIN_DIR)
@@ -79,9 +61,7 @@ $(TARGET): $(OBJS) | $(BIN_DIR)
 $(TEST_TARGET): $(TEST_OBJS) $(OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
--include $(DEPS)
- -include $(DEPS)
- -include $(TEST_DEPS)
+-include $(DEPS) $(TEST_DEPS)
 
 run: $(TARGET)
 	./$(TARGET)

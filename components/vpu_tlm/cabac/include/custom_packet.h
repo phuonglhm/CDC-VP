@@ -1,5 +1,5 @@
-#ifndef REC_PACKET_H
-#define REC_PACKET_H
+#ifndef CUSTOM_PACKET_H
+#define CUSTOM_PACKET_H
 
 #include <systemc>
 #include <cstdint>
@@ -11,24 +11,19 @@
 #include <sstream>
 #include "tlm.h"
 
-enum class RecCmd : uint8_t { RESIDUAL = 0, COEFF = 1, PRE = 2, READ_REQ = 3 };
+enum class CustomCmd : uint8_t { RESIDUAL = 0, COEFF = 1, PRE = 2, READ_REQ = 3 };
 
 enum class PredType : uint8_t { INTRA = 0, MC = 1 };
 
-// RecPacket: typed metadata + owned payload buffer.
-// Field widths in comments reflect RTL signals (for reference).
-struct RecPacket {
-        RecCmd cmd;               // RESIDUAL/COEFF/PRE/READ_REQ
+
+struct CustomPacket {
+        CustomCmd cmd;               // RESIDUAL/COEFF/PRE/READ_REQ
         uint8_t block_idx;        // RTL: 5 bits
         uint8_t x;                // RTL: 4 bits
         uint8_t y;                // RTL: 4 bits
         uint8_t size;             // RTL: 2 bits (0:4x4,1:8x8,2:16x16,3:32x32)
         uint8_t sel;              // RTL: 2 bits (TYPE_Y/U/V)
         uint8_t qp;               // RTL: 6 bits
-        // NOTE: `type` (single-bit INTRA/INTER) was removed and merged with
-        // `pred_type`. The TLM header now stores `pred_type` at byte offset 7
-        // (previously occupied by the legacy `type` bit), and the extended
-        // header no longer contains `pred_type`.
         uint8_t pred_type;        // engine/prediction type: PredType
         uint8_t mode;             // RTL: 6-bit mode id (planar=0,DC=1,angular..)
         uint8_t pre_sel;          // RTL: 2-bit pre_sel
@@ -37,23 +32,23 @@ struct RecPacket {
         std::bitset<256> cbf_mask; // per-block CBF mask (match RTL up to 256 bits)
         std::vector<uint8_t> data; // owned contiguous payload bytes (copy from trans.get_data_ptr())
 
-        RecPacket()
-            : cmd(RecCmd::RESIDUAL), block_idx(0), x(0), y(0),
+        CustomPacket()
+            : cmd(CustomCmd::RESIDUAL), block_idx(0), x(0), y(0),
                 size(0), sel(0), qp(0), pred_type(static_cast<uint8_t>(PredType::INTRA)),
                 mode(1), pre_sel(0), i4x4_x(0), i4x4_y(0), cbf_mask(), data() {}
 };
 
-inline std::ostream& operator<<(std::ostream& os, const RecPacket& p) {
+inline std::ostream& operator<<(std::ostream& os, const CustomPacket& p) {
     // Header lines
-    os << "RecPacket {" << std::endl;
+    os << "CustomPacket {" << std::endl;
 
     // cmd as text
     os << "  cmd: ";
     switch (p.cmd) {
-        case RecCmd::RESIDUAL: os << "RESIDUAL"; break;
-        case RecCmd::COEFF:    os << "COEFF";    break;
-        case RecCmd::PRE:      os << "PRE";      break;
-        case RecCmd::READ_REQ: os << "READ_REQ"; break;
+        case CustomCmd::RESIDUAL: os << "RESIDUAL"; break;
+        case CustomCmd::COEFF:    os << "COEFF";    break;
+        case CustomCmd::PRE:      os << "PRE";      break;
+        case CustomCmd::READ_REQ: os << "READ_REQ"; break;
         default:               os << static_cast<int>(p.cmd); break;
     }
     os << ", idx: " << static_cast<int>(p.block_idx)
@@ -116,8 +111,8 @@ inline std::ostream& operator<<(std::ostream& os, const RecPacket& p) {
     return os;
 }
 
-// Helpers to pack/unpack RecPacket to/from a contiguous byte buffer used on the TLM wire.
-inline std::vector<uint8_t> packRecPacket(const RecPacket &p) {
+// Helpers to pack/unpack CustomPacket to/from a contiguous byte buffer used on the TLM wire.
+inline std::vector<uint8_t> packCustomPacket(const CustomPacket &p) {
     std::vector<uint8_t> buf;
     // header: original 8 bytes + 5 extended bytes
     // header: original 8 bytes (pred_type reused at byte 7) + 4 extended bytes
@@ -140,10 +135,10 @@ inline std::vector<uint8_t> packRecPacket(const RecPacket &p) {
     return buf;
 }
 
-inline RecPacket unpackRecPacket(const uint8_t *buf, size_t len) {
-    RecPacket p;
+inline CustomPacket unpackCustomPacket(const uint8_t *buf, size_t len) {
+    CustomPacket p;
     if (!buf || len < 8) return p; // return default if too small
-    p.cmd = static_cast<RecCmd>(buf[0]);
+    p.cmd = static_cast<CustomCmd>(buf[0]);
     p.block_idx = buf[1];
     p.x = buf[2];
     p.y = buf[3];
@@ -168,9 +163,9 @@ inline RecPacket unpackRecPacket(const uint8_t *buf, size_t len) {
     return p;
 }
 
-inline RecPacket unpackRecPacket(const tlm::tlm_generic_payload &trans) {
+inline CustomPacket unpackCustomPacket(const tlm::tlm_generic_payload &trans) {
     const uint8_t *buf = reinterpret_cast<const uint8_t*>(trans.get_data_ptr());
-    return unpackRecPacket(buf, trans.get_data_length());
+    return unpackCustomPacket(buf, trans.get_data_length());
 }
 
 #endif

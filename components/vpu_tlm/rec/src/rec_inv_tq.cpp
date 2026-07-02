@@ -116,101 +116,100 @@ void InvTQ::inv_quantize(uint8_t size4x4, const std::vector<int32_t>& in, uint8_
 }
 
 
-// Integer inverse 4x4 transform
-    // Inverse transform: optimized integer 4x4 inverse, generic floating-point IDCT for larger sizes
-    void InvTQ::inv_DCT(uint8_t size4x4, const std::vector<int16_t>& in, std::vector<int32_t>& out) {
-        int side = 4 << size4x4;
-        int N = side;
-        out.assign(N * N, 0);
+// Inverse transform: optimized integer 4x4 inverse, generic floating-point IDCT for larger sizes
+void InvTQ::inv_DCT(uint8_t size4x4, const std::vector<int16_t>& in, std::vector<int32_t>& out) {
+    int side = 4 << size4x4;
+    int N = side;
+    out.assign(N * N, 0);
 
-        if (size4x4 == 0) {
-            // 4x4 inverse: integer path to mirror RecTQ::dct()
-            int32_t tmp[4][4] = {};
-            // invert vertical stage (operate per-column)
-            for (int c = 0; c < 4; ++c) {
-                int32_t o0 = (int32_t)in[0 * 4 + c];
-                int32_t o1 = (int32_t)in[1 * 4 + c];
-                int32_t o2 = (int32_t)in[2 * 4 + c];
-                int32_t o3 = (int32_t)in[3 * 4 + c];
+    if (size4x4 == 0) {
+        // 4x4 inverse: integer path to mirror RecTQ::dct()
+        int32_t tmp[4][4] = {};
+        // invert vertical stage (operate per-column)
+        for (int c = 0; c < 4; ++c) {
+            int32_t o0 = (int32_t)in[0 * 4 + c];
+            int32_t o1 = (int32_t)in[1 * 4 + c];
+            int32_t o2 = (int32_t)in[2 * 4 + c];
+            int32_t o3 = (int32_t)in[3 * 4 + c];
 
-                int32_t b0 = (o0 + o2) >> 1;
-                int32_t b1 = (o0 - o2) >> 1;
-                int32_t b3 = (o1 + o3) >> 1;
-                int32_t b2 = o1 - o3;
+            int32_t b0 = (o0 + o2) >> 1;
+            int32_t b1 = (o0 - o2) >> 1;
+            int32_t b3 = (o1 + o3) >> 1;
+            int32_t b2 = o1 - o3;
 
-                tmp[0][c] = (b0 + b3) >> 1;
-                tmp[3][c] = (b0 - b3) >> 1;
-                tmp[1][c] = (b1 + b2) >> 1;
-                tmp[2][c] = (b1 - b2) >> 1;
-            }
-
-            // invert horizontal stage (operate per-row)
-            for (int r = 0; r < 4; ++r) {
-                int32_t t0 = tmp[r][0];
-                int32_t t1 = tmp[r][1];
-                int32_t t2 = tmp[r][2];
-                int32_t t3 = tmp[r][3];
-
-                int32_t a0 = (t0 + t2) >> 1;
-                int32_t a1 = (t0 - t2) >> 1;
-                int32_t a3 = (t1 + t3) >> 1;
-                int32_t a2 = t1 - t3;
-
-                int32_t s0 = (a0 + a3) >> 1;
-                int32_t s3 = (a0 - a3) >> 1;
-                int32_t s1 = (a1 + a2) >> 1;
-                int32_t s2 = (a1 - a2) >> 1;
-
-                out[r * 4 + 0] = s0;
-                out[r * 4 + 1] = s1;
-                out[r * 4 + 2] = s2;
-                out[r * 4 + 3] = s3;
-            }
-            return;
+            tmp[0][c] = (b0 + b3) >> 1;
+            tmp[3][c] = (b0 - b3) >> 1;
+            tmp[1][c] = (b1 + b2) >> 1;
+            tmp[2][c] = (b1 - b2) >> 1;
         }
 
-        // Generic floating-point separable IDCT for NxN (N = 8,16,32)
-        // Map input coefficients X[u][v] from `in` (row-major: u* N + v)
-        std::vector<double> alpha(N);
-        double invN = 1.0 / (double)N;
-        alpha[0] = std::sqrt(invN);
-        for (int k = 1; k < N; ++k) alpha[k] = std::sqrt(2.0 * invN);
+        // invert horizontal stage (operate per-row)
+        for (int r = 0; r < 4; ++r) {
+            int32_t t0 = tmp[r][0];
+            int32_t t1 = tmp[r][1];
+            int32_t t2 = tmp[r][2];
+            int32_t t3 = tmp[r][3];
 
-        // Precompute cosine terms: cos(pi*(2*n+1)*k/(2N)) for n,k
-        const double PI = std::acos(-1.0);
-        std::vector<std::vector<double>> cos_term(N, std::vector<double>(N));
-        for (int n = 0; n < N; ++n) {
-            for (int k = 0; k < N; ++k) {
-                cos_term[n][k] = std::cos(PI * (2.0 * n + 1.0) * k / (2.0 * N));
-            }
+            int32_t a0 = (t0 + t2) >> 1;
+            int32_t a1 = (t0 - t2) >> 1;
+            int32_t a3 = (t1 + t3) >> 1;
+            int32_t a2 = t1 - t3;
+
+            int32_t s0 = (a0 + a3) >> 1;
+            int32_t s3 = (a0 - a3) >> 1;
+            int32_t s1 = (a1 + a2) >> 1;
+            int32_t s2 = (a1 - a2) >> 1;
+
+            out[r * 4 + 0] = s0;
+            out[r * 4 + 1] = s1;
+            out[r * 4 + 2] = s2;
+            out[r * 4 + 3] = s3;
         }
+        return;
+    }
 
-        // tmp[x][v] = sum_u alpha[u] * X[u][v] * cos((2x+1)u*pi/(2N))
-        std::vector<double> tmp(N * N, 0.0);
-        for (int v = 0; v < N; ++v) {
-            for (int x = 0; x < N; ++x) {
-                double sum = 0.0;
-                for (int u = 0; u < N; ++u) {
-                    double Xuv = (u * N + v) < (int)in.size() ? static_cast<double>(in[u * N + v]) : 0.0;
-                    sum += alpha[u] * Xuv * cos_term[x][u];
-                }
-                tmp[x * N + v] = sum;
-            }
-        }
+    // Generic floating-point separable IDCT for NxN (N = 8,16,32)
+    // Map input coefficients X[u][v] from `in` (row-major: u* N + v)
+    std::vector<double> alpha(N);
+    double invN = 1.0 / (double)N;
+    alpha[0] = std::sqrt(invN);
+    for (int k = 1; k < N; ++k) alpha[k] = std::sqrt(2.0 * invN);
 
-        // f[x][y] = sum_v alpha[v] * tmp[x][v] * cos((2y+1)v*pi/(2N))
-        for (int x = 0; x < N; ++x) {
-            for (int y = 0; y < N; ++y) {
-                double sum = 0.0;
-                for (int v = 0; v < N; ++v) {
-                    sum += alpha[v] * tmp[x * N + v] * cos_term[y][v];
-                }
-                long long val = llround(sum);
-                // clamp to 32-bit signed range (shouldn't overflow in practice)
-                if (val > INT32_MAX) val = INT32_MAX;
-                if (val < INT32_MIN) val = INT32_MIN;
-                out[x * N + y] = static_cast<int32_t>(val);
-            }
+    // Precompute cosine terms: cos(pi*(2*n+1)*k/(2N)) for n,k
+    const double PI = std::acos(-1.0);
+    std::vector<std::vector<double>> cos_term(N, std::vector<double>(N));
+    for (int n = 0; n < N; ++n) {
+        for (int k = 0; k < N; ++k) {
+            cos_term[n][k] = std::cos(PI * (2.0 * n + 1.0) * k / (2.0 * N));
         }
     }
+
+    // tmp[x][v] = sum_u alpha[u] * X[u][v] * cos((2x+1)u*pi/(2N))
+    std::vector<double> tmp(N * N, 0.0);
+    for (int v = 0; v < N; ++v) {
+        for (int x = 0; x < N; ++x) {
+            double sum = 0.0;
+            for (int u = 0; u < N; ++u) {
+                double Xuv = (u * N + v) < (int)in.size() ? static_cast<double>(in[u * N + v]) : 0.0;
+                sum += alpha[u] * Xuv * cos_term[x][u];
+            }
+            tmp[x * N + v] = sum;
+        }
+    }
+
+    // f[x][y] = sum_v alpha[v] * tmp[x][v] * cos((2y+1)v*pi/(2N))
+    for (int x = 0; x < N; ++x) {
+        for (int y = 0; y < N; ++y) {
+            double sum = 0.0;
+            for (int v = 0; v < N; ++v) {
+                sum += alpha[v] * tmp[x * N + v] * cos_term[y][v];
+            }
+            long long val = llround(sum);
+            // clamp to 32-bit signed range (shouldn't overflow in practice)
+            if (val > INT32_MAX) val = INT32_MAX;
+            if (val < INT32_MIN) val = INT32_MIN;
+            out[x * N + y] = static_cast<int32_t>(val);
+        }
+    }
+}
 

@@ -5,16 +5,15 @@
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
-#include "rec_memory.h"
+#include "memory_if.h"
 #include <vector>
 #include <algorithm>
 
 // Combined in-repo memory target and bridge helper.
-// - `MemBridge` implements `RecMemoryIf` and forwards requests to an external
+// - `MemBridge` implements `MemoryIf` and forwards requests to an external
 //   TLM memory using an initiator socket.
-// - `RecMemory` is a small local storage implementing `RecMemoryIf` for tests.
 
-class MemBridge : public sc_core::sc_module, public RecMemoryIf {
+class MemBridge : public sc_core::sc_module, public MemoryIf {
 public:
     tlm_utils::simple_initiator_socket<MemBridge> socket; // initiator to external memory
     tlm_utils::simple_target_socket<MemBridge> t_socket;   // target for modules like Cabac
@@ -23,9 +22,7 @@ public:
         : sc_core::sc_module(name), socket("socket"), t_socket("t_socket") {
         t_socket.register_b_transport(this, &MemBridge::b_transport);
     }
-
-    // Forwarding target entry: forward incoming TLM transactions to the
-    // external memory via the initiator `socket`.
+    
     void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay) {
         try {
             socket->b_transport(trans, delay);
@@ -100,27 +97,6 @@ private:
         uint64_t a = (p << (2 + 2 + 9)) | (pd << (2 + 9)) | (s << 9) | (xx << 9) | yy;
         return a;
     }
-};
-
-class RecMemory : public sc_core::sc_module, public RecMemoryIf {
-public:
-    RecMemory(sc_core::sc_module_name name, uint32_t width = 256, uint32_t height = 256, bool use_dummy = false, uint8_t dummy_value = 128);
-
-    bool getRefBlock(RecPlane plane,
-                     uint32_t x,
-                     uint32_t y,
-                     uint8_t size4x4,
-                     PaddingMode pad,
-                     RefBlock &out) override;
-
-private:
-    uint32_t width_;
-    uint32_t height_;
-    std::vector<uint8_t> buf_y_;
-    std::vector<uint8_t> buf_u_;
-    std::vector<uint8_t> buf_v_;
-    bool use_dummy_{false};
-    uint8_t dummy_value_{128};
 };
 
 #endif

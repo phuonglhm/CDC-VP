@@ -77,7 +77,6 @@ bool RecMemory::getRefBlock(RecPlane plane,
     out.stride = ext;
     out.data.assign(static_cast<size_t>(ext) * ext, 0);
 
-    // Interpret x,y as pixel coordinates for simplicity (caller may pass block coords)
     int32_t base_x = static_cast<int32_t>(x);
     int32_t base_y = static_cast<int32_t>(y);
 

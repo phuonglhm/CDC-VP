@@ -7,8 +7,10 @@
 #include "tlm_utils/simple_initiator_socket.h"
 #include "top.h"
 #include "out_monitor.h"
-// Explicitly include RecPacket so this header doesn't rely on precompiled headers
-#include "rec_packet.h"
+#include "custom_packet.h"
+#include "../include/cabac_tables.h"
+#include <vector>
+#include <cstring>
 using namespace sc_core;
 
 class TestBench : sc_module {
@@ -18,14 +20,8 @@ class TestBench : sc_module {
     tlm_utils::simple_initiator_socket<TestBench> start_socket;
     Top top;
     OutMonitor out_monitor;
-    bool dataflow_test(const RecPacket &pkt = RecPacket());
-    bool recIntra_DCMode_test(const RecPacket &pkt = RecPacket());
-    bool recIntra_PlanarMode_test(const RecPacket &pkt = RecPacket());
-    bool recIntra_AngularMode_test(const RecPacket &pkt = RecPacket());
-    bool recMc_test(const RecPacket &pkt = RecPacket());
-    bool residual_test(const RecPacket &pkt = RecPacket());
-    bool tq_test(const RecPacket &pkt = RecPacket());
-    bool inv_tq_test(const RecPacket &pkt = RecPacket());
+    bool dataflow_test(const CustomPacket &pkt = CustomPacket());
+    bool dataflow_stream_test(const CustomPacket &pkt = CustomPacket());
 };
 
 #endif

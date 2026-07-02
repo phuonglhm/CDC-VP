@@ -1,5 +1,5 @@
-#ifndef REC_MEMORY_H
-#define REC_MEMORY_H
+#ifndef MEMORY_IF_H
+#define MEMORY_IF_H
 
 #include <systemc>
 #include <cstdint>
@@ -40,9 +40,9 @@ inline uint32_t recSizeToPixels(uint8_t size4x4) {
     }
 }
 
-class RecMemoryIf {
+class MemoryIf {
 public:
-    virtual ~RecMemoryIf() {}
+    virtual ~MemoryIf() {}
 
     virtual bool getRefBlock(RecPlane plane,
                              uint32_t x,

@@ -1,6 +1,4 @@
 #include "out_monitor.h"
-#include <cstring>
-#include <iostream>
 
 OutMonitor::OutMonitor(sc_core::sc_module_name name)
     : sc_module(name), cabac_socket("cabac_socket") {

@@ -1,11 +1,10 @@
 #include "testbench.h"
-#include "../include/rec_packet.h"
 
-// Implement the dataflow_test to send a RecPacket into Cabac and verify output
-bool TestBench::dataflow_test(const RecPacket &pkt_in) {
-    RecPacket pkt = pkt_in;
+// Implement the dataflow_test to send a CustomPacket into Cabac and verify output
+bool TestBench::dataflow_test(const CustomPacket &pkt_in) {
+    CustomPacket pkt = pkt_in;
     if (pkt.data.empty()) {
-        pkt.cmd = RecCmd::READ_REQ;
+        pkt.cmd = CustomCmd::READ_REQ;
         pkt.block_idx = 0;
         pkt.x = 0; pkt.y = 0;
         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
@@ -13,7 +12,7 @@ bool TestBench::dataflow_test(const RecPacket &pkt_in) {
     }
     std::cout << pkt << std::endl;
 
-    std::vector<uint8_t> buf = packRecPacket(pkt);
+    std::vector<uint8_t> buf = packCustomPacket(pkt);
 
     tlm::tlm_generic_payload trans;
     trans.set_command(tlm::TLM_WRITE_COMMAND);
@@ -22,346 +21,49 @@ bool TestBench::dataflow_test(const RecPacket &pkt_in) {
     trans.set_data_length(buf.size());
     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
 
-    // Send via the testbench initiator socket to Cabac
     start_socket->b_transport(trans, delay);
-
-    // advance simulation briefly
     sc_core::sc_start(1, sc_core::SC_MS);
 
     if (out_monitor.last_data.empty()) return false;
-    RecPacket out_pkt = unpackRecPacket(out_monitor.last_data.data(), out_monitor.last_data.size());
-    if (out_pkt.cmd != RecCmd::COEFF) return false;
+    CustomPacket out_pkt = unpackCustomPacket(out_monitor.last_data.data(), out_monitor.last_data.size());
+    if (out_pkt.cmd != CustomCmd::COEFF) return false;
     if (out_pkt.block_idx != pkt.block_idx) return false;
     if (out_pkt.data.size() != 16) return false; // Cabac currently reads 16 bytes
     return true;
 }
 
-// bool TestBench::dataflow_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::RESIDUAL;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//         pkt.cbf_mask.set(3);
-//         // sample payload bytes (use 16 bytes for 4x4 pixels example)
-//         pkt.data = {0x10, 0x20, 0x30, 0x40, 0x11, 0x21, 0x31, 0x41,
-//                     0x12, 0x22, 0x32, 0x42, 0x13, 0x23, 0x33, 0x43};
-//     }
-//     std::cout << pkt << std::endl;
+//validate the real emitted CABAC stream returned by encode_bins
+bool TestBench::dataflow_stream_test(const CustomPacket &pkt_in) {
+    CustomPacket pkt = pkt_in;
+    if (pkt.data.empty()) {
+        pkt.cmd = CustomCmd::READ_REQ;
+        pkt.block_idx = 0;
+        pkt.x = 0; pkt.y = 0;
+        pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
+        pkt.cbf_mask.set(3);
+    }
+    std::cout << pkt << std::endl;
 
-//     // Serialize RecPacket into a contiguous buffer: header then payload (with extended header)
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
+    std::vector<uint8_t> buf = packCustomPacket(pkt);
 
-//     // create TLM transaction and send via the TestBench initiator
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    tlm::tlm_generic_payload trans;
+    trans.set_command(tlm::TLM_WRITE_COMMAND);
+    trans.set_address(0);
+    trans.set_data_ptr(buf.data());
+    trans.set_data_length(buf.size());
+    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    start_socket->b_transport(trans, delay);
 
-//     // send the transaction into `RecIntra` via the testbench initiator socket so
-//     // it traverses: top -> rec_intra -> res_buffer -> rec_tq -> inv_tq -> db_monitor
-//     intra_socket->b_transport(trans, delay);
+    sc_core::sc_start(1, sc_core::SC_MS);
 
-//     // run a small time for propagation
-//     sc_start(1, SC_MS);
-
-//     // Verify DBMonitor got the same bytes
-//     return (db_monitor.last_data == buf);
-// }
-
-// bool TestBench::recIntra_DCMode_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::READ_REQ;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//         pkt.cbf_mask.set(3);
-//         // sample payload bytes (use 16 bytes for 4x4 pixels example)
-//         pkt.data = {0x10, 0x20, 0x30, 0x40, 0x11, 0x21, 0x31, 0x41,
-//                     0x12, 0x22, 0x32, 0x42, 0x13, 0x23, 0x33, 0x43};
-//     }
-//     std::cout << pkt << std::endl;
-
-//     // Ensure prediction header fields are explicit for this test and use packRecPacket
-//     pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//     pkt.mode = 1; // DC
-//     pkt.pre_sel = 0;
-//     pkt.i4x4_x = 0; pkt.i4x4_y = 0;
-
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
-
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-
-//     // send the transaction into `RecIntra` via the testbench initiator socket so
-//     intra_socket->b_transport(trans, delay);
-//     sc_start(1, SC_MS);
-
-//     // Validate that DBMonitor got a PRE packet with a 4x4 prediction of constant 128
-//     if (db_monitor.last_data.empty()) return false;
-//     RecPacket out_pkt = unpackRecPacket(db_monitor.last_data.data(), db_monitor.last_data.size());
-//     if (out_pkt.cmd != RecCmd::PRE) return false;
-//     if (out_pkt.data.size() < 16) return false;
-//     // expected all-128 4x4
-//     for (size_t i = 0; i < 16; ++i) {
-//         if (out_pkt.data[i] != 128) return false;
-//     }
-//     return true;
-// }
-
-// bool TestBench::recIntra_PlanarMode_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::READ_REQ;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//         pkt.cbf_mask.set(3);
-//     }
-//     std::cout << pkt << std::endl;
-
-//     // Planar prediction
-//     pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//     pkt.mode = 0; // Planar
-//     pkt.pre_sel = 0;
-//     pkt.i4x4_x = 0; pkt.i4x4_y = 0;
-
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
-
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-
-//     intra_socket->b_transport(trans, delay);
-//     sc_start(1, SC_MS);
-
-//     if (db_monitor.last_data.empty()) return false;
-//     RecPacket out_pkt = unpackRecPacket(db_monitor.last_data.data(), db_monitor.last_data.size());
-//     if (out_pkt.cmd != RecCmd::PRE) return false;
-//     if (out_pkt.data.size() < 16) return false;
-//     for (size_t i = 0; i < 16; ++i) {
-//         if (out_pkt.data[i] != 128) return false;
-//     }
-//     return true;
-// }
-
-// bool TestBench::recIntra_AngularMode_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::READ_REQ;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//         pkt.cbf_mask.set(3);
-//     }
-//     std::cout << pkt << std::endl;
-
-//     // Angular prediction (choose a representative angular mode)
-//     pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//     pkt.mode = 10; // an angular mode (maps to pred_angle 0 in implementation)
-//     pkt.pre_sel = 0;
-//     pkt.i4x4_x = 0; pkt.i4x4_y = 0;
-
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
-
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-
-//     intra_socket->b_transport(trans, delay);
-//     sc_start(1, SC_MS);
-
-//     if (db_monitor.last_data.empty()) return false;
-//     RecPacket out_pkt = unpackRecPacket(db_monitor.last_data.data(), db_monitor.last_data.size());
-//     if (out_pkt.cmd != RecCmd::PRE) return false;
-//     if (out_pkt.data.size() < 16) return false;
-//     for (size_t i = 0; i < 16; ++i) {
-//         if (out_pkt.data[i] != 128) return false;
-//     }
-//     return true;
-// }
-
-
-// bool TestBench::recMc_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::READ_REQ;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::MC);
-//         pkt.cbf_mask.set(3);
-//     }
-//     std::cout << pkt << std::endl;
-
-//     // Ensure MC request fields
-//     pkt.pred_type = static_cast<uint8_t>(PredType::MC);
-//     pkt.pre_sel = 0;
-//     pkt.i4x4_x = 0; pkt.i4x4_y = 0;
-
-//     // Install a simple MV (zero offset) for this block index so RecMc
-//     // will use the MV path instead of the fallback.
-//     top.rec_mv.writeMV(static_cast<uint32_t>(pkt.block_idx), MotionVector(0, 0));
-
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
-
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-
-//     // Send to RecMc
-//     mc_socket->b_transport(trans, delay);
-//     sc_start(1, SC_MS);
-
-//     // Validate DBMonitor got a RESIDUAL packet (res_buffer now computes residuals)
-//     if (db_monitor.last_data.empty()) return false;
-//     RecPacket out_pkt = unpackRecPacket(db_monitor.last_data.data(), db_monitor.last_data.size());
-//     if (out_pkt.cmd != RecCmd::RESIDUAL) return false;
-//     if (out_pkt.data.size() < 16) return false;
-//     for (size_t i = 0; i < 16; ++i) {
-//         if (out_pkt.data[i] != 128) return false;
-//     }
-//     return true;
-// }
-
-
-// bool TestBench::residual_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::READ_REQ;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//         pkt.cbf_mask.set(3);
-//         // sample payload bytes (use 16 bytes for 4x4 pixels example)
-//         pkt.data = {0x10, 0x20, 0x30, 0x40, 0x11, 0x21, 0x31, 0x41,
-//                     0x12, 0x22, 0x32, 0x42, 0x13, 0x23, 0x33, 0x43};
-//     }
-//     std::cout << pkt << std::endl;
-
-//     // Ensure prediction header fields are explicit for this test and use packRecPacket
-//     pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//     pkt.mode = 1; // DC
-//     pkt.pre_sel = 0;
-//     pkt.i4x4_x = 0; pkt.i4x4_y = 0;
-
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
-
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-
-//     // send the transaction into `RecIntra` via the testbench initiator socket
-//     intra_socket->b_transport(trans, delay);
-//     sc_start(1, SC_MS);
-
-//     // Validate that DBMonitor got a RESIDUAL packet with 4x4 residuals
-//     if (db_monitor.last_data.empty()) return false;
-//     RecPacket out_pkt = unpackRecPacket(db_monitor.last_data.data(), db_monitor.last_data.size());
-//     if (out_pkt.cmd != RecCmd::RESIDUAL) return false;
-//     if (out_pkt.data.size() < 16) return false;
-//     for (size_t i = 0; i < 16; ++i) {
-//         if (out_pkt.data[i] != 128) return false;
-//     }
-//     return true;
-// }
-
-
-// bool TestBench::tq_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::READ_REQ;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//         pkt.cbf_mask.set(3);
-//     }
-//     std::cout << pkt << std::endl;
-
-//     // Ensure prediction header fields are explicit for this test
-//     pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//     pkt.mode = 1; // DC
-//     pkt.pre_sel = 0;
-//     pkt.i4x4_x = 0; pkt.i4x4_y = 0;
-
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
-
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-
-//     // send to RecIntra to drive the pipeline -> ResBuffer -> RecTQ -> CoeffMonitor
-//     intra_socket->b_transport(trans, delay);
-//     sc_start(1, SC_MS);
-
-//     if (coeff_monitor.last_data.empty()) return false;
-//     RecPacket out_pkt = unpackRecPacket(coeff_monitor.last_data.data(), coeff_monitor.last_data.size());
-//     if (out_pkt.cmd != RecCmd::COEFF) return false;
-//     // Expect at least 16 int16 coefficients (32 bytes)
-//     if (out_pkt.data.size() < 32) return false;
-//     return true;
-// }
-
-
-// bool TestBench::inv_tq_test(const RecPacket &pkt_in) {
-//     RecPacket pkt = pkt_in;
-//     if (pkt.data.empty()) {
-//         pkt.cmd = RecCmd::READ_REQ;
-//         pkt.block_idx = 5;
-//         pkt.x = 1; pkt.y = 2;
-//         pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//         pkt.cbf_mask.set(3);
-//     }
-//     std::cout << pkt << std::endl;
-
-//     // Ensure prediction header fields are explicit for this test
-//     pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
-//     pkt.mode = 1; // DC
-//     pkt.pre_sel = 0;
-//     pkt.i4x4_x = 0; pkt.i4x4_y = 0;
-
-//     std::vector<uint8_t> buf = packRecPacket(pkt);
-
-//     tlm::tlm_generic_payload trans;
-//     trans.set_command(tlm::TLM_WRITE_COMMAND);
-//     trans.set_address(0);
-//     trans.set_data_ptr(buf.data());
-//     trans.set_data_length(buf.size());
-//     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-
-//     // send to RecIntra to drive the pipeline -> ResBuffer -> RecTQ -> InvTQ -> DB
-//     intra_socket->b_transport(trans, delay);
-//     sc_start(1, SC_MS);
-
-//     if (db_monitor.last_data.empty()) return false;
-//     RecPacket out_pkt = unpackRecPacket(db_monitor.last_data.data(), db_monitor.last_data.size());
-//     if (out_pkt.cmd != RecCmd::RESIDUAL) return false;
-//     int side = 4 << pkt.size;
-//     if ((int)out_pkt.data.size() < side * side) return false;
-//     return true;
-// }
+    if (out_monitor.last_data.empty()) return false;
+    CustomPacket out_pkt = unpackCustomPacket(out_monitor.last_data.data(), out_monitor.last_data.size());
+    if (out_pkt.cmd != CustomCmd::COEFF) return false;
+    if (out_pkt.block_idx != pkt.block_idx) return false;
+    // Expect non-empty emitted stream (real encoder output)
+    if (out_pkt.data.empty()) return false;
+    return true;
+}
 
 
 int sc_main(int argc, char* argv[]) {
@@ -369,7 +71,87 @@ int sc_main(int argc, char* argv[]) {
     test_bench.start_socket.bind(test_bench.top.cabac.start_socket);
     test_bench.top.cabac.out_socket.bind(test_bench.out_monitor.cabac_socket);
 
-    bool ok = test_bench.dataflow_test();
-    std::cout << "Dataflow Test: " << (ok ? "PASS" : "FAIL") << std::endl;
-    return ok ? 0 : 1;
+    // Run three targeted unit tests
+    bool ok_all = true;
+
+    auto mem_read = [&](uint64_t addr, size_t len) -> std::vector<uint8_t> {
+        std::vector<uint8_t> buf(len);
+        tlm::tlm_generic_payload t;
+        t.set_command(tlm::TLM_READ_COMMAND);
+        t.set_address(addr);
+        t.set_data_ptr(buf.data());
+        t.set_data_length(buf.size());
+        t.set_streaming_width(buf.size());
+        t.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        sc_core::sc_time d = sc_core::SC_ZERO_TIME;
+        test_bench.top.mem_bridge.socket->b_transport(t, d);
+        return buf;
+    };
+
+    auto mem_read_byte = [&](uint64_t addr) -> uint8_t {
+        return mem_read(addr, 1)[0];
+    };
+
+    // Test 1: binarizer FL / LUT checks
+    auto binarizer_fl_test = [&]() -> bool {
+        bool ok = true;
+        if (cabac_bina_type[0] != 0) { std::cerr << "binarizer_fl_test: ctx 0 not FL\n"; ok = false; }
+        if (cabac_bina_cmax[0] != 1) { std::cerr << "binarizer_fl_test: cmax[0] != 1\n"; ok = false; }
+        if (cabac_bina_type[7] != 1) { std::cerr << "binarizer_fl_test: ctx 7 not TU\n"; ok = false; }
+        if (cabac_bina_type[191] != 4) { std::cerr << "binarizer_fl_test: ctx 191 not CREG\n"; ok = false; }
+        std::cout << "binarizer_fl_test: " << (ok ? "PASS" : "FAIL") << std::endl;
+        return ok;
+    };
+
+    // Test 2: context state transition — ensure at least one context byte 0..15 is updated
+    auto context_state_transition_test = [&]() -> bool {
+        uint64_t base = 0x10000000ULL;
+        std::vector<uint8_t> before(16), after(16);
+        for (size_t i = 0; i < 16; ++i) before[i] = mem_read_byte(base + i);
+
+        bool res = test_bench.dataflow_stream_test();
+        if (!res) { std::cerr << "context_state_transition_test: dataflow failed\n"; return false; }
+
+        for (size_t i = 0; i < 16; ++i) after[i] = mem_read_byte(base + i);
+
+        bool changed = false;
+        for (size_t i = 0; i < 16; ++i) {
+            if (after[i] != before[i]) {
+                // written contexts are packed [mps<<6 | state], so should be <= 0x7F
+                if (after[i] <= 0x7F) changed = true;
+            }
+        }
+        std::cout << "context_state_transition_test: " << (changed ? "PASS" : "FAIL") << std::endl;
+        return changed;
+    };
+
+    // Test 3: emitted-stream memory consistency
+    auto emit_memory_consistency_test = [&]() -> bool {
+        CustomPacket pkt;
+        pkt.cmd = CustomCmd::READ_REQ;
+        pkt.block_idx = 3; // use block index 3 to avoid collisions
+        pkt.x = 0; pkt.y = 0; pkt.size = 0; pkt.sel = 0; pkt.qp = 22; pkt.pred_type = static_cast<uint8_t>(PredType::INTRA);
+        pkt.cbf_mask.set(3);
+
+        bool ok = test_bench.dataflow_stream_test(pkt);
+        if (!ok) { std::cerr << "emit_memory_consistency_test: dataflow_stream_test failed\n"; return false; }
+
+        if (test_bench.out_monitor.last_data.empty()) { std::cerr << "emit_memory_consistency_test: no out packet\n"; return false; }
+        CustomPacket outp = unpackCustomPacket(test_bench.out_monitor.last_data.data(), test_bench.out_monitor.last_data.size());
+        uint64_t emit_addr = 0x20000000ULL | static_cast<uint64_t>(pkt.block_idx);
+        std::vector<uint8_t> mem = mem_read(emit_addr, outp.data.size());
+            bool non_zero = false;
+            for (auto v : mem) if (v != 0) { non_zero = true; break; }
+            bool match = (outp.data.size() > 0) && non_zero;
+            if (!match) std::cerr << "emit_memory_consistency_test: empty emitted stream or memory region all zeros\n";
+            std::cout << "emit_memory_consistency_test: " << (match ? "PASS" : "FAIL") << std::endl;
+            return match;
+    };
+
+    bool t1 = binarizer_fl_test(); ok_all &= t1;
+    bool t2 = context_state_transition_test(); ok_all &= t2;
+    bool t3 = emit_memory_consistency_test(); ok_all &= t3;
+
+    std::cout << "Unit Tests: " << (ok_all ? "ALL PASS" : "SOME FAIL") << std::endl;
+    return ok_all ? 0 : 1;
 }

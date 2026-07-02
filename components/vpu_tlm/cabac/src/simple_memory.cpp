@@ -1,16 +1,9 @@
 #include "simple_memory.h"
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <vector>
 
 SimpleMemory::SimpleMemory(sc_core::sc_module_name name)
     : sc_core::sc_module(name), socket("socket") {
     socket.register_b_transport(this, &SimpleMemory::b_transport);
-    // Auto-load CABAC tables from prebuilt binary files in tables/.
-    if (!load_cabac_tables()) {
-        std::cerr << "SimpleMemory: warning - no CABAC .bin tables found\n";
-    }
+    load_cabac_tables();
 }
 
 void SimpleMemory::load_data(uint64_t addr, const std::vector<uint8_t>& data) {
@@ -55,28 +48,12 @@ bool SimpleMemory::load_cabac_tables(const std::vector<std::string>& /*candidate
     constexpr uint64_t CABAC_CTX_BASE_I = 0x10000000ULL;
     constexpr uint64_t CABAC_CTX_BASE_INIT2 = 0x10000100ULL;
     constexpr uint64_t CABAC_CTX_BASE_INIT1 = 0x10000200ULL;
-
-    bool loaded_any = false;
-
-    struct BinMap { const char* file; uint64_t base; };
-    BinMap bins[] = {
-        {"tables/cabac_ctx_islice.bin", CABAC_CTX_BASE_I},
-        {"tables/cabac_ctx_init2.bin", CABAC_CTX_BASE_INIT2},
-        {"tables/cabac_ctx_init1.bin", CABAC_CTX_BASE_INIT1},
-    };
-
-    for (const auto &bm : bins) {
-        std::ifstream bin(bm.file, std::ios::binary);
-        if (!bin) continue;
-        bin.seekg(0, std::ios::end);
-        std::streampos n = bin.tellg();
-        bin.seekg(0);
-        std::vector<uint8_t> data(static_cast<size_t>(n));
-        if (n > 0) bin.read(reinterpret_cast<char*>(data.data()), n);
-        load_data(bm.base, data);
-        std::cerr << "SimpleMemory: loaded " << bm.file << " (" << data.size() << " bytes) at 0x" << std::hex << bm.base << std::dec << "\n";
-        loaded_any = true;
-    }
-
-    return loaded_any;
+    // Load from embedded arrays in include/cabac_tables.h
+    load_data(CABAC_CTX_BASE_I, std::vector<uint8_t>(cabac_ctx_islice, cabac_ctx_islice + sizeof(cabac_ctx_islice)));
+    std::cerr << "SimpleMemory: loaded embedded cabac_ctx_islice (" << (sizeof(cabac_ctx_islice)) << " bytes) at 0x" << std::hex << CABAC_CTX_BASE_I << std::dec << "\n";
+    load_data(CABAC_CTX_BASE_INIT2, std::vector<uint8_t>(cabac_ctx_init2, cabac_ctx_init2 + sizeof(cabac_ctx_init2)));
+    std::cerr << "SimpleMemory: loaded embedded cabac_ctx_init2 (" << (sizeof(cabac_ctx_init2)) << " bytes) at 0x" << std::hex << CABAC_CTX_BASE_INIT2 << std::dec << "\n";
+    load_data(CABAC_CTX_BASE_INIT1, std::vector<uint8_t>(cabac_ctx_init1, cabac_ctx_init1 + sizeof(cabac_ctx_init1)));
+    std::cerr << "SimpleMemory: loaded embedded cabac_ctx_init1 (" << (sizeof(cabac_ctx_init1)) << " bytes) at 0x" << std::hex << CABAC_CTX_BASE_INIT1 << std::dec << "\n";
+    return true;
 }

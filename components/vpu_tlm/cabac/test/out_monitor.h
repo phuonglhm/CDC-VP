@@ -5,6 +5,8 @@
 #include "tlm.h"
 #include "tlm_utils/simple_target_socket.h"
 #include <vector>
+#include <cstring>
+#include <iostream>
 
 class OutMonitor : public sc_core::sc_module {
   public:

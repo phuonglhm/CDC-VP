@@ -90,9 +90,6 @@ void RecTQ::dct(uint8_t size4x4, const std::vector<int16_t>& in, std::vector<int
     out.assign(N, 0);
     if (size4x4 == 0) {
         // 4x4 block
-        // implement a simple integer 4x4 DCT with scaling similar to H.264 4x4 integer transform
-        // Using the H.264 4x4 integer transform: coeff = A * in * A^T (scaled)
-        //implement the standard 4x4 forward transform (approximate)
         int32_t tmp[4][4];
         // load input into 2D
         int idx = 0;

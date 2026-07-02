@@ -36,9 +36,7 @@ void ResBuffer::mc_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& 
 
 void ResBuffer::forward_thread() {
     while (true) {
-        RecPacket pkt = fifo_buffer.read(); // blocks until data available
-        // If this is a PRE (prediction) packet and we have memory access,
-        // compute residual = original - prediction and forward a RESIDUAL packet.
+        RecPacket pkt = fifo_buffer.read();
         if (pkt.cmd == RecCmd::PRE && mem_if) {
             uint32_t px = static_cast<uint32_t>(pkt.x) * 4u;
             uint32_t py = static_cast<uint32_t>(pkt.y) * 4u;

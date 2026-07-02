@@ -2,7 +2,7 @@
 #define TOP_H
 
 #include <systemc>
-#include "rec_mem_target.h"
+#include "mem_bridge.h"
 #include "simple_memory.h"
 #include "cabac.h"
 using namespace sc_core;

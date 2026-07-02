@@ -7,7 +7,6 @@ RecMc::RecMc(sc_core::sc_module_name name) :
 }
 
 void RecMc::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    // Unpack typed packet from the generic payload (helper in rec_packet.h)
     RecPacket pkt = unpackRecPacket(trans);
 
     switch (pkt.cmd) {
@@ -20,16 +19,12 @@ void RecMc::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
         default:
             break;
     }
-
-    // Always acknowledge the transaction for now.
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 
 
 
-// Handle PRE (prediction write) packets.
 void RecMc::handle_pre(const RecPacket &pkt) {
-    // Pack the PRE packet and forward it synchronously to downstream RecTQ
     std::vector<uint8_t> outbuf = packRecPacket(pkt);
 
     tlm::tlm_generic_payload new_trans;
@@ -39,12 +34,10 @@ void RecMc::handle_pre(const RecPacket &pkt) {
     new_trans.set_data_length(outbuf.size());
     sc_core::sc_time d = sc_core::SC_ZERO_TIME;
 
-    // Forward to the prediction buffer / RecTQ (downstream)
     buffer_socket->b_transport(new_trans, d);
 }
 
 
-// Handle READ_REQ packets.
 void RecMc::handle_read_req(const RecPacket &pkt, tlm::tlm_generic_payload &trans) {
     // Convert 4x4 block coords to pixel coords
     uint32_t px = static_cast<uint32_t>(pkt.x) * 4u;
@@ -142,17 +135,6 @@ void RecMc::handle_read_req(const RecPacket &pkt, tlm::tlm_generic_payload &tran
 
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
-
-
-//Handle COEFF packets (coefficients / encoder side data
-// void RecMc::handle_coeff(const RecPacket &pkt) {
-//     (void)pkt;
-// }
-
-// //Handle RESIDUAL packets (decoded residuals)
-// void RecMc::handle_residual(const RecPacket &pkt) {
-//     (void)pkt;
-// }
 
 // Bind a memory provider so this module can fetch reference blocks
 void RecMc::bindMemory(RecMemoryIf &mem) {

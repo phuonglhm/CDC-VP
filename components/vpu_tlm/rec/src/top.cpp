@@ -16,11 +16,8 @@ Top::Top(sc_module_name name) :
     res_buffer.buffer_socket.bind(rec_tq.buffer_socket);
     rec_tq.inv_tq_socket.bind(inv_tq.tq_socket);
 
-    // Bind in-repo RecMemory to RecIntra so it can pull reference pixels
     rec_intra.bindMemory(rec_mem);
-    // Bind RecMemory and MV memory to RecMc
     rec_mc.bindMemory(rec_mem);
-    // Bind RecMemory to ResBuffer so it can compute residual = original - prediction
     res_buffer.bindMemory(rec_mem);
     rec_mc.bindMvMemory(rec_mv);
 
