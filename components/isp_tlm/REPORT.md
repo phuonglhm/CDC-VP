@@ -211,7 +211,7 @@ cmake --build build/bremen --target isp_run
 # Run pipeline
 ./build/bremen/components/isp_tlm/tests/isp_run \
   -i ./components/isp_tlm/input/ColorChecker_2592x1536_12bits_RGGB.raw \
-  -o output.yuv -w 2592 --height 1536 -b 16 -p 2
+  -o ./components/isp_tlm/output/output.yuv -w 2592 --height 1536 -b 16 -p 2
 
 # View
 ffplay -f rawvideo -pixel_format yuv420p -video_size 2592x1536 output.yuv
