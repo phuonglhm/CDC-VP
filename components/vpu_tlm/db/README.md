@@ -8,9 +8,6 @@ This is a SystemC TLM 2.3.4 model of the Deblocking block in a VPU. It serves to
 - All modules in test is for testing and wiring up dangling sockets
 - Uses custom payload struct custom_packet (in custom_packet.h)
 
-# Progress
-- D_bs done
-
 # Run
 - make testbench
 - (to clean build) make clean

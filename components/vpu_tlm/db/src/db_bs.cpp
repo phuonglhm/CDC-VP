@@ -23,9 +23,62 @@ void BorderStrength::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_ti
     uint8_t qp_p = 0, qp_q = 0;
     select_qp(pkt, sys_ctu_x, sys_ctu_y, cnt, state, qp_p, qp_q);
 
+    // store last results for unit tests
+    this->last_tu_edge = tu_edge;
+    this->last_pu_edge = pu_edge;
+    this->last_cbf_p = cbf_p;
+    this->last_cbf_q = cbf_q;
+    this->last_qp_p = qp_p;
+    this->last_qp_q = qp_q;
+
     std::cout << "  tu_edge=" << tu_edge << " pu_edge=" << pu_edge << " cbf_p=" << cbf_p << " cbf_q=" << cbf_q << " qp_p=" << static_cast<int>(qp_p) << " qp_q=" << static_cast<int>(qp_q) << std::endl;
 
-    // forward transaction unchanged for now
+    // annotate packet metadata so Filter_SAO can run canonical kernels
+    pkt.tu_edge = tu_edge;
+    pkt.pu_edge = pu_edge;
+    pkt.cbf_p = cbf_p;
+    pkt.cbf_q = cbf_q;
+    pkt.qp_p = qp_p;
+    pkt.qp_q = qp_q;
+    // determine is_luma and edge_type (approx using pred_type)
+    bool is_luma = (pkt.sel == 0);
+    bool edge_intra = (pkt.pred_type == static_cast<uint8_t>(PredType::INTRA));
+
+    // compute bs per db_filter.v semantics (best-effort):
+    uint8_t bs_val = 0;
+    if (edge_intra) {
+        bs_val = tu_edge ? 2u : 0u;
+    } else {
+        if (is_luma) {
+            if (tu_edge && (cbf_p || cbf_q)) bs_val = 1u;
+            else if (pu_edge) {
+                // if MV metadata present, evaluate >3 check; otherwise conservatively set 1
+                int16_t mx_p=0,my_p=0,mx_q=0,my_q=0;
+                const uint32_t mask10 = 0x3FFu;
+                // decode pkt.mv_p
+                if (pkt.mv_p) {
+                    uint32_t raw_y = pkt.mv_p & mask10;
+                    uint32_t raw_x = (pkt.mv_p >> 10) & mask10;
+                    mx_p = (raw_x & 0x200) ? static_cast<int16_t>(raw_x | 0xFC00) : static_cast<int16_t>(raw_x);
+                    my_p = (raw_y & 0x200) ? static_cast<int16_t>(raw_y | 0xFC00) : static_cast<int16_t>(raw_y);
+                }
+                if (pkt.mv_q) {
+                    uint32_t raw_y = pkt.mv_q & mask10;
+                    uint32_t raw_x = (pkt.mv_q >> 10) & mask10;
+                    mx_q = (raw_x & 0x200) ? static_cast<int16_t>(raw_x | 0xFC00) : static_cast<int16_t>(raw_x);
+                    my_q = (raw_y & 0x200) ? static_cast<int16_t>(raw_y | 0xFC00) : static_cast<int16_t>(raw_y);
+                }
+                if ((std::abs(mx_p - mx_q) > 3) || (std::abs(my_p - my_q) > 3)) bs_val = 1u;
+                else bs_val = 0u;
+            }
+        }
+    }
+    pkt.bs = bs_val;
+
+    // repack and forward
+    std::vector<uint8_t> outbuf = packCustomPacket(pkt);
+    trans.set_data_ptr(outbuf.data());
+    trans.set_data_length(outbuf.size());
     filter_socket->b_transport(trans, delay);
 }
 

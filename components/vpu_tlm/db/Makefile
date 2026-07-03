@@ -2,10 +2,6 @@
 CXX      := g++
 CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
 
-## FORCE using the local SystemC 2.3.4 install in the user's home
-## Resolve SYSTEMC installation location.
-# Prefer a workspace-local ./local if it contains SystemC headers; otherwise fall back to $(HOME)/.local.
-# Allow users to override by exporting SYSTEMC_HOME when invoking make.
 ifneq ("$(wildcard $(CURDIR)/local/include/systemc.h)","")
 SYSTEMC_HOME ?= $(CURDIR)/local
 else

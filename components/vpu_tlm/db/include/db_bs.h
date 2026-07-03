@@ -13,6 +13,13 @@ class BorderStrength : sc_core::sc_module {
     tlm_utils::simple_initiator_socket<BorderStrength> filter_socket;
     tlm_utils::simple_target_socket<BorderStrength> start_socket;
 
+    bool last_tu_edge{false};
+    bool last_pu_edge{false};
+    bool last_cbf_p{false};
+    bool last_cbf_q{false};
+    uint8_t last_qp_p{0};
+    uint8_t last_qp_q{0};
+
 
     private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);

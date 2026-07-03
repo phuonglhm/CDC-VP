@@ -17,4 +17,4 @@ class Top : public sc_module {
     Filter_SAO db_filter_sao;
 };
 
-#endif // TOP_H
+#endif

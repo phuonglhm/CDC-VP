@@ -9,7 +9,6 @@ using namespace sc_core;
 
 class Top : public sc_module {
     public:
-    // Memory bridge and external memory target for CABAC tables
     MemBridge mem_bridge;
     SimpleMemory simple_mem;
     Cabac cabac;
