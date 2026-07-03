@@ -1,0 +1,13 @@
+{
+  "width": 2688,
+  "height": 1520,
+  "format": "yuv420p",
+  "input_bit_depth": 16,
+  "output_bit_depth": 8,
+  "bayer_pattern": 2,
+  "bayer_pattern_name": "BGGR",
+  "plane_order": ["Y", "U", "V"],
+  "chroma_subsampling": "4:2:0",
+  "conv_standard": "BT.709",
+  "source_raw": "components/isp_tlm/input/A_raw_2688x1520_5376.raw"
+}
