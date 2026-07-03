@@ -39,6 +39,15 @@ void isp_tlm::update_irq_output()
     irq_out.write(irq_level_);
 }
 
+void isp_tlm::allocate_buffers()
+{
+    const std::size_t raw_size = static_cast<std::size_t>(width_) * height_;
+    const std::size_t yuv_size = static_cast<std::size_t>(width_) * height_ * 3 / 2;
+
+    raw_buffer_.resize(raw_size);
+    yuv_buffer_.resize(yuv_size);
+}
+
 void isp_tlm::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
 {
     delay += access_latency_;
@@ -352,10 +361,23 @@ void isp_tlm::trigger_processing()
     }
 
     pipeline_.set_dimensions(width_, height_);
+
+    // Map register-level bayer_pattern (0..3) to cfa_types enum
+    cfa_types bayer_pattern = cfa_types::RGGB;
+    switch (bayer_pattern_) {
+        case 0: bayer_pattern = cfa_types::RGGB; break;
+        case 1: bayer_pattern = cfa_types::GRBG; break;
+        case 2: bayer_pattern = cfa_types::BGGR; break;
+        case 3: bayer_pattern = cfa_types::GBRG; break;
+        default: bayer_pattern = cfa_types::RGGB; break;
+    }
+    pipeline_.set_input_format(static_cast<std::uint8_t>(bit_depth_), bayer_pattern);
+    pipeline_.set_lsc_mem(nullptr);
+
     update_config_from_regs();
 
     const std::size_t raw_size = static_cast<std::size_t>(width_) * height_;
-    const std::size_t yuv_size = static_cast<std::size_t>(width_) * height_ * 3;
+    const std::size_t yuv_size = static_cast<std::size_t>(width_) * height_ * 3 / 2;
 
     raw_buffer_.resize(raw_size);
     yuv_buffer_.resize(yuv_size);

@@ -1,10 +1,14 @@
 #include "isp_pipeline.h"
 
 #include <cstring>
+#include <iostream>
 
 isp_pipeline::isp_pipeline()
     : width_(0)
     , height_(0)
+    , input_bit_depth_(12)
+    , input_bayer_pattern_(cfa_types::RGGB)
+    , working_bit_depth_(12)
     , lsc_mem_ptr_(nullptr)
     , awb_r_gain_(1.0f)
     , awb_b_gain_(1.0f)
@@ -47,6 +51,14 @@ void isp_pipeline::set_lsc_mem(const float* lsc_mem)
     lsc_mem_ptr_ = lsc_mem;
 }
 
+void isp_pipeline::set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern)
+{
+    input_bit_depth_ = bit_depth;
+    input_bayer_pattern_ = bayer_pattern;
+    // All processing blocks operate at 12-bit working precision
+    working_bit_depth_ = 12;
+}
+
 void isp_pipeline::run(const std::uint16_t* raw_in,
                        std::vector<std::uint8_t>& yuv_out,
                        const isp_config& cfg)
@@ -60,20 +72,38 @@ void isp_pipeline::run(const std::uint16_t* raw_in,
     const std::size_t rgb_pixels = raw_pixels * 3u;
     const std::size_t yuv_pixels = raw_pixels * 3u;
 
+    // Normalize input to 12-bit working range (0..4095).
+    // For 12-bit input: no change. For 16-bit input: shift right by 4.
+    const std::uint32_t work_max = (1u << working_bit_depth_) - 1u;
+    const std::uint32_t src_max  = (1u << input_bit_depth_)  - 1u;
+    if (src_max == 0) return;
+    // Pre-compute scale = work_max / src_max as Q16 fixed point for speed
+    // but keep it readable using 64-bit math
+    const std::uint64_t scale_num = work_max;
+    const std::uint64_t scale_den = src_max;
+
     std::memcpy(raw_buf_.data(), raw_in, raw_pixels * sizeof(std::uint16_t));
+    for (std::size_t p = 0; p < raw_pixels; ++p) {
+        const std::uint64_t v = static_cast<std::uint64_t>(raw_buf_[p]);
+        const std::uint64_t scaled = (v * scale_num) / scale_den;
+        raw_buf_[p] = static_cast<std::uint16_t>(scaled > work_max ? work_max : scaled);
+    }
+
+    const std::uint8_t bd = working_bit_depth_;
+    const cfa_types cfa = input_bayer_pattern_;
 
     blc_.process(raw_buf_.data(), blc_out_.data(), width_, height_,
-                 cfg.blc, cfa_types::RGGB, 12);
+                 cfg.blc, cfa, bd);
     dpc_.process(blc_out_.data(), dpc_out_.data(), width_, height_, cfg.dpc);
     lsc_.process(dpc_out_.data(), lsc_out_.data(), width_, height_,
-                 cfg.lsc, lsc_mem_ptr_, cfa_types::RGGB, 12);
-    dg_.process(lsc_out_.data(), dg_out_.data(), width_, height_, cfg.dg, 12);
+                 cfg.lsc, lsc_mem_ptr_, cfa, bd);
+    dg_.process(lsc_out_.data(), dg_out_.data(), width_, height_, cfg.dg, bd);
     bnr_.process(dg_out_.data(), bnr_out_.data(), width_, height_,
-                 cfg.bnr, cfa_types::RGGB, 12);
+                 cfg.bnr, cfa, bd);
 
     awb_config awb_cfg = cfg.awb;
     if (cfg.awb.is_enable) {
-        awb_.process(bnr_out_.data(), width_, height_, awb_cfg, 12);
+        awb_.process(bnr_out_.data(), width_, height_, awb_cfg, bd);
         awb_r_gain_ = awb_cfg.r_gain_out;
         awb_b_gain_ = awb_cfg.b_gain_out;
     } else {
@@ -82,7 +112,7 @@ void isp_pipeline::run(const std::uint16_t* raw_in,
     }
 
     demosaic_.process(bnr_out_.data(), demosaic_out_.data(), width_, height_,
-                      cfg.demosaic, cfa_types::RGGB, 12);
+                      cfg.demosaic, cfa, bd);
 
     wb_config wb_cfg = cfg.wb;
     wb_cfg.r_gain = cfg.wb.is_enable ? cfg.wb.r_gain : 1.0f;

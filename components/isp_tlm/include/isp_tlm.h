@@ -106,9 +106,13 @@ public:
 
     std::uint16_t* get_raw_buffer() { return raw_buffer_.data(); }
     std::uint8_t* get_yuv_buffer() { return yuv_buffer_.data(); }
+    std::size_t get_raw_buffer_size() const { return raw_buffer_.size(); }
+    std::size_t get_yuv_buffer_size() const { return yuv_buffer_.size(); }
 
     std::uint32_t get_width() const { return width_; }
     std::uint32_t get_height() const { return height_; }
+
+    void allocate_buffers();
 
 private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);

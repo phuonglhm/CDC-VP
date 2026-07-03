@@ -47,6 +47,7 @@ public:
 
     void set_dimensions(std::uint32_t width, std::uint32_t height);
     void set_lsc_mem(const float* lsc_mem);
+    void set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern);
 
     void run(const std::uint16_t* raw_in,
              std::vector<std::uint8_t>& yuv_out,
@@ -58,6 +59,9 @@ public:
 private:
     std::uint32_t width_;
     std::uint32_t height_;
+    std::uint8_t  input_bit_depth_;
+    cfa_types     input_bayer_pattern_;
+    std::uint8_t  working_bit_depth_;  // all blocks operate at 12-bit
     const float* lsc_mem_ptr_;
     float awb_r_gain_;
     float awb_b_gain_;

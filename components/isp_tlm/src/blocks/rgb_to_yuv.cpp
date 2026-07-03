@@ -31,9 +31,15 @@ void csc_block::process(const std::uint16_t* in,
 
     for (std::size_t p = 0; p < pixels; ++p) {
         const std::size_t i = p * 3u;
-        const std::int32_t r = static_cast<std::int32_t>(in[i]);
-        const std::int32_t g = static_cast<std::int32_t>(in[i + 1u]);
-        const std::int32_t b = static_cast<std::int32_t>(in[i + 2u]);
+        const std::int32_t r_raw = static_cast<std::int32_t>(in[i]);
+        const std::int32_t g_raw = static_cast<std::int32_t>(in[i + 1u]);
+        const std::int32_t b_raw = static_cast<std::int32_t>(in[i + 2u]);
+
+        // Normalize 12-bit input to 8-bit range [0, 255]
+        // Shift right by 4 bits (4096 -> 256)
+        const std::int32_t r = r_raw >> 4;
+        const std::int32_t g = g_raw >> 4;
+        const std::int32_t b = b_raw >> 4;
 
         std::int32_t y_raw, u_raw, v_raw;
 
