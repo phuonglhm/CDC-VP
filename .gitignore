@@ -27,3 +27,4 @@ build.ninja
 components/otp_tlm/otp_tlm
 components/otp_tlm/*.o
 components/otp_tlm/build/
+*.yuv
