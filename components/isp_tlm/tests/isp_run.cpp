@@ -69,16 +69,16 @@ int sc_main(int argc, char* argv[]) {
     std::uint32_t bayer_pattern = 0; // 0 = RGGB
 
     // Canonical output directory (relative to workspace root).
-    // If CWD is already inside components/isp_tlm, use that.
-    // Otherwise, default to components/isp_tlm/output.yuv.
+    // If CWD is already inside components/isp_tlm, use output/ there.
+    // Otherwise, default to components/isp_tlm/output/.
     auto detect_output_dir = []() -> std::string {
         const char* cwd = std::getenv("PWD");
         if (cwd == nullptr) cwd = ".";
         std::string s(cwd);
         if (s.find("components/isp_tlm") != std::string::npos) {
-            return ".";
+            return "output";
         }
-        return "components/isp_tlm";
+        return "components/isp_tlm/output";
     };
     output_path = detect_output_dir() + "/output.yuv";
     metadata_path = output_path + ".json";
@@ -90,7 +90,7 @@ int sc_main(int argc, char* argv[]) {
             std::cout << "Usage: " << argv[0] << " [options]\n";
             std::cout << "Options:\n";
             std::cout << "  -i <path>    Input RAW file path (required)\n";
-            std::cout << "  -o <path>    Output YUV file path (default: output.yuv)\n";
+            std::cout << "  -o <path>    Output YUV file path (default: output/output.yuv)\n";
             std::cout << "  -w <width>   Image width in pixels (required)\n";
             std::cout << "  --height <h> Image height in pixels (required)\n";
             std::cout << "  -b <bits>    Bit depth (default: 12)\n";

@@ -124,16 +124,20 @@ def read_yuv420(filepath, width, height):
 
 
 def find_output_yuv():
-    """Find the canonical output.yuv file. Prioritizes current dir, then
-    components/isp_tlm/, then the workspace root output path."""
+    """Find the canonical output.yuv file. Prioritizes the output/ folder
+    inside the script directory, then components/isp_tlm/output/, then the
+    workspace root output path."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
-        "output.yuv",
-        "components/isp_tlm/output.yuv",
+        "output/output.yuv",
+        os.path.join(script_dir, "output", "output.yuv"),
+        "components/isp_tlm/output/output.yuv",
     ]
     for c in candidates:
         if os.path.exists(c):
             return c
-    return "output.yuv"  # default if not found
+    # Default if not found: prefer the script's own output/ folder
+    return os.path.join(script_dir, "output", "output.yuv")
 
 
 def main():
@@ -227,8 +231,10 @@ def main():
         axes[1].set_title("After: ISP Pipeline Output (YUV420)")
         axes[1].axis('off')
 
-        # Save standalone JPEG of the final output
-        output_jpg = yuv_path.replace('.yuv', '.jpg')
+        # Save standalone JPEG of the final output next to the YUV file,
+        # i.e. inside the same output/ folder.
+        yuv_dir = os.path.dirname(os.path.abspath(yuv_path)) or "."
+        output_jpg = os.path.join(yuv_dir, "output.jpg")
         try:
             plt.imsave(output_jpg, yuv_preview)
             print(f"Saved standalone output image to {output_jpg}")
@@ -239,7 +245,10 @@ def main():
         axes[1].axis('off')
 
     plt.tight_layout()
-    output_cmp = "isp_before_after.jpg"
+    # Save the before/after comparison image next to the YUV file,
+    # i.e. inside the same output/ folder.
+    yuv_dir = os.path.dirname(os.path.abspath(yuv_path)) or "."
+    output_cmp = os.path.join(yuv_dir, "isp_before_after.jpg")
     plt.savefig(output_cmp, dpi=150)
     print(f"Saved comparison visualization to {output_cmp}")
 
