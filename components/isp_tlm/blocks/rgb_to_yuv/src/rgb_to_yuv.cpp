@@ -28,13 +28,31 @@ void csc_block::process(const std::uint16_t* in,
         return;
     }
 
+    // Resolve input bit-depth: use cfg-provided value, fall back to 12 for back-compat.
+    const std::uint32_t effective_bit_depth = (bit_depth > 0) ? bit_depth : 12u;
+
+    // Number of bits to drop (or gain) when normalizing to 8-bit [0, 255].
+    // 12-bit input -> shift 4.   16-bit input -> shift 8.   <8-bit -> left-shift up.
+    const std::int32_t shift_to_8bit =
+        static_cast<std::int32_t>(effective_bit_depth) - 8;
+
     const std::size_t pixels = static_cast<std::size_t>(width) * height;
 
     if (!cfg.is_enable) {
         for (std::size_t p = 0; p < pixels; ++p) {
-            out[p * 3u]     = static_cast<std::uint8_t>(in[p * 3u]     >> 4);
-            out[p * 3u + 1u] = static_cast<std::uint8_t>(in[p * 3u + 1u] >> 4);
-            out[p * 3u + 2u] = static_cast<std::uint8_t>(in[p * 3u + 2u] >> 4);
+            for (std::size_t c = 0; c < 3u; ++c) {
+                const std::int32_t raw = static_cast<std::int32_t>(in[p * 3u + c]);
+                std::int32_t v;
+                if (shift_to_8bit > 0) {
+                    // Down-shift with rounding (less quantization noise than pure truncation)
+                    v = (raw + (1 << (shift_to_8bit - 1))) >> shift_to_8bit;
+                } else if (shift_to_8bit < 0) {
+                    v = raw << (-shift_to_8bit);
+                } else {
+                    v = raw;
+                }
+                out[p * 3u + c] = clip_to_uint8(v);
+            }
         }
         return;
     }
@@ -45,11 +63,20 @@ void csc_block::process(const std::uint16_t* in,
         const std::int32_t g_raw = static_cast<std::int32_t>(in[i + 1u]);
         const std::int32_t b_raw = static_cast<std::int32_t>(in[i + 2u]);
 
-        // Normalize dynamic bit-depth input to 8-bit range [0, 255]
-        const std::int32_t shift = (bit_depth > 8) ? (bit_depth - 8) : 0;
-        const std::int32_t r = (bit_depth >= 8) ? (r_raw >> shift) : (r_raw << (8 - bit_depth));
-        const std::int32_t g = (bit_depth >= 8) ? (g_raw >> shift) : (g_raw << (8 - bit_depth));
-        const std::int32_t b = (bit_depth >= 8) ? (b_raw >> shift) : (b_raw << (8 - bit_depth));
+        // Normalize dynamic bit-depth input to 8-bit range [0, 255] with rounding.
+        auto to_8bit = [shift_to_8bit](std::int32_t v) -> std::int32_t {
+            if (shift_to_8bit > 0) {
+                return (v + (1 << (shift_to_8bit - 1))) >> shift_to_8bit;
+            }
+            if (shift_to_8bit < 0) {
+                return v << (-shift_to_8bit);
+            }
+            return v;
+        };
+
+        const std::int32_t r = to_8bit(r_raw);
+        const std::int32_t g = to_8bit(g_raw);
+        const std::int32_t b = to_8bit(b_raw);
 
         std::int32_t y_raw, u_raw, v_raw;
 

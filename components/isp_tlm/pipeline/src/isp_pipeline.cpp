@@ -120,8 +120,20 @@ void isp_pipeline::run(const std::uint16_t *raw_in,
    if (cfg.csc.is_enable) {
        csc_.process(gc_out_.data(), csc_out_.data(), width_, height_, cfg.csc, bd);
    } else {
+      const std::int32_t shift_to_8bit = static_cast<std::int32_t>(bd) - 8;
       for (std::size_t p = 0; p < rgb_pixels; ++p) {
-         csc_out_[p] = static_cast<std::uint8_t>(gc_out_[p] >> 4);
+         const std::int32_t raw = static_cast<std::int32_t>(gc_out_[p]);
+         std::int32_t v;
+         if (shift_to_8bit > 0) {
+            v = (raw + (1 << (shift_to_8bit - 1))) >> shift_to_8bit;
+         } else if (shift_to_8bit < 0) {
+            v = raw << (-shift_to_8bit);
+         } else {
+            v = raw;
+         }
+         if (v < 0) v = 0;
+         if (v > 255) v = 255;
+         csc_out_[p] = static_cast<std::uint8_t>(v);
       }
    }
 
