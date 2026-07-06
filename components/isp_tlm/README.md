@@ -46,6 +46,7 @@ Firmware can access ISP tuning parameters via memory-mapped registers through th
 | 0x010 | `REG_HEIGHT` | Image height |
 | 0x014 | `REG_BIT_DEPTH` | Bit depth (8, 10, 12, 14) |
 | 0x018 | `REG_BAYER_PATTERN` | Bayer pattern (0=RGGB, 1=GRBG, 2=BGGR, 3=GBRG) |
+| 0x134 | `REG_DEST_ADDR` | The RAM address where the processed image will be stored |
 
 ### BLC Registers
 
