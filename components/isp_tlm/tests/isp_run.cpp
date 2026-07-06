@@ -224,12 +224,6 @@ int sc_main(int argc, char* argv[]) {
 
     // Write metadata JSON
     write_json_metadata(metadata_path, width, height, bit_depth, bayer_pattern, input_path, "yuv420p");
-
-    // Print ffplay command
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "To view the output, run:" << std::endl;
-    std::cout << "  ffplay -f rawvideo -pixel_format yuv420p -video_size " << width << "x" << height << " " << output_path << std::endl;
-    std::cout << "========================================" << std::endl;
-
+   
     return 0;
 }
