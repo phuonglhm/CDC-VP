@@ -260,6 +260,11 @@ void isp_tlm::write_reg(std::uint32_t offset, std::uint32_t value) {
       update_config_from_regs();
       break;
 
+   case REG_CSC_ENABLE:
+      reg_file_[REG_CSC_ENABLE / 4] = value;
+      update_config_from_regs();
+      break;
+
    case REG_CSC_STANDARD:
       reg_file_[REG_CSC_STANDARD / 4] = value;
       config_.csc.conv_standard = static_cast<std::uint8_t>(value);
@@ -391,6 +396,8 @@ void isp_tlm::update_config_from_regs() {
    config_.ccm.is_enable = (reg_file_[REG_CCM_ENABLE / 4] & 0x1) != 0;
 
    config_.gc.is_enable = (reg_file_[REG_GC_ENABLE / 4] & 0x1) != 0;
+
+   config_.csc.is_enable = (reg_file_[REG_CSC_ENABLE / 4] & 0x1) != 0;
 
    config_.cse.is_enable = (reg_file_[REG_CSE_ENABLE / 4] & 0x1) != 0;
 

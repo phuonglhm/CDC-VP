@@ -30,6 +30,15 @@ void csc_block::process(const std::uint16_t* in,
 
     const std::size_t pixels = static_cast<std::size_t>(width) * height;
 
+    if (!cfg.is_enable) {
+        for (std::size_t p = 0; p < pixels; ++p) {
+            out[p * 3u]     = static_cast<std::uint8_t>(in[p * 3u]     >> 4);
+            out[p * 3u + 1u] = static_cast<std::uint8_t>(in[p * 3u + 1u] >> 4);
+            out[p * 3u + 2u] = static_cast<std::uint8_t>(in[p * 3u + 2u] >> 4);
+        }
+        return;
+    }
+
     for (std::size_t p = 0; p < pixels; ++p) {
         const std::size_t i = p * 3u;
         const std::int32_t r_raw = static_cast<std::int32_t>(in[i]);

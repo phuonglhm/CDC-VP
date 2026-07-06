@@ -114,9 +114,17 @@ void isp_pipeline::run(const std::uint16_t *raw_in,
    }
    wb_.process(demosaic_out_.data(), wb_out_.data(), width_, height_, wb_cfg, bd);
 
+
    ccm_.process(wb_out_.data(), ccm_out_.data(), width_, height_, cfg.ccm, bd);
    gc_.process(ccm_out_.data(), gc_out_.data(), width_, height_, cfg.gc, bd);
-   csc_.process(gc_out_.data(), csc_out_.data(), width_, height_, cfg.csc, bd);
+   if (cfg.csc.is_enable) {
+       csc_.process(gc_out_.data(), csc_out_.data(), width_, height_, cfg.csc, bd);
+   } else {
+      for (std::size_t p = 0; p < rgb_pixels; ++p) {
+         csc_out_[p] = static_cast<std::uint8_t>(gc_out_[p] >> 4);
+      }
+   }
+
    cse_.process(csc_out_.data(), cse_out_.data(), width_, height_, cfg.cse);
    sharpen_.process(cse_out_.data(), sharpen_out_.data(), width_, height_, cfg.sharpen);
    twodnr_.process(sharpen_out_.data(), twodnr_out_.data(), width_, height_, cfg.twodnr);

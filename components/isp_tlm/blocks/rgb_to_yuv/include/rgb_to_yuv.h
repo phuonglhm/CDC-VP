@@ -4,6 +4,7 @@
 #include <vector>
 
 struct csc_config {
+    std::uint8_t is_enable;
     std::uint8_t conv_standard = 1;
 };
 

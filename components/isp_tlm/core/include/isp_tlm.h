@@ -64,6 +64,7 @@ constexpr std::uint32_t REG_CCM_MATRIX22 = 0x0C4;
 
 constexpr std::uint32_t REG_GC_ENABLE = 0x0D0;
 
+constexpr std::uint32_t REG_CSC_ENABLE    = 0x0DC;
 constexpr std::uint32_t REG_CSC_STANDARD = 0x0E0;
 
 constexpr std::uint32_t REG_CSE_ENABLE = 0x0F0;

@@ -174,6 +174,7 @@ int sc_main(int argc, char* argv[]) {
     probe.write(REG_GC_ENABLE, &enable, 4);
 
     // Enable CSC (BT.709)
+    probe.write(REG_CSC_ENABLE, &enable, 4);
     std::uint32_t csc_standard = 1; // BT.709
     probe.write(REG_CSC_STANDARD, &csc_standard, 4);
 
