@@ -49,6 +49,13 @@ public:
    void set_lsc_mem(const float *lsc_mem);
    void set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern);
 
+   // The model defaults to the original bit depth for all operations in RAW/RGB domains and a bit
+   // depth of 8 for YUV domain. This function is for when the user want to set that native bit
+   // depth themselves.
+   void set_working_bit_depth(std::uint8_t bd) {
+      working_bit_depth_ = bd;
+   }
+
    void run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &yuv_out, const isp_config &cfg);
 
    float get_awb_r_gain() const {
@@ -64,7 +71,7 @@ private:
    std::uint32_t height_;
    std::uint8_t input_bit_depth_;
    cfa_types input_bayer_pattern_;
-   std::uint8_t working_bit_depth_; // all blocks operate at 12-bit
+   std::uint8_t working_bit_depth_;
    const float *lsc_mem_ptr_;
    float awb_r_gain_;
    float awb_b_gain_;

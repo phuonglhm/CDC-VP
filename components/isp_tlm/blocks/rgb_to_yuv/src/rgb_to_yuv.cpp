@@ -21,7 +21,8 @@ void csc_block::process(const std::uint16_t* in,
                         std::uint8_t* out,
                         std::uint32_t width,
                         std::uint32_t height,
-                        const csc_config& cfg) const
+                        const csc_config& cfg,
+                        std::uint8_t bit_depth) const
 {
     if (in == nullptr || out == nullptr || width == 0 || height == 0) {
         return;
@@ -35,11 +36,11 @@ void csc_block::process(const std::uint16_t* in,
         const std::int32_t g_raw = static_cast<std::int32_t>(in[i + 1u]);
         const std::int32_t b_raw = static_cast<std::int32_t>(in[i + 2u]);
 
-        // Normalize 12-bit input to 8-bit range [0, 255]
-        // Shift right by 4 bits (4096 -> 256)
-        const std::int32_t r = r_raw >> 4;
-        const std::int32_t g = g_raw >> 4;
-        const std::int32_t b = b_raw >> 4;
+        // Normalize dynamic bit-depth input to 8-bit range [0, 255]
+        const std::int32_t shift = (bit_depth > 8) ? (bit_depth - 8) : 0;
+        const std::int32_t r = (bit_depth >= 8) ? (r_raw >> shift) : (r_raw << (8 - bit_depth));
+        const std::int32_t g = (bit_depth >= 8) ? (g_raw >> shift) : (g_raw << (8 - bit_depth));
+        const std::int32_t b = (bit_depth >= 8) ? (b_raw >> shift) : (b_raw << (8 - bit_depth));
 
         std::int32_t y_raw, u_raw, v_raw;
 
@@ -63,7 +64,8 @@ void csc_block::process(const std::vector<std::uint16_t>& in,
                         std::vector<std::uint8_t>& out,
                         std::uint32_t width,
                         std::uint32_t height,
-                        const csc_config& cfg) const
+                        const csc_config& cfg,
+                        std::uint8_t bit_depth) const
 {
     const std::size_t pixels = static_cast<std::size_t>(width) * height;
     out.resize(pixels * 3u);
@@ -72,5 +74,5 @@ void csc_block::process(const std::vector<std::uint16_t>& in,
         std::fill(out.begin(), out.end(), 0u);
         return;
     }
-    process(in.data(), out.data(), width, height, cfg);
+    process(in.data(), out.data(), width, height, cfg, bit_depth);
 }

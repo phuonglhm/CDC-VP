@@ -33,7 +33,8 @@ void ccm_block::process(const std::uint16_t* in,
                         std::uint16_t* out,
                         std::uint32_t width,
                         std::uint32_t height,
-                        const ccm_config& cfg) const
+                        const ccm_config& cfg,
+                        std::uint8_t bit_depth) const
 {
     const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
     if (in == nullptr || out == nullptr || samples == 0u) {
@@ -47,7 +48,7 @@ void ccm_block::process(const std::uint16_t* in,
         return;
     }
 
-    const std::uint16_t max_value = max_for_bit_depth(cfg.bit_depth);
+    const std::uint16_t max_value = max_for_bit_depth(bit_depth);
     const float inv_max = 1.0f / static_cast<float>(max_value);
 
     for (std::size_t i = 0; i < samples; i += 3u) {
@@ -73,7 +74,8 @@ void ccm_block::process(const std::vector<std::uint16_t>& in,
                         std::vector<std::uint16_t>& out,
                         std::uint32_t width,
                         std::uint32_t height,
-                        const ccm_config& cfg) const
+                        const ccm_config& cfg,
+                        std::uint8_t bit_depth) const
 {
     const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
     out.resize(samples);
@@ -81,5 +83,5 @@ void ccm_block::process(const std::vector<std::uint16_t>& in,
         std::fill(out.begin(), out.end(), 0u);
         return;
     }
-    process(in.data(), out.data(), width, height, cfg);
+    process(in.data(), out.data(), width, height, cfg, bit_depth);
 }

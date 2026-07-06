@@ -55,7 +55,8 @@ void gc_block::process(const std::uint16_t* in,
                        std::uint16_t* out,
                        std::uint32_t width,
                        std::uint32_t height,
-                       const gc_config& cfg) const
+                       const gc_config& cfg,
+                       std::uint8_t bit_depth) const
 {
     const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
     if (in == nullptr || out == nullptr || samples == 0u) {
@@ -70,7 +71,7 @@ void gc_block::process(const std::uint16_t* in,
     }
 
     std::size_t lut_size = 0;
-    const std::uint16_t* lut = get_active_lut(cfg, cfg.bit_depth, lut_size);
+    const std::uint16_t* lut = get_active_lut(cfg, bit_depth, lut_size);
 
     if (lut == nullptr || lut_size == 0) {
         if (in != out) {
@@ -91,7 +92,8 @@ void gc_block::process(const std::vector<std::uint16_t>& in,
                        std::vector<std::uint16_t>& out,
                        std::uint32_t width,
                        std::uint32_t height,
-                       const gc_config& cfg) const
+                       const gc_config& cfg,
+                       std::uint8_t bit_depth) const
 {
     const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
     out.resize(samples);
@@ -99,5 +101,5 @@ void gc_block::process(const std::vector<std::uint16_t>& in,
         std::fill(out.begin(), out.end(), 0u);
         return;
     }
-    process(in.data(), out.data(), width, height, cfg);
+    process(in.data(), out.data(), width, height, cfg, bit_depth);
 }

@@ -50,8 +50,8 @@ void isp_pipeline::set_lsc_mem(const float *lsc_mem) {
 void isp_pipeline::set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern) {
    input_bit_depth_ = bit_depth;
    input_bayer_pattern_ = bayer_pattern;
-   // All processing blocks operate at 12-bit working precision
-   working_bit_depth_ = 12;
+   // Default to matching input bit depth to avoid scaling, can be overridden via set_working_bit_depth
+   working_bit_depth_ = bit_depth;
 }
 
 void isp_pipeline::run(const std::uint16_t *raw_in,
@@ -66,8 +66,8 @@ void isp_pipeline::run(const std::uint16_t *raw_in,
    const std::size_t rgb_pixels = raw_pixels * 3u;
    const std::size_t yuv_pixels = raw_pixels * 3u;
 
-   // Normalize input to 12-bit working range (0..4095).
-   // For 12-bit input: no change. For 16-bit input: shift right by 4.
+   // Normalize input to working range if different from input range.
+   // For matching bit depths: no change. For different depths: scale accordingly.
    const std::uint32_t work_max = (1u << working_bit_depth_) - 1u;
    const std::uint32_t src_max = (1u << input_bit_depth_) - 1u;
    if (src_max == 0)
@@ -112,11 +112,11 @@ void isp_pipeline::run(const std::uint16_t *raw_in,
       wb_cfg.r_gain *= awb_r_gain_;
       wb_cfg.b_gain *= awb_b_gain_;
    }
-   wb_.process(demosaic_out_.data(), wb_out_.data(), width_, height_, wb_cfg);
+   wb_.process(demosaic_out_.data(), wb_out_.data(), width_, height_, wb_cfg, bd);
 
-   ccm_.process(wb_out_.data(), ccm_out_.data(), width_, height_, cfg.ccm);
-   gc_.process(ccm_out_.data(), gc_out_.data(), width_, height_, cfg.gc);
-   csc_.process(gc_out_.data(), csc_out_.data(), width_, height_, cfg.csc);
+   ccm_.process(wb_out_.data(), ccm_out_.data(), width_, height_, cfg.ccm, bd);
+   gc_.process(ccm_out_.data(), gc_out_.data(), width_, height_, cfg.gc, bd);
+   csc_.process(gc_out_.data(), csc_out_.data(), width_, height_, cfg.csc, bd);
    cse_.process(csc_out_.data(), cse_out_.data(), width_, height_, cfg.cse);
    sharpen_.process(cse_out_.data(), sharpen_out_.data(), width_, height_, cfg.sharpen);
    twodnr_.process(sharpen_out_.data(), twodnr_out_.data(), width_, height_, cfg.twodnr);

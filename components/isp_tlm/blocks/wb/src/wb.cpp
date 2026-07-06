@@ -23,8 +23,10 @@ void wb_block::process(const std::uint16_t* in,
                        std::uint16_t* out,
                        std::uint32_t width,
                        std::uint32_t height,
-                       const wb_config& cfg) const
+                       const wb_config& cfg,
+                       std::uint8_t bit_depth) const
 {
+    const std::uint16_t max_value = static_cast<std::uint16_t>((1u << bit_depth) - 1);
     const std::size_t pixels = static_cast<std::size_t>(width) * height;
     if (in == nullptr || out == nullptr || pixels == 0u) {
         return;
@@ -40,9 +42,9 @@ void wb_block::process(const std::uint16_t* in,
 
     for (std::size_t p = 0; p < pixels; ++p) {
         const std::size_t i = p * 3u;
-        out[i]     = scale_and_clip(in[i],     cfg.r_gain, 4095);
+        out[i]     = scale_and_clip(in[i],     cfg.r_gain, max_value);
         out[i + 1u] = in[i + 1u];
-        out[i + 2u] = scale_and_clip(in[i + 2u], cfg.b_gain, 4095);
+        out[i + 2u] = scale_and_clip(in[i + 2u], cfg.b_gain, max_value);
     }
 }
 
@@ -50,7 +52,8 @@ void wb_block::process(const std::vector<std::uint16_t>& in,
                        std::vector<std::uint16_t>& out,
                        std::uint32_t width,
                        std::uint32_t height,
-                       const wb_config& cfg) const
+                       const wb_config& cfg,
+                       std::uint8_t bit_depth) const
 {
     const std::size_t pixels = static_cast<std::size_t>(width) * height;
     const std::size_t samples = pixels * 3u;
@@ -59,5 +62,5 @@ void wb_block::process(const std::vector<std::uint16_t>& in,
         std::fill(out.begin(), out.end(), 0u);
         return;
     }
-    process(in.data(), out.data(), width, height, cfg);
+    process(in.data(), out.data(), width, height, cfg, bit_depth);
 }

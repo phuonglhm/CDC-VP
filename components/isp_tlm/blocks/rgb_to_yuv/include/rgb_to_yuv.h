@@ -5,7 +5,6 @@
 
 struct csc_config {
     std::uint8_t conv_standard = 1;
-    std::uint8_t bit_depth = 12;
 };
 
 class csc_block {
@@ -14,11 +13,13 @@ public:
                  std::uint8_t* out,
                  std::uint32_t width,
                  std::uint32_t height,
-                 const csc_config& cfg) const;
+                 const csc_config& cfg,
+                 std::uint8_t bit_depth) const;
 
     void process(const std::vector<std::uint16_t>& in,
                  std::vector<std::uint8_t>& out,
                  std::uint32_t width,
                  std::uint32_t height,
-                 const csc_config& cfg) const;
+                 const csc_config& cfg,
+                 std::uint8_t bit_depth) const;
 };
