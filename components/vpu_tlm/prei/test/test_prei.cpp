@@ -18,7 +18,7 @@ static int g_failures = 0;
             std::cerr << "[FAIL] " << #expr << std::endl;                 \
         } else {                                                           \
             std::cout << "[PASS] " << #expr << std::endl;                 \
-        }                                                                  \
+        }                                                                 \
     } while (0)
 
 static cdc::components::frame make_gradient_frame(std::uint32_t width,
@@ -78,20 +78,32 @@ static void test_prei_multiple_positions()
     std::cout << "\n[TEST] PREI multiple block positions\n";
 
     frame input = make_gradient_frame(64, 64);
-
     prei dut;
 
     const block block0(0, 0, 16, block_type::ctu);
     const block block1(16, 16, 16, block_type::ctu);
     const block block2(32, 32, 16, block_type::ctu);
+    const block block3(48, 48, 16, block_type::ctu);
 
-    const prei_result result0 = dut.run(input, block0);
-    const prei_result result1 = dut.run(input, block1);
-    const prei_result result2 = dut.run(input, block2);
+    CHECK(dut.run(input, block0).valid);
+    CHECK(dut.run(input, block1).valid);
+    CHECK(dut.run(input, block2).valid);
+    CHECK(dut.run(input, block3).valid);
+}
 
-    CHECK(result0.valid);
-    CHECK(result1.valid);
-    CHECK(result2.valid);
+static void test_prei_empty_frame_invalid()
+{
+    using namespace cdc::components;
+
+    std::cout << "\n[TEST] PREI empty frame invalid input\n";
+
+    frame empty;
+    block ctu(0, 0, 16, block_type::ctu);
+
+    prei dut;
+    prei_result result = dut.run(empty, ctu);
+
+    CHECK(!result.valid);
 }
 
 int sc_main(int argc, char* argv[])
@@ -100,17 +112,18 @@ int sc_main(int argc, char* argv[])
     (void)argv;
 
     std::cout << "========================================\n";
-    std::cout << " PREI Unit Test\n";
+    std::cout << " PREI Deep Unit Test\n";
     std::cout << "========================================\n";
 
     test_prei_gradient_ctu();
     test_prei_flat_ctu();
     test_prei_multiple_positions();
+    test_prei_empty_frame_invalid();
 
     if (g_failures == 0) {
-        std::cout << "\nPREI test PASSED\n";
+        std::cout << "\nPREI deep test PASSED\n";
     } else {
-        std::cout << "\nPREI test FAILED, failures = " << g_failures << "\n";
+        std::cout << "\nPREI deep test FAILED, failures = " << g_failures << "\n";
     }
 
     return g_failures == 0 ? 0 : 1;
