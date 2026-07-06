@@ -319,19 +319,8 @@ Successfully saved YUV output to output/output.yuv
 Output size: 6128640 bytes
 Metadata written to: output/output.yuv.json
 
-========================================
-To view the output, run:
-  ffplay -f rawvideo -pixel_format yuv420p -video_size 2688x1520 output/output.yuv
-========================================
 ```
 
-### Viewing the Output
-
-The tool prints a ready-to-use `ffplay` command. The YUV file can also be opened in any raw YUV viewer:
-
-```bash
-ffplay -f rawvideo -pixel_format yuv420p -video_size 2688x1520 output/output.yuv
-```
 
 ### Output Files
 
@@ -380,7 +369,9 @@ components/isp_tlm/
 │   └── CMakeLists.txt
 └── input/
     ├── A_raw_2688x1520_5376.raw
-    └── ColorChecker_2592x1536_12bits_RGGB.raw
+    ├── ColorChecker_2592x1536_12bits_RGGB.raw
+    └── ...
+    
 ```
 
 ---
