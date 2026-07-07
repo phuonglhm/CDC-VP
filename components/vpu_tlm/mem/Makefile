@@ -1,8 +1,9 @@
-# Compiler
 CXX      := g++
+# Common include directory (overrideable from environment)
 COMMON_DIR ?= ../common
 COMMON_INCLUDE ?= $(COMMON_DIR)/include
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -I$(COMMON_INCLUDE) -g
+
+CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -I$(COMMON_INCLUDE) -I../ime/include -I../fme/include -I../prei/include -I../posi/include -g
 
 ## FORCE using the local SystemC 2.3.4 install in the user's home
 SYSTEMC_HOME := $(HOME)/.local
@@ -17,9 +18,7 @@ LDFLAGS      := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib
 # Target library
 LIBS := -lsystemc
 
-# Precompiled header (speeds up repeated inclusion of heavy headers like SystemC)
-# Use a copy of the header inside $(OBJ_DIR) so generated .gch stays in build/
-# Directories and target
+# Directories and targets
 SRC_DIR := src
 OBJ_DIR := build
 BIN_DIR := out
@@ -29,39 +28,31 @@ SRCS := $(wildcard $(SRC_DIR)/*.cpp)
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 
-# Optional fetch integration for tests. Enable with: `make testbench USE_FETCH=1`
-# When enabled, add the fetch include path and compile the FetchWrapper
-# and SimpleMemory sources into the rec build so tests can exercise fetch.
-ifeq ($(USE_FETCH),1)
-CXXFLAGS += -I../fetch/include -DUSE_FETCH
-# Use canonical SimpleMemory from common/src
-FETCH_SRCS := ../fetch/src/fetch_wrapper_tlm.cpp ../common/src/simple_memory.cpp
-FETCH_OBJS := $(OBJ_DIR)/fetch_wrapper_tlm.o $(OBJ_DIR)/simple_memory.o
-FETCH_DEPS := $(FETCH_OBJS:.o=.d)
-else
-FETCH_SRCS :=
-FETCH_OBJS :=
-FETCH_DEPS :=
-endif
-
 .PHONY: all main run clean testbench
+
+# Default build target: build the testbench by default
+all: $(TEST_TARGET)
 
 # Testbench dirs/targets
 TEST_DIR := test
 # Gather test sources, but exclude helper implementation files
 TEST_SRC_ALL := $(wildcard $(TEST_DIR)/*.cpp)
-TEST_SRC := $(filter-out $(TEST_DIR)/coeff_monitor.cpp $(TEST_DIR)/db_monitor.cpp $(TEST_DIR)/frame_buffer.cpp, $(TEST_SRC_ALL))
+TEST_SRC := $(filter-out $(TEST_DIR)/coeff_monitor.cpp $(TEST_DIR)/db_monitor.cpp $(TEST_DIR)/frame_buffer.cpp $(TEST_DIR)/integration_db_mem.cpp, $(TEST_SRC_ALL))
 TEST_TARGET := $(BIN_DIR)/testbench
 TEST_OBJS := $(patsubst $(TEST_DIR)/%.cpp,$(OBJ_DIR)/test_%.o,$(TEST_SRC))
+EXTRA_OBJS := $(OBJ_DIR)/common_frame.o $(OBJ_DIR)/ime_ime.o $(OBJ_DIR)/fme_fme.o $(OBJ_DIR)/prei_prei.o $(OBJ_DIR)/posi_posi.o $(OBJ_DIR)/simple_memory.o
 TEST_DEPS := $(TEST_OBJS:.o=.d)
+
+# Integration test target (builds test/integration_db_mem.cpp separately)
+INTEGRATION_SRC := $(TEST_DIR)/integration_db_mem.cpp
+INTEGRATION_OBJ := $(OBJ_DIR)/test_integration_db_mem.o
+INTEGRATION_TARGET := $(BIN_DIR)/integration_db_mem
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
-
-# Note: precompiled header support removed to simplify the build.
 
 # Compile source files into object files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
@@ -71,25 +62,33 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
 $(OBJ_DIR)/test_%.o: $(TEST_DIR)/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
 
-# Compile selected fetch_tlm sources into the rec build using the
-# fetch_tlm include directory so their internal relative includes work.
-ifeq ($(USE_FETCH),1)
-$(OBJ_DIR)/fetch_wrapper_tlm.o: ../fetch/src/fetch_wrapper_tlm.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -I../fetch/include -MMD -c $< -o $@
-
-$(OBJ_DIR)/simple_memory.o: ../common/src/simple_memory.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
-endif
-
 # Link object files into final executable (Objects MUST precede -lsystemc)
-$(TARGET): $(OBJS) $(FETCH_OBJS) | $(BIN_DIR)
+$(TARGET): $(OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # Link testbench (link against src objects as well)
-$(TEST_TARGET): $(TEST_OBJS) $(OBJS) $(FETCH_OBJS) | $(BIN_DIR)
+$(TEST_TARGET): $(TEST_OBJS) $(OBJS) $(EXTRA_OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
--include $(DEPS) $(TEST_DEPS) $(FETCH_DEPS)
+$(OBJ_DIR)/common_frame.o: ../common/src/frame.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/ime_ime.o: ../ime/src/ime.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/fme_fme.o: ../fme/src/fme.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/prei_prei.o: ../prei/src/prei.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/posi_posi.o: ../posi/src/posi.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/simple_memory.o: ../common/src/simple_memory.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+-include $(DEPS) $(TEST_DEPS)
 
 run: $(TARGET)
 	./$(TARGET)
@@ -99,6 +98,13 @@ main: run
 # Build and run the testbench executable from test/testbench.cpp
 testbench: $(TEST_TARGET)
 	./$(TEST_TARGET)
+
+.PHONY: integration
+integration: $(INTEGRATION_TARGET)
+	./$(INTEGRATION_TARGET)
+
+$(INTEGRATION_TARGET): $(INTEGRATION_OBJ) $(OBJS) $(EXTRA_OBJS) | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
 clean:
 	rm -rf $(OBJ_DIR) $(BIN_DIR)

@@ -6,13 +6,10 @@ RecTQ::RecTQ(sc_core::sc_module_name name) :
 }
 
 void RecTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    // Unpack the incoming generic payload into a typed RecPacket, then
-    // re-pack and forward a local transaction to the InvTQ path. This keeps
-    // RecTQ simple: it doesn't need reference pixels, only packet routing.
-    RecPacket pkt = unpackRecPacket(trans);
+    CustomPacket pkt = unpackCustomPacket(trans);
 
     // If this is a RESIDUAL packet, perform DCT -> Quantize and send COEFF
-    if (pkt.cmd == RecCmd::RESIDUAL) {
+    if (pkt.cmd == CustomCmd::RESIDUAL) {
         // Parse residual samples: pkt.data holds biased-by-128 signed residuals
         uint8_t blk_size = pkt.size; // 0:4x4,1:8x8,...
         int side = 4 << blk_size;
@@ -32,9 +29,8 @@ void RecTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
         bool type_i = (pkt.pred_type == static_cast<uint8_t>(PredType::INTRA));
         quantize(blk_size, coeffs, pkt.qp, type_i, qcoeffs);
 
-        //build COEFF packet for cabac
-        RecPacket c_pkt = pkt;
-        c_pkt.cmd = RecCmd::COEFF;
+        CustomPacket c_pkt = pkt;
+        c_pkt.cmd = CustomCmd::COEFF;
         c_pkt.data.clear();
         // pack qcoeffs as little-endian int16
         for (int i = 0; i < n; ++i) {
@@ -48,7 +44,7 @@ void RecTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
         std::cout << "----------------TQ Packet (internal)---------------" << std::endl;
         std::cout << pkt;
         //cabac forward
-        std::vector<uint8_t> cabac_buf = packRecPacket(c_pkt);
+        std::vector<uint8_t> cabac_buf = packCustomPacket(c_pkt);
         tlm::tlm_generic_payload cabac_trans;
         cabac_trans.set_command(tlm::TLM_WRITE_COMMAND);
         cabac_trans.set_address(0);
@@ -70,7 +66,7 @@ void RecTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
     }
 
     // default behavior: forward to inv_tq
-    std::vector<uint8_t> buf = packRecPacket(pkt);
+    std::vector<uint8_t> buf = packCustomPacket(pkt);
     tlm::tlm_generic_payload new_trans;
     new_trans.set_command(tlm::TLM_WRITE_COMMAND);
     new_trans.set_address(0);

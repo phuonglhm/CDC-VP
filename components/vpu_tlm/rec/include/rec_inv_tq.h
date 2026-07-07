@@ -5,7 +5,7 @@
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
-#include "rec_packet.h"
+#include "custom_packet.h"
 
 class InvTQ : sc_core::sc_module {
     public:

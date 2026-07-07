@@ -14,10 +14,10 @@ const int InvTQ::inverse_data_mux[6] = { 40, 45, 51, 57, 64, 72 };
 
 void InvTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
     // Unpack the incoming packet
-    RecPacket pkt = unpackRecPacket(trans);
+    CustomPacket pkt = unpackCustomPacket(trans);
 
     // If this is a COEFF packet, perform inverse quantize + inverse transform
-    if (pkt.cmd == RecCmd::COEFF) {
+    if (pkt.cmd == CustomCmd::COEFF) {
         int side = 4 << pkt.size;
         int N = side * side;
 
@@ -47,8 +47,8 @@ void InvTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
         inv_DCT(pkt.size, deq, recon);
 
         // Build RESIDUAL packet with reconstructed spatial samples (biased by +128)
-        RecPacket out_pkt = pkt;
-        out_pkt.cmd = RecCmd::RESIDUAL;
+        CustomPacket out_pkt = pkt;
+        out_pkt.cmd = CustomCmd::RESIDUAL;
         out_pkt.data.clear();
         out_pkt.data.reserve(N);
         for (int i = 0; i < N; ++i) {
@@ -59,7 +59,7 @@ void InvTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
             out_pkt.data.push_back(static_cast<uint8_t>(biased));
         }
 
-        std::vector<uint8_t> buf = packRecPacket(out_pkt);
+        std::vector<uint8_t> buf = packCustomPacket(out_pkt);
 
         std::cout << "------------Inverse TQ Packet (internal)----------------" << std::endl;
         std::cout << out_pkt;

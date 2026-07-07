@@ -21,22 +21,22 @@ class TestBench : sc_module {
     CoeffMonitor coeff_monitor;
     DBMonitor db_monitor;
     FrameBuffer frame_buffer;
-    bool dataflow_test(const RecPacket &pkt = RecPacket());
-    bool recIntra_DCMode_test(const RecPacket &pkt = RecPacket());
-    bool recIntra_PlanarMode_test(const RecPacket &pkt = RecPacket());
-    bool recIntra_AngularMode_test(const RecPacket &pkt = RecPacket());
-    bool recMc_test(const RecPacket &pkt = RecPacket());
-    bool mcPre_to_db_test(const RecPacket &pkt = RecPacket());
-    bool mcReadReq_no_mv_fallback_test(const RecPacket &pkt = RecPacket());
-    bool coeffThroughInvTq_test(const RecPacket &pkt = RecPacket());
-    bool large_block_tq_test(const RecPacket &pkt = RecPacket());
-    bool pack_unpack_roundtrip_test(const RecPacket &pkt = RecPacket());
-    bool subblock_offset_test(const RecPacket &pkt = RecPacket());
-    bool qp_extremes_test(const RecPacket &pkt = RecPacket());
-    bool short_payload_handling_test(const RecPacket &pkt = RecPacket());
-    bool residual_test(const RecPacket &pkt = RecPacket());
-    bool tq_test(const RecPacket &pkt = RecPacket());
-    bool inv_tq_test(const RecPacket &pkt = RecPacket());
+    bool dataflow_test(const CustomPacket &pkt = CustomPacket());
+    bool recIntra_DCMode_test(const CustomPacket &pkt = CustomPacket());
+    bool recIntra_PlanarMode_test(const CustomPacket &pkt = CustomPacket());
+    bool recIntra_AngularMode_test(const CustomPacket &pkt = CustomPacket());
+    bool recMc_test(const CustomPacket &pkt = CustomPacket());
+    bool mcPre_to_db_test(const CustomPacket &pkt = CustomPacket());
+    bool mcReadReq_no_mv_fallback_test(const CustomPacket &pkt = CustomPacket());
+    bool coeffThroughInvTq_test(const CustomPacket &pkt = CustomPacket());
+    bool large_block_tq_test(const CustomPacket &pkt = CustomPacket());
+    bool pack_unpack_roundtrip_test(const CustomPacket &pkt = CustomPacket());
+    bool subblock_offset_test(const CustomPacket &pkt = CustomPacket());
+    bool qp_extremes_test(const CustomPacket &pkt = CustomPacket());
+    bool short_payload_handling_test(const CustomPacket &pkt = CustomPacket());
+    bool residual_test(const CustomPacket &pkt = CustomPacket());
+    bool tq_test(const CustomPacket &pkt = CustomPacket());
+    bool inv_tq_test(const CustomPacket &pkt = CustomPacket());
 };
 
 #endif

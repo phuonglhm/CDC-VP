@@ -4,16 +4,16 @@
 #include <systemc>
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
-#include "rec_memory.h"
+#include "memory_if.h"
 #include <vector>
 #include <algorithm>
 
 // Combined in-repo memory target and bridge helper.
-// - `MemBridge` implements `RecMemoryIf` and forwards requests to an external
+// - `MemBridge` implements `MemoryIf` and forwards requests to an external
 //   TLM memory using an initiator socket.
-// - `RecMemory` is a small local storage implementing `RecMemoryIf` for tests.
+// - `RecMemory` is a small local storage implementing `MemoryIf` for tests.
 
-class MemBridge : public sc_core::sc_module, public RecMemoryIf {
+class MemBridge : public sc_core::sc_module, public MemoryIf {
 public:
     tlm_utils::simple_initiator_socket<MemBridge> socket;
 
@@ -88,7 +88,7 @@ private:
     }
 };
 
-class RecMemory : public sc_core::sc_module, public RecMemoryIf {
+class RecMemory : public sc_core::sc_module, public MemoryIf {
 public:
     RecMemory(sc_core::sc_module_name name, uint32_t width = 256, uint32_t height = 256, bool use_dummy = false, uint8_t dummy_value = 128);
 
