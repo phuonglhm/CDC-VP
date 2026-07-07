@@ -15,13 +15,11 @@ public:
                  std::uint16_t* out,
                  std::uint32_t width,
                  std::uint32_t height,
-                 const wb_config& cfg,
-                 std::uint8_t bit_depth) const;
+                 const wb_config& cfg) const;
 
     void process(const std::vector<std::uint16_t>& in,
                  std::vector<std::uint16_t>& out,
                  std::uint32_t width,
                  std::uint32_t height,
-                 const wb_config& cfg,
-                 std::uint8_t bit_depth) const;
+                 const wb_config& cfg) const;
 };

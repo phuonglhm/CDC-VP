@@ -33,84 +33,105 @@ A 3-tier Transaction-Level Model (TLM) of an Image Signal Processor (ISP) for th
 
 ## TLM Register Map
 
-Firmware can access ISP tuning parameters via memory-mapped registers through the TLM-2.0 socket. All registers are 32-bit aligned.
+Firmware can access ISP tuning parameters via memory-mapped registers through the TLM-2.0 socket.
 
 ### Global Registers
+
 | Address | Name | Description |
 |---------|------|-------------|
-| 0x0000 | `REG_CTRL` | Control register (bit 0: ENABLE, bit 1: START) |
-| 0x0004 | `REG_STATUS` | Status register (bit 0: DONE, bit 1: IDLE) |
-| 0x0008 | `REG_IRQ_ENABLE` | Interrupt Enable register |
-| 0x000C | `REG_IRQ_STATUS` | Interrupt Status register |
-| 0x0024 | `REG_WIDTH` | Image width |
-| 0x0028 | `REG_HEIGHT` | Image height |
-| 0x002C | `REG_STRIDE` | Line stride in bytes |
-| 0x0030 | `REG_FORMAT` | Image format |
-| 0x0034 | `REG_OP_MODE` | Operating mode |
-| 0x0040 | `REG_BIT_DEPTH` | Input bit depth (8, 10, 12, 14) |
-| 0x0044 | `REG_BAYER_PATTERN` | Bayer pattern (0=RGGB, 1=GRBG, 2=BGGR, 3=GBRG) |
+| 0x000 | `REG_ISP_ENABLE` | Global ISP enable |
+| 0x004 | `REG_STATUS` | Status register (bit 0: DONE, bit 1: BUSY) |
+| 0x008 | `REG_TRIGGER` | Trigger processing (write 1 to start) |
+| 0x00C | `REG_WIDTH` | Image width |
+| 0x010 | `REG_HEIGHT` | Image height |
+| 0x014 | `REG_BIT_DEPTH` | Bit depth (8, 10, 12, 14) |
+| 0x018 | `REG_BAYER_PATTERN` | Bayer pattern (0=RGGB, 1=GRBG, 2=BGGR, 3=GBRG) |
 
-### Buffer Descriptors
+### BLC Registers
+
 | Address | Name | Description |
 |---------|------|-------------|
-| 0x0100 | `REG_SRC_ADDR` | DRAM source address of input RAW frame |
-| 0x0104 | `REG_DST_ADDR` | DRAM destination address of output YUV frame |
-| 0x0108 | `REG_SCRATCH_ADDR` | DRAM scratch buffer address |
-| 0x010C | `REG_SRC_SIZE_BYTES` | Source frame size in bytes |
-| 0x0110 | `REG_DST_SIZE_BYTES` | Destination frame size in bytes |
-| 0x0114 | `REG_WEIGHTS_ADDR` | DRAM weights buffer address |
-| 0x0118 | `REG_PARAM_ADDR` | DRAM LSC parameters buffer address |
+| 0x020 | `REG_BLC_ENABLE` | Enable BLC |
+| 0x024 | `REG_BLC_R_OFFSET` | Red channel offset |
+| 0x028 | `REG_BLC_GR_OFFSET` | Green-Red channel offset |
+| 0x02C | `REG_BLC_GB_OFFSET` | Green-Blue channel offset |
+| 0x030 | `REG_BLC_B_OFFSET` | Blue channel offset |
 
-### Processing Block Registers
-The configuration offsets of each processing block are mapped sequentially:
+### AWB Registers
 
-* **BLC (0x1000 - 0x107F)**: `REG_BLC_ENABLE` (0x1000), `REG_BLC_LINEAR` (0x1004), offsets for R/GR/GB/B channels (0x1008 - 0x1014), and saturation limits for R/GR/GB/B channels (0x1018 - 0x1024).
-* **DPC (0x1080 - 0x10FF)**: `REG_DPC_ENABLE` (0x1080), `REG_DPC_THRESH` (0x1084).
-* **LSC (0x1100 - 0x117F)**: `REG_LSC_ENABLE` (0x1100), `REG_LSC_GRID_W` (0x1104), `REG_LSC_GRID_H` (0x1108).
-* **DG (0x1180 - 0x11FF)**: `REG_DG_ENABLE` (0x1180), `REG_DG_GAIN` (0x1184), `REG_DG_AUTO` (0x1188).
-* **BNR (0x1200 - 0x127F)**: `REG_BNR_ENABLE` (0x1200), `REG_BNR_WINDOW` (0x1204).
-* **Demosaic (0x1280 - 0x12FF)**: `REG_DEMOSAIC_ENABLE` (0x1280).
-* **AWB (0x1300 - 0x137F)**: `REG_AWB_ENABLE` (0x1300), `REG_AWB_ALGORITHM` (0x1304), computed R/B gains (0x1308, 0x130C), threshold percentages (0x1310 - 0x1318).
-* **WB (0x1380 - 0x13FF)**: `REG_WB_ENABLE` (0x1380), manual R/B gains (0x1384, 0x1388).
-* **CCM (0x1400 - 0x147F)**: `REG_CCM_ENABLE` (0x1400), 3x3 floating point correction matrix (0x1404 - 0x1424).
-* **GC (0x1480 - 0x14FF)**: `REG_GC_ENABLE` (0x1480), `REG_GC_GAMMA` (0x1484), indirect LUT address and data ports (`REG_GC_LUT_ADDR` 0x1488, `REG_GC_LUT_DATA` 0x148C).
-* **AEC (0x1500 - 0x157F)**: `REG_AEC_ENABLE` (0x1500), `REG_AEC_FEEDBACK` (0x1504), tuning parameters (0x1508, 0x150C).
-* **CSC (0x1580 - 0x15FF)**: `REG_CSC_ENABLE` (0x1580), `REG_CSC_STANDARD` (0x1584).
-* **CSE (0x1600 - 0x167F)**: `REG_CSE_ENABLE` (0x1600), `REG_CSE_SAT_GAIN` (0x1604).
-* **Sharpen (0x1680 - 0x16FF)**: `REG_SHARPEN_ENABLE` (0x1680), `REG_SHARPEN_SIGMA` (0x1684), `REG_SHARPEN_STRENGTH` (0x1688).
-* **2DNR (0x1700 - 0x177F)**: `REG_2DNR_ENABLE` (0x1700), search window (0x1704), patch size (0x1708), filtering weight (0x170C).
-* **Scale (0x1780 - 0x17FF)**: `REG_SCALE_ENABLE` (0x1780), output width (0x1784), output height (0x1788).
-* **YUV420 (0x1800 - 0x187F)**: `REG_YUV420_ENABLE` (0x1800).
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x085 | `REG_AWB_ENABLE` | Enable Auto White Balance |
+| 0x086 | `REG_AWB_ALGORITHM` | AWB algorithm selection |
+| 0x087 | `REG_AWB_R_GAIN` | Computed red gain (float) |
+| 0x088 | `REG_AWB_B_GAIN` | Computed blue gain (float) |
 
----
+### WB Registers
 
-## C++ Public APIs
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x090 | `REG_WB_ENABLE` | Enable White Balance |
+| 0x094 | `REG_WB_R_GAIN` | Red channel gain (float) |
+| 0x098 | `REG_WB_B_GAIN` | Blue channel gain (float) |
 
-The `isp_tlm` SystemC module exposes a minimal public C++ interface:
+### CCM Registers
 
-* **`std::uint16_t* get_raw_buffer()`**: Returns a pointer to the internal raw input buffer. Lazily allocates/resizes the buffer if the register configuration (`REG_WIDTH`, `REG_HEIGHT`) changes.
-* **`std::uint8_t* get_yuv_buffer()`**: Returns a pointer to the internal YUV output buffer. Lazily allocates/resizes the buffer.
-* **`std::size_t get_raw_buffer_size()`**: Returns the current raw input buffer size in bytes.
-* **`std::size_t get_yuv_buffer_size()`**: Returns the current YUV output buffer size in bytes.
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x0A0 | `REG_CCM_ENABLE` | Enable CCM |
+| 0x0A4 | `REG_CCM_MATRIX00` | Matrix[0][0] (float) |
+| 0x0A8 | `REG_CCM_MATRIX01` | Matrix[0][1] (float) |
+| 0x0AC | `REG_CCM_MATRIX02` | Matrix[0][2] (float) |
+| 0x0B0 | `REG_CCM_MATRIX10` | Matrix[1][0] (float) |
+| 0x0B4 | `REG_CCM_MATRIX11` | Matrix[1][1] (float) |
+| 0x0B8 | `REG_CCM_MATRIX12` | Matrix[1][2] (float) |
+| 0x0BC | `REG_CCM_MATRIX20` | Matrix[2][0] (float) |
+| 0x0C0 | `REG_CCM_MATRIX21` | Matrix[2][1] (float) |
+| 0x0C4 | `REG_CCM_MATRIX22` | Matrix[2][2] (float) |
 
-*Note: All hardware configurations, control triggers, and status queries must go through the standard TLM-2.0 register access socket (`socket`).*
+### CSC Registers
 
-## Interrupt Condition and Reset
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x0E0 | `REG_CSC_STANDARD` | Conversion standard (0=BT.601, 1=BT.709) |
 
-### Interrupt Flow
-1. **Enable**: Firmware enables interrupts by writing `1` to `REG_IRQ_ENABLE` (`0x0008`).
-2. **Completion**: When the ISP finishes processing a frame, it:
-   * Sets the `STATUS_DONE` bit (bit 0) in `REG_STATUS` (`0x0004`).
-   * Sets the interrupt status bit in `REG_IRQ_STATUS` (`0x000C`).
-   * Asserts the physical `irq` pin high.
-3. **Clearing**: To clear the interrupt and deassert the `irq` pin, firmware must either trigger a new transaction (which starts the next run) or perform a reset.
+### CSE Registers
 
-### Reset Behavior
-When the physical hardware `reset_n` pin goes low, the TLM wrapper invokes `pipeline_.reset()`. This:
-* Resets all internal MMIO registers to default values.
-* Clears the `processing_done_` flag (clearing the `DONE` status bit).
-* Deasserts the `irq` pin.
-* Clears all internal buffer vectors.
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x0F0 | `REG_CSE_ENABLE` | Enable Color Saturation Enhancement |
+| 0x0F4 | `REG_CSE_SAT_GAIN` | Saturation gain (float) |
+
+### Sharpen Registers
+
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x100 | `REG_SHARPEN_ENABLE` | Enable Sharpen |
+| 0x104 | `REG_SHARPEN_SIGMA` | Gaussian sigma (uint8) |
+| 0x108 | `REG_SHARPEN_STRENGTH` | Sharpen strength (uint16) |
+
+### 2DNR Registers
+
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x110 | `REG_2DNR_ENABLE` | Enable 2D Noise Reduction |
+| 0x114 | `REG_2DNR_WINDOW` | Search window size (uint8) |
+| 0x118 | `REG_2DNR_PATCH` | Patch size (uint8) |
+| 0x11C | `REG_2DNR_WTS` | Weight parameter (uint16) |
+
+### Scale Registers
+
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x120 | `REG_SCALE_ENABLE` | Enable Scaling |
+| 0x124 | `REG_SCALE_OUT_W` | Output width |
+| 0x128 | `REG_SCALE_OUT_H` | Output height |
+
+### YUV420 Registers
+
+| Address | Name | Description |
+|---------|------|-------------|
+| 0x130 | `REG_YUV420_ENABLE` | Enable YUV420 output |
 
 ---
 
@@ -266,7 +287,7 @@ This keeps all generated artifacts in one consistent place.
 
 For `ColorChecker_2592x1536_12bits_RGGB.raw` (12-bit, RGGB):
 ```bash
-cd <YourPath...>/CDC-VP
+cd CDC-VP
 ./build/bremen/components/isp_tlm/tests/isp_run \
   -i components/isp_tlm/input/ColorChecker_2592x1536_12bits_RGGB.raw \
   -w 2592 --height 1536 -b 12 -p 0
@@ -274,7 +295,7 @@ cd <YourPath...>/CDC-VP
 
 For `A_raw_2688x1520_5376.raw` (16-bit, BGGR):
 ```bash
-cd <YourPath...>/CDC-VP
+cd CDC-VP
 ./build/bremen/components/isp_tlm/tests/isp_run \
   -i components/isp_tlm/input/A_raw_2688x1520_5376.raw \
   -w 2688 --height 1520 -b 16 -p 2
@@ -300,6 +321,13 @@ Metadata written to: output/output.yuv.json
 
 ```
 
+### Viewing the Output
+
+The tool prints a ready-to-use `ffplay` command. The YUV file can also be opened in any raw YUV viewer:
+
+```bash
+ffplay -f rawvideo -pixel_format yuv420p -video_size 2688x1520 output/output.yuv
+```
 
 ### Output Files
 
@@ -350,7 +378,6 @@ components/isp_tlm/
     ├── A_raw_2688x1520_5376.raw
     ├── ColorChecker_2592x1536_12bits_RGGB.raw
     └── ...
-    
 ```
 
 ---
@@ -368,33 +395,32 @@ int sc_main(int argc, char* argv[]) {
 
     // Configure image dimensions
     std::uint32_t val = 640;
-    probe.write(0x0024, &val, 4);  // REG_WIDTH
+    probe.write(0x00C, &val, 4);  // REG_WIDTH
     val = 480;
-    probe.write(0x0028, &val, 4);  // REG_HEIGHT
+    probe.write(0x010, &val, 4);  // REG_HEIGHT
 
-    // Enable demosaic
+    // Enable ISP and demosaic
     val = 1;
-    probe.write(0x1280, &val, 4);  // REG_DEMOSAIC_ENABLE
+    probe.write(0x000, &val, 4);  // REG_ISP_ENABLE
+    probe.write(0x080, &val, 4);  // REG_DEMOSAIC_ENABLE
 
     // Set white balance gains
     float gain = 1.2f;
-    probe.write(0x1384, &gain, 4); // REG_WB_R_GAIN
-    val = 1;
-    probe.write(0x1380, &val, 4);  // REG_WB_ENABLE
+    probe.write(0x094, &gain, 4);  // REG_WB_R_GAIN
+    probe.write(0x090, &val, 4);   // REG_WB_ENABLE
 
     // Set CSC to BT.709
     val = 1;
-    probe.write(0x1584, &val, 4);  // REG_CSC_STANDARD
-    probe.write(0x1580, &val, 4);  // REG_CSC_ENABLE
+    probe.write(0x0E0, &val, 4);  // REG_CSC_STANDARD
 
-    // Copy input frame to ISP buffer (lazily allocates internally)
+    // Copy input frame to ISP buffer
     std::memcpy(isp.get_raw_buffer(), raw_data, sizeof(raw_data));
 
-    // Enable ISP and Trigger processing
-    val = 3;                       // ENABLE | START
-    probe.write(0x0000, &val, 4);  // REG_CTRL
+    // Trigger processing
+    val = 1;
+    probe.write(0x008, &val, 4);  // REG_TRIGGER
 
-    // Wait for processing to complete and read output
+    // Read output
     std::memcpy(yuv_data, isp.get_yuv_buffer(), sizeof(yuv_data));
 
     sc_core::sc_stop();

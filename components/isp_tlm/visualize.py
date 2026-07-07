@@ -4,6 +4,9 @@ import sys
 import os
 import json
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+
 try:
     import numpy as np
     import matplotlib.pyplot as plt
@@ -29,6 +32,12 @@ def read_metadata(yuv_path):
         except Exception as e:
             print(f"Warning: Could not read metadata from {json_path}: {e}")
     return None
+
+
+def ensure_output_dir():
+    """Create and return the canonical generated-output folder."""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    return OUTPUT_DIR
 
 
 def read_raw_image(filepath, width, height):
@@ -124,20 +133,23 @@ def read_yuv420(filepath, width, height):
 
 
 def find_output_yuv():
-    """Find the canonical output.yuv file. Prioritizes the output/ folder
-    inside the script directory, then components/isp_tlm/output/, then the
-    workspace root output path."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    """Find the canonical output.yuv file.
+
+    Prefer components/isp_tlm/output/, but keep legacy locations readable so
+    existing generated files can still be visualized.
+    """
     candidates = [
-        "output/output.yuv",
-        os.path.join(script_dir, "output", "output.yuv"),
+        os.path.join(OUTPUT_DIR, "output.yuv"),
+        os.path.join("output", "output.yuv"),
         "components/isp_tlm/output/output.yuv",
+        "output.yuv",
+        os.path.join(SCRIPT_DIR, "output.yuv"),
+        "components/isp_tlm/output.yuv",
     ]
     for c in candidates:
         if os.path.exists(c):
             return c
-    # Default if not found: prefer the script's own output/ folder
-    return os.path.join(script_dir, "output", "output.yuv")
+    return os.path.join(OUTPUT_DIR, "output.yuv")  # default if not found
 
 
 def main():
@@ -231,10 +243,8 @@ def main():
         axes[1].set_title("After: ISP Pipeline Output (YUV420)")
         axes[1].axis('off')
 
-        # Save standalone JPEG of the final output next to the YUV file,
-        # i.e. inside the same output/ folder.
-        yuv_dir = os.path.dirname(os.path.abspath(yuv_path)) or "."
-        output_jpg = os.path.join(yuv_dir, "output.jpg")
+        # Save standalone JPEG of the final output in the generated-output dir.
+        output_jpg = os.path.join(ensure_output_dir(), "output.jpg")
         try:
             plt.imsave(output_jpg, yuv_preview)
             print(f"Saved standalone output image to {output_jpg}")
@@ -245,10 +255,7 @@ def main():
         axes[1].axis('off')
 
     plt.tight_layout()
-    # Save the before/after comparison image next to the YUV file,
-    # i.e. inside the same output/ folder.
-    yuv_dir = os.path.dirname(os.path.abspath(yuv_path)) or "."
-    output_cmp = os.path.join(yuv_dir, "isp_before_after.jpg")
+    output_cmp = os.path.join(ensure_output_dir(), "isp_before_after.jpg")
     plt.savefig(output_cmp, dpi=150)
     print(f"Saved comparison visualization to {output_cmp}")
 
