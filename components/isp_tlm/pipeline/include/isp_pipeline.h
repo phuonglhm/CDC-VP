@@ -19,6 +19,7 @@
 #include "2dnr.h"
 #include "scale.h"
 #include "yuv420.h"
+#include "aec.h"
 #include "isp_types.h"
 #include "isp_regmap.h"
 
@@ -33,6 +34,7 @@ struct isp_config {
    wb_config wb;
    ccm_config ccm;
    gc_config gc;
+   aec_config aec;
    csc_config csc;
    cse_config cse;
    sharpen_config sharpen;
@@ -94,6 +96,20 @@ private:
    std::uint32_t raw_frame_addr_    = 0;
    std::uint32_t yuv_frame_addr_    = 0;
 
+   std::uint32_t ctrl_               = 0;
+   std::uint32_t irq_enable_         = 0;
+   std::uint32_t irq_status_         = 0;
+   std::uint32_t scratch_frame_addr_ = 0;
+   std::uint32_t src_size_bytes_     = 0;
+   std::uint32_t dst_size_bytes_     = 0;
+   std::uint32_t stride_             = 0;
+   std::uint32_t format_             = 0;
+   std::uint32_t op_mode_            = 0;
+   std::uint32_t weights_frame_addr_ = 0;
+   std::uint32_t param_frame_addr_   = 0;
+   std::uint32_t lut_addr_           = 0;
+   std::int32_t  aec_feedback_       = 0;
+
    std::vector<std::uint16_t> raw_buf_;
    std::vector<std::uint16_t> blc_out_;
    std::vector<std::uint16_t> dpc_out_;
@@ -121,6 +137,7 @@ private:
    wb_block       wb_;
    ccm_block      ccm_;
    gc_block       gc_;
+   aec_block      aec_;
    csc_block      csc_;
    cse_block      cse_;
    sharpen_block  sharpen_;

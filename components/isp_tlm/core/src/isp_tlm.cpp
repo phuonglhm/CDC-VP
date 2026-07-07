@@ -61,12 +61,10 @@ void isp_tlm::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &del
       std::uint32_t value = 0;
       std::memcpy(&value, ptr, sizeof(value));
 
-      // ISP_ENABLE and TRIGGER live here in the TLM shell (they control DMA / IRQ)
-      if (offset == REG_ISP_ENABLE) {
-         // just stored; nothing else to do at this layer
-      } else if (offset == REG_TRIGGER) {
+      // CTRL lives here in the TLM shell (bit 0 controls enable, bit 1 triggers processing)
+      if (offset == REG_CTRL) {
          pipeline_.write_reg(static_cast<std::uint32_t>(offset), value);
-         if (value & 0x1) {
+         if (value & 0x2) { // bit 1: START
             trigger_processing();
          }
       } else {
@@ -81,7 +79,7 @@ void isp_tlm::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &del
 }
 
 void isp_tlm::dma_read() {
-   std::uint32_t src_addr = pipeline_.read_reg(REG_RAW_FRAME_ADDR);
+   std::uint32_t src_addr = pipeline_.read_reg(REG_SRC_ADDR);
    if (src_addr == 0)
       return;
 
@@ -113,7 +111,7 @@ void isp_tlm::dma_read() {
 }
 
 void isp_tlm::dma_write() {
-   std::uint32_t dest_addr = pipeline_.read_reg(REG_YUV_FRAME_ADDR);
+   std::uint32_t dest_addr = pipeline_.read_reg(REG_DST_ADDR);
    if (dest_addr == 0)
       return;
 

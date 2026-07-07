@@ -4,91 +4,134 @@
 
 namespace cdc::components {
 
-// ── Global ISP register map ──────────────────────────────────────────────────
+//  Global/Common ISP register map (0x0000 - 0x00FF)
+constexpr std::uint32_t REG_CTRL = 0x0000;
+constexpr std::uint32_t REG_STATUS = 0x0004;
+constexpr std::uint32_t REG_IRQ_ENABLE = 0x0008;
+constexpr std::uint32_t REG_IRQ_STATUS = 0x000C;
 
-constexpr std::uint32_t REG_ISP_ENABLE     = 0x000;
-constexpr std::uint32_t REG_STATUS          = 0x004;
-constexpr std::uint32_t REG_TRIGGER         = 0x008;
-constexpr std::uint32_t REG_WIDTH           = 0x00C;
-constexpr std::uint32_t REG_HEIGHT          = 0x010;
-constexpr std::uint32_t REG_BIT_DEPTH        = 0x014;
-constexpr std::uint32_t REG_BAYER_PATTERN   = 0x018;
+//  Buffer Descriptors (0x0100 - 0x01FF)
+constexpr std::uint32_t REG_SRC_ADDR = 0x0100;
+constexpr std::uint32_t REG_DST_ADDR = 0x0104;
+constexpr std::uint32_t REG_SCRATCH_ADDR = 0x0108;
+constexpr std::uint32_t REG_SRC_SIZE_BYTES = 0x010C;
+constexpr std::uint32_t REG_DST_SIZE_BYTES = 0x0110;
+constexpr std::uint32_t REG_WEIGHTS_ADDR = 0x0114;
+constexpr std::uint32_t REG_PARAM_ADDR = 0x0118;
 
-constexpr std::uint32_t REG_BLC_ENABLE      = 0x020;
-constexpr std::uint32_t REG_BLC_R_OFFSET    = 0x024;
-constexpr std::uint32_t REG_BLC_GR_OFFSET   = 0x028;
-constexpr std::uint32_t REG_BLC_GB_OFFSET   = 0x02C;
-constexpr std::uint32_t REG_BLC_B_OFFSET    = 0x030;
+//  Global Parameters (0x0020 - 0x0050)
+constexpr std::uint32_t REG_WIDTH = 0x0024;
+constexpr std::uint32_t REG_HEIGHT = 0x0028;
+constexpr std::uint32_t REG_STRIDE = 0x002C;
+constexpr std::uint32_t REG_FORMAT = 0x0030;
+constexpr std::uint32_t REG_OP_MODE = 0x0034;
+constexpr std::uint32_t REG_BIT_DEPTH = 0x0040;
+constexpr std::uint32_t REG_BAYER_PATTERN = 0x0044;
 
-constexpr std::uint32_t REG_DPC_ENABLE      = 0x040;
-constexpr std::uint32_t REG_DPC_THRESH      = 0x044;
+// BLC (Black Level Correction)
+constexpr std::uint32_t REG_BLC_ENABLE = 0x1000;
+constexpr std::uint32_t REG_BLC_LINEAR = 0x1004;
+constexpr std::uint32_t REG_BLC_R_OFFSET = 0x1008;
+constexpr std::uint32_t REG_BLC_GR_OFFSET = 0x100C;
+constexpr std::uint32_t REG_BLC_GB_OFFSET = 0x1010;
+constexpr std::uint32_t REG_BLC_B_OFFSET = 0x1014;
+constexpr std::uint32_t REG_BLC_R_SAT = 0x1018;
+constexpr std::uint32_t REG_BLC_GR_SAT = 0x101C;
+constexpr std::uint32_t REG_BLC_GB_SAT = 0x1020;
+constexpr std::uint32_t REG_BLC_B_SAT = 0x1024;
 
-constexpr std::uint32_t REG_LSC_ENABLE      = 0x050;
-constexpr std::uint32_t REG_LSC_GRID_W      = 0x054;
-constexpr std::uint32_t REG_LSC_GRID_H      = 0x058;
+// DPC (Defect Pixel Correction)
+constexpr std::uint32_t REG_DPC_ENABLE = 0x1080;
+constexpr std::uint32_t REG_DPC_THRESH = 0x1084;
 
-constexpr std::uint32_t REG_DG_ENABLE       = 0x060;
-constexpr std::uint32_t REG_DG_GAIN         = 0x064;
+// LSC (Lens Shading Correction)
+constexpr std::uint32_t REG_LSC_ENABLE = 0x1100;
+constexpr std::uint32_t REG_LSC_GRID_W = 0x1104;
+constexpr std::uint32_t REG_LSC_GRID_H = 0x1108;
 
-constexpr std::uint32_t REG_BNR_ENABLE      = 0x070;
-constexpr std::uint32_t REG_BNR_WINDOW      = 0x074;
+// DG (Digital Gain)
+constexpr std::uint32_t REG_DG_ENABLE = 0x1180;
+constexpr std::uint32_t REG_DG_GAIN = 0x1184;
+constexpr std::uint32_t REG_DG_AUTO = 0x1188;
 
-constexpr std::uint32_t REG_DEMOSAIC_ENABLE = 0x080;
+// BNR (Bayer Noise Reduction)
+constexpr std::uint32_t REG_BNR_ENABLE = 0x1200;
+constexpr std::uint32_t REG_BNR_WINDOW = 0x1204;
 
-constexpr std::uint32_t REG_AWB_ENABLE      = 0x085;
-constexpr std::uint32_t REG_AWB_ALGORITHM   = 0x086;
-constexpr std::uint32_t REG_AWB_R_GAIN      = 0x087;
-constexpr std::uint32_t REG_AWB_B_GAIN      = 0x088;
+// Demosaic
+constexpr std::uint32_t REG_DEMOSAIC_ENABLE = 0x1280;
 
-constexpr std::uint32_t REG_WB_ENABLE       = 0x090;
-constexpr std::uint32_t REG_WB_R_GAIN       = 0x094;
-constexpr std::uint32_t REG_WB_B_GAIN       = 0x098;
+// AWB (Auto White Balance)
+constexpr std::uint32_t REG_AWB_ENABLE = 0x1300;
+constexpr std::uint32_t REG_AWB_ALGORITHM = 0x1304;
+constexpr std::uint32_t REG_AWB_R_GAIN = 0x1308;
+constexpr std::uint32_t REG_AWB_B_GAIN = 0x130C;
+constexpr std::uint32_t REG_AWB_UNDER_PCT = 0x1310;
+constexpr std::uint32_t REG_AWB_OVER_PCT = 0x1314;
+constexpr std::uint32_t REG_AWB_PERCENT = 0x1318;
 
-constexpr std::uint32_t REG_CCM_ENABLE      = 0x0A0;
-constexpr std::uint32_t REG_CCM_MATRIX00    = 0x0A4;
-constexpr std::uint32_t REG_CCM_MATRIX01    = 0x0A8;
-constexpr std::uint32_t REG_CCM_MATRIX02    = 0x0AC;
-constexpr std::uint32_t REG_CCM_MATRIX10    = 0x0B0;
-constexpr std::uint32_t REG_CCM_MATRIX11    = 0x0B4;
-constexpr std::uint32_t REG_CCM_MATRIX12    = 0x0B8;
-constexpr std::uint32_t REG_CCM_MATRIX20    = 0x0BC;
-constexpr std::uint32_t REG_CCM_MATRIX21    = 0x0C0;
-constexpr std::uint32_t REG_CCM_MATRIX22    = 0x0C4;
+// WB (White Balance)
+constexpr std::uint32_t REG_WB_ENABLE = 0x1380;
+constexpr std::uint32_t REG_WB_R_GAIN = 0x1384;
+constexpr std::uint32_t REG_WB_B_GAIN = 0x1388;
 
-constexpr std::uint32_t REG_GC_ENABLE       = 0x0D0;
+// CCM (Color Correction Matrix)
+constexpr std::uint32_t REG_CCM_ENABLE = 0x1400;
+constexpr std::uint32_t REG_CCM_MATRIX00 = 0x1404;
+constexpr std::uint32_t REG_CCM_MATRIX01 = 0x1408;
+constexpr std::uint32_t REG_CCM_MATRIX02 = 0x140C;
+constexpr std::uint32_t REG_CCM_MATRIX10 = 0x1410;
+constexpr std::uint32_t REG_CCM_MATRIX11 = 0x1414;
+constexpr std::uint32_t REG_CCM_MATRIX12 = 0x1418;
+constexpr std::uint32_t REG_CCM_MATRIX20 = 0x141C;
+constexpr std::uint32_t REG_CCM_MATRIX21 = 0x1420;
+constexpr std::uint32_t REG_CCM_MATRIX22 = 0x1424;
 
-constexpr std::uint32_t REG_CSC_ENABLE      = 0x0DC;
-constexpr std::uint32_t REG_CSC_STANDARD     = 0x0E0;
+// GC (Gamma Correction)
+constexpr std::uint32_t REG_GC_ENABLE = 0x1480;
+constexpr std::uint32_t REG_GC_LUT_ADDR = 0x1484;
+constexpr std::uint32_t REG_GC_LUT_DATA = 0x1488;
 
-constexpr std::uint32_t REG_CSE_ENABLE      = 0x0F0;
-constexpr std::uint32_t REG_CSE_SAT_GAIN    = 0x0F4;
+// AEC (Auto Exposure Control)
+constexpr std::uint32_t REG_AEC_ENABLE = 0x1500;
+constexpr std::uint32_t REG_AEC_FEEDBACK = 0x1504;
+constexpr std::uint32_t REG_AEC_CENTER_ILLUM = 0x1508;
+constexpr std::uint32_t REG_AEC_SKEWNESS = 0x150C;
 
-constexpr std::uint32_t REG_SHARPEN_ENABLE  = 0x100;
-constexpr std::uint32_t REG_SHARPEN_SIGMA   = 0x104;
-constexpr std::uint32_t REG_SHARPEN_STRENGTH = 0x108;
+// CSC (Color Space Conversion)
+constexpr std::uint32_t REG_CSC_ENABLE = 0x1580;
+constexpr std::uint32_t REG_CSC_STANDARD = 0x1584;
 
-constexpr std::uint32_t REG_2DNR_ENABLE     = 0x110;
-constexpr std::uint32_t REG_2DNR_WINDOW     = 0x114;
-constexpr std::uint32_t REG_2DNR_PATCH      = 0x118;
-constexpr std::uint32_t REG_2DNR_WTS        = 0x11C;
+// CSE (Color Saturation Enhancement)
+constexpr std::uint32_t REG_CSE_ENABLE = 0x1600;
+constexpr std::uint32_t REG_CSE_SAT_GAIN = 0x1604;
 
-constexpr std::uint32_t REG_SCALE_ENABLE    = 0x120;
-constexpr std::uint32_t REG_SCALE_OUT_W     = 0x124;
-constexpr std::uint32_t REG_SCALE_OUT_H     = 0x128;
+// Sharpen
+constexpr std::uint32_t REG_SHARPEN_ENABLE = 0x1680;
+constexpr std::uint32_t REG_SHARPEN_SIGMA = 0x1684;
+constexpr std::uint32_t REG_SHARPEN_STRENGTH = 0x1688;
 
-constexpr std::uint32_t REG_YUV420_ENABLE   = 0x130;
+// 2DNR
+constexpr std::uint32_t REG_2DNR_ENABLE = 0x1700;
+constexpr std::uint32_t REG_2DNR_WINDOW = 0x1704;
+constexpr std::uint32_t REG_2DNR_PATCH = 0x1708;
+constexpr std::uint32_t REG_2DNR_WTS = 0x170C;
 
-constexpr std::uint32_t REG_LUT_ADDR        = 0x200;
-constexpr std::uint32_t REG_LUT_DATA        = 0x204;
+// Scale
+constexpr std::uint32_t REG_SCALE_ENABLE = 0x1780;
+constexpr std::uint32_t REG_SCALE_OUT_W = 0x1784;
+constexpr std::uint32_t REG_SCALE_OUT_H = 0x1788;
 
-constexpr std::uint32_t REG_RAW_FRAME_ADDR  = 0x300;
-constexpr std::uint32_t REG_YUV_FRAME_ADDR  = 0x304;
+// YUV420
+constexpr std::uint32_t REG_YUV420_ENABLE = 0x1800;
 
-constexpr std::uint32_t REG_MAX             = 0x400;
+// max offset
+constexpr std::uint32_t REG_MAX = 0x10000; // 64 KiB window
 
-// ── Status flags ──────────────────────────────────────────────────────────────
-
+// Status flags
 constexpr std::uint32_t STATUS_DONE = 0x01;
 constexpr std::uint32_t STATUS_BUSY = 0x02;
+constexpr std::uint32_t STATUS_ERROR = 0x04;
+constexpr std::uint32_t STATUS_IDLE = 0x08;
 
 } // namespace cdc::components

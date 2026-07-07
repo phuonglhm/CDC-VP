@@ -20,19 +20,35 @@ public:
 
    tlm_utils::simple_target_socket<isp_tlm> socket;
    tlm_utils::simple_initiator_socket<isp_tlm> dma_socket;
-   sc_core::sc_in<bool>  reset_n;
+   sc_core::sc_in<bool> reset_n;
    sc_core::sc_out<bool> irq_out;
 
    explicit isp_tlm(sc_core::sc_module_name name,
                     sc_core::sc_time access_latency = sc_core::sc_time(10, sc_core::SC_NS));
 
-   // ── Buffer access (raw memory owned by this TLM module) ────────────────────
-   std::uint16_t *get_raw_buffer() { return raw_buffer_.data(); }
-   std::uint8_t  *get_yuv_buffer() { return yuv_buffer_.data(); }
-   std::size_t    get_raw_buffer_size() const { return raw_buffer_.size(); }
-   std::size_t    get_yuv_buffer_size() const { return yuv_buffer_.size(); }
-   std::uint32_t  get_width()   const { return pipeline_.get_width(); }
-   std::uint32_t  get_height()  const { return pipeline_.get_height(); }
+   std::uint16_t *get_raw_buffer() {
+      return raw_buffer_.data();
+   }
+
+   std::uint8_t *get_yuv_buffer() {
+      return yuv_buffer_.data();
+   }
+
+   std::size_t get_raw_buffer_size() const {
+      return raw_buffer_.size();
+   }
+
+   std::size_t get_yuv_buffer_size() const {
+      return yuv_buffer_.size();
+   }
+
+   std::uint32_t get_width() const {
+      return pipeline_.get_width();
+   }
+
+   std::uint32_t get_height() const {
+      return pipeline_.get_height();
+   }
 
    void allocate_buffers();
 
@@ -48,13 +64,13 @@ private:
    isp_pipeline pipeline_;
 
    std::vector<std::uint16_t> raw_buffer_;
-   std::vector<std::uint8_t>  yuv_buffer_;
+   std::vector<std::uint8_t> yuv_buffer_;
 
    sc_core::sc_time access_latency_;
    sc_core::sc_event processing_event_;
    bool irq_level_;
 
-   static constexpr std::size_t MAX_WIDTH  = 4096;
+   static constexpr std::size_t MAX_WIDTH = 4096;
    static constexpr std::size_t MAX_HEIGHT = 4096;
 };
 
