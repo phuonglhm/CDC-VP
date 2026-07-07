@@ -773,6 +773,10 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    }
    wb_.process(demosaic_out_.data(), wb_out_.data(), width_, height_, wb_cfg, bd);
 
+   // CCM — optionally compute the matrix from the white-balanced input automatically
+   if (config_.ccm.auto_compute) {
+      ccm_.compute_ccm(wb_out_.data(), width_, height_, config_.ccm, bd);
+   }
    ccm_.process(wb_out_.data(), ccm_out_.data(), width_, height_, config_.ccm, bd);
    gc_.process(ccm_out_.data(), gc_out_.data(), width_, height_, config_.gc, bd);
 

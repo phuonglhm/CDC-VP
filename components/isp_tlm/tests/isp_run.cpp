@@ -203,28 +203,120 @@ int sc_main(int argc, char* argv[]) {
     }
     std::cout << "Read " << read_bytes << " bytes from " << input_path << std::endl;
 
-    // Trigger processing
-    std::cout << "Triggering ISP pipeline..." << std::endl;
-    probe.write(REG_TRIGGER, &enable, 4);
-    sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
-
-    // Write output
-    std::FILE* fp_out = std::fopen(output_path.c_str(), "wb");
-    if (!fp_out) {
-        std::cerr << "Error: Could not open output file: " << output_path << std::endl;
-        return 1;
+    // ── Identity CCM run ──────────────────────────────────────────────────────
+    // Write the identity matrix so the CCM stage is a no-op.
+    float identity_ccm[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+    for (int i = 0; i < 9; ++i) {
+        probe.write(REG_CCM_MATRIX00 + i * 4, &identity_ccm[i], 4);
     }
 
-    // YUV420 size
-    std::size_t yuv_size = static_cast<std::size_t>(width) * height * 3 / 2;
-    std::fwrite(isp.get_yuv_buffer(), 1, yuv_size, fp_out);
+    // Trigger the pipeline with identity CCM.
+    probe.write(REG_TRIGGER, &enable, 4);
+    sc_start(1, SC_MS);
+
+    // Save the identity result; it becomes the baseline for the CCM assertion.
+    std::string identity_path = detect_output_dir() + "/ccm_identity.yuv";
+    std::FILE* fp_identity = std::fopen(identity_path.c_str(), "wb");
+    if (!fp_identity) {
+        std::cerr << "Error: Could not open identity output file: " << identity_path << std::endl;
+        return 1;
+    }
+    std::fwrite(isp.get_yuv_buffer(), 1, yuv_size, fp_identity);
+    std::fclose(fp_identity);
+    std::cout << "Identity CCM run complete, saved to " << identity_path << std::endl;
+
+    // ── Non-identity CCM run ─────────────────────────────────────────────────
+    // Write a CCM that visibly changes the image (without clipping) so we can
+    // verify the registers actually drive the hardware.
+    //
+    // All coefficients are in (0, 1] so that:
+    //   - No output channel exceeds its input range  → no clipping artifacts.
+    //   - The net effect is a visible warm/cool tint  → byte-for-byte difference
+    //     from the identity run is guaranteed.
+    //
+    //   R_out = 0.70 * R + 0.10 * G + 0.00 * B   (dim red, bleed green in)
+    //   G_out = 0.15 * R + 0.85 * G + 0.00 * B   (warm-green)
+    //   B_out = 0.00 * R + 0.05 * G + 0.95 * B   (blue slightly lifted by green)
+    //
+    // Brightness is roughly preserved (row sums ≈ 0.80, 1.00, 1.00) so mid-tone
+    // luminance stays close to identity.  No coefficient exceeds 1.0, so no channel
+    // can saturate regardless of input.
+    float test_ccm[9] = {
+        0.70f, 0.10f, 0.00f,   // row 0: corrected_red
+        0.15f, 0.85f, 0.00f,   // row 1: corrected_green
+        0.00f, 0.05f, 0.95f,   // row 2: corrected_blue
+    };
+    for (int i = 0; i < 9; ++i) {
+        probe.write(REG_CCM_MATRIX00 + i * 4, &test_ccm[i], 4);
+    }
+
+    probe.write(REG_TRIGGER, &enable, 4);
+    sc_start(1, SC_MS);
+
+    // Save non-identity result.
+    std::string nonidentity_path = detect_output_dir() + "/ccm_nonidentity.yuv";
+    std::FILE* fp_nonidentity = std::fopen(nonidentity_path.c_str(), "wb");
+    if (!fp_nonidentity) {
+        std::cerr << "Error: Could not open non-identity output file: " << nonidentity_path << std::endl;
+        return 1;
+    }
+    std::fwrite(isp.get_yuv_buffer(), 1, yuv_size, fp_nonidentity);
+    std::fclose(fp_nonidentity);
+    std::cout << "Non-identity CCM run complete, saved to " << nonidentity_path << std::endl;
+
+    // ── Read both outputs and assert they differ ──────────────────────────────
+    std::vector<std::uint8_t> identity_bytes(yuv_size);
+    std::vector<std::uint8_t> nonidentity_bytes(yuv_size);
+    std::FILE* fp_r = std::fopen(identity_path.c_str(), "rb");
+    if (!fp_r) {
+        std::cerr << "Error: Could not re-read identity output" << std::endl;
+        return 1;
+    }
+    if (std::fread(identity_bytes.data(), 1, yuv_size, fp_r) != yuv_size) {
+        std::cerr << "Error: identity output file is truncated" << std::endl;
+        std::fclose(fp_r);
+        return 1;
+    }
+    std::fclose(fp_r);
+
+    fp_r = std::fopen(nonidentity_path.c_str(), "rb");
+    if (!fp_r) {
+        std::cerr << "Error: Could not re-read non-identity output" << std::endl;
+        return 1;
+    }
+    if (std::fread(nonidentity_bytes.data(), 1, yuv_size, fp_r) != yuv_size) {
+        std::cerr << "Error: non-identity output file is truncated" << std::endl;
+        std::fclose(fp_r);
+        return 1;
+    }
+    std::fclose(fp_r);
+
+    // The non-identity CCM run must differ from the identity run.  A single byte
+    // difference is sufficient proof that the matrix registers are wired correctly.
+    if (identity_bytes == nonidentity_bytes) {
+        std::cerr << "FAIL: CCM output did not change after writing non-identity matrix." << std::endl;
+        std::cerr << "  Expected at least one output byte to differ between identity and" << std::endl;
+        std::cerr << "  non-identity CCM runs. This indicates REG_CCM_MATRIX00..22 are not" << std::endl;
+        std::cerr << "  being applied by the CCM processing stage." << std::endl;
+        return 1;
+    }
+    std::cout << "PASS: CCM output differs between identity and non-identity runs." << std::endl;
+
+    // ── Final output: always use the non-identity result as the canonical output
+    std::string final_output = output_path;
+    std::FILE* fp_out = std::fopen(final_output.c_str(), "wb");
+    if (!fp_out) {
+        std::cerr << "Error: Could not open final output file: " << final_output << std::endl;
+        return 1;
+    }
+    std::fwrite(nonidentity_bytes.data(), 1, yuv_size, fp_out);
     std::fclose(fp_out);
 
-    std::cout << "Successfully saved YUV output to " << output_path << std::endl;
+    std::cout << "Successfully saved final YUV output to " << final_output << std::endl;
     std::cout << "Output size: " << yuv_size << " bytes" << std::endl;
 
     // Write metadata JSON
     write_json_metadata(metadata_path, width, height, bit_depth, bayer_pattern, input_path, "yuv420p");
-   
+
     return 0;
 }
