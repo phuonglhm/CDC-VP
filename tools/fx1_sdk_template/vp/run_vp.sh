@@ -6,6 +6,11 @@
 #   ./run_vp.sh app.elf --sim-ms 20  # extra args pass straight through
 #   ./run_vp.sh --no-fw              # elaboration smoke run (no firmware)
 #
+# ROM-code boot flow (see vp/doc/VP_FX1_SOC/AI_CONTEXT.md):
+#   ./run_vp.sh bootrom.elf --int-flash app.bin --boot-pin low
+#   ./run_vp.sh bootrom.elf --boot-pin high --uart0-socket 5577 --uart0-wait --sim-ms 60000
+#   ./run_vp.sh bootrom.elf --boot-pin high --spi-flash image.bin --sim-ms 300
+#
 # The binary is self-contained (libsystemc.so* sits next to it, rpath=$ORIGIN);
 # no SystemC install is required on the firmware team's host.
 set -euo pipefail

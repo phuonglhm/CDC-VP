@@ -19,10 +19,12 @@
 #include "timer.h"     // model: namespace ADDR / OPS
 #include "i2c.h"       // model: I2C_* #defines
 #include "dma_tlm.h"   // model: cdc::components::dma_tlm::* static consts
+#include "gpio_tlm.h"  // model: cdc::components::gpio_tlm::k*Offset
 
 #include "soc/regs/soc_regs_timer.h"
 #include "soc/regs/soc_regs_i2c.h"
 #include "soc/regs/soc_regs_dma.h"
+#include "soc/soc_memory_map.h"   // GPIO offsets live in the memory-map header
 
 /* ---- Timer ---- */
 static_assert(CDC_TIMER_CTRL      == ADDR::CTRL,      "timer CTRL drift");
@@ -64,5 +66,11 @@ static_assert(CDC_DMA_CH_AXI_STRIDE  == dma::CHANNEL_AXI_STRIDE,    "dma AXI str
 static_assert(CDC_DMA_CH_STAT_STRIDE == dma::CHANNEL_STATUS_STRIDE, "dma stat stride drift");
 /* CCR_RESET_VALUE is private in the model, so it cannot be static_asserted here;
  * the value in soc_regs_dma.h is copied from the model and left informational. */
+
+/* ---- GPIO (ROM-code boot strap block) ---- */
+using gpio = cdc::components::gpio_tlm;
+static_assert(CDC_GPIO_VALUE == gpio::kValueOffset, "gpio VALUE drift");
+static_assert(CDC_GPIO_OUT   == gpio::kOutOffset,   "gpio OUT drift");
+static_assert(CDC_GPIO_DIR   == gpio::kDirOffset,   "gpio DIR drift");
 
 int main() { return 0; }

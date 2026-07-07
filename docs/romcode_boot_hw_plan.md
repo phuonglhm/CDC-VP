@@ -4,10 +4,12 @@
 > VP_FX1 boot flow. It records WHY each change exists, the frozen ABI
 > decisions, exact status of the work, and what remains.
 >
-> Status as of 2026-07-07: **Phases 1–3 COMPLETE (1 and 2 committed; 3 built,
-> unit-tested, and E2E-verified: full probe chain UART→SPI→repeat works on the
-> VP).** Remaining: packaging/delivery to fx1 (memory-map doc, default.yaml,
-> BSP headers/regref, pack script run).
+> Status as of 2026-07-07: **ALL PHASES + PACKAGING COMPLETE.** Phases 1–3
+> committed; packaging (docs, yaml, BSP headers, regref, AI_CONTEXT) staged
+> into fx1 via `tools/pack_fx1_sdk.sh --build --fx1 ../fx1` and smoke-tested
+> there (uart_hello + full boot-flow matrix on the delivered binary).
+> NOTE: the first pack ran from a dirty tree (`vp/VERSION` = 661367a predates
+> the packaging edits) — re-run the pack after committing so VERSION matches.
 
 ## 0. Repo topology — two projects, one direction of flow
 
@@ -180,16 +182,27 @@ All paths relative to CDC-VP repo root.
   strap LOW unchanged. Regression: test_spi_tlm, test_qspi_tlm,
   test_flash_nor_tlm, test_gpio_tlm, test_uart_host_bridge all PASS.
 
-### Packaging / delivery (after phases build & pass)
-1. Update `docs/peripheral_memory_map.md` (+BOOTROM, IFLASH, GPIO0 rows) and
-   the firmware-facing header blocks in it.
-2. Update `platforms/VP_FX1_Full_SoC/configs/default.yaml` memory_map section.
-3. Regenerate / hand-update fx1 BSP headers (`soc_memory_map.h`); run
-   `tools/check_regs_drift.sh`.
-4. Add `tools/fx1_sdk_template` regref for gpio_tlm (fx1 side:
-   `sw/bsp/VP_FX1_SOC/regref/gpio_tlm/README.md`).
-5. `tools/pack_fx1_sdk.sh --build --fx1 ../fx1` → delivers new VP + BSP to the
-   firmware workspace (`vp/VERSION` records the CDC-VP sha).
+### Packaging / delivery — DONE 2026-07-07
+1. ✅ `docs/peripheral_memory_map.md`: BOOTROM row made real + IFLASH + GPIO0
+   rows, SPI0 SSPCSR/NOR note, ROM-code boot flow in the boot-assumptions
+   table, integration-notes rows (GPIO0, BOOTROM/IFLASH backdoor, SPI_FLASH0),
+   C-define block (+GPIO0/IFLASH/GPIO regs/boot pin/SPI_CSR).
+2. ✅ `configs/default.yaml`: +bootrom, +iflash, +gpio0 (and the previously
+   missing adc0) memory_map rows.
+3. ✅ `fw/common/include/soc/soc_memory_map.h` (BSP ABI source): BOOTROM_SIZE,
+   IFLASH_BASE/SIZE, GPIO0_BASE, GPIO reg offsets + BOOT_PIN, SPI_CSR.
+   `tools/check_regs_drift.{sh,cpp}` extended to static_assert the GPIO
+   offsets against gpio_tlm — PASS.
+4. ✅ regref: automatic — the pack script copies every component README;
+   fx1 now has `regref/gpio_tlm/` and `regref/uart_host_tlm/`.
+   Boot-flow docs added to `tools/fx1_sdk_template/AI_CONTEXT.md` (new
+   "ROM-code boot flow" section + map rows + gotchas), template `README.md`,
+   and `run_vp.sh` usage examples.
+5. ✅ `tools/pack_fx1_sdk.sh --build --fx1 ../fx1` ran clean (drift check
+   PASS). Verified in fx1 on the DELIVERED binary: uart_hello smoke PASS,
+   strap LOW → IFLASH app PASS, strap HIGH + `--spi-flash` → SPI download
+   PASS. Re-run the pack after committing these packaging edits so
+   `vp/VERSION` matches the shipped headers/docs.
 
 ## 6. Firmware-side gaps the hardware will NOT fix (relay to firmware team)
 

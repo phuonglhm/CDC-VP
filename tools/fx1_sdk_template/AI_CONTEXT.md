@@ -47,12 +47,13 @@ the exact CDC-VP commit this delivery was built from.
 
 | Base | Block | Notes |
 |---|---|---|
-| `0x0000_0000` | Boot ROM | optional first-stage |
+| `0x0000_0000` | BOOTROM (64 KiB, RO) | first-stage boot ROM; ROM-code ELF entry must be `0x0` (see "ROM-code boot flow") |
+| `0x0400_0000` | IFLASH (4 MiB, RO, XIP) | internal code flash; the ROM code jumps here when the boot strap is LOW |
 | `0x0200_0000` | CLINT | `MSIP 0x0`, `MTIMECMP 0x4000`, `MTIME 0xBFF8` |
 | `0x0C00_0000` | PLIC | `PRIORITY(id)=4*id`, `ENABLE 0x2000`, `THRESHOLD 0x200000`, `CLAIM 0x200004` |
 | `0x1000_0000` | UART0 | console |
 | `0x1001_0000` | I2C0 | |
-| `0x1002_0000` | SPI0 | |
+| `0x1002_0000` | SPI0 | PL022-style; vendor `SSPCSR @ +0x28` (bit0 = CS assert); dedicated 16 MiB NOR behind it for the boot-flow SPI download |
 | `0x1003_0000` | TIMER0 | |
 | `0x1004_0000` | WDT0 | |
 | `0x1005_0000` | PWM0 | **no IRQ output** in current model |
@@ -64,7 +65,7 @@ the exact CDC-VP commit this delivery was built from.
 | `0x100B_0000` | OTP0 | |
 | `0x100C_0000` | QSPI0 | NOR flash behind it |
 | `0x100D–100F_0000` | ISP0 / VPU0 / NPU0 | **RESERVED — no model, no IRQ; do not write drivers for these** |
-| `0x1010_0000`… | UART1, I2C1, SPI1, TIMER1, RTC0, ADC0 | instance-1 block, `+0x1_0000` apart |
+| `0x1010_0000`… | UART1, I2C1, SPI1, TIMER1, RTC0, ADC0, GPIO0 | instance-1 block, `+0x1_0000` apart; GPIO0 @ `0x1016_0000` (`VALUE 0x00` RO / `OUT 0x04` / `DIR 0x08`, 32-bit only, **no IRQ**), pin 1 = boot strap |
 | `0x8000_0000` | RAM0 (256 MiB) | FW 16 MiB, then RAW_IN0/ISP_OUT0/VPU_OUT0/NPU_WGT0/NPU_WORK0 buffer windows |
 
 ## Interrupts (from `soc_irq_map.h` — authoritative)
@@ -79,6 +80,31 @@ the exact CDC-VP commit this delivery was built from.
   TIMER1=21, RTC0=22(alarm), ADC0=23; 24–31 reserved.
 - All modeled IRQ lines are **level-sensitive** into the PLIC.
 
+## ROM-code boot flow (bootloader work targets this)
+
+The VP implements the agreed ROM-code boot sequence
+(`vp/doc/VP_FX1_SOC/ROMCode Boot Sequence.png`):
+
+1. Reset → CPU starts in BOOTROM @ `0x0`. Build the ROM code with **entry
+   `0x0`** (custom linker script: text in ROM, stack in RAM) and pass it with
+   `--fw bootrom.elf`.
+2. ROM code reads the boot strap **GPIO0 pin 1** (`CDC_GPIO_BOOT_PIN`):
+   - **LOW** (default / `--boot-pin low`) → jump to the application in IFLASH
+     @ `0x0400_0000` (raw image preloaded with `--int-flash app.bin`).
+   - **HIGH** (`--boot-pin high`) → download probe loop:
+     a. request over **UART0**; the "PC host tool" is a TCP client on the VP's
+        bridge (`--uart0-socket <port>`, add `--uart0-wait` to block the sim
+        until the tool connects) or a canned byte file (`--uart0-rx-file`).
+     b. else NOR READ (`0x03`) over **SPI0**: assert CS via `SSPCSR` bit0,
+        shift `0x03` + 3 address bytes, then dummy frames clock data out;
+        deassert CS to end the command. Flash image: `--spi-flash <bin>`
+        (independent from the QSPI0 flash).
+3. Firmware-side duties the VP does NOT solve: bound the probe loop (WDT!),
+   validate images (magic/size/entry/checksum header) before jumping, and
+   frame/verify the UART protocol (no line-rate modeling — 19200 8N1 is
+   cosmetic; the UART bridge also forwards ROM log prints to the host tool,
+   so the protocol must tolerate interleaved text).
+
 ## Build & run
 
 ```bash
@@ -89,6 +115,13 @@ sw/bootloader/test/VP_FX1_SOC/run_vp.sh                  # run default uart_hell
 sw/bootloader/test/VP_FX1_SOC/run_vp.sh path/to/app.elf  # run a specific ELF
 sw/bootloader/test/VP_FX1_SOC/run_vp.sh app.elf --sim-ms 20
 sw/bootloader/test/VP_FX1_SOC/run_vp.sh --no-fw          # SoC banner only
+
+# ROM-code boot flow (extra args pass through to the VP):
+sw/bootloader/test/VP_FX1_SOC/run_vp.sh bootrom.elf --int-flash app.bin --boot-pin low
+sw/bootloader/test/VP_FX1_SOC/run_vp.sh bootrom.elf --boot-pin high \
+    --uart0-socket 5577 --uart0-wait --sim-ms 60000    # then connect the host tool
+sw/bootloader/test/VP_FX1_SOC/run_vp.sh bootrom.elf --boot-pin high \
+    --spi-flash image.bin --sim-ms 300
 ```
 
 Expected smoke-test output: `VP_FX1 SDK: UART console up` + `driver template OK`.
@@ -120,7 +153,10 @@ A driver Makefile sets `BSP := ../../../../bsp/VP_FX1_SOC` and includes
   tied to 0 in this SoC — a committed low-power entry has no wired wakeup
   source. Exercise fall-through / abort / `INTR_TEST` flows instead of a full
   sleep-wake round trip. A plain wakeup does **not** set `INTR_STATE`.
-- **PWM0 and CMU0 have no IRQ** despite having PLIC slots reserved.
+- **PWM0, CMU0 and GPIO0 have no IRQ** despite having PLIC slots reserved
+  (GPIO0's is source 24). Poll `GPIO VALUE` for pin changes.
+- **BOOTROM/IFLASH are read-only**: functional stores fail with a bus error;
+  only the VP's image loaders (debug/backdoor writes) can fill them.
 - **UART HAL is polled**, not interrupt-driven; UART0 RX/TX interrupts exist in
   the model if a driver wants them (see `regref/uart2_tlm`).
 - `MTIME` counts microseconds, not cycles — timer math must not assume a

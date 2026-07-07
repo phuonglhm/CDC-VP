@@ -4,7 +4,9 @@ cpu:
   backend: riscv_vp            # Bremen RV32 (application-class)
 
 memory_map:
-  ram:    { base: 0x80000000, size: 0x10000000 }   # 256 MiB
+  ram:     { base: 0x80000000, size: 0x10000000 }  # 256 MiB
+  bootrom: { base: 0x00000000, size: 0x10000 }     # 64 KiB ROM, ROM-code entry 0x0
+  iflash:  { base: 0x04000000, size: 0x400000 }    # 4 MiB internal code flash (XIP, RO)
   clint:  { base: 0x02000000, size: 0x10000 }
   plic:   { base: 0x0C000000, size: 0x400000 }
   uart0:  { base: 0x10000000, size: 0x1000 }
@@ -25,7 +27,10 @@ memory_map:
   spi1:   { base: 0x10120000, size: 0x1000 }
   timer1: { base: 0x10130000, size: 0x1000 }
   rtc0:   { base: 0x10140000, size: 0x1000 }
+  adc0:   { base: 0x10150000, size: 0x1000 }
+  gpio0:  { base: 0x10160000, size: 0x1000 }       # pin 1 = ROM-code boot strap
   # ISP0 0x100D0000 / VPU0 0x100E0000 / NPU0 0x100F0000 reserved (planned)
+  # NOR flash behind SPI0 (16 MiB, --spi-flash) is serial-only, not CPU-mapped
 
 interrupts:
   controller: PLIC (31 sources) + CLINT (MTIP/MSIP)

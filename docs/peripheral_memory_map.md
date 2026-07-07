@@ -43,7 +43,7 @@ current tests and firmware defines do not change.
 | ELF boot behavior | Bremen wrapper starts at the ELF entry point |
 | No-firmware fallback | Current wrapper initializes PC to `0x8000_0000` |
 | Recommended firmware link base | `0x8000_0000` RAM |
-| Optional boot ROM flow | If a bootrom ELF is added, set its entry to `0x0000_0000`; bootrom may copy from QSPI flash to RAM and jump to `0x8000_0000` |
+| ROM-code boot flow (VP_FX1) | BOOTROM0 at `0x0000_0000` is a real 64 KiB ROM; the ROM-code ELF is built with entry `0x0` and loaded via `--fw`. It reads the boot strap GPIO0 pin 1: LOW → jump to the application in IFLASH0 (`0x0400_0000`, loaded via `--int-flash`); HIGH → probe UART0 (host tool via `--uart0-socket`/`--uart0-rx-file`) then NOR READ over SPI0 (`--spi-flash`). See `docs/romcode_boot_hw_plan.md`. |
 
 ## Address Map
 
@@ -57,12 +57,13 @@ KiB later without changing its base address.
 
 | Region | Base | Size | End | CPU access | Notes |
 |---|---:|---:|---:|---|---|
-| BOOTROM0 | `0x0000_0000` | `0x0001_0000` | `0x0000_FFFF` | optional ROM | Optional first-stage boot image. Not required when loading firmware ELF directly to RAM. |
+| BOOTROM0 | `0x0000_0000` | `0x0001_0000` | `0x0000_FFFF` | ROM (read-only, executable) | First-stage boot ROM, bound in VP_FX1_Full_SoC (`memory_tlm`, read-only; debug/backdoor loads bypass the write protect). ROM-code ELF entry must be `0x0`. |
+| IFLASH0 | `0x0400_0000` | `0x0040_0000` | `0x043F_FFFF` | ROM (read-only, executable) | Internal code flash, 4 MiB XIP window (VP_FX1_Full_SoC). Preloaded from a raw binary via `--int-flash`. Do not reuse `0x2000_0000` (reserved for future QSPI XIP). |
 | CLINT0 | `0x0200_0000` | `0x0001_0000` | `0x0200_FFFF` | MMIO | RISC-V local MSIP/MTIP source. |
 | PLIC0 | `0x0C00_0000` | `0x0040_0000` | `0x0C3F_FFFF` | MMIO | External interrupt controller, hart0 M-mode context. |
 | UART0 | `0x1000_0000` | `0x0000_1000` | `0x1000_0FFF` | MMIO | Console UART. Selected model is `uart2_tlm`. Exposes `sc_out<bool> irq` (combined UARTINTR) for the PLIC. |
 | I2C0 | `0x1001_0000` | `0x0000_1000` | `0x1001_0FFF` | MMIO | I2C controller. |
-| SPI0 | `0x1002_0000` | `0x0000_1000` | `0x1002_0FFF` | MMIO | SPI controller. |
+| SPI0 | `0x1002_0000` | `0x0000_1000` | `0x1002_0FFF` | MMIO | SPI controller (PL022-style). Vendor register `SSPCSR` @ `+0x28` (bit0: 1 = assert the active-low chip-select). A dedicated NOR flash (`spi_flash0`, 16 MiB, independent from QSPI0's FLASH0) sits behind it for the ROM-code SPI download; image via `--spi-flash`. |
 | TIMER0 | `0x1003_0000` | `0x0000_1000` | `0x1003_0FFF` | MMIO | Peripheral timer, separate from CLINT `mtime/mtimecmp`. |
 | WDT0 | `0x1004_0000` | `0x0000_1000` | `0x1004_0FFF` | MMIO | Watchdog timer. |
 | PWM0 | `0x1005_0000` | `0x0000_1000` | `0x1005_0FFF` | MMIO | PWM controller. Current model has no IRQ output. |
@@ -82,6 +83,7 @@ KiB later without changing its base address.
 | TIMER1 | `0x1013_0000` | `0x0000_1000` | `0x1013_0FFF` | MMIO | Second peripheral timer, separate from CLINT and TIMER0. |
 | RTC0 | `0x1014_0000` | `0x0000_1000` | `0x1014_0FFF` | MMIO | Real-time clock with alarm. Implemented by `rtc_tlm`. May also drive a PMU wakeup line in future. |
 | ADC0 | `0x1015_0000` | `0x0000_1000` | `0x1015_0FFF` | MMIO | ADC controller (`adc_tlm`). Assigned in the VP_FX1 full SoC (resolves the earlier ADC base TBD). |
+| GPIO0 | `0x1016_0000` | `0x0000_1000` | `0x1016_0FFF` | MMIO | GPIO block (`gpio_tlm`), 32 pins. Registers: `0x00 VALUE` (RO), `0x04 OUT` (RW), `0x08 DIR` (RW, 1=output, reset all-inputs); 32-bit accesses only. Pin 1 is the ROM-code boot-mode strap (LOW = boot IFLASH app, HIGH = download probe). No IRQ in this revision (PLIC 24 stays reserved). |
 | RAM0 | `0x8000_0000` | `0x1000_0000` | `0x8FFF_FFFF` | RAM/DDR | Firmware, heap/stack, frame buffers, tensors, weights, and accelerator scratch space. Final integrated SoC target is 256 MiB. |
 
 ## Accelerator Pipeline Buffer Plan
@@ -204,7 +206,7 @@ architecture and must not be assigned.
 | 21 | `timer1.irq_out` | assigned | Second peripheral timer interrupt. |
 | 22 | `rtc0.irq_out` | assigned | RTC alarm interrupt. `rtc_tlm` exposes `sc_out<bool> irq_out`. |
 | 23 | `adc0.irq_out` | assigned | ADC0 interrupt (VP_FX1 full SoC). |
-| 24-31 | reserved | reserved | Keep free for GPIO, AES, additional instances, or future platform IP. |
+| 24-31 | reserved | reserved | Keep free for GPIO, AES, additional instances, or future platform IP. GPIO0 exists (0x1016_0000) but has no IRQ output in this revision; source 24 stays reserved for it. |
 
 Recommended PLIC construction for the integrated platform:
 
@@ -243,6 +245,9 @@ handles default-low signals safely.
 | SPI1 | `spi_tlm::socket` | IRQ port is `irq`. |
 | TIMER1 | `Timer::socket` | IRQ port is `irq_out`. |
 | RTC0 | `rtc_tlm::socket` | Implemented (`rtc_tlm`). Bind `reset_n`; IRQ port is `irq_out` to the PLIC. Optional future wakeup line to PMU. |
+| GPIO0 | `gpio_tlm::socket` | No IRQ in this revision. External pin stimulus (boot strap, testbench, CLI) via the `set_pin()` C++ API. |
+| BOOTROM0/IFLASH0 | `memory_tlm::socket` (read-only) | Functional writes fail; `transport_dbg` writes bypass the protect (image-loader backdoor). |
+| SPI_FLASH0 | `flash_nor_tlm::from_spi_socket` | NOR behind SPI0 (byte-stream face, 8-bit frames, CMD `0x03` only). Chip-select: bridge `spi_tlm::cs_n` to `flash_nor_tlm::spi_cs()`; command state machine resets on CS deassert. Deselected = frame echoed back (legacy loopback behavior). |
 
 ## C/C++ Address Defines
 
@@ -276,6 +281,17 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_TIMER1_BASE   0x10130000u
 #define CDC_RTC0_BASE     0x10140000u
 #define CDC_ADC0_BASE     0x10150000u
+#define CDC_GPIO0_BASE    0x10160000u
+
+/* ROM-code boot flow (docs/romcode_boot_hw_plan.md) */
+#define CDC_BOOTROM_SIZE  0x00010000u  /* 64 KiB ROM, ROM-code entry 0x0    */
+#define CDC_IFLASH_BASE   0x04000000u  /* 4 MiB internal code flash (XIP)   */
+#define CDC_IFLASH_SIZE   0x00400000u
+#define CDC_GPIO_VALUE    0x00u        /* RO pin levels                     */
+#define CDC_GPIO_OUT      0x04u
+#define CDC_GPIO_DIR      0x08u        /* 1=output, reset: all inputs       */
+#define CDC_GPIO_BOOT_PIN 1u           /* strap: LOW=app, HIGH=download     */
+#define CDC_SPI_CSR       0x28u        /* SPI0 vendor reg: bit0 = CS assert */
 
 #define CDC_ACCEL_MMIO_SIZE 0x00010000u
 

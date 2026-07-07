@@ -74,6 +74,11 @@ run_vp.sh                 # load the default uart_hello ELF from build/VP_FX1_SO
 run_vp.sh path/to/app.elf # load a specific ELF (entry = _start)
 run_vp.sh app.elf --sim-ms 20   # extra args pass straight through to the VP
 run_vp.sh --no-fw         # elaboration smoke run (SoC banner only, no firmware)
+
+# ROM-code boot flow (details: vp/doc/VP_FX1_SOC/AI_CONTEXT.md):
+run_vp.sh bootrom.elf --int-flash app.bin --boot-pin low     # strap LOW: boot IFLASH app
+run_vp.sh bootrom.elf --boot-pin high --uart0-socket 5577 --uart0-wait --sim-ms 60000
+run_vp.sh bootrom.elf --boot-pin high --spi-flash image.bin --sim-ms 300
 ```
 
 ## Writing a driver
@@ -95,7 +100,11 @@ on the VP.
 ## What is and isn't modeled
 
 - **Present & driver-ready:** UARTx2, I2Cx2, SPIx2, TIMERx2, WDT, PWM, DMA,
-  TRNG, CMU, PMU, DMIC, OTP, QSPI(+NOR flash), RTC, ADC, CLINT, PLIC.
+  TRNG, CMU, PMU, DMIC, OTP, QSPI(+NOR flash), RTC, ADC, GPIO, CLINT, PLIC.
+- **Boot hardware:** BOOTROM 64 KiB @ `0x0` (read-only, ROM-code entry 0x0),
+  IFLASH 4 MiB @ `0x0400_0000` (read-only XIP window), GPIO0 pin 1 boot strap,
+  NOR flash behind SPI0 (SW chip-select via `SSPCSR @ +0x28`), UART0 host
+  bridge (`--uart0-socket` / `--uart0-rx-file`).
 - **Reserved (no model, no IRQ):** ISP0/VPU0/NPU0 windows. Do not write drivers
   that expect them to run.
 - **Functional, not timing-accurate.** Loosely-timed model: validate register

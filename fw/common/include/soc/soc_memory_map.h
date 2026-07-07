@@ -15,9 +15,16 @@
 #define CDC_SOC_MEMORY_MAP_H
 
 /* ---- System / interrupt controllers ---------------------------------- */
-#define CDC_BOOTROM_BASE  0x00000000u  /* optional first-stage boot ROM     */
+#define CDC_BOOTROM_BASE  0x00000000u  /* 64 KiB boot ROM, ROM-code entry 0x0 */
+#define CDC_BOOTROM_SIZE  0x00010000u
 #define CDC_CLINT_BASE    0x02000000u  /* MSIP/MTIP (local interrupts)      */
 #define CDC_PLIC_BASE     0x0C000000u  /* external interrupt controller     */
+
+/* ---- ROM-code boot flow (docs/romcode_boot_hw_plan.md) ---------------- */
+/* Internal code flash: 4 MiB read-only XIP window. The ROM code jumps here
+ * when the boot strap (GPIO0 pin 1) is LOW. Preloaded via --int-flash.    */
+#define CDC_IFLASH_BASE   0x04000000u
+#define CDC_IFLASH_SIZE   0x00400000u
 
 /* ---- Peripheral instance 0 ------------------------------------------- */
 #define CDC_UART0_BASE    0x10000000u  /* console UART  (uart2_tlm, PL011)  */
@@ -47,6 +54,19 @@
 #define CDC_TIMER1_BASE   0x10130000u
 #define CDC_RTC0_BASE     0x10140000u
 #define CDC_ADC0_BASE     0x10150000u
+#define CDC_GPIO0_BASE    0x10160000u  /* gpio_tlm, 32 pins, no IRQ yet     */
+
+/* GPIO register offsets (from CDC_GPIO0_BASE); 32-bit accesses only.      */
+#define CDC_GPIO_VALUE    0x00u        /* RO: pin levels                    */
+#define CDC_GPIO_OUT      0x04u        /* RW: output latch                  */
+#define CDC_GPIO_DIR      0x08u        /* RW: 1=output, reset: all inputs   */
+#define CDC_GPIO_BOOT_PIN 1u           /* boot strap: LOW=IFLASH app,
+                                          HIGH=UART/SPI download probe      */
+
+/* SPI0 (PL022) vendor register: software chip-select for the NOR flash
+ * behind SPI0. bit0: 1 = assert (line low). A NOR READ (CMD 0x03) spans
+ * many frames and terminates on CS deassert.                              */
+#define CDC_SPI_CSR       0x28u
 
 /* ---- Main memory (RAM0 / DDR-like), 256 MiB -------------------------- */
 #define CDC_RAM0_BASE     0x80000000u
