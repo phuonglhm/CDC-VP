@@ -17,7 +17,10 @@ CROSS   ?= riscv-none-elf-
 CC      := $(CROSS)gcc
 OBJDUMP := $(CROSS)objdump
 
-ARCH    := -march=rv32imac -mabi=ilp32
+# _zicsr: GCC >= 12 no longer implies the CSR instructions in the base ISA
+# string; IRQ code (csrw mtvec/mie/mstatus) needs it spelled out. Codegen ABI
+# is unchanged - this does not relax the "do not change -march/-mabi" rule.
+ARCH    := -march=rv32imac_zicsr -mabi=ilp32
 CFLAGS  := $(ARCH) -Os -ffreestanding -nostdlib -fno-pic -Wall -Wextra \
            -I$(BSP)/include/soc -I$(BSP)/include/hal
 LDFLAGS := -T $(BSP)/link/riscv.ld -Wl,--gc-sections

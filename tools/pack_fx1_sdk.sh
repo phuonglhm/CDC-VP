@@ -74,6 +74,7 @@ chmod +x "$sdk/sw/bootloader/test/$soc/run_vp.sh"
 # --- SoC-level docs ---------------------------------------------------------
 cp "$repo/docs/peripheral_memory_map.md"      "$sdk/vp/doc/$soc/"
 cp "$repo/docs/interrupt_modeling_policy.md"  "$sdk/vp/doc/$soc/"
+cp "$tmpl/AI_CONTEXT.md"                      "$sdk/vp/doc/$soc/"
 
 # --- BSP (the ABI the firmware compiles against) ---------------------------
 cp "$common"/include/soc/*.h       "$bsp/include/soc/"

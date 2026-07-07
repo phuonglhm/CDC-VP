@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "riscv_vp_wrapper.h"
+#include <cstdlib>
 
 #include <cdc/cpu/elf_loader.h>
 
@@ -59,6 +60,7 @@ struct riscv_vp_cpu::impl {
 
     impl() : iss(/*hart_id=*/0), mem_if("core_mem", iss) {
         iss.systemc_name = "core";
+        if (std::getenv("CDC_ISS_TRACE") != nullptr) iss.trace = true;  // TEMP DEBUG
         mem_if.bus_lock = bus_lock;
         // DirectCoreRunner registers the SC_THREAD that calls iss.run(); it reads
         // iss.systemc_name (set above) for its module name.

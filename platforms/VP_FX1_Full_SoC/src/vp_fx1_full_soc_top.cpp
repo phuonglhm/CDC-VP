@@ -1,7 +1,10 @@
 #include "vp_fx1_full_soc_top.h"
 
 #include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <vector>
 
 #include <tlm_utils/simple_target_socket.h>
 #include <tlm_utils/simple_initiator_socket.h>
@@ -26,6 +29,7 @@
 #include <flash_nor_tlm.h>
 #include <rtc_tlm.h>     // cdc::components::rtc_tlm
 #include <adc_tlm.h>     // cdc::components::adc_tlm
+#include <gpio_tlm.h>    // cdc::components::gpio_tlm
 
 #include <riscv_vp_wrapper.h>
 
@@ -46,7 +50,11 @@ constexpr std::uint64_t kQspi0 = 0x100C'0000;
 constexpr std::uint64_t kUart1 = 0x1010'0000, kI2c1  = 0x1011'0000, kSpi1   = 0x1012'0000;
 constexpr std::uint64_t kTimer1= 0x1013'0000, kRtc0  = 0x1014'0000;
 constexpr std::uint64_t kAdc0  = 0x1015'0000;   // resolves map "ADC base TBD"
+constexpr std::uint64_t kGpio0 = 0x1016'0000;   // boot-mode strap on pin 1
 constexpr std::uint64_t kRamBase = 0x8000'0000, kRamSize = 0x1000'0000; // 256 MiB
+// ROM-code boot flow (firmware team's boot-sequence spec):
+constexpr std::uint64_t kBootromBase = 0x0000'0000, kBootromSize = 0x1'0000;  // 64 KiB
+constexpr std::uint64_t kIflashBase  = 0x0400'0000, kIflashSize  = 0x40'0000; // 4 MiB
 // ISP0 0x100D, VPU0 0x100E, NPU0 0x100F windows are reserved (planned, not bound).
 
 constexpr unsigned kNumPlic = 31;            // PLIC sources 1..31 (id 0 reserved)
@@ -84,6 +92,8 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     cpu_backend_t cpu;
     cdc::components::bus_router bus;
     cdc::components::memory_tlm ram;
+    cdc::components::memory_tlm bootrom;   // ROM-code image, entry 0x0
+    cdc::components::memory_tlm iflash;    // internal code flash (XIP-able ROM)
     cdc::components::clint_tlm clint;
     cdc::components::plic_tlm plic;
 
@@ -106,6 +116,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     cdc::components::flash_nor_tlm flash0;
     cdc::components::rtc_tlm rtc0;
     cdc::components::adc_tlm adc0;
+    cdc::components::gpio_tlm gpio0;   // pin 1 = ROM-code boot-mode strap
 
     // ── Signals ─────────────────────────────────────────────────────────────
     sc_core::sc_buffer<unsigned char> uart0_tx, uart1_tx;
@@ -142,9 +153,11 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     impl(sc_core::sc_module_name name, const std::string& config_path)
         : sc_core::sc_module(name)
         , cpu("cpu")
-        , bus("bus", /*num_targets=*/22,
+        , bus("bus", /*num_targets=*/25,
               /*num_initiators=*/(cpu.has_unified_bus() ? 1u : 2u) + 1u /*DMA master*/)
         , ram("ram", kRamSize)
+        , bootrom("bootrom", kBootromSize, /*read_only=*/true)
+        , iflash("iflash", kIflashSize, /*read_only=*/true)
         , clint("clint", cpu)
         , plic("plic", cpu, kNumPlic)
         , uart0("uart0"), uart1("uart1")
@@ -166,6 +179,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         , flash0("flash0", kFlashSize)
         , rtc0("rtc0")
         , adc0("adc0")
+        , gpio0("gpio0")
         , uart0_tx("uart0_tx"), uart1_tx("uart1_tx")
         , trng0_clk("trng0_clk", sc_core::sc_time(10, sc_core::SC_NS))
         , cmu_idle("cmu_idle", 4)
@@ -180,7 +194,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         }
         dma0.master_socket.bind(bus.cpu_port(port++));
 
-        // ── Downstream targets (21) ──────────────────────────────────────────
+        // ── Downstream targets (25) ──────────────────────────────────────────
+        bus.add_target(kBootromBase, kBootromSize).bind(bootrom.socket);
+        bus.add_target(kIflashBase,  kIflashSize ).bind(iflash.socket);
         bus.add_target(kRamBase,   kRamSize ).bind(ram.socket);
         bus.add_target(kClintBase, kClintSize).bind(clint.socket);
         bus.add_target(kPlicBase,  kPlicSize ).bind(plic.socket);
@@ -203,6 +219,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         bus.add_target(kTimer1,kMmio).bind(timer1.socket);
         bus.add_target(kRtc0,  kMmio).bind(rtc0.socket);
         bus.add_target(kAdc0,  kMmio).bind(adc0.socket);
+        bus.add_target(kGpio0, kMmio).bind(gpio0.socket);
 
         // ── Per-IP secondary sockets / outputs ───────────────────────────────
         uart0.tx(uart0_tx); uart0.irq(uart0_irq);
@@ -298,8 +315,10 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
             std::cout << "cpu backend: " << cpu.backend_name() << '\n';
             std::cout << "RAM 256 MiB @ 0x80000000 | MMIO @ 0x1000_0000 region | "
                          "CLINT @ 0x0200_0000 | PLIC @ 0x0C00_0000\n";
+            std::cout << "BOOTROM 64 KiB @ 0x0 | IFLASH 4 MiB @ 0x0400_0000 | "
+                         "GPIO0 @ 0x1016_0000 (pin1 = boot strap)\n";
             std::cout << "IPs: UARTx2 I2Cx2 SPIx2 TIMERx2 WDT PWM DMA TRNG CMU PMU "
-                         "DMIC OTP QSPI(+flash) RTC ADC | ISP/VPU/NPU reserved\n";
+                         "DMIC OTP QSPI(+flash) RTC ADC GPIO | ISP/VPU/NPU reserved\n";
         }
     }
 
@@ -345,6 +364,28 @@ vp_fx1_full_soc_top::~vp_fx1_full_soc_top() = default;
 void vp_fx1_full_soc_top::load_firmware(const std::string& path)
 {
     impl_->cpu.load_elf(path);
+}
+
+void vp_fx1_full_soc_top::load_int_flash(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        SC_REPORT_ERROR("vp_fx1_full_soc", ("cannot open int-flash image: " + path).c_str());
+        return;
+    }
+    std::vector<std::uint8_t> img((std::istreambuf_iterator<char>(in)),
+                                  std::istreambuf_iterator<char>());
+    if (img.size() > impl_->iflash.size()) {
+        SC_REPORT_ERROR("vp_fx1_full_soc", ("int-flash image larger than 4 MiB window: " + path).c_str());
+        return;
+    }
+    impl_->iflash.load(img.data(), img.size());
+    std::cout << "IFLASH loaded " << img.size() << " bytes from " << path << '\n';
+}
+
+void vp_fx1_full_soc_top::set_boot_pin(bool high)
+{
+    impl_->gpio0.set_pin(1, high);
 }
 
 std::string vp_fx1_full_soc_top::backend_name() const

@@ -27,6 +27,7 @@ target_link_libraries(vp_fx1_full_soc PRIVATE
     cdc::components::flash_nor_tlm
     cdc::components::rtc_tlm
     cdc::components::adc_tlm
+    cdc::components::gpio_tlm
     cdc::cpu::${CDC_CPU_BACKEND})
 
 add_custom_command(TARGET vp_fx1_full_soc POST_BUILD

@@ -16,6 +16,13 @@ public:
     ~vp_fx1_full_soc_top() override;
 
     void load_firmware(const std::string& path);
+
+    // Preload the internal-flash ROM window (0x0400_0000) from a raw binary.
+    void load_int_flash(const std::string& path);
+
+    // Drive the ROM-code boot-mode strap (GPIO0 pin 1). Default low.
+    void set_boot_pin(bool high);
+
     std::string backend_name() const;
 
 private:

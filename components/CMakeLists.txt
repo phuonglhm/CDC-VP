@@ -19,6 +19,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/otp_tlm/CMakeLists.txt")
 endif()
 
 add_subdirectory(adc_tlm)
+add_subdirectory(gpio_tlm)
 add_subdirectory(clkmgr_tlm)
 add_subdirectory(spi_tlm)
 add_subdirectory(clint_tlm)

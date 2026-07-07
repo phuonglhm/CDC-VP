@@ -16,7 +16,8 @@ FX1/
     bin/VP_FX1_SOC/                self-contained VP executable (rpath=$ORIGIN)
                                    + bundled libsystemc.so* (no host install needed)
     configs/VP_FX1_SOC/            SoC memory/IRQ configuration (default.yaml)
-    doc/VP_FX1_SOC/                SoC-level docs (memory map, interrupt policy)
+    doc/VP_FX1_SOC/                SoC-level docs (memory map, interrupt policy,
+                                   AI_CONTEXT.md for AI coding assistants)
     licenses/                      third-party notices (SystemC, riscv-vp, SoftFloat)
     src/VP_FX1_SOC/                (reserved: per-SoC VP source, if ever shipped)
     VERSION                        CDC-VP git SHA + build date + ABI

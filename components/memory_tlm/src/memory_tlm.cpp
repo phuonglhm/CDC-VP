@@ -79,7 +79,10 @@ unsigned int memory_tlm::transport_dbg(tlm::tlm_generic_payload& trans)
 
     if (trans.get_command() == tlm::TLM_READ_COMMAND) {
         std::memcpy(ptr, data_.data() + addr, n);
-    } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND && !read_only_) {
+    } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
+        // Debug transport is a backdoor: writes are allowed even for ROM so
+        // image loaders (e.g. the ELF loader) can populate boot ROM content.
+        // Functional writes via b_transport still honour read_only_.
         std::memcpy(data_.data() + addr, ptr, n);
     } else {
         return 0;

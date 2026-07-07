@@ -14,7 +14,8 @@ namespace cdc::components {
 //
 // Addresses are region-local (0 .. size-1); the bus_router translates global
 // addresses before forwarding. Supports b_transport, transport_dbg (backdoor,
-// untimed) and DMI.
+// untimed) and DMI. transport_dbg writes bypass read_only so image loaders
+// can populate ROM content; functional (b_transport/DMI) writes do not.
 class memory_tlm : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<memory_tlm> socket;
