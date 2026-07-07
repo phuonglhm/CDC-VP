@@ -5,8 +5,8 @@
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
-#include "custom_packet.h"
-#include "memory_if.h"
+#include "rec_packet.h"
+#include "rec_memory.h"
 #include "rec_mv.h"
 
 
@@ -17,8 +17,8 @@ class RecMc : sc_core::sc_module {
     tlm_utils::simple_initiator_socket<RecMc> buffer_socket;
     tlm_utils::simple_target_socket<RecMc> start_socket;
 
-    // Bind a MemoryIf implementation to serve reference pixels
-    void bindMemory(MemoryIf &mem);
+    // Bind a RecMemoryIf implementation to serve reference pixels
+    void bindMemory(RecMemoryIf &mem);
 
     // Bind an MV memory provider for motion-vector storage/lookup
     void bindMvMemory(RecMvIf &mvmem);
@@ -42,11 +42,11 @@ class RecMc : sc_core::sc_module {
     private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
 
-    void handle_pre(const CustomPacket &pkt);
-    void handle_read_req(const CustomPacket &pkt, tlm::tlm_generic_payload &trans);
-    void handle_coeff(const CustomPacket &pkt);
-    void handle_residual(const CustomPacket &pkt);
-    MemoryIf *mem_if{nullptr};
+    void handle_pre(const RecPacket &pkt);
+    void handle_read_req(const RecPacket &pkt, tlm::tlm_generic_payload &trans);
+    void handle_coeff(const RecPacket &pkt);
+    void handle_residual(const RecPacket &pkt);
+    RecMemoryIf *mem_if{nullptr};
     RecMvIf *mvd_if{nullptr};
 };
 

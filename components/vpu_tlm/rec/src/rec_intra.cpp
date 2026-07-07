@@ -8,12 +8,12 @@ RecIntra::RecIntra(sc_core::sc_module_name name) :
 }
 
 void RecIntra::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    // Parse incoming transaction into a typed CustomPacket (backward-compatible)
+    // Parse incoming transaction into a typed RecPacket (backward-compatible)
     auto len = trans.get_data_length();
     auto ptr = reinterpret_cast<const uint8_t*>(trans.get_data_ptr());
     if (len >= 8 && ptr) {
-        CustomPacket in = unpackCustomPacket(ptr, len);
-        if (in.cmd == CustomCmd::READ_REQ && mem_if) {
+        RecPacket in = unpackRecPacket(ptr, len);
+        if (in.cmd == RecCmd::READ_REQ && mem_if) {
             // Convert 4x4 block coords to pixel coords (caller may already be pixels)
             uint32_t px = static_cast<uint32_t>(in.x) * 4u;
             uint32_t py = static_cast<uint32_t>(in.y) * 4u;
@@ -43,8 +43,8 @@ void RecIntra::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& de
                     pred.assign(16, 0);
                 }
 
-                CustomPacket pkt;
-                pkt.cmd = CustomCmd::PRE;
+                RecPacket pkt;
+                pkt.cmd = RecCmd::PRE;
                 pkt.block_idx = in.block_idx;
                 pkt.x = in.x;
                 pkt.y = in.y;
@@ -58,7 +58,7 @@ void RecIntra::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& de
                 pkt.i4x4_y = in.i4x4_y;
                 pkt.data = std::move(pred);
 
-                std::vector<uint8_t> outbuf = packCustomPacket(pkt);
+                std::vector<uint8_t> outbuf = packRecPacket(pkt);
 
                 std::cout << "-------------RecIntra Packet (internal)--------------" << std::endl;
                 std::cout << pkt << std::endl;
@@ -82,7 +82,7 @@ void RecIntra::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& de
     buffer_socket->b_transport(trans, delay);
 }
 
-void RecIntra::bindMemory(MemoryIf &mem) {
+void RecIntra::bindMemory(RecMemoryIf &mem) {
     mem_if = &mem;
 }
 

@@ -5,14 +5,14 @@
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
-#include "memory_if.h"
+#include "rec_memory.h"
 #include <vector>
 #include <mutex>
 
-// Gateway that implements MemoryIf and forwards requests to a
+// Gateway that implements RecMemoryIf and forwards requests to a
 // `fetch_tlm::FetchWrapper` using TLM. This is intended for tests only
 // and performs simple synchronous round-trips using `LOAD` requests.
-class RecFetchGateway : public sc_core::sc_module, public MemoryIf {
+class RecFetchGateway : public sc_core::sc_module, public RecMemoryIf {
 public:
     tlm_utils::simple_initiator_socket<RecFetchGateway> start_socket;
     tlm_utils::simple_target_socket<RecFetchGateway> out_socket;

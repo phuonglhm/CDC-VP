@@ -8,27 +8,27 @@ ResBuffer::ResBuffer(sc_core::sc_module_name name) :
     SC_THREAD(forward_thread);
 }
 
-void ResBuffer::bindMemory(MemoryIf &mem) {
+void ResBuffer::bindMemory(RecMemoryIf &mem) {
     mem_if = &mem;
 }
 
 void ResBuffer::intra_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    CustomPacket pkt;
+    RecPacket pkt;
     auto len = trans.get_data_length();
     if (len > 0 && trans.get_data_ptr()) {
         const uint8_t *ptr = reinterpret_cast<const uint8_t*>(trans.get_data_ptr());
-        pkt = unpackCustomPacket(ptr, len);
+        pkt = unpackRecPacket(ptr, len);
     }
     fifo_buffer.write(std::move(pkt));
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 
 void ResBuffer::mc_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    CustomPacket pkt;
+    RecPacket pkt;
     auto len = trans.get_data_length();
     if (len > 0 && trans.get_data_ptr()) {
         const uint8_t *ptr = reinterpret_cast<const uint8_t*>(trans.get_data_ptr());
-        pkt = unpackCustomPacket(ptr, len);
+        pkt = unpackRecPacket(ptr, len);
     }
     fifo_buffer.write(std::move(pkt));
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
@@ -36,8 +36,8 @@ void ResBuffer::mc_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& 
 
 void ResBuffer::forward_thread() {
     while (true) {
-        CustomPacket pkt = fifo_buffer.read();
-        if (pkt.cmd == CustomCmd::PRE && mem_if) {
+        RecPacket pkt = fifo_buffer.read();
+        if (pkt.cmd == RecCmd::PRE && mem_if) {
             uint32_t px = static_cast<uint32_t>(pkt.x) * 4u;
             uint32_t py = static_cast<uint32_t>(pkt.y) * 4u;
             uint32_t ax = (px > 0) ? (px - 1u) : 0u;
@@ -73,11 +73,11 @@ void ResBuffer::forward_thread() {
                     res[i] = static_cast<uint8_t>(biased);
                 }
 
-                CustomPacket outpkt = pkt;
-                outpkt.cmd = CustomCmd::RESIDUAL;
+                RecPacket outpkt = pkt;
+                outpkt.cmd = RecCmd::RESIDUAL;
                 outpkt.data = std::move(res);
 
-                std::vector<uint8_t> buf = packCustomPacket(outpkt);
+                std::vector<uint8_t> buf = packRecPacket(outpkt);
 
                 std::cout << "----------------Residual Packet (internal)---------------" << std::endl;
                 std::cout << outpkt;
@@ -93,7 +93,7 @@ void ResBuffer::forward_thread() {
         }
 
         // Default behaviour
-        std::vector<uint8_t> buf = packCustomPacket(pkt);
+        std::vector<uint8_t> buf = packRecPacket(pkt);
         tlm::tlm_generic_payload trans;
         trans.set_command(tlm::TLM_WRITE_COMMAND);
         trans.set_address(0);

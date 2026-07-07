@@ -19,6 +19,10 @@ LIBS := -lsystemc
 
 # Precompiled header (speeds up repeated inclusion of heavy headers like SystemC)
 # Use a copy of the header inside $(OBJ_DIR) so generated .gch stays in build/
+PCH_HEADER := include/rec_packet.h
+PCH_COPY = $(OBJ_DIR)/rec_packet.h
+PCH_GCH = $(PCH_COPY).gch
+
 # Directories and target
 SRC_DIR := src
 OBJ_DIR := build
@@ -61,24 +65,30 @@ $(BIN_DIR):
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
-# Note: precompiled header support removed to simplify the build.
+# Copy header into obj dir and build precompiled header there so build artifacts
+# remain under $(OBJ_DIR).
+$(PCH_COPY): $(PCH_HEADER) | $(OBJ_DIR)
+	cp $< $@
 
-# Compile source files into object files
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+$(PCH_GCH): $(PCH_COPY) | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -x c++-header $< -o $@
 
-# Compile test sources into object files
-$(OBJ_DIR)/test_%.o: $(TEST_DIR)/%.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+# Compile source files into object files (use the PCH copy in $(OBJ_DIR))
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR) $(PCH_GCH)
+	$(CXX) $(CXXFLAGS) -include $(PCH_COPY) -MMD -c $< -o $@
+
+# Compile test sources into object files (use the PCH copy in $(OBJ_DIR))
+$(OBJ_DIR)/test_%.o: $(TEST_DIR)/%.cpp | $(OBJ_DIR) $(PCH_GCH)
+	$(CXX) $(CXXFLAGS) -include $(PCH_COPY) -MMD -c $< -o $@
 
 # Compile selected fetch_tlm sources into the rec build using the
 # fetch_tlm include directory so their internal relative includes work.
 ifeq ($(USE_FETCH),1)
-$(OBJ_DIR)/fetch_wrapper_tlm.o: ../fetch/src/fetch_wrapper_tlm.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -I../fetch/include -MMD -c $< -o $@
+$(OBJ_DIR)/fetch_wrapper_tlm.o: ../fetch/src/fetch_wrapper_tlm.cpp | $(OBJ_DIR) $(PCH_GCH)
+	$(CXX) $(CXXFLAGS) -I../fetch/include -include $(PCH_COPY) -MMD -c $< -o $@
 
-$(OBJ_DIR)/simple_memory.o: ../common/src/simple_memory.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+$(OBJ_DIR)/simple_memory.o: ../common/src/simple_memory.cpp | $(OBJ_DIR) $(PCH_GCH)
+	$(CXX) $(CXXFLAGS) -include $(PCH_COPY) -MMD -c $< -o $@
 endif
 
 # Link object files into final executable (Objects MUST precede -lsystemc)
@@ -89,7 +99,11 @@ $(TARGET): $(OBJS) $(FETCH_OBJS) | $(BIN_DIR)
 $(TEST_TARGET): $(TEST_OBJS) $(OBJS) $(FETCH_OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
--include $(DEPS) $(TEST_DEPS) $(FETCH_DEPS)
+-include $(DEPS)
+ -include $(DEPS)
+ -include $(DEPS)
+ -include $(TEST_DEPS)
+ -include $(FETCH_DEPS)
 
 run: $(TARGET)
 	./$(TARGET)

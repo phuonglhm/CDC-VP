@@ -5,8 +5,8 @@
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
-#include "custom_packet.h"
-#include "memory_if.h"
+#include "rec_packet.h"
+#include "rec_memory.h"
 
 class RecIntra : sc_core::sc_module {
     public:
@@ -31,12 +31,12 @@ class RecIntra : sc_core::sc_module {
                           uint8_t size4x4,
                           PaddingMode pad,
                           std::vector<uint8_t> &out);
-    // Bind a MemoryIf implementation to serve reference pixels
-    void bindMemory(MemoryIf &mem);
+    // Bind a RecMemoryIf implementation to serve reference pixels
+    void bindMemory(RecMemoryIf &mem);
 
     private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
-    MemoryIf *mem_if{nullptr};
+    RecMemoryIf *mem_if{nullptr};
     void DC_mode(const RefBlock& win, uint8_t size4x4, uint8_t pre_sel, uint32_t i4x4_x, uint32_t i4x4_y, std::vector<uint8_t>& out);
     // Planar prediction for the 4x4 sub-block at `i4x4_x,i4x4_y` inside the
     // N×N block indicated by `size4x4`.

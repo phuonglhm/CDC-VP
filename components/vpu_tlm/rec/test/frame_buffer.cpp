@@ -2,13 +2,13 @@
 #include "tlm.h"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
-#include "custom_packet.h"
+#include "rec_packet.h"
 
 class FrameBuffer : sc_core::sc_module {
     public:
     FrameBuffer(sc_core::sc_module_name name);
     SC_HAS_PROCESS(FrameBuffer);
-    sc_core::sc_fifo<CustomPacket> fifo_buffer;
+    sc_core::sc_fifo<RecPacket> fifo_buffer;
     tlm_utils::simple_target_socket<FrameBuffer> mc_socket;
 
     private:
@@ -22,7 +22,7 @@ FrameBuffer::FrameBuffer(sc_core::sc_module_name name)
 }
 
 void FrameBuffer::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    CustomPacket pkt;
+    RecPacket pkt;
     auto len = trans.get_data_length();
     if (len > 0 && trans.get_data_ptr()) {
         pkt.data.assign(trans.get_data_ptr(), trans.get_data_ptr() + len);

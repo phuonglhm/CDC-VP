@@ -7,13 +7,13 @@ RecMc::RecMc(sc_core::sc_module_name name) :
 }
 
 void RecMc::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    CustomPacket pkt = unpackCustomPacket(trans);
+    RecPacket pkt = unpackRecPacket(trans);
 
     switch (pkt.cmd) {
-        case CustomCmd::PRE:
+        case RecCmd::PRE:
             handle_pre(pkt);
             break;
-        case CustomCmd::READ_REQ:
+        case RecCmd::READ_REQ:
             handle_read_req(pkt, trans);
             break;
         default:
@@ -24,8 +24,8 @@ void RecMc::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
 
 
 
-void RecMc::handle_pre(const CustomPacket &pkt) {
-    std::vector<uint8_t> outbuf = packCustomPacket(pkt);
+void RecMc::handle_pre(const RecPacket &pkt) {
+    std::vector<uint8_t> outbuf = packRecPacket(pkt);
 
     tlm::tlm_generic_payload new_trans;
     new_trans.set_command(tlm::TLM_WRITE_COMMAND);
@@ -38,7 +38,7 @@ void RecMc::handle_pre(const CustomPacket &pkt) {
 }
 
 
-void RecMc::handle_read_req(const CustomPacket &pkt, tlm::tlm_generic_payload &trans) {
+void RecMc::handle_read_req(const RecPacket &pkt, tlm::tlm_generic_payload &trans) {
     // Convert 4x4 block coords to pixel coords
     uint32_t px = static_cast<uint32_t>(pkt.x) * 4u;
     uint32_t py = static_cast<uint32_t>(pkt.y) * 4u;
@@ -109,8 +109,8 @@ void RecMc::handle_read_req(const CustomPacket &pkt, tlm::tlm_generic_payload &t
     }
 
     // Build PRE packet and forward to downstream buffer (RecTQ)
-    CustomPacket outpkt;
-    outpkt.cmd = CustomCmd::PRE;
+    RecPacket outpkt;
+    outpkt.cmd = RecCmd::PRE;
     outpkt.block_idx = pkt.block_idx;
     outpkt.x = pkt.x;
     outpkt.y = pkt.y;
@@ -124,7 +124,7 @@ void RecMc::handle_read_req(const CustomPacket &pkt, tlm::tlm_generic_payload &t
     outpkt.i4x4_y = pkt.i4x4_y;
     outpkt.data = std::move(pred);
 
-    std::vector<uint8_t> outbuf = packCustomPacket(outpkt);
+    std::vector<uint8_t> outbuf = packRecPacket(outpkt);
     tlm::tlm_generic_payload new_trans;
     new_trans.set_command(tlm::TLM_WRITE_COMMAND);
     new_trans.set_address(0);
@@ -137,7 +137,7 @@ void RecMc::handle_read_req(const CustomPacket &pkt, tlm::tlm_generic_payload &t
 }
 
 // Bind a memory provider so this module can fetch reference blocks
-void RecMc::bindMemory(MemoryIf &mem) {
+void RecMc::bindMemory(RecMemoryIf &mem) {
     mem_if = &mem;
 }
 
