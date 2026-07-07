@@ -103,7 +103,8 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     cdc::components::uart_host_bridge uart0_host; // boot-flow UART download path
     i2c i2c0, i2c1;
     cdc::components::spi_tlm spi0, spi1;
-    spi_dummy spi0_peri, spi1_peri;
+    cdc::components::flash_nor_tlm spi_flash0; // NOR behind SPI0 (boot-flow SPI download)
+    spi_dummy spi1_peri;
     cdc::components::Timer timer0, timer1;
     cdc::components::wdt_tlm wdt0;
     PWM pwm0;
@@ -125,6 +126,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     sc_core::sc_signal<bool> uart0_irq, uart1_irq;
     sc_core::sc_signal<bool> i2c0_irq, i2c1_irq;
     sc_core::sc_signal<bool> spi0_irq, spi1_irq, spi0_rst, spi1_rst;
+    // SPI0 chip-select to the NOR flash. MANY_WRITERS: driven from spi0's
+    // reset method and from register writes running in the CPU's process.
+    sc_core::sc_signal<bool, sc_core::SC_MANY_WRITERS> spi0_cs_n;
     sc_core::sc_signal<bool> timer0_irq, timer1_irq, timer0_rst, timer1_rst, timer0_ext, timer1_ext;
     sc_core::sc_signal<bool> wdt0_irq, wdt0_rst, wdt0_rsto;
     sc_core::sc_signal<bool> pwm0_out;
@@ -166,7 +170,8 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         , uart0_host("uart0_host")
         , i2c0("i2c0"), i2c1("i2c1")
         , spi0("spi0"), spi1("spi1")
-        , spi0_peri("spi0_peri"), spi1_peri("spi1_peri")
+        , spi_flash0("spi_flash0", kFlashSize)
+        , spi1_peri("spi1_peri")
         , timer0("timer0", 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, sc_core::sc_time(10, sc_core::SC_NS))
         , timer1("timer1", 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, sc_core::sc_time(10, sc_core::SC_NS))
         , wdt0("wdt0", sc_core::sc_time(10, sc_core::SC_NS))
@@ -235,7 +240,11 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
 
         i2c0.irq(i2c0_irq); i2c1.irq(i2c1_irq);
 
-        spi0.to_peri_socket.bind(spi0_peri.socket); spi0.irq(spi0_irq); spi0.reset_n(spi0_rst);
+        // SPI0 master ↔ NOR flash byte-stream face; CS from SSPCSR via signal.
+        spi0.to_peri_socket.bind(spi_flash0.from_spi_socket);
+        spi0.cs_n(spi0_cs_n);
+        spi0.irq(spi0_irq); spi0.reset_n(spi0_rst);
+        SC_METHOD(spi0_cs_bridge); sensitive << spi0_cs_n;
         spi1.to_peri_socket.bind(spi1_peri.socket); spi1.irq(spi1_irq); spi1.reset_n(spi1_rst);
 
         timer0.irq_out(timer0_irq); timer0.reset_n(timer0_rst); timer0.extin(timer0_ext);
@@ -325,11 +334,16 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
             std::cout << "BOOTROM 64 KiB @ 0x0 | IFLASH 4 MiB @ 0x0400_0000 | "
                          "GPIO0 @ 0x1016_0000 (pin1 = boot strap)\n";
             std::cout << "IPs: UARTx2 I2Cx2 SPIx2 TIMERx2 WDT PWM DMA TRNG CMU PMU "
-                         "DMIC OTP QSPI(+flash) RTC ADC GPIO | ISP/VPU/NPU reserved\n";
+                         "DMIC OTP QSPI(+flash) RTC ADC GPIO | SPI0+NOR (boot) | "
+                         "ISP/VPU/NPU reserved\n";
         }
     }
 
     void monitor_uart0() { std::cout << uart0_tx.read(); std::cout.flush(); }
+
+    // Active-low line -> flash's "selected" state; deassert edge ends a
+    // NOR command (resets the flash's SPI state machine).
+    void spi0_cs_bridge() { spi_flash0.spi_cs(!spi0_cs_n.read()); }
 
     void dma_irq_bridge() { dma0_irq_nonzero.write(dma0_irq.read() != 0u); }
 
@@ -388,6 +402,23 @@ void vp_fx1_full_soc_top::load_int_flash(const std::string& path)
     }
     impl_->iflash.load(img.data(), img.size());
     std::cout << "IFLASH loaded " << img.size() << " bytes from " << path << '\n';
+}
+
+void vp_fx1_full_soc_top::load_spi_flash(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        SC_REPORT_ERROR("vp_fx1_full_soc", ("cannot open spi-flash image: " + path).c_str());
+        return;
+    }
+    std::vector<std::uint8_t> img((std::istreambuf_iterator<char>(in)),
+                                  std::istreambuf_iterator<char>());
+    if (img.size() > impl_->spi_flash0.size()) {
+        SC_REPORT_ERROR("vp_fx1_full_soc", ("spi-flash image larger than flash: " + path).c_str());
+        return;
+    }
+    impl_->spi_flash0.load(img.data(), img.size());
+    std::cout << "SPI0 NOR loaded " << img.size() << " bytes from " << path << '\n';
 }
 
 void vp_fx1_full_soc_top::set_boot_pin(bool high)

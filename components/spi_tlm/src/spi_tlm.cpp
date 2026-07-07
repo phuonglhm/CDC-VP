@@ -176,6 +176,11 @@ bool spi_tlm::write_reg(std::uint8_t offset, std::uint16_t value) {
    case 0x24:
       reg_dmacr = value & 0x3;
       return true;
+
+   case 0x28: // SSPCSR (vendor): bit0 = assert chip-select (line low)
+      reg_csr = value & 0x1;
+      drive_cs();
+      return true;
    }
 
    return false;
@@ -224,6 +229,9 @@ std::uint16_t spi_tlm::read_reg(std::uint16_t offset) {
 
    case 0x24:
       return reg_dmacr & 0x3;
+
+   case 0x28:
+      return reg_csr & 0x1;
 
    case 0xFE0:
       return reg_periph_id0;
@@ -303,6 +311,8 @@ void spi_tlm::handle_reset() {
    reg_mis = 0x0;
    reg_icr = 0x0;
    reg_dmacr = 0x0;
+   reg_csr = 0x0;
+   drive_cs();
 
    std::uint16_t dump_buffer;
    while (rx_fifo.nb_read(dump_buffer))
@@ -315,6 +325,11 @@ void spi_tlm::handle_reset() {
 
    possible_intr_event.notify(sc_core::SC_ZERO_TIME);
    update_status_reg();
+}
+
+void spi_tlm::drive_cs() {
+   if (cs_n.size() > 0)
+      cs_n->write(reg_csr == 0); // line is active low: deasserted = high
 }
 
 } // namespace cdc::components

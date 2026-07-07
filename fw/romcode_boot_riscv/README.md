@@ -4,8 +4,11 @@ Test firmware for `docs/romcode_boot_hw_plan.md` on VP_FX1_Full_SoC:
 
 - `bootrom/` → `bootrom.elf` (entry 0x0, runs from BOOTROM): reads the boot
   strap GPIO0 pin 1; LOW → jump to the app at IFLASH `0x0400_0000`; HIGH →
-  the diagram's probe loop (send `'R'` over UART0, bounded 8 attempts; a
-  response enters an echo "download" loop; SPI0 probe is Phase 3, stubbed).
+  the diagram's probe loop, bounded to 8 attempts: a. send `'R'` over UART0
+  and wait (a response enters an echo "download" loop); b. NOR READ (CMD
+  `0x03`) over SPI0 (a non-erased image dumps its first 8 bytes as the "SPI
+  download"). "Present" = a first byte that is not 0xFF/0x00 — a real ROM
+  must validate an image header instead.
 - `app/` → `app.bin` (raw binary for `--int-flash`): XIP from the read-only
   IFLASH window, prints on UART0. No writable `.data`/`.bss` (flash is ROM);
   stack in SoC RAM.
@@ -33,8 +36,12 @@ $VP $FW --boot-pin high --uart0-rx-file resp.bin --sim-ms 200
 $VP $FW --boot-pin high --uart0-socket 5577 --uart0-wait --sim-ms 300 &
 python3 host_tool.py 5577   # connect, send a response, read the echo
 
+# strap HIGH + NOR image behind SPI0: SPI download branch
+printf 'SPI-IMG!' > spi_img.bin
+$VP $FW --boot-pin high --spi-flash spi_img.bin --sim-ms 300
+
 # strap HIGH, nobody answers: probe loop prints 8x 'R' then exits
-$VP $FW --boot-pin high --sim-ms 300
+$VP $FW --boot-pin high --sim-ms 400
 ```
 
 Note: the probe timeout is a spin count (~4 ms sim time per attempt), so the

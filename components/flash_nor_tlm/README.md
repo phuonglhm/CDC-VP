@@ -3,11 +3,23 @@
 ## Overview
 
 `flash_nor_tlm` is a lightweight SystemC/TLM model of a serial NOR flash device
-intended to sit behind `qspi_tlm`.
+intended to sit behind `qspi_tlm` — or, since the ROM-code boot-flow work,
+behind a plain `spi_tlm` master.
 
 This model is not memory-mapped directly on the CPU bus. The CPU accesses it by
 programming the QSPI controller registers, and the QSPI controller sends serial
 command frames through `flash_nor_tlm::from_qspi_socket`.
+
+A second, independent face `from_spi_socket` speaks `spi_tlm`'s frame protocol
+(one full-duplex frame per `b_transport`: TLM write, 2-byte payload, low byte =
+MOSI, MISO written back into the low byte; 8-bit frames only). A state machine
+decodes NOR READ (`0x03` + 3 address bytes → data out); any other opcode makes
+the face return `0xFF` until chip-select deasserts. Chip-select is a C++ call,
+`spi_cs(bool selected)` — the platform wires it from the SPI controller's
+`cs_n` line (deassert resets the command state machine; while deselected the
+flash leaves the frame untouched, i.e. the master sees its own bytes echoed,
+matching the legacy loopback dummy-sink behavior). Both sockets are optional:
+bind whichever face(s) the instance serves.
 
 The current implementation is a programmer's-view / transaction-level model for
 early platform integration, firmware bring-up, and QSPI boot-flow experiments.

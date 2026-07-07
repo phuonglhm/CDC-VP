@@ -26,6 +26,7 @@ This project provides a **Programmer's View (PV)** model of a **SPI controller**
 | --- | --- | --- | --- |
 | `irq` | Output | `sc_out<bool>` | High when a masked interrupt condition is met. |
 | `reset_n` | Input | `sc_in<bool>` | Active Low. Resets all registers and clears both FIFOs. |
+| `cs_n` | Output (optional) | `sc_port<sc_signal_write_if<bool>, 1, SC_ZERO_OR_MORE_BOUND>` | Active-low chip-select, software-controlled through the vendor register `SSPCSR` @ `0x28` (bit0: 1 = assert/drive low; reset 0 = deasserted). Added for NOR-flash command framing (a command spans many frames and terminates on CS deassert). Leave unbound when unused. |
 
 ## Build and Unit Testing
 

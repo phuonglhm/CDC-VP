@@ -4,10 +4,10 @@
 > VP_FX1 boot flow. It records WHY each change exists, the frozen ABI
 > decisions, exact status of the work, and what remains.
 >
-> Status as of 2026-07-07: **Phase 1 COMPLETE (committed). Phase 2 COMPLETE —
-> UART0 host input path built, unit-tested, and E2E-verified (file replay and
-> TCP host-tool dialogue).** Phase 3 (SPI0 NOR) not started; nothing packed or
-> delivered to the firmware workspace yet.
+> Status as of 2026-07-07: **Phases 1–3 COMPLETE (1 and 2 committed; 3 built,
+> unit-tested, and E2E-verified: full probe chain UART→SPI→repeat works on the
+> VP).** Remaining: packaging/delivery to fx1 (memory-map doc, default.yaml,
+> BSP headers/regref, pack script run).
 
 ## 0. Repo topology — two projects, one direction of flow
 
@@ -75,7 +75,9 @@ The sequence, in words:
 | GPIO0 registers | `0x00 VALUE` RO, `0x04 OUT` RW, `0x08 DIR` RW (1=out, reset all-in) | minimal; 32-bit word access only |
 | GPIO0 IRQ | none in this revision | same precedent as PWM0/CMU0; PLIC 24 stays reserved |
 | Boot strap | GPIO0 **pin 1**; LOW (default) = boot internal flash app; HIGH = probe UART/SPI download | matches diagram "A1 != HIGH → Jump to App" |
-| VP CLI | `--fw <bootrom.elf>` (ROM code, entry 0x0), `--int-flash <app.bin>` (raw binary → IFLASH), `--boot-pin high|low` (default low), `--uart0-socket <port>` (TCP host-tool bridge on 127.0.0.1, bidirectional), `--uart0-wait` (block sim at t=0 until the client connects), `--uart0-rx-file <f>` (deterministic RX replay for CI) | |
+| VP CLI | `--fw <bootrom.elf>` (ROM code, entry 0x0), `--int-flash <app.bin>` (raw binary → IFLASH), `--boot-pin high|low` (default low), `--uart0-socket <port>` (TCP host-tool bridge on 127.0.0.1, bidirectional), `--uart0-wait` (block sim at t=0 until the client connects), `--uart0-rx-file <f>` (deterministic RX replay for CI), `--spi-flash <bin>` (image for the NOR behind SPI0, independent from QSPI0's flash0) | |
+| SPI0 chip-select | vendor register `SSPCSR` @ SPI0+`0x28`, bit0: 1 = assert (line low), reset 0 = deasserted; optional `cs_n` port on spi_tlm | PL022 has no SW CS; NOR command framing needs one (command ends on CS deassert) |
+| SPI0 NOR protocol | 8-bit frames; only CMD `0x03` + 3 addr bytes → sequential data out; other opcodes dead (0xFF) until CS deassert | minimal set required by the boot diagram |
 | ROM loading mechanism | ELF loader writes through bus `transport_dbg`; memory_tlm debug writes now bypass `read_only` (backdoor). Functional writes to ROM still fail. | standard TLM debug-transport convention |
 | PLIC sources | unchanged (1..23 assigned, 24-31 reserved) | |
 
@@ -149,15 +151,34 @@ All paths relative to CDC-VP repo root.
     host saw the 'R' probe + all TX, ROM echoed the host's bytes back.
   - no backend: probe loop exits after 8 attempts; strap LOW unchanged.
 
-### Phase 3 — NOR flash behind SPI0 (hardest)
-- `spi_tlm` has `to_peri_socket` (word-at-a-time MOSI/MISO initiator) but NO
-  chip-select modeling; `flash_nor_tlm` only speaks qspi_tlm transactions.
-- Plan: add CS output to spi_tlm (from SSP register or explicit), add a
-  `from_spi_socket` byte-stream face to flash_nor_tlm (state machine:
-  CMD 0x03 + 3 addr bytes → data out; reset on CS deassert). Separate flash
-  instance + image file (`--spi-flash <bin>`), independent from QSPI0 flash0.
-- Until then the diagram's SPI probe can never answer (spi0 is bound to a
-  dummy sink in the top).
+### Phase 3 — NOR flash behind SPI0 — DONE 2026-07-07
+- `spi_tlm`: vendor register `SSPCSR` @0x28 (bit0 = CS assert) + optional
+  active-low `cs_n` port (`SC_ZERO_OR_MORE_BOUND`, existing bindings
+  unaffected). Register readable; reset deasserts.
+- `flash_nor_tlm`: new `from_spi_socket` byte-stream face (spi_tlm frame
+  protocol: TLM write, 2-byte payload, low byte MOSI/MISO, 8-bit frames) +
+  `spi_cs(bool)` C++ chip-select. State machine idle→addr(3B)→data; unknown
+  opcode → dead (0xFF) until CS deassert. DESELECTED = frame left untouched
+  (MISO tri-state → master sees its own bytes): deliberately preserves the
+  legacy loopback-dummy behavior so `fw/spi_test_riscv` (which never asserts
+  CS) still passes — verified PHASE 1-3 PASS on the platform. BOTH sockets
+  are now `simple_target_socket_optional` so an instance can serve either
+  face alone. Unit test extended (deselected echo + no decode, read,
+  CS-abort/restart, unknown opcode).
+  (Found while testing, unrelated: `fw/spi_test_riscv/linker.ld` is broken at
+  HEAD — `//Author` comment lines from commit 146a4c4 are invalid ld syntax.)
+- Top: `spi_flash0` (16 MiB, erased 0xFF unless `--spi-flash <bin>`) replaces
+  the spi0 dummy sink; `spi0_cs_n` signal (SC_MANY_WRITERS: written from
+  spi0's reset method AND from register writes in the CPU process) bridged to
+  `spi_flash0.spi_cs()`. spi1 keeps the dummy.
+- Bootrom E2E: SPI probe implemented (CR0 8-bit, CPSR=2, SSE, CS assert,
+  CMD 0x03 + addr 0 + 8 dummy frames, CS deassert; "present" = any first byte
+  not 0xFF/0x00 — real ROM must validate an image header instead, plan §6).
+  Verified: `--boot-pin high --spi-flash img.bin` → dumps the image's first
+  8 bytes ("SPI download mode"); UART present + SPI present → UART wins
+  (diagram order a before b); nothing attached → 8 probe rounds then exit;
+  strap LOW unchanged. Regression: test_spi_tlm, test_qspi_tlm,
+  test_flash_nor_tlm, test_gpio_tlm, test_uart_host_bridge all PASS.
 
 ### Packaging / delivery (after phases build & pass)
 1. Update `docs/peripheral_memory_map.md` (+BOOTROM, IFLASH, GPIO0 rows) and

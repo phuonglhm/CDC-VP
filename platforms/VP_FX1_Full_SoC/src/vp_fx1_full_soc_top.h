@@ -21,6 +21,9 @@ public:
     // Preload the internal-flash ROM window (0x0400_0000) from a raw binary.
     void load_int_flash(const std::string& path);
 
+    // Preload the NOR flash behind SPI0 (boot-flow SPI download source).
+    void load_spi_flash(const std::string& path);
+
     // Drive the ROM-code boot-mode strap (GPIO0 pin 1). Default low.
     void set_boot_pin(bool high);
 

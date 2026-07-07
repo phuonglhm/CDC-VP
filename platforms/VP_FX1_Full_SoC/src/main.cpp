@@ -32,6 +32,7 @@ int sc_main(int argc, char* argv[])
                                        "platforms/VP_FX1_Full_SoC/configs/default.yaml");
     const std::string fw = get_opt(argc, argv, "--fw", "");
     const std::string int_flash = get_opt(argc, argv, "--int-flash", "");
+    const std::string spi_flash = get_opt(argc, argv, "--spi-flash", "");
     const std::string boot_pin = get_opt(argc, argv, "--boot-pin", "low");
     // UART0 host input path (ROM-code download branch): TCP bridge / file replay.
     const std::string uart0_socket = get_opt(argc, argv, "--uart0-socket", "");
@@ -46,6 +47,7 @@ int sc_main(int argc, char* argv[])
     cdc::platforms::vp_fx1_full_soc::vp_fx1_full_soc_top top("vp_fx1_full_soc", config);
     if (!fw.empty()) top.load_firmware(fw);
     if (!int_flash.empty()) top.load_int_flash(int_flash);
+    if (!spi_flash.empty()) top.load_spi_flash(spi_flash);
     top.set_boot_pin(boot_pin == "high" || boot_pin == "1");
     if (!uart0_socket.empty())
         top.set_uart0_socket(static_cast<std::uint16_t>(std::stoul(uart0_socket)), uart0_wait);

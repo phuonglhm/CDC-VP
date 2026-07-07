@@ -21,6 +21,14 @@ public:
    sc_core::sc_out<bool> irq;
    sc_core::sc_in<bool> reset_n;
 
+   // Chip-select line (active low), software-controlled via the vendor
+   // register SSPCSR @ 0x28 (bit0: 1 = assert, i.e. drive the line low).
+   // PL022 has no SW CS; NOR command framing needs one (a command spans many
+   // frames and ends only on CS deassert) — see docs/romcode_boot_hw_plan.md.
+   // Optional so existing single-slave/loopback bindings keep working.
+   sc_core::sc_port<sc_core::sc_signal_write_if<bool>, 1,
+                    sc_core::SC_ZERO_OR_MORE_BOUND> cs_n;
+
    SC_HAS_PROCESS(spi_tlm);
    explicit spi_tlm(sc_core::sc_module_name name);
 
@@ -41,6 +49,7 @@ private:
    std::uint16_t reg_mis;
    std::uint16_t reg_icr;
    std::uint16_t reg_dmacr;
+   std::uint16_t reg_csr; // SSPCSR @ 0x28: bit0 chip-select assert
 
    // readonly IDs
    const std::uint8_t reg_periph_id0 = 0x22;
@@ -72,6 +81,7 @@ private:
    bool is_transmitting = false;
 
    void handle_reset();
+   void drive_cs(); // reflect reg_csr on the (optional) cs_n line
 };
 
 } // namespace cdc::components
