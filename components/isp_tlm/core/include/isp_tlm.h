@@ -63,8 +63,8 @@ private:
    sc_core::sc_event processing_event_;
    bool irq_level_;
 
-   static constexpr std::size_t MAX_WIDTH = 4096;
-   static constexpr std::size_t MAX_HEIGHT = 4096;
+   // static constexpr std::size_t MAX_WIDTH = 4096;
+   // static constexpr std::size_t MAX_HEIGHT = 4096;
 };
 
 } // namespace cdc::components
