@@ -31,8 +31,13 @@ void isp_tlm::update_irq_output() {
 }
 
 void isp_tlm::allocate_buffers() {
-   const std::size_t raw_size = static_cast<std::size_t>(get_width()) * get_height();
-   const std::size_t yuv_size = static_cast<std::size_t>(get_width()) * get_height() * 3 / 2;
+   const std::uint32_t w = pipeline_.read_reg(REG_WIDTH);
+   const std::uint32_t h = pipeline_.read_reg(REG_HEIGHT);
+   const std::size_t raw_size = static_cast<std::size_t>(w) * h;
+   const std::size_t yuv_size = static_cast<std::size_t>(w) * h * 3 / 2;
+   if (raw_buffer_.size() == raw_size) {
+      return;
+   }
    raw_buffer_.resize(raw_size);
    yuv_buffer_.resize(yuv_size);
 }
@@ -166,8 +171,8 @@ unsigned int isp_tlm::transport_dbg(tlm::tlm_generic_payload &trans) {
 }
 
 void isp_tlm::trigger_processing() {
-   const std::uint32_t w = pipeline_.get_width();
-   const std::uint32_t h = pipeline_.get_height();
+   const std::uint32_t w = pipeline_.read_reg(REG_WIDTH);
+   const std::uint32_t h = pipeline_.read_reg(REG_HEIGHT);
    if (w == 0 || h == 0) {
       return;
    }
@@ -189,7 +194,7 @@ void isp_tlm::processing_thread() {
       wait();
 
       if (!reset_n.read()) {
-         pipeline_.clear_processing_done();
+         pipeline_.reset();
          irq_level_ = false;
          raw_buffer_.clear();
          yuv_buffer_.clear();

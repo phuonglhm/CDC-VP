@@ -27,10 +27,12 @@ public:
                     sc_core::sc_time access_latency = sc_core::sc_time(10, sc_core::SC_NS));
 
    std::uint16_t *get_raw_buffer() {
+      allocate_buffers();
       return raw_buffer_.data();
    }
 
    std::uint8_t *get_yuv_buffer() {
+      allocate_buffers();
       return yuv_buffer_.data();
    }
 
@@ -42,17 +44,8 @@ public:
       return yuv_buffer_.size();
    }
 
-   std::uint32_t get_width() const {
-      return pipeline_.get_width();
-   }
-
-   std::uint32_t get_height() const {
-      return pipeline_.get_height();
-   }
-
-   void allocate_buffers();
-
 private:
+   void allocate_buffers();
    void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
    unsigned int transport_dbg(tlm::tlm_generic_payload &trans);
    void dma_read();

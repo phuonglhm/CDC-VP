@@ -32,6 +32,55 @@ isp_pipeline::isp_pipeline()
 isp_pipeline::~isp_pipeline() {
 }
 
+void isp_pipeline::reset() {
+   width_ = 0;
+   height_ = 0;
+   input_bit_depth_ = 12;
+   input_bayer_pattern_ = cfa_types::RGGB;
+   working_bit_depth_ = 12;
+   lsc_mem_ptr_ = nullptr;
+   awb_r_gain_ = 1.0f;
+   awb_b_gain_ = 1.0f;
+   bit_depth_ = 12;
+   bayer_pattern_ = 0;
+   processing_done_ = false;
+   ctrl_ = 0;
+   irq_enable_ = 0;
+   irq_status_ = 0;
+   scratch_frame_addr_ = 0;
+   src_size_bytes_ = 0;
+   dst_size_bytes_ = 0;
+   stride_ = 0;
+   format_ = 0;
+   op_mode_ = 0;
+   weights_frame_addr_ = 0;
+   param_frame_addr_ = 0;
+   lut_addr_ = 0;
+   aec_feedback_ = 0;
+   raw_frame_addr_ = 0;
+   yuv_frame_addr_ = 0;
+   awb_r_gain_raw_ = 0x3f800000u;
+   awb_b_gain_raw_ = 0x3f800000u;
+   std::memset(ccm_matrix_raw_, 0, sizeof(ccm_matrix_raw_));
+   config_ = isp_config();
+   raw_buf_.clear();
+   blc_out_.clear();
+   dpc_out_.clear();
+   lsc_out_.clear();
+   dg_out_.clear();
+   bnr_out_.clear();
+   demosaic_out_.clear();
+   wb_out_.clear();
+   ccm_out_.clear();
+   gc_out_.clear();
+   csc_out_.clear();
+   cse_out_.clear();
+   sharpen_out_.clear();
+   twodnr_out_.clear();
+   scale_out_.clear();
+   final_out_.clear();
+}
+
 void isp_pipeline::allocate_buffers() {
    const std::size_t raw_pixels = static_cast<std::size_t>(width_) * height_;
    if (raw_buf_.size() == raw_pixels) {
