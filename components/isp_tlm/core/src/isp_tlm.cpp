@@ -172,19 +172,6 @@ void isp_tlm::trigger_processing() {
       return;
    }
 
-   pipeline_.set_dimensions(w, h);
-
-   cfa_types bayer = cfa_types::RGGB;
-   switch (pipeline_.get_bayer_pattern()) {
-   case 0: bayer = cfa_types::RGGB; break;
-   case 1: bayer = cfa_types::GRBG; break;
-   case 2: bayer = cfa_types::BGGR; break;
-   case 3: bayer = cfa_types::GBRG; break;
-   default: bayer = cfa_types::RGGB; break;
-   }
-   pipeline_.set_input_format(static_cast<std::uint8_t>(pipeline_.get_bit_depth()), bayer);
-   pipeline_.set_lsc_mem(nullptr);
-
    raw_buffer_.resize(static_cast<std::size_t>(w) * h);
    yuv_buffer_.resize(static_cast<std::size_t>(w) * h * 3 / 2);
 

@@ -48,10 +48,6 @@ public:
    isp_pipeline();
    ~isp_pipeline();
 
-   void set_dimensions(std::uint32_t width, std::uint32_t height);
-   void set_lsc_mem(const float *lsc_mem);
-   void set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern);
-
    void set_working_bit_depth(std::uint8_t bd) {
       working_bit_depth_ = bd;
    }
@@ -73,6 +69,8 @@ public:
    float get_awb_b_gain() const { return awb_b_gain_; }
 
 private:
+   void allocate_buffers();
+
    std::uint32_t width_;
    std::uint32_t height_;
    std::uint8_t  input_bit_depth_;

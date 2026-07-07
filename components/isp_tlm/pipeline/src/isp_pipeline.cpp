@@ -32,11 +32,11 @@ isp_pipeline::isp_pipeline()
 isp_pipeline::~isp_pipeline() {
 }
 
-void isp_pipeline::set_dimensions(std::uint32_t width, std::uint32_t height) {
-   width_ = width;
-   height_ = height;
-
+void isp_pipeline::allocate_buffers() {
    const std::size_t raw_pixels = static_cast<std::size_t>(width_) * height_;
+   if (raw_buf_.size() == raw_pixels) {
+      return;
+   }
    const std::size_t rgb_pixels = raw_pixels * 3u;
    const std::size_t yuv_pixels = raw_pixels * 3u;
 
@@ -58,21 +58,9 @@ void isp_pipeline::set_dimensions(std::uint32_t width, std::uint32_t height) {
    final_out_.resize(yuv_pixels);
 }
 
-void isp_pipeline::set_lsc_mem(const float *lsc_mem) {
-   lsc_mem_ptr_ = lsc_mem;
-}
-
-void isp_pipeline::set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern) {
-   input_bit_depth_ = bit_depth;
-   input_bayer_pattern_ = bayer_pattern;
-   working_bit_depth_ = bit_depth;
-}
-
-// ── Register-file access ───────────────────────────────────────────────────────
-
 std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    switch (offset) {
-      // ── Global/Common Registers (0x0000 - 0x00FF)
+      //  Global/Common Registers (0x0000 - 0x00FF)
    case cdc::components::REG_CTRL:
       return ctrl_;
    case cdc::components::REG_STATUS:
@@ -97,7 +85,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_BAYER_PATTERN:
       return bayer_pattern_;
 
-   // ── Buffer Descriptors (0x0100 - 0x01FF)
+   //  Buffer Descriptors (0x0100 - 0x01FF)
    case cdc::components::REG_SRC_ADDR:
       return raw_frame_addr_;
    case cdc::components::REG_DST_ADDR:
@@ -113,9 +101,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_PARAM_ADDR:
       return param_frame_addr_;
 
-   // ── Block Parameters in order of flow ──
-
-   // 1. BLC
+   //  BLC
    case cdc::components::REG_BLC_ENABLE:
       return static_cast<std::uint32_t>(config_.blc.is_enable);
    case cdc::components::REG_BLC_LINEAR:
@@ -137,13 +123,13 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_BLC_B_SAT:
       return config_.blc.b_sat;
 
-   // 2. DPC
+   //  DPC
    case cdc::components::REG_DPC_ENABLE:
       return static_cast<std::uint32_t>(config_.dpc.is_enable);
    case cdc::components::REG_DPC_THRESH:
       return config_.dpc.dp_threshold;
 
-   // 3. LSC
+   //  LSC
    case cdc::components::REG_LSC_ENABLE:
       return static_cast<std::uint32_t>(config_.lsc.is_enable);
    case cdc::components::REG_LSC_GRID_W:
@@ -151,7 +137,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_LSC_GRID_H:
       return config_.lsc.grid_height;
 
-   // 4. DG
+   //  DG
    case cdc::components::REG_DG_ENABLE:
       return static_cast<std::uint32_t>(config_.dg.is_enable);
    case cdc::components::REG_DG_GAIN:
@@ -159,17 +145,17 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_DG_AUTO:
       return static_cast<std::uint32_t>(config_.dg.is_auto);
 
-   // 5. BNR
+   //  BNR
    case cdc::components::REG_BNR_ENABLE:
       return static_cast<std::uint32_t>(config_.bnr.is_enable);
    case cdc::components::REG_BNR_WINDOW:
       return static_cast<std::uint32_t>(config_.bnr.filter_window);
 
-   // 6. Demosaic
+   //  Demosaic
    case cdc::components::REG_DEMOSAIC_ENABLE:
       return static_cast<std::uint32_t>(config_.demosaic.is_enable);
 
-   // 7. AWB
+   // AWB
    case cdc::components::REG_AWB_ENABLE:
       return static_cast<std::uint32_t>(config_.awb.is_enable);
    case cdc::components::REG_AWB_ALGORITHM:
@@ -194,7 +180,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
       return raw;
    }
 
-   // 8. WB
+   //  WB
    case cdc::components::REG_WB_ENABLE:
       return static_cast<std::uint32_t>(config_.wb.is_enable);
    case cdc::components::REG_WB_R_GAIN: {
@@ -208,7 +194,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
       return raw;
    }
 
-   // 9. CCM
+   // CCM
    case cdc::components::REG_CCM_ENABLE:
       return static_cast<std::uint32_t>(config_.ccm.is_enable);
    case cdc::components::REG_CCM_MATRIX00:
@@ -230,7 +216,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_CCM_MATRIX22:
       return ccm_matrix_raw_[8];
 
-   // 10. GC
+   //  GC
    case cdc::components::REG_GC_ENABLE:
       return static_cast<std::uint32_t>(config_.gc.is_enable);
    case cdc::components::REG_GC_GAMMA:
@@ -256,7 +242,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
       return 0;
    }
 
-   // 11. AEC
+   //  AEC
    case cdc::components::REG_AEC_ENABLE:
       return static_cast<std::uint32_t>(config_.aec.is_enable);
    case cdc::components::REG_AEC_FEEDBACK:
@@ -269,13 +255,13 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
       return raw;
    }
 
-   // 12. CSC
+   //  CSC
    case cdc::components::REG_CSC_ENABLE:
       return static_cast<std::uint32_t>(config_.csc.is_enable);
    case cdc::components::REG_CSC_STANDARD:
       return static_cast<std::uint32_t>(config_.csc.conv_standard);
 
-   // 13. CSE
+   //  CSE
    case cdc::components::REG_CSE_ENABLE:
       return static_cast<std::uint32_t>(config_.cse.is_enable);
    case cdc::components::REG_CSE_SAT_GAIN: {
@@ -284,7 +270,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
       return raw;
    }
 
-   // 14. Sharpen
+   //  Sharpen
    case cdc::components::REG_SHARPEN_ENABLE:
       return static_cast<std::uint32_t>(config_.sharpen.is_enable);
    case cdc::components::REG_SHARPEN_SIGMA:
@@ -292,7 +278,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_SHARPEN_STRENGTH:
       return config_.sharpen.sharpen_strength;
 
-   // 15. 2DNR
+   //  2DNR
    case cdc::components::REG_2DNR_ENABLE:
       return static_cast<std::uint32_t>(config_.twodnr.is_enable);
    case cdc::components::REG_2DNR_WINDOW:
@@ -302,7 +288,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_2DNR_WTS:
       return config_.twodnr.wts;
 
-   // 16. Scale
+   //  Scale
    case cdc::components::REG_SCALE_ENABLE:
       return static_cast<std::uint32_t>(config_.scale.is_enable);
    case cdc::components::REG_SCALE_OUT_W:
@@ -310,7 +296,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    case cdc::components::REG_SCALE_OUT_H:
       return config_.scale.out_height;
 
-   // 17. YUV420
+   //  YUV420
    case cdc::components::REG_YUV420_ENABLE:
       return static_cast<std::uint32_t>(config_.yuv420.is_enable);
 
@@ -321,7 +307,7 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
 
 void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
    switch (offset) {
-   // ── Global/Common Registers (0x0000 - 0x00FF)
+   //  Global/Common Registers (0x0000 - 0x00FF)
    case cdc::components::REG_CTRL:
       ctrl_ = value;
       break;
@@ -348,12 +334,31 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       break;
    case cdc::components::REG_BIT_DEPTH:
       bit_depth_ = value & 0xFF;
+      input_bit_depth_ = bit_depth_;
+      working_bit_depth_ = bit_depth_;
       break;
    case cdc::components::REG_BAYER_PATTERN:
       bayer_pattern_ = value & 0xFF;
+      switch (bayer_pattern_) {
+      case 0:
+         input_bayer_pattern_ = cfa_types::RGGB;
+         break;
+      case 1:
+         input_bayer_pattern_ = cfa_types::GRBG;
+         break;
+      case 2:
+         input_bayer_pattern_ = cfa_types::BGGR;
+         break;
+      case 3:
+         input_bayer_pattern_ = cfa_types::GBRG;
+         break;
+      default:
+         input_bayer_pattern_ = cfa_types::RGGB;
+         break;
+      }
       break;
 
-   // ── Buffer Descriptors (0x0100 - 0x01FF)
+   //  Buffer Descriptors (0x0100 - 0x01FF)
    case cdc::components::REG_SRC_ADDR:
       raw_frame_addr_ = value;
       break;
@@ -376,9 +381,9 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       param_frame_addr_ = value;
       break;
 
-   // ── Block Parameters ──
+   //  Block Parameters
 
-   // 1. BLC
+   // BLC
    case cdc::components::REG_BLC_ENABLE:
       config_.blc.is_enable = (value & 0x1) != 0;
       break;
@@ -410,7 +415,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.blc.b_sat = static_cast<std::uint16_t>(value & 0xFFFF);
       break;
 
-   // 2. DPC
+   // DPC
    case cdc::components::REG_DPC_ENABLE:
       config_.dpc.is_enable = (value & 0x1) != 0;
       break;
@@ -418,7 +423,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.dpc.dp_threshold = static_cast<std::uint16_t>(value & 0xFFFF);
       break;
 
-   // 3. LSC
+   //  LSC
    case cdc::components::REG_LSC_ENABLE:
       config_.lsc.is_enable = (value & 0x1) != 0;
       break;
@@ -429,7 +434,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.lsc.grid_height = static_cast<std::uint16_t>(value & 0xFFFF);
       break;
 
-   // 4. DG
+   //  DG
    case cdc::components::REG_DG_ENABLE:
       config_.dg.is_enable = (value & 0x1) != 0;
       break;
@@ -440,7 +445,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.dg.is_auto = (value & 0x1) != 0;
       break;
 
-   // 5. BNR
+   //  BNR
    case cdc::components::REG_BNR_ENABLE:
       config_.bnr.is_enable = (value & 0x1) != 0;
       break;
@@ -448,12 +453,12 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.bnr.filter_window = static_cast<std::uint8_t>(value & 0xFF);
       break;
 
-   // 6. Demosaic
+   //  Demosaic
    case cdc::components::REG_DEMOSAIC_ENABLE:
       config_.demosaic.is_enable = (value & 0x1) != 0;
       break;
 
-   // 7. AWB
+   //  AWB
    case cdc::components::REG_AWB_ENABLE:
       config_.awb.is_enable = (value & 0x1) != 0;
       break;
@@ -478,7 +483,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       std::memcpy(&config_.awb.percentage, &value, sizeof(float));
       break;
 
-   // 8. WB
+   //  WB
    case cdc::components::REG_WB_ENABLE:
       config_.wb.is_enable = (value & 0x1) != 0;
       break;
@@ -489,7 +494,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       std::memcpy(&config_.wb.b_gain, &value, sizeof(float));
       break;
 
-   // 9. CCM
+   //  CCM
    case cdc::components::REG_CCM_ENABLE:
       config_.ccm.is_enable = (value & 0x1) != 0;
       break;
@@ -530,7 +535,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       std::memcpy(&config_.ccm.corrected_blue[2], &value, sizeof(float));
       break;
 
-   // 10. GC
+   //  GC
    case cdc::components::REG_GC_ENABLE:
       config_.gc.is_enable = (value & 0x1) != 0;
       break;
@@ -573,7 +578,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       break;
    }
 
-   // 11. AEC
+   //  AEC
    case cdc::components::REG_AEC_ENABLE:
       config_.aec.is_enable = (value & 0x1) != 0;
       break;
@@ -584,7 +589,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       std::memcpy(&config_.aec.histogram_skewness, &value, sizeof(float));
       break;
 
-   // 12. CSC
+   //  CSC
    case cdc::components::REG_CSC_ENABLE:
       config_.csc.is_enable = (value & 0x1) != 0;
       break;
@@ -592,7 +597,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.csc.conv_standard = static_cast<std::uint8_t>(value & 0xFF);
       break;
 
-   // 13. CSE
+   //  CSE
    case cdc::components::REG_CSE_ENABLE:
       config_.cse.is_enable = (value & 0x1) != 0;
       break;
@@ -600,7 +605,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       std::memcpy(&config_.cse.saturation_gain, &value, sizeof(float));
       break;
 
-   // 14. Sharpen
+   // Sharpen
    case cdc::components::REG_SHARPEN_ENABLE:
       config_.sharpen.is_enable = (value & 0x1) != 0;
       break;
@@ -611,7 +616,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.sharpen.sharpen_strength = static_cast<std::uint16_t>(value & 0xFFFF);
       break;
 
-   // 15. 2DNR
+   // 2DNR
    case cdc::components::REG_2DNR_ENABLE:
       config_.twodnr.is_enable = (value & 0x1) != 0;
       break;
@@ -625,7 +630,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.twodnr.wts = static_cast<std::uint16_t>(value & 0xFFFF);
       break;
 
-   // 16. Scale
+   // Scale
    case cdc::components::REG_SCALE_ENABLE:
       config_.scale.is_enable = (value & 0x1) != 0;
       break;
@@ -636,7 +641,7 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       config_.scale.out_height = static_cast<std::uint16_t>(value & 0xFFFF);
       break;
 
-   // 17. YUV420
+   // YUV420
    case cdc::components::REG_YUV420_ENABLE:
       config_.yuv420.is_enable = (value & 0x1) != 0;
       break;
@@ -646,13 +651,13 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
    }
 }
 
-// ── Pipeline run ──────────────────────────────────────────────────────────────
-
 void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &yuv_out) {
    if (width_ == 0 || height_ == 0 || raw_in == nullptr) {
       yuv_out.clear();
       return;
    }
+
+   allocate_buffers();
 
    const std::size_t raw_pixels = static_cast<std::size_t>(width_) * height_;
    const std::size_t rgb_pixels = raw_pixels * 3u;
@@ -722,7 +727,6 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    ccm_.process(wb_out_.data(), ccm_out_.data(), width_, height_, config_.ccm, bd);
    gc_.process(ccm_out_.data(), gc_out_.data(), width_, height_, config_.gc, bd);
 
-   // AEC (Auto Exposure Control)
    if (config_.aec.is_enable) {
       aec_.process(gc_out_.data(), width_, height_, config_.aec, bd);
       aec_feedback_ = config_.aec.ae_feedback;
