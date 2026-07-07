@@ -245,6 +245,8 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
          active_lut = &config_.gc.gamma_lut_12;
       else if (bit_depth_ == 14)
          active_lut = &config_.gc.gamma_lut_14;
+      else if (bit_depth_ == 16)
+         active_lut = &config_.gc.gamma_lut_16;
 
       if (active_lut && lut_addr_ < active_lut->size()) {
          return (*active_lut)[lut_addr_];
@@ -548,6 +550,9 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       } else if (bit_depth_ == 14) {
          active_lut = &config_.gc.gamma_lut_14;
          expected_size = 16384;
+      } else if (bit_depth_ == 16) {
+         active_lut = &config_.gc.gamma_lut_16;
+         expected_size = 65536;
       }
 
       if (active_lut) {
