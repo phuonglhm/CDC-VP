@@ -11,6 +11,8 @@
 #include "prediction_result.h"
 #include "prei.h"
 #include "prei_result.h"
+#include "../../fetch/include/fetch_loader_registry.h"
+#include "../../fetch/include/fetch_frame_loader.h"
 
 static int g_failures = 0;
 

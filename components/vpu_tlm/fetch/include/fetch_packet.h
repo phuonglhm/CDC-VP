@@ -30,8 +30,12 @@ struct FetchPacket {
     uint8_t align_px = 1;   // alignment hint in pixels
     uint32_t req_id = 0;    // application tag
 
-    // payload: for WRITE_4x4 contains 16 bytes (4x4 row-major)
-    // for LOAD_RESP contains width*height bytes row-major
+    // payload:
+    // - for WRITE_4x4: contains 16 bytes (4x4, row-major). Coordinates
+    //   `x_px`,`y_px` specify the top-left pixel of the 4x4 block; wrappers
+    //   should write each row to memory at `encodeAddress(plane, x_px, y_px + r)`
+    //   with data ordered row-major.
+    // - for LOAD_RESP: contains width*height bytes row-major
     std::vector<uint8_t> data;
 
     FetchPacket() = default;

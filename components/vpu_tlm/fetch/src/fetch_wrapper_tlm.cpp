@@ -6,10 +6,13 @@
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
 
-// Minimal FetchWrapper TLM module (sketch): implement constructor and b_transport
 
 // Simple address encoder for example purposes. Real system will use a
 // canonical mapping (plane/stride/etc.). Here we just pack plane/y/x.
+// When we forward addresses over a TLM `mem_socket` we mark them with
+// a magic bit so bridge adapters can reliably recognize fetch-origin
+// addresses and translate them to other encodings.
+static constexpr uint64_t FETCH_ADDR_MAGIC = (1ULL << 55);
 static uint64_t encodeAddress(uint8_t plane, uint32_t x, uint32_t y) {
     uint64_t a = 0;
     a |= (static_cast<uint64_t>(plane) & 0xFFULL) << 56;
@@ -18,13 +21,70 @@ static uint64_t encodeAddress(uint8_t plane, uint32_t x, uint32_t y) {
     return a;
 }
 
-FetchWrapper::FetchWrapper(sc_core::sc_module_name name)
+FetchWrapper::FetchWrapper(sc_core::sc_module_name name, bool use_mem_socket)
     : sc_core::sc_module(name)
     , start_socket("start_socket")
     , out_socket("out_socket")
-    , simple_mem("simple_mem")
+    , use_mem_socket_(use_mem_socket)
 {
+    // Only allocate the embedded SimpleMemory when not using an external
+    // mem_socket. This prevents creating an unbound TLM socket inside the
+    // embedded memory instance (which triggers SystemC E109).
+    if (!use_mem_socket_) {
+        simple_mem = new SimpleMemory("simple_mem");
+    } else {
+        simple_mem = nullptr;
+    }
+
     start_socket.register_b_transport(this, &FetchWrapper::b_transport);
+}
+
+std::vector<uint8_t> FetchWrapper::read_from_mem(uint64_t addr, size_t len) {
+    if (use_mem_socket_) {
+        std::vector<uint8_t> data(len);
+        tlm::tlm_generic_payload trans;
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        // mark fetch-origin addresses so adapters can translate them
+        trans.set_address(addr | FETCH_ADDR_MAGIC);
+        trans.set_data_ptr(reinterpret_cast<unsigned char*>(data.data()));
+        trans.set_data_length(static_cast<unsigned int>(len));
+        trans.set_streaming_width(static_cast<unsigned int>(len));
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        sc_core::sc_time d = sc_core::SC_ZERO_TIME;
+        try {
+            mem_socket->b_transport(trans, d);
+        } catch (...) {
+            std::fill(data.begin(), data.end(), 0);
+            return data;
+        }
+        if (trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
+            std::fill(data.begin(), data.end(), 0);
+        }
+        return data;
+    }
+    if (simple_mem) return simple_mem->read_region(addr, len);
+    return std::vector<uint8_t>(len, 0);
+}
+
+void FetchWrapper::write_to_mem(uint64_t addr, const uint8_t* data, size_t len) {
+    if (use_mem_socket_) {
+        tlm::tlm_generic_payload trans;
+        trans.set_command(tlm::TLM_WRITE_COMMAND);
+        // mark fetch-origin addresses so adapters can translate them
+        trans.set_address(addr | FETCH_ADDR_MAGIC);
+        trans.set_data_ptr(const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(data)));
+        trans.set_data_length(static_cast<unsigned int>(len));
+        trans.set_streaming_width(static_cast<unsigned int>(len));
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        sc_core::sc_time d = sc_core::SC_ZERO_TIME;
+        try {
+            mem_socket->b_transport(trans, d);
+        } catch (...) {
+            return;
+        }
+        return;
+    }
+    if (simple_mem) simple_mem->write_region(addr, data, len);
 }
 
 void FetchWrapper::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay) {
@@ -49,8 +109,8 @@ void FetchWrapper::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time
                 mtrans.set_streaming_width(row.size());
                 mtrans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
 
-                // Read directly from the embedded SimpleMemory
-                std::vector<uint8_t> read = simple_mem.read_region(addr, row.size());
+                // Read from memory (either via mem_socket or embedded simple_mem)
+                std::vector<uint8_t> read = read_from_mem(addr, row.size());
                 payload.insert(payload.end(), read.begin(), read.end());
             }
 
@@ -91,21 +151,20 @@ void FetchWrapper::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time
                 return;
             }
 
-            // Map 4x4 coordinate packing: assume caller encoded x_px/y_px as 4x4 indices
-            uint32_t x4 = req.x_px & 0xFFFFu;
-            uint32_t y4 = req.y_px & 0xFFFFu;
-            uint64_t addr = encodeAddress(req.plane, x4, y4);
-
-            tlm::tlm_generic_payload mtrans;
-            mtrans.set_command(tlm::TLM_WRITE_COMMAND);
-            mtrans.set_address(addr);
-            mtrans.set_data_ptr(const_cast<uint8_t*>(req.data.data()));
-            mtrans.set_data_length(16);
-            mtrans.set_streaming_width(16);
-            mtrans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-
-            // write into the embedded SimpleMemory
-            simple_mem.write_region(addr, reinterpret_cast<const uint8_t*>(req.data.data()), 16);
+            // Interpret x_px,y_px as the top-left pixel of a 4x4 block.
+            // Write each row separately so memory layout matches consumers
+            // that read rows via `read_region(encodeAddress(plane, x, y), width)`.
+            const uint32_t base_x = req.x_px;
+            const uint32_t base_y = req.y_px;
+            for (uint32_t r = 0; r < 4; ++r) {
+                uint64_t row_addr = encodeAddress(req.plane, base_x, base_y + r);
+                const uint8_t* row_ptr = req.data.data() + static_cast<size_t>(r) * 4;
+                write_to_mem(row_addr, row_ptr, 4);
+                // debug: log the write for visibility in tests
+                std::cerr << "FetchWrapper: WRITE_4x4 row addr=0x" << std::hex << row_addr << std::dec << " data=[";
+                for (int b = 0; b < 4; ++b) std::cerr << int(row_ptr[b]) << (b+1<4?",":"");
+                std::cerr << "]\n";
+            }
 
             trans.set_response_status(tlm::TLM_OK_RESPONSE);
             return;
@@ -119,15 +178,8 @@ void FetchWrapper::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time
             buf.reserve(static_cast<size_t>(ext_w) * ext_h);
             for (uint32_t r = 0; r < ext_h; ++r) {
                 std::vector<uint8_t> row(ext_w);
-                tlm::tlm_generic_payload mtrans;
-                mtrans.set_command(tlm::TLM_READ_COMMAND);
                 uint64_t addr = encodeAddress(req.plane, req.x_px - 1, req.y_px - 1 + r);
-                mtrans.set_address(addr);
-                mtrans.set_data_ptr(row.data());
-                mtrans.set_data_length(row.size());
-                mtrans.set_streaming_width(row.size());
-                mtrans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-                std::vector<uint8_t> read = simple_mem.read_region(addr, row.size());
+                std::vector<uint8_t> read = read_from_mem(addr, row.size());
                 buf.insert(buf.end(), read.begin(), read.end());
             }
 

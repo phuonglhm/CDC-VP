@@ -8,6 +8,8 @@
 #include "frame.h"
 #include "prei.h"
 #include "prei_result.h"
+#include "../../fetch/include/fetch_loader_registry.h"
+#include "../../fetch/include/fetch_frame_loader.h"
 
 static int g_failures = 0;
 
@@ -24,6 +26,20 @@ static int g_failures = 0;
 static cdc::components::frame make_gradient_frame(std::uint32_t width,
                                                    std::uint32_t height)
 {
+    if (auto loader = fetch::get_loader()) {
+        std::vector<uint8_t> data;
+        if (loader->load_rect(0, 0, 0, width, height, data)) {
+            cdc::components::frame f(width, height);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < width; ++x) {
+                    f.set_luma(x, y, data[y * width + x]);
+                }
+            }
+            f.fill_chroma(128, 128);
+            return f;
+        }
+    }
+
     cdc::components::frame f(width, height);
 
     for (std::uint32_t y = 0; y < height; ++y) {

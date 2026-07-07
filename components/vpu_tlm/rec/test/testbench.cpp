@@ -1,4 +1,8 @@
 #include "testbench.h"
+#include "../include/rec_fetch_gateway.h"
+#if defined(USE_FETCH)
+#include "../../fetch/include/fetch_wrapper_tlm.h"
+#endif
 
 bool TestBench::dataflow_test(const RecPacket &pkt_in) {
     RecPacket pkt = pkt_in;
@@ -597,6 +601,34 @@ int sc_main(int argc, char* argv[]) {
     test_bench.top.rec_tq.cabac_socket.bind(test_bench.coeff_monitor.tq_socket);
     test_bench.top.inv_tq.db_socket.bind(test_bench.db_monitor.inv_tq_socket);
 
+    // Test harness: (opt-in) route Rec memory requests through a FetchWrapper
+    // via the RecFetchGateway so we can validate fetch integration without
+    // changing production `Top` wiring.
+#if defined(USE_FETCH)
+    RecFetchGateway gw("rec_fetch_gateway");
+    FetchWrapper fetch("fetch_wrapper");
+    gw.start_socket.bind(fetch.start_socket);
+    fetch.out_socket.bind(gw.out_socket);
+
+    // Preload the embedded SimpleMemory with dummy=128 to match RecMemory default.
+    for (uint8_t plane = 0; plane < 3; ++plane) {
+        for (uint32_t y = 0; y < 64; ++y) {
+            for (uint32_t x = 0; x < 64; x += 16) {
+                uint64_t addr = (static_cast<uint64_t>(plane) & 0xFFULL) << 56
+                                | (static_cast<uint64_t>(y) << 16)
+                                | (static_cast<uint64_t>(x) & 0xFFFFULL);
+                std::vector<uint8_t> v(16, 128);
+                fetch.simple_mem.load_data(addr, v);
+            }
+        }
+    }
+
+    // Override the bindMemory targets to use the gateway for this test run
+    test_bench.top.rec_intra.bindMemory(gw);
+    test_bench.top.rec_mc.bindMemory(gw);
+    test_bench.top.res_buffer.bindMemory(gw);
+#endif
+
     bool ok_dc = test_bench.recIntra_DCMode_test();
     std::cout << "DC Mode Test: " << (ok_dc ? "PASS" : "FAIL") << std::endl;
 
@@ -643,5 +675,24 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "Short-payload COEFF Test: " << (ok_short ? "PASS" : "FAIL") << std::endl;
 
     bool ok_all = ok_dc && ok_planar && ok_angular && ok_mc_fallback && ok_mc_pre && ok_mc && ok_coeff_inv && ok_large_tq && ok_res && ok_tq && ok_inv && ok_pack && ok_sub && ok_qp && ok_short;
+
+    // Print a concise summary for debugging exit code mismatches
+    std::cout << "SUMMARY: ok_dc=" << ok_dc
+              << " ok_planar=" << ok_planar
+              << " ok_angular=" << ok_angular
+              << " ok_mc_fallback=" << ok_mc_fallback
+              << " ok_mc_pre=" << ok_mc_pre
+              << " ok_mc=" << ok_mc
+              << " ok_coeff_inv=" << ok_coeff_inv
+              << " ok_large_tq=" << ok_large_tq
+              << " ok_res=" << ok_res
+              << " ok_tq=" << ok_tq
+              << " ok_inv=" << ok_inv
+              << " ok_pack=" << ok_pack
+              << " ok_sub=" << ok_sub
+              << " ok_qp=" << ok_qp
+              << " ok_short=" << ok_short
+              << " -> ok_all=" << ok_all << std::endl;
+
     return ok_all ? 0 : 1;
 }

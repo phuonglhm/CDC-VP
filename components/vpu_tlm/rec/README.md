@@ -12,4 +12,5 @@ This is a SystemC TLM 2.3.4 model of the Reconstruction block in a VPU. It serve
 
 # Run
 - make testbench
+- To run using package from fetch: make testbench USE_FETCH=1
 - (to clean build) make clean

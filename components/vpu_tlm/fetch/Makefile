@@ -1,6 +1,10 @@
 # Compiler
 CXX      := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
+# Common include directory (overrideable from environment)
+COMMON_DIR ?= ../common
+COMMON_INCLUDE ?= $(COMMON_DIR)/include
+
+CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -I$(COMMON_INCLUDE) -I../ime/include -I../fme/include -I../prei/include -I../posi/include -g
 
 ## FORCE using the local SystemC 2.3.4 install in the user's home
 SYSTEMC_HOME := $(HOME)/.local
@@ -37,6 +41,7 @@ TEST_SRC_ALL := $(wildcard $(TEST_DIR)/*.cpp)
 TEST_SRC := $(filter-out $(TEST_DIR)/coeff_monitor.cpp $(TEST_DIR)/db_monitor.cpp $(TEST_DIR)/frame_buffer.cpp, $(TEST_SRC_ALL))
 TEST_TARGET := $(BIN_DIR)/testbench
 TEST_OBJS := $(patsubst $(TEST_DIR)/%.cpp,$(OBJ_DIR)/test_%.o,$(TEST_SRC))
+EXTRA_OBJS := $(OBJ_DIR)/common_frame.o $(OBJ_DIR)/ime_ime.o $(OBJ_DIR)/fme_fme.o $(OBJ_DIR)/prei_prei.o $(OBJ_DIR)/posi_posi.o $(OBJ_DIR)/simple_memory.o
 TEST_DEPS := $(TEST_OBJS:.o=.d)
 
 $(BIN_DIR):
@@ -58,8 +63,26 @@ $(TARGET): $(OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # Link testbench (link against src objects as well)
-$(TEST_TARGET): $(TEST_OBJS) $(OBJS) | $(BIN_DIR)
+$(TEST_TARGET): $(TEST_OBJS) $(OBJS) $(EXTRA_OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
+
+$(OBJ_DIR)/common_frame.o: ../common/src/frame.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/ime_ime.o: ../ime/src/ime.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/fme_fme.o: ../fme/src/fme.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/prei_prei.o: ../prei/src/prei.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/posi_posi.o: ../posi/src/posi.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+
+$(OBJ_DIR)/simple_memory.o: ../common/src/simple_memory.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
 
 -include $(DEPS) $(TEST_DEPS)
 

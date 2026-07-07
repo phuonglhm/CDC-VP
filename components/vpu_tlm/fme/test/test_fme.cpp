@@ -14,6 +14,8 @@
 #include "ime.h"
 #include "ime_result.h"
 #include "prediction_result.h"
+#include "../../fetch/include/fetch_loader_registry.h"
+#include "../../fetch/include/fetch_frame_loader.h"
 
 static int g_failures = 0;
 

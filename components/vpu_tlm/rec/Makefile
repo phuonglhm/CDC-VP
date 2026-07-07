@@ -1,6 +1,8 @@
 # Compiler
 CXX      := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -g
+COMMON_DIR ?= ../common
+COMMON_INCLUDE ?= $(COMMON_DIR)/include
+CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -I$(COMMON_INCLUDE) -g
 
 ## FORCE using the local SystemC 2.3.4 install in the user's home
 SYSTEMC_HOME := $(HOME)/.local
@@ -30,6 +32,21 @@ TARGET  := $(BIN_DIR)/main
 SRCS := $(wildcard $(SRC_DIR)/*.cpp)
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
+
+# Optional fetch integration for tests. Enable with: `make testbench USE_FETCH=1`
+# When enabled, add the fetch include path and compile the FetchWrapper
+# and SimpleMemory sources into the rec build so tests can exercise fetch.
+ifeq ($(USE_FETCH),1)
+CXXFLAGS += -I../fetch/include -DUSE_FETCH
+# Use canonical SimpleMemory from common/src
+FETCH_SRCS := ../fetch/src/fetch_wrapper_tlm.cpp ../common/src/simple_memory.cpp
+FETCH_OBJS := $(OBJ_DIR)/fetch_wrapper_tlm.o $(OBJ_DIR)/simple_memory.o
+FETCH_DEPS := $(FETCH_OBJS:.o=.d)
+else
+FETCH_SRCS :=
+FETCH_OBJS :=
+FETCH_DEPS :=
+endif
 
 .PHONY: all main run clean testbench
 
@@ -64,17 +81,29 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR) $(PCH_GCH)
 $(OBJ_DIR)/test_%.o: $(TEST_DIR)/%.cpp | $(OBJ_DIR) $(PCH_GCH)
 	$(CXX) $(CXXFLAGS) -include $(PCH_COPY) -MMD -c $< -o $@
 
+# Compile selected fetch_tlm sources into the rec build using the
+# fetch_tlm include directory so their internal relative includes work.
+ifeq ($(USE_FETCH),1)
+$(OBJ_DIR)/fetch_wrapper_tlm.o: ../fetch/src/fetch_wrapper_tlm.cpp | $(OBJ_DIR) $(PCH_GCH)
+	$(CXX) $(CXXFLAGS) -I../fetch/include -include $(PCH_COPY) -MMD -c $< -o $@
+
+$(OBJ_DIR)/simple_memory.o: ../common/src/simple_memory.cpp | $(OBJ_DIR) $(PCH_GCH)
+	$(CXX) $(CXXFLAGS) -include $(PCH_COPY) -MMD -c $< -o $@
+endif
+
 # Link object files into final executable (Objects MUST precede -lsystemc)
-$(TARGET): $(OBJS) | $(BIN_DIR)
+$(TARGET): $(OBJS) $(FETCH_OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # Link testbench (link against src objects as well)
-$(TEST_TARGET): $(TEST_OBJS) $(OBJS) | $(BIN_DIR)
+$(TEST_TARGET): $(TEST_OBJS) $(OBJS) $(FETCH_OBJS) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LIBS) -o $@
 
 -include $(DEPS)
  -include $(DEPS)
+ -include $(DEPS)
  -include $(TEST_DEPS)
+ -include $(FETCH_DEPS)
 
 run: $(TARGET)
 	./$(TARGET)
