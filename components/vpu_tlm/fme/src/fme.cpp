@@ -516,10 +516,17 @@ fme_result fme::run(const frame& input,
 
     const block ctu = ime_info.ctu;
 
-    if (input.empty() || reference.empty() || !ime_info.valid || ctu.area() == 0) {
-        result.valid = false;
-        return result;
-    }
+if (input.empty() ||
+    reference.empty() ||
+    !ime_info.valid ||
+    !ime_info.best_inter_result.valid ||
+    ctu.area() == 0 ||
+    ctu.right() > input.width ||
+    ctu.bottom() > input.height ||
+    ctu.right() > reference.width ||
+    ctu.bottom() > reference.height) {
+    return fme_result::invalid();
+}
 
     const std::uint32_t clamped_qp =
         std::clamp(qp, MIN_QP, MAX_QP);
@@ -541,7 +548,8 @@ fme_result fme::run(const frame& input,
     result.qp = clamped_qp;
     result.best_inter_result = refined;
     result.best_cost = refined.cost;
-
+result.best_mv = result.best_inter_result.mv;
+result.best_partition = result.best_inter_result.partition;
     return result;
 }
 

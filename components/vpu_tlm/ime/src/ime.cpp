@@ -627,9 +627,14 @@ ime_result ime::run(const frame& input,
 
     ime_result result;
 
-    if (input.empty() || reference.empty() || ctu.area() == 0) {
-        result.valid = false;
-        return result;
+    if (input.empty() ||
+        reference.empty() ||
+        ctu.area() == 0 ||
+        ctu.right() > input.width ||
+        ctu.bottom() > input.height ||
+        ctu.right() > reference.width ||
+        ctu.bottom() > reference.height) {
+        return ime_result::invalid();
     }
 
     const std::uint32_t clamped_qp =
@@ -654,15 +659,18 @@ ime_result ime::run(const frame& input,
     result.best_mv = representative_mv(best);
     result.best_cost = best.cost;
     result.best_sad = best.sad;
+    result.best_rate = best.mvd_cost;
 
     result.candidates.clear();
 
     for (const rtl_candidate& piece : best.pieces) {
         ime_candidate candidate;
         candidate.valid = piece.valid;
+        candidate.pu = piece.region;
         candidate.partition = piece.public_partition;
         candidate.mv = piece.mv;
         candidate.sad = piece.sad;
+        candidate.rate = piece.mvd_cost;
         candidate.cost = piece.cost;
 
         result.candidates.push_back(std::move(candidate));
@@ -670,6 +678,7 @@ ime_result ime::run(const frame& input,
 
     return result;
 }
+
 
 } // namespace cdc::components
 

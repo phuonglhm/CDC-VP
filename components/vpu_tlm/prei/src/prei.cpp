@@ -347,6 +347,14 @@ prei_result prei::run(const frame& input,
                       const block& ctu,
                       const prei_rate_control_config& rc_config) const
 {
+ if (input.empty() ||
+        ctu.area() == 0 ||
+        ctu.right() > input.width ||
+        ctu.bottom() > input.height) {
+        return prei_result::invalid();
+    }
+
+
     if (input.empty() || ctu.area() == 0) {
         return prei_result::invalid();
     }

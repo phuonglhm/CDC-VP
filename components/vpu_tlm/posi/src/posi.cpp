@@ -704,7 +704,14 @@ prediction_result posi::run(const frame& input,
                             const prei_result& prei_info,
                             std::uint32_t qp) const
 {
-    if (input.empty() || region.area() == 0) {
+    if (input.empty() ||
+        reconstructed.empty() ||
+        region.area() == 0 ||
+        region.right() > input.width ||
+        region.bottom() > input.height ||
+        region.right() > reconstructed.width ||
+        region.bottom() > reconstructed.height ||
+        !prei_info.valid) {
         return prediction_result::invalid();
     }
 
