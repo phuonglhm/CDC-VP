@@ -93,6 +93,7 @@ private:
    std::uint32_t ccm_matrix_raw_[9] = {};                           // REG_CCM_MATRIX*
    std::uint32_t awb_r_gain_raw_    = 0x3f800000u;                 // 1.0f as uint32_t
    std::uint32_t awb_b_gain_raw_    = 0x3f800000u;                 // 1.0f as uint32_t
+   std::uint32_t gc_gamma_raw_      = 0x40066666u;                 // 2.2f as uint32_t
    std::uint32_t raw_frame_addr_    = 0;
    std::uint32_t yuv_frame_addr_    = 0;
 

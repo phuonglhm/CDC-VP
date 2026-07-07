@@ -88,9 +88,10 @@ constexpr std::uint32_t REG_CCM_MATRIX21 = 0x1420;
 constexpr std::uint32_t REG_CCM_MATRIX22 = 0x1424;
 
 // GC (Gamma Correction)
-constexpr std::uint32_t REG_GC_ENABLE = 0x1480;
-constexpr std::uint32_t REG_GC_LUT_ADDR = 0x1484;
-constexpr std::uint32_t REG_GC_LUT_DATA = 0x1488;
+constexpr std::uint32_t REG_GC_ENABLE    = 0x1480;
+constexpr std::uint32_t REG_GC_GAMMA     = 0x1484;
+constexpr std::uint32_t REG_GC_LUT_ADDR  = 0x1488;
+constexpr std::uint32_t REG_GC_LUT_DATA  = 0x148C;
 
 // AEC (Auto Exposure Control)
 constexpr std::uint32_t REG_AEC_ENABLE = 0x1500;

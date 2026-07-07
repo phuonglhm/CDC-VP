@@ -233,6 +233,8 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) {
    // 10. GC
    case cdc::components::REG_GC_ENABLE:
       return static_cast<std::uint32_t>(config_.gc.is_enable);
+   case cdc::components::REG_GC_GAMMA:
+      return gc_gamma_raw_;
    case cdc::components::REG_GC_LUT_ADDR:
       return lut_addr_;
    case cdc::components::REG_GC_LUT_DATA: {
@@ -531,6 +533,10 @@ void isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
    // 10. GC
    case cdc::components::REG_GC_ENABLE:
       config_.gc.is_enable = (value & 0x1) != 0;
+      break;
+   case cdc::components::REG_GC_GAMMA:
+      gc_gamma_raw_ = value;
+      std::memcpy(&config_.gc.default_gamma, &value, sizeof(float));
       break;
    case cdc::components::REG_GC_LUT_ADDR:
       lut_addr_ = value & 0x3FFF;
