@@ -2,7 +2,12 @@ file(GLOB VPU_FETCH_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/fetch/src/*.cpp
 )
 
+file(GLOB VPU_MEM_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/mem/src/*.cpp
+)
+
 add_library(video_encoder_tlm STATIC
+    ${VPU_MEM_SOURCES}
     ${VPU_FETCH_SOURCES}
     common/src/frame.cpp
 
@@ -15,6 +20,7 @@ add_library(video_encoder_tlm STATIC
 target_include_directories(video_encoder_tlm
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/common/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/mem/include
         ${CMAKE_CURRENT_SOURCE_DIR}/fetch/include
         ${CMAKE_CURRENT_SOURCE_DIR}/prei/include
         ${CMAKE_CURRENT_SOURCE_DIR}/posi/include
@@ -33,3 +39,5 @@ add_subdirectory(prei/test)
 add_subdirectory(posi/test)
 add_subdirectory(ime/test)
 add_subdirectory(fme/test)
+
+add_subdirectory(mem/test)
