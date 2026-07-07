@@ -4,9 +4,10 @@
 > VP_FX1 boot flow. It records WHY each change exists, the frozen ABI
 > decisions, exact status of the work, and what remains.
 >
-> Status as of 2026-07-07: **Phase 1 COMPLETE — built, unit-tested, and E2E
-> boot flow verified on the VP (both strap values).** Nothing has been
-> committed, packed, or delivered to the firmware workspace yet.
+> Status as of 2026-07-07: **Phase 1 COMPLETE (committed). Phase 2 COMPLETE —
+> UART0 host input path built, unit-tested, and E2E-verified (file replay and
+> TCP host-tool dialogue).** Phase 3 (SPI0 NOR) not started; nothing packed or
+> delivered to the firmware workspace yet.
 
 ## 0. Repo topology — two projects, one direction of flow
 
@@ -74,7 +75,7 @@ The sequence, in words:
 | GPIO0 registers | `0x00 VALUE` RO, `0x04 OUT` RW, `0x08 DIR` RW (1=out, reset all-in) | minimal; 32-bit word access only |
 | GPIO0 IRQ | none in this revision | same precedent as PWM0/CMU0; PLIC 24 stays reserved |
 | Boot strap | GPIO0 **pin 1**; LOW (default) = boot internal flash app; HIGH = probe UART/SPI download | matches diagram "A1 != HIGH → Jump to App" |
-| VP CLI | `--fw <bootrom.elf>` (ROM code, entry 0x0), `--int-flash <app.bin>` (raw binary → IFLASH), `--boot-pin high|low` (default low) | |
+| VP CLI | `--fw <bootrom.elf>` (ROM code, entry 0x0), `--int-flash <app.bin>` (raw binary → IFLASH), `--boot-pin high|low` (default low), `--uart0-socket <port>` (TCP host-tool bridge on 127.0.0.1, bidirectional), `--uart0-wait` (block sim at t=0 until the client connects), `--uart0-rx-file <f>` (deterministic RX replay for CI) | |
 | ROM loading mechanism | ELF loader writes through bus `transport_dbg`; memory_tlm debug writes now bypass `read_only` (backdoor). Functional writes to ROM still fail. | standard TLM debug-transport convention |
 | PLIC sources | unchanged (1..23 assigned, 24-31 reserved) | |
 
@@ -126,11 +127,27 @@ All paths relative to CDC-VP repo root.
    `--boot-pin high` → "BOOTROM: strap HIGH → probe UART0/SPI0 download
    (not modeled yet)". Both paths print via UART0.
 
-### Phase 2 — UART0 host-tool input path
-- uart2_tlm RX side already modeled (FIFO, RXRIS/RTRIS). Missing: VP-process
-  backend feeding bytes into uart0 RX. Plan: TCP socket option
-  (`--uart0-socket <port>`) + file replay (`--uart0-rx-file <f>`) for CI.
-- Without this, the diagram's UART download branch cannot be exercised.
+### Phase 2 — UART0 host-tool input path — DONE 2026-07-07
+- NEW component `components/uart_host_tlm/` (`cdc::components::uart_host_bridge`,
+  + unit test `test_uart_host_bridge`): no bus presence, binds on the UART's
+  pin side (`rx_out` → `UartTLM::rx` sc_buffer, `tx_in` ← the uart TX signal).
+  Backends selected before `sc_start()`:
+  - `listen_on(port, wait_for_client)` — TCP server on 127.0.0.1; client bytes
+    → RX FIFO, firmware TX forwarded back (bidirectional, non-blocking,
+    reconnect allowed). `wait_for_client` blocks the sim at t=0 (sim time
+    races wall clock, so interactive tools should use it or a long --sim-ms).
+  - `replay_file(path, start_delay)` — deterministic CI replay.
+  No line-rate modeling: 10 µs/byte injection pacing, 100 µs socket poll.
+- Platform: `uart0_host` instance in the top, always bound, idles unless
+  configured. CLI: `--uart0-socket <port>`, `--uart0-wait`, `--uart0-rx-file`.
+- E2E verified with `fw/romcode_boot_riscv` (bootrom probe branch now real:
+  strap HIGH → send 'R' over UART0, bounded 8-attempt probe loop, response →
+  echo download loop):
+  - file replay: `--boot-pin high --uart0-rx-file resp.bin --sim-ms 200` →
+    "UART response -> download mode, echo: …" + "download done".
+  - TCP: `--uart0-socket 5577 --uart0-wait` + mock host tool (python) →
+    host saw the 'R' probe + all TX, ROM echoed the host's bytes back.
+  - no backend: probe loop exits after 8 attempts; strap LOW unchanged.
 
 ### Phase 3 — NOR flash behind SPI0 (hardest)
 - `spi_tlm` has `to_peri_socket` (word-at-a-time MOSI/MISO initiator) but NO

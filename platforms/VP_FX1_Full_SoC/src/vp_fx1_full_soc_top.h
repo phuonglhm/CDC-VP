@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -22,6 +23,10 @@ public:
 
     // Drive the ROM-code boot-mode strap (GPIO0 pin 1). Default low.
     void set_boot_pin(bool high);
+
+    // UART0 host input path (boot-flow download branch). Call before sc_start.
+    void set_uart0_socket(std::uint16_t port, bool wait_for_client);
+    void set_uart0_rx_file(const std::string& path);
 
     std::string backend_name() const;
 

@@ -12,6 +12,7 @@ target_link_libraries(vp_fx1_full_soc PRIVATE
     cdc::components::clint_tlm
     cdc::components::plic_tlm
     cdc::components::uart2_tlm
+    cdc::components::uart_host_tlm
     cdc::components::i2c_tlm
     cdc::components::spi_tlm
     cdc::components::timer_tlm

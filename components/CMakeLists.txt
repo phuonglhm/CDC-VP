@@ -5,6 +5,7 @@ add_subdirectory(common)
 add_subdirectory(bus_router)
 add_subdirectory(memory_tlm)
 add_subdirectory(uart2_tlm)
+add_subdirectory(uart_host_tlm)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/i2c_tlm/CMakeLists.txt")
    add_subdirectory(i2c_tlm)

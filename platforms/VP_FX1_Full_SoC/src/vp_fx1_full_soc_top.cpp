@@ -14,6 +14,7 @@
 #include <clint_tlm.h>
 #include <plic_tlm.h>
 #include <uart.h>        // UartTLM            (global)
+#include <uart_host_bridge.h> // cdc::components::uart_host_bridge
 #include <i2c.h>         // i2c               (global)
 #include <spi_tlm.h>     // cdc::components::spi_tlm
 #include <timer.h>       // cdc::components::Timer
@@ -99,6 +100,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
 
     // ── Peripherals ─────────────────────────────────────────────────────────
     UartTLM uart0, uart1;
+    cdc::components::uart_host_bridge uart0_host; // boot-flow UART download path
     i2c i2c0, i2c1;
     cdc::components::spi_tlm spi0, spi1;
     spi_dummy spi0_peri, spi1_peri;
@@ -161,6 +163,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         , clint("clint", cpu)
         , plic("plic", cpu, kNumPlic)
         , uart0("uart0"), uart1("uart1")
+        , uart0_host("uart0_host")
         , i2c0("i2c0"), i2c1("i2c1")
         , spi0("spi0"), spi1("spi1")
         , spi0_peri("spi0_peri"), spi1_peri("spi1_peri")
@@ -225,6 +228,10 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         uart0.tx(uart0_tx); uart0.irq(uart0_irq);
         uart1.tx(uart1_tx); uart1.irq(uart1_irq);
         SC_METHOD(monitor_uart0); sensitive << uart0_tx; dont_initialize();
+        // Host bridge sits on UART0's pin side; idles unless configured
+        // via --uart0-socket / --uart0-rx-file.
+        uart0_host.rx_out(uart0.rx);
+        uart0_host.tx_in(uart0_tx);
 
         i2c0.irq(i2c0_irq); i2c1.irq(i2c1_irq);
 
@@ -386,6 +393,16 @@ void vp_fx1_full_soc_top::load_int_flash(const std::string& path)
 void vp_fx1_full_soc_top::set_boot_pin(bool high)
 {
     impl_->gpio0.set_pin(1, high);
+}
+
+void vp_fx1_full_soc_top::set_uart0_socket(std::uint16_t port, bool wait_for_client)
+{
+    impl_->uart0_host.listen_on(port, wait_for_client);
+}
+
+void vp_fx1_full_soc_top::set_uart0_rx_file(const std::string& path)
+{
+    impl_->uart0_host.replay_file(path);
 }
 
 std::string vp_fx1_full_soc_top::backend_name() const
