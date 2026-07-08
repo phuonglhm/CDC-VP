@@ -15,6 +15,7 @@
 #include "isp_regmap.h"
 #include "isp_tlm.h"
 #include "tlm_probe.h"
+#include "memory_tlm.h"
 
 namespace {
 
@@ -177,8 +178,18 @@ int sc_main(int argc, char *argv[]) {
    cdc::test::tlm_probe probe("probe");
    probe.socket.bind(isp.socket);
 
+   cdc::components::memory_tlm dram("dram", 128 * 1024 * 1024);
+   std::cout << "memory" << std::endl;
+   isp.dma_socket.bind(dram.socket);
+
    reset_n.write(true);
    sc_start(SC_ZERO_TIME);
+
+   // Configure DMA Addresses
+   std::uint32_t src_addr = 0x81000000;
+   std::uint32_t dst_addr = 0x82000000;
+   probe.write(REG_SRC_ADDR, &src_addr, 4);
+   probe.write(REG_DST_ADDR, &dst_addr, 4);
 
    // Configure ISP
    probe.write(REG_WIDTH, &width, 4);
@@ -196,9 +207,13 @@ int sc_main(int argc, char *argv[]) {
    probe.write(REG_WB_ENABLE, &enable, 4);
    probe.write(REG_CCM_ENABLE, &enable, 4);
    probe.write(REG_AEC_ENABLE, &enable, 4);
+   probe.write(REG_LSC_ENABLE, &enable, 4);
 
    // Set identity CCM
    float identity_ccm[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+
+   // Because we're processing single frame, we need to run the pipeline a few times for STATS block
+   // to stabilize.
    for (int i = 0; i < 9; ++i) {
       probe.write(REG_CCM_MATRIX00 + i * 4, &identity_ccm[i], 4);
    }
@@ -227,8 +242,12 @@ int sc_main(int argc, char *argv[]) {
    }
 
    std::size_t expected_bytes = static_cast<std::size_t>(width) * height * 2;
-   std::size_t read_bytes = std::fread(isp.get_raw_buffer(), 1, expected_bytes, fp_in);
+   std::vector<std::uint8_t> tmp_raw(expected_bytes);
+   std::size_t read_bytes = std::fread(tmp_raw.data(), 1, expected_bytes, fp_in);
    std::fclose(fp_in);
+
+   // Load raw data into DRAM at translated local address (0x81000000 -> 0x01000000)
+   dram.load(tmp_raw.data(), expected_bytes, 0x01000000);
 
    if (read_bytes < expected_bytes) {
       std::cerr << "Warning: Read only " << read_bytes << " of " << expected_bytes << " expected bytes"
