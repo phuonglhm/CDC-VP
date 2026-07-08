@@ -98,19 +98,102 @@ def demosaic_basic(bayer, pattern='RGGB'):
     return rgb
 
 
-def read_yuv420(filepath, width, height):
-    """Read YUV420 file and convert to RGB."""
+def visualize_bayer_raw(bayer, pattern='RGGB'):
+    """Display raw Bayer pattern with strong color coding to show CFA mask.
+
+    Each pixel is colored according to its CFA channel (R/Gr/Gb/B).
+    The actual raw value modulates brightness but channel color is dominant,
+    making the Bayer grid pattern visible even when zoomed in.
+    """
+    h, w = bayer.shape
+
+    # Normalize raw values to 0-1 for brightness modulation
+    max_val = bayer.max() if bayer.max() > 0 else 1
+    brightness = (bayer.astype(np.float32) / max_val)
+
+    # Build masks for each CFA channel based on pattern
+    if pattern == 'RGGB':
+        mask_r  = np.zeros((h, w), dtype=bool); mask_r[0::2, 0::2]  = True
+        mask_gr = np.zeros((h, w), dtype=bool); mask_gr[0::2, 1::2] = True
+        mask_gb = np.zeros((h, w), dtype=bool); mask_gb[1::2, 0::2] = True
+        mask_b  = np.zeros((h, w), dtype=bool); mask_b[1::2, 1::2]  = True
+    elif pattern == 'BGGR':
+        mask_b  = np.zeros((h, w), dtype=bool); mask_b[0::2, 0::2]  = True
+        mask_gb = np.zeros((h, w), dtype=bool); mask_gb[0::2, 1::2] = True
+        mask_gr = np.zeros((h, w), dtype=bool); mask_gr[1::2, 0::2] = True
+        mask_r  = np.zeros((h, w), dtype=bool); mask_r[1::2, 1::2]  = True
+    elif pattern == 'GRBG':
+        mask_gr = np.zeros((h, w), dtype=bool); mask_gr[0::2, 0::2] = True
+        mask_r  = np.zeros((h, w), dtype=bool); mask_r[0::2, 1::2]  = True
+        mask_b  = np.zeros((h, w), dtype=bool); mask_b[1::2, 0::2]  = True
+        mask_gb = np.zeros((h, w), dtype=bool); mask_gb[1::2, 1::2] = True
+    elif pattern == 'GBRG':
+        mask_gb = np.zeros((h, w), dtype=bool); mask_gb[0::2, 0::2] = True
+        mask_b  = np.zeros((h, w), dtype=bool); mask_b[0::2, 1::2]  = True
+        mask_r  = np.zeros((h, w), dtype=bool); mask_r[1::2, 0::2]  = True
+        mask_gr = np.zeros((h, w), dtype=bool); mask_gr[1::2, 1::2] = True
+    else:
+        mask_r  = np.zeros((h, w), dtype=bool)
+        mask_gr = np.zeros((h, w), dtype=bool)
+        mask_gb = np.zeros((h, w), dtype=bool)
+        mask_b  = np.zeros((h, w), dtype=bool)
+        mask_r[0::2, 0::2] = True
+
+    # Strong color overlay - each channel saturated to make pattern obvious.
+    # Brightness is preserved by multiplying raw value with base color.
+    rgb = np.zeros((h, w, 3), dtype=np.float32)
+
+    # Red channel positions: pure red with brightness modulation
+    rgb[mask_r]  = np.stack([brightness[mask_r],  brightness[mask_r] * 0.1, brightness[mask_r] * 0.1], axis=-1)
+    # Green positions (Gr/Gb)
+    rgb[mask_gr] = np.stack([brightness[mask_gr] * 0.1, brightness[mask_gr], brightness[mask_gr] * 0.1], axis=-1)
+    rgb[mask_gb] = np.stack([brightness[mask_gb] * 0.1, brightness[mask_gb], brightness[mask_gb] * 0.1], axis=-1)
+    # Blue positions: pure blue
+    rgb[mask_b]  = np.stack([brightness[mask_b] * 0.1,  brightness[mask_b] * 0.1, brightness[mask_b]], axis=-1)
+
+    # Boost saturation - add a minimum color even for very dark pixels
+    # so the pattern is visible even in dark regions
+    base_color = np.zeros((h, w, 3), dtype=np.float32)
+    base_color[mask_r]  = [0.4, 0.0, 0.0]
+    base_color[mask_gr] = [0.0, 0.4, 0.0]
+    base_color[mask_gb] = [0.0, 0.4, 0.0]
+    base_color[mask_b]  = [0.0, 0.0, 0.4]
+
+    # Combine: 70% base color + 30% brightness-modulated color
+    # This ensures pattern is always visible regardless of pixel brightness
+    rgb = base_color * 0.7 + rgb * 0.3
+    rgb = np.clip(rgb, 0, 1)
+
+    return rgb
+
+
+def read_yuv420_nv12(filepath, width, height):
+    """Read YUV420 NV12 (semi-planar) file and convert to RGB.
+
+    NV12 format:
+    - Y plane: width × height bytes
+    - UV plane: width × (height/2) bytes, interleaved as UVUVUV...
+    """
     try:
         data = np.fromfile(filepath, dtype=np.uint8)
 
         y_size = width * height
-        uv_size = (width // 2) * (height // 2)
+        uv_size = width * (height // 2)  # NV12 UV plane is interleaved
 
         Y = data[0:y_size].reshape((height, width))
-        U = data[y_size:y_size+uv_size].reshape((height//2, width//2))
-        V = data[y_size+uv_size:].reshape((height//2, width//2))
 
-        # Upsample U and V
+        # NV12: UV is interleaved (UVUVUV...), stored in a single plane
+        U = np.zeros((height // 2, width // 2), dtype=np.uint8)
+        V = np.zeros((height // 2, width // 2), dtype=np.uint8)
+        uv_data = data[y_size:y_size + uv_size]
+
+        # Extract U and V from interleaved UV
+        U_flat = uv_data[0::2]  # Even indices = U
+        V_flat = uv_data[1::2]  # Odd indices = V
+        U = U_flat.reshape((height // 2, width // 2))
+        V = V_flat.reshape((height // 2, width // 2))
+
+        # Upsample U and V to full resolution
         U_up = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)
         V_up = np.repeat(np.repeat(V, 2, axis=0), 2, axis=1)
 
@@ -128,7 +211,7 @@ def read_yuv420(filepath, width, height):
 
         return RGB
     except Exception as e:
-        print(f"Error reading YUV image: {e}")
+        print(f"Error reading YUV NV12 image: {e}")
         return None
 
 
@@ -208,39 +291,37 @@ def main():
     print(f"\nReading RAW image from {raw_path}...")
     raw_img = read_raw_image(raw_path, width, height)
 
-    raw_preview = None
+    bayer_raw_display = None
     if raw_img is not None:
-        print("Creating basic RAW preview...")
-        # Normalize by the input bit depth max value
-        max_val = (1 << input_bit_depth) - 1
-        raw_preview = demosaic_basic(raw_img, pattern=bayer_pattern_name) / float(max_val)
-        raw_preview = np.clip(raw_preview, 0, 1.0)
-        raw_preview = np.power(raw_preview, 1/2.2)
+        print("Creating RAW Bayer pattern visualization...")
+        bayer_raw_display = visualize_bayer_raw(raw_img, pattern=bayer_pattern_name)
 
     yuv_preview = None
     if os.path.exists(yuv_path):
-        print(f"Reading YUV output image from {yuv_path}...")
-        yuv_preview = read_yuv420(yuv_path, width, height)
+        print(f"Reading YUV output image from {yuv_path} (NV12 format)...")
+        yuv_preview = read_yuv420_nv12(yuv_path, width, height)
     else:
         print(f"\nERROR: YUV output {yuv_path} not found.")
         print("Run the isp_run tool first to generate the output:")
         print(f"  ./build/bremen/components/isp_tlm/tests/isp_run -i {raw_path} -o {yuv_path} -w {width} --height {height} -b 12 -p 0")
         print()
 
-    # Plotting
-    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    # Plotting - 2 columns: Raw Bayer, Processed
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
-    if raw_preview is not None:
-        axes[0].imshow(raw_preview)
-        axes[0].set_title("Before: Input RAW (Basic Preview)")
+    # Column 1: Raw Bayer pattern with color-coded CFA mask
+    if bayer_raw_display is not None:
+        axes[0].imshow(bayer_raw_display)
+        axes[0].set_title(f"Input RAW: {bayer_pattern_name} Bayer Pattern\n(Colored CFA mask - R/Gr/Gb/B)")
         axes[0].axis('off')
     else:
         axes[0].text(0.5, 0.5, 'RAW Image Not Found', ha='center', va='center')
         axes[0].axis('off')
 
+    # Column 2: Processed YUV output
     if yuv_preview is not None:
         axes[1].imshow(yuv_preview)
-        axes[1].set_title("After: ISP Pipeline Output (YUV420)")
+        axes[1].set_title("After ISP: YUV420 NV12 Output")
         axes[1].axis('off')
 
         # Save standalone JPEG of the final output in the generated-output dir.
