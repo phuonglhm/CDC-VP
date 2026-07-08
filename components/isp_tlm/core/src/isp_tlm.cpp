@@ -38,9 +38,9 @@ void isp_tlm::reset_state()
 void isp_tlm::allocate_buffers()
 {
     const std::size_t raw_size =
-        static_cast<std::size_t>(pipeline_.get_width()) * pipeline_.get_height();
+        static_cast<std::size_t>(pipeline_.read_reg(REG_WIDTH)) * pipeline_.read_reg(REG_HEIGHT);
     const std::size_t yuv_size =
-        static_cast<std::size_t>(pipeline_.get_width()) * pipeline_.get_height() * 3 / 2;
+        static_cast<std::size_t>(pipeline_.read_reg(REG_WIDTH)) * pipeline_.read_reg(REG_HEIGHT) * 3 / 2;
 
     raw_buffer_.resize(raw_size);
     yuv_buffer_.resize(yuv_size);
@@ -127,7 +127,6 @@ void isp_tlm::trigger_processing()
     update_irq_output();
 
     allocate_buffers();
-    pipeline_.set_lsc_mem(nullptr);
     pipeline_.run(raw_buffer_.data(), yuv_buffer_);
 
     pipeline_.mark_processing_done();

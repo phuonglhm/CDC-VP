@@ -115,11 +115,6 @@ void isp_pipeline::set_dimensions(std::uint32_t width, std::uint32_t height)
     final_out_.resize(yuv_pixels);
 }
 
-void isp_pipeline::set_lsc_mem(const float* lsc_mem)
-{
-    lsc_mem_ptr_ = lsc_mem;
-}
-
 void isp_pipeline::set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern)
 {
     input_bit_depth_ = bit_depth;
