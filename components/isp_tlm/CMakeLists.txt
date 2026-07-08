@@ -12,6 +12,7 @@ add_library(isp_tlm STATIC
     blocks/dg/src/dg.cpp
     blocks/dpc/src/dpc.cpp
     blocks/gc/src/gc.cpp
+    blocks/gc/gc_lut/lut.cpp
     blocks/lsc/src/lsc.cpp
 
     blocks/rgb_to_yuv/src/rgb_to_yuv.cpp
@@ -37,6 +38,7 @@ target_include_directories(isp_tlm
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/blocks/dg/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/blocks/dpc/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/blocks/gc/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/blocks/gc/gc_lut>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/blocks/lsc/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/blocks/rgb_to_yuv/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/blocks/scale/include>

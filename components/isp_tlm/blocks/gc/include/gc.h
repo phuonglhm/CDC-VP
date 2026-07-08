@@ -6,10 +6,6 @@
 struct gc_config {
     bool is_enable = false;
     std::uint8_t bit_depth = 12;
-    std::vector<std::uint16_t> gamma_lut_8;
-    std::vector<std::uint16_t> gamma_lut_10;
-    std::vector<std::uint16_t> gamma_lut_12;
-    std::vector<std::uint16_t> gamma_lut_14;
 };
 
 class gc_block {

@@ -1,61 +1,30 @@
 #include "gc.h"
 
+#include "lut.h"
+
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 
 namespace {
 
-std::size_t get_lut_size_for_bit_depth(std::uint8_t bit_depth)
+// Number of bits to shift the input sample so it lands in the 12-bit
+// LUT index range [0, 4095].
+//   - input > 12 bit: shift right (downscale)
+//   - input < 12 bit: shift left  (upscale)
+//   - input == 12 bit: no shift
+int shift_amount(std::uint8_t bit_depth)
 {
-    switch (bit_depth) {
-    case 8:  return 256u;
-    case 10: return 1024u;
-    case 12: return 4096u;
-    case 14: return 16384u;
-    default: return 0u;
-    }
-}
-
-const std::uint16_t* get_active_lut(const gc_config& cfg, std::uint8_t bit_depth, std::size_t& lut_size)
-{
-    lut_size = get_lut_size_for_bit_depth(bit_depth);
-
-    switch (bit_depth) {
-    case 8:
-        if (!cfg.gamma_lut_8.empty()) {
-            return cfg.gamma_lut_8.data();
-        }
-        break;
-    case 10:
-        if (!cfg.gamma_lut_10.empty()) {
-            return cfg.gamma_lut_10.data();
-        }
-        break;
-    case 12:
-        if (!cfg.gamma_lut_12.empty()) {
-            return cfg.gamma_lut_12.data();
-        }
-        break;
-    case 14:
-        if (!cfg.gamma_lut_14.empty()) {
-            return cfg.gamma_lut_14.data();
-        }
-        break;
-    default:
-        break;
-    }
-
-    lut_size = 0;
-    return nullptr;
+    return static_cast<int>(gc_lut::GAMMA_LUT_BIT_DEPTH) - static_cast<int>(bit_depth);
 }
 
 } // namespace
 
 void gc_block::process(const std::uint16_t* in,
-                       std::uint16_t* out,
-                       std::uint32_t width,
-                       std::uint32_t height,
-                       const gc_config& cfg) const
+                      std::uint16_t* out,
+                      std::uint32_t width,
+                      std::uint32_t height,
+                      const gc_config& cfg) const
 {
     const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
     if (in == nullptr || out == nullptr || samples == 0u) {
@@ -69,29 +38,46 @@ void gc_block::process(const std::uint16_t* in,
         return;
     }
 
-    std::size_t lut_size = 0;
-    const std::uint16_t* lut = get_active_lut(cfg, cfg.bit_depth, lut_size);
+    const std::size_t lut_size = gc_lut::get_lut_size(); 
+    //gc_lut::get_lut_size();
+    const std::uint16_t* lut = gc_lut::get_lut();
 
-    if (lut == nullptr || lut_size == 0) {
+    if (lut == nullptr || lut_size == 0u) {
         if (in != out) {
             std::copy(in, in + samples, out);
         }
         return;
     }
 
+    // Clamp bit_depth to a sane range so the shift amount stays bounded.
+    const std::uint8_t bd = (cfg.bit_depth == 0u || cfg.bit_depth > 16u) ? 12u : cfg.bit_depth;
+    const int shift = shift_amount(bd);
     const std::uint16_t max_lut_idx = static_cast<std::uint16_t>(lut_size - 1u);
 
     for (std::size_t i = 0; i < samples; ++i) {
-        const std::uint16_t idx = std::min(in[i], max_lut_idx);
+        std::uint32_t idx;
+        if (shift > 0) {
+            // input bit_depth < 12: upscale into LUT range
+            idx = static_cast<std::uint32_t>(in[i]) << shift;
+        } else if (shift < 0) {
+            // input bit_depth > 12: downscale into LUT range
+            idx = static_cast<std::uint32_t>(in[i]) >> (-shift);
+        } else {
+            idx = in[i];
+        }
+
+        if (idx > max_lut_idx) {
+            idx = max_lut_idx;
+        }
         out[i] = lut[idx];
     }
 }
 
 void gc_block::process(const std::vector<std::uint16_t>& in,
-                       std::vector<std::uint16_t>& out,
-                       std::uint32_t width,
-                       std::uint32_t height,
-                       const gc_config& cfg) const
+                      std::vector<std::uint16_t>& out,
+                      std::uint32_t width,
+                      std::uint32_t height,
+                      const gc_config& cfg) const
 {
     const std::size_t samples = static_cast<std::size_t>(width) * height * 3u;
     out.resize(samples);
