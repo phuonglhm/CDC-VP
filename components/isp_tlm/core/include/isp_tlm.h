@@ -28,45 +28,25 @@ public:
     std::size_t get_raw_buffer_size() const { return raw_buffer_.size(); }
     std::size_t get_yuv_buffer_size() const { return yuv_buffer_.size(); }
 
-    std::uint32_t get_width() const { return width_; }
-    std::uint32_t get_height() const { return height_; }
+    std::uint32_t get_width() const { return pipeline_.get_width(); }
+    std::uint32_t get_height() const { return pipeline_.get_height(); }
 
     void allocate_buffers();
 
 private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
     unsigned int transport_dbg(tlm::tlm_generic_payload& trans);
-    void processing_thread();
     void update_irq_output();
     void reset_state();
 
-    std::uint32_t read_reg(std::uint32_t offset);
-    void write_reg(std::uint32_t offset, std::uint32_t value);
-    void update_config_from_regs();
     void trigger_processing();
 
     isp_pipeline pipeline_;
-    isp_config config_;
-
-    std::uint32_t reg_file_[REG_MAX / 4];
-
-    std::uint32_t width_;
-    std::uint32_t height_;
-    std::uint32_t bit_depth_;
-    std::uint32_t bayer_pattern_;
 
     std::vector<std::uint16_t> raw_buffer_;
     std::vector<std::uint8_t> yuv_buffer_;
 
     sc_core::sc_time access_latency_;
-    sc_core::sc_event processing_event_;
-    bool processing_done_;
-    bool processing_busy_;
-    bool processing_error_;
-    bool irq_level_;
-
-    static constexpr std::size_t MAX_WIDTH = 4096;
-    static constexpr std::size_t MAX_HEIGHT = 4096;
 };
 
 } // namespace cdc::components

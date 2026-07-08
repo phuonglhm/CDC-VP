@@ -20,6 +20,7 @@
 #include "scale.h"
 #include "yuv420.h"
 #include "isp_types.h"
+#include "isp_regmap.h"
 
 struct isp_config {
     blc_config blc;
@@ -50,13 +51,58 @@ public:
     void set_input_format(std::uint8_t bit_depth, cfa_types bayer_pattern);
 
     void run(const std::uint16_t* raw_in,
-             std::vector<std::uint8_t>& yuv_out,
-             const isp_config& cfg);
+             std::vector<std::uint8_t>& yuv_out);
+
+    void reset_registers();
+    std::uint32_t read_reg(std::uint32_t offset) const;
+    bool write_reg(std::uint32_t offset, std::uint32_t value);
+
+    bool irq_level() const;
+    bool is_enabled() const;
+    bool has_valid_dimensions() const;
+    void mark_processing_started();
+    void mark_processing_done();
+    void mark_processing_error();
+
+    std::uint32_t get_width() const { return width_; }
+    std::uint32_t get_height() const { return height_; }
+    const isp_config& config() const { return config_; }
 
     float get_awb_r_gain() const { return awb_r_gain_; }
     float get_awb_b_gain() const { return awb_b_gain_; }
 
 private:
+    std::uint32_t status_reg() const;
+    std::uint32_t bayer_pattern_reg() const;
+
+    isp_config config_;
+
+    std::uint32_t ctrl_;
+    std::uint32_t irq_enable_;
+    std::uint32_t irq_status_;
+    bool processing_done_;
+    bool processing_busy_;
+    bool processing_error_;
+
+    std::uint32_t src_addr_;
+    std::uint32_t dst_addr_;
+    std::uint32_t scratch_addr_;
+    std::uint32_t src_size_bytes_;
+    std::uint32_t dst_size_bytes_;
+    std::uint32_t weights_addr_;
+    std::uint32_t param_addr_;
+    std::uint32_t stride_;
+    std::uint32_t format_;
+    std::uint32_t op_mode_;
+    std::uint32_t gc_gamma_;
+    std::uint32_t gc_lut_addr_;
+    std::uint32_t gc_lut_data_;
+    std::uint32_t aec_enable_;
+    std::uint32_t aec_feedback_;
+    std::uint32_t aec_center_illum_;
+    std::uint32_t aec_skewness_;
+    std::uint32_t csc_enable_;
+
     std::uint32_t width_;
     std::uint32_t height_;
     std::uint8_t  input_bit_depth_;
