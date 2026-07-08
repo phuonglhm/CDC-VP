@@ -10,6 +10,7 @@
 #include "bnr.h"
 #include "demosaic.h"
 #include "awb.h"
+#include "aec.h"
 #include "wb.h"
 #include "ccm.h"
 #include "gc.h"
@@ -30,6 +31,7 @@ struct isp_config {
    bnr_config bnr;
    demosaic_config demosaic;
    awb_config awb;
+   aec_config aec;
    wb_config wb;
    ccm_config ccm;
    gc_config gc;
@@ -92,10 +94,6 @@ private:
    std::uint32_t gc_gamma_;
    std::uint32_t gc_lut_addr_;
    std::uint32_t gc_lut_data_;
-   std::uint32_t aec_enable_;
-   std::uint32_t aec_feedback_;
-   std::uint32_t aec_center_illum_;
-   std::uint32_t aec_skewness_;
    std::uint32_t csc_enable_;
 
    std::uint32_t width_;
@@ -114,6 +112,7 @@ private:
    bnr_block bnr_;
    demosaic_block demosaic_;
    awb_block awb_;
+   aec_block aec_;
    wb_block wb_;
    ccm_block ccm_;
    gc_block gc_;

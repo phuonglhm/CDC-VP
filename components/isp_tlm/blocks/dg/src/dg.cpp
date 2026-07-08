@@ -18,17 +18,6 @@ void dg_block::process(
 
    // determine active gain index
    uint16_t gain_idx = cfg.current_gain;
-   if (cfg.is_auto) {
-      if (cfg.ae_feedback < 0) {
-         if (gain_idx < kGainArraySize - 1) {
-            gain_idx++;
-         }
-      } else if (cfg.ae_feedback > 0) {
-         if (gain_idx > 0) {
-            gain_idx--;
-         }
-      }
-   }
 
    gain_idx = (gain_idx >= kGainArraySize) ? kGainArraySize - 1 : gain_idx;
 

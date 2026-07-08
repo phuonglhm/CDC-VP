@@ -7,7 +7,6 @@ struct dg_config {
    bool is_enable;
    bool is_auto;
    uint16_t current_gain;
-   int32_t ae_feedback;
 };
 
 class dg_block {
