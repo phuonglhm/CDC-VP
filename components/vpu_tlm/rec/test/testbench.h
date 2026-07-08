@@ -9,15 +9,21 @@
 #include "coeff_monitor.cpp"
 #include "db_monitor.cpp"
 #include "frame_buffer.cpp"
-using namespace sc_core;
 
-class TestBench : sc_module {
-    public:
-    TestBench (sc_module_name name) : sc_module(name), top("top_test"), coeff_monitor("coeff_monitor"), db_monitor("db_monitor"), frame_buffer("frame_buffer") {};
+class TestBench : public sc_core::sc_module {
+public:
+    explicit TestBench(sc_core::sc_module_name name)
+        : sc_core::sc_module(name),
+          top("top_test"),
+          coeff_monitor("coeff_monitor"),
+          db_monitor("db_monitor"),
+          frame_buffer("frame_buffer")
+    {
+    }
     SC_HAS_PROCESS(TestBench);
     tlm_utils::simple_initiator_socket<TestBench> intra_socket;
     tlm_utils::simple_initiator_socket<TestBench> mc_socket;
-    Top top;
+    RecTop top;
     CoeffMonitor coeff_monitor;
     DBMonitor db_monitor;
     FrameBuffer frame_buffer;

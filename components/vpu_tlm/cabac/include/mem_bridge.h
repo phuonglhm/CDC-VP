@@ -1,5 +1,5 @@
-#ifndef REC_MEM_TARGET_H
-#define REC_MEM_TARGET_H
+#ifndef VPU_TLM_CABAC_MEM_BRIDGE_H
+#define VPU_TLM_CABAC_MEM_BRIDGE_H
 
 #include <systemc>
 #include "tlm.h"
@@ -10,17 +10,17 @@
 #include <algorithm>
 
 // Combined in-repo memory target and bridge helper.
-// - `MemBridge` implements `MemoryIf` and forwards requests to an external
+// - `CabacMemBridge` implements `CabacMemoryIf` and forwards requests to an external
 //   TLM memory using an initiator socket.
 
-class MemBridge : public sc_core::sc_module, public MemoryIf {
+class CabacMemBridge : public sc_core::sc_module, public CabacMemoryIf {
 public:
-    tlm_utils::simple_initiator_socket<MemBridge> socket; // initiator to external memory
-    tlm_utils::simple_target_socket<MemBridge> t_socket;   // target for modules like Cabac
+    tlm_utils::simple_initiator_socket<CabacMemBridge> socket; // initiator to external memory
+    tlm_utils::simple_target_socket<CabacMemBridge> t_socket;   // target for modules like Cabac
 
-    MemBridge(sc_core::sc_module_name name)
+    CabacMemBridge(sc_core::sc_module_name name)
         : sc_core::sc_module(name), socket("socket"), t_socket("t_socket") {
-        t_socket.register_b_transport(this, &MemBridge::b_transport);
+        t_socket.register_b_transport(this, &CabacMemBridge::b_transport);
     }
     
     void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay) {
@@ -31,14 +31,14 @@ public:
         }
     }
 
-    bool getRefBlock(RecPlane plane,
+    bool getRefBlock(CabacRecPlane plane,
                      uint32_t x,
                      uint32_t y,
                      uint8_t size4x4,
-                     PaddingMode pad,
-                     RefBlock &out) override
+                     CabacPaddingMode pad,
+                     CabacRefBlock &out) override
     {
-        const uint32_t edge = recSizeToPixels(size4x4);
+        const uint32_t edge = cabacSizeToPixels(size4x4);
         // return an (N+2)x(N+2) window anchored at (x,y) so callers
         // can access top/left plus the top-right and bottom-left extras
         const uint32_t ext = edge + 2;
@@ -64,17 +64,17 @@ public:
         return trans.get_response_status() == tlm::TLM_OK_RESPONSE;
     }
 
-    void pushRefBlock(RecPlane plane,
+    void pushRefBlock(CabacRecPlane plane,
                       uint32_t x,
                       uint32_t y,
                       uint8_t size4x4,
-                      const RefBlock &block,
+                      const CabacRefBlock &block,
                       uint64_t version) override
     {
         (void)plane; (void)x; (void)y; (void)size4x4; (void)block; (void)version;
     }
 
-    uint64_t regionVersion(RecPlane plane,
+    uint64_t regionVersion(CabacRecPlane plane,
                            uint32_t x,
                            uint32_t y,
                            uint8_t size4x4) const override
@@ -83,11 +83,11 @@ public:
     }
 
 private:
-    static uint64_t encodeAddress(RecPlane plane,
+    static uint64_t encodeAddress(CabacRecPlane plane,
                                   uint32_t x,
                                   uint32_t y,
                                   uint8_t size4x4,
-                                  PaddingMode pad)
+                                  CabacPaddingMode pad)
     {
         uint64_t p = static_cast<uint64_t>(plane) & 0x3;
         uint64_t pd = static_cast<uint64_t>(pad) & 0x3;

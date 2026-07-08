@@ -1,6 +1,6 @@
-#include "top.h"
+#include "../include/top.h"
 
-Top::Top(sc_core::sc_module_name name)
+CabacTop::CabacTop(sc_core::sc_module_name name)
 	: sc_module(name),
 	  mem_bridge("mem_bridge"),
 	  simple_mem("simple_mem"),

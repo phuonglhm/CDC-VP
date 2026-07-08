@@ -1,5 +1,5 @@
-#ifndef REC_MEM_TARGET_H
-#define REC_MEM_TARGET_H
+#ifndef VPU_TLM_REC_MEM_TARGET_H
+#define VPU_TLM_REC_MEM_TARGET_H
 
 #include <systemc>
 #include "tlm.h"

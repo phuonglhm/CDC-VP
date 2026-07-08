@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cmath>
 
+#include "debug_config.h"
 
 InvTQ::InvTQ(sc_core::sc_module_name name) : 
     sc_module(name), tq_socket("tq_socket"), db_socket("db_socket") {
@@ -61,8 +62,10 @@ void InvTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
 
         std::vector<uint8_t> buf = packRecPacket(out_pkt);
 
-        std::cout << "------------Inverse TQ Packet (internal)----------------" << std::endl;
-        std::cout << out_pkt;
+        if (cdc::components::verbose_enabled()) {
+            std::cout << "------------Inverse TQ Packet (internal)----------------" << std::endl;
+            std::cout << out_pkt;
+        }
         tlm::tlm_generic_payload db_trans;
         db_trans.set_command(tlm::TLM_WRITE_COMMAND);
         db_trans.set_address(0);
@@ -212,4 +215,3 @@ void InvTQ::inv_DCT(uint8_t size4x4, const std::vector<int16_t>& in, std::vector
         }
     }
 }
-

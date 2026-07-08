@@ -1,5 +1,7 @@
 #include "rec_tq.h"
 
+#include "debug_config.h"
+
 RecTQ::RecTQ(sc_core::sc_module_name name) : 
     sc_module(name), buffer_socket("buffer_socket"), cabac_socket("cabac_socket"), inv_tq_socket("inv_tq_socket") {
     buffer_socket.register_b_transport(this, &RecTQ::b_transport);  
@@ -45,8 +47,10 @@ void RecTQ::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
             c_pkt.data.push_back(hi);
         }
 
-        std::cout << "----------------TQ Packet (internal)---------------" << std::endl;
-        std::cout << pkt;
+        if (cdc::components::verbose_enabled()) {
+            std::cout << "----------------TQ Packet (internal)---------------" << std::endl;
+            std::cout << pkt;
+        }
         //cabac forward
         std::vector<uint8_t> cabac_buf = packRecPacket(c_pkt);
         tlm::tlm_generic_payload cabac_trans;

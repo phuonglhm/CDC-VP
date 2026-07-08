@@ -1,10 +1,20 @@
 #include "rec_mc.h"
+#include "../../include/block_coord_codec.h"
 #include <iostream>
 
 RecMc::RecMc(sc_core::sc_module_name name) : 
     sc_module(name), start_socket("start_socket"), buffer_socket("buffer_socket") {
     start_socket.register_b_transport(this, &RecMc::b_transport);
 }
+
+namespace {
+
+uint32_t derive_mv_addr(const RecPacket& pkt)
+{
+    return cdc::components::make_extended_block_address(pkt.block_idx, pkt.x, pkt.y);
+}
+
+} // namespace
 
 void RecMc::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
     RecPacket pkt = unpackRecPacket(trans);
@@ -39,9 +49,11 @@ void RecMc::handle_pre(const RecPacket &pkt) {
 
 
 void RecMc::handle_read_req(const RecPacket &pkt, tlm::tlm_generic_payload &trans) {
+    const cdc::components::block_coord_4x4 block_coord =
+        cdc::components::decode_block_coord_4x4(pkt.block_idx, pkt.x, pkt.y);
     // Convert 4x4 block coords to pixel coords
-    uint32_t px = static_cast<uint32_t>(pkt.x) * 4u;
-    uint32_t py = static_cast<uint32_t>(pkt.y) * 4u;
+    uint32_t px = block_coord.x * 4u;
+    uint32_t py = block_coord.y * 4u;
 
     RecPlane plane = (pkt.sel <= 2) ? static_cast<RecPlane>(pkt.sel) : RecPlane::Y;
 
@@ -51,7 +63,7 @@ void RecMc::handle_read_req(const RecPacket &pkt, tlm::tlm_generic_payload &tran
     // If this is an MC request and we have an MV provider, try to read MV
     if (static_cast<PredType>(pkt.pred_type) == PredType::MC && mvd_if) {
         MotionVector mv;
-        if (mvd_if->readMV(static_cast<uint32_t>(pkt.block_idx), mv)) {
+        if (mvd_if->readMV(derive_mv_addr(pkt), mv)) {
             // Treat MV components as integer pixel offsets for this TLM model
             int32_t ref_px = static_cast<int32_t>(px) + mv.x;
             int32_t ref_py = static_cast<int32_t>(py) + mv.y;

@@ -18,8 +18,18 @@ struct fme_candidate {
     std::uint32_t satd = 0;
     std::uint32_t rate = 0;
     std::uint32_t cost = 0;
+    bool half_pel = false;
+    bool quarter_pel = false;
+    bool skip = false;
 
     std::vector<std::uint8_t> predicted_luma;
+    std::vector<std::int16_t> residual_luma;
+};
+
+struct refinement_result {
+    bool valid = false;
+    fme_candidate best {};
+    std::vector<::cdc::components::fme_candidate> candidates;
 };
 
 int abs_int(int value)
@@ -57,29 +67,12 @@ std::uint8_t read_luma_clamped(const frame& input, int x, int y)
 
 // TLM equivalent of fme_interpolator / half / quarter interpolation.
 // Motion vectors are kept in quarter-pixel unit.
-std::uint8_t read_luma_qpel(const frame& reference,
-                            int pixel_x,
-                            int pixel_y,
-                            const motion_vector& mv)
+std::uint8_t bilinear_luma_qpel(const frame& reference,
+                                int base_x,
+                                int base_y,
+                                int frac_x,
+                                int frac_y)
 {
-    const int qx = pixel_x * 4 + mv.x;
-    const int qy = pixel_y * 4 + mv.y;
-
-    int base_x = qx / 4;
-    int base_y = qy / 4;
-    int frac_x = qx % 4;
-    int frac_y = qy % 4;
-
-    if (frac_x < 0) {
-        frac_x += 4;
-        --base_x;
-    }
-
-    if (frac_y < 0) {
-        frac_y += 4;
-        --base_y;
-    }
-
     const int p00 = read_luma_clamped(reference, base_x,     base_y);
     const int p10 = read_luma_clamped(reference, base_x + 1, base_y);
     const int p01 = read_luma_clamped(reference, base_x,     base_y + 1);
@@ -99,9 +92,78 @@ std::uint8_t read_luma_qpel(const frame& reference,
     return clamp_u8((value + 8) >> 4);
 }
 
+const std::array<int, 8>& hevc_luma_filter(int frac)
+{
+    static const std::array<std::array<int, 8>, 4> kFilters {{
+        {{ 0, 0, 0, 64, 0, 0, 0, 0 }},
+        {{ -1, 4, -10, 58, 17, -5, 1, 0 }},
+        {{ -1, 4, -11, 40, 40, -11, 4, -1 }},
+        {{ 0, 1, -5, 17, 58, -10, 4, -1 }},
+    }};
+
+    return kFilters[std::clamp(frac, 0, 3)];
+}
+
+std::uint8_t hevc_luma_qpel(const frame& reference,
+                            int base_x,
+                            int base_y,
+                            int frac_x,
+                            int frac_y)
+{
+    const auto& coeff_x = hevc_luma_filter(frac_x);
+    const auto& coeff_y = hevc_luma_filter(frac_y);
+    std::int64_t sum = 0;
+
+    for (int fy = 0; fy < 8; ++fy) {
+        for (int fx = 0; fx < 8; ++fx) {
+            const int sample =
+                read_luma_clamped(reference,
+                                  base_x + fx - 3,
+                                  base_y + fy - 3);
+            sum += static_cast<std::int64_t>(coeff_y[fy]) *
+                   static_cast<std::int64_t>(coeff_x[fx]) *
+                   static_cast<std::int64_t>(sample);
+        }
+    }
+
+    return clamp_u8(static_cast<int>((sum + 2048) >> 12));
+}
+
+std::uint8_t read_luma_qpel(const frame& reference,
+                            int pixel_x,
+                            int pixel_y,
+                            const motion_vector& mv,
+                            bool use_hevc_luma_filter)
+{
+    const int qx = pixel_x * 4 + mv.x;
+    const int qy = pixel_y * 4 + mv.y;
+
+    int base_x = qx / 4;
+    int base_y = qy / 4;
+    int frac_x = qx % 4;
+    int frac_y = qy % 4;
+
+    if (frac_x < 0) {
+        frac_x += 4;
+        --base_x;
+    }
+
+    if (frac_y < 0) {
+        frac_y += 4;
+        --base_y;
+    }
+
+    if (!use_hevc_luma_filter) {
+        return bilinear_luma_qpel(reference, base_x, base_y, frac_x, frac_y);
+    }
+
+    return hevc_luma_qpel(reference, base_x, base_y, frac_x, frac_y);
+}
+
 std::vector<std::uint8_t> make_prediction_block(const frame& reference,
                                                 const block& current,
-                                                const motion_vector& mv)
+                                                const motion_vector& mv,
+                                                bool use_hevc_luma_filter)
 {
     std::vector<std::uint8_t> predicted;
     predicted.resize(static_cast<std::size_t>(current.area()), 128);
@@ -112,11 +174,37 @@ std::vector<std::uint8_t> make_prediction_block(const frame& reference,
             const int py = static_cast<int>(current.y + y);
 
             predicted[static_cast<std::size_t>(y * current.width + x)] =
-                read_luma_qpel(reference, px, py, mv);
+                read_luma_qpel(reference, px, py, mv, use_hevc_luma_filter);
         }
     }
 
     return predicted;
+}
+
+std::vector<std::int16_t> build_residual(const frame& input,
+                                         const block& current,
+                                         const std::vector<std::uint8_t>& predicted)
+{
+    std::vector<std::int16_t> residual;
+    residual.resize(predicted.size(), 0);
+
+    for (std::uint32_t y = 0; y < current.height; ++y) {
+        for (std::uint32_t x = 0; x < current.width; ++x) {
+            const std::size_t idx =
+                static_cast<std::size_t>(y * current.width + x);
+            const int original =
+                read_luma_clamped(input,
+                                  static_cast<int>(current.x + x),
+                                  static_cast<int>(current.y + y));
+            const int pred =
+                idx < predicted.size()
+                    ? static_cast<int>(predicted[idx])
+                    : 128;
+            residual[idx] = static_cast<std::int16_t>(original - pred);
+        }
+    }
+
+    return residual;
 }
 
 void hadamard_1d_8(std::array<int, 8>& data)
@@ -175,15 +263,14 @@ std::uint32_t satd_8x8(const std::array<int, 64>& residual)
 
 // TLM equivalent of fme_satd_gen.
 // The RTL computes SATD for 9 candidates candi0..candi8.
-std::uint32_t calculate_block_satd(const frame& input,
-                                   const block& current,
-                                   const std::vector<std::uint8_t>& predicted)
+std::uint32_t calculate_block_satd(const block& current,
+                                   const std::vector<std::int16_t>& residual_samples)
 {
     std::uint64_t total = 0;
 
     for (std::uint32_t by = 0; by < current.height; by += 8u) {
         for (std::uint32_t bx = 0; bx < current.width; bx += 8u) {
-            std::array<int, 64> residual {};
+            std::array<int, 64> block_residual {};
 
             for (std::uint32_t y = 0; y < 8u; ++y) {
                 for (std::uint32_t x = 0; x < 8u; ++x) {
@@ -192,28 +279,21 @@ std::uint32_t calculate_block_satd(const frame& input,
 
                     int diff = 0;
 
-                    if (lx < current.width && ly < current.height) {
-                        const int original =
-                            read_luma_clamped(input,
-                                              static_cast<int>(current.x + lx),
-                                              static_cast<int>(current.y + ly));
-
+                    if (lx < current.width && ly < current.height &&
+                        !residual_samples.empty()) {
                         const std::size_t idx =
                             static_cast<std::size_t>(ly * current.width + lx);
-
-                        const int pred =
-                            idx < predicted.size()
-                                ? static_cast<int>(predicted[idx])
-                                : 128;
-
-                        diff = original - pred;
+                        diff =
+                            idx < residual_samples.size()
+                                ? static_cast<int>(residual_samples[idx])
+                                : 0;
                     }
 
-                    residual[static_cast<std::size_t>(y * 8u + x)] = diff;
+                    block_residual[static_cast<std::size_t>(y * 8u + x)] = diff;
                 }
             }
 
-            total += satd_8x8(residual);
+            total += satd_8x8(block_residual);
         }
     }
 
@@ -284,7 +364,8 @@ fme_candidate evaluate_candidate(const frame& input,
                                  const frame& reference,
                                  const block& current,
                                  const motion_vector& mv,
-                                 std::uint32_t qp)
+                                 std::uint32_t qp,
+                                 const fme_refine_config& config)
 {
     fme_candidate candidate;
     candidate.valid = false;
@@ -295,10 +376,16 @@ fme_candidate evaluate_candidate(const frame& input,
     }
 
     candidate.predicted_luma =
-        make_prediction_block(reference, current, mv);
+        make_prediction_block(reference,
+                              current,
+                              mv,
+                              config.use_hevc_luma_filter);
+
+    candidate.residual_luma =
+        build_residual(input, current, candidate.predicted_luma);
 
     candidate.satd =
-        calculate_block_satd(input, current, candidate.predicted_luma);
+        calculate_block_satd(current, candidate.residual_luma);
 
     candidate.rate =
         estimate_mv_rate(mv);
@@ -308,50 +395,83 @@ fme_candidate evaluate_candidate(const frame& input,
                   static_cast<std::uint64_t>(lambda_from_qp(qp)) *
                   static_cast<std::uint64_t>(candidate.rate));
 
+    const int frac_x = abs_int(mv.x) % 4;
+    const int frac_y = abs_int(mv.y) % 4;
+    candidate.quarter_pel = (frac_x % 2 != 0) || (frac_y % 2 != 0);
+    candidate.half_pel = !candidate.quarter_pel &&
+                         ((frac_x != 0) || (frac_y != 0));
     candidate.valid = true;
     return candidate;
 }
 
-std::array<motion_vector, 9> make_3x3_candidates(const motion_vector& center,
-                                                 int step_qpel)
+std::vector<motion_vector> make_stage_candidates(const motion_vector& center,
+                                                 int step_qpel,
+                                                 int radius_qpel)
 {
-    std::array<motion_vector, 9> candidates {};
+    std::vector<motion_vector> candidates;
+    const int step = std::max(step_qpel, 1);
+    const int radius = std::max(radius_qpel, 0);
 
-    std::size_t index = 0;
+    if (radius == 0) {
+        candidates.push_back(center);
+        return candidates;
+    }
 
-    for (int dy = -step_qpel; dy <= step_qpel; dy += step_qpel) {
-        for (int dx = -step_qpel; dx <= step_qpel; dx += step_qpel) {
+    for (int dy = -radius; dy <= radius; dy += step) {
+        for (int dx = -radius; dx <= radius; dx += step) {
             motion_vector mv;
             mv.x = center.x + dx;
             mv.y = center.y + dy;
-
-            candidates[index++] = mv;
+            candidates.push_back(mv);
         }
     }
 
     return candidates;
 }
 
-fme_candidate search_3x3(const frame& input,
-                         const frame& reference,
-                         const block& current,
-                         const motion_vector& center,
-                         int step_qpel,
-                         std::uint32_t qp)
+::cdc::components::fme_candidate export_candidate(const block& current,
+                                                  partition_mode partition,
+                                                  const fme_candidate& candidate)
+{
+    ::cdc::components::fme_candidate exported;
+    exported.valid = candidate.valid;
+    exported.pu = current;
+    exported.partition = partition;
+    exported.mv = candidate.mv;
+    exported.satd = candidate.satd;
+    exported.rate = candidate.rate;
+    exported.cost = candidate.cost;
+    exported.half_pel = candidate.half_pel;
+    exported.quarter_pel = candidate.quarter_pel;
+    exported.skip = candidate.skip;
+    return exported;
+}
+
+fme_candidate search_candidates(const frame& input,
+                                const frame& reference,
+                                const block& current,
+                                partition_mode partition,
+                                const std::vector<motion_vector>& search_points,
+                                std::uint32_t qp,
+                                const fme_refine_config& config,
+                                std::vector<::cdc::components::fme_candidate>& exported_candidates)
 {
     fme_candidate best;
     best.valid = false;
     best.cost = std::numeric_limits<std::uint32_t>::max();
 
-    const std::array<motion_vector, 9> candidates =
-        make_3x3_candidates(center, step_qpel);
-
-    for (const motion_vector& mv : candidates) {
+    for (const motion_vector& mv : search_points) {
         fme_candidate candidate =
-            evaluate_candidate(input, reference, current, mv, qp);
+            evaluate_candidate(input, reference, current, mv, qp, config);
 
-        if (candidate.valid &&
-            (!best.valid || candidate.cost < best.cost)) {
+        if (!candidate.valid) {
+            continue;
+        }
+
+        exported_candidates.push_back(
+            export_candidate(current, partition, candidate));
+
+        if (!best.valid || candidate.cost < best.cost) {
             best = std::move(candidate);
         }
     }
@@ -433,63 +553,88 @@ prediction_result make_inter_prediction_result(const block& current,
     result.rate = best.rate;
     result.cost = best.cost;
     result.predicted_luma = best.predicted_luma;
+    result.residual_luma = best.residual_luma;
+    result.skip = best.skip;
 
     return result;
 }
 
 // Main RTL-level TLM FME flow:
 // 1. read integer MV from IME
-// 2. half-pixel 3x3 refinement
-// 3. quarter-pixel 3x3 refinement around best half-pel MV
+// 2. optional half-pixel refinement
+// 3. optional quarter-pixel refinement around the best prior stage
 // 4. generate prediction pixels
 // 5. optional skip decision
-prediction_result refine_inter_prediction(const frame& input,
+refinement_result refine_inter_prediction(const frame& input,
                                           const frame& reference,
                                           const block& current,
                                           const ime_result& ime_info,
+                                          const fme_refine_config& config,
                                           std::uint32_t qp)
 {
+    refinement_result result;
     const motion_vector integer_mv =
         choose_integer_mv_from_ime(ime_info);
 
     const partition_mode partition =
         choose_partition_from_ime(ime_info);
 
-    fme_candidate half_best =
-        search_3x3(input,
-                   reference,
-                   current,
-                   integer_mv,
-                   2,
-                   qp);
+    const std::vector<motion_vector> integer_points {integer_mv};
+    fme_candidate best =
+        search_candidates(input,
+                          reference,
+                          current,
+                          partition,
+                          integer_points,
+                          qp,
+                          config,
+                          result.candidates);
 
-    if (!half_best.valid) {
-        return prediction_result::invalid();
+    if (!best.valid) {
+        return result;
     }
 
-    fme_candidate quarter_best =
-        search_3x3(input,
-                   reference,
-                   current,
-                   half_best.mv,
-                   1,
-                   qp);
+    if (config.enable_half_pel && config.half_pel_radius_qpel > 0) {
+        best = search_candidates(input,
+                                 reference,
+                                 current,
+                                 partition,
+                                 make_stage_candidates(integer_mv,
+                                                       2,
+                                                       config.half_pel_radius_qpel),
+                                 qp,
+                                 config,
+                                 result.candidates);
 
-    if (!quarter_best.valid) {
-        return prediction_result::invalid();
+        if (!best.valid) {
+            return refinement_result {};
+        }
     }
 
-    prediction_result refined =
-        make_inter_prediction_result(current,
-                                     quarter_best,
-                                     partition,
-                                     qp);
+    if (config.enable_quarter_pel && config.quarter_pel_radius_qpel > 0) {
+        best = search_candidates(input,
+                                 reference,
+                                 current,
+                                 partition,
+                                 make_stage_candidates(best.mv,
+                                                       1,
+                                                       config.quarter_pel_radius_qpel),
+                                 qp,
+                                 config,
+                                 result.candidates);
 
-    // Keep refined MV as output even if skip is detected.
-    // Skip flag/index are stored in fme_result when the header supports them.
-    (void)is_skip_candidate(quarter_best, current);
+        if (!best.valid) {
+            return refinement_result {};
+        }
+    }
 
-    return refined;
+    if (config.enable_skip_decision) {
+        best.skip = is_skip_candidate(best, current);
+    }
+
+    result.valid = true;
+    result.best = best;
+    return result;
 }
 
 } // namespace
@@ -510,8 +655,6 @@ fme_result fme::run(const frame& input,
                     const fme_refine_config& config,
                     std::uint32_t qp) const
 {
-    (void)config;
-
     fme_result result;
 
     const block ctu = ime_info.ctu;
@@ -531,14 +674,15 @@ if (input.empty() ||
     const std::uint32_t clamped_qp =
         std::clamp(qp, MIN_QP, MAX_QP);
 
-    prediction_result refined =
+    const refinement_result refined =
         refine_inter_prediction(input,
                                 reference,
                                 ctu,
                                 ime_info,
+                                config,
                                 clamped_qp);
 
-    if (!refined.valid) {
+    if (!refined.valid || !refined.best.valid) {
         result.valid = false;
         return result;
     }
@@ -546,10 +690,18 @@ if (input.empty() ||
     result.valid = true;
     result.ctu = ctu;
     result.qp = clamped_qp;
-    result.best_inter_result = refined;
-    result.best_cost = refined.cost;
-result.best_mv = result.best_inter_result.mv;
-result.best_partition = result.best_inter_result.partition;
+    result.best_partition = choose_partition_from_ime(ime_info);
+    result.best_mv = refined.best.mv;
+    result.best_satd = refined.best.satd;
+    result.best_rate = refined.best.rate;
+    result.best_cost = refined.best.cost;
+    result.skip = refined.best.skip;
+    result.candidates = refined.candidates;
+    result.best_inter_result =
+        make_inter_prediction_result(ctu,
+                                     refined.best,
+                                     result.best_partition,
+                                     clamped_qp);
     return result;
 }
 

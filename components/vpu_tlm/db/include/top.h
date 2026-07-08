@@ -1,19 +1,17 @@
-#ifndef TOP_H
-#define TOP_H
+#ifndef VPU_TLM_DB_TOP_H
+#define VPU_TLM_DB_TOP_H
 
 #include <systemc>
 #include "db_bs.h"
 #include "db_mv.h"
 #include "db_filter_sao.h"
 
-using namespace sc_core;
-
-class Top : public sc_module {
-  public:
-    Top(sc_module_name name);
+class DbTop : public sc_core::sc_module {
+public:
+    explicit DbTop(sc_core::sc_module_name name);
 
     BorderStrength db_bs;
-    MotionVector db_mv;
+    DbMotionVector db_mv;
     Filter_SAO db_filter_sao;
 };
 

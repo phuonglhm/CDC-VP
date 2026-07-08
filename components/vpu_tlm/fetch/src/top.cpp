@@ -1,6 +1,6 @@
 #include "top.h"
 
-Top::Top(sc_core::sc_module_name name)
+FetchTop::FetchTop(sc_core::sc_module_name name)
 	: sc_module(name),
 	  fetch("fetch")
 {

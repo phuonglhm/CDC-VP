@@ -1,7 +1,7 @@
-#include "top.h"
+#include "../include/top.h"
 
-Top::Top(sc_module_name name) : 
-    sc_module(name),
+RecTop::RecTop(sc_core::sc_module_name name) :
+    sc_core::sc_module(name),
     rec_intra("rec_intra"),
     rec_mc ("rec_mc"),
     rec_tq ("rec_tq"),

@@ -1,5 +1,5 @@
-#ifndef CABAC_TABLES_H
-#define CABAC_TABLES_H
+#ifndef VPU_TLM_CABAC_TABLES_H
+#define VPU_TLM_CABAC_TABLES_H
 
 #include <stdint.h>
 
@@ -165,4 +165,4 @@ static const uint8_t cabac_ctx_init1[186] = {
     0x9a, 0x9a, 0x9a, 0x9a, 0x9a, 0x9a
 };
 
-#endif // CABAC_TABLES_H
+#endif // VPU_TLM_CABAC_TABLES_H

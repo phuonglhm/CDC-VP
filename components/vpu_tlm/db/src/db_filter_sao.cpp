@@ -6,7 +6,7 @@ Filter_SAO::Filter_SAO(sc_core::sc_module_name name)  : sc_module(name), out_soc
     mv_socket.register_b_transport(this, &Filter_SAO::b_transport); //placeholder
 }
 
-void Filter_SAO::unpack_blocks(const CustomPacket &pkt, std::array<uint8_t,16> &p_blk, std::array<uint8_t,16> &q_blk) const {
+void Filter_SAO::unpack_blocks(const DbCustomPacket &pkt, std::array<uint8_t,16> &p_blk, std::array<uint8_t,16> &q_blk) const {
     p_blk.fill(0);
     q_blk.fill(0);
     const size_t n = pkt.data.size();
@@ -19,7 +19,7 @@ void Filter_SAO::unpack_blocks(const CustomPacket &pkt, std::array<uint8_t,16> &
     }
 }
 
-void Filter_SAO::pack_blocks(CustomPacket &pkt, const std::array<uint8_t,16> &p_blk, const std::array<uint8_t,16> &q_blk) const {
+void Filter_SAO::pack_blocks(DbCustomPacket &pkt, const std::array<uint8_t,16> &p_blk, const std::array<uint8_t,16> &q_blk) const {
     pkt.data.clear();
     pkt.data.reserve(32);
     pkt.data.insert(pkt.data.end(), p_blk.begin(), p_blk.end());
@@ -27,7 +27,7 @@ void Filter_SAO::pack_blocks(CustomPacket &pkt, const std::array<uint8_t,16> &p_
 }
 
 void Filter_SAO::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    CustomPacket pkt = unpackCustomPacket(trans);
+    DbCustomPacket pkt = unpackDbCustomPacket(trans);
 
     // Extract 4x4 blocks
     std::array<uint8_t,16> p_in{}, q_in{}, p_out{}, q_out{};
@@ -61,7 +61,7 @@ void Filter_SAO::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& 
     }
 
     pack_blocks(pkt, p_out, q_out);
-    std::vector<uint8_t> outbuf = packCustomPacket(pkt);
+    std::vector<uint8_t> outbuf = packDbCustomPacket(pkt);
     trans.set_data_ptr(outbuf.data());
     trans.set_data_length(outbuf.size());
     out_socket->b_transport(trans, delay);

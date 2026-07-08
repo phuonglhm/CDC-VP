@@ -1,3 +1,6 @@
+# Legacy local build helper. Canonical integrated build/test flow for vpu_tlm
+# is driven from the repository top-level CMake + CTest configuration.
+
 # Compiler
 CXX      := g++
 COMMON_DIR ?= ../common

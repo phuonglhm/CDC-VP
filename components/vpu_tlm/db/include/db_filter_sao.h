@@ -19,8 +19,8 @@ public:
 private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
 
-    void unpack_blocks(const CustomPacket &pkt, std::array<uint8_t,16> &p_blk, std::array<uint8_t,16> &q_blk) const;
-    void pack_blocks(CustomPacket &pkt, const std::array<uint8_t,16> &p_blk, const std::array<uint8_t,16> &q_blk) const;
+    void unpack_blocks(const DbCustomPacket &pkt, std::array<uint8_t,16> &p_blk, std::array<uint8_t,16> &q_blk) const;
+    void pack_blocks(DbCustomPacket &pkt, const std::array<uint8_t,16> &p_blk, const std::array<uint8_t,16> &q_blk) const;
 
     // Parameters that control filtering for a single edge/block pair.
     struct FilterParams {

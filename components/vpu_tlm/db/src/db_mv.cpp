@@ -2,13 +2,18 @@
 #include <iostream>
 #include <algorithm>
 
-MotionVector::MotionVector(sc_core::sc_module_name name) : sc_module(name), filter_socket("filter_socket"), start_socket("start_socket") {
-    start_socket.register_b_transport(this, &MotionVector::b_transport);
+#include "../../include/block_coord_codec.h"
+#include "debug_config.h"
+
+DbMotionVector::DbMotionVector(sc_core::sc_module_name name) : sc_module(name), filter_socket("filter_socket"), start_socket("start_socket") {
+    start_socket.register_b_transport(this, &DbMotionVector::b_transport);
 }
-void MotionVector::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    CustomPacket pkt = unpackCustomPacket(trans);
-    unsigned sys_ctu_x = pkt.x;
-    unsigned sys_ctu_y = pkt.y;
+void DbMotionVector::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
+    DbCustomPacket pkt = unpackDbCustomPacket(trans);
+    const cdc::components::block_coord_4x4 block_coord =
+        cdc::components::decode_block_coord_4x4(pkt.block_idx, pkt.x, pkt.y);
+    unsigned sys_ctu_x = cdc::components::ctu_index_from_4x4(block_coord.x);
+    unsigned sys_ctu_y = cdc::components::ctu_index_from_4x4(block_coord.y);
     uint16_t cnt = pkt.cnt;
     uint8_t state = pkt.state;
 
@@ -49,18 +54,20 @@ void MotionVector::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time
     this->last_mv_p = mv_p;
     this->last_mv_q = mv_q;
 
-    std::cout << sc_core::sc_time_stamp() << " MotionVector pkt(cnt=" << pkt.cnt << ") mv_p=0x" << std::hex << mv_p << " mv_q=0x" << mv_q << std::dec << std::endl;
+    if (cdc::components::verbose_enabled()) {
+        std::cout << sc_core::sc_time_stamp() << " MotionVector pkt(cnt=" << pkt.cnt << ") mv_p=0x" << std::hex << mv_p << " mv_q=0x" << mv_q << std::dec << std::endl;
+    }
 
     // annotate packet and forward
     pkt.mv_p = mv_p & 0xFFFFFu;
     pkt.mv_q = mv_q & 0xFFFFFu;
-    std::vector<uint8_t> outbuf = packCustomPacket(pkt);
+    std::vector<uint8_t> outbuf = packDbCustomPacket(pkt);
     trans.set_data_ptr(outbuf.data());
     trans.set_data_length(outbuf.size());
     filter_socket->b_transport(trans, delay);
 }
 
-void MotionVector::compute_mv_addresses(unsigned sys_ctu_x, uint16_t cnt,
+void DbMotionVector::compute_mv_addresses(unsigned sys_ctu_x, uint16_t cnt,
                                         unsigned &cur_rd_addr, unsigned &cur_wr_addr,
                                         bool &use_top_read, unsigned &top_addr,
                                         bool &top_write) {
@@ -79,7 +86,7 @@ void MotionVector::compute_mv_addresses(unsigned sys_ctu_x, uint16_t cnt,
     top_write = false; 
 }
 
-void MotionVector::decode_mv(uint32_t packed_mv, int16_t &mx, int16_t &my) {
+void DbMotionVector::decode_mv(uint32_t packed_mv, int16_t &mx, int16_t &my) {
     const uint32_t mask10 = 0x3FFu;
     uint32_t raw_y = packed_mv & mask10;
     uint32_t raw_x = (packed_mv >> 10) & mask10;
@@ -87,7 +94,7 @@ void MotionVector::decode_mv(uint32_t packed_mv, int16_t &mx, int16_t &my) {
     my = (raw_y & 0x200) ? static_cast<int16_t>(raw_y | 0xFC00) : static_cast<int16_t>(raw_y);
 }
 
-void MotionVector::select_mv(const CustomPacket &pkt,
+void DbMotionVector::select_mv(const DbCustomPacket &pkt,
                              unsigned sys_ctu_x, unsigned sys_ctu_y,
                              uint16_t cnt, uint8_t state,
                              uint32_t &mv_p, uint32_t &mv_q) {
@@ -136,17 +143,17 @@ void MotionVector::select_mv(const CustomPacket &pkt,
     }
 }
 
-void MotionVector::write_cur_mv(unsigned addr, uint32_t data) {
+void DbMotionVector::write_cur_mv(unsigned addr, uint32_t data) {
     if (addr < cur_mv_r.size()) cur_mv_r[addr] = data & 0xFFFFFu;
 }
-void MotionVector::read_cur_mv(unsigned addr, uint32_t &data) const {
+void DbMotionVector::read_cur_mv(unsigned addr, uint32_t &data) const {
     if (addr < cur_mv_r.size()) data = cur_mv_r[addr] & 0xFFFFFu;
     else data = 0;
 }
-void MotionVector::write_top_mv(unsigned addr, uint32_t data) {
+void DbMotionVector::write_top_mv(unsigned addr, uint32_t data) {
     if (addr < top_mv_r.size()) top_mv_r[addr] = data & 0xFFFFFu;
 }
-void MotionVector::read_top_mv(unsigned addr, uint32_t &data) const {
+void DbMotionVector::read_top_mv(unsigned addr, uint32_t &data) const {
     if (addr < top_mv_r.size()) data = top_mv_r[addr] & 0xFFFFFu;
     else data = 0;
 }

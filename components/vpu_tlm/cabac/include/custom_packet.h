@@ -1,5 +1,5 @@
-#ifndef CUSTOM_PACKET_H
-#define CUSTOM_PACKET_H
+#ifndef VPU_TLM_CABAC_CUSTOM_PACKET_H
+#define VPU_TLM_CABAC_CUSTOM_PACKET_H
 
 #include <systemc>
 #include <cstdint>
@@ -11,16 +11,16 @@
 #include <sstream>
 #include "tlm.h"
 
-enum class CustomCmd : uint8_t { RESIDUAL = 0, COEFF = 1, PRE = 2, READ_REQ = 3 };
+enum class CabacCustomCmd : uint8_t { RESIDUAL = 0, COEFF = 1, PRE = 2, READ_REQ = 3 };
 
-enum class PredType : uint8_t { INTRA = 0, MC = 1 };
+enum class CabacPredType : uint8_t { INTRA = 0, MC = 1 };
 
 
-struct CustomPacket {
-        CustomCmd cmd;               // RESIDUAL/COEFF/PRE/READ_REQ
-        uint8_t block_idx;        // RTL: 5 bits
-        uint8_t x;                // RTL: 4 bits
-        uint8_t y;                // RTL: 4 bits
+struct CabacCustomPacket {
+        CabacCustomCmd cmd;               // RESIDUAL/COEFF/PRE/READ_REQ
+        uint8_t block_idx;        // high bits of 4x4 block y/x: [y11:8|x11:8]
+        uint8_t x;                // low 8 bits of 4x4 block x
+        uint8_t y;                // low 8 bits of 4x4 block y
         uint8_t size;             // RTL: 2 bits (0:4x4,1:8x8,2:16x16,3:32x32)
         uint8_t sel;              // RTL: 2 bits (TYPE_Y/U/V)
         uint8_t qp;               // RTL: 6 bits
@@ -32,23 +32,23 @@ struct CustomPacket {
         std::bitset<256> cbf_mask; // per-block CBF mask (match RTL up to 256 bits)
         std::vector<uint8_t> data; // owned contiguous payload bytes (copy from trans.get_data_ptr())
 
-        CustomPacket()
-            : cmd(CustomCmd::RESIDUAL), block_idx(0), x(0), y(0),
-                size(0), sel(0), qp(0), pred_type(static_cast<uint8_t>(PredType::INTRA)),
+        CabacCustomPacket()
+            : cmd(CabacCustomCmd::RESIDUAL), block_idx(0), x(0), y(0),
+                size(0), sel(0), qp(0), pred_type(static_cast<uint8_t>(CabacPredType::INTRA)),
                 mode(1), pre_sel(0), i4x4_x(0), i4x4_y(0), cbf_mask(), data() {}
 };
 
-inline std::ostream& operator<<(std::ostream& os, const CustomPacket& p) {
+inline std::ostream& operator<<(std::ostream& os, const CabacCustomPacket& p) {
     // Header lines
     os << "CustomPacket {" << std::endl;
 
     // cmd as text
     os << "  cmd: ";
     switch (p.cmd) {
-        case CustomCmd::RESIDUAL: os << "RESIDUAL"; break;
-        case CustomCmd::COEFF:    os << "COEFF";    break;
-        case CustomCmd::PRE:      os << "PRE";      break;
-        case CustomCmd::READ_REQ: os << "READ_REQ"; break;
+        case CabacCustomCmd::RESIDUAL: os << "RESIDUAL"; break;
+        case CabacCustomCmd::COEFF:    os << "COEFF";    break;
+        case CabacCustomCmd::PRE:      os << "PRE";      break;
+        case CabacCustomCmd::READ_REQ: os << "READ_REQ"; break;
         default:               os << static_cast<int>(p.cmd); break;
     }
     os << ", idx: " << static_cast<int>(p.block_idx)
@@ -65,9 +65,9 @@ inline std::ostream& operator<<(std::ostream& os, const CustomPacket& p) {
             << ", qp: " << static_cast<int>(p.qp) << std::endl;
 
      os << "  pred_type: ";
-     switch (static_cast<PredType>(p.pred_type)) {
-          case PredType::INTRA: os << "INTRA"; break;
-          case PredType::MC:    os << "MC";    break;
+     switch (static_cast<CabacPredType>(p.pred_type)) {
+          case CabacPredType::INTRA: os << "INTRA"; break;
+          case CabacPredType::MC:    os << "MC";    break;
           default:              os << static_cast<int>(p.pred_type); break;
      }
      os << ", mode: " << static_cast<int>(p.mode)
@@ -112,7 +112,7 @@ inline std::ostream& operator<<(std::ostream& os, const CustomPacket& p) {
 }
 
 // Helpers to pack/unpack CustomPacket to/from a contiguous byte buffer used on the TLM wire.
-inline std::vector<uint8_t> packCustomPacket(const CustomPacket &p) {
+inline std::vector<uint8_t> packCabacCustomPacket(const CabacCustomPacket &p) {
     std::vector<uint8_t> buf;
     // header: original 8 bytes + 5 extended bytes
     // header: original 8 bytes (pred_type reused at byte 7) + 4 extended bytes
@@ -135,10 +135,10 @@ inline std::vector<uint8_t> packCustomPacket(const CustomPacket &p) {
     return buf;
 }
 
-inline CustomPacket unpackCustomPacket(const uint8_t *buf, size_t len) {
-    CustomPacket p;
+inline CabacCustomPacket unpackCabacCustomPacket(const uint8_t *buf, size_t len) {
+    CabacCustomPacket p;
     if (!buf || len < 8) return p; // return default if too small
-    p.cmd = static_cast<CustomCmd>(buf[0]);
+    p.cmd = static_cast<CabacCustomCmd>(buf[0]);
     p.block_idx = buf[1];
     p.x = buf[2];
     p.y = buf[3];
@@ -163,9 +163,9 @@ inline CustomPacket unpackCustomPacket(const uint8_t *buf, size_t len) {
     return p;
 }
 
-inline CustomPacket unpackCustomPacket(const tlm::tlm_generic_payload &trans) {
+inline CabacCustomPacket unpackCabacCustomPacket(const tlm::tlm_generic_payload &trans) {
     const uint8_t *buf = reinterpret_cast<const uint8_t*>(trans.get_data_ptr());
-    return unpackCustomPacket(buf, trans.get_data_length());
+    return unpackCabacCustomPacket(buf, trans.get_data_length());
 }
 
 #endif

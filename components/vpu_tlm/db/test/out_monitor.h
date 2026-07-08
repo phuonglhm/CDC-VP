@@ -6,8 +6,6 @@
 #include "tlm_utils/simple_target_socket.h"
 #include "custom_packet.h"
 
-using namespace sc_core;
-
 class OutMonitor : public sc_core::sc_module {
   public:
     OutMonitor(sc_core::sc_module_name name);

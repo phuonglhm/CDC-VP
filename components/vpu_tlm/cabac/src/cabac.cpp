@@ -1,7 +1,21 @@
 #include "cabac.h"
+#include "../../include/block_coord_codec.h"
 
 // Binarization types
 enum BinaType : uint8_t { BINA_FL = 0, BINA_TU = 1, BINA_EG1 = 2, BINA_CREG = 4, BINA_SP = 5 };
+
+namespace {
+
+constexpr uint64_t kCabacCoeffBaseAddr = 0x11000000ULL;
+constexpr uint64_t kCabacEmitBaseAddr = 0x20000000ULL;
+
+uint32_t make_block_addr(const CabacCustomPacket& pkt)
+{
+    return cdc::components::make_extended_block_address(pkt.block_idx, pkt.x, pkt.y);
+}
+
+} // namespace
+
 Cabac::Cabac(sc_core::sc_module_name name) :
     sc_module(name), mem_socket("mem_socket"), start_socket("start_socket"), out_socket("out_socket") {
     start_socket.register_b_transport(this, &Cabac::b_transport);
@@ -10,7 +24,7 @@ Cabac::Cabac(sc_core::sc_module_name name) :
 void Cabac::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
 
     if (trans.get_command() == tlm::TLM_WRITE_COMMAND && trans.get_data_length() > 0 && trans.get_data_ptr()) {
-        CustomPacket pkt = unpackCustomPacket(trans);
+        CabacCustomPacket pkt = unpackCabacCustomPacket(trans);
         // update current QP
         qp_ = static_cast<uint8_t>(pkt.qp);
 
@@ -18,8 +32,9 @@ void Cabac::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
         std::vector<uint8_t> membuf(16, 0);
         tlm::tlm_generic_payload mtrans;
         mtrans.set_command(tlm::TLM_READ_COMMAND);
-        // simple example address mapping: base 0x10000000 + block_idx
-        uint64_t addr = 0x10000000ULL | static_cast<uint64_t>(pkt.block_idx);
+        // Coefficients are addressed by 4x4 block location so larger frames do
+        // not alias inside the sparse TLM memory.
+        uint64_t addr = kCabacCoeffBaseAddr | static_cast<uint64_t>(make_block_addr(pkt));
         mtrans.set_address(addr);
         mtrans.set_data_ptr(membuf.data());
         mtrans.set_data_length(membuf.size());
@@ -38,15 +53,21 @@ void Cabac::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay
         std::vector<uint8_t> binstream = binarize(membuf);
         std::vector<Bin> bins = bin_buffer_select(pkt, binstream);
 
-        uint64_t emit_base = 0x20000000ULL | static_cast<uint64_t>(pkt.block_idx);
+        uint64_t emit_base = kCabacEmitBaseAddr | static_cast<uint64_t>(make_block_addr(pkt));
         std::vector<uint8_t> coded = encode_bins(bins, emit_base);
 
-        CustomPacket outpkt;
-        outpkt.cmd = CustomCmd::COEFF;
+        CabacCustomPacket outpkt;
+        outpkt.cmd = CabacCustomCmd::COEFF;
         outpkt.block_idx = pkt.block_idx;
+        outpkt.x = pkt.x;
+        outpkt.y = pkt.y;
+        outpkt.size = pkt.size;
+        outpkt.qp = pkt.qp;
+        outpkt.pred_type = pkt.pred_type;
+        outpkt.mode = pkt.mode;
         outpkt.data = coded;
 
-        std::vector<uint8_t> outbuf = packCustomPacket(outpkt);
+        std::vector<uint8_t> outbuf = packCabacCustomPacket(outpkt);
         tlm::tlm_generic_payload otrans;
         otrans.set_command(tlm::TLM_WRITE_COMMAND);
         otrans.set_address(0);
@@ -96,7 +117,7 @@ std::vector<uint8_t> Cabac::binarize(const std::vector<uint8_t>& coeffs) {
 // mark bypass bins (e.g. sign bits). Currently we assume each symbol from
 // `binarize()` is 9 bits (8 magnitude + 1 sign, LSB-first). Sign bits are
 // marked as bypass so they will not use context/state updates.
-std::vector<Cabac::Bin> Cabac::bin_buffer_select(const CustomPacket &pkt, const std::vector<uint8_t>& binstream) {
+std::vector<Cabac::Bin> Cabac::bin_buffer_select(const CabacCustomPacket &pkt, const std::vector<uint8_t>& binstream) {
     std::vector<Cabac::Bin> out;
     if (binstream.empty()) return out;
 
@@ -217,7 +238,7 @@ void Cabac::write_context(uint32_t ctx_idx, uint8_t state, uint8_t mps) {
 }
 
 // Map raw packed binstream bytes into a sequence of `Bin` entries with deterministic context indices derived from the packet's block index
-std::vector<Cabac::Bin> Cabac::assign_contexts(const CustomPacket &pkt, const std::vector<uint8_t>& binstream) {
+std::vector<Cabac::Bin> Cabac::assign_contexts(const CabacCustomPacket &pkt, const std::vector<uint8_t>& binstream) {
     std::vector<Bin> out;
     if (binstream.empty()) return out;
 

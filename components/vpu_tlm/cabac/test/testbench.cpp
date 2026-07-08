@@ -1,4 +1,5 @@
 #include "testbench.h"
+#include "../../include/block_coord_codec.h"
 
 // Implement the dataflow_test to send a CustomPacket into Cabac and verify output
 bool TestBench::dataflow_test(const CustomPacket &pkt_in) {
@@ -138,7 +139,11 @@ int sc_main(int argc, char* argv[]) {
 
         if (test_bench.out_monitor.last_data.empty()) { std::cerr << "emit_memory_consistency_test: no out packet\n"; return false; }
         CustomPacket outp = unpackCustomPacket(test_bench.out_monitor.last_data.data(), test_bench.out_monitor.last_data.size());
-        uint64_t emit_addr = 0x20000000ULL | static_cast<uint64_t>(pkt.block_idx);
+        uint64_t emit_addr =
+            0x20000000ULL |
+            static_cast<uint64_t>(
+                cdc::components::make_extended_block_address(
+                    pkt.block_idx, pkt.x, pkt.y));
         std::vector<uint8_t> mem = mem_read(emit_addr, outp.data.size());
             bool non_zero = false;
             for (auto v : mem) if (v != 0) { non_zero = true; break; }

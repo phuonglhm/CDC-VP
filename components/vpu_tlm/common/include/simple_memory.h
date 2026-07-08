@@ -1,5 +1,5 @@
-#ifndef SIMPLE_MEMORY_H
-#define SIMPLE_MEMORY_H
+#ifndef VPU_TLM_COMMON_SIMPLE_MEMORY_H
+#define VPU_TLM_COMMON_SIMPLE_MEMORY_H
 
 #include <systemc>
 #include "tlm.h"

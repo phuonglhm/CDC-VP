@@ -8,12 +8,10 @@
 #include "top.h"
 #include "out_monitor.h"
 
-using namespace sc_core;
-
-class TestBench : public sc_module {
-    public:
-        TestBench(sc_module_name name)
-            : sc_module(name),
+class TestBench : public sc_core::sc_module {
+public:
+        explicit TestBench(sc_core::sc_module_name name)
+            : sc_core::sc_module(name),
               bs_socket("bs_socket"),
               mv_socket("mv_socket"),
               out_monitor("out_monitor"),
@@ -21,10 +19,10 @@ class TestBench : public sc_module {
             bs_socket.bind(top.db_bs.start_socket);
             mv_socket.bind(top.db_mv.start_socket);
             top.db_filter_sao.out_socket.bind(out_monitor.filter_socket);
-        };
+        }
         SC_HAS_PROCESS(TestBench);
         bool dataflow_test(const CustomPacket &pkt_in);
-          bool cbf_qp_param_test();
+        bool cbf_qp_param_test();
         bool pack_unpack_test();
         bool outmonitor_receive_test();
 
@@ -36,7 +34,7 @@ class TestBench : public sc_module {
         tlm_utils::simple_initiator_socket<TestBench> bs_socket;
         tlm_utils::simple_initiator_socket<TestBench> mv_socket;
         OutMonitor out_monitor;
-        Top top;
+        DbTop top;
 };
 
 #endif

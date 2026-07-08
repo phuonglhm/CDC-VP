@@ -323,16 +323,11 @@ static void check_valid_fme_result_common(
     CHECK(result.best_inter_result.qp == expected_qp);
 
     CHECK(result.best_inter_result.predicted_luma.size() == ctu.area());
-
-    if (!result.best_inter_result.residual_luma.empty()) {
-        CHECK(result.best_inter_result.residual_luma.size() == ctu.area());
-        CHECK(residual_matches_input_minus_prediction(
-            input,
-            ctu,
-            result.best_inter_result));
-    } else {
-        std::cout << "[INFO] result.best_inter_result.residual_luma is empty in this FME model\n";
-    }
+    CHECK(result.best_inter_result.residual_luma.size() == ctu.area());
+    CHECK(residual_matches_input_minus_prediction(
+        input,
+        ctu,
+        result.best_inter_result));
 
     CHECK(result.best_satd < std::numeric_limits<std::uint32_t>::max());
     CHECK(result.best_rate < std::numeric_limits<std::uint32_t>::max());
@@ -344,12 +339,9 @@ static void check_valid_fme_result_common(
     CHECK(result.best_inter_result.mv.x == result.best_mv.x);
     CHECK(result.best_inter_result.mv.y == result.best_mv.y);
 
-    if (!result.candidates.empty()) {
-        CHECK(fme_candidates_are_valid(result, ctu));
-        CHECK(result.best_cost == min_candidate_cost(result.candidates));
-    } else {
-        std::cout << "[INFO] result.candidates is empty in this FME model\n";
-    }
+    CHECK(!result.candidates.empty());
+    CHECK(fme_candidates_are_valid(result, ctu));
+    CHECK(result.best_cost == min_candidate_cost(result.candidates));
 }
 
 static bool same_fme_result_summary(const cdc::components::fme_result& a,
@@ -445,6 +437,8 @@ static void test_fme_integer_only_config()
 
     CHECK(result.best_mv.x == mv.x);
     CHECK(result.best_mv.y == mv.y);
+    CHECK(!has_half_pel_candidate(result.candidates));
+    CHECK(!has_quarter_pel_candidate(result.candidates));
 }
 
 static void test_fme_half_only_config()
@@ -467,6 +461,7 @@ static void test_fme_half_only_config()
 
     check_valid_fme_result_common(input, result, ctu, INIT_QP);
 
+    CHECK(has_half_pel_candidate(result.candidates));
     CHECK(!has_quarter_pel_candidate(result.candidates));
 }
 
@@ -489,12 +484,8 @@ static void test_fme_quarter_enabled_config()
     fme_result result = dut.run(input, reference, ime_info, config, INIT_QP);
 
     check_valid_fme_result_common(input, result, ctu, INIT_QP);
-
-    if (!result.candidates.empty()) {
-        CHECK(result.candidates.size() > 1);
-    } else {
-        std::cout << "[INFO] candidate list is not exported in this FME model\n";
-    }
+    CHECK(has_quarter_pel_candidate(result.candidates));
+    CHECK(result.candidates.size() > 1);
 }
 
 static void test_fme_known_integer_shift_from_manual_ime()
@@ -591,6 +582,8 @@ static void test_fme_skip_decision_on_flat_frame()
     check_valid_fme_result_common(input, result, ctu, INIT_QP);
 
     CHECK(result.best_satd == 0);
+    CHECK(result.skip);
+    CHECK(result.best_inter_result.skip);
 }
 
 static void test_fme_different_block_sizes()

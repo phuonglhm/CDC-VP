@@ -11,14 +11,19 @@
 #include "../include/cabac_tables.h"
 #include <vector>
 #include <cstring>
-using namespace sc_core;
 
-class TestBench : sc_module {
-    public:
-    TestBench (sc_module_name name) : sc_module(name), start_socket("start_socket"), top("top_test"), out_monitor("out_monitor") {}
+class TestBench : public sc_core::sc_module {
+public:
+    explicit TestBench(sc_core::sc_module_name name)
+        : sc_core::sc_module(name),
+          start_socket("start_socket"),
+          top("top_test"),
+          out_monitor("out_monitor")
+    {
+    }
     SC_HAS_PROCESS(TestBench);
     tlm_utils::simple_initiator_socket<TestBench> start_socket;
-    Top top;
+    CabacTop top;
     OutMonitor out_monitor;
     bool dataflow_test(const CustomPacket &pkt = CustomPacket());
     bool dataflow_stream_test(const CustomPacket &pkt = CustomPacket());

@@ -10,11 +10,11 @@
 #include <array>
 #include <cstdint>
 
-class MotionVector : sc_core::sc_module {
+class DbMotionVector : sc_core::sc_module {
     public:
-    MotionVector(sc_core::sc_module_name name);
-    tlm_utils::simple_initiator_socket<MotionVector> filter_socket;
-    tlm_utils::simple_target_socket<MotionVector> start_socket;
+    DbMotionVector(sc_core::sc_module_name name);
+    tlm_utils::simple_initiator_socket<DbMotionVector> filter_socket;
+    tlm_utils::simple_target_socket<DbMotionVector> start_socket;
 
     uint32_t last_mv_p{0};
     uint32_t last_mv_q{0};
@@ -25,7 +25,7 @@ class MotionVector : sc_core::sc_module {
     // Select motion vectors for the current edge/micro-phase. Mirrors the
     // selection logic in db_mv.v. Produces packed 20-bit MVs in the same
     // format used by the RTL: [19:10]=x (signed), [9:0]=y (signed).
-    void select_mv(const CustomPacket &pkt,
+    void select_mv(const DbCustomPacket &pkt,
                    unsigned sys_ctu_x, unsigned sys_ctu_y,
                    uint16_t cnt, uint8_t state,
                    uint32_t &mv_p, uint32_t &mv_q);

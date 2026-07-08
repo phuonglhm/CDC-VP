@@ -1,0 +1,10 @@
+/cabac/out/
+/cabac/build/
+/db/out/
+/db/build/
+/fetch/out/
+/fetch/build/
+/rec/out/
+/rec/build/
+/tests/build/
+*.gch

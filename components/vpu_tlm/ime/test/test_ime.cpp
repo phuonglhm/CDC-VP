@@ -408,7 +408,33 @@ static void test_ime_zero_search_config()
 
     check_valid_ime_result_common(input, result, ctu, INIT_QP);
 
+    CHECK(result.best_partition == partition_mode::part_2nx2n);
     CHECK(result.best_mv.x == 0);
+    CHECK(result.best_mv.y == 0);
+    CHECK(result.best_sad == 0);
+}
+
+static void test_ime_feedback_center_config()
+{
+    using namespace cdc::components;
+
+    std::cout << "\n[TEST] IME feedback-centered search config\n";
+
+    frame input = make_textured_frame(96, 96);
+    frame reference = make_shifted_reference_from_current(input, 2, 0);
+    block ctu(32, 32, 16, block_type::ctu);
+
+    ime_search_config config = only_2nx2n_config(0, 0);
+    config.use_feedback = true;
+    config.center_mv = motion_vector(8, 0);
+
+    ime dut;
+    ime_result result = dut.run(input, reference, ctu, config, INIT_QP);
+
+    check_valid_ime_result_common(input, result, ctu, INIT_QP);
+
+    CHECK(result.best_partition == partition_mode::part_2nx2n);
+    CHECK(result.best_mv.x == 8);
     CHECK(result.best_mv.y == 0);
     CHECK(result.best_sad == 0);
 }
@@ -437,6 +463,7 @@ static void test_ime_known_horizontal_shift()
 
     check_valid_ime_result_common(input, result, ctu, INIT_QP);
 
+    CHECK(result.best_partition == partition_mode::part_2nx2n);
     CHECK(abs_i(abs_i(result.best_mv.x) - abs_i(shift_x * 4)) <= 4);
     CHECK(abs_i(result.best_mv.y - shift_y * 4) <= 4);
 }
@@ -464,6 +491,7 @@ static void test_ime_known_vertical_shift()
 
     check_valid_ime_result_common(input, result, ctu, INIT_QP);
 
+    CHECK(result.best_partition == partition_mode::part_2nx2n);
     CHECK(abs_i(result.best_mv.x - shift_x * 4) <= 4);
     CHECK(abs_i(abs_i(result.best_mv.y) - abs_i(shift_y * 4)) <= 4);
 }
@@ -491,6 +519,7 @@ static void test_ime_known_diagonal_shift()
 
     check_valid_ime_result_common(input, result, ctu, INIT_QP);
 
+    CHECK(result.best_partition == partition_mode::part_2nx2n);
     CHECK(abs_i(abs_i(result.best_mv.x) - abs_i(shift_x * 4)) <= 4);
     CHECK(abs_i(abs_i(result.best_mv.y) - abs_i(shift_y * 4)) <= 4);
 }
@@ -518,6 +547,7 @@ static void test_ime_negative_horizontal_shift()
 
     check_valid_ime_result_common(input, result, ctu, INIT_QP);
 
+    CHECK(result.best_partition == partition_mode::part_2nx2n);
     CHECK(abs_i(abs_i(result.best_mv.x) - abs_i(shift_x * 4)) <= 4);
     CHECK(abs_i(result.best_mv.y - shift_y * 4) <= 4);
 }
@@ -731,6 +761,7 @@ int sc_main(int argc, char* argv[])
 
     test_ime_identical_current_reference();
     test_ime_zero_search_config();
+    test_ime_feedback_center_config();
 
     test_ime_known_horizontal_shift();
     test_ime_known_vertical_shift();

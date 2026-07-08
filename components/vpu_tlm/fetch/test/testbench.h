@@ -4,7 +4,6 @@
 
 #include <systemc>
 #include "top.h"
-using namespace sc_core;
 
 // Simplified TestBench declaration for fetch-only tests.
 struct FetchFrameLoader;
@@ -22,7 +21,7 @@ class TestBench : public sc_core::sc_module {
 		SC_HAS_PROCESS(TestBench);
 		void run();
 		bool passed{true};
-		Top* top{nullptr};
+		FetchTop* top{nullptr};
 
 	private:
 		FetchFrameLoader* loader;

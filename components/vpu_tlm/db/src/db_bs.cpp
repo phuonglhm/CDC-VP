@@ -1,17 +1,24 @@
 #include "db_bs.h"
 #include "custom_packet.h"
+#include "../../include/block_coord_codec.h"
 #include <iostream>
 #include <vector>
+
+#include "debug_config.h"
 
 BorderStrength::BorderStrength(sc_core::sc_module_name name) : sc_module(name), filter_socket("filter_socket"), start_socket("start_socket") {
     start_socket.register_b_transport(this, &BorderStrength::b_transport);
 }
 
 void BorderStrength::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    CustomPacket pkt = unpackCustomPacket(trans);
-    std::cout << sc_core::sc_time_stamp() << "---------------BorderStrength Packet (internal)--------------\n" << pkt << std::endl;
-    unsigned sys_ctu_x = pkt.x;
-    unsigned sys_ctu_y = pkt.y;
+    DbCustomPacket pkt = unpackDbCustomPacket(trans);
+    if (cdc::components::verbose_enabled()) {
+        std::cout << sc_core::sc_time_stamp() << "---------------BorderStrength Packet (internal)--------------\n" << pkt << std::endl;
+    }
+    const cdc::components::block_coord_4x4 block_coord =
+        cdc::components::decode_block_coord_4x4(pkt.block_idx, pkt.x, pkt.y);
+    unsigned sys_ctu_x = cdc::components::ctu_index_from_4x4(block_coord.x);
+    unsigned sys_ctu_y = cdc::components::ctu_index_from_4x4(block_coord.y);
     uint16_t cnt = pkt.cnt;
     uint8_t state = pkt.state;
     bool tu_edge = false, pu_edge = false;
@@ -31,7 +38,9 @@ void BorderStrength::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_ti
     this->last_qp_p = qp_p;
     this->last_qp_q = qp_q;
 
-    std::cout << "  tu_edge=" << tu_edge << " pu_edge=" << pu_edge << " cbf_p=" << cbf_p << " cbf_q=" << cbf_q << " qp_p=" << static_cast<int>(qp_p) << " qp_q=" << static_cast<int>(qp_q) << std::endl;
+    if (cdc::components::verbose_enabled()) {
+        std::cout << "  tu_edge=" << tu_edge << " pu_edge=" << pu_edge << " cbf_p=" << cbf_p << " cbf_q=" << cbf_q << " qp_p=" << static_cast<int>(qp_p) << " qp_q=" << static_cast<int>(qp_q) << std::endl;
+    }
 
     // annotate packet metadata so Filter_SAO can run canonical kernels
     pkt.tu_edge = tu_edge;
@@ -42,7 +51,7 @@ void BorderStrength::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_ti
     pkt.qp_q = qp_q;
     // determine is_luma and edge_type (approx using pred_type)
     bool is_luma = (pkt.sel == 0);
-    bool edge_intra = (pkt.pred_type == static_cast<uint8_t>(PredType::INTRA));
+    bool edge_intra = (pkt.pred_type == static_cast<uint8_t>(DbPredType::INTRA));
 
     // compute bs per db_filter.v semantics (best-effort):
     uint8_t bs_val = 0;
@@ -76,7 +85,7 @@ void BorderStrength::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_ti
     pkt.bs = bs_val;
 
     // repack and forward
-    std::vector<uint8_t> outbuf = packCustomPacket(pkt);
+    std::vector<uint8_t> outbuf = packDbCustomPacket(pkt);
     trans.set_data_ptr(outbuf.data());
     trans.set_data_length(outbuf.size());
     filter_socket->b_transport(trans, delay);
@@ -338,7 +347,7 @@ void BorderStrength::compute_pu_masks(const std::bitset<21> &mb_partition, const
 }
 
 
-void BorderStrength::edge_detect(const CustomPacket &pkt,
+void BorderStrength::edge_detect(const DbCustomPacket &pkt,
                     unsigned sys_ctu_x, unsigned sys_ctu_y,
                     uint16_t cnt, uint8_t state,
                     bool &tu_edge, bool &pu_edge) {
@@ -360,7 +369,7 @@ void BorderStrength::edge_detect(const CustomPacket &pkt,
     pu_edge = pu_v || pu_h || tu_edge;
 }
 
-void BorderStrength::cbf_select(const CustomPacket &pkt,
+void BorderStrength::cbf_select(const DbCustomPacket &pkt,
                     unsigned sys_ctu_x, unsigned sys_ctu_y,
                     uint16_t cnt, uint8_t state,
                     bool &cbf_p, bool &cbf_q) {
@@ -462,7 +471,7 @@ void BorderStrength::cbf_select(const CustomPacket &pkt,
     }
 }
 
-void BorderStrength::select_qp(const CustomPacket &pkt,
+void BorderStrength::select_qp(const DbCustomPacket &pkt,
                    unsigned sys_ctu_x, unsigned sys_ctu_y,
                    uint16_t cnt, uint8_t state,
                    uint8_t &qp_p, uint8_t &qp_q) {

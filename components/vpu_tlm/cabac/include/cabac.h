@@ -18,8 +18,8 @@
 #include <string>
 #include "cabac_tables.h"
 
-// forward-declare CustomPacket to avoid including the full header in this file
-struct CustomPacket;
+// forward-declare CabacCustomPacket to avoid including the full header in this file
+struct CabacCustomPacket;
 
 class Cabac : sc_core::sc_module {
     public:
@@ -39,12 +39,12 @@ class Cabac : sc_core::sc_module {
     };
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
     std::vector<uint8_t> binarize(const std::vector<uint8_t>& coeffs);
-    std::vector<Bin> bin_buffer_select(const CustomPacket &pkt, const std::vector<uint8_t>& binstream);
+    std::vector<Bin> bin_buffer_select(const CabacCustomPacket &pkt, const std::vector<uint8_t>& binstream);
     std::pair<uint8_t, uint8_t> read_context(uint32_t ctx_idx);
     void write_context(uint32_t ctx_idx, uint8_t state, uint8_t mps);
     void emit_bytes_to_mem(uint64_t addr, const std::vector<uint8_t>& data);
 
-    std::vector<Bin> assign_contexts(const CustomPacket &pkt, const std::vector<uint8_t>& binstream);
+    std::vector<Bin> assign_contexts(const CabacCustomPacket &pkt, const std::vector<uint8_t>& binstream);
     std::vector<uint8_t> encode_bins(const std::vector<Bin>& bins, uint64_t emit_base_addr = 0x20000000ULL);
     uint16_t rlps_for_state(uint8_t state, uint16_t range);
     void range_update(bool bin, uint16_t &range, uint16_t &low, uint8_t &state, uint8_t &mps);    

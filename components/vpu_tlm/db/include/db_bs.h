@@ -29,24 +29,24 @@ class BorderStrength : sc_core::sc_module {
         std::array<uint16_t, 8> h;   // h0..h7
     };
 
-    void edge_detect(const CustomPacket &pkt,
+    void edge_detect(const DbCustomPacket &pkt,
                      unsigned sys_ctu_x, unsigned sys_ctu_y,
                      uint16_t cnt, uint8_t state,
                      bool &tu_edge, bool &pu_edge);
 
-    void cbf_select(const CustomPacket &pkt,
+    void cbf_select(const DbCustomPacket &pkt,
                     unsigned sys_ctu_x, unsigned sys_ctu_y,
                     uint16_t cnt, uint8_t state,
                     bool &cbf_p, bool &cbf_q);
 
-    void select_qp(const CustomPacket &pkt,
+    void select_qp(const DbCustomPacket &pkt,
                    unsigned sys_ctu_x, unsigned sys_ctu_y,
                    uint16_t cnt, uint8_t state,
                    uint8_t &qp_p, uint8_t &qp_q);
 
     void compute_tu_masks(const std::bitset<21> &mb_partition, EdgeMasks &out);
     void compute_pu_masks(const std::bitset<21> &mb_partition, const std::bitset<42> &mb_p_pu_mode, EdgeMasks &out);
-    void compute_qp_flags(const CustomPacket &pkt, std::array<bool, 64> &qp_flags);
+    void compute_qp_flags(const DbCustomPacket &pkt, std::array<bool, 64> &qp_flags);
 
     std::array<uint16_t, 64> cbf_top_r{};
     std::array<uint8_t, 16> cbf_left{};

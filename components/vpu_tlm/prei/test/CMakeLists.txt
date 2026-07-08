@@ -7,3 +7,5 @@ target_link_libraries(test_prei
         video_encoder_tlm
         SystemC::systemc
 )
+
+add_test(NAME vpu_tlm.test_prei COMMAND test_prei)

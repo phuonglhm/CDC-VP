@@ -1,4 +1,4 @@
-# vpu_tlm / rec block
+# vpu_tlm / db block
 
 This is a SystemC TLM 2.3.4 model of the Deblocking block in a VPU. It serves to:
 - Compute and smooth border mismatch caused by processing by small block in the process.

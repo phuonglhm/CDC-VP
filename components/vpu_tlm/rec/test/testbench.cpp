@@ -1,5 +1,6 @@
 #include "testbench.h"
 #include "../include/rec_fetch_gateway.h"
+#include "../../include/block_coord_codec.h"
 #if defined(USE_FETCH)
 #include "../../fetch/include/fetch_wrapper_tlm.h"
 #endif
@@ -180,7 +181,9 @@ bool TestBench::recMc_test(const RecPacket &pkt_in) {
 
     // Install a simple MV (zero offset) for this block index so RecMc
     // will use the MV path instead of the fallback.
-    top.rec_mv.writeMV(static_cast<uint32_t>(pkt.block_idx), MotionVector(0, 0));
+    top.rec_mv.writeMV(
+        cdc::components::make_extended_block_address(pkt.block_idx, pkt.x, pkt.y),
+        MotionVector(0, 0));
 
     std::vector<uint8_t> buf = packRecPacket(pkt);
 

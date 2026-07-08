@@ -7,3 +7,5 @@ target_link_libraries(test_fme
         video_encoder_tlm
         SystemC::systemc
 )
+
+add_test(NAME vpu_tlm.test_fme COMMAND test_fme)

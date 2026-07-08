@@ -1,5 +1,5 @@
-#ifndef CUSTOM_PACKET_H
-#define CUSTOM_PACKET_H
+#ifndef VPU_TLM_DB_CUSTOM_PACKET_H
+#define VPU_TLM_DB_CUSTOM_PACKET_H
 
 #include <systemc>
 #include <cstdint>
@@ -11,15 +11,15 @@
 #include <sstream>
 #include "tlm.h"
 
-enum class CustomCmd : uint8_t { RESIDUAL = 0, COEFF = 1, PRE = 2, READ_REQ = 3 };
+enum class DbCustomCmd : uint8_t { RESIDUAL = 0, COEFF = 1, PRE = 2, READ_REQ = 3 };
 
-enum class PredType : uint8_t { INTRA = 0, MC = 1 };
+enum class DbPredType : uint8_t { INTRA = 0, MC = 1 };
 
-struct CustomPacket {
-    CustomCmd cmd;
-    uint8_t block_idx;
-    uint8_t x;
-    uint8_t y;
+struct DbCustomPacket {
+    DbCustomCmd cmd;
+    uint8_t block_idx; // high bits of 4x4 block y/x: [y11:8|x11:8]
+    uint8_t x;         // low 8 bits of 4x4 block x
+    uint8_t y;         // low 8 bits of 4x4 block y
     uint8_t size;
     uint8_t sel;
     uint8_t qp;
@@ -49,21 +49,21 @@ struct CustomPacket {
     uint32_t mv_p{0};
     uint32_t mv_q{0};
 
-    CustomPacket()
-        : cmd(CustomCmd::RESIDUAL), block_idx(0), x(0), y(0), size(0), sel(0), qp(0), pred_type(static_cast<uint8_t>(PredType::INTRA)),
+    DbCustomPacket()
+        : cmd(DbCustomCmd::RESIDUAL), block_idx(0), x(0), y(0), size(0), sel(0), qp(0), pred_type(static_cast<uint8_t>(DbPredType::INTRA)),
           mode(1), pre_sel(0), i4x4_x(0), i4x4_y(0), cnt(0), state(0), cbf_mask(), data(), mb_partition(), mb_p_pu_mode() {}
 };
 
-inline std::ostream& operator<<(std::ostream& os, const CustomPacket& p) {
-    os << "CustomPacket {" << std::endl;
+inline std::ostream& operator<<(std::ostream& os, const DbCustomPacket& p) {
+    os << "DbCustomPacket {" << std::endl;
     os << "  cmd: ";
-    switch (p.cmd) { case CustomCmd::RESIDUAL: os << "RESIDUAL"; break; case CustomCmd::COEFF: os << "COEFF"; break; case CustomCmd::PRE: os << "PRE"; break; case CustomCmd::READ_REQ: os << "READ_REQ"; break; default: os << static_cast<int>(p.cmd); break; }
+    switch (p.cmd) { case DbCustomCmd::RESIDUAL: os << "RESIDUAL"; break; case DbCustomCmd::COEFF: os << "COEFF"; break; case DbCustomCmd::PRE: os << "PRE"; break; case DbCustomCmd::READ_REQ: os << "READ_REQ"; break; default: os << static_cast<int>(p.cmd); break; }
     os << ", idx: " << static_cast<int>(p.block_idx) << ", pos: (" << static_cast<int>(p.x) << "," << static_cast<int>(p.y) << ")" << std::endl;
     os << "  size: ";
     switch (p.size) { case 0: os << "4x4"; break; case 1: os << "8x8"; break; case 2: os << "16x16"; break; case 3: os << "32x32"; break; default: os << static_cast<int>(p.size); break; }
     os << ", sel: " << static_cast<int>(p.sel) << ", qp: " << static_cast<int>(p.qp) << std::endl;
     os << "  pred_type: ";
-    switch (static_cast<PredType>(p.pred_type)) { case PredType::INTRA: os << "INTRA"; break; case PredType::MC: os << "MC"; break; default: os << static_cast<int>(p.pred_type); break; }
+    switch (static_cast<DbPredType>(p.pred_type)) { case DbPredType::INTRA: os << "INTRA"; break; case DbPredType::MC: os << "MC"; break; default: os << static_cast<int>(p.pred_type); break; }
     os << ", mode: " << static_cast<int>(p.mode) << ", pre_sel: " << static_cast<int>(p.pre_sel) << ", i4x4: (" << static_cast<int>(p.i4x4_x) << "," << static_cast<int>(p.i4x4_y) << ")" << std::endl;
 
     unsigned long long part_val = 0ULL;
@@ -112,7 +112,7 @@ inline std::ostream& operator<<(std::ostream& os, const CustomPacket& p) {
     return os;
 }
 
-inline std::vector<uint8_t> packCustomPacket(const CustomPacket &p) {
+inline std::vector<uint8_t> packDbCustomPacket(const DbCustomPacket &p) {
     std::vector<uint8_t> buf;
     const size_t cbf_bytes = 32;
     const size_t mb_part_bytes = (21 + 7) / 8; // 3
@@ -162,10 +162,10 @@ inline std::vector<uint8_t> packCustomPacket(const CustomPacket &p) {
     return buf;
 }
 
-inline CustomPacket unpackCustomPacket(const uint8_t *buf, size_t len) {
-    CustomPacket p;
+inline DbCustomPacket unpackDbCustomPacket(const uint8_t *buf, size_t len) {
+    DbCustomPacket p;
     if (!buf || len < 8) return p;
-    p.cmd = static_cast<CustomCmd>(buf[0]); p.block_idx = buf[1]; p.x = buf[2]; p.y = buf[3]; p.size = buf[4]; p.sel = buf[5]; p.qp = buf[6]; p.pred_type = buf[7];
+    p.cmd = static_cast<DbCustomCmd>(buf[0]); p.block_idx = buf[1]; p.x = buf[2]; p.y = buf[3]; p.size = buf[4]; p.sel = buf[5]; p.qp = buf[6]; p.pred_type = buf[7];
     size_t base = 8;
     if (len >= 12) { p.mode = buf[8]; p.pre_sel = buf[9]; p.i4x4_x = buf[10]; p.i4x4_y = buf[11]; base = 12; }
     if (len >= 15) { p.cnt = static_cast<uint16_t>(buf[12]) | (static_cast<uint16_t>(buf[13]) << 8); p.state = buf[14]; base = 15; }
@@ -195,9 +195,9 @@ inline CustomPacket unpackCustomPacket(const uint8_t *buf, size_t len) {
     return p;
 }
 
-inline CustomPacket unpackCustomPacket(const tlm::tlm_generic_payload &trans) {
+inline DbCustomPacket unpackDbCustomPacket(const tlm::tlm_generic_payload &trans) {
     const uint8_t *buf = reinterpret_cast<const uint8_t*>(trans.get_data_ptr());
-    return unpackCustomPacket(buf, trans.get_data_length());
+    return unpackDbCustomPacket(buf, trans.get_data_length());
 }
 
 #endif

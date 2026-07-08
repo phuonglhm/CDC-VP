@@ -1,16 +1,15 @@
-#ifndef TOP_H
-#define TOP_H
+#ifndef VPU_TLM_FETCH_TOP_H
+#define VPU_TLM_FETCH_TOP_H
 
 #include <systemc>
 #include "fetch_wrapper_tlm.h"
-using namespace sc_core;
 
-class Top : public sc_module {
-    public:
-    // Memory bridge and external memory target for CABAC tables
+class FetchTop : public sc_core::sc_module {
+public:
+    // Wrapper around the functional fetch-side frame loader/memory path.
     FetchWrapper fetch;
 
-    Top(sc_module_name name);
+    explicit FetchTop(sc_core::sc_module_name name);
 };
 
 #endif

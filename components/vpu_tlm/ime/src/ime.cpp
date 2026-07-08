@@ -11,11 +11,6 @@ namespace cdc::components {
 
 namespace {
 
-constexpr int RTL_SW_LEFT  = -64;
-constexpr int RTL_SW_RIGHT =  63;
-constexpr int RTL_SW_UP    = -32;
-constexpr int RTL_SW_DOWN  =  31;
-
 enum class rtl_partition_kind {
     part_1nx1n,
     part_1nx2n,
@@ -177,15 +172,18 @@ std::vector<std::uint8_t> make_prediction_block(const frame& reference,
 std::uint32_t calculate_sad(const frame& input,
                             const frame& reference,
                             const block& current,
-                            const motion_vector& mv)
+                            const motion_vector& mv,
+                            bool downsample)
 {
     const int mv_x_int = mv.x / 4;
     const int mv_y_int = mv.y / 4;
 
     std::uint64_t sad = 0;
+    const std::uint32_t step = downsample ? 2u : 1u;
+    const std::uint32_t scale = downsample ? 4u : 1u;
 
-    for (std::uint32_t y = 0; y < current.height; ++y) {
-        for (std::uint32_t x = 0; x < current.width; ++x) {
+    for (std::uint32_t y = 0; y < current.height; y += step) {
+        for (std::uint32_t x = 0; x < current.width; x += step) {
             const int cur_x = static_cast<int>(current.x + x);
             const int cur_y = static_cast<int>(current.y + y);
 
@@ -195,29 +193,48 @@ std::uint32_t calculate_sad(const frame& input,
             const int cur_pixel = read_luma_clamped(input, cur_x, cur_y);
             const int ref_pixel = read_luma_clamped(reference, ref_x, ref_y);
 
-            sad += static_cast<std::uint32_t>(abs_int(cur_pixel - ref_pixel));
+            sad += static_cast<std::uint32_t>(abs_int(cur_pixel - ref_pixel)) * scale;
         }
     }
 
     return clamp_u32(sad);
 }
 
-std::vector<motion_vector> generate_rtl_search_points()
+int align_to_integer_pel_qpel(int qpel)
+{
+    if (qpel >= 0) {
+        return ((qpel + 2) / 4) * 4;
+    }
+
+    return -((((-qpel) + 2) / 4) * 4);
+}
+
+std::vector<motion_vector> generate_search_points(const ime_search_config& config)
 {
     std::vector<motion_vector> points;
-    points.reserve(static_cast<std::size_t>(
-        (RTL_SW_RIGHT - RTL_SW_LEFT + 1) *
-        (RTL_SW_DOWN - RTL_SW_UP + 1)
-    ));
+    const std::uint32_t range_x = std::min<std::uint32_t>(config.search_range_x,
+                                                           IME_SEARCH_RANGE);
+    const std::uint32_t range_y = std::min<std::uint32_t>(config.search_range_y,
+                                                           IME_SEARCH_RANGE);
+    const int center_x = config.use_feedback
+                             ? align_to_integer_pel_qpel(config.center_mv.x)
+                             : 0;
+    const int center_y = config.use_feedback
+                             ? align_to_integer_pel_qpel(config.center_mv.y)
+                             : 0;
 
-    // TLM equivalent of ime_addressing scan:
-    // x scans left to right; y scans up/down around center.
-    // Keep integer-pel candidates and store them in quarter-pel unit.
-    for (int dx = RTL_SW_LEFT; dx <= RTL_SW_RIGHT; ++dx) {
-        for (int dy = RTL_SW_UP; dy <= RTL_SW_DOWN; ++dy) {
+    points.reserve(static_cast<std::size_t>((range_x * 2u + 1u) *
+                                            (range_y * 2u + 1u)));
+
+    for (int dx = -static_cast<int>(range_x);
+         dx <= static_cast<int>(range_x);
+         ++dx) {
+        for (int dy = -static_cast<int>(range_y);
+             dy <= static_cast<int>(range_y);
+             ++dy) {
             motion_vector mv;
-            mv.x = dx * 4;
-            mv.y = dy * 4;
+            mv.x = center_x + dx * 4;
+            mv.y = center_y + dy * 4;
             points.push_back(mv);
         }
     }
@@ -229,7 +246,7 @@ partition_mode to_public_partition(rtl_partition_kind kind)
 {
     switch (kind) {
     case rtl_partition_kind::part_1nx1n:
-        return partition_mode::part_2nx2n;
+        return partition_mode::part_split;
     case rtl_partition_kind::part_1nx2n:
         return partition_mode::part_nx2n;
     case rtl_partition_kind::part_2nx1n:
@@ -244,6 +261,7 @@ rtl_candidate search_one_block(const frame& input,
                                const frame& reference,
                                const block& current,
                                rtl_partition_kind rtl_partition,
+                               const ime_search_config& config,
                                std::uint32_t qp)
 {
     rtl_candidate best;
@@ -257,11 +275,11 @@ rtl_candidate search_one_block(const frame& input,
         return best;
     }
 
-    const std::vector<motion_vector> points = generate_rtl_search_points();
+    const std::vector<motion_vector> points = generate_search_points(config);
 
     for (const motion_vector& mv : points) {
         const std::uint32_t sad =
-            calculate_sad(input, reference, current, mv);
+            calculate_sad(input, reference, current, mv, config.downsample);
 
         const std::uint32_t mvd_cost =
             calculate_mvd_cost(mv, qp);
@@ -307,6 +325,7 @@ block make_child_block(const block& parent,
 rtl_partition_eval evaluate_partition_2nx2n(const frame& input,
                                             const frame& reference,
                                             const block& current,
+                                            const ime_search_config& config,
                                             std::uint32_t qp)
 {
     rtl_partition_eval eval;
@@ -318,6 +337,7 @@ rtl_partition_eval evaluate_partition_2nx2n(const frame& input,
                          reference,
                          current,
                          rtl_partition_kind::part_2nx2n,
+                         config,
                          qp);
 
     if (!c.valid) {
@@ -336,6 +356,7 @@ rtl_partition_eval evaluate_partition_2nx2n(const frame& input,
 rtl_partition_eval evaluate_partition_2nx1n(const frame& input,
                                             const frame& reference,
                                             const block& current,
+                                            const ime_search_config& config,
                                             std::uint32_t qp)
 {
     rtl_partition_eval eval;
@@ -359,6 +380,7 @@ rtl_partition_eval evaluate_partition_2nx1n(const frame& input,
                              reference,
                              part,
                              rtl_partition_kind::part_2nx1n,
+                             config,
                              qp);
 
         if (!c.valid) {
@@ -378,6 +400,7 @@ rtl_partition_eval evaluate_partition_2nx1n(const frame& input,
 rtl_partition_eval evaluate_partition_1nx2n(const frame& input,
                                             const frame& reference,
                                             const block& current,
+                                            const ime_search_config& config,
                                             std::uint32_t qp)
 {
     rtl_partition_eval eval;
@@ -401,6 +424,7 @@ rtl_partition_eval evaluate_partition_1nx2n(const frame& input,
                              reference,
                              part,
                              rtl_partition_kind::part_1nx2n,
+                             config,
                              qp);
 
         if (!c.valid) {
@@ -420,11 +444,12 @@ rtl_partition_eval evaluate_partition_1nx2n(const frame& input,
 rtl_partition_eval evaluate_partition_1nx1n(const frame& input,
                                             const frame& reference,
                                             const block& current,
+                                            const ime_search_config& config,
                                             std::uint32_t qp)
 {
     rtl_partition_eval eval;
     eval.rtl_partition = rtl_partition_kind::part_1nx1n;
-    eval.public_partition = partition_mode::part_2nx2n;
+    eval.public_partition = partition_mode::part_split;
 
     const std::uint32_t w0 = current.width / 2u;
     const std::uint32_t h0 = current.height / 2u;
@@ -447,6 +472,7 @@ rtl_partition_eval evaluate_partition_1nx1n(const frame& input,
                              reference,
                              part,
                              rtl_partition_kind::part_1nx1n,
+                             config,
                              qp);
 
         if (!c.valid) {
@@ -463,61 +489,42 @@ rtl_partition_eval evaluate_partition_1nx1n(const frame& input,
     return eval;
 }
 
-bool is_boundary_partition(const block& part,
-                           const block& ctu)
-{
-    const bool partial_x = part.right() > ctu.right();
-    const bool partial_y = part.bottom() > ctu.bottom();
-
-    return partial_x || partial_y;
-}
-
 rtl_partition_eval choose_partition_like_rtl(const frame& input,
                                              const frame& reference,
                                              const block& ctu,
+                                             const ime_search_config& config,
                                              std::uint32_t qp)
 {
-    rtl_partition_eval p_1nx1n =
-        evaluate_partition_1nx1n(input, reference, ctu, qp);
-
-    rtl_partition_eval p_1nx2n =
-        evaluate_partition_1nx2n(input, reference, ctu, qp);
-
-    rtl_partition_eval p_2nx1n =
-        evaluate_partition_2nx1n(input, reference, ctu, qp);
-
-    rtl_partition_eval p_2nx2n =
-        evaluate_partition_2nx2n(input, reference, ctu, qp);
-
-    const bool boundary =
-        is_boundary_partition(ctu, ctu);
-
-    if (boundary && p_1nx1n.valid) {
-        return p_1nx1n;
-    }
-
-    // RTL engine:
-    // cost_1nx1n = sum of 4 parts
-    // cost_2nx1n = sum of 2 horizontal parts
-    // cost_1nx2n = sum of 2 vertical parts
-    // cost_2nx2n = full block
     rtl_partition_eval best;
     best.valid = false;
     best.cost = std::numeric_limits<std::uint32_t>::max();
 
-    const rtl_partition_eval candidates[] = {
-        p_1nx1n,
-        p_2nx1n,
-        p_1nx2n,
-        p_2nx2n
-    };
+    std::vector<rtl_partition_eval> candidates;
+    candidates.reserve(4);
+
+    if (config.enable_split) {
+        candidates.push_back(
+            evaluate_partition_1nx1n(input, reference, ctu, config, qp));
+    }
+
+    if (config.enable_2nxn) {
+        candidates.push_back(
+            evaluate_partition_2nx1n(input, reference, ctu, config, qp));
+    }
+
+    if (config.enable_nx2n) {
+        candidates.push_back(
+            evaluate_partition_1nx2n(input, reference, ctu, config, qp));
+    }
+
+    if (config.enable_2nx2n || candidates.empty()) {
+        candidates.push_back(
+            evaluate_partition_2nx2n(input, reference, ctu, config, qp));
+    }
 
     for (const rtl_partition_eval& candidate : candidates) {
-        if (!candidate.valid) {
-            continue;
-        }
-
-        if (!best.valid || candidate.cost < best.cost) {
+        if (candidate.valid &&
+            (!best.valid || candidate.cost < best.cost)) {
             best = candidate;
         }
     }
@@ -577,11 +584,40 @@ motion_vector representative_mv(const rtl_partition_eval& eval)
     return mv;
 }
 
-prediction_result make_prediction_result_from_eval(const block& ctu,
+std::vector<std::int16_t> build_residual(const frame& input,
+                                         const block& ctu,
+                                         const std::vector<std::uint8_t>& predicted)
+{
+    std::vector<std::int16_t> residual;
+    residual.resize(predicted.size(), 0);
+
+    for (std::uint32_t y = 0; y < ctu.height; ++y) {
+        for (std::uint32_t x = 0; x < ctu.width; ++x) {
+            const std::size_t idx =
+                static_cast<std::size_t>(y * ctu.width + x);
+            const int cur =
+                read_luma_clamped(input,
+                                  static_cast<int>(ctu.x + x),
+                                  static_cast<int>(ctu.y + y));
+            const int pred =
+                idx < predicted.size()
+                    ? static_cast<int>(predicted[idx])
+                    : 128;
+            residual[idx] = static_cast<std::int16_t>(cur - pred);
+        }
+    }
+
+    return residual;
+}
+
+prediction_result make_prediction_result_from_eval(const frame& input,
+                                                   const block& ctu,
                                                    const rtl_partition_eval& eval,
                                                    std::uint32_t qp)
 {
     prediction_result result;
+    const std::vector<std::uint8_t> merged_prediction =
+        merge_prediction(ctu, eval);
     result.valid = eval.valid;
     result.mode = prediction_mode::inter;
     result.partition = eval.public_partition;
@@ -590,7 +626,8 @@ prediction_result make_prediction_result_from_eval(const block& ctu,
     result.distortion = eval.sad;
     result.rate = eval.mvd_cost;
     result.cost = eval.cost;
-    result.predicted_luma = merge_prediction(ctu, eval);
+    result.predicted_luma = merged_prediction;
+    result.residual_luma = build_residual(input, ctu, merged_prediction);
 
     return result;
 }
@@ -623,8 +660,6 @@ ime_result ime::run(const frame& input,
                     const ime_search_config& config,
                     std::uint32_t qp) const
 {
-    (void)config;
-
     ime_result result;
 
     if (input.empty() ||
@@ -641,7 +676,7 @@ ime_result ime::run(const frame& input,
         std::clamp(qp, MIN_QP, MAX_QP);
 
     rtl_partition_eval best =
-        choose_partition_like_rtl(input, reference, ctu, clamped_qp);
+        choose_partition_like_rtl(input, reference, ctu, config, clamped_qp);
 
     if (!best.valid) {
         result.valid = false;
@@ -649,7 +684,7 @@ ime_result ime::run(const frame& input,
     }
 
     prediction_result inter_prediction =
-        make_prediction_result_from_eval(ctu, best, clamped_qp);
+        make_prediction_result_from_eval(input, ctu, best, clamped_qp);
 
     result.valid = true;
     result.ctu = ctu;
@@ -681,4 +716,3 @@ ime_result ime::run(const frame& input,
 
 
 } // namespace cdc::components
-

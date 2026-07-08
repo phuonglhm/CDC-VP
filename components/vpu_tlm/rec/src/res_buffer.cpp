@@ -1,5 +1,8 @@
 #include "res_buffer.h"
+#include "../../include/block_coord_codec.h"
 #include <algorithm>
+
+#include "debug_config.h"
 
 ResBuffer::ResBuffer(sc_core::sc_module_name name) : 
     sc_module(name), intra_socket("intra_socket"), mc_socket("mc_socket") {
@@ -38,8 +41,10 @@ void ResBuffer::forward_thread() {
     while (true) {
         RecPacket pkt = fifo_buffer.read();
         if (pkt.cmd == RecCmd::PRE && mem_if) {
-            uint32_t px = static_cast<uint32_t>(pkt.x) * 4u;
-            uint32_t py = static_cast<uint32_t>(pkt.y) * 4u;
+            const cdc::components::block_coord_4x4 block_coord =
+                cdc::components::decode_block_coord_4x4(pkt.block_idx, pkt.x, pkt.y);
+            uint32_t px = block_coord.x * 4u;
+            uint32_t py = block_coord.y * 4u;
             uint32_t ax = (px > 0) ? (px - 1u) : 0u;
             uint32_t ay = (py > 0) ? (py - 1u) : 0u;
             RecPlane plane = (pkt.sel <= 2) ? static_cast<RecPlane>(pkt.sel) : RecPlane::Y;
@@ -79,8 +84,10 @@ void ResBuffer::forward_thread() {
 
                 std::vector<uint8_t> buf = packRecPacket(outpkt);
 
-                std::cout << "----------------Residual Packet (internal)---------------" << std::endl;
-                std::cout << outpkt;
+                if (cdc::components::verbose_enabled()) {
+                    std::cout << "----------------Residual Packet (internal)---------------" << std::endl;
+                    std::cout << outpkt;
+                }
                 tlm::tlm_generic_payload trans;
                 trans.set_command(tlm::TLM_WRITE_COMMAND);
                 trans.set_address(0);

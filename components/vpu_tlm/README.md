@@ -1,20 +1,172 @@
-# VPU TLM Prediction Blocks
+# VPU TLM Video Encoder Model
 
 ## Overview
 
-This directory contains the functional SystemC/TLM model for the prediction part of a simplified VPU / video encoder.
+This directory contains the functional SystemC/TLM model for a simplified VPU video-encoder pipeline.
 
-The current model focuses on four main prediction blocks:
+The current codebase includes:
 
 ```text
 PREI  -> Pre-Intra Estimation
 POSI  -> Post-Intra Prediction
 IME   -> Integer Motion Estimation
 FME   -> Fractional Motion Estimation
+REC   -> Reconstruction / TQ / InvTQ path
+DB    -> Deblocking / SAO-like post-filter path
+CABAC -> Entropy coding path
+FETCH -> Frame loading helpers
+MEM   -> Shared memory abstractions
 ```
 
 The model is a **functional TLM model**, not a cycle-accurate RTL model.  
-It focuses on block-level behavior, dataflow, input/output structures, and unit testing.
+It focuses on block-level behavior, dataflow, packet formats, and unit testing.
+
+Public integration headers are exposed under `include/`.  
+Wrappers such as `vpu_rec_top.h` and `vpu_cabac_custom_packet.h` provide stable names for module-level types without leaking relative include paths into downstream code.
+
+The canonical build/test flow is `CMake + CTest` from the repository build directory.  
+Per-module `Makefile`s are kept only as local legacy helpers and are not the primary integration path.
+
+## Architecture
+
+### Scope
+
+`vpu_tlm` is a functional SystemC/TLM model for a block-level video encoder pipeline.
+
+It is intended to model:
+
+- block traversal
+- intra/inter mode evaluation
+- reconstruction handoff
+- deblocking/CABAC side effects
+- packet formats and backend glue
+
+It is not intended to be:
+
+- cycle-accurate RTL
+- bitstream-exact HEVC reference software
+- a full encode product with GOP/rate-control/session management
+
+### Top-Level Layers
+
+#### 1. Prediction layer
+
+Implemented by:
+
+- `prei/`
+- `posi/`
+- `ime/`
+- `fme/`
+- [`src/video_encoder_tlm.cpp`](./src/video_encoder_tlm.cpp)
+
+Responsibilities:
+
+- run the intra path
+- run the inter path when a valid reference exists
+- choose the final mode with `mode_decision`
+- convert the selected prediction into a REC request packet
+
+Main public entry:
+
+- [`video_encoder_tlm`](./include/video_encoder_tlm.h)
+
+#### 2. REC/backend bridge layer
+
+Implemented by:
+
+- [`src/prediction_to_rec_packet.cpp`](./src/prediction_to_rec_packet.cpp)
+- [`src/video_encoder_to_rec.cpp`](./src/video_encoder_to_rec.cpp)
+- [`src/rec_backend_bridges.cpp`](./src/rec_backend_bridges.cpp)
+
+Responsibilities:
+
+- translate encoder decisions into REC packets
+- populate MV memory for inter prediction
+- bridge REC outputs into DB and CABAC packet formats
+
+#### 3. Integrated backend layer
+
+Implemented by:
+
+- `rec/`
+- `db/`
+- `cabac/`
+- [`src/video_encoder_full_tlm.cpp`](./src/video_encoder_full_tlm.cpp)
+
+Responsibilities:
+
+- run the reconstruction path
+- feed deblocking metadata
+- feed entropy-coding input/output
+- expose a region-level or frame-level integrated run
+
+Main public entry:
+
+- [`video_encoder_full_tlm`](./include/video_encoder_full_tlm.h)
+
+### Packet Coordinate Contract
+
+REC/DB/CABAC packets use an extended 4x4-block coordinate encoding:
+
+- `x`: low 8 bits of 4x4 block x
+- `y`: low 8 bits of 4x4 block y
+- `block_idx`: packed high bits as `[y11:8 | x11:8]`
+
+Shared helpers live in:
+
+- [`include/block_coord_codec.h`](./include/block_coord_codec.h)
+
+Any module that interprets packet position should decode through that helper instead of using `x` or `y` directly as full coordinates.
+
+### Test Layers
+
+There are two kinds of tests:
+
+- block-local tests under `*/test/`
+- encoder/integration tests under [`tests/`](./tests)
+
+## Testing
+
+Build all `vpu_tlm` test targets from the repository build directory:
+
+```bash
+cd /home/indows/CDC-VP/build
+cmake --build . --target \
+  test_prei \
+  test_posi \
+  test_ime \
+  test_fme \
+  test_mem \
+  test_mode_decision \
+  test_prediction_to_rec_packet \
+  test_video_encoder_tlm \
+  test_video_encoder_rec_integration \
+  test_video_encoder_full_tlm
+```
+
+Run the full `vpu_tlm` test set through `ctest`:
+
+```bash
+cd /home/indows/CDC-VP/build
+LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
+ctest --output-on-failure -R '^vpu_tlm\.'
+```
+
+Run only the integrated video-encoder tests:
+
+```bash
+cd /home/indows/CDC-VP/build
+LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
+./components/vpu_tlm/tests/test_mode_decision
+LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
+./components/vpu_tlm/tests/test_prediction_to_rec_packet
+LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
+./components/vpu_tlm/tests/test_video_encoder_tlm
+LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
+./components/vpu_tlm/tests/test_video_encoder_rec_integration
+LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
+./components/vpu_tlm/tests/test_video_encoder_full_tlm
+```
 
 ---
 
@@ -58,15 +210,17 @@ components/vpu_tlm/
 │   └── test/
 │       ├── CMakeLists.txt
 │       └── test_ime.cpp
-└── fme/
-    ├── include/
-    │   ├── fme.h
-    │   └── fme_result.h
-    ├── src/
-    │   └── fme.cpp
-    └── test/
-        ├── CMakeLists.txt
-        └── test_fme.cpp
+├── fetch/
+├── mem/
+├── rec/
+├── db/
+├── cabac/
+├── prei/
+├── posi/
+├── ime/
+├── fme/
+├── include/
+└── tests/
 ```
 
 ---
@@ -629,4 +783,3 @@ FME  : Fractional motion estimation
 ```
 
 This structure makes each block easier to understand, test, and maintain independently.
-

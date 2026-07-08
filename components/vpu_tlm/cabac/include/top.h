@@ -1,19 +1,18 @@
-#ifndef TOP_H
-#define TOP_H
+#ifndef VPU_TLM_CABAC_TOP_H
+#define VPU_TLM_CABAC_TOP_H
 
 #include <systemc>
 #include "mem_bridge.h"
 #include "simple_memory.h"
 #include "cabac.h"
-using namespace sc_core;
 
-class Top : public sc_module {
-    public:
-    MemBridge mem_bridge;
-    SimpleMemory simple_mem;
+class CabacTop : public sc_core::sc_module {
+public:
+    CabacMemBridge mem_bridge;
+    CabacSimpleMemory simple_mem;
     Cabac cabac;
 
-    Top(sc_module_name name);
+    explicit CabacTop(sc_core::sc_module_name name);
 };
 
 #endif

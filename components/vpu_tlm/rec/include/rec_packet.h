@@ -19,9 +19,9 @@ enum class PredType : uint8_t { INTRA = 0, MC = 1 };
 // Field widths in comments reflect RTL signals (for reference).
 struct RecPacket {
         RecCmd cmd;               // RESIDUAL/COEFF/PRE/READ_REQ
-        uint8_t block_idx;        // RTL: 5 bits
-        uint8_t x;                // RTL: 4 bits
-        uint8_t y;                // RTL: 4 bits
+        uint8_t block_idx;        // high bits of 4x4 block y/x: [y11:8|x11:8]
+        uint8_t x;                // low 8 bits of 4x4 block x
+        uint8_t y;                // low 8 bits of 4x4 block y
         uint8_t size;             // RTL: 2 bits (0:4x4,1:8x8,2:16x16,3:32x32)
         uint8_t sel;              // RTL: 2 bits (TYPE_Y/U/V)
         uint8_t qp;               // RTL: 6 bits
