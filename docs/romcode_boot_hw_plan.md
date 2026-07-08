@@ -195,9 +195,13 @@ All paths relative to CDC-VP repo root.
    offsets against gpio_tlm — PASS.
 4. ✅ regref: automatic — the pack script copies every component README;
    fx1 now has `regref/gpio_tlm/` and `regref/uart_host_tlm/`.
-   Boot-flow docs added to `tools/fx1_sdk_template/AI_CONTEXT.md` (new
-   "ROM-code boot flow" section + map rows + gotchas), template `README.md`,
-   and `run_vp.sh` usage examples.
+   Firmware-facing doc: `tools/fx1_sdk_template/BOOTFLOW_GUIDE.md`
+   ("VP_FX1 Firmware Handbook" — SoC quick reference + ROM-code boot
+   contract + CLI run matrix). AI_CONTEXT.md was merged into it and
+   RETIRED (deleted from the template and from fx1). Reference firmware
+   seeded ONCE into fx1 `sw/bootloader/sources/VP_FX1_SOC/romcode_ref/`
+   (firmware-owned; packs never touch it). Template `README.md` and
+   `run_vp.sh` carry boot-flow run examples.
 5. ✅ `tools/pack_fx1_sdk.sh --build --fx1 ../fx1` ran clean (drift check
    PASS). Verified in fx1 on the DELIVERED binary: uart_hello smoke PASS,
    strap LOW → IFLASH app PASS, strap HIGH + `--spi-flash` → SPI download

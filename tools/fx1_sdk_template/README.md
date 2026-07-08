@@ -17,7 +17,8 @@ FX1/
                                    + bundled libsystemc.so* (no host install needed)
     configs/VP_FX1_SOC/            SoC memory/IRQ configuration (default.yaml)
     doc/VP_FX1_SOC/                SoC-level docs (memory map, interrupt policy,
-                                   AI_CONTEXT.md for AI coding assistants)
+                                   BOOTFLOW_GUIDE.md: SoC quick reference
+                                   + ROM-code boot contract)
     licenses/                      third-party notices (SystemC, riscv-vp, SoftFloat)
     src/VP_FX1_SOC/                (reserved: per-SoC VP source, if ever shipped)
     VERSION                        CDC-VP git SHA + build date + ABI
@@ -75,7 +76,7 @@ run_vp.sh path/to/app.elf # load a specific ELF (entry = _start)
 run_vp.sh app.elf --sim-ms 20   # extra args pass straight through to the VP
 run_vp.sh --no-fw         # elaboration smoke run (SoC banner only, no firmware)
 
-# ROM-code boot flow (details: vp/doc/VP_FX1_SOC/AI_CONTEXT.md):
+# ROM-code boot flow (details: vp/doc/VP_FX1_SOC/BOOTFLOW_GUIDE.md):
 run_vp.sh bootrom.elf --int-flash app.bin --boot-pin low     # strap LOW: boot IFLASH app
 run_vp.sh bootrom.elf --boot-pin high --uart0-socket 5577 --uart0-wait --sim-ms 60000
 run_vp.sh bootrom.elf --boot-pin high --spi-flash image.bin --sim-ms 300

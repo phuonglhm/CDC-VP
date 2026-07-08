@@ -67,14 +67,16 @@ mkdir -p "$sdk/vp/bin/$soc" "$sdk/vp/configs/$soc" "$sdk/vp/doc/$soc" \
 # --- VP runtime (the "chip") -----------------------------------------------
 cp "$pkg/vp_fx1_full_soc"   "$sdk/vp/bin/$soc/"
 cp "$pkg"/libsystemc.so*    "$sdk/vp/bin/$soc/"
-cp "$pkg"/configs/*.yaml    "$sdk/vp/configs/$soc/"
+# configs from the SOURCE tree, not the package dir: the package copy is only
+# refreshed when the VP target relinks, so a config-only change would ship stale.
+cp "$repo/platforms/VP_FX1_Full_SoC/configs"/*.yaml "$sdk/vp/configs/$soc/"
 cp "$tmpl/vp/run_vp.sh"     "$sdk/sw/bootloader/test/$soc/"
 chmod +x "$sdk/sw/bootloader/test/$soc/run_vp.sh"
 
 # --- SoC-level docs ---------------------------------------------------------
 cp "$repo/docs/peripheral_memory_map.md"      "$sdk/vp/doc/$soc/"
 cp "$repo/docs/interrupt_modeling_policy.md"  "$sdk/vp/doc/$soc/"
-cp "$tmpl/AI_CONTEXT.md"                      "$sdk/vp/doc/$soc/"
+cp "$tmpl/BOOTFLOW_GUIDE.md"                  "$sdk/vp/doc/$soc/"
 
 # --- BSP (the ABI the firmware compiles against) ---------------------------
 cp "$common"/include/soc/*.h       "$bsp/include/soc/"

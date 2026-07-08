@@ -6,7 +6,7 @@
 #   ./run_vp.sh app.elf --sim-ms 20  # extra args pass straight through
 #   ./run_vp.sh --no-fw              # elaboration smoke run (no firmware)
 #
-# ROM-code boot flow (see vp/doc/VP_FX1_SOC/AI_CONTEXT.md):
+# ROM-code boot flow (see vp/doc/VP_FX1_SOC/BOOTFLOW_GUIDE.md):
 #   ./run_vp.sh bootrom.elf --int-flash app.bin --boot-pin low
 #   ./run_vp.sh bootrom.elf --boot-pin high --uart0-socket 5577 --uart0-wait --sim-ms 60000
 #   ./run_vp.sh bootrom.elf --boot-pin high --spi-flash image.bin --sim-ms 300
