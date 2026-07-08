@@ -54,6 +54,7 @@ install(TARGETS isp_tlm EXPORT cdc-components-targets
     ARCHIVE DESTINATION lib
     INCLUDES DESTINATION include)
 install(DIRECTORY core/include/ DESTINATION include)
+install(DIRECTORY pipeline/include/ DESTINATION include)
 
 if(CDC_BUILD_TESTS)
    add_subdirectory(tests)

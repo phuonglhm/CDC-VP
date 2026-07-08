@@ -17,6 +17,9 @@
 
 namespace {
 
+constexpr std::uint32_t CTRL_ENABLE = 1u << 0;
+constexpr std::uint32_t CTRL_START = 1u << 1;
+
 void write_json_metadata(const std::string& path,
                         std::uint32_t width,
                         std::uint32_t height,
@@ -171,9 +174,9 @@ int sc_main(int argc, char* argv[]) {
     probe.write(REG_BIT_DEPTH, &bit_depth, 4);
     probe.write(REG_BAYER_PATTERN, &bayer_pattern, 4);
 
-    // Enable ISP
     std::uint32_t enable = 1;
-    probe.write(REG_ISP_ENABLE, &enable, 4);
+    std::uint32_t ctrl = CTRL_ENABLE;
+    probe.write(REG_CTRL, &ctrl, 4);
 
     // Enable all processing blocks
     probe.write(REG_DEMOSAIC_ENABLE, &enable, 4);
@@ -221,7 +224,8 @@ int sc_main(int argc, char* argv[]) {
 
     // Trigger processing
     std::cout << "Triggering ISP pipeline..." << std::endl;
-    probe.write(REG_TRIGGER, &enable, 4);
+    ctrl = CTRL_ENABLE | CTRL_START;
+    probe.write(REG_CTRL, &ctrl, 4);
     sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
 
     // Write output
