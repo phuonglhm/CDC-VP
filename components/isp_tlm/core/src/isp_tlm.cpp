@@ -9,6 +9,7 @@ namespace cdc::components {
 isp_tlm::isp_tlm(sc_core::sc_module_name name, sc_core::sc_time access_latency)
     : sc_core::sc_module(name)
     , socket("socket")
+    , dma_socket("dma_socket")
     , reset_n("reset_n")
     , irq_out("irq_out")
     , access_latency_(access_latency)
@@ -111,6 +112,66 @@ unsigned int isp_tlm::transport_dbg(tlm::tlm_generic_payload& trans)
     return sizeof(std::uint32_t);
 }
 
+void isp_tlm::dma_read() {
+   std::uint32_t src_addr = pipeline_.read_reg(REG_SRC_ADDR);
+   if (src_addr == 0) return;
+
+   std::size_t size = raw_buffer_.size() * sizeof(std::uint16_t);
+   if (size == 0) return;
+
+   std::uint64_t local_addr = src_addr;
+   if (local_addr >= 0x80000000ULL && local_addr < 0x90000000ULL) {
+      local_addr -= 0x80000000ULL;
+   }
+
+   tlm::tlm_generic_payload trans;
+   sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+   trans.set_command(tlm::TLM_READ_COMMAND);
+   trans.set_address(local_addr);
+   trans.set_data_ptr(reinterpret_cast<unsigned char *>(raw_buffer_.data()));
+   trans.set_data_length(size);
+   trans.set_streaming_width(size);
+   trans.set_byte_enable_ptr(nullptr);
+   trans.set_dmi_allowed(false);
+   trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+
+   dma_socket->b_transport(trans, delay);
+   if (trans.is_response_error()) {
+      SC_REPORT_ERROR("ISP_DMA", "DMA Read from DRAM failed!");
+   }
+}
+
+void isp_tlm::dma_write() {
+   std::uint32_t dest_addr = pipeline_.read_reg(REG_DST_ADDR);
+   if (dest_addr == 0) return;
+
+   std::size_t size = yuv_buffer_.size();
+   if (size == 0) return;
+
+   std::uint64_t local_addr = dest_addr;
+   if (local_addr >= 0x80000000ULL && local_addr < 0x90000000ULL) {
+      local_addr -= 0x80000000ULL;
+   }
+
+   tlm::tlm_generic_payload trans;
+   sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+
+   trans.set_command(tlm::TLM_WRITE_COMMAND);
+   trans.set_address(local_addr);
+   trans.set_data_ptr(reinterpret_cast<unsigned char *>(yuv_buffer_.data()));
+   trans.set_data_length(size);
+   trans.set_streaming_width(size);
+   trans.set_byte_enable_ptr(nullptr);
+   trans.set_dmi_allowed(false);
+   trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+
+   dma_socket->b_transport(trans, delay);
+   if (trans.is_response_error()) {
+      SC_REPORT_ERROR("ISP_DMA", "DMA Write to DRAM failed!");
+   }
+}
+
 void isp_tlm::trigger_processing()
 {
     if (!pipeline_.is_enabled()) {
@@ -127,7 +188,9 @@ void isp_tlm::trigger_processing()
     update_irq_output();
 
     allocate_buffers();
+    dma_read();
     pipeline_.run(raw_buffer_.data(), yuv_buffer_);
+    dma_write();
 
     pipeline_.mark_processing_done();
     update_irq_output();

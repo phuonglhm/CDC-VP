@@ -3,6 +3,7 @@
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_target_socket.h>
+#include <tlm_utils/simple_initiator_socket.h>
 
 #include <cstdint>
 #include <vector>
@@ -17,6 +18,7 @@ public:
    SC_HAS_PROCESS(isp_tlm);
 
    tlm_utils::simple_target_socket<isp_tlm> socket;
+   tlm_utils::simple_initiator_socket<isp_tlm> dma_socket;
    sc_core::sc_in<bool> reset_n;
    sc_core::sc_out<bool> irq_out;
 
@@ -44,6 +46,8 @@ public:
 private:
    void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
    unsigned int transport_dbg(tlm::tlm_generic_payload &trans);
+   void dma_read();
+   void dma_write();
    void update_irq_output();
    void reset_state();
 
