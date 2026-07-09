@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <sstream>
 
 #include <systemc>
 #include <tlm>
@@ -227,17 +228,63 @@ int sc_main(int argc, char *argv[]) {
 
    std::uint32_t nx = lsc_grid_w + 1;
    std::uint32_t ny = lsc_grid_h + 1;
-   float cx = (nx - 1) / 2.0f;
-   float cy = (ny - 1) / 2.0f;
+
+   // Read CSV file
+   std::ifstream lsc_csv("components/isp_tlm/asset/lsc_lut_17x13_q10.csv");
+   std::vector<std::vector<float>> lsc_gains(4, std::vector<float>(nx * ny, 1.0f));
+   if (lsc_csv.is_open()) {
+      std::string line;
+      std::getline(lsc_csv, line); // Skip header
+      while (std::getline(lsc_csv, line)) {
+         if (line.empty())
+            continue;
+         std::stringstream ss(line);
+         std::string token;
+         int col = 0, r = 0, c = 0;
+         float g0 = 1.0f, g1 = 1.0f, g2 = 1.0f, g3 = 1.0f;
+         while (std::getline(ss, token, ',')) {
+            if (col == 0)
+               r = std::stoi(token);
+            else if (col == 1)
+               c = std::stoi(token);
+            else if (col == 4)
+               g0 = std::stof(token) / 1024.0f;
+            else if (col == 5)
+               g1 = std::stof(token) / 1024.0f;
+            else if (col == 6)
+               g2 = std::stof(token) / 1024.0f;
+            else if (col == 7)
+               g3 = std::stof(token) / 1024.0f;
+            col++;
+         }
+         if (r < ny && c < nx) {
+            lsc_gains[0][r * nx + c] = g0;
+            lsc_gains[1][r * nx + c] = g1;
+            lsc_gains[2][r * nx + c] = g2;
+            lsc_gains[3][r * nx + c] = g3;
+         }
+      }
+      lsc_csv.close();
+      std::cout << "Loaded LSC LUT from CSV!" << std::endl;
+   } else {
+      std::cerr << "Warning: Could not open LSC CSV, using flat 1.0x gains." << std::endl;
+   }
+
+   // Calculate true optical center offset directly using isp_pipeline::OPTICAL_CENTER_X
 
    for (int ch = 0; ch < 4; ++ch) {
       for (std::uint32_t y = 0; y < ny; ++y) {
          for (std::uint32_t x = 0; x < nx; ++x) {
-            float dx = (static_cast<float>(x) - cx) / cx;
-            float dy = (static_cast<float>(y) - cy) / cy;
-            float dist2 = dx * dx + dy * dy;
-            float gain = 1.0f + 0.5f * dist2; // 1.0x at center, ~2.0x at corners
+            // Map grid node to pixel coordinate
+            float px = static_cast<float>(x) * (static_cast<float>(width) / lsc_grid_w);
+            float py = static_cast<float>(y) * (static_cast<float>(height) / lsc_grid_h);
 
+            // Normalize distance relative to half-dimensions
+            float dx = (px - isp_pipeline::OPTICAL_CENTER_X) / (static_cast<float>(width) / 2.0f);
+            float dy = (py - isp_pipeline::OPTICAL_CENTER_Y) / (static_cast<float>(height) / 2.0f);
+
+            float dist2 = dx * dx + dy * dy;
+            float gain = lsc_csv.is_open() ? lsc_gains[ch][y * nx + x] : (1.0f + 0.5f * dist2);
             std::uint32_t gain_bits;
             std::memcpy(&gain_bits, &gain, sizeof(float));
             probe.write(REG_LSC_LUT_DATA, &gain_bits, 4);
@@ -295,7 +342,7 @@ int sc_main(int argc, char *argv[]) {
 
    // Because we're processing single frame, we need to run the pipeline a few times for STATS block
    // to stabilize.
-   for (int i = 0; i < 2; i++) {
+   for (int i = 0; i < 4; i++) {
       probe.write(REG_CTRL, &ctrl, 4);
       sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
    }

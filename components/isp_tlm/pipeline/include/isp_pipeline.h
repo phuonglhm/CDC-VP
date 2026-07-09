@@ -45,6 +45,9 @@ struct isp_config {
 
 class isp_pipeline {
 public:
+   static constexpr float OPTICAL_CENTER_X = 1292.15f;
+   static constexpr float OPTICAL_CENTER_Y = 638.02f;
+
    isp_pipeline();
    ~isp_pipeline();
 

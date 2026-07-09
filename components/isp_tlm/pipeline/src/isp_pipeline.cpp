@@ -154,6 +154,10 @@ void isp_pipeline::reset_registers() {
    set_dimensions(0, 0);
    set_input_format(12, cfa_types::RGGB);
 
+   config_.blc.r_offset = 256;
+   config_.blc.gr_offset = 256;
+   config_.blc.gb_offset = 256;
+   config_.blc.b_offset = 256;
    config_.blc.r_sat = 4095;
    config_.blc.gr_sat = 4095;
    config_.blc.gb_sat = 4095;
@@ -167,6 +171,8 @@ void isp_pipeline::reset_registers() {
    config_.bnr.b_std_dev_s = 1.5f;
    config_.bnr.b_std_dev_r = 0.1f;
 
+   config_.dpc.dp_threshold = 30;
+
    config_.dg.current_gain = 1;
    config_.aec.center_illuminance = 128;
 
@@ -175,14 +181,21 @@ void isp_pipeline::reset_registers() {
    config_.lsc.grid_height = 12;
    std::uint32_t nx = 16 + 1;
    std::uint32_t ny = 12 + 1;
-   float cx = (nx - 1) / 2.0f;
-   float cy = (ny - 1) / 2.0f;
+   
+   // True optical center (1-based from geometric -51.35, -121.48 shift)
+   // Assuming roughly 2688x1520 dimensions for the default generator
+   float default_w = 2688.0f;
+   float default_h = 1520.0f;
+
    std::uint32_t addr = 0;
    for (int ch = 0; ch < 4; ++ch) {
       for (std::uint32_t y = 0; y < ny; ++y) {
          for (std::uint32_t x = 0; x < nx; ++x) {
-            float dx = (static_cast<float>(x) - cx) / cx;
-            float dy = (static_cast<float>(y) - cy) / cy;
+            float px = static_cast<float>(x) * (default_w / config_.lsc.grid_width);
+            float py = static_cast<float>(y) * (default_h / config_.lsc.grid_height);
+            
+            float dx = (px - OPTICAL_CENTER_X) / (default_w / 2.0f);
+            float dy = (py - OPTICAL_CENTER_Y) / (default_h / 2.0f);
             float dist2 = dx * dx + dy * dy;
             lsc_sram_[addr++] = 1.0f + 0.5f * dist2;
          }
