@@ -4,9 +4,6 @@
 #include <cstring>
 #include <iostream>
 
-static const float kGainArray[] = {1.0f, 2.0f, 4.0f, 6.0f, 8.0f, 10.0f, 12.0f, 16.0f, 32.0f, 64.0f};
-static const size_t kGainArraySize = sizeof(kGainArray) / sizeof(kGainArray[0]);
-
 void dg_block::process(
     const uint16_t *in, uint16_t *out, uint32_t w, uint32_t h, const dg_config &cfg, uint8_t bit_depth) {
    if (!cfg.is_enable) {

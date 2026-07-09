@@ -1,4 +1,5 @@
 #include "isp_pipeline.h"
+#include "dg.h"
 
 #include <cstring>
 #include <iostream>
@@ -166,7 +167,8 @@ void isp_pipeline::reset_registers() {
    config_.bnr.b_std_dev_s = 1.5f;
    config_.bnr.b_std_dev_r = 0.1f;
 
-   config_.dg.current_gain = 5;
+   config_.dg.current_gain = 1;
+   config_.aec.center_illuminance = 128;
 
    // default lsc lut
    config_.lsc.grid_width = 16;
@@ -875,7 +877,7 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    if (aec_cfg.is_enable) {
       config_.aec.ae_feedback = aec_cfg.ae_feedback;
       if (cfg.dg.is_auto) {
-         if (aec_cfg.ae_feedback < 0 && config_.dg.current_gain < 9) {
+         if (aec_cfg.ae_feedback < 0 && config_.dg.current_gain < kGainArraySize) {
             config_.dg.current_gain++;
          } else if (aec_cfg.ae_feedback > 0 && config_.dg.current_gain > 0) {
             config_.dg.current_gain--;
