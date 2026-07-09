@@ -201,6 +201,9 @@ int sc_main(int argc, char *argv[]) {
    probe.write(REG_CTRL, &ctrl, 4);
 
    // Enable all processing blocks
+   probe.write(REG_BLC_ENABLE, &enable, 4);
+   probe.write(REG_DPC_ENABLE, &enable, 4);
+   probe.write(REG_BNR_ENABLE, &enable, 4);
    probe.write(REG_DEMOSAIC_ENABLE, &enable, 4);
    probe.write(REG_AWB_ENABLE, &enable, 4);
    probe.write(REG_WB_ENABLE, &enable, 4);
@@ -209,6 +212,9 @@ int sc_main(int argc, char *argv[]) {
    probe.write(REG_LSC_ENABLE, &enable, 4);
    probe.write(REG_DG_ENABLE, &enable, 4);
    probe.write(REG_DG_AUTO, &enable, 4);
+   probe.write(REG_CSC_ENABLE, &enable, 4); // always run, even if not enabled
+   probe.write(REG_SHARPEN_ENABLE, &enable, 4);
+   probe.write(REG_2DNR_ENABLE, &enable, 4);
 
    // Generate and load parabolic LSC LUT
    std::uint32_t lsc_grid_w = 16;
@@ -289,7 +295,7 @@ int sc_main(int argc, char *argv[]) {
 
    // Because we're processing single frame, we need to run the pipeline a few times for STATS block
    // to stabilize.
-   for (int i = 0; i < 5; i++) {
+   for (int i = 0; i < 2; i++) {
       probe.write(REG_CTRL, &ctrl, 4);
       sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
    }

@@ -67,7 +67,8 @@ float apply_gaussian_at(const std::uint8_t* y_plane,
             sx = std::max(0, std::min(static_cast<int>(width) - 1, sx));
 
             const float k = kernel[static_cast<std::size_t>((dy + radius) * size + (dx + radius))];
-            sum += static_cast<float>(y_plane[static_cast<std::size_t>(sy) * width + static_cast<std::size_t>(sx)]) * k;
+            const std::size_t idx = (static_cast<std::size_t>(sy) * width + static_cast<std::size_t>(sx)) * 3u;
+            sum += static_cast<float>(y_plane[idx]) * k;
         }
     }
 

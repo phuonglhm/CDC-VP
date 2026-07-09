@@ -76,8 +76,9 @@ float compute_patch_distance(const std::uint8_t* y_work,
             int rx2 = sx + dx;
             rx2 = std::max(0, std::min(static_cast<int>(width) - 1, rx2));
 
-            const int diff = static_cast<int>(y_work[static_cast<std::size_t>(ry) * width + static_cast<std::size_t>(rx)]) -
-                             static_cast<int>(y_work[static_cast<std::size_t>(ry2) * width + static_cast<std::size_t>(rx2)]);
+            const std::size_t idx1 = (static_cast<std::size_t>(ry) * width + static_cast<std::size_t>(rx)) * 3u;
+            const std::size_t idx2 = (static_cast<std::size_t>(ry2) * width + static_cast<std::size_t>(rx2)) * 3u;
+            const int diff = static_cast<int>(y_work[idx1]) - static_cast<int>(y_work[idx2]);
             const float weighted_diff_sq = static_cast<float>(diff * diff) *
                                           patch_gaussian[static_cast<std::size_t>((dy + patch_radius) * static_cast<int>(patch_radius * 2 + 1) + (dx + patch_radius))];
             dist += weighted_diff_sq;
@@ -92,7 +93,7 @@ std::uint8_t get_pixel_clamped(const std::uint8_t* buf, std::uint32_t width, std
 {
     y = std::max(0, std::min(static_cast<int>(height) - 1, y));
     x = std::max(0, std::min(static_cast<int>(width) - 1, x));
-    return buf[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)];
+    return buf[(static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)) * 3u];
 }
 
 } // namespace
