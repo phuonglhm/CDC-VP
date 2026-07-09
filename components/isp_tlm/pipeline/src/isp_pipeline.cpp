@@ -782,7 +782,7 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
       return;
    }
 
-   const isp_config &cfg = config_;
+   const isp_config cfg = config_;
 
    const std::size_t raw_pixels = static_cast<std::size_t>(width_) * height_;
    const std::size_t rgb_pixels = raw_pixels * 3u;
@@ -830,15 +830,6 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    aec_config aec_cfg = cfg.aec;
    if (aec_cfg.is_enable) {
       aec_.process(demosaic_out_.data(), width_, height_, aec_cfg, bd);
-      config_.aec.ae_feedback = aec_cfg.ae_feedback;
-
-      if (config_.dg.is_auto) {
-         if (aec_cfg.ae_feedback < 0 && config_.dg.current_gain < 9) {
-            config_.dg.current_gain++;
-         } else if (aec_cfg.ae_feedback > 0 && config_.dg.current_gain > 0) {
-            config_.dg.current_gain--;
-         }
-      }
    }
 
    wb_config wb_cfg = cfg.wb;
@@ -873,4 +864,24 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    }
 
    yuv_out = final_out_;
+
+   // Update feedback/dynamic state registers at end of frame
+   if (cfg.awb.is_enable) {
+      config_.awb.r_gain_out = awb_r_gain_;
+      config_.awb.b_gain_out = awb_b_gain_;
+   }
+
+   if (aec_cfg.is_enable) {
+      config_.aec.ae_feedback = aec_cfg.ae_feedback;
+      if (cfg.dg.is_auto) {
+         if (aec_cfg.ae_feedback < 0 && config_.dg.current_gain < 9) {
+            config_.dg.current_gain++;
+         } else if (aec_cfg.ae_feedback > 0 && config_.dg.current_gain > 0) {
+            config_.dg.current_gain--;
+         }
+      }
+   }
+
+   std::cout << "current gain: " << config_.dg.current_gain << std::endl;
+   std::cout << "aec feedback: " << config_.aec.ae_feedback << std::endl;
 }

@@ -179,7 +179,6 @@ int sc_main(int argc, char *argv[]) {
    probe.socket.bind(isp.socket);
 
    cdc::components::memory_tlm dram("dram", 128 * 1024 * 1024);
-   std::cout << "memory" << std::endl;
    isp.dma_socket.bind(dram.socket);
 
    reset_n.write(true);
@@ -241,8 +240,6 @@ int sc_main(int argc, char *argv[]) {
    // Set identity CCM
    float identity_ccm[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
 
-   // Because we're processing single frame, we need to run the pipeline a few times for STATS block
-   // to stabilize.
    for (int i = 0; i < 9; ++i) {
       probe.write(REG_CCM_MATRIX00 + i * 4, &identity_ccm[i], 4);
    }
@@ -288,6 +285,8 @@ int sc_main(int argc, char *argv[]) {
    std::cout << "Triggering ISP pipeline..." << std::endl;
    ctrl = CTRL_ENABLE | CTRL_START;
 
+   // Because we're processing single frame, we need to run the pipeline a few times for STATS block
+   // to stabilize.
    for (int i = 0; i < 5; i++) {
       probe.write(REG_CTRL, &ctrl, 4);
       sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
