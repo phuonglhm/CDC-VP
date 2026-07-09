@@ -157,9 +157,16 @@ void isp_pipeline::reset_registers() {
    config_.blc.gr_sat = 4095;
    config_.blc.gb_sat = 4095;
    config_.blc.b_sat = 4095;
-   config_.bnr.filter_window = 3;
 
-   // default lsc LUT
+   config_.bnr.filter_window = 3;
+   config_.bnr.r_std_dev_s = 1.5f;
+   config_.bnr.r_std_dev_r = 0.1f;
+   config_.bnr.g_std_dev_s = 1.5f;
+   config_.bnr.g_std_dev_r = 0.1f;
+   config_.bnr.b_std_dev_s = 1.5f;
+   config_.bnr.b_std_dev_r = 0.1f;
+
+   // default lsc lut
    config_.lsc.grid_width = 16;
    config_.lsc.grid_height = 12;
    std::uint32_t nx = 16 + 1;
@@ -324,6 +331,18 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) const {
       return config_.bnr.is_enable ? 1u : 0u;
    case REG_BNR_WINDOW:
       return config_.bnr.filter_window;
+   case REG_BNR_R_STD_DEV_S:
+      return float_to_reg(config_.bnr.r_std_dev_s);
+   case REG_BNR_R_STD_DEV_R:
+      return float_to_reg(config_.bnr.r_std_dev_r);
+   case REG_BNR_G_STD_DEV_S:
+      return float_to_reg(config_.bnr.g_std_dev_s);
+   case REG_BNR_G_STD_DEV_R:
+      return float_to_reg(config_.bnr.g_std_dev_r);
+   case REG_BNR_B_STD_DEV_S:
+      return float_to_reg(config_.bnr.b_std_dev_s);
+   case REG_BNR_B_STD_DEV_R:
+      return float_to_reg(config_.bnr.b_std_dev_r);
 
    case REG_DEMOSAIC_ENABLE:
       return config_.demosaic.is_enable ? 1u : 0u;
@@ -586,6 +605,24 @@ bool isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
       return false;
    case REG_BNR_WINDOW:
       config_.bnr.filter_window = value & 0xFFu;
+      return false;
+   case REG_BNR_R_STD_DEV_S:
+      config_.bnr.r_std_dev_s = reg_to_float(value);
+      return false;
+   case REG_BNR_R_STD_DEV_R:
+      config_.bnr.r_std_dev_r = reg_to_float(value);
+      return false;
+   case REG_BNR_G_STD_DEV_S:
+      config_.bnr.g_std_dev_s = reg_to_float(value);
+      return false;
+   case REG_BNR_G_STD_DEV_R:
+      config_.bnr.g_std_dev_r = reg_to_float(value);
+      return false;
+   case REG_BNR_B_STD_DEV_S:
+      config_.bnr.b_std_dev_s = reg_to_float(value);
+      return false;
+   case REG_BNR_B_STD_DEV_R:
+      config_.bnr.b_std_dev_r = reg_to_float(value);
       return false;
 
    case REG_DEMOSAIC_ENABLE:

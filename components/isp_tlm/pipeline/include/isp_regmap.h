@@ -59,6 +59,12 @@ constexpr std::uint32_t REG_DG_AUTO = 0x1188;
 // BNR (Bayer Noise Reduction)
 constexpr std::uint32_t REG_BNR_ENABLE = 0x1200;
 constexpr std::uint32_t REG_BNR_WINDOW = 0x1204;
+constexpr std::uint32_t REG_BNR_R_STD_DEV_S = 0x1208;
+constexpr std::uint32_t REG_BNR_R_STD_DEV_R = 0x120C;
+constexpr std::uint32_t REG_BNR_G_STD_DEV_S = 0x1210;
+constexpr std::uint32_t REG_BNR_G_STD_DEV_R = 0x1214;
+constexpr std::uint32_t REG_BNR_B_STD_DEV_S = 0x1218;
+constexpr std::uint32_t REG_BNR_B_STD_DEV_R = 0x121C;
 
 // Demosaic
 constexpr std::uint32_t REG_DEMOSAIC_ENABLE = 0x1280;
@@ -90,10 +96,10 @@ constexpr std::uint32_t REG_CCM_MATRIX21 = 0x1420;
 constexpr std::uint32_t REG_CCM_MATRIX22 = 0x1424;
 
 // GC (Gamma Correction)
-constexpr std::uint32_t REG_GC_ENABLE    = 0x1480;
-constexpr std::uint32_t REG_GC_GAMMA     = 0x1484;
-constexpr std::uint32_t REG_GC_LUT_ADDR  = 0x1488;
-constexpr std::uint32_t REG_GC_LUT_DATA  = 0x148C;
+constexpr std::uint32_t REG_GC_ENABLE = 0x1480;
+constexpr std::uint32_t REG_GC_GAMMA = 0x1484;
+constexpr std::uint32_t REG_GC_LUT_ADDR = 0x1488;
+constexpr std::uint32_t REG_GC_LUT_DATA = 0x148C;
 
 // AEC (Auto Exposure Control)
 constexpr std::uint32_t REG_AEC_ENABLE = 0x1500;
