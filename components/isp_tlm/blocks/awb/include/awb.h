@@ -3,8 +3,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "isp_types.h"
-
 struct awb_config {
     bool is_enable = false;
     std::uint8_t algorithm = 0;
@@ -17,13 +15,7 @@ struct awb_config {
 
 class awb_block {
 public:
-    void process(const std::uint16_t* in,
-                 std::uint32_t width,
-                 std::uint32_t height,
-                 awb_config& cfg,
-                 std::uint8_t bit_depth) const;
-
-    void process(const std::vector<std::uint16_t>& in,
+    void process(const std::uint16_t* rgb_in,
                  std::uint32_t width,
                  std::uint32_t height,
                  awb_config& cfg,

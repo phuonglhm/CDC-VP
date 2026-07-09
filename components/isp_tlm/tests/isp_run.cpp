@@ -207,6 +207,8 @@ int sc_main(int argc, char *argv[]) {
    probe.write(REG_CCM_ENABLE, &enable, 4);
    probe.write(REG_AEC_ENABLE, &enable, 4);
    probe.write(REG_LSC_ENABLE, &enable, 4);
+   probe.write(REG_DG_ENABLE, &enable, 4);
+   probe.write(REG_DG_AUTO, &enable, 4);
 
    // Generate and load parabolic LSC LUT
    std::uint32_t lsc_grid_w = 16;

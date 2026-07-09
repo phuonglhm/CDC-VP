@@ -166,6 +166,8 @@ void isp_pipeline::reset_registers() {
    config_.bnr.b_std_dev_s = 1.5f;
    config_.bnr.b_std_dev_r = 0.1f;
 
+   config_.dg.current_gain = 5;
+
    // default lsc lut
    config_.lsc.grid_width = 16;
    config_.lsc.grid_height = 12;
@@ -815,21 +817,16 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    dg_.process(lsc_out_.data(), dg_out_.data(), width_, height_, cfg.dg, bd);
    bnr_.process(dg_out_.data(), bnr_out_.data(), width_, height_, cfg.bnr, cfa, bd);
 
+   demosaic_.process(bnr_out_.data(), demosaic_out_.data(), width_, height_, cfg.demosaic, cfa, bd);
+
    awb_config awb_cfg = cfg.awb;
    if (cfg.awb.is_enable) {
-      awb_.process(bnr_out_.data(), width_, height_, awb_cfg, bd);
+      awb_.process(demosaic_out_.data(), width_, height_, awb_cfg, bd);
       awb_r_gain_ = awb_cfg.r_gain_out;
       awb_b_gain_ = awb_cfg.b_gain_out;
    } else {
       awb_r_gain_ = 1.0f;
       awb_b_gain_ = 1.0f;
-   }
-
-   demosaic_.process(bnr_out_.data(), demosaic_out_.data(), width_, height_, cfg.demosaic, cfa, bd);
-
-   aec_config aec_cfg = cfg.aec;
-   if (aec_cfg.is_enable) {
-      aec_.process(demosaic_out_.data(), width_, height_, aec_cfg, bd);
    }
 
    wb_config wb_cfg = cfg.wb;
@@ -843,6 +840,10 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
 
    ccm_.process(wb_out_.data(), ccm_out_.data(), width_, height_, cfg.ccm);
    gc_.process(ccm_out_.data(), gc_out_.data(), width_, height_, cfg.gc);
+
+   aec_config aec_cfg = cfg.aec;
+   aec_.process(gc_out_.data(), width_, height_, aec_cfg, bd);
+
    csc_.process(gc_out_.data(), csc_out_.data(), width_, height_, cfg.csc);
    cse_.process(csc_out_.data(), cse_out_.data(), width_, height_, cfg.cse);
    sharpen_.process(cse_out_.data(), sharpen_out_.data(), width_, height_, cfg.sharpen);
