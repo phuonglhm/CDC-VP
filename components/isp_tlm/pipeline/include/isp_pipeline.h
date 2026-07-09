@@ -94,6 +94,7 @@ private:
    std::uint32_t gc_gamma_;
    std::uint32_t gc_lut_addr_;
    std::uint32_t gc_lut_data_;
+   std::uint32_t lsc_lut_addr_;
    std::uint32_t csc_enable_;
 
    std::uint32_t width_;
@@ -101,7 +102,7 @@ private:
    std::uint8_t input_bit_depth_;
    cfa_types input_bayer_pattern_;
    std::uint8_t working_bit_depth_; // all blocks operate at 12-bit
-   const float *lsc_mem_ptr_;
+   std::vector<float> lsc_sram_;
    float awb_r_gain_;
    float awb_b_gain_;
 

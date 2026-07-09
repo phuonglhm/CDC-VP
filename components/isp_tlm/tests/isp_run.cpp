@@ -209,6 +209,35 @@ int sc_main(int argc, char *argv[]) {
    probe.write(REG_AEC_ENABLE, &enable, 4);
    probe.write(REG_LSC_ENABLE, &enable, 4);
 
+   // Generate and load parabolic LSC LUT
+   std::uint32_t lsc_grid_w = 16;
+   std::uint32_t lsc_grid_h = 12;
+   probe.write(REG_LSC_GRID_W, &lsc_grid_w, 4);
+   probe.write(REG_LSC_GRID_H, &lsc_grid_h, 4);
+
+   std::uint32_t lsc_start_addr = 0;
+   probe.write(REG_LSC_LUT_ADDR, &lsc_start_addr, 4);
+
+   std::uint32_t nx = lsc_grid_w + 1;
+   std::uint32_t ny = lsc_grid_h + 1;
+   float cx = (nx - 1) / 2.0f;
+   float cy = (ny - 1) / 2.0f;
+
+   for (int ch = 0; ch < 4; ++ch) {
+      for (std::uint32_t y = 0; y < ny; ++y) {
+         for (std::uint32_t x = 0; x < nx; ++x) {
+            float dx = (static_cast<float>(x) - cx) / cx;
+            float dy = (static_cast<float>(y) - cy) / cy;
+            float dist2 = dx * dx + dy * dy;
+            float gain = 1.0f + 0.5f * dist2; // 1.0x at center, ~2.0x at corners
+
+            std::uint32_t gain_bits;
+            std::memcpy(&gain_bits, &gain, sizeof(float));
+            probe.write(REG_LSC_LUT_DATA, &gain_bits, 4);
+         }
+      }
+   }
+
    // Set identity CCM
    float identity_ccm[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
 

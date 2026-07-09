@@ -67,15 +67,16 @@ isp_pipeline::isp_pipeline()
     , gc_gamma_(0)
     , gc_lut_addr_(0)
     , gc_lut_data_(0)
+    , lsc_lut_addr_(0)
     , csc_enable_(0)
     , width_(0)
     , height_(0)
     , input_bit_depth_(12)
     , input_bayer_pattern_(cfa_types::RGGB)
     , working_bit_depth_(12)
-    , lsc_mem_ptr_(nullptr)
     , awb_r_gain_(1.0f)
     , awb_b_gain_(1.0f) {
+   lsc_sram_.resize(8192);
    reset_registers();
 }
 
@@ -143,6 +144,7 @@ void isp_pipeline::reset_registers() {
    gc_gamma_ = 0;
    gc_lut_addr_ = 0;
    gc_lut_data_ = 0;
+   lsc_lut_addr_ = 0;
    csc_enable_ = 0;
 
    awb_r_gain_ = 1.0f;
@@ -282,6 +284,15 @@ std::uint32_t isp_pipeline::read_reg(std::uint32_t offset) const {
       return config_.lsc.grid_width;
    case REG_LSC_GRID_H:
       return config_.lsc.grid_height;
+   case REG_LSC_LUT_ADDR:
+      return lsc_lut_addr_;
+   case REG_LSC_LUT_DATA:
+      if (lsc_lut_addr_ < lsc_sram_.size()) {
+         std::uint32_t val;
+         std::memcpy(&val, &lsc_sram_[lsc_lut_addr_], sizeof(float));
+         return val;
+      }
+      return 0;
 
    case REG_DG_ENABLE:
       return config_.dg.is_enable ? 1u : 0u;
@@ -529,6 +540,17 @@ bool isp_pipeline::write_reg(std::uint32_t offset, std::uint32_t value) {
    case REG_LSC_GRID_H:
       config_.lsc.grid_height = value & 0xFFFFu;
       return false;
+   case REG_LSC_LUT_ADDR:
+      lsc_lut_addr_ = value;
+      return false;
+   case REG_LSC_LUT_DATA:
+      if (lsc_lut_addr_ < lsc_sram_.size()) {
+         float f_val;
+         std::memcpy(&f_val, &value, sizeof(float));
+         lsc_sram_[lsc_lut_addr_] = f_val;
+         lsc_lut_addr_++;
+      }
+      return false;
 
    case REG_DG_ENABLE:
       config_.dg.is_enable = (value & 0x1u) != 0u;
@@ -733,7 +755,7 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
 
    blc_.process(raw_buf_.data(), blc_out_.data(), width_, height_, cfg.blc, cfa, bd);
    dpc_.process(blc_out_.data(), dpc_out_.data(), width_, height_, cfg.dpc);
-   lsc_.process(dpc_out_.data(), lsc_out_.data(), width_, height_, cfg.lsc, lsc_mem_ptr_, cfa, bd);
+   lsc_.process(dpc_out_.data(), lsc_out_.data(), width_, height_, cfg.lsc, lsc_sram_.data(), cfa, bd);
    dg_.process(lsc_out_.data(), dg_out_.data(), width_, height_, cfg.dg, bd);
    bnr_.process(dg_out_.data(), bnr_out_.data(), width_, height_, cfg.bnr, cfa, bd);
 

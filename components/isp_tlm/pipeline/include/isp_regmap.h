@@ -48,6 +48,8 @@ constexpr std::uint32_t REG_DPC_THRESH = 0x1084;
 constexpr std::uint32_t REG_LSC_ENABLE = 0x1100;
 constexpr std::uint32_t REG_LSC_GRID_W = 0x1104;
 constexpr std::uint32_t REG_LSC_GRID_H = 0x1108;
+constexpr std::uint32_t REG_LSC_LUT_ADDR = 0x110C;
+constexpr std::uint32_t REG_LSC_LUT_DATA = 0x1110;
 
 // DG (Digital Gain)
 constexpr std::uint32_t REG_DG_ENABLE = 0x1180;
