@@ -158,6 +158,25 @@ void isp_pipeline::reset_registers() {
    config_.blc.gb_sat = 4095;
    config_.blc.b_sat = 4095;
    config_.bnr.filter_window = 3;
+
+   // default lsc LUT
+   config_.lsc.grid_width = 16;
+   config_.lsc.grid_height = 12;
+   std::uint32_t nx = 16 + 1;
+   std::uint32_t ny = 12 + 1;
+   float cx = (nx - 1) / 2.0f;
+   float cy = (ny - 1) / 2.0f;
+   std::uint32_t addr = 0;
+   for (int ch = 0; ch < 4; ++ch) {
+      for (std::uint32_t y = 0; y < ny; ++y) {
+         for (std::uint32_t x = 0; x < nx; ++x) {
+            float dx = (static_cast<float>(x) - cx) / cx;
+            float dy = (static_cast<float>(y) - cy) / cy;
+            float dist2 = dx * dx + dy * dy;
+            lsc_sram_[addr++] = 1.0f + 0.5f * dist2;
+         }
+      }
+   }
 }
 
 std::uint32_t isp_pipeline::status_reg() const {
