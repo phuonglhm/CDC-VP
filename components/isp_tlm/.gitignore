@@ -2,3 +2,4 @@ output/*
 output/.*
 !output/.gitkeep
 __pycache__/*
+calib/

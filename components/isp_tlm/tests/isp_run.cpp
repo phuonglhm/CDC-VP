@@ -15,6 +15,7 @@
 
 #include "isp_regmap.h"
 #include "isp_tlm.h"
+#include "isp_config.h"
 #include "tlm_probe.h"
 #include "memory_tlm.h"
 
@@ -100,6 +101,7 @@ int sc_main(int argc, char *argv[]) {
    std::uint32_t height = 0;
    std::uint32_t bit_depth = 12;
    std::uint32_t bayer_pattern = 0; // 0 = RGGB
+   std::string config_path = "tuning.bin";
 
    // Canonical output directory (relative to workspace root).
    // If CWD is already inside components/isp_tlm, use output/ there.
@@ -129,8 +131,9 @@ int sc_main(int argc, char *argv[]) {
          std::cout << "  --height <h> Image height in pixels (required)\n";
          std::cout << "  -b <bits>    Bit depth (default: 12)\n";
          std::cout << "  -p <0-3>     Bayer pattern: 0=RGGB, 1=GRBG, 2=BGGR, 3=GBRG (default: 0)\n";
+         std::cout << "  -c <path>    IQ Tuning config binary (default: tuning.bin)\n";
          std::cout << "\nExample:\n";
-         std::cout << "  " << argv[0] << " -i input.raw -o output.yuv -w 2592 --height 1536 -b 12 -p 0\n";
+         std::cout << "  " << argv[0] << " -i input.raw -c tuning.bin\n";
          return 0;
       } else if (arg == "-i" && i + 1 < argc) {
          input_path = argv[++i];
@@ -145,6 +148,8 @@ int sc_main(int argc, char *argv[]) {
          bit_depth = static_cast<std::uint32_t>(std::atoi(argv[++i]));
       } else if (arg == "-p" && i + 1 < argc) {
          bayer_pattern = static_cast<std::uint32_t>(std::atoi(argv[++i]));
+      } else if (arg == "-c" && i + 1 < argc) {
+         config_path = argv[++i];
       }
    }
 
@@ -191,126 +196,158 @@ int sc_main(int argc, char *argv[]) {
    probe.write(REG_SRC_ADDR, &src_addr, 4);
    probe.write(REG_DST_ADDR, &dst_addr, 4);
 
-   // Configure ISP
-   probe.write(REG_WIDTH, &width, 4);
-   probe.write(REG_HEIGHT, &height, 4);
-   probe.write(REG_BIT_DEPTH, &bit_depth, 4);
-   probe.write(REG_BAYER_PATTERN, &bayer_pattern, 4);
+   // Load and apply IQ Configuration
+   cdc::components::isp_iq_config iq_cfg;
+   std::ifstream bin_file(config_path, std::ios::binary);
+   if (bin_file.is_open()) {
+      bin_file.read(reinterpret_cast<char *>(&iq_cfg), sizeof(iq_cfg));
+      bin_file.close();
+      if (iq_cfg.magic_word == 0x49535021) {
+         std::cout << "Loaded IQ config from " << config_path << std::endl;
 
-   std::uint32_t enable = 1;
+         // Override global dimensions if CLI did not specify them
+         if (width == 0)
+            width = iq_cfg.width;
+         if (height == 0)
+            height = iq_cfg.height;
+
+         probe.write(REG_WIDTH, &iq_cfg.width, 4);
+         probe.write(REG_HEIGHT, &iq_cfg.height, 4);
+         probe.write(REG_BIT_DEPTH, &iq_cfg.bit_depth, 4);
+         probe.write(REG_BAYER_PATTERN, &iq_cfg.bayer_pattern, 4);
+
+         std::uint32_t enable_32;
+
+         // BLC
+         enable_32 = iq_cfg.blc_enable;
+         probe.write(REG_BLC_ENABLE, &enable_32, 4);
+         enable_32 = iq_cfg.blc_linear;
+         probe.write(REG_BLC_LINEAR, &enable_32, 4);
+         std::uint32_t r_off = iq_cfg.blc_r_offset;
+         probe.write(REG_BLC_R_OFFSET, &r_off, 4);
+         std::uint32_t gr_off = iq_cfg.blc_gr_offset;
+         probe.write(REG_BLC_GR_OFFSET, &gr_off, 4);
+         std::uint32_t gb_off = iq_cfg.blc_gb_offset;
+         probe.write(REG_BLC_GB_OFFSET, &gb_off, 4);
+         std::uint32_t b_off = iq_cfg.blc_b_offset;
+         probe.write(REG_BLC_B_OFFSET, &b_off, 4);
+         std::uint32_t r_sat = iq_cfg.blc_r_sat;
+         probe.write(REG_BLC_R_SAT, &r_sat, 4);
+         std::uint32_t gr_sat = iq_cfg.blc_gr_sat;
+         probe.write(REG_BLC_GR_SAT, &gr_sat, 4);
+         std::uint32_t gb_sat = iq_cfg.blc_gb_sat;
+         probe.write(REG_BLC_GB_SAT, &gb_sat, 4);
+         std::uint32_t b_sat = iq_cfg.blc_b_sat;
+         probe.write(REG_BLC_B_SAT, &b_sat, 4);
+
+         // DPC
+         enable_32 = iq_cfg.dpc_enable;
+         probe.write(REG_DPC_ENABLE, &enable_32, 4);
+         std::uint32_t dpc_thresh = iq_cfg.dpc_thresh;
+         probe.write(REG_DPC_THRESH, &dpc_thresh, 4);
+
+         // BNR
+         enable_32 = iq_cfg.bnr_enable;
+         probe.write(REG_BNR_ENABLE, &enable_32, 4);
+
+         // Demosaic
+         enable_32 = iq_cfg.demosaic_enable;
+         probe.write(REG_DEMOSAIC_ENABLE, &enable_32, 4);
+
+         // AWB
+         enable_32 = iq_cfg.awb_enable;
+         probe.write(REG_AWB_ENABLE, &enable_32, 4);
+
+         // WB
+         enable_32 = iq_cfg.wb_enable;
+         probe.write(REG_WB_ENABLE, &enable_32, 4);
+
+         // CCM
+         enable_32 = iq_cfg.ccm_enable;
+         probe.write(REG_CCM_ENABLE, &enable_32, 4);
+
+         // AEC
+         enable_32 = iq_cfg.aec_enable;
+         probe.write(REG_AEC_ENABLE, &enable_32, 4);
+
+         // LSC
+         enable_32 = iq_cfg.lsc_enable;
+         probe.write(REG_LSC_ENABLE, &enable_32, 4);
+         probe.write(REG_LSC_GRID_W, &iq_cfg.lsc_grid_w, 4);
+         probe.write(REG_LSC_GRID_H, &iq_cfg.lsc_grid_h, 4);
+
+         // DG
+         enable_32 = iq_cfg.dg_enable;
+         probe.write(REG_DG_ENABLE, &enable_32, 4);
+         probe.write(REG_DG_AUTO, &iq_cfg.dg_auto, 4);
+
+         // CSC
+         enable_32 = iq_cfg.csc_enable;
+         probe.write(REG_CSC_ENABLE, &enable_32, 4);
+
+         // Sharpen
+         enable_32 = iq_cfg.sharpen_enable;
+         probe.write(REG_SHARPEN_ENABLE, &enable_32, 4);
+
+         // 2DNR
+         enable_32 = iq_cfg.twodnr_enable;
+         probe.write(REG_2DNR_ENABLE, &enable_32, 4);
+
+         // CCM Matrix
+         float ccm_matrix[9] = {iq_cfg.ccm_matrix00, iq_cfg.ccm_matrix01, iq_cfg.ccm_matrix02,
+                                iq_cfg.ccm_matrix10, iq_cfg.ccm_matrix11, iq_cfg.ccm_matrix12,
+                                iq_cfg.ccm_matrix20, iq_cfg.ccm_matrix21, iq_cfg.ccm_matrix22};
+         for (int i = 0; i < 9; ++i) {
+            probe.write(REG_CCM_MATRIX00 + i * 4, &ccm_matrix[i], 4);
+         }
+
+         // GC
+         enable_32 = iq_cfg.gc_enable;
+         probe.write(REG_GC_ENABLE, &enable_32, 4);
+
+         // CSE
+         enable_32 = iq_cfg.cse_enable;
+         probe.write(REG_CSE_ENABLE, &enable_32, 4);
+
+         // CSC Standard
+         std::uint32_t csc_std = iq_cfg.csc_standard;
+         probe.write(REG_CSC_STANDARD, &csc_std, 4);
+
+         // YUV420
+         enable_32 = iq_cfg.yuv420_enable;
+         probe.write(REG_YUV420_ENABLE, &enable_32, 4);
+
+      } else {
+         std::cerr << "Warning: Invalid IQ config magic word. Using default parameters." << std::endl;
+      }
+   } else {
+      std::cerr << "Warning: Could not open " << config_path << ", using default parameters." << std::endl;
+      // Fallback manual settings
+      probe.write(REG_WIDTH, &width, 4);
+      probe.write(REG_HEIGHT, &height, 4);
+      probe.write(REG_BIT_DEPTH, &bit_depth, 4);
+      probe.write(REG_BAYER_PATTERN, &bayer_pattern, 4);
+      std::uint32_t enable = 1;
+      // probe.write(REG_BLC_ENABLE, &enable, 4);
+      // probe.write(REG_DPC_ENABLE, &enable, 4);
+      // probe.write(REG_LSC_ENABLE, &enable, 4);
+      // probe.write(REG_DG_ENABLE, &enable, 4);
+      // probe.write(REG_BNR_ENABLE, &enable, 4);
+      probe.write(REG_DEMOSAIC_ENABLE, &enable, 4);
+      // probe.write(REG_AWB_ENABLE, &enable, 4);
+      // probe.write(REG_WB_ENABLE, &enable, 4);
+      // probe.write(REG_CCM_ENABLE, &enable, 4);
+      // probe.write(REG_GC_ENABLE, &enable, 4);
+      // probe.write(REG_AEC_ENABLE, &enable, 4);
+      probe.write(REG_CSC_ENABLE, &enable, 4);
+      // probe.write(REG_CSE_ENABLE, &enable, 4);
+      // probe.write(REG_SHARPEN_ENABLE, &enable, 4);
+      // probe.write(REG_2DNR_ENABLE, &enable, 4);
+      probe.write(REG_YUV420_ENABLE, &enable, 4);
+   }
+
    std::uint32_t ctrl = CTRL_ENABLE;
    probe.write(REG_CTRL, &ctrl, 4);
-
-   // Enable all processing blocks
-   probe.write(REG_BLC_ENABLE, &enable, 4);
-   probe.write(REG_DPC_ENABLE, &enable, 4);
-   probe.write(REG_BNR_ENABLE, &enable, 4);
-   probe.write(REG_DEMOSAIC_ENABLE, &enable, 4);
-   probe.write(REG_AWB_ENABLE, &enable, 4);
-   probe.write(REG_WB_ENABLE, &enable, 4);
-   probe.write(REG_CCM_ENABLE, &enable, 4);
-   probe.write(REG_AEC_ENABLE, &enable, 4);
-   probe.write(REG_LSC_ENABLE, &enable, 4);
-   probe.write(REG_DG_ENABLE, &enable, 4);
-   probe.write(REG_DG_AUTO, &enable, 4);
-   probe.write(REG_CSC_ENABLE, &enable, 4); // always run, even if not enabled
-   probe.write(REG_SHARPEN_ENABLE, &enable, 4);
-   probe.write(REG_2DNR_ENABLE, &enable, 4);
-
-   // Generate and load parabolic LSC LUT
-   std::uint32_t lsc_grid_w = 16;
-   std::uint32_t lsc_grid_h = 12;
-   probe.write(REG_LSC_GRID_W, &lsc_grid_w, 4);
-   probe.write(REG_LSC_GRID_H, &lsc_grid_h, 4);
-
-   std::uint32_t lsc_start_addr = 0;
-   probe.write(REG_LSC_LUT_ADDR, &lsc_start_addr, 4);
-
-   std::uint32_t nx = lsc_grid_w + 1;
-   std::uint32_t ny = lsc_grid_h + 1;
-
-   // Read CSV file
-   std::ifstream lsc_csv("components/isp_tlm/asset/lsc_lut_17x13_q10.csv");
-   std::vector<std::vector<float>> lsc_gains(4, std::vector<float>(nx * ny, 1.0f));
-   if (lsc_csv.is_open()) {
-      std::string line;
-      std::getline(lsc_csv, line); // Skip header
-      while (std::getline(lsc_csv, line)) {
-         if (line.empty())
-            continue;
-         std::stringstream ss(line);
-         std::string token;
-         int col = 0, r = 0, c = 0;
-         float g0 = 1.0f, g1 = 1.0f, g2 = 1.0f, g3 = 1.0f;
-         while (std::getline(ss, token, ',')) {
-            if (col == 0)
-               r = std::stoi(token);
-            else if (col == 1)
-               c = std::stoi(token);
-            else if (col == 4)
-               g0 = std::stof(token) / 1024.0f;
-            else if (col == 5)
-               g1 = std::stof(token) / 1024.0f;
-            else if (col == 6)
-               g2 = std::stof(token) / 1024.0f;
-            else if (col == 7)
-               g3 = std::stof(token) / 1024.0f;
-            col++;
-         }
-         if (r < ny && c < nx) {
-            lsc_gains[0][r * nx + c] = g0;
-            lsc_gains[1][r * nx + c] = g1;
-            lsc_gains[2][r * nx + c] = g2;
-            lsc_gains[3][r * nx + c] = g3;
-         }
-      }
-      lsc_csv.close();
-      std::cout << "Loaded LSC LUT from CSV!" << std::endl;
-   } else {
-      std::cerr << "Warning: Could not open LSC CSV, using flat 1.0x gains." << std::endl;
-   }
-
-   // Calculate true optical center offset directly using isp_pipeline::OPTICAL_CENTER_X
-
-   for (int ch = 0; ch < 4; ++ch) {
-      for (std::uint32_t y = 0; y < ny; ++y) {
-         for (std::uint32_t x = 0; x < nx; ++x) {
-            // Map grid node to pixel coordinate
-            float px = static_cast<float>(x) * (static_cast<float>(width) / lsc_grid_w);
-            float py = static_cast<float>(y) * (static_cast<float>(height) / lsc_grid_h);
-
-            // Normalize distance relative to half-dimensions
-            float dx = (px - isp_pipeline::OPTICAL_CENTER_X) / (static_cast<float>(width) / 2.0f);
-            float dy = (py - isp_pipeline::OPTICAL_CENTER_Y) / (static_cast<float>(height) / 2.0f);
-
-            float dist2 = dx * dx + dy * dy;
-            float gain = lsc_csv.is_open() ? lsc_gains[ch][y * nx + x] : (1.0f + 0.5f * dist2);
-            std::uint32_t gain_bits;
-            std::memcpy(&gain_bits, &gain, sizeof(float));
-            probe.write(REG_LSC_LUT_DATA, &gain_bits, 4);
-         }
-      }
-   }
-
-   // Set identity CCM
-   float identity_ccm[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-
-   for (int i = 0; i < 9; ++i) {
-      probe.write(REG_CCM_MATRIX00 + i * 4, &identity_ccm[i], 4);
-   }
-
-   // Enable GC with identity LUT
-   probe.write(REG_GC_ENABLE, &enable, 4);
-
-   // Enable CSC (BT.709)
-   std::uint32_t csc_standard = 1; // BT.709
-   probe.write(REG_CSC_STANDARD, &csc_standard, 4);
-
-   // Enable CSE
-   probe.write(REG_CSE_ENABLE, &enable, 4);
-
-   // Enable YUV420 output
-   probe.write(REG_YUV420_ENABLE, &enable, 4);
 
    // Allocate buffers before reading file
    isp.allocate_buffers();
@@ -342,7 +379,7 @@ int sc_main(int argc, char *argv[]) {
 
    // Because we're processing single frame, we need to run the pipeline a few times for STATS block
    // to stabilize.
-   for (int i = 0; i < 4; i++) {
+   for (int i = 0; i < 2; i++) {
       probe.write(REG_CTRL, &ctrl, 4);
       sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
    }

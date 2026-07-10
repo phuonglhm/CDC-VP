@@ -293,12 +293,10 @@ cd CDC-VP
   -w 2592 --height 1536 -b 12 -p 0
 ```
 
-For `A_raw_2688x1520_5376.raw` (16-bit, BGGR):
+For `D65_raw_2688x1520_5376.raw` (16-bit, BGGR):
 ```bash
 cd CDC-VP
-./build/bremen/components/isp_tlm/tests/isp_run \
-  -i components/isp_tlm/input/A_raw_2688x1520_5376.raw \
-  -w 2688 --height 1520 -b 16 -p 2
+./build/bremen/components/isp_tlm/tests/isp_run   -i components/isp_tlm/input/D65_raw_2688x1520_5376.raw   -w 2688 --height 1520 -b 16 -p 2 -c components/isp_tlm/tests/tuning.bin
 ```
 
 **Example output:**
