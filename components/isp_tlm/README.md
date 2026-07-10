@@ -264,6 +264,17 @@ The binary will be at:
 build/bremen/components/isp_tlm/tests/isp_run
 ```
 
+### Tuning the Pipeline (IQ Config)
+
+The ISP testbench uses an Image Quality (IQ) tuning binary to configure hardware block parameters via MMIO.
+
+1. **Modify Parameters:** Open `components/isp_tlm/tests/generate_iq.py` to enable/disable specific ISP blocks or tweak configuration parameters (e.g., bit depth, saturation limits, or Gamma LUTs).
+2. **Generate Binary:** Run the script to compile the parameters into `tuning.bin`:
+   ```bash
+   python3 components/isp_tlm/tests/generate_iq.py
+   ```
+   *Note: If processing true 16-bit raw data, ensure you update BLC saturation caps (e.g., `4095` to `65535`) inside the script.*
+
 ### Running the Pipeline
 
 The tool can be invoked from any directory. Output is written to a canonical location inside the `output/` folder:
@@ -281,6 +292,7 @@ This keeps all generated artifacts in one consistent place.
 | `--height <h>` | Image height in pixels (required) |
 | `-b <bits>` | Bit depth: 8, 10, 12, 16 (default: 12) |
 | `-p <0-3>` | Bayer pattern: 0=RGGB, 1=GRBG, 2=BGGR, 3=GBRG (default: 0) |
+| `-c <path>` | Path to IQ tuning binary file (default: `tuning.bin`) |
 | `--help` | Show help message |
 
 **Run with the test images:**
@@ -296,7 +308,10 @@ cd CDC-VP
 For `D65_raw_2688x1520_5376.raw` (16-bit, BGGR):
 ```bash
 cd CDC-VP
-./build/bremen/components/isp_tlm/tests/isp_run   -i components/isp_tlm/input/D65_raw_2688x1520_5376.raw   -w 2688 --height 1520 -b 16 -p 2 -c components/isp_tlm/tests/tuning.bin
+./build/bremen/components/isp_tlm/tests/isp_run  \
+    -i components/isp_tlm/input/D65_raw_2688x1520_5376.raw  \
+    -c components/isp_tlm/tests/tuning.bin \
+    -w 2688 --height 1520 -b 16 -p 2 
 ```
 
 **Example output:**
