@@ -5,7 +5,7 @@
 
 struct cse_config {
     bool is_enable = false;
-    float saturation_gain = 1.0f;
+    float saturation_gain = 4.0f;
 };
 
 class cse_block {
