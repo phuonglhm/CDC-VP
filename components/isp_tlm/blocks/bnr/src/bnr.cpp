@@ -98,23 +98,68 @@ void bnr_block::process(const uint16_t *in,
       norm_in[i] = static_cast<float>(in[i]) * scale;
    }
 
-   // green channel interpolation for guidance
+   // Green channel interpolation for bilateral-filter guidance.
+   // At each pixel position we want a smooth estimate of the underlying
+   // green luminance so the joint bilateral filter can preserve green-channel
+   // edges. The estimate must respect the Bayer CFA: the 4 cardinal neighbors
+   // (distance 1) of an R or B pixel are GREEN, the 4 diagonal neighbors
+   // (distance sqrt(2)) are the SAME colour as the center.
+   //
+   // We use the Hamilton-Adams estimator:
+   //   G(R or B) = (R_or_B + (G_N + G_S + G_E + G_W)/4
+   //                - (opp_NE + opp_NW + opp_SE + opp_SW)/4) * 1.0
+   //
+   // At a G pixel we just keep the measured value (no interpolation needed).
    std::vector<float> kern_filt_g(w * h);
    for (int i = 0; i < static_cast<int>(h); ++i) {
       for (int j = 0; j < static_cast<int>(w); ++j) {
-         float sum = 0.0f;
-         sum += -1.0f * isp_utils::get_pixel_mirror(norm_in.data(), i - 2, j, w, h);
-         sum += 2.0f * isp_utils::get_pixel_mirror(norm_in.data(), i - 1, j, w, h);
-         sum += -1.0f * isp_utils::get_pixel_mirror(norm_in.data(), i, j - 2, w, h);
-         sum += 2.0f * isp_utils::get_pixel_mirror(norm_in.data(), i, j - 1, w, h);
-         sum += 4.0f * isp_utils::get_pixel_mirror(norm_in.data(), i, j, w, h);
-         sum += 2.0f * isp_utils::get_pixel_mirror(norm_in.data(), i, j + 1, w, h);
-         sum += -1.0f * isp_utils::get_pixel_mirror(norm_in.data(), i, j + 2, w, h);
-         sum += 2.0f * isp_utils::get_pixel_mirror(norm_in.data(), i + 1, j, w, h);
-         sum += -1.0f * isp_utils::get_pixel_mirror(norm_in.data(), i + 2, j, w, h);
+         const bool is_even_row = (i & 1) == 0;
+         const bool is_even_col = (j & 1) == 0;
 
-         float val = sum / 8.0f;
-         kern_filt_g[i * w + j] = std::clamp(val, 0.0f, 1.0f);
+         bayer_channel channel = bayer_channel::R;
+         switch (bayer_pattern) {
+         case cfa_types::RGGB:
+            channel = is_even_row ? (is_even_col ? bayer_channel::R : bayer_channel::GR)
+                                  : (is_even_col ? bayer_channel::GB : bayer_channel::B);
+            break;
+         case cfa_types::BGGR:
+            channel = is_even_row ? (is_even_col ? bayer_channel::B : bayer_channel::GB)
+                                  : (is_even_col ? bayer_channel::GR : bayer_channel::R);
+            break;
+         case cfa_types::GRBG:
+            channel = is_even_row ? (is_even_col ? bayer_channel::GR : bayer_channel::R)
+                                  : (is_even_col ? bayer_channel::B : bayer_channel::GB);
+            break;
+         case cfa_types::GBRG:
+            channel = is_even_row ? (is_even_col ? bayer_channel::GB : bayer_channel::B)
+                                  : (is_even_col ? bayer_channel::R : bayer_channel::GR);
+            break;
+         }
+
+         float green_est;
+         if (channel == bayer_channel::GR || channel == bayer_channel::GB) {
+            // Already a green sample
+            green_est = norm_in[i * w + j];
+         } else {
+            // R or B center: 4 cardinal neighbors are GREEN, 4 diagonal are
+            // the same colour as the center.
+            const float g_n = isp_utils::get_pixel_mirror(norm_in.data(), i - 1, j,     w, h);
+            const float g_s = isp_utils::get_pixel_mirror(norm_in.data(), i + 1, j,     w, h);
+            const float g_e = isp_utils::get_pixel_mirror(norm_in.data(), i,     j + 1, w, h);
+            const float g_w = isp_utils::get_pixel_mirror(norm_in.data(), i,     j - 1, w, h);
+            const float d_ne = isp_utils::get_pixel_mirror(norm_in.data(), i - 1, j + 1, w, h);
+            const float d_nw = isp_utils::get_pixel_mirror(norm_in.data(), i - 1, j - 1, w, h);
+            const float d_se = isp_utils::get_pixel_mirror(norm_in.data(), i + 1, j + 1, w, h);
+            const float d_sw = isp_utils::get_pixel_mirror(norm_in.data(), i + 1, j - 1, w, h);
+
+            const float center = norm_in[i * w + j];
+            const float card_avg = 0.25f * (g_n + g_s + g_e + g_w);
+            const float diag_avg = 0.25f * (d_ne + d_nw + d_se + d_sw);
+            // Hamilton-Adams: G = center + (cardinal_green - diagonal_opposite_color) / 2
+            green_est = center + 0.5f * (card_avg - diag_avg);
+         }
+
+         kern_filt_g[i * w + j] = std::clamp(green_est, 0.0f, 1.0f);
       }
    }
 

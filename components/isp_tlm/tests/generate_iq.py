@@ -60,8 +60,8 @@ params = [
     12,  # enable, grid_w, grid_h
     # DG
     1,
-    5,
-    1,  # enable, gain, auto
+    1,
+    0,  # enable, gain, auto (manual mode; gain=1 -> multiplier 2.0 to match prior behavior)
     # BNR
     1,
     3,
@@ -86,16 +86,16 @@ params = [
     1.0,
     1.0,  # enable, r_gain, b_gain
     # CCM
-    1,
+    1,   # enable, matrix
     1.0,
     0.0,
-    0.0,
+    0.0, ## row 1
     0.0,
     1.0,
+    0.0, ## row 2
     0.0,
     0.0,
-    0.0,
-    1.0,  # enable, matrix
+    1.0, ## row 3
     # GC
     1,
     1,  # enable, gamma
@@ -109,7 +109,7 @@ params = [
     0,  # enable, standard
     # CSE
     1,
-    1.0,  # enable, sat_gain
+    2.35,  # enable, sat_gain
     # Sharpen
     1,
     1,

@@ -170,41 +170,46 @@ def visualize_bayer_raw(bayer, pattern='RGGB'):
 def read_yuv420_nv12(filepath, width, height):
     """Read YUV420 NV12 (semi-planar) file and convert to RGB.
 
-    NV12 format:
-    - Y plane: width × height bytes
-    - UV plane: width × (height/2) bytes, interleaved as UVUVUV...
+    NV12 layout (the format produced by the ISP pipeline's `yuv420_block`):
+    - Y plane: width x height bytes
+    - UV plane: width x (height/2) bytes, interleaved as UVUVUV...
+
+    U values are at even byte offsets and V at odd byte offsets within
+    the UV plane. After deinterleaving, both U and V are width/2 x height/2.
     """
     try:
         data = np.fromfile(filepath, dtype=np.uint8)
 
         y_size = width * height
-        uv_size = width * (height // 2)  # NV12 UV plane is interleaved
+        chroma_w = (width + 1) // 2
+        chroma_h = (height + 1) // 2
+        chroma_size = chroma_w * chroma_h  # UV pairs
+
+        if data.size < y_size + 2 * chroma_size:
+            print(f"Warning: file size {data.size} smaller than expected "
+                  f"{y_size + 2 * chroma_size} for {width}x{height} NV12")
+            return None
 
         Y = data[0:y_size].reshape((height, width))
+        # NV12: UV plane has width*(height/2) interleaved bytes; after
+        # deinterleaving the even-offset slice and odd-offset slice each
+        # contain chroma_w*chroma_h values.
+        uv_data = data[y_size:y_size + chroma_size * 2]
+        U = uv_data[0::2].reshape((chroma_h, chroma_w))
+        V = uv_data[1::2].reshape((chroma_h, chroma_w))
 
-        # NV12: UV is interleaved (UVUVUV...), stored in a single plane
-        U = np.zeros((height // 2, width // 2), dtype=np.uint8)
-        V = np.zeros((height // 2, width // 2), dtype=np.uint8)
-        uv_data = data[y_size:y_size + uv_size]
+        # Upsample U and V to full resolution using nearest-neighbor
+        U_up = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)[:height, :width]
+        V_up = np.repeat(np.repeat(V, 2, axis=0), 2, axis=1)[:height, :width]
 
-        # Extract U and V from interleaved UV
-        U_flat = uv_data[0::2]  # Even indices = U
-        V_flat = uv_data[1::2]  # Odd indices = V
-        U = U_flat.reshape((height // 2, width // 2))
-        V = V_flat.reshape((height // 2, width // 2))
-
-        # Upsample U and V to full resolution
-        U_up = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)
-        V_up = np.repeat(np.repeat(V, 2, axis=0), 2, axis=1)
-
-        # Convert to RGB (BT.709)
+        # Convert to RGB. The ISP pipeline emits BT.601 limited-range YUV.
         Y_f = Y.astype(np.float32)
         U_f = U_up.astype(np.float32) - 128.0
         V_f = V_up.astype(np.float32) - 128.0
 
-        R = Y_f + 1.5748 * V_f
-        G = Y_f - 0.1873 * U_f - 0.4681 * V_f
-        B = Y_f + 1.8556 * U_f
+        R = Y_f + 1.402 * V_f
+        G = Y_f - 0.344136 * U_f - 0.714136 * V_f
+        B = Y_f + 1.772 * U_f
 
         RGB = np.stack([R, G, B], axis=-1)
         RGB = np.clip(RGB, 0, 255) / 255.0
@@ -298,7 +303,7 @@ def main():
 
     yuv_preview = None
     if os.path.exists(yuv_path):
-        print(f"Reading YUV output image from {yuv_path} (NV12 format)...")
+        print(f"Reading YUV output image from {yuv_path} (NV12 semi-planar)...")
         yuv_preview = read_yuv420_nv12(yuv_path, width, height)
     else:
         print(f"\nERROR: YUV output {yuv_path} not found.")

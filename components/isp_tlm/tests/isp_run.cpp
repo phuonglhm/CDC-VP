@@ -29,6 +29,7 @@ void write_json_metadata(const std::string &path,
                          std::uint32_t height,
                          std::uint32_t bit_depth,
                          std::uint32_t bayer_pattern,
+                         std::uint32_t csc_standard,
                          const std::string &source_raw,
                          const std::string &format = "yuv420p") {
    std::ofstream f(path);
@@ -64,7 +65,7 @@ void write_json_metadata(const std::string &path,
    f << "\",\n";
    f << "  \"plane_order\": [\"Y\", \"U\", \"V\"],\n";
    f << "  \"chroma_subsampling\": \"4:2:0\",\n";
-   f << "  \"conv_standard\": \"BT.709\",\n";
+   f << "  \"conv_standard\": \"" << (csc_standard == 1 ? "BT.709" : "BT.601") << "\",\n";
    f << "  \"source_raw\": \"" << source_raw << "\"\n";
    f << "}\n";
    f.close();
@@ -216,9 +217,9 @@ int sc_main(int argc, char *argv[]) {
          probe.write(REG_BIT_DEPTH, &iq_cfg.bit_depth, 4);
          probe.write(REG_BAYER_PATTERN, &iq_cfg.bayer_pattern, 4);
 
-         std::uint32_t enable_32;
+std::uint32_t enable_32;
 
-         // BLC
+        // BLC
          enable_32 = iq_cfg.blc_enable;
          probe.write(REG_BLC_ENABLE, &enable_32, 4);
          enable_32 = iq_cfg.blc_linear;
@@ -276,10 +277,12 @@ int sc_main(int argc, char *argv[]) {
          probe.write(REG_LSC_GRID_W, &iq_cfg.lsc_grid_w, 4);
          probe.write(REG_LSC_GRID_H, &iq_cfg.lsc_grid_h, 4);
 
-         // DG
-         enable_32 = iq_cfg.dg_enable;
-         probe.write(REG_DG_ENABLE, &enable_32, 4);
-         probe.write(REG_DG_AUTO, &iq_cfg.dg_auto, 4);
+// DG
+        enable_32 = iq_cfg.dg_enable;
+        probe.write(REG_DG_ENABLE, &enable_32, 4);
+        probe.write(REG_DG_AUTO, &iq_cfg.dg_auto, 4);
+        std::uint32_t dg_gain = iq_cfg.dg_gain;
+        probe.write(REG_DG_GAIN, &dg_gain, 4);
 
          // CSC
          enable_32 = iq_cfg.csc_enable;
@@ -305,13 +308,14 @@ int sc_main(int argc, char *argv[]) {
          enable_32 = iq_cfg.gc_enable;
          probe.write(REG_GC_ENABLE, &enable_32, 4);
 
-         // CSE
-         enable_32 = iq_cfg.cse_enable;
-         probe.write(REG_CSE_ENABLE, &enable_32, 4);
+// CSE
+        enable_32 = iq_cfg.cse_enable;
+        probe.write(REG_CSE_ENABLE, &enable_32, 4);
+        probe.write(REG_CSE_SAT_GAIN, &iq_cfg.cse_sat_gain, 4);
 
-         // CSC Standard
-         std::uint32_t csc_std = iq_cfg.csc_standard;
-         probe.write(REG_CSC_STANDARD, &csc_std, 4);
+        // CSC Standard
+        std::uint32_t csc_std = iq_cfg.csc_standard;
+        probe.write(REG_CSC_STANDARD, &csc_std, 4);
 
          // YUV420
          enable_32 = iq_cfg.yuv420_enable;
@@ -404,7 +408,7 @@ int sc_main(int argc, char *argv[]) {
    std::cout << "Output size: " << yuv_size << " bytes" << std::endl;
 
    // Write metadata JSON
-   write_json_metadata(metadata_path, width, height, bit_depth, bayer_pattern, input_path, "yuv420p");
+   write_json_metadata(metadata_path, width, height, bit_depth, bayer_pattern, iq_cfg.csc_standard, input_path, "yuv420p");
 
    return 0;
 }
