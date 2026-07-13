@@ -10,3 +10,7 @@ Main responsibilities:
 Notes:
 - this is an integration/helper block, not a full encoder stage by itself
 - unit-style coverage lives under `fetch/test`
+
+# Run in module
+- make testbench
+- make clean (to clean up)

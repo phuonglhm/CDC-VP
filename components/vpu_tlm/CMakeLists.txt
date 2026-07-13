@@ -12,6 +12,7 @@ add_library(video_encoder_tlm STATIC
     ${VPU_MEM_SOURCES}
     ${VPU_FETCH_SOURCES}
     common/src/frame.cpp
+    common/src/simple_memory.cpp
     src/mode_decision.cpp
     src/prediction_to_rec_packet.cpp
     src/rec_backend_bridges.cpp
@@ -33,7 +34,6 @@ add_library(video_encoder_tlm STATIC
     db/src/top.cpp
 
     cabac/src/cabac.cpp
-    cabac/src/simple_memory.cpp
     cabac/src/top.cpp
 
     prei/src/prei.cpp
@@ -68,6 +68,10 @@ add_subdirectory(prei/test)
 add_subdirectory(posi/test)
 add_subdirectory(ime/test)
 add_subdirectory(fme/test)
+add_subdirectory(rec/test)
+add_subdirectory(db/test)
+add_subdirectory(cabac/test)
+add_subdirectory(fetch/test)
 
 add_subdirectory(mem/test)
 add_subdirectory(tests)

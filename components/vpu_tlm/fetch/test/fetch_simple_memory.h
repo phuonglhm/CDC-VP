@@ -7,7 +7,6 @@
 #include <vector>
 #include <unordered_map>
 
-// Test-scoped TLM memory (no CABAC table loading).
 class FetchSimpleMemory : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<FetchSimpleMemory> socket;

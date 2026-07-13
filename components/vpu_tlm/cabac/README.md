@@ -22,6 +22,6 @@ This repository contains a SystemC TLM 2.3.4 model of the CABAC (Context-Adaptiv
 	- **0x20000000**: CABAC emitted byte-stream base
 		- encoded bytes are written using the same extended block key
 
-# Run
+# Run in module
 - make testbench
 - (to clean build) make clean

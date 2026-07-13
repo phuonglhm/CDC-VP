@@ -143,7 +143,7 @@ int sc_main(int argc, char* argv[]) {
             0x20000000ULL |
             static_cast<uint64_t>(
                 cdc::components::make_extended_block_address(
-                    pkt.block_idx, pkt.x, pkt.y));
+                    outp.block_idx, outp.x, outp.y));
         std::vector<uint8_t> mem = mem_read(emit_addr, outp.data.size());
             bool non_zero = false;
             for (auto v : mem) if (v != 0) { non_zero = true; break; }

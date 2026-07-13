@@ -10,6 +10,8 @@
 #include "db_monitor.cpp"
 #include "frame_buffer.cpp"
 
+using namespace sc_core;
+
 class TestBench : public sc_core::sc_module {
 public:
     explicit TestBench(sc_core::sc_module_name name)

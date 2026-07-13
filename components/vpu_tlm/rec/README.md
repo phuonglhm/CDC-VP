@@ -10,7 +10,7 @@ This is a SystemC TLM 2.3.4 model of the Reconstruction block in a VPU. It serve
 - All modules in /test folder is for testing and wiring up dangling sockets
 - Uses custom payload struct rec_packet (in rec_packet.h)
 
-# Run
+# Run in module
 - make testbench
 - To run using package from fetch: make testbench USE_FETCH=1
 - (to clean build) make clean

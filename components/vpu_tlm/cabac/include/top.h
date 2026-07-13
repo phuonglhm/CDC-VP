@@ -3,7 +3,7 @@
 
 #include <systemc>
 #include "mem_bridge.h"
-#include "simple_memory.h"
+#include "vpu_cabac_simple_memory.h"
 #include "cabac.h"
 
 class CabacTop : public sc_core::sc_module {

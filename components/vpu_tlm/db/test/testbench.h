@@ -8,6 +8,8 @@
 #include "top.h"
 #include "out_monitor.h"
 
+using namespace sc_core;
+
 class TestBench : public sc_core::sc_module {
 public:
         explicit TestBench(sc_core::sc_module_name name)
