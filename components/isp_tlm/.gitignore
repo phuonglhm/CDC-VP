@@ -3,3 +3,4 @@ output/.*
 !output/.gitkeep
 __pycache__/*
 calib/
+systemc/output/*
