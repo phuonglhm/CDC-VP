@@ -65,6 +65,14 @@ sau `sc_start()`. Register `FIFO_CONFIG` phải khớp tham số đó. Testbench
 Soft reset khi VPU đang BUSY bị từ chối với `StartWhileBusy`; model không bỏ
 âm thầm một DMA transaction đang block.
 
+## Hardware metric dashboard
+
+Testbench native in báo cáo sau khi nhận DONE/IRQ. Collector ghi active/stall,
+FIFO peak, frame token, timestamp first/last và mọi TLM DMA burst/byte. Các giá
+trị latency/throughput/utilization được suy ra với clock cấu hình bằng
+`--clock-mhz`; target SRAM có latency và transfer width cấu hình được. Xem
+[hardware_metrics.md](hardware_metrics.md) để biết công thức và nhãn nguồn.
+
 ## Build
 
 Ubuntu/Debian:

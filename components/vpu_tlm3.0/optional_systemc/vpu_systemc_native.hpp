@@ -26,7 +26,9 @@ class TlmDmaBridge final : public sc_core::sc_module,
 public:
     tlm_utils::simple_initiator_socket<TlmDmaBridge> socket{"socket"};
 
-    TlmDmaBridge(sc_core::sc_module_name name, std::size_t burst_bytes = 64);
+    TlmDmaBridge(sc_core::sc_module_name name, NativePipelineStats& stats,
+                 sc_core::sc_time clock_period,
+                 std::size_t burst_bytes = 64);
 
     bool read(std::uint64_t address,
               std::span<std::uint8_t> destination) override;
@@ -38,6 +40,8 @@ private:
                    std::uint8_t* data, std::size_t size);
 
     std::size_t burst_bytes_;
+    NativePipelineStats& stats_;
+    sc_core::sc_time clock_period_;
 };
 
 class VpuController final : public sc_core::sc_module {
@@ -109,7 +113,8 @@ public:
     sc_core::sc_port<DmaTransportIf> dma{"dma"};
 
     InputDmaStage(sc_core::sc_module_name name, std::uint32_t fifo_depth,
-                  NativePipelineStats& stats);
+                  NativePipelineStats& stats,
+                  sc_core::sc_time clock_period);
 
 private:
     void run();
@@ -119,6 +124,7 @@ private:
 
     std::uint32_t fifo_depth_;
     NativePipelineStats& stats_;
+    sc_core::sc_time clock_period_;
 };
 
 class PredictionStage final : public sc_core::sc_module {
@@ -131,7 +137,8 @@ public:
     sc_core::sc_fifo_out<FramePacket> output{"output"};
 
     PredictionStage(sc_core::sc_module_name name, std::uint32_t fifo_depth,
-                    NativePipelineStats& stats);
+                    NativePipelineStats& stats,
+                    sc_core::sc_time clock_period);
 
 private:
     void run();
@@ -140,6 +147,7 @@ private:
 
     std::uint32_t fifo_depth_;
     NativePipelineStats& stats_;
+    sc_core::sc_time clock_period_;
 };
 
 class TransformStage final : public sc_core::sc_module {
@@ -152,7 +160,8 @@ public:
     sc_core::sc_fifo_out<FramePacket> output{"output"};
 
     TransformStage(sc_core::sc_module_name name, std::uint32_t fifo_depth,
-                   NativePipelineStats& stats);
+                   NativePipelineStats& stats,
+                   sc_core::sc_time clock_period);
 
 private:
     void run();
@@ -161,6 +170,7 @@ private:
 
     std::uint32_t fifo_depth_;
     NativePipelineStats& stats_;
+    sc_core::sc_time clock_period_;
 };
 
 class CabacStage final : public sc_core::sc_module {
@@ -173,7 +183,8 @@ public:
     sc_core::sc_fifo_out<BitstreamPacket> output{"output"};
 
     CabacStage(sc_core::sc_module_name name, std::uint32_t fifo_depth,
-               NativePipelineStats& stats);
+               NativePipelineStats& stats,
+               sc_core::sc_time clock_period);
 
 private:
     void run();
@@ -182,6 +193,7 @@ private:
 
     std::uint32_t fifo_depth_;
     NativePipelineStats& stats_;
+    sc_core::sc_time clock_period_;
 };
 
 class OutputDmaStage final : public sc_core::sc_module {
@@ -195,13 +207,15 @@ public:
     sc_core::sc_port<DmaTransportIf> dma{"dma"};
 
     OutputDmaStage(sc_core::sc_module_name name,
-                   NativePipelineStats& stats);
+                   NativePipelineStats& stats,
+                   sc_core::sc_time clock_period);
 
 private:
     void run();
     void complete(const CompletionPacket& completion);
 
     NativePipelineStats& stats_;
+    sc_core::sc_time clock_period_;
 };
 
 class VpuSystemCNative final : public sc_core::sc_module {

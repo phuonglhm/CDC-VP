@@ -53,11 +53,22 @@ std::uint64_t frame_samples(const JobConfig& job) {
     return static_cast<std::uint64_t>(job.width) * job.height * 3U / 2U;
 }
 
+std::uint64_t current_cycle(sc_core::sc_time clock_period) {
+    return sc_core::sc_time_stamp().value() / clock_period.value();
+}
+
+void set_first(std::uint64_t& destination, std::uint64_t value) {
+    if (destination == 0) destination = value;
+}
+
 } // namespace
 
 TlmDmaBridge::TlmDmaBridge(sc_core::sc_module_name name,
+                           NativePipelineStats& stats,
+                           sc_core::sc_time clock_period,
                            std::size_t burst_bytes)
-    : sc_module(name), burst_bytes_(burst_bytes) {
+    : sc_module(name), burst_bytes_(burst_bytes), stats_(stats),
+      clock_period_(clock_period) {
     if (burst_bytes_ == 0 ||
         burst_bytes_ > std::numeric_limits<unsigned>::max()) {
         throw std::invalid_argument("DMA burst size must fit TLM data_length");
@@ -99,6 +110,16 @@ bool TlmDmaBridge::transport(tlm::tlm_command command, std::uint64_t address,
         socket->b_transport(transaction, delay);
         if (delay != sc_core::SC_ZERO_TIME) sc_core::wait(delay);
         if (transaction.is_response_error()) return false;
+        const auto wait_cycles = delay.value() / clock_period_.value();
+        if (command == tlm::TLM_READ_COMMAND) {
+            ++stats_.dma_read_bursts;
+            stats_.dma_read_bytes += burst;
+            stats_.dma_read_wait_cycles += wait_cycles;
+        } else {
+            ++stats_.dma_write_bursts;
+            stats_.dma_write_bytes += burst;
+            stats_.dma_write_wait_cycles += wait_cycles;
+        }
         offset += burst;
     }
     return true;
@@ -166,7 +187,7 @@ std::uint32_t VpuController::read_register(std::uint32_t offset) const {
     using namespace vpu_reg;
     switch (offset) {
     case ID: return 0x56505533U;
-    case VERSION: return 0x00030009U; // native SystemC pipeline revision
+    case VERSION: return 0x0003000aU; // native SystemC + HW metric dashboard
     case CONTROL: return control_;
     case STATUS: return status_;
     case SRC_ADDR_LO: return src_lo_;
@@ -304,6 +325,7 @@ void VpuController::start() {
     }
     active_job_id_ = job.job_id;
     start_time_ = sc_core::sc_time_stamp();
+    stats_.job_start_cycle = current_cycle(clock_period_);
     status_ = vpu_reg::STATUS_BUSY;
     update_irq();
 }
@@ -376,8 +398,10 @@ void VpuController::update_irq() {
 
 InputDmaStage::InputDmaStage(sc_core::sc_module_name name,
                              std::uint32_t fifo_depth,
-                             NativePipelineStats& stats)
-    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats) {
+                             NativePipelineStats& stats,
+                             sc_core::sc_time clock_period)
+    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats),
+      clock_period_(clock_period) {
     SC_THREAD(run);
 }
 
@@ -462,6 +486,12 @@ void InputDmaStage::run() {
                 packet.frame.reset();
             }
             push(std::move(packet));
+            if (!failed) {
+                ++stats_.frames_input;
+                const auto cycle = current_cycle(clock_period_);
+                set_first(stats_.first_input_cycle, cycle);
+                stats_.last_input_cycle = cycle;
+            }
             if (failed) break;
         }
     }
@@ -469,8 +499,10 @@ void InputDmaStage::run() {
 
 PredictionStage::PredictionStage(sc_core::sc_module_name name,
                                  std::uint32_t fifo_depth,
-                                 NativePipelineStats& stats)
-    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats) {
+                                 NativePipelineStats& stats,
+                                 sc_core::sc_time clock_period)
+    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats),
+      clock_period_(clock_period) {
     SC_THREAD(run);
 }
 
@@ -500,14 +532,21 @@ void PredictionStage::run() {
             wait_active(divide_round_up(frame_samples(packet.job),
                                         kPredictionSamplesPerCycle));
         }
+        if (packet.error == VpuError::None) {
+            ++stats_.frames_prediction;
+            set_first(stats_.first_prediction_cycle,
+                      current_cycle(clock_period_));
+        }
         push(std::move(packet));
     }
 }
 
 TransformStage::TransformStage(sc_core::sc_module_name name,
                                std::uint32_t fifo_depth,
-                               NativePipelineStats& stats)
-    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats) {
+                               NativePipelineStats& stats,
+                               sc_core::sc_time clock_period)
+    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats),
+      clock_period_(clock_period) {
     SC_THREAD(run);
 }
 
@@ -537,14 +576,21 @@ void TransformStage::run() {
             wait_active(divide_round_up(frame_samples(packet.job),
                                         kTransformSamplesPerCycle));
         }
+        if (packet.error == VpuError::None) {
+            ++stats_.frames_transform;
+            set_first(stats_.first_transform_cycle,
+                      current_cycle(clock_period_));
+        }
         push(std::move(packet));
     }
 }
 
 CabacStage::CabacStage(sc_core::sc_module_name name,
                        std::uint32_t fifo_depth,
-                       NativePipelineStats& stats)
-    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats) {
+                       NativePipelineStats& stats,
+                       sc_core::sc_time clock_period)
+    : sc_module(name), fifo_depth_(fifo_depth), stats_(stats),
+      clock_period_(clock_period) {
     SC_THREAD(run);
 }
 
@@ -591,6 +637,9 @@ void CabacStage::run() {
                                            frame_bytes.begin(), frame_bytes.end());
                 wait_active(divide_round_up(output_packet.bytes.size(),
                                             kCabacBytesPerCycle));
+                ++stats_.frames_cabac;
+                set_first(stats_.first_cabac_cycle,
+                          current_cycle(clock_period_));
             } catch (const std::exception&) {
                 output_packet.error = VpuError::InvalidConfig;
                 output_packet.last = true;
@@ -602,8 +651,9 @@ void CabacStage::run() {
 }
 
 OutputDmaStage::OutputDmaStage(sc_core::sc_module_name name,
-                               NativePipelineStats& stats)
-    : sc_module(name), stats_(stats) {
+                               NativePipelineStats& stats,
+                               sc_core::sc_time clock_period)
+    : sc_module(name), stats_(stats), clock_period_(clock_period) {
     SC_THREAD(run);
 }
 
@@ -641,6 +691,10 @@ void OutputDmaStage::run() {
                 } else {
                     output_offset += static_cast<std::uint32_t>(packet.bytes.size());
                     ++frames_done;
+                    ++stats_.frames_output;
+                    const auto cycle = current_cycle(clock_period_);
+                    set_first(stats_.first_output_cycle, cycle);
+                    stats_.last_output_cycle = cycle;
                 }
             }
         }
@@ -661,12 +715,13 @@ VpuSystemCNative::VpuSystemCNative(sc_core::sc_module_name name,
       coefficient_fifo_("coefficient_fifo", static_cast<int>(fifo_depth)),
       output_fifo_("output_fifo", static_cast<int>(fifo_depth)),
       completion_fifo_("completion_fifo", 1),
-      dma_bridge_("dma_bridge", dma_burst_bytes),
+      dma_bridge_("dma_bridge", stats_, clock_period, dma_burst_bytes),
       controller_("controller", fifo_depth, stats_, clock_period),
-      input_dma_("input_dma", fifo_depth, stats_),
-      prediction_("prediction", fifo_depth, stats_),
-      transform_("transform", fifo_depth, stats_),
-      cabac_("cabac", fifo_depth, stats_), output_dma_("output_dma", stats_) {
+      input_dma_("input_dma", fifo_depth, stats_, clock_period),
+      prediction_("prediction", fifo_depth, stats_, clock_period),
+      transform_("transform", fifo_depth, stats_, clock_period),
+      cabac_("cabac", fifo_depth, stats_, clock_period),
+      output_dma_("output_dma", stats_, clock_period) {
     if (fifo_depth == 0 || fifo_depth > 255) {
         throw std::invalid_argument("native SystemC FIFO depth must be 1..255");
     }

@@ -1,6 +1,7 @@
 #include "vpu_systemc_native.hpp"
 
 #include "hevc/yuv420.hpp"
+#include "systemc_vpu/hardware_metrics.hpp"
 
 #include <systemc>
 #include <tlm>
@@ -32,6 +33,11 @@ struct Options {
     std::uint32_t mode = model::vpu_reg::MODE_PCM;
     std::uint32_t fifo_depth = 4;
     std::uint32_t dma_burst = 64;
+    std::uint32_t clock_mhz = 1000;
+    std::uint32_t sram_read_latency = 1;
+    std::uint32_t sram_write_latency = 1;
+    std::uint32_t sram_bytes_per_cycle = 16;
+    bool hardware_report = true;
     bool require_stall = false;
     std::optional<std::uint32_t> dst_capacity;
     std::optional<std::uint32_t> expected_error;
@@ -63,6 +69,34 @@ Options parse_options(int argc, char** argv) {
             if (result.dma_burst == 0 || result.dma_burst > 4096) {
                 throw std::invalid_argument("--dma-burst must be 1..4096");
             }
+        } else if (arg == "--clock-mhz") {
+            result.clock_mhz = std::stoul(next());
+            if (result.clock_mhz == 0 || result.clock_mhz > 10000) {
+                throw std::invalid_argument("--clock-mhz must be 1..10000");
+            }
+        } else if (arg == "--sram-read-latency") {
+            result.sram_read_latency = std::stoul(next());
+            if (result.sram_read_latency > 1000) {
+                throw std::invalid_argument(
+                    "--sram-read-latency must be 0..1000 cycles");
+            }
+        } else if (arg == "--sram-write-latency") {
+            result.sram_write_latency = std::stoul(next());
+            if (result.sram_write_latency > 1000) {
+                throw std::invalid_argument(
+                    "--sram-write-latency must be 0..1000 cycles");
+            }
+        } else if (arg == "--sram-bytes-per-cycle") {
+            result.sram_bytes_per_cycle = std::stoul(next());
+            if (result.sram_bytes_per_cycle == 0 ||
+                result.sram_bytes_per_cycle > 4096) {
+                throw std::invalid_argument(
+                    "--sram-bytes-per-cycle must be 1..4096");
+            }
+        } else if (arg == "--hw-report") {
+            result.hardware_report = true;
+        } else if (arg == "--no-hw-report") {
+            result.hardware_report = false;
         } else if (arg == "--require-stall") {
             result.require_stall = true;
         } else if (arg == "--dst-capacity") {
@@ -110,8 +144,15 @@ class TlmMemory final : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<TlmMemory> target_socket{"target_socket"};
 
-    TlmMemory(sc_core::sc_module_name name, std::size_t size)
-        : sc_module(name), bytes_(size) {
+    TlmMemory(sc_core::sc_module_name name, std::size_t size,
+              sc_core::sc_time clock_period,
+              std::uint32_t read_latency_cycles,
+              std::uint32_t write_latency_cycles,
+              std::uint32_t bytes_per_cycle)
+        : sc_module(name), bytes_(size), clock_period_(clock_period),
+          read_latency_cycles_(read_latency_cycles),
+          write_latency_cycles_(write_latency_cycles),
+          bytes_per_cycle_(bytes_per_cycle) {
         target_socket.register_b_transport(this, &TlmMemory::b_transport);
     }
 
@@ -159,11 +200,22 @@ private:
             transaction.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
             return;
         }
-        delay += sc_core::sc_time((size + 15U) / 16U, sc_core::SC_NS);
+        const auto transfer_cycles =
+            (size + bytes_per_cycle_ - 1U) / bytes_per_cycle_;
+        const auto access_latency =
+            transaction.get_command() == tlm::TLM_READ_COMMAND
+                ? read_latency_cycles_
+                : write_latency_cycles_;
+        delay += clock_period_ *
+            static_cast<double>(access_latency + transfer_cycles);
         transaction.set_response_status(tlm::TLM_OK_RESPONSE);
     }
 
     std::vector<std::uint8_t> bytes_;
+    sc_core::sc_time clock_period_;
+    std::uint32_t read_latency_cycles_;
+    std::uint32_t write_latency_cycles_;
+    std::uint32_t bytes_per_cycle_;
 };
 
 class CpuDriver final : public sc_core::sc_module {
@@ -175,9 +227,11 @@ public:
 
     CpuDriver(sc_core::sc_module_name name, TlmMemory& memory, Options options,
               std::vector<std::uint8_t> raw, std::uint64_t src,
-              std::uint64_t dst, std::uint32_t capacity)
+              std::uint64_t dst, std::uint32_t capacity,
+              const model::systemc_native::NativePipelineStats& stats)
         : sc_module(name), memory_(memory), options_(std::move(options)),
-          raw_(std::move(raw)), src_(src), dst_(dst), capacity_(capacity) {
+          raw_(std::move(raw)), src_(src), dst_(dst), capacity_(capacity),
+          stats_(stats) {
         SC_THREAD(run);
     }
 
@@ -312,6 +366,27 @@ private:
                       << ", transform=" << read32(TRANSFORM_ACTIVE)
                       << ", cabac=" << read32(CABAC_ACTIVE)
                       << ", dma_write=" << read32(DMA_WRITE_ACTIVE) << '\n';
+            if (options_.hardware_report) {
+                model::systemc_native::HardwareReportInput report;
+                report.width = options_.width;
+                report.height = options_.height;
+                report.frames = read32(FRAMES_DONE);
+                report.qp = options_.qp;
+                report.encoder_mode = options_.mode;
+                report.fifo_depth = options_.fifo_depth;
+                report.dma_burst_bytes = options_.dma_burst;
+                report.sram_read_latency_cycles =
+                    options_.sram_read_latency;
+                report.sram_write_latency_cycles =
+                    options_.sram_write_latency;
+                report.sram_bytes_per_cycle =
+                    options_.sram_bytes_per_cycle;
+                report.clock_mhz = options_.clock_mhz;
+                report.total_cycles = cycles;
+                report.bitstream_bytes = output_size;
+                model::systemc_native::print_hardware_report(
+                    std::cout, report, stats_);
+            }
             write32(IRQ_STATUS, IRQ_DONE | IRQ_ERROR);
         } catch (const std::exception& error) {
             SC_REPORT_ERROR("CpuDriver", error.what());
@@ -325,6 +400,7 @@ private:
     std::uint64_t src_;
     std::uint64_t dst_;
     std::uint32_t capacity_;
+    const model::systemc_native::NativePipelineStats& stats_;
 };
 
 } // namespace
@@ -360,15 +436,19 @@ int sc_main(int argc, char** argv) {
         const auto memory_size =
             static_cast<std::size_t>(dst + capacity + 4096);
 
-        const auto clock_period = sc_core::sc_time(1, sc_core::SC_NS);
+        const auto clock_period = sc_core::sc_time(
+            1000.0 / static_cast<double>(options.clock_mhz), sc_core::SC_NS);
         sc_core::sc_clock clock("clock", clock_period);
         sc_core::sc_signal<bool> reset_n("reset_n");
         sc_core::sc_signal<bool> irq_signal("irq_signal");
-        TlmMemory memory("memory", memory_size);
+        TlmMemory memory("memory", memory_size, clock_period,
+                         options.sram_read_latency,
+                         options.sram_write_latency,
+                         options.sram_bytes_per_cycle);
         model::systemc_native::VpuSystemCNative vpu(
             "vpu", options.fifo_depth, clock_period, options.dma_burst);
         CpuDriver cpu("cpu", memory, options, std::move(raw), src, dst,
-                      capacity);
+                      capacity, vpu.stats());
 
         cpu.mmio_socket.bind(vpu.mmio_socket());
         vpu.dma_socket().bind(memory.target_socket);

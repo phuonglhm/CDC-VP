@@ -45,13 +45,19 @@ build/test_vpu_mmio: tests/test_vpu_mmio.cpp $(CORE_SRC) src/vpu_mmio.cpp $(FIFO
 build/test_fifo_cycle_model: tests/test_fifo_cycle_model.cpp $(FIFO_SRC) | build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
 
+build/test_hardware_metrics: tests/test_hardware_metrics.cpp \
+		optional_systemc/hardware_metrics.cpp | build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
+
 build:
 	mkdir -p build
 
-test: build/test_core build/test_vpu_mmio build/test_fifo_cycle_model
+test: build/test_core build/test_vpu_mmio build/test_fifo_cycle_model \
+	build/test_hardware_metrics
 	./build/test_core
 	./build/test_vpu_mmio
 	./build/test_fifo_cycle_model
+	./build/test_hardware_metrics
 
 verify: all test
 	./build/yuvgen build/test_96x66.yuv 96 66 2
@@ -223,7 +229,8 @@ systemc: | build
 systemc-native: | build
 	$(CXX) $(CPPFLAGS) $(SYSTEMC_CPPFLAGS) $(CXXFLAGS) -DHEVC_HAVE_SYSTEMC \
 		optional_systemc/sc_native_main.cpp \
-		optional_systemc/vpu_systemc_native.cpp $(CORE_SRC) \
+		optional_systemc/vpu_systemc_native.cpp \
+		optional_systemc/hardware_metrics.cpp $(CORE_SRC) \
 		$(SYSTEMC_LDFLAGS) $(SYSTEMC_LDLIBS) -o $(SYSTEMC_NATIVE_BIN)
 
 verify-systemc-native: all systemc-native
@@ -236,8 +243,12 @@ verify-systemc-native: all systemc-native
 		--mode intra-directional-tq --qp 26 --fifo-depth 1 --require-stall \
 		-o build/systemc_native_d1.h265
 	./$(SYSTEMC_NATIVE_BIN) -i build/systemc_native_input.yuv -w 96 -h 66 -n 8 \
-		--mode intra-directional-tq --qp 26 --fifo-depth 4 \
-		-o build/systemc_native_d4.h265
+		--mode intra-directional-tq --qp 26 --fifo-depth 4 --clock-mhz 800 \
+		-o build/systemc_native_d4.h265 > build/systemc_hw_report.txt
+	grep -q "VPU SystemC/TLM HARDWARE METRIC DASHBOARD" build/systemc_hw_report.txt
+	grep -q "Pipeline fill (first output)" build/systemc_hw_report.txt
+	grep -q "SRAM read transactions" build/systemc_hw_report.txt
+	grep -q "no x265/FFmpeg encoder" build/systemc_hw_report.txt
 	cmp build/systemc_native_reference.h265 build/systemc_native_d1.h265
 	cmp build/systemc_native_reference.h265 build/systemc_native_d4.h265
 	ffprobe -v error -select_streams v:0 \

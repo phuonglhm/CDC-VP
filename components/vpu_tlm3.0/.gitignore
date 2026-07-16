@@ -1,5 +1,4 @@
 /build/
-
 *.yuv
 *.h265
-
+output/*.txt

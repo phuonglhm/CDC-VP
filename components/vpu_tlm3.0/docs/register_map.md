@@ -3,7 +3,8 @@
 All registers are 32-bit little-endian. `tick()` advances one FIFO cycle;
 legacy `step()` advances ticks until one frame completes.
 
-Implementation SystemC-native báo `VERSION=0x00030009`. Với implementation
+Implementation SystemC-native có hardware metric dashboard báo
+`VERSION=0x0003000A`. Với implementation
 này, `FIFO_CONFIG` phản ánh độ sâu `sc_fifo` được chọn khi elaboration và giá
 trị driver ghi phải khớp phần cứng; FIFO không thể resize sau `sc_start()`.
 
@@ -53,3 +54,8 @@ trị driver ghi phải khớp phần cứng; FIFO không thể resize sau `sc_s
 
 Performance counters ổn định khi `DONE=1`. Nhiều stage có thể stall trong cùng
 một cycle, nên tổng bốn stall counter có thể lớn hơn `CYCLES`.
+
+Dashboard còn đọc các counter nội bộ 64-bit cho TLM burst/byte, SRAM response
+delay, frame token và timestamp pipeline. Các counter mở rộng này thuộc
+testbench instrumentation, chưa chiếm thêm offset trong register space 0x100;
+software SoC vẫn dùng các register chuẩn trong bảng trên.

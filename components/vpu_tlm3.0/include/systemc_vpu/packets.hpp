@@ -62,6 +62,29 @@ struct NativePipelineStats {
     std::uint32_t max_residual_occupancy = 0;
     std::uint32_t max_coefficient_occupancy = 0;
     std::uint32_t max_output_occupancy = 0;
+
+    // Counts below are collected by the native SystemC/TLM data path.  The
+    // timestamps are absolute simulation clock indices; the report converts
+    // them to job-relative fill/drain latency.
+    std::uint64_t dma_read_bytes = 0;
+    std::uint64_t dma_write_bytes = 0;
+    std::uint64_t dma_read_bursts = 0;
+    std::uint64_t dma_write_bursts = 0;
+    std::uint64_t dma_read_wait_cycles = 0;
+    std::uint64_t dma_write_wait_cycles = 0;
+    std::uint64_t frames_input = 0;
+    std::uint64_t frames_prediction = 0;
+    std::uint64_t frames_transform = 0;
+    std::uint64_t frames_cabac = 0;
+    std::uint64_t frames_output = 0;
+    std::uint64_t job_start_cycle = 0;
+    std::uint64_t first_input_cycle = 0;
+    std::uint64_t first_prediction_cycle = 0;
+    std::uint64_t first_transform_cycle = 0;
+    std::uint64_t first_cabac_cycle = 0;
+    std::uint64_t first_output_cycle = 0;
+    std::uint64_t last_input_cycle = 0;
+    std::uint64_t last_output_cycle = 0;
 };
 
 inline std::ostream& operator<<(std::ostream& stream, const JobConfig& value) {
