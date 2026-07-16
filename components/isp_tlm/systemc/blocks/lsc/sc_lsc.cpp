@@ -1,6 +1,10 @@
 /**
  * @file sc_lsc.cpp
  * @brief Implementation of sc_lsc SystemC module
+ *
+ * Hardware shell pattern (Phase 3):
+ *   - process_pixel(): Pure functional kernel
+ *   - process_stream(): Hardware shell with timing
  */
 #include "sc_lsc.h"
 #include <cmath>
@@ -72,27 +76,59 @@ float sc_lsc::get_lsc_gain(std::uint32_t row, std::uint32_t col, bayer_channel c
     return bilinear_interpolate(G00, G10, G01, G11, dx, dy);
 }
 
-void sc_lsc::process_stream() {
+std::uint16_t sc_lsc::process_pixel(std::uint16_t pixel) {
+    if (!m_cfg.is_enable || m_lsc_lut.empty()) {
+        return pixel;
+    }
+
+    bayer_channel channel = get_bayer_channel(m_row, m_col);
+    float gain = get_lsc_gain(m_row, m_col, channel);
+
     std::uint32_t bit_range = (1u << m_bit_depth) - 1;
+    float val = static_cast<float>(pixel) * gain;
+    return static_cast<std::uint16_t>(
+        std::clamp(val, 0.0f, static_cast<float>(bit_range)));
+}
+
+void sc_lsc::process_stream() {
+    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
+    m_metrics.set_cycles_per_pixel(1);
+
+    // Check if timed mode is enabled
+    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    if (timed_mode) {
+        m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
+    }
 
     while (true) {
         std::uint16_t pixel = fifo_in->read();
+        m_metrics.begin_processing();
 
-        if (!m_cfg.is_enable || m_lsc_lut.empty()) {
-            fifo_out->write(pixel);
+        std::uint16_t output = process_pixel(pixel);
+
+        // Hardware shell: timing
+        if (timed_mode) {
+            for (int i = 0; i < m_cycles_per_pixel; ++i) {
+                wait();
+                ++m_cycle_count;
+                ++m_active_cycles;
+            }
         } else {
-            bayer_channel channel = get_bayer_channel(m_row, m_col);
-            float gain = get_lsc_gain(m_row, m_col, channel);
-            float val = static_cast<float>(pixel) * gain;
-            std::uint16_t output = static_cast<std::uint16_t>(
-                std::clamp(val, 0.0f, static_cast<float>(bit_range)));
-            fifo_out->write(output);
+            ++m_cycle_count;
+            ++m_active_cycles;
         }
+
+        fifo_out->write(output);
+        m_metrics.end_processing();
+        m_metrics.record_output();
 
         m_col++;
         if (m_col >= m_width) {
             m_col = 0;
             m_row++;
+            if (m_row >= m_height) {
+                m_row = 0;  // Frame complete - reset for next frame
+            }
         }
     }
 }

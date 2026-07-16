@@ -5,6 +5,10 @@
 #include "sc_yuv420.h"
 
 void sc_yuv420::process_stream() {
+    // Frame-level: measure from first read to last write
+    m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::FRAME);
+    m_metrics.begin_processing();
+
     if (!m_cfg.is_enable) {
         // Bypass mode: output YUV444 (interleaved)
         const std::size_t pixels = static_cast<std::size_t>(m_width) * m_height;
@@ -56,4 +60,10 @@ void sc_yuv420::process_stream() {
             fifo_out->write(static_cast<std::uint8_t>(sum_v / count));
         }
     }
+    m_metrics.end_processing();
+    const std::size_t out_y_size = static_cast<std::size_t>(m_width) * m_height;
+    const std::size_t out_uv_size = (static_cast<std::size_t>(m_width) + 1) / 2 * ((m_height + 1) / 2);
+    for (std::size_t i = 0; i < out_y_size; ++i) m_metrics.record_output();
+    for (std::size_t i = 0; i < out_uv_size; ++i) m_metrics.record_output();
+    for (std::size_t i = 0; i < out_uv_size; ++i) m_metrics.record_output();
 }

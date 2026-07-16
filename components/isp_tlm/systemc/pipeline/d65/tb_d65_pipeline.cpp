@@ -11,6 +11,8 @@
  *
  * Usage:
  *   ./tb_d65_pipeline
+ *   ./tb_d65_pipeline --metrics            # Enable metrics collection
+ *   ./tb_d65_pipeline --metrics-dir <dir>  # Custom metrics output directory
  *
  * Exits with 0 on success (MSE == 0), non-zero on mismatch.
  */
@@ -41,6 +43,18 @@ using namespace sc_core;
 using namespace cdc::components;
 
 namespace {
+
+// Resolve a path relative to the systemc directory
+// tb_d65_pipeline.cpp is at:
+//   <repo>/components/isp_tlm/systemc/pipeline/d65/tb_d65_pipeline.cpp
+// So systemc = __FILE__ -> d65 -> pipeline -> systemc
+std::string resolve_output_path(const std::string& rel_path) {
+    std::filesystem::path p(__FILE__);
+    p = p.parent_path();  // d65/
+    p = p.parent_path();  // pipeline/
+    p = p.parent_path();  // systemc/
+    return (p / rel_path).string();
+}
 
 // ---------------------------------------------------------------------------
 // Resolve input/output paths relative to the repository root.
@@ -117,6 +131,26 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "==================================================\n";
     std::cout << "FULL ISP PIPELINE TEST (D65 RAW 2688x1520)\n";
     std::cout << "==================================================\n";
+
+    // Parse command-line arguments
+    bool enable_metrics = false;
+    std::string metrics_dir = "output/metrics";
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--metrics" || arg == "-m") {
+            enable_metrics = true;
+        } else if ((arg == "--metrics-dir" || arg == "-d") && i + 1 < argc) {
+            metrics_dir = argv[++i];
+            enable_metrics = true;
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: " << argv[0] << " [options]\n";
+            std::cout << "Options:\n";
+            std::cout << "  --metrics, -m         Enable metrics collection\n";
+            std::cout << "  --metrics-dir, -d <dir>  Metrics output directory (default: output/metrics)\n";
+            std::cout << "  --help, -h            Show this help message\n";
+            return 0;
+        }
+    }
 
     // 1. Load the real RAW frame
     constexpr std::uint32_t W = 2688;
@@ -243,6 +277,14 @@ int sc_main(int argc, char* argv[]) {
     Generic_Driver<std::uint16_t> driver("driver", test_input);
     driver.fifo_out(input_fifo);
 
+    // Enable metrics if requested
+    if (enable_metrics) {
+        sc_isp_pipeline::set_metrics_request(true, resolve_output_path(metrics_dir), /*skip=*/nullptr);
+    } else {
+        // Metrics disabled - set empty path but don't clear to avoid overriding dut's defaults
+        sc_isp_pipeline::set_metrics_request(false, resolve_output_path("output/metrics"), nullptr);
+    }
+
     std::vector<float> lsc_lut(8192, 1.0f);  // not used (LSC disabled)
     cfa_types dut_bayer = cfa_types::RGGB;
     switch (dut_bayer_pattern & 0x3u) {
@@ -281,6 +323,17 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "[TB] SystemC simulation finished in "
               << std::chrono::duration_cast<std::chrono::milliseconds>(s1 - s0).count()
               << " ms\n";
+
+    // Dump metrics if enabled
+    if (enable_metrics) {
+        std::size_t boundary_samples = dut.dump_pipeline_metrics();
+        std::size_t block_samples = dut.dump_all_block_metrics();
+
+        std::cout << "[TB] Metrics collection completed:\n";
+        std::cout << "[TB]   Boundary samples: " << boundary_samples << "\n";
+        std::cout << "[TB]   Block samples: " << block_samples << "\n";
+        std::cout << "[TB]   Output directory: " << metrics_dir << "\n";
+    }
 
     // 7. Capture results, save, compare
     std::vector<std::uint8_t> sc_output = drain_monitor(monitor);

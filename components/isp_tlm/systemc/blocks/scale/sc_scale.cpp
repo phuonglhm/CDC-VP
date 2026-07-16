@@ -32,6 +32,10 @@ std::uint8_t sc_scale::interpolate_bilinear_yuv(const std::vector<std::uint8_t>&
 }
 
 void sc_scale::process_stream() {
+    // Frame-level: measure from first read to last write
+    m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::FRAME);
+    m_metrics.begin_processing();
+
     if (!m_cfg.is_enable || (m_in_width == m_cfg.out_width && m_in_height == m_cfg.out_height)) {
         // Bypass mode
         const std::size_t in_pixels = static_cast<std::size_t>(m_in_width) * m_in_height;
@@ -63,4 +67,6 @@ void sc_scale::process_stream() {
             }
         }
     }
+    m_metrics.end_processing();
+    for (std::size_t i = 0; i < 3 * m_cfg.out_width * m_cfg.out_height; ++i) m_metrics.record_output();
 }

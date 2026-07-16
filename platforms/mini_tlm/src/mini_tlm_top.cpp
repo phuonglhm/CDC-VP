@@ -149,7 +149,7 @@ struct mini_tlm_top::impl : public sc_core::sc_module {
     UartTLM uart;
    sc_core::sc_buffer<unsigned char> uart_tx;
    sc_core::sc_signal<bool> uart_irq;
-    cdc::components::timer_tlm timer;
+    cdc::components::Timer timer;
     cdc::components::memory_tlm ram;
     sc_core::sc_signal<bool> timer_irq; // sợi dây vật lý
 
@@ -160,7 +160,7 @@ struct mini_tlm_top::impl : public sc_core::sc_module {
         , uart("uart")
        , uart_tx("uart_tx")
        , uart_irq("uart_irq")
-        , timer("timer")
+        , timer("timer", 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4)
         , ram("ram", kRegionSize)
         , timer_irq("timer_irq")
     {

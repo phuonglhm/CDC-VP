@@ -28,6 +28,7 @@ using namespace sc_core;
 
 #include "../../../blocks/awb/include/awb.h"
 #include "../../../core/include/isp_types.h"
+#include "../../tb_utils/sc_block_metrics.h"
 
 SC_MODULE(sc_awb) {
 public:
@@ -43,12 +44,19 @@ public:
             std::uint8_t bit_depth)
         : sc_module(name), m_cfg(cfg), m_width(width), m_height(height),
           m_bit_depth(bit_depth), m_r_gain(1.0f), m_b_gain(1.0f),
-          m_bayer_pattern(cfa_types::RGGB), m_input_bit_depth(bit_depth) {
+          m_bayer_pattern(cfa_types::RGGB), m_input_bit_depth(bit_depth),
+          m_metrics("awb") {
         SC_THREAD(process_stream);
     }
 
+    sc_block_metrics<std::uint16_t> m_metrics;
+
     float get_r_gain() const { return m_r_gain; }
     float get_b_gain() const { return m_b_gain; }
+
+    // Latched gains: updated at end-of-frame, safe for downstream blocks to read
+    float get_latched_r_gain() const { return m_latched_r_gain; }
+    float get_latched_b_gain() const { return m_latched_b_gain; }
 
     // Pre-compute the R/B gains from a raw Bayer buffer (single-channel
     // 16-bit values). The buffer is interpreted as a mosaic in the CFA
@@ -87,6 +95,21 @@ public:
         m_b_gain = b_gain;
     }
 
+    // Architecture metrics (for collect_block_metrics)
+    std::uint64_t active_cycles() const { return m_active_cycles; }
+    std::uint64_t starved_cycles() const { return m_starved_cycles; }
+    std::uint64_t total_cycles() const { return m_cycle_count; }
+    double utilization() const {
+        return (m_cycle_count > 0) ?
+            static_cast<double>(m_active_cycles) / m_cycle_count : 0.0;
+    }
+
+    void reset_counters() {
+        m_active_cycles = 0;
+        m_starved_cycles = 0;
+        m_cycle_count = 0;
+    }
+
 private:
     void process_stream();
 
@@ -97,8 +120,15 @@ private:
 
     float m_r_gain;
     float m_b_gain;
+    float m_latched_r_gain = 1.0f;  // Latched at end-of-frame, safe to read
+    float m_latched_b_gain = 1.0f;   // Latched at end-of-frame, safe to read
     cfa_types m_bayer_pattern;
     std::uint8_t m_input_bit_depth;
+
+    // Architecture metrics
+    std::uint64_t m_active_cycles = 0;
+    std::uint64_t m_starved_cycles = 0;
+    std::uint64_t m_cycle_count = 0;
 };
 
 #endif  // SC_AWB_H

@@ -2,18 +2,11 @@
  * @file sc_bnr.cpp
  * @brief Implementation of sc_bnr SystemC module
  *
- * Bayer Noise Reduction (BNR).
+ * Bayer Noise Reduction (BNR) - Frame-level processing.
  *
- * Functional clone of the original `bnr_block::process`:
- *   1. Read entire frame from fifo_in
- *   2. Hamilton-Adams green-channel interpolation (guide image)
- *   3. Extract R / G / B sub-images at the CFA positions
- *   4. Joint bilateral filter on each plane separately
- *   5. Reconstruct the Bayer grid
- *   6. Rescale and stream out via fifo_out
- *
- * `isp_utils::get_pixel_mirror` is replicated locally as `mirror_get()`
- * to satisfy the "no global lookups in SystemC wrappers" rule.
+ * Hardware shell pattern (Phase 3):
+ *   - Frame-level processing with timing
+ *   - Architecture metrics
  */
 #include "sc_bnr.h"
 #include <algorithm>
@@ -124,151 +117,197 @@ inline bayer_channel channel_at(int row, int col, cfa_types bayer) {
 } // anonymous namespace
 
 void sc_bnr::process_stream() {
-    const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
-    const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
-    const float scale = 1.0f / static_cast<float>(bit_range);
+    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
 
-    if (!m_cfg.is_enable) {
-        // Bypass
+    while (true) {
+        m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
+        m_metrics.begin_processing();
+
+        const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
+        const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
+        const float scale = 1.0f / static_cast<float>(bit_range);
+
+        // Wait for frame data
+        if (timed_mode) {
+            while (fifo_in->num_available() < total) {
+                ++m_starved_cycles;
+                ++m_cycle_count;
+                wait();
+            }
+        } else {
+            while (fifo_in->num_available() < total) {
+                wait();
+            }
+        }
+
+        if (!m_cfg.is_enable) {
+            // Bypass
+            for (std::size_t i = 0; i < total; ++i) {
+                fifo_out->write(fifo_in->read());
+                if (timed_mode) {
+                    ++m_active_cycles;
+                    ++m_cycle_count;
+                    wait();
+                }
+            }
+            m_metrics.end_processing();
+            for (std::size_t i = 0; i < total; ++i) m_metrics.record_output();
+            continue;
+        }
+
+        // 1) Read entire frame
+        std::vector<std::uint16_t> raw(total);
         for (std::size_t i = 0; i < total; ++i) {
-            fifo_out->write(fifo_in->read());
-        }
-        return;
-    }
-
-    // 1) Read entire frame
-    std::vector<std::uint16_t> raw(total);
-    for (std::size_t i = 0; i < total; ++i) {
-        raw[i] = fifo_in->read();
-    }
-
-    std::vector<float> norm_in(total);
-    for (std::size_t i = 0; i < total; ++i) {
-        norm_in[i] = static_cast<float>(raw[i]) * scale;
-    }
-
-    const int W = static_cast<int>(m_width);
-    const int H = static_cast<int>(m_height);
-
-    // 2) Hamilton-Adams green-channel interpolation (guide image)
-    std::vector<float> kern_filt_g(total);
-    for (int i = 0; i < H; ++i) {
-        for (int j = 0; j < W; ++j) {
-            bayer_channel channel = channel_at(i, j, m_bayer);
-            float green_est;
-            if (channel == bayer_channel::GR || channel == bayer_channel::GB) {
-                green_est = norm_in[static_cast<std::size_t>(i) * m_width + j];
-            } else {
-                const float g_n  = mirror_get(norm_in.data(), i - 1, j    , m_width, m_height);
-                const float g_s  = mirror_get(norm_in.data(), i + 1, j    , m_width, m_height);
-                const float g_e  = mirror_get(norm_in.data(), i    , j + 1, m_width, m_height);
-                const float g_w  = mirror_get(norm_in.data(), i    , j - 1, m_width, m_height);
-                const float d_ne = mirror_get(norm_in.data(), i - 1, j + 1, m_width, m_height);
-                const float d_nw = mirror_get(norm_in.data(), i - 1, j - 1, m_width, m_height);
-                const float d_se = mirror_get(norm_in.data(), i + 1, j + 1, m_width, m_height);
-                const float d_sw = mirror_get(norm_in.data(), i + 1, j - 1, m_width, m_height);
-
-                const float center   = norm_in[static_cast<std::size_t>(i) * m_width + j];
-                const float card_avg = 0.25f * (g_n + g_s + g_e + g_w);
-                const float diag_avg = 0.25f * (d_ne + d_nw + d_se + d_sw);
-                green_est = center + 0.5f * (card_avg - diag_avg);
+            raw[i] = fifo_in->read();
+            if (timed_mode) {
+                ++m_active_cycles;
+                ++m_cycle_count;
+                wait();
             }
-            kern_filt_g[static_cast<std::size_t>(i) * m_width + j] =
-                std::clamp(green_est, 0.0f, 1.0f);
         }
-    }
 
-    // 3) Extract sub-images at R / B positions
-    std::vector<float> interp_g = norm_in;
-    const std::uint32_t sub_w = m_width / 2;
-    const std::uint32_t sub_h = m_height / 2;
-    std::vector<float> in_img_r(static_cast<std::size_t>(sub_w) * sub_h);
-    std::vector<float> in_img_b(static_cast<std::size_t>(sub_w) * sub_h);
-    std::vector<float> interp_g_at_r(static_cast<std::size_t>(sub_w) * sub_h);
-    std::vector<float> interp_g_at_b(static_cast<std::size_t>(sub_w) * sub_h);
+        std::vector<float> norm_in(total);
+        for (std::size_t i = 0; i < total; ++i) {
+            norm_in[i] = static_cast<float>(raw[i]) * scale;
+        }
 
-    for (std::uint32_t i = 0; i < sub_h; ++i) {
-        for (std::uint32_t j = 0; j < sub_w; ++j) {
-            std::uint32_t r_idx = 0, b_idx = 0;
-            switch (m_bayer) {
-            case cfa_types::RGGB:
-                r_idx = (2 * i) * m_width + (2 * j);
-                b_idx = (2 * i + 1) * m_width + (2 * j + 1);
-                break;
-            case cfa_types::BGGR:
-                r_idx = (2 * i + 1) * m_width + (2 * j + 1);
-                b_idx = (2 * i) * m_width + (2 * j);
-                break;
-            case cfa_types::GRBG:
-                r_idx = (2 * i) * m_width + (2 * j + 1);
-                b_idx = (2 * i + 1) * m_width + (2 * j);
-                break;
-            case cfa_types::GBRG:
-                r_idx = (2 * i + 1) * m_width + (2 * j);
-                b_idx = (2 * i) * m_width + (2 * j + 1);
-                break;
+        const int W = static_cast<int>(m_width);
+        const int H = static_cast<int>(m_height);
+
+        // 2) Hamilton-Adams green-channel interpolation (guide image)
+        std::vector<float> kern_filt_g(total);
+        for (int i = 0; i < H; ++i) {
+            for (int j = 0; j < W; ++j) {
+                bayer_channel channel = channel_at(i, j, m_bayer);
+                float green_est;
+                if (channel == bayer_channel::GR || channel == bayer_channel::GB) {
+                    green_est = norm_in[static_cast<std::size_t>(i) * m_width + j];
+                } else {
+                    const float g_n  = mirror_get(norm_in.data(), i - 1, j    , m_width, m_height);
+                    const float g_s  = mirror_get(norm_in.data(), i + 1, j    , m_width, m_height);
+                    const float g_e  = mirror_get(norm_in.data(), i    , j + 1, m_width, m_height);
+                    const float g_w  = mirror_get(norm_in.data(), i    , j - 1, m_width, m_height);
+                    const float d_ne = mirror_get(norm_in.data(), i - 1, j + 1, m_width, m_height);
+                    const float d_nw = mirror_get(norm_in.data(), i - 1, j - 1, m_width, m_height);
+                    const float d_se = mirror_get(norm_in.data(), i + 1, j + 1, m_width, m_height);
+                    const float d_sw = mirror_get(norm_in.data(), i + 1, j - 1, m_width, m_height);
+
+                    const float center   = norm_in[static_cast<std::size_t>(i) * m_width + j];
+                    const float card_avg = 0.25f * (g_n + g_s + g_e + g_w);
+                    const float diag_avg = 0.25f * (d_ne + d_nw + d_se + d_sw);
+                    green_est = center + 0.5f * (card_avg - diag_avg);
+                }
+                kern_filt_g[static_cast<std::size_t>(i) * m_width + j] =
+                    std::clamp(green_est, 0.0f, 1.0f);
+
+                if (timed_mode) {
+                    ++m_active_cycles;
+                    ++m_cycle_count;
+                    wait();
+                }
             }
-
-            in_img_r[i * sub_w + j] = norm_in[r_idx];
-            in_img_b[i * sub_w + j] = norm_in[b_idx];
-
-            interp_g[r_idx] = kern_filt_g[r_idx];
-            interp_g[b_idx] = kern_filt_g[b_idx];
-
-            interp_g_at_r[i * sub_w + j] = kern_filt_g[r_idx];
-            interp_g_at_b[i * sub_w + j] = kern_filt_g[b_idx];
         }
-    }
 
-    // 4) Joint bilateral filtering on R / G / B sub-images
-    const int filt_size_g = m_cfg.filter_window;
-    const int filt_size_r = (m_cfg.filter_window + 1) / 2;
-    const int filt_size_b = (m_cfg.filter_window + 1) / 2;
+        // 3) Extract sub-images at R / B positions
+        std::vector<float> interp_g = norm_in;
+        const std::uint32_t sub_w = m_width / 2;
+        const std::uint32_t sub_h = m_height / 2;
+        std::vector<float> in_img_r(static_cast<std::size_t>(sub_w) * sub_h);
+        std::vector<float> in_img_b(static_cast<std::size_t>(sub_w) * sub_h);
+        std::vector<float> interp_g_at_r(static_cast<std::size_t>(sub_w) * sub_h);
+        std::vector<float> interp_g_at_b(static_cast<std::size_t>(sub_w) * sub_h);
 
-    std::vector<float> out_img_r(static_cast<std::size_t>(sub_w) * sub_h);
-    std::vector<float> out_img_g(total);
-    std::vector<float> out_img_b(static_cast<std::size_t>(sub_w) * sub_h);
+        for (std::uint32_t i = 0; i < sub_h; ++i) {
+            for (std::uint32_t j = 0; j < sub_w; ++j) {
+                std::uint32_t r_idx = 0, b_idx = 0;
+                switch (m_bayer) {
+                case cfa_types::RGGB:
+                    r_idx = (2 * i) * m_width + (2 * j);
+                    b_idx = (2 * i + 1) * m_width + (2 * j + 1);
+                    break;
+                case cfa_types::BGGR:
+                    r_idx = (2 * i + 1) * m_width + (2 * j + 1);
+                    b_idx = (2 * i) * m_width + (2 * j);
+                    break;
+                case cfa_types::GRBG:
+                    r_idx = (2 * i) * m_width + (2 * j + 1);
+                    b_idx = (2 * i + 1) * m_width + (2 * j);
+                    break;
+                case cfa_types::GBRG:
+                    r_idx = (2 * i + 1) * m_width + (2 * j);
+                    b_idx = (2 * i) * m_width + (2 * j + 1);
+                    break;
+                }
 
-    joint_bilateral_filter(in_img_r, interp_g_at_r, out_img_r, sub_w, sub_h,
-                           filt_size_r, m_cfg.r_std_dev_s, m_cfg.r_std_dev_r, 2);
-    joint_bilateral_filter(interp_g, interp_g, out_img_g, m_width, m_height,
-                           filt_size_g, m_cfg.g_std_dev_s, m_cfg.g_std_dev_r, 1);
-    joint_bilateral_filter(in_img_b, interp_g_at_b, out_img_b, sub_w, sub_h,
-                           filt_size_b, m_cfg.b_std_dev_s, m_cfg.b_std_dev_r, 2);
+                in_img_r[i * sub_w + j] = norm_in[r_idx];
+                in_img_b[i * sub_w + j] = norm_in[b_idx];
 
-    // 5) Reconstruct Bayer grid
-    std::vector<float> bnr_out = out_img_g;
-    for (std::uint32_t i = 0; i < sub_h; ++i) {
-        for (std::uint32_t j = 0; j < sub_w; ++j) {
-            std::uint32_t r_idx = 0, b_idx = 0;
-            switch (m_bayer) {
-            case cfa_types::RGGB:
-                r_idx = (2 * i) * m_width + (2 * j);
-                b_idx = (2 * i + 1) * m_width + (2 * j + 1);
-                break;
-            case cfa_types::BGGR:
-                r_idx = (2 * i + 1) * m_width + (2 * j + 1);
-                b_idx = (2 * i) * m_width + (2 * j);
-                break;
-            case cfa_types::GRBG:
-                r_idx = (2 * i) * m_width + (2 * j + 1);
-                b_idx = (2 * i + 1) * m_width + (2 * j);
-                break;
-            case cfa_types::GBRG:
-                r_idx = (2 * i + 1) * m_width + (2 * j);
-                b_idx = (2 * i) * m_width + (2 * j + 1);
-                break;
+                interp_g[r_idx] = kern_filt_g[r_idx];
+                interp_g[b_idx] = kern_filt_g[b_idx];
+
+                interp_g_at_r[i * sub_w + j] = kern_filt_g[r_idx];
+                interp_g_at_b[i * sub_w + j] = kern_filt_g[b_idx];
             }
-            bnr_out[r_idx] = out_img_r[i * sub_w + j];
-            bnr_out[b_idx] = out_img_b[i * sub_w + j];
         }
-    }
 
-    // 6) Rescale & stream out
-    for (std::size_t i = 0; i < total; ++i) {
-        const float val = bnr_out[i] * static_cast<float>(bit_range);
-        const std::uint16_t output = static_cast<std::uint16_t>(
-            std::clamp(val, 0.0f, static_cast<float>(bit_range)));
-        fifo_out->write(output);
+        // 4) Joint bilateral filtering on R / G / B sub-images
+        const int filt_size_g = m_cfg.filter_window;
+        const int filt_size_r = (m_cfg.filter_window + 1) / 2;
+        const int filt_size_b = (m_cfg.filter_window + 1) / 2;
+
+        std::vector<float> out_img_r(static_cast<std::size_t>(sub_w) * sub_h);
+        std::vector<float> out_img_g(total);
+        std::vector<float> out_img_b(static_cast<std::size_t>(sub_w) * sub_h);
+
+        joint_bilateral_filter(in_img_r, interp_g_at_r, out_img_r, sub_w, sub_h,
+                               filt_size_r, m_cfg.r_std_dev_s, m_cfg.r_std_dev_r, 2);
+        joint_bilateral_filter(interp_g, interp_g, out_img_g, m_width, m_height,
+                               filt_size_g, m_cfg.g_std_dev_s, m_cfg.g_std_dev_r, 1);
+        joint_bilateral_filter(in_img_b, interp_g_at_b, out_img_b, sub_w, sub_h,
+                               filt_size_b, m_cfg.b_std_dev_s, m_cfg.b_std_dev_r, 2);
+
+        // 5) Reconstruct Bayer grid
+        std::vector<float> bnr_out = out_img_g;
+        for (std::uint32_t i = 0; i < sub_h; ++i) {
+            for (std::uint32_t j = 0; j < sub_w; ++j) {
+                std::uint32_t r_idx = 0, b_idx = 0;
+                switch (m_bayer) {
+                case cfa_types::RGGB:
+                    r_idx = (2 * i) * m_width + (2 * j);
+                    b_idx = (2 * i + 1) * m_width + (2 * j + 1);
+                    break;
+                case cfa_types::BGGR:
+                    r_idx = (2 * i + 1) * m_width + (2 * j + 1);
+                    b_idx = (2 * i) * m_width + (2 * j);
+                    break;
+                case cfa_types::GRBG:
+                    r_idx = (2 * i) * m_width + (2 * j + 1);
+                    b_idx = (2 * i + 1) * m_width + (2 * j);
+                    break;
+                case cfa_types::GBRG:
+                    r_idx = (2 * i + 1) * m_width + (2 * j);
+                    b_idx = (2 * i) * m_width + (2 * j + 1);
+                    break;
+                }
+                bnr_out[r_idx] = out_img_r[i * sub_w + j];
+                bnr_out[b_idx] = out_img_b[i * sub_w + j];
+            }
+        }
+
+        // 6) Rescale & stream out
+        for (std::size_t i = 0; i < total; ++i) {
+            const float val = bnr_out[i] * static_cast<float>(bit_range);
+            const std::uint16_t output = static_cast<std::uint16_t>(
+                std::clamp(val, 0.0f, static_cast<float>(bit_range)));
+            fifo_out->write(output);
+            m_metrics.record_output();
+            if (timed_mode) {
+                ++m_active_cycles;
+                ++m_cycle_count;
+                wait();
+            }
+        }
+
+        m_metrics.end_processing();
     }
 }

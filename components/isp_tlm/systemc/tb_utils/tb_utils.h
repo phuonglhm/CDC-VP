@@ -1,33 +1,20 @@
 /**
-
  * @file tb_utils.h
-
  * @brief Generic Testbench Utilities for SystemC ISP Streaming Architecture
-
  *
-
  * Provides templated Driver and Monitor classes for pixel-by-pixel streaming
-
  * testbench generation. These utilities enable untimed verification of each
-
  * ISP processing block by driving stimulus and capturing/monitoring responses.
-
  */
-
 #ifndef ISP_TB_UTILS_H
-
 #define ISP_TB_UTILS_H
 
-
-
 #include <systemc>
-using namespace sc_core;
-
-
 #include <vector>
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <systemc>
 
 /**
  * @brief Generic Driver template for pushing pixel data into SystemC FIFOs

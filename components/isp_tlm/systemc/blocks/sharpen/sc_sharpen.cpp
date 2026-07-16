@@ -34,6 +34,10 @@ std::vector<float> sc_sharpen::create_gaussian_kernel(std::uint8_t sigma) {
 }
 
 void sc_sharpen::process_stream() {
+    // Frame-level: measure from first read to last write
+    m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::FRAME);
+    m_metrics.begin_processing();
+
     if (!m_cfg.is_enable || m_cfg.sharpen_strength == 0) {
         // Bypass mode
         while (true) {
@@ -88,4 +92,6 @@ void sc_sharpen::process_stream() {
             fifo_out->write(y_plane[i + 2u]);  // V unchanged
         }
     }
+    m_metrics.end_processing();
+    for (std::size_t i = 0; i < 3 * m_width * m_height; ++i) m_metrics.record_output();
 }

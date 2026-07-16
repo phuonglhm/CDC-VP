@@ -56,6 +56,10 @@ inline bayer_channel channel_at(int row, int col, cfa_types bayer) {
 } // anonymous namespace
 
 void sc_demosaic::process_stream() {
+    // Frame-level: measure from first read to last write
+    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
+    m_metrics.begin_processing();
+
     const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
     const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
 
@@ -135,4 +139,7 @@ void sc_demosaic::process_stream() {
     for (std::size_t i = 0; i < output.size(); ++i) {
         fifo_out->write(output[i]);
     }
+
+    m_metrics.end_processing();
+    for (std::size_t i = 0; i < output.size(); ++i) m_metrics.record_output();
 }

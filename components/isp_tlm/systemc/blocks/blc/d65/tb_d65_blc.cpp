@@ -110,7 +110,7 @@ int sc_main(int argc, char* argv[]) {
     Generic_Driver<std::uint16_t> driver("driver", test_input);
     driver.fifo_out(input_fifo);
 
-    sc_blc dut("blc_dut", cfg, cfa_types::RGGB, 12);
+    sc_blc dut("blc_dut", cfg, cfa_types::RGGB, 12, 1280, 720, nullptr);
     dut.fifo_in(input_fifo);
     dut.fifo_out(output_fifo);
 

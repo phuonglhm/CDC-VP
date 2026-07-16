@@ -76,6 +76,10 @@ namespace {
 }
 
 void sc_2dnr::process_stream() {
+    // Frame-level: measure from first read to last write
+    m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::FRAME);
+    m_metrics.begin_processing();
+
     if (!m_cfg.is_enable || m_cfg.window_size < 3 || m_cfg.patch_size < 3) {
         while (true) {
             fifo_out->write(fifo_in->read());
@@ -158,4 +162,6 @@ void sc_2dnr::process_stream() {
     for (std::size_t i = 0; i < output.size(); ++i) {
         fifo_out->write(output[i]);
     }
+    m_metrics.end_processing();
+    for (std::size_t i = 0; i < 3 * m_width * m_height; ++i) m_metrics.record_output();
 }

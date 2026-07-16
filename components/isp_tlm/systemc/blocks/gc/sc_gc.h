@@ -1,24 +1,20 @@
 /**
-
  * @file sc_gc.h
-
  * @brief SystemC Streaming Module for Gamma Correction (GC)
-
  *
-
  * Implements gamma correction using a 12-bit LUT lookup.
-
+ * Streaming architecture with pixel-by-pixel processing.
+ *
+ * Hardware shell features (Phase 3):
+ *   - Optional hw_params for timing
+ *   - Configurable cycles per pixel
+ *   - Architecture metrics
  */
-
 #ifndef SC_GC_H
-
 #define SC_GC_H
-
-
 
 #include <systemc>
 using namespace sc_core;
-
 
 #include <systemc>
 #include <cstdint>
@@ -26,25 +22,68 @@ using namespace sc_core;
 
 #include "../../../blocks/gc/include/gc.h"
 #include "../../../blocks/gc/gc_lut/lut.h"
+#include "../../tb_utils/sc_block_metrics.h"
+#include "../../hw/isp_arch_config.h"
 
 SC_MODULE(sc_gc) {
 public:
     sc_core::sc_port<sc_fifo_in_if<std::uint16_t>> fifo_in;
     sc_core::sc_port<sc_fifo_out_if<std::uint16_t>> fifo_out;
 
+    // Optional clock port for timed mode
+    sc_in<bool> clk;
+
     SC_HAS_PROCESS(sc_gc);
 
-    sc_gc(sc_core::sc_module_name name, const gc_config& cfg)
-        : sc_module(name), m_cfg(cfg) {
+    sc_gc(sc_core::sc_module_name name,
+          const gc_config& cfg,
+          const hw_params* hw = nullptr)
+        : sc_module(name), m_cfg(cfg), m_hw(hw),
+          m_cycles_per_pixel(2), m_metrics("gc") {
         SC_THREAD(process_stream);
+    }
+
+    // Block-level metrics collector
+    sc_block_metrics<std::uint16_t> m_metrics;
+
+    // Hardware configuration
+    void set_hw_params(const hw_params* hw) { m_hw = hw; }
+    void set_cycles_per_pixel(int cycles) { m_cycles_per_pixel = cycles; }
+
+    // Architecture metrics
+    std::uint64_t active_cycles() const { return m_active_cycles; }
+    std::uint64_t starved_cycles() const { return m_starved_cycles; }
+    std::uint64_t total_cycles() const { return m_cycle_count; }
+    double utilization() const {
+        return (m_cycle_count > 0) ?
+            static_cast<double>(m_active_cycles) / m_cycle_count : 0.0;
+    }
+
+    void reset_counters() {
+        m_active_cycles = 0;
+        m_starved_cycles = 0;
+        m_cycle_count = 0;
     }
 
 private:
     void process_stream();
 
+    // Process RGB triplet - pure functional
+    void process_rgb_triplet(std::uint16_t r, std::uint16_t g, std::uint16_t b,
+                           std::uint16_t& r_out, std::uint16_t& g_out, std::uint16_t& b_out);
+
     const gc_config& m_cfg;
     const std::uint16_t* m_lut;
     std::size_t m_lut_size;
+
+    // Hardware parameters
+    const hw_params* m_hw;
+    int m_cycles_per_pixel;
+
+    // Architecture metrics
+    std::uint64_t m_active_cycles = 0;
+    std::uint64_t m_starved_cycles = 0;
+    std::uint64_t m_cycle_count = 0;
 };
 
 #endif  // SC_GC_H

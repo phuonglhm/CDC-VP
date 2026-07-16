@@ -1,19 +1,36 @@
 # ==============================================================================
-# SystemC ISP Streaming Testbenches
+# SystemC ISP Streaming Testbenches (Architecture-Aware)
 #
 # Builds:
-#   - 17 individual block testbenches (tb_blc, tb_dpc, tb_dg, tb_wb, tb_ccm,
-#     tb_gc, tb_csc, tb_cse, tb_lsc, tb_bnr, tb_demosaic, tb_sharpen,
-#     tb_2dnr, tb_awb, tb_aec, tb_scale, tb_yuv420)
+#   - 17 individual block testbenches
 #   - 1 full-pipeline testbench (tb_pipeline)
+#   - 1 architecture-aware timed pipeline testbench (tb_arch_pipeline)
 #
-# Each block-level testbench does NOT depend on the original C++ reference
-# library; it is a standalone sc_main that compiles its DUT + test patterns
-# in-test.
-#
-# The full pipeline testbench DOES depend on `cdc::components::isp_tlm`
-# (the original sequential C++ pipeline) for golden reference generation.
+# Hardware architecture support files in hw/ directory:
+#   - isp_arch_config.h: Architecture configuration
+#   - stream_beat.h: Frame-aware stream types
+#   - timed_stream.h: Clocked instrumented streams
+#   - metrics.h: Architecture metrics collection
+#   - local_memory.h: Line buffer and memory models
+#   - frame_dma.h: DMA models
+#   - timed_block.h: Hardware shell base classes
+#   - trace.h: VCD tracing utilities
 # ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Hardware Architecture Support (header-only, no compilation needed)
+# ------------------------------------------------------------------------------
+set(SC_ISP_HW_HEADERS
+    hw/isp_arch_config.h
+    hw/stream_beat.h
+    hw/timed_stream.h
+    hw/metrics.h
+    hw/local_memory.h
+    hw/frame_dma.h
+    hw/timed_block.h
+    hw/trace.h
+    hw/hw.h
+)
 
 # ------------------------------------------------------------------------------
 # Aggregate a list of every sc_<block>.cpp file so we can compile them as a
@@ -54,6 +71,7 @@ add_library(cdc::components::sc_isp_pipeline ALIAS sc_isp_pipeline)
 target_include_directories(sc_isp_blocks PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/hw
     # Re-export the original block headers so DUT code can `#include` them
     ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
     ${CMAKE_SOURCE_DIR}/components/isp_tlm/blocks/2dnr/include
@@ -179,6 +197,7 @@ target_include_directories(tb_pipeline PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
     ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
     ${CMAKE_SOURCE_DIR}/components/isp_tlm/pipeline/include
+    ${SYSTEMC_INCLUDE_DIR}
 )
 target_link_libraries(tb_pipeline PRIVATE
     sc_isp_pipeline
@@ -187,7 +206,8 @@ target_link_libraries(tb_pipeline PRIVATE
 )
 
 if(CDC_BUILD_TESTS)
-    add_test(NAME tb_pipeline COMMAND tb_pipeline)
+    add_test(NAME tb_pipeline COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_pipeline
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 # ------------------------------------------------------------------------------
@@ -212,7 +232,8 @@ target_link_libraries(tb_d65_pipeline PRIVATE
     SystemC::systemc
 )
 if(CDC_BUILD_TESTS)
-    add_test(NAME tb_d65_pipeline COMMAND tb_d65_pipeline)
+    add_test(NAME tb_d65_pipeline COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_d65_pipeline
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 add_executable(tb_d65_blc blocks/blc/d65/tb_d65_blc.cpp)
@@ -229,5 +250,137 @@ target_link_libraries(tb_d65_blc PRIVATE
     SystemC::systemc
 )
 if(CDC_BUILD_TESTS)
-    add_test(NAME tb_d65_blc COMMAND tb_d65_blc)
+    add_test(NAME tb_d65_blc COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_d65_blc
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# ------------------------------------------------------------------------------
+# Metrics wrapper demo testbench (single-block demo)
+#
+# Exercises sc_metrics_wrapper<uint16_t> between a Generic_Driver and a
+# sc_blc block. Dumps per-token latency CSV + summary at sc_main return.
+# ------------------------------------------------------------------------------
+add_executable(tb_metrics_demo tb_utils/metrics_demo_tb.cpp)
+target_include_directories(tb_metrics_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/blocks/blc/include
+)
+target_link_libraries(tb_metrics_demo PRIVATE
+    sc_isp_blocks
+    SystemC::systemc
+)
+if(CDC_BUILD_TESTS)
+    add_test(NAME tb_metrics_demo COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_metrics_demo
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# ------------------------------------------------------------------------------
+# Architecture-Aware Timed Pipeline Testbench
+#
+# This testbench demonstrates the full architecture model with:
+#   - Clock and reset signals
+#   - Timed block processing
+#   - Architecture metrics collection
+#   - Bottleneck analysis
+# ------------------------------------------------------------------------------
+add_executable(tb_arch_pipeline pipeline/tb_arch_pipeline.cpp)
+target_include_directories(tb_arch_pipeline PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/hw
+    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/pipeline/include
+    ${SYSTEMC_INCLUDE_DIR}
+)
+target_link_libraries(tb_arch_pipeline PRIVATE
+    sc_isp_pipeline
+    cdc::components::isp_tlm    # original C++ reference pipeline
+    SystemC::systemc
+)
+if(CDC_BUILD_TESTS)
+    add_test(NAME tb_arch_pipeline COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_arch_pipeline
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# ------------------------------------------------------------------------------
+# DMA Integration Testbench
+# ------------------------------------------------------------------------------
+add_executable(tb_dma_integration pipeline/tb_dma_integration.cpp)
+target_include_directories(tb_dma_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/hw
+    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/pipeline/include
+    ${SYSTEMC_INCLUDE_DIR}
+)
+target_link_libraries(tb_dma_integration PRIVATE
+    sc_isp_pipeline
+    cdc::components::isp_tlm
+    SystemC::systemc
+)
+if(CDC_BUILD_TESTS)
+    add_test(NAME tb_dma_integration COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_dma_integration
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# ------------------------------------------------------------------------------
+# Power Metrics Testbench
+# ------------------------------------------------------------------------------
+add_executable(tb_power_metrics pipeline/tb_power_metrics.cpp)
+target_include_directories(tb_power_metrics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/hw
+    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/pipeline/include
+    ${SYSTEMC_INCLUDE_DIR}
+)
+target_link_libraries(tb_power_metrics PRIVATE
+    sc_isp_pipeline
+    cdc::components::isp_tlm
+    SystemC::systemc
+)
+if(CDC_BUILD_TESTS)
+    add_test(NAME tb_power_metrics COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_power_metrics
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# ------------------------------------------------------------------------------
+# Architecture Sweep Testbench
+# ------------------------------------------------------------------------------
+add_executable(tb_arch_sweep pipeline/tb_arch_sweep.cpp)
+target_include_directories(tb_arch_sweep PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/hw
+    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
+    ${CMAKE_SOURCE_DIR}/components/isp_tlm/pipeline/include
+    ${SYSTEMC_INCLUDE_DIR}
+)
+target_link_libraries(tb_arch_sweep PRIVATE
+    sc_isp_pipeline
+    cdc::components::isp_tlm
+    SystemC::systemc
+)
+if(CDC_BUILD_TESTS)
+    add_test(NAME tb_arch_sweep COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_arch_sweep
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# ------------------------------------------------------------------------------
+# Metrics summary Python aggregator
+# ------------------------------------------------------------------------------
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_custom_target(metrics_summary
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils/metrics_summary.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/output/metrics
+        DEPENDS tb_pipeline
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Aggregating metrics CSVs into summary"
+    )
 endif()

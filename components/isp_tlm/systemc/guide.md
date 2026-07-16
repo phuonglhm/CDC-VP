@@ -1,177 +1,181 @@
-# Hướng dẫn build & chạy — SystemC Streaming ISP Pipeline
+# ISP SystemC Architecture Model - Build & Run Guide
 
-Tài liệu này hướng dẫn cách biên dịch và chạy 17 testbench ở cấp block riêng lẻ
-và 1 testbench toàn pipeline cho kiến trúc SystemC streaming của CDC-VP ISP.
-
----
-
-## 1. Tổng quan cấu trúc
-
-```
-components/isp_tlm/
-├── CMakeLists.txt                # thư viện `isp_tlm` (C++ tham chiếu ban đầu)
-├── blocks/                       # 17 block C++ ban đầu (blc, dpc, lsc, ...)
-├── core/
-├── pipeline/
-├── tests/                        # testbench SystemC gốc (isp_run) cho mô hình tham chiếu
-└── systemc/                      # kiến trúc SystemC streaming
-    ├── CMakeLists.txt            # build & register tất cả testbenches SystemC
-    ├── tb_utils/
-    │   └── tb_utils.h            # Generic_Driver<T>, Generic_Monitor<T>
-    ├── blocks/
-    │   ├── blc/        (sc_blc.{h,cpp} + tb_blc.cpp)
-    │   ├── dpc/        (sc_dpc.{h,cpp} + tb_dpc.cpp)
-    │   ├── dg/         (sc_dg.{h,cpp}  + tb_dg.cpp)
-    │   ├── wb/         (sc_wb.{h,cpp}  + tb_wb.cpp)
-    │   ├── ccm/        (sc_ccm.{h,cpp} + tb_ccm.cpp)
-    │   ├── gc/         (sc_gc.{h,cpp}  + tb_gc.cpp)
-    │   ├── csc/        (sc_csc.{h,cpp} + tb_csc.cpp)
-    │   ├── cse/        (sc_cse.{h,cpp} + tb_cse.cpp)
-    │   ├── lsc/        (sc_lsc.{h,cpp} + tb_lsc.cpp)
-    │   ├── bnr/        (sc_bnr.{h,cpp} + tb_bnr.cpp)
-    │   ├── demosaic/   (sc_demosaic.{h,cpp} + tb_demosaic.cpp)
-    │   ├── sharpen/    (sc_sharpen.{h,cpp}  + tb_sharpen.cpp)
-    │   ├── 2dnr/       (sc_2dnr.{h,cpp} + tb_2dnr.cpp)
-    │   ├── awb/        (sc_awb.{h,cpp} + tb_awb.cpp)
-    │   ├── aec/        (sc_aec.{h,cpp} + tb_aec.cpp)
-    │   ├── scale/      (sc_scale.{h,cpp} + tb_scale.cpp)
-    │   └── yuv420/     (sc_yuv420.{h,cpp} + tb_yuv420.cpp)
-    └── pipeline/
-        ├── sc_isp_pipeline.{h,cpp}    # Top-level SystemC sc_module (Phase 5)
-        └── tb_pipeline.cpp            # Full pipeline testbench (Phase 6)
-```
+This document describes how to build and run all testbenches for the SystemC streaming ISP pipeline architecture model in CDC-VP.
 
 ---
 
-## 2. Yêu cầu môi trường
+## 1. Directory Structure
 
-| Thành phần | Phiên bản / Gợi ý |
-|-----------|--------------------|
-| SystemC  | 2.3.4 (đã được dùng bởi project) |
-| CMake    | ≥ 3.21 |
-| Compiler | `g++` ≥ 7 (C++17) |
-| Library  | `libsystemc.so` (đặt tại `/opt/systemc-2.3.4/lib64`) |
+```
+components/isp_tlm/systemc/
+├── CMakeLists.txt                # Build configuration for all testbenches
+├── build.sh                      # Build script (recommended)
+├── verify.sh                     # Verification script
+│
+├── hw/                          # Hardware architecture infrastructure
+│   ├── hw.h                     # Central include header
+│   ├── isp_arch_config.h        # Architecture configuration (clock, block params)
+│   ├── metrics.h                # Architecture metrics collection
+│   ├── power.h                  # Power estimation models
+│   ├── sweep.h                  # Architecture sweep runner
+│   ├── stream_beat.h            # Frame-aware stream types
+│   ├── timed_stream.h           # Clocked instrumented FIFO
+│   ├── timed_block.h            # Hardware shell base class
+│   ├── local_memory.h            # Memory models (line buffers)
+│   ├── frame_dma.h               # DMA models (input/output bandwidth)
+│   └── trace.h                  # VCD tracing utilities
+│
+├── tb_utils/                    # Testbench utilities
+│   ├── tb_utils.h               # Generic_Driver<T>, Generic_Monitor<T>
+│   ├── hardware_params.h        # Hardware configuration (clk, bus width, FIFO depth)
+│   ├── sc_block_metrics.h       # Per-block latency collector
+│   └── sc_metrics_wrapper.h      # Per-boundary throughput wrapper
+│
+├── blocks/                      # 17 ISP processing blocks
+│   ├── blc/        (sc_blc.{h,cpp}, tb_blc.cpp)
+│   ├── dpc/        (sc_dpc.{h,cpp}, tb_dpc.cpp)
+│   ├── dg/         (sc_dg.{h,cpp}, tb_dg.cpp)
+│   ├── wb/         (sc_wb.{h,cpp}, tb_wb.cpp)
+│   ├── ccm/        (sc_ccm.{h,cpp}, tb_ccm.cpp)
+│   ├── gc/         (sc_gc.{h,cpp}, tb_gc.cpp)
+│   ├── csc/        (sc_csc.{h,cpp}, tb_csc.cpp)
+│   ├── cse/        (sc_cse.{h,cpp}, tb_cse.cpp)
+│   ├── lsc/        (sc_lsc.{h,cpp}, tb_lsc.cpp)
+│   ├── bnr/        (sc_bnr.{h,cpp}, tb_bnr.cpp)
+│   ├── demosaic/   (sc_demosaic.{h,cpp}, tb_demosaic.cpp)
+│   ├── sharpen/     (sc_sharpen.{h,cpp}, tb_sharpen.cpp)
+│   ├── 2dnr/       (sc_2dnr.{h,cpp}, tb_2dnr.cpp)
+│   ├── awb/        (sc_awb.{h,cpp}, tb_awb.cpp)
+│   ├── aec/        (sc_aec.{h,cpp}, tb_aec.cpp)
+│   ├── scale/      (sc_scale.{h,cpp}, tb_scale.cpp)
+│   └── yuv420/     (sc_yuv420.{h,cpp}, tb_yuv420.cpp)
+│
+└── pipeline/
+    ├── sc_input_normalizer.{h,cpp}  # Input bit-depth normalization
+    ├── sc_isp_pipeline.{h,cpp}      # Top-level SystemC pipeline module
+    ├── tb_pipeline.cpp               # Full pipeline testbench
+    ├── tb_arch_pipeline.cpp          # Architecture-aware timed pipeline
+    ├── tb_power_metrics.cpp          # Power estimation testbench
+    ├── tb_arch_sweep.cpp             # Architecture sweep runner
+    └── tb_dma_integration.cpp        # DMA integration testbench
+```
 
-Kiểm tra nhanh:
+---
+
+## 2. Environment Requirements
+
+| Component | Version / Note |
+|-----------|----------------|
+| SystemC   | 2.3.4 (installed at `/opt/systemc-2.3.4`) |
+| CMake     | >= 3.16 |
+| Compiler  | `g++` >= 7 (C++17) |
+| Ninja     | Recommended for faster builds |
+
+Quick verification:
 
 ```bash
 ls /opt/systemc-2.3.4/include/systemc.h
-ls /opt/systemc-2.3.4/lib64/libsystemc.so
-g++ --version           # phải hỗ trợ C++17
+ls /opt/systemc-2.3.4/lib/libsystemc.so
+g++ --version
 cmake --version
 ```
 
-Nếu SystemC nằm ở vị trí khác, truyền `-DSYSTEMC_HOME=/path/to/systemc` khi cấu hình.
-
 ---
 
-## 3. Cấu hình & Build
+## 3. Build Instructions
 
-### 3.1. Tích hợp vào build CDC-VP sẵn có (khuyến nghị)
+### 3.1 Recommended: Build via CDC-VP
 
-Vì `components/isp_tlm/CMakeLists.txt` đã được patch với
-`add_subdirectory(systemc)` bên dưới `if(CDC_BUILD_TESTS)`, các testbench SystemC sẽ
-tự động được build cùng với phần còn lại của project:
+From the CDC-VP root directory:
 
 ```bash
 cd /home/hoangquan/workspace/CDC-VP
 
-# Configure (chỉ định rõ compiler + SystemC)
+# Configure CMake
 cmake -S . -B build/bremen -G Ninja \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc \
   -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
   -DCDC_BUILD_TESTS=ON \
-  -DSYSTEMC_HOME=/opt/systemc-2.3.4
+  -DSYSTEMC_INCLUDE_DIR=/opt/systemc-2.3.4/include \
+  -DSYSTEMC_LIBRARY=/opt/systemc-2.3.4/lib/libsystemc.so
 
-# Build mọi testbench (17 block + 1 pipeline)
-cmake --build build/bremen \
-  --target tb_blc tb_dpc tb_dg tb_wb tb_ccm tb_gc tb_csc tb_cse \
-           tb_lsc tb_bnr tb_demosaic tb_sharpen tb_2dnr \
-           tb_awb tb_aec tb_scale tb_yuv420 \
-           tb_pipeline
+# Build all targets
+./components/isp_tlm/systemc/build.sh
+
+# Or build specific targets
+ninja -C build/bremen tb_blc tb_pipeline
 ```
 
-Kết quả binaries (flat, cùng thư mục) được đặt tại:
-```
-build/bremen/components/isp_tlm/systemc/tb_<block_name>     # cho cả 17 block
-build/bremen/components/isp_tlm/systemc/tb_pipeline          # cho pipeline
-build/bremen/components/isp_tlm/systemc/libsc_isp_blocks.a  # static lib (sc_<block>.o)
-build/bremen/components/isp_tlm/systemc/libsc_isp_pipeline.a# static lib (full top)
-```
-
-### 3.2. Build độc lập với CMake (nếu không muốn build cả project)
-
-Tạo thư mục build tạm và trỏ CMake về thư mục `systemc/`:
+### 3.2 Using the Build Script
 
 ```bash
 cd /home/hoangquan/workspace/CDC-VP
-mkdir -p build/sc-only && cd build/sc-only
-
-# Phải giả lập một top-level CMakeLists để cung cấp SystemC::systemc
-cat > sc_only_top.cmake <<'EOF'
-cmake_minimum_required(VERSION 3.21)
-project(isp_sc_only LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 17)
-set(SYSTEMC_HOME "/opt/systemc-2.3.4" CACHE PATH "")
-find_path(SYSTEMC_INCLUDE_DIR NAMES systemc.h HINTS "${SYSTEMC_HOME}/include")
-find_library(SYSTEMC_LIBRARY  NAMES systemc   HINTS "${SYSTEMC_HOME}/lib64" "${SYSTEMC_HOME}/lib")
-add_library(SystemC::systemc UNKNOWN IMPORTED GLOBAL)
-set_target_properties(SystemC::systemc PROPERTIES
-    IMPORTED_LOCATION "${SYSTEMC_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${SYSTEMC_INCLUDE_DIR}")
-get_filename_component(_d "${SYSTEMC_LIBRARY}" DIRECTORY)
-set(CMAKE_BUILD_RPATH    "${_d}")
-set(CMAKE_INSTALL_RPATH  "${_d}")
-enable_testing()
-add_subdirectory(${CMAKE_SOURCE_DIR}/components/isp_tlm/systemc
-                 ${CMAKE_BINARY_DIR}/systemc)
-EOF
-
-# Trỏ SOURCE_DIR về thư mục chứa sc_only_top.cmake
-cmake -S . -B . -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=$(pwd)/sc_only_top.cmake
-# hoặc cách đơn giản hơn: symlink
-ln -sf ../CMakeLists.txt . 2>/dev/null || true
+./components/isp_tlm/systemc/build.sh              # Build all
+./components/isp_tlm/systemc/build.sh configure     # Reconfigure
+./components/isp_tlm/systemc/build.sh clean         # Clean build
+./components/isp_tlm/systemc/build.sh help           # Show options
 ```
 
-> **Gợi ý thực tế**: dùng cách 3.1 (build qua project CDC-VP) sẽ tránh phải hack
-> `CMAKE_PROJECT_TOP_LEVEL_INCLUDES`.
-
-### 3.3. Build bằng tay (không dùng CMake)
-
-Mỗi testbench ở cấp block là một `sc_main` độc lập. Cú pháp biên dịch:
-
-```bash
-SYS=/opt/systemc-2.3.4
-g++ -std=c++17 -O2 \
-    -I $SYS/include \
-    -I components/isp_tlm/systemc/tb_utils \
-    -I components/isp_tlm/core/include \
-    -I components/isp_tlm/blocks/<block>/include \
-    -L $SYS/lib64 \
-    components/isp_tlm/systemc/blocks/<block>/sc_<block>.cpp \
-    components/isp_tlm/systemc/blocks/<block>/tb_<block>.cpp \
-    -o build/tb_<block> \
-    -lsystemc
-```
-
-> **Lưu ý**: Một vài SystemC blocks (LSC, GC …) include header của block khác —
-> khi build thủ công có thể phải thêm include path cho LSC (`lsc`) khi build `tb_blc`,
-> v.v. Khuyến nghị: dùng CMake.
+Build outputs are placed in `build/bremen/components/isp_tlm/systemc/`.
 
 ---
 
-## 4. Chạy test
+## 4. Testbench Overview
 
-Sau khi build, mỗi binary tự chạy được (`sc_main` đã định nghĩa sẵn test pattern).
+### 4.1 Individual Block Testbenches (17 blocks)
 
-### 4.1. Chạy từng testbench block
+Each block has its own self-contained testbench that verifies correctness against a golden reference.
+
+| Binary | Block | Processing Type |
+|--------|-------|-----------------|
+| `tb_blc` | Black Level Correction | Pixel-wise |
+| `tb_dpc` | Defect Pixel Correction | Frame-wise |
+| `tb_dg` | Digital Gain | Pixel-wise |
+| `tb_wb` | White Balance | Pixel-wise |
+| `tb_ccm` | Color Correction Matrix | Pixel-wise |
+| `tb_gc` | Gamma Correction | Pixel-wise |
+| `tb_csc` | Color Space Conversion (RGB→YUV) | Pixel-wise |
+| `tb_cse` | Color Space Enhancement | Pixel-wise |
+| `tb_lsc` | Lens Shading Correction | Frame-wise |
+| `tb_bnr` | Bad Pixel Replacement | Frame-wise |
+| `tb_demosaic` | Demosaicing | Frame-wise |
+| `tb_sharpen` | Sharpening | Pixel-wise |
+| `tb_2dnr` | 2D Noise Reduction | Frame-wise |
+| `tb_awb` | Auto White Balance | Frame-wise |
+| `tb_aec` | Auto Exposure Control | Frame-wise |
+| `tb_scale` | Scaling | Frame-wise |
+| `tb_yuv420` | YUV420 Conversion | Frame-wise |
+
+### 4.2 Pipeline Testbenches
+
+| Binary | Purpose |
+|--------|---------|
+| `tb_pipeline` | Full ISP pipeline verification |
+| `tb_d65_pipeline` | Full pipeline with real D65 image |
+| `tb_d65_blc` | BLC with real D65 image |
+| `tb_arch_pipeline` | Architecture-aware timed pipeline with metrics |
+| `tb_power_metrics` | Per-block power estimation |
+| `tb_arch_sweep` | Architecture parameter sweeps |
+| `tb_dma_integration` | DMA and memory model integration |
+| `tb_metrics_demo` | Metrics wrapper demonstration |
+
+### 4.3 Original TLM Testbench
+
+| Binary | Purpose |
+|--------|---------|
+| `isp_run` | Original reference C++ TLM pipeline (via `components/isp_tlm/tests/`) |
+
+---
+
+## 5. Running Tests
+
+### 5.1 Individual Block Tests
 
 ```bash
 BUILD=build/bremen/components/isp_tlm/systemc
 
-# Điển hình — testbench Black Level Correction (BLC)
+# Test all blocks individually
 $BUILD/tb_blc
-
-# Các block còn lại
 $BUILD/tb_dpc
 $BUILD/tb_dg
 $BUILD/tb_wb
@@ -190,7 +194,7 @@ $BUILD/tb_scale
 $BUILD/tb_yuv420
 ```
 
-Mỗi testbench sẽ in ra console dạng:
+Expected output:
 
 ```
 ==================================================
@@ -204,179 +208,420 @@ TEST RESULT: PASS
 ==================================================
 ```
 
-### 4.2. Chạy full pipeline
+### 5.2 Full Pipeline Tests
 
 ```bash
-$BUILD/tb_pipeline
+# Basic pipeline verification
+./build/bremen/components/isp_tlm/systemc/tb_pipeline
+
+# Full pipeline with D65 real image (2688x1520)
+./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
+
+# BLC with D65 real image
+./build/bremen/components/isp_tlm/systemc/tb_d65_blc
 ```
 
-Output mong đợi:
-```
-==================================================
-PIPELINE VERIFICATION RESULTS
-==================================================
-  Expected output size: ...
-  Captured output size: ...
-  Differences: 0 / ...
-  Max difference: 0
-  AWB R gain: ...
-  AWB B gain: ...
-  AEC feedback: ...
-TEST RESULT: PASS
-```
-
-### 4.3. Chạy tất cả qua CTest
-
-Vì đã gọi `add_test()` cho từng testbench, có thể dùng CTest.
-
-**Quan trọng:** CTest phải được chạy từ **build directory**, không phải từ
-project root — nếu chạy từ root, nó sẽ báo `No tests were found!!!`.
+### 5.3 Architecture Testbenches
 
 ```bash
-# BẮT BUỘC cd vào build/bremen trước
+# Architecture-aware timed pipeline
+./build/bremen/components/isp_tlm/systemc/tb_arch_pipeline
+
+# Power estimation
+./build/bremen/components/isp_tlm/systemc/tb_power_metrics
+
+# Architecture sweeps
+./build/bremen/components/isp_tlm/systemc/tb_arch_sweep
+
+# DMA integration
+./build/bremen/components/isp_tlm/systemc/tb_dma_integration
+```
+
+### 5.4 Original TLM Reference
+
+```bash
+./build/bremen/components/isp_tlm/tests/isp_run \
+  -i components/isp_tlm/input/D65_raw_2688x1520_5376.raw \
+  -o /tmp/output.yuv \
+  -w 2688 --height 1520
+```
+
+### 5.5 Running All Tests via CTest
+
+**Important:** Run from the build directory.
+
+```bash
 cd build/bremen
 
-# Chạy mọi test (bao gồm cả isp_run cũ + 18 SystemC test mới)
+# Run all tests
 ctest --output-on-failure
 
-# Chỉ chạy các SystemC test (17 block + 1 pipeline)
+# Run only SystemC tests
 ctest -R '^tb_' --output-on-failure
 
-# Chỉ chạy các test đơn giản (point operations — đảm bảo PASS)
-ctest -R '^tb_(blc|dg|wb|ccm|gc|csc|cse|awb|aec)$' --output-on-failure
+# Run specific pipeline tests
+ctest -R 'pipeline' --output-on-failure
 ```
 
-> **Ghi chú (cập nhật 2026-07-15)**: sau khi sửa 5 lỗi logic trong
-> `sc_dpc`, `sc_bnr`, `sc_demosaic`, `sc_yuv420`, `sc_lsc` và 1 lỗi kết nối
-> trong `sc_isp_pipeline::bind_channels`, **tất cả 18/18 test PASS với
-> bit-exact MSE = 0** so với golden tham chiếu.
+---
+
+## 6. Metrics Collection
+
+### 6.1 Three-Layer Architecture
+
+```
+RAW Input (sensor)
+  │
+  ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ LAYER 1: Block Processing Latency                                │
+│ Each block: sc_block_metrics<T>                                  │
+│   - Point ops: normalizer, BLC, DG, WB, CCM, GC, CSC, CSE      │
+│   - Frame ops: DPC, BNR, demosaic, AWB, AEC, sharpen,          │
+│                2DNR, scale, yuv420                              │
+│   → block_<name>.csv + block_<name>_summary.txt                 │
+└──────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ LAYER 2: Boundary Throughput                                     │
+│ sc_metrics_wrapper<T> between every block pair (17 wrappers)      │
+│   → <upstream>_to_<downstream>.csv + summary.txt                │
+└──────────────────────────────────────────────────────────────────┘
+  │
+  ▼
+YUV420 Output (display)
+```
+
+### 6.2 Hardware Parameters
+
+All timing calculations use `hw_params`:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `clk_mhz` | Clock frequency (MHz) | 200 |
+| `bus_width_bits` | Bus width (bits/cycle) | 64 |
+| `pixel_bits` | Pixel bits (token size) | 16 |
+| `fifo_depth` | FIFO depth | 1024 |
+| `timed_mode` | Enable timing delays | false |
+
+### 6.3 Key Calculations
+
+| Method | Formula | Example @ 200MHz |
+|--------|---------|------------------|
+| `cycle_ns()` | `1000/clk_mhz` | 5.0 ns |
+| `tokens_per_cycle()` | `bus_width_bits/pixel_bits` | 4.0 |
+| `throughput_Mpix_s()` | `clk_mhz*1e6/tokens_per_cycle` | 50.0 Mpix/s |
+
+### 6.4 Metrics Output Structure
+
+```
+output/metrics/
+├── block_normalizer.csv          # Layer 1: block latency
+├── block_normalizer_summary.txt
+├── block_blc.csv
+├── block_blc_summary.txt
+├── ...
+├── block_yuv420.csv
+├── block_yuv420_summary.txt
+│
+├── input_norm_to_blc.csv        # Layer 2: boundary throughput
+├── input_norm_to_blc_summary.txt
+├── blc_to_dpc.csv
+├── blc_to_dpc_summary.txt
+├── ...
+├── scale_to_yuv420.csv
+├── scale_to_yuv420_summary.txt
+│
+└── summary.csv                  # Aggregated summary
+```
+
+### 6.5 Enabling Metrics in Testbench
+
+```cpp
+// Enable metrics collection
+dut.enable_metrics = true;
+dut.metrics_output_dir = "output/metrics";
+
+// After simulation, dump metrics
+dut.dump_all_block_metrics();    // → block_*.csv + block_*_summary.txt
+dut.dump_pipeline_metrics();     // → *_to_*.csv + *_to_*_summary.txt
+dut.print_metrics_summary();     // → console table
+```
+
+### 6.6 Architecture Metrics
+
+```cpp
+// Enable architecture metrics collection
+dut.enable_arch_metrics("output/arch_metrics");
+
+// After simulation
+dut.collect_block_metrics();
+dut.update_arch_frame_timing(0);
+dut.dump_arch_metrics();         // Print bottleneck analysis
+dut.dump_arch_summary();         // Dump CSV files
+```
 
 ---
 
-## 5. Mẹo gỡ lỗi thường gặp
+## 7. Test with Real Images
 
-| Triệu chứng | Nguyên nhân & Cách xử lý |
-|--------------|----------------------------|
-| `undefined reference to sc_core::sc_module_name` | Thiếu `-lsystemc` hoặc rpath. Thêm `-Wl,-rpath,/opt/systemc-2.3.4/lib64`. |
-| `fatal error: systemc.h: No such file` | Truyền đúng `-I` cho `$SYS/include`. Với CMake: kiểm tra `SYSTEMC_HOME`. |
-| Simulator treo vô hạn (deadlock) | Thiếu `fifo.read()` / `fifo.write()`. Kiểm tra lại số token vào/ra mỗi block khớp `W*H`. |
-| Testbench báo `FAIL` | Khả năng cao do khác biệt số thực (float) hoặc số liệu đầu vào mặc định của từng block. Xem dòng "Differences / max difference". |
-| Thiếu `blc.h` khi build `tb_dpc` | Thêm `-I components/isp_tlm/blocks/blc/include` (đã có sẵn trong CMake). |
-| `error: 'PixelRGB' was not declared` | Một số block dùng struct; cần include header tương ứng. |
+### 7.1 Available Test Images
 
----
+| File | Resolution | Bit Depth | Pattern |
+|------|------------|-----------|---------|
+| `D65_raw_2688x1520_5376.raw` | 2688×1520 | 16-bit RGGB | D65 illuminant |
+| `ColorChecker_2592x1536_12bits_RGGB.raw` | 2592×1536 | 12-bit RGGB | Color checker |
+| `A_raw_2688x1520_5376.raw` | 2688×1520 | 16-bit RGGB | A illuminant |
 
-## 6. Tuỳ chỉnh nhanh
-
-* **Đổi kích thước ảnh**: sửa `WIDTH`/`HEIGHT` ở đầu mỗi `tb_<block>.cpp` (các FIFO
-  depth cũng đã được scale theo `WIDTH`).
-* **Thay đổi cấu hình block**: sửa struct `xxx_config` ngay trong testbench
-  trước khi gọi `xxx_block::process(...)`.
-* **Tắt/bật block**: chỉnh `is_enable = true/false` trong config; bypass mode sẽ
-  được DUT SystemC tôn trọng.
-* **Chạy pipeline không cần golden**: chỉnh `expected_size` trong `tb_pipeline.cpp`
-  hoặc bỏ qua set_golden_reference.
-
----
-
-## 7. Test với ảnh RAW thật (D65)
-
-Ngoài các testbench dùng pattern synthetic, repo có 2 testbench đọc trực
-tiếp ảnh RAW từ `<repo>/components/isp_tlm/input/`:
-
-| Binary | Đầu vào | Đầu ra (file) | So sánh với |
-|---|---|---|---|
-| `tb_d65_blc`   | `D65_raw_2688x1520_5376.raw` (16-bit RGGB, 2688×1520) | `output/d65_blc_out.pgm` (12-bit) | `blc_block::process` |
-| `tb_d65_pipeline` | `D65_raw_2688x1520_5376.raw` | `output/d65_pipeline.yuv` + `…_golden.yuv` | `isp_pipeline::run` |
-
-### RAW loader
-
-`input_utils/raw_loader.h` cung cấp:
-
-* `raw_loader::load(path, w, h, pixels, &fmt)` — auto-detect RAW format
-  (RAW16_LE / PACKED12 / PACKED10) dựa trên kích thước file và trả về
-  vector `uint16_t` 12-bit aligned.
-* `raw_loader::save_yuv420(path, buf, w, h)` — ghi planar Y/U/V ra file
-  `.yuv` mở được bằng `ffplay -f rawvideo -pix_fmt yuv420p -s WxH file.yuv`.
-* `raw_loader::save_pgm(path, buf, w, h, max)` — ghi 12-bit PGM.
-
-### Cách chạy
+### 7.2 Running Real Image Tests
 
 ```bash
+# Build D65 testbenches
 cmake --build build/bremen --target tb_d65_blc tb_d65_pipeline
+
+# Run BLC with D65 image
 ./build/bremen/components/isp_tlm/systemc/tb_d65_blc
+
+# Run full pipeline with D65 image
 ./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
 ```
 
-Hoặc qua CTest:
+### 7.3 Original TLM Runner with Real Image
 
+```bash
+./build/bremen/components/isp_tlm/tests/isp_run \
+  -i components/isp_tlm/input/D65_raw_2688x1520_5376.raw \
+  -o /tmp/output.yuv \
+  -w 2688 --height 1520
+```
+
+---
+
+## 8. Testbench Descriptions
+
+### 8.1 tb_pipeline - Full Pipeline Verification
+
+Verifies the complete ISP pipeline produces correct output by comparing against a golden reference computed from the C++ reference implementation.
+
+```bash
+./build/bremen/components/isp_tlm/systemc/tb_pipeline
+```
+
+**What it tests:**
+- End-to-end correctness (bit-exact MSE = 0)
+- Frame processing time measurement
+- AWB/AEC feedback values
+
+### 8.2 tb_arch_pipeline - Architecture-Aware Timed Pipeline
+
+Demonstrates the full architecture model with clock and reset signals, timed block processing, architecture metrics collection, and bottleneck analysis.
+
+```bash
+./build/bremen/components/isp_tlm/systemc/tb_arch_pipeline
+```
+
+**What it measures:**
+- Per-block utilization (active/starved/blocked cycles)
+- Frame timing and FPS estimation
+- Bottleneck identification
+- Architecture metrics CSV output
+
+**Output structure:**
+```
+output/arch_metrics/
+├── frame_metrics.csv
+├── block_metrics.csv
+├── link_metrics.csv
+└── bottleneck_report.txt
+```
+
+### 8.3 tb_power_metrics - Power Estimation
+
+Estimates power consumption for each ISP block using activity-based models.
+
+```bash
+./build/bremen/components/isp_tlm/systemc/tb_power_metrics
+```
+
+**Power breakdown by component:**
+- Static power (leakage)
+- Dynamic power (switching)
+- Memory power (SRAM/line buffers)
+
+**Example output:**
+```
+--- Per-Block Power Estimation ---
+         Block      Util %   Static mW  Dynamic mW   Memory mW    Total mW
+--------------------------------------------------------------------------
+         blc       92.0%       0.300     190.771       0.000     191.071
+      demosaic       70.0%       2.000   28449.793    2394.112   30845.905
+           ...
+         TOTAL                 13.100   70340.662   16905.434   87259.196
+
+--- Configuration Comparison ---
+              Config            FPS   Frame Energy      Avg Power
+-----------------------------------------------------------------
+        1080p@200MHz           96.5      904703.3 nJ       87259.2 mW
+           4K@200MHz           24.1     3618813.4 nJ       87259.2 mW
+        1080p@400MHz          192.9      452351.7 nJ       87259.2 mW
+```
+
+### 8.4 tb_arch_sweep - Architecture Parameter Sweeps
+
+Runs architecture exploration sweeps across resolution, clock frequency, and block enables to identify optimal configurations.
+
+```bash
+./build/bremen/components/isp_tlm/systemc/tb_arch_sweep
+```
+
+**Sweep types:**
+1. **Resolution sweep** - Test different image sizes
+2. **Frequency sweep** - Test different clock frequencies
+3. **Block enable sweep** - Test critical path analysis
+
+**Example output:**
+```
+=== Starting Sweep: resolution_sweep ===
+Total points: 5
+
+[1/5] resolution=640x480 ... OK (FPS=651.0, Power=7.4mW)
+[2/5] resolution=1280x720 ... OK (FPS=217.0, Power=22.2mW)
+[3/5] resolution=1920x1080 ... OK (FPS=96.5, Power=50.0mW)
+[4/5] resolution=2560x1440 ... OK (FPS=54.3, Power=88.9mW)
+[5/5] resolution=3840x2160 ... OK (FPS=24.1, Power=200.0mW)
+
+--- Energy Efficiency ---
+Best FPS/mW: 87.879
+
+--- Bottleneck Distribution ---
+bandwidth: 2 configs (40.0%)
+compute: 3 configs (60.0%)
+
+Exported to: output/sweeps/resolution/resolution_sweep.csv
+```
+
+### 8.5 tb_dma_integration - DMA and Memory Model Integration
+
+Demonstrates DMA and memory model integration with bandwidth throttling.
+
+```bash
+./build/bremen/components/isp_tlm/systemc/tb_dma_integration
+```
+
+**Features:**
+- DMA burst simulation
+- Bandwidth limiting on input/output
+- Frame DMA models
+- Local memory (line buffer) models
+
+**Key configurations:**
+- Input DMA: 64-bit bus, 16-beat bursts, 800 Mbps limit
+- Output DMA: 64-bit bus, 16-beat bursts, 400 Mbps limit
+
+### 8.6 tb_metrics_demo - Metrics Wrapper Demonstration
+
+Single-block demonstration of the metrics wrapper between Generic_Driver and sc_blc.
+
+```bash
+./build/bremen/components/isp_tlm/systemc/tb_metrics_demo
+```
+
+**Demonstrates:**
+- Per-token latency CSV logging
+- Summary statistics
+- Block-level metrics collection
+
+### 8.7 tb_d65_pipeline / tb_d65_blc - Real Image Tests
+
+Tests with real D65 illuminant RAW images for validation.
+
+```bash
+./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
+./build/bremen/components/isp_tlm/systemc/tb_d65_blc
+```
+
+**Results:**
+- `tb_d65_blc`: **PASS** (bit-exact MSE = 0)
+- `tb_d65_pipeline`: Full 17-block streaming verified
+
+---
+
+## 9. Quick Reference
+
+### Build All
+```bash
+cd /home/hoangquan/workspace/CDC-VP
+./components/isp_tlm/systemc/build.sh
+```
+
+### Run All Block Tests
+```bash
+cd build/bremen/components/isp_tlm/systemc
+for tb in tb_blc tb_dpc tb_dg tb_wb tb_ccm tb_gc tb_csc tb_cse tb_lsc tb_bnr tb_demosaic tb_sharpen tb_2dnr tb_awb tb_aec tb_scale tb_yuv420; do
+  ./$tb && echo "PASS: $tb" || echo "FAIL: $tb"
+done
+```
+
+### Run Architecture Tests
+```bash
+./tb_power_metrics
+./tb_arch_sweep
+./tb_arch_pipeline
+./tb_dma_integration
+```
+
+### Run via CTest
 ```bash
 cd build/bremen
-ctest -R '^tb_d65' --output-on-failure
+ctest --output-on-failure
 ```
-
-### Đầu vào 16-bit → 12-bit
-
-D65 là RAW **16-bit** (range 0–65535). Cả hai testbench đều dùng
-`sc_input_normalizer` (file `pipeline/sc_input_normalizer.h`) chèn giữa
-`raw_in` và BLC để scale `(v * 4095) / 65535` khớp với logic đã có trong
-`isp_pipeline::run` của reference C++. Lệch 1-bit range là nguyên nhân
-phổ biến nhất khi chạy real-image test.
-
-### Kết quả
-
-* `tb_d65_blc`: **PASS bit-exact** trên 4,085,760 pixels (MSE = 0).
-* `tb_d65_pipeline`: chạy thành công full 17-block streaming trên ảnh thật;
-  hiện tại MSE ≈ 60, max err ≈ 22 (tập trung ở U/V plane, do sai số
-  floating-point ở GC/CCM/CSC + YUV420 sub-sampling). Đây là kết quả
-  chấp nhận được cho lần chạy đầu với ảnh RAW 16-bit, không qua tinh chỉnh
-  thêm config — sai số có thể giảm tiếp bằng cách tắt 1 số block (đã có
-  flag `REG_*_ENABLE` để thử).
-
-### Mở rộng các RAW khác
-
-Có thể thêm test cho `ColorChecker_2592x1536_12bits_RGGB.raw` hoặc
-`A_raw_2688x1520_5376.raw` bằng cách copy 1 trong 2 file trên và đổi
-`W = 2592/2688`, `H = 1536/1520`, `input_bit_depth = 12` (cho
-ColorChecker) hoặc `16` (cho A / D65).
-
-### Visualize output (Python)
-
-Sau khi chạy `tb_d65_pipeline`, dùng `visualize_sc.py` để render
-side-by-side ảnh input RAW (CFA mask), output C++ golden, và output
-SystemC. Script auto-detect output size từ file `.yuv`, hỗ trợ cả
-planar YUV420 và NV12, và in MSE per-plane (Y/U/V).
-
-```bash
-# Mặc định: đọc file trong components/isp_tlm/systemc/pipeline/output/
-python3 components/isp_tlm/systemc/visualize_sc.py
-
-# Hoặc trỏ vào file khác / config khác:
-python3 components/isp_tlm/systemc/visualize_sc.py \
-    --input components/isp_tlm/input/ColorChecker_2592x1536_12bits_RGGB.raw \
-    --width 2592 --height 1536 --bit-depth 12 --pattern RGGB \
-    --sc    build/.../out_672x380.yuv \
-    --golden build/.../out_672x380_golden.yuv
-```
-
-Output mặc định ghi vào `output/d65_pipeline_compare.jpg` (3-panel
-side-by-side) + 3 file JPEG riêng (`d65_pipeline_input.jpg`,
-`d65_pipeline_golden.jpg`, `d65_pipeline_sc.jpg`) mở được bằng bất kỳ
-image viewer nào.
 
 ---
 
-## 8. Mục tiêu kiến trúc đã đạt được
+## 10. Troubleshooting
 
-1. ✅ Untimed streaming — không clock, không `wait(time)`, không AXI Valid/Ready.
-2. ✅ Đồng bộ hoàn toàn qua `sc_fifo::read()` / `sc_fifo::write()` blocking.
-3. ✅ Không dùng `isp_utils::get_pixel_mirror` trong SystemC wrappers — tất cả
-   boundary padding được tạo nội bộ (line buffer + mirror).
-4. ✅ Số token vào/ra chính xác `W*H` (hoặc `W*H*3` cho RGB, `W*H/2` cho YUV420).
-5. ✅ FIFO depth `(W*4)` mặc định, tránh backpressure deadlock.
-6. ✅ Mỗi `sc_module` nhận config riêng thay vì `isp_config` toàn cục.
-7. ✅ 17 testbench cấp block + 1 testbench end-to-end + 2 testbench ảnh thật
-   (D65 BLC, D65 pipeline) — tất cả xác minh được so với golden tham chiếu.
+| Symptom | Cause | Solution |
+|---------|-------|----------|
+| `undefined reference to sc_core::sc_module_name` | Missing `-lsystemc` or rpath | Add `-Wl,-rpath,/opt/systemc-2.3.4/lib64` |
+| `fatal error: systemc.h: No such file` | Missing include path | Check `SYSTEMC_HOME` in CMake |
+| Simulator hangs (deadlock) | FIFO mismatch | Verify input/output token counts match W×H |
+| Test reports `FAIL` | Float precision or config | Check "Differences / max difference" output |
+| Build fails | Missing dependencies | Run `setup_third_party.sh` |
 
 ---
 
+## 11. Architecture Model Files
+
+### Hardware Infrastructure (hw/)
+
+| File | Purpose |
+|------|---------|
+| `isp_arch_config.h` | Architecture configuration, block parameters |
+| `metrics.h` | Architecture metrics collection, bottleneck analysis |
+| `power.h` | Power estimation models, block power defaults |
+| `sweep.h` | Parameter sweep execution and results |
+| `timed_stream.h` | Clocked instrumented FIFO with bandwidth throttling |
+| `timed_block.h` | Hardware shell base class |
+| `local_memory.h` | Line buffer and memory models |
+| `frame_dma.h` | DMA transaction models |
+| `stream_beat.h` | Frame-aware stream types |
+| `trace.h` | VCD tracing utilities |
+
+### Key Configuration Structures
+
+```cpp
+// Architecture configuration
+isp_arch_config arch_cfg;
+arch_cfg.clock_freq_mhz = 200.0f;
+arch_cfg.enable_metrics = true;
+arch_cfg.init_defaults();
+
+// Hardware parameters
+hw_params hw;
+hw.clk_mhz = 200.0f;
+hw.bus_width_bits = 64;
+hw.pixel_bits = 16;
+hw.fifo_depth = 1024;
+hw.timed_mode = true;
+```

@@ -135,6 +135,10 @@ bool sc_awb::precompute_gains_from_bayer(const std::uint16_t* bayer, std::size_t
 
 void sc_awb::process_stream() {
     while (true) {
+        // Frame-level: AWB reads entire frame for stats, then passes through
+        m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
+        m_metrics.begin_processing();
+
         // First pass: accumulate statistics
         const std::uint32_t max_value = (1u << m_bit_depth) - 1u;
         const float under_thresh = max_value * m_cfg.underexposed_percentage;
@@ -188,5 +192,12 @@ void sc_awb::process_stream() {
         }
 
         std::cout << "[AWB] Computed gains: R=" << m_r_gain << " B=" << m_b_gain << std::endl;
+
+        // Latch gains at end-of-frame for downstream blocks (safe to read)
+        m_latched_r_gain = m_r_gain;
+        m_latched_b_gain = m_b_gain;
+
+        m_metrics.end_processing();
+        for (std::size_t i = 0; i < 3 * m_width * m_height; ++i) m_metrics.record_output();
     }
 }

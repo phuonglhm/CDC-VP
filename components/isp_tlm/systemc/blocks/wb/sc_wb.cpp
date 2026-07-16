@@ -1,6 +1,10 @@
 /**
  * @file sc_wb.cpp
  * @brief Implementation of sc_wb SystemC module
+ *
+ * Hardware shell pattern (Phase 3):
+ *   - process_pixel_triplet(): Pure functional kernel
+ *   - process_stream(): Hardware shell with timing
  */
 #include "sc_wb.h"
 #include "../awb/sc_awb.h"
@@ -14,39 +18,81 @@ namespace {
     }
 }
 
+void sc_wb::process_pixel_triplet(std::uint16_t r_in, std::uint16_t g_in, std::uint16_t b_in,
+                                  std::uint16_t& r_out, std::uint16_t& g_out, std::uint16_t& b_out) {
+    if (!m_cfg.is_enable) {
+        r_out = r_in;
+        g_out = g_in;
+        b_out = b_in;
+    } else {
+        // Combine static WB gain with AWB-computed latched gains
+        float r_gain = m_cfg.r_gain;
+        float b_gain = m_cfg.b_gain;
+        if (m_awb != nullptr) {
+            r_gain *= get_latched_r_gain();
+            b_gain *= get_latched_b_gain();
+        }
+        r_out = scale_and_clip(r_in, r_gain, 4095);
+        g_out = g_in;  // Green channel unchanged
+        b_out = scale_and_clip(b_in, b_gain, 4095);
+    }
+}
+
 void sc_wb::process_stream() {
+    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
+    m_metrics.set_cycles_per_pixel(1);
+
+    // Check if timed mode is enabled
+    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    if (timed_mode) {
+        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
+        m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
+    }
+
     while (true) {
-        // Read RGB triplet
+        // Read RGB triplet (need 3 tokens)
+        if (fifo_in->num_available() < 3) {
+            if (timed_mode) {
+                ++m_starved_cycles;
+                ++m_cycle_count;
+            }
+            wait();
+            continue;
+        }
+
         std::uint16_t r = fifo_in->read();
         std::uint16_t g = fifo_in->read();
         std::uint16_t b = fifo_in->read();
+        m_metrics.begin_processing();
 
         std::uint16_t r_out, g_out, b_out;
+        process_pixel_triplet(r, g, b, r_out, g_out, b_out);
 
-        if (!m_cfg.is_enable) {
-            r_out = r;
-            g_out = g;
-            b_out = b;
-        } else {
-            // Combine the static WB gain (from tuning) with the dynamic
-            // AWB-computed gain (if AWB is wired up). AWB finishes its
-            // statistics after reading the entire frame, so the WB applies
-            // those gains with a one-frame latency on the first frame;
-            // from the second frame onward the streaming output matches
-            // what a single-pass C++ reference would produce.
-            float r_gain = m_cfg.r_gain;
-            float b_gain = m_cfg.b_gain;
-            if (m_awb != nullptr) {
-                r_gain *= m_awb->get_r_gain();
-                b_gain *= m_awb->get_b_gain();
+        // Hardware shell: timing
+        if (timed_mode) {
+            for (int i = 0; i < m_cycles_per_pixel; ++i) {
+                wait();
+                ++m_cycle_count;
+                ++m_active_cycles;
             }
-            r_out = scale_and_clip(r, r_gain, 4095);
-            g_out = g;  // Green channel unchanged
-            b_out = scale_and_clip(b, b_gain, 4095);
+        } else {
+            ++m_cycle_count;
+            ++m_active_cycles;
+        }
+
+        // Check for output backpressure (need 3 tokens free)
+        if (fifo_out->num_free() < 3) {
+            if (timed_mode) {
+                ++m_cycle_count;
+            }
+            wait();
         }
 
         fifo_out->write(r_out);
         fifo_out->write(g_out);
         fifo_out->write(b_out);
+
+        m_metrics.end_processing();
+        m_metrics.record_output();
     }
 }
