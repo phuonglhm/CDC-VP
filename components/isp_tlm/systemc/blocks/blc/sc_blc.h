@@ -31,7 +31,7 @@ public:
     sc_core::sc_port<sc_fifo_out_if<std::uint16_t>> fifo_out;
 
     // Optional clock port for timed mode
-    sc_in<bool> clk;
+    sc_in<bool>* clk = nullptr;
 
     SC_HAS_PROCESS(sc_blc);
 
@@ -97,7 +97,7 @@ private:
     /**
      * @brief Compute per-pixel saturation range
      */
-    std::uint16_t get_saturation_range(std::uint32_t row, std::uint32_t col) const;
+    std::uint16_t get_channel_saturation(std::uint32_t row, std::uint32_t col) const;
 
     // Process a single pixel - pure functional, no timing
     std::uint16_t process_pixel(std::uint16_t pixel, std::uint32_t row, std::uint32_t col);

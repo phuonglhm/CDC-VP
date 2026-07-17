@@ -33,7 +33,7 @@ public:
     sc_core::sc_port<sc_fifo_out_if<std::uint16_t>> fifo_out;
 
     // Optional clock port for timed mode
-    sc_in<bool> clk;
+    sc_in<bool>* clk = nullptr;
 
     SC_HAS_PROCESS(sc_input_normalizer);
 
@@ -119,7 +119,7 @@ inline void sc_input_normalizer::process_stream() {
     m_metrics.set_cycles_per_pixel(1);
 
     // Check if timed mode is enabled
-    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode && (clk != nullptr);
     if (timed_mode) {
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
     }

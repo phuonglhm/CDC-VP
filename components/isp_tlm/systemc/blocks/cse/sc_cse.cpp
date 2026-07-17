@@ -42,12 +42,28 @@ void sc_cse::process_stream() {
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
     if (timed_mode) {
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
     }
 
     while (true) {
-        // Read YUV triplet
+        // Read YUV triplet (need 3 tokens)
+        if (fifo_in->num_available() < 3) {
+            if (timed_mode) {
+                ++m_starved_cycles;
+                ++m_cycle_count;
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
+            } else {
+                wait(fifo_in->data_written_event());
+            }
+            continue;
+        }
+
         std::uint8_t y = fifo_in->read();
         m_metrics.begin_processing();
         std::uint8_t u = fifo_in->read();
@@ -59,13 +75,31 @@ void sc_cse::process_stream() {
         // Hardware shell: timing
         if (timed_mode) {
             for (int i = 0; i < m_cycles_per_pixel; ++i) {
-                wait();
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
                 ++m_cycle_count;
                 ++m_active_cycles;
             }
         } else {
             ++m_cycle_count;
             ++m_active_cycles;
+        }
+
+        // Check for output backpressure (need 3 tokens free)
+        if (fifo_out->num_free() < 3) {
+            if (timed_mode) {
+                ++m_cycle_count;
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
+            } else {
+                wait(fifo_out->data_read_event());
+            }
         }
 
         fifo_out->write(y_out);

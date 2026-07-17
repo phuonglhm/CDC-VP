@@ -96,11 +96,20 @@ void sc_lsc::process_stream() {
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
     if (timed_mode) {
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
     }
 
     while (true) {
+        if (timed_mode) {
+            if (has_clock) {
+                wait(clk->posedge_event());
+            } else {
+                wait();
+            }
+        }
+
         std::uint16_t pixel = fifo_in->read();
         m_metrics.begin_processing();
 
@@ -109,7 +118,11 @@ void sc_lsc::process_stream() {
         // Hardware shell: timing
         if (timed_mode) {
             for (int i = 0; i < m_cycles_per_pixel; ++i) {
-                wait();
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
                 ++m_cycle_count;
                 ++m_active_cycles;
             }

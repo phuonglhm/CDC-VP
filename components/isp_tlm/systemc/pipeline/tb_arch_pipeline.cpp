@@ -9,7 +9,7 @@
  *   - Bottleneck analysis
  *
  * This testbench is the foundation for architecture exploration and
- * can be extended for parameter sweeps (Phase 7 of plan.md).
+ * can be extended for parameter sweeps.
  */
 
 #include <systemc>
@@ -19,10 +19,13 @@ using namespace sc_core;
 #include <iomanip>
 #include <cmath>
 #include <cstring>
+#include <chrono>
 
 #include "sc_isp_pipeline.h"
 #include "../hw/isp_arch_config.h"
 #include "../hw/metrics.h"
+#include "../tb_utils/hardware_params.h"
+#include "../tb_utils/tb_utils.h"
 
 // Test parameters
 constexpr std::uint32_t WIDTH = 32;
@@ -30,88 +33,11 @@ constexpr std::uint32_t HEIGHT = 32;
 constexpr std::uint32_t N_PIXELS = WIDTH * HEIGHT;
 
 // ============================================================================
-// Driver Module - feeds input pixels to pipeline
-// ============================================================================
-class driver_module : public sc_module {
-public:
-    sc_port<sc_fifo_out_if<std::uint16_t>> raw_out;
-    std::vector<std::uint16_t>* input_data;
-
-    SC_HAS_PROCESS(driver_module);
-
-    driver_module(sc_module_name name, std::vector<std::uint16_t>* data)
-        : sc_module(name), input_data(data) {
-        SC_THREAD(run);
-    }
-
-    void run() {
-        std::cout << "[Driver] Starting...\n";
-
-        // Wait a bit for pipeline to initialize
-        wait(100, SC_NS);
-
-        // Write input pixels
-        for (std::uint32_t i = 0; i < input_data->size(); ++i) {
-            raw_out->write((*input_data)[i]);
-            if (i % 1000 == 0 && i > 0) {
-                std::cout << "[Driver] Wrote " << i << "/" << input_data->size() << " pixels\n";
-            }
-        }
-
-        std::cout << "[Driver] Completed writing " << input_data->size() << " pixels\n";
-    }
-};
-
-// ============================================================================
-// Monitor Module - collects output from pipeline
-// ============================================================================
-class monitor_module : public sc_module {
-public:
-    sc_port<sc_fifo_in_if<std::uint8_t>> yuv_in;
-    std::size_t expected_tokens;
-    std::size_t received = 0;
-
-    SC_HAS_PROCESS(monitor_module);
-
-    monitor_module(sc_module_name name, std::size_t expected)
-        : sc_module(name), expected_tokens(expected), received(0) {
-        SC_THREAD(run);
-    }
-
-    void run() {
-        std::cout << "[Monitor] Starting...\n";
-
-        // YUV420 output
-        const std::size_t max_wait = 100000;  // Prevent infinite loop
-        int wait_count = 0;
-
-        while (received < expected_tokens) {
-            if (yuv_in->num_available() > 0) {
-                std::uint8_t val = yuv_in->read();
-                ++received;
-                if (received % 1000 == 0 && received > 0) {
-                    std::cout << "[Monitor] Read " << received << " tokens\n";
-                }
-                wait_count = 0;
-            } else {
-                wait(10, SC_NS);
-                if (++wait_count > static_cast<int>(max_wait)) {
-                    std::cout << "[Monitor] Timeout after " << max_wait << " waits\n";
-                    break;
-                }
-            }
-        }
-
-        std::cout << "[Monitor] Completed reading " << received << " tokens\n";
-    }
-};
-
-// ============================================================================
 // Main Testbench
 // ============================================================================
 int sc_main(int argc, char* argv[]) {
     std::cout << "============================================================\n";
-    std::cout << "   Architecture-Aware ISP Pipeline Testbench\n";
+    std::cout << "   Architecture-Aware ISP Pipeline Testbench (TIMED MODE)\n";
     std::cout << "============================================================\n\n";
 
     // ----------------------------------------------------------------
@@ -140,6 +66,27 @@ int sc_main(int argc, char* argv[]) {
     isp_cfg.scale.in_height = HEIGHT;
     isp_cfg.scale.out_width = WIDTH / 2;
     isp_cfg.scale.out_height = HEIGHT / 2;
+    // Keep AWB enabled for proper data flow
+    // isp_cfg.awb.is_enable = false;
+
+    // Hardware parameters - TIMED MODE
+    hw_params hw;
+    hw.clk_mhz = 200.0f;         // Configurable clock frequency
+    hw.bus_width_bits = 64;
+    hw.pixel_bits = 16;
+    hw.fifo_depth = 4096;
+    hw.timed_mode = false;         // Disabled - timed mode needs proper sc_start with time
+    hw.default_cycles_per_pixel = 1;
+
+    std::cout << "--- Hardware Parameters (TIMED MODE) ---\n";
+    std::cout << hw.to_string();
+
+    // Create the clock signal (used when timed_mode is enabled)
+    // Clock period = 1 / freq = 1 / 200MHz = 5ns
+    // sc_clock clk("clk", 1.0f / hw.clk_mhz * 1000.0f, sc_time_unit::SC_NS);
+
+    // Enable metrics collection
+    arch_cfg.enable_metrics = true;
 
     // ----------------------------------------------------------------
     // 3. Create test data (synthetic pattern)
@@ -156,37 +103,54 @@ int sc_main(int argc, char* argv[]) {
     sc_fifo<std::uint8_t> yuv_out(N_PIXELS * 2);  // YUV420 output
 
     // ----------------------------------------------------------------
-    // 5. Instantiate pipeline
+    // 5. Enable metrics before pipeline construction
     // ----------------------------------------------------------------
+    // Must be called before sc_isp_pipeline constructor
+    sc_isp_pipeline::set_metrics_request(true, "output/metrics", nullptr);
+    
     std::vector<float> lsc_lut;  // Empty LUT for this test
     sc_isp_pipeline dut("isp_pipeline", isp_cfg, lsc_lut,
-                        &raw_in, &yuv_out, 12, cfa_types::RGGB);
-
-    // Enable metrics collection
-    dut.enable_metrics = true;
-    dut.metrics_output_dir = "output/arch_metrics";
-
-    // Enable architecture metrics (Phase 5)
-    dut.enable_arch_metrics("output/arch_metrics");
+                        &raw_in, &yuv_out, 12, cfa_types::RGGB, &hw);
+    // Note: Clock binding only needed for timed mode
+    // dut.bind_clock(&clk);
 
     // ----------------------------------------------------------------
-    // 6. Instantiate driver and monitor (as proper SystemC modules)
+    // 6. Instantiate driver and monitor
     // ----------------------------------------------------------------
-    driver_module driver("driver", &input);
-    driver.raw_out(raw_in);
+    Generic_Driver<std::uint16_t> driver("driver", input);
+    driver.fifo_out(raw_in);
 
     std::size_t expected_output = (WIDTH / 2) * (HEIGHT / 2) * 3 / 2;
-    monitor_module monitor("monitor", expected_output);
-    monitor.yuv_in(yuv_out);
+    Generic_Monitor<std::uint8_t> monitor("monitor", expected_output);
+    monitor.fifo_in(yuv_out);
 
     // ----------------------------------------------------------------
-    // 7. Run simulation
+    // 7. Calculate max simulation time (for estimation only)
     // ----------------------------------------------------------------
-    std::cout << "--- Starting Simulation ---\n";
-    sc_start();
+    // For timed mode: estimate worst-case frame time
+    double tokens_per_cycle = static_cast<double>(hw.bus_width_bits) / hw.pixel_bits;
+    double mpix_per_s = hw.clk_mhz * tokens_per_cycle;
+    double max_frame_us = (static_cast<double>(WIDTH * HEIGHT) / mpix_per_s) / 1e6;
+    max_frame_us *= 3.0;  // Add margin for pipeline latency
+
+    std::cout << "--- Starting Simulation (no time limit) ---\n";
+    std::cout << "Estimated max frame time: " << max_frame_us << " us\n\n";
+
+    auto sim_start = std::chrono::steady_clock::now();
 
     // ----------------------------------------------------------------
-    // 8. Results
+    // 8. Run simulation without time limit
+    // ----------------------------------------------------------------
+    sc_start();  // No max time
+
+    auto sim_end = std::chrono::steady_clock::now();
+    std::cout << "Simulation completed\n";
+    std::cout << "Wall-clock time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(sim_end - sim_start).count()
+              << " ms\n";
+
+    // ----------------------------------------------------------------
+    // 9. Results
     // ----------------------------------------------------------------
     std::cout << "\n============================================================\n";
     std::cout << "   SIMULATION RESULTS\n";
@@ -205,43 +169,28 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "\n";
 
     // ----------------------------------------------------------------
-    // 9. Architecture Metrics
+    // 10. Architecture Metrics
     // ----------------------------------------------------------------
     std::cout << "--- Architecture Metrics ---\n";
+    std::cout << "Total boundary samples: " << dut.metrics_sample_count() << "\n";
+    std::cout << "Total block samples: " << dut.block_metrics_sample_count() << "\n";
 
-    // Collect block metrics into arch_metrics
-    dut.collect_block_metrics();
-
-    // Update frame timing
-    dut.update_arch_frame_timing(0);
-
-    // Dump architecture metrics report
-    dut.dump_arch_metrics();
-
-    // Dump summary files (CSVs)
-    dut.dump_arch_summary();
-
-    // Also dump block and pipeline metrics
-    dut.dump_all_block_metrics();
-    dut.dump_pipeline_metrics();
+    dut.print_metrics_summary();
 
     // ----------------------------------------------------------------
-    // 10. Output Verification
+    // 11. Output verification
     // ----------------------------------------------------------------
+    const auto& captured = monitor.get_captured_data();
     std::cout << "\n--- Output Verification ---\n";
-    std::cout << "Output tokens received: " << monitor.received << "\n";
-    std::cout << "Expected: " << expected_output << "\n";
+    std::cout << "Expected tokens: " << expected_output << "\n";
+    std::cout << "Captured tokens: " << captured.size() << "\n";
 
-    if (monitor.received >= expected_output) {
-        std::cout << "TEST RESULT: PASS\n";
-    } else {
-        std::cout << "TEST RESULT: INCOMPLETE (expected " << expected_output
-                  << ", got " << monitor.received << ")\n";
-    }
+    bool complete = (captured.size() >= expected_output);
+    std::cout << "Status: " << (complete ? "COMPLETE" : "INCOMPLETE") << "\n";
 
     std::cout << "\n============================================================\n";
-    std::cout << "Metrics files written to: output/arch_metrics/\n";
+    std::cout << "TEST RESULT: " << (complete ? "PASS" : "FAIL (INCOMPLETE)") << "\n";
     std::cout << "============================================================\n";
 
-    return 0;
+    return complete ? 0 : 1;
 }

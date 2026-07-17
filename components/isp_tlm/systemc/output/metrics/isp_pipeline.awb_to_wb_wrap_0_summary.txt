@@ -1,0 +1,11 @@
+=== Metrics summary for block: awb_to_wb ===
+total_samples        : 0
+simulation_time_ns   : 0.000000
+mean_latency_ns      : 0
+min_latency_ns       : 0
+max_latency_ns       : 0
+stddev_latency_ns    : 0
+throughput_tokens_s  : 0
+fifo_in_avg_fill     : 0
+fifo_out_avg_fill    : N/A (write-only port)
+sampling_events      : 1

@@ -6,7 +6,9 @@
  *
  * Hardware shell pattern (Phase 3):
  *   - Frame-level processing with timing
- *   - Architecture metrics
+ *   - Optional clock binding via hw_params
+ *   - In timed_mode: uses clk->posedge_event() for proper timing
+ *   - In untimed mode: no wait() needed, fifo operations block naturally
  */
 #include "sc_dpc.h"
 #include <algorithm>
@@ -37,6 +39,7 @@ inline std::uint16_t corrected_3p(std::uint32_t a, std::uint32_t b) {
 
 void sc_dpc::process_stream() {
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
 
     while (true) {
         m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
@@ -50,33 +53,49 @@ void sc_dpc::process_stream() {
             while (fifo_in->num_available() < total) {
                 ++m_starved_cycles;
                 ++m_cycle_count;
-                wait();
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
             }
         } else {
-            // Wait for enough data (blocking)
+            // In untimed mode: wait on FIFO event until we have enough data
             while (fifo_in->num_available() < total) {
-                wait();
+                wait(fifo_in->data_written_event());
             }
         }
 
         // 1) Read the entire frame
         std::vector<std::uint16_t> frame(total);
         for (std::size_t i = 0; i < total; ++i) {
+            if (timed_mode) {
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
+            }
             frame[i] = fifo_in->read();
             if (timed_mode) {
                 ++m_active_cycles;
                 ++m_cycle_count;
-                wait();
             }
         }
 
         if (!m_cfg.is_enable) {
             for (std::size_t i = 0; i < total; ++i) {
+                if (timed_mode) {
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                }
                 fifo_out->write(frame[i]);
                 if (timed_mode) {
                     ++m_active_cycles;
                     ++m_cycle_count;
-                    wait();
                 }
             }
             m_metrics.end_processing();
@@ -161,19 +180,29 @@ void sc_dpc::process_stream() {
                 if (timed_mode) {
                     ++m_active_cycles;
                     ++m_cycle_count;
-                    wait();
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
                 }
             }
         }
 
         // 3) Stream out
         for (std::size_t i = 0; i < total; ++i) {
+            if (timed_mode) {
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
+            }
             fifo_out->write(out[i]);
             m_metrics.record_output();
             if (timed_mode) {
                 ++m_active_cycles;
                 ++m_cycle_count;
-                wait();
             }
         }
 

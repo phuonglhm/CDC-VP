@@ -118,6 +118,7 @@ inline bayer_channel channel_at(int row, int col, cfa_types bayer) {
 
 void sc_bnr::process_stream() {
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
 
     while (true) {
         m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
@@ -127,27 +128,33 @@ void sc_bnr::process_stream() {
         const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
         const float scale = 1.0f / static_cast<float>(bit_range);
 
-        // Wait for frame data
         if (timed_mode) {
             while (fifo_in->num_available() < total) {
                 ++m_starved_cycles;
                 ++m_cycle_count;
-                wait();
-            }
-        } else {
-            while (fifo_in->num_available() < total) {
-                wait();
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
             }
         }
 
         if (!m_cfg.is_enable) {
             // Bypass
             for (std::size_t i = 0; i < total; ++i) {
+                if (timed_mode) {
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                }
+
                 fifo_out->write(fifo_in->read());
                 if (timed_mode) {
                     ++m_active_cycles;
                     ++m_cycle_count;
-                    wait();
                 }
             }
             m_metrics.end_processing();
@@ -158,11 +165,18 @@ void sc_bnr::process_stream() {
         // 1) Read entire frame
         std::vector<std::uint16_t> raw(total);
         for (std::size_t i = 0; i < total; ++i) {
+            if (timed_mode) {
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
+            }
+
             raw[i] = fifo_in->read();
             if (timed_mode) {
                 ++m_active_cycles;
                 ++m_cycle_count;
-                wait();
             }
         }
 
@@ -203,7 +217,11 @@ void sc_bnr::process_stream() {
                 if (timed_mode) {
                     ++m_active_cycles;
                     ++m_cycle_count;
-                    wait();
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
                 }
             }
         }
@@ -304,7 +322,11 @@ void sc_bnr::process_stream() {
             if (timed_mode) {
                 ++m_active_cycles;
                 ++m_cycle_count;
-                wait();
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
             }
         }
 

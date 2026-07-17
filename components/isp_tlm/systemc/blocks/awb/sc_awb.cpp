@@ -90,7 +90,7 @@ bool sc_awb::precompute_gains_from_bayer(const std::uint16_t* bayer, std::size_t
             const std::uint16_t g112 = static_cast<std::uint16_t>(
                 bayer[y * W + x + (r_dx ^ 1)] >> shift);
             const std::uint16_t g212 = static_cast<std::uint16_t>(
-                bayer[(y + 1) * W + (x + (r_dx ^ 1))] >> shift);
+                bayer[(y + 1) * W + x + (r_dx ^ 1)] >> shift);
 
             // Luminance for raw Bayer: each 2x2 block has 1 R, 1 B, 2 G
             // samples. Use weights 0.5 / 1.0 / 0.5 so the formula
@@ -134,6 +134,13 @@ bool sc_awb::precompute_gains_from_bayer(const std::uint16_t* bayer, std::size_t
 }
 
 void sc_awb::process_stream() {
+    // Check if timed mode is enabled
+    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
+    if (timed_mode) {
+        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
+    }
+
     while (true) {
         // Frame-level: AWB reads entire frame for stats, then passes through
         m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
@@ -151,9 +158,28 @@ void sc_awb::process_stream() {
 
         // Read all pixels and compute statistics
         for (std::size_t i = 0; i < pixels; ++i) {
+            if (timed_mode) {
+                if (fifo_in->num_available() < 3) {
+                    ++m_starved_cycles;
+                    ++m_cycle_count;
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                    --i;  // Retry this iteration
+                    continue;
+                }
+            }
+
             std::uint16_t r = fifo_in->read();
             std::uint16_t g = fifo_in->read();
             std::uint16_t b = fifo_in->read();
+
+            if (timed_mode) {
+                ++m_active_cycles;
+                ++m_cycle_count;
+            }
 
             const float lum = 0.299f * r + 0.587f * g + 0.114f * b;
             if (lum >= under_thresh && lum <= over_thresh) {
@@ -164,9 +190,32 @@ void sc_awb::process_stream() {
             }
 
             // Pass through immediately for streaming
+            if (timed_mode) {
+                if (fifo_out->num_free() < 3) {
+                    ++m_cycle_count;
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                }
+            }
             fifo_out->write(r);
             fifo_out->write(g);
             fifo_out->write(b);
+            if (timed_mode) {
+                ++m_cycle_count;
+            }
+        }
+
+        // Synchronize at end of frame in timed mode
+        if (timed_mode) {
+            if (has_clock) {
+                wait(clk->posedge_event());
+            } else {
+                wait();
+            }
+            ++m_cycle_count;
         }
 
         // Compute gains (mirrors `precompute_gains`)

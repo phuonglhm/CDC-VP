@@ -118,6 +118,9 @@ public:
 
     ~sc_isp_pipeline();
 
+    // Bind a clock signal to all blocks
+    void bind_clock(sc_core::sc_clock* clk);
+
     float get_awb_r_gain() const;
     float get_awb_b_gain() const;
     std::int32_t get_aec_feedback() const;

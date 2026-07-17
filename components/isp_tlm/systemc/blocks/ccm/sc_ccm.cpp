@@ -64,6 +64,7 @@ void sc_ccm::process_stream() {
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
     if (timed_mode) {
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
         m_metrics.set_cycles_per_pixel(m_cycles_per_pixel);
@@ -75,8 +76,14 @@ void sc_ccm::process_stream() {
             if (timed_mode) {
                 ++m_starved_cycles;
                 ++m_cycle_count;
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
+            } else {
+                wait(fifo_in->data_written_event());
             }
-            wait();
             continue;
         }
 
@@ -92,7 +99,11 @@ void sc_ccm::process_stream() {
         // Hardware shell: timing
         if (timed_mode) {
             for (int i = 0; i < m_cycles_per_pixel; ++i) {
-                wait();
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
                 ++m_cycle_count;
                 ++m_active_cycles;
             }
@@ -105,8 +116,14 @@ void sc_ccm::process_stream() {
         if (fifo_out->num_free() < 3) {
             if (timed_mode) {
                 ++m_cycle_count;
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
+            } else {
+                wait(fifo_out->data_read_event());
             }
-            wait();
         }
 
         fifo_out->write(r_out);

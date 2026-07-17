@@ -56,90 +56,144 @@ inline bayer_channel channel_at(int row, int col, cfa_types bayer) {
 } // anonymous namespace
 
 void sc_demosaic::process_stream() {
-    // Frame-level: measure from first read to last write
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
-    m_metrics.begin_processing();
-
-    const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
-    const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
-
-    // 1) Read entire RAW frame
-    std::vector<std::uint16_t> raw(total);
-    for (std::size_t i = 0; i < total; ++i) {
-        raw[i] = fifo_in->read();
+    // Check if timed mode is enabled
+    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
+    if (timed_mode) {
+        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
     }
 
-    // 2) Bypass mode: replicate single channel into R=G=B triplet
-    if (!m_cfg.is_enable) {
+    while (true) {
+        // Frame-level: measure from first read to last write
+        m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
+        m_metrics.begin_processing();
+
+        const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
+        const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
+
+        // 1) Read entire RAW frame
+        std::vector<std::uint16_t> raw(total);
         for (std::size_t i = 0; i < total; ++i) {
-            fifo_out->write(raw[i]);
-            fifo_out->write(raw[i]);
-            fifo_out->write(raw[i]);
-        }
-        return;
-    }
-
-    // 3) Demosaic pass
-    std::vector<std::uint16_t> output(total * 3u);
-    const int W = static_cast<int>(m_width);
-    const int H = static_cast<int>(m_height);
-
-    for (int r = 0; r < H; ++r) {
-        for (int c = 0; c < W; ++c) {
-            const std::uint32_t out_idx = 3u * (static_cast<std::uint32_t>(r) * m_width +
-                                                static_cast<std::uint32_t>(c));
-
-            float W5[WINDOW_SIZE][WINDOW_SIZE];
-            for (int i = 0; i < WINDOW_SIZE; ++i) {
-                for (int j = 0; j < WINDOW_SIZE; ++j) {
-                    W5[i][j] = static_cast<float>(
-                        mirror_get(raw.data(), r + i - HALF_WINDOW, c + j - HALF_WINDOW,
-                                   m_width, m_height));
+            if (timed_mode) {
+                if (fifo_in->num_available() < 1) {
+                    ++m_starved_cycles;
+                    ++m_cycle_count;
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                    --i;  // Retry this read
+                    continue;
                 }
             }
-
-            const bayer_channel channel = channel_at(r, c, m_bayer);
-
-            float rout = 0.0f, gout = 0.0f, bout = 0.0f;
-
-            if (channel == bayer_channel::R) {
-                rout = W5[2][2];
-                gout = (4.0f * W5[2][2] - W5[0][2] - W5[2][0] - W5[4][2] - W5[2][4] +
-                        2.0f * (W5[1][2] + W5[3][2] + W5[2][1] + W5[2][3])) / 8.0f;
-                bout = (6.0f * W5[2][2] - 1.5f * (W5[0][2] + W5[2][0] + W5[4][2] + W5[2][4]) +
-                        2.0f * (W5[1][1] + W5[1][3] + W5[3][1] + W5[3][3])) / 8.0f;
-            } else if (channel == bayer_channel::B) {
-                bout = W5[2][2];
-                gout = (4.0f * W5[2][2] - W5[0][2] - W5[2][0] - W5[4][2] - W5[2][4] +
-                        2.0f * (W5[1][2] + W5[3][2] + W5[2][1] + W5[2][3])) / 8.0f;
-                rout = (6.0f * W5[2][2] - 1.5f * (W5[0][2] + W5[2][0] + W5[4][2] + W5[2][4]) +
-                        2.0f * (W5[1][1] + W5[1][3] + W5[3][1] + W5[3][3])) / 8.0f;
-            } else if (channel == bayer_channel::GR) {
-                gout = W5[2][2];
-                rout = (5.0f * W5[2][2] - W5[2][0] - W5[1][1] - W5[3][1] - W5[1][3] - W5[3][3] - W5[2][4] +
-                        0.5f * (W5[0][2] + W5[4][2]) + 4.0f * (W5[2][1] + W5[2][3])) / 8.0f;
-                bout = (5.0f * W5[2][2] - W5[0][2] - W5[1][1] - W5[1][3] - W5[4][2] - W5[3][1] - W5[3][3] +
-                        0.5f * (W5[2][0] + W5[2][4]) + 4.0f * (W5[1][2] + W5[3][2])) / 8.0f;
-            } else { // GB
-                gout = W5[2][2];
-                bout = (5.0f * W5[2][2] - W5[2][0] - W5[1][1] - W5[3][1] - W5[1][3] - W5[3][3] - W5[2][4] +
-                        0.5f * (W5[0][2] + W5[4][2]) + 4.0f * (W5[2][1] + W5[2][3])) / 8.0f;
-                rout = (5.0f * W5[2][2] - W5[0][2] - W5[1][1] - W5[1][3] - W5[4][2] - W5[3][1] - W5[3][3] +
-                        0.5f * (W5[2][0] + W5[2][4]) + 4.0f * (W5[1][2] + W5[3][2])) / 8.0f;
+            raw[i] = fifo_in->read();
+            if (timed_mode) {
+                ++m_active_cycles;
+                ++m_cycle_count;
             }
-
-            const float br = static_cast<float>(bit_range);
-            output[out_idx + 0] = static_cast<std::uint16_t>(std::clamp(rout, 0.0f, br));
-            output[out_idx + 1] = static_cast<std::uint16_t>(std::clamp(gout, 0.0f, br));
-            output[out_idx + 2] = static_cast<std::uint16_t>(std::clamp(bout, 0.0f, br));
         }
-    }
 
-    // 4) Stream out RGB triplets
-    for (std::size_t i = 0; i < output.size(); ++i) {
-        fifo_out->write(output[i]);
-    }
+        // Synchronize after read phase in timed mode
+        if (timed_mode) {
+            if (has_clock) {
+                wait(clk->posedge_event());
+            } else {
+                wait();
+            }
+            ++m_cycle_count;
+        }
 
-    m_metrics.end_processing();
-    for (std::size_t i = 0; i < output.size(); ++i) m_metrics.record_output();
+        // 2) Bypass mode: replicate single channel into R=G=B triplet
+        if (!m_cfg.is_enable) {
+            for (std::size_t i = 0; i < total; ++i) {
+                fifo_out->write(raw[i]);
+                fifo_out->write(raw[i]);
+                fifo_out->write(raw[i]);
+            }
+            m_metrics.end_processing();
+            for (std::size_t i = 0; i < total * 3u; ++i) m_metrics.record_output();
+            continue;
+        }
+
+        // 3) Demosaic pass
+        std::vector<std::uint16_t> output(total * 3u);
+        const int W = static_cast<int>(m_width);
+        const int H = static_cast<int>(m_height);
+
+        for (int r = 0; r < H; ++r) {
+            for (int c = 0; c < W; ++c) {
+                const std::uint32_t out_idx = 3u * (static_cast<std::uint32_t>(r) * m_width +
+                                                    static_cast<std::uint32_t>(c));
+
+                float W5[WINDOW_SIZE][WINDOW_SIZE];
+                for (int i = 0; i < WINDOW_SIZE; ++i) {
+                    for (int j = 0; j < WINDOW_SIZE; ++j) {
+                        W5[i][j] = static_cast<float>(
+                            mirror_get(raw.data(), r + i - HALF_WINDOW, c + j - HALF_WINDOW,
+                                       m_width, m_height));
+                    }
+                }
+
+                const bayer_channel channel = channel_at(r, c, m_bayer);
+
+                float rout = 0.0f, gout = 0.0f, bout = 0.0f;
+
+                if (channel == bayer_channel::R) {
+                    rout = W5[2][2];
+                    gout = (4.0f * W5[2][2] - W5[0][2] - W5[2][0] - W5[4][2] - W5[2][4] +
+                            2.0f * (W5[1][2] + W5[3][2] + W5[2][1] + W5[2][3])) / 8.0f;
+                    bout = (6.0f * W5[2][2] - 1.5f * (W5[0][2] + W5[2][0] + W5[4][2] + W5[2][4]) +
+                            2.0f * (W5[1][1] + W5[1][3] + W5[3][1] + W5[3][3])) / 8.0f;
+                } else if (channel == bayer_channel::B) {
+                    bout = W5[2][2];
+                    gout = (4.0f * W5[2][2] - W5[0][2] - W5[2][0] - W5[4][2] - W5[2][4] +
+                            2.0f * (W5[1][2] + W5[3][2] + W5[2][1] + W5[2][3])) / 8.0f;
+                    rout = (6.0f * W5[2][2] - 1.5f * (W5[0][2] + W5[2][0] + W5[4][2] + W5[2][4]) +
+                            2.0f * (W5[1][1] + W5[1][3] + W5[3][1] + W5[3][3])) / 8.0f;
+                } else if (channel == bayer_channel::GR) {
+                    gout = W5[2][2];
+                    rout = (5.0f * W5[2][2] - W5[2][0] - W5[1][1] - W5[3][1] - W5[1][3] - W5[3][3] - W5[2][4] +
+                            0.5f * (W5[0][2] + W5[4][2]) + 4.0f * (W5[2][1] + W5[2][3])) / 8.0f;
+                    bout = (5.0f * W5[2][2] - W5[0][2] - W5[1][1] - W5[1][3] - W5[4][2] - W5[3][1] - W5[3][3] +
+                            0.5f * (W5[2][0] + W5[2][4]) + 4.0f * (W5[1][2] + W5[3][2])) / 8.0f;
+                } else { // GB
+                    gout = W5[2][2];
+                    bout = (5.0f * W5[2][2] - W5[2][0] - W5[1][1] - W5[3][1] - W5[1][3] - W5[3][3] - W5[2][4] +
+                            0.5f * (W5[0][2] + W5[4][2]) + 4.0f * (W5[2][1] + W5[2][3])) / 8.0f;
+                    rout = (5.0f * W5[2][2] - W5[0][2] - W5[1][1] - W5[1][3] - W5[4][2] - W5[3][1] - W5[3][3] +
+                            0.5f * (W5[2][0] + W5[2][4]) + 4.0f * (W5[1][2] + W5[3][2])) / 8.0f;
+                }
+
+                const float br = static_cast<float>(bit_range);
+                output[out_idx + 0] = static_cast<std::uint16_t>(std::clamp(rout, 0.0f, br));
+                output[out_idx + 1] = static_cast<std::uint16_t>(std::clamp(gout, 0.0f, br));
+                output[out_idx + 2] = static_cast<std::uint16_t>(std::clamp(bout, 0.0f, br));
+            }
+        }
+
+        // 4) Stream out RGB triplets
+        for (std::size_t i = 0; i < output.size(); ++i) {
+            if (timed_mode) {
+                if (fifo_out->num_free() < 1) {
+                    ++m_cycle_count;
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                    --i;  // Retry this write
+                    continue;
+                }
+            }
+            fifo_out->write(output[i]);
+            if (timed_mode) {
+                ++m_active_cycles;
+                ++m_cycle_count;
+            }
+        }
+
+        m_metrics.end_processing();
+        for (std::size_t i = 0; i < output.size(); ++i) m_metrics.record_output();
+    }
 }

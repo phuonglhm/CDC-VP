@@ -1,0 +1,12 @@
+=== Metrics summary for block: ccm_to_gc ===
+total_samples        : 3072
+simulation_time_ns   : 0.000000
+mean_latency_ns      : 0.000000
+min_latency_ns       : 0.000000
+max_latency_ns       : 0.000000
+stddev_latency_ns    : 0.000000
+throughput_tokens_s  : inf
+mean_period_ns       : 0
+fifo_in_avg_fill     : 255
+fifo_out_avg_fill    : N/A (write-only port)
+sampling_events      : 6145

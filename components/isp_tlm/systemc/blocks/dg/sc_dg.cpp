@@ -23,22 +23,29 @@ void sc_dg::process_stream() {
     m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
     m_metrics.set_cycles_per_pixel(1);
 
-    // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
     if (timed_mode) {
         m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
     }
 
     while (true) {
-        // Check for input availability
-        if (fifo_in->num_available() == 0) {
-            if (timed_mode) {
+        if (timed_mode) {
+            while (fifo_in->num_available() == 0) {
                 ++m_starved_cycles;
                 ++m_cycle_count;
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
             }
-            wait();
-            continue;
+            if (has_clock) {
+                wait(clk->posedge_event());
+            } else {
+                wait();
+            }
         }
 
         std::uint16_t pixel = fifo_in->read();
@@ -51,10 +58,13 @@ void sc_dg::process_stream() {
             out = process_pixel(pixel);
         }
 
-        // Hardware shell: timing
         if (timed_mode) {
             for (int i = 0; i < m_cycles_per_pixel; ++i) {
-                wait();
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
                 ++m_cycle_count;
                 ++m_active_cycles;
             }
@@ -63,12 +73,15 @@ void sc_dg::process_stream() {
             ++m_active_cycles;
         }
 
-        // Check for output backpressure
-        if (fifo_out->num_free() == 0) {
-            if (timed_mode) {
+        if (timed_mode) {
+            while (fifo_out->num_free() == 0) {
                 ++m_cycle_count;
+                if (has_clock) {
+                    wait(clk->posedge_event());
+                } else {
+                    wait();
+                }
             }
-            wait();
         }
 
         fifo_out->write(out);

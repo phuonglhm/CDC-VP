@@ -1,77 +1,119 @@
-# ISP SystemC Architecture Model - Build & Run Guide
+# ISP SystemC Architecture Model — Build & Run Guide
 
-This document describes how to build and run all testbenches for the SystemC streaming ISP pipeline architecture model in CDC-VP.
+This document describes the SystemC ISP pipeline model in CDC-VP: what it is, how it is built, how to run it, and what the output means.
 
 ---
 
-## 1. Directory Structure
+## 1. Overview
+
+The model is a **SystemC TLM (Transaction-Level Modeling) simulation** of a complete 18-stage image signal processor (ISP) that converts raw Bayer sensor data into display-ready YUV420. It supports:
+
+- **Untimed mode** (default) — functional verification, cycle-accurate pixel outputs, no timing delays.
+- **Timed mode** — clock-synchronized block processing, hardware-level cycle accounting, bottleneck analysis, power estimation.
+
+The model sits in `components/isp_tlm/systemc/` and builds into `build/bremen/components/isp_tlm/systemc/`.
+
+---
+
+## 2. Directory Structure
 
 ```
 components/isp_tlm/systemc/
-├── CMakeLists.txt                # Build configuration for all testbenches
-├── build.sh                      # Build script (recommended)
-├── verify.sh                     # Verification script
+├── CMakeLists.txt              # Build configuration; registers all testbenches with CTest
+├── build.sh                    # Recommended build wrapper (calls cmake + ninja)
 │
-├── hw/                          # Hardware architecture infrastructure
-│   ├── hw.h                     # Central include header
-│   ├── isp_arch_config.h        # Architecture configuration (clock, block params)
-│   ├── metrics.h                # Architecture metrics collection
-│   ├── power.h                  # Power estimation models
-│   ├── sweep.h                  # Architecture sweep runner
-│   ├── stream_beat.h            # Frame-aware stream types
-│   ├── timed_stream.h           # Clocked instrumented FIFO
-│   ├── timed_block.h            # Hardware shell base class
-│   ├── local_memory.h            # Memory models (line buffers)
-│   ├── frame_dma.h               # DMA models (input/output bandwidth)
-│   └── trace.h                  # VCD tracing utilities
+├── hw/                         # Hardware architecture infrastructure
+│   ├── hw.h                    # Central include: pulls in everything below
+│   ├── isp_arch_config.h       # Block/link indices, bus/DMA/block default configs
+│   ├── metrics.h               # arch_metrics_collector, bottleneck analysis, power
+│   ├── power.h                 # Per-block power models (static/dynamic/memory)
+│   ├── sweep.h                 # Parameter sweep execution
+│   ├── stream_beat.h           # Frame-aware stream token types
+│   ├── timed_stream.h          # Clocked instrumented FIFO with bandwidth throttling
+│   ├── timed_block.h           # Hardware shell base class (timed/untimed abstraction)
+│   ├── local_memory.h          # Line buffer and SRAM models
+│   ├── frame_dma.h             # DMA transaction models (input/output bandwidth)
+│   └── trace.h                 # VCD tracing utilities
 │
-├── tb_utils/                    # Testbench utilities
-│   ├── tb_utils.h               # Generic_Driver<T>, Generic_Monitor<T>
-│   ├── hardware_params.h        # Hardware configuration (clk, bus width, FIFO depth)
-│   ├── sc_block_metrics.h       # Per-block latency collector
-│   └── sc_metrics_wrapper.h      # Per-boundary throughput wrapper
+├── tb_utils/                   # Shared testbench infrastructure
+│   ├── tb_utils.h              # Generic_Driver<T>, Generic_Monitor<T>
+│   ├── hardware_params.h       # hw_params: clock, bus width, FIFO depth, timed_mode
+│   ├── sc_block_metrics.h      # Per-block latency collector (Layer 1)
+│   ├── sc_metrics_wrapper.h    # Passive inter-block FIFO observer (Layer 2)
+│   └── metrics_demo_tb.cpp     # Metrics wrapper demo (single-block, blc)
 │
-├── blocks/                      # 17 ISP processing blocks
-│   ├── blc/        (sc_blc.{h,cpp}, tb_blc.cpp)
-│   ├── dpc/        (sc_dpc.{h,cpp}, tb_dpc.cpp)
-│   ├── dg/         (sc_dg.{h,cpp}, tb_dg.cpp)
-│   ├── wb/         (sc_wb.{h,cpp}, tb_wb.cpp)
-│   ├── ccm/        (sc_ccm.{h,cpp}, tb_ccm.cpp)
-│   ├── gc/         (sc_gc.{h,cpp}, tb_gc.cpp)
-│   ├── csc/        (sc_csc.{h,cpp}, tb_csc.cpp)
-│   ├── cse/        (sc_cse.{h,cpp}, tb_cse.cpp)
-│   ├── lsc/        (sc_lsc.{h,cpp}, tb_lsc.cpp)
-│   ├── bnr/        (sc_bnr.{h,cpp}, tb_bnr.cpp)
-│   ├── demosaic/   (sc_demosaic.{h,cpp}, tb_demosaic.cpp)
-│   ├── sharpen/     (sc_sharpen.{h,cpp}, tb_sharpen.cpp)
-│   ├── 2dnr/       (sc_2dnr.{h,cpp}, tb_2dnr.cpp)
-│   ├── awb/        (sc_awb.{h,cpp}, tb_awb.cpp)
-│   ├── aec/        (sc_aec.{h,cpp}, tb_aec.cpp)
-│   ├── scale/      (sc_scale.{h,cpp}, tb_scale.cpp)
-│   └── yuv420/     (sc_yuv420.{h,cpp}, tb_yuv420.cpp)
+├── blocks/                     # 17 ISP processing blocks + input normalizer
+│   ├── input_normalizer/       # (in pipeline/ directory instead)
+│   ├── blc/                    # sc_blc.{h,cpp}  — Black Level Correction
+│   ├── dpc/                    # sc_dpc.{h,cpp}  — Defect Pixel Correction
+│   ├── lsc/                    # sc_lsc.{h,cpp}  — Lens Shading Correction
+│   ├── dg/                     # sc_dg.{h,cpp}   — Digital Gain
+│   ├── bnr/                    # sc_bnr.{h,cpp}  — Bad Pixel Replacement
+│   ├── demosaic/               # sc_demosaic.{h,cpp} — Demosaicing (RGB→Bayer)
+│   ├── awb/                    # sc_awb.{h,cpp}  — Auto White Balance (statistics)
+│   ├── wb/                     # sc_wb.{h,cpp}   — White Balance
+│   ├── ccm/                    # sc_ccm.{h,cpp}  — Color Correction Matrix
+│   ├── gc/                     # sc_gc.{h,cpp}   — Gamma Correction
+│   ├── aec/                    # sc_aec.{h,cpp}  — Auto Exposure Control (statistics)
+│   ├── csc/                    # sc_csc.{h,cpp}  — Color Space Conversion (RGB→YUV444)
+│   ├── cse/                    # sc_cse.{h,cpp}  — Color Space Enhancement
+│   ├── sharpen/                # sc_sharpen.{h,cpp} — Sharpening
+│   ├── 2dnr/                   # sc_2dnr.{h,cpp} — 2D Noise Reduction
+│   ├── scale/                  # sc_scale.{h,cpp} — Scaling / downsampling
+│   └── yuv420/                 # sc_yuv420.{h,cpp} — YUV444→YUV420 conversion
 │
-└── pipeline/
-    ├── sc_input_normalizer.{h,cpp}  # Input bit-depth normalization
-    ├── sc_isp_pipeline.{h,cpp}      # Top-level SystemC pipeline module
-    ├── tb_pipeline.cpp               # Full pipeline testbench
-    ├── tb_arch_pipeline.cpp          # Architecture-aware timed pipeline
-    ├── tb_power_metrics.cpp          # Power estimation testbench
-    ├── tb_arch_sweep.cpp             # Architecture sweep runner
-    └── tb_dma_integration.cpp        # DMA integration testbench
+├── pipeline/
+│   ├── sc_input_normalizer.{h,cpp}  # Input bit-depth normalization (12/14/16 → 12-bit)
+│   ├── sc_isp_pipeline.{h,cpp}      # Top-level pipeline module; instantiates all 18 blocks
+│   ├── tb_pipeline.cpp               # Full pipeline functional verification
+│   ├── tb_arch_pipeline.cpp         # Timed pipeline + architecture metrics
+│   ├── tb_power_metrics.cpp         # Per-block power estimation
+│   ├── tb_arch_sweep.cpp            # Architecture parameter sweeps
+│   └── tb_dma_integration.cpp       # DMA and memory model integration
+│
+└── docs/
+    └── MODEL_EVALUATION.md           # Model evaluation report
+```
+
+### Data flow through the pipeline
+
+```
+RAW Input (12/14/16-bit Bayer)
+  │
+  ▼
+input_normalizer (bit-depth normalization)
+  │
+  ▼
+blc  →  dpc  →  lsc  →  dg  →  bnr  →  demosaic
+                                              │
+RAW domain                               ▼
+                                   awb (statistics)
+                                   wb   →  ccm  →  gc  →  aec (statistics)
+                                   │
+                                   ▼
+RGB domain                         csc  →  cse  →  sharpen  →  2dnr
+                                                    │
+YUV444 domain                                          ▼
+                                                 scale (optional)
+                                                      │
+                                                      ▼
+                                                 yuv420
+                                                      │
+YUV420 Output                                            ▼
 ```
 
 ---
 
-## 2. Environment Requirements
+## 3. Environment Requirements
 
-| Component | Version / Note |
-|-----------|----------------|
-| SystemC   | 2.3.4 (installed at `/opt/systemc-2.3.4`) |
-| CMake     | >= 3.16 |
-| Compiler  | `g++` >= 7 (C++17) |
-| Ninja     | Recommended for faster builds |
+| Component | Version / Notes |
+|-----------|---------------|
+| SystemC | 2.3.4 at `/opt/systemc-2.3.4` |
+| CMake | ≥ 3.16 |
+| Compiler | `g++` ≥ 7 (C++17) |
+| Ninja | Recommended (faster than make) |
 
-Quick verification:
+Verify your setup:
 
 ```bash
 ls /opt/systemc-2.3.4/include/systemc.h
@@ -82,16 +124,29 @@ cmake --version
 
 ---
 
-## 3. Build Instructions
+## 4. Build
 
-### 3.1 Recommended: Build via CDC-VP
+### 4.1 Recommended: via the wrapper script
 
-From the CDC-VP root directory:
+From the CDC-VP root:
 
 ```bash
 cd /home/hoangquan/workspace/CDC-VP
 
-# Configure CMake
+# Build everything (cmake configure + ninja)
+./components/isp_tlm/systemc/build.sh
+
+# Rebuild after editing source
+ninja -C build/bremen isp_tlm
+
+# Clean and rebuild from scratch
+./components/isp_tlm/systemc/build.sh clean
+./components/isp_tlm/systemc/build.sh
+```
+
+### 4.2 Manual cmake
+
+```bash
 cmake -S . -B build/bremen -G Ninja \
   -DCMAKE_C_COMPILER=/usr/bin/gcc \
   -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
@@ -99,102 +154,63 @@ cmake -S . -B build/bremen -G Ninja \
   -DSYSTEMC_INCLUDE_DIR=/opt/systemc-2.3.4/include \
   -DSYSTEMC_LIBRARY=/opt/systemc-2.3.4/lib/libsystemc.so
 
-# Build all targets
-./components/isp_tlm/systemc/build.sh
-
-# Or build specific targets
-ninja -C build/bremen tb_blc tb_pipeline
+cmake --build build/bremen
 ```
 
-### 3.2 Using the Build Script
+### 4.3 Build a specific testbench
 
 ```bash
-cd /home/hoangquan/workspace/CDC-VP
-./components/isp_tlm/systemc/build.sh              # Build all
-./components/isp_tlm/systemc/build.sh configure     # Reconfigure
-./components/isp_tlm/systemc/build.sh clean         # Clean build
-./components/isp_tlm/systemc/build.sh help           # Show options
+ninja -C build/bremen tb_pipeline
+ninja -C build/bremen tb_arch_pipeline
+ninja -C build/bremen tb_d65_pipeline
 ```
 
-Build outputs are placed in `build/bremen/components/isp_tlm/systemc/`.
-
----
-
-## 4. Testbench Overview
-
-### 4.1 Individual Block Testbenches (17 blocks)
-
-Each block has its own self-contained testbench that verifies correctness against a golden reference.
-
-| Binary | Block | Processing Type |
-|--------|-------|-----------------|
-| `tb_blc` | Black Level Correction | Pixel-wise |
-| `tb_dpc` | Defect Pixel Correction | Frame-wise |
-| `tb_dg` | Digital Gain | Pixel-wise |
-| `tb_wb` | White Balance | Pixel-wise |
-| `tb_ccm` | Color Correction Matrix | Pixel-wise |
-| `tb_gc` | Gamma Correction | Pixel-wise |
-| `tb_csc` | Color Space Conversion (RGB→YUV) | Pixel-wise |
-| `tb_cse` | Color Space Enhancement | Pixel-wise |
-| `tb_lsc` | Lens Shading Correction | Frame-wise |
-| `tb_bnr` | Bad Pixel Replacement | Frame-wise |
-| `tb_demosaic` | Demosaicing | Frame-wise |
-| `tb_sharpen` | Sharpening | Pixel-wise |
-| `tb_2dnr` | 2D Noise Reduction | Frame-wise |
-| `tb_awb` | Auto White Balance | Frame-wise |
-| `tb_aec` | Auto Exposure Control | Frame-wise |
-| `tb_scale` | Scaling | Frame-wise |
-| `tb_yuv420` | YUV420 Conversion | Frame-wise |
-
-### 4.2 Pipeline Testbenches
-
-| Binary | Purpose |
-|--------|---------|
-| `tb_pipeline` | Full ISP pipeline verification |
-| `tb_d65_pipeline` | Full pipeline with real D65 image |
-| `tb_d65_blc` | BLC with real D65 image |
-| `tb_arch_pipeline` | Architecture-aware timed pipeline with metrics |
-| `tb_power_metrics` | Per-block power estimation |
-| `tb_arch_sweep` | Architecture parameter sweeps |
-| `tb_dma_integration` | DMA and memory model integration |
-| `tb_metrics_demo` | Metrics wrapper demonstration |
-
-### 4.3 Original TLM Testbench
-
-| Binary | Purpose |
-|--------|---------|
-| `isp_run` | Original reference C++ TLM pipeline (via `components/isp_tlm/tests/`) |
+All built executables land in `build/bremen/components/isp_tlm/systemc/`.
 
 ---
 
 ## 5. Running Tests
 
-### 5.1 Individual Block Tests
+### 5.1 Pipeline testbenches (recommended)
 
 ```bash
 BUILD=build/bremen/components/isp_tlm/systemc
 
-# Test all blocks individually
-$BUILD/tb_blc
-$BUILD/tb_dpc
-$BUILD/tb_dg
-$BUILD/tb_wb
-$BUILD/tb_ccm
-$BUILD/tb_gc
-$BUILD/tb_csc
-$BUILD/tb_cse
-$BUILD/tb_lsc
-$BUILD/tb_bnr
-$BUILD/tb_demosaic
-$BUILD/tb_sharpen
-$BUILD/tb_2dnr
-$BUILD/tb_awb
-$BUILD/tb_aec
-$BUILD/tb_scale
-$BUILD/tb_yuv420
+# Functional verification with synthetic pattern
+$BUILD/tb_pipeline
+
+# Full pipeline with real D65 image (2688×1520, 16-bit RGGB)
+$BUILD/tb_d65_pipeline
+
+# BLC only with real D65 image
+$BUILD/tb_d65_blc
+
+# Timed mode — clock-synchronized, cycle accounting, bottleneck analysis
+$BUILD/tb_arch_pipeline
+
+# Per-block power breakdown
+$BUILD/tb_power_metrics
+
+# Architecture parameter sweeps (resolution, frequency, block enables)
+$BUILD/tb_arch_sweep
+
+# DMA and memory model integration
+$BUILD/tb_dma_integration
+
+# Single-block metrics demo (blc + wrapper)
+$BUILD/tb_metrics_demo
 ```
 
-Expected output:
+### 5.2 Individual block testbenches (17 blocks)
+
+```bash
+BUILD=build/bremen/components/isp_tlm/systemc
+for tb in $BUILD/tb_{blc,dpc,dg,wb,ccm,gc,csc,cse,lsc,bnr,demosaic,sharpen,2dnr,awb,aec,scale,yuv420}; do
+  $tb && echo "PASS: $tb" || echo "FAIL: $tb"
+done
+```
+
+Each block testbench verifies correctness against a golden reference. Expected output:
 
 ```
 ==================================================
@@ -208,116 +224,133 @@ TEST RESULT: PASS
 ==================================================
 ```
 
-### 5.2 Full Pipeline Tests
-
-```bash
-# Basic pipeline verification
-./build/bremen/components/isp_tlm/systemc/tb_pipeline
-
-# Full pipeline with D65 real image (2688x1520)
-./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
-
-# BLC with D65 real image
-./build/bremen/components/isp_tlm/systemc/tb_d65_blc
-```
-
-### 5.3 Architecture Testbenches
-
-```bash
-# Architecture-aware timed pipeline
-./build/bremen/components/isp_tlm/systemc/tb_arch_pipeline
-
-# Power estimation
-./build/bremen/components/isp_tlm/systemc/tb_power_metrics
-
-# Architecture sweeps
-./build/bremen/components/isp_tlm/systemc/tb_arch_sweep
-
-# DMA integration
-./build/bremen/components/isp_tlm/systemc/tb_dma_integration
-```
-
-### 5.4 Original TLM Reference
-
-```bash
-./build/bremen/components/isp_tlm/tests/isp_run \
-  -i components/isp_tlm/input/D65_raw_2688x1520_5376.raw \
-  -o /tmp/output.yuv \
-  -w 2688 --height 1520
-```
-
-### 5.5 Running All Tests via CTest
-
-**Important:** Run from the build directory.
+### 5.3 CTest (all registered tests)
 
 ```bash
 cd build/bremen
 
-# Run all tests
+# List all registered tests
+ctest -N
+
+# Run all tests, show output on failure
 ctest --output-on-failure
 
 # Run only SystemC tests
 ctest -R '^tb_' --output-on-failure
 
-# Run specific pipeline tests
+# Run only pipeline tests
 ctest -R 'pipeline' --output-on-failure
+
+# Run in parallel
+ctest -j$(nproc) --output-on-failure
 ```
 
 ---
 
-## 6. Metrics Collection
+## 6. Timed vs Untimed Mode
 
-### 6.1 Three-Layer Architecture
+Every ISP block supports two simulation modes controlled by `hw_params.timed_mode`:
+
+| | Untimed (`timed_mode = false`) | Timed (`timed_mode = true`) |
+|---|---|---|
+| **Clock** | No clock port bound | `sc_in<bool>* clk` bound via `sc_isp_pipeline::bind_clock()` |
+| **FIFO waits** | Blocking `read()`/`write()` only | `wait(clk->posedge_event())` before each read |
+| **Processing** | No `wait()` in processing loops | `wait(clk->posedge_event())` in timed processing/output loops |
+| **Timing** | `sc_time_stamp()` stays at 0 | Real cycle-accurate delays |
+| **Use case** | Functional verification, MSE vs golden reference | Hardware cycle accounting, bottleneck analysis, power |
+
+To enable timed mode in a testbench:
+
+```cpp
+hw_params hw;
+hw.timed_mode = true;
+hw.clk_mhz = 200.0f;
+hw.bus_width_bits = 64;
+hw.pixel_bits = 16;
+
+sc_isp_pipeline pipeline("isp", cfg, lsc_lut, raw_in_fifo, yuv_out_fifo,
+                          12, cfa_types::RGGB, &hw);
+
+// Create and bind a clock (200 MHz, 50% duty cycle)
+sc_clock* clk = new sc_clock("clk", sc_time(5.0, SC_NS), 0.5);
+pipeline.bind_clock(clk);
+
+sc_start();
+```
+
+---
+
+## 7. Hardware Parameters
+
+`hw_params` (defined in `tb_utils/hardware_params.h`) drives all timing and throughput calculations:
+
+```cpp
+hw_params hw;
+hw.clk_mhz          = 200.0f;   // Clock frequency (MHz)
+hw.bus_width_bits   = 64;        // Data bus width (bits/cycle)
+hw.pixel_bits       = 16;        // Token size (uint16_t=16, uint8_t=8)
+hw.fifo_depth       = 1024;      // Inter-block FIFO depth
+hw.timed_mode       = true;      // Enable clock-synchronized waits
+hw.default_cycles_per_pixel = 1; // Processing cycles per pixel
+
+// Derived:
+hw.cycle_ns()            // 5.0 ns @ 200 MHz
+hw.tokens_per_cycle()     // 4.0 @ 64-bit / 16-bit
+hw.throughput_mpixels_s() // 50.0 Mpixels/s @ 200 MHz, 4 tokens/cycle
+```
+
+---
+
+## 8. Metrics Collection
+
+The model uses a **three-layer metrics architecture**:
 
 ```
-RAW Input (sensor)
+RAW Input
   │
-  ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ LAYER 1: Block Processing Latency                                │
-│ Each block: sc_block_metrics<T>                                  │
-│   - Point ops: normalizer, BLC, DG, WB, CCM, GC, CSC, CSE      │
-│   - Frame ops: DPC, BNR, demosaic, AWB, AEC, sharpen,          │
-│                2DNR, scale, yuv420                              │
-│   → block_<name>.csv + block_<name>_summary.txt                 │
-└──────────────────────────────────────────────────────────────────┘
+  ▼  Layer 1: sc_block_metrics<T>  (per-block processing latency)
+  ┌─────────────────────────────────────────────────────────────┐
+  │  normalizer → blc → dpc → lsc → dg → bnr → demosaic  ... │
+  │  → block_<name>.csv  +  block_<name>_summary.txt           │
+  └─────────────────────────────────────────────────────────────┘
   │
-  ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ LAYER 2: Boundary Throughput                                     │
-│ sc_metrics_wrapper<T> between every block pair (17 wrappers)      │
-│   → <upstream>_to_<downstream>.csv + summary.txt                │
-└──────────────────────────────────────────────────────────────────┘
+  ▼  Layer 2: sc_metrics_wrapper<T>  (inter-block boundary throughput)
+  ┌─────────────────────────────────────────────────────────────┐
+  │  17 wrapper instances between every adjacent block pair       │
+  │  → <upstream>_to_<downstream>.csv  +  <upstream>_to_<downstream>_summary.txt │
+  └─────────────────────────────────────────────────────────────┘
   │
-  ▼
-YUV420 Output (display)
+  ▼  Layer 3: arch_metrics_collector  (frame timing, bottleneck, power)
+  ┌─────────────────────────────────────────────────────────────┐
+  │  → frame_metrics.csv, block_metrics.csv, link_metrics.csv    │
+  │  → bottleneck_report.txt, power_metrics.csv                  │
+  └─────────────────────────────────────────────────────────────┘
+  │
+YUV420 Output
 ```
 
-### 6.2 Hardware Parameters
+### Enabling metrics
 
-All timing calculations use `hw_params`:
+```cpp
+// Method A: set static request before pipeline construction
+sc_isp_pipeline::set_metrics_request(true, "output/metrics");
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `clk_mhz` | Clock frequency (MHz) | 200 |
-| `bus_width_bits` | Bus width (bits/cycle) | 64 |
-| `pixel_bits` | Pixel bits (token size) | 16 |
-| `fifo_depth` | FIFO depth | 1024 |
-| `timed_mode` | Enable timing delays | false |
+// Method B: set public fields after construction (but before sc_start)
+sc_isp_pipeline pipeline(...);
+pipeline.enable_metrics = true;
+pipeline.metrics_output_dir = "output/metrics";
 
-### 6.3 Key Calculations
+// After sc_start()
+pipeline.dump_pipeline_metrics();    // Layer 2 CSVs
+pipeline.dump_all_block_metrics();  // Layer 1 CSVs
+pipeline.print_metrics_summary();    // Console table
+```
 
-| Method | Formula | Example @ 200MHz |
-|--------|---------|------------------|
-| `cycle_ns()` | `1000/clk_mhz` | 5.0 ns |
-| `tokens_per_cycle()` | `bus_width_bits/pixel_bits` | 4.0 |
-| `throughput_Mpix_s()` | `clk_mhz*1e6/tokens_per_cycle` | 50.0 Mpix/s |
-
-### 6.4 Metrics Output Structure
+### Output structure
 
 ```
 output/metrics/
-├── block_normalizer.csv          # Layer 1: block latency
+├── block_normalizer.csv              # Layer 1: per-block latency
 ├── block_normalizer_summary.txt
 ├── block_blc.csv
 ├── block_blc_summary.txt
@@ -325,290 +358,101 @@ output/metrics/
 ├── block_yuv420.csv
 ├── block_yuv420_summary.txt
 │
-├── input_norm_to_blc.csv        # Layer 2: boundary throughput
+├── input_norm_to_blc.csv             # Layer 2: boundary throughput
 ├── input_norm_to_blc_summary.txt
 ├── blc_to_dpc.csv
 ├── blc_to_dpc_summary.txt
 ├── ...
 ├── scale_to_yuv420.csv
-├── scale_to_yuv420_summary.txt
-│
-└── summary.csv                  # Aggregated summary
-```
+└── scale_to_yuv420_summary.txt
 
-### 6.5 Enabling Metrics in Testbench
-
-```cpp
-// Enable metrics collection
-dut.enable_metrics = true;
-dut.metrics_output_dir = "output/metrics";
-
-// After simulation, dump metrics
-dut.dump_all_block_metrics();    // → block_*.csv + block_*_summary.txt
-dut.dump_pipeline_metrics();     // → *_to_*.csv + *_to_*_summary.txt
-dut.print_metrics_summary();     // → console table
-```
-
-### 6.6 Architecture Metrics
-
-```cpp
-// Enable architecture metrics collection
-dut.enable_arch_metrics("output/arch_metrics");
-
-// After simulation
-dut.collect_block_metrics();
-dut.update_arch_frame_timing(0);
-dut.dump_arch_metrics();         // Print bottleneck analysis
-dut.dump_arch_summary();         // Dump CSV files
+output/arch_metrics/                  # Layer 3 (timed mode only)
+├── frame_metrics.csv
+├── block_metrics.csv
+├── link_metrics.csv
+├── bottleneck_report.txt
+├── power_metrics.csv
+└── power_summary.txt
 ```
 
 ---
 
-## 7. Test with Real Images
-
-### 7.1 Available Test Images
+## 9. Test Images
 
 | File | Resolution | Bit Depth | Pattern |
-|------|------------|-----------|---------|
+|------|-----------|-----------|---------|
 | `D65_raw_2688x1520_5376.raw` | 2688×1520 | 16-bit RGGB | D65 illuminant |
 | `ColorChecker_2592x1536_12bits_RGGB.raw` | 2592×1536 | 12-bit RGGB | Color checker |
 | `A_raw_2688x1520_5376.raw` | 2688×1520 | 16-bit RGGB | A illuminant |
 
-### 7.2 Running Real Image Tests
-
-```bash
-# Build D65 testbenches
-cmake --build build/bremen --target tb_d65_blc tb_d65_pipeline
-
-# Run BLC with D65 image
-./build/bremen/components/isp_tlm/systemc/tb_d65_blc
-
-# Run full pipeline with D65 image
-./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
-```
-
-### 7.3 Original TLM Runner with Real Image
-
-```bash
-./build/bremen/components/isp_tlm/tests/isp_run \
-  -i components/isp_tlm/input/D65_raw_2688x1520_5376.raw \
-  -o /tmp/output.yuv \
-  -w 2688 --height 1520
-```
+Located in `components/isp_tlm/input/`.
 
 ---
 
-## 8. Testbench Descriptions
+## 10. Quick Reference
 
-### 8.1 tb_pipeline - Full Pipeline Verification
-
-Verifies the complete ISP pipeline produces correct output by comparing against a golden reference computed from the C++ reference implementation.
-
+### Build all
 ```bash
-./build/bremen/components/isp_tlm/systemc/tb_pipeline
-```
-
-**What it tests:**
-- End-to-end correctness (bit-exact MSE = 0)
-- Frame processing time measurement
-- AWB/AEC feedback values
-
-### 8.2 tb_arch_pipeline - Architecture-Aware Timed Pipeline
-
-Demonstrates the full architecture model with clock and reset signals, timed block processing, architecture metrics collection, and bottleneck analysis.
-
-```bash
-./build/bremen/components/isp_tlm/systemc/tb_arch_pipeline
-```
-
-**What it measures:**
-- Per-block utilization (active/starved/blocked cycles)
-- Frame timing and FPS estimation
-- Bottleneck identification
-- Architecture metrics CSV output
-
-**Output structure:**
-```
-output/arch_metrics/
-├── frame_metrics.csv
-├── block_metrics.csv
-├── link_metrics.csv
-└── bottleneck_report.txt
-```
-
-### 8.3 tb_power_metrics - Power Estimation
-
-Estimates power consumption for each ISP block using activity-based models.
-
-```bash
-./build/bremen/components/isp_tlm/systemc/tb_power_metrics
-```
-
-**Power breakdown by component:**
-- Static power (leakage)
-- Dynamic power (switching)
-- Memory power (SRAM/line buffers)
-
-**Example output:**
-```
---- Per-Block Power Estimation ---
-         Block      Util %   Static mW  Dynamic mW   Memory mW    Total mW
---------------------------------------------------------------------------
-         blc       92.0%       0.300     190.771       0.000     191.071
-      demosaic       70.0%       2.000   28449.793    2394.112   30845.905
-           ...
-         TOTAL                 13.100   70340.662   16905.434   87259.196
-
---- Configuration Comparison ---
-              Config            FPS   Frame Energy      Avg Power
------------------------------------------------------------------
-        1080p@200MHz           96.5      904703.3 nJ       87259.2 mW
-           4K@200MHz           24.1     3618813.4 nJ       87259.2 mW
-        1080p@400MHz          192.9      452351.7 nJ       87259.2 mW
-```
-
-### 8.4 tb_arch_sweep - Architecture Parameter Sweeps
-
-Runs architecture exploration sweeps across resolution, clock frequency, and block enables to identify optimal configurations.
-
-```bash
-./build/bremen/components/isp_tlm/systemc/tb_arch_sweep
-```
-
-**Sweep types:**
-1. **Resolution sweep** - Test different image sizes
-2. **Frequency sweep** - Test different clock frequencies
-3. **Block enable sweep** - Test critical path analysis
-
-**Example output:**
-```
-=== Starting Sweep: resolution_sweep ===
-Total points: 5
-
-[1/5] resolution=640x480 ... OK (FPS=651.0, Power=7.4mW)
-[2/5] resolution=1280x720 ... OK (FPS=217.0, Power=22.2mW)
-[3/5] resolution=1920x1080 ... OK (FPS=96.5, Power=50.0mW)
-[4/5] resolution=2560x1440 ... OK (FPS=54.3, Power=88.9mW)
-[5/5] resolution=3840x2160 ... OK (FPS=24.1, Power=200.0mW)
-
---- Energy Efficiency ---
-Best FPS/mW: 87.879
-
---- Bottleneck Distribution ---
-bandwidth: 2 configs (40.0%)
-compute: 3 configs (60.0%)
-
-Exported to: output/sweeps/resolution/resolution_sweep.csv
-```
-
-### 8.5 tb_dma_integration - DMA and Memory Model Integration
-
-Demonstrates DMA and memory model integration with bandwidth throttling.
-
-```bash
-./build/bremen/components/isp_tlm/systemc/tb_dma_integration
-```
-
-**Features:**
-- DMA burst simulation
-- Bandwidth limiting on input/output
-- Frame DMA models
-- Local memory (line buffer) models
-
-**Key configurations:**
-- Input DMA: 64-bit bus, 16-beat bursts, 800 Mbps limit
-- Output DMA: 64-bit bus, 16-beat bursts, 400 Mbps limit
-
-### 8.6 tb_metrics_demo - Metrics Wrapper Demonstration
-
-Single-block demonstration of the metrics wrapper between Generic_Driver and sc_blc.
-
-```bash
-./build/bremen/components/isp_tlm/systemc/tb_metrics_demo
-```
-
-**Demonstrates:**
-- Per-token latency CSV logging
-- Summary statistics
-- Block-level metrics collection
-
-### 8.7 tb_d65_pipeline / tb_d65_blc - Real Image Tests
-
-Tests with real D65 illuminant RAW images for validation.
-
-```bash
-./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
-./build/bremen/components/isp_tlm/systemc/tb_d65_blc
-```
-
-**Results:**
-- `tb_d65_blc`: **PASS** (bit-exact MSE = 0)
-- `tb_d65_pipeline`: Full 17-block streaming verified
-
----
-
-## 9. Quick Reference
-
-### Build All
-```bash
-cd /home/hoangquan/workspace/CDC-VP
 ./components/isp_tlm/systemc/build.sh
 ```
 
-### Run All Block Tests
+### Run pipeline tests
 ```bash
-cd build/bremen/components/isp_tlm/systemc
-for tb in tb_blc tb_dpc tb_dg tb_wb tb_ccm tb_gc tb_csc tb_cse tb_lsc tb_bnr tb_demosaic tb_sharpen tb_2dnr tb_awb tb_aec tb_scale tb_yuv420; do
-  ./$tb && echo "PASS: $tb" || echo "FAIL: $tb"
-done
+./build/bremen/components/isp_tlm/systemc/tb_pipeline
+./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
+./build/bremen/components/isp_tlm/systemc/tb_arch_pipeline
 ```
 
-### Run Architecture Tests
+### Run architecture tests
 ```bash
-./tb_power_metrics
-./tb_arch_sweep
-./tb_arch_pipeline
-./tb_dma_integration
+./build/bremen/components/isp_tlm/systemc/tb_power_metrics
+./build/bremen/components/isp_tlm/systemc/tb_arch_sweep
+./build/bremen/components/isp_tlm/systemc/tb_dma_integration
 ```
 
-### Run via CTest
+### Run all via CTest
 ```bash
-cd build/bremen
-ctest --output-on-failure
+cd build/bremen && ctest -R '^tb_' --output-on-failure
+```
+
+### Post-process metrics
+```bash
+python3 components/isp_tlm/systemc/tb_utils/metrics_summary.py
 ```
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause | Solution |
-|---------|-------|----------|
-| `undefined reference to sc_core::sc_module_name` | Missing `-lsystemc` or rpath | Add `-Wl,-rpath,/opt/systemc-2.3.4/lib64` |
-| `fatal error: systemc.h: No such file` | Missing include path | Check `SYSTEMC_HOME` in CMake |
-| Simulator hangs (deadlock) | FIFO mismatch | Verify input/output token counts match W×H |
-| Test reports `FAIL` | Float precision or config | Check "Differences / max difference" output |
-| Build fails | Missing dependencies | Run `setup_third_party.sh` |
+|---------|-------|---------|
+| `fatal error: systemc.h: No such file` | Missing SystemC include path | Check `SYSTEMC_INCLUDE` in CMake |
+| `undefined reference to sc_core::sc_module_name` | Missing `-lsystemc` or rpath | Add `-Wl,-rpath,/opt/systemc-2.3.4/lib` |
+| Simulator hangs (deadlock) | FIFO size mismatch with W×H | Verify token count matches frame pixels |
+| Test reports `FAIL` | Float precision or config mismatch | Check "Differences / max difference" output |
+| Latency values all 0 | Running in untimed mode | Set `hw_params.timed_mode = true` and bind a clock |
+| Build fails | Stale object files | `rm -rf build/bremen && ./build.sh` |
 
 ---
 
-## 11. Architecture Model Files
+## 12. Architecture Model Files
 
-### Hardware Infrastructure (hw/)
+### `hw/` — Hardware Infrastructure
 
 | File | Purpose |
 |------|---------|
-| `isp_arch_config.h` | Architecture configuration, block parameters |
-| `metrics.h` | Architecture metrics collection, bottleneck analysis |
-| `power.h` | Power estimation models, block power defaults |
-| `sweep.h` | Parameter sweep execution and results |
+| `isp_arch_config.h` | Block/link indices and per-block default configurations |
+| `metrics.h` | `arch_metrics_collector`, bottleneck classification, power estimation |
+| `power.h` | Per-block power models; static/dynamic/memory breakdown |
+| `sweep.h` | Parameter sweep execution across resolution, frequency, enables |
 | `timed_stream.h` | Clocked instrumented FIFO with bandwidth throttling |
-| `timed_block.h` | Hardware shell base class |
-| `local_memory.h` | Line buffer and memory models |
-| `frame_dma.h` | DMA transaction models |
-| `stream_beat.h` | Frame-aware stream types |
+| `timed_block.h` | Hardware shell base class (timed/untimed abstraction) |
+| `local_memory.h` | Line buffer and SRAM models |
+| `frame_dma.h` | DMA transaction models (input/output bandwidth) |
+| `stream_beat.h` | Frame-aware stream token types |
 | `trace.h` | VCD tracing utilities |
 
-### Key Configuration Structures
+### Key configuration structs
 
 ```cpp
 // Architecture configuration

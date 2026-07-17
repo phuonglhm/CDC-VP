@@ -128,43 +128,44 @@ sc_isp_pipeline::MetricsRequest sc_isp_pipeline::consume_metrics_request() {
     return r;
 }
 
-// Wrap a u16 boundary. PROD writes to in_f, wrapper reads in_f and writes
-// out_f, CONS reads from out_f.  When metrics are disabled, fall back to
-// the original direct binding PROD -> OUT_FIFO -> CONS.
+// Wrap a u16 boundary. PROD writes to OUT_FIFO, wrapper reads from OUT_FIFO
+// and writes to out_f, CONS reads from out_f. When metrics are disabled,
+// fall back to direct binding PROD -> OUT_FIFO -> CONS.
 #define WRAP_U16(NAME, PROD, CONS, OUT_FIFO, METRICS_ON)                       \
     do {                                                                       \
+        PROD->fifo_out(*(OUT_FIFO));                                          \
         if ((METRICS_ON) &&                                                    \
             std::find(skip.begin(), skip.end(),                                \
                       std::string(NAME)) == skip.end()) {                      \
-            auto* in_f  = new sc_core::sc_fifo<std::uint16_t>(FIFO_DEPTH);     \
+            auto* w = new sc_metrics_wrapper<std::uint16_t>(                    \
+                sc_core::sc_gen_unique_name(NAME "_wrap"), NAME);               \
+            w->fifo_in(*(OUT_FIFO));                                           \
             auto* out_f = new sc_core::sc_fifo<std::uint16_t>(FIFO_DEPTH);     \
-            auto* w     = new sc_metrics_wrapper<std::uint16_t>(               \
-                sc_core::sc_gen_unique_name(NAME "_wrap"), NAME);                \
-            w->fifo_in(*in_f);                                                 \
             w->fifo_out(*out_f);                                               \
-            PROD->fifo_out(*in_f);                                             \
             CONS->fifo_in(*out_f);                                             \
             WrapperNode node{NAME, w, &dump_wrapper_u16, &count_wrapper_u16};   \
-            m_wrapper_nodes.push_back(node);                                    \
-        } else {                                                               \
+            m_wrapper_nodes.push_back(node);                                   \
+        } else {                                                              \
             CONS->fifo_in(*(OUT_FIFO));                                        \
         }                                                                      \
     } while (0)
 
+// Wrap a u8 boundary. PROD writes to OUT_FIFO, wrapper reads from OUT_FIFO
+// and writes to out_f, CONS reads from out_f. When metrics are disabled,
+// fall back to direct binding PROD -> OUT_FIFO -> CONS.
 #define WRAP_U8(NAME, PROD, CONS, OUT_FIFO, METRICS_ON)                        \
     do {                                                                       \
+        PROD->fifo_out(*(OUT_FIFO));                                          \
         if ((METRICS_ON) &&                                                    \
             std::find(skip.begin(), skip.end(),                                \
                       std::string(NAME)) == skip.end()) {                      \
-            auto* in_f  = new sc_core::sc_fifo<std::uint8_t>(FIFO_DEPTH);     \
-            auto* out_f = new sc_core::sc_fifo<std::uint8_t>(FIFO_DEPTH);     \
-            auto* w     = new sc_metrics_wrapper<std::uint8_t>(                \
-                sc_core::sc_gen_unique_name(NAME "_wrap"), NAME);                \
-            w->fifo_in(*in_f);                                                 \
+            auto* w = new sc_metrics_wrapper<std::uint8_t>(                    \
+                sc_core::sc_gen_unique_name(NAME "_wrap"), NAME);               \
+            w->fifo_in(*(OUT_FIFO));                                           \
+            auto* out_f = new sc_core::sc_fifo<std::uint8_t>(FIFO_DEPTH);      \
             w->fifo_out(*out_f);                                               \
-            PROD->fifo_out(*in_f);                                             \
             CONS->fifo_in(*out_f);                                             \
-            WrapperNode node{NAME, w, &dump_wrapper_u8, &count_wrapper_u8};    \
+            WrapperNode node{NAME, w, &dump_wrapper_u8, &count_wrapper_u8};     \
             m_wrapper_nodes.push_back(node);                                    \
         } else {                                                               \
             CONS->fifo_in(*(OUT_FIFO));                                        \
@@ -224,6 +225,68 @@ sc_isp_pipeline::~sc_isp_pipeline() {
     for (auto& node : m_block_nodes) {
         node.block_metrics_ptr = nullptr;
     }
+}
+
+void sc_isp_pipeline::bind_clock(sc_core::sc_clock* clk) {
+    if (!clk) return;
+
+    // Bind clock to all blocks that have a clock port
+    if (m_input_norm && m_input_norm->clk) {
+        m_input_norm->clk->bind(*clk);
+    }
+    if (m_blc && m_blc->clk) {
+        m_blc->clk->bind(*clk);
+    }
+    if (m_dpc && m_dpc->clk) {
+        m_dpc->clk->bind(*clk);
+    }
+    if (m_lsc && m_lsc->clk) {
+        m_lsc->clk->bind(*clk);
+    }
+    if (m_dg && m_dg->clk) {
+        m_dg->clk->bind(*clk);
+    }
+    if (m_bnr && m_bnr->clk) {
+        m_bnr->clk->bind(*clk);
+    }
+    if (m_demosaic && m_demosaic->clk) {
+        m_demosaic->clk->bind(*clk);
+    }
+    if (m_awb && m_awb->clk) {
+        m_awb->clk->bind(*clk);
+    }
+    if (m_wb && m_wb->clk) {
+        m_wb->clk->bind(*clk);
+    }
+    if (m_ccm && m_ccm->clk) {
+        m_ccm->clk->bind(*clk);
+    }
+    if (m_gc && m_gc->clk) {
+        m_gc->clk->bind(*clk);
+    }
+    if (m_aec && m_aec->clk) {
+        m_aec->clk->bind(*clk);
+    }
+    if (m_csc && m_csc->clk) {
+        m_csc->clk->bind(*clk);
+    }
+    if (m_cse && m_cse->clk) {
+        m_cse->clk->bind(*clk);
+    }
+    if (m_sharpen && m_sharpen->clk) {
+        m_sharpen->clk->bind(*clk);
+    }
+    if (m_2dnr && m_2dnr->clk) {
+        m_2dnr->clk->bind(*clk);
+    }
+    if (m_scale && m_scale->clk) {
+        m_scale->clk->bind(*clk);
+    }
+    if (m_yuv420 && m_yuv420->clk) {
+        m_yuv420->clk->bind(*clk);
+    }
+
+    std::cout << "[sc_isp_pipeline] Bound clock to all blocks" << std::endl;
 }
 
 void sc_isp_pipeline::init_modules() {
@@ -587,26 +650,6 @@ void sc_isp_pipeline::bind_channels() {
                   << " boundary wrappers, registered " << m_block_nodes.size()
                   << " block metrics" << std::endl;
     }
-
-    // Bind clk ports on blocks that have them (dummy clock if no real clock)
-    static sc_core::sc_signal<bool> dummy_clk;
-    dummy_clk.write(false);
-    if (m_input_norm) m_input_norm->clk.bind(dummy_clk);
-    if (m_blc) m_blc->clk.bind(dummy_clk);
-    if (m_dpc) m_dpc->clk.bind(dummy_clk);
-    if (m_lsc) m_lsc->clk.bind(dummy_clk);
-    if (m_dg) m_dg->clk.bind(dummy_clk);
-    if (m_bnr) m_bnr->clk.bind(dummy_clk);
-    if (m_demosaic) m_demosaic->clk.bind(dummy_clk);
-    if (m_wb) m_wb->clk.bind(dummy_clk);
-    if (m_ccm) m_ccm->clk.bind(dummy_clk);
-    if (m_gc) m_gc->clk.bind(dummy_clk);
-    if (m_csc) m_csc->clk.bind(dummy_clk);
-    if (m_cse) m_cse->clk.bind(dummy_clk);
-    if (m_sharpen) m_sharpen->clk.bind(dummy_clk);
-    if (m_2dnr) m_2dnr->clk.bind(dummy_clk);
-    if (m_scale) m_scale->clk.bind(dummy_clk);
-    if (m_yuv420) m_yuv420->clk.bind(dummy_clk);
 }
 
 void sc_isp_pipeline::setup_metrics() {

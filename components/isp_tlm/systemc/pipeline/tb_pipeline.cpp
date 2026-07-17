@@ -151,7 +151,7 @@ int sc_main(int argc, char* argv[]) {
     hw.bus_width_bits = 64;
     hw.pixel_bits = 16;
     hw.fifo_depth = FIFO_DEPTH;
-    hw.timed_mode = false;
+    hw.timed_mode = false;  // Untimed mode - no clock needed
 
     std::cout << "\n--- Hardware Parameters ---\n";
     std::cout << hw.to_string();

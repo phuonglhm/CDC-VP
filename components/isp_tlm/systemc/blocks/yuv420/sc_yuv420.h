@@ -28,8 +28,8 @@ public:
     sc_core::sc_port<sc_fifo_in_if<std::uint8_t>> fifo_in;
     sc_core::sc_port<sc_fifo_out_if<std::uint8_t>> fifo_out;
 
-    // Optional clock port for timed mode
-    sc_in<bool> clk;
+    // Clock port - using pointer so it's optional (nullptr when not used)
+    sc_in<bool>* clk = nullptr;
 
     SC_HAS_PROCESS(sc_yuv420);
 

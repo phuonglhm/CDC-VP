@@ -76,92 +76,206 @@ namespace {
 }
 
 void sc_2dnr::process_stream() {
-    // Frame-level: measure from first read to last write
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::FRAME);
-    m_metrics.begin_processing();
-
-    if (!m_cfg.is_enable || m_cfg.window_size < 3 || m_cfg.patch_size < 3) {
-        while (true) {
-            fifo_out->write(fifo_in->read());
-            fifo_out->write(fifo_in->read());
-            fifo_out->write(fifo_in->read());
-        }
+    // Check if timed mode is enabled
+    bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
+    bool has_clock = (clk != nullptr);
+    if (timed_mode) {
+        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
     }
 
-    // Read entire frame
-    std::vector<std::uint8_t> frame(m_width * m_height * 3);
-    for (std::size_t i = 0; i < m_width * m_height * 3; ++i) {
-        frame[i] = fifo_in->read();
-    }
+    while (true) {
+        // Frame-level: measure from first read to last write
+        m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::FRAME);
+        m_metrics.begin_processing();
 
-    const std::vector<float> weight_lut = build_weight_lut(m_cfg.wts);
-    const std::vector<float> patch_gaussian = build_patch_gaussian_kernel(m_cfg.patch_size);
-    const int patch_radius = static_cast<int>(m_cfg.patch_size) / 2;
-    const int window_radius = static_cast<int>(m_cfg.window_size) / 2;
-    const std::size_t lut_max_idx = WEIGHT_LUT_SIZE - 1;
-
-    std::vector<std::uint8_t> output(frame.size());
-
-    for (std::uint32_t py = 0; py < m_height; ++py) {
-        for (std::uint32_t px = 0; px < m_width; ++px) {
-            float weighted_sum = 0.0f;
-            float weight_sum = 0.0f;
-
-            for (int wy = -window_radius; wy <= window_radius; ++wy) {
-                for (int wx = -window_radius; wx <= window_radius; ++wx) {
-                    int sy = static_cast<int>(py) + wy;
-                    int sx = static_cast<int>(px) + wx;
-                    if (sy < 0 || sy >= static_cast<int>(m_height) ||
-                        sx < 0 || sx >= static_cast<int>(m_width))
+        if (!m_cfg.is_enable || m_cfg.window_size < 3 || m_cfg.patch_size < 3) {
+            while (true) {
+                if (timed_mode) {
+                    if (fifo_in->num_available() < 3) {
+                        ++m_starved_cycles;
+                        ++m_cycle_count;
+                        if (has_clock) {
+                            wait(clk->posedge_event());
+                        } else {
+                            wait();
+                        }
                         continue;
+                    }
+                } else {
+                    if (fifo_in->num_available() < 3) {
+                        wait(fifo_in->data_written_event());
+                        continue;
+                    }
+                }
+                std::uint8_t v1 = fifo_in->read();
+                std::uint8_t v2 = fifo_in->read();
+                std::uint8_t v3 = fifo_in->read();
 
-                    float dist = 0.0f;
-                    for (int dy = -patch_radius; dy <= patch_radius; ++dy) {
-                        for (int dx = -patch_radius; dx <= patch_radius; ++dx) {
-                            int ry = py + dy;
-                            int rx = px + dx;
-                            int ry2 = sy + dy;
-                            int rx2 = sx + dx;
-                            ry = std::max(0, std::min(static_cast<int>(m_height) - 1, ry));
-                            rx = std::max(0, std::min(static_cast<int>(m_width) - 1, rx));
-                            ry2 = std::max(0, std::min(static_cast<int>(m_height) - 1, ry2));
-                            rx2 = std::max(0, std::min(static_cast<int>(m_width) - 1, rx2));
-                            const std::size_t idx1 = (static_cast<std::size_t>(ry) * m_width + rx) * 3u;
-                            const std::size_t idx2 = (static_cast<std::size_t>(ry2) * m_width + rx2) * 3u;
-                            const int diff = static_cast<int>(frame[idx1]) - static_cast<int>(frame[idx2]);
-                            dist += static_cast<float>(diff * diff) * patch_gaussian[static_cast<std::size_t>((dy + patch_radius) * static_cast<int>(m_cfg.patch_size) + (dx + patch_radius))];
+                if (timed_mode) {
+                    ++m_active_cycles;
+                    ++m_cycle_count;
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                    ++m_cycle_count;
+                }
+
+                if (timed_mode) {
+                    if (fifo_out->num_free() < 3) {
+                        ++m_cycle_count;
+                        if (has_clock) {
+                            wait(clk->posedge_event());
+                        } else {
+                            wait();
                         }
                     }
-                    const std::size_t patch_area = static_cast<std::size_t>(patch_radius * 2 + 1) * static_cast<std::size_t>(patch_radius * 2 + 1);
-                    dist /= static_cast<float>(patch_area);
-
-                    const std::size_t lut_idx = static_cast<std::size_t>(std::min<float>(dist, static_cast<float>(lut_max_idx)));
-                    const float weight = weight_lut[lut_idx];
-
-                    const std::uint8_t search_pixel = get_pixel_clamped(frame.data(), m_width, m_height, sy, sx);
-                    weighted_sum += static_cast<float>(search_pixel) * weight;
-                    weight_sum += weight;
+                } else {
+                    if (fifo_out->num_free() < 3) {
+                        wait(fifo_out->data_read_event());
+                    }
+                }
+                fifo_out->write(v1);
+                fifo_out->write(v2);
+                fifo_out->write(v3);
+                if (timed_mode) {
+                    ++m_cycle_count;
                 }
             }
-
-            const std::size_t p = static_cast<std::size_t>(py) * m_width + static_cast<std::size_t>(px);
-            const std::size_t i = p * 3u;
-
-            if (weight_sum > 0.0f) {
-                const float y_denoised = weighted_sum / weight_sum;
-                output[i] = static_cast<std::uint8_t>(std::lround(std::max(0.0f, std::min(255.0f, y_denoised))));
-            } else {
-                output[i] = frame[i];
-            }
-            output[i + 1u] = frame[i + 1u];  // U unchanged
-            output[i + 2u] = frame[i + 2u];  // V unchanged
         }
-    }
 
-    // Output
-    for (std::size_t i = 0; i < output.size(); ++i) {
-        fifo_out->write(output[i]);
+        // Read entire frame
+        std::vector<std::uint8_t> frame(m_width * m_height * 3);
+        for (std::size_t i = 0; i < m_width * m_height * 3; ++i) {
+            if (timed_mode) {
+                if (fifo_in->num_available() < 1) {
+                    ++m_starved_cycles;
+                    ++m_cycle_count;
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                    --i;  // Retry this read
+                    continue;
+                }
+            } else {
+                if (fifo_in->num_available() < 1) {
+                    wait(fifo_in->data_written_event());
+                    --i;  // Retry this read
+                    continue;
+                }
+            }
+            frame[i] = fifo_in->read();
+            if (timed_mode) {
+                ++m_active_cycles;
+                ++m_cycle_count;
+            }
+        }
+
+        // Synchronize after read phase in timed mode
+        if (timed_mode) {
+            if (has_clock) {
+                wait(clk->posedge_event());
+            } else {
+                wait();
+            }
+            ++m_cycle_count;
+        }
+
+        const std::vector<float> weight_lut = build_weight_lut(m_cfg.wts);
+        const std::vector<float> patch_gaussian = build_patch_gaussian_kernel(m_cfg.patch_size);
+        const int patch_radius = static_cast<int>(m_cfg.patch_size) / 2;
+        const int window_radius = static_cast<int>(m_cfg.window_size) / 2;
+        const std::size_t lut_max_idx = WEIGHT_LUT_SIZE - 1;
+
+        std::vector<std::uint8_t> output(frame.size());
+
+        for (std::uint32_t py = 0; py < m_height; ++py) {
+            for (std::uint32_t px = 0; px < m_width; ++px) {
+                float weighted_sum = 0.0f;
+                float weight_sum = 0.0f;
+
+                for (int wy = -window_radius; wy <= window_radius; ++wy) {
+                    for (int wx = -window_radius; wx <= window_radius; ++wx) {
+                        int sy = static_cast<int>(py) + wy;
+                        int sx = static_cast<int>(px) + wx;
+                        if (sy < 0 || sy >= static_cast<int>(m_height) ||
+                            sx < 0 || sx >= static_cast<int>(m_width))
+                            continue;
+
+                        float dist = 0.0f;
+                        for (int dy = -patch_radius; dy <= patch_radius; ++dy) {
+                            for (int dx = -patch_radius; dx <= patch_radius; ++dx) {
+                                int ry = py + dy;
+                                int rx = px + dx;
+                                int ry2 = sy + dy;
+                                int rx2 = sx + dx;
+                                ry = std::max(0, std::min(static_cast<int>(m_height) - 1, ry));
+                                rx = std::max(0, std::min(static_cast<int>(m_width) - 1, rx));
+                                ry2 = std::max(0, std::min(static_cast<int>(m_height) - 1, ry2));
+                                rx2 = std::max(0, std::min(static_cast<int>(m_width) - 1, rx2));
+                                const std::size_t idx1 = (static_cast<std::size_t>(ry) * m_width + rx) * 3u;
+                                const std::size_t idx2 = (static_cast<std::size_t>(ry2) * m_width + rx2) * 3u;
+                                const int diff = static_cast<int>(frame[idx1]) - static_cast<int>(frame[idx2]);
+                                dist += static_cast<float>(diff * diff) * patch_gaussian[static_cast<std::size_t>((dy + patch_radius) * static_cast<int>(m_cfg.patch_size) + (dx + patch_radius))];
+                            }
+                        }
+                        const std::size_t patch_area = static_cast<std::size_t>(patch_radius * 2 + 1) * static_cast<std::size_t>(patch_radius * 2 + 1);
+                        dist /= static_cast<float>(patch_area);
+
+                        const std::size_t lut_idx = static_cast<std::size_t>(std::min<float>(dist, static_cast<float>(lut_max_idx)));
+                        const float weight = weight_lut[lut_idx];
+
+                        const std::uint8_t search_pixel = get_pixel_clamped(frame.data(), m_width, m_height, sy, sx);
+                        weighted_sum += static_cast<float>(search_pixel) * weight;
+                        weight_sum += weight;
+                    }
+                }
+
+                const std::size_t p = static_cast<std::size_t>(py) * m_width + static_cast<std::size_t>(px);
+                const std::size_t i = p * 3u;
+
+                if (weight_sum > 0.0f) {
+                    const float y_denoised = weighted_sum / weight_sum;
+                    output[i] = static_cast<std::uint8_t>(std::lround(std::max(0.0f, std::min(255.0f, y_denoised))));
+                } else {
+                    output[i] = frame[i];
+                }
+                output[i + 1u] = frame[i + 1u];  // U unchanged
+                output[i + 2u] = frame[i + 2u];  // V unchanged
+            }
+        }
+
+        // Output
+        for (std::size_t i = 0; i < output.size(); ++i) {
+            if (timed_mode) {
+                if (fifo_out->num_free() < 1) {
+                    ++m_cycle_count;
+                    if (has_clock) {
+                        wait(clk->posedge_event());
+                    } else {
+                        wait();
+                    }
+                    --i;  // Retry this write
+                    continue;
+                }
+            } else {
+                if (fifo_out->num_free() < 1) {
+                    wait(fifo_out->data_read_event());
+                    --i;  // Retry this write
+                    continue;
+                }
+            }
+            fifo_out->write(output[i]);
+            if (timed_mode) {
+                ++m_active_cycles;
+                ++m_cycle_count;
+            }
+        }
+
+        m_metrics.end_processing();
+        for (std::size_t i = 0; i < 3 * m_width * m_height; ++i) m_metrics.record_output();
     }
-    m_metrics.end_processing();
-    for (std::size_t i = 0; i < 3 * m_width * m_height; ++i) m_metrics.record_output();
 }
