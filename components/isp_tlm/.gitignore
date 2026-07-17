@@ -4,3 +4,4 @@ output/.*
 __pycache__/*
 calib/
 systemc/pipeline/output/*
+systemc/output/*
