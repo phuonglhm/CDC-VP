@@ -162,5 +162,13 @@ namespace cdc::components {
 
         int esc_timeout_counter_;
         static constexpr int kEscTimeoutCycles = 128;
+
+        /* Wakes the FSM/IRQ threads when anything they evaluate may have
+         * changed (register write, state transition, fault, input edge).
+         * Replaces the former 1-100 ns polling loops, which dominated
+         * whole-platform simulation cost (~1e9 wakeups per simulated
+         * second while completely idle). */
+        sc_core::sc_event kick_;
+        void input_kick_method();
     };
 }

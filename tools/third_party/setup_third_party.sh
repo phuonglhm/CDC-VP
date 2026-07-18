@@ -8,6 +8,9 @@ THIRD_PARTY_DIR="${REPO_ROOT}/third_party"
 RISCV_VP_URL="https://github.com/agra-uni-bremen/riscv-vp.git"
 RISCV_VP_COMMIT="48b2f5877b2368cc466fb0da155db349e676c0b0"
 
+FREERTOS_URL="https://github.com/FreeRTOS/FreeRTOS-Kernel.git"
+FREERTOS_COMMIT="0adc196d4bd52a2d91102b525b0aafc1e14a2386"   # V11.2.0
+
 die() {
     echo "ERROR: $*" >&2
     exit 1
@@ -62,6 +65,9 @@ mkdir -p "${THIRD_PARTY_DIR}"
 
 setup_repo "Bremen riscv-vp" "${RISCV_VP_URL}" "${RISCV_VP_COMMIT}" \
     "${THIRD_PARTY_DIR}/riscv-vp"
+
+setup_repo "FreeRTOS-Kernel" "${FREERTOS_URL}" "${FREERTOS_COMMIT}" \
+    "${THIRD_PARTY_DIR}/FreeRTOS-Kernel"
 
 echo
 echo "Third-party dependencies are ready."

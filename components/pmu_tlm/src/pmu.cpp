@@ -15,6 +15,16 @@ namespace cdc::components {
         SC_THREAD(esc_timeout_thread);
         SC_THREAD(main_pd_monitor_thread);
         SC_THREAD(irq_update_thread);
+
+        SC_METHOD(input_kick_method);
+        sensitive << wakeups << rstreqs << ndmreset_req << sw_rst_req
+                  << core_sleeping << por_rst_n;
+        dont_initialize();
+    }
+
+    void Pwrmgr::input_kick_method()
+    {
+        kick_.notify(SC_ZERO_TIME);
     }
 
     void Pwrmgr::b_transport(tlm::tlm_generic_payload& trans, sc_time& delay)
@@ -53,6 +63,7 @@ namespace cdc::components {
             uint32_t val = 0;
             std::memcpy(&val, ptr, 4);
             reg_write(addr, val, be_mask);
+            kick_.notify(SC_ZERO_TIME);
             trans.set_response_status(tlm::TLM_OK_RESPONSE);
         } else {
             trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
@@ -213,6 +224,7 @@ namespace cdc::components {
     void Pwrmgr::set_fault(uint32_t bit)
     {
         r_fault_status_ |= (1u << bit);
+        kick_.notify(SC_ZERO_TIME);
     }
 
     void Pwrmgr::enter_terminal_state()
@@ -232,11 +244,13 @@ namespace cdc::components {
     void Pwrmgr::slow_fsm_transition(SlowFsmState next)
     {
         slow_state_ = next;
+        kick_.notify(SC_ZERO_TIME);
     }
 
     void Pwrmgr::fast_fsm_transition(FastFsmState next)
     {
         fast_state_ = next;
+        kick_.notify(SC_ZERO_TIME);
     }
 
     void Pwrmgr::do_reset_sequence(ResetReason reason)
@@ -257,7 +271,7 @@ namespace cdc::components {
     void Pwrmgr::slow_fsm_thread()
     {
         while (true) {
-            if (terminal_) { wait(sc_time(100, SC_NS)); continue; }
+            if (terminal_) { wait(kick_); continue; }
 
             switch (slow_state_) {
 
@@ -279,7 +293,7 @@ namespace cdc::components {
 
             case SlowFsmState::REQ_FAST_PWR: {
                 while (fast_state_ != FastFsmState::ACTIVE && !terminal_) {
-                    wait(sc_time(10, SC_NS));
+                    wait(kick_);
                 }
                 if (terminal_) break;
                 slow_fsm_transition(SlowFsmState::IDLE);
@@ -288,7 +302,7 @@ namespace cdc::components {
 
             case SlowFsmState::IDLE: {
                 while (fast_state_ != FastFsmState::LOW_POWER_ENTRY && !terminal_) {
-                    wait(sc_time(10, SC_NS));
+                    wait(kick_);
                 }
                 if (terminal_) break;
                 slow_fsm_transition(SlowFsmState::PWR_DOWN_AST);
@@ -317,7 +331,7 @@ namespace cdc::components {
                         }
                         break;
                     }
-                    wait(sc_time(10, SC_NS));
+                    wait(kick_);
                 }
                 if (terminal_) break;
                 low_power_o.write(false);
@@ -328,7 +342,7 @@ namespace cdc::components {
             case SlowFsmState::INVALID:
             default:
                 enter_terminal_state();
-                wait(sc_time(100, SC_NS));
+                wait(kick_);
                 break;
             }
         }
@@ -337,7 +351,7 @@ namespace cdc::components {
     void Pwrmgr::fast_fsm_thread()
     {
         while (true) {
-            if (terminal_) { wait(sc_time(100, SC_NS)); continue; }
+            if (terminal_) { wait(kick_); continue; }
 
             switch (fast_state_) {
 
@@ -348,7 +362,7 @@ namespace cdc::components {
                 while (slow_state_ == SlowFsmState::RESET ||
                     slow_state_ == SlowFsmState::PWR_UP_AST) {
                     if (terminal_) break;
-                    wait(sc_time(10, SC_NS));
+                    wait(kick_);
                 }
                 if (terminal_) break;
                 low_power_o.write(false);
@@ -422,7 +436,7 @@ namespace cdc::components {
                         break;
                     }
 
-                    wait(sc_time(10, SC_NS));
+                    wait(kick_);
                 }
                 break;
             }
@@ -492,34 +506,43 @@ namespace cdc::components {
         }
     }
 
+    /* Event-driven escalation watchdog (was a 1 ns polling loop). While the
+     * escalation clock is reported dead, a timed wait models the
+     * kEscTimeoutCycles (ns) timeout window; otherwise the thread sleeps on
+     * input edges only. */
     void Pwrmgr::esc_timeout_thread()
     {
-        const sc_time tick(1, SC_NS);
+        const sc_time esc_timeout(kEscTimeoutCycles, SC_NS);
         while (true) {
-            wait(tick);
-            if (terminal_) { esc_timeout_counter_ = 0; continue; }
-            if (esc_rx.read()) {
+            if (!terminal_ && esc_rx.read()) {
                 r_escalate_reset_status_ = 1;
-                esc_timeout_counter_ = 0;
+                kick_.notify(SC_ZERO_TIME);
+                wait(esc_rx.value_changed_event());
                 continue;
             }
-            if (esc_clk_alive.read()) {
-                esc_timeout_counter_ = 0;
-            } else {
-                ++esc_timeout_counter_;
-                if (esc_timeout_counter_ >= kEscTimeoutCycles) {
+            if (!terminal_ && !esc_clk_alive.read()) {
+                wait(esc_timeout, esc_rx.value_changed_event() |
+                                  esc_clk_alive.value_changed_event());
+                if (!terminal_ && !esc_rx.read() && !esc_clk_alive.read()) {
                     set_fault(FAULT_ESC_TIMEOUT_BIT);
                     r_escalate_reset_status_ = 1;
-                    esc_timeout_counter_ = 0;
+                    kick_.notify(SC_ZERO_TIME);
+                    wait(esc_rx.value_changed_event() |
+                         esc_clk_alive.value_changed_event());
                 }
+                continue;
             }
+            wait(esc_rx.value_changed_event() |
+                 esc_clk_alive.value_changed_event());
         }
     }
 
+    /* Event-driven power-good glitch monitor (was a 1 ns polling loop). */
     void Pwrmgr::main_pd_monitor_thread()
     {
         while (true) {
-            wait(sc_time(1, SC_NS));
+            wait(ast_main_pd_n.value_changed_event() |
+                 main_pok.value_changed_event());
             if (terminal_) continue;
 
             bool power_should_be_on = ast_main_pd_n.read();
@@ -530,12 +553,15 @@ namespace cdc::components {
         }
     }
 
+    /* Recomputes wakeup_irq whenever register state may have changed
+     * (was a 1 ns polling loop). Every INTR_STATE/INTR_ENABLE writer runs
+     * inside reg_write, an FSM transition, or set_fault - all notify kick_. */
     void Pwrmgr::irq_update_thread()
     {
         while (true) {
-            wait(sc_time(1, SC_NS));
             bool irq = ((r_intr_state_ & r_intr_enable_) & 0x1) != 0;
             wakeup_irq.write(irq);
+            wait(kick_);
         }
     }
 }

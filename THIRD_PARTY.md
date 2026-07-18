@@ -13,6 +13,7 @@ The external CPU core is **not** bundled in this repository. It is fetched into
 | Component | Where | Upstream | License | Used by |
 |---|---|---|---|---|
 | RISC-V VP (Bremen) | `third_party/riscv-vp` | `agra-uni-bremen/riscv-vp` | **MIT** | `riscv_vp` CPU backend |
+| FreeRTOS-Kernel V11.2.0 | `third_party/FreeRTOS-Kernel` (gitignored, fetched by `tools/third_party/setup_third_party.sh`) | `FreeRTOS/FreeRTOS-Kernel` | **MIT** | `fw/freertos_fx1` RTOS firmware |
 | SystemC | `/opt/systemc-2.3.4` (host) | Accellera | Apache-2.0 | all |
 | RISC-V toolchain | host install | xpack `riscv-none-elf` GCC | GCC runtime exception | firmware (`fw/`) |
 | SAURIA NPU v4 | optional external `SAURIA_NPU_ROOT`; not bundled in public CDC-VP | [`bsc-loca/sauria`](https://github.com/bsc-loca/sauria) architecture, private SystemC implementation | `Apache-2.0 WITH SHL-2.1` upstream; private implementation is internal-only | optional `npu_tlm_v4_model`, internal VP binary |

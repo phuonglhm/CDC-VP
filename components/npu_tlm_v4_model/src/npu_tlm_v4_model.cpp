@@ -95,7 +95,14 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
     npu_tlm_v4_model& owner;
     sc_core::sc_time access_latency;
 
-    sc_core::sc_clock core_clk;
+    /* Gated core clock: a free-running sc_clock at the 2 ns core period
+     * dominates simulation cost for the whole platform even while the NPU
+     * is idle (~5e8 edges per simulated second). The clock thread below only
+     * toggles while the worker consumes edges through wait_clock(). */
+    sc_core::sc_signal<bool> core_clk{"core_clk"};
+    sc_core::sc_time clk_half_period;
+    bool clk_enabled = false;
+    sc_core::sc_event clk_enable_event;
     core_type core;
 
     sc_core::sc_signal<bool> core_rst_n{"core_rst_n"};
@@ -125,9 +132,11 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         : sc_core::sc_module(name)
         , owner(owner_ref)
         , access_latency(mmio_latency)
-        , core_clk("core_clk", clock_period)
+        , clk_half_period(clock_period / 2)
         , core("sauria_core", exact_int8_config())
     {
+        sc_core::sc_spawn(sc_bind(&impl::clock_thread, this),
+                          "core_clk_gen");
         core.i_clk(core_clk);
         core.i_rstn(core_rst_n);
         core.i_soft_reset(core_soft_reset);
@@ -321,8 +330,33 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         return tlm::TLM_OK_RESPONSE;
     }
 
+    void clock_thread()
+    {
+        core_clk.write(false);
+        for (;;) {
+            while (!clk_enabled) {
+                sc_core::wait(clk_enable_event);
+            }
+            core_clk.write(true);
+            sc_core::wait(clk_half_period);
+            core_clk.write(false);
+            sc_core::wait(clk_half_period);
+        }
+    }
+
+    void set_clock_running(bool on)
+    {
+        if (on && !clk_enabled) {
+            clk_enabled = true;
+            clk_enable_event.notify(sc_core::SC_ZERO_TIME);
+        } else if (!on) {
+            clk_enabled = false;
+        }
+    }
+
     bool wait_clock(unsigned count = 1)
     {
+        set_clock_running(true);
         for (unsigned i = 0; i < count; ++i) {
             sc_core::wait(core_clk.posedge_event());
             sc_core::wait(sc_core::SC_ZERO_TIME);
@@ -744,6 +778,7 @@ void npu_tlm_v4_model::worker_thread()
 
     for (;;) {
         while (!reset_n.read()) {
+            impl_->set_clock_running(false);
             wait(reset_n.posedge_event());
         }
         if (!impl_->wait_clock(2)) {
@@ -757,6 +792,7 @@ void npu_tlm_v4_model::worker_thread()
 
         while (reset_n.read()) {
             if (!impl_->job_pending && !impl_->soft_reset_pending) {
+                impl_->set_clock_running(false);
                 wait(impl_->work_event | reset_n.negedge_event());
                 if (!reset_n.read()) {
                     break;
@@ -789,6 +825,7 @@ void npu_tlm_v4_model::worker_thread()
         impl_->core_rst_n.write(false);
         impl_->drive_idle_host();
         impl_->reset_registers();
+        impl_->set_clock_running(false);
     }
 }
 

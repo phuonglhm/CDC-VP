@@ -59,7 +59,7 @@ validate drivers, and grow toward a media/AI accelerator pipeline
 | Peripheral MMIO | ✅ Most listed IPs have TLM models and CTests | Driver-visible register models exist for per-IP verification. |
 | DMA / masters | ✅ DMA has target + master socket | Non-CPU RAM traffic can be validated through the same address map. |
 | QSPI / NOR | ✅ Register-driven QSPI to serial NOR | Flash transactions work through QSPI; CPU XIP is not implemented. |
-| RTOS | ⛯ FreeRTOS target, port not yet created | The hardware hooks exist; BSP/porting work remains. |
+| RTOS | ✅ FreeRTOS V11.2.0 boots on `VP_FX1_Full_SoC` (`fw/freertos_fx1`) | Preemptive scheduler, CLINT 1 kHz tick, PLIC dispatcher, and an interrupt-driven NPU task all verified (`FreeRTOS FX1 PASS`). |
 | Full SoC top | ✅ `VP_FX1_Full_SoC` assembled | Bremen CPU, RAM, CLINT/PLIC, and public peripherals are bound; internal builds can add NPU0. |
 | Media/AI | ◐ Public adapter, private optional NPU core | With `CDC_ENABLE_SAURIA_NPU_V4=ON`, SAURIA v4 executes a fixed 32xK by Kx32 INT8 GEMM through physical RAM and PLIC IRQ17. |
 
@@ -417,11 +417,19 @@ the model, MMIO window, key registers, interface, and IRQ.
   documented bases. A full HAL/BSP is **early-stage**. ◐
 - **Examples (`fw/`):** `hello_baremetal_riscv`, per-IP `*_irq_riscv` / `*_test_riscv`,
   `clint_timer_riscv`, `soc_irq_riscv`, `bench_riscv`. ✅
-- **OS:** FreeRTOS is the first RTOS target — **port not yet created** ⛯;
+- **OS:** FreeRTOS V11.2.0 runs on `VP_FX1_Full_SoC` via `fw/freertos_fx1`
+  (kernel fetched into `third_party/FreeRTOS-Kernel`, MIT, pinned; official
+  GCC/RISC-V port unmodified; self-checking runner
+  `fw/freertos_fx1/run_freertos_test.sh`). ✅
   `zephyr_app` / `linux_minimal` are stubs (Bremen core is Linux-capable upstream). ⛯
 - **Debug:** ISS-level (`get_pc`, `get_instret`). GDB/RSP **not wired** in CDC-VP. ◐
 
 ### FreeRTOS bring-up acceptance checklist
+
+Status 2026-07-18: **all gates below demonstrated** by `fw/freertos_fx1` on
+`VP_FX1_Full_SoC` (markers `CLINT tick OK`, `PLIC TIMER0 OK`,
+`FreeRTOS NPU PASS` in the NPU build, `FreeRTOS FX1 PASS`); the "serial + stateful
+IP from RTOS tasks" driver-smoke row remains open beyond UART/TIMER0/NPU.
 
 The first RTOS milestone is considered complete only when these are demonstrated
 on the Bremen backend:
@@ -589,6 +597,7 @@ M-mode memory isolation, and **secure/measured boot** leveraging the existing OT
 | Component | Source | License | Pinned |
 |---|---|---|---|
 | Bremen core | `agra-uni-bremen/riscv-vp` | **MIT** | commit `48b2f58…` |
+| FreeRTOS-Kernel | `FreeRTOS/FreeRTOS-Kernel` | **MIT** | V11.2.0 (`0adc196…`), gitignored `third_party/` |
 | SystemC | Accellera | Apache-2.0 | 2.3.4 (`/opt/systemc-2.3.4`) |
 | SAURIA NPU v4 | [`bsc-loca/sauria`](https://github.com/bsc-loca/sauria) architecture + optional private SystemC source (`SAURIA_NPU_ROOT`) | `Apache-2.0 WITH SHL-2.1` upstream; private implementation is internal-only | upstream `2bb469e…` |
 | RISC-V toolchain | xpack `riscv-none-elf` GCC | — | host install |

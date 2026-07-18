@@ -149,7 +149,10 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     sc_core::sc_signal<std::uint32_t> dma0_irq;
     sc_core::sc_signal<bool> dma0_irq_nonzero, dma0_irq_abort, dma0_rst;
     sc_core::sc_signal<bool> trng0_irq, trng0_rst;
-    sc_core::sc_clock trng0_clk;
+    /* trng_tlm declares (and requires binding of) a clk input but never uses
+     * it; a real sc_clock here costs 2e8 edges per simulated second for
+     * nothing, so bind a static-low signal instead. */
+    sc_core::sc_signal<bool> trng0_clk;
     sc_core::sc_signal<bool> dmic0_irq, dmic0_rst;
     sc_core::sc_signal<bool> otp0_irq;
     sc_core::sc_signal<bool> qspi0_irq, qspi0_rst;
@@ -210,7 +213,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         , npu0("npu0", sc_core::sc_time(2, sc_core::SC_NS))
 #endif
         , uart0_tx("uart0_tx"), uart1_tx("uart1_tx")
-        , trng0_clk("trng0_clk", sc_core::sc_time(10, sc_core::SC_NS))
+        , trng0_clk("trng0_clk")
         , cmu_idle("cmu_idle", 4)
     {
         // ── Upstream initiators: CPU instruction/data + DMA master ───────────
