@@ -76,7 +76,7 @@ KiB later without changing its base address.
 | QSPI0 | `0x100C_0000` | `0x0000_1000` | `0x100C_0FFF` | MMIO | QSPI controller register window. |
 | ISP0 | `0x100D_0000` | `0x0001_0000` | `0x100D_FFFF` | MMIO + master | Image signal processor. Uses source/destination frame-buffer descriptors in RAM0. |
 | VPU0 | `0x100E_0000` | `0x0001_0000` | `0x100E_FFFF` | MMIO + master | Video processing unit. Uses frame-buffer descriptors in RAM0. |
-| NPU0 | `0x100F_0000` | `0x0001_0000` | `0x100F_FFFF` | MMIO + master | Neural processing unit. Uses tensor/weight/activation descriptors in RAM0. |
+| NPU0 | `0x100F_0000` | `0x0001_0000` | `0x100F_FFFF` | MMIO + master | Optional internal build (`CDC_ENABLE_SAURIA_NPU_V4=ON`). First operation is `INT8 32xK * Kx32 -> INT32 32x32`; the public default leaves this window unbound. |
 | UART1 | `0x1010_0000` | `0x0000_1000` | `0x1010_0FFF` | MMIO | Second UART instance. Same register model as UART0. |
 | I2C1 | `0x1011_0000` | `0x0000_1000` | `0x1011_0FFF` | MMIO | Second I2C controller. |
 | SPI1 | `0x1012_0000` | `0x0000_1000` | `0x1012_0FFF` | MMIO | Second SPI controller. |
@@ -121,8 +121,10 @@ Recommended minimum behavior for the first ISP/VPU/NPU models:
 
 ## ISP/VPU/NPU Common Register Window
 
-The three algorithmic accelerators should share this first-pass register layout
-where possible. IP-specific algorithm parameters live in the parameter window.
+The three algorithmic accelerators are intended to share this first-pass
+register layout where possible. NPU0 implements the common low-offset subset
+plus the SAURIA-specific registers described below. IP-specific algorithm
+parameters live in the parameter window.
 
 | Offset range | Name | Access | Notes |
 |---:|---|---|---|
@@ -153,6 +155,26 @@ Common low-offset registers:
 | `0x0034` | `OP_MODE` | R/W | IP-specific algorithm mode. |
 | `0x0038` | `WEIGHTS_ADDR` | R/W | NPU weight/model base; reserved for ISP/VPU unless needed. |
 | `0x003C` | `PARAM_ADDR` | R/W | Optional RAM0 parameter table pointer. |
+| `0x0040` | `WEIGHTS_SIZE_BYTES` | R/W | NPU bounds check for weight reads. |
+
+NPU0 SAURIA v4 additions and current constraints:
+
+| Offset | Register | Access | Notes |
+|---:|---|---|---|
+| `0x1000` | `K_DIMENSION` | R/W | GEMM K, `1..992`. |
+| `0x1004` | `ZERO_THRESHOLD_FP32` | R/W | IEEE-754 binary32 bits passed to the core. |
+| `0x1008` | `ROWS_ACTIVE` | R/W | SAURIA active-row mask. |
+| `0x100C` | `DILATION_PATTERN` | R/W | SAURIA feeder parameter. |
+| `0x1010` | `CYCLE_COUNT` | R | Core run cycles for the last job. |
+| `0x1014` | `BYTES_READ` | R | RAM bytes read for the last job. |
+| `0x1018` | `BYTES_WRITTEN` | R | RAM bytes written for the last job. |
+| `0x101C` | `LAST_ERROR` | R | Error code; definitions are in `soc_regs_npu_v4.h`. |
+| `0x1020` | `CORE_ID` | R | `0x53415534` (`"SAU4"`). |
+
+NPU0 accepts only `WIDTH=32`, `HEIGHT=32`, `FORMAT=1`
+(`INT8_INT8_INT32`), and `OP_MODE=0` (`GEMM`) in this revision. Firmware
+supplies row-major `A[32][K]` at `SRC_ADDR`, row-major `B[K][32]` at
+`WEIGHTS_ADDR`, and receives row-major `C[32][32]` at `DST_ADDR`.
 
 ## QSPI Flash Addressing
 
@@ -199,7 +221,7 @@ architecture and must not be assigned.
 | 14 | `qspi0.irq` | assigned | QSPI transfer-done interrupt. |
 | 15 | `isp0.irq` | reserved | Planned ISP interrupt. Tie low until the ISP model exposes an IRQ output. |
 | 16 | `vpu0.irq` | reserved | Planned VPU interrupt. Tie low until the VPU model exposes an IRQ output. |
-| 17 | `npu0.irq` | reserved | Planned NPU interrupt. Tie low until the NPU model exposes an IRQ output. |
+| 17 | `npu0.irq_out` | optional | SAURIA v4 done/error level interrupt in an NPU-enabled internal build; otherwise tied low. |
 | 18 | `uart1.irq` | assigned | Second UART (`uart2_tlm`). Same `sc_out<bool> irq` contract as UART0. |
 | 19 | `i2c1.irq` | assigned | Second I2C interrupt. |
 | 20 | `spi1.irq` | assigned | Second SPI interrupt. |
@@ -239,7 +261,7 @@ handles default-low signals safely.
 | FLASH0 | `flash_nor_tlm::from_qspi_socket` | Not a CPU target. Load image with `flash.load(...)` before simulation or from a platform helper. |
 | ISP0 | planned target + master sockets | Planned IP. MMIO controls the job; master socket reads RAW_IN0 and writes ISP_OUT0. |
 | VPU0 | planned target + master sockets | Planned IP. MMIO controls the job; master socket reads ISP_OUT0 and writes VPU_OUT0. |
-| NPU0 | planned target + master sockets | Planned IP. MMIO controls the job; master socket reads VPU_OUT0 and NPU_WEIGHTS0, then writes tensors/results to NPU_WORK0. |
+| NPU0 | `npu_tlm_v4_model::target_socket`, `master_socket` | Optional internal build. Master reads physical RAM0 activation/weight addresses and writes INT32 results; `irq_out` is PLIC source 17; bind active-low `reset_n`. |
 | UART1 | `UartTLM::bus` (`uart2_tlm`) | Second instance; identical socket/IRQ contract to UART0 (`irq` port). |
 | I2C1 | `i2c::socket` | IRQ port is `irq`. |
 | SPI1 | `spi_tlm::socket` | IRQ port is `irq`. |
@@ -329,7 +351,7 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_IRQ_QSPI0      14u
 #define CDC_IRQ_ISP0       15u  /* reserved until ISP IRQ is modeled */
 #define CDC_IRQ_VPU0       16u  /* reserved until VPU IRQ is modeled */
-#define CDC_IRQ_NPU0       17u  /* reserved until NPU IRQ is modeled */
+#define CDC_IRQ_NPU0       17u  /* SAURIA NPU done/error IRQ */
 #define CDC_IRQ_UART1      18u  /* uart2_tlm irq (combined UARTINTR) */
 #define CDC_IRQ_I2C1       19u
 #define CDC_IRQ_SPI1       20u
@@ -342,15 +364,16 @@ Use these constants in firmware headers and platform top-level code:
 
 1. Instantiate CPU, RAM0, CLINT0, PLIC0, bus router, and all listed IPs.
 2. Configure `bus_router` with enough initiator ports for CPU instruction/data,
-   DMA master, ISP0 master, VPU0 master, and NPU0 master.
+   DMA master, and NPU0 master. Add ISP0/VPU0 masters when those models exist.
 3. Add all address windows from the Address Map table.
 4. Bind PLIC sources using the PLIC IRQ Map table.
 5. Tie reserved IRQ sources low.
 6. Bind all active-low resets (`reset_n`) to a common SoC reset signal unless an
    IP-specific reset is required.
 7. Bind QSPI0 to FLASH0 through the QSPI/flash socket pair.
-8. Bind ISP0/VPU0/NPU0 target sockets for MMIO and master sockets for RAM0 data
-   movement.
+8. For an NPU-enabled internal build, bind the NPU0 target socket for MMIO and
+   master socket for RAM0 data movement. Otherwise keep NPU0 reserved and
+   source 17 tied low. Keep ISP0/VPU0 reserved until implemented.
 9. Route the image/AI pipeline through RAM0 buffers:
    `RAW_IN0 -> ISP_OUT0 -> VPU_OUT0 -> NPU_WORK0`.
 10. For direct ELF boot, link firmware at `0x8000_0000`.

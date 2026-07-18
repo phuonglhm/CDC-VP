@@ -3,7 +3,9 @@ add_executable(vp_fx1_full_soc
     src/vp_fx1_full_soc_top.cpp)
 
 target_include_directories(vp_fx1_full_soc PRIVATE src)
-target_compile_definitions(vp_fx1_full_soc PRIVATE CDC_CPU_BACKEND_${CDC_CPU_BACKEND})
+target_compile_definitions(vp_fx1_full_soc PRIVATE
+    CDC_CPU_BACKEND_${CDC_CPU_BACKEND}
+    CDC_ENABLE_SAURIA_NPU_V4=$<BOOL:${CDC_ENABLE_SAURIA_NPU_V4}>)
 target_link_libraries(vp_fx1_full_soc PRIVATE
     SystemC::systemc
     cdc::components::common
@@ -30,6 +32,11 @@ target_link_libraries(vp_fx1_full_soc PRIVATE
     cdc::components::adc_tlm
     cdc::components::gpio_tlm
     cdc::cpu::${CDC_CPU_BACKEND})
+
+if(CDC_ENABLE_SAURIA_NPU_V4)
+    target_link_libraries(vp_fx1_full_soc PRIVATE
+        cdc::components::npu_tlm_v4_model)
+endif()
 
 add_custom_command(TARGET vp_fx1_full_soc POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

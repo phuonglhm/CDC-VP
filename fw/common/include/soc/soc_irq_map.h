@@ -38,7 +38,7 @@
 #define CDC_IRQ_QSPI0       14u
 #define CDC_IRQ_ISP0        15u  /* reserved until ISP model exposes IRQ  */
 #define CDC_IRQ_VPU0        16u  /* reserved until VPU model exposes IRQ  */
-#define CDC_IRQ_NPU0        17u  /* reserved until NPU model exposes IRQ  */
+#define CDC_IRQ_NPU0        17u  /* optional NPU IRQ; default tied low    */
 #define CDC_IRQ_UART1       18u
 #define CDC_IRQ_I2C1        19u
 #define CDC_IRQ_SPI1        20u

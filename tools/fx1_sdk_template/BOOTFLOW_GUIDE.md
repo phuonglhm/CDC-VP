@@ -51,7 +51,8 @@ Hardware reference set:
 | `0x100A_0000` | DMIC0 | |
 | `0x100B_0000` | OTP0 | |
 | `0x100C_0000` | QSPI0 | its own NOR flash behind it (separate from SPI0's) |
-| `0x100D–100F_0000` | ISP0 / VPU0 / NPU0 | **RESERVED — no model, no IRQ; do not write drivers for these** |
+| `0x100D–100E_0000` | ISP0 / VPU0 | **RESERVED — no model, no IRQ** |
+| `0x100F_0000` | NPU0 | SAURIA v4 wrapper: 64 KiB MMIO + RAM master, INT8 GEMM |
 | `0x1010_0000`… | UART1, I2C1, SPI1, TIMER1, RTC0, ADC0, GPIO0 | instance-1 block, `+0x1_0000` apart; GPIO0 @ `0x1016_0000` (`VALUE 0x00` RO / `OUT 0x04` / `DIR 0x08`, 32-bit only, **no IRQ**), pin 1 = boot strap |
 | `0x8000_0000` | RAM0 (256 MiB) | FW 16 MiB, then RAW_IN0/ISP_OUT0/VPU_OUT0/NPU_WGT0/NPU_WORK0 buffer windows |
 
@@ -63,7 +64,7 @@ Hardware reference set:
 - PLIC sources are 1-based (`CDC_PLIC_NUM_SOURCES = 31`):
   UART0=1, I2C0=2, SPI0=3, TIMER0=4, WDT0=5, PWM0=6(reserved), DMA0=7,
   DMA0_ABORT=8, TRNG0=9, CMU0=10(reserved), PMU0=11, DMIC0=12, OTP0=13,
-  QSPI0=14, ISP0/VPU0/NPU0=15–17(reserved), UART1=18, I2C1=19, SPI1=20,
+  QSPI0=14, ISP0/VPU0=15–16(reserved), NPU0=17, UART1=18, I2C1=19, SPI1=20,
   TIMER1=21, RTC0=22(alarm), ADC0=23; 24–31 reserved (24 earmarked GPIO0).
 - All modeled IRQ lines are **level-sensitive** into the PLIC.
 
@@ -75,6 +76,8 @@ Hardware reference set:
   Exercise fall-through / abort / `INTR_TEST` flows instead of a full
   sleep-wake round trip. A plain wakeup does **not** set `INTR_STATE`.
 - **PWM0, CMU0 and GPIO0 have no IRQ** despite reserved PLIC slots. Poll.
+- **NPU0 IRQ17 is level-sensitive.** Clear `NPU_IRQ_STATUS` first, then
+  complete the PLIC claim. See `regs/soc_regs_npu_v4.h` and the NPU regref.
 - **BOOTROM/IFLASH are read-only:** functional stores fail with a bus error;
   only the VP's image loaders (debug/backdoor writes) can fill them.
 - **UART HAL is polled**; UART0 RX/TX interrupts exist in the model if a

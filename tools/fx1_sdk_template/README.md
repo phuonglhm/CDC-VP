@@ -3,6 +3,10 @@
 Virtual-platform delivery of the **VP_FX1 Full SoC** for firmware/driver
 development. Treat the VP as the chip: you run it, you write drivers against its
 fixed register/IRQ ABI. See `vp/VERSION` for the exact CDC-VP source it was built from.
+The handover contains the compiled VP and its runtime assets; it does not copy
+CDC-VP platform source or the private SystemC NPU model into the FX1 repository.
+When `tools/pack_fx1_sdk.sh --fx1 <private-repo>` is used, only `vp/` is staged
+there; the generated `sw/` examples remain in the local SDK/tarball.
 
 The tree is organised per-SoC under a `VP_FX1_SOC` namespace so additional SoC
 targets can be added later without disturbing this one. Sources, build outputs,
@@ -19,8 +23,7 @@ FX1/
     doc/VP_FX1_SOC/                SoC-level docs (memory map, interrupt policy,
                                    BOOTFLOW_GUIDE.md: SoC quick reference
                                    + ROM-code boot contract)
-    licenses/                      third-party notices (SystemC, riscv-vp, SoftFloat)
-    src/VP_FX1_SOC/                (reserved: per-SoC VP source, if ever shipped)
+    licenses/                      third-party notices for redistributable dependencies
     VERSION                        CDC-VP git SHA + build date + ABI
   sw/
     bsp/VP_FX1_SOC/                SoC ABI + HAL (shared by all VP_FX1 firmware)
@@ -101,13 +104,13 @@ on the VP.
 ## What is and isn't modeled
 
 - **Present & driver-ready:** UARTx2, I2Cx2, SPIx2, TIMERx2, WDT, PWM, DMA,
-  TRNG, CMU, PMU, DMIC, OTP, QSPI(+NOR flash), RTC, ADC, GPIO, CLINT, PLIC.
+  TRNG, CMU, PMU, DMIC, OTP, QSPI(+NOR flash), RTC, ADC, GPIO, NPU0, CLINT,
+  PLIC. NPU0 currently exposes one `32xK` by `Kx32` INT8 GEMM operation.
 - **Boot hardware:** BOOTROM 64 KiB @ `0x0` (read-only, ROM-code entry 0x0),
   IFLASH 4 MiB @ `0x0400_0000` (read-only XIP window), GPIO0 pin 1 boot strap,
   NOR flash behind SPI0 (SW chip-select via `SSPCSR @ +0x28`), UART0 host
   bridge (`--uart0-socket` / `--uart0-rx-file`).
-- **Reserved (no model, no IRQ):** ISP0/VPU0/NPU0 windows. Do not write drivers
-  that expect them to run.
+- **Reserved (no model, no IRQ):** ISP0 and VPU0 windows.
 - **Functional, not timing-accurate.** Loosely-timed model: validate register
   semantics, IRQ ordering, and data movement - not cycle timing or WCET.
 - Single hart, M-mode, no MMU, no caches.
@@ -124,7 +127,8 @@ Two levels, both under `sw/bsp/VP_FX1_SOC` - one to **read**, one to **compile**
   `#include`s and compiles against, so there are no magic numbers and one place
   to change if the SoC moves a register. Every offset is verified against the VP
   model when the SDK is packed, so a clean header cannot silently drift from the
-  chip. Shipped so far: `timer`, `i2c`, `dma` (UART is covered by the HAL).
+  chip. Shipped so far: `timer`, `i2c`, `dma`, `npu_v4` (UART is covered by the
+  HAL).
 
 So: read `regref/` to learn the register, then use `soc_regs_<ip>.h` to program it.
 
@@ -143,6 +147,10 @@ your driver.
 
 ## Third-party licenses
 
-The VP executable statically links the Bremen riscv-vp ISS (MIT) and Berkeley
-SoftFloat-3 (BSD-3-Clause), and ships the Accellera SystemC runtime
-(Apache-2.0). Keep `vp/licenses/` with the tree whenever this SDK is passed on.
+The VP executable statically links the Bremen riscv-vp ISS (MIT), Berkeley
+SoftFloat-3 (BSD-3-Clause), and the externally supplied SAURIA v4 model; it
+ships the Accellera SystemC runtime (Apache-2.0). Keep `vp/licenses/` with the
+tree whenever this SDK is passed on. The package includes the upstream SAURIA
+Solderpad v2.1/Apache-2.0 license and a provenance record. Public distribution
+also requires approval from the rights owner of the internal SystemC
+implementation.

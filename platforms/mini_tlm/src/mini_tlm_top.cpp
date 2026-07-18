@@ -51,7 +51,9 @@ private:
             throw std::runtime_error("RAM read-back mismatch");
         }
 
-        write32(kTimerBase, 1U);
+        // ENABLE | INTR_EN. VALUE resets to zero, so the timer raises the IRQ
+        // after one 10 ms tick.
+        write32(kTimerBase, OPS::ENABLE | OPS::INTR_EN);
 
         wait(timer_irq.posedge_event());
         write_uart("Timer IRQ fired at 10ms\n");
@@ -149,9 +151,11 @@ struct mini_tlm_top::impl : public sc_core::sc_module {
     UartTLM uart;
    sc_core::sc_buffer<unsigned char> uart_tx;
    sc_core::sc_signal<bool> uart_irq;
-    cdc::components::timer_tlm timer;
+    cdc::components::Timer timer;
     cdc::components::memory_tlm ram;
-    sc_core::sc_signal<bool> timer_irq; // sợi dây vật lý
+    sc_core::sc_signal<bool> timer_irq;
+    sc_core::sc_signal<bool> timer_rst_n;
+    sc_core::sc_signal<bool> timer_extin;
 
     impl(sc_core::sc_module_name name, const std::string& config_path)
         : sc_core::sc_module(name)
@@ -160,23 +164,32 @@ struct mini_tlm_top::impl : public sc_core::sc_module {
         , uart("uart")
        , uart_tx("uart_tx")
        , uart_irq("uart_irq")
-        , timer("timer")
+        , timer("timer",
+                1, 2, 3, 4, 5, 6, 7, 8,
+                1, 2, 3, 4,
+                sc_core::sc_time(10, sc_core::SC_MS))
         , ram("ram", kRegionSize)
         , timer_irq("timer_irq")
+        , timer_rst_n("timer_rst_n")
+        , timer_extin("timer_extin")
     {
-        // duyptt note:  Nối ouput của CPU vào Input của BUS Từ giờ CPU gọi bus_socket->b_transport(...) thì giao dịch chui vào bus_router.
+        // Connect the CPU output to the bus input; subsequent transactions
+        // issued through bus_socket are forwarded by the bus router.
         cpu.bus_socket.bind(bus.target_socket); 
 
-        // duyptt note: nối day và memory map
+        // Bind downstream targets according to the platform memory map.
         bus.add_target(kUartBase, kRegionSize).bind(uart.bus);
       uart.tx(uart_tx);
       uart.irq(uart_irq); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho uart 
         bus.add_target(kTimerBase, kRegionSize).bind(timer.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho timer
         bus.add_target(kRamBase, kRegionSize).bind(ram.socket); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho ram 
 
-        // dây tín hiệu IRQ 
-        timer.irq_out(timer_irq); // đầu ra của timer hàn vào dây.
-        cpu.timer_irq(timer_irq); // đầu vào của CPU hàn vào cùng dây đó
+        timer.reset_n(timer_rst_n);
+        timer.extin(timer_extin);
+        timer.irq_out(timer_irq);
+        cpu.timer_irq(timer_irq);
+        timer_rst_n.write(true);
+        timer_extin.write(false);
 
         if (!config_path.empty()) {
             std::cout << "mini_tlm config: " << config_path << '\n';

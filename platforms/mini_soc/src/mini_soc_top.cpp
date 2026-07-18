@@ -149,10 +149,11 @@ namespace cdc::platforms::mini_soc {
         , ram("ram", kRegionSize_ram)
         , i2c_irq("i2c_irq")
     {
-        // duyptt note:  Nối ouput của CPU vào Input của BUS Từ giờ CPU gọi bus_socket->b_transport(...) thì giao dịch chui vào bus_router.
+        // Connect the CPU output to the bus input; subsequent transactions
+        // issued through bus_socket are forwarded by the bus router.
         cpu.bus_socket.bind(bus.target_socket); 
 
-        // duyptt note: nối day và memory map
+        // Bind downstream targets according to the platform memory map.
         bus.add_target(kUartBase, kRegionSize).bind(uart.bus);
       uart.tx(uart_tx);
       uart.irq(uart_irq); // địa chỉ bắt đầu, độ dài , và dành 1 socket cho uart 

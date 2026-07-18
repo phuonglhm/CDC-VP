@@ -66,7 +66,8 @@ Address decoding over one shared physical address space for all initiators:
   forward to the target -> restore the original address. If no region matches,
   return `TLM_ADDRESS_ERROR_RESPONSE`.
 - **Multiple upstream ports** share the same downstream map: CPU instruction bus
-  + data bus (or unified bus), **DMA master**, and **ISP/VPU/NPU master** -
+  + data bus (or unified bus), **DMA master**, and the active **NPU master**
+  (plus future ISP/VPU masters) -
   configured through
   `num_initiators` / `cpu_port(i)`.
 - **Master access:** DMA and accelerators issue `b_transport` as initiators to

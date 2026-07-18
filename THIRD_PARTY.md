@@ -1,7 +1,9 @@
 # Third-party components & licenses
 
-CDC-VP's own source code is licensed under **Apache-2.0** (see `LICENSE`). All
-dependencies are **permissive** (no copyleft).
+CDC-VP's own source code is licensed under **Apache-2.0** (see `LICENSE`).
+Known repository dependencies are permissive (no copyleft). The upstream
+SAURIA design uses Solderpad Hardware License v2.1 with an Apache-2.0 option.
+Its license and provenance are kept under `licenses/`.
 
 The external CPU core is **not** bundled in this repository. It is fetched into
 `third_party/` (gitignored) by `tools/third_party/setup_third_party.sh`.
@@ -11,6 +13,12 @@ The external CPU core is **not** bundled in this repository. It is fetched into
 | RISC-V VP (Bremen) | `third_party/riscv-vp` | `agra-uni-bremen/riscv-vp` | **MIT** | `riscv_vp` CPU backend |
 | SystemC | `/opt/systemc-2.3.4` (host) | Accellera | Apache-2.0 | all |
 | RISC-V toolchain | host install | xpack `riscv-none-elf` GCC | GCC runtime exception | firmware (`fw/`) |
+| SAURIA NPU v4 | optional external `SAURIA_NPU_ROOT`; not bundled in public CDC-VP | [`bsc-loca/sauria`](https://github.com/bsc-loca/sauria) architecture, private SystemC implementation | `Apache-2.0 WITH SHL-2.1` upstream; private implementation is internal-only | optional `npu_tlm_v4_model`, internal VP binary |
+
+The public repository ships only the CDC-VP adapter, register ABI, tests, and
+upstream attribution. It does not ship the private SystemC source or an
+NPU-enabled binary. See `licenses/SAURIA.PROVENANCE.md` for the upstream
+revision and public/private boundary.
 
 ## IP register models
 

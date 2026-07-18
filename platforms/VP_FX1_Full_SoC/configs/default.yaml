@@ -22,6 +22,8 @@ memory_map:
   dmic0:  { base: 0x100A0000, size: 0x1000 }
   otp0:   { base: 0x100B0000, size: 0x1000 }
   qspi0:  { base: 0x100C0000, size: 0x1000 }
+  # Optional internal build only: CDC_ENABLE_SAURIA_NPU_V4=ON.
+  npu0:   { base: 0x100F0000, size: 0x10000 }      # otherwise reserved/tied low
   uart1:  { base: 0x10100000, size: 0x1000 }
   i2c1:   { base: 0x10110000, size: 0x1000 }
   spi1:   { base: 0x10120000, size: 0x1000 }
@@ -29,7 +31,7 @@ memory_map:
   rtc0:   { base: 0x10140000, size: 0x1000 }
   adc0:   { base: 0x10150000, size: 0x1000 }
   gpio0:  { base: 0x10160000, size: 0x1000 }       # pin 1 = ROM-code boot strap
-  # ISP0 0x100D0000 / VPU0 0x100E0000 / NPU0 0x100F0000 reserved (planned)
+  # ISP0 0x100D0000 / VPU0 0x100E0000 reserved (planned)
   # NOR flash behind SPI0 (16 MiB, --spi-flash) is serial-only, not CPU-mapped
 
 interrupts:

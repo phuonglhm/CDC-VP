@@ -130,8 +130,8 @@ There are two kinds of tests:
 Build all `vpu_tlm` test targets from the repository build directory:
 
 ```bash
-cd /home/indows/CDC-VP/build
-cmake --build . --target \
+cmake -S . -B build
+cmake --build build --target \
   test_prei \
   test_posi \
   test_ime \
@@ -147,25 +147,17 @@ cmake --build . --target \
 Run the full `vpu_tlm` test set through `ctest`:
 
 ```bash
-cd /home/indows/CDC-VP/build
-LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
-ctest --output-on-failure -R '^vpu_tlm\.'
+ctest --test-dir build --output-on-failure -R '^vpu_tlm\.'
 ```
 
 Run only the integrated video-encoder tests:
 
 ```bash
-cd /home/indows/CDC-VP/build
-LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
-./components/vpu_tlm/tests/test_mode_decision
-LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
-./components/vpu_tlm/tests/test_prediction_to_rec_packet
-LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
-./components/vpu_tlm/tests/test_video_encoder_tlm
-LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
-./components/vpu_tlm/tests/test_video_encoder_rec_integration
-LD_LIBRARY_PATH=/opt/systemc-2.3.4/lib:$LD_LIBRARY_PATH \
-./components/vpu_tlm/tests/test_video_encoder_full_tlm
+build/components/vpu_tlm/tests/test_mode_decision
+build/components/vpu_tlm/tests/test_prediction_to_rec_packet
+build/components/vpu_tlm/tests/test_video_encoder_tlm
+build/components/vpu_tlm/tests/test_video_encoder_rec_integration
+build/components/vpu_tlm/tests/test_video_encoder_full_tlm
 ```
 
 ---

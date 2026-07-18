@@ -7,3 +7,10 @@ the Apache License, Version 2.0 (see LICENSE).
 This repository does NOT bundle its external CPU core. The Bremen riscv-vp core
 (MIT) is fetched separately into third_party/ (gitignored) by
 tools/third_party/setup_third_party.sh. See THIRD_PARTY.md.
+
+An internal binary build of this product can include a private SystemC
+implementation based on the SAURIA accelerator architecture from Barcelona
+Supercomputing Center. The public source tree does not include that model.
+The upstream SAURIA design is Copyright 2022 Jordi Fornt Mas and is available
+under Apache-2.0 WITH SHL-2.1. See licenses/SAURIA.SHL-2.1 and
+licenses/SAURIA.PROVENANCE.md.

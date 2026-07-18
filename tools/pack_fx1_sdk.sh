@@ -2,7 +2,8 @@
 # pack_fx1_sdk.sh - assemble the versioned VP_FX1 SDK handover for the firmware team.
 #
 # Produces a self-contained SDK tree (VP runtime + BSP + sample driver) and a
-# versioned tarball, then optionally stages it into an FX1 project directory.
+# versioned tarball, then optionally stages only the compiled VP runtime bundle
+# into an FX1 project directory.
 # The tree is namespaced per-SoC (VP_FX1_SOC) so more SoC targets can be added
 # later; see tools/fx1_sdk_template/README.md for the layout.
 #
@@ -10,7 +11,7 @@
 #   tools/pack_fx1_sdk.sh [--fx1 <dir>] [--build]
 #
 #   --build       (re)build the VP package target before packing
-#   --fx1 <dir>   also sync the SDK into <dir> (e.g. ../fx1)
+#   --fx1 <dir>   sync only vp/ (binary/runtime/config/docs/licenses) into <dir>
 #
 # Output: out/vp_fx1_sdk_<sha>/  and  out/vp_fx1_sdk_<sha>.tar.gz
 set -euo pipefail
@@ -38,6 +39,14 @@ common="$repo/fw/common"
 systemc_home="$(sed -n 's/^SYSTEMC_HOME:PATH=//p' build-soc/CMakeCache.txt 2>/dev/null)"
 systemc_home="${systemc_home:-/opt/systemc-2.3.4}"
 riscv_vp_dir="$repo/third_party/riscv-vp"
+npu_enabled="$(sed -n 's/^CDC_ENABLE_SAURIA_NPU_V4:BOOL=//p' \
+    build-soc/CMakeCache.txt 2>/dev/null)"
+
+if [[ "$npu_enabled" != "ON" ]]; then
+    echo "FX1 SDK requires an NPU-enabled internal build." >&2
+    echo "Configure build-soc with CDC_ENABLE_SAURIA_NPU_V4=ON and the private SAURIA_NPU_ROOT." >&2
+    exit 1
+fi
 
 if [[ "$do_build" == 1 || ! -x "$pkg/vp_fx1_full_soc" ]]; then
     echo ">> building VP package target"
@@ -50,6 +59,9 @@ echo ">> checking register headers against the TLM models"
 "$repo/tools/check_regs_drift.sh"
 
 sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if [[ -n "$(git status --porcelain --untracked-files=normal 2>/dev/null)" ]]; then
+    sha="${sha}-dirty"
+fi
 date_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sdk="$repo/out/vp_fx1_sdk_${sha}"
 
@@ -57,7 +69,7 @@ echo ">> assembling $sdk"
 rm -rf "$sdk"
 bsp="$sdk/sw/bsp/$soc"
 mkdir -p "$sdk/vp/bin/$soc" "$sdk/vp/configs/$soc" "$sdk/vp/doc/$soc" \
-         "$sdk/vp/licenses" "$sdk/vp/src/$soc" \
+         "$sdk/vp/licenses" \
          "$bsp/include/soc/regs" "$bsp/include/hal" \
          "$bsp/src" "$bsp/startup" "$bsp/link" "$bsp/regref" \
          "$sdk/sw/drivers/sources/$soc" "$sdk/sw/drivers/build/$soc" \
@@ -105,12 +117,14 @@ cp -r "$tmpl/sw/drivers/uart_hello" "$sdk/sw/drivers/sources/$soc/"
 cp "$tmpl/README.md"                "$sdk/"
 
 # --- Third-party license notices --------------------------------------------
-# The VP binary statically links the Bremen riscv-vp ISS (MIT) and Berkeley
-# SoftFloat-3 (BSD-3-Clause), and ships libsystemc.so (Apache-2.0). All three
-# require their notice to accompany binary redistribution.
+# The VP binary statically links the Bremen riscv-vp ISS, Berkeley SoftFloat-3,
+# and the SAURIA-derived internal NPU v4 model, and ships libsystemc.so. Bundle
+# the upstream SAURIA license/provenance as well as the other notices.
 cp "$systemc_home/share/doc/systemc/LICENSE" "$sdk/vp/licenses/SYSTEMC.LICENSE"
 cp "$systemc_home/share/doc/systemc/NOTICE"  "$sdk/vp/licenses/SYSTEMC.NOTICE"
 cp "$riscv_vp_dir/LICENSE"                   "$sdk/vp/licenses/RISCV-VP.LICENSE"
+cp "$repo/licenses/SAURIA.SHL-2.1"           "$sdk/vp/licenses/SAURIA.SHL-2.1"
+cp "$repo/licenses/SAURIA.PROVENANCE.md"     "$sdk/vp/licenses/SAURIA.PROVENANCE.md"
 # SoftFloat carries its BSD-3 license only in source headers; extract the block.
 sed -n '/^\/\*====/,/^====.*\*\/$/p' \
     "$riscv_vp_dir/vp/src/vendor/softfloat/include/softfloat/softfloat.h" \
@@ -130,21 +144,31 @@ passed on.
 | Accellera SystemC 2.3.4    | Apache-2.0   | `vp/bin/VP_FX1_SOC/libsystemc.so*`  | SYSTEMC.LICENSE, SYSTEMC.NOTICE |
 | Bremen riscv-vp (RV32 ISS) | MIT          | statically linked into the VP binary | RISCV-VP.LICENSE   |
 | Berkeley SoftFloat-3       | BSD-3-Clause | statically linked into the VP binary | SOFTFLOAT.LICENSE  |
+| SAURIA NPU upstream design | Apache-2.0 WITH SHL-2.1 | internal SystemC implementation statically linked into VP | SAURIA.SHL-2.1, SAURIA.PROVENANCE.md |
+EOF
+
+cat >> "$sdk/vp/licenses/README.md" <<'EOF'
+
+The upstream SAURIA license and attribution are bundled. Public distribution
+also requires approval from the rights owner of the internal SystemC
+implementation; see SAURIA.PROVENANCE.md.
 EOF
 
 # --- Keep reserved/output dirs present in git checkouts ---------------------
-touch "$sdk/vp/src/$soc/.gitkeep" \
-      "$sdk/sw/drivers/build/$soc/.gitkeep" \
+touch "$sdk/sw/drivers/build/$soc/.gitkeep" \
       "$sdk/sw/bootloader/sources/$soc/.gitkeep" \
       "$sdk/sw/bootloader/build/$soc/.gitkeep" \
       "$sdk/sw/bootloader/scripts/$soc/.gitkeep"
 
 # --- Version stamp ---------------------------------------------------------
+vp_binary_sha256="$(sha256sum "$sdk/vp/bin/$soc/vp_fx1_full_soc" | awk '{print $1}')"
 cat > "$sdk/vp/VERSION" <<EOF
 VP_FX1 SoC SDK
 CDC-VP source : ${sha}
 Built (UTC)   : ${date_utc}
+VP SHA-256    : ${vp_binary_sha256}
 CPU backend   : riscv_vp (Bremen RV32IMAC)
+NPU upstream  : bsc-loca/sauria @ 2bb469e4e4ab7413b88c985b4c83a98b9544c827
 ABI           : rv32imac / ilp32, link base 0x80000000
 Memory/IRQ map: vp/doc/${soc}/peripheral_memory_map.md (docs @ ${sha})
 EOF
@@ -154,17 +178,13 @@ tarball="$repo/out/vp_fx1_sdk_${sha}.tar.gz"
 tar -C "$repo/out" -czf "$tarball" "vp_fx1_sdk_${sha}"
 echo ">> tarball: $tarball"
 
-# --- Optional stage into an FX1 project ------------------------------------
+# --- Optional binary-only stage into an FX1 project -------------------------
 if [[ -n "$fx1_dir" ]]; then
     fx1_abs="$(cd "$fx1_dir" && pwd)"
-    echo ">> syncing SDK into $fx1_abs"
-    mkdir -p "$fx1_abs/vp" "$fx1_abs/sw"
+    echo ">> syncing compiled VP runtime into $fx1_abs/vp"
+    mkdir -p "$fx1_abs/vp"
     cp -r "$sdk/vp/." "$fx1_abs/vp/"
-    cp -r "$sdk/sw/." "$fx1_abs/sw/"
-    cp "$sdk/README.md" "$fx1_abs/README.md"
-    echo ">> FX1 staged. Next:"
-    echo "     make -C $fx1_abs/sw/drivers/sources/$soc/uart_hello"
-    echo "     $fx1_abs/sw/bootloader/test/$soc/run_vp.sh"
+    echo ">> FX1 staged without CDC-VP platform source or SDK sw/ sources"
 fi
 
 echo ">> done: $sdk"

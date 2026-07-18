@@ -8,14 +8,22 @@ memory map and IRQ map so firmware, drivers, and TLM IP models develop independe
 - **Infrastructure:** TLM bus router, RAM, CLINT, PLIC.
 - **Peripherals:** UART×2, I2C×2, SPI×2, Timer×2, WDT, PWM, DMA, TRNG, DMIC, OTP, QSPI
   (+ NOR flash), CMU, PMU, RTC, ADC.
-- **Planned:** media/AI accelerator pipeline `RAW → ISP → VPU → NPU`.
+- **Optional accelerator adapter:** SAURIA NPU v4 MMIO, physical-RAM master,
+  PLIC IRQ17, and fixed `INT8 32xK * Kx32 -> INT32 32x32` GEMM. The private
+  SystemC core is not part of this public repository.
 
 > Full documentation: [`docs/CDC-VP_VIRTUAL_SoC_PLATFORM.md`](docs/CDC-VP_VIRTUAL_SoC_PLATFORM.md)
 
 ## Quick start
 
 ```bash
-source tools/third_party/setup_env.sh        # CC/CXX + RISC-V toolchain
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+$CC -dumpfullversion
+$CXX --version | head -n 1
+
+source tools/third_party/setup_env.sh        # RISC-V toolchain
 tools/third_party/setup_third_party.sh       # fetch external CPU cores
 
 cmake -S . -B build \
@@ -27,6 +35,14 @@ ctest --test-dir build --output-on-failure
 
 Requires: SystemC 2.3.4 (`/opt/systemc-2.3.4`), a C++17 compiler, CMake, and the
 `riscv-none-elf` bare-metal toolchain for firmware.
+
+Authorized internal builds enable the external NPU model explicitly:
+
+```bash
+cmake -S . -B build-soc \
+  -DCDC_ENABLE_SAURIA_NPU_V4=ON \
+  -DSAURIA_NPU_ROOT=/private/path/to/v4_model
+```
 
 ## Documentation
 
@@ -44,6 +60,9 @@ Requires: SystemC 2.3.4 (`/opt/systemc-2.3.4`), a C++17 compiler, CMake, and the
 CDC-VP's own source is licensed under **Apache-2.0** (see [`LICENSE`](LICENSE) and
 [`NOTICE`](NOTICE)).
 
-The external CPU core (**Bremen riscv-vp, MIT**) is **not** bundled; it is fetched
-into `third_party/` (gitignored). All dependencies are permissive — see
+The external CPU core (**Bremen riscv-vp, MIT**) is **not** bundled; it is
+fetched into `third_party/` (gitignored). The external SAURIA source is also not
+bundled. Its upstream Solderpad v2.1/Apache-2.0 license and provenance are kept
+under [`licenses/`](licenses/). The public CDC-VP source release does not
+contain that private model or an NPU-enabled binary. See
 [`THIRD_PARTY.md`](THIRD_PARTY.md).

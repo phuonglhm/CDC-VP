@@ -7,7 +7,8 @@
  * Rules for driver authors:
  *   - Never hard-code an address; always reference these macros.
  *   - All normal MMIO registers are 32-bit little-endian words.
- *   - ISP0/VPU0/NPU0 windows are RESERVED (no model, no IRQ) in this release.
+ *   - ISP0/VPU0 remain reserved. NPU0 is optional and is reserved in the
+ *     public default build.
  *
  * If this file and the VP disagree, the VP wins - regenerate from the memory map.
  */
@@ -41,10 +42,10 @@
 #define CDC_OTP0_BASE     0x100B0000u
 #define CDC_QSPI0_BASE    0x100C0000u  /* NOR flash sits behind QSPI0       */
 
-/* ---- Accelerators (RESERVED - planned, not modeled in this release) --- */
+/* ---- Accelerators ----------------------------------------------------- */
 #define CDC_ISP0_BASE     0x100D0000u  /* reserved */
 #define CDC_VPU0_BASE     0x100E0000u  /* reserved */
-#define CDC_NPU0_BASE     0x100F0000u  /* reserved */
+#define CDC_NPU0_BASE     0x100F0000u  /* optional private SAURIA build */
 #define CDC_ACCEL_MMIO_SIZE 0x00010000u
 
 /* ---- Peripheral instance 1 ------------------------------------------- */

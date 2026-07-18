@@ -14,11 +14,15 @@ option(CDC_BUILD_MINI_TLM "Build mini TLM platform (Step 1)" ON)
 option(CDC_BUILD_CPU_EVAL "Build RISC-V CPU evaluation platform (Step 2)" ON)
 option(CDC_BUILD_CUSTOM_SOC "Build RISC-V custom SoC platform (Step 3)" ON)
 option(CDC_BUILD_TESTS "Build component/platform tests" ON)
+option(CDC_ENABLE_SAURIA_NPU_V4
+    "Enable the optional external SAURIA v4 SystemC model" OFF)
 
 set(CDC_CPU_BACKEND "riscv_vp" CACHE STRING "CPU backend: riscv_vp (Bremen riscv-vp, MIT)")
 set_property(CACHE CDC_CPU_BACKEND PROPERTY STRINGS riscv_vp)
 
 set(SYSTEMC_HOME "/opt/systemc-2.3.4" CACHE PATH "SystemC installation prefix")
+set(SAURIA_NPU_ROOT "$ENV{SAURIA_NPU_ROOT}" CACHE PATH
+    "Private path containing the optional SAURIA v4 npu_top.h")
 
 find_path(SYSTEMC_INCLUDE_DIR
     NAMES systemc systemc.h

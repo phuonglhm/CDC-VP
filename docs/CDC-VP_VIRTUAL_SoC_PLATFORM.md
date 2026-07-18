@@ -6,7 +6,7 @@
 > **Status legend used throughout:**
 > `✅ Implemented & verified` · `◐ Modeled (partial / stub)` · `⛯ Planned / Research`
 >
-> Doc revision: 2026-06-29. Verified against the repository at this date.
+> Doc revision: 2026-07-18. Verified against the repository at this date.
 
 ---
 
@@ -60,8 +60,8 @@ validate drivers, and grow toward a media/AI accelerator pipeline
 | DMA / masters | ✅ DMA has target + master socket | Non-CPU RAM traffic can be validated through the same address map. |
 | QSPI / NOR | ✅ Register-driven QSPI to serial NOR | Flash transactions work through QSPI; CPU XIP is not implemented. |
 | RTOS | ⛯ FreeRTOS target, port not yet created | The hardware hooks exist; BSP/porting work remains. |
-| Full SoC top | ⛯ Target spec exists, final integrated top not assembled | Current platforms are per-IP and smaller integration platforms. |
-| Media/AI | ⛯ ISP/VPU/NPU planned | Memory map and programming contract are reserved; algorithms not implemented. |
+| Full SoC top | ✅ `VP_FX1_Full_SoC` assembled | Bremen CPU, RAM, CLINT/PLIC, and public peripherals are bound; internal builds can add NPU0. |
+| Media/AI | ◐ Public adapter, private optional NPU core | With `CDC_ENABLE_SAURIA_NPU_V4=ON`, SAURIA v4 executes a fixed 32xK by Kx32 INT8 GEMM through physical RAM and PLIC IRQ17. |
 
 ### Platform contract
 
@@ -78,7 +78,9 @@ collection of component models:
   error response.
 - Bus target addresses received by an IP are region-local; the interconnect subtracts
   the region base before forwarding the transaction.
-- CPU, DMA, and future ISP/VPU/NPU master sockets must share the same physical RAM map.
+- CPU and DMA master sockets share the same physical RAM map; NPU0 joins that
+  map only when the optional internal build is enabled. Future ISP/VPU masters
+  must follow the same rule.
   A buffer address programmed by firmware must mean the same thing to all bus masters.
 - Interrupts into the PLIC are modeled as level-sensitive device signals. Firmware
   clears the device interrupt cause first, then completes the PLIC claim.
@@ -131,7 +133,9 @@ build/platforms/tests/uart_platform/uart_platform \
 
 CMake presets `debug` / `release` are available (`CMakePresets.json`). Top-level
 options: `CDC_BUILD_MINI_TLM`, `CDC_BUILD_CPU_EVAL`, `CDC_BUILD_CUSTOM_SOC`,
-`CDC_BUILD_TESTS`, `CDC_CPU_BACKEND`.
+`CDC_BUILD_TESTS`, `CDC_CPU_BACKEND`, and
+`CDC_ENABLE_SAURIA_NPU_V4` (default `OFF`). Authorized internal builds set the
+latter to `ON` and supply the private `SAURIA_NPU_ROOT` cache path.
 
 ---
 
@@ -237,7 +241,7 @@ Block diagram: [`docs/virtual_soc_block_diagram.svg`](virtual_soc_block_diagram.
 | QSPI0 | 0x100C_0000 | 0x100C_0FFF | 4 KiB | MMIO | NOR flash behind it |
 | ISP0 | 0x100D_0000 | 0x100D_FFFF | 64 KiB | MMIO + master | ⛯ planned |
 | VPU0 | 0x100E_0000 | 0x100E_FFFF | 64 KiB | MMIO + master | ⛯ planned |
-| NPU0 | 0x100F_0000 | 0x100F_FFFF | 64 KiB | MMIO + master | ⛯ planned |
+| NPU0 | 0x100F_0000 | 0x100F_FFFF | 64 KiB | MMIO + master | ◐ optional private SAURIA build |
 | UART1 | 0x1010_0000 | 0x1010_0FFF | 4 KiB | MMIO | uart2_tlm (PL011) |
 | I2C1 | 0x1011_0000 | 0x1011_0FFF | 4 KiB | MMIO | |
 | SPI1 | 0x1012_0000 | 0x1012_0FFF | 4 KiB | MMIO | |
@@ -259,7 +263,8 @@ Block diagram: [`docs/virtual_soc_block_diagram.svg`](virtual_soc_block_diagram.
 | PIPELINE_RSVD | 0x8C00_0000 – 0x8FFF_FFFF | reserved |
 
 Authoritative source: [`docs/peripheral_memory_map.md`](peripheral_memory_map.md).
-**ADC0 base/IRQ are not yet assigned (TBD).**
+ADC0 is assigned at `0x1015_0000`, PLIC source 23. NPU0's programming details
+are in `components/npu_tlm_v4_model/README.md`.
 
 ---
 
@@ -296,13 +301,15 @@ sets PLIC priority/threshold and source enable → on trap, **claim** (read clai
 | 12 | dmic0.irq_out | ✅ |
 | 13 | otp0.irq_out | ✅ |
 | 14 | qspi0.irq | ✅ |
-| 15–17 | isp0/vpu0/npu0.irq | ⛯ reserved |
+| 15–16 | isp0/vpu0.irq | ⛯ reserved |
+| 17 | npu0.irq_out | ◐ optional; tied low in the public default build |
 | 18 | uart1.irq | ✅ |
 | 19 | i2c1.irq | ✅ |
 | 20 | spi1.irq | ✅ |
 | 21 | timer1.irq_out | ✅ |
 | 22 | rtc0.irq_out | ✅ |
-| 23–31 | — | reserved (GPIO/ADC/AES/future) |
+| 23 | adc0.irq_out | ✅ |
+| 24–31 | — | reserved (GPIO/AES/future) |
 
 ---
 
@@ -373,7 +380,7 @@ the model, MMIO window, key registers, interface, and IRQ.
 - **WDT** (SP805-style) — LOAD/VALUE/CONTROL/INTCLR down-counter; `reset_n`,`irq`,`reset_o`. ✅
 - **PWM** (OpenTitan-style) — 6 channels PARAM/DUTY/BLINK, CFG/PWM_EN/INVERT, REGWEN;
   **no real IRQ yet**. ◐
-- **ADC** — CONTROL/STATUS/DATA/INTR_ENABLE (0x00–0x0C); `reset_n`,`irq_out`. ✅ *(base/IRQ TBD in map)*
+- **ADC** — CONTROL/STATUS/DATA/INTR_ENABLE (0x00–0x0C); `reset_n`,`irq_out`. ✅
 - **DMA** (PL330-style) — manager DSR/DPC + per-channel regs; MFIFO 1024 B; channel/manager
   faults; target + **master** socket; `irq_nonzero`, `irq_abort`. ✅
 - **TRNG** (CryptoCell-style) — IMR/ISR/ICR/CONFIG/VALID, 6×32-bit EHR (192-bit), BIST;
@@ -389,8 +396,12 @@ the model, MMIO window, key registers, interface, and IRQ.
 - **RTC** (`rtc_tlm`, PL031) — DR/MR/LR/CR/IMSC/RIS/MIS/ICR; free-running counter + alarm;
   `reset_n`,`irq_out`. ✅
 - **CLINT / PLIC** — see §6.
-- **ISP / VPU / NPU** — planned: MMIO target + RAM master + IRQ; shared register block
-  (CTRL/STATUS/IRQ_*, SRC/DST/SCRATCH_ADDR, WIDTH/HEIGHT/STRIDE/FORMAT/OP_MODE, WEIGHTS_ADDR). ⛯
+- **NPU0** — SAURIA v4 signal-level core behind a TLM MMIO target and RAM
+  master; fixed `INT8 32xK * Kx32 -> INT32 32x32` GEMM, physical buffer
+  addresses, sticky done/error status, and level IRQ17. ◐ *(optional internal
+  build; absent from the public default binary)*
+- **ISP / VPU** — planned MMIO target + RAM master + IRQ using the common
+  accelerator register block. ⛯
 
 ---
 
@@ -481,7 +492,7 @@ ctest --test-dir build/bremen --output-on-failure
 | WDT0 | SP805 | ✅ | ✅ | ✅ | ✅ | + reset_o |
 | PWM0 | OpenTitan | ✅ | ◐ | — | ✅ | no IRQ yet |
 | DMA0 | PL330 | ✅ | ✅×2 | ✅ | ✅ | master socket |
-| ADC0 | custom | ✅ | ✅ | ✅ | ✅ | base/IRQ TBD |
+| ADC0 | custom | ✅ | ✅ | ✅ | ✅ | base `0x1015_0000`, IRQ23 |
 | TRNG0 | CryptoCell | ✅ | ✅ | ✅ | ✅ | |
 | DMIC0 | PDM/CIC | ✅ | ✅ | ✅ | ✅ | |
 | OTP0 | OpenTitan | ✅ | ✅ | — | ✅ | |
@@ -494,7 +505,8 @@ ctest --test-dir build/bremen --output-on-failure
 | PLIC0 | RISC-V | ✅ | n/a | — | ✅ | MEIP |
 | bus_router | TLM | ✅ | — | — | ✅ | no DMI |
 | memory | TLM | ✅ | — | — | ✅ | |
-| ISP/VPU/NPU | accel | ⛯ | ⛯ | — | — | planned |
+| NPU0 | private SAURIA v4 + public adapter | conditional | conditional | conditional | conditional | available only in an NPU-enabled internal build; target + RAM master |
+| ISP/VPU | accel | ⛯ | ⛯ | — | — | planned |
 
 ---
 
@@ -578,11 +590,15 @@ M-mode memory isolation, and **secure/measured boot** leveraging the existing OT
 |---|---|---|---|
 | Bremen core | `agra-uni-bremen/riscv-vp` | **MIT** | commit `48b2f58…` |
 | SystemC | Accellera | Apache-2.0 | 2.3.4 (`/opt/systemc-2.3.4`) |
+| SAURIA NPU v4 | [`bsc-loca/sauria`](https://github.com/bsc-loca/sauria) architecture + optional private SystemC source (`SAURIA_NPU_ROOT`) | `Apache-2.0 WITH SHL-2.1` upstream; private implementation is internal-only | upstream `2bb469e…` |
 | RISC-V toolchain | xpack `riscv-none-elf` GCC | — | host install |
 
-CDC-VP's own source is **Apache-2.0** (`LICENSE`, `NOTICE`). The external Bremen core
-(MIT) is not bundled (fetched into gitignored `third_party/`). All dependencies are
-permissive — see [`THIRD_PARTY.md`](../THIRD_PARTY.md).
+CDC-VP's own source is **Apache-2.0** (`LICENSE`, `NOTICE`). The external Bremen
+core (MIT) is not bundled (fetched into gitignored `third_party/`). The SAURIA
+source is also external. Its official upstream license and a public/private
+provenance record are bundled under `licenses/`. The public repository does not
+include the private SystemC source or an NPU-enabled binary. See
+[`THIRD_PARTY.md`](../THIRD_PARTY.md).
 
 IP register models are **reference-design-style** (ARM PrimeCell/PL011/PL022/PL330/
 SP805, CryptoCell; OpenTitan clkmgr/pwrmgr/OTP/I2C/PWM) — re-implemented as TLM

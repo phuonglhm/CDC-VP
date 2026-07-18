@@ -13,6 +13,7 @@ SYSTEMC_INC="${SYSTEMC_INC:-/opt/systemc-2.3.4/include}"
     -I"$repo/components/i2c_tlm/include" \
     -I"$repo/components/dma_tlm/include" \
     -I"$repo/components/gpio_tlm/include" \
+    -I"$repo/components/npu_tlm_v4_model/include" \
     -I"$repo/fw/common/include" \
     "$repo/tools/check_regs_drift.cpp"
 

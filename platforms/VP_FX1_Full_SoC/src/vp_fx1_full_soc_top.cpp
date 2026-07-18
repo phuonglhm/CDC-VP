@@ -31,6 +31,9 @@
 #include <rtc_tlm.h>     // cdc::components::rtc_tlm
 #include <adc_tlm.h>     // cdc::components::adc_tlm
 #include <gpio_tlm.h>    // cdc::components::gpio_tlm
+#if CDC_ENABLE_SAURIA_NPU_V4
+#include <npu_tlm_v4_model.h>
+#endif
 
 #include <riscv_vp_wrapper.h>
 
@@ -48,6 +51,9 @@ constexpr std::uint64_t kTimer0= 0x1003'0000, kWdt0  = 0x1004'0000, kPwm0   = 0x
 constexpr std::uint64_t kDma0  = 0x1006'0000, kTrng0 = 0x1007'0000, kCmu0   = 0x1008'0000;
 constexpr std::uint64_t kPmu0  = 0x1009'0000, kDmic0 = 0x100A'0000, kOtp0   = 0x100B'0000;
 constexpr std::uint64_t kQspi0 = 0x100C'0000;
+#if CDC_ENABLE_SAURIA_NPU_V4
+constexpr std::uint64_t kNpu0  = 0x100F'0000, kAccelMmio = 0x1'0000;
+#endif
 constexpr std::uint64_t kUart1 = 0x1010'0000, kI2c1  = 0x1011'0000, kSpi1   = 0x1012'0000;
 constexpr std::uint64_t kTimer1= 0x1013'0000, kRtc0  = 0x1014'0000;
 constexpr std::uint64_t kAdc0  = 0x1015'0000;   // resolves map "ADC base TBD"
@@ -56,10 +62,15 @@ constexpr std::uint64_t kRamBase = 0x8000'0000, kRamSize = 0x1000'0000; // 256 M
 // ROM-code boot flow (firmware team's boot-sequence spec):
 constexpr std::uint64_t kBootromBase = 0x0000'0000, kBootromSize = 0x1'0000;  // 64 KiB
 constexpr std::uint64_t kIflashBase  = 0x0400'0000, kIflashSize  = 0x40'0000; // 4 MiB
-// ISP0 0x100D, VPU0 0x100E, NPU0 0x100F windows are reserved (planned, not bound).
+// ISP0 0x100D and VPU0 0x100E remain reserved (planned, not bound).
 
 constexpr unsigned kNumPlic = 31;            // PLIC sources 1..31 (id 0 reserved)
 constexpr std::size_t kFlashSize = 16u * 1024u * 1024u;
+#if CDC_ENABLE_SAURIA_NPU_V4
+constexpr unsigned kNpuInstances = 1;
+#else
+constexpr unsigned kNpuInstances = 0;
+#endif
 
 // Minimal SPI off-chip peripheral: a benign target for spi.to_peri_socket so the
 // controller's initiator socket is bound. Returns OK, echoes nothing.
@@ -120,6 +131,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     cdc::components::rtc_tlm rtc0;
     cdc::components::adc_tlm adc0;
     cdc::components::gpio_tlm gpio0;   // pin 1 = ROM-code boot-mode strap
+#if CDC_ENABLE_SAURIA_NPU_V4
+    cdc::components::npu_tlm_v4_model npu0;
+#endif
 
     // ── Signals ─────────────────────────────────────────────────────────────
     sc_core::sc_buffer<unsigned char> uart0_tx, uart1_tx;
@@ -141,6 +155,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     sc_core::sc_signal<bool> qspi0_irq, qspi0_rst;
     sc_core::sc_signal<bool> rtc0_irq, rtc0_rst;
     sc_core::sc_signal<bool> adc0_irq, adc0_rst;
+#if CDC_ENABLE_SAURIA_NPU_V4
+    sc_core::sc_signal<bool> npu0_irq, npu0_rst;
+#endif
 
     // CMU / clkmgr environment
     sc_core::sc_vector<sc_core::sc_signal<bool>> cmu_idle;
@@ -159,8 +176,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     impl(sc_core::sc_module_name name, const std::string& config_path)
         : sc_core::sc_module(name)
         , cpu("cpu")
-        , bus("bus", /*num_targets=*/25,
-              /*num_initiators=*/(cpu.has_unified_bus() ? 1u : 2u) + 1u /*DMA master*/)
+        , bus("bus", /*num_targets=*/25 + kNpuInstances,
+              /*num_initiators=*/(cpu.has_unified_bus() ? 1u : 2u) +
+                  1u + kNpuInstances /* DMA + optional NPU master */)
         , ram("ram", kRamSize)
         , bootrom("bootrom", kBootromSize, /*read_only=*/true)
         , iflash("iflash", kIflashSize, /*read_only=*/true)
@@ -188,6 +206,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         , rtc0("rtc0")
         , adc0("adc0")
         , gpio0("gpio0")
+#if CDC_ENABLE_SAURIA_NPU_V4
+        , npu0("npu0", sc_core::sc_time(2, sc_core::SC_NS))
+#endif
         , uart0_tx("uart0_tx"), uart1_tx("uart1_tx")
         , trng0_clk("trng0_clk", sc_core::sc_time(10, sc_core::SC_NS))
         , cmu_idle("cmu_idle", 4)
@@ -201,8 +222,11 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
             cpu.data_bus().bind(bus.cpu_port(port++));
         }
         dma0.master_socket.bind(bus.cpu_port(port++));
+#if CDC_ENABLE_SAURIA_NPU_V4
+        npu0.master_socket.bind(bus.cpu_port(port++));
+#endif
 
-        // ── Downstream targets (25) ──────────────────────────────────────────
+        // ── Downstream targets (25 plus optional NPU0) ────────────────────────
         bus.add_target(kBootromBase, kBootromSize).bind(bootrom.socket);
         bus.add_target(kIflashBase,  kIflashSize ).bind(iflash.socket);
         bus.add_target(kRamBase,   kRamSize ).bind(ram.socket);
@@ -221,6 +245,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         bus.add_target(kDmic0, kMmio).bind(dmic0.bus_target_socket);
         bus.add_target(kOtp0,  kMmio).bind(otp0.socket);
         bus.add_target(kQspi0, kMmio).bind(qspi0.from_apb_socket);
+#if CDC_ENABLE_SAURIA_NPU_V4
+        bus.add_target(kNpu0,  kAccelMmio).bind(npu0.target_socket);
+#endif
         bus.add_target(kUart1, kMmio).bind(uart1.bus);
         bus.add_target(kI2c1,  kMmio).bind(i2c1.socket);
         bus.add_target(kSpi1,  kMmio).bind(spi1.from_apb_socket);
@@ -273,6 +300,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
 
         rtc0.irq_out(rtc0_irq); rtc0.reset_n(rtc0_rst);
         adc0.irq_out(adc0_irq); adc0.reset_n(adc0_rst);
+#if CDC_ENABLE_SAURIA_NPU_V4
+        npu0.irq_out(npu0_irq); npu0.reset_n(npu0_rst);
+#endif
 
         // PMU environment
         pmu0.por_rst_n(por_rst_n);       pmu0.core_sleeping(core_sleeping);
@@ -306,7 +336,11 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         plic.irq_in[13](qspi0_irq);         // 14 QSPI0
         plic.irq_in[14](tie_low);           // 15 ISP0 (reserved)
         plic.irq_in[15](tie_low);           // 16 VPU0 (reserved)
-        plic.irq_in[16](tie_low);           // 17 NPU0 (reserved)
+#if CDC_ENABLE_SAURIA_NPU_V4
+        plic.irq_in[16](npu0_irq);          // 17 NPU0
+#else
+        plic.irq_in[16](tie_low);           // 17 NPU0 (optional, disabled)
+#endif
         plic.irq_in[17](uart1_irq);         // 18 UART1
         plic.irq_in[18](i2c1_irq);          // 19 I2C1
         plic.irq_in[19](spi1_irq);          // 20 SPI1
@@ -323,6 +357,9 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         wdt0_rst.write(true);  dma0_rst.write(true);
         trng0_rst.write(true); dmic0_rst.write(true);
         qspi0_rst.write(true); rtc0_rst.write(true); adc0_rst.write(true);
+#if CDC_ENABLE_SAURIA_NPU_V4
+        npu0_rst.write(true);
+#endif
         cmu_byp_ack.write(false);
         for (int i = 0; i < 4; ++i) cmu_idle[i].write(false);
 
@@ -335,7 +372,11 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
                          "GPIO0 @ 0x1016_0000 (pin1 = boot strap)\n";
             std::cout << "IPs: UARTx2 I2Cx2 SPIx2 TIMERx2 WDT PWM DMA TRNG CMU PMU "
                          "DMIC OTP QSPI(+flash) RTC ADC GPIO | SPI0+NOR (boot) | "
-                         "ISP/VPU/NPU reserved\n";
+#if CDC_ENABLE_SAURIA_NPU_V4
+                         "NPUv4 | ISP/VPU reserved\n";
+#else
+                         "ISP/VPU/NPU reserved (enable optional SAURIA build)\n";
+#endif
         }
     }
 
