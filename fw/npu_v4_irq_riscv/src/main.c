@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #include <stdint.h>
 
 #include "soc/regs/soc_regs_npu_v4.h"

@@ -1,4 +1,6 @@
 /*
+ * SPDX-License-Identifier: Apache-2.0
+ *
  * SAURIA NPU v4 register ABI. Offsets are relative to CDC_NPU0_BASE.
  * All accesses are aligned 32-bit little-endian words.
  */

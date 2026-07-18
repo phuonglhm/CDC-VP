@@ -1,4 +1,6 @@
 OUTPUT_ARCH(riscv)
+/* SPDX-License-Identifier: Apache-2.0 */
+
 ENTRY(_start)
 
 MEMORY

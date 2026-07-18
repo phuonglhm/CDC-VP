@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+#
 # Cross-compile the VP_FX1 SAURIA NPU v4 end-to-end firmware test.
 
 CROSS   ?= riscv-none-elf-

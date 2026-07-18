@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #include "npu_tlm_v4_model.h"
 
 #include "npu_tlm_v4_regmap.h"

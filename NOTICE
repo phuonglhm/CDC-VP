@@ -14,3 +14,15 @@ Supercomputing Center. The public source tree does not include that model.
 The upstream SAURIA design is Copyright 2022 Jordi Fornt Mas and is available
 under Apache-2.0 WITH SHL-2.1. See licenses/SAURIA.SHL-2.1 and
 licenses/SAURIA.PROVENANCE.md.
+
+This source distribution also contains:
+
+- the official CMake 3.21.7 Linux x86-64 installer from Kitware, distributed
+  under BSD-3-Clause; see licenses/CMAKE.BSD-3-Clause and
+  licenses/CMAKE.PROVENANCE.md; and
+- the optional VPU TLM 3.0 subtree under the MIT License; see
+  components/vpu_tlm3.0/LICENSE.
+
+The ISP RAW test inputs and architecture JPEG listed in
+components/isp_tlm/ASSET_PROVENANCE.md are Copyright 2026 The CDC-VP Authors
+and are distributed under Apache-2.0.

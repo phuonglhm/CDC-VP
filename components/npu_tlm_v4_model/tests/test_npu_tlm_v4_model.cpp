@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #include <array>
 #include <cstdint>
 #include <cstring>

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 if(NOT EXISTS "${SAURIA_NPU_ROOT}/npu_top.h")
     message(FATAL_ERROR
         "CDC_ENABLE_SAURIA_NPU_V4=ON requires the private SAURIA model, but "

@@ -54,6 +54,7 @@ cmake -S . -B build-soc \
 | CPU features & block diagram | `docs/CDC-VP_VIRTUAL_SoC_PLATFORM.md` §7, `docs/cpu_block_diagram.svg` |
 | CPU benchmark | `docs/cpu_benchmark_results.md` |
 | Block / pipeline diagrams | `docs/virtual_soc_block_diagram.svg`, `docs/virtual_soc_flow_diagrams.svg` |
+| Public release checklist | `docs/PUBLIC_RELEASE_CHECKLIST.md` |
 
 ## License
 
@@ -66,3 +67,8 @@ bundled. Its upstream Solderpad v2.1/Apache-2.0 license and provenance are kept
 under [`licenses/`](licenses/). The public CDC-VP source release does not
 contain that private model or an NPU-enabled binary. See
 [`THIRD_PARTY.md`](THIRD_PARTY.md).
+
+Before publishing a release, complete
+[`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md).
+The ISP asset license and VPU TLM 3.0 rights holder are recorded in their
+component provenance files.

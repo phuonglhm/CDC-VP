@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 add_executable(test_npu_tlm_v4_model
     test_npu_tlm_v4_model.cpp)
 
