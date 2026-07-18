@@ -126,9 +126,9 @@ public:
                     const sc_core::sc_time t_out  = m_out_times[i];
                     const sc_core::sc_time t_in   = t_out - m_latencies[i];
                     ofs << i << ','
-                        << std::setprecision(9) << t_in.to_double()  / 1e-9 << ','
-                        << std::setprecision(9) << t_out.to_double() / 1e-9 << ','
-                        << std::setprecision(9) << m_latencies[i].to_double() / 1e-9
+                        << std::setprecision(9) << t_in.to_seconds()  / 1e-9 << ','
+                        << std::setprecision(9) << t_out.to_seconds() / 1e-9 << ','
+                        << std::setprecision(9) << m_latencies[i].to_seconds() / 1e-9
                         << '\n';
                 }
                 ofs.close();
@@ -147,7 +147,7 @@ public:
             ofs << "=== Metrics summary for block: " << m_block_label << " ===\n";
             ofs << "total_samples        : " << m_latencies.size()     << '\n';
             ofs << "simulation_time_ns   : "
-                << sc_core::sc_time_stamp().to_double() / 1e-9 << '\n';
+                << sc_core::sc_time_stamp().to_seconds() / 1e-9 << '\n';
             if (m_latencies.empty()) {
                 ofs << "mean_latency_ns      : 0\n";
                 ofs << "min_latency_ns       : 0\n";
@@ -156,16 +156,16 @@ public:
                 ofs << "throughput_tokens_s  : 0\n";
             } else {
                 ofs << "mean_latency_ns      : "
-                    << mean_latency().to_double() / 1e-9 << '\n';
+                    << mean_latency().to_seconds() / 1e-9 << '\n';
                 ofs << "min_latency_ns       : "
-                    << min_latency().to_double() / 1e-9 << '\n';
+                    << min_latency().to_seconds() / 1e-9 << '\n';
                 ofs << "max_latency_ns       : "
-                    << max_latency().to_double() / 1e-9 << '\n';
+                    << max_latency().to_seconds() / 1e-9 << '\n';
 
-                const double mean_ns = mean_latency().to_double() / 1e-9;
+                const double mean_ns = mean_latency().to_seconds() / 1e-9;
                 double sumsq = 0.0;
                 for (const auto& t : m_latencies) {
-                    const double v = t.to_double() / 1e-9;
+                    const double v = t.to_seconds() / 1e-9;
                     const double d = v - mean_ns;
                     sumsq += d * d;
                 }
@@ -174,13 +174,12 @@ public:
 
                 const sc_core::sc_time span = m_last_out_time - m_first_out_time;
                 if (span > SC_ZERO_TIME) {
-                    const double tokens_per_ns =
+                    const double tokens_per_s =
                         static_cast<double>(m_out_times.size()) /
-                        (span.to_double() / 1e-9);
-                    const double tokens_per_s = tokens_per_ns * 1e9;
+                        span.to_seconds();
                     ofs << "throughput_tokens_s  : " << tokens_per_s << '\n';
                     ofs << "mean_period_ns       : "
-                        << throughput_period_mean().to_double() / 1e-9 << '\n';
+                        << throughput_period_mean().to_seconds() / 1e-9 << '\n';
                 } else {
                     ofs << "throughput_tokens_s  : inf\n";
                     ofs << "mean_period_ns       : 0\n";

@@ -143,10 +143,10 @@ public:
 
     double stddev_latency() const {
         if (m_latencies.size() < 2) return 0.0;
-        const double mean_ns = mean_latency().to_double() / 1e-9;
+        const double mean_ns = mean_latency().to_seconds() / 1e-9;
         double sumsq = 0.0;
         for (const auto& t : m_latencies) {
-            const double v = t.to_double() / 1e-9;
+            const double v = t.to_seconds() / 1e-9;
             const double d = v - mean_ns;
             sumsq += d * d;
         }
@@ -172,7 +172,7 @@ public:
         const sc_time span = m_out_times.back() - m_out_times.front();
         if (span <= SC_ZERO_TIME) return 0.0f;
         return static_cast<float>(m_out_times.size()) /
-               (span.to_double() / 1e9);
+               (span.to_seconds());
     }
 
     // Dump CSV (per-unit latency + output timestamps) and text summary
@@ -204,10 +204,10 @@ private:
             // Recompute t_start from latency: t_start = t_end - latency
             sc_time t_in = (t_end >= m_latencies[i]) ? (t_end - m_latencies[i]) : SC_ZERO_TIME;
             ofs << i << ','
-                << std::setprecision(9) << t_in.to_double() / 1e-9 << ','
-                << std::setprecision(9) << t_end.to_double() / 1e-9 << ','
-                << std::setprecision(9) << m_latencies[i].to_double() / 1e-9 << ','
-                << std::setprecision(9) << t_end.to_double() / 1e-9
+                << std::setprecision(9) << t_in.to_seconds() / 1e-9 << ','
+                << std::setprecision(9) << t_end.to_seconds() / 1e-9 << ','
+                << std::setprecision(9) << m_latencies[i].to_seconds() / 1e-9 << ','
+                << std::setprecision(9) << t_end.to_seconds() / 1e-9
                 << '\n';
         }
         ofs.close();
@@ -224,7 +224,7 @@ private:
         ofs << "=== Block metrics: " << m_block_name << " ===\n";
         ofs << "total_samples        : " << m_latencies.size() << '\n';
         ofs << "simulation_time_ns   : "
-            << sc_time_stamp().to_double() / 1e-9 << '\n';
+            << sc_time_stamp().to_seconds() / 1e-9 << '\n';
         ofs << "processing_unit      : ";
         switch (m_processing_unit) {
             case ProcessingUnit::PIXEL: ofs << "pixel\n"; break;
@@ -249,11 +249,11 @@ private:
             ofs << "throughput_tokens_s : 0\n";
         } else {
             ofs << "mean_latency_ns     : "
-                << mean_latency().to_double() / 1e-9 << '\n';
+                << mean_latency().to_seconds() / 1e-9 << '\n';
             ofs << "min_latency_ns      : "
-                << min_latency().to_double() / 1e-9 << '\n';
+                << min_latency().to_seconds() / 1e-9 << '\n';
             ofs << "max_latency_ns      : "
-                << max_latency().to_double() / 1e-9 << '\n';
+                << max_latency().to_seconds() / 1e-9 << '\n';
             ofs << "stddev_latency_ns   : " << stddev_latency() << '\n';
 
             if (m_out_times.size() >= 2) {
@@ -261,10 +261,10 @@ private:
                 if (span > SC_ZERO_TIME) {
                     const double tokens_per_ns =
                         static_cast<double>(m_out_times.size()) /
-                        (span.to_double() / 1e9);
+                        (span.to_seconds());
                     ofs << "throughput_tokens_s : " << tokens_per_ns << '\n';
                     ofs << "mean_period_ns      : "
-                        << throughput_period_mean().to_double() / 1e-9 << '\n';
+                        << throughput_period_mean().to_seconds() / 1e-9 << '\n';
                 }
             }
         }

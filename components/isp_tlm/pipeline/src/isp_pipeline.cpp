@@ -800,6 +800,9 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    }
 
    const isp_config cfg = config_;
+   // AWB gains committed by frame N apply to white balance in frame N+1.
+   const float feedback_awb_r_gain = awb_r_gain_;
+   const float feedback_awb_b_gain = awb_b_gain_;
 
    const std::size_t raw_pixels = static_cast<std::size_t>(width_) * height_;
    const std::size_t rgb_pixels = raw_pixels * 3u;
@@ -845,8 +848,12 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    }
 
    wb_config wb_cfg = cfg.wb;
-   wb_cfg.r_gain = cfg.wb.is_enable ? cfg.wb.r_gain : 1.0f;
-   wb_cfg.b_gain = cfg.wb.is_enable ? cfg.wb.b_gain : 1.0f;
+   wb_cfg.r_gain = cfg.wb.is_enable
+                        ? cfg.wb.r_gain * feedback_awb_r_gain
+                        : 1.0f;
+   wb_cfg.b_gain = cfg.wb.is_enable
+                        ? cfg.wb.b_gain * feedback_awb_b_gain
+                        : 1.0f;
 
    wb_.process(demosaic_out_.data(), wb_out_.data(), width_, height_, wb_cfg);
 
@@ -879,10 +886,6 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    yuv_out = final_out_;
 
    // Update feedback/dynamic state registers at end of frame
-   if (cfg.awb.is_enable) {
-      wb_cfg.r_gain *= awb_r_gain_;
-      wb_cfg.b_gain *= awb_b_gain_;
-   }
    if (cfg.awb.is_enable) {
       config_.awb.r_gain_out = awb_r_gain_;
       config_.awb.b_gain_out = awb_b_gain_;

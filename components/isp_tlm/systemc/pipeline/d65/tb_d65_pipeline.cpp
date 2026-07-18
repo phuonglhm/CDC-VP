@@ -239,7 +239,7 @@ int sc_main(int argc, char* argv[]) {
               << frame_time_us << " us\n";
     std::cout << "  Frame time (ns)    : " << std::setprecision(3)
               << frame_time_ns << " ns\n";
-    std::cout << "  Sim timestamp       : " << sc_time_stamp().to_double() / 1e-9
+    std::cout << "  Sim timestamp       : " << sc_time_stamp().to_seconds() / 1e-9
               << " ns\n";
 
     double fps = (frame_time_us > 0) ? (1e6 / frame_time_us) : 0;

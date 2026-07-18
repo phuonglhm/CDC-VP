@@ -50,7 +50,7 @@ struct frame_metrics {
     }
 
     double frame_time_us() const {
-        return frame_time().to_double() / 1e-3;
+        return frame_time().to_seconds() / 1e-6;
     }
 
     double fps(float clk_mhz) const {
@@ -312,34 +312,74 @@ private:
 // ============================================================================
 inline bottleneck_report arch_metrics_collector::analyze_bottleneck() const {
     bottleneck_report report;
+    report.description =
+        "No bottleneck candidate evidence captured by the selected counters";
 
-    // Find block with lowest utilization
-    double min_util = 1.0;
-    std::string bottleneck_block;
-    bottleneck_type bt = bottleneck_type::NONE;
+    const auto consider = [&report](bottleneck_type type,
+                                    const std::string& location,
+                                    double numerator,
+                                    double denominator,
+                                    const std::string& evidence) {
+        if (numerator <= 0.0) {
+            return;
+        }
+        const double severity =
+            std::min(1.0, numerator / std::max(1.0, denominator));
+        if (severity <= report.severity) {
+            return;
+        }
+        report.type = type;
+        report.location = location;
+        report.severity = severity;
+        report.description =
+            "Bottleneck candidate based on local counters; root cause is not proven";
+        report.trace.clear();
+        report.trace.push_back(evidence);
+    };
 
     for (const auto& bm : m_block_metrics) {
-        if (bm.block_utilization < min_util) {
-            min_util = bm.block_utilization;
-            bottleneck_block = bm.block_name;
-
-            if (bm.cycles.starved_cycles > bm.cycles.active_cycles) {
-                bt = bottleneck_type::INPUT_BANDWIDTH;
-            } else if (bm.cycles.blocked_cycles > bm.cycles.active_cycles) {
-                bt = bottleneck_type::DOWNSTREAM_BACKPRESSURE;
-            } else if (bm.cycles.memory_wait_cycles > 0) {
-                bt = bottleneck_type::MEMORY_PORT;
-            } else {
-                bt = bottleneck_type::COMPUTE_II;
-            }
+        const double active = static_cast<double>(bm.cycles.active_cycles);
+        const double stalls =
+            static_cast<double>(bm.cycles.starved_cycles +
+                                bm.cycles.blocked_cycles +
+                                bm.cycles.memory_wait_cycles +
+                                bm.cycles.stall_cycles);
+        consider(bottleneck_type::DOWNSTREAM_BACKPRESSURE, bm.block_name,
+                 static_cast<double>(bm.cycles.blocked_cycles),
+                 active + stalls,
+                 bm.block_name + ": blocked_cycles=" +
+                     std::to_string(bm.cycles.blocked_cycles));
+        consider(bottleneck_type::INPUT_BANDWIDTH, bm.block_name,
+                 static_cast<double>(bm.cycles.starved_cycles),
+                 active + stalls,
+                 bm.block_name + ": starved_cycles=" +
+                     std::to_string(bm.cycles.starved_cycles));
+        consider(bottleneck_type::MEMORY_PORT, bm.block_name,
+                 static_cast<double>(bm.cycles.memory_wait_cycles),
+                 active + stalls,
+                 bm.block_name + ": memory_wait_cycles=" +
+                     std::to_string(bm.cycles.memory_wait_cycles));
+        if (bm.effective_ii > 1.0) {
+            consider(bottleneck_type::COMPUTE_II, bm.block_name,
+                     bm.effective_ii - 1.0, bm.effective_ii,
+                     bm.block_name + ": effective_ii=" +
+                         std::to_string(bm.effective_ii));
         }
     }
 
-    if (min_util < 1.0) {
-        report.type = bt;
-        report.location = bottleneck_block;
-        report.severity = 1.0 - min_util;
-        report.description = "Block " + bottleneck_block + " has lowest utilization";
+    for (const auto& link : m_link_metrics) {
+        consider(bottleneck_type::DOWNSTREAM_BACKPRESSURE, link.link_name,
+                 static_cast<double>(link.backpressure_events),
+                 static_cast<double>(link.transfer_count +
+                                     link.backpressure_events),
+                 link.link_name + ": backpressure_events=" +
+                     std::to_string(link.backpressure_events));
+        consider(bottleneck_type::INPUT_BANDWIDTH, link.link_name,
+                 static_cast<double>(link.starvation_events),
+                 static_cast<double>(link.transfer_count +
+                                     link.starvation_events),
+                 link.link_name + ": starvation_events=" +
+                     std::to_string(link.starvation_events));
     }
 
     return report;
@@ -359,9 +399,9 @@ inline void arch_metrics_collector::dump_frame_metrics() const {
             << f.height << ','
             << f.total_pixels << ','
             << std::fixed << std::setprecision(3)
-            << f.first_input_time.to_double() / 1e-3 << ','
-            << f.first_output_time.to_double() / 1e-3 << ','
-            << f.last_output_time.to_double() / 1e-3 << ','
+            << f.first_input_time.to_seconds() / 1e-6 << ','
+            << f.first_output_time.to_seconds() / 1e-6 << ','
+            << f.last_output_time.to_seconds() / 1e-6 << ','
             << f.frame_time_us() << ','
             << f.fps(200.0) << ','
             << f.input_bytes << ','
@@ -386,9 +426,9 @@ inline void arch_metrics_collector::dump_block_metrics() const {
             << bm.input_beats << ','
             << bm.output_beats << ','
             << std::fixed << std::setprecision(3)
-            << bm.mean_latency.to_double() / 1e-9 << ','
-            << bm.min_latency.to_double() / 1e-9 << ','
-            << bm.max_latency.to_double() / 1e-9 << ','
+            << bm.mean_latency.to_seconds() / 1e-9 << ','
+            << bm.min_latency.to_seconds() / 1e-9 << ','
+            << bm.max_latency.to_seconds() / 1e-9 << ','
             << std::setprecision(4) << bm.block_utilization << ','
             << bm.cycles.active_cycles << ','
             << bm.cycles.idle_cycles << ','

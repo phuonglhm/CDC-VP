@@ -30,6 +30,9 @@ set(SC_ISP_HW_HEADERS
     hw/timed_block.h
     hw/trace.h
     hw/hw.h
+    hw/line_channel.h
+    hw/stage_runtime.h
+    hw/frame_feedback.h
 )
 
 # ------------------------------------------------------------------------------
@@ -384,3 +387,16 @@ if(Python3_Interpreter_FOUND)
         COMMENT "Aggregating metrics CSVs into summary"
     )
 endif()
+
+# ------------------------------------------------------------------------------
+# Line-granular primitive contract test
+# ------------------------------------------------------------------------------
+add_executable(tb_line_primitives hw/tb_line_primitives.cpp)
+target_include_directories(tb_line_primitives PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/hw
+)
+target_link_libraries(tb_line_primitives PRIVATE SystemC::systemc)
+if(CDC_BUILD_TESTS)
+    add_test(NAME tb_line_primitives COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_line_primitives)
+endif()
+

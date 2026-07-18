@@ -1,0 +1,22 @@
+# isp-level-metric
+
+- First-input to first-output latency.
+- Total frame cycles.
+- Pixels per cycle.
+- Input and output bandwidth.
+- Total bytes transferred.
+
+# Block metrics
+
+Emit:
+
+- Accepted input beats.
+- Produced output beats.
+- Active compute cycles.
+- Bypass cycles.
+- Input-starved cycles.
+- Output-blocked cycles.
+- Local-memory-wait cycles.
+- Pipeline utilization.
+- Effective initiation interval.
+- Operations performed.

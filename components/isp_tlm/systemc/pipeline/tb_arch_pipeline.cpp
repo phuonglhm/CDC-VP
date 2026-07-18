@@ -130,7 +130,7 @@ int sc_main(int argc, char* argv[]) {
     // For timed mode: estimate worst-case frame time
     double tokens_per_cycle = static_cast<double>(hw.bus_width_bits) / hw.pixel_bits;
     double mpix_per_s = hw.clk_mhz * tokens_per_cycle;
-    double max_frame_us = (static_cast<double>(WIDTH * HEIGHT) / mpix_per_s) / 1e6;
+    double max_frame_us = (static_cast<double>(WIDTH * HEIGHT) / mpix_per_s);
     max_frame_us *= 3.0;  // Add margin for pipeline latency
 
     std::cout << "--- Starting Simulation (no time limit) ---\n";
@@ -158,8 +158,8 @@ int sc_main(int argc, char* argv[]) {
 
     std::cout << "--- Frame Timing ---\n";
     std::cout << "Frame start: " << std::fixed << std::setprecision(3)
-              << dut.get_frame_start_time().to_double() / 1e-3 << " us\n";
-    std::cout << "Frame end: " << dut.get_frame_end_time().to_double() / 1e-3 << " us\n";
+              << dut.get_frame_start_time().to_seconds() / 1e-6 << " us\n";
+    std::cout << "Frame end: " << dut.get_frame_end_time().to_seconds() / 1e-6 << " us\n";
     std::cout << "Frame time: " << dut.get_frame_time_us() << " us\n";
 
     if (dut.get_frame_time_us() > 0) {

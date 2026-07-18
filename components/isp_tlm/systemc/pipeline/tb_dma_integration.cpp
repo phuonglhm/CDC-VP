@@ -233,7 +233,9 @@ int sc_main(int argc, char* argv[]) {
     // 4. Calculate expected bandwidth
     // ----------------------------------------------------------------
     std::uint64_t input_frame_bytes = N_PIXELS * 2;  // 16-bit pixels
-    std::uint64_t output_frame_bytes = WIDTH * HEIGHT * 3 / 2;  // YUV444
+    std::uint64_t output_frame_bytes =
+        static_cast<std::uint64_t>(WIDTH) * HEIGHT +
+        2u * ((WIDTH + 1u) / 2u) * ((HEIGHT + 1u) / 2u);  // YUV420
 
     float bus_freq_mhz = 200.0f;
     float input_cycles = (float)(input_frame_bytes * 8) / input_dma_cfg.bus_width_bits;
@@ -296,6 +298,9 @@ int sc_main(int argc, char* argv[]) {
     isp_cfg.bnr.is_enable = false;
     isp_cfg.sharpen.is_enable = false;
     isp_cfg.cse.is_enable = false;
+    isp_cfg.scale.in_width = WIDTH;
+    isp_cfg.scale.in_height = HEIGHT;
+    isp_cfg.yuv420.is_enable = true;
 
     std::vector<float> lsc_lut;
     sc_isp_pipeline dut("isp_pipeline", isp_cfg, lsc_lut,
@@ -324,7 +329,7 @@ int sc_main(int argc, char* argv[]) {
     dma_driver_module driver("dma_driver", &input);
     driver.raw_out(raw_in);
 
-    std::size_t expected_output = WIDTH * HEIGHT * 3 / 2;
+    std::size_t expected_output = static_cast<std::size_t>(output_frame_bytes);
     dma_monitor_module monitor("dma_monitor", expected_output);
     monitor.yuv_in(yuv_out);
 
@@ -346,8 +351,8 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "============================================================\n\n";
 
     std::cout << "--- Timing ---\n";
-    std::cout << "Simulation time: " << sim_time.to_double() / 1e-3 << " us\n";
-    std::cout << "Sim cycles (@200MHz): " << sim_time.to_double() / 5.0 << "\n\n";
+    std::cout << "Simulation time: " << sim_time.to_seconds() / 1e-6 << " us\n";
+    std::cout << "Sim cycles (@200MHz): " << sim_time.to_seconds() / 5e-9 << "\n\n";
 
     std::cout << "--- Frame Timing ---\n";
     std::cout << "Frame time: " << dut.get_frame_time_us() << " us\n";

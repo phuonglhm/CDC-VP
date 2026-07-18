@@ -23,6 +23,7 @@ using namespace sc_core;
 
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <cstdlib>
 #include <iomanip>
 #include <sys/stat.h>
@@ -36,9 +37,12 @@ using namespace sc_core;
 
 #include "../../pipeline/include/isp_config.h"
 #include "../../pipeline/include/isp_pipeline.h"
+#include "../../pipeline/include/isp_regmap.h"
+#include <cstring>
 
 #define WIDTH  32
 #define HEIGHT 32
+constexpr std::size_t FRAME_COUNT = 4;
 #define FIFO_DEPTH 1024
 
 namespace {
@@ -128,16 +132,20 @@ int sc_main(int argc, char* argv[]) {
 
     // Parse command-line arguments
     bool save_output = false;
+    bool wb_enable = true;
     std::string external_golden_path;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--save-output" || arg == "-s") {
             save_output = true;
+        } else if (arg == "--wb-off") {
+            wb_enable = false;
         } else if ((arg == "--golden" || arg == "-g") && i + 1 < argc) {
             external_golden_path = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0] << " [options]\n";
             std::cout << "Options:\n";
+            std::cout << "  --wb-off            Disable WB while AWB remains enabled\n";
             std::cout << "  --save-output, -s   Save captured and golden output to output/ directory\n";
             std::cout << "  --golden, -g <file> Compare with external golden YUV file\n";
             std::cout << "  --help, -h          Show this help message\n";
@@ -158,76 +166,124 @@ int sc_main(int argc, char* argv[]) {
 
     // 2. Generate test input
     const std::size_t raw_pixels = WIDTH * HEIGHT;
-    std::vector<std::uint16_t> test_input = tb_utils::generate_test_pattern<std::uint16_t>(
-        WIDTH, HEIGHT, 1, 2048);
+    const std::vector<std::uint16_t> base_input =
+        tb_utils::generate_test_pattern<std::uint16_t>(WIDTH, HEIGHT, 1, 2048);
+    std::vector<std::uint16_t> test_input(raw_pixels * FRAME_COUNT);
+    std::copy(base_input.begin(), base_input.end(), test_input.begin());
+    for (std::size_t frame = 1; frame < FRAME_COUNT; ++frame) {
+        for (std::size_t row = 0; row < HEIGHT; ++row) {
+            for (std::size_t col = 0; col < WIDTH; ++col) {
+                const bool even_row = (row & 1u) == 0u;
+                const bool even_col = (col & 1u) == 0u;
+                std::uint16_t value = 1700;
+                if (even_row && even_col) {
+                    value = 3000;  // RGGB red
+                } else if (!even_row && !even_col) {
+                    value = 600;   // RGGB blue
+                }
+                test_input[frame * raw_pixels + row * WIDTH + col] = value;
+            }
+        }
+    }
 
-    std::cout << "[TB] Test input: " << raw_pixels << " pixels" << std::endl;
-
-    // 3. Compute golden reference using original C++ pipeline
+    // Configure the oracle through the same register interface as the DUT.
+    // isp_pipeline exposes config() read-only, so mutating a copied config
+    // would leave the oracle at its defaults and produce a vacuous golden.
     isp_pipeline golden_pipeline;
-    isp_config cfg = golden_pipeline.config();
-
-    cfg.scale.in_width = WIDTH;
-    cfg.scale.in_height = HEIGHT;
-    cfg.scale.out_width = WIDTH / 2;
-    cfg.scale.out_height = HEIGHT / 2;
-
-    cfg.blc.is_enable = true;
-    cfg.dpc.is_enable = true;
-    cfg.lsc.is_enable = false;
-    cfg.dg.is_enable = false;
-    cfg.bnr.is_enable = false;
-    cfg.demosaic.is_enable = true;
-    cfg.awb.is_enable = true;
-    cfg.wb.is_enable = true;
-    cfg.ccm.is_enable = true;
-    cfg.gc.is_enable = true;
-    cfg.aec.is_enable = true;
-    cfg.csc.conv_standard = 0;
-    cfg.cse.is_enable = true;
-    cfg.sharpen.is_enable = true;
-    cfg.twodnr.is_enable = false;
-    cfg.scale.is_enable = true;
-    cfg.yuv420.is_enable = true;
-
-    cfg.blc.r_offset = 256; cfg.blc.gr_offset = 256;
-    cfg.blc.gb_offset = 256; cfg.blc.b_offset = 256;
-    cfg.blc.r_sat = 4095; cfg.blc.gr_sat = 4095;
-    cfg.blc.gb_sat = 4095; cfg.blc.b_sat = 4095;
-
-    cfg.dpc.dp_threshold = 30;
-
-    cfg.wb.r_gain = 1.0f;
-    cfg.wb.b_gain = 1.0f;
-
-    cfg.ccm.bit_depth = 12;
-    cfg.ccm.corrected_red[0] = 1.0f; cfg.ccm.corrected_red[1] = 0.0f; cfg.ccm.corrected_red[2] = 0.0f;
-    cfg.ccm.corrected_green[0] = 0.0f; cfg.ccm.corrected_green[1] = 1.0f; cfg.ccm.corrected_green[2] = 0.0f;
-    cfg.ccm.corrected_blue[0] = 0.0f; cfg.ccm.corrected_blue[1] = 0.0f; cfg.ccm.corrected_blue[2] = 1.0f;
-
-    cfg.gc.bit_depth = 12;
-    cfg.cse.saturation_gain = 1.0f;
-    cfg.sharpen.sharpen_sigma = 1;
-    cfg.sharpen.sharpen_strength = 1;
-
-    cfg.awb.underexposed_percentage = 0.01f;
-    cfg.awb.overexposed_percentage = 0.01f;
-
     auto write_to_reg = [&](std::uint32_t offset, std::uint32_t value) {
-        while (golden_pipeline.write_reg(offset, value)) {}
+        golden_pipeline.write_reg(offset, value);
+    };
+    auto float_to_reg = [](float value) {
+        std::uint32_t raw = 0;
+        std::memcpy(&raw, &value, sizeof(raw));
+        return raw;
     };
 
-    write_to_reg(0x0004, 0);
-    write_to_reg(0x000C, 0);
-    write_to_reg(0x0010, WIDTH);
-    write_to_reg(0x0014, HEIGHT);
-    write_to_reg(0x0020, 12);
-    write_to_reg(0x0024, 0);
+    using namespace cdc::components;
+    write_to_reg(REG_CTRL, 0);
+    write_to_reg(REG_WIDTH, WIDTH);
+    write_to_reg(REG_HEIGHT, HEIGHT);
+    write_to_reg(REG_BIT_DEPTH, 12);
+    write_to_reg(REG_BAYER_PATTERN, 0);  // RGGB
 
+    write_to_reg(REG_BLC_ENABLE, 1);
+    write_to_reg(REG_BLC_R_OFFSET, 256);
+    write_to_reg(REG_BLC_GR_OFFSET, 256);
+    write_to_reg(REG_BLC_GB_OFFSET, 256);
+    write_to_reg(REG_BLC_B_OFFSET, 256);
+    write_to_reg(REG_BLC_R_SAT, 4095);
+    write_to_reg(REG_BLC_GR_SAT, 4095);
+    write_to_reg(REG_BLC_GB_SAT, 4095);
+    write_to_reg(REG_BLC_B_SAT, 4095);
+    write_to_reg(REG_DPC_ENABLE, 1);
+    write_to_reg(REG_DPC_THRESH, 30);
+    write_to_reg(REG_LSC_ENABLE, 0);
+    write_to_reg(REG_DG_ENABLE, 1);
+    write_to_reg(REG_DG_AUTO, 1);
+    write_to_reg(REG_BNR_ENABLE, 0);
+    write_to_reg(REG_DEMOSAIC_ENABLE, 1);
+    write_to_reg(REG_AWB_ENABLE, 1);
+    write_to_reg(REG_AWB_UNDER_PCT, float_to_reg(0.01f));
+    write_to_reg(REG_AWB_OVER_PCT, float_to_reg(0.01f));
+    write_to_reg(REG_WB_ENABLE, wb_enable ? 1u : 0u);
+    write_to_reg(REG_WB_R_GAIN, float_to_reg(1.25f));
+    write_to_reg(REG_WB_B_GAIN, float_to_reg(0.75f));
+    write_to_reg(REG_CCM_ENABLE, 1);
+    write_to_reg(REG_CCM_MATRIX00, float_to_reg(1.0f));
+    write_to_reg(REG_CCM_MATRIX01, float_to_reg(0.0f));
+    write_to_reg(REG_CCM_MATRIX02, float_to_reg(0.0f));
+    write_to_reg(REG_CCM_MATRIX10, float_to_reg(0.0f));
+    write_to_reg(REG_CCM_MATRIX11, float_to_reg(1.0f));
+    write_to_reg(REG_CCM_MATRIX12, float_to_reg(0.0f));
+    write_to_reg(REG_CCM_MATRIX20, float_to_reg(0.0f));
+    write_to_reg(REG_CCM_MATRIX21, float_to_reg(0.0f));
+    write_to_reg(REG_CCM_MATRIX22, float_to_reg(1.0f));
+    write_to_reg(REG_GC_ENABLE, 1);
+    write_to_reg(REG_AEC_ENABLE, 1);
+    write_to_reg(REG_CSC_STANDARD, 0);
+    write_to_reg(REG_CSE_ENABLE, 1);
+    write_to_reg(REG_CSE_SAT_GAIN, float_to_reg(1.0f));
+    write_to_reg(REG_SHARPEN_ENABLE, 1);
+    write_to_reg(REG_SHARPEN_SIGMA, 1);
+    write_to_reg(REG_SHARPEN_STRENGTH, 1);
+    write_to_reg(REG_2DNR_ENABLE, 0);
+    write_to_reg(REG_SCALE_ENABLE, 1);
+    write_to_reg(REG_SCALE_OUT_W, WIDTH / 2);
+    write_to_reg(REG_SCALE_OUT_H, HEIGHT / 2);
+    write_to_reg(REG_YUV420_ENABLE, 1);
+
+    // Read back only after programming so the DUT and oracle share one config.
+    isp_config cfg = golden_pipeline.config();
+    std::cout << "[TB] Oracle config: scale=" << cfg.scale.is_enable
+              << " " << cfg.scale.out_width << "x" << cfg.scale.out_height
+              << ", yuv420=" << cfg.yuv420.is_enable << std::endl;
+    const std::size_t golden_expected_size = (WIDTH / 2) * (HEIGHT / 2) +
+                                             2 * (((WIDTH / 2) + 1) / 2) *
+                                                 (((HEIGHT / 2) + 1) / 2);
     std::vector<std::uint8_t> golden_output;
-    golden_pipeline.run(test_input.data(), golden_output);
-
-    std::cout << "[TB] Golden output size: " << golden_output.size() << " bytes" << std::endl;
+    golden_output.reserve(golden_expected_size * FRAME_COUNT);
+    for (std::size_t frame = 0; frame < FRAME_COUNT; ++frame) {
+        std::vector<std::uint8_t> frame_output;
+        golden_pipeline.run(test_input.data() + frame * raw_pixels, frame_output);
+        if (frame_output.size() < golden_expected_size) {
+            std::cerr << "[TB] ERROR: oracle frame " << frame << " produced "
+                      << frame_output.size() << " bytes; expected at least "
+                      << golden_expected_size << " bytes for YUV420 output"
+                      << std::endl;
+            return 1;
+        }
+        frame_output.resize(golden_expected_size);
+        golden_output.insert(golden_output.end(), frame_output.begin(),
+                             frame_output.end());
+    }
+    std::cout << "[TB] Golden output size: " << golden_output.size()
+              << " bytes (" << golden_expected_size << " bytes/frame, "
+              << FRAME_COUNT << " frames)" << std::endl;
+    if (golden_output.empty()) {
+        std::cerr << "[TB] ERROR: oracle produced an empty YUV420 frame"
+                  << std::endl;
+        return 1;
+    }
 
     // 4. Create SystemC pipeline
     std::vector<float> lsc_lut(8192, 1.0f);
@@ -253,7 +309,7 @@ int sc_main(int argc, char* argv[]) {
     std::size_t expected_size = out_w * out_h +
                                 2 * ((out_w + 1) / 2) * ((out_h + 1) / 2);
 
-    Generic_Monitor<std::uint8_t> monitor("monitor", expected_size);
+    Generic_Monitor<std::uint8_t> monitor("monitor", expected_size * FRAME_COUNT);
     monitor.fifo_in(output_fifo);
     monitor.set_golden_reference(golden_output.data(), golden_output.size());
 
@@ -283,25 +339,28 @@ int sc_main(int argc, char* argv[]) {
               << frame_time_us << " us\n";
     std::cout << "  Frame time (ns)    : " << std::setprecision(3)
               << frame_time_ns << " ns\n";
-    std::cout << "  Sim timestamp       : " << sc_time_stamp().to_double() / 1e-9
+    std::cout << "  Sim timestamp       : " << sc_time_stamp().to_seconds() / 1e-9
               << " ns\n";
 
     dut.print_metrics_summary();
 
     // Verify output
     const auto& captured = monitor.get_captured_data();
-    bool pass = true;
+    bool pass = captured.size() == golden_output.size();
     std::size_t diff_count = 0;
     double max_diff = 0.0;
 
-    std::size_t compare_size = std::min(captured.size(), golden_output.size());
-
+    const std::size_t compare_size = std::min(captured.size(), golden_output.size());
     for (std::size_t i = 0; i < compare_size; ++i) {
-        double diff = std::abs(static_cast<double>(captured[i]) - golden_output[i]);
+        const double diff = std::abs(static_cast<double>(captured[i]) - golden_output[i]);
         if (diff > 0.0) {
-            diff_count++;
+            ++diff_count;
             max_diff = std::max(max_diff, diff);
         }
+    }
+    if (captured.size() != golden_output.size()) {
+        std::cerr << "[TB] ERROR: captured output size " << captured.size()
+                  << " differs from oracle size " << golden_output.size() << std::endl;
     }
 
     std::cout << std::endl;
@@ -310,14 +369,13 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "==================================================" << std::endl;
     std::cout << "  Expected output size: " << golden_output.size() << std::endl;
     std::cout << "  Captured output size: " << captured.size() << std::endl;
-    std::cout << "  Differences: " << diff_count << " / " << compare_size << std::endl;
+    std::cout << "  Differences: " << diff_count << " / " << golden_output.size() << std::endl;
     std::cout << "  Max difference: " << max_diff << std::endl;
     std::cout << "  AWB R gain: " << dut.get_awb_r_gain() << std::endl;
     std::cout << "  AWB B gain: " << dut.get_awb_b_gain() << std::endl;
     std::cout << "  AEC feedback: " << dut.get_aec_feedback() << std::endl;
 
-    pass = (diff_count == 0) ||
-           (max_diff < 5.0 && (diff_count < compare_size * 0.05));
+    pass = pass && diff_count == 0;
 
     std::cout << "==================================================" << std::endl;
     std::cout << "TEST RESULT: " << (pass ? "PASS" : "FAIL") << std::endl;

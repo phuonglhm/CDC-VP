@@ -66,17 +66,17 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "[TB] Starting simulation with N=" << N << " tokens" << std::endl;
     sc_start();
     std::cout << "[TB] Simulation completed at t="
-              << sc_time_stamp().to_double() / 1e-9 << " ns" << std::endl;
+              << sc_time_stamp().to_seconds() / 1e-9 << " ns" << std::endl;
 
     // 7. Dump metrics
     wrap.dump_metrics("output/metrics_blc_demo");
 
     std::cout << "[TB] mean_latency   = "
-              << wrap.mean_latency().to_double() / 1e-9 << " ns" << std::endl;
+              << wrap.mean_latency().to_seconds() / 1e-9 << " ns" << std::endl;
     std::cout << "[TB] min_latency    = "
-              << wrap.min_latency().to_double() / 1e-9 << " ns" << std::endl;
+              << wrap.min_latency().to_seconds() / 1e-9 << " ns" << std::endl;
     std::cout << "[TB] max_latency    = "
-              << wrap.max_latency().to_double() / 1e-9 << " ns" << std::endl;
+              << wrap.max_latency().to_seconds() / 1e-9 << " ns" << std::endl;
     std::cout << "[TB] sample_count   = " << wrap.sample_count() << std::endl;
 
     return (wrap.sample_count() == N) ? 0 : 1;

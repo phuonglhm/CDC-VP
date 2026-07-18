@@ -1,0 +1,476 @@
+---
+title: ISP TLM Line-Granular Architecture Refactor
+kind: plan
+localOnly: true
+---
+
+# ISP TLM Line-Granular Architecture Refactor
+
+## Outcome
+
+Refactor `components/isp_tlm/systemc` into a causal, line-granular internal ISP architecture model.
+The delivered model retains one `SC_THREAD` per logical ISP block, exchanges slot-backed line tokens between blocks, represents spatial history in stage-local SRAM, and records timing only at meaningful events.
+The full-frame C++ pipeline remains the untimed functional oracle used by tests.
+
+Done means the line model produces the same final bytes as the oracle for supported configurations, cannot deadlock because a frame is larger than an inter-stage FIFO, exposes latency separately from initiation interval, and reports internal bottleneck candidates without modeling DMA, DRAM, or bus contention.
+
+<Callout id="scope-decision" tone="decision">
+
+The exploration boundary is the ISP pipeline itself.
+An ideal testbench source supplies RAW lines whenever ingress credit exists, and an ideal sink consumes YUV output immediately.
+DMA, DRAM, bus arbitration, configuration-file loading time, and external backpressure are outside the timed model.
+
+</Callout>
+
+## Scope and non-goals
+
+### Included
+
+1. Line-granular channels across all 18 logical stages, including the input normalizer.
+2. Per-link preallocated storage, slot ownership, ready queues, and credits.
+3. Stage-local line SRAM for DPC, BNR, demosaic, sharpen, and 2DNR.
+4. Logical in-flight line scheduling with independent latency and initiation interval.
+5. Next-frame AWB and AEC feedback with an explicit frame-start barrier.
+6. Scale and YUV420 rate changes, including plane-aware output placement.
+7. Event-duration metrics and local bottleneck-candidate reporting.
+8. Differential functional verification against `isp_pipeline::run()`.
+9. Real pipeline sweeps over coherent architecture candidates rather than mock formulas.
+
+### Excluded
+
+1. Read or write DMA processes.
+2. `b_transport`, `nb_transport`, DRAM timing, and bus arbitration.
+3. LUT or scalar configuration transfer time.
+4. RTL-calibrated latency claims before RTL or HLS evidence exists.
+5. Proven causal bottleneck attribution from local counters alone.
+6. Power-model calibration.
+
+## Current evidence and target delta
+
+| Current behavior | Target behavior |
+| --- | --- |
+| Pixel-typed `sc_fifo` links with one thread per block | Slot-backed line channels with one thread per block |
+| Point blocks wait per pixel in timed mode | Blocks wake for line arrival, issue, completion, credit, feedback, or reset |
+| Spatial blocks wait for a complete frame | Spatial blocks ingest lines into bounded stage-local SRAM and emit rows when halos are ready |
+| DPC requires `width * height` tokens to coexist in a FIFO whose top-level depth is 1024 | DPC consumes each input line immediately and retains only the rows required by its 5x5 neighborhood |
+| Pipeline depth and throughput are conflated by serial waits | `compute_latency`, line issue interval, and maximum in-flight lines remain separate |
+| Architecture sweep uses `run_mock_simulation()` | Sweep runner constructs and executes the actual line pipeline |
+| Lowest utilization is labeled the bottleneck | Reports rank internal bottleneck candidates from local issue, wait, occupancy, and rate evidence |
+
+<Callout id="deadlock-evidence" tone="risk">
+
+`sc_dpc::process_stream()` waits until `fifo_in->num_available()` reaches the full frame size before consuming any token.
+The top-level creates that boundary with depth 1024.
+Any enabled DPC frame larger than 1024 pixels can therefore deadlock before functional work begins.
+The line cutover must eliminate every whole-frame availability predicate before the full pipeline is considered operational.
+
+</Callout>
+
+## Target architecture
+
+<Diagram id="target-architecture" caption="Ideal boundaries surround three typed processing domains. Every arrow inside the ISP is a bounded line channel with its own slot pool.">
+
+```html
+<div class="diagram-panel isp-architecture" data-rough>
+  <div class="diagram-card boundary-card">
+    <strong>Ideal RAW source</strong>
+    <span class="diagram-muted">Host frame already loaded; publishes while ingress credit exists</span>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="domain-grid">
+    <section class="diagram-box" data-rough>
+      <span class="diagram-pill">RAW uint16</span>
+      <div class="stage-flow">
+        <span class="diagram-node">Normalizer</span><span>→</span>
+        <span class="diagram-node">BLC</span><span>→</span>
+        <span class="diagram-node">DPC</span><span>→</span>
+        <span class="diagram-node">LSC</span><span>→</span>
+        <span class="diagram-node">DG</span><span>→</span>
+        <span class="diagram-node">BNR</span>
+      </div>
+      <small class="diagram-muted">DPC and BNR own local halo SRAM</small>
+    </section>
+    <section class="diagram-box" data-rough>
+      <span class="diagram-pill">RGB uint16 x3</span>
+      <div class="stage-flow">
+        <span class="diagram-node">Demosaic</span><span>→</span>
+        <span class="diagram-node">AWB</span><span>→</span>
+        <span class="diagram-node">WB</span><span>→</span>
+        <span class="diagram-node">CCM</span><span>→</span>
+        <span class="diagram-node">GC</span><span>→</span>
+        <span class="diagram-node">AEC</span><span>→</span>
+        <span class="diagram-node">CSC</span>
+      </div>
+      <small class="diagram-muted">AWB and AEC commit feedback for the next frame</small>
+    </section>
+    <section class="diagram-box" data-rough>
+      <span class="diagram-pill">YUV uint8</span>
+      <div class="stage-flow">
+        <span class="diagram-node">CSE</span><span>→</span>
+        <span class="diagram-node">Sharpen</span><span>→</span>
+        <span class="diagram-node">2DNR</span><span>→</span>
+        <span class="diagram-node">Scale</span><span>→</span>
+        <span class="diagram-node">YUV420</span>
+      </div>
+      <small class="diagram-muted">Scale may emit zero or multiple rows; YUV420 emits plane-aware rows</small>
+    </section>
+  </div>
+  <div class="feedback-row">
+    <span class="diagram-node">Frame feedback latch</span>
+    <span class="diagram-muted">AWB/AEC frame N results gate frame N+1 ingress and provide an immutable frame snapshot</span>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="diagram-card boundary-card">
+    <strong>Ideal YUV sink</strong>
+    <span class="diagram-muted">Consumes immediately and writes each plane line at its final byte offset</span>
+  </div>
+</div>
+```
+
+```css
+.isp-architecture { display: grid; gap: 14px; padding: 4px; }
+.boundary-card { display: grid; gap: 6px; text-align: center; }
+.flow-arrow { text-align: center; color: var(--wf-muted); font-size: 20px; }
+.domain-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.stage-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 12px 0; }
+.feedback-row { display: grid; grid-template-columns: minmax(150px, 0.45fr) minmax(240px, 1fr); gap: 12px; align-items: center; }
+@media (max-width: 860px) { .domain-grid { grid-template-columns: 1fr; } .feedback-row { grid-template-columns: 1fr; } }
+```
+
+</Diagram>
+
+### Ownership model
+
+Each link owns a fixed number of line-sized slots.
+A token carries metadata and a slot identifier, never an owning pointer or `std::vector`.
+The producer reserves an unpublished slot, writes the functional result, schedules its completion time, and publishes the slot only when the result is ready and the boundary has credit.
+The consumer reads the token, accesses a const view, ingests or processes the line, and releases the slot.
+
+Spatial blocks copy an incoming line into their own stage-local SRAM and release the upstream slot after ingestion.
+The stage-local SRAM remains distinct from inter-stage FIFO capacity so buffer-depth sweeps do not silently change halo storage.
+
+### One line lifecycle
+
+<Mermaid
+  id="line-lifecycle"
+  caption="One SystemC thread represents several hardware lines in flight by scheduling timestamps rather than spawning more processes."
+  source={"sequenceDiagram\n  participant U as Upstream channel\n  participant B as Block SC_THREAD\n  participant S as Stage runtime\n  participant D as Downstream channel\n  U->>B: read line token and const view\n  B->>B: ingest or run functional line kernel\n  B->>S: schedule(slot, ready_at = now + latency)\n  Note over S: Several line records may coexist\n  S-->>B: earliest completion event\n  B->>D: publish reserved slot when boundary credit exists\n  D-->>B: slot released after downstream ingestion\n  B->>B: accumulate elapsed issue and retire states"}
+/>
+
+## Planned core code shapes
+
+The snippets below show intended interfaces and ownership boundaries.
+They are proposed C++17 shapes, not source copied from the current implementation.
+
+<TabsBlock
+  id="target-code-shapes"
+  orientation="vertical"
+  tabs={[
+    {
+      id: "line-channel-tab",
+      label: "line_channel.h",
+      blocks: [
+        {
+          id: "line-channel-code",
+          type: "annotated-code",
+          data: {
+            filename: "components/isp_tlm/systemc/hw/line_channel.h",
+            language: "cpp",
+            code: "enum class line_plane : std::uint8_t { raw, rgb, yuv444, y, uv };\n\nstruct line_meta {\n    std::uint64_t frame_id;\n    std::uint32_t row;\n    std::uint32_t width_pixels;\n    std::uint32_t valid_samples;\n    std::uint32_t dst_offset_bytes;\n    line_plane plane;\n    bool start_of_frame;\n    bool end_of_frame;\n};\n\ntemplate <typename T>\nclass basic_line_view {\npublic:\n    T* data() const;\n    std::size_t size() const;\n    T& operator[](std::size_t index) const;\n};\n\ntemplate <typename T>\nclass line_channel : public sc_core::sc_prim_channel {\npublic:\n    write_handle<T> reserve_result();\n    void publish(write_handle<T>&&, line_meta);\n    read_handle<const T> read();\n    void release(read_handle<const T>&&);\n    const sc_core::sc_event& data_event() const;\n    const sc_core::sc_event& credit_event() const;\n    line_link_metrics snapshot() const;\n\nprivate:\n    std::vector<T> storage_;\n    std::deque<slot_id> free_slots_;\n    std::deque<line_token> ready_lines_;\n    std::size_t published_capacity_;\n};",
+            annotations: [
+              { lines: "3-12", label: "Metadata only", note: "The token names frame, row, plane, shape, and final output placement without owning payload memory." },
+              { lines: "14-20", label: "C++17 view", note: "Use pointer plus length because the project is C++17 and cannot rely on std::span." },
+              { lines: "22-31", label: "Ownership protocol", note: "Reserve, publish, read, and release are the only legal slot transitions." },
+              { lines: "33-37", label: "Bounded storage", note: "All payload storage is allocated during elaboration; no per-line allocation occurs during simulation." }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      id: "stage-runtime-tab",
+      label: "stage_runtime.h",
+      blocks: [
+        {
+          id: "stage-runtime-code",
+          type: "annotated-code",
+          data: {
+            filename: "components/isp_tlm/systemc/hw/stage_runtime.h",
+            language: "cpp",
+            code: "struct stage_timing {\n    std::uint32_t compute_latency_cycles;\n    std::uint32_t pixel_ii;\n    std::uint32_t pixels_per_cycle;\n    std::uint32_t max_in_flight_lines;\n    timing_source source;\n};\n\nstruct scheduled_line {\n    slot_id output_slot;\n    line_meta meta;\n    sc_core::sc_time ready_at;\n};\n\nclass stage_runtime {\npublic:\n    bool can_issue(sc_core::sc_time now, std::uint32_t width) const;\n    void schedule(scheduled_line line, sc_core::sc_time now);\n    template <typename Channel> void retire_ready(Channel& output);\n    sc_core::sc_time next_wakeup() const;\n    void transition_issue(issue_state next, sc_core::sc_time now);\n    void transition_retire(retire_state next, sc_core::sc_time now);\n    stage_metrics snapshot(sc_core::sc_time now) const;\n\nprivate:\n    stage_timing timing_;\n    sc_core::sc_time next_issue_at_;\n    std::deque<scheduled_line> in_flight_;\n    event_duration_metrics durations_;\n};",
+            annotations: [
+              { lines: "1-7", label: "Assumption provenance", note: "Latency and II remain explicit assumed parameters until RTL or HLS calibrates them." },
+              { lines: "9-13", label: "Logical concurrency", note: "Each record represents one hardware line in flight; it is data, not another SystemC process." },
+              { lines: "15-23", label: "Meaningful events", note: "The block wakes for issue, completion, input, credit, feedback, or reset events rather than every clock." },
+              { lines: "25-29", label: "Separate timing", note: "First-output latency, sustained issue rate, in-flight capacity, and elapsed states remain independently observable." }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      id: "feedback-tab",
+      label: "frame_feedback.h",
+      blocks: [
+        {
+          id: "feedback-code",
+          type: "annotated-code",
+          data: {
+            filename: "components/isp_tlm/systemc/hw/frame_feedback.h",
+            language: "cpp",
+            code: "struct frame_feedback {\n    std::uint64_t applies_to_frame;\n    float awb_r_gain;\n    float awb_b_gain;\n    std::int32_t aec_feedback;\n    std::uint32_t dg_gain;\n};\n\nclass frame_feedback_latch {\npublic:\n    bool ready(std::uint64_t frame_id) const;\n    const frame_feedback& snapshot(std::uint64_t frame_id) const;\n    void commit_awb(std::uint64_t completed_frame, float r, float b);\n    void commit_aec(std::uint64_t completed_frame, std::int32_t feedback);\n    const sc_core::sc_event& ready_event() const;\n\nprivate:\n    void publish_next_when_complete(std::uint64_t completed_frame);\n    std::map<std::uint64_t, pending_feedback> pending_;\n    std::map<std::uint64_t, frame_feedback> snapshots_;\n};",
+            annotations: [
+              { lines: "1-7", label: "Immutable frame view", note: "DG and WB read one stable feedback snapshot for the entire frame." },
+              { lines: "9-15", label: "Two producers", note: "AWB and AEC commit independently at end of frame N; frame N+1 is released only after all enabled feedback is ready." },
+              { lines: "17-20", label: "Explicit barrier", note: "The barrier is a measured internal frame-statistics cost, not an external input-bandwidth stall." }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      id: "block-loop-tab",
+      label: "sc_blc.cpp",
+      blocks: [
+        {
+          id: "block-loop-code",
+          type: "annotated-code",
+          data: {
+            filename: "components/isp_tlm/systemc/blocks/blc/sc_blc.cpp",
+            language: "cpp",
+            code: "void sc_blc::process_lines() {\n    while (true) {\n        runtime_.retire_ready(*line_out);\n\n        if (line_in->available() && runtime_.can_issue(sc_time_stamp(), width_)) {\n            auto input = line_in->read();\n            auto output = line_out->reserve_result();\n\n            process_line(input.view(), output.view(), input.meta());\n            line_in->release(std::move(input));\n\n            runtime_.schedule(\n                scheduled_line{output.slot(), input.meta(), ready_time_for(input.meta())},\n                sc_time_stamp());\n        }\n\n        wait(runtime_.next_event(*line_in, *line_out, reset_event_));\n    }\n}",
+            annotations: [
+              { lines: "3", label: "Retire first", note: "Completed work is published before accepting more input so returned credits are visible immediately." },
+              { lines: "5-10", label: "Functional work", note: "The pure line kernel runs without advancing simulated time and writes into preallocated result storage." },
+              { lines: "12-15", label: "Timing visibility", note: "The result remains unpublished until its scheduled completion and downstream credit permit retirement." },
+              { lines: "18", label: "No clock loop", note: "The only wait is on the earliest meaningful event set." }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      id: "pipeline-wiring-tab",
+      label: "sc_isp_pipeline.cpp",
+      blocks: [
+        {
+          id: "pipeline-wiring-code",
+          type: "annotated-code",
+          data: {
+            filename: "components/isp_tlm/systemc/pipeline/sc_isp_pipeline.cpp",
+            language: "cpp",
+            code: "void sc_isp_pipeline::init_channels() {\n    input_to_blc_ = make_raw_link(link_cfg(INPUT_NORM_TO_BLC), max_raw_width_);\n    blc_to_dpc_ = make_raw_link(link_cfg(BLC_TO_DPC), max_raw_width_);\n    // Remaining RAW links use uint16_t samples per pixel.\n    demosaic_to_awb_ = make_rgb_link(link_cfg(DEMOSAIC_TO_AWB), max_rgb_samples_);\n    // Remaining RGB links use three uint16_t samples per pixel.\n    csc_to_cse_ = make_yuv_link(link_cfg(CSC_TO_CSE), max_yuv_samples_);\n    // Remaining YUV links use uint8_t samples and runtime valid lengths.\n}\n\nvoid sc_isp_pipeline::bind_channels() {\n    input_norm_->line_out(input_to_blc_);\n    blc_->line_in(input_to_blc_);\n    blc_->line_out(blc_to_dpc_);\n    dpc_->line_in(blc_to_dpc_);\n    // Continue the existing block order through YUV420.\n    yuv420_->line_out(*yuv_out_);\n}\n\nvoid sc_isp_pipeline::on_frame_start(std::uint64_t frame_id) {\n    feedback_.wait_until_ready(frame_id);\n    frame_contexts_[frame_id] = make_frame_context(config_, feedback_.snapshot(frame_id));\n}",
+            annotations: [
+              { lines: "1-8", label: "Typed domains", note: "Channels preserve RAW, RGB, and YUV sample widths while allowing runtime line lengths for Scale and YUV420." },
+              { lines: "11-17", label: "Clean cutover", note: "The existing top-level class and stage order remain; pixel FIFO wiring is replaced rather than wrapped by adapters." },
+              { lines: "20-23", label: "Frame snapshot", note: "Configuration and next-frame feedback become immutable before the first RAW line enters the normalizer." }
+            ]
+          }
+        }
+      ]
+    }
+  ]}
+/>
+
+## Function and ownership relationships
+
+<Table
+  id="call-relationship-table"
+  columns={["Owner", "Entry point", "Calls or waits on", "Observable result"]}
+  rows={[
+    ["Ideal source testbench", "drive_frame()", "ingress.reserve_result(), ingress.publish()", "RAW lines remain available whenever the ISP can accept them"],
+    ["Point or LUT block", "process_lines()", "line_in.read(), process_line(), runtime.schedule(), runtime.retire_ready()", "One output line per input line with configured latency and II"],
+    ["Spatial block", "process_lines()", "stage_sram.ingest(), can_emit_row(), process_window_row(), runtime.schedule()", "Bounded halo storage and exact border or flush behavior"],
+    ["AWB", "process_lines()", "stats.accumulate_line(), feedback.commit_awb()", "RGB pass-through plus gains for the next frame"],
+    ["AEC", "process_lines()", "stats.accumulate_line(), feedback.commit_aec()", "RGB pass-through plus exposure feedback for the next frame"],
+    ["Scale", "process_lines()", "vertical_mapper.consume_row(), emit_ready_rows()", "Zero, one, or multiple output rows with new width and row indices"],
+    ["YUV420", "process_lines()", "emit_y_row(), accumulate_uv_pair(), emit_uv_row()", "Plane-aware Y and UV tokens with final destination offsets"],
+    ["Ideal sink testbench", "capture_frame()", "line_out.read(), place_at(dst_offset), line_out.release()", "Final contiguous YUV buffer for oracle comparison"],
+    ["Pipeline metrics", "snapshot_metrics()", "block runtime and link snapshots", "Local bottleneck candidates and event-duration evidence"]
+  ]}
+  density="compact"
+/>
+
+## Block migration matrix
+
+<Table
+  id="block-migration-matrix"
+  columns={["Group", "Blocks", "Line-kernel contract", "Special state"]}
+  rows={[
+    ["Point and LUT", "Normalizer, BLC, LSC, DG, WB, CCM, GC, CSC, CSE", "Consume one complete line and emit one complete line", "Coordinate tracking, LUT SRAM ports, immutable frame context"],
+    ["Spatial", "DPC, BNR, Demosaic, Sharpen, 2DNR", "Ingest one line; emit a row only when required history and lookahead exist", "Stage-local SRAM, border policy, tail flush, variable window radius"],
+    ["Statistical", "AWB, AEC", "Pass lines through while accumulating frame statistics", "End-of-frame commit and next-frame barrier"],
+    ["Rate changing", "Scale", "Consume input rows according to vertical mapping and emit zero or more resized rows", "Fractional source-row position and changed dimensions"],
+    ["Plane conversion", "YUV420", "Emit Y rows and paired UV rows as separate plane tokens", "Two-row chroma state and final byte offsets"]
+  ]}
+  density="compact"
+/>
+
+## File map
+
+<FileTree
+  id="implementation-file-map"
+  title="Planned source changes"
+  entries={[
+    { path: "components/isp_tlm/systemc/hw/line_channel.h", change: "added", note: "C++17 line metadata, views, slot pool, ownership interfaces, credit events, and link metrics." },
+    { path: "components/isp_tlm/systemc/hw/stage_runtime.h", change: "added", note: "In-flight completion scheduling, II gating, event waits, and issue or retire duration accounting." },
+    { path: "components/isp_tlm/systemc/hw/frame_feedback.h", change: "added", note: "AWB/AEC commit tracking and immutable next-frame snapshots." },
+    { path: "components/isp_tlm/systemc/hw/isp_arch_config.h", change: "modified", note: "Coherent block and line-link candidates; external bus and DMA fields are excluded from active sweeps." },
+    { path: "components/isp_tlm/systemc/hw/local_memory.h", change: "modified", note: "Replace clock-ticked placeholder behavior with stage-local line SRAM storage and event-level port accounting." },
+    { path: "components/isp_tlm/systemc/hw/metrics.h", change: "modified", note: "Event-duration states, link occupancy, achieved issue rate, and bottleneck-candidate reporting." },
+    { path: "components/isp_tlm/systemc/tb_utils/sc_block_metrics.h", change: "modified", note: "Line processing units and event-duration summaries instead of pixel or frame timestamp assumptions." },
+    { path: "components/isp_tlm/systemc/pipeline/sc_input_normalizer.h", change: "modified", note: "Line ingress, frame-context snapshot, and ideal-boundary contract." },
+    { path: "components/isp_tlm/systemc/pipeline/sc_isp_pipeline.h", change: "modified", note: "Own typed links, feedback latch, existing block instances, and public line ingress or egress interfaces." },
+    { path: "components/isp_tlm/systemc/pipeline/sc_isp_pipeline.cpp", change: "modified", note: "Allocate slot pools, preserve stage order, bind line interfaces, and collect line-level metrics." },
+    { path: "components/isp_tlm/systemc/blocks/*/sc_*.h", change: "modified", note: "Replace pixel FIFO ports and per-block counters with line ports, runtime, and stage-specific state." },
+    { path: "components/isp_tlm/systemc/blocks/*/sc_*.cpp", change: "modified", note: "Implement point, spatial, statistical, rate-changing, and plane-conversion line kernels." },
+    { path: "components/isp_tlm/systemc/pipeline/tb_pipeline.cpp", change: "modified", note: "Ideal line source and sink plus byte-exact oracle comparison." },
+    { path: "components/isp_tlm/systemc/pipeline/tb_arch_pipeline.cpp", change: "modified", note: "Timing invariants, internal stalls, occupancy, and bottleneck-candidate evidence." },
+    { path: "components/isp_tlm/systemc/pipeline/tb_arch_sweep.cpp", change: "modified", note: "Replace run_mock_simulation() with actual line-pipeline runs over coherent candidate configurations." },
+    { path: "components/isp_tlm/systemc/pipeline/d65/tb_d65_pipeline.cpp", change: "modified", note: "Real-image line harness and differential output proof." },
+    { path: "components/isp_tlm/systemc/blocks/*/tb_*.cpp", change: "modified", note: "Per-block line contracts, border cases, rate changes, and golden comparisons." },
+    { path: "components/isp_tlm/systemc/CMakeLists.txt", change: "modified", note: "Register foundation headers and any focused line-channel or runtime contract test targets." }
+  ]}
+/>
+
+The existing `isp_pipeline` and original C++ block implementations remain the functional oracle and are not converted into timing-aware code.
+The existing `sc_isp_pipeline` name remains the architectural top level so callers and CMake aliases do not split between parallel pixel and line implementations.
+
+## Ordered implementation plan
+
+### 1. Establish deterministic baselines
+
+Reuse `tb_pipeline`, `tb_arch_pipeline`, and `tb_d65_pipeline` before changing interfaces.
+Capture current oracle output hashes, observed deadlock boundaries, host elapsed time, SystemC process wake counts where available, and current metric files.
+Do not treat the existing mock sweep results as a baseline for architectural accuracy.
+
+### 2. Add line ownership and event-runtime primitives
+
+Add `line_channel.h`, `stage_runtime.h`, and `frame_feedback.h` without wiring them into the full pipeline.
+Add focused contract tests for slot reuse, double-release rejection, bounded publication, completion ordering, simultaneous events, frame metadata, and reset.
+Implement the channel so elaboration allocates every sample slot and the runtime path performs no heap allocation.
+
+### 3. Convert block interfaces and pure line kernels
+
+Convert all block headers to line input and output interfaces in one clean API cutover.
+Implement point and LUT blocks first because they establish the common one-line-in and one-line-out path.
+Implement spatial blocks next using stage-local SRAM and exact mirror or clamp border semantics from the golden kernels.
+Implement AWB and AEC accumulation with end-of-frame commits.
+Implement Scale and YUV420 last because they change row counts, widths, planes, and final output offsets.
+Keep block-level tests executable throughout the migration; do not add permanent pixel-to-line compatibility adapters.
+
+### 4. Cut over the top-level pipeline
+
+Replace pixel FIFO allocation and binding in `sc_isp_pipeline::init_modules()` and `bind_channels()` with typed line channels.
+Retain the current block order, configuration objects, LSC LUT ownership, metrics entry points, and golden accessors that remain meaningful.
+Add the feedback latch to the top level and gate each frame snapshot before its first RAW line is accepted.
+Use an ideal line source and sink in the testbench, not simulated DMA or timed external streams.
+
+### 5. Replace per-cycle timing with event scheduling
+
+Derive line issue intervals from width, pixels per cycle, and pixel II.
+Schedule each produced line at `ready_at = issue_time + compute_latency` while allowing up to `max_in_flight_lines` logical records.
+Wake a block only for input arrival, issue eligibility, completion, downstream credit, feedback readiness, reset, or end-of-frame flush.
+Track issue-side and retire-side durations separately so active work and output blocking can coexist.
+
+### 6. Make metrics and sweeps describe the real model
+
+Replace lowest-utilization bottleneck labeling with candidate evidence based on achieved issue rate, input availability, output credit, local SRAM waits, in-flight occupancy, and neighboring link occupancy.
+Label reports as bottleneck candidates because the selected local counters do not prove root cause.
+Replace `run_mock_simulation()` in `tb_arch_sweep.cpp` with actual construction and execution of the line pipeline.
+Sweep coherent block variants that bind latency, II, lanes, SRAM ports, and storage together, and retain `timing_source::assumed` until implementation evidence exists.
+
+### 7. Verify the complete architectural contract
+
+Run block-level differential tests before the full pipeline.
+Run small deterministic frames covering odd widths, odd heights, minimum legal dimensions, disabled blocks, maximum configured windows, Scale up and down, and YUV420 plane placement.
+Run at least one real RAW fixture through both the oracle and line pipeline and compare final bytes.
+Demonstrate internal backpressure by constraining selected inter-stage depths while keeping the ideal source and sink unchanged.
+Demonstrate that changing timing parameters alters timestamps and occupancies but never output bytes.
+Compare scheduler activations and host elapsed time against the captured pixel-model baseline.
+
+## Risks and controls
+
+<Callout id="border-risk" tone="risk">
+
+Chunk boundaries must never become image boundaries.
+Every spatial stage must preserve the golden kernel's top, bottom, left, and right padding semantics and must flush its final output rows explicitly at end of frame.
+Block differential tests must cover dimensions smaller than or equal to the active kernel diameter.
+
+</Callout>
+
+<Callout id="feedback-risk" tone="risk">
+
+AEC is downstream of DG, so applying frame N feedback to DG for frame N+1 requires an ingress frame barrier until AEC commits.
+This barrier is an intentional internal statistic cost and must appear in metrics as `FRAME_STATISTICS_BARRIER`, not as input bandwidth starvation.
+
+</Callout>
+
+<Callout id="rate-change-risk" tone="risk">
+
+Scale and YUV420 break the one-input-line to one-output-line assumption.
+Their APIs must permit zero or multiple scheduled output tokens per consumed row, and final output placement must use plane plus byte offset rather than FIFO arrival order.
+
+</Callout>
+
+<Callout id="timing-risk" tone="warning">
+
+Without RTL or HLS, all cycle counts are architecture assumptions.
+Reports may compare candidates and diagnose internal pressure, but they must not claim cycle-accurate hardware correlation until measured values replace assumed provenance.
+
+</Callout>
+
+## Verification matrix
+
+<Table
+  id="verification-matrix"
+  columns={["Contract", "Evidence", "Primary target"]}
+  rows={[
+    ["No per-line allocation", "Allocation counter remains unchanged after elaboration", "Focused line-channel test"],
+    ["Slot ownership", "Reserve, publish, read, release transitions reject invalid reuse", "Focused line-channel test"],
+    ["Latency differs from II", "First output follows configured latency; later outputs follow line II", "tb_arch_pipeline"],
+    ["Several lines in flight", "Observed in-flight high-water mark exceeds one when latency is greater than II", "tb_arch_pipeline"],
+    ["Internal backpressure", "Small downstream depth fills, then upstream issue stalls after internal capacity is exhausted", "tb_arch_pipeline"],
+    ["Ideal boundaries", "First stage is not externally starved while RAW rows remain; final stage is not output blocked", "tb_arch_pipeline"],
+    ["Functional parity", "Final byte buffer matches isp_pipeline::run()", "tb_pipeline and block tests"],
+    ["Real image parity", "Real RAW output matches the oracle", "tb_d65_pipeline when fixture is present"],
+    ["Next-frame feedback", "Frame N statistics affect frame N+1 and remain immutable within a frame", "tb_awb, tb_aec, tb_pipeline"],
+    ["Spatial borders", "Small and odd dimensions match golden mirror or clamp behavior", "tb_dpc, tb_bnr, tb_demosaic, tb_sharpen, tb_2dnr"],
+    ["Scale rate change", "Output row count and samples match configured dimensions", "tb_scale and tb_pipeline"],
+    ["YUV420 placement", "Y and UV lines populate the canonical final offsets", "tb_yuv420 and tb_pipeline"],
+    ["Timing does not change pixels", "Timing sweep preserves output hashes", "tb_arch_sweep"],
+    ["Scheduler reduction", "Wake count scales with lines and meaningful events rather than pixels or clocks", "tb_arch_pipeline plus captured baseline"]
+  ]}
+  density="compact"
+/>
+
+### Planned commands
+
+```bash
+cmake --build build/bremen --target \
+  tb_blc tb_dpc tb_lsc tb_bnr tb_demosaic tb_awb tb_aec \
+  tb_sharpen tb_2dnr tb_scale tb_yuv420 tb_pipeline tb_arch_pipeline tb_arch_sweep
+
+ctest --test-dir build/bremen \
+  -R '^(tb_(blc|dpc|lsc|bnr|demosaic|awb|aec|sharpen|2dnr|scale|yuv420|pipeline|arch_pipeline))$' \
+  --output-on-failure
+
+build/bremen/components/isp_tlm/systemc/tb_pipeline
+build/bremen/components/isp_tlm/systemc/tb_arch_pipeline
+```
+
+The implementation pass must confirm the final executable paths from generated CMake output before relying on the direct smoke commands.
+
+## Approval checklist
+
+<Checklist
+  id="approval-checklist"
+  items={[
+    { id: "approve-scope", label: "Approve the internal-only scope with ideal source and sink" },
+    { id: "approve-line-threads", label: "Approve one line-granular SC_THREAD per logical block" },
+    { id: "approve-ownership", label: "Approve per-link slot pools plus separate stage-local SRAM" },
+    { id: "approve-feedback", label: "Approve next-frame AWB/AEC feedback with an ingress frame barrier" },
+    { id: "approve-metrics", label: "Approve event-duration local metrics and bottleneck-candidate wording" },
+    { id: "approve-cutover", label: "Approve a clean top-level cutover without permanent pixel-line adapters" }
+  ]}
+/>

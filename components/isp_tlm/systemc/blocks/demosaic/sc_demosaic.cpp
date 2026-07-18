@@ -21,16 +21,22 @@ namespace {
 constexpr int WINDOW_SIZE = 5;
 constexpr int HALF_WINDOW = WINDOW_SIZE / 2;
 
+inline int mirror_index(int index, std::uint32_t size) {
+    if (size <= 1) {
+        return 0;
+    }
+    const int period = 2 * static_cast<int>(size) - 2;
+    int reflected = index % period;
+    if (reflected < 0) {
+        reflected += period;
+    }
+    return reflected < static_cast<int>(size) ? reflected : period - reflected;
+}
+
 inline std::uint16_t mirror_get(const std::uint16_t* img, int row, int col,
                                 std::uint32_t width, std::uint32_t height) {
-    // Mirror convention from the original `isp_utils::get_pixel_mirror`:
-    //   r < 0     -> r = -r           (so -1 -> 0, -2 -> 2, -3 -> 4 ...)
-    //   r >= h    -> r = 2*h-2-r
-    if (row < 0) row = -row;
-    else if (row >= static_cast<int>(height)) row = 2 * static_cast<int>(height) - 2 - row;
-    if (col < 0) col = -col;
-    else if (col >= static_cast<int>(width)) col = 2 * static_cast<int>(width) - 2 - col;
-    return img[static_cast<std::size_t>(row) * width + static_cast<std::size_t>(col)];
+    return img[static_cast<std::size_t>(mirror_index(row, height)) * width +
+               static_cast<std::size_t>(mirror_index(col, width))];
 }
 
 inline bayer_channel channel_at(int row, int col, cfa_types bayer) {
