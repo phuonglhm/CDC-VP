@@ -22,13 +22,7 @@ The configured SystemC environment is available through the project Docker image
 Run this from the repository root:
 
 ```bash
-rtk docker run --rm \
-  -v "$PWD":/workspace \
-  -w /workspace \
-  fpt-vp:latest \
-  cmake --build build/bremen \
-  --target tb_pipeline tb_line_primitives \
-  -j2
+  cmake --build build/bremen \ --target tb_pipeline tb_line_primitives \
 ```
 
 ## Tests
@@ -36,30 +30,18 @@ rtk docker run --rm \
 Run the default four-frame oracle comparison:
 
 ```bash
-rtk docker run --rm \
-  -v "$PWD":/workspace \
-  -w /workspace \
-  fpt-vp:latest \
   ./build/bremen/components/isp_tlm/systemc/tb_pipeline
 ```
 
 Run the AWB-enabled and WB-disabled feedback path:
 
 ```bash
-rtk docker run --rm \
-  -v "$PWD":/workspace \
-  -w /workspace \
-  fpt-vp:latest \
   ./build/bremen/components/isp_tlm/systemc/tb_pipeline --wb-off
 ```
 
 Run the line-channel and feedback primitive contract test:
 
 ```bash
-rtk docker run --rm \
-  -v "$PWD":/workspace \
-  -w /workspace \
-  fpt-vp:latest \
   ./build/bremen/components/isp_tlm/systemc/tb_line_primitives
 ```
 
