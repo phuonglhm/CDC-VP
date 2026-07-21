@@ -41,8 +41,8 @@ void sc_csc::process_rgb_triplet(std::uint16_t r_raw, std::uint16_t g_raw, std::
 }
 
 void sc_csc::process_stream() {
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(2);
+    
+    
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
@@ -69,7 +69,7 @@ void sc_csc::process_stream() {
         }
 
         std::uint16_t r_raw = fifo_in->read();
-        m_metrics.begin_processing();
+        
         std::uint16_t g_raw = fifo_in->read();
         std::uint16_t b_raw = fifo_in->read();
 
@@ -107,11 +107,11 @@ void sc_csc::process_stream() {
         }
 
         fifo_out->write(y);
-        m_metrics.record_output();
+        
         fifo_out->write(u);
-        m_metrics.record_output();
+        
         fifo_out->write(v);
-        m_metrics.end_processing();
-        m_metrics.record_output();
+        
+        
     }
 }

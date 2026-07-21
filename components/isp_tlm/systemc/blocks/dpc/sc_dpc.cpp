@@ -42,8 +42,8 @@ void sc_dpc::process_stream() {
     bool has_clock = (clk != nullptr);
 
     while (true) {
-        m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
-        m_metrics.begin_processing();
+        
+        
 
         // Check if enough data is available (need W*H pixels)
         const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
@@ -98,8 +98,8 @@ void sc_dpc::process_stream() {
                     ++m_cycle_count;
                 }
             }
-            m_metrics.end_processing();
-            m_metrics.record_output();
+            
+            
             continue;
         }
 
@@ -199,13 +199,13 @@ void sc_dpc::process_stream() {
                 }
             }
             fifo_out->write(out[i]);
-            m_metrics.record_output();
+            
             if (timed_mode) {
                 ++m_active_cycles;
                 ++m_cycle_count;
             }
         }
 
-        m_metrics.end_processing();
+        
     }
 }

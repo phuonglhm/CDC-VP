@@ -1,15 +1,17 @@
 /**
  * @file tb_d65_pipeline.cpp
- * @brief Full ISP Pipeline Testbench with Real D65 Image and Timed Mode
+ * @brief Full ISP Pipeline Testbench with Real D65 Image
  *
  * This testbench:
  * 1. Loads real D65 RAW image (2688x1520)
- * 2. Runs full ISP pipeline with timed mode (real clock)
- * 3. Measures accurate latency with sc_clock
- * 4. Compares against golden reference
+ * 2. Runs the functional line pipeline
+ * 3. Compares against the C++ reference
  *
  * Usage:
  *   ./tb_d65_pipeline
+ *   ./tb_d65_pipeline --metrics <file>
+ *   ./tb_d65_pipeline --output-dir <dir>
+ *   ./tb_d65_pipeline --input <file.raw>
  */
 
 #include <systemc>
@@ -19,52 +21,22 @@ using namespace sc_core;
 #include <vector>
 #include <cstdlib>
 #include <iomanip>
-#include <sys/stat.h>
 #include <fstream>
-#include <sstream>
+#include <chrono>
 #include <filesystem>
 
 #include "sc_isp_pipeline.h"
 #include "../tb_utils/tb_utils.h"
-#include "../tb_utils/hardware_params.h"
-#include "../hw/isp_arch_config.h"
 #include "../input_utils/raw_loader.h"
 
 #include "../../pipeline/include/isp_config.h"
 #include "../../pipeline/include/isp_pipeline.h"
-
 namespace {
 
 constexpr std::uint32_t WIDTH = 2688;
 constexpr std::uint32_t HEIGHT = 1520;
 constexpr std::uint32_t FIFO_DEPTH = WIDTH * HEIGHT / 4;  // Quarter frame for buffering
 
-// Get the absolute path to the systemc directory
-std::string get_systemc_dir() {
-    std::filesystem::path p(__FILE__);
-    p = p.parent_path();      // d65/
-    p = p.parent_path();      // pipeline/
-    p = p.parent_path();      // systemc/
-    return p.string();
-}
-
-std::string resolve_output_path(const std::string& rel_path) {
-    return get_systemc_dir() + "/" + rel_path;
-}
-
-inline void ensure_dir(const std::string& path) {
-    if (path.empty()) return;
-    std::string p = path;
-    if (p.front() != '/') {
-        p = resolve_output_path(path);
-    }
-    for (std::size_t i = 1; i < p.size(); ++i) {
-        if (p[i] == '/') {
-            mkdir(p.substr(0, i).c_str(), 0755);
-        }
-    }
-    mkdir(p.c_str(), 0755);
-}
 
 double compute_mse(const std::uint8_t* a, const std::uint8_t* b, std::size_t size) {
     double mse = 0.0;
@@ -88,25 +60,35 @@ double compute_max_diff(const std::uint8_t* a, const std::uint8_t* b, std::size_
 
 int sc_main(int argc, char* argv[]) {
     std::cout << "==================================================" << std::endl;
-    std::cout << "D65 REAL IMAGE PIPELINE TESTBENCH (TIMED MODE)" << std::endl;
+    std::cout << "D65 REAL IMAGE PIPELINE TESTBENCH" << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    // 1. Hardware parameters - TIMED MODE with real clock
-    hw_params hw;
-    hw.clk_mhz = 200.0f;           // 200 MHz
-    hw.bus_width_bits = 64;          // 64-bit bus
-    hw.pixel_bits = 16;              // 16-bit tokens
-    hw.fifo_depth = FIFO_DEPTH;      // Deep FIFOs for timed mode
-    hw.timed_mode = false;            // Disable timed mode for now
-    hw.default_cycles_per_pixel = 1; // 1 cycle per pixel
+    std::string raw_path = "../input/D65_raw_2688x1520_5376.raw";
+    std::string metrics_path;
+    std::string output_dir;
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument = argv[index];
+        if (argument == "--input" && index + 1 < argc) {
+            raw_path = argv[++index];
+        } else if (argument == "--metrics" && index + 1 < argc) {
+            metrics_path = argv[++index];
+        } else if (argument == "--output-dir" && index + 1 < argc) {
+            output_dir = argv[++index];
+        } else if (argument == "--help" || argument == "-h") {
+            std::cout << "Usage: " << argv[0] << " [options]\n"
+                      << "  --metrics <file>    Write the unified pipeline metrics report\n"
+                      << "  --input <file>      Read the D65 RAW image from this path\n"
+                      << "  --output-dir <dir>  Save D65 golden and captured YUV artifacts there\n";
+            return 0;
+        } else {
+            std::cerr << "[ERROR] Unknown or incomplete option: "
+                      << argument << '\n';
+            return 2;
+        }
+    }
 
-    std::cout << "\n--- Hardware Parameters (TIMED MODE) ---\n";
-    std::cout << hw.to_string();
-
-    // 2. Load real D65 RAW image
+    // 1. Load the caller-selected real D65 RAW image.
     std::cout << "\n--- Loading D65 RAW Image ---\n";
-    // Navigate from pipeline/d65/ -> systemc/ -> isp_tlm/ -> input/
-    std::string raw_path = get_systemc_dir() + "/../input/D65_raw_2688x1520_5376.raw";
     std::cout << "Loading: " << raw_path << std::endl;
 
     std::vector<std::uint16_t> raw_input;
@@ -164,28 +146,17 @@ int sc_main(int argc, char* argv[]) {
     golden_pipeline.run(raw_input.data(), golden_output);
     std::cout << "[TB] Golden output size: " << golden_output.size() << " bytes" << std::endl;
 
-    // 4. Create SystemC pipeline with TIMED MODE
-    std::cout << "\n--- Creating SystemC Pipeline (TIMED MODE) ---\n";
+    // 4. Create the functional SystemC pipeline.
+    std::cout << "\n--- Creating SystemC Pipeline ---\n";
     std::vector<float> lsc_lut(8192, 1.0f);
 
-    // Create FIFOs
     sc_fifo<std::uint16_t> input_fifo(FIFO_DEPTH);
     sc_fifo<std::uint8_t> output_fifo(FIFO_DEPTH * 2);
 
-    // Create clock - 200 MHz = 5 ns period
-    sc_clock clk("clk", 5.0, SC_NS, 0.5);
-
-    // Set metrics request before pipeline construction
-    sc_isp_pipeline::set_metrics_request(true, resolve_output_path("output/metrics"), nullptr);
-
-    // Create pipeline with clock
     sc_isp_pipeline dut("isp_pipeline", cfg, lsc_lut,
                         &input_fifo, &output_fifo,
                         /*input_bit_depth=*/16,
-                        /*bayer_pattern=*/cfa_types::RGGB,
-                        &hw);
-    dut.bind_clock(&clk);
-    sc_isp_pipeline::clear_metrics_request();
+                        /*bayer_pattern=*/cfa_types::RGGB);
 
     // 5. Create driver and monitor
     Generic_Driver<std::uint16_t> driver("driver", raw_input);
@@ -193,59 +164,43 @@ int sc_main(int argc, char* argv[]) {
 
     std::size_t out_w = cfg.scale.is_enable ? cfg.scale.out_width : WIDTH;
     std::size_t out_h = cfg.scale.is_enable ? cfg.scale.out_height : HEIGHT;
-    std::size_t expected_size = out_w * out_h + 2 * ((out_w + 1) / 2) * ((out_h + 1) / 2);
+    std::size_t expected_size = out_w * out_h +
+                                2 * ((out_w + 1) / 2) * ((out_h + 1) / 2);
 
     Generic_Monitor<std::uint8_t> monitor("monitor", expected_size);
     monitor.fifo_in(output_fifo);
     monitor.set_golden_reference(golden_output.data(), golden_output.size());
 
-    // 6. Calculate max simulation time (for estimation only)
-    double tokens_per_cycle = static_cast<double>(hw.bus_width_bits) / hw.pixel_bits;
-    double mpix_per_s = hw.clk_mhz * tokens_per_cycle;
-    double max_frame_us = (static_cast<double>(WIDTH * HEIGHT) / mpix_per_s) / 1e6;
-    max_frame_us *= 100.0;  // Add large margin for pipeline latency
-
-    std::cout << "[TB] Estimated max frame time: " << max_frame_us << " us" << std::endl;
-
-    // 7. Run simulation (no time limit in untimed mode)
+    // 6. Run simulation.
     std::cout << "\n[TB] Starting simulation...\n";
-    auto sim_start = std::chrono::steady_clock::now();
-    sc_start();  // No time limit
-    auto sim_end = std::chrono::steady_clock::now();
+    const auto sim_start = std::chrono::steady_clock::now();
+    sc_start();
+    const auto sim_end = std::chrono::steady_clock::now();
 
     std::cout << "[TB] Simulation completed" << std::endl;
     std::cout << "[TB] Simulation time: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(sim_end - sim_start).count()
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     sim_end - sim_start).count()
               << " ms" << std::endl;
 
-    // 8. Dump metrics
-    ensure_dir("output/metrics");
-    if (dut.dump_pipeline_metrics()) {
-        std::cout << "[TB] Dumped "
-                  << dut.metrics_sample_count() << " boundary samples\n";
+    if (!metrics_path.empty()) {
+        if (!dut.write_metrics(metrics_path)) {
+            std::cerr << "[TB] ERROR: failed to write metrics: "
+                      << metrics_path << '\n';
+            return 1;
+        }
+        const auto snapshot = dut.metrics();
+        const auto& frame = snapshot.frame;
+        std::cout << "\n--- Frame Metrics ---\n"
+                  << "  Frame cycles       : " << frame.frame_cycles
+                  << " (" << (frame.frame_cycles_available ? "available" : "unavailable")
+                  << ")\n"
+                  << "  Input bandwidth    : " << frame.input_bandwidth_mbps
+                  << " Mbps\n"
+                  << "  Output bandwidth   : " << frame.output_bandwidth_mbps
+                  << " Mbps\n";
     }
-    if (dut.dump_all_block_metrics()) {
-        std::cout << "[TB] Dumped "
-                  << dut.block_metrics_sample_count() << " block samples\n";
-    }
 
-    // Frame timing
-    const double frame_time_us = dut.get_frame_time_us();
-    const double frame_time_ns = dut.get_frame_time_ns();
-    std::cout << "\n--- Frame Timing ---\n";
-    std::cout << "  Frame size          : " << WIDTH << "x" << HEIGHT
-              << " (" << raw_input.size() << " RAW pixels)\n";
-    std::cout << "  Frame time (sim)   : " << std::fixed << std::setprecision(3)
-              << frame_time_us << " us\n";
-    std::cout << "  Frame time (ns)    : " << std::setprecision(3)
-              << frame_time_ns << " ns\n";
-    std::cout << "  Sim timestamp       : " << sc_time_stamp().to_seconds() / 1e-9
-              << " ns\n";
-
-    double fps = (frame_time_us > 0) ? (1e6 / frame_time_us) : 0;
-    std::cout << "  FPS (measured)      : " << std::fixed << std::setprecision(2) << fps << "\n";
-
-    dut.print_metrics_summary();
 
     // 9. Verify output
     const auto& captured = monitor.get_captured_data();
@@ -265,40 +220,48 @@ int sc_main(int argc, char* argv[]) {
 
     std::cout << std::endl;
     std::cout << "==================================================" << std::endl;
-    std::cout << "PIPELINE VERIFICATION RESULTS (D65 TIMED)" << std::endl;
+    std::cout << "PIPELINE VERIFICATION RESULTS (LINE MODEL)" << std::endl;
     std::cout << "==================================================" << std::endl;
     std::cout << "  Expected output size: " << golden_output.size() << std::endl;
     std::cout << "  Captured output size: " << captured.size() << std::endl;
     std::cout << "  Differences: " << diff_count << " / " << compare_size << std::endl;
     std::cout << "  Max difference: " << max_diff << std::endl;
-    std::cout << "  AWB R gain: " << dut.get_awb_r_gain() << std::endl;
-    std::cout << "  AWB B gain: " << dut.get_awb_b_gain() << std::endl;
-    std::cout << "  AEC feedback: " << dut.get_aec_feedback() << std::endl;
 
-    pass = (diff_count == 0) ||
-           (max_diff < 10.0 && (diff_count < compare_size * 0.05));
+    pass = captured.size() == golden_output.size() && diff_count == 0;
 
     std::cout << "==================================================" << std::endl;
     std::cout << "TEST RESULT: " << (pass ? "PASS" : "FAIL") << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    // 10. Save output files
-    ensure_dir("output");
-    std::string golden_path = resolve_output_path("output/d65_golden.yuv");
-    std::string captured_path = resolve_output_path("output/d65_captured.yuv");
+    if (!output_dir.empty()) {
+        std::error_code error;
+        std::filesystem::create_directories(output_dir, error);
+        if (error) {
+            std::cerr << "[TB] ERROR: cannot create output directory "
+                      << output_dir << ": " << error.message() << '\n';
+            pass = false;
+        } else {
+            const std::filesystem::path directory(output_dir);
+            const std::filesystem::path golden_path =
+                directory / "d65_golden.yuv";
+            const std::filesystem::path captured_path =
+                directory / "d65_captured.yuv";
 
-    std::ofstream gout(golden_path, std::ios::binary);
-    if (gout.is_open()) {
-        gout.write(reinterpret_cast<const char*>(golden_output.data()), golden_output.size());
-        gout.close();
-        std::cout << "\n[Saved] Golden: " << golden_path << std::endl;
-    }
-
-    std::ofstream coutf(captured_path, std::ios::binary);
-    if (coutf.is_open()) {
-        coutf.write(reinterpret_cast<const char*>(captured.data()), captured.size());
-        coutf.close();
-        std::cout << "[Saved] Captured: " << captured_path << std::endl;
+            std::ofstream gout(golden_path, std::ios::binary);
+            std::ofstream coutf(captured_path, std::ios::binary);
+            if (!gout || !coutf) {
+                std::cerr << "[TB] ERROR: cannot save D65 YUV artifacts in "
+                          << output_dir << '\n';
+                pass = false;
+            } else {
+                gout.write(reinterpret_cast<const char*>(golden_output.data()),
+                           static_cast<std::streamsize>(golden_output.size()));
+                coutf.write(reinterpret_cast<const char*>(captured.data()),
+                            static_cast<std::streamsize>(captured.size()));
+                std::cout << "\n[Saved] Golden: " << golden_path << std::endl;
+                std::cout << "[Saved] Captured: " << captured_path << std::endl;
+            }
+        }
     }
 
     return pass ? 0 : 1;

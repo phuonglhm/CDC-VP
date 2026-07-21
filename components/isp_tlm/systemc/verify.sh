@@ -27,20 +27,18 @@ NC='\033[0m'
 REQUIRED_FILES=(
     "components/isp_tlm/systemc/hw/isp_arch_config.h"
     "components/isp_tlm/systemc/hw/metrics.h"
-    "components/isp_tlm/systemc/hw/power.h"
+    "components/isp_tlm/systemc/hw/line_channel.h"
+    "components/isp_tlm/systemc/hw/line_stage.h"
+    "components/isp_tlm/systemc/hw/stage_runtime.h"
+    "components/isp_tlm/systemc/hw/frame_feedback.h"
     "components/isp_tlm/systemc/hw/sweep.h"
-    "components/isp_tlm/systemc/hw/frame_dma.h"
-    "components/isp_tlm/systemc/hw/local_memory.h"
-    "components/isp_tlm/systemc/hw/timed_stream.h"
-    "components/isp_tlm/systemc/hw/timed_block.h"
-    "components/isp_tlm/systemc/hw/stream_beat.h"
-    "components/isp_tlm/systemc/hw/trace.h"
+    "components/isp_tlm/systemc/hw/hw.h"
     "components/isp_tlm/systemc/pipeline/sc_isp_pipeline.h"
     "components/isp_tlm/systemc/pipeline/sc_isp_pipeline.cpp"
+    "components/isp_tlm/systemc/pipeline/tb_pipeline.cpp"
     "components/isp_tlm/systemc/pipeline/tb_arch_pipeline.cpp"
-    "components/isp_tlm/systemc/pipeline/tb_dma_integration.cpp"
-    "components/isp_tlm/systemc/pipeline/tb_power_metrics.cpp"
     "components/isp_tlm/systemc/pipeline/tb_arch_sweep.cpp"
+    "components/isp_tlm/systemc/hw/tb_line_primitives.cpp"
     "components/isp_tlm/systemc/CMakeLists.txt"
 )
 
@@ -77,12 +75,12 @@ check_syntax() {
     local files=(
         "hw/isp_arch_config.h"
         "hw/metrics.h"
-        "hw/power.h"
+        "hw/line_channel.h"
+        "hw/line_stage.h"
+        "hw/stage_runtime.h"
+        "hw/frame_feedback.h"
         "hw/sweep.h"
-        "hw/frame_dma.h"
-        "hw/local_memory.h"
-        "hw/timed_stream.h"
-        "hw/timed_block.h"
+        "hw/hw.h"
     )
 
     local errors=0
@@ -133,10 +131,10 @@ verify_build() {
 
     local targets=(
         "components/isp_tlm/tests/isp_run"
-        "components/isp_tlm/tests/tb_arch_pipeline"
-        "components/isp_tlm/tests/tb_power_metrics"
-        "components/isp_tlm/tests/tb_arch_sweep"
-        "components/isp_tlm/tests/tb_dma_integration"
+        "components/isp_tlm/systemc/tb_pipeline"
+        "components/isp_tlm/systemc/tb_arch_pipeline"
+        "components/isp_tlm/systemc/tb_arch_sweep"
+        "components/isp_tlm/systemc/tb_line_primitives"
     )
 
     local missing=0
@@ -168,15 +166,15 @@ print_summary() {
     echo ""
     echo "  Testbenches: 5"
     echo "    - isp_run: Full ISP pipeline run"
-    echo "    - tb_arch_pipeline: Architecture-aware timed pipeline"
-    echo "    - tb_dma_integration: DMA and memory model integration"
-    echo "    - tb_power_metrics: Power estimation for ISP pipeline"
+    echo "    - tb_pipeline: Full SystemC pipeline"
+    echo "    - tb_arch_pipeline: Architecture-aware line pipeline"
     echo "    - tb_arch_sweep: Architecture sweep runner"
+    echo "    - tb_line_primitives: Line-granular primitive contract"
     echo ""
-    echo "  Hardware Infrastructure: 10 files"
-    echo "    - isp_arch_config.h, metrics.h, power.h, sweep.h"
-    echo "    - frame_dma.h, local_memory.h, timed_stream.h"
-    echo "    - timed_block.h, stream_beat.h, trace.h"
+    echo "  Hardware Infrastructure: 8 files"
+    echo "    - isp_arch_config.h, metrics.h, line_channel.h"
+    echo "    - line_stage.h, stage_runtime.h, frame_feedback.h"
+    echo "    - sweep.h, hw.h"
     echo ""
     echo "  Build Directory: $BUILD_DIR"
     echo ""

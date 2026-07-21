@@ -121,8 +121,8 @@ void sc_bnr::process_stream() {
     bool has_clock = (clk != nullptr);
 
     while (true) {
-        m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
-        m_metrics.begin_processing();
+        
+        
 
         const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
         const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
@@ -157,8 +157,7 @@ void sc_bnr::process_stream() {
                     ++m_cycle_count;
                 }
             }
-            m_metrics.end_processing();
-            for (std::size_t i = 0; i < total; ++i) m_metrics.record_output();
+            
             continue;
         }
 
@@ -318,7 +317,7 @@ void sc_bnr::process_stream() {
             const std::uint16_t output = static_cast<std::uint16_t>(
                 std::clamp(val, 0.0f, static_cast<float>(bit_range)));
             fifo_out->write(output);
-            m_metrics.record_output();
+            
             if (timed_mode) {
                 ++m_active_cycles;
                 ++m_cycle_count;
@@ -330,6 +329,6 @@ void sc_bnr::process_stream() {
             }
         }
 
-        m_metrics.end_processing();
+        
     }
 }

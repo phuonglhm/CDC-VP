@@ -37,14 +37,8 @@ void sc_sharpen::process_stream() {
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
     bool has_clock = (clk != nullptr);
-    if (timed_mode) {
-        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
-    }
 
     while (true) {
-        // Frame-level: measure from first read to last write
-        m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::FRAME);
-        m_metrics.begin_processing();
 
         if (!m_cfg.is_enable || m_cfg.sharpen_strength == 0) {
             // Bypass mode
@@ -201,7 +195,6 @@ void sc_sharpen::process_stream() {
             }
         }
 
-        m_metrics.end_processing();
-        for (std::size_t i = 0; i < 3 * m_width * m_height; ++i) m_metrics.record_output();
+        
     }
 }

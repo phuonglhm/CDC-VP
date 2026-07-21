@@ -59,15 +59,15 @@ void sc_ccm::process_rgb_triplet(std::uint16_t r_in, std::uint16_t g_in, std::ui
 }
 
 void sc_ccm::process_stream() {
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(2);
+    
+    
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
     bool has_clock = (clk != nullptr);
     if (timed_mode) {
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
-        m_metrics.set_cycles_per_pixel(m_cycles_per_pixel);
+        
     }
 
     while (true) {
@@ -90,7 +90,7 @@ void sc_ccm::process_stream() {
         std::uint16_t r = fifo_in->read();
         std::uint16_t g = fifo_in->read();
         std::uint16_t b = fifo_in->read();
-        m_metrics.begin_processing();
+        
 
         // Process - pure functional kernel
         std::uint16_t r_out, g_out, b_out;
@@ -130,7 +130,7 @@ void sc_ccm::process_stream() {
         fifo_out->write(g_out);
         fifo_out->write(b_out);
 
-        m_metrics.end_processing();
-        m_metrics.record_output();
+        
+        
     }
 }

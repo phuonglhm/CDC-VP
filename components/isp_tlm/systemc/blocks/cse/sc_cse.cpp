@@ -37,8 +37,8 @@ void sc_cse::process_yuv_triplet(std::uint8_t y_in, std::uint8_t u_in, std::uint
 }
 
 void sc_cse::process_stream() {
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint8_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(1);
+    
+    
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
@@ -65,7 +65,7 @@ void sc_cse::process_stream() {
         }
 
         std::uint8_t y = fifo_in->read();
-        m_metrics.begin_processing();
+        
         std::uint8_t u = fifo_in->read();
         std::uint8_t v = fifo_in->read();
 
@@ -103,11 +103,11 @@ void sc_cse::process_stream() {
         }
 
         fifo_out->write(y_out);
-        m_metrics.record_output();
+        
         fifo_out->write(u_out);
-        m_metrics.record_output();
+        
         fifo_out->write(v_out);
-        m_metrics.end_processing();
-        m_metrics.record_output();
+        
+        
     }
 }

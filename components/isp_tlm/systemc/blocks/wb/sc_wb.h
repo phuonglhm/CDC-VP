@@ -18,11 +18,9 @@ using namespace sc_core;
 
 #include <systemc>
 #include <cstdint>
-#include <algorithm>
 
 #include "../../../blocks/wb/include/wb.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 #include "../awb/sc_awb.h"
 
 SC_MODULE(sc_wb) {
@@ -42,12 +40,10 @@ public:
         , m_cfg(cfg)
         , m_awb(nullptr)
         , m_hw(hw)
-        , m_cycles_per_pixel(1)
-        , m_metrics("wb") {
+        , m_cycles_per_pixel(1) {
         SC_THREAD(process_stream);
     }
 
-    sc_block_metrics<std::uint16_t> m_metrics;
 
     // Allow sc_isp_pipeline to wire up the upstream AWB
     void bind_awb(class sc_awb* awb) { m_awb = awb; }

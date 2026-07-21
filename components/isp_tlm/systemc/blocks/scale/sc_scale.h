@@ -6,7 +6,6 @@
  *
  * Hardware shell features (Phase 3):
  *   - Optional hw_params for timing
- *   - Frame-level processing metrics
  *   - Architecture metrics
  */
 #ifndef SC_SCALE_H
@@ -20,8 +19,7 @@ using namespace sc_core;
 #include <vector>
 
 #include "../../../blocks/scale/include/scale.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_scale) {
 public:
@@ -42,12 +40,10 @@ public:
         , m_cfg(cfg)
         , m_in_width(in_width)
         , m_in_height(in_height)
-        , m_hw(hw)
-        , m_metrics("scale") {
+        , m_hw(hw) {
         SC_THREAD(process_stream);
     }
 
-    sc_block_metrics<std::uint8_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }

@@ -13,12 +13,10 @@ using namespace sc_core;
 
 #include <systemc>
 #include <cstdint>
-#include <vector>
 
 #include "../../../blocks/awb/include/awb.h"
 #include "../../../core/include/isp_types.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_awb) {
 public:
@@ -39,11 +37,10 @@ public:
         : sc_module(name), m_cfg(cfg), m_width(width), m_height(height),
           m_bit_depth(bit_depth), m_r_gain(1.0f), m_b_gain(1.0f),
           m_bayer_pattern(cfa_types::RGGB), m_input_bit_depth(bit_depth),
-          m_hw(hw), m_metrics("awb") {
+          m_hw(hw) {
         SC_THREAD(process_stream);
     }
 
-    sc_block_metrics<std::uint16_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }
@@ -92,7 +89,7 @@ public:
         m_b_gain = b_gain;
     }
 
-    // Architecture metrics (for collect_block_metrics)
+    // Architecture cycle metrics
     std::uint64_t active_cycles() const { return m_active_cycles; }
     std::uint64_t starved_cycles() const { return m_starved_cycles; }
     std::uint64_t total_cycles() const { return m_cycle_count; }

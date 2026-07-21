@@ -91,8 +91,8 @@ std::uint16_t sc_lsc::process_pixel(std::uint16_t pixel) {
 }
 
 void sc_lsc::process_stream() {
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(1);
+    
+    
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
@@ -111,7 +111,7 @@ void sc_lsc::process_stream() {
         }
 
         std::uint16_t pixel = fifo_in->read();
-        m_metrics.begin_processing();
+        
 
         std::uint16_t output = process_pixel(pixel);
 
@@ -132,8 +132,8 @@ void sc_lsc::process_stream() {
         }
 
         fifo_out->write(output);
-        m_metrics.end_processing();
-        m_metrics.record_output();
+        
+        
 
         m_col++;
         if (m_col >= m_width) {

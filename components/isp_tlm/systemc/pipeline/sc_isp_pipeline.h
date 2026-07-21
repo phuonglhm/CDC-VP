@@ -7,8 +7,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <map>
 #include <vector>
+
 
 #include "../../pipeline/include/isp_pipeline.h"
 #include "../hw/frame_feedback.h"
@@ -16,7 +16,6 @@
 #include "../hw/line_channel.h"
 #include "../hw/line_stage.h"
 #include "../hw/metrics.h"
-#include "../tb_utils/hardware_params.h"
 
 /**
  * Line-granular SystemC architecture model.
@@ -36,17 +35,6 @@ public:
 
     SC_HAS_PROCESS(sc_isp_pipeline);
 
-    struct MetricsRequest {
-        bool enable = false;
-        std::string output_dir = "output/metrics";
-        const std::vector<std::string>* skip = nullptr;
-    };
-
-    static void set_metrics_request(bool enable,
-                                    const std::string& output_dir = "output/metrics",
-                                    const std::vector<std::string>* skip = nullptr);
-    static void clear_metrics_request();
-    static MetricsRequest consume_metrics_request();
 
     sc_isp_pipeline(sc_core::sc_module_name name,
                     const isp_config& cfg,
@@ -55,72 +43,19 @@ public:
                     sc_core::sc_fifo<std::uint8_t>* yuv_out_fifo,
                     std::uint8_t input_bit_depth = 12,
                     cfa_types bayer_pattern = cfa_types::RGGB,
-                    const hw_params* hw = nullptr,
                     const isp_arch_config* arch = nullptr);
 
     ~sc_isp_pipeline();
+    isp_tlm::pipeline_metrics metrics() const;
+    bool write_metrics(const std::string& path) const;
 
-    void bind_clock(sc_core::sc_clock* clk);
 
-    float get_awb_r_gain() const noexcept { return m_last_awb_r_gain; }
-    float get_awb_b_gain() const noexcept { return m_last_awb_b_gain; }
-    std::int32_t get_aec_feedback() const noexcept { return m_last_aec_feedback; }
 
     void precompute_awb_gains(const std::uint16_t* rgb12);
     void precompute_awb_gains_from_bayer(const std::uint16_t* bayer16);
     void prime_awb_gains(float r_gain, float b_gain);
 
-    std::size_t awb_input_pixels() const noexcept {
-        return static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
-    }
 
-    const hw_params& get_hw_params() const noexcept { return m_hw_params; }
-    void set_hw_params(const hw_params& hw) noexcept { m_hw_params = hw; }
-
-    void record_frame_start_time() noexcept {
-        if (m_frame_start_time == sc_core::SC_ZERO_TIME) {
-            m_frame_start_time = sc_core::sc_time_stamp();
-        }
-    }
-    void record_frame_end_time() noexcept { m_frame_end_time = sc_core::sc_time_stamp(); }
-
-    sc_core::sc_time get_frame_start_time() const noexcept { return m_frame_start_time; }
-    sc_core::sc_time get_frame_end_time() const noexcept { return m_frame_end_time; }
-    sc_core::sc_time get_frame_time() const noexcept {
-        return m_frame_end_time > m_frame_start_time
-                   ? m_frame_end_time - m_frame_start_time
-                   : sc_core::SC_ZERO_TIME;
-    }
-    double get_frame_time_ns() const noexcept {
-        return get_frame_time().to_seconds() / 1e-9;
-    }
-    double get_frame_time_us() const noexcept {
-        return get_frame_time().to_seconds() / 1e-6;
-    }
-    double estimate_frame_time_us() const;
-    double estimate_fps() const;
-
-    bool enable_metrics = false;
-    std::string metrics_output_dir = "output/metrics";
-    std::vector<std::string> metrics_skip_blocks;
-
-    bool dump_pipeline_metrics() const;
-    bool dump_all_block_metrics() const;
-    std::size_t metrics_sample_count() const noexcept;
-    std::size_t block_metrics_sample_count() const noexcept;
-    void print_metrics_summary() const;
-
-    void enable_arch_metrics(const std::string& output_dir = "output/arch_metrics");
-    arch_metrics_collector* get_arch_metrics() noexcept { return &m_arch_metrics; }
-    const arch_metrics_collector* get_arch_metrics() const noexcept { return &m_arch_metrics; }
-    void collect_block_metrics();
-    void update_arch_block_metrics(const std::string& block_name,
-                                   std::uint64_t active_cycles,
-                                   std::uint64_t starved_cycles,
-                                   std::uint64_t blocked_cycles);
-    void update_arch_frame_timing(std::uint64_t frame_id);
-    void dump_arch_metrics() const;
-    void dump_arch_summary() const;
 
 private:
     void init_channels();
@@ -137,7 +72,6 @@ private:
     isp_config m_cfg;
     std::vector<float> m_lsc_lut;
     isp_arch_config m_arch_config;
-    hw_params m_hw_params;
     std::uint8_t m_bit_depth = 12;
     std::uint8_t m_input_bit_depth = 12;
     cfa_types m_bayer_pattern = cfa_types::RGGB;
@@ -148,9 +82,7 @@ private:
     std::uint32_t m_final_rows = 0;
     std::uint32_t m_final_line_samples = 0;
     std::size_t m_final_frame_elements = 0;
-
-    // The ideal sink places rate-changing output by byte offset before
-    // exposing the canonical frame order at the public FIFO boundary.
+    std::uint64_t m_logical_input_pixels = 0;
     std::vector<std::uint8_t> m_sink_frame;
 
     std::unique_ptr<isp_tlm::line_channel<std::uint16_t>> m_line_ingress;
@@ -220,12 +152,19 @@ private:
     float m_awb_override_r = 1.0f;
     float m_awb_override_b = 1.0f;
 
-    sc_core::sc_time m_frame_start_time = sc_core::SC_ZERO_TIME;
-    std::map<std::uint64_t, sc_core::sc_time> m_frame_start_times;
-    sc_core::sc_time m_frame_end_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_event m_completed_frame_event;
+    std::uint64_t m_completed_frame = 0;
+    isp_tlm::pipeline_metrics m_latest_metrics;
+    bool m_has_latest_metrics = false;
+    std::uint64_t m_frame_input_id = 0;
+    sc_core::sc_time m_frame_first_input_time = sc_core::SC_ZERO_TIME;
+    std::uint64_t m_frame_input_bytes = 0;
+    bool m_frame_has_input = false;
+    sc_core::sc_time m_frame_first_output_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time m_frame_last_output_time = sc_core::SC_ZERO_TIME;
+    std::uint64_t m_frame_output_bytes = 0;
+    bool m_frame_has_output = false;
     std::uint64_t m_next_input_frame = 0;
-    bool m_arch_metrics_enabled = false;
-    arch_metrics_collector m_arch_metrics;
 };
 
 #endif  // SC_ISP_PIPELINE_H

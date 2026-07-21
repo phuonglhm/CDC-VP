@@ -1,18 +1,17 @@
 /**
  * @file tb_arch_sweep.cpp
- * @brief Bounded architecture sweeps over the line-granular SystemC ISP.
+ * @brief Real line-pipeline architecture sweeps.
  *
- * Every point is elaborated before the first sc_start call.  This is
- * intentional: SystemC does not permit creating another module after
- * elaboration has begun, while sweep_runner invokes its callback synchronously.
+ * Every candidate is constructed before simulation starts.  Each callback then
+ * feeds a real frame through the SystemC model and consumes its metric snapshot.
  */
 
 #include <systemc>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -24,9 +23,8 @@
 
 #include "../hw/isp_arch_config.h"
 #include "../hw/metrics.h"
-#include "../hw/power.h"
 #include "../hw/sweep.h"
-#include "../pipeline/sc_isp_pipeline.h"
+#include "sc_isp_pipeline.h"
 #include "../../pipeline/include/isp_regmap.h"
 
 using namespace sc_core;
@@ -35,40 +33,50 @@ using namespace cdc::components;
 namespace {
 
 constexpr std::uint32_t kInputBitDepth = 12;
-constexpr std::size_t kFifoDepth = 256;
-const sc_core::sc_time kSimulationStep(1, sc_core::SC_US);
+constexpr std::uint32_t kDefaultPpc = 1;
+constexpr std::uint32_t kDefaultPixelIi = 1;
+constexpr std::uint32_t kDefaultLinkDepth = 256;
 constexpr std::size_t kMaxSimulationSteps = 10000;
+const sc_time kSimulationStep(1, SC_US);
+constexpr std::uint32_t kDefaultPipelineLatency = 1;
+constexpr std::uint32_t kDefaultMaxInFlight = 2;
+using candidate_params = std::map<std::string, std::string>;
 
-std::vector<std::uint16_t> make_frame(std::uint32_t width, std::uint32_t height) {
+std::vector<std::uint16_t> make_frame(std::uint32_t width,
+                                      std::uint32_t height) {
     std::vector<std::uint16_t> frame(static_cast<std::size_t>(width) * height);
-    for (std::size_t i = 0; i < frame.size(); ++i) {
-        // A deterministic pattern that exercises both low and high sensor values.
-        frame[i] = static_cast<std::uint16_t>((i * 37u + 113u) & 0x0fffu);
+    for (std::size_t index = 0; index < frame.size(); ++index) {
+        frame[index] = static_cast<std::uint16_t>((index * 37u + 113u) & 0x0fffu);
     }
     return frame;
 }
 
-bool enabled_value(const std::map<std::string, std::string>& params,
-                   const char* name) {
-    const auto enabled = [&](const std::string& key) {
-        const auto it = params.find(key);
-        return it == params.end() || it->second != "off";
-    };
-    const std::string plain(name);
-    const std::string suffixed = plain + "_enable";
-    return enabled(plain) && enabled(suffixed);
+std::uint32_t parameter_u32(const std::map<std::string, std::string>& params,
+                            const char* name, std::uint32_t fallback) {
+    const auto it = params.find(name);
+    if (it == params.end()) return fallback;
+    const unsigned long value = std::strtoul(it->second.c_str(), nullptr, 10);
+    if (value == 0 || value > 0xfffffffful) {
+        throw std::invalid_argument(std::string("invalid ") + name);
+    }
+    return static_cast<std::uint32_t>(value);
 }
 
-std::uint32_t block_id_for_name(const std::string& name) {
-    if (name == "dpc") return isp_blocks::DPC;
-    if (name == "bnr") return isp_blocks::BNR;
-    if (name == "sharpen") return isp_blocks::SHARPEN;
-    if (name == "lsc") return isp_blocks::LSC;
-    if (name == "demosaic") return isp_blocks::DEMOSAIC;
-    if (name == "2dnr") return isp_blocks::TWO_DNR;
-    if (name == "scale") return isp_blocks::SCALE;
-    if (name == "yuv420") return isp_blocks::YUV420;
-    return isp_blocks::COUNT;
+float parameter_frequency(const std::map<std::string, std::string>& params) {
+    const auto it = params.find("frequency");
+    const float frequency = it == params.end()
+        ? 200.0f
+        : static_cast<float>(std::atof(it->second.c_str()));
+    if (frequency <= 0.0f) {
+        throw std::invalid_argument("invalid frequency");
+    }
+    return frequency;
+}
+
+bool enabled_value(const std::map<std::string, std::string>& params,
+                   const char* name) {
+    const auto it = params.find(name);
+    return it == params.end() || it->second != "off";
 }
 
 void set_functional_enable(isp_pipeline& pipeline, const std::string& name,
@@ -77,59 +85,42 @@ void set_functional_enable(isp_pipeline& pipeline, const std::string& name,
     if (name == "dpc") pipeline.write_reg(REG_DPC_ENABLE, value);
     else if (name == "bnr") pipeline.write_reg(REG_BNR_ENABLE, value);
     else if (name == "sharpen") pipeline.write_reg(REG_SHARPEN_ENABLE, value);
-    else if (name == "lsc") pipeline.write_reg(REG_LSC_ENABLE, value);
-    else if (name == "demosaic") pipeline.write_reg(REG_DEMOSAIC_ENABLE, value);
-    else if (name == "2dnr") pipeline.write_reg(REG_2DNR_ENABLE, value);
-    else if (name == "scale") pipeline.write_reg(REG_SCALE_ENABLE, value);
-    else if (name == "yuv420") pipeline.write_reg(REG_YUV420_ENABLE, value);
 }
-
 std::map<std::string, std::string> merge_params(
-    const std::map<std::string, std::string>& fixed,
-    const std::map<std::string, std::string>& current) {
-    std::map<std::string, std::string> result = fixed;
+    const candidate_params& fixed,
+    const candidate_params& current) {
+    candidate_params result = fixed;
     result.insert(current.begin(), current.end());
     return result;
 }
 
-std::string point_name(std::size_t index) {
-    return "arch_point_" + std::to_string(index);
+bool has_param(const candidate_params& params, const char* name) {
+    return params.find(name) != params.end();
 }
-
 struct pipeline_point {
-    std::map<std::string, std::string> params;
+    candidate_params params;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    float frequency_mhz = 0.0f;
     std::vector<std::uint16_t> input;
     std::vector<std::uint8_t> oracle_output;
     isp_config functional_config;
     isp_arch_config architecture_config;
-    hw_params hardware;
     std::unique_ptr<sc_fifo<std::uint16_t>> raw_fifo;
     std::unique_ptr<sc_fifo<std::uint8_t>> yuv_fifo;
     std::unique_ptr<sc_isp_pipeline> pipeline;
 
     pipeline_point(std::size_t index,
-                   const std::map<std::string, std::string>& candidate)
-        : params(candidate) {
+                   const candidate_params& candidate)
+        : params(candidate), frequency_mhz(parameter_frequency(candidate)) {
         const auto resolution_it = params.find("resolution");
-        const resolution_spec resolution =
-            resolution_it == params.end()
-                ? resolution_spec{8, 6}
-                : resolution_spec::from_string(resolution_it->second);
+        const resolution_spec resolution = resolution_it == params.end()
+            ? resolution_spec{8, 6}
+            : resolution_spec::from_string(resolution_it->second);
         width = resolution.width;
         height = resolution.height;
         if (width == 0 || height == 0) {
             throw std::invalid_argument("invalid sweep resolution");
-        }
-
-        const auto frequency_it = params.find("frequency");
-        const float frequency =
-            frequency_it == params.end()
-                ? 200.0f
-                : static_cast<float>(std::atof(frequency_it->second.c_str()));
-        if (frequency <= 0.0f) {
-            throw std::invalid_argument("invalid sweep frequency");
         }
 
         isp_pipeline oracle;
@@ -139,41 +130,81 @@ struct pipeline_point {
         for (const char* block : {"dpc", "bnr", "sharpen"}) {
             set_functional_enable(oracle, block, enabled_value(params, block));
         }
-        // The bounded sweep deliberately leaves rate-changing blocks disabled,
-        // so resolution remains a direct frame-size parameter for both models.
         functional_config = oracle.config();
 
         architecture_config.init_defaults();
-        architecture_config.clock_freq_mhz = frequency;
-        architecture_config.enable_metrics = true;
-        hardware.clk_mhz = frequency;
-        hardware.fifo_depth = kFifoDepth;
-        hardware.timed_mode = true;
-
-        // Block enables are functional settings; all supported architectural
-        // settings are still explicitly initialized for this candidate.
-        for (const char* block : {"dpc", "bnr", "sharpen"}) {
-            const std::size_t block_id = block_id_for_name(block);
-            if (block_id < isp_blocks::COUNT && !enabled_value(params, block)) {
-                architecture_config.blocks[block_id].clock_gating = true;
+        architecture_config.clock_freq_mhz = frequency_mhz;
+        const std::uint32_t ppc = parameter_u32(params, "ppc", kDefaultPpc);
+        const std::uint32_t pixel_ii =
+            parameter_u32(params, "pixel_ii", kDefaultPixelIi);
+        const std::uint32_t link_depth =
+            parameter_u32(params, "link_depth", kDefaultLinkDepth);
+        const std::uint32_t pipeline_latency =
+            parameter_u32(params, "pipeline_latency", kDefaultPipelineLatency);
+        const std::uint32_t max_in_flight =
+            parameter_u32(params, "max_in_flight", kDefaultMaxInFlight);
+        const bool has_memory_profile =
+            has_param(params, "memory_read_ports") ||
+            has_param(params, "memory_write_ports") ||
+            has_param(params, "memory_access_cycles");
+        const std::uint32_t memory_read_ports =
+            parameter_u32(params, "memory_read_ports", 8);
+        const std::uint32_t memory_write_ports =
+            parameter_u32(params, "memory_write_ports", 8);
+        const std::uint32_t memory_access_cycles =
+            parameter_u32(params, "memory_access_cycles", 1);
+        const std::uint32_t downstream_latency =
+            parameter_u32(params, "downstream_latency", pipeline_latency);
+        const std::uint32_t downstream_max_in_flight =
+            parameter_u32(params, "downstream_max_in_flight", max_in_flight);
+        for (auto& block : architecture_config.blocks) {
+            block.pixels_per_cycle = ppc;
+            block.pixel_initiation_interval_cycles = pixel_ii;
+            if (has_param(params, "pipeline_latency")) {
+                block.pipeline_latency_cycles = pipeline_latency;
             }
+            if (has_param(params, "max_in_flight")) {
+                block.max_in_flight_lines = max_in_flight;
+            }
+            if (has_memory_profile) {
+                block.workload = workload_profile{};
+                block.workload.available = true;
+                block.workload.provenance = metric_provenance::modeled;
+                block.workload.additions_per_pixel = 1;
+                block.workload.multiplications_per_pixel = 1;
+                block.workload.comparisons_per_pixel = 1;
+                block.workload.reads_per_pixel = 4;
+                block.workload.writes_per_pixel = 2;
+                block.local_memory = local_memory_service_profile{};
+                block.local_memory.available = true;
+                block.local_memory.provenance = metric_provenance::modeled;
+                block.local_memory.read_ports = memory_read_ports;
+                block.local_memory.write_ports = memory_write_ports;
+                block.local_memory.access_cycles = memory_access_cycles;
+            }
+        }
+        if (has_param(params, "downstream_latency")) {
+            auto& downstream = architecture_config.blocks[isp_blocks::YUV420];
+            downstream.pipeline_latency_cycles = downstream_latency;
+            downstream.max_in_flight_lines = downstream_max_in_flight;
+        }
+        for (auto& link : architecture_config.links) {
+            link.depth = link_depth;
         }
 
         input = make_frame(width, height);
         oracle.run(input.data(), oracle_output);
 
         raw_fifo = std::make_unique<sc_fifo<std::uint16_t>>(
-            (point_name(index) + "_raw").c_str(), kFifoDepth);
+            ("arch_point_" + std::to_string(index) + "_raw").c_str(),
+            input.size() + 16u);
         yuv_fifo = std::make_unique<sc_fifo<std::uint8_t>>(
-            (point_name(index) + "_yuv").c_str(),
-            std::max<std::size_t>(kFifoDepth,
-                                  static_cast<std::size_t>(width) * height * 3u + 16u));
+            ("arch_point_" + std::to_string(index) + "_yuv").c_str(),
+            oracle_output.size() + 16u);
         pipeline = std::make_unique<sc_isp_pipeline>(
-            point_name(index).c_str(), functional_config, std::vector<float>(8192, 1.0f),
-            raw_fifo.get(), yuv_fifo.get(), kInputBitDepth, cfa_types::RGGB,
-            &hardware, &architecture_config);
-        pipeline->enable_arch_metrics("output/sweeps/arch_metrics/" +
-                                      point_name(index));
+            ("arch_point_" + std::to_string(index)).c_str(), functional_config,
+            std::vector<float>(8192, 1.0f), raw_fifo.get(), yuv_fifo.get(),
+            kInputBitDepth, cfa_types::RGGB, &architecture_config);
     }
 };
 
@@ -184,12 +215,9 @@ public:
         std::map<std::string, std::string> current;
         enumerate(current, 0);
     }
-
     explicit pipeline_sweep_runtime(
-        const std::vector<std::map<std::string, std::string>>& candidates) {
-        for (const auto& candidate : candidates) {
-            add_point(candidate);
-        }
+        const std::vector<candidate_params>& candidates) {
+        for (const auto& candidate : candidates) add_point(candidate);
     }
 
     sweep_result run(const std::map<std::string, std::string>& current) {
@@ -198,13 +226,10 @@ public:
         sweep_result result;
         result.params = candidate;
         if (point_it == m_points.end()) {
-            result.passed = false;
             result.error_message = "candidate was not elaborated before sc_start";
             return result;
         }
-
-        pipeline_point& point = *point_it->second;
-        result = execute(point);
+        result = execute(*point_it->second);
         result.params = candidate;
         return result;
     }
@@ -230,108 +255,109 @@ private:
             for (double value = parameter.range_min;
                  value <= parameter.range_max + 0.001;
                  value += parameter.range_step) {
-                std::ostringstream value_stream;
-                value_stream << std::fixed << std::setprecision(0) << value;
-                current[parameter.name] = value_stream.str();
+                std::ostringstream stream;
+                stream << std::fixed << std::setprecision(3) << value;
+                current[parameter.name] = stream.str();
                 enumerate(current, parameter_index + 1);
             }
         }
     }
 
-    static std::size_t allocate_point_index() {
-        static std::size_t next = 0;
-        return next++;
-    }
-
     void add_point(const std::map<std::string, std::string>& candidate) {
-        if (m_points.find(candidate) != m_points.end()) {
-            return;
-        }
+        if (m_points.find(candidate) != m_points.end()) return;
+        const std::size_t index = m_points.size();
         m_points.emplace(candidate,
-                         std::make_unique<pipeline_point>(
-                             allocate_point_index(), candidate));
+                         std::make_unique<pipeline_point>(index, candidate));
     }
 
     static sweep_result execute(pipeline_point& point) {
         sweep_result result;
         result.params = point.params;
+        for (const auto sample : point.input) point.raw_fifo->write(sample);
 
-        for (const std::uint16_t sample : point.input) {
-            point.raw_fifo->write(sample);
-        }
-
+        const sc_time simulation_start = sc_time_stamp();
         std::size_t steps = 0;
         const std::size_t expected = point.oracle_output.size();
         while (static_cast<std::size_t>(point.yuv_fifo->num_available()) < expected &&
                steps++ < kMaxSimulationSteps) {
             sc_start(kSimulationStep);
         }
+        const sc_time simulation_end = sc_time_stamp();
+        result.simulation_time_seconds =
+            (simulation_end - simulation_start).to_seconds();
 
         std::vector<std::uint8_t> actual;
-        while (point.yuv_fifo->num_available() > 0) {
-            actual.push_back(point.yuv_fifo->read());
-        }
-
+        while (point.yuv_fifo->num_available() > 0) actual.push_back(point.yuv_fifo->read());
         const bool complete = actual.size() == expected;
-        const bool parity = complete && actual == point.oracle_output;
-        if (!complete || !parity) {
-            result.passed = false;
-            result.error_message = !complete
-                ? "line pipeline output incomplete: expected " +
-                      std::to_string(expected) + " bytes, got " +
-                      std::to_string(actual.size())
-                : "line pipeline output differs from isp_pipeline::run()";
+        result.parity = complete && actual == point.oracle_output;
+
+        const isp_tlm::pipeline_metrics snapshot = point.pipeline->metrics();
+        const auto& frame = snapshot.frame;
+        result.frame_cycles = frame.frame_cycles;
+        result.frame_cycles_available = frame.frame_cycles_available;
+        result.first_output_latency_cycles = frame.first_output_latency_cycles;
+        result.first_output_latency_available =
+            frame.first_output_latency_available;
+        result.achieved_pixels_per_cycle = frame.achieved_pixels_per_cycle;
+        result.achieved_pixels_per_cycle_available =
+            frame.achieved_pixels_per_cycle_available;
+        result.bandwidth_input_mbps = frame.input_bandwidth_mbps;
+        result.bandwidth_input_available = frame.input_bandwidth_available;
+        result.bandwidth_output_mbps = frame.output_bandwidth_mbps;
+        result.bandwidth_output_available = frame.output_bandwidth_available;
+        if (result.frame_cycles_available) {
+            result.frame_time_us =
+                static_cast<double>(result.frame_cycles) /
+                static_cast<double>(point.frequency_mhz);
+            result.frame_time_available = true;
         }
-
-        const sc_time frame_time = point.pipeline->get_frame_time();
-        result.frame_time_us = frame_time.to_seconds() / 1e-6;
-        result.fps = result.frame_time_us > 0.0 ? 1e6 / result.frame_time_us : 0.0;
-        result.sim_time_seconds = frame_time.to_seconds();
-        result.sim_cycles = point.hardware.cycle_ns() > 0.0f
-            ? static_cast<std::uint64_t>(
-                  std::ceil(frame_time.to_seconds() /
-                            (point.hardware.cycle_ns() * 1e-9f)))
-            : 0;
-        result.throughput_mpixel_s =
-            result.frame_time_us > 0.0
-                ? static_cast<double>(point.width) * point.height /
-                      result.frame_time_us
-                : 0.0;
-        result.bandwidth_input_mbps =
-            result.frame_time_us > 0.0
-                ? static_cast<double>(point.input.size() * sizeof(std::uint16_t) * 8u) /
-                      result.frame_time_us / 1000.0
-                : 0.0;
-        result.bandwidth_output_mbps =
-            result.frame_time_us > 0.0
-                ? static_cast<double>(actual.size() * sizeof(std::uint8_t) * 8u) /
-                      result.frame_time_us / 1000.0
-                : 0.0;
-
-        point.pipeline->collect_block_metrics();
-        arch_metrics_collector* metrics = point.pipeline->get_arch_metrics();
-        metrics->set_total_cycles(result.sim_cycles);
-        power_estimator estimator;
-        metrics->set_power_estimator(&estimator);
-        metrics->calculate_block_power();
-        const pipeline_power_summary power = metrics->get_power_summary();
-        result.avg_power_mw = power.total.total_mw;
-        result.peak_power_mw = power.peak_power_mw;
-        result.frame_energy_nj =
-            estimator.energy_per_frame(power.total, result.frame_time_us);
 
         double utilization_sum = 0.0;
-        for (const auto& block : metrics->blocks()) {
-            utilization_sum += block.block_utilization;
-        }
-        result.avg_block_utilization = metrics->blocks().empty()
+        for (const auto& block : snapshot.blocks) utilization_sum += block.utilization;
+        result.avg_block_utilization = snapshot.blocks.empty()
             ? 0.0
-            : utilization_sum / metrics->blocks().size();
-        const bottleneck_report bottleneck = metrics->analyze_bottleneck();
-        result.bottleneck_location = bottleneck.location;
-        result.bottleneck_severity = bottleneck.severity;
-        if (result.bottleneck_location.empty()) {
-            result.bottleneck_location = "none";
+            : utilization_sum / static_cast<double>(snapshot.blocks.size());
+        if (snapshot.bottlenecks.empty()) {
+            result.top_bottleneck_type = "none";
+            result.top_bottleneck_location = "none";
+            result.top_bottleneck_severity = 0.0;
+            result.top_bottleneck_evidence = "none";
+        } else {
+            const auto& bottleneck = snapshot.bottlenecks.front();
+            result.top_bottleneck_type = bottleneck.type;
+            result.top_bottleneck_location = bottleneck.location;
+            result.top_bottleneck_severity = bottleneck.severity;
+            result.top_bottleneck_evidence = bottleneck.evidence;
+        }
+        for (const auto& block : snapshot.blocks) {
+            result.total_memory_wait_cycles += block.memory_wait_cycles;
+            result.memory_wait_available =
+                result.memory_wait_available || block.memory_wait_available;
+            result.total_output_blocked_cycles += block.output_blocked_cycles;
+            result.total_completion_wait_cycles += block.completion_wait_cycles;
+            if (!result.effective_ii_available && block.effective_ii_available) {
+                result.effective_ii_available = true;
+                result.effective_ii = block.effective_ii;
+            }
+        }
+        for (const auto& link : snapshot.links) {
+            result.max_link_occupancy =
+                std::max(result.max_link_occupancy, link.occupancy_high_water);
+        }
+
+        const bool metrics_available =
+            result.frame_cycles_available && result.frame_time_available &&
+            result.achieved_pixels_per_cycle_available &&
+            result.bandwidth_input_available && result.bandwidth_output_available;
+        result.passed = complete && result.parity && metrics_available;
+        if (!complete) {
+            result.error_message = "output incomplete: expected " +
+                std::to_string(expected) + " bytes, got " +
+                std::to_string(actual.size());
+        } else if (!result.parity) {
+            result.error_message = "output differs from isp_pipeline::run()";
+        } else if (!metrics_available) {
+            result.error_message = "pipeline metric snapshot unavailable";
         }
         return result;
     }
@@ -343,7 +369,8 @@ sweep_config bounded_resolution_config() {
     config.description = "Bounded line-pipeline resolution sweep";
     config.add_resolution_sweep({{8, 6}, {12, 8}, {16, 10}});
     config.add_fixed_param("frequency", "200");
-    config.output_dir = "output/sweeps/resolution";
+    config.add_fixed_param("ppc", "1");
+    config.add_fixed_param("pixel_ii", "1");
     return config;
 }
 
@@ -354,56 +381,220 @@ sweep_config bounded_frequency_config() {
     config.add_custom_sweep("resolution", {"12x8"}, "Bounded frame");
     config.params.back().type = sweep_param_type::RESOLUTION;
     config.add_frequency_sweep(100, 300, 100);
-    config.output_dir = "output/sweeps/frequency";
+    config.add_fixed_param("ppc", "1");
+    config.add_fixed_param("pixel_ii", "1");
     return config;
 }
 
 sweep_config bounded_block_config() {
     sweep_config config;
     config.name = "block_enable_sweep";
-    config.description = "Bounded line-pipeline block-enable sweep";
+    config.description = "Bounded line-pipeline functional-enable sweep";
     config.add_custom_sweep("resolution", {"12x8"}, "Bounded frame");
     config.params.back().type = sweep_param_type::RESOLUTION;
     config.add_fixed_param("frequency", "200");
-    for (const auto& block : {"dpc", "bnr", "sharpen"}) {
-        config.add_block_enable_sweep(block, {"on", "off"});
+    config.add_fixed_param("ppc", "1");
+    config.add_fixed_param("pixel_ii", "1");
+    config.add_fixed_param("link_depth", "256");
+    for (const auto* block : {"dpc", "bnr", "sharpen"}) {
+        config.add_block_enable_sweep(block);
     }
-    config.output_dir = "output/sweeps/block_enable";
     return config;
 }
 
 void run_sweep(const sweep_config& config, pipeline_sweep_runtime& runtime) {
     sweep_runner runner(config);
-    runner.set_run_callback([&runtime](
-        const std::map<std::string, std::string>& params) {
+    runner.set_run_callback([&runtime](const auto& params) {
         return runtime.run(params);
     });
-    sweep_results results = runner.run();
-    const std::string filename = config.output_dir + "/" + config.name + ".csv";
+    const sweep_results results = runner.run();
     results.print_summary();
-    std::filesystem::create_directories(config.output_dir);
-    results.export_csv(filename);
-    std::cout << "\nExported to: " << filename << "\n";
+}
+std::vector<candidate_params> comparison_candidates() {
+    const candidate_params base = {
+        {"variant", "baseline"},
+        {"resolution", "8x6"},
+        {"frequency", "200"},
+        {"ppc", "1"},
+        {"pixel_ii", "1"},
+        {"link_depth", "256"},
+        {"pipeline_latency", "16"},
+        {"max_in_flight", "64"},
+        {"memory_read_ports", "8"},
+        {"memory_write_ports", "8"},
+        {"memory_access_cycles", "1"},
+        {"dpc", "on"},
+        {"bnr", "on"},
+        {"sharpen", "on"},
+    };
+    const auto variant = [&base](const char* name) {
+        candidate_params result = base;
+        result["variant"] = name;
+        return result;
+    };
+    std::vector<candidate_params> candidates;
+    candidates.push_back(base);
+    auto ppc = variant("ppc2");
+    ppc["ppc"] = "2";
+    candidates.push_back(ppc);
+    auto frequency = variant("frequency400");
+    frequency["frequency"] = "400";
+    candidates.push_back(frequency);
+    auto pixel_ii = variant("pixel_ii2");
+    pixel_ii["pixel_ii"] = "2";
+    candidates.push_back(pixel_ii);
+    auto latency = variant("latency32");
+    latency["pipeline_latency"] = "32";
+    candidates.push_back(latency);
+    auto capacity = variant("max_in_flight1");
+    capacity["max_in_flight"] = "1";
+    candidates.push_back(capacity);
+    auto memory = variant("memory_ports1");
+    memory["memory_read_ports"] = "1";
+    memory["memory_write_ports"] = "1";
+    candidates.push_back(memory);
+    auto shallow = variant("link_shallow");
+    shallow["link_depth"] = "1";
+    shallow["downstream_latency"] = "64";
+    shallow["downstream_max_in_flight"] = "1";
+    candidates.push_back(shallow);
+    auto deep = variant("link_deep");
+    deep["downstream_latency"] = "64";
+    deep["downstream_max_in_flight"] = "1";
+    candidates.push_back(deep);
+    return candidates;
 }
 
-void run_quick_comparison(pipeline_sweep_runtime& runtime) {
-    const std::vector<std::map<std::string, std::string>> candidates = {
-        {{"resolution", "8x6"}, {"frequency", "200"},
-         {"dpc", "on"}, {"bnr", "on"}, {"sharpen", "on"}},
-        {{"resolution", "12x8"}, {"frequency", "200"},
-         {"dpc", "on"}, {"bnr", "off"}, {"sharpen", "on"}},
-        {{"resolution", "12x8"}, {"frequency", "400"},
-         {"dpc", "on"}, {"bnr", "on"}, {"sharpen", "off"}},
-    };
-    sweep_results results;
-    results.sweep_name = "quick_comparison";
+bool run_quick_comparison(
+    pipeline_sweep_runtime& runtime,
+    const std::vector<candidate_params>& candidates) {
+    std::vector<sweep_result> results;
+    results.reserve(candidates.size());
     for (const auto& candidate : candidates) {
-        const sweep_result result = runtime.run(candidate);
-        results.add_result(result);
+        results.push_back(runtime.run(candidate));
     }
-    results.print_summary();
-    std::filesystem::create_directories("output/sweeps/quick_comparison");
-    results.export_csv("output/sweeps/quick_comparison/results.csv");
+    sweep_results presentation;
+    presentation.sweep_name = "quick_comparison";
+    for (const auto& result : results) presentation.add_result(result);
+    presentation.print_summary();
+
+    std::cout << "\n=== Comparison Candidate Matrix ===\n";
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        const auto& candidate = candidates[index];
+        const auto& result = results[index];
+        std::cout << "candidate " << index << " " << candidate.at("variant")
+                  << ": frequency=" << candidate.at("frequency")
+                  << " ppc=" << candidate.at("ppc")
+                  << " pixel_ii=" << candidate.at("pixel_ii")
+                  << " link_depth=" << candidate.at("link_depth")
+                  << " pipeline_latency=" << candidate.at("pipeline_latency")
+                  << " max_in_flight=" << candidate.at("max_in_flight")
+                  << " memory_ports=" << candidate.at("memory_read_ports")
+                  << "/" << candidate.at("memory_write_ports")
+                  << " cycles=" << result.frame_cycles
+                  << " first_latency=" << result.first_output_latency_cycles
+                  << " achieved_ppc=" << result.achieved_pixels_per_cycle
+                  << " completion_wait=" << result.total_completion_wait_cycles
+                  << " memory_wait=" << result.total_memory_wait_cycles
+                  << " output_blocked=" << result.total_output_blocked_cycles
+                  << " occupancy=" << result.max_link_occupancy
+                  << " effective_ii=" << result.effective_ii
+                  << " parity=" << (result.parity ? "pass" : "fail")
+                  << "\n";
+    }
+
+    const auto find = [&results](const char* name) -> const sweep_result* {
+        for (const auto& result : results) {
+            const auto it = result.params.find("variant");
+            if (it != result.params.end() && it->second == name) return &result;
+        }
+        return nullptr;
+    };
+    const sweep_result* baseline = find("baseline");
+    const sweep_result* ppc = find("ppc2");
+    const sweep_result* frequency = find("frequency400");
+    const sweep_result* pixel_ii = find("pixel_ii2");
+    const sweep_result* latency = find("latency32");
+    const sweep_result* capacity = find("max_in_flight1");
+    const sweep_result* memory = find("memory_ports1");
+    const sweep_result* shallow = find("link_shallow");
+    const sweep_result* deep = find("link_deep");
+
+    bool all_passed = results.size() == candidates.size() && !results.empty();
+    for (const auto& result : results) {
+        all_passed = all_passed && result.passed && result.parity;
+    }
+    const bool ppc_sensitive =
+        baseline && ppc && baseline->frame_cycles_available &&
+        ppc->frame_cycles_available &&
+        baseline->achieved_pixels_per_cycle_available &&
+        ppc->achieved_pixels_per_cycle_available &&
+        ppc->frame_cycles < baseline->frame_cycles &&
+        ppc->achieved_pixels_per_cycle > baseline->achieved_pixels_per_cycle;
+    const bool frequency_sensitive =
+        baseline && frequency && baseline->frame_cycles_available &&
+        frequency->frame_cycles_available && baseline->frame_time_available &&
+        frequency->frame_time_available &&
+        baseline->frame_cycles == frequency->frame_cycles &&
+        baseline->frame_time_us > frequency->frame_time_us;
+    const bool pixel_ii_sensitive =
+        baseline && pixel_ii && baseline->frame_cycles_available &&
+        pixel_ii->frame_cycles_available &&
+        baseline->achieved_pixels_per_cycle_available &&
+        pixel_ii->achieved_pixels_per_cycle_available &&
+        pixel_ii->frame_cycles > baseline->frame_cycles &&
+        pixel_ii->achieved_pixels_per_cycle < baseline->achieved_pixels_per_cycle;
+    const bool latency_sensitive =
+        baseline && latency && baseline->first_output_latency_available &&
+        latency->first_output_latency_available &&
+        baseline->effective_ii_available && latency->effective_ii_available &&
+        latency->first_output_latency_cycles >
+            baseline->first_output_latency_cycles &&
+        std::abs(latency->effective_ii - baseline->effective_ii) < 1e-9;
+    const bool capacity_sensitive =
+        baseline && capacity && capacity->parity &&
+        baseline->frame_cycles_available && capacity->frame_cycles_available &&
+        capacity->frame_cycles > baseline->frame_cycles &&
+        (capacity->total_completion_wait_cycles >
+             baseline->total_completion_wait_cycles ||
+         capacity->total_output_blocked_cycles >
+             baseline->total_output_blocked_cycles);
+    const bool memory_sensitive =
+        baseline && memory && baseline->memory_wait_available &&
+        memory->memory_wait_available &&
+        memory->total_memory_wait_cycles >
+            baseline->total_memory_wait_cycles &&
+        memory->frame_cycles > baseline->frame_cycles;
+    const bool link_sensitive =
+        shallow && deep && shallow->parity && deep->parity &&
+        shallow->total_output_blocked_cycles >
+            deep->total_output_blocked_cycles &&
+        shallow->max_link_occupancy ==
+            parameter_u32(shallow->params, "link_depth", 0) &&
+        deep->max_link_occupancy <
+            parameter_u32(deep->params, "link_depth", 0);
+
+    std::cout << "\n=== Comparison Invariants ===\n"
+              << "PPC sensitivity: " << (ppc_sensitive ? "PASS" : "FAIL") << "\n"
+              << "frequency changes time, not cycles: "
+              << (frequency_sensitive ? "PASS" : "FAIL") << "\n"
+              << "pixel-II sensitivity: " << (pixel_ii_sensitive ? "PASS" : "FAIL")
+              << "\n"
+              << "latency changes first output, not effective II: "
+              << (latency_sensitive ? "PASS" : "FAIL") << "\n"
+              << "max-in-flight capacity adds frame/pipeline pressure: "
+              << (capacity_sensitive ? "PASS" : "FAIL") << "\n"
+              << "modeled memory ports increase waits and frame cycles: "
+              << (memory_sensitive ? "PASS" : "FAIL") << "\n"
+              << "shallow link increases output blocking/occupancy: "
+              << (link_sensitive ? "PASS" : "FAIL") << "\n";
+    if (!ppc_sensitive || !frequency_sensitive || !pixel_ii_sensitive ||
+        !latency_sensitive || !capacity_sensitive || !memory_sensitive ||
+        !link_sensitive) {
+        std::cerr << "comparison failed: required sensitivity invariant missing\n";
+        all_passed = false;
+    }
+    return all_passed;
 }
 
 }  // namespace
@@ -415,47 +606,41 @@ int sc_main(int argc, char* argv[]) {
     bool run_block = false;
     bool run_compare = false;
 
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--all" || arg == "-a") run_all = true;
-        else if (arg == "--resolution" || arg == "-r") run_res = true;
-        else if (arg == "--frequency" || arg == "-f") run_freq = true;
-        else if (arg == "--blocks" || arg == "-b") run_block = true;
-        else if (arg == "--compare" || arg == "-c") run_compare = true;
-        else if (arg == "--help" || arg == "-h") {
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument = argv[index];
+        if (argument == "--all" || argument == "-a") run_all = true;
+        else if (argument == "--resolution" || argument == "-r") run_res = true;
+        else if (argument == "--frequency" || argument == "-f") run_freq = true;
+        else if (argument == "--blocks" || argument == "-b") run_block = true;
+        else if (argument == "--compare" || argument == "-c") run_compare = true;
+        else if (argument == "--help" || argument == "-h") {
             std::cout << "Usage: tb_arch_sweep [options]\n"
-                      << "  --all, -a          Run bounded sweeps (default)\n"
+                      << "  --all, -a          Run bounded sweeps\n"
                       << "  --resolution, -r  Run resolution sweep\n"
                       << "  --frequency, -f   Run frequency sweep\n"
-                      << "  --blocks, -b      Run block-enable sweep\n"
-                      << "  --compare, -c     Run bounded line-pipeline comparison\n";
+                      << "  --blocks, -b      Run functional-enable sweep\n"
+                      << "  --compare, -c     Compare real architecture candidates\n";
             return 0;
+        } else {
+            std::cerr << "unknown or incomplete option: " << argument << '\n';
+            return 2;
         }
     }
 
     if (run_compare) {
-        const std::vector<std::map<std::string, std::string>> candidates = {
-            {{"resolution", "8x6"}, {"frequency", "200"},
-             {"dpc", "on"}, {"bnr", "on"}, {"sharpen", "on"}},
-            {{"resolution", "12x8"}, {"frequency", "200"},
-             {"dpc", "on"}, {"bnr", "off"}, {"sharpen", "on"}},
-            {{"resolution", "12x8"}, {"frequency", "400"},
-             {"dpc", "on"}, {"bnr", "on"}, {"sharpen", "off"}},
-        };
+        const std::vector<candidate_params> candidates = comparison_candidates();
         pipeline_sweep_runtime runtime(candidates);
-        run_quick_comparison(runtime);
+        const bool passed = run_quick_comparison(runtime, candidates);
         sc_stop();
-        return 0;
+        return passed ? 0 : 1;
     }
 
-    // Construct every module before the first run callback can call sc_start.
-    // This keeps --all within SystemC's single-elaboration lifecycle.
+    sweep_config resolution_config = bounded_resolution_config();
+    sweep_config frequency_config = bounded_frequency_config();
+    sweep_config block_config = bounded_block_config();
     std::unique_ptr<pipeline_sweep_runtime> resolution_runtime;
     std::unique_ptr<pipeline_sweep_runtime> frequency_runtime;
     std::unique_ptr<pipeline_sweep_runtime> block_runtime;
-    const sweep_config resolution_config = bounded_resolution_config();
-    const sweep_config frequency_config = bounded_frequency_config();
-    const sweep_config block_config = bounded_block_config();
     if (run_all || run_res) {
         resolution_runtime = std::make_unique<pipeline_sweep_runtime>(resolution_config);
     }
@@ -465,12 +650,9 @@ int sc_main(int argc, char* argv[]) {
     if (run_all || run_block) {
         block_runtime = std::make_unique<pipeline_sweep_runtime>(block_config);
     }
-
     if (resolution_runtime) run_sweep(resolution_config, *resolution_runtime);
     if (frequency_runtime) run_sweep(frequency_config, *frequency_runtime);
     if (block_runtime) run_sweep(block_config, *block_runtime);
-
-    std::cout << "\nSweep complete; CSV results are under output/sweeps/.\n";
     sc_stop();
     return 0;
 }

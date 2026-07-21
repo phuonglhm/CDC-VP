@@ -1,370 +1,240 @@
 # SystemC ISP Pipeline — Model Evaluation Report
 
-**Date:** 2026-07-16
-**Status:** All targets building; 3 pipeline testbenches verified.
+**Date:** 2026-07-21
 
----
+**Status:** The active line-granular architecture model and focused smoke are documented here.
 
 ## 1. Executive Summary
 
-The SystemC ISP Architecture Model simulates a complete 18-stage image signal processor (ISP) from raw Bayer sensor input to YUV420 output. It supports two simulation modes — **untimed** (functional verification, cycle-accurate pixel outputs) and **timed** (clock-synchronized, cycle-accurate delays, bottleneck analysis, power estimation) — controlled per-block via the shared `hw_params` struct.
+The SystemC ISP model contains an 18-stage image signal processor from RAW Bayer input to YUV420 output.
 
-All 17 ISP processing blocks compile and are verified individually. The three pipeline-level testbenches (`tb_pipeline`, `tb_arch_pipeline`, `tb_d65_pipeline`) link and run successfully.
+The functional pipeline is the byte-exact untimed oracle.
 
-| Category | Status |
-|----------|--------|
-| Build (17 blocks + 3 pipeline testbenches) | **PASS** |
-| Individual block tests (17 blocks) | **PASS** (bit-exact vs golden reference) |
-| Full pipeline verification (`tb_pipeline`) | **PASS** |
-| Real-image pipeline (`tb_d65_pipeline`) | **PASS** |
-| Architecture metrics (`tb_arch_pipeline`) | **PASS** |
-| Power estimation (`tb_power_metrics`) | **Built** |
-| Architecture sweeps (`tb_arch_sweep`) | **Built** |
-| DMA integration (`tb_dma_integration`) | **Built** |
+The architecture model schedules line events from one `isp_arch_config` clock.
 
----
+Its observation window spans the first RAW line entering the ideal source boundary through the last YUV line leaving the ideal sink boundary.
 
-## 2. Build Verification
+The architecture report is one unified immutable snapshot of frame, stage, and link metrics.
 
-### 2.1 Build command
+The focused architecture smoke is `tb_arch_pipeline`.
+
+This report makes no claim of broad suite coverage.
+
+## 2. Functional Evaluation Material Retained
+
+The existing block-level and pipeline-level functional evaluation remains relevant to output correctness.
+
+The block tests compare SystemC output with reference output using deterministic inputs.
+
+The functional pipeline test is run with:
 
 ```bash
-cd /home/hoangquan/workspace/CDC-VP
+build/bremen/components/isp_tlm/systemc/tb_pipeline
+```
+
+The byte-exact untimed oracle remains the reference for output comparison.
+
+The existing real-image evaluation material under `components/isp_tlm/input/` is retained for functional investigations.
+
+AWB and AEC are statistical stages whose behavior depends on frame input and configuration.
+
+The focused architecture smoke is not a replacement for those functional evaluations.
+
+## 3. Build and Focused Smoke
+
+Build the SystemC component with:
+
+```bash
 ./components/isp_tlm/systemc/build.sh
 ```
 
-Or incrementally from an existing build:
+Build the focused architecture executable with:
 
 ```bash
-cd build/bremen
-ninja isp_tlm
+ninja -C build/bremen tb_arch_pipeline
 ```
 
-### 2.2 Built artifacts
+Run the focused smoke with an explicit caller-owned report path:
 
-**Static libraries:**
-```
-components/isp_tlm/systemc/libsc_isp_blocks.a      # 17 ISP block objects
-components/isp_tlm/systemc/libsc_isp_pipeline.a    # Full pipeline library
-```
-
-**Pipeline testbenches:**
-```
-components/isp_tlm/systemc/tb_pipeline           # Full pipeline, untimed
-components/isp_tlm/systemc/tb_arch_pipeline     # Full pipeline, timed + metrics
-components/isp_tlm/systemc/tb_d65_pipeline      # Real D65 image, untimed
+```bash
+BUILD=build/bremen/components/isp_tlm/systemc
+$BUILD/tb_arch_pipeline --metrics /tmp/isp_arch_snapshot.csv
 ```
 
-**Architecture testbenches:**
-```
-components/isp_tlm/systemc/tb_power_metrics       # Per-block power breakdown
-components/isp_tlm/systemc/tb_arch_sweep         # Parameter sweeps
-components/isp_tlm/systemc/tb_dma_integration     # DMA + memory model
-components/isp_tlm/systemc/tb_metrics_demo       # Single-block metrics demo
-```
+The report path is selected by the caller after `--metrics`; `write_metrics` does not create parent directories, so any alternate parent directory must already exist.
 
-**Per-block testbenches (17):**
-```
-tb_2dnr  tb_aec  tb_awb  tb_blc  tb_bnr  tb_ccm  tb_csc  tb_cse
-tb_demosaic  tb_dg  tb_dpc  tb_gc  tb_lsc  tb_scale  tb_sharpen
-tb_wb  tb_yuv420
+The default tests write no source artifacts.
+
+Compare architecture sweep points with:
+
+```bash
+$BUILD/tb_arch_sweep --compare
 ```
 
----
+These commands establish the documented smoke path only.
 
-## 3. Test Results
+They do not establish broad suite coverage.
 
-### 3.1 Individual block tests
+## 4. Active Architecture Model
 
-All 17 block testbenches compare SystemC output against a golden reference computed from the original C++ ISP implementation. Verification uses Mean Squared Error (MSE) with a threshold of 0.
+### 4.1 Clock and scheduling
 
-```
-==================================================
-Testbench: Black Level Correction (BLC)
-==================================================
-[TB] Generated test pattern: 4096 pixels
-[TB] Golden reference computed
-[TB] Starting simulation...
-[TB] Simulation completed
-TEST RESULT: PASS
-==================================================
-```
+One clock in `isp_arch_config` drives `sc_time` scheduling for the architecture model.
 
-The 17 blocks fall into three categories:
+The model does not expose a separate timed-versus-untimed clock binding contract.
 
-| Processing type | Blocks | Verification |
-|----------------|--------|-------------|
-| **Pixel-wise** (1 token in, 1 token out) | BLC, DPC, DG, WB, CCM, GC, CSC, CSE, LSC, BNR, Sharpen | MSE = 0 |
-| **Frame-buffered** (full frame in, full frame out) | Demosaic, AWB, AEC, 2DNR, Scale, YUV420 | MSE = 0 |
+Functional output remains checked against the byte-exact untimed oracle.
 
-### 3.2 Pipeline tests
+### 4.2 Retained parameters
 
-#### `tb_pipeline` — Full pipeline, synthetic pattern
+`isp_arch_config` owns the clock, per-block pixels-per-cycle (PPC), pixel initiation interval (II), pipeline latency, maximum in-flight lines, optional modeled workload and local-memory profiles, and per-link depth.
+Stage enable/bypass controls come from functional `isp_config`, not `isp_arch_config`.
 
-Verifies the complete 18-block pipeline end-to-end against the original C++ reference. Reports token-level diff counts, AWB R/B gains, and AEC feedback values.
+A line is one `line_channel` token representing one logical image row.
 
-```
-==================================================
-PIPELINE VERIFICATION RESULTS
-==================================================
-  Expected output size: ...
-  Captured output size: ...
-  Differences: 0 / ...
-  Max difference: 0
-  AWB R gain: ...
-  AWB B gain: ...
-  AEC feedback: ...
-TEST RESULT: PASS
+RGB and YUV channel multiplicity does not multiply logical pixels.
+
+For logical pixel count $P$ and PPC $Q$, a processing beat count is:
+
+```text
+processing_beats = ceil(P / Q)
 ```
 
-#### `tb_arch_pipeline` — Timed mode with architecture metrics
+For pixel initiation interval $I$, compute demand is:
 
-Runs the pipeline with `hw_params.timed_mode = true`, binding a 200 MHz clock to all blocks. Collects and reports:
-
-- Frame timing: first pixel in → last pixel out
-- Per-block cycle accounting: active / starved / blocked cycles
-- Bottleneck classification and severity
-- Layer 1 + Layer 2 metrics CSVs
-
-```
---- Per-Block Cycle Accounting ---
-         Block      Util %      Active     Starved     Blocked
-----------------------------------------------------------------
-           blc        0.0%           0           1           0
-           dpc        0.0%           0           1           0
-      demosaic        0.0%           0           0           0
-           ...
-
---- Bottleneck Analysis ---
-  Type              : Compute II Limited
-  Severity          : 100.0%
+```text
+compute_cycles = processing_beats * I
 ```
 
-> **Note:** In untimed mode, `sc_time_stamp()` remains at 0 because no `wait()` calls fire. Latency values of 0 are expected and do not indicate a bug. Enable timed mode to get real cycle-accurate timing.
+Processing beats are internal groups of logical pixels and are not bus units.
 
-#### `tb_d65_pipeline` — Real D65 image, 2688×1520
+The architecture reports 18 stages and 18 links.
 
-Streams the real `D65_raw_2688x1520_5376.raw` (16-bit RGGB, D65 illuminant) through the pipeline and compares against the C++ reference.
+The 18 reported link records consist of the 17 inter-stage links from `input_norm_to_blc` through `scale_to_yuv420` plus the `yuv420_to_output` ideal sink-boundary link.
+The ideal source boundary is not emitted as a reported line row; it is instead captured by frame ingress metrics.
+The exact reported link names are `input_norm_to_blc`, `blc_to_dpc`, `dpc_to_lsc`, `lsc_to_dg`, `dg_to_bnr`, `bnr_to_demosaic`, `demosaic_to_awb`, `awb_to_wb`, `wb_to_ccm`, `ccm_to_gc`, `gc_to_aec`, `aec_to_csc`, `csc_to_cse`, `cse_to_sharpen`, `sharpen_to_2dnr`, `2dnr_to_scale_or_yuv420`, `scale_to_yuv420`, and `yuv420_to_output`.
 
-```
-[TB] Golden reference computed: 12257280 raw bytes
-[TB] DUT config: scale.is_enable=false, yuv420.is_enable=true
-[sc_isp_pipeline] Initializing ISP pipeline...
-[sc_isp_pipeline] Image size: 2688x1520
-[TB] Starting SystemC simulation...
-```
+### 4.3 Unified snapshot and API
 
-| Test | Input | Resolution | Result |
-|------|-------|-----------|--------|
-| `tb_d65_blc` | D65_raw_2688x1520_5376.raw | 2688×1520 | **PASS** (MSE = 0) |
-| `tb_d65_pipeline` | D65_raw_2688x1520_5376.raw | 2688×1520 | **PASS** (4.08M pixels) |
+The pipeline API is `metrics()`.
 
----
+The optional `write_metrics(file)` API writes one unified snapshot to the caller-selected file.
 
-## 4. Architecture Model Evaluation
+Raw event ownership remains in the stage runtime, line stage, and line channel components.
 
-### 4.1 Three-Layer Metrics Architecture
+Derivations consume one immutable raw snapshot.
 
-```
-RAW Input
-  │
-  ▼ Layer 1  sc_block_metrics<T>       — Per-block processing latency
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  Each block: processing begin → processing end                    │
-  │  → block_<name>.csv  +  block_<name>_summary.txt                │
-  └──────────────────────────────────────────────────────────────────┘
-  │
-  ▼ Layer 2  sc_metrics_wrapper<T>    — Inter-block boundary throughput
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  17 wrapper instances between every adjacent block pair           │
-  │  → <upstream>_to_<downstream>.csv                               │
-  │    + <upstream>_to_<downstream>_summary.txt                     │
-  └──────────────────────────────────────────────────────────────────┘
-  │
-  ▼ Layer 3  arch_metrics_collector   — Frame timing, bottleneck, power
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  → frame_metrics.csv, block_metrics.csv, link_metrics.csv         │
-  │  → bottleneck_report.txt, power_metrics.csv                       │
-  └──────────────────────────────────────────────────────────────────┘
-  │
-YUV420 Output
-```
+The only metric report filesystem side effect is the explicit `pipeline.write_metrics(file_path)` operation.
+Sweep comparisons consume in-memory snapshots and present results on standard output without CSV export.
 
-### 4.2 Power Estimation (`tb_power_metrics`)
+## 5. Metric Definitions
 
-Activity-based per-block power breakdown for 1920×1080 @ 200 MHz:
+The observation window is one frame from the first RAW line at the ideal source boundary through the last YUV line at the ideal sink boundary.
 
-```
---- Per-Block Power Estimation ---
-         Block      Util %   Static mW  Dynamic mW   Memory mW    Total mW
---------------------------------------------------------------------------
-         blc       92.0%       0.300     190.771       0.000     191.071
-      demosaic       70.0%       2.000   28449.793    2394.112   30845.905
-           bnr       75.0%       1.200   11664.000    2526.720   14191.920
-           ...
-         TOTAL                 13.100   70340.662   16905.434   87259.196
+All cycle values are integer clock cycles.
 
---- Power Breakdown ---
-Static power:     13.10 mW  (0.0%)
-Dynamic power: 70340.7 mW  (80.6%)
-Memory power:   16905.4 mW  (19.4%)
-Total:         87259.2 mW
-```
+Time values are microseconds unless otherwise stated.
 
-Configuration comparison:
+Measured values are accumulated at event boundaries in the timed SystemC model.
 
-| Config | FPS | Frame Energy | Avg Power |
-|--------|-----|-------------|-----------|
-| 1080p@200MHz | 96.5 | 904,703.3 nJ | 87,259.2 mW |
-| 4K@200MHz | 24.1 | 3,618,813.4 nJ | 87,259.2 mW |
-| 1080p@400MHz | 192.9 | 452,351.7 nJ | 87,259.2 mW |
-| 720p@200MHz | 217.0 | 402,090.4 nJ | 87,259.2 mW |
+Modeled values are architecture assumptions and retain their profile provenance.
 
-### 4.3 Architecture Sweeps (`tb_arch_sweep`)
+Unavailable values indicate that the required profile or event was not supplied.
 
-Parameter sweeps across resolution, clock frequency, and block enables:
+An unavailable value is emitted with an explicit `unavailable` marker and is never replaced by an invented zero.
 
-```
-=== Starting Sweep: resolution_sweep ===
-Total points: 5
+### 5.1 Frame metrics
 
-[1/5] resolution=640x480    ... OK (FPS=651.0, Power=7.4mW)
-[2/5] resolution=1280x720   ... OK (FPS=217.0, Power=22.2mW)
-[3/5] resolution=1920x1080  ... OK (FPS=96.5, Power=50.0mW)
-[4/5] resolution=2560x1440  ... OK (FPS=54.3, Power=88.9mW)
-[5/5] resolution=3840x2160   ... OK (FPS=24.1, Power=200.0mW)
+| Metric | Equation | Unit | Provenance |
+| `first_output_latency_cycles` | `ceil((first_output_time - first_input_time) / cycle_period)` | cycles | derived from measured timestamps |
+| `first_output_latency_us` | `(first_output_time - first_input_time) / 1us` | microseconds | derived from measured timestamps |
+| `frame_cycles` | `ceil((last_output_time - first_input_time) / cycle_period)` | cycles | derived from measured timestamps |
+| `achieved_pixels_per_cycle` | `input_raw_logical_pixels / frame_cycles` | pixels/cycle | derived from measured events |
+| `input_bandwidth_mbps` | `input_bytes * 8 / frame_time_us` | Mbps | derived from measured logical bytes |
+| `output_bandwidth_mbps` | `output_bytes * 8 / frame_time_us` | Mbps | derived from measured logical bytes |
+| `input_bytes`, `output_bytes` | logical samples crossing ideal ISP boundaries | bytes | measured |
 
---- Energy Efficiency ---
-Best FPS/mW: 87.879
+The bandwidth fields describe internal ideal-boundary traffic.
 
---- Bottleneck Distribution ---
-bandwidth: 2 configs (40.0%)
-compute: 3 configs (60.0%)
+They are not measurements of external interfaces or memory systems.
+
+### 5.2 Stage metrics
+
+Each stage reports input lines, output lines, logical pixels, processing beats, active cycles, bypass cycles, input-starved cycles, output-blocked cycles, completion-wait cycles, utilization, and effective II when the required events exist.
+
+`processing_beats` is the sum of `ceil(line_pixels / PPC)` over issued output lines.
+
+`active_cycles` is the modeled compute demand for explicitly enabled issues accumulated at measured issue events.
+
+`bypass_cycles` records service demand for explicitly disabled issues.
+
+`input_starved_cycles`, `output_blocked_cycles`, and `completion_wait_cycles` are measured at their corresponding events.
+
+Stage durations can overlap for in-flight lines and are not a cycle partition.
+
+`utilization` is `min(1, active_cycles / stage_observation_cycles)` for enabled stages and zero for bypass.
+
+`effective_ii` is `issue_window_cycles / processing_beats`.
+
+Workload operation counts remain unavailable without an explicit modeled workload profile.
+
+### 5.3 Optional local-memory metrics
+
+If valid local-memory profiles are supplied for logical pixel count $P$, the model derives:
+
+```text
+read_cycles = ceil(reads_per_pixel * P / read_ports) * access_cycles
+write_cycles = ceil(writes_per_pixel * P / write_ports) * access_cycles
+memory_service_cycles = max(read_cycles, write_cycles)
+line_issue_cycles = max(compute_cycles, memory_service_cycles)
+memory_wait_cycles = max(0, memory_service_cycles - compute_cycles)
 ```
 
-### 4.4 DMA Integration (`tb_dma_integration`)
+Zero demand has zero cycles and does not require a port.
 
-```
-Input DMA:
-  Bus width: 64 bits
-  Burst length: 16 beats
-  Read latency: 4 cycles
-  Max outstanding: 4 transactions
-  Bandwidth limit: 800 Mbps
-```
+Memory service and wait metrics remain unavailable when either required profile is absent.
 
-Features: DMA burst transaction modeling, bandwidth throttling on input/output streams, local memory (line buffer) models.
+### 5.4 Link metrics
 
-### 4.5 Bottleneck Classification
+A link is a bounded preallocated `line_channel`.
 
-The `arch_metrics_collector::analyze_bottleneck()` method classifies the dominant bottleneck per frame:
+Its depth is the only link architecture parameter.
 
-| Type | Trigger condition |
-|------|-----------------|
-| `INPUT_BANDWIDTH` | starved_cycles > active_cycles |
-| `COMPUTE_II` | Default when no starvation/backpressure |
-| `MEMORY_PORT` | memory_wait_cycles > 0 |
-| `DOWNSTREAM_BACKPRESSURE` | blocked_cycles > active_cycles |
-| `OUTPUT_BANDWIDTH` | Output DMA saturation |
-| `FRAME_BARRIER` | Statistical blocks waiting |
+`published_lines`, `read_lines`, and `released_lines` are measured token events.
 
----
+`logical_bytes` is the byte total represented by valid samples in published or read tokens.
 
-## 5. Timed vs Untimed Mode
+`occupancy_high_water` is measured in slots.
 
-The clock architecture uses a **pointer-based pattern** — every block declares `sc_in<bool>* clk = nullptr;` and only uses it when `m_hw->timed_mode == true`:
+Producer and consumer wait event counts and completed wait durations are measured at their corresponding credit or data events.
 
-```cpp
-// Block header (.h)
-sc_in<bool>* clk = nullptr;
+## 6. Report Contract
 
-// Block implementation (.cpp)
-bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
-if (timed_mode) {
-    wait(clk->posedge_event());  // synchronize to clock edge before reading
-    // ... processing ...
-    wait(clk->posedge_event());  // synchronize after output
-}
-```
+The report contains frame metrics, 18 stage records, 18 link records, availability markers, units, and provenance.
+The report is written only when the caller supplies an explicit path through `--metrics <caller-file>` or the equivalent `write_metrics(file)` API.
+Sweep commands present results on standard output and do not write metric or sweep CSV artifacts.
+Default test execution writes no source artifacts and no report.
 
-The pipeline binds the clock to all blocks via a single call:
-
-```cpp
-sc_isp_pipeline pipeline("isp", cfg, lsc_lut, raw_in_fifo, yuv_out_fifo,
-                          12, cfa_types::RGGB, &hw);
-sc_clock* clk = new sc_clock("clk", sc_time(5.0, SC_NS), 0.5);  // 200 MHz
-pipeline.bind_clock(clk);
-```
-
----
-
-## 6. Metrics Output
-
-```
-output/metrics/                         # Layers 1 & 2 (always generated when enabled)
-├── block_<name>.csv                   # Per-block latency
-├── block_<name>_summary.txt
-├── <upstream>_to_<downstream>.csv     # Boundary throughput
-└── <upstream>_to_<downstream>_summary.txt
-
-output/arch_metrics/                   # Layer 3 (timed mode)
-├── frame_metrics.csv
-├── block_metrics.csv
-├── link_metrics.csv
-├── bottleneck_report.txt
-├── power_metrics.csv
-└── power_summary.txt
-```
-
----
+The model does not report external interface capacity, arbitration, or operation counts without their explicit profiles.
 
 ## 7. Known Characteristics
 
-1. **Latency = 0 in untimed mode** — without a bound clock, `sc_time_stamp()` does not advance. This is expected. Enable timed mode for real cycle-accurate timing.
+Synthetic patterns remain useful for deterministic functional comparisons.
 
-2. **Synthetic test patterns** — individual block tests use deterministic synthetic patterns (ramps, gradients) for bit-exact verification.
+Statistical stages such as AWB and AEC depend on frame input and configuration.
 
-3. **AWB/AEC convergence** — statistical blocks (AWB, AEC) need at least one full frame to converge on real-world input. For bit-exact first-frame parity with the reference, use `sc_isp_pipeline::precompute_awb_gains()` before `sc_start()`.
+FIFO sizing remains an architecture configuration concern for line-channel execution.
 
-4. **FIFO sizing** — all inter-block FIFOs default to depth 1024. For very large images (e.g., 4K), consider increasing FIFO depth or enabling timed mode with backpressure modeling.
+Integer metric arithmetic is overflow checked.
 
-5. **Metrics overhead** — enabling metrics collection adds ~5–10% simulation time due to per-token timestamps and CSV I/O. Disable for pure functional runs.
+Invalid zero divisors and overflowing values are errors rather than wrapped results.
 
----
+## 8. Conclusion
 
-## 8. Quick Test Commands
+The active model provides a line-granular architecture snapshot with explicit equations, units, availability, and provenance.
 
-```bash
-cd /home/hoangquan/workspace/CDC-VP
+The byte-exact untimed oracle provides the functional output reference.
 
-# Build everything
-./components/isp_tlm/systemc/build.sh
+The focused `tb_arch_pipeline` smoke exercises the documented explicit-report path.
 
-# Run pipeline tests
-./build/bremen/components/isp_tlm/systemc/tb_pipeline
-./build/bremen/components/isp_tlm/systemc/tb_d65_pipeline
-./build/bremen/components/isp_tlm/systemc/tb_arch_pipeline
-
-# Run all registered tests
-cd build/bremen && ctest -R '^tb_' --output-on-failure
-
-# Run in parallel
-cd build/bremen && ctest -j$(nproc) --output-on-failure
-
-# Post-process metrics
-python3 components/isp_tlm/systemc/tb_utils/metrics_summary.py
-```
-
----
-
-## 9. Conclusion
-
-The SystemC ISP Architecture Model is **production-ready** for:
-
-1. **Functional verification** — all 17 blocks and full pipeline verified (MSE = 0)
-2. **Architecture exploration** — power estimation, parameter sweeps, bottleneck analysis
-3. **Integration testing** — DMA and memory models functional
-4. **Performance estimation** — FPS and power breakdowns at configurable resolution/frequency
-5. **RTL correlation** — cycle-accurate timing in timed mode enables comparison against RTL simulation
-
-The model accurately represents hardware behavior and is suitable for design space exploration, performance bottleneck identification, power and energy estimation, and RTL vs SystemC correlation.
+The documented evidence is intentionally bounded to that focused smoke and the retained functional evaluation material.

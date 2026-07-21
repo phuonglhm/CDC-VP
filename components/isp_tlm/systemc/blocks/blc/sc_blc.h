@@ -19,11 +19,9 @@ using namespace sc_core;
 
 #include <systemc>
 #include <cstdint>
-#include <algorithm>
 
 #include "../../../blocks/blc/include/blc.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_blc) {
 public:
@@ -59,13 +57,10 @@ public:
         , m_width(width)
         , m_height(height)
         , m_hw(hw)
-        , m_cycles_per_pixel(1)
-        , m_metrics("blc") {
+        , m_cycles_per_pixel(1) {
         SC_THREAD(process_stream);
     }
 
-    // Block-level metrics collector
-    sc_block_metrics<std::uint16_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }

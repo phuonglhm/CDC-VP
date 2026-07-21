@@ -19,12 +19,9 @@ using namespace sc_core;
 #include <systemc>
 #include <cstdint>
 #include <vector>
-#include <deque>
 
 #include "../../../blocks/lsc/include/lsc.h"
-#include "../../../blocks/blc/include/blc.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_lsc) {
 public:
@@ -57,12 +54,10 @@ public:
            const hw_params* hw = nullptr)
         : sc_module(name), m_cfg(cfg), m_lsc_lut(lsc_lut), m_bayer(bayer),
           m_bit_depth(bit_depth), m_width(width), m_height(height),
-          m_hw(hw), m_cycles_per_pixel(1), m_metrics("lsc") {
+          m_hw(hw), m_cycles_per_pixel(1) {
         SC_THREAD(process_stream);
     }
 
-    // Block-level metrics collector
-    sc_block_metrics<std::uint16_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }

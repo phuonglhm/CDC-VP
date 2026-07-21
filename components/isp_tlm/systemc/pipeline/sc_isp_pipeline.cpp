@@ -1,23 +1,12 @@
 #include "sc_isp_pipeline.h"
 
 #include <algorithm>
-#include <array>
-#include <cmath>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <iomanip>
-#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <utility>
 
 namespace {
-
-sc_isp_pipeline::MetricsRequest& pending_metrics_request() {
-    static sc_isp_pipeline::MetricsRequest request;
-    return request;
-}
 
 std::uint32_t safe_dimension(std::uint32_t value) {
     return value == 0 ? 1u : value;
@@ -33,35 +22,7 @@ std::uint32_t safe_samples(std::uint64_t value) {
     return static_cast<std::uint32_t>(value);
 }
 
-std::uint32_t cycles_from_time(sc_core::sc_time duration,
-                               sc_core::sc_time cycle) {
-    if (duration <= sc_core::SC_ZERO_TIME || cycle <= sc_core::SC_ZERO_TIME) {
-        return 0;
-    }
-    const double value = duration.to_seconds() / cycle.to_seconds();
-    return static_cast<std::uint32_t>(std::ceil(value));
-}
-
 }  // namespace
-
-void sc_isp_pipeline::set_metrics_request(
-    bool enable, const std::string& output_dir,
-    const std::vector<std::string>* skip) {
-    MetricsRequest& request = pending_metrics_request();
-    request.enable = enable;
-    request.output_dir = output_dir;
-    request.skip = skip;
-}
-
-void sc_isp_pipeline::clear_metrics_request() {
-    pending_metrics_request() = MetricsRequest{};
-}
-
-sc_isp_pipeline::MetricsRequest sc_isp_pipeline::consume_metrics_request() {
-    MetricsRequest request = pending_metrics_request();
-    pending_metrics_request() = MetricsRequest{};
-    return request;
-}
 
 sc_isp_pipeline::sc_isp_pipeline(
     sc_core::sc_module_name name, const isp_config& cfg,
@@ -69,21 +30,19 @@ sc_isp_pipeline::sc_isp_pipeline(
     sc_core::sc_fifo<std::uint16_t>* raw_in_fifo,
     sc_core::sc_fifo<std::uint8_t>* yuv_out_fifo,
     std::uint8_t input_bit_depth, cfa_types bayer_pattern,
-    const hw_params* hw, const isp_arch_config* arch)
+    const isp_arch_config* arch)
     : sc_core::sc_module(name),
       raw_in(raw_in_fifo),
       yuv_out(yuv_out_fifo),
       m_cfg(cfg),
       m_lsc_lut(lsc_lut),
       m_arch_config(),
-      m_hw_params(hw != nullptr ? *hw : hw_params{}),
       m_input_bit_depth(input_bit_depth == 0 ? 12 : input_bit_depth),
       m_bayer_pattern(bayer_pattern),
       m_feedback(cfg.awb.is_enable, cfg.aec.is_enable,
                  cfg.awb.is_enable && cfg.wb.is_enable,
                  cfg.aec.is_enable && cfg.dg.is_auto),
-      m_dg_gain_state(cfg.dg.current_gain),
-      m_arch_metrics("output/arch_metrics") {
+      m_dg_gain_state(cfg.dg.current_gain) {
     if (raw_in == nullptr || yuv_out == nullptr) {
         throw std::invalid_argument("sc_isp_pipeline requires raw and YUV FIFOs");
     }
@@ -91,6 +50,9 @@ sc_isp_pipeline::sc_isp_pipeline(
     m_arch_config.init_defaults();
     if (arch != nullptr) {
         m_arch_config = *arch;
+    }
+    if (!m_arch_config.is_valid()) {
+        throw std::invalid_argument("invalid ISP architecture configuration");
     }
 
     m_width = safe_dimension(m_cfg.scale.in_width);
@@ -107,6 +69,8 @@ sc_isp_pipeline::sc_isp_pipeline(
     m_cfg.scale.out_width = static_cast<std::uint16_t>(m_scaled_width);
     m_cfg.scale.out_height = static_cast<std::uint16_t>(m_scaled_height);
     m_bit_depth = m_cfg.ccm.bit_depth == 0 ? 12 : m_cfg.ccm.bit_depth;
+    m_logical_input_pixels =
+        isp_tlm::checked_mul(static_cast<std::uint64_t>(m_width), m_height);
 
     const std::uint32_t half_width = ceil_half(m_scaled_width);
     const std::uint32_t half_height = ceil_half(m_scaled_height);
@@ -127,13 +91,6 @@ sc_isp_pipeline::sc_isp_pipeline(
         m_lsc_lut.assign(8192, 1.0f);
     }
 
-    const MetricsRequest request = consume_metrics_request();
-    enable_metrics = request.enable;
-    metrics_output_dir = request.output_dir;
-    if (request.skip != nullptr) {
-        metrics_skip_blocks = *request.skip;
-    }
-
     init_channels();
     init_stages();
     SC_THREAD(ingress_loop);
@@ -142,35 +99,30 @@ sc_isp_pipeline::sc_isp_pipeline(
 
 sc_isp_pipeline::~sc_isp_pipeline() = default;
 
-void sc_isp_pipeline::bind_clock(sc_core::sc_clock* clk) {
-    (void)clk;
-}
-
 std::size_t sc_isp_pipeline::link_depth(std::size_t link_id) const noexcept {
-    if (link_id >= m_arch_config.links.size()) {
-        return std::max<std::size_t>(1, m_hw_params.fifo_depth);
-    }
-    const std::size_t configured = m_arch_config.links[link_id].depth;
-    return std::max<std::size_t>(1, configured == 0 ? m_hw_params.fifo_depth : configured);
+    return m_arch_config.links[link_id].depth;
 }
 
 isp_tlm::stage_timing sc_isp_pipeline::stage_timing(std::size_t block_id) const {
+    const block_arch_config& block = m_arch_config.blocks[block_id];
     isp_tlm::stage_timing timing;
-    if (block_id < m_arch_config.blocks.size()) {
-        const block_arch_config& block = m_arch_config.blocks[block_id];
-        timing.compute_latency_cycles = std::max<std::uint32_t>(1, block.pipeline_latency);
-        timing.pixel_ii = std::max<std::uint32_t>(1, block.initiation_interval);
-        timing.pixels_per_cycle = std::max<std::uint32_t>(1, block.pixel_per_cycle);
-        timing.max_in_flight_lines = std::max<std::uint32_t>(
-            2, block.line_buffer_rows + block.line_buffer_banks + 1);
-        timing.source = isp_tlm::timing_source::assumed;
+    timing.pipeline_latency_cycles = block.pipeline_latency_cycles;
+    timing.pixel_initiation_interval_cycles =
+        block.pixel_initiation_interval_cycles;
+    timing.pixels_per_cycle = block.pixels_per_cycle;
+    timing.max_in_flight_lines = block.max_in_flight_lines;
+    timing.cycle_period = sc_core::sc_time(
+        1000.0 / static_cast<double>(m_arch_config.clock_freq_mhz),
+        sc_core::SC_NS);
+    if (block.workload.available) {
+        timing.workload = block.workload;
     }
-    const float cycle_ns = m_hw_params.cycle_ns() > 0.0f
-                               ? m_hw_params.cycle_ns()
-                               : 1.0f;
-    timing.cycle_period = sc_core::sc_time(cycle_ns, sc_core::SC_NS);
+    if (block.local_memory.available) {
+        timing.local_memory = block.local_memory;
+    }
     return timing;
 }
+
 
 void sc_isp_pipeline::init_channels() {
     const std::uint32_t raw_samples = m_width;
@@ -188,7 +140,7 @@ void sc_isp_pipeline::init_channels() {
             name, depth, samples);
     };
 
-    m_line_ingress = u16("line_ingress", link_depth(0), raw_samples);
+    m_line_ingress = u16("line_ingress", m_height, raw_samples);
     m_norm_blc = u16("line_norm_blc", link_depth(0), raw_samples);
     m_blc_dpc = u16("line_blc_dpc", link_depth(1), raw_samples);
     m_dpc_lsc = u16("line_dpc_lsc", link_depth(2), raw_samples);
@@ -539,30 +491,53 @@ void sc_isp_pipeline::init_stages() {
                std::uint64_t) {
             m_yuv420_kernel.process(in, out, w, h, m_cfg.yuv420);
         }, final_meta, stage_timing(isp_blocks::YUV420));
+    m_input_norm->set_enabled(true);
+    m_blc->set_enabled(m_cfg.blc.is_enable);
+    m_dpc->set_enabled(m_cfg.dpc.is_enable);
+    m_lsc->set_enabled(m_cfg.lsc.is_enable);
+    m_dg->set_enabled(m_cfg.dg.is_enable);
+    m_bnr->set_enabled(m_cfg.bnr.is_enable);
+    m_demosaic->set_enabled(m_cfg.demosaic.is_enable);
+    m_awb->set_enabled(m_cfg.awb.is_enable);
+    m_wb->set_enabled(m_cfg.wb.is_enable);
+    m_ccm->set_enabled(m_cfg.ccm.is_enable);
+    m_gc->set_enabled(m_cfg.gc.is_enable);
+    m_aec->set_enabled(m_cfg.aec.is_enable);
+    m_csc->set_enabled(true);
+    m_cse->set_enabled(m_cfg.cse.is_enable);
+    m_sharpen->set_enabled(m_cfg.sharpen.is_enable);
+    m_2dnr->set_enabled(m_cfg.twodnr.is_enable);
+    m_scale->set_enabled(m_cfg.scale.is_enable);
+    m_yuv420->set_enabled(m_cfg.yuv420.is_enable);
 }
 
 void sc_isp_pipeline::ingress_loop() {
     while (true) {
         const std::uint64_t frame_id = m_next_input_frame++;
-        if (frame_id != 0 && m_feedback.enabled_producers() != 0) {
-            while (!m_feedback.ready(frame_id)) {
-                sc_core::wait(m_feedback.ready_event());
+        if (frame_id != 0) {
+            while (m_completed_frame < frame_id) {
+                sc_core::wait(m_completed_frame_event);
+            }
+            if (m_feedback.enabled_producers() != 0) {
+                while (!m_feedback.ready(frame_id)) {
+                    sc_core::wait(m_feedback.ready_event());
+                }
             }
         }
 
-        bool frame_started = false;
+        m_frame_input_id = frame_id;
+        m_frame_has_input = false;
+        m_frame_input_bytes = 0;
         for (std::uint32_t row = 0; row < m_height; ++row) {
             auto token = m_line_ingress->reserve_result();
             auto view = token.view();
             for (std::uint32_t sample = 0; sample < m_width; ++sample) {
                 const std::uint16_t value = raw_in->read();
-                if (!frame_started) {
-                    const sc_core::sc_time start = sc_core::sc_time_stamp();
-                    m_frame_start_times[frame_id] = start;
-                    if (frame_id == 0) {
-                        m_frame_start_time = start;
-                    }
-                    frame_started = true;
+                if (!m_frame_has_input) {
+                    m_frame_first_input_time = sc_core::sc_time_stamp();
+                    m_frame_input_bytes = isp_tlm::checked_mul(
+                        m_logical_input_pixels, sizeof(std::uint16_t));
+                    m_frame_has_input = true;
                 }
                 view[sample] = value;
             }
@@ -571,7 +546,8 @@ void sc_isp_pipeline::ingress_loop() {
             meta.row = row;
             meta.width_pixels = m_width;
             meta.valid_samples = m_width;
-            meta.dst_offset_bytes = row * m_width * sizeof(std::uint16_t);
+            meta.dst_offset_bytes = static_cast<std::uint32_t>(
+                static_cast<std::size_t>(row) * m_width * sizeof(std::uint16_t));
             meta.plane = isp_tlm::line_plane::raw;
             meta.start_of_frame = row == 0;
             meta.end_of_frame = row + 1 == m_height;
@@ -584,52 +560,187 @@ void sc_isp_pipeline::egress_loop() {
     while (true) {
         std::uint64_t frame_id = 0;
         bool have_frame = false;
+        bool metadata_valid = true;
+        m_frame_has_output = false;
+        m_frame_output_bytes = 0;
         std::fill(m_sink_frame.begin(), m_sink_frame.end(), 0u);
 
         for (std::uint32_t row = 0; row < m_final_rows; ++row) {
             auto token = m_line_egress->read();
             const isp_tlm::line_meta& meta = token.meta();
+            const sc_core::sc_time line_time = sc_core::sc_time_stamp();
             if (!have_frame) {
                 frame_id = meta.frame_id;
                 have_frame = true;
-                const auto start = m_frame_start_times.find(frame_id);
-                if (m_arch_metrics_enabled) {
-                    m_arch_metrics.start_frame(frame_id, m_width, m_height);
-                    if (start != m_frame_start_times.end()) {
-                        m_arch_metrics.record_first_input(start->second);
-                    }
-                    m_arch_metrics.record_first_output(sc_core::sc_time_stamp());
-                }
+            }
+            if (meta.frame_id != frame_id || meta.frame_id != m_frame_input_id ||
+                meta.row != row ||
+                meta.start_of_frame != (row == 0) ||
+                meta.end_of_frame != (row + 1 == m_final_rows) ||
+                meta.valid_samples == 0 || meta.valid_samples > token.view().size()) {
+                metadata_valid = false;
+                SC_REPORT_ERROR("sc_isp_pipeline",
+                                "invalid egress frame/line metadata");
             }
 
             const auto view = token.view();
             const std::size_t offset = meta.dst_offset_bytes;
-            const std::size_t valid =
-                std::min<std::size_t>(meta.valid_samples, view.size());
+            const std::size_t valid = meta.valid_samples;
             if (offset > m_sink_frame.size() ||
                 valid > m_sink_frame.size() - offset) {
+                metadata_valid = false;
                 SC_REPORT_ERROR("sc_isp_pipeline",
                                 "egress line exceeds sink frame storage");
                 continue;
             }
             std::copy_n(view.data(), valid, m_sink_frame.data() + offset);
+            if (!m_frame_has_output) {
+                m_frame_first_output_time = line_time;
+                m_frame_has_output = true;
+            }
+            m_frame_last_output_time = line_time;
+            m_frame_output_bytes =
+                isp_tlm::checked_add(m_frame_output_bytes, valid);
         }
 
         for (const std::uint8_t value : m_sink_frame) {
             yuv_out->write(value);
         }
 
-        const sc_core::sc_time end = sc_core::sc_time_stamp();
-        const auto start = m_frame_start_times.find(frame_id);
-        if (start != m_frame_start_times.end()) {
-            m_frame_start_time = start->second;
-            m_frame_start_times.erase(start);
-        }
-        m_frame_end_time = end;
-        if (m_arch_metrics_enabled) {
-            m_arch_metrics.record_last_output(end);
-            m_arch_metrics.end_frame();
-        }
+        isp_tlm::raw_pipeline_metrics raw;
+        raw.frame.frame_id = frame_id;
+        raw.frame.width = m_width;
+        raw.frame.height = m_height;
+        raw.frame.logical_pixels = m_logical_input_pixels;
+        raw.frame.input_bytes = m_frame_input_bytes;
+        raw.frame.output_bytes = m_frame_output_bytes;
+        raw.frame.input_bytes_available = m_frame_has_input;
+        raw.frame.output_bytes_available = m_frame_has_output && metadata_valid;
+        raw.frame.cycle_period = stage_timing(isp_blocks::INPUT_NORMALIZER).cycle_period;
+        raw.frame.first_input_time = m_frame_first_input_time;
+        raw.frame.first_output_time = m_frame_first_output_time;
+        raw.frame.last_output_time = m_frame_last_output_time;
+        raw.frame.has_first_input = m_frame_has_input;
+        raw.frame.has_first_output = m_frame_has_output && metadata_valid;
+        raw.frame.has_last_output = m_frame_has_output && metadata_valid;
+        const bool valid_frame_times =
+            raw.frame.has_first_input && raw.frame.has_last_output &&
+            raw.frame.last_output_time >= raw.frame.first_input_time;
+        const std::uint64_t frame_cycles =
+            valid_frame_times
+                ? isp_tlm::time_to_cycles(
+                      raw.frame.last_output_time - raw.frame.first_input_time,
+                      raw.frame.cycle_period)
+                : 0;
+
+
+        const auto add_block = [this, &raw, frame_cycles](const char* name,
+                                                           const auto& stage,
+                                                           std::size_t block_id) {
+            const auto& metric = stage->metrics();
+            const auto timing = stage_timing(block_id);
+            isp_tlm::raw_block_metrics block;
+            block.name = name;
+            block.enabled = stage->enabled();
+            block.input_lines = metric.input_lines;
+            block.input_logical_pixels = metric.input_logical_pixels;
+            block.output_logical_pixels = metric.output_logical_pixels;
+            block.accepted_input_beats = metric.accepted_input_beats;
+            block.produced_output_beats = metric.produced_output_beats;
+            block.output_lines = metric.output_lines;
+            block.logical_pixels = metric.logical_pixels;
+            block.processing_beats = metric.processing_beats;
+            block.active_cycles = metric.active_cycles;
+            block.bypass_cycles = metric.bypass_cycles;
+            block.input_starved_cycles =
+                isp_tlm::time_to_cycles(metric.input_starved_time, timing.cycle_period);
+            block.output_blocked_cycles =
+                isp_tlm::time_to_cycles(metric.output_blocked_time, timing.cycle_period);
+            block.completion_wait_cycles =
+                isp_tlm::time_to_cycles(metric.completion_wait_time, timing.cycle_period);
+            block.memory_wait_cycles = metric.memory_wait_cycles;
+            block.memory_wait_available = metric.memory_wait_available;
+            block.memory_wait_provenance = metric.memory_wait_provenance;
+            block.issue_window_cycles = metric.issue_window_cycles;
+            block.observation_cycles = frame_cycles;
+            block.operations = metric.operations;
+            raw.blocks.push_back(std::move(block));
+        };
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::INPUT_NORMALIZER], m_input_norm,
+                  isp_blocks::INPUT_NORMALIZER);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::BLC], m_blc, isp_blocks::BLC);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::DPC], m_dpc, isp_blocks::DPC);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::LSC], m_lsc, isp_blocks::LSC);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::DG], m_dg, isp_blocks::DG);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::BNR], m_bnr, isp_blocks::BNR);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::DEMOSAIC], m_demosaic, isp_blocks::DEMOSAIC);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::AWB], m_awb, isp_blocks::AWB);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::WB], m_wb, isp_blocks::WB);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::CCM], m_ccm, isp_blocks::CCM);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::GC], m_gc, isp_blocks::GC);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::AEC], m_aec, isp_blocks::AEC);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::CSC], m_csc, isp_blocks::CSC);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::CSE], m_cse, isp_blocks::CSE);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::SHARPEN], m_sharpen, isp_blocks::SHARPEN);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::TWO_DNR], m_2dnr, isp_blocks::TWO_DNR);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::SCALE], m_scale, isp_blocks::SCALE);
+        add_block(isp_blocks::BLOCK_NAMES[isp_blocks::YUV420], m_yuv420, isp_blocks::YUV420);
+
+        const auto add_link = [&raw](const char* name, const auto& link) {
+            const auto metric = link->snapshot();
+            isp_tlm::raw_link_metrics result;
+            result.name = name;
+            result.published_lines = metric.published;
+            result.read_lines = metric.read;
+            result.released_lines = metric.released;
+            result.logical_bytes = metric.logical_bytes;
+            result.occupancy_high_water = metric.occupancy_high_water;
+            result.producer_wait_events = metric.producer_wait_events;
+            result.consumer_wait_events = metric.consumer_wait_events;
+            result.producer_wait = metric.producer_wait;
+            result.consumer_wait = metric.consumer_wait;
+            result.producer_wait_cycles =
+                isp_tlm::time_to_cycles(metric.producer_wait, raw.frame.cycle_period);
+            result.consumer_wait_cycles =
+                isp_tlm::time_to_cycles(metric.consumer_wait, raw.frame.cycle_period);
+            raw.links.push_back(std::move(result));
+        };
+        add_link(isp_links::LINK_NAMES[0], m_norm_blc);
+        add_link(isp_links::LINK_NAMES[1], m_blc_dpc);
+        add_link(isp_links::LINK_NAMES[2], m_dpc_lsc);
+        add_link(isp_links::LINK_NAMES[3], m_lsc_dg);
+        add_link(isp_links::LINK_NAMES[4], m_dg_bnr);
+        add_link(isp_links::LINK_NAMES[5], m_bnr_demosaic);
+        add_link(isp_links::LINK_NAMES[6], m_demosaic_awb);
+        add_link(isp_links::LINK_NAMES[7], m_awb_wb);
+        add_link(isp_links::LINK_NAMES[8], m_wb_ccm);
+        add_link(isp_links::LINK_NAMES[9], m_ccm_gc);
+        add_link(isp_links::LINK_NAMES[10], m_gc_aec);
+        add_link(isp_links::LINK_NAMES[11], m_aec_csc);
+        add_link(isp_links::LINK_NAMES[12], m_csc_cse);
+        add_link(isp_links::LINK_NAMES[13], m_cse_sharpen);
+        add_link(isp_links::LINK_NAMES[14], m_sharpen_2dnr);
+        add_link(isp_links::LINK_NAMES[15], m_2dnr_scale);
+        add_link(isp_links::LINK_NAMES[16], m_scale_yuv420);
+        add_link(isp_links::LINK_NAMES[17], m_line_egress);
+        m_latest_metrics = isp_tlm::derive_metrics(raw);
+        m_has_latest_metrics = true;
+        m_input_norm->reset_metrics();
+        m_blc->reset_metrics(); m_dpc->reset_metrics(); m_lsc->reset_metrics();
+        m_dg->reset_metrics(); m_bnr->reset_metrics(); m_demosaic->reset_metrics();
+        m_awb->reset_metrics(); m_wb->reset_metrics(); m_ccm->reset_metrics();
+        m_gc->reset_metrics(); m_aec->reset_metrics(); m_csc->reset_metrics();
+        m_cse->reset_metrics(); m_sharpen->reset_metrics(); m_2dnr->reset_metrics();
+        m_scale->reset_metrics(); m_yuv420->reset_metrics();
+        m_line_ingress->reset_metrics(); m_norm_blc->reset_metrics();
+        m_blc_dpc->reset_metrics(); m_dpc_lsc->reset_metrics(); m_lsc_dg->reset_metrics();
+        m_dg_bnr->reset_metrics(); m_bnr_demosaic->reset_metrics(); m_demosaic_awb->reset_metrics();
+        m_awb_wb->reset_metrics(); m_wb_ccm->reset_metrics(); m_ccm_gc->reset_metrics();
+        m_gc_aec->reset_metrics(); m_aec_csc->reset_metrics(); m_csc_cse->reset_metrics();
+        m_cse_sharpen->reset_metrics(); m_sharpen_2dnr->reset_metrics(); m_2dnr_scale->reset_metrics();
+        m_scale_yuv420->reset_metrics(); m_line_egress->reset_metrics();
+        m_completed_frame = frame_id + 1;
+        m_completed_frame_event.notify(sc_core::SC_ZERO_TIME);
     }
 }
 
@@ -660,266 +771,10 @@ void sc_isp_pipeline::prime_awb_gains(float r_gain, float b_gain) {
     m_last_awb_b_gain = b_gain;
 }
 
-double sc_isp_pipeline::estimate_frame_time_us() const {
-    if (get_frame_time() > sc_core::SC_ZERO_TIME) {
-        return get_frame_time_us();
-    }
-    double cycles = 0.0;
-    for (std::size_t id = 0; id < m_arch_config.blocks.size(); ++id) {
-        const isp_tlm::stage_timing timing = stage_timing(id);
-        const std::uint32_t lines =
-            id == isp_blocks::YUV420 ? m_final_rows : m_height;
-        const std::uint32_t width =
-            (id == isp_blocks::SCALE || id == isp_blocks::YUV420)
-                ? m_scaled_width
-                : m_width;
-        const std::uint32_t ppc = std::max<std::uint32_t>(1, timing.pixels_per_cycle);
-        const std::uint64_t transfer_cycles =
-            (static_cast<std::uint64_t>(width) + ppc - 1u) / ppc;
-        const std::uint64_t issue_cycles =
-            std::max<std::uint64_t>(transfer_cycles, timing.pixel_ii);
-        cycles += static_cast<double>(lines) * issue_cycles;
-    }
-    const double cycle_ns = m_hw_params.cycle_ns() > 0.0f ? m_hw_params.cycle_ns() : 1.0;
-    return cycles * cycle_ns / 1000.0;
+isp_tlm::pipeline_metrics sc_isp_pipeline::metrics() const {
+    return m_has_latest_metrics ? m_latest_metrics : isp_tlm::pipeline_metrics{};
 }
 
-double sc_isp_pipeline::estimate_fps() const {
-    const double frame_us = estimate_frame_time_us();
-    return frame_us > 0.0 ? 1.0e6 / frame_us : 0.0;
-}
-
-std::size_t sc_isp_pipeline::metrics_sample_count() const noexcept {
-    const std::array<const isp_tlm::line_channel<std::uint16_t>*, 13> u16_links = {
-        m_line_ingress.get(), m_norm_blc.get(), m_blc_dpc.get(), m_dpc_lsc.get(),
-        m_lsc_dg.get(), m_dg_bnr.get(), m_bnr_demosaic.get(), m_demosaic_awb.get(),
-        m_awb_wb.get(), m_wb_ccm.get(), m_ccm_gc.get(), m_gc_aec.get(),
-        m_aec_csc.get()};
-    const std::array<const isp_tlm::line_channel<std::uint8_t>*, 7> u8_links = {
-        m_csc_cse.get(), m_cse_sharpen.get(), m_sharpen_2dnr.get(), m_2dnr_scale.get(),
-        m_scale_yuv420.get(), m_line_egress.get(), nullptr};
-    std::size_t total = 0;
-    for (const auto* link : u16_links) {
-        if (link != nullptr) {
-            total += link->snapshot().published;
-        }
-    }
-    for (const auto* link : u8_links) {
-        if (link != nullptr) {
-            total += link->snapshot().published;
-        }
-    }
-    return total;
-}
-
-std::size_t sc_isp_pipeline::block_metrics_sample_count() const noexcept {
-    std::size_t total = 0;
-    const auto add = [&total](const auto& stage) {
-        if (stage != nullptr) {
-            total += stage->metrics().output_lines;
-        }
-    };
-    add(m_input_norm);
-    add(m_blc);
-    add(m_dpc);
-    add(m_lsc);
-    add(m_dg);
-    add(m_bnr);
-    add(m_demosaic);
-    add(m_awb);
-    add(m_wb);
-    add(m_ccm);
-    add(m_gc);
-    add(m_aec);
-    add(m_csc);
-    add(m_cse);
-    add(m_sharpen);
-    add(m_2dnr);
-    add(m_scale);
-    add(m_yuv420);
-    return total;
-}
-
-bool sc_isp_pipeline::dump_pipeline_metrics() const {
-    std::error_code error;
-    std::filesystem::create_directories(metrics_output_dir, error);
-    std::ofstream output(metrics_output_dir + "/line_links.csv");
-    if (!output) {
-        return false;
-    }
-    output << "link,published,read,released,occupancy_high_water,blocked_producers,blocked_consumers\n";
-    std::size_t index = 0;
-    const auto dump = [&output, &index](const auto* link) {
-        if (link == nullptr) {
-            return;
-        }
-        const auto snapshot = link->snapshot();
-        output << index++ << ',' << snapshot.published << ',' << snapshot.read << ','
-               << snapshot.released << ',' << snapshot.occupancy_high_water << ','
-               << snapshot.blocked_producers << ',' << snapshot.blocked_consumers << '\n';
-    };
-    dump(m_norm_blc.get());
-    dump(m_blc_dpc.get());
-    dump(m_dpc_lsc.get());
-    dump(m_lsc_dg.get());
-    dump(m_dg_bnr.get());
-    dump(m_bnr_demosaic.get());
-    dump(m_demosaic_awb.get());
-    dump(m_awb_wb.get());
-    dump(m_wb_ccm.get());
-    dump(m_ccm_gc.get());
-    dump(m_gc_aec.get());
-    dump(m_aec_csc.get());
-    dump(m_csc_cse.get());
-    dump(m_cse_sharpen.get());
-    dump(m_sharpen_2dnr.get());
-    dump(m_2dnr_scale.get());
-    dump(m_scale_yuv420.get());
-    dump(m_line_egress.get());
-    return true;
-}
-
-bool sc_isp_pipeline::dump_all_block_metrics() const {
-    std::error_code error;
-    std::filesystem::create_directories(metrics_output_dir, error);
-    std::ofstream output(metrics_output_dir + "/line_stages.csv");
-    if (!output) {
-        return false;
-    }
-    output << "stage,input_lines,output_lines,issued_lines,retired_lines,"
-              "in_flight_high_water,issue_stalls,input_wait_s,issue_wait_s,"
-              "retire_wait_s,output_wait_s,frames\n";
-    const auto dump = [&output](const char* name, const auto* stage) {
-        if (stage == nullptr) {
-            return;
-        }
-        const auto metrics = stage->metrics();
-        output << name << ',' << metrics.input_lines << ','
-               << metrics.output_lines << ',' << metrics.issued_lines << ','
-               << metrics.retired_lines << ','
-               << metrics.in_flight_high_water << ',' << metrics.issue_stalls << ','
-               << metrics.input_wait.to_seconds() << ','
-               << metrics.issue_wait.to_seconds() << ','
-               << metrics.retire_wait.to_seconds() << ','
-               << metrics.output_wait.to_seconds() << ',' << metrics.frames << '\n';
-    };
-    dump("input_norm", m_input_norm.get());
-    dump("blc", m_blc.get());
-    dump("dpc", m_dpc.get());
-    dump("lsc", m_lsc.get());
-    dump("dg", m_dg.get());
-    dump("bnr", m_bnr.get());
-    dump("demosaic", m_demosaic.get());
-    dump("awb", m_awb.get());
-    dump("wb", m_wb.get());
-    dump("ccm", m_ccm.get());
-    dump("gc", m_gc.get());
-    dump("aec", m_aec.get());
-    dump("csc", m_csc.get());
-    dump("cse", m_cse.get());
-    dump("sharpen", m_sharpen.get());
-    dump("2dnr", m_2dnr.get());
-    dump("scale", m_scale.get());
-    dump("yuv420", m_yuv420.get());
-    return true;
-}
-
-void sc_isp_pipeline::print_metrics_summary() const {
-    std::cout << "[sc_isp_pipeline] line tokens=" << metrics_sample_count()
-              << ", stage outputs=" << block_metrics_sample_count()
-              << ", frame_us=" << std::fixed << std::setprecision(3)
-              << estimate_frame_time_us() << ", fps=" << estimate_fps() << '\n';
-}
-
-void sc_isp_pipeline::enable_arch_metrics(const std::string& output_dir) {
-    m_arch_metrics_enabled = true;
-    m_arch_metrics = arch_metrics_collector(output_dir);
-}
-
-void sc_isp_pipeline::collect_block_metrics() {
-    if (!m_arch_metrics_enabled) {
-        return;
-    }
-    const sc_core::sc_time cycle = sc_core::sc_time(
-        m_hw_params.cycle_ns() > 0.0f ? m_hw_params.cycle_ns() : 1.0f,
-        sc_core::SC_NS);
-    const auto collect = [this, cycle](const char* name, const auto* stage,
-                                       std::size_t block_id) {
-        if (stage == nullptr) {
-            return;
-        }
-        const auto metrics = stage->metrics();
-        const auto timing = stage_timing(block_id);
-        block_perf_metrics block;
-        block.block_name = name;
-        block.frame_id = m_next_input_frame == 0 ? 0 : m_next_input_frame - 1;
-        block.input_beats = metrics.input_lines;
-        block.output_beats = metrics.output_lines;
-        block.effective_ii = static_cast<double>(timing.pixel_ii);
-        block.cycles.active_cycles =
-            metrics.retired_lines * timing.compute_latency_cycles;
-        block.cycles.starved_cycles = cycles_from_time(metrics.input_wait, cycle);
-        block.cycles.blocked_cycles = cycles_from_time(metrics.retire_wait, cycle);
-        block.cycles.stall_cycles =
-            block.cycles.starved_cycles + block.cycles.blocked_cycles +
-            cycles_from_time(metrics.issue_wait, cycle);
-        block.block_utilization = block.cycles.utilization();
-        m_arch_metrics.record_block_metrics(block);
-    };
-    collect("input_norm", m_input_norm.get(), isp_blocks::INPUT_NORMALIZER);
-    collect("blc", m_blc.get(), isp_blocks::BLC);
-    collect("dpc", m_dpc.get(), isp_blocks::DPC);
-    collect("lsc", m_lsc.get(), isp_blocks::LSC);
-    collect("dg", m_dg.get(), isp_blocks::DG);
-    collect("bnr", m_bnr.get(), isp_blocks::BNR);
-    collect("demosaic", m_demosaic.get(), isp_blocks::DEMOSAIC);
-    collect("awb", m_awb.get(), isp_blocks::AWB);
-    collect("wb", m_wb.get(), isp_blocks::WB);
-    collect("ccm", m_ccm.get(), isp_blocks::CCM);
-    collect("gc", m_gc.get(), isp_blocks::GC);
-    collect("aec", m_aec.get(), isp_blocks::AEC);
-    collect("csc", m_csc.get(), isp_blocks::CSC);
-    collect("cse", m_cse.get(), isp_blocks::CSE);
-    collect("sharpen", m_sharpen.get(), isp_blocks::SHARPEN);
-    collect("2dnr", m_2dnr.get(), isp_blocks::TWO_DNR);
-    collect("scale", m_scale.get(), isp_blocks::SCALE);
-    collect("yuv420", m_yuv420.get(), isp_blocks::YUV420);
-}
-
-void sc_isp_pipeline::update_arch_block_metrics(
-    const std::string& block_name, std::uint64_t active_cycles,
-    std::uint64_t starved_cycles, std::uint64_t blocked_cycles) {
-    if (!m_arch_metrics_enabled) {
-        return;
-    }
-    block_perf_metrics metrics;
-    metrics.block_name = block_name;
-    metrics.frame_id = m_next_input_frame == 0 ? 0 : m_next_input_frame - 1;
-    metrics.cycles.active_cycles = active_cycles;
-    metrics.cycles.starved_cycles = starved_cycles;
-    metrics.cycles.blocked_cycles = blocked_cycles;
-    metrics.cycles.stall_cycles = starved_cycles + blocked_cycles;
-    metrics.block_utilization = metrics.cycles.utilization();
-    m_arch_metrics.record_block_metrics(metrics);
-}
-
-void sc_isp_pipeline::update_arch_frame_timing(std::uint64_t) {
-    if (!m_arch_metrics_enabled || m_frame_end_time <= m_frame_start_time) {
-        return;
-    }
-    // Frame timing is recorded by egress_loop as each frame closes.
-}
-
-void sc_isp_pipeline::dump_arch_metrics() const {
-    if (m_arch_metrics_enabled) {
-        m_arch_metrics.dump_all();
-    }
-}
-
-void sc_isp_pipeline::dump_arch_summary() const {
-    if (m_arch_metrics_enabled) {
-        const bottleneck_report report = m_arch_metrics.analyze_bottleneck();
-        std::cout << "[sc_isp_pipeline] bottleneck=" << report.location
-                  << ", severity=" << report.severity << '\n';
-    }
+bool sc_isp_pipeline::write_metrics(const std::string& path) const {
+    return isp_tlm::write_metrics(metrics(), path);
 }

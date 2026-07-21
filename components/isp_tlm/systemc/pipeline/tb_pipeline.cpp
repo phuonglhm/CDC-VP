@@ -13,9 +13,10 @@
  * throughput, and frame processing time.
  *
  * Usage:
- *   ./tb_pipeline                          # Run with golden reference comparison
- *   ./tb_pipeline --save-output           # Save both golden and captured output
- *   ./tb_pipeline --golden <file.yuv>     # Compare with external golden file
+ *   ./tb_pipeline
+ *   ./tb_pipeline --metrics <file>
+ *   ./tb_pipeline --output-dir <dir>
+ *   ./tb_pipeline --golden <file.yuv>
  */
 #include <systemc>
 using namespace sc_core;
@@ -26,16 +27,13 @@ using namespace sc_core;
 #include <algorithm>
 #include <cstdlib>
 #include <iomanip>
-#include <sys/stat.h>
 #include <fstream>
-#include <sstream>
 #include <filesystem>
 
 #include "sc_isp_pipeline.h"
 #include "../tb_utils/tb_utils.h"
-#include "../tb_utils/hardware_params.h"
 
-#include "../../pipeline/include/isp_config.h"
+
 #include "../../pipeline/include/isp_pipeline.h"
 #include "../../pipeline/include/isp_regmap.h"
 #include <cstring>
@@ -47,34 +45,6 @@ constexpr std::size_t FRAME_COUNT = 4;
 
 namespace {
 
-// Get the absolute path to the systemc directory
-// Based on __FILE__ location: .../CDC-VP/components/isp_tlm/systemc/pipeline/tb_pipeline.cpp
-std::string get_systemc_dir() {
-    std::filesystem::path p(__FILE__);
-    // Navigate: tb_pipeline.cpp -> pipeline -> systemc -> isp_tlm -> components -> repo root
-    p = p.parent_path();      // pipeline/
-    p = p.parent_path();      // systemc/
-    return p.string();
-}
-
-// Resolve output path relative to systemc directory
-std::string resolve_output_path(const std::string& rel_path) {
-    return get_systemc_dir() + "/" + rel_path;
-}
-
-inline void ensure_dir(const std::string& path) {
-    if (path.empty()) return;
-    std::string p = path;
-    if (p.front() != '/') {
-        p = resolve_output_path(path);
-    }
-    for (std::size_t i = 1; i < p.size(); ++i) {
-        if (p[i] == '/') {
-            mkdir(p.substr(0, i).c_str(), 0755);
-        }
-    }
-    mkdir(p.c_str(), 0755);
-}
 
 bool save_yuv_file(const std::string& path, const std::uint8_t* data, std::size_t size) {
     std::ofstream fout(path, std::ios::binary);
@@ -130,39 +100,35 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "FULL ISP PIPELINE TESTBENCH" << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    // Parse command-line arguments
-    bool save_output = false;
+    // Parse command-line arguments. Output is opt-in and always caller-owned.
     bool wb_enable = true;
     std::string external_golden_path;
+    std::string metrics_path;
+    std::string output_dir;
     for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--save-output" || arg == "-s") {
-            save_output = true;
-        } else if (arg == "--wb-off") {
+        const std::string arg = argv[i];
+        if (arg == "--wb-off") {
             wb_enable = false;
         } else if ((arg == "--golden" || arg == "-g") && i + 1 < argc) {
             external_golden_path = argv[++i];
+        } else if (arg == "--metrics" && i + 1 < argc) {
+            metrics_path = argv[++i];
+        } else if (arg == "--output-dir" && i + 1 < argc) {
+            output_dir = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0] << " [options]\n";
             std::cout << "Options:\n";
             std::cout << "  --wb-off            Disable WB while AWB remains enabled\n";
-            std::cout << "  --save-output, -s   Save captured and golden output to output/ directory\n";
             std::cout << "  --golden, -g <file> Compare with external golden YUV file\n";
+            std::cout << "  --metrics <file>    Write the unified pipeline metrics report\n";
+            std::cout << "  --output-dir <dir>  Save captured and golden YUV artifacts there\n";
             std::cout << "  --help, -h          Show this help message\n";
             return 0;
+        } else {
+            std::cerr << "[ERROR] Unknown or incomplete option: " << arg << '\n';
+            return 2;
         }
     }
-
-    // 1. Hardware parameters
-    hw_params hw;
-    hw.clk_mhz = 200.0f;
-    hw.bus_width_bits = 64;
-    hw.pixel_bits = 16;
-    hw.fifo_depth = FIFO_DEPTH;
-    hw.timed_mode = false;  // Untimed mode - no clock needed
-
-    std::cout << "\n--- Hardware Parameters ---\n";
-    std::cout << hw.to_string();
 
     // 2. Generate test input
     const std::size_t raw_pixels = WIDTH * HEIGHT;
@@ -294,15 +260,10 @@ int sc_main(int argc, char* argv[]) {
     Generic_Driver<std::uint16_t> driver("driver", test_input);
     driver.fifo_out(input_fifo);
 
-    // Enable metrics - use absolute path relative to executable
-    sc_isp_pipeline::set_metrics_request(true, resolve_output_path("output/metrics"), /*skip=*/nullptr);
-
     sc_isp_pipeline dut("isp_pipeline", cfg, lsc_lut,
                         &input_fifo, &output_fifo,
                         /*input_bit_depth=*/12,
-                        /*bayer_pattern=*/cfa_types::RGGB,
-                        &hw);
-    sc_isp_pipeline::clear_metrics_request();
+                        /*bayer_pattern=*/cfa_types::RGGB);
 
     std::size_t out_w = cfg.scale.is_enable ? cfg.scale.out_width : WIDTH;
     std::size_t out_h = cfg.scale.is_enable ? cfg.scale.out_height : HEIGHT;
@@ -318,31 +279,23 @@ int sc_main(int argc, char* argv[]) {
     sc_start();
     std::cout << "[TB] Simulation completed" << std::endl;
 
-    // Metrics dump
-    ensure_dir("output/metrics");
-    if (dut.dump_pipeline_metrics()) {
-        std::cout << "[TB] Dumped "
-                  << dut.metrics_sample_count() << " boundary samples\n";
+    if (!metrics_path.empty()) {
+        if (!dut.write_metrics(metrics_path)) {
+            std::cerr << "[TB] ERROR: failed to write metrics: "
+                      << metrics_path << '\n';
+            return 1;
+        }
+        const auto snapshot = dut.metrics();
+        const auto& frame = snapshot.frame;
+        std::cout << "\n--- Frame Metrics ---\n"
+                  << "  Frame cycles       : " << frame.frame_cycles
+                  << " (" << (frame.frame_cycles_available ? "available" : "unavailable")
+                  << ")\n"
+                  << "  Input bandwidth    : " << frame.input_bandwidth_mbps
+                  << " Mbps\n"
+                  << "  Output bandwidth   : " << frame.output_bandwidth_mbps
+                  << " Mbps\n";
     }
-    if (dut.dump_all_block_metrics()) {
-        std::cout << "[TB] Dumped "
-                  << dut.block_metrics_sample_count() << " block samples\n";
-    }
-
-    // Frame timing
-    const double frame_time_us = dut.get_frame_time_us();
-    const double frame_time_ns = dut.get_frame_time_ns();
-    std::cout << "\n--- Frame Timing ---\n";
-    std::cout << "  Frame size          : " << WIDTH << "x" << HEIGHT
-              << " (" << raw_pixels << " RAW pixels)\n";
-    std::cout << "  Frame time (sim)   : " << std::fixed << std::setprecision(3)
-              << frame_time_us << " us\n";
-    std::cout << "  Frame time (ns)    : " << std::setprecision(3)
-              << frame_time_ns << " ns\n";
-    std::cout << "  Sim timestamp       : " << sc_time_stamp().to_seconds() / 1e-9
-              << " ns\n";
-
-    dut.print_metrics_summary();
 
     // Verify output
     const auto& captured = monitor.get_captured_data();
@@ -371,9 +324,6 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "  Captured output size: " << captured.size() << std::endl;
     std::cout << "  Differences: " << diff_count << " / " << golden_output.size() << std::endl;
     std::cout << "  Max difference: " << max_diff << std::endl;
-    std::cout << "  AWB R gain: " << dut.get_awb_r_gain() << std::endl;
-    std::cout << "  AWB B gain: " << dut.get_awb_b_gain() << std::endl;
-    std::cout << "  AEC feedback: " << dut.get_aec_feedback() << std::endl;
 
     pass = pass && diff_count == 0;
 
@@ -381,14 +331,26 @@ int sc_main(int argc, char* argv[]) {
     std::cout << "TEST RESULT: " << (pass ? "PASS" : "FAIL") << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    // Save output files if requested
-    if (save_output) {
-        ensure_dir("output");
-        std::string golden_path = "output/golden_" + std::to_string(WIDTH) + "x" + std::to_string(HEIGHT) + ".yuv";
-        std::string captured_path = "output/captured_" + std::to_string(out_w) + "x" + std::to_string(out_h) + ".yuv";
-
-        save_yuv_file(golden_path, golden_output.data(), golden_output.size());
-        save_yuv_file(captured_path, captured.data(), captured.size());
+    if (!output_dir.empty()) {
+        std::error_code error;
+        std::filesystem::create_directories(output_dir, error);
+        if (error) {
+            std::cerr << "[TB] ERROR: cannot create output directory "
+                      << output_dir << ": " << error.message() << '\n';
+            pass = false;
+        } else {
+            const std::filesystem::path directory(output_dir);
+            const std::string golden_path =
+                (directory / ("golden_" + std::to_string(WIDTH) + "x" +
+                              std::to_string(HEIGHT) + ".yuv")).string();
+            const std::string captured_path =
+                (directory / ("captured_" + std::to_string(out_w) + "x" +
+                              std::to_string(out_h) + ".yuv")).string();
+            pass = save_yuv_file(golden_path, golden_output.data(),
+                                 golden_output.size()) && pass;
+            pass = save_yuv_file(captured_path, captured.data(),
+                                 captured.size()) && pass;
+        }
     }
 
     // Compare with external golden file if provided

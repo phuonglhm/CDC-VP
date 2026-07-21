@@ -1,617 +1,544 @@
-/**
- * @file metrics.h
- * @brief Architecture metrics collection for ISP pipeline
- *
- * Provides metrics collection at multiple levels:
- *   - Frame metrics: end-to-end timing
- *   - Block metrics: per-block processing
- *   - Link metrics: inter-block communication
- *   - Bottleneck classification
- */
-
 #ifndef ISP_ARCH_METRICS_H
 #define ISP_ARCH_METRICS_H
 
-#include <systemc>
-using namespace sc_core;
-
-#include <cstdint>
-#include <vector>
-#include <string>
-#include <array>
-#include <algorithm>
-#include <cmath>
-#include <fstream>
-#include <iomanip>
-
 #include "isp_arch_config.h"
-#include "power.h"
 
-// ============================================================================
-// Frame Metrics
-// ============================================================================
-struct frame_metrics {
+#include <systemc>
+
+#include <algorithm>
+#include <cstdint>
+#include <fstream>
+#include <limits>
+#include <optional>
+#include <ostream>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace isp_tlm {
+
+// Checked integer primitives used by every timing equation.  They throw
+// instead of allowing a large image or profile value to wrap around.
+inline std::uint64_t checked_add(std::uint64_t lhs, std::uint64_t rhs) {
+    if (rhs > (std::numeric_limits<std::uint64_t>::max)() - lhs) {
+        throw std::overflow_error("ISP metric addition overflow");
+    }
+    return lhs + rhs;
+}
+
+inline std::uint64_t checked_mul(std::uint64_t lhs, std::uint64_t rhs) {
+    if (lhs != 0 && rhs > (std::numeric_limits<std::uint64_t>::max)() / lhs) {
+        throw std::overflow_error("ISP metric multiplication overflow");
+    }
+    return lhs * rhs;
+}
+
+inline std::uint64_t ceil_div(std::uint64_t value, std::uint64_t divisor) {
+    if (divisor == 0) {
+        throw std::invalid_argument("ISP metric division by zero");
+    }
+    return value / divisor + (value % divisor == 0 ? 0 : 1);
+}
+
+inline std::uint64_t processing_beats(std::uint64_t logical_pixels,
+                                      std::uint32_t pixels_per_cycle) {
+    if (pixels_per_cycle == 0) {
+        throw std::invalid_argument("pixels_per_cycle must be positive");
+    }
+    return ceil_div(logical_pixels, pixels_per_cycle);
+}
+
+inline std::uint64_t compute_cycles(std::uint64_t logical_pixels,
+                                    std::uint32_t pixels_per_cycle,
+                                    std::uint32_t pixel_initiation_interval_cycles) {
+    if (pixel_initiation_interval_cycles == 0) {
+        throw std::invalid_argument("pixel initiation interval must be positive");
+    }
+    return checked_mul(processing_beats(logical_pixels, pixels_per_cycle),
+                       pixel_initiation_interval_cycles);
+}
+
+inline std::optional<std::uint64_t> memory_service_cycles(
+    std::uint64_t logical_pixels, const std::optional<workload_profile>& workload,
+    const std::optional<local_memory_service_profile>& memory) {
+    if (!workload || !memory || !workload->available || !memory->available ||
+        !workload->is_valid() || !memory->is_valid()) {
+        return std::nullopt;
+    }
+    const auto demand_cycles = [&](std::uint32_t accesses_per_pixel,
+                                   std::uint32_t ports) -> std::uint64_t {
+        if (accesses_per_pixel == 0) {
+            return 0;
+        }
+        if (ports == 0) {
+            throw std::invalid_argument("memory ports must cover non-zero demand");
+        }
+        const std::uint64_t accesses =
+            checked_mul(logical_pixels, accesses_per_pixel);
+        return checked_mul(ceil_div(accesses, ports), memory->access_cycles);
+    };
+    const std::uint64_t reads =
+        demand_cycles(workload->reads_per_pixel, memory->read_ports);
+    const std::uint64_t writes =
+        demand_cycles(workload->writes_per_pixel, memory->write_ports);
+    return std::max(reads, writes);
+}
+
+inline std::uint64_t line_issue_interval_cycles(
+    std::uint64_t logical_pixels, std::uint32_t pixels_per_cycle,
+    std::uint32_t pixel_initiation_interval_cycles,
+    const std::optional<workload_profile>& workload = std::nullopt,
+    const std::optional<local_memory_service_profile>& memory = std::nullopt) {
+    const std::uint64_t compute = compute_cycles(
+        logical_pixels, pixels_per_cycle, pixel_initiation_interval_cycles);
+    const auto service = memory_service_cycles(logical_pixels, workload, memory);
+    return std::max(compute, service.value_or(0));
+}
+
+inline std::optional<std::uint64_t> memory_wait_cycles(
+    std::uint64_t logical_pixels, std::uint32_t pixels_per_cycle,
+    std::uint32_t pixel_initiation_interval_cycles,
+    const std::optional<workload_profile>& workload = std::nullopt,
+    const std::optional<local_memory_service_profile>& memory = std::nullopt) {
+    const auto service = memory_service_cycles(logical_pixels, workload, memory);
+    if (!service) {
+        return std::nullopt;
+    }
+    const std::uint64_t compute = compute_cycles(
+        logical_pixels, pixels_per_cycle, pixel_initiation_interval_cycles);
+    return *service > compute ? *service - compute : 0;
+}
+
+struct operation_counts {
+    bool available = false;
+    metric_provenance provenance = metric_provenance::unavailable;
+    std::uint64_t additions = 0;
+    std::uint64_t multiplications = 0;
+    std::uint64_t comparisons = 0;
+    std::uint64_t reads = 0;
+    std::uint64_t writes = 0;
+};
+
+inline operation_counts modeled_operations(std::uint64_t logical_pixels,
+                                           const std::optional<workload_profile>& workload) {
+    operation_counts result;
+    if (!workload || !workload->available || !workload->is_valid()) {
+        return result;
+    }
+    result.available = true;
+    result.provenance = metric_provenance::modeled;
+    result.additions = checked_mul(logical_pixels, workload->additions_per_pixel);
+    result.multiplications =
+        checked_mul(logical_pixels, workload->multiplications_per_pixel);
+    result.comparisons = checked_mul(logical_pixels, workload->comparisons_per_pixel);
+    result.reads = checked_mul(logical_pixels, workload->reads_per_pixel);
+    result.writes = checked_mul(logical_pixels, workload->writes_per_pixel);
+    return result;
+}
+
+struct raw_frame_metrics {
     std::uint64_t frame_id = 0;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    std::uint64_t total_pixels = 0;
-
-    // Timing
-    sc_time first_input_time = SC_ZERO_TIME;
-    sc_time first_output_time = SC_ZERO_TIME;
-    sc_time last_output_time = SC_ZERO_TIME;
-
-    // Computed
-    sc_time frame_time() const {
-        if (last_output_time > first_input_time) {
-            return last_output_time - first_input_time;
-        }
-        return SC_ZERO_TIME;
-    }
-
-    double frame_time_us() const {
-        return frame_time().to_seconds() / 1e-6;
-    }
-
-    double fps(float clk_mhz) const {
-        double ft = frame_time_us();
-        return (ft > 0.0) ? (1e6 / ft) : 0.0;
-    }
-
-    // Bandwidth
+    std::uint64_t logical_pixels = 0;
     std::uint64_t input_bytes = 0;
     std::uint64_t output_bytes = 0;
+    bool input_bytes_available = false;
+    bool output_bytes_available = false;
+    sc_core::sc_time cycle_period = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time first_input_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time first_output_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time last_output_time = sc_core::SC_ZERO_TIME;
+    bool has_first_input = false;
+    bool has_first_output = false;
+    bool has_last_output = false;
+};
+
+struct raw_block_metrics {
+    std::string name;
+    bool enabled = true;
+    std::uint64_t input_lines = 0;
+    std::uint64_t input_logical_pixels = 0;
+    std::uint64_t output_logical_pixels = 0;
+    std::uint64_t accepted_input_beats = 0;
+    std::uint64_t produced_output_beats = 0;
+    std::uint64_t output_lines = 0;
+    std::uint64_t logical_pixels = 0;
+    std::uint64_t processing_beats = 0;
+    std::uint64_t active_cycles = 0;
+    std::uint64_t bypass_cycles = 0;
+    std::uint64_t input_starved_cycles = 0;
+    std::uint64_t output_blocked_cycles = 0;
+    std::uint64_t completion_wait_cycles = 0;
+    std::uint64_t memory_wait_cycles = 0;
+    bool memory_wait_available = false;
+    metric_provenance memory_wait_provenance = metric_provenance::unavailable;
+    std::uint64_t issue_window_cycles = 0;
+    std::uint64_t observation_cycles = 0;
+    operation_counts operations{};
+};
+
+struct raw_link_metrics {
+    std::string name;
+    std::uint64_t published_lines = 0;
+    std::uint64_t read_lines = 0;
+    std::uint64_t released_lines = 0;
+    std::uint64_t logical_bytes = 0;
+    std::uint32_t occupancy_high_water = 0;
+    std::uint64_t producer_wait_events = 0;
+    std::uint64_t consumer_wait_events = 0;
+    sc_core::sc_time producer_wait = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time consumer_wait = sc_core::SC_ZERO_TIME;
+    std::uint64_t producer_wait_cycles = 0;
+    std::uint64_t consumer_wait_cycles = 0;
+};
+
+struct raw_pipeline_metrics {
+    raw_frame_metrics frame;
+    std::vector<raw_block_metrics> blocks;
+    std::vector<raw_link_metrics> links;
+};
+
+struct frame_metric_values {
+    bool first_output_latency_available = false;
+    bool frame_cycles_available = false;
+    std::uint64_t input_bytes = 0;
+    std::uint64_t output_bytes = 0;
+    bool input_bytes_available = false;
+    bool output_bytes_available = false;
+    std::uint64_t first_output_latency_cycles = 0;
+    std::uint64_t frame_cycles = 0;
+    bool achieved_pixels_per_cycle_available = false;
+    bool input_bandwidth_available = false;
+    bool output_bandwidth_available = false;
+    double achieved_pixels_per_cycle = 0.0;
     double input_bandwidth_mbps = 0.0;
     double output_bandwidth_mbps = 0.0;
-
-    // Reset
-    void reset() {
-        frame_id = 0;
-        first_input_time = SC_ZERO_TIME;
-        first_output_time = SC_ZERO_TIME;
-        last_output_time = SC_ZERO_TIME;
-        input_bytes = 0;
-        output_bytes = 0;
-        input_bandwidth_mbps = 0.0;
-        output_bandwidth_mbps = 0.0;
-    }
+    double first_output_latency_us = 0.0;
+    bool first_output_latency_us_available = false;
 };
 
-// ============================================================================
-// Block Cycle Counters
-// ============================================================================
-struct block_cycle_counters {
+struct block_metric_values {
+    std::string name;
+    std::uint64_t input_lines = 0;
+    std::uint64_t output_lines = 0;
+    std::uint64_t logical_pixels = 0;
+    std::uint64_t processing_beats = 0;
+    bool enabled = true;
+    std::uint64_t input_logical_pixels = 0;
+    std::uint64_t output_logical_pixels = 0;
+    std::uint64_t accepted_input_beats = 0;
+    std::uint64_t produced_output_beats = 0;
     std::uint64_t active_cycles = 0;
-    std::uint64_t idle_cycles = 0;
-    std::uint64_t starved_cycles = 0;    // Waiting for input
-    std::uint64_t blocked_cycles = 0;     // Waiting for output
-    std::uint64_t memory_wait_cycles = 0; // Waiting for memory
-    std::uint64_t bypass_cycles = 0;      // Processing bypassed
-    std::uint64_t stall_cycles = 0;       // Any stall condition
-
-    double utilization() const {
-        std::uint64_t total = active_cycles + idle_cycles + starved_cycles +
-                             blocked_cycles + memory_wait_cycles + bypass_cycles;
-        return (total > 0) ? static_cast<double>(active_cycles) / total : 0.0;
-    }
-
-    void reset() { *this = block_cycle_counters{}; }
-};
-
-// ============================================================================
-// Block Performance Metrics
-// ============================================================================
-struct block_perf_metrics {
-    std::string block_name;
-    std::uint64_t frame_id = 0;
-
-    // Throughput
-    std::uint64_t input_beats = 0;
-    std::uint64_t output_beats = 0;
-    double throughput_hz = 0.0;
-    double effective_ii = 0.0;  // Effective initiation interval
-
-    // Latency
-    sc_time mean_latency = SC_ZERO_TIME;
-    sc_time min_latency = SC_ZERO_TIME;
-    sc_time max_latency = SC_ZERO_TIME;
-    double latency_stddev = 0.0;
-
-    // Cycles
-    block_cycle_counters cycles;
-    double block_utilization = 0.0;
-
-    // Memory
-    std::uint64_t memory_reads = 0;
-    std::uint64_t memory_writes = 0;
+    std::uint64_t bypass_cycles = 0;
+    std::uint64_t input_starved_cycles = 0;
+    std::uint64_t output_blocked_cycles = 0;
+    std::uint64_t completion_wait_cycles = 0;
     std::uint64_t memory_wait_cycles = 0;
-
-    // Operations
-    std::uint64_t ops_add = 0;
-    std::uint64_t ops_mul = 0;
-    std::uint64_t ops_cmp = 0;
-
-    // Power estimation
-    power_values power;
-    double energy_nj = 0.0;
-
-    void reset() {
-        *this = block_perf_metrics{block_name};
-    }
+    bool memory_wait_available = false;
+    metric_provenance memory_wait_provenance = metric_provenance::unavailable;
+    double utilization = 0.0;
+    bool effective_ii_available = false;
+    double effective_ii = 0.0;
+    operation_counts operations{};
 };
 
-// ============================================================================
-// Link/Stream Metrics
-// ============================================================================
-struct link_metrics {
-    std::string link_name;
-
-    // Transfer stats
-    std::uint64_t transfer_count = 0;
-    std::uint64_t total_bits = 0;
-    double bandwidth_hz = 0.0;
-
-    // Occupancy
-    std::uint32_t max_occupancy = 0;
-    double avg_occupancy = 0.0;
-    double occupancy_utilization = 0.0;
-
-    // Backpressure
-    std::uint64_t backpressure_events = 0;
-    std::uint64_t backpressure_cycles = 0;
-
-    // Starvation
-    std::uint64_t starvation_events = 0;
-    std::uint64_t starvation_cycles = 0;
-
-    // Cycles
-    std::uint64_t empty_cycles = 0;
-    std::uint64_t full_cycles = 0;
-    std::uint64_t active_cycles = 0;
-
-    void reset() {
-        *this = link_metrics{link_name};
-    }
+struct link_metric_values {
+    std::string name;
+    std::uint64_t published_lines = 0;
+    std::uint64_t read_lines = 0;
+    std::uint64_t released_lines = 0;
+    std::uint64_t logical_bytes = 0;
+    std::uint32_t occupancy_high_water = 0;
+    std::uint64_t producer_wait_events = 0;
+    std::uint64_t consumer_wait_events = 0;
+    sc_core::sc_time producer_wait = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time consumer_wait = sc_core::SC_ZERO_TIME;
+    std::uint64_t producer_wait_cycles = 0;
+    std::uint64_t consumer_wait_cycles = 0;
 };
 
-// ============================================================================
-// Bottleneck Classification
-// ============================================================================
-enum class bottleneck_type {
-    NONE,
-    INPUT_BANDWIDTH,
-    COMPUTE_II,          // Initiation interval limited
-    MEMORY_PORT,          // Memory bandwidth limited
-    DOWNSTREAM_BACKPRESSURE,
-    OUTPUT_BANDWIDTH,
-    FRAME_BARRIER        // Statistical blocks waiting
+struct bottleneck_candidate {
+    std::string type;
+    std::string location;
+    double severity = 0.0;
+    std::string evidence;
 };
 
-struct bottleneck_report {
-    bottleneck_type type = bottleneck_type::NONE;
-    std::string location;           // Which block/link
-    double severity = 0.0;          // 0.0 - 1.0
-    std::string description;
-    std::vector<std::string> trace; // Backtrace of blocking chain
+struct pipeline_metrics {
+    frame_metric_values frame;
+    std::vector<block_metric_values> blocks;
+    std::vector<link_metric_values> links;
+    std::vector<bottleneck_candidate> bottlenecks;
 };
 
-// Forward declaration for power config
-struct block_power_config;
-block_power_config get_power_config_for_block(const std::string& block_name);
-
-// ============================================================================
-// Architecture Metrics Collector
-// ============================================================================
-class arch_metrics_collector {
-public:
-    explicit arch_metrics_collector(const std::string& output_dir = "output/arch_metrics")
-        : m_output_dir(output_dir)
-        , m_total_cycles(0)
-        , m_frame_count(0) {}
-
-    // Frame management
-    void start_frame(std::uint64_t frame_id, std::uint32_t width, std::uint32_t height) {
-        m_current_frame.reset();
-        m_current_frame.frame_id = frame_id;
-        m_current_frame.width = width;
-        m_current_frame.height = height;
-        m_current_frame.total_pixels = static_cast<std::uint64_t>(width) * height;
-        m_frame_count = frame_id + 1;
-    }
-
-    void record_first_input(const sc_time& t) {
-        m_current_frame.first_input_time = t;
-    }
-
-    void record_first_output(const sc_time& t) {
-        if (m_current_frame.first_output_time == SC_ZERO_TIME) {
-            m_current_frame.first_output_time = t;
-        }
-    }
-
-    void record_last_output(const sc_time& t) {
-        m_current_frame.last_output_time = t;
-    }
-
-    void end_frame() {
-        m_frames.push_back(m_current_frame);
-    }
-
-    // Block metrics
-    void record_block_metrics(const block_perf_metrics& metrics) {
-        m_block_metrics.push_back(metrics);
-    }
-
-    void update_block_cycles(const std::string& block,
-                            const block_cycle_counters& cycles) {
-        for (auto& bm : m_block_metrics) {
-            if (bm.block_name == block) {
-                bm.cycles = cycles;
-                bm.block_utilization = cycles.utilization();
-                return;
+inline std::vector<bottleneck_candidate> rank_bottlenecks(
+    const raw_pipeline_metrics& raw) {
+    std::vector<bottleneck_candidate> result;
+    for (const auto& block : raw.blocks) {
+        const long double denominator =
+            1.0L + static_cast<long double>(block.active_cycles) +
+            static_cast<long double>(block.bypass_cycles) +
+            static_cast<long double>(block.input_starved_cycles) +
+            static_cast<long double>(block.output_blocked_cycles) +
+            static_cast<long double>(block.completion_wait_cycles) +
+            static_cast<long double>(block.memory_wait_cycles);
+        const auto add = [&](const char* type, std::uint64_t evidence,
+                             const char* field) {
+            if (evidence != 0) {
+                const double severity =
+                    static_cast<double>(static_cast<long double>(evidence) /
+                                        denominator);
+                result.push_back({type, block.name, std::min(1.0, severity),
+                                  block.name + ": " + field + "=" +
+                                      std::to_string(evidence)});
             }
+        };
+        add("input_starvation", block.input_starved_cycles,
+            "input_starved_cycles");
+        add("downstream_credit", block.output_blocked_cycles,
+            "output_blocked_cycles");
+        if (block.memory_wait_available) {
+            add("memory_port", block.memory_wait_cycles, "memory_wait_cycles");
         }
-        // Not found, add new
-        block_perf_metrics new_bm;
-        new_bm.block_name = block;
-        new_bm.cycles = cycles;
-        m_block_metrics.push_back(new_bm);
-    }
-
-    // Link metrics
-    void record_link_metrics(const link_metrics& metrics) {
-        m_link_metrics.push_back(metrics);
-    }
-
-    // Total cycles
-    void set_total_cycles(std::uint64_t cycles) { m_total_cycles = cycles; }
-
-    // Bottleneck analysis
-    bottleneck_report analyze_bottleneck() const;
-
-    // Dump methods
-    void dump_frame_metrics() const;
-    void dump_block_metrics() const;
-    void dump_link_metrics() const;
-    void dump_bottleneck_report() const;
-    void dump_all() const {
-        dump_frame_metrics();
-        dump_block_metrics();
-        dump_link_metrics();
-        dump_bottleneck_report();
-    }
-
-    // Power estimation methods
-    void set_power_estimator(power_estimator* est) { m_power_estimator = est; }
-    void calculate_block_power();
-    void dump_power_metrics() const;
-    pipeline_power_summary get_power_summary() const { return m_power_summary; }
-
-    // Accessors
-    const std::vector<frame_metrics>& frames() const { return m_frames; }
-    const std::vector<block_perf_metrics>& blocks() const { return m_block_metrics; }
-    const std::vector<link_metrics>& links() const { return m_link_metrics; }
-    std::uint64_t total_cycles() const { return m_total_cycles; }
-    std::uint64_t frame_count() const { return m_frame_count; }
-
-private:
-    std::string m_output_dir;
-    std::uint64_t m_total_cycles;
-    std::uint64_t m_frame_count;
-    power_estimator* m_power_estimator = nullptr;
-    pipeline_power_summary m_power_summary;
-
-    frame_metrics m_current_frame;
-    std::vector<frame_metrics> m_frames;
-    std::vector<block_perf_metrics> m_block_metrics;
-    std::vector<link_metrics> m_link_metrics;
-};
-
-// ============================================================================
-// Implementation
-// ============================================================================
-inline bottleneck_report arch_metrics_collector::analyze_bottleneck() const {
-    bottleneck_report report;
-    report.description =
-        "No bottleneck candidate evidence captured by the selected counters";
-
-    const auto consider = [&report](bottleneck_type type,
-                                    const std::string& location,
-                                    double numerator,
-                                    double denominator,
-                                    const std::string& evidence) {
-        if (numerator <= 0.0) {
-            return;
-        }
-        const double severity =
-            std::min(1.0, numerator / std::max(1.0, denominator));
-        if (severity <= report.severity) {
-            return;
-        }
-        report.type = type;
-        report.location = location;
-        report.severity = severity;
-        report.description =
-            "Bottleneck candidate based on local counters; root cause is not proven";
-        report.trace.clear();
-        report.trace.push_back(evidence);
-    };
-
-    for (const auto& bm : m_block_metrics) {
-        const double active = static_cast<double>(bm.cycles.active_cycles);
-        const double stalls =
-            static_cast<double>(bm.cycles.starved_cycles +
-                                bm.cycles.blocked_cycles +
-                                bm.cycles.memory_wait_cycles +
-                                bm.cycles.stall_cycles);
-        consider(bottleneck_type::DOWNSTREAM_BACKPRESSURE, bm.block_name,
-                 static_cast<double>(bm.cycles.blocked_cycles),
-                 active + stalls,
-                 bm.block_name + ": blocked_cycles=" +
-                     std::to_string(bm.cycles.blocked_cycles));
-        consider(bottleneck_type::INPUT_BANDWIDTH, bm.block_name,
-                 static_cast<double>(bm.cycles.starved_cycles),
-                 active + stalls,
-                 bm.block_name + ": starved_cycles=" +
-                     std::to_string(bm.cycles.starved_cycles));
-        consider(bottleneck_type::MEMORY_PORT, bm.block_name,
-                 static_cast<double>(bm.cycles.memory_wait_cycles),
-                 active + stalls,
-                 bm.block_name + ": memory_wait_cycles=" +
-                     std::to_string(bm.cycles.memory_wait_cycles));
-        if (bm.effective_ii > 1.0) {
-            consider(bottleneck_type::COMPUTE_II, bm.block_name,
-                     bm.effective_ii - 1.0, bm.effective_ii,
-                     bm.block_name + ": effective_ii=" +
-                         std::to_string(bm.effective_ii));
+        if (block.processing_beats != 0 &&
+            block.issue_window_cycles > block.processing_beats) {
+            result.push_back({"compute_ii", block.name,
+                              std::min(1.0, static_cast<double>(
+                                                 block.issue_window_cycles -
+                                                 block.processing_beats) /
+                                             static_cast<double>(
+                                                 block.issue_window_cycles)),
+                              block.name + ": observed_issue_window_cycles=" +
+                                  std::to_string(block.issue_window_cycles)});
         }
     }
-
-    for (const auto& link : m_link_metrics) {
-        consider(bottleneck_type::DOWNSTREAM_BACKPRESSURE, link.link_name,
-                 static_cast<double>(link.backpressure_events),
-                 static_cast<double>(link.transfer_count +
-                                     link.backpressure_events),
-                 link.link_name + ": backpressure_events=" +
-                     std::to_string(link.backpressure_events));
-        consider(bottleneck_type::INPUT_BANDWIDTH, link.link_name,
-                 static_cast<double>(link.starvation_events),
-                 static_cast<double>(link.transfer_count +
-                                     link.starvation_events),
-                 link.link_name + ": starvation_events=" +
-                     std::to_string(link.starvation_events));
-    }
-
-    return report;
+    std::sort(result.begin(), result.end(),
+              [](const auto& lhs, const auto& rhs) {
+                  return lhs.severity > rhs.severity;
+              });
+    return result;
 }
 
-inline void arch_metrics_collector::dump_frame_metrics() const {
-    std::string path = m_output_dir + "/frame_metrics.csv";
-    std::ofstream ofs(path);
-    if (!ofs) return;
-
-    ofs << "frame_id,width,height,pixels,first_input_us,first_output_us,"
-        << "last_output_us,frame_time_us,fps,input_bytes,output_bytes\n";
-
-    for (const auto& f : m_frames) {
-        ofs << f.frame_id << ','
-            << f.width << ','
-            << f.height << ','
-            << f.total_pixels << ','
-            << std::fixed << std::setprecision(3)
-            << f.first_input_time.to_seconds() / 1e-6 << ','
-            << f.first_output_time.to_seconds() / 1e-6 << ','
-            << f.last_output_time.to_seconds() / 1e-6 << ','
-            << f.frame_time_us() << ','
-            << f.fps(200.0) << ','
-            << f.input_bytes << ','
-            << f.output_bytes << '\n';
+inline std::uint64_t time_to_cycles(const sc_core::sc_time& duration,
+                                    const sc_core::sc_time& cycle_period) {
+    if (duration <= sc_core::SC_ZERO_TIME ||
+        cycle_period <= sc_core::SC_ZERO_TIME) {
+        return 0;
     }
-    ofs.close();
+    const std::uint64_t duration_ticks =
+        static_cast<std::uint64_t>(duration.value());
+    const std::uint64_t period_ticks =
+        static_cast<std::uint64_t>(cycle_period.value());
+    return ceil_div(duration_ticks, period_ticks);
 }
 
-inline void arch_metrics_collector::dump_block_metrics() const {
-    std::string path = m_output_dir + "/block_metrics.csv";
-    std::ofstream ofs(path);
-    if (!ofs) return;
-
-    ofs << "block,frame_id,input_beats,output_beats,mean_latency_ns,"
-        << "min_latency_ns,max_latency_ns,utilization,"
-        << "active_cycles,idle_cycles,starved_cycles,blocked_cycles,"
-        << "memory_wait_cycles,bypass_cycles\n";
-
-    for (const auto& bm : m_block_metrics) {
-        ofs << bm.block_name << ','
-            << bm.frame_id << ','
-            << bm.input_beats << ','
-            << bm.output_beats << ','
-            << std::fixed << std::setprecision(3)
-            << bm.mean_latency.to_seconds() / 1e-9 << ','
-            << bm.min_latency.to_seconds() / 1e-9 << ','
-            << bm.max_latency.to_seconds() / 1e-9 << ','
-            << std::setprecision(4) << bm.block_utilization << ','
-            << bm.cycles.active_cycles << ','
-            << bm.cycles.idle_cycles << ','
-            << bm.cycles.starved_cycles << ','
-            << bm.cycles.blocked_cycles << ','
-            << bm.cycles.memory_wait_cycles << ','
-            << bm.cycles.bypass_cycles << '\n';
+inline pipeline_metrics derive_metrics(const raw_pipeline_metrics& raw) {
+    pipeline_metrics result;
+    result.bottlenecks = rank_bottlenecks(raw);
+    const auto& frame = raw.frame;
+    const bool valid_clock = frame.cycle_period > sc_core::SC_ZERO_TIME;
+    const bool ordered_first =
+        !frame.has_first_input || !frame.has_first_output ||
+        frame.first_output_time >= frame.first_input_time;
+    const bool ordered_frame =
+        !frame.has_first_input || !frame.has_last_output ||
+        frame.last_output_time >= frame.first_input_time;
+    const bool valid_first_latency =
+        valid_clock && frame.has_first_input && frame.has_first_output &&
+        ordered_first;
+    const bool valid_frame = valid_clock && frame.has_first_input &&
+                             frame.has_last_output && ordered_frame;
+    const std::uint64_t first_latency =
+        valid_first_latency
+            ? time_to_cycles(frame.first_output_time - frame.first_input_time,
+                             frame.cycle_period)
+            : 0;
+    const std::uint64_t elapsed =
+        valid_frame
+            ? time_to_cycles(frame.last_output_time - frame.first_input_time,
+                             frame.cycle_period)
+            : 0;
+    result.frame.first_output_latency_available = valid_first_latency;
+    result.frame.frame_cycles_available = valid_frame;
+    result.frame.first_output_latency_cycles = first_latency;
+    result.frame.first_output_latency_us_available = valid_first_latency;
+    result.frame.first_output_latency_us =
+        valid_first_latency
+            ? (frame.first_output_time - frame.first_input_time).to_seconds() / 1e-6
+            : 0.0;
+    result.frame.frame_cycles = elapsed;
+    result.frame.input_bytes = frame.input_bytes;
+    result.frame.output_bytes = frame.output_bytes;
+    result.frame.input_bytes_available = frame.input_bytes_available;
+    result.frame.output_bytes_available = frame.output_bytes_available;
+    const double frame_us =
+        valid_frame
+            ? (frame.last_output_time - frame.first_input_time).to_seconds() / 1e-6
+            : 0.0;
+    const bool positive_elapsed = frame_us > 0.0;
+    result.frame.achieved_pixels_per_cycle_available = elapsed != 0;
+    result.frame.input_bandwidth_available =
+        positive_elapsed && frame.input_bytes_available;
+    result.frame.output_bandwidth_available =
+        positive_elapsed && frame.output_bytes_available;
+    if (elapsed != 0) {
+        result.frame.achieved_pixels_per_cycle =
+            static_cast<double>(frame.logical_pixels) / static_cast<double>(elapsed);
     }
-    ofs.close();
-}
-
-inline void arch_metrics_collector::dump_link_metrics() const {
-    std::string path = m_output_dir + "/link_metrics.csv";
-    std::ofstream ofs(path);
-    if (!ofs) return;
-
-    ofs << "link,transfer_count,total_bits,bandwidth_hz,"
-        << "max_occupancy,avg_occupancy,occupancy_util,"
-        << "backpressure_events,backpressure_cycles,"
-        << "starvation_events,starvation_cycles,"
-        << "empty_cycles,full_cycles\n";
-
-    for (const auto& lm : m_link_metrics) {
-        ofs << lm.link_name << ','
-            << lm.transfer_count << ','
-            << lm.total_bits << ','
-            << std::fixed << std::setprecision(2) << lm.bandwidth_hz << ','
-            << lm.max_occupancy << ','
-            << std::setprecision(4) << lm.avg_occupancy << ','
-            << lm.occupancy_utilization << ','
-            << lm.backpressure_events << ','
-            << lm.backpressure_cycles << ','
-            << lm.starvation_events << ','
-            << lm.starvation_cycles << ','
-            << lm.empty_cycles << ','
-            << lm.full_cycles << '\n';
+    if (positive_elapsed && frame.input_bytes_available) {
+        result.frame.input_bandwidth_mbps =
+            static_cast<double>(frame.input_bytes) * 8.0 / frame_us;
     }
-    ofs.close();
-}
+    if (positive_elapsed && frame.output_bytes_available) {
+        result.frame.output_bandwidth_mbps =
+            static_cast<double>(frame.output_bytes) * 8.0 / frame_us;
+    }
 
-inline void arch_metrics_collector::dump_bottleneck_report() const {
-    bottleneck_report report = analyze_bottleneck();
-
-    std::string path = m_output_dir + "/bottleneck_report.txt";
-    std::ofstream ofs(path);
-    if (!ofs) return;
-
-    ofs << "=== Bottleneck Analysis Report ===\n\n";
-
-    if (report.type == bottleneck_type::NONE) {
-        ofs << "No significant bottleneck detected.\n";
-    } else {
-        ofs << "Dominant bottleneck: " << report.location << "\n"
-            << "Type: ";
-        switch (report.type) {
-            case bottleneck_type::INPUT_BANDWIDTH: ofs << "Input Bandwidth Limited\n"; break;
-            case bottleneck_type::COMPUTE_II: ofs << "Compute II Limited\n"; break;
-            case bottleneck_type::MEMORY_PORT: ofs << "Memory Port Limited\n"; break;
-            case bottleneck_type::DOWNSTREAM_BACKPRESSURE: ofs << "Downstream Backpressure\n"; break;
-            case bottleneck_type::OUTPUT_BANDWIDTH: ofs << "Output Bandwidth Limited\n"; break;
-            case bottleneck_type::FRAME_BARRIER: ofs << "Frame Barrier Limited\n"; break;
-            default: ofs << "Unknown\n";
+    result.blocks.reserve(raw.blocks.size());
+    for (const auto& block : raw.blocks) {
+        block_metric_values derived;
+        derived.name = block.name;
+        derived.input_lines = block.input_lines;
+        derived.output_lines = block.output_lines;
+        derived.logical_pixels = block.logical_pixels;
+        derived.processing_beats = block.processing_beats;
+        derived.enabled = block.enabled;
+        derived.input_logical_pixels = block.input_logical_pixels;
+        derived.output_logical_pixels = block.output_logical_pixels;
+        derived.accepted_input_beats = block.accepted_input_beats;
+        derived.produced_output_beats = block.produced_output_beats;
+        derived.active_cycles = block.active_cycles;
+        derived.bypass_cycles = block.bypass_cycles;
+        derived.input_starved_cycles = block.input_starved_cycles;
+        derived.output_blocked_cycles = block.output_blocked_cycles;
+        derived.completion_wait_cycles = block.completion_wait_cycles;
+        derived.memory_wait_cycles = block.memory_wait_cycles;
+        derived.memory_wait_available = block.memory_wait_available;
+        derived.memory_wait_provenance = block.memory_wait_provenance;
+        derived.operations = block.operations;
+        if (block.enabled && block.observation_cycles != 0) {
+            derived.utilization = std::min(
+                1.0, static_cast<double>(block.active_cycles) /
+                         static_cast<double>(block.observation_cycles));
         }
-        ofs << "Severity: " << std::fixed << std::setprecision(2)
-            << (report.severity * 100.0) << "%\n"
-            << "Description: " << report.description << "\n";
-    }
-
-    ofs << "\n=== Per-Block Utilization ===\n";
-    for (const auto& bm : m_block_metrics) {
-        ofs << bm.block_name << ": "
-             << std::fixed << std::setprecision(1)
-             << (bm.block_utilization * 100.0) << "%\n";
-    }
-
-    ofs.close();
-}
-
-inline void arch_metrics_collector::calculate_block_power() {
-    if (!m_power_estimator) return;
-
-    for (auto& bm : m_block_metrics) {
-        // Get appropriate power config based on block name
-        block_power_config cfg = get_power_config_for_block(bm.block_name);
-
-        // Calculate power based on block metrics
-        std::uint64_t total_cycles = bm.cycles.active_cycles + bm.cycles.idle_cycles +
-                                     bm.cycles.starved_cycles + bm.cycles.blocked_cycles;
-        std::uint64_t memory_accesses = bm.memory_reads + bm.memory_writes;
-
-        bm.power = m_power_estimator->calculate_power(
-            cfg,
-            bm.cycles.active_cycles,
-            total_cycles,
-            memory_accesses,
-            bm.input_beats
-        );
-
-        // Scale by utilization
-        bm.power = m_power_estimator->scaled_power(bm.power, bm.block_utilization);
-
-        // Calculate energy
-        if (!m_frames.empty()) {
-            double frame_time_us = m_frames.back().frame_time_us();
-            bm.energy_nj = m_power_estimator->energy_per_frame(bm.power, frame_time_us);
+        if (block.processing_beats != 0 && block.issue_window_cycles != 0) {
+            derived.effective_ii_available = true;
+            derived.effective_ii = static_cast<double>(block.issue_window_cycles) /
+                                   static_cast<double>(block.processing_beats);
         }
+        result.blocks.push_back(std::move(derived));
+    }
 
-        // Add to summary
-        m_power_summary.add_block(bm.block_name, bm.power);
+    result.links.reserve(raw.links.size());
+    for (const auto& link : raw.links) {
+        link_metric_values derived;
+        derived.name = link.name;
+        derived.published_lines = link.published_lines;
+        derived.read_lines = link.read_lines;
+        derived.released_lines = link.released_lines;
+        derived.logical_bytes = link.logical_bytes;
+        derived.occupancy_high_water = link.occupancy_high_water;
+        derived.producer_wait_events = link.producer_wait_events;
+        derived.consumer_wait_events = link.consumer_wait_events;
+        derived.producer_wait = link.producer_wait;
+        derived.consumer_wait = link.consumer_wait;
+        derived.producer_wait_cycles =
+            time_to_cycles(link.producer_wait, frame.cycle_period);
+        derived.consumer_wait_cycles =
+            time_to_cycles(link.consumer_wait, frame.cycle_period);
+        result.links.push_back(std::move(derived));
+    }
+    return result;
+}
+
+inline const char* metric_availability(bool available) noexcept {
+    return available ? "available" : "unavailable";
+}
+inline const char* provenance_name(metric_provenance provenance) noexcept {
+    switch (provenance) {
+        case metric_provenance::modeled: return "modeled";
+        case metric_provenance::measured: return "measured";
+        default: return "unavailable";
     }
 }
 
-inline void arch_metrics_collector::dump_power_metrics() const {
-    std::string path = m_output_dir + "/power_metrics.csv";
-    std::ofstream ofs(path);
-    if (!ofs) return;
-
-    ofs << "block,utilization,static_mw,dynamic_mw,memory_mw,total_mw,energy_nj\n";
-
-    for (const auto& bm : m_block_metrics) {
-        ofs << bm.block_name << ','
-            << std::fixed << std::setprecision(4) << bm.block_utilization << ','
-            << std::setprecision(3) << bm.power.static_mw << ','
-            << bm.power.dynamic_mw << ','
-            << bm.power.memory_mw << ','
-            << bm.power.total_mw << ','
-            << bm.power.total_mw * m_power_summary.frame_time_us / 1000.0 << '\n';
+inline bool write_metrics(std::ostream& output, const pipeline_metrics& metrics) {
+    output << "frame_metric,value,availability\n"
+           << "first_output_latency_cycles," << metrics.frame.first_output_latency_cycles
+           << ',' << metric_availability(metrics.frame.first_output_latency_available) << "\n"
+           << "first_output_latency_us," << metrics.frame.first_output_latency_us
+           << ',' << metric_availability(metrics.frame.first_output_latency_us_available) << "\n"
+           << "frame_cycles," << metrics.frame.frame_cycles << ','
+           << metric_availability(metrics.frame.frame_cycles_available) << "\n"
+           << "achieved_pixels_per_cycle," << metrics.frame.achieved_pixels_per_cycle
+           << ',' << metric_availability(
+                          metrics.frame.achieved_pixels_per_cycle_available) << "\n"
+           << "input_bandwidth_mbps," << metrics.frame.input_bandwidth_mbps << ','
+           << metric_availability(metrics.frame.input_bandwidth_available) << "\n"
+           << "output_bandwidth_mbps," << metrics.frame.output_bandwidth_mbps << ','
+           << metric_availability(metrics.frame.output_bandwidth_available) << "\n\n"
+           << "input_bytes," << metrics.frame.input_bytes << ','
+           << metric_availability(metrics.frame.input_bytes_available) << "\n"
+           << "output_bytes," << metrics.frame.output_bytes << ','
+           << metric_availability(metrics.frame.output_bytes_available) << "\n"
+           << "block,name,input_lines,output_lines,logical_pixels,processing_beats,"
+              "input_logical_pixels,output_logical_pixels,accepted_input_beats,"
+              "produced_output_beats,enabled,active_cycles,bypass_cycles,"
+              "input_starved_cycles,output_blocked_cycles,completion_wait_cycles,"
+              "memory_wait_cycles,memory_wait_availability,memory_wait_provenance,"
+              "utilization,effective_ii,effective_ii_availability,additions,"
+              "multiplications,comparisons,reads,writes,operations_provenance\n";
+    for (const auto& block : metrics.blocks) {
+        output << "block," << block.name << ',' << block.input_lines << ','
+               << block.output_lines << ',' << block.logical_pixels << ','
+               << block.processing_beats << ',' << block.input_logical_pixels << ','
+               << block.output_logical_pixels << ',' << block.accepted_input_beats << ','
+               << block.produced_output_beats << ',' << (block.enabled ? 1 : 0) << ','
+               << block.active_cycles << ',' << block.bypass_cycles << ','
+               << block.input_starved_cycles << ',' << block.output_blocked_cycles << ','
+               << block.completion_wait_cycles << ',' << block.memory_wait_cycles << ','
+               << metric_availability(block.memory_wait_available) << ','
+               << provenance_name(block.memory_wait_provenance) << ','
+               << block.utilization << ',' << block.effective_ii << ','
+               << metric_availability(block.effective_ii_available) << ','
+               << block.operations.additions << ',' << block.operations.multiplications << ','
+               << block.operations.comparisons << ',' << block.operations.reads << ','
+               << block.operations.writes << ','
+               << provenance_name(block.operations.provenance) << "\n";
     }
-
-    // Summary
-    ofs << "\n# Summary\n";
-    ofs << "# Total static: " << m_power_summary.total.static_mw << " mW\n";
-    ofs << "# Total dynamic: " << m_power_summary.total.dynamic_mw << " mW\n";
-    ofs << "# Total memory: " << m_power_summary.total.memory_mw << " mW\n";
-    ofs << "# Total power: " << m_power_summary.total.total_mw << " mW\n";
-
-    ofs.close();
-
-    // Also dump text summary
-    std::string txt_path = m_output_dir + "/power_summary.txt";
-    std::ofstream txt(txt_path);
-    if (!txt) return;
-
-    txt << "=== Power Estimation Summary ===\n\n";
-    txt << "Total Power: " << std::fixed << std::setprecision(2)
-        << m_power_summary.total.total_mw << " mW\n";
-    txt << "  Static:  " << m_power_summary.total.static_mw << " mW\n";
-    txt << "  Dynamic: " << m_power_summary.total.dynamic_mw << " mW\n";
-    txt << "  Memory:  " << m_power_summary.total.memory_mw << " mW\n\n";
-
-    if (m_power_summary.frame_time_us > 0) {
-        txt << "Frame Energy: " << m_power_summary.frame_energy_nj << " nJ\n";
-        txt << "Average Power: " << m_power_summary.avg_power_mw << " mW\n";
+    output << "\nlink,name,published_lines,read_lines,released_lines,logical_bytes,"
+              "occupancy_high_water,producer_wait_events,consumer_wait_events,"
+              "producer_wait_seconds,consumer_wait_seconds,producer_wait_cycles,"
+              "consumer_wait_cycles\n";
+    for (const auto& link : metrics.links) {
+        output << "link," << link.name << ',' << link.published_lines << ','
+               << link.read_lines << ',' << link.released_lines << ','
+               << link.logical_bytes << ',' << link.occupancy_high_water << ','
+               << link.producer_wait_events << ',' << link.consumer_wait_events << ','
+               << link.producer_wait.to_seconds() << ','
+               << link.consumer_wait.to_seconds() << ',' << link.producer_wait_cycles
+               << ',' << link.consumer_wait_cycles << "\n";
     }
-
-    txt.close();
+    output << "\nbottleneck,type,location,severity,evidence\n";
+    for (const auto& bottleneck : metrics.bottlenecks) {
+        output << "bottleneck," << bottleneck.type << ',' << bottleneck.location
+               << ',' << bottleneck.severity << ',' << bottleneck.evidence << "\n";
+    }
+    return static_cast<bool>(output);
 }
 
-// Helper to get power config for a block
-inline block_power_config get_power_config_for_block(const std::string& block_name) {
-    if (block_name == "blc") return block_power_defaults::blc();
-    if (block_name == "dg") return block_power_defaults::dg();
-    if (block_name == "wb") return block_power_defaults::wb();
-    if (block_name == "ccm") return block_power_defaults::ccm();
-    if (block_name == "gc") return block_power_defaults::point_op();
-    if (block_name == "csc") return block_power_defaults::csc();
-    if (block_name == "cse") return block_power_defaults::point_op();
-    if (block_name == "dpc") return block_power_defaults::dpc();
-    if (block_name == "bnr") return block_power_defaults::bnr();
-    if (block_name == "demosaic") return block_power_defaults::demosaic();
-    if (block_name == "sharpen") return block_power_defaults::sharpen();
-    if (block_name == "2dnr") return block_power_defaults::tdnoise_reduction();
-    if (block_name == "lsc") return block_power_defaults::lsc();
-    if (block_name == "scale") return block_power_defaults::scale();
-    if (block_name == "yuv420") return block_power_defaults::yuv420();
-    if (block_name == "awb") return block_power_defaults::awb();
-    if (block_name == "aec") return block_power_defaults::aec();
-    if (block_name == "normalizer") return block_power_defaults::normalizer();
-
-    // Default
-    block_power_config cfg;
-    cfg.name = block_name;
-    return cfg;
+// The only filesystem side effect in this header.  In-memory derivation never
+// opens files or creates directories.
+inline bool write_metrics(const pipeline_metrics& metrics, const std::string& path) {
+    std::ofstream output(path);
+    if (!output) {
+        return false;
+    }
+    return write_metrics(output, metrics);
 }
 
-#endif  // ISP_ARCH_METRICS_H
+} // namespace isp_tlm
+
+#endif // ISP_ARCH_METRICS_H

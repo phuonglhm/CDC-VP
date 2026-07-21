@@ -7,8 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <limits>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -26,10 +24,30 @@ struct line_stage_metrics {
     std::uint64_t retired_lines = 0;
     std::uint32_t in_flight_high_water = 0;
     std::uint64_t issue_stalls = 0;
+    std::uint64_t logical_pixels = 0;
+    std::uint64_t input_logical_pixels = 0;
+    std::uint64_t output_logical_pixels = 0;
+    std::uint64_t accepted_input_beats = 0;
+    std::uint64_t produced_output_beats = 0;
+    operation_counts operations{};
+    std::uint64_t processing_beats = 0;
+    std::uint64_t active_cycles = 0;
+    std::uint64_t bypass_cycles = 0;
+    std::uint64_t memory_wait_cycles = 0;
+    bool memory_wait_available = false;
+    metric_provenance memory_wait_provenance = metric_provenance::unavailable;
+    std::uint64_t issue_window_cycles = 0;
+    sc_core::sc_time first_issue_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time last_issue_time = sc_core::SC_ZERO_TIME;
+    bool has_issue_time = false;
+    double effective_ii = 0.0;
     sc_core::sc_time input_wait = sc_core::SC_ZERO_TIME;
     sc_core::sc_time issue_wait = sc_core::SC_ZERO_TIME;
     sc_core::sc_time retire_wait = sc_core::SC_ZERO_TIME;
     sc_core::sc_time output_wait = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time input_starved_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time output_blocked_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time completion_wait_time = sc_core::SC_ZERO_TIME;
 };
 
 /**
@@ -145,7 +163,12 @@ public:
 
 
     const line_stage_metrics& metrics() const noexcept { return metrics_; }
-    void reset_metrics() noexcept { metrics_ = line_stage_metrics{}; }
+    void reset_metrics() {
+        runtime_.reset_metrics();
+        metrics_ = line_stage_metrics{};
+    }
+    void set_enabled(bool enabled) noexcept { enabled_ = enabled; }
+    bool enabled() const noexcept { return enabled_; }
 
     line_channel<InT>* input_channel() const noexcept { return input_; }
     line_channel<OutT>* output_channel() const noexcept { return output_; }
@@ -191,6 +214,38 @@ private:
         }
         return required;
     }
+    void record_input_meta(const line_meta& meta) {
+        metrics_.input_logical_pixels =
+            checked_add(metrics_.input_logical_pixels, meta.width_pixels);
+        metrics_.accepted_input_beats = checked_add(
+            metrics_.accepted_input_beats,
+            processing_beats(meta.width_pixels, runtime_.timing().pixels_per_cycle));
+    }
+
+    void record_output_meta(const line_meta& meta) {
+        metrics_.output_logical_pixels =
+            checked_add(metrics_.output_logical_pixels, meta.width_pixels);
+        metrics_.produced_output_beats = checked_add(
+            metrics_.produced_output_beats,
+            processing_beats(meta.width_pixels, runtime_.timing().pixels_per_cycle));
+    }
+    typename line_channel<OutT>::write_type reserve_output_result() {
+        auto result = output_->try_reserve_result();
+        if (result.valid()) {
+            return result;
+        }
+        const sc_core::sc_time start = sc_core::sc_time_stamp();
+        output_->record_producer_blocked_episode();
+        while (!result.valid()) {
+            runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
+            result = output_->try_reserve_result();
+            if (!result.valid()) {
+                wait_for_output_progress();
+            }
+        }
+        output_->record_producer_wait_duration(sc_core::sc_time_stamp() - start);
+        return result;
+    }
 
     void process_lines() {
         while (true) {
@@ -207,12 +262,20 @@ private:
             // blocks on data_event inside line_channel; no whole-frame
             // availability query is used here.
             for (std::uint32_t row = 0; row < input_rows_; ++row) {
+                const bool input_eligible =
+                    runtime_.can_issue(sc_core::sc_time_stamp(), output_width_pixels_);
                 const sc_core::sc_time wait_start = sc_core::sc_time_stamp();
                 auto token = input_->read();
-                metrics_.input_wait += sc_core::sc_time_stamp() - wait_start;
+                if (input_eligible) {
+                    const sc_core::sc_time waited =
+                        sc_core::sc_time_stamp() - wait_start;
+                    metrics_.input_wait += waited;
+                    metrics_.input_starved_time += waited;
+                }
 
                 const auto view = token.view();
                 const line_meta meta = token.meta();
+                record_input_meta(meta);
                 if (!frame_id_valid) {
                     frame_id = meta.frame_id;
                     frame_id_valid = true;
@@ -257,14 +320,7 @@ private:
 
             for (std::uint32_t row = 0; row < output_rows_; ++row) {
                 wait_until_issueable();
-                auto result = output_->try_reserve_result();
-                while (!result.valid()) {
-                    runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
-                    result = output_->try_reserve_result();
-                    if (!result.valid()) {
-                        wait_for_output_progress();
-                    }
-                }
+                auto result = reserve_output_result();
 
                 line_meta meta{};
                 meta.frame_id = frame_id;
@@ -296,17 +352,17 @@ private:
                 for (std::size_t sample = 0; sample < safe_count; ++sample) {
                     view[sample] = output_frame_[offset + sample];
                 }
+                record_output_meta(meta);
 
                 runtime_.schedule(std::move(result), meta,
-                                  sc_core::sc_time_stamp());
+                                  sc_core::sc_time_stamp(), enabled_);
                 ++metrics_.output_lines;
-                runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
             }
 
             while (runtime_.has_in_flight()) {
                 runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
                 if (runtime_.has_in_flight()) {
-                    wait_for_output_progress();
+                    wait_for_completion_progress();
                 }
             }
             refresh_runtime_metrics();
@@ -320,12 +376,20 @@ private:
         bool frame_ok = true;
 
         for (std::uint32_t row = 0; row < input_rows_; ++row) {
+            wait_until_issueable();
+            const bool input_eligible = true;
             const sc_core::sc_time wait_start = sc_core::sc_time_stamp();
             auto token = input_->read();
-            metrics_.input_wait += sc_core::sc_time_stamp() - wait_start;
+            if (input_eligible) {
+                const sc_core::sc_time waited =
+                    sc_core::sc_time_stamp() - wait_start;
+                metrics_.input_wait += waited;
+                metrics_.input_starved_time += waited;
+            }
 
             const auto input_view = token.view();
             const line_meta input_meta = token.meta();
+            record_input_meta(input_meta);
             if (!frame_id_valid) {
                 frame_id = input_meta.frame_id;
                 frame_id_valid = true;
@@ -352,15 +416,7 @@ private:
                 continue;
             }
 
-            wait_until_issueable();
-            auto result = output_->try_reserve_result();
-            while (!result.valid()) {
-                runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
-                result = output_->try_reserve_result();
-                if (!result.valid()) {
-                    wait_for_output_progress();
-                }
-            }
+            auto result = reserve_output_result();
 
             line_meta output_meta{};
             output_meta.frame_id = frame_id;
@@ -384,8 +440,9 @@ private:
             input_->release(std::move(token));
             ++metrics_.input_lines;
 
+            record_output_meta(output_meta);
             runtime_.schedule(std::move(result), output_meta,
-                              sc_core::sc_time_stamp());
+                              sc_core::sc_time_stamp(), enabled_);
             ++metrics_.output_lines;
             runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
         }
@@ -393,7 +450,7 @@ private:
         while (runtime_.has_in_flight()) {
             runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
             if (runtime_.has_in_flight()) {
-                wait_for_output_progress();
+                wait_for_completion_progress();
             }
         }
         refresh_runtime_metrics();
@@ -408,11 +465,11 @@ private:
             if (runtime_.can_issue(sc_core::sc_time_stamp(), output_width_pixels_)) {
                 return;
             }
-            wait_for_issue_progress();
+            wait_for_issue_progress(runtime_.capacity_full());
         }
     }
 
-    void wait_for_issue_progress() {
+    void wait_for_issue_progress(bool capacity_limited) {
         const sc_core::sc_time start = sc_core::sc_time_stamp();
         const sc_core::sc_time wake = runtime_.next_wakeup();
         const sc_core::sc_time now = sc_core::sc_time_stamp();
@@ -421,7 +478,12 @@ private:
         } else {
             wait(runtime_.completion_event());
         }
-        metrics_.issue_wait += sc_core::sc_time_stamp() - start;
+        const sc_core::sc_time waited = sc_core::sc_time_stamp() - start;
+        metrics_.issue_wait += waited;
+        if (capacity_limited) {
+            metrics_.retire_wait += waited;
+            metrics_.completion_wait_time += waited;
+        }
     }
 
     void wait_for_output_progress() {
@@ -435,8 +497,30 @@ private:
             wait(progress);
         }
         const sc_core::sc_time waited = sc_core::sc_time_stamp() - start;
-        metrics_.retire_wait += waited;
+        // The episode began with no downstream credit.  Attribute its complete
+        // duration to credit blocking; completion is an overlapping cause.
         metrics_.output_wait += waited;
+        metrics_.output_blocked_time += waited;
+        const std::size_t retired =
+            runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
+        if (retired != 0) {
+            metrics_.retire_wait += waited;
+            metrics_.completion_wait_time += waited;
+        }
+    }
+    void wait_for_completion_progress() {
+        const sc_core::sc_time start = sc_core::sc_time_stamp();
+        const sc_core::sc_time wake = runtime_.next_wakeup();
+        const sc_core::sc_time now = sc_core::sc_time_stamp();
+        if (wake > now) {
+            wait(wake - now, runtime_.completion_event());
+        } else {
+            wait(runtime_.completion_event());
+        }
+        const sc_core::sc_time waited = sc_core::sc_time_stamp() - start;
+        runtime_.retire_ready(*output_, sc_core::sc_time_stamp());
+        metrics_.retire_wait += waited;
+        metrics_.completion_wait_time += waited;
     }
 
     void refresh_runtime_metrics() {
@@ -445,6 +529,23 @@ private:
         metrics_.retired_lines = runtime.completed;
         metrics_.in_flight_high_water = runtime.high_water_in_flight;
         metrics_.issue_stalls = runtime.issue_stalls;
+        metrics_.logical_pixels = runtime.logical_pixels;
+        metrics_.processing_beats = runtime.processing_beats;
+        metrics_.active_cycles = runtime.active_cycles;
+        metrics_.bypass_cycles = runtime.bypass_cycles;
+        metrics_.memory_wait_cycles = runtime.memory_wait_cycles;
+        metrics_.memory_wait_available = runtime.memory_service_available;
+        metrics_.memory_wait_provenance = runtime.memory_service_provenance;
+        metrics_.operations = runtime.operations;
+        metrics_.issue_window_cycles = runtime.issue_window_cycles;
+        metrics_.first_issue_time = runtime.first_issue_time;
+        metrics_.last_issue_time = runtime.last_issue_time;
+        metrics_.has_issue_time = runtime.has_issue_time;
+        if (runtime.processing_beats != 0) {
+            metrics_.effective_ii =
+                static_cast<double>(runtime.issue_window_cycles) /
+                static_cast<double>(runtime.processing_beats);
+        }
     }
 
     line_channel<InT>* input_;
@@ -459,6 +560,7 @@ private:
     frame_kernel kernel_;
     metadata_callback metadata_;
     line_kernel line_kernel_;
+    bool enabled_ = true;
     stage_runtime<OutT> runtime_;
     std::vector<InT> input_frame_;
     std::vector<OutT> output_frame_;

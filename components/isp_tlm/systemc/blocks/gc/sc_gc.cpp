@@ -7,6 +7,7 @@
  *   - process_stream(): Hardware shell with timing
  */
 #include "sc_gc.h"
+#include "../../../blocks/gc/gc_lut/lut.h"
 
 int shift_amount(std::uint8_t bit_depth) {
     return static_cast<int>(gc_lut::GAMMA_LUT_BIT_DEPTH) - static_cast<int>(bit_depth);
@@ -47,8 +48,8 @@ void sc_gc::process_stream() {
     m_lut = gc_lut::get_lut();
     m_lut_size = gc_lut::get_lut_size();
 
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(2);
+    
+    
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
@@ -75,7 +76,7 @@ void sc_gc::process_stream() {
         }
 
         std::uint16_t r = fifo_in->read();
-        m_metrics.begin_processing();
+        
         std::uint16_t g = fifo_in->read();
         std::uint16_t b = fifo_in->read();
 
@@ -113,11 +114,11 @@ void sc_gc::process_stream() {
         }
 
         fifo_out->write(r_out);
-        m_metrics.record_output();
+        
         fifo_out->write(g_out);
-        m_metrics.record_output();
+        
         fifo_out->write(b_out);
-        m_metrics.end_processing();
-        m_metrics.record_output();
+        
+        
     }
 }

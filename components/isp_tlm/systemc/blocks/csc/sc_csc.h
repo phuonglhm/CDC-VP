@@ -21,8 +21,7 @@ using namespace sc_core;
 #include <cstdint>
 
 #include "../../../blocks/rgb_to_yuv/include/rgb_to_yuv.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_csc) {
 public:
@@ -38,12 +37,10 @@ public:
           const csc_config& cfg,
           const hw_params* hw = nullptr)
         : sc_module(name), m_cfg(cfg), m_hw(hw),
-          m_cycles_per_pixel(2), m_metrics("csc") {
+          m_cycles_per_pixel(2) {
         SC_THREAD(process_stream);
     }
 
-    // Block-level metrics collector
-    sc_block_metrics<std::uint8_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }

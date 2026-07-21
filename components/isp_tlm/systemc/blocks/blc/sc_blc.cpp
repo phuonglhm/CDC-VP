@@ -27,8 +27,8 @@ inline std::uint16_t apply_blc(std::uint16_t pixel,
 }  // anonymous namespace
 
 void sc_blc::process_stream() {
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(1);
+    
+    
 
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
@@ -36,7 +36,7 @@ void sc_blc::process_stream() {
     bool has_clock = (clk != nullptr);
 
     if (timed_mode) {
-        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
+        
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
     }
 
@@ -52,7 +52,7 @@ void sc_blc::process_stream() {
 
         // Read pixel - blocks until data available
         std::uint16_t pixel = fifo_in->read();
-        m_metrics.begin_processing();
+        
 
         // Update row/col for bayer pattern
         if (++m_col >= m_width) {
@@ -84,8 +84,8 @@ void sc_blc::process_stream() {
         }
 
         fifo_out->write(out);
-        m_metrics.end_processing();
-        m_metrics.record_output();
+        
+        
     }
 }
 

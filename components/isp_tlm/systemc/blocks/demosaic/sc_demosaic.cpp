@@ -13,8 +13,8 @@
  */
 #include "sc_demosaic.h"
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
+#include <vector>
 
 namespace {
 
@@ -65,14 +65,8 @@ void sc_demosaic::process_stream() {
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
     bool has_clock = (clk != nullptr);
-    if (timed_mode) {
-        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
-    }
 
     while (true) {
-        // Frame-level: measure from first read to last write
-        m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
-        m_metrics.begin_processing();
 
         const std::size_t total = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
         const std::uint32_t bit_range = (1u << m_bit_depth) - 1;
@@ -117,8 +111,7 @@ void sc_demosaic::process_stream() {
                 fifo_out->write(raw[i]);
                 fifo_out->write(raw[i]);
             }
-            m_metrics.end_processing();
-            for (std::size_t i = 0; i < total * 3u; ++i) m_metrics.record_output();
+            
             continue;
         }
 
@@ -199,7 +192,6 @@ void sc_demosaic::process_stream() {
             }
         }
 
-        m_metrics.end_processing();
-        for (std::size_t i = 0; i < output.size(); ++i) m_metrics.record_output();
+        
     }
 }

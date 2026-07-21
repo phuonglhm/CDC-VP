@@ -1,22 +1,168 @@
-# isp-level-metric
+# ISP internal metrics contract
 
-- First-input to first-output latency.
-- Total frame cycles.
-- Pixels per cycle.
-- Input and output bandwidth.
-- Total bytes transferred.
+This file is the normative vocabulary for the line-granular SystemC ISP report.
+The observation window is one frame, from the first RAW line entering the ideal
+source boundary through the last YUV line leaving the ideal sink boundary.
+Logical pixels are image samples identified by line metadata; channel
+multiplicity does not multiply them.  All cycle fields are integer clock
+cycles, all link wait seconds are seconds, and time-derived bandwidth is in
+Mbps.
 
-# Block metrics
+Every CSV row emitted by `write_metrics(metrics, path)` is one of the four
+record types and columns documented below.  The first row of each section is
+the section's exact CSV header.  `available` and `unavailable` are explicit
+availability markers; an unavailable numeric value is retained as zero only as
+a serialization placeholder and MUST NOT be interpreted as a measured zero.
+The only filesystem side effect described by this contract is an explicit
+`write_metrics` call.
 
-Emit:
+## Provenance
 
-- Accepted input beats.
-- Produced output beats.
-- Active compute cycles.
-- Bypass cycles.
-- Input-starved cycles.
-- Output-blocked cycles.
-- Local-memory-wait cycles.
-- Pipeline utilization.
-- Effective initiation interval.
-- Operations performed.
+- **measured**: accumulated at an event boundary in the timed SystemC model.
+- **modeled**: an architecture assumption or deterministic equation, not an
+  observed event from an untimed functional kernel.
+- **derived**: calculated from a measured event snapshot; when a CSV field has
+  no provenance column, its provenance is given in the tables here.
+- **unavailable**: the required event or profile was not supplied.  It MUST NOT
+  be replaced by an invented zero.
+
+Workload and local-memory profiles are modeled assumptions.  An available
+profile is valid only with `metric_provenance::modeled`; measured or unavailable
+profile provenance is rejected.  A valid workload profile produces operation
+counts with modeled provenance unconditionally.  Raw event fields that are not
+profile-derived retain their measured provenance.
+
+## Timing definitions
+
+- A **line** is exactly one `line_channel` token representing one logical image
+  row.
+- A **processing beat** is one internal group of up to `pixels_per_cycle`
+  logical pixels.  It is not a bus or AXI beat.  For logical pixel count `P`
+  and PPC `Q`, `processing_beats = ceil(P / Q)`.
+- `compute_cycles = processing_beats * pixel_initiation_interval_cycles`.
+- With valid modeled workload and local-memory profiles:
+  `read_cycles = ceil(reads_per_pixel * P / read_ports) * access_cycles` and
+  `write_cycles = ceil(writes_per_pixel * P / write_ports) * access_cycles`.
+  Zero demand has zero cycles and does not require a port.
+- `memory_service_cycles = max(read_cycles, write_cycles)`.
+- `line_issue_cycles = max(compute_cycles, memory_service_cycles)`.
+- `memory_wait_cycles = max(0, memory_service_cycles - compute_cycles)`.
+  Memory service and memory wait are modeled and retain modeled provenance.
+  If either profile is unavailable, both memory metrics are unavailable.
+- `completion_time = issue_time + pipeline_latency_cycles * cycle_period`.
+- `next_issue_time = issue_time + line_issue_cycles * cycle_period`.
+- Integer arithmetic is overflow checked.  Invalid zero divisors or overflow
+  are errors, never wrapped results.
+
+## Frame report
+
+The frame section starts with:
+
+```text
+frame_metric,value,availability
+```
+
+It emits these rows:
+
+| `frame_metric` | Definition | Unit | Provenance |
+|---|---|---|---|
+| `first_output_latency_cycles` | `ceil((first_output_time - first_input_time) / cycle_period)` | cycles | derived from measured timestamps |
+| `first_output_latency_us` | `(first_output_time - first_input_time) / 1us` | microseconds | derived from measured timestamps |
+| `frame_cycles` | `ceil((last_output_time - first_input_time) / cycle_period)` | cycles | derived from measured timestamps |
+| `achieved_pixels_per_cycle` | frame input logical pixels / `frame_cycles` | pixels/cycle | derived from measured events |
+| `input_bandwidth_mbps` | `input_bytes * 8 / frame_time_us` | Mbps | derived from measured logical bytes and timestamps |
+| `output_bandwidth_mbps` | `output_bytes * 8 / frame_time_us` | Mbps | derived from measured logical bytes and timestamps |
+
+The frame section is followed by these exact byte rows:
+
+```text
+input_bytes,value,availability
+output_bytes,value,availability
+```
+
+`input_bytes` is the logical RAW sample byte total crossing the ideal input
+boundary; `output_bytes` is the logical YUV sample byte total crossing the
+ideal output boundary.  Both are measured.  Their availability columns use
+`input_bytes_available` and `output_bytes_available`, respectively, and are
+independent of bandwidth availability.  The bandwidth rows additionally
+require a positive measured frame duration.
+
+## Block report
+
+The block section starts with this exact header:
+
+```text
+block,name,input_lines,output_lines,logical_pixels,processing_beats,input_logical_pixels,output_logical_pixels,accepted_input_beats,produced_output_beats,enabled,active_cycles,bypass_cycles,input_starved_cycles,output_blocked_cycles,completion_wait_cycles,memory_wait_cycles,memory_wait_availability,memory_wait_provenance,utilization,effective_ii,effective_ii_availability,additions,multiplications,comparisons,reads,writes,operations_provenance
+```
+
+Each `block` row contains:
+
+| Field | Definition | Unit | Provenance/availability |
+|---|---|---|---|
+| `name` | configured block name | name | configuration |
+| `input_lines` | line tokens consumed | lines | measured |
+| `output_lines` | line tokens issued | lines | measured |
+| `logical_pixels` | logical pixels represented by issued output lines and used for block service | pixels | measured metadata |
+| `processing_beats` | sum of `ceil(line_pixels / PPC)` for issued lines | beats | derived from measured metadata and config |
+| `input_logical_pixels` | sum of input line widths accepted by the block | pixels | measured metadata |
+| `output_logical_pixels` | sum of output line widths produced by the block | pixels | measured metadata |
+| `accepted_input_beats` | sum of `ceil(input_line_pixels / PPC)` for accepted input lines | beats | derived from measured metadata and config |
+| `produced_output_beats` | sum of `ceil(output_line_pixels / PPC)` for produced output lines | beats | derived from measured metadata and config |
+| `enabled` | `1` when the block was enabled at issue time, otherwise `0` | boolean | measured issue state |
+| `active_cycles` | compute demand for explicitly enabled issues | cycles | modeled demand accumulated at measured issue events |
+| `bypass_cycles` | service demand for explicitly disabled issues | cycles | modeled demand accumulated at measured issue events |
+| `input_starved_cycles` | eligible time waiting for an empty input | cycles | measured |
+| `output_blocked_cycles` | time waiting specifically for downstream slot credit | cycles | measured |
+| `completion_wait_cycles` | time waiting for scheduled completion/latency | cycles | measured |
+| `memory_wait_cycles` | accumulated `memory_wait_cycles` per issued line | cycles | modeled; unavailable without profiles |
+| `memory_wait_availability` | whether memory wait data is supplied | marker | `available`/`unavailable` |
+| `memory_wait_provenance` | provenance of memory wait data | marker | normally `modeled` when available |
+| `utilization` | `min(1, active_cycles / stage_observation_cycles)` when enabled; zero for bypass | ratio | derived |
+| `effective_ii` | `issue_window_cycles / processing_beats` | cycles/processing beat | derived |
+| `effective_ii_availability` | whether issue window and processing beats permit the ratio | marker | `available`/`unavailable` |
+| `additions` | workload additions per pixel times logical pixels | operations | modeled; unavailable without workload |
+| `multiplications` | workload multiplications per pixel times logical pixels | operations | modeled; unavailable without workload |
+| `comparisons` | workload comparisons per pixel times logical pixels | operations | modeled; unavailable without workload |
+| `reads` | workload reads per pixel times logical pixels | operations | modeled; unavailable without workload |
+| `writes` | workload writes per pixel times logical pixels | operations | modeled; unavailable without workload |
+| `operations_provenance` | provenance of all five operation counts | marker | `modeled` with a valid workload, otherwise `unavailable` |
+
+Enabled/bypass state is captured at issue time.  Bypass operation counts are
+zero even when bypass service demand is recorded.  Durations can overlap for
+in-flight lines and are not a cycle partition.
+
+## Link report
+
+The link section starts with:
+
+```text
+link,name,published_lines,read_lines,released_lines,logical_bytes,occupancy_high_water,producer_wait_events,consumer_wait_events,producer_wait_seconds,consumer_wait_seconds,producer_wait_cycles,consumer_wait_cycles
+```
+
+`name` is the configured link name.  `published_lines`, `read_lines`, and
+`released_lines` are measured token events; `logical_bytes` is the measured
+byte total represented by valid samples in those tokens, not physical bus
+traffic.  `occupancy_high_water` is measured slots.  Producer and consumer
+wait event counts, completed wait durations in seconds, and their cycle
+conversions are measured at the corresponding credit/data events.
+
+## Bottleneck-candidate report
+
+The bottleneck section starts with:
+
+```text
+bottleneck,type,location,severity,evidence
+```
+
+`type` is a ranked evidence category such as `input_starvation`,
+`downstream_credit`, `memory_port`, or `compute_ii`; `location` identifies the
+block; `severity` is a bounded [0,1] ranking score; and `evidence` is the
+concrete metric field/value used for ranking.  Candidates are evidence, not
+claims about external DMA, DRAM, bus capacity, arbitration, power, or RTL
+cycle accuracy.
+
+## Scope exclusions
+
+No metric in this contract includes DMA, external bus width or bandwidth,
+external backpressure, calibrated power, clock gating, or RTL cycle-accuracy
+claims.

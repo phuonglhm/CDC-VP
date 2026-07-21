@@ -11,9 +11,6 @@ void sc_aec::process_stream() {
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
     bool has_clock = (clk != nullptr);
-    if (timed_mode) {
-        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
-    }
 
     while (true) {
         double m2 = 0.0;

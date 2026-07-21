@@ -179,10 +179,8 @@ list_targets() {
     echo -e "${YELLOW}Available testbench targets:${NC}"
     echo ""
     echo "  isp_run         - Full ISP pipeline run"
-    echo "  tb_arch_pipeline - Architecture-aware timed pipeline"
-    echo "  tb_power_metrics - Power estimation for ISP pipeline"
+    echo "  tb_arch_pipeline - Architecture-aware line pipeline"
     echo "  tb_arch_sweep   - Architecture sweep runner"
-    echo "  tb_dma_integration - DMA and memory model integration"
     echo ""
 }
 

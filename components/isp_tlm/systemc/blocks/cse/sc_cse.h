@@ -20,8 +20,7 @@ using namespace sc_core;
 #include <cstdint>
 
 #include "../../../blocks/cse/include/cse.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_cse) {
 public:
@@ -37,12 +36,10 @@ public:
           const cse_config& cfg,
           const hw_params* hw = nullptr)
         : sc_module(name), m_cfg(cfg), m_hw(hw),
-          m_cycles_per_pixel(1), m_metrics("cse") {
+          m_cycles_per_pixel(1) {
         SC_THREAD(process_stream);
     }
 
-    // Block-level metrics collector
-    sc_block_metrics<std::uint8_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }

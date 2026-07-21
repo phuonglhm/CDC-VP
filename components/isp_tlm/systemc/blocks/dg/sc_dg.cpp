@@ -7,6 +7,7 @@
  *   - process_stream(): Hardware shell with timing
  */
 #include "sc_dg.h"
+#include <algorithm>
 
 std::uint16_t sc_dg::process_pixel(std::uint16_t pixel) {
     std::uint32_t bit_range = (1u << m_bit_depth) - 1;
@@ -20,13 +21,13 @@ std::uint16_t sc_dg::process_pixel(std::uint16_t pixel) {
 }
 
 void sc_dg::process_stream() {
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(1);
+    
+    
 
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
     bool has_clock = (clk != nullptr);
     if (timed_mode) {
-        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
+        
         m_cycles_per_pixel = m_hw->default_cycles_per_pixel;
     }
 
@@ -49,7 +50,7 @@ void sc_dg::process_stream() {
         }
 
         std::uint16_t pixel = fifo_in->read();
-        m_metrics.begin_processing();
+        
 
         std::uint16_t out;
         if (!m_cfg.is_enable) {
@@ -85,7 +86,7 @@ void sc_dg::process_stream() {
         }
 
         fifo_out->write(out);
-        m_metrics.end_processing();
-        m_metrics.record_output();
+        
+        
     }
 }

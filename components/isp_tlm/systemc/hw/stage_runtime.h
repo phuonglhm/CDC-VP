@@ -2,26 +2,27 @@
 #define ISP_STAGE_RUNTIME_H
 
 #include "line_channel.h"
+#include "metrics.h"
 
 #include <systemc>
 
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
 namespace isp_tlm {
 
-enum class timing_source { assumed, measured, rtl, hls };
-
 struct stage_timing {
-    std::uint32_t compute_latency_cycles = 1;
-    std::uint32_t pixel_ii = 1;
+    std::uint32_t pipeline_latency_cycles = 1;
+    std::uint32_t pixel_initiation_interval_cycles = 1;
     std::uint32_t pixels_per_cycle = 1;
     std::uint32_t max_in_flight_lines = 1;
-    timing_source source = timing_source::assumed;
     sc_core::sc_time cycle_period = sc_core::sc_time(1, sc_core::SC_NS);
+    std::optional<workload_profile> workload;
+    std::optional<local_memory_service_profile> local_memory;
 };
 
 template <class T>
@@ -30,14 +31,13 @@ struct pending_line {
     line_meta meta{};
     sc_core::sc_time ready_at = sc_core::SC_ZERO_TIME;
     std::uint64_t sequence = 0;
+    bool enabled = true;
 };
 
 template <class T>
 using scheduled_line = pending_line<T>;
-
 template <class T>
 using pending = pending_line<T>;
-
 template <class T>
 using scheduled = pending_line<T>;
 
@@ -53,12 +53,29 @@ public:
         std::uint32_t in_flight = 0;
         std::uint32_t high_water_in_flight = 0;
         std::uint64_t issue_stalls = 0;
+        std::uint64_t enabled_issues = 0;
+        std::uint64_t bypassed_issues = 0;
+        std::uint64_t logical_pixels = 0;
+        std::uint64_t processing_beats = 0;
+        std::uint64_t compute_cycles = 0;
+        std::uint64_t memory_service_cycles = 0;
+        std::uint64_t active_cycles = 0;
+        std::uint64_t bypass_cycles = 0;
+        std::uint64_t memory_wait_cycles = 0;
+        bool memory_service_available = false;
+        metric_provenance memory_service_provenance = metric_provenance::unavailable;
+        std::uint64_t issue_window_cycles = 0;
+        sc_core::sc_time first_issue_time = sc_core::SC_ZERO_TIME;
+        sc_core::sc_time last_issue_time = sc_core::SC_ZERO_TIME;
+        bool has_issue_time = false;
+        operation_counts operations{};
     };
 
     explicit stage_runtime(const stage_timing& timing = stage_timing{})
-        : m_timing(timing), m_pending(timing.max_in_flight_lines == 0
-                                           ? nullptr
-                                           : std::make_unique<pending[]>(timing.max_in_flight_lines)) {
+        : m_timing(timing),
+          m_pending(timing.max_in_flight_lines == 0
+                        ? nullptr
+                        : std::make_unique<pending[]>(timing.max_in_flight_lines)) {
         validate_timing();
     }
 
@@ -74,12 +91,15 @@ public:
     stage_runtime(const stage_runtime&) = delete;
     stage_runtime& operator=(const stage_runtime&) = delete;
 
-    bool can_issue(const sc_core::sc_time& now, std::uint32_t width) const noexcept {
+    bool can_issue(const sc_core::sc_time& now, std::uint32_t /*width*/) const noexcept {
         return m_in_flight < m_timing.max_in_flight_lines && now >= m_next_issue;
+    }
+    bool capacity_full() const noexcept {
+        return m_in_flight >= m_timing.max_in_flight_lines;
     }
 
     void schedule(write_handle<T>&& handle, const line_meta& meta,
-                  const sc_core::sc_time& now) {
+                  const sc_core::sc_time& now, bool enabled) {
         if (!handle.valid()) {
             throw std::logic_error("cannot schedule an invalid line handle");
         }
@@ -94,24 +114,86 @@ public:
         if (index == m_timing.max_in_flight_lines) {
             throw std::logic_error("stage runtime pending storage is full");
         }
+
+        const std::uint64_t pixels = meta.width_pixels;
+        const std::uint64_t beats = processing_beats(pixels, m_timing.pixels_per_cycle);
+        const std::uint64_t compute = compute_cycles(
+            pixels, m_timing.pixels_per_cycle,
+            m_timing.pixel_initiation_interval_cycles);
+        const auto service = memory_service_cycles(
+            pixels, m_timing.workload, m_timing.local_memory);
+        const std::uint64_t issue_cycles = line_issue_interval_cycles(
+            pixels, m_timing.pixels_per_cycle,
+            m_timing.pixel_initiation_interval_cycles,
+            m_timing.workload, m_timing.local_memory);
+
         pending& item = m_pending[index];
         item.handle = std::move(handle);
         item.meta = meta;
         item.ready_at = now + m_timing.cycle_period *
-                                  static_cast<double>(m_timing.compute_latency_cycles);
+                                  static_cast<double>(m_timing.pipeline_latency_cycles);
         item.sequence = m_next_sequence++;
+        item.enabled = enabled;
         ++m_in_flight;
         ++m_issued;
+        if (enabled) {
+            ++m_enabled_issues;
+            m_active_cycles = checked_add(m_active_cycles, compute);
+        } else {
+            ++m_bypassed_issues;
+            m_bypass_cycles = checked_add(m_bypass_cycles, compute);
+        }
+        m_logical_pixels = checked_add(m_logical_pixels, pixels);
+        m_processing_beats = checked_add(m_processing_beats, beats);
+        m_compute_cycles = checked_add(m_compute_cycles, compute);
+        m_memory_service_available = service.has_value();
+        if (service) {
+            m_memory_service_cycles = checked_add(m_memory_service_cycles, *service);
+            const auto wait = memory_wait_cycles(
+                pixels, m_timing.pixels_per_cycle,
+                m_timing.pixel_initiation_interval_cycles,
+                m_timing.workload, m_timing.local_memory);
+            if (wait) {
+                m_memory_wait_cycles = checked_add(m_memory_wait_cycles, *wait);
+            }
+            m_memory_service_provenance = m_timing.local_memory
+                                              ? m_timing.local_memory->provenance
+                                              : metric_provenance::unavailable;
+        }
+        if (!m_has_issue_time) {
+            m_first_issue_time = now;
+            m_has_issue_time = true;
+        }
+        m_last_issue_time = now;
+        const std::uint64_t elapsed_issue_cycles =
+            m_has_issue_time
+                ? time_to_cycles(now - m_first_issue_time, m_timing.cycle_period)
+                : 0;
+        m_issue_window_cycles = checked_add(elapsed_issue_cycles, issue_cycles);
+        if (enabled) {
+            const auto ops = modeled_operations(pixels, m_timing.workload);
+            if (ops.available) {
+                m_operations.available = true;
+                m_operations.provenance = ops.provenance;
+                m_operations.additions = checked_add(m_operations.additions, ops.additions);
+                m_operations.multiplications =
+                    checked_add(m_operations.multiplications, ops.multiplications);
+                m_operations.comparisons =
+                    checked_add(m_operations.comparisons, ops.comparisons);
+                m_operations.reads = checked_add(m_operations.reads, ops.reads);
+                m_operations.writes = checked_add(m_operations.writes, ops.writes);
+            }
+        }
         if (m_in_flight > m_high_water_in_flight) {
             m_high_water_in_flight = m_in_flight;
         }
-        m_next_issue = now + issue_interval(width_or_meta_width(meta));
+        m_next_issue = now + m_timing.cycle_period * static_cast<double>(issue_cycles);
     }
 
     std::size_t retire_ready(line_channel<T>& channel, const sc_core::sc_time& now) {
         std::size_t retired = 0;
         while (m_in_flight != 0) {
-            std::size_t index = find_next_sequence();
+            const std::size_t index = find_next_sequence();
             if (index == m_timing.max_in_flight_lines || m_pending[index].ready_at > now) {
                 break;
             }
@@ -120,6 +202,7 @@ public:
             item.meta = line_meta{};
             item.ready_at = sc_core::SC_ZERO_TIME;
             item.sequence = 0;
+            item.enabled = true;
             --m_in_flight;
             ++m_completed;
             ++retired;
@@ -132,8 +215,7 @@ public:
 
     sc_core::sc_time next_wakeup() const {
         const sc_core::sc_time now = sc_core::sc_time_stamp();
-        sc_core::sc_time wake =
-            m_next_issue > now ? m_next_issue : now;
+        sc_core::sc_time wake = m_next_issue > now ? m_next_issue : now;
         if (m_in_flight != 0) {
             const std::size_t index = find_next_sequence();
             if (index != m_timing.max_in_flight_lines) {
@@ -150,35 +232,80 @@ public:
     const sc_core::sc_event& completion_event() const noexcept { return m_completion_event; }
 
     snapshot_type snapshot() const noexcept {
-        return {m_issued, m_completed, m_in_flight, m_high_water_in_flight, m_issue_stalls};
+        snapshot_type result;
+        result.issued = m_issued;
+        result.completed = m_completed;
+        result.in_flight = m_in_flight;
+        result.high_water_in_flight = m_high_water_in_flight;
+        result.issue_stalls = m_issue_stalls;
+        result.enabled_issues = m_enabled_issues;
+        result.bypassed_issues = m_bypassed_issues;
+        result.logical_pixels = m_logical_pixels;
+        result.processing_beats = m_processing_beats;
+        result.compute_cycles = m_compute_cycles;
+        result.memory_service_cycles = m_memory_service_cycles;
+        result.active_cycles = m_active_cycles;
+        result.bypass_cycles = m_bypass_cycles;
+        result.memory_wait_cycles = m_memory_wait_cycles;
+        result.memory_service_available = m_memory_service_available;
+        result.memory_service_provenance = m_memory_service_provenance;
+        result.issue_window_cycles = m_issue_window_cycles;
+        result.first_issue_time = m_first_issue_time;
+        result.last_issue_time = m_last_issue_time;
+        result.has_issue_time = m_has_issue_time;
+        result.operations = m_operations;
+        return result;
+    }
+    void reset_metrics() {
+        if (m_in_flight != 0) {
+            throw std::logic_error("cannot reset stage metrics with in-flight lines");
+        }
+        m_issued = 0;
+        m_completed = 0;
+        m_issue_stalls = 0;
+        m_enabled_issues = 0;
+        m_bypassed_issues = 0;
+        m_logical_pixels = 0;
+        m_processing_beats = 0;
+        m_compute_cycles = 0;
+        m_memory_service_cycles = 0;
+        m_active_cycles = 0;
+        m_bypass_cycles = 0;
+        m_memory_wait_cycles = 0;
+        m_issue_window_cycles = 0;
+        m_high_water_in_flight = 0;
+        m_memory_service_available = false;
+        m_memory_service_provenance = metric_provenance::unavailable;
+        m_first_issue_time = sc_core::SC_ZERO_TIME;
+        m_last_issue_time = sc_core::SC_ZERO_TIME;
+        m_has_issue_time = false;
+        m_operations = operation_counts{};
     }
 
     sc_core::sc_time issue_interval(std::uint32_t width) const {
-        const std::uint32_t ppc = m_timing.pixels_per_cycle == 0 ? 1 : m_timing.pixels_per_cycle;
-        const std::uint64_t transfer_cycles =
-            (static_cast<std::uint64_t>(width) + ppc - 1u) / ppc;
-        const std::uint64_t issue_cycles =
-            transfer_cycles > m_timing.pixel_ii ? transfer_cycles : m_timing.pixel_ii;
-        return m_timing.cycle_period * static_cast<double>(issue_cycles == 0 ? 1 : issue_cycles);
+        const std::uint64_t cycles = line_issue_interval_cycles(
+            width, m_timing.pixels_per_cycle,
+            m_timing.pixel_initiation_interval_cycles,
+            m_timing.workload, m_timing.local_memory);
+        return m_timing.cycle_period * static_cast<double>(cycles);
     }
 
     const stage_timing& timing() const noexcept { return m_timing; }
 
 private:
     void validate_timing() const {
-        if (m_timing.max_in_flight_lines == 0 || m_timing.pixel_ii == 0 ||
-            m_timing.pixels_per_cycle == 0 || m_timing.cycle_period <= sc_core::SC_ZERO_TIME) {
+        if (m_timing.max_in_flight_lines == 0 ||
+            m_timing.pixel_initiation_interval_cycles == 0 ||
+            m_timing.pixels_per_cycle == 0 ||
+            m_timing.pipeline_latency_cycles == 0 ||
+            m_timing.cycle_period <= sc_core::SC_ZERO_TIME) {
             throw std::invalid_argument("stage timing values must be positive");
         }
     }
 
-    std::uint32_t width_or_meta_width(const line_meta& meta) const noexcept {
-        return meta.width_pixels;
-    }
-
     std::size_t find_next_sequence() const noexcept {
         std::size_t best = m_timing.max_in_flight_lines;
-        std::uint64_t sequence = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t sequence = (std::numeric_limits<std::uint64_t>::max)();
         for (std::size_t i = 0; i < m_timing.max_in_flight_lines; ++i) {
             if (m_pending[i].handle.valid() && m_pending[i].sequence < sequence) {
                 sequence = m_pending[i].sequence;
@@ -192,12 +319,28 @@ private:
     std::unique_ptr<pending[]> m_pending;
     sc_core::sc_event m_completion_event;
     sc_core::sc_time m_next_issue = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time m_first_issue_time = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time m_last_issue_time = sc_core::SC_ZERO_TIME;
     std::uint64_t m_next_sequence = 0;
     std::uint64_t m_issued = 0;
     std::uint64_t m_completed = 0;
     std::uint64_t m_issue_stalls = 0;
+    std::uint64_t m_enabled_issues = 0;
+    std::uint64_t m_bypassed_issues = 0;
+    std::uint64_t m_logical_pixels = 0;
+    std::uint64_t m_processing_beats = 0;
+    std::uint64_t m_compute_cycles = 0;
+    std::uint64_t m_memory_service_cycles = 0;
+    std::uint64_t m_active_cycles = 0;
+    std::uint64_t m_bypass_cycles = 0;
+    std::uint64_t m_memory_wait_cycles = 0;
+    std::uint64_t m_issue_window_cycles = 0;
     std::uint32_t m_in_flight = 0;
     std::uint32_t m_high_water_in_flight = 0;
+    bool m_memory_service_available = false;
+    metric_provenance m_memory_service_provenance = metric_provenance::unavailable;
+    bool m_has_issue_time = false;
+    operation_counts m_operations{};
 };
 
 } // namespace isp_tlm

@@ -24,8 +24,7 @@ using namespace sc_core;
 
 #include <cstdint>
 
-#include "../tb_utils/sc_block_metrics.h"
-#include "hw/isp_arch_config.h"
+#include "../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_input_normalizer) {
 public:
@@ -52,12 +51,9 @@ public:
         , m_work_bit_depth(work_bit_depth)
         , m_hw(hw)
         , m_cycles_per_pixel(1)
-        , m_metrics("normalizer") {
         SC_THREAD(process_stream);
     }
 
-    // Block-level metrics collector
-    sc_block_metrics<std::uint16_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }
@@ -115,9 +111,6 @@ inline std::uint16_t sc_input_normalizer::process_pixel(std::uint16_t pixel) {
 }
 
 inline void sc_input_normalizer::process_stream() {
-    m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::PIXEL);
-    m_metrics.set_cycles_per_pixel(1);
-
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode && (clk != nullptr);
     if (timed_mode) {
@@ -133,7 +126,6 @@ inline void sc_input_normalizer::process_stream() {
 
     while (true) {
         const std::uint16_t v = fifo_in->read();
-        m_metrics.begin_processing();
 
         std::uint16_t out;
         if (!need_conversion) {
@@ -156,8 +148,6 @@ inline void sc_input_normalizer::process_stream() {
         }
 
         fifo_out->write(out);
-        m_metrics.end_processing();
-        m_metrics.record_output();
     }
 }
 

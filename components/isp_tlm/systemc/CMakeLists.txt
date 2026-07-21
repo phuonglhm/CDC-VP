@@ -3,18 +3,17 @@
 #
 # Builds:
 #   - 17 individual block testbenches
-#   - 1 full-pipeline testbench (tb_pipeline)
-#   - 1 architecture-aware timed pipeline testbench (tb_arch_pipeline)
+#   - Full-pipeline, real-image, architecture sweep, and line primitive tests
 #
-# Hardware architecture support files in hw/ directory:
+# Active internal hardware model headers (7 model headers + umbrella):
 #   - isp_arch_config.h: Architecture configuration
-#   - stream_beat.h: Frame-aware stream types
-#   - timed_stream.h: Clocked instrumented streams
-#   - metrics.h: Architecture metrics collection
-#   - local_memory.h: Line buffer and memory models
-#   - frame_dma.h: DMA models
-#   - timed_block.h: Hardware shell base classes
-#   - trace.h: VCD tracing utilities
+#   - metrics.h: Internal metric collection
+#   - line_channel.h: Line-granular token channels
+#   - line_stage.h: Line-granular processing stages
+#   - stage_runtime.h: Stage runtime and metric accounting
+#   - frame_feedback.h: Frame-level feedback
+#   - sweep.h: Architecture parameter sweeps
+#   - hw.h: Umbrella include for the active model
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -22,17 +21,13 @@
 # ------------------------------------------------------------------------------
 set(SC_ISP_HW_HEADERS
     hw/isp_arch_config.h
-    hw/stream_beat.h
-    hw/timed_stream.h
     hw/metrics.h
-    hw/local_memory.h
-    hw/frame_dma.h
-    hw/timed_block.h
-    hw/trace.h
-    hw/hw.h
     hw/line_channel.h
+    hw/line_stage.h
     hw/stage_runtime.h
     hw/frame_feedback.h
+    hw/sweep.h
+    hw/hw.h
 )
 
 # ------------------------------------------------------------------------------
@@ -210,17 +205,15 @@ target_link_libraries(tb_pipeline PRIVATE
 
 if(CDC_BUILD_TESTS)
     add_test(NAME tb_pipeline COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_pipeline
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
 # ------------------------------------------------------------------------------
 # Real-image (D65 RAW 2688x1520) testbenches.
 #
-# These testbenches load a real RAW capture from disk, stream it through
-# the SystemC DUT and:
-#   1. Save the DUT output to `output/`
-#   2. Compare bit-exact against the original C++ reference
-# ------------------------------------------------------------------------------
+# These testbenches load a caller-selected real RAW capture, compare the
+# SystemC DUT bit-exactly against the original C++ reference, and write YUV or
+# metric artifacts only when explicit output paths are supplied.
 add_executable(tb_d65_pipeline pipeline/d65/tb_d65_pipeline.cpp)
 target_include_directories(tb_d65_pipeline PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
@@ -236,7 +229,8 @@ target_link_libraries(tb_d65_pipeline PRIVATE
 )
 if(CDC_BUILD_TESTS)
     add_test(NAME tb_d65_pipeline COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_d65_pipeline
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        --input ${CMAKE_CURRENT_SOURCE_DIR}/../input/D65_raw_2688x1520_5376.raw
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
 add_executable(tb_d65_blc blocks/blc/d65/tb_d65_blc.cpp)
@@ -254,39 +248,17 @@ target_link_libraries(tb_d65_blc PRIVATE
 )
 if(CDC_BUILD_TESTS)
     add_test(NAME tb_d65_blc COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_d65_blc
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
-# ------------------------------------------------------------------------------
-# Metrics wrapper demo testbench (single-block demo)
-#
-# Exercises sc_metrics_wrapper<uint16_t> between a Generic_Driver and a
-# sc_blc block. Dumps per-token latency CSV + summary at sc_main return.
-# ------------------------------------------------------------------------------
-add_executable(tb_metrics_demo tb_utils/metrics_demo_tb.cpp)
-target_include_directories(tb_metrics_demo PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
-    ${CMAKE_SOURCE_DIR}/components/isp_tlm/blocks/blc/include
-)
-target_link_libraries(tb_metrics_demo PRIVATE
-    sc_isp_blocks
-    SystemC::systemc
-)
-if(CDC_BUILD_TESTS)
-    add_test(NAME tb_metrics_demo COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_metrics_demo
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-endif()
 
 # ------------------------------------------------------------------------------
-# Architecture-Aware Timed Pipeline Testbench
+# Architecture-Aware Line Pipeline Testbench
 #
-# This testbench demonstrates the full architecture model with:
-#   - Clock and reset signals
-#   - Timed block processing
-#   - Architecture metrics collection
-#   - Bottleneck analysis
+# This testbench exercises the internal line-granular pipeline model with:
+#   - Architecture configuration and metric accounting
+#   - In-memory reference comparison
+#   - Frame-level availability and throughput metrics
 # ------------------------------------------------------------------------------
 add_executable(tb_arch_pipeline pipeline/tb_arch_pipeline.cpp)
 target_include_directories(tb_arch_pipeline PRIVATE
@@ -304,52 +276,10 @@ target_link_libraries(tb_arch_pipeline PRIVATE
 )
 if(CDC_BUILD_TESTS)
     add_test(NAME tb_arch_pipeline COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_arch_pipeline
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
-# ------------------------------------------------------------------------------
-# DMA Integration Testbench
-# ------------------------------------------------------------------------------
-add_executable(tb_dma_integration pipeline/tb_dma_integration.cpp)
-target_include_directories(tb_dma_integration PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
-    ${CMAKE_CURRENT_SOURCE_DIR}/hw
-    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline
-    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
-    ${CMAKE_SOURCE_DIR}/components/isp_tlm/pipeline/include
-    ${SYSTEMC_INCLUDE_DIR}
-)
-target_link_libraries(tb_dma_integration PRIVATE
-    sc_isp_pipeline
-    cdc::components::isp_tlm
-    SystemC::systemc
-)
-if(CDC_BUILD_TESTS)
-    add_test(NAME tb_dma_integration COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_dma_integration
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-endif()
 
-# ------------------------------------------------------------------------------
-# Power Metrics Testbench
-# ------------------------------------------------------------------------------
-add_executable(tb_power_metrics pipeline/tb_power_metrics.cpp)
-target_include_directories(tb_power_metrics PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils
-    ${CMAKE_CURRENT_SOURCE_DIR}/hw
-    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline
-    ${CMAKE_SOURCE_DIR}/components/isp_tlm/core/include
-    ${CMAKE_SOURCE_DIR}/components/isp_tlm/pipeline/include
-    ${SYSTEMC_INCLUDE_DIR}
-)
-target_link_libraries(tb_power_metrics PRIVATE
-    sc_isp_pipeline
-    cdc::components::isp_tlm
-    SystemC::systemc
-)
-if(CDC_BUILD_TESTS)
-    add_test(NAME tb_power_metrics COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_power_metrics
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-endif()
 
 # ------------------------------------------------------------------------------
 # Architecture Sweep Testbench
@@ -369,24 +299,10 @@ target_link_libraries(tb_arch_sweep PRIVATE
     SystemC::systemc
 )
 if(CDC_BUILD_TESTS)
-    add_test(NAME tb_arch_sweep COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_arch_sweep
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME tb_arch_sweep COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tb_arch_sweep --compare
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
-# ------------------------------------------------------------------------------
-# Metrics summary Python aggregator
-# ------------------------------------------------------------------------------
-find_package(Python3 COMPONENTS Interpreter)
-if(Python3_Interpreter_FOUND)
-    add_custom_target(metrics_summary
-        COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tb_utils/metrics_summary.py
-            ${CMAKE_CURRENT_SOURCE_DIR}/output/metrics
-        DEPENDS tb_pipeline
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Aggregating metrics CSVs into summary"
-    )
-endif()
 
 # ------------------------------------------------------------------------------
 # Line-granular primitive contract test

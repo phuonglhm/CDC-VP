@@ -163,6 +163,13 @@ public:
         std::uint32_t occupancy_high_water = 0;
         std::uint64_t blocked_producers = 0;
         std::uint64_t blocked_consumers = 0;
+        std::uint64_t logical_bytes = 0;
+        std::uint64_t published_logical_bytes = 0;
+        std::uint64_t read_logical_bytes = 0;
+        std::uint64_t producer_wait_events = 0;
+        std::uint64_t consumer_wait_events = 0;
+        sc_core::sc_time producer_wait = sc_core::SC_ZERO_TIME;
+        sc_core::sc_time consumer_wait = sc_core::SC_ZERO_TIME;
     };
 
     line_channel(sc_core::sc_module_name name, std::size_t slot_count,
@@ -194,9 +201,13 @@ public:
     line_channel& operator=(const line_channel&) = delete;
 
     write_type reserve_result() {
-        while (m_free_count == 0) {
-            ++m_blocked_producers;
-            sc_core::wait(m_credit_event);
+        if (m_free_count == 0) {
+            const sc_core::sc_time start = sc_core::sc_time_stamp();
+            do {
+                sc_core::wait(m_credit_event);
+            } while (m_free_count == 0);
+            record_producer_blocked_episode();
+            record_producer_wait_duration(sc_core::sc_time_stamp() - start);
         }
         return reserve_now();
     }
@@ -206,6 +217,14 @@ public:
             return {};
         }
         return reserve_now();
+    }
+    void record_producer_blocked_episode() noexcept {
+        ++m_blocked_producers;
+        ++m_producer_wait_events;
+    }
+
+    void record_producer_wait_duration(const sc_core::sc_time& duration) noexcept {
+        m_producer_wait += duration;
     }
 
     void publish(write_type&& handle, const line_meta& meta) {
@@ -218,15 +237,24 @@ public:
         m_state[id] = slot_state::published;
         enqueue_ready(id);
         ++m_published;
+        const std::uint64_t bytes = logical_bytes(meta.valid_samples);
+        m_logical_bytes = saturating_add(m_logical_bytes, bytes);
+        m_published_logical_bytes =
+            saturating_add(m_published_logical_bytes, bytes);
         handle.invalidate();
         m_data_pending = true;
         request_update();
     }
 
     read_type read() {
-        while (m_ready_count == 0) {
+        if (m_ready_count == 0) {
+            const sc_core::sc_time start = sc_core::sc_time_stamp();
+            do {
+                sc_core::wait(m_data_event);
+            } while (m_ready_count == 0);
             ++m_blocked_consumers;
-            sc_core::wait(m_data_event);
+            ++m_consumer_wait_events;
+            m_consumer_wait += sc_core::sc_time_stamp() - start;
         }
         return read_now();
     }
@@ -260,8 +288,41 @@ public:
     const sc_core::sc_event& credit_event() const noexcept { return m_credit_event; }
 
     snapshot_type snapshot() const noexcept {
-        return {m_published, m_read, m_released, m_occupancy_high_water,
-                m_blocked_producers, m_blocked_consumers};
+        snapshot_type result;
+        result.published = m_published;
+        result.read = m_read;
+        result.released = m_released;
+        result.occupancy_high_water = m_occupancy_high_water;
+        result.blocked_producers = m_blocked_producers;
+        result.blocked_consumers = m_blocked_consumers;
+        result.logical_bytes = m_logical_bytes;
+        result.published_logical_bytes = m_published_logical_bytes;
+        result.read_logical_bytes = m_read_logical_bytes;
+        result.producer_wait_events = m_producer_wait_events;
+        result.consumer_wait_events = m_consumer_wait_events;
+        result.producer_wait = m_producer_wait;
+        result.consumer_wait = m_consumer_wait;
+        return result;
+    }
+    void reset_metrics() {
+        if (m_free_count != m_slot_count || m_ready_count != 0) {
+            throw std::logic_error("cannot reset channel metrics with live slots");
+        }
+        m_published = 0;
+        m_read = 0;
+        m_released = 0;
+        m_occupancy_high_water = 0;
+        m_blocked_producers = 0;
+        m_blocked_consumers = 0;
+        m_logical_bytes = 0;
+        m_published_logical_bytes = 0;
+        m_read_logical_bytes = 0;
+        m_producer_wait_events = 0;
+        m_consumer_wait_events = 0;
+        m_producer_wait = sc_core::SC_ZERO_TIME;
+        m_consumer_wait = sc_core::SC_ZERO_TIME;
+        m_data_pending = false;
+        m_credit_pending = false;
     }
 
 protected:
@@ -295,9 +356,27 @@ private:
         const slot_id id = dequeue_ready();
         m_state[id] = slot_state::reading;
         ++m_read;
+        const std::uint64_t bytes = logical_bytes(m_meta[id].valid_samples);
+        m_read_logical_bytes = saturating_add(m_read_logical_bytes, bytes);
         return read_type(this, id, m_generation[id]);
     }
 
+    static std::uint64_t logical_bytes(std::uint32_t samples) noexcept {
+        const std::uint64_t width = static_cast<std::uint64_t>(sizeof(T));
+        if (samples != 0 &&
+            width > (std::numeric_limits<std::uint64_t>::max)() / samples) {
+            return (std::numeric_limits<std::uint64_t>::max)();
+        }
+        return static_cast<std::uint64_t>(samples) * width;
+    }
+
+    static std::uint64_t saturating_add(std::uint64_t lhs,
+                                        std::uint64_t rhs) noexcept {
+        if (rhs > (std::numeric_limits<std::uint64_t>::max)() - lhs) {
+            return (std::numeric_limits<std::uint64_t>::max)();
+        }
+        return lhs + rhs;
+    }
     void validate_write(const write_type& handle) const {
         if (handle.m_channel != this || handle.m_slot >= m_slot_count ||
             handle.m_generation != m_generation[handle.m_slot] ||
@@ -422,6 +501,13 @@ private:
     std::uint32_t m_occupancy_high_water = 0;
     std::uint64_t m_blocked_producers = 0;
     std::uint64_t m_blocked_consumers = 0;
+    std::uint64_t m_logical_bytes = 0;
+    std::uint64_t m_published_logical_bytes = 0;
+    std::uint64_t m_read_logical_bytes = 0;
+    std::uint64_t m_producer_wait_events = 0;
+    std::uint64_t m_consumer_wait_events = 0;
+    sc_core::sc_time m_producer_wait = sc_core::SC_ZERO_TIME;
+    sc_core::sc_time m_consumer_wait = sc_core::SC_ZERO_TIME;
     bool m_data_pending = false;
     bool m_credit_pending = false;
     sc_core::sc_event m_data_event;

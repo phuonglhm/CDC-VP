@@ -6,7 +6,6 @@
  *
  * Hardware shell features (Phase 3):
  *   - Optional hw_params for timing
- *   - Frame-level processing metrics
  *   - Architecture metrics
  */
 #ifndef SC_YUV420_H
@@ -17,11 +16,9 @@ using namespace sc_core;
 
 #include <systemc>
 #include <cstdint>
-#include <vector>
 
 #include "../../../blocks/yuv420/include/yuv420.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_yuv420) {
 public:
@@ -42,12 +39,10 @@ public:
         , m_cfg(cfg)
         , m_width(width)
         , m_height(height)
-        , m_hw(hw)
-        , m_metrics("yuv420") {
+        , m_hw(hw) {
         SC_THREAD(process_stream);
     }
 
-    sc_block_metrics<std::uint8_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }

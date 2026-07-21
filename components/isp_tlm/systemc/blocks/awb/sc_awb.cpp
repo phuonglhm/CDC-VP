@@ -137,14 +137,11 @@ void sc_awb::process_stream() {
     // Check if timed mode is enabled
     bool timed_mode = (m_hw != nullptr) && m_hw->timed_mode;
     bool has_clock = (clk != nullptr);
-    if (timed_mode) {
-        m_metrics.set_cycles_per_pixel(m_hw->default_cycles_per_pixel);
-    }
 
     while (true) {
         // Frame-level: AWB reads entire frame for stats, then passes through
-        m_metrics.set_processing_unit(sc_block_metrics<std::uint16_t>::ProcessingUnit::FRAME);
-        m_metrics.begin_processing();
+        
+        
 
         // First pass: accumulate statistics
         const std::uint32_t max_value = (1u << m_bit_depth) - 1u;
@@ -246,7 +243,6 @@ void sc_awb::process_stream() {
         m_latched_r_gain = m_r_gain;
         m_latched_b_gain = m_b_gain;
 
-        m_metrics.end_processing();
-        for (std::size_t i = 0; i < 3 * m_width * m_height; ++i) m_metrics.record_output();
+        
     }
 }

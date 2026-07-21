@@ -17,11 +17,9 @@ using namespace sc_core;
 
 #include <systemc>
 #include <cstdint>
-#include <algorithm>
 
 #include "../../../blocks/ccm/include/ccm.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_ccm) {
 public:
@@ -39,13 +37,10 @@ public:
         : sc_module(name)
         , m_cfg(cfg)
         , m_hw(hw)
-        , m_cycles_per_pixel(2)
-        , m_metrics("ccm") {
+        , m_cycles_per_pixel(2) {
         SC_THREAD(process_stream);
     }
 
-    // Block-level metrics collector
-    sc_block_metrics<std::uint16_t> m_metrics;
 
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }

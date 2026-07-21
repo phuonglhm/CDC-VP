@@ -13,11 +13,9 @@ using namespace sc_core;
 
 #include <systemc>
 #include <cstdint>
-#include <vector>
 
 #include "../../../blocks/aec/include/aec.h"
-#include "../../tb_utils/sc_block_metrics.h"
-#include "../../hw/isp_arch_config.h"
+#include "../../tb_utils/hardware_params.h"
 
 SC_MODULE(sc_aec) {
 public:
@@ -36,7 +34,7 @@ public:
             std::uint8_t bit_depth,
             const hw_params* hw = nullptr)
         : sc_module(name), m_cfg(cfg), m_width(width), m_height(height),
-          m_bit_depth(bit_depth), m_ae_feedback(0), m_hw(hw), m_metrics("aec") {
+          m_bit_depth(bit_depth), m_ae_feedback(0), m_hw(hw) {
         SC_THREAD(process_stream);
     }
 
@@ -45,10 +43,8 @@ public:
     // Hardware configuration
     void set_hw_params(const hw_params* hw) { m_hw = hw; }
 
-    // Block-level metrics collector (public so sc_isp_pipeline can access)
-    sc_block_metrics<std::uint16_t> m_metrics;
 
-    // Architecture metrics (for collect_block_metrics)
+    // Architecture cycle metrics
     std::uint64_t active_cycles() const { return m_active_cycles; }
     std::uint64_t starved_cycles() const { return m_starved_cycles; }
     std::uint64_t total_cycles() const { return m_cycle_count; }
