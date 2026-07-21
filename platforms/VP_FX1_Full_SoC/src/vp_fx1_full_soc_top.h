@@ -30,7 +30,8 @@ public:
 
     // UART0 host input path (boot-flow download branch). Call before sc_start.
     void set_uart0_socket(std::uint16_t port, bool wait_for_client);
-    void set_uart0_rx_file(const std::string& path);
+    void set_uart0_rx_file(const std::string& path,
+                           std::uint64_t start_delay_us = 0);
 
     std::string backend_name() const;
 

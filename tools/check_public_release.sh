@@ -34,6 +34,8 @@ required_files=(
     components/isp_tlm/ASSET_PROVENANCE.md
     components/vpu_tlm3.0/LICENSE
     components/vpu_tlm3.0/PROVENANCE.md
+    fw/freertos_fx1/models/ASSET_PROVENANCE.md
+    fw/freertos_fx1/models/secda_simple_model_model_data.cc
 )
 
 missing=0
@@ -59,6 +61,22 @@ if [[ "$cmake_hash" == \
     pass "CMake installer provenance hash"
 else
     fail "CMake installer hash mismatch: ${cmake_hash:-missing}"
+fi
+
+simple_model_hash="$(
+    sed -n '/g_secda_simple_model_model_data\[\] = {/,/};/p' \
+        fw/freertos_fx1/models/secda_simple_model_model_data.cc |
+        rg -o '0x[0-9a-fA-F]+' |
+        awk '{printf "%02x", strtonum($0)}' |
+        xxd -r -p |
+        sha256sum |
+        awk '{print $1}'
+)"
+if [[ "$simple_model_hash" == \
+      "aa467144bf1e697094dec0f399e4e644fd39acc63be7d4bfd54974a84fe1c6b5" ]]; then
+    pass "SECDA simple-model payload hash"
+else
+    fail "SECDA simple-model payload hash mismatch: ${simple_model_hash:-missing}"
 fi
 
 if rg -Uq \

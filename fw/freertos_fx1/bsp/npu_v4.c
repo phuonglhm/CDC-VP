@@ -34,6 +34,7 @@ static struct {
     TaskHandle_t waiter;            /* task blocked on completion        */
     volatile uint32_t last_status;  /* STATUS captured in the ISR        */
     volatile uint32_t last_irq;     /* IRQ_STATUS captured in the ISR    */
+    npu_v4_metrics_t metrics;        /* counters captured after each job  */
     int initialized;
 } npu;
 
@@ -97,6 +98,13 @@ uint32_t npu_v4_last_status(void)
     return npu.last_status;
 }
 
+void npu_v4_get_metrics(npu_v4_metrics_t *metrics)
+{
+    if (metrics != NULL) {
+        *metrics = npu.metrics;
+    }
+}
+
 int npu_v4_gemm(const npu_gemm_job_t *job, TickType_t timeout)
 {
     if (!npu.initialized) {
@@ -112,6 +120,11 @@ int npu_v4_gemm(const npu_gemm_job_t *job, TickType_t timeout)
     int result = NPU_V4_OK;
 
     xSemaphoreTake(npu.mutex, portMAX_DELAY);
+
+    npu.metrics.cycle_count = 0u;
+    npu.metrics.bytes_read = 0u;
+    npu.metrics.bytes_written = 0u;
+    npu.metrics.last_error = 0u;
 
     /* Clear stale completion state before arming a new job. */
     npu_write(CDC_NPU_IRQ_STATUS, CDC_NPU_IRQ_DONE | CDC_NPU_IRQ_ERROR);
@@ -151,6 +164,13 @@ int npu_v4_gemm(const npu_gemm_job_t *job, TickType_t timeout)
                (bits & NPU_NOTIFY_DONE) == 0u) {
         result = NPU_V4_ERR_DEVICE;
     }
+
+    /* Order DMA result and counter reads after observing the completion IRQ. */
+    __asm__ volatile("fence" ::: "memory");
+    npu.metrics.cycle_count = npu_read(CDC_NPU_CYCLE_COUNT);
+    npu.metrics.bytes_read = npu_read(CDC_NPU_BYTES_READ);
+    npu.metrics.bytes_written = npu_read(CDC_NPU_BYTES_WRITTEN);
+    npu.metrics.last_error = npu_read(CDC_NPU_LAST_ERROR);
 
     npu.waiter = NULL;
     xSemaphoreGive(npu.mutex);

@@ -34,10 +34,13 @@ int sc_main(int argc, char* argv[])
     const std::string int_flash = get_opt(argc, argv, "--int-flash", "");
     const std::string spi_flash = get_opt(argc, argv, "--spi-flash", "");
     const std::string boot_pin = get_opt(argc, argv, "--boot-pin", "low");
-    // UART0 host input path (ROM-code download branch): TCP bridge / file replay.
+    // UART0 host input path: TCP bridge or deterministic file replay. A replay
+    // delay is useful for RTOS firmware that enables RX interrupts after boot.
     const std::string uart0_socket = get_opt(argc, argv, "--uart0-socket", "");
     const bool uart0_wait = has_flag(argc, argv, "--uart0-wait");
     const std::string uart0_rx_file = get_opt(argc, argv, "--uart0-rx-file", "");
+    const std::uint64_t uart0_rx_delay_us =
+        std::stoull(get_opt(argc, argv, "--uart0-rx-delay-us", "0"));
 
     // Bremen's ISS requires the TLM global quantum >= its cycle time; set before build.
     const std::uint64_t quantum_ns = std::stoull(get_opt(argc, argv, "--quantum", "1000"));
@@ -51,7 +54,8 @@ int sc_main(int argc, char* argv[])
     top.set_boot_pin(boot_pin == "high" || boot_pin == "1");
     if (!uart0_socket.empty())
         top.set_uart0_socket(static_cast<std::uint16_t>(std::stoul(uart0_socket)), uart0_wait);
-    if (!uart0_rx_file.empty()) top.set_uart0_rx_file(uart0_rx_file);
+    if (!uart0_rx_file.empty())
+        top.set_uart0_rx_file(uart0_rx_file, uart0_rx_delay_us);
 
     // Simulated run length in ms (0 = elaboration/smoke check only).
     const double sim_ms = std::stod(get_opt(argc, argv, "--sim-ms", "5"));

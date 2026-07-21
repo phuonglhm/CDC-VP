@@ -1,0 +1,1 @@
+help;tflm_hello;tflm_run;tflm_simple;tflm_npu;tflm_demo;hw_scan;reg_test;badcmd

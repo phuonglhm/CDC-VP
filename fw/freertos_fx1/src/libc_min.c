@@ -7,6 +7,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ * Newlib's libm calls this hook when a range/domain error must set errno.
+ * TFLM Softmax pulls expf(), but this freestanding image deliberately does
+ * not link the rest of newlib. A single slot is sufficient because only the
+ * console task invokes TFLM and no firmware decision depends on errno.
+ */
+int *__errno(void)
+{
+    static int value;
+
+    return &value;
+}
+
 void *memset(void *dst, int value, size_t n)
 {
     unsigned char *d = (unsigned char *)dst;
@@ -70,4 +83,35 @@ size_t strlen(const char *s)
         ++p;
     }
     return (size_t)(p - s);
+}
+
+int strcmp(const char *a, const char *b)
+{
+    while (*a != '\0' && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
+int strncmp(const char *a, const char *b, size_t n)
+{
+    while (n != 0u && *a != '\0' && *a == *b) {
+        ++a;
+        ++b;
+        --n;
+    }
+    if (n == 0u) {
+        return 0;
+    }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
+__attribute__((noreturn)) void abort(void)
+{
+    /* Reaching abort means an internal library invariant failed. Avoid
+     * pulling hosted libc termination into the freestanding RTOS image. */
+    for (;;) {
+        __asm__ volatile("wfi");
+    }
 }

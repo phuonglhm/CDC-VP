@@ -11,6 +11,9 @@ RISCV_VP_COMMIT="48b2f5877b2368cc466fb0da155db349e676c0b0"
 FREERTOS_URL="https://github.com/FreeRTOS/FreeRTOS-Kernel.git"
 FREERTOS_COMMIT="0adc196d4bd52a2d91102b525b0aafc1e14a2386"   # V11.2.0
 
+TFLM_URL="https://github.com/tensorflow/tflite-micro.git"
+TFLM_COMMIT="096563546742ba81adb6f012ab718d196a48e02d"
+
 die() {
     echo "ERROR: $*" >&2
     exit 1
@@ -69,9 +72,13 @@ setup_repo "Bremen riscv-vp" "${RISCV_VP_URL}" "${RISCV_VP_COMMIT}" \
 setup_repo "FreeRTOS-Kernel" "${FREERTOS_URL}" "${FREERTOS_COMMIT}" \
     "${THIRD_PARTY_DIR}/FreeRTOS-Kernel"
 
+setup_repo "TensorFlow Lite Micro" "${TFLM_URL}" "${TFLM_COMMIT}" \
+    "${THIRD_PARTY_DIR}/tflite-micro"
+
 echo
 echo "Third-party dependencies are ready."
 echo "Next:"
 echo "  source ./tools/third_party/setup_env.sh"
+echo "  ./tools/third_party/build_tflm_riscv.sh   # needed for fw TFLM=1"
 echo "  cmake --preset debug"
 echo "  cmake --build --preset debug"

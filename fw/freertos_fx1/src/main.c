@@ -15,6 +15,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "cli.h"
 #include "plic.h"
 #include "uart.h"
 
@@ -50,6 +51,12 @@ _Static_assert(configMTIMECMP_BASE_ADDRESS ==
 static volatile int tick_ok;
 static volatile int timer_ok;
 static volatile int npu_ok;
+
+#if defined(DEMO_TFLM)
+#define CONSOLE_STACK_WORDS 2048u
+#else
+#define CONSOLE_STACK_WORDS 384u
+#endif
 
 /* =======================================================================
  * Milestone 3: PLIC path - TIMER0 periodic interrupt wakes a task.
@@ -198,6 +205,11 @@ static void console_task(void *params)
 {
     (void)params;
 
+    /* Enable UART0 RX as soon as task context exists. Script bytes arriving
+     * before the health checks finish are queued and consumed once cli_run()
+     * starts, keeping the deterministic regression markers free of prompts. */
+    uart_rx_start();
+
     /* Prove the CLINT tick advances real (simulated) time: three 100 ms
      * delays must advance the tick count accordingly. */
     for (int i = 1; i <= 3; ++i) {
@@ -218,7 +230,7 @@ static void console_task(void *params)
     for (int waited_ms = 0; waited_ms < 3000; waited_ms += 100) {
         if (tick_ok && timer_ok && npu_ok) {
             uart_puts("FreeRTOS FX1 PASS\n");
-            vTaskDelete(NULL);
+            cli_run(); /* does not return */
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -227,7 +239,7 @@ static void console_task(void *params)
     uart_put_u32("tick=", (uint32_t)tick_ok, " ");
     uart_put_u32("timer=", (uint32_t)timer_ok, " ");
     uart_put_u32("npu=", (uint32_t)npu_ok, ")\n");
-    vTaskDelete(NULL);
+    cli_run(); /* keep the diagnostic console available after a demo failure */
 }
 
 int main(void)
@@ -243,7 +255,9 @@ int main(void)
 
     BaseType_t ok;
 
-    ok = xTaskCreate(console_task, "console", 384, NULL, 1, NULL);
+    /* The CLI task also constructs TFLM interpreter objects when TFLM=1. */
+    ok = xTaskCreate(console_task, "console", CONSOLE_STACK_WORDS, NULL, 1,
+                     NULL);
     configASSERT(ok == pdPASS);
     ok = xTaskCreate(timer_demo_task, "timer0", 384, NULL, 2,
                      &timer_task_handle);

@@ -475,9 +475,12 @@ void vp_fx1_full_soc_top::set_uart0_socket(std::uint16_t port, bool wait_for_cli
     impl_->uart0_host.listen_on(port, wait_for_client);
 }
 
-void vp_fx1_full_soc_top::set_uart0_rx_file(const std::string& path)
+void vp_fx1_full_soc_top::set_uart0_rx_file(const std::string& path,
+                                            std::uint64_t start_delay_us)
 {
-    impl_->uart0_host.replay_file(path);
+    impl_->uart0_host.replay_file(
+        path, sc_core::sc_time(static_cast<double>(start_delay_us),
+                              sc_core::SC_US));
 }
 
 std::string vp_fx1_full_soc_top::backend_name() const

@@ -28,8 +28,16 @@ typedef struct {
     uint32_t activation_stride;     /* bytes per A row; 0 means k */
 } npu_gemm_job_t;
 
+typedef struct {
+    uint32_t cycle_count;
+    uint32_t bytes_read;
+    uint32_t bytes_written;
+    uint32_t last_error;
+} npu_v4_metrics_t;
+
 int npu_v4_init(void);              /* registers PLIC source 17; call once before use */
 int npu_v4_gemm(const npu_gemm_job_t *job, TickType_t timeout);
 uint32_t npu_v4_last_status(void);  /* NPU STATUS captured in the last ISR */
+void npu_v4_get_metrics(npu_v4_metrics_t *metrics);
 
 #endif /* FREERTOS_FX1_NPU_V4_H */
