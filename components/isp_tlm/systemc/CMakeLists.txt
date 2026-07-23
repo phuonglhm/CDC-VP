@@ -44,9 +44,8 @@ set(COMMON_SOURCES
     src/common/common_defs.h
 )
 
-# Base classes
+# Base classes (none - using standalone blocks)
 set(BASE_SOURCES
-    src/base/isp_block_base.h
 )
 
 # Utils
