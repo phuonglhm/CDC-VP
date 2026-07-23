@@ -113,9 +113,29 @@ target_include_directories(isp_tb PRIVATE
 # target_link_libraries(test_dpc ${SystemC_LIBRARIES})
 
 #=============================================================================
+# BLC Standalone Testbench
+#=============================================================================
+add_executable(blc_tb
+    tb/blc_tb.cpp
+)
+
+target_link_libraries(blc_tb ${SystemC_LIBRARIES})
+
+target_include_directories(blc_tb PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/common
+    ${CMAKE_SOURCE_DIR}/src/base
+    ${CMAKE_SOURCE_DIR}/src/utils
+    ${CMAKE_SOURCE_DIR}/src/blocks
+    ${CMAKE_SOURCE_DIR}/src/metrics
+    ${CMAKE_SOURCE_DIR}/src/pipeline
+    ${SystemC_INCLUDE_DIRS}
+)
+
+#=============================================================================
 # Installation (optional)
 #=============================================================================
-install(TARGETS isp_tb DESTINATION bin)
+install(TARGETS isp_tb blc_tb DESTINATION bin)
 
 # Print configuration summary
 message(STATUS "")

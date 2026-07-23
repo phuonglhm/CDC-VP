@@ -3,5 +3,5 @@ output/.*
 !output/.gitkeep
 __pycache__/*
 calib/
-systemc/pipeline/output/*
-systemc/output/*
+systemc/blc_metrics.json
+systemc/blc_trace.vcd
