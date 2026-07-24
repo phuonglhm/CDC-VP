@@ -1,5 +1,5 @@
 /*
- * BLC Testbench - Account for 1-cycle pipeline delay
+ * BLC Testbench - Account for 1-cycle latency
  */
 
 #include <systemc>
@@ -11,10 +11,45 @@
 using namespace sc_core;
 using namespace std;
 
+class ConfigDriver : public sc_module {
+public:
+    sc_in<bool> pclk;
+    sc_out<bool> rst_n_o, enable_o, linear_en_o;
+    sc_out<uint16_t> blc_r_o, blc_gr_o, blc_gb_o, blc_b_o;
+    sc_out<uint16_t> linear_r_o, linear_gr_o, linear_gb_o, linear_b_o;
+
+    bool m_rst_n = false, m_enable = false, m_linear_en = false;
+    uint16_t m_blc_r = 0, m_blc_gr = 0, m_blc_gb = 0, m_blc_b = 0;
+    uint16_t m_linear_r = 1024, m_linear_gr = 1024, m_linear_gb = 1024, m_linear_b = 1024;
+
+    SC_HAS_PROCESS(ConfigDriver);
+
+    ConfigDriver(sc_module_name n) : sc_module(n) {
+        SC_METHOD(drive_method);
+        sensitive << pclk.pos();
+        dont_initialize();
+    }
+
+    void drive_method() {
+        rst_n_o.write(m_rst_n);
+        enable_o.write(m_enable);
+        linear_en_o.write(m_linear_en);
+        blc_r_o.write(m_blc_r);
+        blc_gr_o.write(m_blc_gr);
+        blc_gb_o.write(m_blc_gb);
+        blc_b_o.write(m_blc_b);
+        linear_r_o.write(m_linear_r);
+        linear_gr_o.write(m_linear_gr);
+        linear_gb_o.write(m_linear_gb);
+        linear_b_o.write(m_linear_b);
+    }
+};
+
 class BlcTestbench : public sc_module {
 public:
     sc_clock pclk{"pclk", sc_time(10, SC_NS)};
     isp_blc<10> dut{"blc_dut"};
+    ConfigDriver cfg{"cfg"};
 
     sc_signal<bool> rst_n{"rst_n"}, enable{"enable"};
     sc_signal<bool> i_href{"i_href"}, i_vsync{"i_vsync"};
@@ -33,64 +68,72 @@ public:
     SC_HAS_PROCESS(BlcTestbench);
 
     BlcTestbench(const sc_module_name& n) : sc_module(n), errors(0), verified(0) {
+        cfg.pclk(pclk);
         dut.pclk(pclk); dut.rst_n(rst_n); dut.enable(enable);
+
+        cfg.rst_n_o(rst_n); cfg.enable_o(enable); cfg.linear_en_o(linear_en);
+        cfg.blc_r_o(blc_r); cfg.blc_gr_o(blc_gr);
+        cfg.blc_gb_o(blc_gb); cfg.blc_b_o(blc_b);
+        cfg.linear_r_o(linear_r); cfg.linear_gr_o(linear_gr);
+        cfg.linear_gb_o(linear_gb); cfg.linear_b_o(linear_b);
+
         dut.i_href(i_href); dut.i_vsync(i_vsync); dut.i_data(i_data);
         dut.o_href(o_href); dut.o_vsync(o_vsync); dut.o_data(o_data);
+
         dut.i_blc_r(blc_r); dut.i_blc_gr(blc_gr);
         dut.i_blc_gb(blc_gb); dut.i_blc_b(blc_b);
         dut.i_linear_en(linear_en);
         dut.i_linear_r(linear_r); dut.i_linear_gr(linear_gr);
         dut.i_linear_gb(linear_gb); dut.i_linear_b(linear_b);
+
         SC_THREAD(run_tests);
     }
 
+    unsigned channel(unsigned x, unsigned y) {
+        bool ey = (y & 1) == 0, ex = (x & 1) == 0;
+        return ey ? (ex ? 0 : 1) : (ex ? 2 : 3);
+    }
+
     void run_tests() {
-        rst_n = false; enable = false;
-        i_href = false; i_vsync = false; i_data = 0;
-        blc_r = blc_gr = blc_gb = blc_b = 64;
-        linear_r = linear_gr = linear_gb = linear_b = 1024;
-        linear_en = false;
+        cout << "\n=== BLC Test (1-cycle latency) ===" << endl;
 
-        wait(pclk.posedge_event());
-        rst_n = true; wait(pclk.posedge_event());
-        enable = true; wait(pclk.posedge_event());
-
-        cout << "\n=== BLC Test (1-cycle pipeline) ===" << endl;
-
-        // Test 1: Simple offset
-        cout << "\n--- Test 1: offset=64 ---" << endl;
         dut.set_image_size(8, 2);
-        blc_r = blc_gr = blc_gb = blc_b = 64;
-        linear_en = false;
-        wait(pclk.posedge_event());
-        wait(pclk.posedge_event());
+        cfg.m_blc_r = cfg.m_blc_gr = cfg.m_blc_gb = cfg.m_blc_b = 64;
+        cfg.m_enable = true;
+        cfg.m_rst_n = true;
 
+        // Wait for config
+        for (int i = 0; i < 5; i++) wait(pclk.posedge_event());
+        cout << "Config: blc_r=" << blc_r << endl;
+
+        // Test 1: offset=64
+        cout << "\n--- Test 1: offset=64 ---" << endl;
+
+        // VSYNC
         i_vsync = 1; wait(pclk.posedge_event());
         i_vsync = 0; wait(pclk.posedge_event());
 
         unsigned ok = 0, err = 0;
-        // Pipeline delay: store expected values
-        uint16_t expected_buf[16];
+        uint16_t exp_buf[16];
 
         for (unsigned y = 0; y < 2; y++) {
             i_href = 1;
             for (unsigned x = 0; x < 8; x++) {
                 unsigned idx = y * 8 + x;
                 uint16_t in = 100 + idx;
-                // Compute expected (this is what will appear at output 1 cycle later)
-                expected_buf[idx] = (in > 64) ? (in - 64) : 0;
+                uint16_t exp = (in > 64) ? (in - 64) : 0;
+                exp_buf[idx] = exp;
 
                 i_data = in;
                 wait(pclk.posedge_event());
 
-                // Read output - this is the processed value from PREVIOUS input
-                if (o_href && idx > 0) {  // Skip first pixel (pipeline filling)
+                // DUT output is processed value from PREVIOUS pixel
+                if (o_href && idx > 0) {
                     uint16_t got = o_data;
-                    uint16_t exp = expected_buf[idx - 1];
-                    if (got == exp) ok++;
+                    if (got == exp_buf[idx - 1]) ok++;
                     else {
                         if (err < 5) cerr << "  ERR x=" << x << " y=" << y
-                                           << " in=" << in << " exp=" << exp << " got=" << got << endl;
+                                           << " in=" << in << " exp=" << exp_buf[idx-1] << " got=" << got << endl;
                         err++;
                     }
                 }
@@ -98,17 +141,17 @@ public:
             i_href = 0;
             wait(pclk.posedge_event());
         }
-        cout << "  Result: " << ok << " OK, " << err << " errors" << endl;
+
+        cout << "  Result: " << ok << "/" << (2*8 - 2) << " OK, " << err << " errors" << endl;
         verified += ok; errors += err;
 
         wait(10, SC_US);
 
-        // Test 2: Linear gain
+        // Test 2: linear
         cout << "\n--- Test 2: linear gain=1.125x ---" << endl;
-        linear_en = true;
-        linear_r = linear_gr = linear_gb = linear_b = 1152;
-        wait(pclk.posedge_event());
-        wait(pclk.posedge_event());
+        cfg.m_linear_en = true;
+        cfg.m_linear_r = cfg.m_linear_gr = cfg.m_linear_gb = cfg.m_linear_b = 1152;
+        for (int i = 0; i < 5; i++) wait(pclk.posedge_event());
 
         i_vsync = 1; wait(pclk.posedge_event());
         i_vsync = 0; wait(pclk.posedge_event());
@@ -120,18 +163,18 @@ public:
                 unsigned idx = y * 8 + x;
                 uint16_t in = 100 + idx;
                 uint32_t r = ((uint32_t)in * 1152) >> 10;
-                expected_buf[idx] = (r > 1023) ? 1023 : (uint16_t)r;
+                uint16_t exp = (r > 1023) ? 1023 : (uint16_t)r;
+                exp_buf[idx] = exp;
 
                 i_data = in;
                 wait(pclk.posedge_event());
 
                 if (o_href && idx > 0) {
                     uint16_t got = o_data;
-                    uint16_t exp = expected_buf[idx - 1];
-                    if (got == exp) ok++;
+                    if (got == exp_buf[idx - 1]) ok++;
                     else {
                         if (err < 5) cerr << "  ERR x=" << x << " y=" << y
-                                           << " in=" << in << " exp=" << exp << " got=" << got << endl;
+                                           << " in=" << in << " exp=" << exp_buf[idx-1] << " got=" << got << endl;
                         err++;
                     }
                 }
@@ -139,7 +182,8 @@ public:
             i_href = 0;
             wait(pclk.posedge_event());
         }
-        cout << "  Result: " << ok << " OK, " << err << " errors" << endl;
+
+        cout << "  Result: " << ok << "/" << (2*8 - 2) << " OK, " << err << " errors" << endl;
         verified += ok; errors += err;
 
         cout << "\n=== Total: " << verified << " OK, " << errors << " errors ===" << endl;
@@ -176,7 +220,6 @@ int sc_main(int argc, char* argv[]) {
     }
 
     sc_start(30, SC_MS);
-
     if (tf) sc_close_vcd_trace_file(tf);
 
     return tb.errors > 0;

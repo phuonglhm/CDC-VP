@@ -1,6 +1,6 @@
 /*
  * BLC (Black Level Correction) Block
- * Back to SC_THREAD with proper timing
+ * True combinational output - zero latency
  */
 
 #ifndef ISP_BLC_H
@@ -50,8 +50,8 @@ public:
 
     void set_image_size(unsigned w, unsigned h) { m_metrics.set_config(w, h); }
 
-    unsigned get_pixel_count() const { return m_pixel_count; }
-    unsigned get_frame_count() const { return m_frame_count; }
+    unsigned get_pixel_count() const { return m_pixel_count >= 0 ? (unsigned)m_pixel_count : 0; }
+    unsigned get_frame_count() const { return m_frame_count >= 0 ? (unsigned)m_frame_count : 0; }
     unsigned get_width() const { return m_metrics.get_width(); }
     unsigned get_height() const { return m_metrics.get_height(); }
     bool in_frame() const { return m_in_frame; }
@@ -59,7 +59,7 @@ public:
 private:
     static constexpr uint16_t MAX = (1 << BITS) - 1;
 
-    unsigned m_pixel_count, m_line_count, m_frame_count;
+    int m_pixel_count, m_line_count, m_frame_count;
     bool m_prev_vsync, m_prev_href, m_in_frame;
     BlcMetricsCollector m_metrics;
 
@@ -73,7 +73,7 @@ private:
 
             if (!rst_n.read()) {
                 m_pixel_count = 0;
-                m_line_count = 0;
+                m_line_count = -1;
                 m_in_frame = false;
                 continue;
             }
@@ -88,7 +88,7 @@ private:
 
             if (vsync_fall) {
                 m_frame_count++;
-                m_line_count = 0;
+                m_line_count = -1;
                 m_pixel_count = 0;
                 m_in_frame = true;
                 m_metrics.record_frame();
@@ -104,12 +104,15 @@ private:
 
             m_metrics.record_total_cycle();
 
+            // Combinational output - drive immediately
             uint16_t out_data = 0;
-            bool out_href = false;
+            bool out_href = curr_href;
             bool out_vsync = curr_vsync;
 
             if (enable.read() && m_in_frame && curr_href) {
-                unsigned ch = calculate_channel(m_pixel_count, m_line_count);
+                unsigned x = (unsigned)m_pixel_count;
+                unsigned y = (unsigned)m_line_count;
+                unsigned ch = calculate_channel(x, y);
                 uint16_t off = get_blc_offset(ch);
 
                 uint16_t corrected;
@@ -135,7 +138,8 @@ private:
 
                 m_pixel_count++;
                 out_data = corrected;
-                out_href = true;
+            } else if (curr_href) {
+                m_pixel_count++;
             }
 
             o_data.write(out_data);
@@ -150,7 +154,7 @@ private:
     void reset_handler() {
         wait();
         m_pixel_count = 0;
-        m_line_count = 0;
+        m_line_count = -1;
         m_frame_count = 0;
         m_in_frame = false;
         m_prev_vsync = false;
