@@ -80,8 +80,24 @@ struct BlockMetrics {
     }
 
     double throughput_fps() const {
-        if (total_cycles == 0 || frame_count == 0) return 0.0;
-        return (double)frame_count * tech_params::FREQ_MHZ * 1e6 / total_cycles;
+        if (width == 0 || height == 0) {
+            if (total_cycles == 0 || frame_count == 0) return 0.0;
+            return (double)frame_count * tech_params::FREQ_MHZ * 1e6 / total_cycles;
+        }
+        double cycles_per_frame;
+        if (active_cycles > 0 && frame_count > 0) {
+            cycles_per_frame = (double)active_cycles / (double)frame_count;
+        } else {
+            cycles_per_frame = (double)width * (double)height;
+        }
+        if (cycles_per_frame < 1.0) cycles_per_frame = 1.0;
+        return tech_params::FREQ_MHZ * 1e6 / cycles_per_frame;
+    }
+
+    double max_throughput_fps() const {
+        if (width == 0 || height == 0) return 0.0;
+        double cycles_per_frame = (double)width * (double)height;
+        return tech_params::FREQ_MHZ * 1e6 / cycles_per_frame;
     }
 
     double pixels_per_cycle() const {
@@ -218,6 +234,9 @@ public:
         os << std::setw(30) << std::left << "  Throughput:"
            << std::fixed << std::setprecision(2)
            << m_metrics.throughput_fps() << " fps\n";
+        os << std::setw(30) << std::left << "  Max Throughput (full-frame):"
+           << std::fixed << std::setprecision(2)
+           << m_metrics.max_throughput_fps() << " fps\n";
         os << std::setw(30) << std::left << "  Pixels/Cycle:"
            << std::fixed << std::setprecision(4)
            << m_metrics.pixels_per_cycle() << "\n";

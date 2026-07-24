@@ -5,6 +5,7 @@
 #include <systemc>
 #include <iostream>
 #include <fstream>
+#include <vector>
 #include "blocks/blc/isp_blc.h"
 #include "blocks/blc/blc_metrics.h"
 
@@ -97,7 +98,7 @@ public:
     void run_tests() {
         cout << "\n=== BLC Test (1-cycle latency) ===" << endl;
 
-        dut.set_image_size(8, 2);
+        dut.set_image_size(640, 480);
         cfg.m_blc_r = cfg.m_blc_gr = cfg.m_blc_gb = cfg.m_blc_b = 64;
         cfg.m_enable = true;
         cfg.m_rst_n = true;
@@ -114,13 +115,16 @@ public:
         i_vsync = 0; wait(pclk.posedge_event());
 
         unsigned ok = 0, err = 0;
-        uint16_t exp_buf[16];
+        unsigned img_w = dut.get_width();
+        unsigned img_h = dut.get_height();
+        static std::vector<uint16_t> exp_buf;
+        if (exp_buf.size() < img_w * img_h) exp_buf.resize(img_w * img_h);
 
-        for (unsigned y = 0; y < 2; y++) {
+        for (unsigned y = 0; y < img_h; y++) {
             i_href = 1;
-            for (unsigned x = 0; x < 8; x++) {
-                unsigned idx = y * 8 + x;
-                uint16_t in = 100 + idx;
+            for (unsigned x = 0; x < img_w; x++) {
+                unsigned idx = y * img_w + x;
+                uint16_t in = 100 + (idx & 0xFF);
                 uint16_t exp = (in > 64) ? (in - 64) : 0;
                 exp_buf[idx] = exp;
 
@@ -142,7 +146,7 @@ public:
             wait(pclk.posedge_event());
         }
 
-        cout << "  Result: " << ok << "/" << (2*8 - 2) << " OK, " << err << " errors" << endl;
+        cout << "  Result: " << ok << "/" << (img_w * img_h - 1) << " OK, " << err << " errors" << endl;
         verified += ok; errors += err;
 
         wait(10, SC_US);
@@ -157,11 +161,11 @@ public:
         i_vsync = 0; wait(pclk.posedge_event());
 
         ok = 0; err = 0;
-        for (unsigned y = 0; y < 2; y++) {
+        for (unsigned y = 0; y < img_h; y++) {
             i_href = 1;
-            for (unsigned x = 0; x < 8; x++) {
-                unsigned idx = y * 8 + x;
-                uint16_t in = 100 + idx;
+            for (unsigned x = 0; x < img_w; x++) {
+                unsigned idx = y * img_w + x;
+                uint16_t in = 100 + (idx & 0xFF);
                 uint32_t r = ((uint32_t)in * 1152) >> 10;
                 uint16_t exp = (r > 1023) ? 1023 : (uint16_t)r;
                 exp_buf[idx] = exp;
@@ -183,7 +187,7 @@ public:
             wait(pclk.posedge_event());
         }
 
-        cout << "  Result: " << ok << "/" << (2*8 - 2) << " OK, " << err << " errors" << endl;
+        cout << "  Result: " << ok << "/" << (img_w * img_h - 1) << " OK, " << err << " errors" << endl;
         verified += ok; errors += err;
 
         cout << "\n=== Total: " << verified << " OK, " << errors << " errors ===" << endl;
