@@ -133,8 +133,8 @@ inline constexpr std::uint32_t NATIVE_TILE_C         = NATIVE_CFG_LAYER_OFFSET +
 inline constexpr std::uint32_t NATIVE_X_USED         = NATIVE_CFG_LAYER_OFFSET + 0x40;
 inline constexpr std::uint32_t NATIVE_Y_USED         = NATIVE_CFG_LAYER_OFFSET + 0x44;
 
-// 1 MiB covers the native CFG area plus SRAMA/SRAMB/SRAMC host windows.
-inline constexpr std::uint32_t MMIO_SIZE = 0x0010'0000;
+// CPU-facing wrapper aperture only; native SRAM windows stay private.
+inline constexpr std::uint32_t MMIO_SIZE = 0x0001'0000;
 
 inline constexpr std::uint32_t CTRL_ENABLE     = 1u << 0;
 inline constexpr std::uint32_t CTRL_START      = 1u << 1;

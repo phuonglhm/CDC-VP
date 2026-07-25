@@ -154,7 +154,7 @@ int sc_main(int, char*[])
         CDC_CHECK((read_reg(STATUS) & STATUS_BUSY) != 0u);
 
         bool completed = false;
-        for (unsigned poll = 0; poll < 500; ++poll) {
+        for (unsigned poll = 0; poll < 2000; ++poll) {
             wait(100, sc_core::SC_NS);
             const std::uint32_t status = read_reg(STATUS);
             if ((status & (STATUS_DONE | STATUS_ERROR)) != 0u) {
@@ -165,6 +165,12 @@ int sc_main(int, char*[])
         CDC_CHECK(completed);
 
         const std::uint32_t status = read_reg(STATUS);
+        if ((status & STATUS_ERROR) != 0u) {
+            std::cerr << "NPU job failed: status=0x" << std::hex << status
+                      << " last_error=0x" << read_reg(LAST_ERROR)
+                      << " cycles=0x" << read_reg(CYCLE_COUNT)
+                      << std::dec << '\n';
+        }
         CDC_CHECK((status & STATUS_DONE) != 0u);
         CDC_CHECK((status & STATUS_ERROR) == 0u);
         CDC_CHECK(read_reg(LAST_ERROR) ==

@@ -38,7 +38,20 @@ constexpr std::uint32_t kInt32Bytes = 4;
 constexpr std::uint32_t kConfigRegisterBytes = 42 * sizeof(std::uint32_t);
 
 using core_type =
-    sauria::NpuTop<32, 32, float, float, float>;
+    sauria::NpuTop<32, 32, std::int8_t, std::int8_t, std::int32_t,
+                   1024, 1024, 2048, 16, 64, 1>;
+
+sauria::PeConfig exact_int8_config()
+{
+    sauria::PeConfig cfg;
+    cfg.arithmetic_type = 0;
+    cfg.mul_type = 0;
+    cfg.add_type = 0;
+    cfg.stages_mul = 1;
+    cfg.intermediate_pipeline_stage = true;
+    cfg.zero_gating_mult = false;
+    return cfg;
+}
 
 bool physical_ram_range(std::uint32_t addr, std::uint32_t size)
 {
@@ -235,7 +248,7 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         , owner(owner_ref)
         , access_latency(mmio_latency)
         , clk_half_period(clock_period / 2)
-        , core("sauria_core")
+        , core("sauria_core", exact_int8_config())
     {
         sc_core::sc_spawn(sc_bind(&impl::clock_thread, this),
                           "core_clk_gen");
@@ -602,17 +615,33 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         return core_host_write(address, data, mask);
     }
 
-    bool program_core_registers()
+    bool program_core_registers(const sauria::SauriaLayerDesc& desc,
+                                const sauria::SauriaTarget& target)
     {
+        std::uint64_t fields[sauria::F_CFG_COUNT];
+        sauria::sauria_compute_core_fields(desc, target, fields);
+
+        /*
+         * v4.1 uses the SAURIA address generators and PSM schedule.  The
+         * previous port selected V4_LINEAR but only programmed three control
+         * words; that leaves the unified feeders waiting forever on their
+         * first synchronized vector.  Program the complete native single-tile
+         * schedule used by the v4.1 reference testbench.
+         */
         if (!write_scalar(sauria::CFG_REGS_OFFSET |
+                              sauria::CFG_PROFILE_ADDR,
+                          sauria::PROFILE_V1_SAURIA) ||
+            !write_scalar(sauria::CFG_REGS_OFFSET |
                               (sauria::CFG_CON_OFFSET + 0x00),
-                          regs.k_dimension + kCols) ||
+                          regs.k_dimension) ||
             !write_scalar(sauria::CFG_REGS_OFFSET |
                               (sauria::CFG_CON_OFFSET + 0x04),
-                          1) ||
+                          static_cast<std::uint32_t>(
+                              fields[sauria::F_CFG_ACT_REPS])) ||
             !write_scalar(sauria::CFG_REGS_OFFSET |
                               (sauria::CFG_CON_OFFSET + 0x08),
-                          1)) {
+                          static_cast<std::uint32_t>(
+                              fields[sauria::F_CFG_WEI_REPS]))) {
             return false;
         }
 
@@ -628,9 +657,84 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
                              rows, full_mask)) {
             return false;
         }
-        return write_scalar(sauria::CFG_REGS_OFFSET |
-                                (sauria::CFG_ACT_OFFSET + 0x28),
-                            regs.dilation_pattern);
+
+        const auto wr = [this](std::uint32_t address,
+                               std::uint64_t value) {
+            return write_scalar(sauria::CFG_REGS_OFFSET | address,
+                                static_cast<std::uint32_t>(value));
+        };
+
+        return
+            // Activation feeder: compatibility counters plus native addr-gen.
+            wr(sauria::CFG_ACT_OFFSET + 0x04, regs.k_dimension) &&
+            wr(sauria::CFG_ACT_OFFSET + 0x08,
+               fields[sauria::F_CFG_XSTEP]) &&
+            wr(sauria::CFG_ACT_OFFSET + 0x0C,
+               fields[sauria::F_CFG_XLIM]) &&
+            wr(sauria::CFG_ACT_OFFSET + 0x10,
+               fields[sauria::F_CFG_XSTEP]) &&
+            wr(sauria::CFG_ACT_OFFSET + 0x28,
+               fields[sauria::F_CFG_DIL_PAT]) &&
+            wr(sauria::ACT_XLIM, fields[sauria::F_CFG_XLIM]) &&
+            wr(sauria::ACT_XSTEP, fields[sauria::F_CFG_XSTEP]) &&
+            wr(sauria::ACT_YLIM, fields[sauria::F_CFG_YLIM]) &&
+            wr(sauria::ACT_YSTEP, fields[sauria::F_CFG_YSTEP]) &&
+            wr(sauria::ACT_CHLIM, fields[sauria::F_CFG_CHLIM]) &&
+            wr(sauria::ACT_CHSTEP, fields[sauria::F_CFG_CHSTEP]) &&
+            wr(sauria::ACT_TIL_XLIM,
+               fields[sauria::F_CFG_TIL_XLIM]) &&
+            wr(sauria::ACT_TIL_XSTEP,
+               fields[sauria::F_CFG_TIL_XSTEP]) &&
+            wr(sauria::ACT_TIL_YLIM,
+               fields[sauria::F_CFG_TIL_YLIM]) &&
+            wr(sauria::ACT_TIL_YSTEP,
+               fields[sauria::F_CFG_TIL_YSTEP]) &&
+
+            // Weight feeder.
+            wr(sauria::CFG_WEI_OFFSET + 0x04,
+               fields[sauria::F_CFG_WLIM]) &&
+            wr(sauria::CFG_WEI_OFFSET + 0x08,
+               fields[sauria::F_CFG_WSTEP]) &&
+            wr(sauria::WEI_WLIM, fields[sauria::F_CFG_WLIM]) &&
+            wr(sauria::WEI_WSTEP, fields[sauria::F_CFG_WSTEP]) &&
+            wr(sauria::WEI_KLIM, fields[sauria::F_CFG_KLIM]) &&
+            wr(sauria::WEI_KSTEP, fields[sauria::F_CFG_KSTEP]) &&
+            wr(sauria::WEI_TIL_XLIM,
+               fields[sauria::F_CFG_TIL_KLIM]) &&
+            wr(sauria::WEI_TIL_XSTEP,
+               fields[sauria::F_CFG_TIL_KSTEP]) &&
+            wr(sauria::WEI_COLS_ACTIVE,
+               fields[sauria::F_CFG_COLS_ACTIVE]) &&
+            wr(sauria::WEI_WALIGNED,
+               fields[sauria::F_CFG_WALIGNED]) &&
+
+            // PSM/output schedule.
+            wr(sauria::NCONTEXTS,
+               fields[sauria::F_CFG_NCONTEXTS]) &&
+            wr(sauria::CFG_OUT_OFFSET + 0x04,
+               fields[sauria::F_CFG_CXLIM]) &&
+            wr(sauria::CFG_OUT_OFFSET + 0x08,
+               fields[sauria::F_CFG_CXSTEP]) &&
+            wr(sauria::CFG_OUT_OFFSET + 0x0C,
+               fields[sauria::F_CFG_CKLIM]) &&
+            wr(sauria::CFG_OUT_OFFSET + 0x10,
+               fields[sauria::F_CFG_CKSTEP]) &&
+            wr(sauria::TIL_CYLIM,
+               fields[sauria::F_CFG_TIL_CYLIM]) &&
+            wr(sauria::TIL_CYSTEP,
+               fields[sauria::F_CFG_TIL_CYSTEP]) &&
+            wr(sauria::TIL_CKLIM,
+               fields[sauria::F_CFG_TIL_CKLIM]) &&
+            wr(sauria::TIL_CKSTEP,
+               fields[sauria::F_CFG_TIL_CKSTEP]) &&
+            wr(sauria::INACTIVE_COLS,
+               fields[sauria::F_CFG_INACTIVE_COLS]) &&
+            wr(sauria::PRELOAD_EN, 0u) &&
+
+            // The wrapper preloads the private SRAMs from offset zero.
+            wr(sauria::CFG_ACT_BASE_ADDR, 0u) &&
+            wr(sauria::CFG_WEI_BASE_ADDR, 0u) &&
+            wr(sauria::CFG_OUT_BASE_ADDR, 0u);
     }
 
     bool dma_read(std::uint32_t address, std::vector<std::uint8_t>& data,
@@ -749,53 +853,107 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         threshold.write(bits_to_float(regs.threshold_bits));
         buffer_select.write(sc_dt::sc_bv<3>("000"));
 
-        if (!program_core_registers()) {
+        const sauria::SauriaTarget* target =
+            sauria::sauria_find_target("int8_32x32");
+        if (target == nullptr) {
+            return error_code::invalid_format;
+        }
+        const sauria::SauriaLayerDesc desc =
+            make_gemm_as_conv1x1_desc(kRows, kCols, regs.k_dimension,
+                                      kRows, kCols);
+
+        /*
+         * Present the firmware's row-major GEMM operands as a 1x1 convolution:
+         *   A [Cin][1][W]       = activation[row][k]
+         *   B [Cout][Cin][1][1] = weight[k][col]
+         * The v4.1 driver then provides the exact native SRAM byte layout.
+         */
+        std::vector<double> native_a(
+            static_cast<std::size_t>(regs.k_dimension) * kRows);
+        std::vector<double> native_b(
+            static_cast<std::size_t>(kCols) * regs.k_dimension);
+        std::vector<double> native_c(
+            static_cast<std::size_t>(kCols) * kRows, 0.0);
+        for (std::uint32_t k = 0; k < regs.k_dimension; ++k) {
+            for (std::uint32_t row = 0; row < kRows; ++row) {
+                native_a[static_cast<std::size_t>(k) * kRows + row] =
+                    static_cast<std::int8_t>(
+                        activations[static_cast<std::size_t>(row) * stride +
+                                    k]);
+            }
+        }
+        for (std::uint32_t col = 0; col < kCols; ++col) {
+            for (std::uint32_t k = 0; k < regs.k_dimension; ++k) {
+                native_b[static_cast<std::size_t>(col) *
+                             regs.k_dimension +
+                         k] =
+                    static_cast<std::int8_t>(
+                        weights[static_cast<std::size_t>(k) * kCols + col]);
+            }
+        }
+
+        const sauria::SauriaRunInputs native =
+            sauria::sauria_prepare(
+                *target, desc,
+                native_a.data(), regs.k_dimension, 1, kRows,
+                native_b.data(), kCols, regs.k_dimension, 1, 1,
+                native_c.data(), kCols, 1, kRows);
+
+        // One public wrapper job is one complete 32x32 output tile.
+        mvm_k.write(regs.k_dimension);
+        total_contexts.write(1u);
+
+        if (!program_core_registers(desc, *target)) {
             return error_code::reset_aborted;
         }
 
         sauria::host_mask_t full_mask;
         full_mask.data.fill(true);
 
-        // SRAM A native layout: one vector of 32 rows for every K index,
-        // split into eight 4-element host beats.
-        for (std::uint32_t k = 0; k < regs.k_dimension; ++k) {
-            for (std::uint32_t sw = 0; sw < 8; ++sw) {
-                sauria::host_data_t data;
-                for (std::uint32_t lane = 0; lane < 4; ++lane) {
-                    const std::uint32_t row = sw * 4 + lane;
-                    const std::uint8_t raw = activations[row * stride + k];
-                    data[lane] =
-                        static_cast<float>(static_cast<std::int8_t>(raw));
+        const auto preload_int8 =
+            [this, &native, &full_mask](std::uint32_t sram_offset,
+                                        std::uint32_t begin,
+                                        std::uint32_t size) {
+                std::uint32_t loaded = 0;
+                for (std::uint32_t phys = 0; loaded < size; ++phys) {
+                    for (std::uint32_t sw = 0; sw < 8 && loaded < size;
+                         ++sw) {
+                        sauria::host_data_t data;
+                        data.data.fill(0.0f);
+                        for (std::uint32_t lane = 0;
+                             lane < 4 && loaded < size; ++lane, ++loaded) {
+                            data[lane] = static_cast<float>(
+                                static_cast<std::int8_t>(
+                                    native.initial_dram[begin + loaded]));
+                        }
+                        const std::uint32_t address =
+                            sram_offset | ((phys << 3) | sw);
+                        if (!core_host_write(address, data, full_mask)) {
+                            return false;
+                        }
+                    }
                 }
-                const std::uint32_t address =
-                    sauria::SRAMA_OFFSET | ((k << 3) | sw);
-                if (!core_host_write(address, data, full_mask)) {
-                    return error_code::reset_aborted;
-                }
-            }
+                return true;
+            };
+
+        if (!preload_int8(sauria::SRAMA_OFFSET, native.A_off,
+                          native.B_off - native.A_off) ||
+            !preload_int8(sauria::SRAMB_OFFSET, native.B_off,
+                          native.C_off - native.B_off)) {
+            return error_code::reset_aborted;
         }
 
-        // The SAURIA weight feeder expects the input pre-skewed by column.
-        // Firmware supplies a normal row-major Kx32 matrix; the wrapper models
-        // the front-end transformation while staging the private SRAM.
-        for (std::uint32_t index = 0;
-             index < regs.k_dimension + kCols; ++index) {
+        /*
+         * Clear the output SRAM because preload is disabled.  This also makes
+         * repeated jobs deterministic if a future model version stops clearing
+         * SRAM C as part of soft reset.
+         */
+        for (std::uint32_t col = 0; col < kCols; ++col) {
             for (std::uint32_t sw = 0; sw < 8; ++sw) {
                 sauria::host_data_t data;
-                for (std::uint32_t lane = 0; lane < 4; ++lane) {
-                    const std::uint32_t col = sw * 4 + lane;
-                    const std::int64_t k =
-                        static_cast<std::int64_t>(index) - col;
-                    std::int8_t value = 0;
-                    if (k >= 0 &&
-                        k < static_cast<std::int64_t>(regs.k_dimension)) {
-                        value = static_cast<std::int8_t>(
-                            weights[static_cast<std::size_t>(k) * kCols + col]);
-                    }
-                    data[lane] = static_cast<float>(value);
-                }
+                data.data.fill(0.0f);
                 const std::uint32_t address =
-                    sauria::SRAMB_OFFSET | ((index << 3) | sw);
+                    make_sram_c_addr(col * kRows, sw);
                 if (!core_host_write(address, data, full_mask)) {
                     return error_code::reset_aborted;
                 }
@@ -837,11 +995,12 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
 
         std::vector<std::uint8_t> output(
             kRows * kCols * sizeof(std::int32_t), 0);
+        // Native C layout is [output channel][spatial row].
         for (std::uint32_t col = 0; col < kCols; ++col) {
             for (std::uint32_t sw = 0; sw < 8; ++sw) {
                 sauria::host_data_t data;
                 const std::uint32_t address =
-                    sauria::SRAMC_OFFSET | ((col << 3) | sw);
+                    make_sram_c_addr(col * kRows, sw);
                 if (!core_host_read(address, data)) {
                     return error_code::reset_aborted;
                 }
