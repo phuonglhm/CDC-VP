@@ -52,7 +52,7 @@ constexpr std::uint64_t kDma0  = 0x1006'0000, kTrng0 = 0x1007'0000, kCmu0   = 0x
 constexpr std::uint64_t kPmu0  = 0x1009'0000, kDmic0 = 0x100A'0000, kOtp0   = 0x100B'0000;
 constexpr std::uint64_t kQspi0 = 0x100C'0000;
 #if CDC_ENABLE_SAURIA_NPU_V4
-constexpr std::uint64_t kNpu0  = 0x100F'0000, kAccelMmio = 0x1'0000;
+constexpr std::uint64_t kNpu0  = 0x100F'0000, kAccelMmio = 0x10'0000;
 #endif
 constexpr std::uint64_t kUart1 = 0x1010'0000, kI2c1  = 0x1011'0000, kSpi1   = 0x1012'0000;
 constexpr std::uint64_t kTimer1= 0x1013'0000, kRtc0  = 0x1014'0000;

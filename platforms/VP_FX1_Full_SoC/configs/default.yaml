@@ -23,7 +23,7 @@ memory_map:
   otp0:   { base: 0x100B0000, size: 0x1000 }
   qspi0:  { base: 0x100C0000, size: 0x1000 }
   # Optional internal build only: CDC_ENABLE_SAURIA_NPU_V4=ON.
-  npu0:   { base: 0x100F0000, size: 0x10000 }      # otherwise reserved/tied low
+  npu0:   { base: 0x100F0000, size: 0x100000 }     # otherwise reserved/tied low
   uart1:  { base: 0x10100000, size: 0x1000 }
   i2c1:   { base: 0x10110000, size: 0x1000 }
   spi1:   { base: 0x10120000, size: 0x1000 }

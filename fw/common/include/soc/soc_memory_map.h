@@ -46,7 +46,7 @@
 #define CDC_ISP0_BASE     0x100D0000u  /* reserved */
 #define CDC_VPU0_BASE     0x100E0000u  /* reserved */
 #define CDC_NPU0_BASE     0x100F0000u  /* optional private SAURIA build */
-#define CDC_ACCEL_MMIO_SIZE 0x00010000u
+#define CDC_ACCEL_MMIO_SIZE 0x00100000u
 
 /* ---- Peripheral instance 1 ------------------------------------------- */
 #define CDC_UART1_BASE    0x10100000u

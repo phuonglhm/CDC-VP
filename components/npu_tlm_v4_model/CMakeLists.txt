@@ -16,7 +16,9 @@ target_include_directories(npu_tlm_v4_model
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        "${SAURIA_NPU_ROOT}")
+        "${SAURIA_NPU_ROOT}"
+        "${SAURIA_NPU_ROOT}/driver"
+        "${SAURIA_NPU_ROOT}/instrumentation")
 
 target_link_libraries(npu_tlm_v4_model PUBLIC SystemC::systemc)
 

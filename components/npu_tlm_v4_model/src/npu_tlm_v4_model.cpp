@@ -10,9 +10,16 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <sstream>
 #include <vector>
 
+#include <eval_counters.h>
+#include <libsauria_cfg.h>
 #include <npu_top.h>
+#include <npu_profile.h>
+#include <perf_counters.h>
+#include <sauria_run.h>
+#include <sauria_targets.h>
 
 namespace cdc::components {
 namespace {
@@ -25,22 +32,13 @@ constexpr std::uint32_t kRows = 32;
 constexpr std::uint32_t kCols = 32;
 constexpr std::uint32_t kMaxK = 1024 - kCols;
 constexpr std::uint32_t kCoreTimeoutCycles = 50'000;
+constexpr std::uint32_t kStatusPollCycles = 8;
+constexpr std::uint32_t kInt8Bytes = 1;
+constexpr std::uint32_t kInt32Bytes = 4;
+constexpr std::uint32_t kConfigRegisterBytes = 42 * sizeof(std::uint32_t);
 
 using core_type =
-    sauria::NpuTop<32, 32, std::int8_t, std::int8_t, std::int32_t,
-                   1024, 1024, 2048, 16, 64, 1>;
-
-sauria::PeConfig exact_int8_config()
-{
-    sauria::PeConfig cfg;
-    cfg.arithmetic_type = 1;
-    cfg.mul_type = 0;
-    cfg.add_type = 0;
-    cfg.stages_mul = 1;
-    cfg.intermediate_pipeline_stage = true;
-    cfg.zero_gating_mult = false;
-    return cfg;
-}
+    sauria::NpuTop<32, 32, float, float, float>;
 
 bool physical_ram_range(std::uint32_t addr, std::uint32_t size)
 {
@@ -58,6 +56,94 @@ float bits_to_float(std::uint32_t bits)
     static_assert(sizeof(value) == sizeof(bits));
     std::memcpy(&value, &bits, sizeof(value));
     return value;
+}
+
+std::uint32_t low32(std::uint64_t value)
+{
+    return static_cast<std::uint32_t>(value & 0xFFFF'FFFFULL);
+}
+
+std::int32_t clamp_i64(std::int64_t value)
+{
+    if (value > std::numeric_limits<std::int32_t>::max()) {
+        return std::numeric_limits<std::int32_t>::max();
+    }
+    if (value < std::numeric_limits<std::int32_t>::min()) {
+        return std::numeric_limits<std::int32_t>::min();
+    }
+    return static_cast<std::int32_t>(value);
+}
+
+std::int32_t rounding_divide_by_pot(std::int64_t value, int shift)
+{
+    if (shift <= 0) {
+        return clamp_i64(value);
+    }
+
+    const std::int64_t mask = (std::int64_t{1} << shift) - 1;
+    const std::int64_t remainder = value & mask;
+    const std::int64_t threshold = (mask >> 1) + ((value < 0) ? 1 : 0);
+    return clamp_i64((value >> shift) +
+                     ((remainder > threshold) ? 1 : 0));
+}
+
+std::int32_t multiply_by_quantized_multiplier(std::int32_t value,
+                                              std::int32_t multiplier,
+                                              std::int8_t shift)
+{
+    std::int64_t scaled = static_cast<std::int64_t>(value) * multiplier;
+    scaled = (scaled + (std::int64_t{1} << 30)) >> 31;
+
+    if (shift > 0) {
+        return clamp_i64(scaled << shift);
+    }
+    return rounding_divide_by_pot(scaled, -shift);
+}
+
+std::uint32_t make_sram_a_addr(std::uint32_t phys_addr,
+                               std::uint32_t sub_word)
+{
+    return sauria::SRAMA_OFFSET | (phys_addr << sauria::SHIFT_A) |
+           (sub_word & sauria::MASK_A);
+}
+
+std::uint32_t make_sram_b_addr(std::uint32_t phys_addr,
+                               std::uint32_t sub_word)
+{
+    return sauria::SRAMB_OFFSET | (phys_addr << sauria::SHIFT_B) |
+           (sub_word & sauria::MASK_B);
+}
+
+std::uint32_t make_sram_c_addr(std::uint32_t phys_addr,
+                               std::uint32_t sub_word)
+{
+    return sauria::SRAMC_OFFSET | (phys_addr << sauria::SHIFT_C) |
+           (sub_word & sauria::MASK_C);
+}
+
+sauria::SauriaLayerDesc make_gemm_as_conv1x1_desc(std::uint32_t rows,
+                                                   std::uint32_t cols,
+                                                   std::uint32_t depth,
+                                                   std::uint32_t tile_rows,
+                                                   std::uint32_t tile_cols)
+{
+    sauria::SauriaLayerDesc desc;
+    desc.B_w = 1;
+    desc.B_h = 1;
+    desc.d = 1;
+    desc.s = 1;
+    desc.c_til = static_cast<int>(depth);
+    desc.k_til = static_cast<int>(tile_cols);
+    desc.h_til = 1;
+    desc.w_til = static_cast<int>(tile_rows);
+    desc.X_used = static_cast<int>(tile_cols);
+    desc.Y_used = static_cast<int>(tile_rows);
+    desc.preload_en = 0;
+    desc.C_w = static_cast<int>(rows);
+    desc.C_h = 1;
+    desc.C_c = static_cast<int>(cols);
+    desc.A_c = static_cast<int>(depth);
+    return desc;
 }
 
 } // namespace
@@ -85,6 +171,17 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         std::uint32_t threshold_bits = 0;
         std::uint32_t rows_active = 0xFFFF'FFFFu;
         std::uint32_t dilation_pattern = 1;
+        std::uint32_t input_offset = 0;
+        std::uint32_t weight_offset = 0;
+        std::uint32_t output_offset = 0;
+        std::uint32_t activation_min = static_cast<std::uint32_t>(-128);
+        std::uint32_t activation_max = 127;
+        std::uint32_t bias_addr = 0;
+        std::uint32_t bias_size = 0;
+        std::uint32_t multiplier_addr = 0;
+        std::uint32_t multiplier_size = 0;
+        std::uint32_t shift_addr = 0;
+        std::uint32_t shift_size = 0;
         std::uint32_t cycle_count = 0;
         std::uint32_t bytes_read = 0;
         std::uint32_t bytes_written = 0;
@@ -110,6 +207,7 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
     sc_core::sc_signal<bool> core_start{"core_start"};
     sc_core::sc_signal<bool> core_done{"core_done"};
     sc_core::sc_signal<bool> core_deadlock{"core_deadlock"};
+    sc_core::sc_signal<std::uint32_t> mvm_k{"mvm_k"};
     sc_core::sc_signal<std::uint32_t> host_addr{"host_addr"};
     sc_core::sc_signal<bool> host_wren{"host_wren"};
     sc_core::sc_signal<bool> host_rden{"host_rden"};
@@ -118,7 +216,11 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
     sc_core::sc_signal<sauria::host_data_t> host_rdata{"host_rdata"};
     sc_core::sc_signal<float> threshold{"threshold"};
     sc_core::sc_signal<sc_dt::sc_bv<3>> buffer_select{"buffer_select"};
+    sc_core::sc_signal<std::uint32_t> total_contexts{"total_contexts"};
     sc_core::sc_signal<bool, sc_core::SC_MANY_WRITERS> irq_level{"irq_level"};
+    fx1::PerfCounters perf;
+    fx1::EvalCounters eval;
+    fx1::DmaTimingParams dma_params;
 
     register_file regs;
     sc_core::sc_event work_event;
@@ -133,7 +235,7 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         , owner(owner_ref)
         , access_latency(mmio_latency)
         , clk_half_period(clock_period / 2)
-        , core("sauria_core", exact_int8_config())
+        , core("sauria_core")
     {
         sc_core::sc_spawn(sc_bind(&impl::clock_thread, this),
                           "core_clk_gen");
@@ -143,6 +245,7 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         core.i_start(core_start);
         core.o_done(core_done);
         core.o_deadlock(core_deadlock);
+        core.i_mvm_k(mvm_k);
         core.i_host_addr(host_addr);
         core.i_host_wren(host_wren);
         core.i_host_rden(host_rden);
@@ -151,6 +254,10 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         core.o_host_rdata(host_rdata);
         core.i_threshold(threshold);
         core.i_select(buffer_select);
+        core.i_total_contexts(total_contexts);
+        core.attach_perf(&perf);
+        perf.X = kCols;
+        perf.Y = kRows;
 
         core_rst_n.write(false);
         core_soft_reset.write(false);
@@ -160,8 +267,10 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         host_rden.write(false);
         host_wdata.write(sauria::host_data_t());
         host_wmask.write(sauria::host_mask_t());
+        mvm_k.write(0);
         threshold.write(0.0f);
         buffer_select.write(sc_dt::sc_bv<3>("000"));
+        total_contexts.write(0);
     }
 
     bool busy() const { return (regs.status & STATUS_BUSY) != 0u; }
@@ -227,6 +336,42 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         case BYTES_WRITTEN:      value = regs.bytes_written; break;
         case LAST_ERROR:         value = regs.last_error; break;
         case CORE_ID:            value = CORE_ID_VALUE; break;
+        case INPUT_OFFSET:       value = regs.input_offset; break;
+        case WEIGHT_OFFSET:      value = regs.weight_offset; break;
+        case OUTPUT_OFFSET:      value = regs.output_offset; break;
+        case ACTIVATION_MIN:     value = regs.activation_min; break;
+        case ACTIVATION_MAX:     value = regs.activation_max; break;
+        case BIAS_ADDR:          value = regs.bias_addr; break;
+        case BIAS_SIZE_BYTES:    value = regs.bias_size; break;
+        case MULTIPLIER_ADDR:    value = regs.multiplier_addr; break;
+        case MULTIPLIER_SIZE_BYTES: value = regs.multiplier_size; break;
+        case SHIFT_ADDR:         value = regs.shift_addr; break;
+        case SHIFT_SIZE_BYTES:   value = regs.shift_size; break;
+        case PERF_EXEC_CYCLES:   value = low32(perf.exec_cycles); break;
+        case PERF_STALL_CYCLES:  value = low32(perf.stall_cycles); break;
+        case PERF_MAC_OPS:       value = low32(perf.mac_ops); break;
+        case PERF_ACTIVE_PE_CYCLES:
+            value = low32(perf.active_pe_cycles);
+            break;
+        case PERF_TOTAL_PE_CYCLES:
+            value = low32(perf.total_pe_cycles);
+            break;
+        case EVAL_TOTAL_CYCLES:  value = low32(eval.total_cycles); break;
+        case EVAL_PROCESSING_CYCLES:
+            value = low32(eval.processing_cycles);
+            break;
+        case EVAL_TRANSFER_CYCLES:
+            value = low32(eval.transfer_cycles);
+            break;
+        case EVAL_DMA_STALL_CYCLES:
+            value = low32(eval.dma_stall_cycles);
+            break;
+        case EVAL_DDR_READ_BYTES:
+            value = low32(eval.ddr_read_bytes);
+            break;
+        case EVAL_DDR_WRITE_BYTES:
+            value = low32(eval.ddr_write_bytes);
+            break;
         default:
             return tlm::TLM_ADDRESS_ERROR_RESPONSE;
         }
@@ -318,11 +463,33 @@ struct npu_tlm_v4_model::impl : public sc_core::sc_module {
         case ZERO_THRESHOLD_FP32:regs.threshold_bits = value; break;
         case ROWS_ACTIVE:        regs.rows_active = value; break;
         case DILATION_PATTERN:   regs.dilation_pattern = value; break;
+        case INPUT_OFFSET:       regs.input_offset = value; break;
+        case WEIGHT_OFFSET:      regs.weight_offset = value; break;
+        case OUTPUT_OFFSET:      regs.output_offset = value; break;
+        case ACTIVATION_MIN:     regs.activation_min = value; break;
+        case ACTIVATION_MAX:     regs.activation_max = value; break;
+        case BIAS_ADDR:          regs.bias_addr = value; break;
+        case BIAS_SIZE_BYTES:    regs.bias_size = value; break;
+        case MULTIPLIER_ADDR:    regs.multiplier_addr = value; break;
+        case MULTIPLIER_SIZE_BYTES: regs.multiplier_size = value; break;
+        case SHIFT_ADDR:         regs.shift_addr = value; break;
+        case SHIFT_SIZE_BYTES:   regs.shift_size = value; break;
         case CYCLE_COUNT:
         case BYTES_READ:
         case BYTES_WRITTEN:
         case LAST_ERROR:
         case CORE_ID:
+        case PERF_EXEC_CYCLES:
+        case PERF_STALL_CYCLES:
+        case PERF_MAC_OPS:
+        case PERF_ACTIVE_PE_CYCLES:
+        case PERF_TOTAL_PE_CYCLES:
+        case EVAL_TOTAL_CYCLES:
+        case EVAL_PROCESSING_CYCLES:
+        case EVAL_TRANSFER_CYCLES:
+        case EVAL_DMA_STALL_CYCLES:
+        case EVAL_DDR_READ_BYTES:
+        case EVAL_DDR_WRITE_BYTES:
             return tlm::TLM_COMMAND_ERROR_RESPONSE;
         default:
             return tlm::TLM_ADDRESS_ERROR_RESPONSE;
