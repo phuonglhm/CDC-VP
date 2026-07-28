@@ -52,7 +52,7 @@ Hardware reference set:
 | `0x100B_0000` | OTP0 | |
 | `0x100C_0000` | QSPI0 | its own NOR flash behind it (separate from SPI0's) |
 | `0x100D–100E_0000` | ISP0 / VPU0 | **RESERVED — no model, no IRQ** |
-| `0x100F_0000` | NPU0 | SAURIA v4 wrapper: 64 KiB MMIO + RAM master, INT8 GEMM |
+| `0x1020_0000` | NPU0 | SAURIA v4 wrapper: 64 KiB MMIO + RAM master, INT8 GEMM |
 | `0x1010_0000`… | UART1, I2C1, SPI1, TIMER1, RTC0, ADC0, GPIO0 | instance-1 block, `+0x1_0000` apart; GPIO0 @ `0x1016_0000` (`VALUE 0x00` RO / `OUT 0x04` / `DIR 0x08`, 32-bit only, **no IRQ**), pin 1 = boot strap |
 | `0x8000_0000` | RAM0 (256 MiB) | FW 16 MiB, then RAW_IN0/ISP_OUT0/VPU_OUT0/NPU_WGT0/NPU_WORK0 buffer windows |
 

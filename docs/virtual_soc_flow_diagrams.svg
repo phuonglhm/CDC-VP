@@ -126,7 +126,7 @@
   <rect class="box-acc" x="1210" y="360" width="150" height="92"/>
   <text class="label" x="1285" y="398" text-anchor="middle">NPU0</text>
   <text class="tiny" x="1285" y="418" text-anchor="middle">AI inference</text>
-  <text class="addr" x="1285" y="438" text-anchor="middle">MMIO 0x100F_0000</text>
+  <text class="addr" x="1285" y="438" text-anchor="middle">MMIO 0x1020_0000</text>
   <rect class="badge" x="1336" y="366" width="20" height="18" rx="5"/>
   <text class="badge-txt" x="1346" y="380" text-anchor="middle">M</text>
 

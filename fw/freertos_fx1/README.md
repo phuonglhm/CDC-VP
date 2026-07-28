@@ -82,7 +82,7 @@ bit-exactly and rejects zero hardware traffic counters.
 
 `hw_scan` enumerates every mapped platform window from the shared SoC memory
 map, prints stable identity/status values, reads the QSPI NOR JEDEC ID
-`EF 40 18`, and identifies NPU0 as `SAU4`. ISP0/VPU0 are reported as reserved;
+`EF 40 18`, and identifies NPU0 as `SA41`. ISP0/VPU0 are reported as reserved;
 an `NPU=0` build also reports NPU0 as reserved without touching its unbound
 window. The deterministic summaries are:
 

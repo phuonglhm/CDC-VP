@@ -108,12 +108,12 @@ else
 fi
 if [ "${NPU}" = "1" ]; then
     check "HW_SCAN PASS implemented=25 reserved=2"
-    check "NPU0     0x100F0000  0x00001020  0x53415534  SAU4"
+    check "NPU0     0x10200000  0x00001020  0x53413431  SA41"
     check "NPU0.CORE_ID"
     check "NPU0.K_DIMENSION"
 else
     check "HW_SCAN PASS implemented=24 reserved=3"
-    check "NPU0     0x100F0000  ----------  ----------  reserved"
+    check "NPU0     0x10200000  ----------  ----------  reserved"
 fi
 check "QSPI0    0x100C0000  0x00000008  0x00EF4018  JEDEC EF4018"
 check "REG_TEST PASS"

@@ -1,1 +1,37 @@
-/build/
+# CMake build trees. The documented flow uses BUILD_DIR=/tmp/..., but a plain
+# `make` falls back to ./build.
+/build*/
+
+# Verilator output. The cross-check runners pass --Mdir under BUILD_ROOT; this
+# catches BUILD_ROOT set inside the component and manual verilator runs.
+obj_dir/
+/verilator*/
+
+# Generated cross-check traces. The tracked stimulus and RTL-captured golden
+# files are *_stimulus.csv and *_expected_*.csv, so they stay visible.
+*_systemc_trace.csv
+*_rtl_trace.csv
+
+# Waveforms from sc_trace or an RTL simulator.
+*.vcd
+*.fsdb
+*.vpd
+
+# VCS artifacts, for the router-level cross-checks that will need it.
+simv
+simv.daidir/
+csrc/
+ucli.key
+vc_hdrs.h
+verdiLog/
+novas.*
+.vlogansetup.*
+AN.DB/
+
+# Stimulus generator byte-code.
+__pycache__/
+*.pyc
+
+# Locked RTL dependency checkout, if FLOO_RTL_DEPS_ROOT is pointed in-tree
+# instead of at the default location outside the repository.
+/rtl_deps/

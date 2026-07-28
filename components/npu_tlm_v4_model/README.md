@@ -73,7 +73,7 @@ contain system physical addresses; firmware must not subtract
 | `0x1014` | `BYTES_READ` | RO | RAM bytes read for the last job |
 | `0x1018` | `BYTES_WRITTEN` | RO | RAM bytes written for the last job |
 | `0x101C` | `LAST_ERROR` | RO | Error code from `npu_tlm_v4_regmap.h` |
-| `0x1020` | `CORE_ID` | RO | `0x53415534` (`"SAU4"`) |
+| `0x1020` | `CORE_ID` | RO | `0x53413431` (`"SA41"`) |
 
 The complete C/C++ definitions are in:
 

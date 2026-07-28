@@ -3,7 +3,7 @@
 #pragma once
 
 #include "floo_noc_model/floo_types.hpp"
-#include "floo_noc_model/ready_valid_fifo.hpp"
+#include "floo_noc_model/stream_fifo.hpp"
 #include "floo_noc_model/wormhole_arbiter.hpp"
 #include "floo_noc_model/xy_route_select.hpp"
 
@@ -112,7 +112,8 @@ public:
     }
 
 private:
-    sc_core::sc_vector<ready_valid_fifo<FlitT, InFifoDepth>> input_fifos_;
+    sc_core::sc_vector<stream_fifo_optimal_wrap<FlitT, InFifoDepth>>
+        input_fifos_;
     sc_core::sc_vector<xy_route_select<FlitT>> route_selectors_;
     sc_core::sc_vector<wormhole_arbiter<FlitT, num_ports>> output_arbiters_;
 

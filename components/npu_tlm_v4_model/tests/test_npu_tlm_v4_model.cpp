@@ -20,7 +20,7 @@ namespace {
 using namespace cdc::components;
 using namespace cdc::components::npu_v4_reg;
 
-constexpr std::uint64_t kNpuBase = 0x100F'0000ULL;
+constexpr std::uint64_t kNpuBase = 0x1020'0000ULL;
 constexpr std::uint64_t kRamBase = 0x8000'0000ULL;
 constexpr std::uint32_t kSrcOffset = 0x0001'0000;
 constexpr std::uint32_t kWeightsOffset = 0x0002'0000;

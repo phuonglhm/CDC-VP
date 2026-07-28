@@ -196,7 +196,7 @@
   <text class="badge-txt" x="1380" y="687" text-anchor="middle">M</text>
   <rect class="box-ai" x="1111" y="734" width="280" height="48"/>
   <text class="label" x="1251" y="755" text-anchor="middle">NPU0</text>
-  <text class="addr" x="1251" y="774" text-anchor="middle">MMIO 0x100F_0000</text>
+  <text class="addr" x="1251" y="774" text-anchor="middle">MMIO 0x1020_0000</text>
   <rect class="badge" x="1369" y="738" width="22" height="20" rx="5"/>
   <text class="badge-txt" x="1380" y="753" text-anchor="middle">M</text>
   <path class="pipe" d="M1251 584 L1251 602"/>

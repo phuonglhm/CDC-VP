@@ -11,6 +11,12 @@
 The model must not silently track another FlooNoC revision. Changing the frozen
 revision requires an RTL cross-check rerun and an update to this document.
 
+External RTL dependencies are pinned to the revisions resolved in the frozen
+`Bender.lock` and are materialised by `rtl_crosscheck/fetch_rtl_deps.sh`, which
+guards both the lock entry and the SHA-256 of every compiled file. Currently
+resolved: `common_cells` `1.39.0` @ `9ca8a76`. A dependency-revision change is
+a scope change and follows the same rules as a FlooNoC revision change.
+
 ## Vertical slice v0
 
 The first end-to-end slice is deliberately constrained to:
@@ -24,7 +30,7 @@ The first end-to-end slice is deliberately constrained to:
 | Link flow control | ready/valid |
 | Virtual channels | disabled |
 | Router ports | North, East, South, West, Eject |
-| Router input FIFO | enabled; depth fixed per instantiated test |
+| Router input FIFO | enabled; depth fixed per instantiated test (depth 2 selects the RTL spill-register branch) |
 | Router output FIFO | initially disabled |
 | Topology | rectangular 2-D mesh |
 | Link latency | one configured cycle per registered boundary |

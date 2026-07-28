@@ -76,7 +76,7 @@ KiB later without changing its base address.
 | QSPI0 | `0x100C_0000` | `0x0000_1000` | `0x100C_0FFF` | MMIO | QSPI controller register window. |
 | ISP0 | `0x100D_0000` | `0x0001_0000` | `0x100D_FFFF` | MMIO + master | Image signal processor. Uses source/destination frame-buffer descriptors in RAM0. |
 | VPU0 | `0x100E_0000` | `0x0001_0000` | `0x100E_FFFF` | MMIO + master | Video processing unit. Uses frame-buffer descriptors in RAM0. |
-| NPU0 | `0x100F_0000` | `0x0001_0000` | `0x100F_FFFF` | MMIO + master | Optional internal build (`CDC_ENABLE_SAURIA_NPU_V4=ON`). First operation is `INT8 32xK * Kx32 -> INT32 32x32`; the public default leaves this window unbound. |
+| NPU0 | `0x1020_0000` | `0x0001_0000` | `0x1020_FFFF` | MMIO + master | Optional internal build (`CDC_ENABLE_SAURIA_NPU_V4=ON`). First operation is `INT8 32xK * Kx32 -> INT32 32x32`; the public default leaves this window unbound. |
 | UART1 | `0x1010_0000` | `0x0000_1000` | `0x1010_0FFF` | MMIO | Second UART instance. Same register model as UART0. |
 | I2C1 | `0x1011_0000` | `0x0000_1000` | `0x1011_0FFF` | MMIO | Second I2C controller. |
 | SPI1 | `0x1012_0000` | `0x0000_1000` | `0x1012_0FFF` | MMIO | Second SPI controller. |
@@ -169,7 +169,7 @@ NPU0 SAURIA v4 additions and current constraints:
 | `0x1014` | `BYTES_READ` | R | RAM bytes read for the last job. |
 | `0x1018` | `BYTES_WRITTEN` | R | RAM bytes written for the last job. |
 | `0x101C` | `LAST_ERROR` | R | Error code; definitions are in `soc_regs_npu_v4.h`. |
-| `0x1020` | `CORE_ID` | R | `0x53415534` (`"SAU4"`). |
+| `0x1020` | `CORE_ID` | R | `0x53413431` (`"SA41"`). |
 
 NPU0 accepts only `WIDTH=32`, `HEIGHT=32`, `FORMAT=1`
 (`INT8_INT8_INT32`), and `OP_MODE=0` (`GEMM`) in this revision. Firmware
@@ -295,7 +295,7 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_QSPI0_BASE    0x100C0000u
 #define CDC_ISP0_BASE     0x100D0000u
 #define CDC_VPU0_BASE     0x100E0000u
-#define CDC_NPU0_BASE     0x100F0000u
+#define CDC_NPU0_BASE     0x10200000u
 
 #define CDC_UART1_BASE    0x10100000u
 #define CDC_I2C1_BASE     0x10110000u
