@@ -4,24 +4,35 @@ This mapping follows FlooNoC structure rather than the NPU worked example.
 
 | SystemC model block | FlooNoC source | Initial responsibility |
 |---|---|---|
-| `floo_types.hpp` | `hw/include/floo_noc/typedef.svh`, `hw/floo_pkg.sv` | Coordinates, header fields, flit and channel identity |
+| `floo_types.hpp` | `hw/include/floo_noc/typedef.svh`, `hw/floo_pkg.sv` | Coordinates, header fields, flit and channel identity. Direction and AXI-channel encodings verified exact; the header omits the frozen `collective_mask` and `collective_op` fields |
 | `reference_model.hpp` | FlooGen graph/routing/address models | Timing-independent address decode and expected XY path |
 | `stream_fifo.hpp` | `stream_fifo_optimal_wrap`, `spill_register_flushable`, `stream_fifo`, `fifo_v3` from `common_cells` 1.39.0 | Input buffering and back-pressure; mirrors the RTL wrap hierarchy including the depth-2 spill-register branch |
 | `xy_route_select.hpp` | `hw/floo_route_select.sv` | XY next-hop selection and burst route lock |
 | `rr_arb_tree.hpp` | `rr_arb_tree`, `lzc`, `cf_math_pkg::idx_width` from `common_cells` 1.39.0 | Round-robin tree, trailing-zero counters, and fair next-index state |
 | `wormhole_arbiter.hpp` | `hw/floo_wormhole_arbiter.sv` | Request snapshot, output selection, and packet lock through `last` |
-| `floo_router.hpp` | `hw/floo_router.sv`, `hw/floo_output_arbiter.sv` | Input FIFOs, routing, crossbar, per-output arbitration |
-| future `axi_chimney.hpp` | `hw/floo_axi_chimney.sv` | AXI/flit mapping, AW/W coupling, response ordering |
+| `floo_router.hpp` | `hw/floo_router.sv`, `hw/floo_output_arbiter.sv` | Input FIFOs, routing, crossbar with the `NoLoopback`/`XYRouteOpt` tie-offs, per-output arbitration |
+| `axi_chimney_pack.hpp` | `hw/floo_axi_chimney.sv`, `hw/floo_id_translation.sv` | Flit assembly per AXI channel, both destination-decode modes, AW/W select FSM |
+| `meta_buffer.hpp` | `hw/floo_meta_buffer.sv` (`MaxUniqueIds == 1` branch) | Request metadata retention and the constant downstream reissue ID |
+| `rob_order_gate.hpp` | `hw/floo_rob_wrapper.sv` (`NoRoB` branch) | Same-ID/different-destination admission stall. **Not RTL cross-checked** |
+| `axi_endpoint.hpp` | none: composes the blocks above | Transaction-level AXI manager and subordinate. **Model-side abstraction** |
 | future `meta_buffer.hpp` | `hw/floo_meta_buffer.sv` | Source metadata and downstream AXI ID management |
 | future `reorder_buffer.hpp` | `hw/floo_rob*.sv` | Same-ID AXI response ordering |
 | `floo_mesh.hpp` | FlooGen generated `floo_*_noc.sv` | Rectangular router/link topology with abstract local endpoints |
+| `noc_counters.hpp` | none: passive observation of `hw/floo_router.sv` boundary signals | Measured accept/stall/occupancy counters; drives nothing |
+| `axi_types.hpp` | `hw/floo_pkg.sv` sizing functions, `hw/include/floo_noc/typedef.svh`, `axi 0.39.9` `src/axi_pkg.sv` | AXI config, five channel payloads, channel-to-link mapping, flit width and reserved-bit arithmetic |
 | future TLM transactors | CDC-VP wrapper plus AXI semantics | TLM generic payload to/from signal-level AXI |
 
 External RTL dependencies such as `common_cells` and `axi` are behavioral
 dependencies of the named FlooNoC blocks. Only the behavior exercised by the
 frozen FlooNoC configuration is ported; the external libraries are not copied
-into the component. `rtl_crosscheck/fetch_rtl_deps.sh` checks them out at the
-revisions locked in the frozen `Bender.lock`.
+into the component.
+
+Two resolution paths exist. `rtl_crosscheck/fetch_rtl_deps.sh` checks out
+single repositories at the revisions locked in the frozen `Bender.lock` and
+guards them by per-file SHA-256; the leaf cross-checks use it.
+`rtl_crosscheck/gen_rtl_filelist.sh` runs Bender against the same lock to
+resolve the full transitive tree and emit ordered tool file lists, and asserts
+that its `common_cells` result agrees with the leaf path.
 
 ## Cross-check mapping
 
@@ -81,3 +92,45 @@ sampled pre-edge and post-edge, plus the registered state `valid_q`, `last_q`,
 `rr_q`, `lock_q`, and `req_q` read through hierarchical references. The
 `rr_arb_tree` data and grant outputs are excluded because the frozen
 instantiation leaves them unconnected.
+
+### `rtl_crosscheck/floo_router`
+
+Compiles the unmodified frozen `hw/floo_router.sv` in the v0 parameter set
+recorded in `docs/P0_SCOPE.md`. This harness uses **no shim of any kind**: the
+compile comes from the Bender-generated file list, so `floo_pkg`,
+`floo_route_select`, `floo_wormhole_arbiter`, `floo_vc_arbiter`, and every
+`common_cells` dependency are the real frozen sources. Flit and header types
+are built from the frozen `floo_noc/typedef.svh` macros.
+
+At these parameters the RTL reduces to the model's structure: the reduction
+demux, the parallel-reduction path in `floo_output_arbiter`, the output FIFO,
+and `floo_vc_arbiter` all degenerate away, leaving input FIFO, route select,
+masked crossbar, and one wormhole arbiter per output.
+
+Comparison is exact on the per-port `ready_o`/`valid_o` masks and per-output
+`data_o`, sampled pre-edge and post-edge, plus the one-hot `route_mask` per
+input. The router's `StableValidIn`/`StableValidOut` assertions stay enabled
+and the runner fails the run if either fires.
+
+### `rtl_crosscheck/axi_sizing`
+
+Compares the model's flit sizing arithmetic against the real `floo_pkg`
+functions over a list of AXI configurations. Not a cycle comparison: the
+functions are pure. The compile comes from the Bender-generated file list, so
+`floo_pkg` and `axi_pkg` are the frozen sources.
+
+Compared per configuration: per-channel payload width, channel-to-link
+mapping, both physical channel widths, and per-channel reserved bits.
+
+### `rtl_crosscheck/axi_chimney`
+
+Two harnesses over the unmodified frozen `hw/floo_axi_chimney.sv`, both built
+on the Bender-generated file list with no shim.
+
+`run_chimney_req_crosscheck.sh` drives AXI beats into the manager port and
+compares every emitted request flit. `run_chimney_rsp_crosscheck.sh` drives
+request flits into `floo_req_i`, answers on `axi_out_rsp_i`, and compares every
+emitted response flit; it issues three transactions per batch so the metadata
+FIFOs hold more than one entry.
+
+Both compare flit content and ordering, not chimney timing or arbitration.

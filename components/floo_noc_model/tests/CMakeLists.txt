@@ -12,6 +12,11 @@ add_floo_model_test(test_xy_route_select)
 add_floo_model_test(test_wormhole_arbiter)
 add_floo_model_test(test_floo_router)
 add_floo_model_test(test_floo_mesh)
+add_floo_model_test(test_noc_counters)
+add_floo_model_test(test_axi_types)
+add_floo_model_test(test_axi_chimney_pack)
+add_floo_model_test(test_rob_order_gate)
+add_floo_model_test(test_axi_endpoint)
 
 add_executable(route_trace_sc route_trace_sc.cpp)
 target_link_libraries(route_trace_sc PRIVATE
@@ -25,6 +30,26 @@ target_link_libraries(fifo_trace_sc PRIVATE
 
 add_executable(arbiter_trace_sc arbiter_trace_sc.cpp)
 target_link_libraries(arbiter_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(axi_sizing_trace axi_sizing_trace.cpp)
+target_link_libraries(axi_sizing_trace PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(chimney_req_trace_sc chimney_req_trace_sc.cpp)
+target_link_libraries(chimney_req_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(chimney_rsp_trace_sc chimney_rsp_trace_sc.cpp)
+target_link_libraries(chimney_rsp_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(router_trace_sc router_trace_sc.cpp)
+target_link_libraries(router_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
 
@@ -50,6 +75,34 @@ foreach(_depth 2 4)
             ${_depth}
             "${CMAKE_CURRENT_SOURCE_DIR}/data/stream_fifo_expected_d${_depth}.csv")
 endforeach()
+
+add_test(
+    NAME test_axi_sizing_trace
+    COMMAND axi_sizing_trace
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/axi_sizing_configs.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/axi_sizing_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/axi_sizing_expected.csv")
+
+add_test(
+    NAME test_chimney_req_trace_sc
+    COMMAND chimney_req_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_req_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/chimney_req_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_req_expected.csv")
+
+add_test(
+    NAME test_chimney_rsp_trace_sc
+    COMMAND chimney_rsp_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_rsp_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/chimney_rsp_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_rsp_expected.csv")
+
+add_test(
+    NAME test_router_trace_sc
+    COMMAND router_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/router_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/router_systemc_trace.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/router_expected.csv")
 
 foreach(_routes 2 4 5)
     add_test(

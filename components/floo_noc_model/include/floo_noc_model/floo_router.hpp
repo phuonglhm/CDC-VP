@@ -41,6 +41,13 @@ public:
     sc_core::sc_vector<sc_core::sc_out<bool>> o_output_locked{
         "o_output_locked", num_ports};
 
+    /// Selected output per input, mirroring the RTL's `route_mask[in]`, which
+    /// is one-hot at `route_sel_id_o` for unicast. Trace/debug only.
+    unsigned route_index(unsigned input) const
+    {
+        return route_index_[input].read().to_uint();
+    }
+
     SC_HAS_PROCESS(floo_router);
 
     explicit floo_router(sc_core::sc_module_name name)
@@ -161,7 +168,12 @@ private:
                     route_index_[input].read().to_uint() == output;
                 const bool connected =
                     optimized_connection_is_legal(input, output);
-                cross_data_[index].write(routed_data_[input].read());
+                // floo_router.sv ties the data of an illegal input/output
+                // pair to '0, not just its handshake. The output arbiter
+                // drives `data_o` from the selected index even when that
+                // index is not valid, so the tie-off is observable.
+                cross_data_[index].write(
+                    connected ? routed_data_[input].read() : FlitT{});
                 cross_valid_[index].write(
                     connected && selected && fifo_valid_[input].read());
             }

@@ -4,6 +4,11 @@ This component is a FlooNoC-native Direction-2 model. The SAURIA/NPU model is
 used only as a process and packaging reference; no accelerator-specific
 `START`/`DONE`, tensor staging, DMA worker, or register contract is reused.
 
+The reference architecture is the FlooNoC IP implementation itself, upstream at
+`https://github.com/pulp-platform/FlooNoC.git` and frozen locally at the
+revision recorded in `docs/P0_SCOPE.md`. Every modelling decision must be
+traceable to a file in that tree.
+
 The source of truth is, in order:
 
 1. FlooNoC RTL at the frozen revision recorded in `docs/P0_SCOPE.md`.
@@ -53,6 +58,10 @@ unmodified frozen RTL, then compares the cycle traces exactly.
 bash rtl_crosscheck/run_route_select_crosscheck.sh       # hw/floo_route_select.sv
 bash rtl_crosscheck/run_stream_fifo_crosscheck.sh        # common_cells FIFO wrap
 bash rtl_crosscheck/run_wormhole_arbiter_crosscheck.sh   # hw/floo_wormhole_arbiter.sv
+bash rtl_crosscheck/run_router_crosscheck.sh             # hw/floo_router.sv
+bash rtl_crosscheck/run_axi_sizing_crosscheck.sh         # floo_pkg flit sizing
+bash rtl_crosscheck/run_chimney_req_crosscheck.sh        # chimney request path
+bash rtl_crosscheck/run_chimney_rsp_crosscheck.sh        # chimney response path
 ```
 
 Both default to the frozen local FlooNoC tree and write generated files under
@@ -69,6 +78,23 @@ The route-selector harness supplies only a minimal `floo_pkg`/`common_cells`
 compile shim; route computation and locking are compiled from the original
 FlooNoC RTL, and the runner rejects an RTL file whose SHA-256 does not match
 frozen revision `9a6972a`.
+
+### Full RTL compile flow
+
+Leaf cross-checks pin single dependencies themselves. For anything that needs
+the whole transitive tree, such as the upcoming router cross-check, generate an
+ordered file list with Bender:
+
+```bash
+bash rtl_crosscheck/gen_rtl_filelist.sh
+```
+
+It refuses to run unless Bender is the pinned version, the FlooNoC tree is at
+the frozen revision and clean, and `Bender.lock` hashes identically before and
+after. It emits Verilator, VCS, and generic file lists plus the resolved
+dependency table, and verifies that `floo_router.sv` elaborates from the result.
+If Bender is missing, the script prints the exact pinned-artifact install
+commands.
 
 The FIFO and arbiter harnesses use no behavioural shim.
 `rtl_crosscheck/fetch_rtl_deps.sh` checks out `common_cells` at the revision
@@ -88,10 +114,23 @@ cross-checking still requires the complete Bender dependency tree.
 - P7.6 (partial): common SystemC/SV trace harness with passing equivalence
   checks of 12 cycles for the XY route selector, 133 cycles for the input FIFO
   at depths 2 and 4, and 152 cycles for the wormhole arbiter at 5, 4, and 2
-  routes.
+  routes, and 214 cycles for the five-port router; plus a reproducible
+  full-tree RTL compile flow.
 
-RTL-signed so far: XY route selection with lock state, the input FIFO wrap, and
-the wormhole arbiter. Everything else is cycle-approximate.
+- P5: measured router counters, observing only RTL-signed signals and driving
+  nothing.
+- P6: single-AXI channel types and sizing, chimney flit assembly and
+  destination decode, metadata retention, the `NoRoB` ordering rule, and
+  abstract AXI endpoint transactors.
+
+RTL-signed so far: XY route selection with lock state, the input FIFO wrap, the
+wormhole arbiter, the five-port router, the AXI flit sizing, and both chimney
+flit paths. The chimney comparisons cover flit content and ordering, not
+chimney timing. Everything else is cycle-approximate.
+
+The router harness uses no shim at all: it compiles the real RTL from the
+Bender-generated file list and keeps the router's own protocol assertions
+enabled.
 
 CDC-VP fabric integration is deliberately deferred until the standalone blocks
 and router-level model have RTL cross-check coverage.

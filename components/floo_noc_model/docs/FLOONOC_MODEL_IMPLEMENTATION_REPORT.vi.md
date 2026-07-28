@@ -5,16 +5,19 @@
 - Tên hạng mục: Mô hình FlooNoC mức cycle-approximate bằng SystemC/TLM.
 - Thư mục triển khai:
   `/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model`
-- Nguồn RTL tham chiếu:
+- Kiến trúc tham chiếu: chính IP FlooNoC, upstream
+  `https://github.com/pulp-platform/FlooNoC.git`, đóng băng tại
   `/home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC`
+  (đã verify `origin` đúng upstream, `describe` = `v0.8.4-10-g9a6972a`)
 - FlooNoC revision cố định: `9a6972a`.
 - FlooGen version: `0.8.4`.
 - SystemC: `2.3.4`.
 - C++ standard: C++17.
 - Compiler đã kiểm thử: GCC/G++ `11.5.0`.
 - RTL simulator đã kiểm thử: Verilator `5.022`.
-- Dependency RTL đã resolve: `common_cells` `1.39.0` @
-  `9ca8a7655f741e7dd5736669a20a301325194c28`.
+- Dependency RTL đã resolve: toàn bộ 13 package theo `Bender.lock`, trong đó
+  `common_cells` `1.39.0` @ `9ca8a7655f741e7dd5736669a20a301325194c28`.
+- Bender đã cài (pin): `0.32.1` tại `/home/duyptt_HW/.local/bin/bender`.
 - Ngày cập nhật báo cáo: 2026-07-28.
 
 ## 2. Mục tiêu
@@ -45,6 +48,9 @@ Nguồn sự thật được ưu tiên theo thứ tự:
 
 Khi SystemC và RTL khác nhau, cần kiểm tra cấu hình RTL rồi sửa SystemC theo
 RTL. Không sửa RTL tham chiếu chỉ để test SystemC chạy qua.
+
+Mọi quyết định mô hình hóa phải truy vết được về một file cụ thể trong cây
+FlooNoC đóng băng. Không suy diễn từ tài liệu hay từ mô hình NPU.
 
 ### 3.2 Không sao chép mô hình NPU
 
@@ -81,8 +87,9 @@ kiến trúc.
   estimate.
 
 Hiện tại đã RTL-signed: XY route selector, input FIFO
-(`stream_fifo_optimal_wrap`) và wormhole arbiter (`floo_wormhole_arbiter` trên
-`rr_arb_tree`). Các block còn lại vẫn là cycle-approximate.
+(`stream_fifo_optimal_wrap`), wormhole arbiter (`floo_wormhole_arbiter` trên
+`rr_arb_tree`) và router năm cổng (`floo_router`). Các block còn lại vẫn là
+cycle-approximate.
 
 ## 4. Phạm vi vertical slice v0
 
@@ -173,7 +180,12 @@ include/floo_noc_model/floo_types.hpp
 - enum AXI channel: AW, W, AR, B và R.
 - enum physical channel: req và rsp.
 - kiểu coordinate gồm X, Y và local port ID.
-- flit header gồm source, destination, `last`, AXI channel, RoB và ATOP fields.
+- flit header đầy đủ theo `FLOO_TYPEDEF_HDR_T` đóng băng, đúng thứ tự khai báo:
+  `rob_req, rob_idx, dst_id, collective_mask, src_id, last, atop, axi_ch,
+  collective_op`. Hai trường `collective_mask`/`collective_op` bất hoạt ở v0
+  (unicast, `EnMultiCast = 0`) nhưng vẫn mang theo để header là tập con trung
+  thực của header thật.
+- enum `collect_op` theo `floo_pkg::collect_op_e`.
 - generic `basic_flit<PayloadBits>`.
 - `test_flit` với payload 64 bit.
 
@@ -206,6 +218,84 @@ include/floo_noc_model/reference_model.hpp
 - tạo toàn bộ đường đi XY và Eject cuối cùng;
 - kiểm tra source/destination nằm trong mesh;
 - chỉ chấp nhận một local Eject port trong v0.
+
+### 6.2b Kiểu AXI và số học sizing flit
+
+File:
+
+```text
+include/floo_noc_model/axi_types.hpp
+```
+
+Mirror `floo_pkg::axi_cfg_t`, năm kiểu payload AXI channel, và bốn hàm
+`axi_chan_mapping`, `get_axi_chan_width`, `get_max_axi_payload_bits`,
+`get_axi_rsvd_bits`, dựa trên hằng số field width của `axi_pkg` tại revision
+khóa.
+
+Đây là **số học**, không phải timing, nên cross-check đánh giá hai bên trên
+cùng một danh sách config thay vì theo cycle. Harness này tồn tại vì hai chi
+tiết rất dễ chép sai và sai âm thầm ở mọi chỗ phía sau:
+
+- `get_max_axi_payload_bits` **cộng thêm 1 bit dự phòng** — physical channel
+  luôn rộng hơn payload rộng nhất của nó ít nhất 1 bit;
+- width các channel dùng `cfg.InIdWidth`, **không bao giờ** dùng `OutIdWidth`.
+
+Cả hai đã được kiểm chứng bằng negative control.
+
+Kết quả: `axi-sizing cross-check PASS: 8 configurations match`.
+
+Một edge case của RTL được model tái tạo nguyên trạng chứ không "làm cho đẹp":
+`get_axi_chan_width` dùng `cfg.UserWidth` thô, trong khi
+`FLOO_TYPEDEF_AXI_FROM_CFG` khai báo kiểu user là
+`logic [floo_iomsb(UserWidth):0]`. Ở `UserWidth == 0` hai cái lệch nhau 1 bit.
+Không config nào trong phạm vi hiện tại dùng user width bằng 0.
+
+### 6.2c Chimney: đóng gói flit và giải mã đích — **CHƯA cross-check RTL**
+
+File:
+
+```text
+include/floo_noc_model/axi_chimney_pack.hpp
+```
+
+Mirror các khối `always_comb` đóng gói flit của `hw/floo_axi_chimney.sv`, luật
+`gen_route` trên `hw/floo_id_translation.sv`, và state `aw_w_sel_q`.
+
+Các luật đọc thẳng từ RTL, đều là chỗ model tự viết rất dễ sai:
+
+| Luật | Ý nghĩa |
+|---|---|
+| AW có `hdr.last = 0`, W có `hdr.last = w.last` | AW và W burst là **một** packet wormhole → giữ chung một route |
+| W mang reorder tag **của AW**, không phải của chính nó | W thuộc về transaction của AW |
+| AR, B, R đều có `hdr.last = 1` | packet một flit; RTL ghi rõ R burst cố ý không wormhole |
+| `hdr.atop = (aw.atop != ATOP_NONE)` | là **cờ**, không phải mã ATOP |
+| B và R khôi phục AXI id gốc của manager từ metadata | id phía downstream là id cấp lại nội bộ chimney |
+| Đích của W là id đã latch lúc AW được nhận | W không bao giờ tự giải mã địa chỉ |
+
+Giải mã đích có **hai mode** dưới XY routing và cây đóng băng dùng cả hai, nên
+model làm cả hai: `UseIdTable = 1` tra system address map (như
+`floogen/examples/axi_mesh_xy.yml`); `UseIdTable = 0` trích toạ độ từ trường bit
+của địa chỉ (như `hw/test/floo_test_pkg.sv`).
+
+**Trạng thái kiểm chứng: ĐÃ RTL-signed cả hai chiều.**
+
+- Request path: 16 flit khớp chính xác.
+- Response path: 8 flit khớp chính xác, với 3 giao dịch outstanding mỗi batch.
+
+Đoạn dưới đây giữ lại vì vẫn đúng về *phạm vi*: phép so là **nội dung flit và
+thứ tự**, không phải timing chimney. Phần đóng gói nằm inline `always_comb` bên trong
+chimney nên không tách ra được; cross-check thật phải instantiate cả chimney
+kèm meta buffer và reorder buffer. Cho tới lúc đó, coi header này là **chưa
+kiểm chứng**.
+
+Điều đã xác lập được là harness **khả thi**:
+`rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_elab.sv` instantiate chimney
+gốc với parameter set của test package upstream và **lint 0 error** trên file
+list bender. Phần còn lại là stimulus và tracing, không phải type plumbing.
+
+Không tái dùng được `hw/tb/tb_floo_axi_chimney.sv` của upstream dưới Verilator
+vì nó phụ thuộc package class-based `axi_test`. Vẫn dùng được dưới VCS, vốn có
+sẵn trên máy này.
 
 ### 6.3 Input FIFO (`stream_fifo_optimal_wrap`)
 
@@ -336,6 +426,23 @@ Router hiện tại gồm:
 - chặn input-to-same-output loopback;
 - traffic đi vào từ hướng Y không được quay lại hướng X.
 
+**Sai lệch đã phát hiện và sửa qua cross-check.** RTL tie về `'0` **cả**
+handshake **lẫn data** của cặp (input, output) bị cấm:
+
+```systemverilog
+assign masked_ready_transposed[in][v][out] = '0;
+assign masked_valid[out][v][in]            = '0;
+assign masked_data[out][v][in]             = '0;   // model đã bỏ sót dòng này
+```
+
+Model cũ chỉ tie handshake, vẫn đưa flit đã route lên mọi nhánh crossbar. Điều
+này **quan sát được**, vì `floo_wormhole_arbiter` luôn lái `data_o` từ index
+được chọn kể cả khi index đó không valid: output nào có arbiter chọn trúng
+nhánh bị cấm sẽ ra `'0` ở RTL nhưng ra dữ liệu cũ ở model.
+
+Hai luật crossbar của model đã được xác nhận map đúng parameter RTL:
+`NoLoopback` (default `1'b1`) và `XYRouteOpt` (default `1'b1`).
+
 Chưa có:
 
 - output FIFO;
@@ -464,11 +571,16 @@ Mô hình hiện là header-only interface library.
 | `test_arbiter_trace_sc_n2` | 152 cycle arbiter trace so với golden lấy từ RTL, 2 route |
 | `test_arbiter_trace_sc_n4` | 152 cycle arbiter trace so với golden lấy từ RTL, 4 route |
 | `test_arbiter_trace_sc_n5` | 152 cycle arbiter trace so với golden lấy từ RTL, 5 route |
+| `test_noc_counters` | Đếm accept/stall/high-water suy tay, identity từng port, bảo toàn flit |
+| `test_axi_types` | Width AXI tính tay, mapping channel, reserved bits, độc lập `OutIdWidth` |
+| `test_axi_sizing_trace` | Bảng sizing 8 config so với golden lấy từ RTL |
+| `test_axi_chimney_pack` | Đóng gói flit từng channel, hai mode giải mã đích, FSM AW/W |
+| `test_router_trace_sc` | 214 cycle router trace so với golden lấy từ RTL |
 
 Kết quả chạy ngày 2026-07-28:
 
 ```text
-100% tests passed, 0 tests failed out of 12
+100% tests passed, 0 tests failed out of 21
 ```
 
 ### 8.2 Route-selector SystemC ↔ RTL cross-check
@@ -618,6 +730,52 @@ mình đều tái tạo đúng hành vi RTL; gỡ cả hai thì hỏng — đún
 tư cho thấy. Đây là tính chất của RTL, không phải điểm yếu của stimulus, và
 không nên "sửa" bằng cách thêm stimulus.
 
+### 8.2d Router SystemC ↔ RTL cross-check
+
+RTL tham chiếu: `FlooNoC/hw/floo_router.sv` không sửa đổi, ở đúng parameter set
+đã đóng băng trong `docs/P0_SCOPE.md`.
+
+Harness này **không dùng shim nào cả**. Toàn bộ compile lấy từ file list do
+bender sinh, nên `floo_pkg`, `floo_route_select`, `floo_wormhole_arbiter`,
+`floo_vc_arbiter` và mọi dependency `common_cells` đều là source thật. Kiểu
+flit/header dựng từ macro `floo_noc/typedef.svh` gốc.
+
+Ở parameter set này, RTL rút gọn về đúng cấu trúc của model: nhánh reduction,
+đường parallel-reduction trong `floo_output_arbiter`, output FIFO và
+`floo_vc_arbiter` đều thoái hoá hết.
+
+Các trường được so sánh:
+
+```text
+cycle,pre_ready,pre_valid,pre_d0..pre_d4,
+post_ready,post_valid,post_d0..post_d4,
+mask0..mask4
+```
+
+`maskN` là `route_mask` dạng one-hot — thứ mà router thật sự dùng, thay vì
+index. Cross-check route-selector trước đây chỉ so `route_sel_id_o`, nên cột
+này đóng nốt khoảng trống đó bằng thực nghiệm.
+
+Kết quả:
+
+```text
+floo-router cross-check PASS: 214 cycles match
+```
+
+Assertion `StableValidIn`/`StableValidOut` của router **vẫn bật** trong
+Verilator (vì `INC_ASSERT` gate theo `SYNTHESIS`, còn file list chỉ define
+`TARGET_SYNTHESIS`). Runner grep log và fail nếu chúng nổ — stimulus vi phạm
+contract sẽ bị báo là lỗi stimulus chứ không bị bỏ qua. Stimulus hiện tại không
+làm assertion nào nổ.
+
+Ba negative control, đều FAIL đúng:
+
+| Lỗi cố ý tiêm vào model | Kết quả |
+|---|---|
+| Bỏ tie-off data của crossbar | FAIL từ cycle 15 |
+| Bỏ luật `XYRouteOpt` (Y→X) | FAIL từ cycle 15 |
+| Bỏ luật `NoLoopback` | FAIL từ cycle 15 |
+
 ### 8.3 Bảo vệ revision RTL
 
 Cross-check runner kiểm tra SHA-256 của:
@@ -714,6 +872,33 @@ $CXX --version | head
 ./rtl_crosscheck/run_route_select_crosscheck.sh
 ```
 
+### 9.2e Chạy router RTL cross-check
+
+```bash
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model
+./rtl_crosscheck/run_router_crosscheck.sh
+```
+
+Runner này tự gọi `gen_rtl_filelist.sh`, nên cần có bender.
+
+### 9.2d Sinh file list RTL đầy đủ bằng Bender
+
+```bash
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model
+./rtl_crosscheck/gen_rtl_filelist.sh
+```
+
+Script chỉ chạy khi: bender đúng version pin, FlooNoC đúng revision đóng băng
+và sạch, `Bender.lock` khớp hash trước **và** sau khi chạy. Nó chỉ gọi
+`bender checkout`, không bao giờ gọi `bender update`.
+
+Output mặc định tại `/tmp/floo_noc_rtl_filelist`: `floo_verilator.f`,
+`floo_vcs.sh`, `floo_flist_plus.f`, `resolved_deps.txt`.
+
+Nếu chưa có bender, script in sẵn lệnh cài từ artifact đã pin. **Không** dùng
+installer `https://pulp-platform.github.io/bender/init`: từ v0.32.0 nó là
+wrapper cargo-dist, cài vào `$CARGO_HOME/bin` và sửa file shell profile.
+
 ### 9.2c Chạy wormhole-arbiter RTL cross-check
 
 ```bash
@@ -781,19 +966,43 @@ Chưa có trong `PATH`:
 bender
 ```
 
-Trạng thái dependency trong `Bender.lock`:
+Toàn bộ dependency tree đã được resolve. Có hai đường, và chúng kiểm chứng
+lẫn nhau:
 
-- `common_cells` 1.39.0 @ `9ca8a76` — **đã checkout và verify hash**;
-- `axi` 0.39.9 — chưa cần, chưa fetch;
-- `axi_riscv_atomics` 0.8.3 — chưa cần, chưa fetch;
-- `common_verification` 0.2.5 — chưa cần, chưa fetch;
-- `idma` 0.6.5 — chưa cần, chưa fetch.
+**Đường leaf** — `rtl_crosscheck/fetch_rtl_deps.sh`: pin từng repo theo
+revision và SHA-256 từng file, không cần Bender. Đây là đường mà cross-check
+FIFO và arbiter đang dùng: nhanh, offline sau lần đầu, có hash guard.
 
-`rtl_crosscheck/fetch_rtl_deps.sh` thay thế Bender ở phạm vi hẹp: đọc revision
-từ `Bender.lock`, dừng nếu lock đã đổi so với giá trị đóng băng, checkout đúng
-commit, và verify SHA-256 từng file được compile. Script này **không** giải
-transitive dependency và không sinh file list theo thứ tự — cross-check ở mức
-router vẫn cần Bender thật hoặc một file list đầy đủ tương đương.
+**Đường đầy đủ** — `rtl_crosscheck/gen_rtl_filelist.sh`: chạy Bender 0.32.1
+trên `Bender.lock` đóng băng, resolve toàn bộ 13 package và sinh file list có
+thứ tự. Script assert rằng revision `common_cells` mà Bender resolve **trùng**
+với pin độc lập của đường leaf — và thực tế đã trùng, kể cả hash từng file.
+
+Bảng dependency đã resolve:
+
+| Package | Version | Revision |
+|---|---|---|
+| apb | 0.2.4 | `77ddf07` |
+| axi | 0.39.9 | `a256a3b` |
+| axi_riscv_atomics | 0.8.3 | `97a1dd2` |
+| axi_stream | 0.1.1 | `54891ff` |
+| common_cells | 1.39.0 | `9ca8a76` |
+| common_verification | 0.2.5 | `fb1885f` |
+| fpnew | — | `e5aa6a0` |
+| fpu_div_sqrt_mvp | 1.0.4 | `86e1f55` |
+| idma | 0.6.5 | `28a36e5` |
+| obi | 0.1.7 | `0155fc3` |
+| register_interface | 0.4.7 | `d6e1d4c` |
+| tech_cells_generic | 0.2.13 | `7968dd6` |
+| floo_noc_pd | path `./pd` | — |
+
+Hai điểm cần nhớ:
+
+- `Bender.lock` **có** được git track trong repo FlooNoC. Dòng `Bender.lock`
+  trong `.gitignore` của repo đó vô hiệu vì file đã được commit, nên thay đổi
+  lock vẫn hiện trong `git status`.
+- Chỉ được chạy `bender checkout` trên cây đóng băng. `bender update` sẽ
+  re-resolve và ghi đè lock.
 
 FIFO, wormhole arbiter và router cross-check phải dùng đúng dependency version
 được khóa. Không được viết một behavioral SV FIFO/arbiter khác rồi gọi đó là
@@ -814,13 +1023,14 @@ RTL cross-check.
 
 ### 11.2 Về verification
 
-- Mười hai SystemC test đều PASS.
+- Hai mươi mốt SystemC test đều PASS.
 - Route-selector khớp RTL 12/12 cycle.
 - Input FIFO khớp RTL 133/133 cycle ở cả depth 2 và depth 4.
 - Wormhole arbiter khớp RTL 152/152 cycle ở 5, 4 và 2 route, gồm cả state.
-- Đã phát hiện và sửa hai nhóm sai lệch thật giữa model và RTL: FIFO
-  accept-at-full, và bốn điểm sai của arbiter (round-robin, tập request,
-  `ready_o`, `data_o`).
+- Router năm cổng khớp RTL 214/214 cycle, gồm cả one-hot route mask.
+- Đã phát hiện và sửa ba nhóm sai lệch thật giữa model và RTL: FIFO
+  accept-at-full; bốn điểm sai của arbiter (round-robin, tập request,
+  `ready_o`, `data_o`); và thiếu tie-off data trên crossbar của router.
 - Có common CSV stimulus/trace format.
 - Có automatic trace comparison.
 - Có RTL source hash guard và dependency revision guard.
@@ -841,7 +1051,8 @@ RTL cross-check.
 
 Chưa thể khẳng định:
 
-- toàn bộ router cycle-equivalent với RTL;
+- router cycle-equivalent ở cấu hình khác v0 (VC, credit, output FIFO,
+  collective, multicast, reduction đều chưa model và chưa so);
 - FIFO cycle-equivalent ở depth khác 2 và 4, hoặc trên `usage_o`/`flush_i`;
 - arbiter cycle-equivalent ở `NumRoutes` khác 2, 4 và 5;
 - mesh có latency theo đúng generated topology;
@@ -851,15 +1062,16 @@ Chưa thể khẳng định:
 - CDC-VP traffic đã đi qua FlooNoC;
 - performance counters đã phản ánh RTL.
 
-Việc FIFO và arbiter đã RTL-signed **không** làm router trở thành
-cycle-equivalent: crossbar, kết nối route-selector với arbiter, và toàn bộ
-tổ hợp bên trong `floo_router.sv` vẫn chưa được kiểm chứng.
+Việc router đã RTL-signed **không** làm mesh trở thành cycle-equivalent: link
+giữa các router hiện vẫn là kết nối tổ hợp, và topology sinh bởi FlooGen chưa
+có sẵn để đối chiếu.
 
 Vì vậy kết luận chính xác hiện tại là:
 
-> Mô hình đã hoàn thành nền tảng router/mesh SystemC và kiểm thử contract nội
-> bộ. XY route selector, input FIFO và wormhole arbiter đã được xác nhận khớp
-> RTL theo cycle. Các block còn lại vẫn ở mức cycle-approximate.
+> Mô hình đã hoàn thành nền tảng router/mesh SystemC. XY route selector, input
+> FIFO, wormhole arbiter và router năm cổng đã được xác nhận khớp RTL theo
+> cycle ở cấu hình v0. Mesh, link và latency toàn mạng vẫn ở mức
+> cycle-approximate.
 
 ## 13. Các hạn chế kỹ thuật hiện tại
 
@@ -878,6 +1090,28 @@ Chưa có:
 - response ordering;
 - reorder buffer.
 
+### 13.1b Kiểu dữ liệu chưa khớp header thật
+
+Audit ngày 2026-07-28 đối chiếu `flit_header` của model với
+`FLOO_TYPEDEF_HDR_T` trong `hw/include/floo_noc/typedef.svh`:
+
+```systemverilog
+rob_req, rob_idx, dst_id, collective_mask, src_id, last, atop, axi_ch, collective_op
+```
+
+Model **thiếu** `collective_mask` và `collective_op`. Trong v0 (Unicast,
+`EnMultiCast = 0`) điều này không gây sai hành vi — nên không test nào fail —
+nhưng đây không phải chỉ là khác width mà là thiếu hẳn hai trường, và
+`hw/floo_route_select.sv` ở revision này **có** đọc `hdr.collective_op`. Phải
+bổ sung trước khi động tới multicast, collective hoặc reduction.
+
+Những gì đã verify là khớp chính xác: `direction` ↔ `route_direction_e`,
+`axi_channel` ↔ `axi_ch_e` (kể cả width 3 bit), và shim `floo_pkg` của
+route-select harness ↔ `hw/floo_pkg.sv`.
+
+Giới hạn coverage trước đây chưa nêu: cross-check route-selector chạy với id
+type 2-bit `x`/`y`, nên chỉ sign-off được toạ độ 0..3.
+
 ### 13.2 Network chưa hoàn chỉnh
 
 - Mesh hiện chỉ chở một generic `FlitT` stream.
@@ -887,16 +1121,36 @@ Chưa có:
 - Chưa có explicit link latency.
 - Chưa có virtual channel và credit.
 
-### 13.3 Instrumentation chưa có
+### 13.3 Instrumentation
 
-Các counter dự kiến nhưng chưa triển khai:
+**Đã có** (`include/floo_noc_model/noc_counters.hpp`), chỉ quan sát tín hiệu đã
+RTL-signed ở biên router:
 
-- transaction/flit latency;
-- flit và payload bytes per cycle;
-- injection/ejection stalls;
-- arbitration wait;
-- FIFO high-water mark;
-- link utilization;
+- accepted flits và packets, từng input và từng output;
+- stall cycles và busy cycles từng port;
+- occupancy high-water và tổng occupancy của input buffer.
+
+Hai nguyên tắc:
+
+- **Phạm vi:** counter chỉ được quan sát tín hiệu đã qua cross-check. Không có
+  counter nào cho link hay latency end-to-end vì mesh vẫn cycle-approximate.
+- **Thụ động:** block chỉ khai báo `sc_in`, không lái gì. Đây là điều được
+  **kiểm chứng** chứ không phải tuyên bố suông: `router_trace_sc.cpp` gắn
+  counters cạnh router, nên cross-check 214 cycle chạy *có* counters và vẫn
+  khớp RTL chính xác.
+
+Ba tầng báo cáo tách bạch: **measured** (đếm tại `valid && ready`), **derived**
+(số học trên measured, ví dụ utilisation), **analytic** (không cung cấp).
+
+Lưu ý quan trọng: **bảo toàn flit chỉ đúng trong cửa sổ không có reset và đã
+drain hết.** Reset hủy flit đang nằm trong buffer. Stimulus router 214 cycle có
+hai lần reset nên hiển thị 179 flit vào / 165 flit ra — đúng, không phải lỗi.
+
+**Chưa có**, và cố ý, vì mỗi cái cần một đường chưa RTL-signed hoặc chưa model:
+
+- transaction/flit latency và hop count: cần tag từng flit và mesh đã signed;
+- payload bytes per cycle: cần kiểu AXI payload thật;
+- link utilization: link là khái niệm của mesh, mà mesh chưa signed;
 - hop count;
 - outstanding responses;
 - RoB occupancy.
@@ -937,23 +1191,47 @@ packing của flit struct thật.
 Phần arbiter còn thiếu: `NumRoutes` ngoài 2/4/5; data mux và grant decode của
 tree không được model vì instantiation đóng băng để hở chúng.
 
-### Bước 3: Cross-check router (bước kế tiếp)
+### Bước 3: Resolve compile flow RTL đầy đủ — ĐÃ XONG (2026-07-28)
 
-Đây là bước đầu tiên cần nhiều hơn `common_cells`: `floo_router.sv` kéo theo
-`floo_vc_arbiter`, `floo_route_select` và `floo_pkg` thật, mà `floo_pkg` lại
-cần `axi_pkg`. `fetch_rtl_deps.sh` chỉ pin từng repo đơn lẻ, không giải
-transitive dependency và không sinh file list có thứ tự.
+- Đã cài Bender 0.32.1 từ artifact pin, không chạy installer cargo-dist và
+  không sửa shell profile nào.
+- `bender checkout` resolve đủ 13 package từ `Bender.lock` đóng băng. Không
+  chạy `bender update`.
+- `Bender.lock` giống hệt trước và sau; cây FlooNoC vẫn sạch.
+- Revision và hash `common_cells` mà Bender resolve **trùng** với pin độc lập
+  trong `fetch_rtl_deps.sh` — tức các cross-check trước đó đã compile đúng
+  nguồn mà Bender resolve.
+- Đã sinh `floo_verilator.f`, `floo_vcs.sh`, `floo_flist_plus.f`,
+  `resolved_deps.txt`.
+- `floo_router.sv` elaborate **0 error** từ file list sinh ra, Verilator 5.022.
+- Đã test guard: cây bẩn bị chặn, `Bender.lock` bị sửa bị chặn, và backstop
+  hash lock có kích hoạt khi test riêng.
 
-- Resolve toàn bộ Bender dependency.
-- Freeze chính xác RTL parameters tương ứng v0.
-- So sánh ready, valid, data, arbitration và FIFO state theo cycle.
+### Bước 3b: Cross-check router — ĐÃ XONG (2026-07-28)
 
-### Bước 4: Thêm performance counters
+- Parameter set v0 được **suy ra từ RTL**, không đoán, và đã ghi vào
+  `docs/P0_SCOPE.md` kèm giải thích từng parameter rút gọn RTL về cái gì.
+- Harness compile RTL thật từ file list bender, không shim, type dựng từ macro
+  `typedef.svh` gốc.
+- Tìm và sửa một sai lệch thật: thiếu tie-off data trên crossbar.
+- 214 cycle khớp, gồm cả one-hot route mask.
+- Assertion của router vẫn bật và không nổ; runner fail nếu chúng nổ.
+- Đã kiểm chứng harness bằng ba negative control.
 
-- Chỉ đếm transaction/flit tại handshake `valid && ready`.
-- Tách measured counters khỏi analytic estimates.
+Phần router còn thiếu: chỉ sign-off `NumRoutes=5`, `NumVirtChannels=1`,
+`InFifoDepth=2`, `OutFifoDepth=0`. Virtual channel, credit, output FIFO,
+collective, multicast, reduction đều chưa model và chưa so.
 
-### Bước 5: Mô hình hóa single-AXI chimney
+### Bước 4: Thêm performance counters — ĐÃ XONG (2026-07-28)
+
+- Chỉ đếm tại `valid && ready`, chỉ trên tín hiệu đã RTL-signed ở biên router.
+- Block thụ động hoàn toàn; đã **kiểm chứng** bằng cách gắn vào router trace
+  runner và chạy lại cross-check: vẫn khớp 214/214.
+- Test pin số tuyệt đối suy tay từ spill register: drain liên tục thì nhận 1
+  flit/cycle và không back-pressure; bị stall thì nhận đúng 2 rồi từ chối 3.
+- Tách bạch measured / derived / analytic; không phát hành analytic nào.
+
+### Bước 5: Mô hình hóa single-AXI chimney (bước kế tiếp)
 
 Thứ tự:
 
@@ -1001,8 +1279,12 @@ Hạng mục đã hoàn thành nền tảng quan trọng cho mô hình FlooNoC D
 - xây dựng flow SystemC ↔ RTL bằng common CSV trace;
 - xác nhận XY route selector khớp RTL 12/12 cycle;
 - resolve dependency `common_cells` theo revision khóa và verify hash;
+- resolve toàn bộ dependency tree bằng Bender và sinh file list tái lập được;
+- xác nhận `floo_router.sv` elaborate sạch từ file list đó;
 - xác nhận input FIFO khớp RTL 133/133 cycle ở depth 2 và depth 4;
 - xác nhận wormhole arbiter khớp RTL 152/152 cycle ở 5, 4 và 2 route;
+- xác nhận router năm cổng khớp RTL 214/214 cycle ở cấu hình v0;
+- thêm measured counters thụ động, đã chứng minh không làm nhiễu datapath;
 - phát hiện và sửa hai nhóm sai lệch thật của model so với RTL;
 - đóng băng source revision và bảo vệ bằng RTL hash;
 - tài liệu hóa scope, giới hạn và roadmap.
@@ -1012,7 +1294,7 @@ trúc (FIFO optimal cho phép push khi đầy nếu đang pop) đã sai so với
 lộ ra khi so sánh theo từng cycle với source gốc. Các block chưa cross-check
 phải được xem là chưa đúng, không phải "gần đúng".
 
-Mô hình hiện phù hợp để tiếp tục verification ở cấp router. Chưa nên
+Mô hình hiện phù hợp để tiến sang AXI chimney. Chưa nên
 chuyển sang tích hợp TLM/CDC-VP hoặc công bố latency toàn mạng là cycle-accurate
 trước khi các bước RTL cross-check này hoàn thành.
 

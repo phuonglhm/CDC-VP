@@ -35,6 +35,27 @@ enum class physical_channel : std::uint8_t {
     rsp = 1,
 };
 
+/// Mirrors `floo_pkg::collect_op_e`. Only `unicast` is in v0 scope; the rest
+/// exist so the header field can carry the frozen encoding faithfully.
+enum class collect_op : std::uint8_t {
+    unicast    = 0x0,
+    multicast  = 0x1,
+    lsb_and    = 0x2,
+    fp_add     = 0x3,
+    fp_mul     = 0x4,
+    fp_min     = 0x5,
+    fp_max     = 0x6,
+    int_add    = 0x7,
+    int_mul    = 0x8,
+    int_min_s  = 0x9,
+    int_min_u  = 0xA,
+    int_max_s  = 0xB,
+    int_max_u  = 0xC,
+    select_aw  = 0xD,
+    collect_b  = 0xE,
+    seq_aw     = 0xF,
+};
+
 inline constexpr unsigned to_port(direction value)
 {
     return static_cast<unsigned>(value);
@@ -101,14 +122,27 @@ inline void sc_trace(
     sc_core::sc_trace(tf, value.port_id, name + ".port_id");
 }
 
+/// Field set and declaration order follow `FLOO_TYPEDEF_HDR_T` in
+/// `hw/include/floo_noc/typedef.svh` at the frozen revision:
+///
+///   rob_req, rob_idx, dst_id, collective_mask, src_id, last, atop, axi_ch,
+///   collective_op
+///
+/// `collective_mask` and `collective_op` are inert in vertical slice v0, which
+/// is unicast with `EnMultiCast = 0`: `floo_route_select.sv` only reads
+/// `collective_op` when `EnMultiCast` is set. They are carried anyway so the
+/// header is a faithful subset of the frozen one.
 struct flit_header {
-    coordinate dst_id{};
-    coordinate src_id{};
-    bool last{true};
-    sc_dt::sc_uint<3> axi_ch{static_cast<unsigned>(axi_channel::aw)};
     bool rob_req{false};
     sc_dt::sc_uint<16> rob_idx{0};
+    coordinate dst_id{};
+    sc_dt::sc_uint<16> collective_mask{0};
+    coordinate src_id{};
+    bool last{true};
     bool atop{false};
+    sc_dt::sc_uint<3> axi_ch{static_cast<unsigned>(axi_channel::aw)};
+    sc_dt::sc_uint<4> collective_op{
+        static_cast<unsigned>(collect_op::unicast)};
 
     bool operator==(const flit_header& other) const
     {
@@ -118,7 +152,9 @@ struct flit_header {
             && axi_ch == other.axi_ch
             && rob_req == other.rob_req
             && rob_idx == other.rob_idx
-            && atop == other.atop;
+            && atop == other.atop
+            && collective_mask == other.collective_mask
+            && collective_op == other.collective_op;
     }
 
     bool operator!=(const flit_header& other) const
@@ -135,7 +171,9 @@ inline std::ostream& operator<<(std::ostream& os, const flit_header& value)
               << ",axi_ch=" << value.axi_ch.to_uint()
               << ",rob_req=" << value.rob_req
               << ",rob_idx=" << value.rob_idx.to_uint()
-              << ",atop=" << value.atop << '}';
+              << ",atop=" << value.atop
+              << ",cmask=" << value.collective_mask.to_uint()
+              << ",cop=" << value.collective_op.to_uint() << '}';
 }
 
 inline void sc_trace(
@@ -150,6 +188,8 @@ inline void sc_trace(
     sc_core::sc_trace(tf, value.rob_req, name + ".rob_req");
     sc_core::sc_trace(tf, value.rob_idx, name + ".rob_idx");
     sc_core::sc_trace(tf, value.atop, name + ".atop");
+    sc_core::sc_trace(tf, value.collective_mask, name + ".collective_mask");
+    sc_core::sc_trace(tf, value.collective_op, name + ".collective_op");
 }
 
 template <unsigned PayloadBits>
