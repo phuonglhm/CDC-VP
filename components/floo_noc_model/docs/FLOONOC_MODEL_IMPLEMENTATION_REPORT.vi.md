@@ -80,8 +80,9 @@ kiến trúc.
 - Các block chưa cross-check RTL phải được ghi là cycle-approximate hoặc
   estimate.
 
-Hiện tại đã RTL-signed: XY route selector và input FIFO
-(`stream_fifo_optimal_wrap`). Các block còn lại vẫn là cycle-approximate.
+Hiện tại đã RTL-signed: XY route selector, input FIFO
+(`stream_fifo_optimal_wrap`) và wormhole arbiter (`floo_wormhole_arbiter` trên
+`rr_arb_tree`). Các block còn lại vẫn là cycle-approximate.
 
 ## 4. Phạm vi vertical slice v0
 
@@ -276,21 +277,41 @@ include/floo_noc_model/xy_route_select.hpp
 File:
 
 ```text
+include/floo_noc_model/rr_arb_tree.hpp
 include/floo_noc_model/wormhole_arbiter.hpp
 ```
 
-Đã triển khai:
+**Nguyên nhân gốc của việc viết lại.** Model cũ tự cài round-robin: quét
+`valid_i` trực tiếp bắt đầu từ thanh ghi `rr_next_q`, và sau mỗi packet thì
+`rr_next_q = selected + 1`. RTL đóng băng không làm như vậy. Nó dùng
+`rr_arb_tree` với `ExtPrio = 0`, `AxiVldRdy = 1`, `LockIn = 1`, `FairArb = 1`,
+và chỉ được grant bởi `ready_i & last_out`. Bốn điểm sai cụ thể:
 
-- lựa chọn requester theo round-robin;
-- chỉ input được chọn nhận ready;
-- khóa requester khi packet chưa kết thúc;
-- ngăn flit từ packet khác xen vào;
-- release lock tại accepted last flit;
-- chuyển round-robin priority sau khi packet hoàn thành;
-- expose selected input và lock state.
+| Khía cạnh | Model cũ | RTL đóng băng |
+|---|---|---|
+| Tăng round-robin | `selected + 1` | `FairArb`: index đang request kế tiếp lớn hơn `rr_q`, tính bằng hai `lzc` trên mask |
+| Tập request được arbitrate | `valid_i` trực tiếp | snapshot `valid_q`, được giữ bởi `LockIn` của tree |
+| `ready_o` | chỉ khi input được chọn đang valid | đặt lên index được chọn khi có bất kỳ input nào valid |
+| `data_o` khi không valid | trả về 0 | luôn lấy `data_i[valid_selected_idx]` |
 
-Block này đã pass SystemC unit test nhưng chưa cross-check với RTL
-`floo_wormhole_arbiter.sv`.
+Đã triển khai (bám đúng phân cấp RTL):
+
+- `rr_arb_tree<NumIn>`: tái tạo cấu trúc cây arbitration, `lzc` với `MODE = 0`,
+  và `cf_math_pkg::idx_width`. Là helper không trạng thái; các thanh ghi
+  `rr_q`, `lock_q`, `req_q` nằm ở module bao ngoài để dùng được `sc_signal`.
+- `wormhole_arbiter<FlitT, NumRoutes>`: snapshot `valid_q` chỉ refresh khi rỗng
+  hoặc chu kỳ trước đã nhận flit `last`, `valid_selected_idx`, decode handshake,
+  và `last_q`.
+
+Không model data mux và grant decode của tree vì instantiation đóng băng nối
+`data_i` bằng `'0` và để hở `data_o`/`gnt_o`. `flush_i` bị tie 0 nên cũng không
+model.
+
+`o_selected` và `o_locked` là output debug do model tự định nghĩa, không nằm
+trong contract đã sign-off.
+
+Block này đã được cross-check theo từng cycle với RTL gốc: 152 cycle khớp ở cả
+5, 4 và 2 route, so cả output lẫn toàn bộ thanh ghi nội bộ.
 
 ### 6.6 Router năm cổng
 
@@ -369,6 +390,7 @@ floo_noc_model/
     reference_model.hpp
     stream_fifo.hpp
     xy_route_select.hpp
+    rr_arb_tree.hpp
     wormhole_arbiter.hpp
     floo_router.hpp
     floo_mesh.hpp
@@ -382,6 +404,7 @@ floo_noc_model/
     test_floo_mesh.cpp
     route_trace_sc.cpp
     fifo_trace_sc.cpp
+    arbiter_trace_sc.cpp
     data/
       route_select_stimulus.csv
       route_select_expected.csv
@@ -389,17 +412,26 @@ floo_noc_model/
       stream_fifo_stimulus.csv
       stream_fifo_expected_d2.csv
       stream_fifo_expected_d4.csv
+      gen_wormhole_arbiter_stimulus.py
+      wormhole_arbiter_stimulus.csv
+      wormhole_arbiter_expected_n2.csv
+      wormhole_arbiter_expected_n4.csv
+      wormhole_arbiter_expected_n5.csv
   rtl_crosscheck/
     compare_traces.py
     fetch_rtl_deps.sh
     run_route_select_crosscheck.sh
     run_stream_fifo_crosscheck.sh
+    run_wormhole_arbiter_crosscheck.sh
     route_select/
       floo_pkg.sv
       tb_route_select_trace.sv
       shim/common_cells/registers.svh
     stream_fifo/
       tb_stream_fifo_trace.sv
+    wormhole_arbiter/
+      floo_pkg_empty.sv
+      tb_wormhole_arbiter_trace.sv
 ```
 
 `stream_fifo_expected_d*.csv` được sinh từ RTL gốc bởi
@@ -423,17 +455,20 @@ Mô hình hiện là header-only interface library.
 | `test_reference_model` | Address boundary, overlap, out-of-mesh và XY path |
 | `test_stream_fifo` | Nhánh spill (depth 2) và FIFO (depth 4): reset, fill, từ chối push khi đầy, pointer wrap, drain |
 | `test_xy_route_select` | XY order, Eject, route lock và release |
-| `test_wormhole_arbiter` | Round-robin, packet lock và chống interleave |
+| `test_wormhole_arbiter` | Round-robin, packet lock và chống interleave (2 route) |
 | `test_floo_router` | Contention, output stall, FIFO và packet continuity |
 | `test_floo_mesh` | Mesh 2×2, multi-hop delivery và stable stall |
 | `test_route_trace_sc` | CSV-driven route/lock trace |
 | `test_fifo_trace_sc_d2` | 133 cycle FIFO trace so với golden lấy từ RTL, depth 2 |
 | `test_fifo_trace_sc_d4` | 133 cycle FIFO trace so với golden lấy từ RTL, depth 4 |
+| `test_arbiter_trace_sc_n2` | 152 cycle arbiter trace so với golden lấy từ RTL, 2 route |
+| `test_arbiter_trace_sc_n4` | 152 cycle arbiter trace so với golden lấy từ RTL, 4 route |
+| `test_arbiter_trace_sc_n5` | 152 cycle arbiter trace so với golden lấy từ RTL, 5 route |
 
 Kết quả chạy ngày 2026-07-28:
 
 ```text
-100% tests passed, 0 tests failed out of 9
+100% tests passed, 0 tests failed out of 12
 ```
 
 ### 8.2 Route-selector SystemC ↔ RTL cross-check
@@ -525,6 +560,63 @@ Harness đã được kiểm chứng bằng hai negative control, cả hai đề
 
 Không so sánh `usage_o`: router đóng băng để hở tín hiệu này và nhánh depth 2
 trả `'x`.
+
+### 8.2c Wormhole-arbiter SystemC ↔ RTL cross-check
+
+RTL tham chiếu (không sửa đổi):
+
+```text
+FlooNoC/hw/floo_wormhole_arbiter.sv
+common_cells/src/cf_math_pkg.sv
+common_cells/src/lzc.sv
+common_cells/src/rr_arb_tree.sv
+```
+
+File local duy nhất trong compile là `floo_pkg_empty.sv` — một package rỗng cố
+ý. `floo_wormhole_arbiter.sv` có `import floo_pkg::*;` nhưng không dùng symbol
+nào; compile với package rỗng là cách **chứng minh** điều đó thay vì khẳng
+định suông. Không dùng `hw/floo_pkg.sv` thật vì nó phụ thuộc `axi_pkg`.
+
+Cấu hình phủ: `NumRoutes` = 5 (cấu hình router, cây không phải lũy thừa 2),
+4 (cây nhị phân đầy đủ), 2 (cây một tầng, đúng cấu hình unit test đang dùng).
+
+Các trường được so sánh:
+
+```text
+cycle,pre_ready,pre_valid,pre_data,pre_selected,
+post_ready,post_valid,post_data,post_selected,
+valid_q,last_q,rr_q,lock_q,req_q
+```
+
+Trạng thái nội bộ của RTL được lấy qua hierarchical reference, nên phép so sánh
+ghim cả state chứ không chỉ output.
+
+Kết quả:
+
+```text
+wormhole-arbiter routes 5 cross-check PASS: 152 cycles match
+wormhole-arbiter routes 4 cross-check PASS: 152 cycles match
+wormhole-arbiter routes 2 cross-check PASS: 152 cycles match
+```
+
+Harness đã được kiểm chứng bằng sáu negative control:
+
+| Lỗi cố ý tiêm vào model | Kết quả |
+|---|---|
+| Round-robin tăng theo `selected + 1` | FAIL tại `rr_q`, cycle 4 |
+| `ready_o` bị gate bởi valid của chính input được chọn | FAIL tại `ready_o`, cycle 40 |
+| Snapshot không bao giờ refresh theo `last_q` | FAIL từ cycle 5 |
+| Gỡ đồng thời cả hai cơ chế hold | FAIL tại selection, cycle 13 |
+| Cho tree ăn `valid_i` trực tiếp thay vì snapshot | PASS — xem giải thích dưới |
+| Tắt `LockIn` của tree | PASS — xem giải thích dưới |
+
+**Hai cơ chế hold trùng lặp trong RTL.** Hai control cuối PASS vì snapshot
+`valid_q` của wrapper và `LockIn` của tree cài đặt cùng một cơ chế giữ packet.
+Khi `lock_q` = 0, trạng thái reachable bảo đảm `valid_d == valid_i`; khi
+`lock_q` = 1, tree bỏ qua hoàn toàn input request của nó. Mỗi cơ chế đứng một
+mình đều tái tạo đúng hành vi RTL; gỡ cả hai thì hỏng — đúng như control thứ
+tư cho thấy. Đây là tính chất của RTL, không phải điểm yếu của stimulus, và
+không nên "sửa" bằng cách thêm stimulus.
 
 ### 8.3 Bảo vệ revision RTL
 
@@ -622,6 +714,13 @@ $CXX --version | head
 ./rtl_crosscheck/run_route_select_crosscheck.sh
 ```
 
+### 9.2c Chạy wormhole-arbiter RTL cross-check
+
+```bash
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model
+./rtl_crosscheck/run_wormhole_arbiter_crosscheck.sh
+```
+
 ### 9.2b Chạy input-FIFO RTL cross-check
 
 ```bash
@@ -715,10 +814,13 @@ RTL cross-check.
 
 ### 11.2 Về verification
 
-- Chín SystemC test đều PASS.
+- Mười hai SystemC test đều PASS.
 - Route-selector khớp RTL 12/12 cycle.
 - Input FIFO khớp RTL 133/133 cycle ở cả depth 2 và depth 4.
-- Đã phát hiện và sửa một sai lệch thật giữa model và RTL (accept-at-full).
+- Wormhole arbiter khớp RTL 152/152 cycle ở 5, 4 và 2 route, gồm cả state.
+- Đã phát hiện và sửa hai nhóm sai lệch thật giữa model và RTL: FIFO
+  accept-at-full, và bốn điểm sai của arbiter (round-robin, tập request,
+  `ready_o`, `data_o`).
 - Có common CSV stimulus/trace format.
 - Có automatic trace comparison.
 - Có RTL source hash guard và dependency revision guard.
@@ -741,7 +843,7 @@ Chưa thể khẳng định:
 
 - toàn bộ router cycle-equivalent với RTL;
 - FIFO cycle-equivalent ở depth khác 2 và 4, hoặc trên `usage_o`/`flush_i`;
-- wormhole arbiter có priority/state hoàn toàn giống RTL;
+- arbiter cycle-equivalent ở `NumRoutes` khác 2, 4 và 5;
 - mesh có latency theo đúng generated topology;
 - current mesh là full single-AXI network;
 - req và rsp đã được tách thành hai physical network;
@@ -749,14 +851,15 @@ Chưa thể khẳng định:
 - CDC-VP traffic đã đi qua FlooNoC;
 - performance counters đã phản ánh RTL.
 
-Việc FIFO đã RTL-signed **không** làm router trở thành cycle-equivalent: phần
-routing, crossbar và arbitration bao quanh buffer vẫn chưa được kiểm chứng.
+Việc FIFO và arbiter đã RTL-signed **không** làm router trở thành
+cycle-equivalent: crossbar, kết nối route-selector với arbiter, và toàn bộ
+tổ hợp bên trong `floo_router.sv` vẫn chưa được kiểm chứng.
 
 Vì vậy kết luận chính xác hiện tại là:
 
 > Mô hình đã hoàn thành nền tảng router/mesh SystemC và kiểm thử contract nội
-> bộ. XY route selector và input FIFO đã được xác nhận khớp RTL theo cycle.
-> Các block còn lại vẫn ở mức cycle-approximate.
+> bộ. XY route selector, input FIFO và wormhole arbiter đã được xác nhận khớp
+> RTL theo cycle. Các block còn lại vẫn ở mức cycle-approximate.
 
 ## 13. Các hạn chế kỹ thuật hiện tại
 
@@ -823,16 +926,23 @@ Chưa có:
 Phần FIFO còn thiếu: depth khác 2/4, `usage_o`, `flush_i`, `testmode_i`, và
 packing của flit struct thật.
 
-### Bước 2: Cross-check wormhole arbiter (bước kế tiếp)
+### Bước 2: Cross-check wormhole arbiter — ĐÃ XONG (2026-07-28)
 
-- Compile `hw/floo_wormhole_arbiter.sv`.
-- Dùng đúng `rr_arb_tree` từ checkout `common_cells` đã có sẵn.
-- Bổ sung hash của các file dependency mới vào `fetch_rtl_deps.sh`.
-- Kiểm tra contention, back-pressure, lock, release và round-robin fairness.
-- Lấy mẫu trace cả pre-edge và post-edge, kèm negative control.
-- Nếu RTL khác model thì sửa model, không giữ giả định fairness cũ.
+- Đã compile `floo_wormhole_arbiter.sv` gốc trên `rr_arb_tree`/`lzc`/
+  `cf_math_pkg` đúng revision khóa, có hash guard cho từng file.
+- Đã phát hiện model sai ở bốn điểm và viết lại theo cấu trúc RTL.
+- 152 cycle khớp ở 5, 4 và 2 route, so cả output lẫn state nội bộ.
+- Đã kiểm chứng harness bằng sáu negative control.
 
-### Bước 3: Cross-check router
+Phần arbiter còn thiếu: `NumRoutes` ngoài 2/4/5; data mux và grant decode của
+tree không được model vì instantiation đóng băng để hở chúng.
+
+### Bước 3: Cross-check router (bước kế tiếp)
+
+Đây là bước đầu tiên cần nhiều hơn `common_cells`: `floo_router.sv` kéo theo
+`floo_vc_arbiter`, `floo_route_select` và `floo_pkg` thật, mà `floo_pkg` lại
+cần `axi_pkg`. `fetch_rtl_deps.sh` chỉ pin từng repo đơn lẻ, không giải
+transitive dependency và không sinh file list có thứ tự.
 
 - Resolve toàn bộ Bender dependency.
 - Freeze chính xác RTL parameters tương ứng v0.
@@ -887,12 +997,13 @@ Vertical slice chỉ được xem là hoàn thành khi:
 Hạng mục đã hoàn thành nền tảng quan trọng cho mô hình FlooNoC Direction-2:
 
 - xây dựng các block từ type, FIFO, routing, arbitration đến router và mesh;
-- xây dựng standalone build và chín SystemC tests, toàn bộ PASS;
+- xây dựng standalone build và mười hai SystemC tests, toàn bộ PASS;
 - xây dựng flow SystemC ↔ RTL bằng common CSV trace;
 - xác nhận XY route selector khớp RTL 12/12 cycle;
 - resolve dependency `common_cells` theo revision khóa và verify hash;
 - xác nhận input FIFO khớp RTL 133/133 cycle ở depth 2 và depth 4;
-- phát hiện và sửa một sai lệch thật của model so với RTL;
+- xác nhận wormhole arbiter khớp RTL 152/152 cycle ở 5, 4 và 2 route;
+- phát hiện và sửa hai nhóm sai lệch thật của model so với RTL;
 - đóng băng source revision và bảo vệ bằng RTL hash;
 - tài liệu hóa scope, giới hạn và roadmap.
 
@@ -901,7 +1012,7 @@ trúc (FIFO optimal cho phép push khi đầy nếu đang pop) đã sai so với
 lộ ra khi so sánh theo từng cycle với source gốc. Các block chưa cross-check
 phải được xem là chưa đúng, không phải "gần đúng".
 
-Mô hình hiện phù hợp để tiếp tục verification ở cấp arbiter và router. Chưa nên
+Mô hình hiện phù hợp để tiếp tục verification ở cấp router. Chưa nên
 chuyển sang tích hợp TLM/CDC-VP hoặc công bố latency toàn mạng là cycle-accurate
 trước khi các bước RTL cross-check này hoàn thành.
 

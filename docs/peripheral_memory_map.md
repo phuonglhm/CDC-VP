@@ -47,10 +47,10 @@ current tests and firmware defines do not change.
 
 ## Address Map
 
-Small control peripherals use a 4 KiB active register window. ISP/VPU/NPU use a
-64 KiB MMIO window because they are algorithmic accelerators: the first 4 KiB is
-the common control/status block, while the rest is reserved for descriptors,
-algorithm parameters, debug counters, and future register expansion.
+Small control peripherals use a 4 KiB active register window. ISP/VPU reserve
+64 KiB, while NPU0 reserves a separate 1 MiB aperture: the first portion holds
+the implemented control/status and metric registers, while the rest is reserved
+for descriptors, algorithm parameters, debug counters, and future expansion.
 
 All peripheral bases remain on 64 KiB boundaries, so a 4 KiB IP can grow to 64
 KiB later without changing its base address.
@@ -76,7 +76,7 @@ KiB later without changing its base address.
 | QSPI0 | `0x100C_0000` | `0x0000_1000` | `0x100C_0FFF` | MMIO | QSPI controller register window. |
 | ISP0 | `0x100D_0000` | `0x0001_0000` | `0x100D_FFFF` | MMIO + master | Image signal processor. Uses source/destination frame-buffer descriptors in RAM0. |
 | VPU0 | `0x100E_0000` | `0x0001_0000` | `0x100E_FFFF` | MMIO + master | Video processing unit. Uses frame-buffer descriptors in RAM0. |
-| NPU0 | `0x1020_0000` | `0x0001_0000` | `0x1020_FFFF` | MMIO + master | Optional internal build (`CDC_ENABLE_SAURIA_NPU_V4=ON`). First operation is `INT8 32xK * Kx32 -> INT32 32x32`; the public default leaves this window unbound. |
+| NPU0 | `0x1020_0000` | `0x0010_0000` | `0x102F_FFFF` | MMIO + master | Optional internal build (`CDC_ENABLE_SAURIA_NPU_V4=ON`). First operation is `INT8 32xK * Kx32 -> INT32 32x32`; unused offsets are reserved and the public default leaves this window unbound. |
 | UART1 | `0x1010_0000` | `0x0000_1000` | `0x1010_0FFF` | MMIO | Second UART instance. Same register model as UART0. |
 | I2C1 | `0x1011_0000` | `0x0000_1000` | `0x1011_0FFF` | MMIO | Second I2C controller. |
 | SPI1 | `0x1012_0000` | `0x0000_1000` | `0x1012_0FFF` | MMIO | Second SPI controller. |
@@ -315,7 +315,7 @@ Use these constants in firmware headers and platform top-level code:
 #define CDC_GPIO_BOOT_PIN 1u           /* strap: LOW=app, HIGH=download     */
 #define CDC_SPI_CSR       0x28u        /* SPI0 vendor reg: bit0 = CS assert */
 
-#define CDC_ACCEL_MMIO_SIZE 0x00010000u
+#define CDC_ACCEL_MMIO_SIZE 0x00100000u
 
 #define CDC_RAM0_BASE     0x80000000u
 #define CDC_RAM0_SIZE     0x10000000u

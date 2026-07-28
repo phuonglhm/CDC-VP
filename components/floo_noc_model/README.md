@@ -50,8 +50,9 @@ Each harness runs one shared CSV stimulus through both the SystemC model and the
 unmodified frozen RTL, then compares the cycle traces exactly.
 
 ```bash
-bash rtl_crosscheck/run_route_select_crosscheck.sh   # hw/floo_route_select.sv
-bash rtl_crosscheck/run_stream_fifo_crosscheck.sh    # common_cells FIFO wrap
+bash rtl_crosscheck/run_route_select_crosscheck.sh       # hw/floo_route_select.sv
+bash rtl_crosscheck/run_stream_fifo_crosscheck.sh        # common_cells FIFO wrap
+bash rtl_crosscheck/run_wormhole_arbiter_crosscheck.sh   # hw/floo_wormhole_arbiter.sv
 ```
 
 Both default to the frozen local FlooNoC tree and write generated files under
@@ -69,10 +70,12 @@ compile shim; route computation and locking are compiled from the original
 FlooNoC RTL, and the runner rejects an RTL file whose SHA-256 does not match
 frozen revision `9a6972a`.
 
-The FIFO harness uses no shim at all. `rtl_crosscheck/fetch_rtl_deps.sh` checks
-out `common_cells` at the revision locked in the frozen `Bender.lock` and
-verifies every compiled file by SHA-256. Router-level cross-checking still
-requires the complete Bender dependency tree.
+The FIFO and arbiter harnesses use no behavioural shim.
+`rtl_crosscheck/fetch_rtl_deps.sh` checks out `common_cells` at the revision
+locked in the frozen `Bender.lock` and verifies every compiled file by SHA-256.
+The arbiter harness compiles against an intentionally empty `floo_pkg`, which
+proves the arbiter references no symbol from that package. Router-level
+cross-checking still requires the complete Bender dependency tree.
 
 ## Current deliverables
 
@@ -80,14 +83,15 @@ requires the complete Bender dependency tree.
 - P1: timing-independent address decode and XY-path reference.
 - P2: signal-safe flit/header/coordinate types.
 - P3/P4: `stream_fifo_optimal_wrap` mirror, locked XY route selector, wormhole
-  arbiter, five-port XY router, and rectangular mesh top, each with a standalone
-  SystemC test.
-- P7.6 (partial): common SystemC/SV trace harness with a passing 12-cycle
-  equivalence check for the XY route selector and a passing 133-cycle
-  equivalence check for the input FIFO at depths 2 and 4.
+  arbiter over an `rr_arb_tree` mirror, five-port XY router, and rectangular
+  mesh top, each with a standalone SystemC test.
+- P7.6 (partial): common SystemC/SV trace harness with passing equivalence
+  checks of 12 cycles for the XY route selector, 133 cycles for the input FIFO
+  at depths 2 and 4, and 152 cycles for the wormhole arbiter at 5, 4, and 2
+  routes.
 
-RTL-signed so far: XY route selection with lock state, and the input FIFO wrap.
-Everything else is cycle-approximate.
+RTL-signed so far: XY route selection with lock state, the input FIFO wrap, and
+the wormhole arbiter. Everything else is cycle-approximate.
 
 CDC-VP fabric integration is deliberately deferred until the standalone blocks
 and router-level model have RTL cross-check coverage.

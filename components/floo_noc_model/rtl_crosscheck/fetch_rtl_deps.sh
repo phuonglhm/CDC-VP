@@ -27,6 +27,9 @@ eb50c6f9d402cb6dd416b3fb3aa62e96bb7ada1e5adbdc9abae68235829b29c3  src/stream_fif
 3285eb2e557f6377de88df91751b0bccdad07b16be9d926314a52a23e964f02c  src/spill_register_flushable.sv
 b24dbfeff17323b339fcf38854e5dfadd8b8e15489936d4a029988ece240eac3  src/stream_fifo.sv
 861ea44cbd3129731b77977da36fb0dac1a1350d7df664a1b4310423e7d272bc  src/fifo_v3.sv
+f72bc188ea8253230a722bfb6436ab31b6e41c26020fa4ba4eebd93025984f7e  src/rr_arb_tree.sv
+f31989be4369ea7c4809c0c3d61df28581e9ac7666005fde6e476a975d1acd07  src/lzc.sv
+bbf0614771ceb9526356bb8e5234787324ef215884bc11b4aa27e91fc3cc8910  src/cf_math_pkg.sv
 EOF
 
 if [[ ! -f "$lock_file" ]]; then

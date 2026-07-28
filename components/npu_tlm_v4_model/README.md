@@ -3,7 +3,7 @@
 `npu_tlm_v4_model` adapts the signal-level SAURIA v4 SystemC core to the
 CDC-VP software-visible accelerator contract:
 
-- a 64 KiB TLM target socket for CPU MMIO;
+- a 1 MiB TLM target aperture for CPU MMIO;
 - a TLM initiator socket for physical RAM DMA;
 - an active-low reset input;
 - a level-sensitive done/error IRQ output.

@@ -133,8 +133,9 @@ inline constexpr std::uint32_t NATIVE_TILE_C         = NATIVE_CFG_LAYER_OFFSET +
 inline constexpr std::uint32_t NATIVE_X_USED         = NATIVE_CFG_LAYER_OFFSET + 0x40;
 inline constexpr std::uint32_t NATIVE_Y_USED         = NATIVE_CFG_LAYER_OFFSET + 0x44;
 
-// CPU-facing wrapper aperture only; native SRAM windows stay private.
-inline constexpr std::uint32_t MMIO_SIZE = 0x0001'0000;
+// Reserve a 1 MiB CPU-facing aperture. Only documented wrapper registers are
+// currently implemented; native core SRAM windows remain private.
+inline constexpr std::uint32_t MMIO_SIZE = 0x0010'0000;
 
 inline constexpr std::uint32_t CTRL_ENABLE     = 1u << 0;
 inline constexpr std::uint32_t CTRL_START      = 1u << 1;

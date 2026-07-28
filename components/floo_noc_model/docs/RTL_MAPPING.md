@@ -8,7 +8,8 @@ This mapping follows FlooNoC structure rather than the NPU worked example.
 | `reference_model.hpp` | FlooGen graph/routing/address models | Timing-independent address decode and expected XY path |
 | `stream_fifo.hpp` | `stream_fifo_optimal_wrap`, `spill_register_flushable`, `stream_fifo`, `fifo_v3` from `common_cells` 1.39.0 | Input buffering and back-pressure; mirrors the RTL wrap hierarchy including the depth-2 spill-register branch |
 | `xy_route_select.hpp` | `hw/floo_route_select.sv` | XY next-hop selection and burst route lock |
-| `wormhole_arbiter.hpp` | `hw/floo_wormhole_arbiter.sv` | Fair output selection and packet lock through `last` |
+| `rr_arb_tree.hpp` | `rr_arb_tree`, `lzc`, `cf_math_pkg::idx_width` from `common_cells` 1.39.0 | Round-robin tree, trailing-zero counters, and fair next-index state |
+| `wormhole_arbiter.hpp` | `hw/floo_wormhole_arbiter.sv` | Request snapshot, output selection, and packet lock through `last` |
 | `floo_router.hpp` | `hw/floo_router.sv`, `hw/floo_output_arbiter.sv` | Input FIFOs, routing, crossbar, per-output arbitration |
 | future `axi_chimney.hpp` | `hw/floo_axi_chimney.sv` | AXI/flit mapping, AW/W coupling, response ordering |
 | future `meta_buffer.hpp` | `hw/floo_meta_buffer.sv` | Source metadata and downstream AXI ID management |
@@ -54,3 +55,29 @@ one testbench covers both wrap branches (2 and 4).
 Comparison is exact on `ready_o`, `valid_o`, and `data_o`, sampled both
 pre-edge and post-edge. `usage_o` is excluded because the frozen router leaves
 it unconnected and the depth-2 branch drives it to `'x`.
+
+### `rtl_crosscheck/wormhole_arbiter`
+
+Compiles the unmodified frozen `hw/floo_wormhole_arbiter.sv` over the
+unmodified locked dependencies:
+
+```text
+common_cells/src/cf_math_pkg.sv
+common_cells/src/lzc.sv
+common_cells/src/rr_arb_tree.sv
+```
+
+The only local SystemVerilog file in the compile is `floo_pkg_empty.sv`, an
+intentionally empty package. `floo_wormhole_arbiter.sv` imports `floo_pkg` but
+references no symbol from it, and compiling against an empty package proves
+that rather than asserting it.
+
+`NumRoutes` is a top-level parameter, covering 5 (the router configuration,
+non power-of-two tree), 4 (full binary tree), and 2 (single-level tree, the
+configuration the standalone unit test uses).
+
+Comparison is exact on `ready_o`, `valid_o`, `data_o`, and the selected index,
+sampled pre-edge and post-edge, plus the registered state `valid_q`, `last_q`,
+`rr_q`, `lock_q`, and `req_q` read through hierarchical references. The
+`rr_arb_tree` data and grant outputs are excluded because the frozen
+instantiation leaves them unconnected.

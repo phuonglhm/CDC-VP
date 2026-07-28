@@ -23,6 +23,11 @@ target_link_libraries(fifo_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
 
+add_executable(arbiter_trace_sc arbiter_trace_sc.cpp)
+target_link_libraries(arbiter_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
 set(_route_trace_actual
     "${CMAKE_CURRENT_BINARY_DIR}/route_select_systemc_trace.csv")
 add_test(
@@ -44,4 +49,14 @@ foreach(_depth 2 4)
             "${CMAKE_CURRENT_BINARY_DIR}/stream_fifo_d${_depth}_systemc_trace.csv"
             ${_depth}
             "${CMAKE_CURRENT_SOURCE_DIR}/data/stream_fifo_expected_d${_depth}.csv")
+endforeach()
+
+foreach(_routes 2 4 5)
+    add_test(
+        NAME test_arbiter_trace_sc_n${_routes}
+        COMMAND arbiter_trace_sc
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/wormhole_arbiter_stimulus.csv"
+            "${CMAKE_CURRENT_BINARY_DIR}/wormhole_arbiter_n${_routes}_systemc_trace.csv"
+            ${_routes}
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/wormhole_arbiter_expected_n${_routes}.csv")
 endforeach()

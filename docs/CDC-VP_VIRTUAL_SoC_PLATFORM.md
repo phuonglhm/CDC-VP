@@ -241,7 +241,7 @@ Block diagram: [`docs/virtual_soc_block_diagram.svg`](virtual_soc_block_diagram.
 | QSPI0 | 0x100C_0000 | 0x100C_0FFF | 4 KiB | MMIO | NOR flash behind it |
 | ISP0 | 0x100D_0000 | 0x100D_FFFF | 64 KiB | MMIO + master | ⛯ planned |
 | VPU0 | 0x100E_0000 | 0x100E_FFFF | 64 KiB | MMIO + master | ⛯ planned |
-| NPU0 | 0x1020_0000 | 0x1020_FFFF | 64 KiB | MMIO + master | ◐ optional private SAURIA build |
+| NPU0 | 0x1020_0000 | 0x102F_FFFF | 1 MiB | MMIO + master | ◐ optional private SAURIA build |
 | UART1 | 0x1010_0000 | 0x1010_0FFF | 4 KiB | MMIO | uart2_tlm (PL011) |
 | I2C1 | 0x1011_0000 | 0x1011_0FFF | 4 KiB | MMIO | |
 | SPI1 | 0x1012_0000 | 0x1012_0FFF | 4 KiB | MMIO | |

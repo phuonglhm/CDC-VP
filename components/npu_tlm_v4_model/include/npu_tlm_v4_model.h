@@ -13,7 +13,7 @@ namespace cdc::components {
 
 // TLM-2.0 integration wrapper for the signal-level SAURIA v4 NPU model.
 //
-// Software programs physical RAM addresses through the 64 KiB MMIO target.
+// Software programs physical RAM addresses through the 1 MiB MMIO aperture.
 // A worker thread stages matrices into the core's private SRAMs, runs the
 // cycle-accurate INT8/INT8/INT32 core, writes the result back through the
 // master socket, and raises a level-sensitive interrupt.
