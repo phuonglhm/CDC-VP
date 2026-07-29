@@ -138,7 +138,12 @@ struct flit_header {
     coordinate dst_id{};
     sc_dt::sc_uint<16> collective_mask{0};
     coordinate src_id{};
-    bool last{true};
+    // `false`, so a default-constructed header equals the RTL's `'0` flit.
+    // The mesh writes `FlitT{}` into unconnected inputs, mirroring FlooGen's
+    // `assign ..._req_in[p] = '0;` at the edges, and the inter-node
+    // cross-check compares that idle value. A `true` default made every idle
+    // cycle diverge on `last`.
+    bool last{false};
     bool atop{false};
     sc_dt::sc_uint<3> axi_ch{static_cast<unsigned>(axi_channel::aw)};
     sc_dt::sc_uint<4> collective_op{

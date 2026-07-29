@@ -94,7 +94,7 @@ floo_router #(
   .NumVirtChannels ( 1                           ),
   .NumPhysChannels ( 1                           ),
   .InFifoDepth     ( 2                           ),
-  .OutFifoDepth    ( 0                           ),
+  .OutFifoDepth    ( 2                           ),   // see the note below
   .RouteAlgo       ( floo_pkg::XYRouting         ),
   .IdWidth         ( $bits(id_t)                 ),
   .id_t            ( id_t                        ),
@@ -122,7 +122,7 @@ blocks rather than by assumption:
 | `CollectiveSupportDefaultCfg` | `'{default: '0}`, so `EnMultiCast`, `EnSequentialReduction`, and `EnParallelReduction` are all 0 |
 | Reduction demux / logic | `gen_no_red_offload`: `cross_valid = in_valid`, `in_ready = cross_ready` |
 | `floo_output_arbiter` | `NumParallelRedRoutes = 0`, so it degenerates to a single `floo_wormhole_arbiter` |
-| `OutFifoDepth = 0` | `gen_no_out_fifo`: output buffer bypassed |
+| `OutFifoDepth = 2` | `gen_out_fifo`: a `stream_fifo_optimal_wrap` per output. **Corrected 2026-07-29.** This file previously recorded `0`, the `gen_no_out_fifo` bypass. That was a choice made in the router testbench, not a property of the IP: every FlooGen router template hardcodes `.OutFifoDepth (2)` and `hw/test/floo_test_pkg.sv` defines no router FIFO depths at all, so no generated NoC uses `0`. The model was one buffer short on every router output — one cycle per hop. Both branches are now signed |
 | `floo_vc_arbiter` | `NumVirtChannels == NumPhysChannels`, so `gen_virt_eq_phys` is a pure pass-through |
 | `VcImpl = VcNaive` | `gen_no_credit`: `credit_o` tied high; credit path unused |
 | `NumPhysChannels = 1` | `gen_single_phys`: `in_p = '0` |

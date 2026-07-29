@@ -17,6 +17,15 @@ add_floo_model_test(test_axi_types)
 add_floo_model_test(test_axi_chimney_pack)
 add_floo_model_test(test_rob_order_gate)
 add_floo_model_test(test_axi_endpoint)
+add_floo_model_test(test_axi_noc)
+
+# The TLM wrapper is a compiled target, so its test links that instead of the
+# header-only model alone.
+add_executable(test_noc_interconnect test_noc_interconnect.cpp)
+target_link_libraries(test_noc_interconnect PRIVATE
+    cdc::components::noc_interconnect
+    SystemC::systemc)
+add_test(NAME test_noc_interconnect COMMAND test_noc_interconnect)
 
 add_executable(route_trace_sc route_trace_sc.cpp)
 target_link_libraries(route_trace_sc PRIVATE
@@ -45,6 +54,26 @@ target_link_libraries(chimney_req_trace_sc PRIVATE
 
 add_executable(chimney_rsp_trace_sc chimney_rsp_trace_sc.cpp)
 target_link_libraries(chimney_rsp_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(mesh_trace_sc mesh_trace_sc.cpp)
+target_link_libraries(mesh_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(chimney_rsp_timing_trace_sc chimney_rsp_timing_trace_sc.cpp)
+target_link_libraries(chimney_rsp_timing_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(chimney_timing_trace_sc chimney_timing_trace_sc.cpp)
+target_link_libraries(chimney_timing_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+
+add_executable(rob_trace_sc rob_trace_sc.cpp)
+target_link_libraries(rob_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
 
@@ -98,11 +127,44 @@ add_test(
         "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_rsp_expected.csv")
 
 add_test(
-    NAME test_router_trace_sc
-    COMMAND router_trace_sc
-        "${CMAKE_CURRENT_SOURCE_DIR}/data/router_stimulus.csv"
-        "${CMAKE_CURRENT_BINARY_DIR}/router_systemc_trace.csv"
-        "${CMAKE_CURRENT_SOURCE_DIR}/data/router_expected.csv")
+    NAME test_mesh_trace_sc
+    COMMAND mesh_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/mesh_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/mesh_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/mesh_expected.csv")
+
+add_test(
+    NAME test_chimney_rsp_timing_trace_sc
+    COMMAND chimney_rsp_timing_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_rsp_timing_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/chimney_rsp_timing_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_rsp_timing_expected.csv")
+
+add_test(
+    NAME test_chimney_timing_trace_sc
+    COMMAND chimney_timing_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_timing_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/chimney_timing_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_timing_expected.csv")
+
+add_test(
+    NAME test_rob_trace_sc
+    COMMAND rob_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/rob_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/rob_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/rob_expected.csv")
+
+# `OutFifoDepth = 2` is what every generated FlooNoC router has; `0` is the
+# `gen_no_out_fifo` bypass. Both RTL branches are signed.
+foreach(_out_depth 2 0)
+    add_test(
+        NAME test_router_trace_sc_d${_out_depth}
+        COMMAND router_trace_sc
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/router_stimulus.csv"
+            "${CMAKE_CURRENT_BINARY_DIR}/router_d${_out_depth}_systemc_trace.csv"
+            ${_out_depth}
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/router_expected_d${_out_depth}.csv")
+endforeach()
 
 foreach(_routes 2 4 5)
     add_test(

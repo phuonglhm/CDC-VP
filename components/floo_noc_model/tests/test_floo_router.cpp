@@ -204,7 +204,15 @@ int sc_main(int, char**)
     sc_core::sc_vector<sc_core::sc_signal<bool>> locked{
         "locked", num_ports};
 
-    floo::model::floo_router<flit_t, 2> dut{"dut"};
+    // Pinned to the `gen_no_out_fifo` bypass. This test walks a precise
+    // cycle-by-cycle sequence at the arbiter boundary, mixing arbiter state
+    // (`i_locked`, `i_selected`) with the data the port presents. With
+    // `OutFifoDepth = 2` those two are a cycle apart and the sequence no longer
+    // lines up, so the hand-derived expectations would have to be re-derived
+    // against the model rather than against the RTL — which is exactly what
+    // `test_router_trace_sc_d2` already does, cycle-exactly, at the depth every
+    // generated FlooNoC router uses.
+    floo::model::floo_router<flit_t, 2, 0> dut{"dut"};
     dut.i_clk(clk);
     dut.i_rst_n(rst_n);
     dut.i_router_id(router_id);

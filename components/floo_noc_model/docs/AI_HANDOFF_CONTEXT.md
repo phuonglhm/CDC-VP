@@ -48,7 +48,7 @@ so a reader is not left guessing, but its scope is strictly limited:
 | Test registration and standalone build layout | The target socket plus worker structure |
 | Platform assembly and SDK packaging patterns (P11/P12) | `START`/`DONE`, tensor staging, GEMM FSM, DMA worker |
 
-Nothing before Step 8 needs it. Steps 5 to 7 are anchored entirely in the
+Nothing before Step 10 needs it. Steps 5 to 9 are anchored entirely in the
 FlooNoC IP. Do not open it for architecture questions.
 
 ### 2.2 Integration role in CDC-VP
@@ -1567,7 +1567,8 @@ Two things this establishes that were previously unverified assumptions:
   `NoLoopback` and `XYRouteOpt` parameters.
 
 Remaining router gaps: only `NumRoutes = 5`, `NumVirtChannels = 1`,
-`InFifoDepth = 2`, `OutFifoDepth = 0` are signed off; virtual channels, credit
+`InFifoDepth = 2`, `OutFifoDepth = 2` are signed off (and `0` too, though no
+generated NoC uses it — see Step 9.2); virtual channels, credit
 flow control, output FIFOs, collectives, multicast, and reduction are neither
 modeled nor compared.
 
@@ -1634,12 +1635,225 @@ Also unverified: chimney *timing* and arbitration in both directions,
 multi-beat R bursts, ATOPs, back-pressure on either link, and the
 `MaxUniqueIds > 1` metadata path.
 
-### Step 7 — Replace abstract mesh endpoints (next)
+### Step 7 — Sign the `NoRoB` ordering rule — DONE (2026-07-29)
 
-Connect the verified AXI chimney/transactors to req/rsp network instances.
-Only then claim an end-to-end single-AXI FlooNoC vertical slice.
+`rtl_crosscheck/run_rob_crosscheck.sh`: **127 cycles match**, twelve negative
+controls all detected. See `docs/STATUS.md` for the full control table.
 
-### Step 8 — Design CDC-VP TLM integration
+**The plan was wrong about where to put the harness.** It said to extend the
+chimney request harness. `floo_rob_wrapper.sv` is a leaf module, so it is
+instantiated directly instead. That keeps the comparison free of the chimney's
+arbitration and cuts — which is exactly the timing divergence the plan
+predicted would swamp the ordering signal. Prefer the leaf whenever the RTL
+offers one.
+
+**Three counter-bank rules the earlier model got wrong**, all from
+`axi_demux_id_counters` in axi `src/axi_demux_simple.sv`:
+
+- `full_o = |cnt_full` is a **global** OR across all `2**AxiIdBits` counters.
+  One saturated ID stalls *every* ID. The old model had a per-ID full.
+- `cnt_full[i] = overflow | (&in_flight)` saturates at
+  `2**$clog2(MaxRoTxnsPerId) - 1`, so the default `MaxRoTxnsPerId = 32` admits
+  **31**. The old model admitted 32.
+- the counter pops by `rsp_i.id`, the ID on the *response*.
+
+`delta_counter` holds `WIDTH + 1` bits with `q_o` the low `WIDTH` and
+`overflow_o` the top bit; `id_counter_bank` reproduces that shape rather than
+collapsing it into a saturating counter.
+
+**A control that passes is not automatically a harness gap.** Rewriting the
+simultaneous push/pop arm as an unconditional `+1` then `-1` passed, because on
+a wrapping counter those cancel exactly — it injects no defect. It was
+discarded and replaced, not recorded as a gap. Check for equivalence before
+concluding the harness is blind.
+
+**Stimulus must be directed here.** A same-ID/different-destination stall needs
+the ID outstanding when the second destination is offered, and the global
+`full_o` only shows when a second *completely idle* ID is offered while the
+first is saturated. Neither happens by chance.
+`tests/data/gen_rob_stimulus.py` carries a shadow of the rule used **only** to
+keep the response stream legal — the bank has an underflow assertion, and
+popping an unadmitted transaction corrupts both sides rather than comparing
+them. The generator asserts its own phase invariants so a stimulus that stops
+reaching the interesting states fails loudly.
+
+### Step 8 — Cross-check chimney timing — DONE (2026-07-29)
+
+`rtl_crosscheck/run_chimney_timing_crosscheck.sh`: **141 cycles match**, eleven
+negative controls all detected, two discarded as equivalent rewrites. See
+`docs/STATUS.md` for the tables.
+
+**The plan's premise was wrong: the frozen chimney has no cuts.**
+`ChimneyDefaultCfg` sets `CutAx = CutOup = CutRsp = 0`, and `floo_test_pkg`
+takes the defaults. `i_req_out_cut` is instantiated with `Bypass = !CutOup = 1`
+and is fully transparent. So "model the chimney's cuts" was not the work; the
+request path's only state is the `aw_w_sel_q` FSM, the arbiter registers, and
+the reorder-buffer counters. Check a generate condition's *value in the frozen
+config* before planning around it.
+
+**The defect it found: the request arbiter's index order is reversed.**
+
+```systemverilog
+floo_req_chan_t [AxiW:AxiAr] floo_req_arb_in;   // AxiW = 1, AxiAr = 2
+```
+
+That range is **ascending**, so the first index is the most significant
+element: connected to `data_i[NumRoutes-1:0]`, the `AxiW` slot lands on bit 1
+and `AxiAr` on bit **0**. Arbiter index 0 is AR. The model had W there, which
+inverts round-robin priority whenever AW and AR contend. It showed at the first
+traced cycle, because with `valid_i == 0` the arbiter drives
+`data_o = data_i[0]` and the RTL was presenting an AR flit where the model
+presented an AW.
+
+Verilator's `ASCRANGE` warning is the only signal the RTL gives. The same
+applies to `floo_rsp_arb_in [AxiB:AxiR]` — index 0 is R, index 1 is B — which
+matters for Step 9 if the response path is composed next.
+
+**Verilator 5.022 crashes** with "internal fault" on a hierarchical reference
+to an enum *member* (`dut.SelAw`). Compare against the literal instead; the
+enum's declaration order gives the value.
+
+**Two controls passed and were discarded, not recorded as gaps.** Swapping the
+two `aw_w_sel_d` assignments is unobservable because an AW acceptance needs
+`sel == SelAw` and a W acceptance needs `sel == SelW`, so they can never both
+fire. Building the AW flit with the AR reorder tag is unobservable because
+under `NoRoB` both reorder buffers drive the same constant `{rob_req = 1,
+rob_idx = 0}`. Always check for equivalence before concluding the harness is
+blind — this is the third time a passing control turned out to be a
+non-defect.
+
+**Still unsigned after this step:** the response path's timing, the subordinate
+side (`i_aw_out_queue`, the meta buffer), multi-beat R bursts, ATOPs, and the
+reorder-buffer saturation corner. The response link is held idle here, and the
+stimulus generator bounds offers per ID below the counter capacity.
+
+### Step 9 — Replace abstract mesh endpoints — DONE (2026-07-29)
+
+`include/floo_noc_model/axi_noc.hpp` plus `test_axi_noc`: AXI runs end to end
+over separate `req` and `rsp` meshes on a 4x4 grid. 24/24 tests pass.
+
+**The two-network shape is the IP's, not a choice.** `hw/floo_axi_router.sv` is
+literally two `floo_router` instances with identical parameters, one per flit
+type, with two independent `[NumRoutes-1:0]` port arrays. No shared
+arbitration, no shared buffering, no ordering between them. So `axi_noc` is two
+`floo_mesh` instantiations — `floo_mesh` was already templated on `FlitT`, so
+this needed no change to the mesh at all.
+
+**FlooGen 0.8.4 is installed and reproducible** via
+`rtl_crosscheck/install_floogen.sh`. Two environment facts it works around:
+FlooGen needs Python >= 3.10 and this host's default `python3` is 3.9, so it
+uses `python3.11`; and it writes only into a build directory and then fails if
+`git status` in the frozen tree is non-empty.
+
+The generated `floo_axi_mesh_noc.sv` **confirms the port index order** the model
+already used (North 0, East 1, South 2, West 3, Eject 4). Note FlooGen puts the
+extra HBM endpoints in the *West* slot of the x=0 column, which is why a corner
+router's index 3 is an endpoint rather than a neighbour.
+
+**Latency is checked structurally, not against a golden.** Each router registers
+its input (`InFifoDepth = 2`), so a round trip cannot beat one cycle per hop
+each way. Measured 1 hop 11 cycles, 6 hops 30 cycles (corrected in Step 9.2;
+the 7 and 16 first recorded here predate the output-FIFO fix), and the test
+asserts the
+bound plus far > near. That is what separates "the mesh was traversed" from "a
+test that passes because nothing moved". Two controls confirm it: swapping the
+address regions, and ejecting from the wrong network.
+
+**A constraint found in the frozen configuration.** `MaxUniqueIds = 1` makes
+`hw/floo_meta_buffer.sv` store metadata in a plain `fifo_v3` popped in order
+with **no ID matching**; the `id_queue` keyed by AXI ID is the
+`MaxUniqueIds > 1` branch. So the chimney assumes responses return in request
+order per direction. One destination gives that; two do not, because `NoRoB`
+only serialises the *same* AXI ID to a different destination. Either each
+manager uses a single AXI ID, or `MaxUniqueIds` must be raised. Derived from
+the RTL text, not demonstrated against a full-system RTL simulation.
+
+**Still not signed:** inter-node timing (needs the generated top elaborated
+against the model — the harness does not exist), the chimney's response-path
+timing and subordinate side, and the endpoint transactors themselves, which
+have no RTL counterpart.
+
+### Step 9.1 — Sign the chimney response path and subordinate side — DONE (2026-07-29)
+
+`rtl_crosscheck/run_chimney_rsp_timing_crosscheck.sh`: **221 cycles match**,
+eleven negative controls all detected. `axi_chimney_response` in
+`include/floo_noc_model/axi_chimney.hpp`. Both chimney directions are now
+signed for timing.
+
+**Not everything is bypassed on this side.** The request path had
+`CutAx = CutOup = CutRsp = 0` and therefore no cuts at all; here
+`i_aw_out_queue` is an **unconditional** `spill_register` (no `Cut*` parameter
+gates it — AW and W share a link, so a subordinate may refuse the AW until its
+W is valid), and the metadata FIFOs' `full` back-pressures the inbound link.
+
+**The ascending-range trap, second instance.** `floo_rsp_arb_in [AxiB:AxiR]`
+with `AxiB = 3`, `AxiR = 4` puts **R at index 0 and B at index 1**. Modelled
+right first time only because the request-side defect had already taught the
+pattern. Assume every `[Lo:Hi]` port array in this IP is ascending.
+
+Also: `floo_req_out_ready = axi_ready_out[hdr.axi_ch]` — the inbound link's
+`ready` is *selected by the channel the arriving flit names*.
+
+**Two stimulus gaps, found by controls and closed.** The first run detected
+only nine of eleven, and neither miss was an equivalence:
+
+- the metadata-`full` control passed because `MaxTxns = 32` and the stimulus
+  never had 32 outstanding writes;
+- the `r.last` control passed because every R beat carried `last = 1`.
+
+Both were unreachable states, not equivalent rewrites. **A passing control is
+one or the other, and they need different fixes** — argue equivalence from the
+RTL, or extend the stimulus. Three earlier passes in this project were
+equivalences; these two were coverage.
+
+The meta buffer is instantiated inside the `gen_mgr_port` generate block
+despite `ChimneyCfg.EnSbrPort` being what selects it, so its hierarchical path
+is `dut.gen_mgr_port.i_floo_meta_buffer.gen_no_atop_fifos.*`.
+
+### Step 9.2 — Sign inter-node timing — DONE (2026-07-29)
+
+`rtl_crosscheck/run_mesh_crosscheck.sh`: **1872 node-cycles match** on a 3x3
+grid of the unmodified `floo_axi_router`. Six of seven negative controls
+detected, one discarded as an equivalence. This was the last unsigned timing
+path.
+
+**Do not cross-check against the FlooGen top.** `floo_axi_mesh_noc.sv` exposes
+only AXI ports per endpoint, so it would need a full chimney at every node and
+would fold chimney behaviour into a mesh measurement. `floo_axi_router` has
+flit-level ports and is the isolatable unit. Use the generated netlist as the
+authority for the *wiring rule* only.
+
+**The defect it found: the model had no output FIFO.** Every FlooGen router
+template hardcodes `.OutFifoDepth (2)`; `hw/test/floo_test_pkg.sv` defines no
+router FIFO depths at all. The `OutFifoDepth = 0` that `docs/P0_SCOPE.md`
+recorded as "the frozen v0 parameter set" was a choice made in the router
+testbench back at Step 4, and **no generated NoC uses it**. End-to-end latency
+went from 7 to 11 cycles at one hop and 16 to 30 at six once the buffer was
+added. `floo_router` now takes `OutFifoDepth` (default 2) and both branches are
+signed.
+
+The lesson generalises: **a "frozen parameter set" is only frozen if it came
+from the IP.** Check the generator templates, not just the test package.
+
+**A second defect: `flit_header::last` defaulted to `true`.** The RTL ties
+unconnected inputs to `'0`, and the mesh writes `FlitT{}` into edge inputs, so
+every idle cycle diverged. Earlier cross-checks compared payloads rather than
+`last` while idle and never saw it.
+
+**Two stimulus defects that had silently killed the run**, neither visible from
+the comparison because both sides agreed on a dead network:
+
+- multi-flit packets injected open loop can be *truncated* when the closing
+  `last` lands on a refused cycle; the half-open packet then holds its route
+  forever. Keep multi-flit packets in lightly-loaded directed phases.
+- `NoLoopback` defaults to 1, so a **self-addressed** flit is undeliverable and
+  wedges its node's input FIFO permanently.
+
+Together they had all nine nodes deadlocked by cycle 139 of 208. **Check the
+stimulus is still live before trusting a pass** — count the last cycle each
+node accepted an injection.
+
+### Step 10 — Design CDC-VP TLM integration (next)
 
 After standalone AXI traffic passes:
 
@@ -1724,19 +1938,43 @@ Verilator limitations hit so far, all worked around in the harnesses:
 
 The next AI can be given this task:
 
-> Read `docs/AI_HANDOFF_CONTEXT.md`, then start Step 7: connect the AXI
-> endpoint transactors in `include/floo_noc_model/axi_endpoint.hpp` to the
-> mesh, replacing its abstract endpoints, so AXI traffic runs end to end
-> through the modelled network. Anchor every decision in the FlooNoC IP at
+> Read `docs/AI_HANDOFF_CONTEXT.md`, then start Step 10: design the CDC-VP TLM
+> integration for the NoC. Anchor every decision in the FlooNoC IP at
 > `/home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC` (upstream
-> `https://github.com/pulp-platform/FlooNoC.git`).
+> `https://github.com/pulp-platform/FlooNoC.git`), and in the CDC-VP platform
+> for the socket side.
 >
-> Two things to settle first. The mesh currently carries one generic `FlitT`
-> stream, but AXI needs separate `req` and `rsp` physical channels; decide that
-> before wiring anything. And a mesh cross-check needs the FlooGen-generated
-> topology, which is absent: `generated/` is gitignored and FlooGen 0.8.4 is
-> not installed. Install it from the frozen tree's `pyproject.toml`, not from
-> PyPI latest.
+> Steps 1-9 produced a working AXI vertical slice: separate `req`/`rsp` meshes,
+> RTL-signed routers, FIFOs, arbiters, flit assembly, the `NoRoB` ordering
+> rule, and the chimney request path's timing. `test_axi_noc` runs AXI end to
+> end across a 4x4 mesh. This step makes it usable from CDC-VP.
+>
+> The design work, in the order the roadmap lists it: inspect the CDC-VP bus
+> socket topology; define M:N ownership and routing; decide whether each
+> endpoint needs target and/or initiator sockets; define TLM-to-AXI phase
+> handling and back-pressure; define temporal decoupling policy; implement
+> whole-network quiescence and safe clock gating; and add CDC-VP component
+> tests before touching platform assembly.
+>
+> Three constraints to carry in, all established and documented:
+>
+> 1. **`MaxUniqueIds = 1`** makes the chimney's metadata a plain in-order FIFO
+>    with no ID matching, so it assumes responses return in request order per
+>    direction. Either each CDC-VP manager uses a single AXI ID, or the frozen
+>    configuration has to be changed. This is the single most important fact
+>    for the socket design.
+> 2. **Timing is now signed end to end** — both chimney directions and the mesh
+>    between them. `noc_counters.hpp` still separates measured from derived and
+>    has no analytic tier; keep it that way. Note the measured end-to-end
+>    figures are 11 cycles at one hop and 30 at six, on a 4x4 mesh; anything
+>    quoting 7 and 16 predates the output-FIFO correction and is wrong.
+> 3. **The endpoint transactors have no RTL counterpart** and are not
+>    RTL-signable. They are a driver and collector built on signed rules, not a
+>    timed chimney.
+>
+> Do not open the NPU component for architecture questions. Its CMake shape,
+> test registration, and platform/SDK packaging patterns are reusable; its
+> register map, socket structure, and worker model are not.
 >
 > Harness discipline, learned the hard way in the chimney work: use the
 > synchronous BFM idiom, assert with non-blocking assignments and sample

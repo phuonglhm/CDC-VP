@@ -68,3 +68,14 @@ if(CDC_BUILD_CUSTOM_SOC)
       message(STATUS "Skipping uart_platform: cdc::components::uart2_tlm is not available")
    endif()
 endif()
+
+# The FlooNoC-based SoC is kept separate from the bus_router platforms: its
+# interconnect is cycle accurate, so it runs far slower and is chosen
+# deliberately rather than by default.
+if(CDC_BUILD_NOC_SOC)
+   if(TARGET cdc::components::noc_interconnect)
+      add_subdirectory(noc_soc)
+   else()
+      message(STATUS "Skipping noc_soc: cdc::components::noc_interconnect is not available")
+   endif()
+endif()

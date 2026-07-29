@@ -43,6 +43,13 @@ add_subdirectory(flash_nor_tlm)
 add_subdirectory(qspi_tlm)
 add_subdirectory(rtc_tlm)
 
+# The FlooNoC model plus its TLM wrapper. The model itself is header-only; the
+# wrapper is what a platform links to use the NoC in place of `bus_router`.
+# Its own standalone tests are off here: the top-level build has its own test
+# switch, and the model's cross-check suite is run from the component directory.
+set(FLOO_NOC_MODEL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(floo_noc_model)
+
  add_subdirectory(isp_tlm)  # TEMP: WIP, missing headers — re-enable when it builds
 
 # ── Install/export so a standalone platform can find_package(cdc-components) ──

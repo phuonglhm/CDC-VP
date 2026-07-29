@@ -35,3 +35,9 @@ __pycache__/
 # Locked RTL dependency checkout, if FLOO_RTL_DEPS_ROOT is pointed in-tree
 # instead of at the default location outside the repository.
 /rtl_deps/
+
+# FlooGen output and its virtualenv. rtl_crosscheck/install_floogen.sh writes
+# these into a build directory, but keep the patterns in case someone points
+# BUILD_ROOT at the component.
+/generated/
+/venv/

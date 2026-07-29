@@ -48,7 +48,7 @@ int sc_main(int, char**)
     write.is_write = true;
     write.id = 5;
     write.addr = 0x8000'0040;
-    write.data = 0xDEAD'BEEF;
+    write.data = {0xDEAD'BEEF};
     write.strb = 0xFF;
     check(manager.offer(write), "an idle manager must accept a write");
 
@@ -109,7 +109,7 @@ int sc_main(int, char**)
     check(r.hdr.last, "every R flit closes its packet");
 
     const auto read_done = manager.accept_response(r);
-    check(!read_done.is_write && read_done.data == 0x1234'5678,
+    check(!read_done.is_write && read_done.data.front() == 0x1234'5678,
           "the read completion must carry the data");
 
     // ---- The NoRoB ordering rule -----------------------------------------

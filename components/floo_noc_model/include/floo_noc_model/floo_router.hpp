@@ -11,7 +11,14 @@
 
 namespace floo::model {
 
-template <typename FlitT, unsigned InFifoDepth = 2>
+/// `OutFifoDepth` defaults to 2 because that is what every generated FlooNoC
+/// router has: `floogen/templates/floo_axi_router.sv.mako` and its siblings
+/// hardcode `.OutFifoDepth (2)`, and `hw/test/floo_test_pkg.sv` does not define
+/// router FIFO depths at all. A `0` here is the `gen_no_out_fifo` bypass, which
+/// exists in the RTL but is not what any generated NoC instantiates — the
+/// inter-node cross-check found the model missing this buffer entirely, one
+/// cycle per hop.
+template <typename FlitT, unsigned InFifoDepth = 2, unsigned OutFifoDepth = 2>
 class floo_router : public sc_core::sc_module {
 public:
     static constexpr unsigned num_ports = 5;
@@ -55,6 +62,11 @@ public:
         , input_fifos_("input_fifos", num_ports)
         , route_selectors_("route_selectors", num_ports)
         , output_arbiters_("output_arbiters", num_ports)
+        , output_fifos_("output_fifos", OutFifoDepth > 0 ? num_ports : 0)
+        , arb_data_("arb_data", num_ports)
+        , arb_valid_("arb_valid", num_ports)
+        , arb_ready_("arb_ready", num_ports)
+        , output_occupancy_("output_occupancy", num_ports)
         , fifo_data_("fifo_data", num_ports)
         , fifo_valid_("fifo_valid", num_ports)
         , fifo_ready_("fifo_ready", num_ports)
@@ -93,9 +105,9 @@ public:
             auto& arbiter = output_arbiters_[output];
             arbiter.i_clk(i_clk);
             arbiter.i_rst_n(i_rst_n);
-            arbiter.o_data(o_data[output]);
-            arbiter.o_valid(o_valid[output]);
-            arbiter.i_ready(i_ready[output]);
+            arbiter.o_data(arb_data_[output]);
+            arbiter.o_valid(arb_valid_[output]);
+            arbiter.i_ready(arb_ready_[output]);
             arbiter.o_selected(o_output_selected[output]);
             arbiter.o_locked(o_output_locked[output]);
 
@@ -104,6 +116,30 @@ public:
                 arbiter.i_data[input](cross_data_[index]);
                 arbiter.i_valid[input](cross_valid_[index]);
                 arbiter.o_ready[input](cross_ready_[index]);
+            }
+        }
+
+        // `if (OutFifoDepth > 0) gen_out_fifo` in the RTL: a
+        // `stream_fifo_optimal_wrap` between the output arbiter and the port.
+        if constexpr (OutFifoDepth > 0) {
+            for (unsigned output = 0; output < num_ports; ++output) {
+                auto& fifo = output_fifos_[output];
+                fifo.i_clk(i_clk);
+                fifo.i_rst_n(i_rst_n);
+                fifo.i_data(arb_data_[output]);
+                fifo.i_valid(arb_valid_[output]);
+                fifo.o_ready(arb_ready_[output]);
+                fifo.o_data(o_data[output]);
+                fifo.o_valid(o_valid[output]);
+                fifo.i_ready(i_ready[output]);
+                fifo.o_occupancy(output_occupancy_[output]);
+            }
+        } else {
+            // `gen_no_out_fifo`: a straight pass-through.
+            SC_METHOD(bypass_output_fifo);
+            for (unsigned output = 0; output < num_ports; ++output) {
+                sensitive << arb_data_[output] << arb_valid_[output]
+                          << i_ready[output];
             }
         }
 
@@ -119,6 +155,27 @@ public:
     }
 
 private:
+    void bypass_output_fifo()
+    {
+        for (unsigned output = 0; output < num_ports; ++output) {
+            o_data[output].write(arb_data_[output].read());
+            o_valid[output].write(arb_valid_[output].read());
+            arb_ready_[output].write(i_ready[output].read());
+        }
+    }
+
+    /// `Depth` must be at least two for the wrap, so the bypass case carries a
+    /// zero-length vector rather than an unbound module.
+    static constexpr unsigned out_fifo_depth =
+        OutFifoDepth > 0 ? OutFifoDepth : 2;
+
+    sc_core::sc_vector<stream_fifo_optimal_wrap<FlitT, out_fifo_depth>>
+        output_fifos_;
+    sc_core::sc_vector<sc_core::sc_signal<FlitT>> arb_data_;
+    sc_core::sc_vector<sc_core::sc_signal<bool>> arb_valid_;
+    sc_core::sc_vector<sc_core::sc_signal<bool>> arb_ready_;
+    sc_core::sc_vector<sc_core::sc_signal<unsigned>> output_occupancy_;
+
     sc_core::sc_vector<stream_fifo_optimal_wrap<FlitT, InFifoDepth>>
         input_fifos_;
     sc_core::sc_vector<xy_route_select<FlitT>> route_selectors_;

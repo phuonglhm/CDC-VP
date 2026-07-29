@@ -63,33 +63,50 @@ cmake -S "$model_root" -B "$systemc_build" --fresh \
   -DCMAKE_BUILD_TYPE=Debug \
   -DFLOO_NOC_MODEL_BUILD_TESTS=ON
 cmake --build "$systemc_build" --target router_trace_sc --parallel
-"$systemc_build/tests/router_trace_sc" "$stimulus" "$systemc_trace"
 
-verilator --binary --timing -Wno-fatal \
-  -Wno-DECLFILENAME \
-  -Wno-PINCONNECTEMPTY \
-  -Wno-UNUSEDSIGNAL \
-  -Wno-UNUSEDPARAM \
-  -Wno-WIDTHEXPAND \
-  -Wno-WIDTHTRUNC \
-  -Wno-UNSIGNED \
-  --top-module tb_floo_router_trace \
-  --Mdir "$verilator_build" \
-  -I"$floo_rtl_root/hw/include" \
-  -f "$filelist" \
-  "$script_dir/floo_router/tb_floo_router_trace.sv"
+# Two configurations. `OutFifoDepth = 2` is what every generated FlooNoC router
+# has: the FlooGen templates hardcode it, and `hw/test/floo_test_pkg.sv` does
+# not define router FIFO depths at all. `0` is the `gen_no_out_fifo` bypass,
+# kept so both RTL branches are signed.
+status=0
+for out_depth in 2 0; do
+  systemc_trace="$build_root/router_d${out_depth}_systemc_trace.csv"
+  rtl_trace="$build_root/router_d${out_depth}_rtl_trace.csv"
+  verilator_build="$build_root/verilator_d${out_depth}"
 
-assertion_log="$build_root/router_rtl_run.log"
-"$verilator_build/Vtb_floo_router_trace" \
-  "+STIM_FILE=$stimulus" \
-  "+TRACE_FILE=$rtl_trace" 2>&1 | tee "$assertion_log"
+  "$systemc_build/tests/router_trace_sc" \
+    "$stimulus" "$systemc_trace" "$out_depth"
 
-if grep -qiE "StableValid(In|Out)|Assertion failed" "$assertion_log"; then
-  echo "RTL protocol assertion fired; the stimulus violates the router's" >&2
-  echo "input or output handshake contract. Fix the stimulus, not the model." >&2
-  grep -iE "StableValid(In|Out)|Assertion failed" "$assertion_log" | head -5 >&2
-  exit 1
-fi
+  verilator --binary --timing -Wno-fatal \
+    -Wno-DECLFILENAME \
+    -Wno-PINCONNECTEMPTY \
+    -Wno-UNUSEDSIGNAL \
+    -Wno-UNUSEDPARAM \
+    -Wno-WIDTHEXPAND \
+    -Wno-WIDTHTRUNC \
+    -Wno-UNSIGNED \
+    -GOutFifoDepth="$out_depth" \
+    --top-module tb_floo_router_trace \
+    --Mdir "$verilator_build" \
+    -I"$floo_rtl_root/hw/include" \
+    -f "$filelist" \
+    "$script_dir/floo_router/tb_floo_router_trace.sv"
 
-python3 "$script_dir/compare_traces.py" \
-  "$systemc_trace" "$rtl_trace" "floo-router"
+  assertion_log="$build_root/router_d${out_depth}_rtl_run.log"
+  "$verilator_build/Vtb_floo_router_trace" \
+    "+STIM_FILE=$stimulus" \
+    "+TRACE_FILE=$rtl_trace" 2>&1 | tee "$assertion_log"
+
+  if grep -qiE "StableValid(In|Out)|Assertion failed" "$assertion_log"; then
+    echo "RTL protocol assertion fired at out-fifo depth $out_depth." >&2
+    status=1
+    continue
+  fi
+
+  if ! python3 "$script_dir/compare_traces.py" \
+      "$systemc_trace" "$rtl_trace" "floo-router out-fifo $out_depth"; then
+    status=1
+  fi
+done
+
+exit "$status"

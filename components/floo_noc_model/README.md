@@ -120,19 +120,39 @@ cross-checking still requires the complete Bender dependency tree.
 - P5: measured router counters, observing only RTL-signed signals and driving
   nothing.
 - P6: single-AXI channel types and sizing, chimney flit assembly and
-  destination decode, metadata retention, the `NoRoB` ordering rule, and
-  abstract AXI endpoint transactors.
+  destination decode, metadata retention, and abstract AXI endpoint
+  transactors.
+- P7: the `NoRoB` ordering rule, cycle cross-checked against the unmodified
+  reorder-buffer wrapper over the locked `axi_demux_id_counters` (127 cycles,
+  twelve negative controls all detected).
+- P8: the chimney request path composed at cycle granularity and cross-checked
+  under AW/W/AR contention and link back-pressure (141 cycles, eleven negative
+  controls all detected).
+- P9: separate `req` and `rsp` meshes, matching `floo_axi_router`'s two-router
+  structure, with the AXI transactors attached and AXI running end to end
+  across a 4x4 mesh.
+- P9.1: the chimney's response path and subordinate side cross-checked for
+  timing (221 cycles, eleven negative controls all detected), so both chimney
+  directions are now signed.
+- P9.2: inter-node timing cross-checked against a grid of the real router
+  (1872 node-cycles). It found the model missing the output FIFO that every
+  generated FlooNoC router has, which cost one cycle per hop.
 
 RTL-signed so far: XY route selection with lock state, the input FIFO wrap, the
-wormhole arbiter, the five-port router, the AXI flit sizing, and both chimney
-flit paths. The chimney comparisons cover flit content and ordering, not
-chimney timing. Everything else is cycle-approximate.
+wormhole arbiter, the five-port router at both output-FIFO depths, the AXI flit
+sizing, both chimney flit paths, the `NoRoB` ordering rule, both chimney
+directions' timing, and **inter-node mesh timing**. Every path from an AXI
+manager port to an AXI subordinate port is signed. What is not: the endpoint
+transactors, which have no RTL counterpart and cannot be signed — they are a
+driver and collector built on signed rules, not part of the datapath.
 
 The router harness uses no shim at all: it compiles the real RTL from the
 Bender-generated file list and keeps the router's own protocol assertions
 enabled.
 
-CDC-VP fabric integration is deliberately deferred until the standalone blocks
-and router-level model have RTL cross-check coverage.
+CDC-VP integration is in `include/floo_noc_model/noc_interconnect.h`, a TLM-2.0
+wrapper presenting the same interface as `cdc::components::bus_router` plus mesh
+placement, and `platforms/noc_soc`, a small SoC that uses it. Both are separate
+from the header-only model so a standalone user pays for neither.
 
 See `docs/STATUS.md` for verified coverage and the next implementation step.

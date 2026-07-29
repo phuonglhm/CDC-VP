@@ -18,7 +18,12 @@
 
 `include "floo_noc/typedef.svh"
 
-module tb_floo_router_trace;
+module tb_floo_router_trace #(
+  // Every generated FlooNoC router has `OutFifoDepth = 2`; the FlooGen
+  // templates hardcode it. `0` is the `gen_no_out_fifo` bypass, kept as a
+  // second configuration so both RTL branches are signed.
+  parameter int unsigned OutFifoDepth = 2
+);
 
   import floo_pkg::*;
 
@@ -50,7 +55,7 @@ module tb_floo_router_trace;
     .NumVirtChannels ( 1                           ),
     .NumPhysChannels ( 1                           ),
     .InFifoDepth     ( InFifoDepth                 ),
-    .OutFifoDepth    ( 0                           ),
+    .OutFifoDepth    ( OutFifoDepth                ),
     .RouteAlgo       ( XYRouting                   ),
     .IdWidth         ( $bits(id_t)                 ),
     .id_t            ( id_t                        ),

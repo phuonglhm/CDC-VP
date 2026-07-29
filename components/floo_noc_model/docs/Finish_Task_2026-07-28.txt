@@ -1,0 +1,327 @@
+
+1. Done các task (2 ngày 27=>28/07):
+- Cross-check FIFO với stream_fifo_optimal_wrap.
+- Cross-check wormhole arbiter với RTL gốc.
+- Resolve dependency từ Bender.lock, cross-check toàn router.
+- Thêm performance counters.
+- Mô hình hóa AXI channel và AXI chimney.
+
+2. Đã hoàn thành
+	- Mỗi khối đối chiếu trực tiếp với RTL gốc theo từng cycle
+	- Cùng một file stimulus chạy hai phía model SystemC và RTL gốc qua Verilator, so sánh từng cycle. Lệch một bit là FAIL.
+	- Sample cả pre-edge và post-edge của clock
+	=> khớp hoàn toàn thì e mới ghi nhận khối đã RTL-signed
+
+Các khối đã cross-check khớp với RTL:
+	- XY route selector — 12 cycle.
+	- Input FIFO (stream_fifo_optimal_wrap) — 133 cycle, depth 2 và 4.
+	- Wormhole arbiter (rr_arb_tree) — 152 cycle, 5/4/2 route.
+	- Router 5 port — 214 cycle.
+	- AXI sizing — 8 configuration.
+	- Chimney request path — 16 flit.
+	- Chimney response path — 8 flit.
+
+Các khối mới hoàn thành:
+	- Performance counter, chỉ đo trên tín hiệu đã signed.
+	- Data type cho 5 AXI channel và bảng sizing.
+	- Flit assembly của chimney, destination decode, FSM chọn AW/W.
+	- Metadata buffer và restore AXI ID gốc.
+	- Ordering rule NoRoB.
+	- AXI endpoint transactor manager/subordinate.
+
+Tiếp theo e sẽ (theo thứ tự):
+	- Cross-check timing của chimney: giữ nhiều AXI beat in-flight, thêm
+	  back-pressure hai phía, model các cut của chimney.
+	  (Đây là verification gap lớn nhất còn lại. Chưa đóng thì chưa được
+	   công bố số end-to-end latency.)
+	- Tách hai physical network req/rsp trong mesh và nối AXI endpoint vào.
+	  Cần cài FlooGen 0.8.4 từ frozen tree để generate topology làm reference.
+	- Mở rộng stimulus: multi-beat R burst, ATOP, back-pressure.
+	- Thiết kế M:N TLM fabric adapter để tích hợp vào CDC-VP.
+
+
+==========================================================
+BỔ SUNG NGÀY 29/07 — đã sign ordering rule NoRoB
+==========================================================
+
+Kết quả:
+	- Cross-check với RTL gốc: 127 cycle khớp tuyệt đối.
+	- 12 negative control, cả 12 đều bị bắt.
+	- Tổng: 22/22 test PASS, 8/8 cross-check PASS.
+
+Khác với hai cross-check chimney (so flit content), cái này so handshake
+theo từng cycle. NoRoB là luật admission nên observable duy nhất của nó
+là ax_ready_o phía request.
+
+Quyết định kỹ thuật khác kế hoạch:
+	Kế hoạch ban đầu định mở rộng harness chimney. Nhưng floo_rob_wrapper.sv
+	là leaf module nên e instantiate thẳng nó. Nhờ vậy phép so không bị lẫn
+	arbitration và cut của chimney — đúng cái timing divergence mà kế hoạch
+	đã dự đoán sẽ lấn át tín hiệu ordering.
+
+Ba luật của counter bank mà model cũ hiểu sai (đều lấy từ
+axi_demux_id_counters trong axi src/axi_demux_simple.sv):
+
+	- full_o = |cnt_full là OR TOÀN CỤC trên cả 2**AxiIdBits counter.
+	  Một ID bão hòa sẽ chặn MỌI ID khác, kể cả ID hoàn toàn rỗng.
+	  Model cũ dùng full theo từng ID.
+	- cnt_full[i] = overflow | (&in_flight) bão hòa ở
+	  2**$clog2(MaxRoTxnsPerId) - 1. Nên mặc định MaxRoTxnsPerId = 32
+	  thực tế chỉ nhận 31 outstanding, không phải 32.
+	  Model cũ nhận 32.
+	- Counter pop theo rsp_i.id, tức ID nằm trên RESPONSE, không phải ID
+	  của request.
+
+Một bài học về negative control:
+	Có 1 control PASS. E kiểm tra lại thì đó là phép viết tương đương chứ
+	không phải lỗ hổng harness: viết "+1 rồi -1" trên counter modular đúng
+	bằng giữ nguyên, nên nó không tiêm lỗi nào cả. E đã BỎ control đó và
+	thay bằng control thật (push+pop cùng lúc bị tính thành push), control
+	mới bị bắt ngay. Không ghi nhận đây là gap.
+
+Về stimulus:
+	Phải directed, không random được. Vì trạng thái đáng quan tâm không tự
+	xảy ra: stall same-ID/different-destination cần ID đang outstanding
+	đúng lúc destination thứ hai được đưa vào; còn tính toàn cục của full_o
+	chỉ lộ ra khi có ID thứ hai HOÀN TOÀN RỖNG được đưa vào lúc ID thứ nhất
+	đang bão hòa.
+
+
+==========================================================
+BỔ SUNG NGÀY 29/07 (2) — đã sign timing đường request của chimney
+==========================================================
+
+Kết quả:
+	- Cross-check với RTL gốc: 141 cycle khớp tuyệt đối.
+	- 11 negative control, cả 11 đều bị bắt.
+	- Tổng: 23/23 test PASS, 9/9 cross-check PASS.
+
+Hai cross-check chimney cũ chỉ so flit content: mỗi lần đẩy 1 AXI beat rồi
+drain flit ra trước khi đẩy beat tiếp, nên arbiter bên trong chimney không
+bao giờ phải arbitrate và không hề có back-pressure. Lần này e cho AW, W, AR
+cùng tranh 1 link req và thêm back-pressure không đều, rồi so từng cycle.
+
+Đây là bước COMPOSITION: mọi khối thành phần đều đã signed riêng từ trước
+(spill register 133 cycle, wormhole arbiter 2-route 152 cycle, NoRoB gate
+127 cycle, flit assembly 16+8 flit). Cái chưa từng kiểm là chúng có được
+NỐI với nhau đúng hay không.
+
+Kế hoạch ban đầu SAI ở tiền đề:
+	E đã ghi "phải model các cut của chimney". Đọc lại config đóng băng thì
+	ChimneyDefaultCfg đặt CutAx = CutOup = CutRsp = 0, và floo_test_pkg lấy
+	nguyên default. i_req_out_cut được instantiate với Bypass = !CutOup = 1,
+	tức trong suốt hoàn toàn. Nên chimney v0 KHÔNG có cut nào ở đường
+	request; state duy nhất là FSM aw_w_sel_q, các register của arbiter, và
+	counter của reorder buffer.
+	Bài học: phải kiểm GIÁ TRỊ THỰC TẾ của điều kiện generate trong config
+	đóng băng trước khi lập kế hoạch quanh nó.
+
+Defect thật tìm ra — thứ tự index của request arbiter bị ngược:
+	Chimney khai báo:
+	    floo_req_chan_t [AxiW:AxiAr] floo_req_arb_in;
+	với AxiW = 1, AxiAr = 2. Đây là packed range TĂNG DẦN [1:2]. Trong
+	packed range tăng dần, index đầu là phần tử CÓ TRỌNG SỐ CAO NHẤT. Nên
+	khi nối vào data_i[NumRoutes-1:0] thì slot AxiW nằm ở bit 1 còn AxiAr
+	nằm ở bit 0.
+	=> Index 0 của arbiter là AR, không phải W.
+	Model của e đặt W ở index 0. Vì index quyết định thứ tự ưu tiên
+	round-robin, sai này quan sát được ngay khi AW và AR tranh nhau, và nó
+	lộ ra ngay cycle đầu tiên.
+	Đọc khai báo từ trái sang phải sẽ cho kết quả NGƯỢC LẠI. Dấu hiệu duy
+	nhất RTL để lại là warning ASCRANGE của Verilator.
+	Lưu ý cho bước sau: floo_rsp_arb_in [AxiB:AxiR] cũng vậy — index 0 là R,
+	index 1 là B.
+
+Hai control PASS, đều đã kiểm chứng là phép viết tương đương nên e BỎ:
+	- Đảo thứ tự hai lệnh gán aw_w_sel_d: không bao giờ cùng xảy ra, vì
+	  AW được nhận cần sel == SelAw còn W được nhận cần sel == SelW.
+	- Dựng AW flit bằng tag của AR: dưới NoRoB cả hai reorder buffer đều
+	  drive cùng hằng số {rob_req = 1, rob_idx = 0}.
+	Đây là lần thứ ba một control PASS hóa ra không phải lỗ hổng harness.
+
+Vấn đề công cụ:
+	Verilator 5.022 crash "internal fault" khi tham chiếu phân cấp tới một
+	THÀNH VIÊN enum (dut.SelAw). Phải so với literal thay thế.
+
+Chưa sign sau bước này:
+	Timing đường response, phía subordinate (i_aw_out_queue, meta buffer),
+	multi-beat R burst, ATOP, và góc bão hòa của counter reorder buffer.
+
+
+==========================================================
+BỔ SUNG NGÀY 29/07 (3) — AXI chạy end-to-end qua NoC hai mạng
+==========================================================
+
+Kết quả:
+	- AXI chạy xuyên suốt trên mesh 4x4: manager -> req mesh -> subordinate
+	  -> rsp mesh -> manager.
+	- 24/24 test PASS, 9/9 cross-check PASS.
+	- Đã cài FlooGen 0.8.4 và sinh được reference topology.
+
+Tách hai mạng req/rsp là do IP quy định, không phải lựa chọn của e:
+	hw/floo_axi_router.sv đúng là HAI instance floo_router với tham số
+	giống hệt nhau, mỗi cái một flit type, mang hai mảng port
+	[NumRoutes-1:0] độc lập. Không chia sẻ arbitration, không chia sẻ
+	buffer, không có ràng buộc thứ tự giữa hai mạng.
+	=> axi_noc chỉ là hai instance floo_mesh. floo_mesh vốn đã template
+	   theo FlitT nên không phải sửa gì trong mesh.
+
+FlooGen:
+	Cài từ frozen tree (KHÔNG lấy PyPI), qua script install_floogen.sh.
+	Hai vướng mắc môi trường đã xử lý: FlooGen cần Python >= 3.10 mà
+	python3 mặc định của máy là 3.9 (dùng python3.11), và script chỉ ghi
+	vào build dir rồi fail nếu frozen tree bị thay đổi.
+	Netlist sinh ra XÁC NHẬN thứ tự index port mà model đang dùng:
+	North 0, East 1, South 2, West 3, Eject 4.
+	Lưu ý FlooGen đặt các endpoint HBM vào slot WEST của cột x=0, nên
+	router ở biên có index 3 là endpoint chứ không phải neighbour.
+
+Latency kiểm theo CẤU TRÚC, không so với golden:
+	Mỗi router đều register đầu vào (InFifoDepth = 2), nên round trip
+	không thể nhanh hơn 1 cycle/hop mỗi chiều. Đo được: 1 hop = 7 cycle,
+	6 hop = 16 cycle. Test assert cả cận dưới lẫn far > near.
+	Đây là thứ phân biệt "đã đi qua mesh thật" với "test pass vì chẳng có
+	gì chạy cả". Hai negative control đều bắt được: đảo address region, và
+	eject nhầm mạng.
+
+Ràng buộc tìm ra trong config đóng băng — MaxUniqueIds = 1:
+	Ở nhánh này floo_meta_buffer.sv lưu metadata trong fifo_v3 THUẦN, pop
+	theo thứ tự và KHÔNG khớp ID. Nhánh id_queue khớp theo AXI ID chỉ dùng
+	khi MaxUniqueIds > 1.
+	=> Chimney GIẢ ĐỊNH response quay về đúng thứ tự request cho mỗi
+	   chiều. Một đích thì đúng, vì mọi giao dịch xuống dưới đều được phát
+	   lại với ID hằng '1 nên luật thứ tự AXI áp dụng. HAI đích thì không,
+	   vì NoRoB chỉ serialize khi CÙNG một AXI ID đi tới đích khác.
+	=> Với CDC-VP: hoặc mỗi manager chỉ dùng 1 AXI ID, hoặc phải nâng
+	   MaxUniqueIds. Đây là điểm quan trọng nhất cho thiết kế socket.
+	Lưu ý: điều này suy ra từ đọc RTL, chưa chứng minh bằng mô phỏng RTL
+	toàn hệ thống.
+
+Chưa sign:
+	Timing giữa các node (cần elaborate generated top đối chiếu với model,
+	harness này chưa có), timing đường response và phía subordinate của
+	chimney, và bản thân các endpoint transactor (không có block RTL
+	tương ứng).
+
+
+==========================================================
+BỔ SUNG NGÀY 29/07 (4) — đã sign nốt nửa còn lại của chimney
+==========================================================
+
+Kết quả:
+	- Timing đường response + phía subordinate: 221 cycle khớp tuyệt đối.
+	- 11 negative control, cả 11 đều bị bắt.
+	- Tổng: 25/25 test PASS, 10/10 cross-check PASS.
+	=> CẢ HAI CHIỀU của chimney giờ đã signed về timing.
+
+Nửa này KHÔNG bypass hết như đường request:
+	Đường request có CutAx = CutOup = CutRsp = 0 nên không còn cut nào.
+	Nhưng ở đây:
+	- i_aw_out_queue là spill_register KHÔNG ĐIỀU KIỆN, không có tham số
+	  Cut* nào gate nó. Lý do RTL ghi rõ: AW và W dùng chung một link nên
+	  subordinate có thể từ chối AW cho tới khi W valid.
+	- Các metadata FIFO có tín hiệu full back-pressure ngược lên inbound
+	  req link.
+
+Bẫy ascending range lần thứ hai:
+	floo_rsp_arb_in khai báo [AxiB:AxiR] với AxiB = 3, AxiR = 4.
+	=> index 0 là R, index 1 là B.
+	Lần này e model đúng ngay từ đầu, chỉ vì defect bên đường request đã
+	dạy cho pattern này. Kết luận đã ghi vào doc: coi MỌI mảng port dạng
+	[Lo:Hi] trong IP này là ascending.
+
+Một chi tiết dễ sai khác:
+	floo_req_out_ready = axi_ready_out[hdr.axi_ch]
+	tức ready của inbound link được CHỌN theo channel mà flit đang tới
+	khai báo, không phải một tín hiệu gộp chung.
+
+Hai lỗ hổng STIMULUS tự phát hiện và đã bịt:
+	Lần chạy đầu chỉ bắt được 9/11. Và lần này KHÔNG phải phép viết
+	tương đương như ba lần trước, mà là trạng thái KHÔNG VỚI TỚI ĐƯỢC:
+	- Control "metadata full không back-pressure" PASS vì MaxTxns = 32 mà
+	  stimulus chưa bao giờ có đủ 32 write outstanding.
+	  => Thêm phase đẩy 34 AW flit liên tiếp không trả lời B.
+	- Control "pop bỏ qua r.last" PASS vì mọi R beat trong stimulus đều
+	  mang last = 1.
+	  => Thêm multi-beat R burst, có back-pressure ở giữa burst.
+	Bài học: một control PASS thì hoặc là phép viết tương đương, hoặc là
+	trạng thái không với tới được — và HAI cái này cần cách sửa khác nhau.
+
+Còn lại chưa sign:
+	Chỉ còn TIMING GIỮA CÁC NODE. Cách làm đã ghi rõ trong doc: dựng
+	testbench instantiate lưới floo_axi_router trực tiếp (module này có
+	cổng flit-level sạch), lấy wiring từ netlist FlooGen đã sinh. KHÔNG đi
+	qua FlooGen top vì nó chỉ phơi cổng AXI mỗi endpoint.
+	Endpoint transactor thì không sign được về nguyên tắc, nhưng giờ đã
+	không còn nằm trên đường quyết định độ chính xác nữa, vì model chimney
+	đã đầy đủ cả hai chiều.
+
+
+==========================================================
+BỔ SUNG NGÀY 29/07 (5) — đã sign timing giữa các node
+==========================================================
+
+Kết quả:
+	- 1872 node-cycle khớp tuyệt đối trên lưới 3x3.
+	- 6/7 negative control bắt được, 1 cái là tương đương đã chứng minh.
+	- Tổng: 27/27 test PASS, 11/11 cross-check PASS.
+	=> MỌI đường timing từ cổng AXI manager tới cổng AXI subordinate giờ
+	   đều đã signed.
+
+DEFECT LỚN NHẤT CỦA CẢ ĐỢT — model thiếu hẳn output FIFO:
+	Mọi template router của FlooGen đều hardcode .OutFifoDepth (2).
+	hw/test/floo_test_pkg.sv KHÔNG hề định nghĩa độ sâu FIFO của router.
+	=> Con số OutFifoDepth = 0 mà e ghi trong P0_SCOPE là "frozen v0
+	   parameter set" thực ra là do E TỰ CHỌN trong testbench từ Bước 4,
+	   và KHÔNG có NoC sinh ra nào dùng giá trị đó.
+	Hậu quả: model thiếu một stream_fifo_optimal_wrap trên MỌI output của
+	MỌI router, tức thiếu 1 cycle mỗi hop.
+
+	Số liệu end-to-end phải sửa lại:
+	    1 hop:  7 cycle  ->  11 cycle
+	    6 hop:  16 cycle ->  30 cycle
+	Mọi con số latency ghi trước phần này đều ĐÁNH GIÁ THẤP thiết kế.
+
+	Bài học tổng quát đã ghi vào doc: một "frozen parameter set" chỉ đáng
+	tin nếu nó LẤY TỪ IP. Phải kiểm cả template của generator, không chỉ
+	test package.
+
+	floo_router giờ nhận OutFifoDepth làm tham số (mặc định 2), và cả hai
+	nhánh đều đã signed: 214 cycle ở depth 2 và 214 ở depth 0.
+
+Defect thứ hai — flit rỗng của model khác flit rỗng của RTL:
+	flit_header::last mặc định là true, trong khi RTL nối đất input không
+	dùng về '0. Mesh ghi FlitT{} vào các input ở biên (đúng như FlooGen
+	ghi assign ..._req_in[p] = '0), nên MỌI cycle rảnh đều lệch ở cột
+	last. Các cross-check trước không thấy vì chúng so payload chứ không
+	so last lúc rảnh.
+
+HAI LỖI STIMULUS đã âm thầm giết cả lần chạy:
+	Không nhìn từ kết quả so sánh mà ra, vì hai phía ĐỀU ĐỒNG Ý — trên một
+	mạng đã chết:
+	- Packet nhiều flit bị CẮT CỤT: phase random inject open-loop, khi
+	  flit đóng gói (last) rơi đúng cycle port từ chối thì packet không
+	  bao giờ đóng, và nó giữ route ở mọi router nó chiếm — vĩnh viễn.
+	  => Chỉ để packet nhiều flit ở các phase directed, nơi tải nhẹ và mọi
+	     injection chắc chắn được nhận.
+	- Flit TỰ GỬI CHO CHÍNH MÌNH: NoLoopback mặc định = 1 nên floo_router
+	  nối đất nhánh crossbar Eject-in -> Eject-out. Flit có đích là chính
+	  node đó không bao giờ ra được và làm nghẽn input FIFO vĩnh viễn.
+	Hai lỗi này cộng lại làm cả 9 node deadlock từ cycle 139/208, tức toàn
+	bộ nửa sau lần chạy đang so sánh một mạng đứng yên.
+
+	=> Bài học: một cross-check PASS KHÔNG có ý nghĩa gì nếu stimulus đã
+	   ngừng chuyển động. Phải kiểm mạng còn sống: đếm cycle cuối cùng mà
+	   mỗi node còn nhận được injection.
+
+Vì sao KHÔNG cross-check qua FlooGen top:
+	floo_axi_mesh_noc.sv chỉ phơi cổng AXI mỗi endpoint, nên muốn dùng nó
+	thì phải có chimney đầy đủ ở cả 20 node, và phép đo mesh sẽ bị lẫn
+	hành vi chimney. floo_axi_router có cổng flit-level sạch nên nó mới là
+	đơn vị cô lập được. Netlist FlooGen chỉ dùng làm căn cứ cho QUY TẮC
+	NỐI DÂY.
+
+Trạng thái cuối:
+	Không còn đường timing nào chưa ký. Endpoint transactor vẫn không ký
+	được về nguyên tắc, nhưng nó là driver/collector dựng trên các luật đã
+	ký, không nằm trong datapath.

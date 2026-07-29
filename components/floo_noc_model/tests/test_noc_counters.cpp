@@ -177,10 +177,15 @@ int sc_main(int, char**)
         tick();
     }
 
-    check(counters.input(port_west).accepted_flits == 2,
-          "a stalled spill register accepts exactly two flits");
-    check(counters.input(port_west).stall_cycles == 3,
-          "the remaining three offered cycles must be counted as stalls");
+    // Five cycles are offered. The path from the West input to the stalled
+    // East output holds two flits in the input spill register plus two in the
+    // output one, because the default router carries `OutFifoDepth = 2` — the
+    // value every generated FlooNoC router has. So four are accepted and the
+    // fifth stalls.
+    check(counters.input(port_west).accepted_flits == 4,
+          "the input and output spill registers together hold four flits");
+    check(counters.input(port_west).stall_cycles == 1,
+          "the fifth offered cycle must be counted as a stall");
     check(counters.buffer(port_west).high_water == 2,
           "the spill register must reach full occupancy");
     check(counters.output(port_east).accepted_flits == 0,

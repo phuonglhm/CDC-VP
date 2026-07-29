@@ -22,14 +22,18 @@
 //                   This is what `hw/test/floo_test_pkg.sv` selects, and
 //                   therefore what the upstream chimney testbench exercises.
 //
-// **Verification status: not yet RTL cross-checked.** The rules here were read
-// out of the RTL rather than measured against it. Isolating the packing alone
-// is not possible, because it is inline `always_comb` inside the chimney
-// rather than a separate module; a real cross-check has to instantiate the
-// whole chimney, which also drags in the meta buffer and the reorder buffers.
-// Until that harness exists, treat everything in this header as
-// cycle-approximate and unproven, exactly like any other block before its
-// cross-check.
+// **Verification status: RTL cross-checked.** The packing is inline
+// `always_comb` inside the chimney rather than a separate module, so it cannot
+// be isolated; the harnesses instantiate the whole chimney together with its
+// meta buffer and reorder buffers:
+//
+//   run_chimney_req_crosscheck.sh      16 request flits exact
+//   run_chimney_rsp_crosscheck.sh       8 response flits exact
+//   run_chimney_timing_crosscheck.sh  141 cycles exact, request path, under
+//                                     AW/W/AR contention and back-pressure
+//
+// Content and request-path timing are therefore signed. The chimney's
+// *response*-path timing and its subordinate side are not.
 
 #pragma once
 
@@ -60,6 +64,58 @@ struct axi_rsp_flit {
     axi_b_chan b{};
     axi_r_chan r{};
 };
+
+// `sc_signal` requires equality and streaming. Both compare every payload, not
+// only the one `hdr.axi_ch` names, so a model that leaves a stale payload on an
+// unselected channel is still caught.
+
+inline bool operator==(const axi_req_flit& lhs, const axi_req_flit& rhs)
+{
+    return lhs.hdr == rhs.hdr && lhs.aw == rhs.aw && lhs.w == rhs.w
+        && lhs.ar == rhs.ar;
+}
+
+inline bool operator!=(const axi_req_flit& lhs, const axi_req_flit& rhs)
+{
+    return !(lhs == rhs);
+}
+
+inline bool operator==(const axi_rsp_flit& lhs, const axi_rsp_flit& rhs)
+{
+    return lhs.hdr == rhs.hdr && lhs.b == rhs.b && lhs.r == rhs.r;
+}
+
+inline bool operator!=(const axi_rsp_flit& lhs, const axi_rsp_flit& rhs)
+{
+    return !(lhs == rhs);
+}
+
+inline std::ostream& operator<<(std::ostream& os, const axi_req_flit& value)
+{
+    return os << "req_flit{" << value.hdr << '}';
+}
+
+inline std::ostream& operator<<(std::ostream& os, const axi_rsp_flit& value)
+{
+    return os << "rsp_flit{" << value.hdr << '}';
+}
+
+inline void sc_trace(
+    sc_core::sc_trace_file* tf, const axi_req_flit& value, const std::string& name)
+{
+    sc_trace(tf, value.hdr, name + ".hdr");
+    sc_trace(tf, value.aw, name + ".aw");
+    sc_trace(tf, value.w, name + ".w");
+    sc_trace(tf, value.ar, name + ".ar");
+}
+
+inline void sc_trace(
+    sc_core::sc_trace_file* tf, const axi_rsp_flit& value, const std::string& name)
+{
+    sc_trace(tf, value.hdr, name + ".hdr");
+    sc_trace(tf, value.b, name + ".b");
+    sc_trace(tf, value.r, name + ".r");
+}
 
 /// Reorder-buffer fields the chimney stamps into a request flit.
 ///

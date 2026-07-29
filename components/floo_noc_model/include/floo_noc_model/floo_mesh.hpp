@@ -13,14 +13,15 @@ template <
     typename FlitT,
     unsigned Width,
     unsigned Height,
-    unsigned InFifoDepth = 2>
+    unsigned InFifoDepth = 2,
+    unsigned OutFifoDepth = 2>
 class floo_mesh : public sc_core::sc_module {
 public:
     static_assert(Width > 0 && Height > 0,
                   "FlooNoC mesh dimensions must be non-zero");
 
     static constexpr unsigned num_nodes = Width * Height;
-    static constexpr unsigned num_ports = floo_router<FlitT, InFifoDepth>::num_ports;
+    static constexpr unsigned num_ports = floo_router<FlitT, InFifoDepth, OutFifoDepth>::num_ports;
 
     sc_core::sc_in<bool> i_clk{"i_clk"};
     sc_core::sc_in<bool> i_rst_n{"i_rst_n"};
@@ -99,7 +100,7 @@ public:
     }
 
 private:
-    sc_core::sc_vector<floo_router<FlitT, InFifoDepth>> routers_;
+    sc_core::sc_vector<floo_router<FlitT, InFifoDepth, OutFifoDepth>> routers_;
     sc_core::sc_vector<sc_core::sc_signal<coordinate>> router_ids_;
 
     sc_core::sc_vector<sc_core::sc_signal<FlitT>> router_in_data_;
@@ -116,18 +117,6 @@ private:
     static constexpr unsigned signal_index(unsigned node, unsigned port)
     {
         return node * num_ports + port;
-    }
-
-    void tie_input_to_zero(unsigned node, direction port)
-    {
-        const unsigned index = signal_index(node, to_port(port));
-        router_in_data_[index].write(FlitT{});
-        router_in_valid_[index].write(false);
-    }
-
-    void tie_output_not_ready(unsigned node, direction port)
-    {
-        router_out_ready_[signal_index(node, to_port(port))].write(false);
     }
 
     void connect_neighbor(

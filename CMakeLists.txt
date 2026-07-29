@@ -13,6 +13,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(CDC_BUILD_MINI_TLM "Build mini TLM platform (Step 1)" ON)
 option(CDC_BUILD_CPU_EVAL "Build RISC-V CPU evaluation platform (Step 2)" ON)
 option(CDC_BUILD_CUSTOM_SOC "Build RISC-V custom SoC platform (Step 3)" ON)
+option(CDC_BUILD_NOC_SOC
+    "Build the FlooNoC SoC platform (cycle-accurate interconnect, slow)" ON)
 option(CDC_BUILD_TESTS "Build component/platform tests" ON)
 option(CDC_ENABLE_SAURIA_NPU_V4
     "Enable the optional external SAURIA v4 SystemC model" OFF)

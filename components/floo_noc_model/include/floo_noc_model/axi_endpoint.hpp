@@ -36,20 +36,39 @@
 namespace floo::model {
 
 /// One AXI transaction as offered by a manager endpoint.
+///
+/// A multi-beat write is **one wormhole packet**: an AW with `hdr.last = 0`
+/// followed by W flits, the final one carrying `last`. That is what holds a
+/// route across the network, and it is the property that distinguishes the NoC
+/// from a bus, so a burst must never be split into several transactions.
 struct axi_transaction {
     bool is_write{};
     std::uint64_t id{};
     std::uint64_t addr{};
-    /// Write data. Ignored for reads.
-    std::uint64_t data{};
+    /// Write data, one entry per beat. Empty for reads.
+    std::vector<std::uint64_t> data{};
+    /// Byte enables, applied to every beat.
     std::uint64_t strb{};
+    /// Beats expected back for a read. Ignored for writes, which take their
+    /// beat count from `data`.
+    unsigned read_beats{1};
+    /// `AxSIZE`: log2 of the bytes per beat. A narrower access than the bus
+    /// width is a smaller `size`, not a padded full-width beat — a 32-bit
+    /// peripheral rejects an 8-byte access outright.
+    unsigned size_log2{3};
+
+    unsigned beats() const
+    {
+        return is_write ? static_cast<unsigned>(data.size()) : read_beats;
+    }
 };
 
 /// A completed transaction as seen by the manager that issued it.
 struct axi_completion {
     bool is_write{};
     std::uint64_t id{};
-    std::uint64_t data{};
+    /// Read data, one entry per beat. Empty for writes.
+    std::vector<std::uint64_t> data{};
     std::uint8_t resp{};
 };
 
@@ -89,29 +108,40 @@ public:
         // `floo_rob_wrapper.sv` drives `rob_req` high even with `NoRoB`.
         meta.rob_req = true;
 
+        if (txn.beats() == 0) {
+            throw std::invalid_argument(
+                "axi_manager_endpoint: a transaction needs at least one beat");
+        }
+
         if (txn.is_write) {
             axi_aw_chan aw{};
             aw.id = txn.id;
             aw.addr = txn.addr;
-            aw.size = 3;
+            aw.size = static_cast<std::uint8_t>(txn.size_log2);
             aw.burst = 1;
+            aw.len = static_cast<std::uint8_t>(txn.beats() - 1);
             destination_.accept_aw(*target);
             pending_.push_back(pack_aw(aw, node_id_, *target));
 
-            axi_w_chan w{};
-            w.data = txn.data;
-            w.strb = txn.strb;
-            w.last = true;
-            pending_.push_back(
-                pack_w(w, node_id_, destination_.write_destination()));
+            // One packet: every W but the last carries `hdr.last = 0`, so the
+            // route stays held from the AW through to the final beat.
+            for (unsigned beat = 0; beat < txn.beats(); ++beat) {
+                axi_w_chan w{};
+                w.data = txn.data[beat];
+                w.strb = txn.strb;
+                w.last = beat + 1 == txn.beats();
+                pending_.push_back(
+                    pack_w(w, node_id_, destination_.write_destination()));
+            }
 
             buffer_.push_write(meta);
         } else {
             axi_ar_chan ar{};
             ar.id = txn.id;
             ar.addr = txn.addr;
-            ar.size = 3;
+            ar.size = static_cast<std::uint8_t>(txn.size_log2);
             ar.burst = 1;
+            ar.len = static_cast<std::uint8_t>(txn.beats() - 1);
             pending_.push_back(pack_ar(ar, node_id_, *target));
 
             buffer_.push_read(meta);
@@ -122,6 +152,17 @@ public:
     }
 
     bool has_request() const { return !pending_.empty(); }
+
+    /// The next request flit without consuming it. A signal-level driver has
+    /// to present the flit for a whole cycle before it learns whether the
+    /// network accepted it, so peek and pop are separate.
+    const axi_req_flit& peek_request() const
+    {
+        if (pending_.empty()) {
+            throw std::runtime_error("axi_manager_endpoint: no request flit");
+        }
+        return pending_.front();
+    }
 
     /// Pops the next request flit to inject into the network.
     axi_req_flit take_request()
@@ -146,11 +187,24 @@ public:
             done.id = meta.axi_id;
             done.resp = flit.b.resp;
         } else if (channel == axi_channel::r) {
+            // `ar_no_atop_pop` in `hw/floo_meta_buffer.sv` requires
+            // `axi_rsp_o.r.last`, so intermediate beats of a burst must not
+            // release the metadata entry.
+            read_beats_.push_back(flit.r.data);
+            if (!flit.r.last) {
+                done.is_write = false;
+                done.id = 0;
+                done.resp = flit.r.resp;
+                incomplete_ = true;
+                return done;
+            }
             const auto meta = buffer_.pop_read();
             done.is_write = false;
             done.id = meta.axi_id;
-            done.data = flit.r.data;
+            done.data = read_beats_;
             done.resp = flit.r.resp;
+            read_beats_.clear();
+            incomplete_ = false;
         } else {
             throw std::runtime_error(
                 "axi_manager_endpoint: response flit is neither B nor R");
@@ -158,6 +212,11 @@ public:
         order_gate_.complete(done.id);
         return done;
     }
+
+    /// True when the last `accept_response` was an intermediate R beat, so no
+    /// transaction completed and `accept_response`'s return value is a
+    /// placeholder.
+    bool response_incomplete() const { return incomplete_; }
 
     unsigned outstanding(std::uint64_t axi_id) const
     {
@@ -170,6 +229,8 @@ private:
     meta_buffer buffer_;
     no_rob_order_gate order_gate_;
     std::deque<axi_req_flit> pending_;
+    std::vector<std::uint64_t> read_beats_;
+    bool incomplete_{false};
 };
 
 /// Subordinate-side endpoint: absorbs request flits and produces the response
@@ -200,18 +261,31 @@ public:
         case axi_channel::aw:
             meta.axi_id = flit.aw.id;
             pending_write_ = meta;
+            write_addr_.push_back(flit.aw.addr);
+            write_size_.push_back(flit.aw.size);
             break;
         case axi_channel::w:
             if (!pending_write_.has_value()) {
                 throw std::runtime_error(
                     "axi_subordinate_endpoint: W without a preceding AW");
             }
-            buffer_.push_write(*pending_write_);
-            pending_write_.reset();
+            write_beats_.push_back(flit.w.data);
+            // A burst is one packet; only its final beat completes the write.
+            if (flit.hdr.last) {
+                buffer_.push_write(*pending_write_);
+                pending_write_.reset();
+                completed_writes_.push_back(std::move(write_beats_));
+                write_beats_.clear();
+            }
             break;
         case axi_channel::ar:
             meta.axi_id = flit.ar.id;
             buffer_.push_read(meta);
+            // `ar.len` is beats minus one, so the answer owes that many R flits.
+            read_beats_.push_back(
+                static_cast<unsigned>(flit.ar.len) + 1u);
+            read_addr_.push_back(flit.ar.addr);
+            read_size_.push_back(flit.ar.size);
             break;
         default:
             throw std::runtime_error(
@@ -222,32 +296,86 @@ public:
     bool has_write() const { return buffer_.outstanding_writes() != 0; }
     bool has_read() const { return buffer_.outstanding_reads() != 0; }
 
+    /// The data of the oldest completed write, and the address it targets.
+    /// Both are what a real subordinate would apply to its storage.
+    const std::vector<std::uint64_t>& pending_write_data() const
+    {
+        if (completed_writes_.empty()) {
+            throw std::runtime_error(
+                "axi_subordinate_endpoint: no completed write");
+        }
+        return completed_writes_.front();
+    }
+
+    std::uint64_t pending_write_addr() const { return write_addr_.front(); }
+    /// `AxSIZE` of the oldest request, so a narrow access stays narrow when it
+    /// is replayed onto the real subordinate.
+    unsigned pending_write_size() const { return write_size_.front(); }
+
+    /// How many R beats the oldest outstanding read expects, and from where.
+    unsigned pending_read_beats() const { return read_beats_.front(); }
+    std::uint64_t pending_read_addr() const { return read_addr_.front(); }
+    unsigned pending_read_size() const { return read_size_.front(); }
+
     /// Answers the oldest outstanding write.
     axi_rsp_flit respond_write(std::uint8_t resp)
     {
         const auto meta = buffer_.pop_write();
+        if (!completed_writes_.empty()) {
+            completed_writes_.pop_front();
+            write_addr_.pop_front();
+            write_size_.pop_front();
+        }
         axi_b_chan b{};
         b.id = buffer_.downstream_id();
         b.resp = resp;
         return pack_b(b, node_id_, meta);
     }
 
-    /// Answers the oldest outstanding read.
+    /// Answers the oldest outstanding read with the whole burst, one R flit
+    /// per beat and `last` on the final one.
+    std::vector<axi_rsp_flit> respond_read_burst(
+        const std::vector<std::uint64_t>& data, std::uint8_t resp)
+    {
+        if (data.size() != pending_read_beats()) {
+            throw std::invalid_argument(
+                "axi_subordinate_endpoint: answer length is not the burst length");
+        }
+        const auto meta = buffer_.pop_read();
+        read_beats_.erase(read_beats_.begin());
+        read_addr_.erase(read_addr_.begin());
+        read_size_.erase(read_size_.begin());
+
+        std::vector<axi_rsp_flit> flits;
+        flits.reserve(data.size());
+        for (std::size_t beat = 0; beat < data.size(); ++beat) {
+            axi_r_chan r{};
+            r.id = buffer_.downstream_id();
+            r.data = data[beat];
+            r.resp = resp;
+            r.last = beat + 1 == data.size();
+            flits.push_back(pack_r(r, node_id_, meta));
+        }
+        return flits;
+    }
+
+    /// Single-beat convenience wrapper.
     axi_rsp_flit respond_read(std::uint64_t data, std::uint8_t resp)
     {
-        const auto meta = buffer_.pop_read();
-        axi_r_chan r{};
-        r.id = buffer_.downstream_id();
-        r.data = data;
-        r.resp = resp;
-        r.last = true;
-        return pack_r(r, node_id_, meta);
+        return respond_read_burst({data}, resp).front();
     }
 
 private:
     coordinate node_id_;
     meta_buffer buffer_;
     std::optional<response_meta> pending_write_;
+    std::vector<std::uint64_t> write_beats_;
+    std::deque<std::vector<std::uint64_t>> completed_writes_;
+    std::deque<std::uint64_t> write_addr_;
+    std::deque<unsigned> write_size_;
+    std::deque<unsigned> read_beats_;
+    std::deque<std::uint64_t> read_addr_;
+    std::deque<unsigned> read_size_;
 };
 
 } // namespace floo::model

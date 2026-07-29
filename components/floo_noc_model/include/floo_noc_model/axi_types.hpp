@@ -240,4 +240,81 @@ struct axi_r_chan {
     }
 };
 
+
+// `sc_signal` requires streaming as well as equality. These print the fields a
+// cross-check trace reads back, not the full payload.
+
+inline std::ostream& operator<<(std::ostream& os, const axi_aw_chan& value)
+{
+    return os << "aw{id=" << value.id << ",addr=" << value.addr
+              << ",len=" << unsigned{value.len} << '}';
+}
+
+inline std::ostream& operator<<(std::ostream& os, const axi_w_chan& value)
+{
+    return os << "w{data=" << value.data << ",last=" << value.last << '}';
+}
+
+inline std::ostream& operator<<(std::ostream& os, const axi_ar_chan& value)
+{
+    return os << "ar{id=" << value.id << ",addr=" << value.addr
+              << ",len=" << unsigned{value.len} << '}';
+}
+
+inline std::ostream& operator<<(std::ostream& os, const axi_b_chan& value)
+{
+    return os << "b{id=" << value.id << ",resp=" << unsigned{value.resp} << '}';
+}
+
+inline std::ostream& operator<<(std::ostream& os, const axi_r_chan& value)
+{
+    return os << "r{id=" << value.id << ",data=" << value.data
+              << ",last=" << value.last << '}';
+}
+
+
+// `sc_signal`/`sc_in` of these types instantiate `sc_trace`, so it must exist
+// even when nothing is traced. Only the fields a cross-check reads back are
+// emitted.
+
+inline void sc_trace(
+    sc_core::sc_trace_file* tf, const axi_aw_chan& value, const std::string& name)
+{
+    sc_core::sc_trace(tf, value.id, name + ".id");
+    sc_core::sc_trace(tf, value.addr, name + ".addr");
+    sc_core::sc_trace(tf, value.len, name + ".len");
+    sc_core::sc_trace(tf, value.atop, name + ".atop");
+}
+
+inline void sc_trace(
+    sc_core::sc_trace_file* tf, const axi_w_chan& value, const std::string& name)
+{
+    sc_core::sc_trace(tf, value.data, name + ".data");
+    sc_core::sc_trace(tf, value.strb, name + ".strb");
+    sc_core::sc_trace(tf, value.last, name + ".last");
+}
+
+inline void sc_trace(
+    sc_core::sc_trace_file* tf, const axi_ar_chan& value, const std::string& name)
+{
+    sc_core::sc_trace(tf, value.id, name + ".id");
+    sc_core::sc_trace(tf, value.addr, name + ".addr");
+    sc_core::sc_trace(tf, value.len, name + ".len");
+}
+
+inline void sc_trace(
+    sc_core::sc_trace_file* tf, const axi_b_chan& value, const std::string& name)
+{
+    sc_core::sc_trace(tf, value.id, name + ".id");
+    sc_core::sc_trace(tf, value.resp, name + ".resp");
+}
+
+inline void sc_trace(
+    sc_core::sc_trace_file* tf, const axi_r_chan& value, const std::string& name)
+{
+    sc_core::sc_trace(tf, value.id, name + ".id");
+    sc_core::sc_trace(tf, value.data, name + ".data");
+    sc_core::sc_trace(tf, value.last, name + ".last");
+}
+
 } // namespace floo::model

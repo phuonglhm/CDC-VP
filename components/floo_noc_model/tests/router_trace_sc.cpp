@@ -165,17 +165,15 @@ bool compare_trace(const std::string& actual, const std::string& expected)
 
 } // namespace
 
-int sc_main(int argc, char* argv[])
+namespace {
+
+/// `OutFifoDepth` is a template parameter so one runner covers both RTL
+/// branches: `2`, which every generated FlooNoC router has, and `0`, the
+/// `gen_no_out_fifo` bypass.
+template <unsigned OutFifoDepth>
+int run(int argc, char* argv[], const std::vector<stimulus>& stimuli)
 {
-    if (argc < 3 || argc > 4) {
-        std::cerr << "usage: " << argv[0]
-                  << " <stimulus.csv> <actual.csv> [expected.csv]\n";
-        return 2;
-    }
-
-    try {
-        const auto stimuli = read_stimuli(argv[1]);
-
+    {
         sc_core::sc_signal<bool> clk{"clk"};
         sc_core::sc_signal<bool> rst_n{"rst_n"};
         sc_core::sc_signal<floo::model::coordinate> router_id{"router_id"};
@@ -198,7 +196,7 @@ int sc_main(int argc, char* argv[])
         sc_core::sc_vector<sc_core::sc_signal<bool>> locked{
             "locked", num_ports};
 
-        floo::model::floo_router<flit_t, 2> dut{"dut"};
+        floo::model::floo_router<flit_t, 2, OutFifoDepth> dut{"dut"};
         floo::model::router_counters<flit_t, num_ports> counters{"counters"};
         counters.i_clk(clk);
         counters.i_rst_n(rst_n);
@@ -319,11 +317,38 @@ int sc_main(int argc, char* argv[])
         // Counters are reported outside the compared trace.
         counters.report(std::cout);
 
-        if (argc == 4 && !compare_trace(argv[2], argv[3])) {
+        if (argc == 5 && !compare_trace(argv[2], argv[4])) {
             return 1;
         }
-        std::cout << "router_trace_sc PASS\n";
+        std::cout << "router_trace_sc PASS (out-fifo depth " << OutFifoDepth
+                  << ")\n";
         return 0;
+    }
+}
+
+} // namespace
+
+int sc_main(int argc, char* argv[])
+{
+    if (argc < 4 || argc > 5) {
+        std::cerr << "usage: " << argv[0]
+                  << " <stimulus.csv> <actual.csv> <out-fifo-depth>"
+                     " [expected.csv]\n";
+        return 2;
+    }
+
+    try {
+        const auto stimuli = read_stimuli(argv[1]);
+        const std::string depth = argv[3];
+        if (depth == "2") {
+            return run<2>(argc, argv, stimuli);
+        }
+        if (depth == "0") {
+            return run<0>(argc, argv, stimuli);
+        }
+        std::cerr << "unsupported out-fifo depth '" << depth
+                  << "' (expected 0 or 2)\n";
+        return 2;
     } catch (const std::exception& error) {
         std::cerr << "router_trace_sc: " << error.what() << '\n';
         return 2;
