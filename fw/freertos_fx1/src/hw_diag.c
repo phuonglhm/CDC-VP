@@ -315,7 +315,7 @@ void hw_scan_run(void) {
 
 #if defined(DEMO_NPU)
   scan_probe(&summary, "NPU0", CDC_NPU0_BASE, CDC_NPU_CORE_ID,
-             CDC_NPU_CORE_ID_VALUE, 0xFFFFFFFFu, "SA41");
+             CDC_NPU_CORE_ID_VALUE, 0xFFFFFFFFu, "SA42");
 #else
   scan_reserved(&summary, "NPU0", CDC_NPU0_BASE);
 #endif

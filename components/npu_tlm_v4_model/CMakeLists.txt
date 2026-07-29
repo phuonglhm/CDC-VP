@@ -1,11 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 
-if(NOT EXISTS "${SAURIA_NPU_ROOT}/npu_top.h")
-    message(FATAL_ERROR
-        "CDC_ENABLE_SAURIA_NPU_V4=ON requires the private SAURIA model, but "
-        "npu_top.h was not found at SAURIA_NPU_ROOT='${SAURIA_NPU_ROOT}'. "
-        "Set -DSAURIA_NPU_ROOT=<path-containing-npu_top.h>.")
-endif()
+set(_sauria_v42_required_files
+    npu_top.h
+    npu_profile.h
+    sauria_targets.h
+    driver/libsauria_cfg.h
+    instrumentation/perf_counters.h)
+
+foreach(_sauria_file IN LISTS _sauria_v42_required_files)
+    if(NOT EXISTS "${SAURIA_NPU_ROOT}/${_sauria_file}")
+        message(FATAL_ERROR
+            "CDC_ENABLE_SAURIA_NPU_V4=ON requires the SAURIA V4.2 model, but "
+            "'${_sauria_file}' was not found at "
+            "SAURIA_NPU_ROOT='${SAURIA_NPU_ROOT}'. "
+            "Set -DSAURIA_NPU_ROOT=<path-to-v4.2_model>.")
+    endif()
+endforeach()
 
 add_library(npu_tlm_v4_model STATIC
     src/npu_tlm_v4_model.cpp)

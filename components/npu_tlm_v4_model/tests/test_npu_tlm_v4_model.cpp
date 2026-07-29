@@ -58,9 +58,20 @@ int sc_main(int, char*[])
 
     sc_core::sc_spawn([&] {
         auto write_reg = [&](std::uint32_t offset, std::uint32_t value) {
-            return probe.write(kNpuBase + offset, &value, sizeof(value));
+            return probe.write(kNpuBase + WRAPPER_BASE + offset,
+                               &value, sizeof(value));
         };
         auto read_reg = [&](std::uint32_t offset) {
+            std::uint32_t value = 0;
+            CDC_CHECK(probe.read(kNpuBase + WRAPPER_BASE + offset,
+                                 &value, sizeof(value)) ==
+                      tlm::TLM_OK_RESPONSE);
+            return value;
+        };
+        auto write_native = [&](std::uint32_t offset, std::uint32_t value) {
+            return probe.write(kNpuBase + offset, &value, sizeof(value));
+        };
+        auto read_native = [&](std::uint32_t offset) {
             std::uint32_t value = 0;
             CDC_CHECK(probe.read(kNpuBase + offset, &value, sizeof(value)) ==
                       tlm::TLM_OK_RESPONSE);
@@ -76,6 +87,22 @@ int sc_main(int, char*[])
         CDC_CHECK(read_reg(CORE_ID) == CORE_ID_VALUE);
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
         CDC_CHECK(irq.read() == false);
+
+        // V4.2 native control/profile and SRAM windows are the primary ABI.
+        CDC_CHECK(write_native(NATIVE_CFG_PROFILE, PROFILE_V1_SAURIA) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(NATIVE_CFG_PROFILE) == PROFILE_V1_SAURIA);
+        constexpr std::uint32_t native_word = 0x0403'0201u;
+        CDC_CHECK(write_native(NATIVE_SRAMA_OFFSET, native_word) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(NATIVE_SRAMA_OFFSET) == native_word);
+
+        // Sparse rich/OBP/RCE regions use compact aliases within the aperture.
+        constexpr std::uint32_t rich_m = 32u;
+        CDC_CHECK(write_native(RICH_M, rich_m) == tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(RICH_M) == rich_m);
+        CDC_CHECK(read_native(PERF_EXEC_CYCLES) == 0u);
+        CDC_CHECK(read_native(PERF_EXEC_CYCLES_HI) == 0u);
 
         std::vector<std::uint8_t> activations(kRows * kK);
         std::vector<std::uint8_t> weights(kK * kCols);
@@ -205,10 +232,11 @@ int sc_main(int, char*[])
 
         // Invalid MMIO width/address and invalid job bounds are visible.
         std::uint16_t small = 0;
-        CDC_CHECK(probe.write(kNpuBase + CTRL, &small, sizeof(small)) ==
+        CDC_CHECK(probe.write(kNpuBase + WRAPPER_BASE + CTRL,
+                              &small, sizeof(small)) ==
                   tlm::TLM_ADDRESS_ERROR_RESPONSE);
         std::uint32_t value = 0;
-        CDC_CHECK(probe.read(kNpuBase + 0x2000, &value, sizeof(value)) ==
+        CDC_CHECK(probe.read(kNpuBase + MMIO_SIZE, &value, sizeof(value)) ==
                   tlm::TLM_ADDRESS_ERROR_RESPONSE);
 
         CDC_CHECK(write_reg(DST_ADDR, 0x7000'0000u) ==
