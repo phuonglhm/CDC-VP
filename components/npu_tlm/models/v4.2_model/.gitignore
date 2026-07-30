@@ -1,0 +1,50 @@
+# ── Built binaries (header-only model → built per geometry, never committed) ──
+tb_evaluate
+tb_unified_smoke
+tb_demo
+tb_eval_*
+tb_demo_*
+test_vit_encoder_int8
+*.o
+*.out
+*.exe
+
+# tb_demo.cpp is AUTO-GENERATED from tb_evaluate.cpp (see Makefile) — do not commit.
+tb_demo.cpp
+
+# ── Run outputs / traces ──
+demo_runs_clean/
+trace_sysc/
+*.vcd
+*.csv
+outputs/
+
+# Local model comparison snapshot; the v4.2 sources are canonical.
+temp_diff/
+
+# ── Fresh-shape scratch (run_shape.sh / gen_stim.py) ──
+gen_run_*/
+gen_run_*
+
+# ── Python caches ──
+__pycache__/
+*.pyc
+*.pyo
+
+# ── SAURIA Python venv (offline verify only; never in this tree) ──
+sauria-env/
+*.egg-info/
+
+# ── Backups / archives / editor / OS cruft ──
+*.bak
+*.bak_*
+*.orig
+*.zip
+*.tar.gz
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# NOTE: demo case stimuli (npu_demo_clean/cases/*/stimuli, sauria_tmp, case.env) ARE
+# tracked — the demos are self-contained and need them. Do not add them here.
