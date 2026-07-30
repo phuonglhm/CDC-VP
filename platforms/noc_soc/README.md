@@ -15,8 +15,26 @@ Behind its own option, because a cycle-accurate interconnect is slow:
 export CC=/usr/bin/gcc CXX=/usr/bin/g++ PATH=/usr/bin:/bin:$PATH
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCDC_BUILD_NOC_SOC=ON
 cmake --build build --target noc_soc --parallel
-./build/platforms/noc_soc/noc_soc
+./build/platforms/noc_soc/noc_soc --sim-us 200
 ```
+
+With real firmware, which is what the platform exists to run:
+
+```sh
+export PATH=/opt/toolchains/riscv-none-elf/bin:$PATH
+make -C fw/dma_riscv clean
+make -C fw/dma_riscv EXTRA_CFLAGS=-DDMA_BASE=0x10060000u
+./build/platforms/noc_soc/noc_soc --fw fw/dma_riscv/dma_test.elf --sim-us 500
+```
+
+It must print `DMA PASS`. Two things about that build line:
+
+- The `DMA_BASE` override is required. `fw/dma_riscv` defaults to the
+  `VP_FX1_Full_SoC` address; here DMA0 is at `0x1006_0000` per
+  `docs/peripheral_memory_map.md`.
+- `make clean` first. The firmware Makefile depends only on its sources, so
+  changing `EXTRA_CFLAGS` alone will not retrigger the link and you will silently
+  run a stale ELF against the wrong DMA base.
 
 ## What is on it
 
@@ -72,7 +90,7 @@ Each peripheral gets one register read from the probe port at (3,3):
   timer0  (3,1)   2     15 cyc    15 ns
   wdt0    (2,1)   3     19 cyc    19 ns
   i2c0    (2,0)   4     23 cyc    23 ns
-  uart0   (1,0)   5     27 cyc    37 ns
+  uart0   (1,0)   5     26 cyc    36 ns
 ```
 
 The network column is a straight line in hop count — about **4 cycles per hop**
@@ -106,11 +124,18 @@ Firmware ends in `wfi`, so charging the whole run to its instructions made the
 same workload look like 29.7, 93.3 and 279.8 ns depending only on how long the
 simulation was left running.
 
-Without `--fw` the Bremen ISS traps to `mtvec = 0` at startup — it does this on
-`bus_router` too, so it is the ISS and not the interconnect — and then spins on
-the boot ROM image the platform preloads. The fetch traffic is real and the cost
-per fetch is fair, but it is a trap loop rather than a workload, and the output
-says so.
+Without `--fw` the platform preloads a `jal x0, 0` spin loop into the first 8 KiB
+of both RAM and the boot ROM, so the CPU runs from `0x80000000` and reports about
+**21 ns per instruction**. That is deliberately lower than the firmware figure:
+a four-byte loop is pure fetch, while real firmware also loads, stores, and
+touches peripherals. Use the no-firmware number to compare floorplans, not to
+quote a CPU cost.
+
+The preload happens in the constructor rather than `start_of_simulation`, because
+the ISS may fetch on the first delta and a CPU that reaches zeroed RAM first
+takes a trap it never recovers from. If execution ever does leave mapped RAM the
+report says so explicitly rather than printing a per-instruction figure that
+would be measuring a trap storm.
 
 The boot ROM image and any ELF are loaded backdoor, straight into the memory
 model. That deliberately does not cross the NoC: a firmware image is not traffic
@@ -163,10 +188,25 @@ modelling shortcuts:
   `VP_FX1_Full_SoC`.
 - **NPU0**, which needs the optional SAURIA build.
 - **PMU0**, whose ~20-signal power-sequencing environment is not reproduced.
-- **The DMA's descriptor traffic.** Its master port is on the mesh and the
-  interconnect's multi-manager path is covered by
-  `test_noc_interconnect`, but no firmware here programs a transfer yet. That
-  is the interesting experiment: CPU and DMA contending for the same links.
+Not on this list any more: the DMA's descriptor traffic. `fw/dma_riscv` programs
+a real transfer and reaches `DMA PASS` over the mesh, so CPU and DMA do contend
+for the same links. The measured answer is that it barely matters —
+`MaxUniqueIds = 1` gives each manager one transaction in flight, so three
+managers cannot congest a 4x4 mesh and the worst observed cost is +9 cycles. A
+congestion study needs `MaxUniqueIds > 1` or many more masters.
+
+## Known gaps
+
+- **The firmware run is not automated.** Build and run it by hand, per the
+  commands above. There is no CTest that would catch a regression in it, which is
+  exactly how the `kSurveyScratch` corruption survived 28 passing component
+  tests.
+- **Clock gating is not proven.** `noc_interconnect::network_idle()` decides
+  from its own bookkeeping, not from mesh state — `floo_mesh` does not export
+  router occupancy or lock state upward. See `AI_HANDOFF_CONTEXT.md` section
+  13.6b.
+- **`b_transport` spends simulated time** rather than annotating `delay`, so a
+  caller relying on temporal decoupling will find its quantum consumed.
 
 ## Why it is slow
 

@@ -57,8 +57,13 @@ Standalone verification:
 | `test_chimney_rsp_timing_trace_sc` | 221-cycle chimney response-path and subordinate-side timing trace against the RTL-captured golden |
 | `test_mesh_trace_sc` | 1872 node-cycles of a 3x3 two-network mesh against the RTL-captured golden |
 | `test_router_trace_sc_d2` / `_d0` | 214-cycle router trace against the RTL-captured golden, at output-FIFO depth 2 and 0 |
+| `test_noc_interconnect` | The TLM wrapper contract: address decode to node, multi-initiator ownership, `AxSIZE` preservation, per-node hold-off, and the self-node placement guard |
 
-All twenty-seven tests pass with GCC 11.5.0 and SystemC 2.3.4.
+All twenty-eight tests pass with GCC 11.5.0 and SystemC 2.3.4.
+
+The wrapper covered by the last row has **no RTL counterpart**, so unlike every
+other block on this page it is not signed and cannot be. It is the highest-risk
+correctness layer in the component; see `AI_HANDOFF_CONTEXT.md` Step 10.3.
 
 ## Accuracy status
 
@@ -668,7 +673,7 @@ transaction-level face of the ordering rule that these transactors call, is the
 same arithmetic as the signed `no_rob_gate` without the clock; it is a
 convenience wrapper, not a second model.
 
-### Chimney: what remains unverified
+### Chimney: the rules, and what they cost to sign
 
 `include/floo_noc_model/axi_chimney_pack.hpp` mirrors the `always_comb` blocks
 of `hw/floo_axi_chimney.sv` that assemble flits, its `gen_route` destination
@@ -690,21 +695,33 @@ both, so both are modeled: `UseIdTable = 1` is a system-address-map lookup, as
 `floogen/examples/axi_mesh_xy.yml` selects; `UseIdTable = 0` extracts the
 coordinate from address bit fields, as `hw/test/floo_test_pkg.sv` selects.
 
-**Verification status.** This is a contract test against the RTL text, not an
-equivalence proof. The packing is inline `always_comb` inside the chimney, so
-it cannot be isolated; a real cross-check has to instantiate the whole chimney
-together with its meta buffer and reorder buffers. Treat this header as
-unverified until that harness exists.
+**Verification status: signed, by four separate cross-checks.**
+`tests/test_axi_chimney_pack.cpp` on its own is only a contract test against the
+RTL text, so read it as such. The equivalence proof is elsewhere on this page:
 
-What has been established is that the harness is buildable:
-`rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_elab.sv` instantiates the
-unmodified chimney with the upstream test parameter set and **lints with zero
-errors** against the Bender-generated file list. The remaining work is stimulus
-and tracing, not type plumbing.
+| Cross-check | Section above | Result |
+|---|---|---|
+| request content | "Chimney request path" | 16 flits |
+| response content | "Chimney response path" | 8 flits |
+| request timing | "Chimney request-path timing" | 141 cycles |
+| response and subordinate side | "Chimney response path and subordinate side, timing" | 221 cycles |
+
+The packing is inline `always_comb` and could not be isolated, so all four
+instantiate the whole chimney, which pulls in the meta buffer and the `NoRoB`
+gate as well. That turned out to be the right thing to do: the request-timing
+harness is what found the reversed arbiter index order, and no isolated packing
+harness would have.
+
+The four testbenches live in `rtl_crosscheck/axi_chimney/`. The oldest of them
+began as an elaboration-only file, `tb_floo_axi_chimney_elab.sv`; it became
+`tb_floo_axi_chimney_req_trace.sv` once it carried stimulus, so that name no
+longer exists.
 
 The upstream `hw/tb/tb_floo_axi_chimney.sv` cannot be reused under Verilator:
 it depends on the class-based `axi_test` package. It remains usable under VCS,
-which is installed on this host.
+which is installed on this host. The four harnesses here are hand-written BFMs
+instead; the "Harness lesson" section above is the price that was paid for
+that.
 
 ### Cross-check strength
 
@@ -775,8 +792,13 @@ NumPorts>`. Two rules govern it.
 
 **Scope.** A counter may only observe a signal whose timing has passed an RTL
 cross-check. It therefore observes the router boundary handshake, the input
-buffer occupancy, and nothing else. There are no link or end-to-end latency
-counters, because the mesh links are still cycle-approximate.
+buffer occupancy, and nothing else. There are still no link or end-to-end
+latency counters, but the reason has changed: when this was written the mesh was
+unsigned, and since the inter-node cross-check it is signed. What blocks them now
+is only that per-flit tagging has not been written. The platform measures
+end-to-end latency at the TLM boundary instead
+(`noc_interconnect::last_latency_cycles()`), which is coarser — it sees a
+transaction, not a flit.
 
 **Passivity.** The block declares `sc_in` ports only and drives nothing. That
 claim is checked rather than asserted: `tests/router_trace_sc.cpp` instantiates
@@ -879,16 +901,30 @@ Resolved dependency set (from `Bender.lock`):
 
 ## Next implementation order
 
-1. Cross-check the chimney. Build on
-   `rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_elab.sv`, which already
-   elaborates cleanly; add a CSV-driven AXI stimulus and trace the `floo_req`
-   and `floo_rsp` links plus the AXI out side. This turns the currently
-   unverified flit assembly into signed behaviour.
-2. Model outstanding-transaction tracking and the reorder buffers, which that
-   harness will exercise anyway. Sources of truth: `hw/floo_meta_buffer.sv`,
-   `hw/floo_rob*.sv`.
-3. Replace the abstract mesh endpoint with the chimney. The mesh itself cannot
-   be cross-checked until the generated topology is available, which needs
-   FlooGen 0.8.4 installed from the frozen tree.
-4. Add the CDC-VP M:N TLM fabric adapter only after standalone AXI traffic
-   passes.
+All four items of the previous list are done: the chimney is cross-checked in
+both directions, the meta buffer and the `NoRoB` gate are modelled and signed,
+the abstract mesh endpoints are replaced by chimney-backed AXI endpoints on two
+physical networks, and `noc_interconnect` is the CDC-VP M:N fabric adapter.
+Note item 3's premise was wrong: the mesh was signed against a hand-built grid
+of the frozen `floo_axi_router`, so FlooGen was never needed.
+
+What is left is no longer datapath modelling. The authoritative, ordered list is
+`AI_HANDOFF_CONTEXT.md` section 14, and its sub-steps deliberately do **not**
+run in numeric order:
+
+1. **Step 10.2** — an automated real-firmware regression. Nothing at platform
+   level is tested today, which is how the `kSurveyScratch` corruption survived
+   28 passing component tests.
+2. **Step 10.3** — scoreboard-driven stress on `axi_endpoint.hpp` and
+   `noc_interconnect`. These have no RTL counterpart and every integration
+   defect so far has been in them. Also closes the unproven clock-gating
+   condition.
+3. **Step 10.1** — separate survey and firmware ownership in `noc_soc`. Needs
+   item 1 to be verifiable.
+4. **Step 10.4** — clean-prefix install, packaging, licence and provenance
+   audit.
+5. **Step 10.5** — decide whether `MaxUniqueIds > 1` is required. Only worth it
+   for congestion work; see "A constraint of the frozen configuration" above.
+6. **Step 11** — the fast approximately-timed mode, calibrated against this
+   model. Unstarted, and the largest remaining item: without it the NoC cannot
+   be the interconnect of a VP that boots software at speed.
