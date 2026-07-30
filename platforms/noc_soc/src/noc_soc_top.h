@@ -21,8 +21,10 @@ public:
     /// `firmware` is an optional ELF. Without one the CPU runs a built-in
     /// spin loop so it produces real instruction-fetch traffic instead of
     /// trapping on zeroed memory.
+    /// `sim_us` bounds the run. Firmware ends in a spin loop, so without a
+    /// limit the simulation never returns.
     noc_soc_top(sc_core::sc_module_name name, std::string config_path,
-                std::string firmware = {});
+                std::string firmware = {}, double sim_us = 0.0);
     ~noc_soc_top() override;
 
 private:

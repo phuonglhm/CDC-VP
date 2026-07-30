@@ -14,7 +14,13 @@
 
 #define UART_TX           (*(volatile unsigned char *)0x10000000u)
 #define RAM_BASE          0x80000000u
+/* Overridable: this firmware's own test platform maps DMA0 at 0x1007_0000,
+   but docs/peripheral_memory_map.md puts DMA0 at 0x1006_0000 for the
+   integrated SoC (0x1007_0000 is TRNG0 there). Build with
+   -DDMA_BASE=0x10060000u for a platform that follows the SoC map. */
+#ifndef DMA_BASE
 #define DMA_BASE          0x10070000u
+#endif
 
 /* DMA register offsets (from dma_tlm.h) */
 #define DMA_DSR           (DMA_BASE + 0x000u)

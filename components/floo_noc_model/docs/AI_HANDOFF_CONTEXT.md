@@ -1465,6 +1465,116 @@ changes, and never assume the component has already been staged or committed.
 
 ---
 
+## 13.10 RESOLVED — CPU firmware trap was caused by the synthetic survey
+
+**Status: fixed and verified on 2026-07-29. This was not a
+`noc_interconnect`, mesh, or back-to-back-store bug.**
+
+### Symptom
+
+`platforms/noc_soc` with `--fw` loads and starts the firmware correctly — its
+UART output appears — and then the Bremen ISS takes a trap to `mtvec = 0`. The
+CPU spins at address 0 for the rest of the run.
+
+```text
+DMA platform start
+
+[1] Prepare source/destination buffers
+[ISS] Warn: Taking trap handler in machine mode to 0x0, this is probably an error.
+[PC] trapped to 0 at 9660 ns, last pc before that 0x80000102
+```
+
+The sampled PC initially made `0x8000_0112` (`sb a3,0(a5)`) look suspicious,
+but the actual exception was later in the instruction stream.
+
+### Root cause
+
+Running with `CDC_ISS_TRACE=1` exposed the actual trap:
+
+```text
+core  0: prv 3: pc 80000100: ADD zero (x0), zero (x0), zero (x0)
+core  0: prv 3: pc 80000102: ZERO-INVALID
+take trap 2, mtval=0
+```
+
+`mcause = 2` is an illegal instruction, not a store fault. The ELF contains a
+valid 32-bit instruction at `0x8000_0100`, but `traffic_stub::run()` was
+concurrently executing its RAM correctness test at the same addresses:
+
+```cpp
+access(true, kRamBase, ...);
+access(true, kRamBase + 0x100, burst, sizeof(burst));
+```
+
+The second access wrote `{1, 2, 3, 4}` over live firmware `.text`. At
+`0x8000_0100` the resulting bytes started with `01 00 00 00`: the ISS decoded
+`0x0001` as a compressed NOP, advanced to `0x8000_0102`, then trapped on
+`0x0000`. This exactly explains the observed PC pair. The apparent correlation
+with a tight store loop was coincidental.
+
+### Fix
+
+`platforms/noc_soc/src/noc_soc_top.cpp` now reserves the final 4 KiB RAM page:
+
+```cpp
+constexpr std::uint64_t kSurveyScratch =
+    kRamBase + kRamSize - 0x1000;
+```
+
+All synthetic RAM warm-up, single-beat correctness, and burst correctness
+writes use that page. The current DMA firmware is linked into the first 1 MiB,
+including its stack and DMA buffers, so the survey no longer aliases it.
+
+The similarly observed `riscv_cpu_eval` trap was unrelated. Trace showed
+`mcause = 15`, `mtval = 0x800f_fffc`: that platform maps only 64 KiB of RAM,
+while the probe linker placed its stack at the top of a 1 MiB region.
+
+### Verification
+
+- Alignment/readback probe reached `DONE`; no `Taking trap` or `[PC]` report.
+- SoC-map DMA firmware reached `DMA PASS`, including the 32-byte copy,
+  `DMAKILL`, and the intentional undefined-opcode fault on channel 1.
+- The fixed run retired 10,726 instructions in 500,704 ns and ended at
+  `PC = 0x8000_047a`, not zero.
+- Standalone model regression: **28/28 CTest tests passed** from a clean build
+  directory.
+
+Do not remove `port_busy`/`port_free` or change `MaxUniqueIds` as a fix for this
+incident; neither was causal.
+
+### Three wrapper bugs already found and fixed during this work
+
+Listed because they show the shape of what tends to go wrong here, and none of
+them were visible with a single manager on the mesh:
+
+- **Injection race.** `step_once` drove `inject_valid` from `has_request()` and
+  then re-read it after the half-cycle wait. A `b_transport` running in another
+  process could push a request into a manager during that wait, and the flit
+  was popped without ever being driven — it vanished. Fixed by remembering what
+  was actually driven.
+- **Hold-off underflow.** The target's access latency was discounted from every
+  waiting transaction, which underflows as soon as more than one is in flight.
+  Fixed by charging it to the requesting node, keyed by the request's `src_id`.
+- **Front-versus-back mix-up.** `axi_subordinate_endpoint::pending_*()` returned
+  the *oldest* outstanding request while `absorb_request` used them to describe
+  the request that had just **arrived**. With one manager the two are the same
+  entry; with two managers hitting one node the DMA fetched from the wrong
+  address and faulted on an undefined instruction. Fixed by splitting the two:
+  `pending_*()` reports the newest arrival, responses still pop oldest-first.
+
+Also fixed: the wrapper refused any access whose length was neither a power of
+two below the bus width nor a multiple of it. A PL330 fetching a six-byte
+`DMAMOV` is ordinary AXI traffic; it now uses full-width beats with the tail
+marked by the final beat's byte strobes.
+
+### Guard added
+
+`noc_interconnect` now **refuses at construction** to place a target on a node
+that already hosts an upstream port. `floo_router` defaults to
+`NoLoopback = 1`, so a flit addressed to the node that injected it is
+undeliverable and wedges that port for good — the platform hung silently the
+first time the boot ROM was put on the CPU's node.
+
 ## 14. Required next work, in order
 
 ### Step 1 — RTL cross-check the FIFO — DONE (2026-07-28)

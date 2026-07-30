@@ -91,23 +91,38 @@ floorplan.**
 
 ## The CPU
 
+With firmware, this is the number the platform exists to produce:
+
 ```text
-  CPU pc 0x0, retired 201 instructions in 5692 ns
-  28.3184 ns per instruction, fetching from BOOTROM0 over the mesh
-  (a trap loop, not firmware: the ISS traps to mtvec = 0 without --fw,
-   which it also does on bus_router. Pass --fw <elf> for a real workload.)
+  CPU pc 0x8000047a, retired 10726 instructions in 330704 ns
+  30.832 ns per instruction, fetching from RAM over the mesh
+  (measured over the 330704 ns the CPU was retiring; it then idled until 3000704 ns)
 ```
 
-Be careful with this number. Without firmware the Bremen ISS traps to
-`mtvec = 0` at startup — it does this on `bus_router` too, so it is the ISS and
-not the interconnect — and then spins on the boot ROM image the platform
-preloads. The fetch traffic is real and the cost per fetch is fair, but it is a
-trap loop rather than a workload. Use `--fw` for anything you intend to quote.
+**About 30 ns per instruction**, every fetch crossing the mesh. It is stable
+against `--sim-us` — 29.7 at 200 µs, 30.4 at 1000, 30.8 at 3000 — because the
+figure is measured over the window in which the CPU was actually retiring.
+Firmware ends in `wfi`, so charging the whole run to its instructions made the
+same workload look like 29.7, 93.3 and 279.8 ns depending only on how long the
+simulation was left running.
 
-The boot ROM image is loaded backdoor, straight into the memory model. It
-deliberately does not cross the NoC: a firmware image is not traffic the design
-would ever carry, and charging it to the interconnect would corrupt every
-number above.
+Without `--fw` the Bremen ISS traps to `mtvec = 0` at startup — it does this on
+`bus_router` too, so it is the ISS and not the interconnect — and then spins on
+the boot ROM image the platform preloads. The fetch traffic is real and the cost
+per fetch is fair, but it is a trap loop rather than a workload, and the output
+says so.
+
+The boot ROM image and any ELF are loaded backdoor, straight into the memory
+model. That deliberately does not cross the NoC: a firmware image is not traffic
+the design would ever carry, and charging it to the interconnect would corrupt
+every number above.
+
+**Synthetic survey traffic stays out of firmware memory.** The survey writes
+only inside the final 4 KiB page of RAM (`kSurveyScratch`). It used to write at
+`kRamBase` and `kRamBase + 0x100`, which is inside the firmware's `.text`: it
+overwrote live instructions, the ISS decoded the debris and trapped, and the
+symptom looked convincingly like a store-path bug in the interconnect. It was
+not. Keep every synthetic RAM access in that page.
 
 ## Reading the report honestly
 

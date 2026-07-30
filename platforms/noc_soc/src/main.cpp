@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include <cstdlib>
 
 #include <systemc>
 
@@ -26,14 +27,18 @@ int sc_main(int argc, char* argv[])
     const std::string config_path = parse_config_path(argc, argv);
 
     std::string firmware;
+    double sim_us = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string arg = argv[index];
         if (arg == "--fw" && index + 1 < argc) {
             firmware = argv[++index];
+        } else if (arg == "--sim-us" && index + 1 < argc) {
+            sim_us = std::stod(argv[++index]);
         }
     }
 
-    cdc::platforms::noc_soc::noc_soc_top top("noc_soc", config_path, firmware);
+    cdc::platforms::noc_soc::noc_soc_top top(
+        "noc_soc", config_path, firmware, sim_us);
     sc_core::sc_start();
 
     return 0;

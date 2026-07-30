@@ -8,6 +8,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <algorithm>
+#include <set>
 #include <vector>
 
 #include <tlm>
@@ -61,6 +63,13 @@ constexpr std::uint64_t kBootromBase = 0x0000'0000, kBootromSize = 0x1'0000;
 constexpr std::uint64_t kClintBase = 0x0200'0000, kClintSize = 0x1'0000;
 constexpr std::uint64_t kPlicBase  = 0x0C00'0000, kPlicSize  = 0x40'0000;
 constexpr std::uint64_t kRamBase = 0x8000'0000, kRamSize = 0x100'0000;  // 16 MiB
+/// Final RAM page reserved for the synthetic traffic survey.
+///
+/// Firmware is linked at the bottom of RAM and uses the first MiB for its
+/// image, buffers, and stack. The survey used to write at `kRamBase` and
+/// `kRamBase + 0x100`, corrupting live firmware instructions. Keep every
+/// synthetic RAM write in this dedicated page instead.
+constexpr std::uint64_t kSurveyScratch = kRamBase + kRamSize - 0x1000;
 constexpr std::size_t   kFlashSize = 16u * 1024u * 1024u;
 constexpr unsigned      kNumPlic = 31;   // sources 1..31, id 0 reserved
 
@@ -114,6 +123,21 @@ constexpr unsigned kTargetCount = 23;  // 20 peripherals, CLINT, PLIC, BOOTROM
 /// so its traffic is representative.
 constexpr std::uint8_t kSpinLoop[] = {0x6F, 0x00, 0x00, 0x00};
 
+// DMA test buffers, well clear of the CPU's instruction stream.
+constexpr std::uint64_t kDmaProgram = kRamBase + 0x8'0000;
+constexpr std::uint64_t kDmaSrc     = kRamBase + 0x8'0100;
+constexpr std::uint64_t kDmaDst     = kRamBase + 0x8'0200;
+// 512 bytes, moved as 32 sixteen-byte bursts. An earlier 32-byte transfer
+// finished before it could contend with anything: on a 4x4 mesh that is simply
+// too little traffic to queue behind, and the measurement duly read zero.
+constexpr unsigned      kDmaCopyLen = 512;
+constexpr unsigned      kDmaBurstBytes = 16;
+constexpr unsigned      kDmaEventDone = 3;
+/// A RAM word well away from the DMA's buffers, reached over the same column
+/// of the mesh the DMA uses. Reading it during the transfer is what exposes
+/// link contention.
+constexpr std::uint64_t kDmaProbeAddr = kRamBase + 0x9'0000;
+
 /// A benign off-chip SPI peripheral so the controller's initiator is bound.
 class spi_dummy : public sc_core::sc_module {
 public:
@@ -161,6 +185,19 @@ public:
     tlm_utils::simple_initiator_socket<traffic_stub> bus_socket;
     cdc::components::noc_interconnect* noc = nullptr;
     cdc::cpu::cpu_base* cpu = nullptr;
+    /// When firmware is loaded it owns the DMA; this port must not also try to
+    /// program it, or the two fight over the same channel.
+    bool firmware_drives_dma = false;
+    /// How long to keep running after the survey, so firmware can finish.
+    double sim_us = 0.0;
+    /// Last time the CPU's retire count advanced. Everything after that is the
+    /// CPU idling, and must not be charged to its instructions.
+    sc_core::sc_time cpu_active_until = sc_core::SC_ZERO_TIME;
+
+    /// Latency of the CSR polls issued while the DMA was transferring.
+    std::uint64_t busy_polls = 0;
+    std::uint64_t busy_cycles_sum = 0;
+    std::uint64_t busy_cycles_max = 0;
 
     SC_HAS_PROCESS(traffic_stub);
 
@@ -202,6 +239,121 @@ private:
         return sc_core::sc_time_stamp() - before;
     }
 
+    /// ── DMA: the experiment this platform exists for ────────────────────
+    ///
+    /// Programs a memory-to-memory transfer exactly as `fw/dma_riscv` does, so
+    /// the DMA becomes a second bus master pulling data across the mesh while
+    /// the CPU is fetching. On a flat bus the two would not interact; here they
+    /// share links and the cost shows up in the latency figures.
+    ///
+    /// Without `--fw`, the probe port drives this experiment. With firmware
+    /// loaded, `run()` skips it and the CPU owns DMA0; the installed RISC-V
+    /// toolchain can build `fw/dma_riscv` for that path.
+
+    void write32(std::uint64_t address, std::uint32_t value)
+    {
+        access(true, address, reinterpret_cast<unsigned char*>(&value),
+               sizeof(value));
+    }
+
+    std::uint32_t read32(std::uint64_t address)
+    {
+        std::uint32_t value = 0;
+        access(false, address, reinterpret_cast<unsigned char*>(&value),
+               sizeof(value));
+        return value;
+    }
+
+    void write8(std::uint64_t address, std::uint8_t value)
+    {
+        access(true, address, &value, sizeof(value));
+    }
+
+    std::uint8_t read8(std::uint64_t address)
+    {
+        std::uint8_t value = 0;
+        access(false, address, &value, sizeof(value));
+        return value;
+    }
+
+    /// `DMAMOV reg, imm`: opcode 0xBC, register in bits [7:3] of byte 1, then a
+    /// little-endian 32-bit immediate.
+    std::uint64_t emit_dmamov(
+        std::uint64_t pc, std::uint8_t reg, std::uint32_t imm)
+    {
+        write8(pc + 0, 0xBC);
+        write8(pc + 1, static_cast<std::uint8_t>(reg << 3));
+        for (unsigned byte = 0; byte < 4; ++byte) {
+            write8(pc + 2 + byte,
+                   static_cast<std::uint8_t>((imm >> (8 * byte)) & 0xFF));
+        }
+        return pc + 6;
+    }
+
+    /// Returns true if all `kDmaCopyLen` bytes arrived intact.
+    bool run_dma_transfer()
+    {
+        for (unsigned index = 0; index < kDmaCopyLen; ++index) {
+            write8(kDmaSrc + index, static_cast<std::uint8_t>(0x40 + index));
+            write8(kDmaDst + index, 0);
+        }
+
+        // CCR: source and destination incrementing, 4-byte beats, 4-beat
+        // bursts, both directions.
+        const std::uint32_t ccr = (1u << 0) | (2u << 1) | (3u << 4)
+                                | (1u << 14) | (2u << 15) | (3u << 18);
+        std::uint64_t pc = kDmaProgram;
+        pc = emit_dmamov(pc, 1, ccr);                                  // CCR
+        pc = emit_dmamov(pc, 0, static_cast<std::uint32_t>(kDmaSrc));  // SAR
+        pc = emit_dmamov(pc, 2, static_cast<std::uint32_t>(kDmaDst));  // DAR
+        for (unsigned burst = 0; burst < kDmaCopyLen / kDmaBurstBytes; ++burst) {
+            write8(pc++, 0x04);   // DMALD, one 16-byte burst
+            write8(pc++, 0x08);   // DMAST
+        }
+        write8(pc++, 0x34);   // DMASEV
+        write8(pc++, static_cast<std::uint8_t>(kDmaEventDone << 3));
+        write8(pc++, 0x00);   // DMAEND
+
+        write32(kDma0 + 0x020, 1u << kDmaEventDone);   // INTEN
+
+        // DBGINST0 byte 2 = 0xA0 (DMAGO, secure), byte 3 = channel 0.
+        write32(kDma0 + 0xD08, 0xA0u << 16);
+        write32(kDma0 + 0xD0C, static_cast<std::uint32_t>(kDmaProgram));
+        write32(kDma0 + 0xD04, 0);                     // dispatch
+
+        // Poll CSR0 until the channel stops. Every poll is a real MMIO read
+        // over the mesh, issued *while* the DMA is moving data, so these are
+        // the accesses that actually see contention. Measuring after the
+        // transfer, as an earlier version did, shows nothing.
+        unsigned guard = 4000;
+        busy_polls = 0;
+        busy_cycles_sum = 0;
+        busy_cycles_max = 0;
+        while ((read32(kDma0 + 0x100) & 0xFu) != 0u && guard-- != 0) {
+            // The measured access is a RAM read down the column the DMA is
+            // using; the CSR poll above only decides when to stop.
+            read32(kDmaProbeAddr);
+            if (noc != nullptr) {
+                const auto spent = noc->last_latency_cycles();
+                ++busy_polls;
+                busy_cycles_sum += spent;
+                busy_cycles_max = std::max(busy_cycles_max, spent);
+            }
+        }
+        if (guard == 0) {
+            std::cout << "  DMA channel did not stop before the guard expired\n";
+            return false;
+        }
+
+        for (unsigned index = 0; index < kDmaCopyLen; ++index) {
+            if (read8(kDmaSrc + index) != read8(kDmaDst + index)) {
+                std::cout << "  DMA byte " << index << " did not match\n";
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// A register read, which is what firmware does to a control block.
     ///
     /// The width is per peripheral because the IPs disagree: most want exactly
@@ -234,16 +386,17 @@ private:
 
         // Warm-up, not measured: the mesh holds its reset for a few cycles
         // after time zero and the first access would be charged for it.
-        access(true, kRamBase + 0x800, buffer.data(), sizeof(std::uint64_t));
+        access(true, kSurveyScratch + 0x800, buffer.data(),
+               sizeof(std::uint64_t));
 
         // ── RAM correctness, one beat and a burst ───────────────────────────
         std::uint64_t pattern = 0xCAFE'BABE'DEAD'BEEFull;
         std::memcpy(buffer.data(), &pattern, sizeof(pattern));
         const auto ram_write =
-            access(true, kRamBase, buffer.data(), sizeof(pattern));
+            access(true, kSurveyScratch, buffer.data(), sizeof(pattern));
         std::memset(buffer.data(), 0, buffer.size());
         const auto ram_read =
-            access(false, kRamBase, buffer.data(), sizeof(pattern));
+            access(false, kSurveyScratch, buffer.data(), sizeof(pattern));
         std::uint64_t read_back = 0;
         std::memcpy(&read_back, buffer.data(), sizeof(read_back));
         if (read_back != pattern) {
@@ -253,10 +406,10 @@ private:
         std::uint64_t burst[4] = {1, 2, 3, 4};
         std::memcpy(buffer.data(), burst, sizeof(burst));
         const auto burst_write =
-            access(true, kRamBase + 0x100, buffer.data(), sizeof(burst));
+            access(true, kSurveyScratch + 0x100, buffer.data(), sizeof(burst));
         std::memset(buffer.data(), 0, buffer.size());
         const auto burst_read =
-            access(false, kRamBase + 0x100, buffer.data(), sizeof(burst));
+            access(false, kSurveyScratch + 0x100, buffer.data(), sizeof(burst));
         std::uint64_t burst_back[4] = {};
         std::memcpy(burst_back, buffer.data(), sizeof(burst_back));
         for (unsigned beat = 0; beat < 4; ++beat) {
@@ -324,9 +477,106 @@ private:
                 "noc_soc: an unmapped address was not reported");
         }
 
-        // Let the CPU run for a while so its fetch traffic is measurable and
-        // it contends with this survey for links.
-        wait(sc_core::sc_time(5, sc_core::SC_US));
+        // ── DMA: a second bus master pulling data across the mesh ──────────
+        //
+        // Measure the same peripheral before and during the transfer. The
+        // difference is contention: the DMA's reads and writes share links with
+        // this port's traffic and with the CPU's instruction fetches. A flat
+        // bus cannot produce this number because it has no links to share.
+        // Two things have to be right for this to measure contention rather
+        // than something else.
+        //
+        // The baseline must use the *same* target as the busy samples, or the
+        // comparison is just hop count. An earlier version baselined against
+        // uart1 at one hop and sampled dma0 at four, and the 12-cycle
+        // "contention" it reported was pure distance.
+        //
+        // And the probed path must actually share links with the DMA. Under XY
+        // routing the DMA at (0,3) reaching RAM at (0,1) runs down the x=0
+        // column; this port at (3,3) reaching RAM crosses row y=3 and then runs
+        // down the same column. Probing dma0 at (1,1) instead shares no link
+        // with the DMA at all, and duly reported zero.
+        if (firmware_drives_dma) {
+            std::cout << "\nnoc_soc: firmware owns the DMA; this port is not "
+                         "programming it\n";
+        } else {
+        bool quiet_ok = true;
+        const auto quiet = probe(kDmaProbeAddr, 4, quiet_ok);
+        const auto quiet_cycles =
+            noc != nullptr ? noc->last_latency_cycles() : 0;
+
+        const bool dma_ok = run_dma_transfer();
+
+        std::cout << "\nnoc_soc: DMA memory-to-memory transfer, "
+                  << kDmaCopyLen << " bytes, RAM to RAM\n"
+                  << "  result   " << (dma_ok ? "all bytes match" : "FAILED")
+                  << '\n'
+                  << "  RAM read down the DMA's column, before it starts: " << quiet_cycles
+                  << " network cycles (" << quiet << ")\n";
+        if (busy_polls != 0) {
+            const double mean = static_cast<double>(busy_cycles_sum)
+                / static_cast<double>(busy_polls);
+            // Signed: the "before" sample is not guaranteed to be the cheaper
+            // one, and subtracting unsigned cycle counts printed a 20-digit
+            // number the first time the CPU happened to be busier beforehand.
+            const double mean_delta = mean - static_cast<double>(quiet_cycles);
+            const long long worst_delta =
+                static_cast<long long>(busy_cycles_max)
+                - static_cast<long long>(quiet_cycles);
+            std::cout << "  the same read while the DMA is transferring: "
+                      << busy_polls << " samples, mean " << mean
+                      << ", worst " << busy_cycles_max << " cycles\n"
+                      << "  difference " << mean_delta << " cycles on average, "
+                      << worst_delta << " at worst\n";
+            if (busy_cycles_max <= quiet_cycles) {
+                // Not a broken measurement — a structural result, and the more
+                // useful one. `MaxUniqueIds = 1` makes the chimney's response
+                // metadata an in-order FIFO, so each manager has at most one
+                // transaction in flight. Three masters with one request each
+                // cannot queue behind one another on a 4x4 mesh however much
+                // data they move: the links are idle between round trips.
+                std::cout << "  no contention at this load, and it is not a "
+                             "measurement artefact:\n"
+                             "  MaxUniqueIds = 1 allows one outstanding "
+                             "transaction per manager, so\n"
+                             "  three masters cannot saturate a 4x4 mesh. "
+                             "Congestion needs either\n"
+                             "  multiple outstanding transactions per master or "
+                             "many more masters.\n";
+            }
+        if (!dma_ok) {
+            throw std::runtime_error("noc_soc: the DMA transfer did not verify");
+        }
+        }
+        }
+
+        // Let the CPU run so its traffic is measurable and it contends with
+        // this survey for links. With firmware loaded that also has to be long
+        // enough for the firmware to finish: it ends in a spin loop, so the
+        // simulation would otherwise be cut off mid-run.
+        const double window = sim_us > 0.0
+            ? sim_us
+            : (firmware_drives_dma ? 500.0 : 5.0);
+
+        // Sample the retire count as the window passes, and remember when it
+        // last advanced. Firmware ends in `wfi`, so it stops retiring long
+        // before the window closes; dividing the total instructions by the
+        // whole window would make the per-instruction cost look worse the
+        // longer you run. It did exactly that: the same firmware reported
+        // 29.7 ns at --sim-us 200, 93.3 at 1000 and 279.8 at 3000.
+        const auto step = sc_core::sc_time(window / 200.0, sc_core::SC_US);
+        std::uint64_t previous = cpu != nullptr ? cpu->get_instret() : 0;
+        for (unsigned sample = 0; sample < 200; ++sample) {
+            wait(step);
+            if (cpu == nullptr) {
+                continue;
+            }
+            const auto now = cpu->get_instret();
+            if (now != previous) {
+                previous = now;
+                cpu_active_until = sc_core::sc_time_stamp();
+            }
+        }
 
         // ── Report ─────────────────────────────────────────────────────────
         std::cout << "\nnoc_soc: RAM at " << kRamNode.x << ',' << kRamNode.y
@@ -383,7 +633,12 @@ private:
         if (cpu != nullptr) {
             const auto retired = cpu->get_instret();
             const auto pc = cpu->get_pc();
-            const auto elapsed = sc_core::sc_time_stamp();
+            // Charge only the window in which the CPU was actually retiring.
+            const auto elapsed = cpu_active_until > sc_core::SC_ZERO_TIME
+                ? cpu_active_until
+                : sc_core::sc_time_stamp();
+            const bool idled = cpu_active_until > sc_core::SC_ZERO_TIME
+                && cpu_active_until < sc_core::sc_time_stamp();
             const bool in_ram = pc >= kRamBase && pc < kRamBase + kRamSize;
             const bool in_rom = pc < kBootromBase + kBootromSize;
             const char* region = in_ram ? "RAM" : (in_rom ? "BOOTROM0" : nullptr);
@@ -396,6 +651,11 @@ private:
                               / static_cast<double>(retired)
                           << " ns per instruction, fetching from " << region
                           << " over the mesh\n";
+                if (idled) {
+                    std::cout << "  (measured over the " << elapsed
+                              << " the CPU was retiring; it then idled until "
+                              << sc_core::sc_time_stamp() << ")\n";
+                }
                 if (!in_ram) {
                     // Be precise about what is being measured. Without
                     // firmware the Bremen ISS traps to `mtvec = 0` at startup —
@@ -491,7 +751,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
     std::string firmware_path;
 
     impl(sc_core::sc_module_name name, const std::string& config_path,
-         std::string firmware)
+         std::string firmware, double sim_microseconds)
         : sc_core::sc_module(name)
         , cpu("cpu")
         , probe("probe")
@@ -542,6 +802,8 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         probe.bus_socket.bind(noc.cpu_port(2));
         probe.noc = &noc;
         probe.cpu = &cpu;
+        probe.firmware_drives_dma = !firmware_path.empty();
+        probe.sim_us = sim_microseconds;
 
         // ── Downstream map. The node is the new argument versus `bus_router`.
         noc.add_target(kRamBase, kRamSize, kRamNode).bind(ram.socket);
@@ -611,6 +873,14 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 
         // ── PLIC sources, id = index + 1, same assignment as VP_FX1 ─────────
         SC_METHOD(dma_irq_bridge); sensitive << dma0_irq; dont_initialize();
+        SC_THREAD(pc_watch);
+        SC_METHOD(irq_watch);
+        sensitive << uart0_irq << uart1_irq << i2c0_irq << i2c1_irq << spi0_irq
+                  << spi1_irq << timer0_irq << timer1_irq << wdt0_irq
+                  << trng0_irq << dmic0_irq << otp0_irq << qspi0_irq
+                  << rtc0_irq << adc0_irq << dma0_irq_nonzero
+                  << dma0_irq_abort;
+        dont_initialize();
         plic.irq_in[0](uart0_irq);          // 1  UART0
         plic.irq_in[1](i2c0_irq);           // 2  I2C0
         plic.irq_in[2](spi0_irq);           // 3  SPI0
@@ -681,6 +951,53 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 
     void dma_irq_bridge() { dma0_irq_nonzero.write(dma0_irq.read() != 0u); }
 
+    /// Reports the first assertion of every interrupt source. Firmware written
+    /// for a platform without these peripherals will not have set `mtvec`, and
+    /// the first one to fire sends the CPU to address zero.
+    void irq_watch()
+    {
+        const struct { const char* name; bool level; } sources[] = {
+            {"uart0", uart0_irq.read()}, {"uart1", uart1_irq.read()},
+            {"i2c0", i2c0_irq.read()},   {"i2c1", i2c1_irq.read()},
+            {"spi0", spi0_irq.read()},   {"spi1", spi1_irq.read()},
+            {"timer0", timer0_irq.read()}, {"timer1", timer1_irq.read()},
+            {"wdt0", wdt0_irq.read()},   {"trng0", trng0_irq.read()},
+            {"dmic0", dmic0_irq.read()}, {"otp0", otp0_irq.read()},
+            {"qspi0", qspi0_irq.read()}, {"rtc0", rtc0_irq.read()},
+            {"adc0", adc0_irq.read()},
+            {"dma0", dma0_irq_nonzero.read()},
+            {"dma0_abort", dma0_irq_abort.read()},
+        };
+        for (const auto& source : sources) {
+            if (source.level && irq_seen.find(source.name) == irq_seen.end()) {
+                irq_seen.insert(source.name);
+                std::cout << "[IRQ] " << source.name << " asserted at "
+                          << sc_core::sc_time_stamp() << '\n';
+            }
+        }
+    }
+
+    std::set<std::string> irq_seen;
+
+    /// Reports the moment the CPU first lands on address zero, and the last
+    /// address it was executing before that. Without it the ISS's trap warning
+    /// gives no way to correlate the fault with what the firmware was doing.
+    void pc_watch()
+    {
+        std::uint64_t previous = 0;
+        while (true) {
+            wait(sc_core::sc_time(20, sc_core::SC_NS));
+            const auto pc = cpu.get_pc();
+            if (pc == 0 && previous != 0) {
+                std::cout << "[PC] trapped to 0 at " << sc_core::sc_time_stamp()
+                          << ", last pc before that 0x" << std::hex << previous
+                          << std::dec << '\n';
+                return;
+            }
+            previous = pc;
+        }
+    }
+
     /// Firmware, or a spin loop so the CPU fetches something valid.
     ///
     /// This is a backdoor load straight into the memory model. It must not go
@@ -699,9 +1016,10 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 };
 
 noc_soc_top::noc_soc_top(
-    sc_core::sc_module_name name, std::string config_path, std::string firmware)
+    sc_core::sc_module_name name, std::string config_path, std::string firmware,
+    double sim_us)
     : sc_core::sc_module(name)
-    , impl_(new impl("impl", config_path, std::move(firmware)))
+    , impl_(new impl("impl", config_path, std::move(firmware), sim_us))
 {
 }
 

@@ -125,10 +125,13 @@ public:
 
             // One packet: every W but the last carries `hdr.last = 0`, so the
             // route stays held from the AW through to the final beat.
+            //
+            // Only the final beat can be partial, and its `strb` is what says
+            // how many bytes are live — the same job `WSTRB` does on real AXI.
             for (unsigned beat = 0; beat < txn.beats(); ++beat) {
                 axi_w_chan w{};
                 w.data = txn.data[beat];
-                w.strb = txn.strb;
+                w.strb = beat + 1 == txn.beats() ? txn.strb : 0xFFull;
                 w.last = beat + 1 == txn.beats();
                 pending_.push_back(
                     pack_w(w, node_id_, destination_.write_destination()));
@@ -270,12 +273,14 @@ public:
                     "axi_subordinate_endpoint: W without a preceding AW");
             }
             write_beats_.push_back(flit.w.data);
+            last_write_strb_ = flit.w.strb;
             // A burst is one packet; only its final beat completes the write.
             if (flit.hdr.last) {
                 buffer_.push_write(*pending_write_);
                 pending_write_.reset();
                 completed_writes_.push_back(std::move(write_beats_));
                 write_beats_.clear();
+                write_strb_.push_back(last_write_strb_);
             }
             break;
         case axi_channel::ar:
@@ -296,26 +301,39 @@ public:
     bool has_write() const { return buffer_.outstanding_writes() != 0; }
     bool has_read() const { return buffer_.outstanding_reads() != 0; }
 
-    /// The data of the oldest completed write, and the address it targets.
-    /// Both are what a real subordinate would apply to its storage.
+    /// Details of the write that **just completed**, not the oldest one.
+    ///
+    /// These describe the request whose final W flit has arrived, so a caller
+    /// reacting to that arrival gets the right address. The response side pops
+    /// in FIFO order instead, because AXI answers in request order.
+    ///
+    /// The distinction only matters with two managers writing to one node at
+    /// once: with a single outstanding request the newest and the oldest are
+    /// the same entry. An earlier version returned the oldest here, and a DMA
+    /// contending with another master duly fetched from the wrong address and
+    /// faulted on an undefined instruction.
     const std::vector<std::uint64_t>& pending_write_data() const
     {
         if (completed_writes_.empty()) {
             throw std::runtime_error(
                 "axi_subordinate_endpoint: no completed write");
         }
-        return completed_writes_.front();
+        return completed_writes_.back();
     }
 
-    std::uint64_t pending_write_addr() const { return write_addr_.front(); }
-    /// `AxSIZE` of the oldest request, so a narrow access stays narrow when it
-    /// is replayed onto the real subordinate.
-    unsigned pending_write_size() const { return write_size_.front(); }
+    std::uint64_t pending_write_addr() const { return write_addr_.back(); }
+    /// `AxSIZE`, so a narrow access stays narrow when it is replayed onto the
+    /// real subordinate.
+    unsigned pending_write_size() const { return write_size_.back(); }
+    /// Byte enables of the final W beat. Every earlier beat is full width, so
+    /// this is what makes the exact byte count of the burst recoverable.
+    std::uint64_t pending_write_strb() const { return write_strb_.back(); }
 
-    /// How many R beats the oldest outstanding read expects, and from where.
-    unsigned pending_read_beats() const { return read_beats_.front(); }
-    std::uint64_t pending_read_addr() const { return read_addr_.front(); }
-    unsigned pending_read_size() const { return read_size_.front(); }
+    /// How many R beats the read that just arrived expects, and from where.
+    /// Same front-versus-back distinction as the write side above.
+    unsigned pending_read_beats() const { return read_beats_.back(); }
+    std::uint64_t pending_read_addr() const { return read_addr_.back(); }
+    unsigned pending_read_size() const { return read_size_.back(); }
 
     /// Answers the oldest outstanding write.
     axi_rsp_flit respond_write(std::uint8_t resp)
@@ -325,6 +343,7 @@ public:
             completed_writes_.pop_front();
             write_addr_.pop_front();
             write_size_.pop_front();
+            write_strb_.pop_front();
         }
         axi_b_chan b{};
         b.id = buffer_.downstream_id();
@@ -337,14 +356,16 @@ public:
     std::vector<axi_rsp_flit> respond_read_burst(
         const std::vector<std::uint64_t>& data, std::uint8_t resp)
     {
-        if (data.size() != pending_read_beats()) {
+        if (data.size() != read_beats_.front()) {
             throw std::invalid_argument(
                 "axi_subordinate_endpoint: answer length is not the burst length");
         }
+        // Responses are answered oldest first, so these pop from the front
+        // while `pending_read_*` above reports the newest arrival.
         const auto meta = buffer_.pop_read();
-        read_beats_.erase(read_beats_.begin());
-        read_addr_.erase(read_addr_.begin());
-        read_size_.erase(read_size_.begin());
+        read_beats_.pop_front();
+        read_addr_.pop_front();
+        read_size_.pop_front();
 
         std::vector<axi_rsp_flit> flits;
         flits.reserve(data.size());
@@ -373,6 +394,8 @@ private:
     std::deque<std::vector<std::uint64_t>> completed_writes_;
     std::deque<std::uint64_t> write_addr_;
     std::deque<unsigned> write_size_;
+    std::deque<std::uint64_t> write_strb_;
+    std::uint64_t last_write_strb_{0xFF};
     std::deque<unsigned> read_beats_;
     std::deque<std::uint64_t> read_addr_;
     std::deque<unsigned> read_size_;

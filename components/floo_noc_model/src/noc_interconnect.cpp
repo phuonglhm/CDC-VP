@@ -146,6 +146,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         /// and the cycle the downstream access was issued.
         std::uint64_t ready_at = 0;
         std::uint64_t served_at = 0;
+        /// Exact bytes the replayed access must carry.
+        unsigned byte_length = 0;
         /// Mesh node index of whoever asked, from the request's `src_id`.
         unsigned requester = 0;
         std::vector<std::uint64_t> read_data;
@@ -444,6 +446,19 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             entry.size_log2 = state.subordinate->pending_write_size();
             entry.write_data = state.subordinate->pending_write_data();
             entry.beats = static_cast<unsigned>(entry.write_data.size());
+            // Every beat but the last is full width; the last one's strobe
+            // gives the tail, so the replayed access is the exact length the
+            // caller asked for rather than a padded one.
+            const auto strb = state.subordinate->pending_write_strb();
+            unsigned tail = 0;
+            for (unsigned bit = 0; bit < bus_bytes; ++bit) {
+                if ((strb >> bit) & 1ull) {
+                    ++tail;
+                }
+            }
+            entry.byte_length = entry.size_log2 < 3
+                ? (1u << entry.size_log2)
+                : (entry.beats - 1) * bus_bytes + (tail != 0 ? tail : bus_bytes);
             state.serving.push_back(std::move(entry));
         } else if (channel == axi_channel::ar) {
             served_request entry{};
@@ -452,6 +467,10 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             entry.addr = state.subordinate->pending_read_addr();
             entry.size_log2 = state.subordinate->pending_read_size();
             entry.beats = state.subordinate->pending_read_beats();
+            // A read has no strobes: AXI expresses its length as beats times
+            // `ARSIZE`, and a master wanting fewer bytes reads the whole beat
+            // and uses part of it. The wrapper trims at the initiator.
+            entry.byte_length = entry.beats * (1u << entry.size_log2);
             state.serving.push_back(std::move(entry));
         }
     }
@@ -544,7 +563,9 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         }
         auto& target = targets[static_cast<std::size_t>(slot)];
 
-        const unsigned length = entry.beats * (1u << entry.size_log2);
+        const unsigned length = entry.byte_length != 0
+            ? entry.byte_length
+            : entry.beats * (1u << entry.size_log2);
         std::vector<unsigned char> bytes(length, 0);
         if (entry.is_write) {
             unpack_beats(entry.write_data, bytes.data(), length);
@@ -728,10 +749,12 @@ void noc_interconnect::b_transport(
         return;
     }
 
-    // AXI carries the access width in `AxSIZE`, which must be a power of two.
-    // Below the bus width that is one narrow beat; at or above it, full-width
-    // beats. Anything else would need unaligned-burst modelling, which v0 does
-    // not have.
+    // `AxSIZE` must be a power of two, so a narrow access uses one small beat
+    // and anything else uses full-width beats with the tail marked by the final
+    // beat's byte strobes — which is exactly what `WSTRB` is for. Refusing odd
+    // lengths would be wrong: a PL330 fetching a six-byte `DMAMOV` is ordinary
+    // AXI traffic, and an earlier version of this wrapper rejected it and
+    // faulted the DMA.
     const unsigned length = trans.get_data_length();
     unsigned size_log2 = 3;
     unsigned beats = 1;
@@ -739,21 +762,13 @@ void noc_interconnect::b_transport(
         trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
         return;
     }
-    if (length < bus_bytes) {
-        if ((length & (length - 1)) != 0) {
-            trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
-            return;
-        }
+    if (length < bus_bytes && (length & (length - 1)) == 0) {
         size_log2 = 0;
         while ((1u << size_log2) < length) {
             ++size_log2;
         }
     } else {
-        if (length % bus_bytes != 0) {
-            trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
-            return;
-        }
-        beats = length / bus_bytes;
+        beats = (length + bus_bytes - 1) / bus_bytes;
     }
 
     while (impl_->port_busy[port]) {
