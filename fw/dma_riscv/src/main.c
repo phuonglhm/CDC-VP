@@ -22,6 +22,21 @@
 #define DMA_BASE          0x10070000u
 #endif
 
+/* Make the ELF state its own DMA base.
+ *
+ * `__fw_dma_base` is an absolute symbol whose *address* is the configured base;
+ * nothing dereferences it. It exists so a build can be verified with `nm`
+ * instead of searching a disassembly for a hex substring, which matches any
+ * incidental occurrence — a stack offset, an unrelated constant, a byte pair
+ * inside a larger literal — and says nothing about which base the code uses.
+ *
+ * GNU as accepts the `u` suffix inside an expression, so `DMA_BASE` can be
+ * stringified exactly as written. */
+#define FW_STRINGIFY_(value) #value
+#define FW_STRINGIFY(value) FW_STRINGIFY_(value)
+__asm__(".globl __fw_dma_base\n"
+        ".set __fw_dma_base, " FW_STRINGIFY(DMA_BASE));
+
 /* DMA register offsets (from dma_tlm.h) */
 #define DMA_DSR           (DMA_BASE + 0x000u)
 #define DMA_INTEN         (DMA_BASE + 0x020u)

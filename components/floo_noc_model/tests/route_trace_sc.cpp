@@ -188,7 +188,7 @@ int sc_main(int argc, char* argv[])
             throw std::runtime_error(
                 "cannot create SystemC trace file: " + std::string(argv[2]));
         }
-        trace << "cycle,route,locked\n";
+        trace << "cycle,pre_route,pre_locked,post_route,post_locked\n";
 
         clk.write(false);
         rst_n.write(false);
@@ -211,10 +211,17 @@ int sc_main(int argc, char* argv[])
             ready.write(row.ready);
             sc_core::sc_start(sc_core::sc_time(1, sc_core::SC_NS));
 
+            // Pre-edge, before the registers move. `route` is combinational
+            // here, so this column is what catches an output that wrongly
+            // depends on the clock rather than on the presented header.
+            const auto pre_route = route.read().to_uint();
+            const auto pre_locked = static_cast<unsigned>(locked.read());
+
             clk.write(true);
             sc_core::sc_start(sc_core::sc_time(1, sc_core::SC_NS));
 
-            trace << row.cycle << ',' << route.read().to_uint() << ','
+            trace << row.cycle << ',' << pre_route << ',' << pre_locked << ','
+                  << route.read().to_uint() << ','
                   << static_cast<unsigned>(locked.read()) << '\n';
 
             clk.write(false);

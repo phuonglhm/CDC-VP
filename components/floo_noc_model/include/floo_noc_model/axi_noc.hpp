@@ -32,11 +32,11 @@
 //
 // The routers inside both meshes are the RTL-signed `floo_router` model (214
 // cycles). The link topology is checked against the FlooGen-generated netlist
-// above, by reading it, not by a cycle comparison: a mesh-level cross-check
-// needs the whole generated top elaborated against the model, which is a
-// separate harness that does not exist yet. Treat inter-node **timing** as an
-// estimate; what this header establishes is that the two networks are wired
-// the way the IP wires them.
+// above by reading it. Inter-node **timing** is no longer an estimate: it is
+// cross-checked against a grid of the frozen `floo_axi_router`, wired as the
+// FlooGen netlist wires it, for 1872 node-cycles exact
+// (`run_mesh_crosscheck.sh`). That harness does not need the generated top
+// elaborated, which is why it exists at all.
 
 #pragma once
 

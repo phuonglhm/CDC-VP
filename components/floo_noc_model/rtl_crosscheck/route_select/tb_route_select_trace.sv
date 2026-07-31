@@ -22,6 +22,8 @@ module tb_route_select_trace;
   } flit_t;
 
   logic       clk_i;
+  int         pre_route;
+  logic       pre_locked;
   logic       rst_ni;
   logic       test_enable_i;
   id_t        xy_id_i;
@@ -102,7 +104,7 @@ module tb_route_select_trace;
     ready_i = 1'b0;
 
     scan_result = $fgets(header_line, stimulus_fd);
-    $fwrite(trace_fd, "cycle,route,locked\n");
+    $fwrite(trace_fd, "cycle,pre_route,pre_locked,post_route,post_locked\n");
 
     while (!$feof(stimulus_fd)) begin
       scan_result = $fscanf(
@@ -135,12 +137,20 @@ module tb_route_select_trace;
         ready_i = ready_value[0];
 
         #1;
+        // Pre-edge: what the environment sees within the cycle, before the
+        // registers move. The route is combinational, so this is where a
+        // dependence on the clock would show up.
+        pre_route = route_sel_id_o;
+        pre_locked = dut.gen_lock.locked_route_q;
+
         clk_i = 1'b1;
         #1;
         $fwrite(
           trace_fd,
-          "%0d,%0d,%0d\n",
+          "%0d,%0d,%0d,%0d,%0d\n",
           cycle,
+          pre_route,
+          pre_locked,
           route_sel_id_o,
           dut.gen_lock.locked_route_q
         );

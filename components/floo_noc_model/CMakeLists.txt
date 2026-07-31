@@ -56,6 +56,29 @@ install(TARGETS noc_interconnect EXPORT cdc-components-targets
     ARCHIVE DESTINATION lib
     INCLUDES DESTINATION include)
 
+# Warning policy for this component's own translation units and its tests.
+#
+# A plain variable, not an INTERFACE library. An earlier version used a helper
+# target and linked it PRIVATE into `noc_interconnect`; that target then had to
+# appear in the export set of an installed static library, and a fresh parent
+# configure failed with:
+#
+#   install(EXPORT "cdc-components-targets" ...) includes target
+#   "noc_interconnect" which requires target "floo_noc_model_warnings"
+#   that is not in any export set.
+#
+# A private *link* dependency of a static library is still an export-time
+# dependency; private *compile options* are not. Variables do not enter the
+# export graph at all, which is what this needs.
+#
+# The component is warning-clean. If a warning is ever accepted deliberately,
+# suppress it at the narrowest scope and say why — do not widen this list.
+set(FLOO_NOC_MODEL_WARNINGS "")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(FLOO_NOC_MODEL_WARNINGS -Wall -Wextra -Wpedantic)
+endif()
+target_compile_options(noc_interconnect PRIVATE ${FLOO_NOC_MODEL_WARNINGS})
+
 option(FLOO_NOC_MODEL_BUILD_TESTS "Build FlooNoC model standalone tests" ON)
 if(FLOO_NOC_MODEL_BUILD_TESTS)
     add_subdirectory(tests)

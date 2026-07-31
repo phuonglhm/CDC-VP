@@ -50,7 +50,7 @@ The first end-to-end slice is deliberately constrained to:
 | Virtual channels | disabled |
 | Router ports | North, East, South, West, Eject |
 | Router input FIFO | enabled; depth fixed per instantiated test (depth 2 selects the RTL spill-register branch) |
-| Router output FIFO | initially disabled |
+| Router output FIFO | **`OutFifoDepth = 2`**, which every FlooGen router template hardcodes. An earlier revision of this table said "initially disabled"; that came from a Step-4 testbench choice, not from the RTL, and the model was built without an output FIFO for five steps because of it |
 | Topology | rectangular 2-D mesh |
 | Link latency | one configured cycle per registered boundary |
 

@@ -12,18 +12,16 @@ This mapping follows FlooNoC structure rather than the NPU worked example.
 | `wormhole_arbiter.hpp` | `hw/floo_wormhole_arbiter.sv` | Request snapshot, output selection, and packet lock through `last` |
 | `floo_router.hpp` | `hw/floo_router.sv`, `hw/floo_output_arbiter.sv` | Input FIFOs, routing, crossbar with the `NoLoopback`/`XYRouteOpt` tie-offs, per-output arbitration, and the `OutFifoDepth` output buffer |
 | `axi_chimney_pack.hpp` | `hw/floo_axi_chimney.sv`, `hw/floo_id_translation.sv` | Flit assembly per AXI channel, both destination-decode modes, AW/W select FSM |
-| `meta_buffer.hpp` | `hw/floo_meta_buffer.sv` (`MaxUniqueIds == 1` branch) | Request metadata retention and the constant downstream reissue ID |
-| `rob_order_gate.hpp` | `hw/floo_rob_wrapper.sv` (`NoRoB` branch) over axi `axi_demux_id_counters` | Admission stall, the counter bank, and its **global** `full_o`. RTL cross-checked, 127 cycles |
-| `axi_chimney.hpp` | `hw/floo_axi_chimney.sv`, both directions | Request side: reorder-buffer gates, `aw_w_sel_q` FSM, request arbiter, bypassed output cut (141 cycles). Subordinate side: unpacker, metadata FIFOs, the unconditional `i_aw_out_queue` spill register, response arbiter (221 cycles) |
-| `axi_endpoint.hpp` | none: composes the blocks above | Transaction-level AXI manager and subordinate. **Model-side abstraction** |
-| `noc_interconnect.h` / `src/noc_interconnect.cpp` | none: a CDC-VP integration layer | TLM-2.0 wrapper with `bus_router`'s interface plus mesh placement. **Not RTL-derived** |
-| future `meta_buffer.hpp` | `hw/floo_meta_buffer.sv` | Source metadata and downstream AXI ID management |
-| future `reorder_buffer.hpp` | `hw/floo_rob*.sv` | Same-ID AXI response ordering |
+| `meta_buffer.hpp` | `hw/floo_meta_buffer.sv` (`MaxUniqueIds == 1` branch) | Request metadata as a plain in-order `fifo_v3` with no ID matching, and the constant downstream reissue ID. The `id_queue` branch is deliberately not modelled |
+| `rob_order_gate.hpp` | `hw/floo_rob_wrapper.sv` (`NoRoB` branch) over axi `axi_demux_id_counters` | The same-ID/different-destination admission stall, the counter bank, and its **global** `full_o`. Signed, 127 cycles |
+| `axi_chimney.hpp` | `hw/floo_axi_chimney.sv` | Timed chimney, three of four quadrants signed. **Manager request path** — reorder-buffer gates, `aw_w_sel_q` FSM, request arbiter, bypassed output cut: signed, 141 cycles. **Subordinate side** — unpacker, metadata FIFOs, the unconditional `i_aw_out_queue` spill register, response arbiter: signed, 221 cycles. **Manager-side response unpacker** (`axi_chimney_manager_response`) — implemented and unit-tested, **not signed**; Step A-1 |
+| `axi_lanes.hpp` | AXI byte-lane rules | `AxSIZE`/`AxLEN` selection and per-beat `WSTRB`. No RTL counterpart: it is the TLM-to-AXI mapping, not a hardware block |
 | `floo_mesh.hpp` | FlooGen generated `floo_*_noc.sv` | Rectangular router/link topology; port index order confirmed against the generated netlist |
 | `axi_noc.hpp` | `hw/floo_axi_router.sv` (two `floo_router` instances) | Separate `req` and `rsp` meshes over the same coordinates |
 | `noc_counters.hpp` | none: passive observation of `hw/floo_router.sv` boundary signals | Measured accept/stall/occupancy counters; drives nothing |
 | `axi_types.hpp` | `hw/floo_pkg.sv` sizing functions, `hw/include/floo_noc/typedef.svh`, `axi 0.39.9` `src/axi_pkg.sv` | AXI config, five channel payloads, channel-to-link mapping, flit width and reserved-bit arithmetic |
-| future TLM transactors | CDC-VP wrapper plus AXI semantics | TLM generic payload to/from signal-level AXI |
+| `axi_endpoint.hpp` | **no RTL counterpart**: composes the blocks above | Transaction-level AXI manager and subordinate — a driver and collector built on signed rules, not a hardware block. **Model-side abstraction, not RTL-signable.** Step A-3 replaces it in the datapath with the timed chimney |
+| `noc_interconnect.h` / `src/noc_interconnect.cpp` | **no RTL counterpart**: a CDC-VP integration layer | TLM-2.0 wrapper with `bus_router`'s interface plus mesh placement, and the TLM-payload-to-AXI mapping. **Not RTL-derived** |
 
 External RTL dependencies such as `common_cells` and `axi` are behavioral
 dependencies of the named FlooNoC blocks. Only the behavior exercised by the

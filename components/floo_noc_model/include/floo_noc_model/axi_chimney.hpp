@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: SHL-0.51
 //
-// SystemC mirror of the **request path** of `hw/floo_axi_chimney.sv` in the
-// frozen v0 configuration, at cycle granularity.
+// SystemC mirror of `hw/floo_axi_chimney.sv` in the frozen v0 configuration, at
+// cycle granularity. Three of the chimney's four quadrants live here:
+//
+//   axi_chimney_request           manager AXI  -> `req` link    signed, 141 cyc
+//   axi_chimney_response          `req` link   -> AXI out -> `rsp`
+//                                                              signed, 221 cyc
+//   axi_chimney_manager_response  `rsp` link   -> manager AXI   NOT signed
 //
 // This is the composition step. Every part it wires together is already
 // RTL-signed on its own:
@@ -36,9 +41,10 @@
 //
 // ## Scope
 //
-// Request path only, manager side, `AtopSupport` with no ATOP in the stimulus,
-// `EnMgrPort = 1`. The response path, the subordinate side, the meta buffer,
-// and the unpacker are not modelled here.
+// `AtopSupport` with no ATOP in the stimulus, `EnMgrPort = 1`,
+// `MaxUniqueIds = 1`. The class comments below give each module's own scope;
+// `axi_chimney_manager_response` in particular is implemented and unit-tested
+// but has no RTL cross-check yet — that is Step A-1.
 
 #pragma once
 
@@ -93,13 +99,45 @@ public:
     // ---- Response drain, so the RoB counters can be released ------------
     //
     // The chimney pops the B counter from its unpacker and the R counter from
-    // the meta buffer. Neither is modelled here, so the drain is exposed as an
-    // input and the harness drives it in lockstep with the RTL's own response
-    // stream.
+    // the meta buffer. Neither is modelled *inside this module*, so the drain is
+    // an input: the timing harness drives it in lockstep with the RTL's own
+    // response stream, and in the integrated datapath
+    // `axi_chimney_manager_response` drives it from the arriving `rsp` flits.
     sc_core::sc_in<bool> i_b_pop{"i_b_pop"};
     sc_core::sc_in<unsigned> i_b_pop_id{"i_b_pop_id"};
     sc_core::sc_in<bool> i_r_pop{"i_r_pop"};
     sc_core::sc_in<unsigned> i_r_pop_id{"i_r_pop_id"};
+
+    /// `RLAST` of the arriving R beat.
+    ///
+    /// The reorder buffer releases a counter on `rsp_valid_i && rsp_last_i`, so
+    /// a read burst must release **once**, on its final beat. The RTL wires
+    /// this per direction and the two directions differ:
+    ///
+    /// ```systemverilog
+    /// i_b_rob: .rsp_last_i ( 1'b1 )                            // B is single-beat
+    /// i_r_rob: .rsp_last_i ( floo_rsp_in.axi_r.payload.last )  // R is not
+    /// ```
+    ///
+    /// An earlier revision tied both high, so every beat of a burst released a
+    /// counter and a multi-beat read under-counted its outstanding reads. The
+    /// request-timing cross-check cannot catch that: it holds the response link
+    /// idle, so the counters only ever fill. B keeps the constant, matching the
+    /// RTL.
+    sc_core::sc_in<bool> i_r_pop_last{"i_r_pop_last"};
+
+    // ---- RoB response-side handshake, exposed for the unpacker -----------
+    //
+    // `axi_ready_out[AxiB] = b_rob_ready_out` in the RTL, and
+    // `floo_rsp_out_ready = axi_ready_out[hdr.axi_ch]`. So the inbound `rsp`
+    // link's ready comes from whichever of these two the arriving flit selects.
+    // The timing harness binds `i_*_rsp_ready` high, which is what it always
+    // was internally; exposing it changes no behaviour and the 141-cycle
+    // cross-check is re-run to prove that.
+    sc_core::sc_out<bool> o_b_rsp_ready{"o_b_rsp_ready"};
+    sc_core::sc_out<bool> o_r_rsp_ready{"o_r_rsp_ready"};
+    sc_core::sc_in<bool> i_b_rsp_ready{"i_b_rsp_ready"};
+    sc_core::sc_in<bool> i_r_rsp_ready{"i_r_rsp_ready"};
 
     SC_HAS_PROCESS(axi_chimney_request);
 
@@ -155,11 +193,11 @@ private:
         b_rob_.o_ax_rob_req(aw_rob_req_out_);
         b_rob_.o_ax_rob_idx(aw_rob_idx_out_);
         b_rob_.i_rsp_valid(i_b_pop);
-        b_rob_.o_rsp_ready(b_rsp_ready_out_);
+        b_rob_.o_rsp_ready(o_b_rsp_ready);
         b_rob_.i_rsp_id(i_b_pop_id);
         b_rob_.i_rsp_last(const_true_);
         b_rob_.o_rsp_valid(b_rsp_valid_out_);
-        b_rob_.i_rsp_ready(const_true_);
+        b_rob_.i_rsp_ready(i_b_rsp_ready);
     }
 
     void bind_r_rob()
@@ -175,11 +213,11 @@ private:
         r_rob_.o_ax_rob_req(ar_rob_req_out_);
         r_rob_.o_ax_rob_idx(ar_rob_idx_out_);
         r_rob_.i_rsp_valid(i_r_pop);
-        r_rob_.o_rsp_ready(r_rsp_ready_out_);
+        r_rob_.o_rsp_ready(o_r_rsp_ready);
         r_rob_.i_rsp_id(i_r_pop_id);
-        r_rob_.i_rsp_last(const_true_);
+        r_rob_.i_rsp_last(i_r_pop_last);
         r_rob_.o_rsp_valid(r_rsp_valid_out_);
-        r_rob_.i_rsp_ready(const_true_);
+        r_rob_.i_rsp_ready(i_r_rsp_ready);
     }
 
     void bind_arbiter()
@@ -305,7 +343,6 @@ private:
     sc_core::sc_signal<bool> aw_rob_req_out_{"aw_rob_req_out"};
     sc_core::sc_signal<unsigned> aw_rob_idx_out_{"aw_rob_idx_out"};
     sc_core::sc_signal<unsigned> aw_rob_id_{"aw_rob_id"};
-    sc_core::sc_signal<bool> b_rsp_ready_out_{"b_rsp_ready_out"};
     sc_core::sc_signal<bool> b_rsp_valid_out_{"b_rsp_valid_out"};
 
     sc_core::sc_signal<bool> ar_rob_ready_out_{"ar_rob_ready_out"};
@@ -314,7 +351,6 @@ private:
     sc_core::sc_signal<bool> ar_rob_req_out_{"ar_rob_req_out"};
     sc_core::sc_signal<unsigned> ar_rob_idx_out_{"ar_rob_idx_out"};
     sc_core::sc_signal<unsigned> ar_rob_id_{"ar_rob_id"};
-    sc_core::sc_signal<bool> r_rsp_ready_out_{"r_rsp_ready_out"};
     sc_core::sc_signal<bool> r_rsp_valid_out_{"r_rsp_valid_out"};
 
     sc_core::sc_signal<axi_req_flit> arb_data_w_{"arb_data_w"};
@@ -664,6 +700,131 @@ private:
     sc_core::sc_signal<bool> arb_locked_{"arb_locked"};
 
     sc_core::sc_signal<unsigned> state_epoch_{"state_epoch", 0};
+};
+
+/// Manager-side response unpacker: the fourth quadrant of the chimney.
+///
+/// `axi_chimney_request` covers manager AXI to the `req` link, and
+/// `axi_chimney_response` covers the whole subordinate side. This closes the
+/// remaining path: a B or R flit arriving on the `rsp` link, back out to the
+/// AXI manager, releasing the reorder-buffer counter on the way.
+///
+/// It is purely combinational, and that is not a simplification. In the frozen
+/// `NoRoB` branch of `hw/floo_rob_wrapper.sv` the response side is a literal
+/// pass-through:
+///
+/// ```systemverilog
+/// assign rsp_ready_o = rsp_ready_i;
+/// assign rsp_valid_o = rsp_valid_i;
+/// assign rsp_o       = rsp_i;
+/// assign pop         = rsp_valid_i && rsp_last_i;
+/// // pop_axi_id_i = rsp_i.id, pop_i = pop && rsp_ready_i
+/// ```
+///
+/// so every register on this path lives in the counter bank, which belongs to
+/// `axi_chimney_request`. This module only decodes the channel and routes the
+/// handshake, mirroring `floo_axi_chimney.sv`:
+///
+/// ```systemverilog
+/// assign axi_valid_in[AxiB]  = EnMgrPort && floo_rsp_in_valid &&
+///                              (unpack_rsp_generic.hdr.axi_ch == AxiB);
+/// assign axi_ready_out[AxiB] = b_rob_ready_out;          // no ATOP in v0
+/// assign floo_rsp_out_ready  = axi_ready_out[unpack_rsp_generic.hdr.axi_ch];
+/// assign b_rob_valid_in      = axi_valid_in[AxiB];       // !is_atop_b_rsp
+/// ```
+///
+/// The manager's own `b_ready`/`r_ready` do **not** pass through here. They go
+/// straight to `axi_chimney_request`'s `i_b_rsp_ready`/`i_r_rsp_ready`, because
+/// the RTL wires `b_rob_ready_in = axi_req_in.b_ready` directly to the reorder
+/// buffer.
+///
+/// **The response ID is not restored here.** By the time a flit reaches the
+/// manager it already carries the original AXI ID: the *subordinate's* chimney
+/// restored it from its retained metadata when it packed the B or R. See
+/// `pack_b`/`pack_r`.
+///
+/// Scope: `EnMgrPort = 1`, no ATOPs, `MaxUniqueIds = 1`. With ATOPs the RTL
+/// adds the `b_sel_atop`/`r_sel_atop` bypass around the reorder buffer, which
+/// is deliberately absent here.
+///
+/// **Verification status: not yet RTL cross-checked.** The rules above are read
+/// off the RTL text; the module they compose is signed, this composition is not.
+class axi_chimney_manager_response : public sc_core::sc_module {
+public:
+    // ---- inbound `rsp` link ---------------------------------------------
+    sc_core::sc_in<axi_rsp_flit> i_rsp_data{"i_rsp_data"};
+    sc_core::sc_in<bool> i_rsp_valid{"i_rsp_valid"};
+    sc_core::sc_out<bool> o_rsp_ready{"o_rsp_ready"};
+
+    // ---- reorder-buffer readiness, from `axi_chimney_request` ------------
+    sc_core::sc_in<bool> i_b_rob_ready{"i_b_rob_ready"};
+    sc_core::sc_in<bool> i_r_rob_ready{"i_r_rob_ready"};
+
+    // ---- counter release, back into `axi_chimney_request` ----------------
+    sc_core::sc_out<bool> o_b_pop{"o_b_pop"};
+    sc_core::sc_out<unsigned> o_b_pop_id{"o_b_pop_id"};
+    sc_core::sc_out<bool> o_r_pop{"o_r_pop"};
+    sc_core::sc_out<unsigned> o_r_pop_id{"o_r_pop_id"};
+    /// `RLAST`, which decides whether this beat releases the counter. Kept
+    /// separate from `o_r_pop` rather than folded into it, because the RTL
+    /// keeps `rsp_valid_i` raw and qualifies the pop inside the reorder buffer
+    /// with `rsp_last_i`. Gating the valid instead would also suppress the
+    /// buffer's `rsp_valid_o` pass-through on non-final beats.
+    sc_core::sc_out<bool> o_r_pop_last{"o_r_pop_last"};
+
+    // ---- AXI manager port, response side ---------------------------------
+    sc_core::sc_out<axi_b_chan> o_axi_b{"o_axi_b"};
+    sc_core::sc_out<bool> o_axi_b_valid{"o_axi_b_valid"};
+    sc_core::sc_out<axi_r_chan> o_axi_r{"o_axi_r"};
+    sc_core::sc_out<bool> o_axi_r_valid{"o_axi_r_valid"};
+
+    SC_HAS_PROCESS(axi_chimney_manager_response);
+
+    explicit axi_chimney_manager_response(sc_core::sc_module_name name)
+        : sc_core::sc_module(name)
+    {
+        SC_METHOD(comb);
+        sensitive << i_rsp_data << i_rsp_valid << i_b_rob_ready
+                  << i_r_rob_ready;
+    }
+
+private:
+    void comb()
+    {
+        const axi_rsp_flit flit = i_rsp_data.read();
+        const bool valid = i_rsp_valid.read();
+        const auto channel =
+            static_cast<axi_channel>(flit.hdr.axi_ch.to_uint());
+
+        const bool is_b = valid && channel == axi_channel::b;
+        const bool is_r = valid && channel == axi_channel::r;
+
+        o_axi_b.write(flit.b);
+        o_axi_b_valid.write(is_b);
+        o_axi_r.write(flit.r);
+        o_axi_r_valid.write(is_r);
+
+        // `pop_axi_id_i = rsp_i.id`: the counter is released by the id the
+        // response carries, which is the manager's own id. The gate applies the
+        // `&& rsp_ready_i` handshake itself, so this is the raw valid.
+        o_b_pop.write(is_b);
+        o_b_pop_id.write(static_cast<unsigned>(flit.b.id));
+        o_r_pop.write(is_r);
+        o_r_pop_id.write(static_cast<unsigned>(flit.r.id));
+        // A burst releases its counter once, on `RLAST`.
+        o_r_pop_last.write(flit.r.last);
+
+        // `floo_rsp_out_ready = axi_ready_out[hdr.axi_ch]`. A flit naming any
+        // other channel is not something the `rsp` link carries, so it is
+        // refused rather than silently accepted.
+        bool ready = false;
+        if (channel == axi_channel::b) {
+            ready = i_b_rob_ready.read();
+        } else if (channel == axi_channel::r) {
+            ready = i_r_rob_ready.read();
+        }
+        o_rsp_ready.write(ready);
+    }
 };
 
 } // namespace floo::model

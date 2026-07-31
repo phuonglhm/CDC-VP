@@ -9,9 +9,11 @@
 // What is RTL-signed underneath: the routers (214 cycles), their input FIFOs
 // (133 cycles), the wormhole arbiters (152 cycles), flit assembly (16 + 8
 // flits), the `NoRoB` ordering rule (127 cycles), and the chimney request
-// path's timing (141 cycles). What is not: the endpoint transactors, which
-// have no RTL counterpart, and inter-node timing, which needs a mesh-level
-// cross-check against the FlooGen-generated top.
+// path's timing (141 cycles), the chimney's subordinate side (221 cycles), and
+// inter-node timing (1872 node-cycles, against a grid of the frozen
+// `floo_axi_router`). What is not: the endpoint transactors, which have no RTL
+// counterpart, and the manager-side response unpacker, whose cross-check is
+// Step A-1.
 //
 // The latency checks below are deliberately *structural* rather than exact.
 // Every router registers its input (`InFifoDepth = 2`, a spill register), so a
@@ -206,7 +208,7 @@ int sc_main(int, char**)
     write.id = 1;
     write.addr = 0x8000'0040;
     write.data = {0xDEAD'BEEF};
-    write.strb = 0xFF;
+    write.strb = {0xFF};  // one beat, every lane enabled
     check(manager.offer(write), "the manager must accept the write");
     step(60);
 

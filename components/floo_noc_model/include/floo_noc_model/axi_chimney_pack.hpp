@@ -32,8 +32,14 @@
 //   run_chimney_timing_crosscheck.sh  141 cycles exact, request path, under
 //                                     AW/W/AR contention and back-pressure
 //
-// Content and request-path timing are therefore signed. The chimney's
-// *response*-path timing and its subordinate side are not.
+// Content and request-path timing are signed, and so is the subordinate side
+// including response generation:
+//
+//   run_chimney_rsp_timing_crosscheck.sh  221 cycles exact
+//
+// What is *not* signed is the manager-side response unpacker
+// (`axi_chimney_manager_response`), and therefore not the composed
+// manager-AXI-to-subordinate-AXI path either. Step A-1.
 
 #pragma once
 

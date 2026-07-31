@@ -24,17 +24,28 @@ With real firmware, which is what the platform exists to run:
 export PATH=/opt/toolchains/riscv-none-elf/bin:$PATH
 make -C fw/dma_riscv clean
 make -C fw/dma_riscv EXTRA_CFLAGS=-DDMA_BASE=0x10060000u
-./build/platforms/noc_soc/noc_soc --fw fw/dma_riscv/dma_test.elf --sim-us 500
+./build/platforms/noc_soc/noc_soc --fw fw/dma_riscv/dma_test.elf --sim-us 2000
 ```
 
-It must print `DMA PASS`. Two things about that build line:
+It must print `DMA PASS`. These are the **manual** commands. The automated regression
+(`platforms/noc_soc/tests/run_firmware_regression.sh`) does not use them: it
+builds the firmware in a private copy of its sources under its own log
+directory, so it needs no in-source `make clean`, leaves the working tree
+untouched, and two runs cannot collide. Build by hand like this only when
+driving the platform yourself.
+
+Two things about that build line:
 
 - The `DMA_BASE` override is required. `fw/dma_riscv` defaults to the
   `VP_FX1_Full_SoC` address; here DMA0 is at `0x1006_0000` per
   `docs/peripheral_memory_map.md`.
 - `make clean` first. The firmware Makefile depends only on its sources, so
   changing `EXTRA_CFLAGS` alone will not retrigger the link and you will silently
-  run a stale ELF against the wrong DMA base.
+  run a stale ELF against the wrong DMA base. The automated regression sidesteps
+  this by building in a fresh copy.
+- `--sim-us 2000`, not 500. The workload needs about 563 µs of modelled time
+  since the wrapper began spending the caller's annotated delay; the margin is
+  there to stop a hang, not to assert a performance figure.
 
 ## What is on it
 
@@ -112,17 +123,27 @@ floorplan.**
 With firmware, this is the number the platform exists to produce:
 
 ```text
-  CPU pc 0x8000047a, retired 10726 instructions in 330704 ns
-  30.832 ns per instruction, fetching from RAM over the mesh
-  (measured over the 330704 ns the CPU was retiring; it then idled until 3000704 ns)
+  CPU pc 0x8000047a, retired 10726 instructions in 563183 ns
+  52.506 ns per instruction, fetching from RAM over the mesh
+  (measured over the 563183 ns the CPU was retiring; it then idled until 1500683 ns)
 ```
 
-**About 30 ns per instruction**, every fetch crossing the mesh. It is stable
-against `--sim-us` — 29.7 at 200 µs, 30.4 at 1000, 30.8 at 3000 — because the
-figure is measured over the window in which the CPU was actually retiring.
-Firmware ends in `wfi`, so charging the whole run to its instructions made the
-same workload look like 29.7, 93.3 and 279.8 ns depending only on how long the
-simulation was left running.
+**About 52 ns per instruction**, every fetch crossing the mesh, measured over
+the window in which the CPU was actually retiring. Firmware ends in `wfi`, so
+charging the whole run to its instructions would make the same workload look
+slower the longer the simulation is left running.
+
+**This figure was 30.8 ns until 2026-07-30, and the change is a correction, not
+a regression.** The same 10,726 instructions now take 563 µs of modelled time
+instead of 331 µs, because the wrapper stopped discarding the caller's annotated
+`delay`. A temporally decoupled ISS runs ahead and passes the time it has
+already consumed; the old wrapper threw that away, so each transaction began
+earlier than the CPU believed and the CPU's own execution time was never spent
+at all. The old number measured the network and nothing else. The new one
+includes both.
+
+Anything quoting ~30 ns per instruction predates that fix, including the
+calibration baseline in the fast-mode plan.
 
 Without `--fw` the platform preloads a `jal x0, 0` spin loop into the first 8 KiB
 of both RAM and the boot ROM, so the CPU runs from `0x80000000` and reports about
@@ -164,21 +185,37 @@ not. Keep every synthetic RAM access in that page.
 
 ## Accuracy
 
-RTL-signed against frozen FlooNoC revision `9a6972a`, cycle for cycle: the
-routers and their FIFOs, the wormhole arbiters, both chimney directions, the
-`NoRoB` ordering rule, and inter-node timing. See
+Eleven blocks are RTL-signed against frozen FlooNoC revision `9a6972a`, cycle
+for cycle: the routers and their FIFOs, the wormhole arbiters, the chimney's
+request path (141 cycles) and its subordinate side (221 cycles), the `NoRoB`
+ordering rule, and inter-node timing. The manager-side response unpacker is
+**not** among them — it is implemented and unit-tested, and its cross-check is
+Step A-1. See
 `components/floo_noc_model/docs/STATUS.md` for the evidence and the negative
 controls behind each.
 
-Not signed, and not signable: the endpoint transactors that turn a TLM payload
-into AXI. They have no RTL counterpart.
+**Read that as eleven isolated proofs, not as a signed platform.** What this
+platform runs is `noc_interconnect` over `axi_noc`, which composes the
+combinational flit-assembly rules with abstract AXI endpoint transactors. The
+*timed* chimney that scored 141 and 221 cycles is a separate class
+(`axi_chimney.hpp`) instantiated only by its trace runners, not by anything
+here. So the latency numbers above contain signed mesh timing but the path as a
+whole is not RTL-equivalent, and the transactors and wrapper have no RTL
+counterpart to sign against.
 
-Two behaviours that are the frozen configuration's real behaviour rather than
-modelling shortcuts:
+Three behaviours to keep straight, because two of them are often misattributed:
 
-- **One AXI ID per upstream port**, because `MaxUniqueIds = 1` makes the
-  chimney's response metadata a plain in-order FIFO. A port's transactions are
-  serialised.
+- **One transaction in flight per upstream port** — this is the *wrapper's*
+  limit, not the RTL's. `noc_interconnect` keeps one waiter and one `port_busy`
+  bit per port. The frozen `MaxUniqueIds = 1` branch of `floo_meta_buffer.sv`
+  has read and write metadata FIFOs of depth `MaxTxns = 32` and imposes no such
+  limit.
+- **One AXI ID per upstream port** — but note what `MaxUniqueIds = 1` actually
+  constrains. It governs the *downstream reissued* IDs: the chimney reissues all
+  non-atomic traffic under one ID and keeps response metadata in a plain
+  in-order FIFO with no ID matching, so responses must come back in request
+  order. That the wrapper also presents a single *input* ID upstream is wrapper
+  policy, not something the parameter forces.
 - **`b_transport` spends simulated time** rather than annotating `delay`. A
   caller relying on temporal decoupling will find its quantum consumed.
 
@@ -190,17 +227,22 @@ modelling shortcuts:
 - **PMU0**, whose ~20-signal power-sequencing environment is not reproduced.
 Not on this list any more: the DMA's descriptor traffic. `fw/dma_riscv` programs
 a real transfer and reaches `DMA PASS` over the mesh, so CPU and DMA do contend
-for the same links. The measured answer is that it barely matters —
-`MaxUniqueIds = 1` gives each manager one transaction in flight, so three
-managers cannot congest a 4x4 mesh and the worst observed cost is +9 cycles. A
-congestion study needs `MaxUniqueIds > 1` or many more masters.
+for the same links. The worst observed cost is **+9 cycles**.
+
+Do not read that as "a 4x4 FlooNoC cannot congest". It is a result for *this
+wrapper* with three masters on *this* workload, and the dominant reason is the
+one-transaction-per-port limit in `noc_interconnect` described above — not the
+RTL. Generating real congestion means giving the wrapper concurrent outstanding
+transactions, which is a wrapper change, and only then deciding whether
+`MaxUniqueIds > 1` is also required. The two are separate decisions.
 
 ## Known gaps
 
-- **The firmware run is not automated.** Build and run it by hand, per the
-  commands above. There is no CTest that would catch a regression in it, which is
-  exactly how the `kSurveyScratch` corruption survived 28 passing component
-  tests.
+- ~~The firmware run is not automated.~~ It is, as of 2026-07-30:
+  `tests/run_firmware_regression.sh`, registered as
+  `noc_soc_firmware_regression` under `CDC_BUILD_TESTS`. It runs both images and
+  is validated by three negative controls, including a reintroduction of the
+  `kSurveyScratch` corruption.
 - **Clock gating is not proven.** `noc_interconnect::network_idle()` decides
   from its own bookkeeping, not from mesh state — `floo_mesh` does not export
   router occupancy or lock state upward. See `AI_HANDOFF_CONTEXT.md` section

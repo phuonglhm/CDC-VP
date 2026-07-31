@@ -1,5 +1,20 @@
 # Báo cáo tổng hợp xây dựng mô hình FlooNoC SystemC/TLM
 
+> **BẢN GHI LỊCH SỬ — chụp tại thời điểm trước Step 9 / 9.2.**
+>
+> Tài liệu này giữ nguyên như lúc viết và **không** được cập nhật theo tiến độ
+> sau đó. Nhiều phát biểu trong đây nay đã sai, cụ thể:
+>
+> - gọi mô hình là *cycle-approximate*: hiện 11 block đã RTL-signed;
+> - nói inter-node timing là ước lượng: nay đã cross-check 1872 node-cycle;
+> - bảng trace route-select in `cycle,route,locked`: nay có cả pre-edge và
+>   post-edge;
+> - `OutFifoDepth` mô tả là disabled: giá trị đúng của cấu hình frozen là 2.
+>
+> Giữ lại vì nó ghi *đã biết được điều gì vào lúc nào*, và một vài kết luận ở
+> đây chỉ đúng trong bối cảnh đó. Trạng thái hiện tại luôn lấy từ
+> `docs/STATUS.md` và `docs/AI_HANDOFF_CONTEXT.md`.
+
 ## 1. Thông tin chung
 
 - Tên hạng mục: Mô hình FlooNoC mức cycle-approximate bằng SystemC/TLM.
@@ -277,7 +292,9 @@ model làm cả hai: `UseIdTable = 1` tra system address map (như
 `floogen/examples/axi_mesh_xy.yml`); `UseIdTable = 0` trích toạ độ từ trường bit
 của địa chỉ (như `hw/test/floo_test_pkg.sv`).
 
-**Trạng thái kiểm chứng: ĐÃ RTL-signed cả hai chiều.**
+**Trạng thái kiểm chứng (bản ghi lịch sử — xem banner đầu file).** Tại thời
+điểm viết: request path và subordinate side đã RTL-signed. Manager-side
+response unpacker **chưa** signed; cross-check của nó là Step A-1.
 
 - Request path: 16 flit khớp chính xác.
 - Response path: 8 flit khớp chính xác, với 3 giao dịch outstanding mỗi batch.

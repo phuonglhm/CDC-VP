@@ -233,6 +233,24 @@ void run(const std::vector<stimulus>& stimuli, std::ostream& trace)
     dut.i_b_pop_id(b_pop_id);
     dut.i_r_pop(r_pop);
     dut.i_r_pop_id(r_pop_id);
+    // This harness holds the response link idle, so `r_pop` never asserts and
+    // `i_r_pop_last` is a don't-care. It is tied high because that is what the
+    // module used internally before RLAST was routed properly, which keeps the
+    // 141-cycle trace bit-identical.
+    sc_core::sc_signal<bool> r_pop_last{"r_pop_last", true};
+    dut.i_r_pop_last(r_pop_last);
+
+    // The reorder buffers' response side became visible when the manager-side
+    // unpacker was added. Holding the manager's B/R ready high is exactly what
+    // this module did internally before, so the trace must not move: that is
+    // what re-running this cross-check proves.
+    sc_core::sc_signal<bool> manager_rsp_ready{"manager_rsp_ready", true};
+    sc_core::sc_signal<bool> b_rob_ready{"b_rob_ready"};
+    sc_core::sc_signal<bool> r_rob_ready{"r_rob_ready"};
+    dut.i_b_rsp_ready(manager_rsp_ready);
+    dut.i_r_rsp_ready(manager_rsp_ready);
+    dut.o_b_rsp_ready(b_rob_ready);
+    dut.o_r_rsp_ready(r_rob_ready);
 
     trace << "cycle,"
              "pre_aw_ready,pre_w_ready,pre_ar_ready,pre_req_valid,"

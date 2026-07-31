@@ -529,20 +529,30 @@ private:
                       << "  difference " << mean_delta << " cycles on average, "
                       << worst_delta << " at worst\n";
             if (busy_cycles_max <= quiet_cycles) {
-                // Not a broken measurement — a structural result, and the more
-                // useful one. `MaxUniqueIds = 1` makes the chimney's response
-                // metadata an in-order FIFO, so each manager has at most one
-                // transaction in flight. Three masters with one request each
-                // cannot queue behind one another on a 4x4 mesh however much
-                // data they move: the links are idle between round trips.
+                // Not a broken measurement, but be precise about the cause.
+                //
+                // The one-transaction-per-port limit is the *wrapper's*:
+                // `noc_interconnect` keeps one waiter and one `port_busy` bit
+                // per upstream port. It is not what `MaxUniqueIds = 1` does —
+                // that selects an in-order metadata FIFO with no ID matching,
+                // whose depth is `MaxTxns = 32`, and it constrains response
+                // *ordering*, not the number of outstanding requests.
+                //
+                // So this figure describes this wrapper on this workload. It is
+                // not a property of FlooNoC, and not evidence that a 4x4 mesh
+                // cannot congest.
                 std::cout << "  no contention at this load, and it is not a "
-                             "measurement artefact:\n"
-                             "  MaxUniqueIds = 1 allows one outstanding "
-                             "transaction per manager, so\n"
-                             "  three masters cannot saturate a 4x4 mesh. "
-                             "Congestion needs either\n"
-                             "  multiple outstanding transactions per master or "
-                             "many more masters.\n";
+                             "measurement artefact.\n"
+                             "  Cause: this wrapper allows one transaction in "
+                             "flight per upstream port\n"
+                             "  (one waiter plus port_busy). The RTL does not: "
+                             "MaxUniqueIds = 1 selects an\n"
+                             "  in-order metadata FIFO of depth MaxTxns = 32 "
+                             "and constrains response\n"
+                             "  ordering, not outstanding count. This is a "
+                             "result for this wrapper and\n"
+                             "  workload, not proof that a 4x4 FlooNoC cannot "
+                             "congest.\n";
             }
         if (!dma_ok) {
             throw std::runtime_error("noc_soc: the DMA transfer did not verify");
@@ -806,8 +816,17 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         probe.sim_us = sim_microseconds;
 
         // ── Downstream map. The node is the new argument versus `bus_router`.
-        noc.add_target(kRamBase, kRamSize, kRamNode).bind(ram.socket);
-        noc.add_target(kBootromBase, kBootromSize, kBootNode).bind(bootrom.socket);
+        noc.add_target(kRamBase, kRamSize, kRamNode,
+                       cdc::components::noc_interconnect::target_kind::memory)
+        .bind(ram.socket);
+        // RAM and the boot ROM are the only memory-like targets: they hold
+        // instructions, and a compressed RISC-V fetch is a 4-byte read at a
+        // 2-byte boundary, which AXI widens to a whole beat. Every MMIO target
+        // keeps the default `mmio` kind, so a widened read to one is refused
+        // rather than silently touching a neighbouring register.
+        noc.add_target(kBootromBase, kBootromSize, kBootNode,
+                       cdc::components::noc_interconnect::target_kind::memory)
+            .bind(bootrom.socket);
         noc.add_target(kClintBase, kClintSize, kUart0Node).bind(clint.socket);
         noc.add_target(kPlicBase, kPlicSize, kBootNode).bind(plic.socket);
         noc.add_target(kUart0, kMmio, kUart0Node).bind(uart0.bus);

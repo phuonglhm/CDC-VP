@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Platform-level regression for `noc_soc`: build the SoC-map DMA firmware, run
+# it over the cycle-stepped FlooNoC interconnect, and require it to complete.
+#
+# Why this exists. The component tests in `components/floo_noc_model` cannot
+# cover a platform, and they demonstrably did not: the synthetic survey once
+# wrote inside the firmware's `.text` and overwrote live instructions, and every
+# component test still passed. A stale platform binary produces the same class
+# of symptom. Both are caught here in seconds.
+#
+# Two runs, and they are **not** two firmware images:
+#
+#   1. `--fw`, the real thing. A RISC-V CPU fetching over the mesh, programming
+#      DMA0 and touching peripherals. It must reach `DMA PASS`.
+#   2. no `--fw`, the platform's built-in synthetic survey. It must reach
+#      `result all bytes match`.
+#
+# Run 2 is a **substitute smoke path with reduced and different coverage**, not
+# a second firmware image. It exercises the interconnect and the memory path
+# from the platform's own traffic generator, with no CPU workload, no DMA
+# programming and no interrupt path. It is here because it is nearly free and
+# catches gross interconnect breakage quickly.
+#
+# Reading the pair: a failure in 1 but not 2 is *evidence towards* a fault in
+# the CPU, DMA or firmware-integration path rather than the interconnect, and a
+# failure in both points at the interconnect or memory. That is a hint for
+# where to look first, **not** a decision procedure — the two runs share almost
+# all of the interconnect, so run 2 passing does not clear it. Anyone who wants
+# a real separation needs a dedicated CPU alignment/readback image, which does
+# not exist yet.
+#
+# Exit codes: 0 pass, 1 fail, 77 skipped (CTest's SKIP_RETURN_CODE) when the
+# RISC-V toolchain is absent. Skipping is deliberate — a machine without the
+# cross-compiler should not report a red test it cannot possibly run.
+
+set -u -o pipefail
+
+readonly SKIP=77
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+platform_dir="$(cd "${script_dir}/.." && pwd)"
+repo_root="$(cd "${platform_dir}/../.." && pwd)"
+
+noc_soc_bin="${NOC_SOC_BIN:-}"
+fw_dir="${repo_root}/fw/dma_riscv"
+config="${platform_dir}/configs/default.yaml"
+# A unique directory per run unless one is named explicitly. A fixed default
+# means two concurrent runs — a developer and a CI job, or two CTest jobs —
+# overwrite each other's evidence, and the surviving log belongs to neither.
+if [[ -n "${LOG_DIR:-}" ]]; then
+    log_dir="${LOG_DIR}"
+    mkdir -p "${log_dir}"
+else
+    log_dir="$(mktemp -d "${TMPDIR:-/tmp}/noc_soc_firmware_regression.XXXXXX")"
+fi
+
+# The firmware is built in a private copy of its sources, never in the
+# repository. The Makefile builds in-source, so building here directly would
+# race any concurrent run over the same `dma_test.elf`, and would leave the
+# working tree dirty after a test.
+fw_build_dir="${log_dir}/fw"
+
+# `noc_soc` follows docs/peripheral_memory_map.md; `fw/dma_riscv` defaults to the
+# VP_FX1_Full_SoC address, so the base must be overridden.
+readonly dma_base=0x10060000u
+# Derived, never written twice: two constants that must agree are two constants
+# that will eventually disagree, and the resulting failure would read as "the
+# override did not take effect" when the truth is that this file contradicts
+# itself.
+readonly dma_base_value="${dma_base%u}"
+
+# Every run is bounded. A hang must fail with a message, never wedge the suite.
+readonly run_timeout=300
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# ── locate the binary ────────────────────────────────────────────────────────
+if [[ -z "${noc_soc_bin}" ]]; then
+  for candidate in \
+      "${repo_root}/build/platforms/noc_soc/noc_soc" \
+      "${platform_dir}/noc_soc"; do
+    [[ -x "${candidate}" ]] && { noc_soc_bin="${candidate}"; break; }
+  done
+fi
+[[ -x "${noc_soc_bin:-}" ]] || fail "noc_soc binary not found; set NOC_SOC_BIN"
+
+# ── locate the toolchain ─────────────────────────────────────────────────────
+if ! command -v riscv-none-elf-gcc >/dev/null 2>&1; then
+  if [[ -x /opt/toolchains/riscv-none-elf/bin/riscv-none-elf-gcc ]]; then
+    export PATH="/opt/toolchains/riscv-none-elf/bin:${PATH}"
+  else
+    echo "SKIP: riscv-none-elf-gcc not found; cannot build the firmware." >&2
+    exit "${SKIP}"
+  fi
+fi
+
+mkdir -p "${log_dir}"
+
+# ── build the firmware, in a private copy of its sources ────────────────────
+#
+# Never in the repository. The firmware Makefile builds in-source, so building
+# there would race any concurrent run over the same `dma_test.elf` and would
+# leave the working tree dirty after a test. Copying also removes the need for
+# an in-source `make clean`, which was the previous way of guaranteeing the
+# EXTRA_CFLAGS override actually retriggered the link.
+build_log="${log_dir}/firmware_build.log"
+mkdir -p "${fw_build_dir}"
+cp -r "${fw_dir}/." "${fw_build_dir}/" 2>/dev/null \
+  || fail "could not copy the firmware sources to ${fw_build_dir}"
+# An ELF carried over from an earlier in-source build is linked against
+# whatever base that build used, and is not what this run is testing.
+rm -f "${fw_build_dir}/dma_test.elf" "${fw_build_dir}/dma_test.dis"
+
+if ! make -C "${fw_build_dir}" EXTRA_CFLAGS="-DDMA_BASE=${dma_base}" \
+      >"${build_log}" 2>&1; then
+  echo "--- firmware build log ---" >&2
+  cat "${build_log}" >&2
+  fail "firmware build failed (log kept at ${build_log})"
+fi
+
+elf="${fw_build_dir}/dma_test.elf"
+[[ -f "${elf}" ]] || fail "firmware build produced no ${elf}"
+
+# Prove the override reached the binary, deterministically.
+#
+# The firmware exports `__fw_dma_base`, an absolute symbol whose address *is*
+# the configured base, so `nm` answers the question exactly. An earlier version
+# grepped the disassembly for the substring `10060`, which matches any
+# incidental occurrence — a stack offset, an unrelated constant, a byte pair
+# inside a larger literal — and proves nothing about which base the code uses.
+#
+# The proof is **mandatory**. It used to be wrapped in
+# `if command -v riscv-none-elf-nm`, so a machine with the compiler but without
+# `nm` ran the whole platform and reported a pass while the one deterministic
+# piece of evidence had been skipped. Either the proof happens or the run does
+# not claim to have made it.
+if ! command -v riscv-none-elf-nm >/dev/null 2>&1; then
+  echo "SKIP: riscv-none-elf-nm not found. The DMA-base proof cannot be made," >&2
+  echo "      and this test does not run the platform without it: a pass that" >&2
+  echo "      skipped its own evidence is worse than no result." >&2
+  exit "${SKIP}"
+fi
+
+actual_base="$(riscv-none-elf-nm "${elf}" \
+  | awk '$3 == "__fw_dma_base" { print $1 }')"
+if [[ -z "${actual_base}" ]]; then
+  fail "the ELF exports no __fw_dma_base symbol; the firmware sources are" \
+       "older than this test expects"
+fi
+expected_base="$(printf '%08x' "$((dma_base_value))")"
+if [[ "${actual_base}" != "${expected_base}" ]]; then
+  fail "the ELF was built for DMA base 0x${actual_base}, expected" \
+       "0x${expected_base}: the EXTRA_CFLAGS override did not take effect"
+fi
+echo "  DMA base proved from the ELF: 0x${actual_base}"
+
+# ── run one image and check it ───────────────────────────────────────────────
+# $1 label, $2 log file, $3 the string that must be present, rest: extra args
+run_image() {
+  local label="$1" log="$2" required="$3"
+  shift 3
+
+  timeout --kill-after=10 "${run_timeout}" \
+    "${noc_soc_bin}" -c "${config}" "$@" >"${log}" 2>&1
+  local status=$?
+
+  if [[ ${status} -eq 124 || ${status} -eq 137 ]]; then
+    echo "--- ${label} log (tail) ---" >&2; tail -40 "${log}" >&2
+    fail "${label}: timed out after ${run_timeout}s (log kept at ${log})"
+  fi
+  if [[ ${status} -ne 0 ]]; then
+    echo "--- ${label} log (tail) ---" >&2; tail -40 "${log}" >&2
+    fail "${label}: exited ${status} (log kept at ${log})"
+  fi
+
+  if ! grep -q "${required}" "${log}"; then
+    echo "--- ${label} log (tail) ---" >&2; tail -40 "${log}" >&2
+    fail "${label}: '${required}' not found (log kept at ${log})"
+  fi
+
+  # Symptoms that do not change the exit code but mean the run is worthless.
+  # `\([EW][0-9]{3}\)` is SystemC's parenthesised report id, as in `Error: (E549)`.
+  # Matching the bare digits instead would false-positive on any hex address
+  # that happens to contain them.
+  local pattern
+  for pattern in 'Taking trap' '\[PC\] trapped' 'Error:' '\([EW][0-9]{3}\)' \
+                 'mismatch' 'FAIL'; do
+    if grep -Eq "${pattern}" "${log}"; then
+      echo "--- ${label} log (tail) ---" >&2; tail -40 "${log}" >&2
+      fail "${label}: log contains '${pattern}' (log kept at ${log})"
+    fi
+  done
+
+  # A CPU parked at zero retired nothing useful, whatever else the log says.
+  if grep -Eq 'CPU pc 0x0\b' "${log}"; then
+    echo "--- ${label} log (tail) ---" >&2; tail -40 "${log}" >&2
+    fail "${label}: CPU ended at PC 0 (log kept at ${log})"
+  fi
+
+  echo "  ${label}: PASS"
+}
+
+echo "noc_soc firmware regression"
+echo "  binary:   ${noc_soc_bin}"
+echo "  firmware: ${elf}"
+
+# 2000 µs, not 500. The workload needs about 563 µs of modelled time since the
+# wrapper began spending the caller's annotated delay instead of discarding it
+# (see the delay contract in `noc_interconnect.h`); before that it fitted in
+# ~331 µs. The margin is deliberate — this bound exists to stop a hang, not to
+# assert a performance figure, and a bound tight enough to fail on a timing
+# change is a bound that will keep failing for the wrong reason.
+run_image "firmware (--fw, DMA transfer)" "${log_dir}/firmware.log" \
+          'DMA PASS' --fw "${elf}" --sim-us 2000
+
+run_image "synthetic survey (no --fw)" "${log_dir}/survey.log" \
+          'result   all bytes match' --sim-us 200
+
+echo "noc_soc firmware regression PASS"

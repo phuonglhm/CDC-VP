@@ -34,3 +34,17 @@ add_custom_command(TARGET noc_soc POST_BUILD
 
 cdc_make_portable(noc_soc)
 cdc_package_platform(noc_soc)
+
+# Platform-level regression. The component tests in `components/floo_noc_model`
+# cannot cover this level and demonstrably did not: a synthetic write into the
+# firmware's `.text` once passed all of them. Skips (77) rather than fails when
+# the RISC-V cross-compiler is absent.
+if(CDC_BUILD_TESTS)
+    add_test(
+        NAME noc_soc_firmware_regression
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_firmware_regression.sh)
+    set_tests_properties(noc_soc_firmware_regression PROPERTIES
+        ENVIRONMENT "NOC_SOC_BIN=$<TARGET_FILE:noc_soc>"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+endif()

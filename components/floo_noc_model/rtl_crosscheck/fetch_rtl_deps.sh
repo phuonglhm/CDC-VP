@@ -7,8 +7,23 @@
 # silent upstream force-push can pass unnoticed.
 #
 # This script is not a Bender replacement. It only materialises the exact
-# locked revisions that the current cross-checks need, and it never rewrites
-# dependency sources.
+# locked revisions that the current cross-checks need.
+#
+# ## It verifies before it writes
+#
+# An already-correct checkout is verified **read-only**: revision and every
+# per-file SHA-256 are checked, and nothing is written. The `git checkout` runs
+# only when materialisation is actually needed.
+#
+# That matters for three reasons the previous unconditional checkout got wrong:
+# it required write access to a tree that was already correct; it wrote Git
+# metadata on every cross-check run; and two runners starting together raced on
+# `index.lock`, so a parallel cross-check could fail for a reason that had
+# nothing to do with the RTL.
+#
+# When materialisation *is* needed, a lock serialises it. The lock is held only
+# across the checkout, not across verification, so the common case takes no lock
+# at all.
 
 set -euo pipefail
 
@@ -60,38 +75,91 @@ fi
 common_cells_dir="$deps_root/common_cells"
 mkdir -p "$deps_root"
 
-if [[ ! -d "$common_cells_dir/.git" ]]; then
-  echo "fetching common_cells $frozen_common_cells_version"
-  git clone --quiet --filter=blob:none --no-checkout \
-    "$common_cells_url" "$common_cells_dir"
-fi
+# Verify without writing. Returns 0 when the checkout is already exactly right.
+verify_common_cells() {
+  local quiet="${1:-}"
+  [[ -d "$common_cells_dir/.git" ]] || return 1
+  local head
+  head="$(git -C "$common_cells_dir" rev-parse HEAD 2>/dev/null)" || return 1
+  [[ "$head" == "$frozen_common_cells_rev" ]] || return 1
 
-if ! git -C "$common_cells_dir" cat-file -e "$frozen_common_cells_rev^{commit}" 2>/dev/null; then
-  git -C "$common_cells_dir" fetch --quiet origin "$frozen_common_cells_rev"
-fi
+  while read -r expected_sha file; do
+    [[ -n "$file" ]] || continue
+    if [[ ! -f "$common_cells_dir/$file" ]]; then
+      [[ -n "$quiet" ]] || echo "missing dependency source: $common_cells_dir/$file" >&2
+      return 1
+    fi
+    local actual_sha
+    actual_sha="$(sha256sum "$common_cells_dir/$file" | cut -d ' ' -f 1)"
+    if [[ "$actual_sha" != "$expected_sha" ]]; then
+      if [[ -z "$quiet" ]]; then
+        echo "common_cells/$file does not match the frozen revision." >&2
+        echo "actual SHA-256:   $actual_sha" >&2
+        echo "expected SHA-256: $expected_sha" >&2
+      fi
+      return 1
+    fi
+  done <<< "$frozen_common_cells_hashes"
+  return 0
+}
 
-git -C "$common_cells_dir" checkout --quiet --detach "$frozen_common_cells_rev"
-
-actual_rev="$(git -C "$common_cells_dir" rev-parse HEAD)"
-if [[ "$actual_rev" != "$frozen_common_cells_rev" ]]; then
-  echo "common_cells checkout is $actual_rev, expected $frozen_common_cells_rev" >&2
-  exit 2
-fi
-
-while read -r expected_sha file; do
-  [[ -n "$file" ]] || continue
-  if [[ ! -f "$common_cells_dir/$file" ]]; then
-    echo "missing dependency source: $common_cells_dir/$file" >&2
+if ! verify_common_cells quiet; then
+  # Materialisation is needed. Serialise it: several cross-check runners
+  # starting together would otherwise race on Git's index lock.
+  lock_file_path="$deps_root/.common_cells.lock"
+  exec {lock_fd}>"$lock_file_path"
+  if ! flock --timeout 300 "$lock_fd"; then
+    echo "timed out after 300s waiting for $lock_file_path" >&2
+    echo "another cross-check may be materialising the dependency; if none is," >&2
+    echo "remove that file and retry." >&2
     exit 2
   fi
-  actual_sha="$(sha256sum "$common_cells_dir/$file" | cut -d ' ' -f 1)"
-  if [[ "$actual_sha" != "$expected_sha" ]]; then
-    echo "common_cells/$file does not match the frozen revision." >&2
-    echo "actual SHA-256:   $actual_sha" >&2
-    echo "expected SHA-256: $expected_sha" >&2
+
+  # Another runner may have done the work while this one waited.
+  if ! verify_common_cells quiet; then
+    if [[ -d "$common_cells_dir/.git" ]] \
+       && [[ -n "$(git -C "$common_cells_dir" status --porcelain 2>/dev/null)" ]]; then
+      echo "$common_cells_dir has local modifications; refusing to overwrite." >&2
+      echo "Inspect it, then remove or clean it and rerun." >&2
+      exit 2
+    fi
+
+    if [[ ! -d "$common_cells_dir/.git" ]]; then
+      echo "fetching common_cells $frozen_common_cells_version"
+      if ! git clone --quiet --filter=blob:none --no-checkout \
+             "$common_cells_url" "$common_cells_dir"; then
+        echo "could not clone $common_cells_url." >&2
+        echo "This step needs network access once; afterwards it is offline." >&2
+        echo "Set FLOO_RTL_DEPS_ROOT to a directory that already has it to" >&2
+        echo "skip fetching entirely." >&2
+        exit 2
+      fi
+    fi
+
+    if ! git -C "$common_cells_dir" cat-file -e \
+           "$frozen_common_cells_rev^{commit}" 2>/dev/null; then
+      if ! git -C "$common_cells_dir" fetch --quiet origin \
+             "$frozen_common_cells_rev"; then
+        echo "could not fetch $frozen_common_cells_rev from $common_cells_url." >&2
+        echo "This step needs network access; the revision is not present" >&2
+        echo "locally." >&2
+        exit 2
+      fi
+    fi
+
+    git -C "$common_cells_dir" checkout --quiet --detach "$frozen_common_cells_rev"
+  fi
+
+  flock -u "$lock_fd"
+  exec {lock_fd}>&-
+
+  # Whatever happened above, the result has to satisfy the same checks. This
+  # pass reports precisely which file or revision is wrong.
+  if ! verify_common_cells; then
+    echo "common_cells could not be materialised at $frozen_common_cells_rev" >&2
     exit 2
   fi
-done <<< "$frozen_common_cells_hashes"
+fi
 
 echo "common_cells $frozen_common_cells_version @ ${frozen_common_cells_rev:0:7} verified"
 echo "COMMON_CELLS_ROOT=$common_cells_dir"

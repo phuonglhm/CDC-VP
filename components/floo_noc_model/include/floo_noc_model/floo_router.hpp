@@ -59,14 +59,18 @@ public:
 
     explicit floo_router(sc_core::sc_module_name name)
         : sc_core::sc_module(name)
-        , input_fifos_("input_fifos", num_ports)
-        , route_selectors_("route_selectors", num_ports)
-        , output_arbiters_("output_arbiters", num_ports)
+        // Listed in declaration order. C++ constructs members in declaration
+        // order whatever this list says, so a list in a different order is not
+        // a behavioural difference — it is a `-Wreorder` warning and a reader
+        // who believes the wrong thing about construction sequence.
         , output_fifos_("output_fifos", OutFifoDepth > 0 ? num_ports : 0)
         , arb_data_("arb_data", num_ports)
         , arb_valid_("arb_valid", num_ports)
         , arb_ready_("arb_ready", num_ports)
         , output_occupancy_("output_occupancy", num_ports)
+        , input_fifos_("input_fifos", num_ports)
+        , route_selectors_("route_selectors", num_ports)
+        , output_arbiters_("output_arbiters", num_ports)
         , fifo_data_("fifo_data", num_ports)
         , fifo_valid_("fifo_valid", num_ports)
         , fifo_ready_("fifo_ready", num_ports)

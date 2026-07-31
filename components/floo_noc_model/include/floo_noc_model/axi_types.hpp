@@ -41,11 +41,50 @@ namespace axi_pkg {
 
 inline constexpr unsigned burst_width = 2;
 inline constexpr unsigned resp_width = 2;
+
+/// `xRESP`, exactly as `axi_pkg.sv` encodes it at the locked revision:
+///
+/// ```systemverilog
+/// localparam RESP_OKAY   = 2'b00;
+/// localparam RESP_EXOKAY = 2'b01;
+/// localparam RESP_SLVERR = 2'b10;
+/// localparam RESP_DECERR = 2'b11;
+/// ```
+///
+/// Spelled out because an earlier version of the TLM wrapper used the literal
+/// `1` and called it `SLVERR` in a comment. `1` is `EXOKAY` — the success code
+/// for an exclusive access — so every downstream failure was being reported
+/// upstream as a *successful* exclusive transaction.
+enum class axi_resp : std::uint8_t {
+    okay = 0b00,
+    exokay = 0b01,
+    slverr = 0b10,
+    decerr = 0b11,
+};
+
+constexpr std::uint8_t to_bits(axi_resp value)
+{
+    return static_cast<std::uint8_t>(value);
+}
+
+constexpr bool is_error(axi_resp value)
+{
+    return value == axi_resp::slverr || value == axi_resp::decerr;
+}
 inline constexpr unsigned cache_width = 4;
 inline constexpr unsigned prot_width = 3;
 inline constexpr unsigned qos_width = 4;
 inline constexpr unsigned region_width = 4;
 inline constexpr unsigned len_width = 8;
+
+/// The most beats one AXI burst can describe.
+///
+/// `AxLEN` is `len_width` bits and encodes `beats - 1`, so 256 is the ceiling —
+/// not a style choice, an encoding limit. Named here rather than written as a
+/// literal at each use, because the failure mode when it is missed is silent:
+/// `static_cast<std::uint8_t>(257 - 1)` is `0`, the subordinate reads one beat,
+/// and a 2049-byte read returns OK with most of the caller's buffer untouched.
+inline constexpr unsigned max_burst_beats = 1u << len_width;
 inline constexpr unsigned size_width = 3;
 inline constexpr unsigned lock_width = 1;
 inline constexpr unsigned atop_width = 6;

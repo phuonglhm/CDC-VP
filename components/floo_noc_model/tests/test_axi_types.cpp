@@ -40,6 +40,33 @@ void check_equal(unsigned actual, unsigned expected, const std::string& what)
 
 } // namespace
 
+// The exact `xRESP` encoding, checked at compile time against `axi_pkg.sv`:
+//
+//   localparam RESP_OKAY   = 2'b00;
+//   localparam RESP_EXOKAY = 2'b01;
+//   localparam RESP_SLVERR = 2'b10;
+//   localparam RESP_DECERR = 2'b11;
+//
+// A `static_assert` rather than a runtime check because there is nothing to
+// discover at runtime: if these values are ever edited, the build should stop.
+// The literal `1` was once used in the wrapper and called SLVERR in a comment;
+// it is EXOKAY, so every downstream failure was reported as a successful
+// exclusive access.
+static_assert(static_cast<unsigned>(floo::model::axi_pkg::axi_resp::okay) == 0b00,
+              "RESP_OKAY is 2'b00");
+static_assert(static_cast<unsigned>(floo::model::axi_pkg::axi_resp::exokay) == 0b01,
+              "RESP_EXOKAY is 2'b01");
+static_assert(static_cast<unsigned>(floo::model::axi_pkg::axi_resp::slverr) == 0b10,
+              "RESP_SLVERR is 2'b10");
+static_assert(static_cast<unsigned>(floo::model::axi_pkg::axi_resp::decerr) == 0b11,
+              "RESP_DECERR is 2'b11");
+static_assert(!floo::model::axi_pkg::is_error(floo::model::axi_pkg::axi_resp::okay)
+              && !floo::model::axi_pkg::is_error(floo::model::axi_pkg::axi_resp::exokay),
+              "OKAY and EXOKAY are both success codes");
+static_assert(floo::model::axi_pkg::is_error(floo::model::axi_pkg::axi_resp::slverr)
+              && floo::model::axi_pkg::is_error(floo::model::axi_pkg::axi_resp::decerr),
+              "SLVERR and DECERR are both errors");
+
 int sc_main(int, char**)
 {
     // The FlooGen reference XY-mesh configuration.

@@ -57,13 +57,24 @@ Standalone verification:
 | `test_chimney_rsp_timing_trace_sc` | 221-cycle chimney response-path and subordinate-side timing trace against the RTL-captured golden |
 | `test_mesh_trace_sc` | 1872 node-cycles of a 3x3 two-network mesh against the RTL-captured golden |
 | `test_router_trace_sc_d2` / `_d0` | 214-cycle router trace against the RTL-captured golden, at output-FIFO depth 2 and 0 |
-| `test_noc_interconnect` | The TLM wrapper contract: address decode to node, multi-initiator ownership, `AxSIZE` preservation, per-node hold-off, and the self-node placement guard |
+| `test_noc_interconnect` | The TLM wrapper contract, each item a concrete assertion: payload validation (command, zero length, null pointer, wrapped streaming width, zero-length byte enables); byte-enable to `WSTRB` translation with a disabled byte proven unchanged in target memory; lane placement at `+4` and `+6` and across a beat boundary, checked by direct memory inspection; `DECERR` for an unmapped address distinguished from `SLVERR` for a target that refuses; region-crossing refused; delay contract (incoming delay spent, sub-cycle target latency rounded up, 1.5 and 2.0 cycles both costing 2, measured on four targets sharing one node); reset-time submission and idle-to-active wake-up; a scoreboard over a second initiator's writes; `last_latency_cycles()` excluding the target hold-off; bounded waits and a global watchdog. Round 3 added: the 256/257-beat `AxLEN` boundary at aligned and offset addresses; sparse multi-beat writes with fully disabled leading, trailing and middle beats; the widened-read policy against a spy target that records every downstream access; a region ending at `UINT64_MAX` written and read back; and the exact AXI-to-TLM response mapping for all four codes |
+| `test_axi_lanes` | `AxSIZE`, `AxLEN`, lane offset and per-beat `WSTRB` for 13 address/length shapes, plus byte-enable holes and short repeating enable arrays. Checked on the fields themselves, not through a target, because a packing error and a matching unpacking error cancel |
+| `test_noc_interconnect_bad_config` | Configurations refused before any traffic, each rejected while still an ordinary function call so teardown is normal: a non-positive clock period; a target on an initiator's node, including the documented default `(0,0)` of a port never placed; a manager moved onto an existing target; zero-sized, address-space-wrapping and overlapping regions; and proof that a refused call consumes no target slot and leaves a port's position intact. A legal layout is still accepted |
+| `test_axi_lanes_odr` | Two translation units including `axi_lanes.hpp` in one link. The only test that can catch a missing `inline` |
+| `test_axi_chimney_manager_response` | The manager-side response unpacker: channel decode, per-channel back-pressure, a request channel refused on the `rsp` link, and the AW→B / AR→multi-beat-R counter release loop |
 
-All twenty-eight tests pass with GCC 11.5.0 and SystemC 2.3.4.
+All thirty-two tests pass with GCC 11.5.0 and SystemC 2.3.4.
 
-The wrapper covered by the last row has **no RTL counterpart**, so unlike every
-other block on this page it is not signed and cannot be. It is the highest-risk
-correctness layer in the component; see `AI_HANDOFF_CONTEXT.md` Step 10.3.
+Two rows carry a caveat, and they are not the same caveat:
+
+- `test_noc_interconnect` covers the TLM wrapper, which has **no RTL
+  counterpart** and so cannot ever be signed. It is the highest-risk correctness
+  layer in the component; see `AI_HANDOFF_CONTEXT.md` Step 10.3.
+- `test_axi_chimney_manager_response` covers a module that **does** have an RTL
+  counterpart — the manager-side response path of `hw/floo_axi_chimney.sv`. It is
+  simply not cross-checked yet. That is Step A-1, and until it passes the module
+  is unsigned in the same sense every block was before its own cross-check
+  existed.
 
 ## Accuracy status
 
@@ -71,7 +82,7 @@ RTL-signed blocks:
 
 | Block | RTL reference | Evidence |
 |---|---|---|
-| XY route selector | `hw/floo_route_select.sv` | 12 cycles exact (`route_sel_id_o`, lock state) |
+| XY route selector | `hw/floo_route_select.sv` | 12 cycles exact, pre-edge and post-edge (`route_sel_id_o` and `locked_route_q`), which separates the edge that takes the route lock from the edges that merely hold it |
 | Input FIFO | `common_cells` `stream_fifo_optimal_wrap` | 133 cycles exact at depth 2 and depth 4 (pre-edge and post-edge `ready_o`/`valid_o`/`data_o`) |
 | Wormhole arbiter | `hw/floo_wormhole_arbiter.sv` over `common_cells` `rr_arb_tree`/`lzc` | 152 cycles exact at 5, 4, and 2 routes (pre-edge and post-edge `ready_o`/`valid_o`/`data_o`/selected index, plus `valid_q`, `last_q`, `rr_q`, `lock_q`, `req_q`) |
 | Five-port router | `hw/floo_router.sv` | 214 cycles exact at **both** `OutFifoDepth = 2` (what every generated router has) and `0` (the `gen_no_out_fifo` bypass): pre-edge and post-edge per-port `ready_o`/`valid_o` masks and per-output `data_o`, plus the one-hot route mask per input |
@@ -83,11 +94,25 @@ RTL-signed blocks:
 | Inter-node mesh | a grid of `hw/floo_axi_router.sv`, wired as the FlooGen netlist wires it | 1872 node-cycles exact (per node and per network: local inject `ready`, eject `valid`, and the ejected flit's channel, destination, `last` and payload tag, pre-edge and post-edge) |
 | Chimney response path and subordinate side, **timing** | same, driven from the `req` link | 221 cycles exact (inbound `req` `ready`, the reissued `axi_out` request boundary, the `axi_out` response `ready` signals, the `rsp` link's `valid`/channel/destination/id, plus both metadata FIFO occupancies and every response-arbiter register) |
 
-Every timing path from an AXI manager port to an AXI subordinate port is now
-RTL-signed: both chimney directions and the mesh between them. What remains
-unsigned is the endpoint transactors, which have no RTL counterpart and cannot
-be signed; they are a driver and collector built on signed rules, not part of
-the modelled datapath.
+Each of those blocks is signed **in isolation**: the chimney's **request path** (141 cycles) and its **subordinate side**
+(221 cycles). The **manager-side response unpacker** is implemented and
+unit-tested but **not RTL-signed**, and therefore neither is the complete
+manager-AXI-to-subordinate-AXI composition, plus the mesh between them. That is not the same as a signed
+manager-port-to-subordinate-port path, and the difference is structural: the
+timed chimney lives in `axi_chimney.hpp`, which is instantiated only by the two
+timing trace runners. The integrated path — `noc_interconnect` over
+`axi_noc.hpp` — uses the combinational `axi_chimney_pack.hpp` plus the
+`axi_endpoint.hpp` transactors instead.
+
+So the composed TLM-boundary latency contains signed mesh timing but is not
+itself an RTL-equivalent path. The transactors and the TLM wrapper have no RTL
+counterpart and cannot be signed against one; they are a driver and collector
+built on individually signed rules.
+
+Replacing them with the timed chimney is **Step A** in
+`AI_HANDOFF_CONTEXT.md`, not Step 10.3. The two are different work: Step A
+changes what the datapath is made of, Step 10.3 stresses whatever TLM layer
+remains above it.
 
 ### Corrected router crossbar (2026-07-28)
 
@@ -723,6 +748,51 @@ which is installed on this host. The four harnesses here are hand-written BFMs
 instead; the "Harness lesson" section above is the price that was paid for
 that.
 
+### Negative controls: what is automated, what is not
+
+A test suite that has never been seen to fail is not evidence. Every fix in this
+component was accompanied by an injection that must be detected — but until
+2026-07-30 those injections lived only in prose here, so reproducing one meant
+editing by hand and nothing checked that they still bite.
+
+**Automated.** `rtl_crosscheck/run_negative_controls.sh` holds the model-level
+controls as executable records: file, exact literal, replacement, the test that
+must then fail, and what the defect was. It applies each one, rebuilds, requires
+a non-zero exit, and restores the tree on every exit path including interrupt.
+An injection that stops failing is reported as `MISSED` and the script exits 1 —
+either the defect became unreachable or the test stopped covering it, and both
+need a human decision rather than a silent pass.
+
+| Control | Test that must fail | Defect it restores |
+|---|---|---|
+| `lane-placement` | `test_axi_lanes` | the first payload byte always went to lane 0, so a narrow access at a non-zero offset wrote the wrong half of the bus |
+| `byte-enables-ignored` | `test_axi_lanes` | byte enables were never read, so a partial write became a full one |
+| `target-delay-truncated` | `test_noc_interconnect` | a target latency shorter than one network cycle rounded down to free |
+| `incoming-delay-dropped` | `test_noc_interconnect` | the caller's annotated time was discarded instead of spent |
+| `offer-not-atomic` | `test_axi_endpoint` | capacity was checked after the request flits were queued |
+| `rlast-ignored` | `test_axi_chimney_manager_response` | every beat of a read burst released a reorder-buffer counter |
+
+It is deliberately **not** registered in CTest: it mutates files in the source
+tree, so running it concurrently with anything else would corrupt both.
+
+The runner has its own failure mode worth recording, because it produced a false
+pass on its first run. Records were packed into `|`-delimited strings and read
+with `read`, which stops at the first newline — so every control whose literal
+spanned several lines lost its remaining fields, invoked `cmake --build` with an
+empty target, and counted CMake's usage output as "the defect was detected".
+Four of six controls had never executed. The fields are base64-encoded now, and
+an empty test name is a hard error. **A control mechanism needs its own control:**
+injecting a comment-only change must be reported `MISSED`, and it is.
+
+**Manual.** The RTL cross-check controls stay manual and are documented in the
+sections above, one per cross-check. Each needs Verilator and Bender and takes
+minutes rather than seconds, and — more importantly — several of them
+legitimately *pass*, because the frozen RTL is redundant at that point. The
+wormhole arbiter's snapshot and the tree's `LockIn` implement the same packet
+hold, so removing either alone changes nothing. Deciding whether a passing
+control means "equivalent rewrite" or "coverage gap" is a judgement, and rule 9e
+in `AI_HANDOFF_CONTEXT.md` exists because that judgement was needed twice.
+
 ### Cross-check strength
 
 The FIFO trace records both the pre-edge sample (the handshake view the
@@ -901,20 +971,36 @@ Resolved dependency set (from `Bender.lock`):
 
 ## Next implementation order
 
-All four items of the previous list are done: the chimney is cross-checked in
-both directions, the meta buffer and the `NoRoB` gate are modelled and signed,
-the abstract mesh endpoints are replaced by chimney-backed AXI endpoints on two
-physical networks, and `noc_interconnect` is the CDC-VP M:N fabric adapter.
-Note item 3's premise was wrong: the mesh was signed against a hand-built grid
-of the frozen `floo_axi_router`, so FlooGen was never needed.
+Three of the four items of the previous list are done: the meta buffer and the
+`NoRoB` gate are modelled and signed, the mesh endpoints are chimney-backed AXI
+endpoints on two physical networks, and `noc_interconnect` is the CDC-VP M:N
+fabric adapter. Note item 3's premise was wrong: the mesh was signed against a
+hand-built grid of the frozen `floo_axi_router`, so FlooGen was never needed.
 
-What is left is no longer datapath modelling. The authoritative, ordered list is
-`AI_HANDOFF_CONTEXT.md` section 14, and its sub-steps deliberately do **not**
-run in numeric order:
+The chimney item is **not** done, and "cross-checked in both directions" was the
+wrong summary of it. Three of the chimney's four quadrants are signed — manager
+request timing (141 cyc), subordinate request reception and response generation
+(221 cyc). The fourth, the manager-side response unpacker
+`axi_chimney_manager_response`, is implemented and unit-tested but has **no RTL
+cross-check**: that is Step A-1.
 
-1. **Step 10.2** — an automated real-firmware regression. Nothing at platform
-   level is tested today, which is how the `kSurveyScratch` corruption survived
-   28 passing component tests.
+**Datapath modelling is therefore not finished either.** Steps A-1 to A-3 are
+datapath work: A-1 signs the unpacker, A-2 assembles a per-node timed chimney
+into `axi_noc`, and A-3 switches `noc_interconnect` off the abstract endpoint
+transactors and onto it. Only after A-3 does the composed manager-AXI-port to
+subordinate-AXI-port path exist as an RTL-equivalent one.
+
+The authoritative, ordered list is `AI_HANDOFF_CONTEXT.md` section 14, and its
+sub-steps deliberately do **not** run in numeric order:
+
+1. ~~**Step 10.2** — an automated real-firmware regression.~~ **Done**
+   (2026-07-30): `platforms/noc_soc/tests/run_firmware_regression.sh`, registered
+   as `noc_soc_firmware_regression`, validated by three negative controls
+   including a reintroduction of the `kSurveyScratch` corruption.
+1b. **Step A** — compose the RTL-signed chimney into the datapath, replacing the
+   abstract endpoint transactors. The manager-side unpacker was the missing
+   fourth quadrant and now exists; next is cross-checking it (A-1). See
+   `AI_HANDOFF_CONTEXT.md` section 14.
 2. **Step 10.3** — scoreboard-driven stress on `axi_endpoint.hpp` and
    `noc_interconnect`. These have no RTL counterpart and every integration
    defect so far has been in them. Also closes the unproven clock-gating

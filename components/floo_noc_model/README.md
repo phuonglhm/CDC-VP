@@ -60,8 +60,23 @@ bash rtl_crosscheck/run_stream_fifo_crosscheck.sh        # common_cells FIFO wra
 bash rtl_crosscheck/run_wormhole_arbiter_crosscheck.sh   # hw/floo_wormhole_arbiter.sv
 bash rtl_crosscheck/run_router_crosscheck.sh             # hw/floo_router.sv
 bash rtl_crosscheck/run_axi_sizing_crosscheck.sh         # floo_pkg flit sizing
-bash rtl_crosscheck/run_chimney_req_crosscheck.sh        # chimney request path
-bash rtl_crosscheck/run_chimney_rsp_crosscheck.sh        # chimney response path
+bash rtl_crosscheck/run_chimney_req_crosscheck.sh        # chimney request content
+bash rtl_crosscheck/run_chimney_rsp_crosscheck.sh        # chimney response content
+bash rtl_crosscheck/run_rob_crosscheck.sh                # hw/floo_rob_wrapper.sv, NoRoB
+bash rtl_crosscheck/run_chimney_timing_crosscheck.sh     # chimney request timing
+bash rtl_crosscheck/run_chimney_rsp_timing_crosscheck.sh # chimney subordinate side
+bash rtl_crosscheck/run_mesh_crosscheck.sh               # a grid of floo_axi_router
+```
+
+Eleven runners, and a twelfth is owed: the manager-side response unpacker is
+implemented and unit-tested but not yet cross-checked. That is Step A-1.
+
+The tests are also expected to be seen failing. `run_negative_controls.sh`
+re-injects each defect the model-level tests exist to catch and requires every
+one of them to be detected:
+
+```bash
+bash rtl_crosscheck/run_negative_controls.sh
 ```
 
 Both default to the frozen local FlooNoC tree and write generated files under
@@ -132,19 +147,29 @@ cross-checking still requires the complete Bender dependency tree.
   structure, with the AXI transactors attached and AXI running end to end
   across a 4x4 mesh.
 - P9.1: the chimney's response path and subordinate side cross-checked for
-  timing (221 cycles, eleven negative controls all detected), so both chimney
-  directions are now signed.
+  timing (221 cycles, eleven negative controls all detected).
 - P9.2: inter-node timing cross-checked against a grid of the real router
   (1872 node-cycles). It found the model missing the output FIFO that every
   generated FlooNoC router has, which cost one cycle per hop.
 
 RTL-signed so far: XY route selection with lock state, the input FIFO wrap, the
 wormhole arbiter, the five-port router at both output-FIFO depths, the AXI flit
-sizing, both chimney flit paths, the `NoRoB` ordering rule, both chimney
-directions' timing, and **inter-node mesh timing**. Every path from an AXI
-manager port to an AXI subordinate port is signed. What is not: the endpoint
-transactors, which have no RTL counterpart and cannot be signed — they are a
-driver and collector built on signed rules, not part of the datapath.
+sizing, both chimney flit *content* paths, the `NoRoB` ordering rule, the chimney's
+**request-path timing** (141 cycles) and its **subordinate side** (221 cycles),
+and **inter-node mesh timing** (1872 node-cycles).
+
+Not signed: the **manager-side response unpacker**
+(`axi_chimney_manager_response`), which is implemented and unit-tested but has
+no cross-check yet — Step A-1 — and therefore not the composed
+manager-AXI-to-subordinate-AXI path either.
+
+Each of those is signed in isolation. That is deliberately not a claim that the
+integrated path is signed end to end: the timed chimney (`axi_chimney.hpp`) is
+instantiated only by its two trace runners, while `noc_interconnect` composes
+the combinational `axi_chimney_pack.hpp` with the `axi_endpoint.hpp`
+transactors. Those transactors and the TLM wrapper have no RTL counterpart and
+cannot be signed against one — they are a driver and collector built on signed
+rules.
 
 The router harness uses no shim at all: it compiles the real RTL from the
 Bender-generated file list and keeps the router's own protocol assertions

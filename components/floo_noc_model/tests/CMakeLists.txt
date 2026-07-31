@@ -1,8 +1,19 @@
+# Applied to every component-owned test target, however it was declared.
+#
+# A helper rather than a per-target line: two targets were declared by hand and
+# silently missed the flags, and the round-2 sign-off claimed otherwise because
+# it checked that no warning was *printed* rather than that the flags were
+# *passed*. A compiler that is not asked will not complain.
+function(floo_model_test_options target_name)
+    target_compile_options(${target_name} PRIVATE ${FLOO_NOC_MODEL_WARNINGS})
+endfunction()
+
 function(add_floo_model_test test_name)
     add_executable(${test_name} ${test_name}.cpp)
     target_link_libraries(${test_name} PRIVATE
         cdc::components::floo_noc_model
         SystemC::systemc)
+    floo_model_test_options(${test_name})
     add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
 
@@ -18,6 +29,7 @@ add_floo_model_test(test_axi_chimney_pack)
 add_floo_model_test(test_rob_order_gate)
 add_floo_model_test(test_axi_endpoint)
 add_floo_model_test(test_axi_noc)
+add_floo_model_test(test_axi_chimney_manager_response)
 
 # The TLM wrapper is a compiled target, so its test links that instead of the
 # header-only model alone.
@@ -25,62 +37,106 @@ add_executable(test_noc_interconnect test_noc_interconnect.cpp)
 target_link_libraries(test_noc_interconnect PRIVATE
     cdc::components::noc_interconnect
     SystemC::systemc)
+floo_model_test_options(test_noc_interconnect)
 add_test(NAME test_noc_interconnect COMMAND test_noc_interconnect)
+
+# No kernel runs in this one; it only needs `sc_main` to satisfy the linker.
+add_executable(test_axi_lanes test_axi_lanes.cpp)
+target_link_libraries(test_axi_lanes PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+floo_model_test_options(test_axi_lanes)
+add_test(NAME test_axi_lanes COMMAND test_axi_lanes)
+
+# Two sources on purpose: this is the only test that can catch a missing
+# `inline` in the header's free functions.
+add_executable(test_axi_lanes_odr
+    test_axi_lanes_odr.cpp
+    test_axi_lanes_odr_second.cpp)
+target_link_libraries(test_axi_lanes_odr PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+floo_model_test_options(test_axi_lanes_odr)
+add_test(NAME test_axi_lanes_odr COMMAND test_axi_lanes_odr)
+
+# Configuration errors, rejected before any simulation. Its own executable
+# because it constructs several deliberately-invalid interconnects; keeping
+# them out of the main test avoids polluting that one's SystemC hierarchy.
+add_executable(test_noc_interconnect_bad_config
+    test_noc_interconnect_bad_config.cpp)
+target_link_libraries(test_noc_interconnect_bad_config PRIVATE
+    cdc::components::noc_interconnect
+    SystemC::systemc)
+target_compile_options(test_noc_interconnect_bad_config PRIVATE
+    ${FLOO_NOC_MODEL_WARNINGS})
+add_test(NAME test_noc_interconnect_bad_config
+         COMMAND test_noc_interconnect_bad_config)
 
 add_executable(route_trace_sc route_trace_sc.cpp)
 target_link_libraries(route_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(route_trace_sc)
 
 add_executable(fifo_trace_sc fifo_trace_sc.cpp)
 target_link_libraries(fifo_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(fifo_trace_sc)
 
 add_executable(arbiter_trace_sc arbiter_trace_sc.cpp)
 target_link_libraries(arbiter_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(arbiter_trace_sc)
 
 add_executable(axi_sizing_trace axi_sizing_trace.cpp)
 target_link_libraries(axi_sizing_trace PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(axi_sizing_trace)
 
 add_executable(chimney_req_trace_sc chimney_req_trace_sc.cpp)
 target_link_libraries(chimney_req_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(chimney_req_trace_sc)
 
 add_executable(chimney_rsp_trace_sc chimney_rsp_trace_sc.cpp)
 target_link_libraries(chimney_rsp_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(chimney_rsp_trace_sc)
 
 add_executable(mesh_trace_sc mesh_trace_sc.cpp)
 target_link_libraries(mesh_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(mesh_trace_sc)
 
 add_executable(chimney_rsp_timing_trace_sc chimney_rsp_timing_trace_sc.cpp)
 target_link_libraries(chimney_rsp_timing_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(chimney_rsp_timing_trace_sc)
 
 add_executable(chimney_timing_trace_sc chimney_timing_trace_sc.cpp)
 target_link_libraries(chimney_timing_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(chimney_timing_trace_sc)
 
 add_executable(rob_trace_sc rob_trace_sc.cpp)
 target_link_libraries(rob_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(rob_trace_sc)
 
 add_executable(router_trace_sc router_trace_sc.cpp)
 target_link_libraries(router_trace_sc PRIVATE
     cdc::components::floo_noc_model
     SystemC::systemc)
+floo_model_test_options(router_trace_sc)
 
 set(_route_trace_actual
     "${CMAKE_CURRENT_BINARY_DIR}/route_select_systemc_trace.csv")
