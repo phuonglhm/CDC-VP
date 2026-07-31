@@ -115,16 +115,43 @@ if grep -qiE "Assertion failed|%Error" "$run_log"; then
   exit 1
 fi
 
-# A counter that wrapped would mean the stimulus popped an empty reorder buffer,
-# which is a harness defect: `delta_counter` underflows to its maximum and both
-# sides would have to agree on garbage. `MaxTxnsPerId` is 32, so anything at or
-# above it is a wrap rather than a legitimate depth.
-if awk -F, 'NR > 1 && ($(NF-2) >= 32 || $(NF-1) >= 32 || $NF >= 32) { exit 1 }' \
-     "$rtl_trace"; then
-  :
-else
-  echo "a reorder-buffer counter wrapped: the stimulus pops more than it" >&2
-  echo "pushes. Fix the stimulus rather than the comparison." >&2
+# The transaction budget, checked directly against what the stimulus documents:
+# two outstanding reads on id 1, one on id 2, one write on id 1, and every one
+# of them answered exactly once.
+#
+# This replaces a `counter >= MaxTxnsPerId` test that claimed to detect a wrap
+# and could not. `CounterWidth = $clog2(MaxTxnsPerId) = 5`, so `in_flight` is
+# five bits and never reaches 32; an underflow from zero lands on 31. The check
+# was dead code. Comparing the maxima and the final values catches an underflow,
+# an extra push and a missed pop alike, and says what the stimulus means rather
+# than guessing at a range.
+#
+# It matters because both sides replay the same vector: a stimulus that pushes
+# more transactions than it intends still compares exactly while proving a
+# different scenario than the one written down. An earlier version held
+# `AxVALID` for six cycles — six transactions, not one — and ended with 10 and 5
+# outstanding against a comment claiming 2 and 1.
+expected_peak="2 1 1"
+expected_final="0 0 0"
+actual_peak="$(
+  awk -F, 'NR > 1 {
+             if ($(NF-2)+0 > a) a = $(NF-2)+0
+             if ($(NF-1)+0 > b) b = $(NF-1)+0
+             if ($NF+0     > c) c = $NF+0
+           } END { print a+0, b+0, c+0 }' "$rtl_trace"
+)"
+actual_final="$(tail -n 1 "$rtl_trace" | awk -F, '{print $(NF-2)+0, $(NF-1)+0, $NF+0}')"
+
+if [[ "$actual_peak" != "$expected_peak" ]]; then
+  echo "reorder-buffer peak occupancy (r_cnt1 r_cnt2 b_cnt1) is" >&2
+  echo "  ${actual_peak}, expected ${expected_peak}." >&2
+  echo "The stimulus is not issuing the transaction budget it documents." >&2
+  exit 1
+fi
+if [[ "$actual_final" != "$expected_final" ]]; then
+  echo "reorder-buffer counters did not drain: final (r_cnt1 r_cnt2 b_cnt1) =" >&2
+  echo "  ${actual_final}, expected ${expected_final}." >&2
+  echo "Every pushed transaction must be answered exactly once." >&2
   exit 1
 fi
 

@@ -17,7 +17,7 @@
 //  * **manager request path timing** — signed, 141 cycles;
 //  * **subordinate request reception and response generation** — signed,
 //    221 cycles;
-//  * **manager-side response unpacker** — signed, 97 cycles
+//  * **manager-side response unpacker** — signed, 78 cycles
 //    (`axi_chimney_manager_response`, Step A-1). That completes all four
 //    chimney quadrants;
 //  * **the complete manager-AXI-to-subordinate-AXI composed path** —

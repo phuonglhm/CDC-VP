@@ -362,6 +362,47 @@ add_control \
     "floo_rsp_o.ready was selected by the wrong channel, so a B flit followed the R manager's ready and the reverse" \
     "${A1_ARGS}"
 
+# The response *payload*, not just its handshake. The first version of the A-1
+# trace cast `RDATA` to 32 bits and omitted `BUSER`/`RUSER` entirely, so these
+# three mutations all PASSed: the B/R channel was signed only from bit 31 down,
+# with no user field at all. Each is separated from the others so a detection
+# names exactly which field stopped being compared.
+add_control \
+    "rdata-upper-word-truncated" \
+    "include/floo_noc_model/axi_chimney.hpp" \
+    '        o_axi_r.write(flit.r);' \
+    '        axi_r_chan r_truncated = flit.r;
+        r_truncated.data &= 0xFFFFFFFFull;
+        o_axi_r.write(r_truncated);' \
+    "chimney_mgr_rsp_trace_sc" \
+    "trace mismatch" \
+    "the upper 32 bits of RDATA were dropped, which the first version of this cross-check could not see because it traced only the low word" \
+    "${A1_ARGS}"
+
+add_control \
+    "ruser-dropped" \
+    "include/floo_noc_model/axi_chimney.hpp" \
+    '        o_axi_r.write(flit.r);' \
+    '        axi_r_chan r_nouser = flit.r;
+        r_nouser.user = 0;
+        o_axi_r.write(r_nouser);' \
+    "chimney_mgr_rsp_trace_sc" \
+    "trace mismatch" \
+    "RUSER was not forwarded to the manager, which no trace covered until the payload was traced in full" \
+    "${A1_ARGS}"
+
+add_control \
+    "buser-dropped" \
+    "include/floo_noc_model/axi_chimney.hpp" \
+    '        o_axi_b.write(flit.b);' \
+    '        axi_b_chan b_nouser = flit.b;
+        b_nouser.user = 0;
+        o_axi_b.write(b_nouser);' \
+    "chimney_mgr_rsp_trace_sc" \
+    "trace mismatch" \
+    "BUSER was not forwarded to the manager" \
+    "${A1_ARGS}"
+
 add_control \
     "r-pop-id-from-b-payload" \
     "include/floo_noc_model/axi_chimney.hpp" \

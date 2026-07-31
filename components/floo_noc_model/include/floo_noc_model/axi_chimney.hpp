@@ -7,7 +7,7 @@
 //   axi_chimney_request           manager AXI  -> `req` link    signed, 141 cyc
 //   axi_chimney_response          `req` link   -> AXI out -> `rsp`
 //                                                              signed, 221 cyc
-//   axi_chimney_manager_response  `rsp` link   -> manager AXI   signed,  97 cyc
+//   axi_chimney_manager_response  `rsp` link   -> manager AXI   signed,  78 cyc
 //
 // This is the composition step. Every part it wires together is already
 // RTL-signed on its own:
@@ -747,7 +747,7 @@ private:
 /// adds the `b_sel_atop`/`r_sel_atop` bypass around the reorder buffer, which
 /// is deliberately absent here.
 ///
-/// **Verification status: RTL cross-checked — Step A-1, 97 cycles exact.**
+/// **Verification status: RTL cross-checked — Step A-1, 78 cycles exact.**
 /// `rtl_crosscheck/run_chimney_mgr_rsp_crosscheck.sh` drives `floo_rsp_i` on
 /// the unmodified frozen `floo_axi_chimney.sv` and compares every cycle of
 /// `axi_in_rsp_o`, `floo_rsp_o.ready` and both per-id reorder-buffer counters

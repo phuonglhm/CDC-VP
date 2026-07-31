@@ -73,7 +73,7 @@ Twelve runners. The twelfth,
 `run_chimney_mgr_rsp_crosscheck.sh`, closed the chimney at Step A-1: it drives
 `floo_rsp_i`, which the other three chimney runners pin low, and compares the
 manager's B/R channels, `floo_rsp_o.ready` and both reorder-buffer counters for
-97 cycles.
+78 cycles.
 
 The tests are also expected to be seen failing. `run_negative_controls.sh`
 re-injects each defect the model-level tests exist to catch and requires every
@@ -163,7 +163,7 @@ sizing, both chimney flit *content* paths, the `NoRoB` ordering rule, the chimne
 and **inter-node mesh timing** (1872 node-cycles).
 
 The **manager-side response unpacker** (`axi_chimney_manager_response`) is
-signed too, 97 cycles, which completes all four chimney quadrants.
+signed too, 78 cycles, which completes all four chimney quadrants.
 
 Still not signed: the composed **manager-AXI-to-subordinate-AXI** path. Every
 block on it is signed individually, but `noc_interconnect` does not yet
@@ -171,7 +171,7 @@ instantiate the timed chimney — Steps A-2 and A-3.
 
 Each of those is signed in isolation. That is deliberately not a claim that the
 integrated path is signed end to end: the timed chimney (`axi_chimney.hpp`) is
-instantiated only by its two trace runners, while `noc_interconnect` composes
+instantiated only by its three trace runners, while `noc_interconnect` composes
 the combinational `axi_chimney_pack.hpp` with the `axi_endpoint.hpp`
 transactors. Those transactors and the TLM wrapper have no RTL counterpart and
 cannot be signed against one — they are a driver and collector built on signed

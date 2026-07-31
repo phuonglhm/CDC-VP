@@ -88,29 +88,39 @@ module tb_floo_axi_chimney_mgr_rsp_trace;
   // The reorder-buffer counter banks. `NoRoB` keeps one `delta_counter` per AXI
   // id; `in_flight` is that counter's output. This is the state the whole step
   // is about: a multi-beat read burst must decrement it once, on `RLAST`.
-  wire [5:0] r_cnt1 =
+  // `cnt_t` is `logic [CounterWidth-1:0]` and `CounterWidth =
+  // $clog2(MaxTxnsPerId) = 5`, so these are five bits wide, not six. An
+  // underflow from zero therefore lands on 31 — it cannot produce a value above
+  // `MaxTxnsPerId`, which is why the runner checks the transaction budget
+  // directly instead of testing for an out-of-range count.
+  wire [4:0] r_cnt1 =
       dut.i_r_rob.gen_no_rob.i_axi_demux_id_counters.gen_counters[1].in_flight;
-  wire [5:0] r_cnt2 =
+  wire [4:0] r_cnt2 =
       dut.i_r_rob.gen_no_rob.i_axi_demux_id_counters.gen_counters[2].in_flight;
-  wire [5:0] b_cnt1 =
+  wire [4:0] b_cnt1 =
       dut.i_b_rob.gen_no_rob.i_axi_demux_id_counters.gen_counters[1].in_flight;
 
   string  stimulus_path, trace_path, header_line;
   integer stimulus_fd, trace_fd, scan_result;
   integer cycle, rst_n_value;
-  integer aw_valid_value, aw_id_value, aw_addr_value;
+  integer aw_valid_value, aw_id_value, aw_addr_value, aw_len_value;
   integer w_valid_value, w_data_value, w_last_value;
   integer ar_valid_value, ar_id_value, ar_addr_value, ar_len_value;
   integer req_ready_value;
-  integer rsp_valid_value, rsp_ch_value, rsp_id_value, rsp_data_value;
-  integer rsp_resp_value, rsp_last_value;
+  integer rsp_valid_value, rsp_ch_value, rsp_id_value;
+  // 64 bits, not `integer`. `RDATA` is the full data bus and an `integer` would
+  // silently keep only its low half — which is exactly what the first version
+  // of this testbench did, so corrupting the upper word was invisible.
+  longint unsigned rsp_data_value;
+  integer rsp_resp_value, rsp_last_value, rsp_user_value;
   integer b_ready_value, r_ready_value;
 
-  logic       pre_rsp_ready, pre_b_valid, pre_r_valid, pre_r_last;
-  logic [2:0] pre_b_id, pre_r_id;
-  logic [1:0] pre_b_resp, pre_r_resp;
-  logic [31:0] pre_r_data;
-  logic       pre_aw_ready, pre_ar_ready;
+  logic        pre_rsp_ready, pre_b_valid, pre_r_valid, pre_r_last;
+  logic [2:0]  pre_b_id, pre_r_id;
+  logic [1:0]  pre_b_resp, pre_r_resp;
+  logic [63:0] pre_r_data;
+  logic        pre_b_user, pre_r_user;
+  logic        pre_aw_ready, pre_ar_ready;
 
   // A payload is only meaningful while its valid is high; see the header note.
   function automatic logic [2:0] b_id_of();
@@ -125,8 +135,14 @@ module tb_floo_axi_chimney_mgr_rsp_trace;
   function automatic logic [1:0] r_resp_of();
     return axi_in_rsp.r_valid ? axi_in_rsp.r.resp : 2'd0;
   endfunction
-  function automatic logic [31:0] r_data_of();
-    return axi_in_rsp.r_valid ? 32'(axi_in_rsp.r.data) : 32'd0;
+  function automatic logic [63:0] r_data_of();
+    return axi_in_rsp.r_valid ? 64'(axi_in_rsp.r.data) : 64'd0;
+  endfunction
+  function automatic logic b_user_of();
+    return axi_in_rsp.b_valid ? |axi_in_rsp.b.user : 1'b0;
+  endfunction
+  function automatic logic r_user_of();
+    return axi_in_rsp.r_valid ? |axi_in_rsp.r.user : 1'b0;
   endfunction
   function automatic logic r_last_of();
     return axi_in_rsp.r_valid ? axi_in_rsp.r.last : 1'b0;
@@ -161,28 +177,30 @@ module tb_floo_axi_chimney_mgr_rsp_trace;
     scan_result = $fgets(header_line, stimulus_fd);
     $fwrite(trace_fd, "cycle,");
     $fwrite(trace_fd, "pre_rsp_ready,pre_b_valid,pre_b_id,pre_b_resp,");
-    $fwrite(trace_fd, "pre_r_valid,pre_r_id,pre_r_data,pre_r_resp,");
-    $fwrite(trace_fd, "pre_r_last,pre_aw_ready,pre_ar_ready,");
+    $fwrite(trace_fd, "pre_b_user,pre_r_valid,pre_r_id,pre_r_data,");
+    $fwrite(trace_fd, "pre_r_resp,pre_r_last,pre_r_user,");
+    $fwrite(trace_fd, "pre_aw_ready,pre_ar_ready,");
     $fwrite(trace_fd, "post_rsp_ready,post_b_valid,post_b_id,post_b_resp,");
-    $fwrite(trace_fd, "post_r_valid,post_r_id,post_r_data,post_r_resp,");
-    $fwrite(trace_fd, "post_r_last,post_aw_ready,post_ar_ready,");
+    $fwrite(trace_fd, "post_b_user,post_r_valid,post_r_id,post_r_data,");
+    $fwrite(trace_fd, "post_r_resp,post_r_last,post_r_user,");
+    $fwrite(trace_fd, "post_aw_ready,post_ar_ready,");
     $fwrite(trace_fd, "r_cnt1,r_cnt2,b_cnt1\n");
 
     while (!$feof(stimulus_fd)) begin
       scan_result = $fscanf(
         stimulus_fd,
-        "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+        "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
         cycle, rst_n_value,
-        aw_valid_value, aw_id_value, aw_addr_value,
+        aw_valid_value, aw_id_value, aw_addr_value, aw_len_value,
         w_valid_value, w_data_value, w_last_value,
         ar_valid_value, ar_id_value, ar_addr_value, ar_len_value,
         req_ready_value,
         rsp_valid_value, rsp_ch_value, rsp_id_value, rsp_data_value,
-        rsp_resp_value, rsp_last_value,
+        rsp_resp_value, rsp_last_value, rsp_user_value,
         b_ready_value, r_ready_value
       );
 
-      if (scan_result == 21) begin
+      if (scan_result == 23) begin
         clk   = 1'b0;
         rst_n = rst_n_value[0];
 
@@ -191,6 +209,8 @@ module tb_floo_axi_chimney_mgr_rsp_trace;
         axi_in_req.aw_valid   = aw_valid_value[0];
         axi_in_req.aw.id      = aw_id_value[2:0];
         axi_in_req.aw.addr    = aw_addr_value;
+        // `AWLEN` encodes `beats - 1` and must agree with where `WLAST` falls.
+        axi_in_req.aw.len     = aw_len_value[7:0];
         axi_in_req.aw.size    = 3'd3;
         axi_in_req.aw.burst   = axi_pkg::BURST_INCR;
         axi_in_req.w_valid    = w_valid_value[0];
@@ -229,11 +249,13 @@ module tb_floo_axi_chimney_mgr_rsp_trace;
         if (axi_ch_e'(rsp_ch_value) == AxiB) begin
           floo_rsp_in.rsp.axi_b.payload.id   = rsp_id_value[2:0];
           floo_rsp_in.rsp.axi_b.payload.resp = rsp_resp_value[1:0];
+          floo_rsp_in.rsp.axi_b.payload.user = rsp_user_value[0];
         end else begin
           floo_rsp_in.rsp.axi_r.payload.id   = rsp_id_value[2:0];
           floo_rsp_in.rsp.axi_r.payload.data = rsp_data_value;
           floo_rsp_in.rsp.axi_r.payload.resp = rsp_resp_value[1:0];
           floo_rsp_in.rsp.axi_r.payload.last = rsp_last_value[0];
+          floo_rsp_in.rsp.axi_r.payload.user = rsp_user_value[0];
         end
 
         // ---- outgoing `req` link drain ---------------------------------
@@ -247,11 +269,13 @@ module tb_floo_axi_chimney_mgr_rsp_trace;
         pre_b_valid   = axi_in_rsp.b_valid;
         pre_b_id      = b_id_of();
         pre_b_resp    = b_resp_of();
+        pre_b_user    = b_user_of();
         pre_r_valid   = axi_in_rsp.r_valid;
         pre_r_id      = r_id_of();
         pre_r_data    = r_data_of();
         pre_r_resp    = r_resp_of();
         pre_r_last    = r_last_of();
+        pre_r_user    = r_user_of();
         pre_aw_ready  = axi_in_rsp.aw_ready;
         pre_ar_ready  = axi_in_rsp.ar_ready;
 
@@ -261,16 +285,20 @@ module tb_floo_axi_chimney_mgr_rsp_trace;
         $fwrite(trace_fd, "%0d,%0d,%0d,%0d,",
                 pre_rsp_ready, pre_b_valid, pre_b_id, pre_b_resp);
         $fwrite(trace_fd, "%0d,%0d,%0d,%0d,",
-                pre_r_valid, pre_r_id, pre_r_data, pre_r_resp);
+                pre_b_user, pre_r_valid, pre_r_id, pre_r_data);
         $fwrite(trace_fd, "%0d,%0d,%0d,",
-                pre_r_last, pre_aw_ready, pre_ar_ready);
+                pre_r_resp, pre_r_last, pre_r_user);
+        $fwrite(trace_fd, "%0d,%0d,",
+                pre_aw_ready, pre_ar_ready);
         $fwrite(trace_fd, "%0d,%0d,%0d,%0d,",
                 floo_rsp_out.ready, axi_in_rsp.b_valid, b_id_of(),
                 b_resp_of());
         $fwrite(trace_fd, "%0d,%0d,%0d,%0d,",
-                axi_in_rsp.r_valid, r_id_of(), r_data_of(), r_resp_of());
+                b_user_of(), axi_in_rsp.r_valid, r_id_of(), r_data_of());
         $fwrite(trace_fd, "%0d,%0d,%0d,",
-                r_last_of(), axi_in_rsp.aw_ready, axi_in_rsp.ar_ready);
+                r_resp_of(), r_last_of(), r_user_of());
+        $fwrite(trace_fd, "%0d,%0d,",
+                axi_in_rsp.aw_ready, axi_in_rsp.ar_ready);
         $fwrite(trace_fd, "%0d,%0d,%0d\n", r_cnt1, r_cnt2, b_cnt1);
 
         #1;

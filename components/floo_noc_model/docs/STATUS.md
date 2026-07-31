@@ -62,7 +62,7 @@ Standalone verification:
 | `test_noc_interconnect_bad_config` | Configurations refused before any traffic, each rejected while still an ordinary function call so teardown is normal: a non-positive clock period; a target on an initiator's node, including the documented default `(0,0)` of a port never placed; a manager moved onto an existing target; zero-sized, address-space-wrapping and overlapping regions; and proof that a refused call consumes no target slot and leaves a port's position intact. A legal layout is still accepted |
 | `test_axi_lanes_odr` | Two translation units including `axi_lanes.hpp` in one link. The only test that can catch a missing `inline` |
 | `test_axi_chimney_manager_response` | The manager-side response unpacker: channel decode, per-channel back-pressure, a request channel refused on the `rsp` link, and the AW→B / AR→multi-beat-R counter release loop |
-| `test_chimney_mgr_rsp_trace_sc` | 97-cycle manager-side response trace against the RTL-captured golden: the AXI manager's B and R channels, `floo_rsp_o.ready`, and both per-id reorder-buffer counters |
+| `test_chimney_mgr_rsp_trace_sc` | 78-cycle manager-side response trace against the RTL-captured golden: the AXI manager's B and R channels in full — id, resp, the whole 64-bit `RDATA`, `RLAST`, `BUSER`/`RUSER` — plus `floo_rsp_o.ready` and both per-id reorder-buffer counters, which must drain to zero |
 
 All thirty-three tests pass with GCC 11.5.0 and SystemC 2.3.4.
 
@@ -74,7 +74,7 @@ Two rows carry a caveat, and they are not the same caveat:
 - `test_axi_chimney_manager_response` covers a module that **does** have an RTL
   counterpart — the manager-side response path of `hw/floo_axi_chimney.sv` — and
   that counterpart is now signed: Step A-1, `run_chimney_mgr_rsp_crosscheck.sh`,
-  97 cycles exact. The unit test is kept alongside the cross-check rather than
+  78 cycles exact. The unit test is kept alongside the cross-check rather than
   replaced by it: the unit test says the module's own contract broke, the
   cross-check says the RTL disagrees, and the `rlast-ignored` /
   `rlast-ignored-vs-rtl` control pair keeps both statements honest.
@@ -95,18 +95,20 @@ RTL-signed blocks:
 | `NoRoB` ordering rule | `hw/floo_rob_wrapper.sv` over the locked axi `axi_demux_id_counters` | 127 cycles exact (`ax_ready_o`/`ax_valid_o`/`rsp_*` per cycle, plus `in_flight`, `prev_dest`, `counter_full`, and every counter and destination register in the bank) |
 | Chimney request-path **timing** | `hw/floo_axi_chimney.sv` in the `floo_test_pkg` parameter set | 141 cycles exact (`aw_ready`/`w_ready`/`ar_ready` and the `req` link's `valid`, channel, destination, `last` and payload per cycle, plus `aw_w_sel_q` and every request-arbiter register) |
 | Inter-node mesh | a grid of `hw/floo_axi_router.sv`, wired as the FlooGen netlist wires it | 1872 node-cycles exact (per node and per network: local inject `ready`, eject `valid`, and the ejected flit's channel, destination, `last` and payload tag, pre-edge and post-edge) |
-| Chimney **manager-side response** | same, driven on `floo_rsp_i` | 97 cycles exact (`axi_in_rsp_o`'s B and R channels qualified by their valid, `floo_rsp_o.ready`, manager-side `aw_ready`/`ar_ready`, and the `NoRoB` counter `in_flight` for two read ids and one write id). The other three chimney runners pin `floo_rsp_in.valid = 1'b0`, so this is the only one that drives the link at all |
+| Chimney **manager-side response** | same, driven on `floo_rsp_i` | 78 cycles exact (`axi_in_rsp_o`'s B and R channels qualified by their valid — id, resp, the full 64-bit `RDATA`, `RLAST` and `BUSER`/`RUSER` — plus `floo_rsp_o.ready`, manager-side `aw_ready`/`ar_ready`, and the `NoRoB` counter `in_flight` for two read ids and one write id, asserted to drain to zero). The other three chimney runners pin `floo_rsp_in.valid = 1'b0`, so this is the only one that drives the link at all |
 | Chimney response path and subordinate side, **timing** | same, driven from the `req` link | 221 cycles exact (inbound `req` `ready`, the reissued `axi_out` request boundary, the `axi_out` response `ready` signals, the `rsp` link's `valid`/channel/destination/id, plus both metadata FIFO occupancies and every response-arbiter register) |
 
-Each of those blocks is signed **in isolation**: the chimney's **request path** (141 cycles) and its **subordinate side**
-(221 cycles). The **manager-side response unpacker** is implemented and
-unit-tested but **not RTL-signed**, and therefore neither is the complete
-manager-AXI-to-subordinate-AXI composition, plus the mesh between them. That is not the same as a signed
-manager-port-to-subordinate-port path, and the difference is structural: the
-timed chimney lives in `axi_chimney.hpp`, which is instantiated only by the two
-timing trace runners. The integrated path — `noc_interconnect` over
-`axi_noc.hpp` — uses the combinational `axi_chimney_pack.hpp` plus the
-`axi_endpoint.hpp` transactors instead.
+Each of those blocks is signed **in isolation**: the chimney's **request path**
+(141 cycles), its **subordinate side** (221 cycles), and its **manager-side
+response unpacker** (78 cycles, Step A-1), plus the mesh between them. All four
+chimney quadrants are signed.
+
+That is still not the same as a signed manager-port-to-subordinate-port path,
+and the difference is structural: the timed chimney lives in `axi_chimney.hpp`,
+which is instantiated only by its three timing trace runners. The integrated
+path — `noc_interconnect` over `axi_noc.hpp` — uses the combinational
+`axi_chimney_pack.hpp` plus the `axi_endpoint.hpp` transactors instead. Steps
+A-2 and A-3 replace them.
 
 So the composed TLM-boundary latency contains signed mesh timing but is not
 itself an RTL-equivalent path. The transactors and the TLM wrapper have no RTL
@@ -774,10 +776,10 @@ failing for an unrelated reason as evidence that it covers this defect.
 **Where it runs:** in a private copy of the component under `/tmp`, one per
 control. The working tree is never touched, so an interrupt or a lost machine
 cannot leave a mutated source behind, and two runs cannot collide. It is not
-registered in CTest only because it rebuilds the component seventeen times and
-belongs in a slower loop than the unit tests.
+registered in CTest only because it rebuilds the component twenty-three times
+and belongs in a slower loop than the unit tests.
 
-Seventeen controls, all detected:
+Twenty-three controls, all detected:
 
 | Control | Test that must fail | Defect it restores |
 |---|---|---|
@@ -798,6 +800,12 @@ Seventeen controls, all detected:
 | `self-node-check-skips-default` | `test_noc_interconnect_bad_config` | a target on an unplaced port's documented default `(0,0)` was accepted during configuration and rejected only at `end_of_elaboration()` |
 | `place-initiator-not-atomic` | `test_noc_interconnect_bad_config` | a rejected placement moved the port anyway, so the throw reported a failure that had already been committed |
 | `beat-frame-guard-removed` | `test_noc_interconnect` | a transfer whose beat frame leaves its target's region was accepted; the read then fetched bytes from outside the mapping |
+| `rlast-ignored-vs-rtl` | `chimney_mgr_rsp_trace_sc` | every beat of a read burst released a reorder-buffer counter instead of only `RLAST`, and the RTL counter disagrees from the first beat of the burst |
+| `rsp-ready-channel-swapped` | `chimney_mgr_rsp_trace_sc` | `floo_rsp_o.ready` was selected by the wrong channel, so a B flit followed the R manager's ready and the reverse |
+| `rdata-upper-word-truncated` | `chimney_mgr_rsp_trace_sc` | the upper 32 bits of `RDATA` were dropped, which the first version of the A-1 cross-check could not see because it traced only the low word |
+| `ruser-dropped` | `chimney_mgr_rsp_trace_sc` | `RUSER` was not forwarded to the manager, which no trace covered until the payload was traced in full |
+| `buser-dropped` | `chimney_mgr_rsp_trace_sc` | `BUSER` was not forwarded to the manager |
+| `r-pop-id-from-b-payload` | `chimney_mgr_rsp_trace_sc` | the R counter was released by the id in the B payload rather than the R payload, so a burst decremented the wrong per-id counter |
 
 The runner has its own failure mode worth recording, because it produced a false
 pass on its first run. Records were packed into `|`-delimited strings and read
@@ -827,7 +835,14 @@ proven insufficient: it hides an output that wrongly depends on the current
 state divergence fails even when the outputs still agree. Fourteen negative
 controls were run against the cycle harnesses below; the chimney request and
 response harnesses add three and four more of their own, for twenty-one in
-total:
+total.
+
+That twenty-one counts **manual** harness controls only — the ones tabulated
+below, each run by hand against its own cross-check. The manager-side response
+harness added by Step A-1 is validated differently: its six controls are
+**automated**, registered in `run_negative_controls.sh`, and are counted in the
+twenty-three above. They are deliberately not added here, because the two totals
+are different sets and summing them would count the same six twice.
 
 | Injected defect | Harness | Result |
 |---|---|---|
@@ -1006,7 +1021,7 @@ The chimney item **is** done as of Step A-1, but "cross-checked in both
 directions" was never the right way to say it — the chimney has four quadrants,
 not two. All four are now signed: manager request timing (141 cyc), subordinate
 request reception and response generation (221 cyc), and the manager-side
-response unpacker `axi_chimney_manager_response` (97 cyc,
+response unpacker `axi_chimney_manager_response` (78 cyc,
 `run_chimney_mgr_rsp_crosscheck.sh`).
 
 **Datapath modelling is still not finished.** A-1 signed the last *block*; the
@@ -1024,7 +1039,7 @@ sub-steps deliberately do **not** run in numeric order:
    including a reintroduction of the `kSurveyScratch` corruption.
 1b. **Step A** — compose the RTL-signed chimney into the datapath, replacing the
    abstract endpoint transactors. ~~A-1, cross-check the manager-side
-   unpacker.~~ **Done** (2026-07-31): 97 cycles exact, three negative controls
+   unpacker.~~ **Done** (2026-07-31): 78 cycles exact, six negative controls
    detected. Next is **A-2**, assembling a per-node chimney into `axi_noc`, then
    **A-3**. See `AI_HANDOFF_CONTEXT.md` section 14.
 2. **Step 10.3** — scoreboard-driven stress on the unsigned integration layer

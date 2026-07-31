@@ -4,10 +4,9 @@
 # Cycle cross-check of the model's two-network mesh against a grid of the
 # unmodified frozen `hw/floo_axi_router.sv`.
 #
-# This closes the mesh timing gap. The chimney's request path and subordinate
-# side are signed; its manager-side response unpacker is not (Step A-1), and
-# the routers individually, but until now nothing compared what happens
-# *between* nodes: route turns, packet routes held across several routers,
+# This closes the mesh timing gap. All four of the chimney's quadrants are
+# signed, and the routers individually, but until now nothing compared what
+# happens *between* nodes: route turns, packet routes held across several routers,
 # contention for a shared output, and eject back-pressure propagating back into
 # the network.
 #

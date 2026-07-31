@@ -13,10 +13,18 @@
 // `run_rob_crosscheck.sh`, and what has never been compared is the wiring
 // between the two.
 //
-// Traced: `floo_rsp_o.ready`, the AXI manager port's B and R channels, the
+// Traced: `floo_rsp_o.ready`, the AXI manager port's B and R channels — id,
+// resp, **the full 64-bit `RDATA`**, `RLAST`, and `BUSER`/`RUSER` — the
 // manager-side `aw_ready`/`ar_ready`, and the per-id counters for both
 // directions. Payload fields are qualified by their valid, for the reason given
 // in the testbench header — the RTL's response union aliases B and R bits.
+//
+// `RDATA` is emitted at its full width deliberately. The first version of this
+// file cast it to `std::uint32_t`, so the upper word was never compared: a
+// mutation corrupting it PASSed, and the payload was signed only from bit 31
+// down. `BUSER`/`RUSER` were absent entirely. `AxiCfg.UserWidth` is 1 here, so
+// the user field is reduced to one bit on both sides rather than pretending to
+// a width the frozen parameter set does not have.
 
 #include "floo_noc_model/axi_chimney.hpp"
 
@@ -44,6 +52,7 @@ struct stimulus {
     bool aw_valid{};
     unsigned aw_id{};
     std::uint64_t aw_addr{};
+    unsigned aw_len{};
     bool w_valid{};
     std::uint64_t w_data{};
     bool w_last{};
@@ -58,6 +67,7 @@ struct stimulus {
     std::uint64_t rsp_data{};
     unsigned rsp_resp{};
     bool rsp_last{};
+    bool rsp_user{};
     bool b_ready{};
     bool r_ready{};
 };
@@ -98,9 +108,9 @@ std::vector<stimulus> read_stimuli(const std::string& path)
     }
 
     const std::string expected_header =
-        "cycle,rst_n,aw_valid,aw_id,aw_addr,w_valid,w_data,w_last,"
+        "cycle,rst_n,aw_valid,aw_id,aw_addr,aw_len,w_valid,w_data,w_last,"
         "ar_valid,ar_id,ar_addr,ar_len,req_ready,"
-        "rsp_valid,rsp_ch,rsp_id,rsp_data,rsp_resp,rsp_last,"
+        "rsp_valid,rsp_ch,rsp_id,rsp_data,rsp_resp,rsp_last,rsp_user,"
         "b_ready,r_ready";
     if (line != expected_header) {
         throw std::runtime_error(
@@ -115,10 +125,10 @@ std::vector<stimulus> read_stimuli(const std::string& path)
             continue;
         }
         const auto f = split_csv(line);
-        if (f.size() != 21) {
+        if (f.size() != 23) {
             throw std::runtime_error(
                 path + ':' + std::to_string(line_number)
-                + ": expected 21 CSV fields");
+                + ": expected 23 CSV fields");
         }
         const auto number = [&](std::size_t index) {
             return parse_integer(f[index], path, line_number);
@@ -130,22 +140,24 @@ std::vector<stimulus> read_stimuli(const std::string& path)
         row.aw_valid = number(2) != 0;
         row.aw_id = static_cast<unsigned>(number(3));
         row.aw_addr = number(4);
-        row.w_valid = number(5) != 0;
-        row.w_data = number(6);
-        row.w_last = number(7) != 0;
-        row.ar_valid = number(8) != 0;
-        row.ar_id = static_cast<unsigned>(number(9));
-        row.ar_addr = number(10);
-        row.ar_len = static_cast<unsigned>(number(11));
-        row.req_ready = number(12) != 0;
-        row.rsp_valid = number(13) != 0;
-        row.rsp_ch = static_cast<unsigned>(number(14));
-        row.rsp_id = static_cast<unsigned>(number(15));
-        row.rsp_data = number(16);
-        row.rsp_resp = static_cast<unsigned>(number(17));
-        row.rsp_last = number(18) != 0;
-        row.b_ready = number(19) != 0;
-        row.r_ready = number(20) != 0;
+        row.aw_len = static_cast<unsigned>(number(5));
+        row.w_valid = number(6) != 0;
+        row.w_data = number(7);
+        row.w_last = number(8) != 0;
+        row.ar_valid = number(9) != 0;
+        row.ar_id = static_cast<unsigned>(number(10));
+        row.ar_addr = number(11);
+        row.ar_len = static_cast<unsigned>(number(12));
+        row.req_ready = number(13) != 0;
+        row.rsp_valid = number(14) != 0;
+        row.rsp_ch = static_cast<unsigned>(number(15));
+        row.rsp_id = static_cast<unsigned>(number(16));
+        row.rsp_data = number(17);
+        row.rsp_resp = static_cast<unsigned>(number(18));
+        row.rsp_last = number(19) != 0;
+        row.rsp_user = number(20) != 0;
+        row.b_ready = number(21) != 0;
+        row.r_ready = number(22) != 0;
         result.push_back(row);
     }
     return result;
@@ -287,11 +299,13 @@ void run(const std::vector<stimulus>& stimuli, std::ostream& trace)
 
     trace << "cycle,"
              "pre_rsp_ready,pre_b_valid,pre_b_id,pre_b_resp,"
-             "pre_r_valid,pre_r_id,pre_r_data,pre_r_resp,"
-             "pre_r_last,pre_aw_ready,pre_ar_ready,"
+             "pre_b_user,pre_r_valid,pre_r_id,pre_r_data,"
+             "pre_r_resp,pre_r_last,pre_r_user,"
+             "pre_aw_ready,pre_ar_ready,"
              "post_rsp_ready,post_b_valid,post_b_id,post_b_resp,"
-             "post_r_valid,post_r_id,post_r_data,post_r_resp,"
-             "post_r_last,post_aw_ready,post_ar_ready,"
+             "post_b_user,post_r_valid,post_r_id,post_r_data,"
+             "post_r_resp,post_r_last,post_r_user,"
+             "post_aw_ready,post_ar_ready,"
              "r_cnt1,r_cnt2,b_cnt1\n";
 
     // Payload fields are only meaningful while their valid is high; see the
@@ -305,11 +319,13 @@ void run(const std::vector<stimulus>& stimuli, std::ostream& trace)
             << static_cast<unsigned>(b_v) << ','
             << (b_v ? static_cast<unsigned>(b.id) : 0u) << ','
             << (b_v ? static_cast<unsigned>(b.resp) : 0u) << ','
+            << (b_v ? (b.user != 0 ? 1u : 0u) : 0u) << ','
             << static_cast<unsigned>(r_v) << ','
             << (r_v ? static_cast<unsigned>(r.id) : 0u) << ','
-            << (r_v ? static_cast<std::uint32_t>(r.data) : 0u) << ','
+            << (r_v ? static_cast<std::uint64_t>(r.data) : 0ull) << ','
             << (r_v ? static_cast<unsigned>(r.resp) : 0u) << ','
             << (r_v ? static_cast<unsigned>(r.last) : 0u) << ','
+            << (r_v ? (r.user != 0 ? 1u : 0u) : 0u) << ','
             << static_cast<unsigned>(aw_ready.read()) << ','
             << static_cast<unsigned>(ar_ready.read());
     };
@@ -326,6 +342,10 @@ void run(const std::vector<stimulus>& stimuli, std::ostream& trace)
         axi_aw_chan aw_beat{};
         aw_beat.id = row.aw_id;
         aw_beat.addr = row.aw_addr;
+        // `AWLEN` encodes `beats - 1`. Leaving it at zero while the stimulus
+        // emitted two W beats was an AXI-contract violation that both sides
+        // reproduced identically, so the comparison never noticed.
+        aw_beat.len = row.aw_len;
         aw_beat.size = 3;
         aw_beat.burst = 1;
         aw.write(aw_beat);
@@ -363,11 +383,13 @@ void run(const std::vector<stimulus>& stimuli, std::ostream& trace)
         if (static_cast<axi_channel>(row.rsp_ch) == axi_channel::b) {
             flit.b.id = row.rsp_id;
             flit.b.resp = static_cast<std::uint8_t>(row.rsp_resp);
+            flit.b.user = row.rsp_user ? 1u : 0u;
         } else {
             flit.r.id = row.rsp_id;
             flit.r.data = row.rsp_data;
             flit.r.resp = static_cast<std::uint8_t>(row.rsp_resp);
             flit.r.last = row.rsp_last;
+            flit.r.user = row.rsp_user ? 1u : 0u;
         }
         rsp_data.write(flit);
         rsp_valid.write(row.rsp_valid);

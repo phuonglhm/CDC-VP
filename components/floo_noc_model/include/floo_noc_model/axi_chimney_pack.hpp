@@ -37,7 +37,7 @@
 //
 //   run_chimney_rsp_timing_crosscheck.sh  221 cycles exact
 //
-//   run_chimney_mgr_rsp_crosscheck.sh      97 cycles exact
+//   run_chimney_mgr_rsp_crosscheck.sh      78 cycles exact
 //
 // All four chimney quadrants are signed. What is *not* signed is the composed
 // manager-AXI-to-subordinate-AXI path: `noc_interconnect` still drives the
