@@ -742,15 +742,32 @@ This is guidance, not permission to rewrite unrelated files.
 - [x] 17 detected, 0 missed.
 - [x] clean.
 - [x] `9a6972a…`, 0 dirty files.
-- [x] the three audit greps in section 5 return only historical quotations inside review plans.
+- [x] the three audit greps in section 5 return no overclaim. They do return
+      matches outside the review plans, and the earlier wording of this line —
+      "only historical quotations inside review plans" — was wrong about that.
+      The matches are: `noc_interconnect.h` naming "both directions are signed"
+      as the overclaim to avoid; `STATUS.md` recording that it *was* the wrong
+      summary; a Step 6 record of what was unverified at that point in the
+      sequence; a rule quoting "DO SECOND" as the kind of stale heading to
+      avoid; and "**A-1 first**", which is the current instruction. Each is a
+      negation, a correction, a dated record, or live guidance.
 
 ### Reviewer-only sign-off
 
-- [ ] A final human/AI reviewer independently finds no remaining pre-A1
-      blocker.
+- [x] A final human/AI reviewer independently finds no remaining pre-A1
+      blocker. **Signed 2026-07-31**, after a fourth review round. Verdict:
+      *"Đủ điều kiện để đi tiếp A-1 — reviewer sign-off: PASS."*
+
+      Ticked on the reviewer's instruction, not by the implementer's own
+      judgement. The round-4 findings were seven acceptance and documentation
+      defects — three of them tests that could not observe the defect they were
+      named after, proven by mutation — and a round-5 pass that found one
+      remaining wrong comment (`AWADDR`) and no code, test or roadmap conflict.
+      All are fixed; see sections 14 and 15.
 
 **The implementer must leave the reviewer-only box unchecked. Only after that
-box is checked may the next agent begin Step A-1.**
+box is checked may the next agent begin Step A-1.** That box is now checked, so
+Step A-1 is unblocked.
 
 ---
 
@@ -1006,3 +1023,46 @@ FlooNoC frozen          9a6972a5f9b8117506d1df8a6505ce1da2bc9084, 0 dirty
 
 The reviewer-only box in section 12 remains unchecked. It is the reviewer's to
 check, not the implementer's, and these findings are why.
+
+---
+
+## 15. Round-5 review — sign-off — 2026-07-31
+
+One finding, non-blocking, and it corrected a claim rather than a behaviour.
+
+### `AWADDR` described wrongly
+
+Section 14's beat-frame rationale said `AWADDR` is "beat 0's aligned address".
+It is not. `src/noc_interconnect.cpp` sets `txn.addr` to the raw TLM address,
+and `axi_endpoint.hpp` assigns `aw.addr = txn.addr` unchanged, so `AWADDR` is
+the possibly unaligned transaction start. The aligned beat-0 base exists only
+inside `axi_shape::beat0_addr`, which is a model-side computation and never
+reaches an AXI field.
+
+The argument survives the correction, and is now stated as it actually works:
+`AWSIZE` and `AWLEN` define the beat sequence, and it is that sequence's final
+beat that crosses the region boundary. The frame is still a property of the
+burst rather than of this wrapper's strobe-exact replay, which is why the write
+is refused even though nothing is corrupted today.
+
+Comment-only change to `tests/test_noc_interconnect.cpp`; no code, no test
+outcome, no roadmap item affected.
+
+### Sign-off
+
+The reviewer found no remaining code, test or roadmap defect and signed the
+section 12 box. Evidence at sign-off:
+
+```text
+standalone              32/32 PASS
+warning coverage        30/30 TUs carry -Wall -Wextra -Wpedantic
+negative controls       17 detected, 0 missed
+git diff --check        clean
+generated build files   none inside the component
+FlooNoC frozen          9a6972a5f9b8117506d1df8a6505ce1da2bc9084, clean
+parent / firmware / 11 RTL runners
+                        unaffected — the round-5 change is a comment
+```
+
+**Step A-1 is unblocked.** A checkpoint commit was taken before it started, so
+the pre-A1 state is recoverable.

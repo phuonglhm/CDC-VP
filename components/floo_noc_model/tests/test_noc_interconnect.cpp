@@ -1024,9 +1024,30 @@ private:
     //
     // The target is backed by more memory than the region it is mapped with, so
     // an unguarded overrun does not fail on its own: it lands inside the
-    // backing store, writes bytes outside the declared region, and reports
-    // success. Both halves are asserted — the response code and the fact that
-    // the target was never called at all.
+    // backing store and reports success. Both halves are asserted — the
+    // response code and the fact that the target was never called at all.
+    //
+    // What the two commands actually lose without the guard is **not** the
+    // same, and an earlier version of this comment got the write wrong.
+    //
+    //  * **Read** — the replay takes the whole beat frame, because that is what
+    //    AXI fetches: `length = beats * 2**ARSIZE` from the bus-aligned base of
+    //    beat 0. So an unguarded read really does pull bytes from outside the
+    //    declared region — four of them here — out of a neighbouring mapping or,
+    //    as arranged below, out of backing store the platform never mapped.
+    //  * **Write** — the replay is strobe-exact: `absorb_request` reduces the
+    //    burst to the span of the addresses its `WSTRB` bits actually named, so
+    //    the downstream access stays inside the requested bytes and therefore
+    //    inside the region. Nothing is corrupted today.
+    //
+    // The write is still refused, and deliberately. The frame is a property of
+    // the AXI burst, not of this wrapper's replay: `AWADDR` remains the
+    // possibly unaligned transaction start, and `AWSIZE` and `AWLEN` define a
+    // beat sequence whose final beat crosses the region boundary. So the burst
+    // the wrapper accepted describes a transfer leaving the region. Today a
+    // strobe-exact TLM replay hides that; from Step A-3 the timed chimney puts
+    // that burst on the wire, where a real subordinate decoder sees the frame
+    // and not the strobes. Refusing it now keeps the two paths agreeing.
     void test_beat_frame_guard()
     {
         unsigned char buffer[16] = {};

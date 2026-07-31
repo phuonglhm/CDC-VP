@@ -309,7 +309,7 @@ add_control \
     '' \
     "test_noc_interconnect" \
     "beat frame leaves the region must be refused" \
-    "a full-width transfer was replayed over a beat frame reaching past its target's region, writing bytes outside the mapping and reporting success"
+    "a full-width transfer whose beat frame leaves its target's region was accepted; the read then fetched bytes from outside the mapping, and the write was accepted describing an AXI burst that crosses the region boundary"
 
 # ── run them ─────────────────────────────────────────────────────────────────
 detected=0

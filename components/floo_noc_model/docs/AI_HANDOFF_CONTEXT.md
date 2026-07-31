@@ -2174,9 +2174,11 @@ the ordering gate, because it is an admission decision that needs a harness
 observing the request-side `ready`; and the transactors, which have no RTL
 counterpart.
 
-Also unverified: chimney *timing* and arbitration in both directions,
-multi-beat R bursts, ATOPs, back-pressure on either link, and the
-`MaxUniqueIds > 1` metadata path.
+Also unverified **at the end of Step 6** — this is a dated record, not the
+current state: chimney *timing* and arbitration in both directions, multi-beat R
+bursts, ATOPs, back-pressure on either link, and the `MaxUniqueIds > 1` metadata
+path. Steps 8 and 9 later signed chimney request timing (141 cyc) and the
+subordinate side (221 cyc); for what is still unsigned today see section 14.
 
 ### Step 7 — Sign the `NoRoB` ordering rule — DONE (2026-07-29)
 

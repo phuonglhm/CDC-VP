@@ -757,31 +757,52 @@ editing by hand and nothing checked that they still bite.
 
 **Automated.** `rtl_crosscheck/run_negative_controls.sh` holds the model-level
 controls as executable records: file, exact literal, replacement, the test that
-must then fail, and what the defect was. It applies each one, rebuilds, requires
-a non-zero exit, and restores the tree on every exit path including interrupt.
-An injection that stops failing is reported as `MISSED` and the script exits 1 —
-either the defect became unreachable or the test stopped covering it, and both
-need a human decision rather than a silent pass.
+must then fail, **the message that failure must contain**, and what the defect
+was. It applies each one, rebuilds, and requires both a non-zero exit and that
+message. An injection that stops failing is reported as `MISSED` and the script
+exits 1 — either the defect became unreachable or the test stopped covering it,
+and both need a human decision rather than a silent pass.
+
+Requiring the message is not decoration. Exit status alone counted a mutation
+that merely broke the syntax as equal to one that broke behaviour, and a test
+failing for an unrelated reason as evidence that it covers this defect.
+
+**Where it runs:** in a private copy of the component under `/tmp`, one per
+control. The working tree is never touched, so an interrupt or a lost machine
+cannot leave a mutated source behind, and two runs cannot collide. It is not
+registered in CTest only because it rebuilds the component seventeen times and
+belongs in a slower loop than the unit tests.
+
+Seventeen controls, all detected:
 
 | Control | Test that must fail | Defect it restores |
 |---|---|---|
 | `lane-placement` | `test_axi_lanes` | the first payload byte always went to lane 0, so a narrow access at a non-zero offset wrote the wrong half of the bus |
 | `byte-enables-ignored` | `test_axi_lanes` | byte enables were never read, so a partial write became a full one |
-| `target-delay-truncated` | `test_noc_interconnect` | a target latency shorter than one network cycle rounded down to free |
+| `target-delay-truncated` | `test_noc_interconnect` | a target latency shorter than one network cycle was rounded down to free |
 | `incoming-delay-dropped` | `test_noc_interconnect` | the caller's annotated time was discarded instead of spent |
-| `offer-not-atomic` | `test_axi_endpoint` | capacity was checked after the request flits were queued |
-| `rlast-ignored` | `test_axi_chimney_manager_response` | every beat of a read burst released a reorder-buffer counter |
-
-It is deliberately **not** registered in CTest: it mutates files in the source
-tree, so running it concurrently with anything else would corrupt both.
+| `offer-not-atomic` | `test_axi_endpoint` | capacity was checked after the request flits had been queued, so a full metadata buffer threw with a burst already in flight |
+| `rlast-ignored` | `test_axi_chimney_manager_response` | every beat of a read burst released a reorder-buffer counter, not just the last |
+| `region-decode-addition` | `test_noc_interconnect` | the mapped-region decode used an addition that wraps, making a region whose last byte is `UINT64_MAX` unreachable |
+| `axlen-truncated` | `test_axi_endpoint` | a burst longer than `AxLEN` can encode was narrowed instead of rejected, so 257 beats became `ARLEN = 0` and one beat was returned |
+| `tlm-mapping-slverr-decerr-swapped` | `test_noc_interconnect` | the two AXI error codes were exchanged at the TLM boundary, so a decode failure looked like a target refusal and the reverse |
+| `tlm-mapping-exokay-as-error` | `test_noc_interconnect` | `EXOKAY`, the success code for an exclusive access, was reported to the caller as a failure |
+| `b-response-discarded` | `test_axi_endpoint` | the B response code was thrown away, so a failed write completed as OK |
+| `sparse-beat-renumbering` | `test_noc_interconnect` | a write whose leading beat was fully disabled had its data placed one beat too early, and still reported success |
+| `widened-read-policy-removed` | `test_noc_interconnect` | a read wider than the request reached an MMIO target, where a neighbouring register may clear on read |
+| `r-burst-error-lost` | `test_axi_endpoint` | an error on an intermediate R beat was erased by a later OKAY |
+| `self-node-check-skips-default` | `test_noc_interconnect_bad_config` | a target on an unplaced port's documented default `(0,0)` was accepted during configuration and rejected only at `end_of_elaboration()` |
+| `place-initiator-not-atomic` | `test_noc_interconnect_bad_config` | a rejected placement moved the port anyway, so the throw reported a failure that had already been committed |
+| `beat-frame-guard-removed` | `test_noc_interconnect` | a transfer whose beat frame leaves its target's region was accepted; the read then fetched bytes from outside the mapping |
 
 The runner has its own failure mode worth recording, because it produced a false
 pass on its first run. Records were packed into `|`-delimited strings and read
 with `read`, which stops at the first newline — so every control whose literal
 spanned several lines lost its remaining fields, invoked `cmake --build` with an
 empty target, and counted CMake's usage output as "the defect was detected".
-Four of six controls had never executed. The fields are base64-encoded now, and
-an empty test name is a hard error. **A control mechanism needs its own control:**
+Four of six controls had never executed. Records are parallel arrays now, since
+the literals routinely span several lines, and an empty required field is a hard
+error before anything is built. **A control mechanism needs its own control:**
 injecting a comment-only change must be reported `MISSED`, and it is.
 
 **Manual.** The RTL cross-check controls stay manual and are documented in the
@@ -1001,10 +1022,13 @@ sub-steps deliberately do **not** run in numeric order:
    abstract endpoint transactors. The manager-side unpacker was the missing
    fourth quadrant and now exists; next is cross-checking it (A-1). See
    `AI_HANDOFF_CONTEXT.md` section 14.
-2. **Step 10.3** — scoreboard-driven stress on `axi_endpoint.hpp` and
-   `noc_interconnect`. These have no RTL counterpart and every integration
-   defect so far has been in them. Also closes the unproven clock-gating
-   condition.
+2. **Step 10.3** — scoreboard-driven stress on the unsigned integration layer
+   that remains **above** the chimney once A-3 lands: `noc_interconnect` and its
+   TLM-to-AXI mapping. It has no RTL counterpart and every integration defect so
+   far has been in it. Also closes the unproven clock-gating condition.
+   `axi_endpoint.hpp` was named here before Step A existed; A-3 removes it from
+   the datapath, so stressing it would buy directed coverage of code with a
+   scheduled removal date. That is why 10.3 sits after A-3, not before it.
 3. **Step 10.1** — separate survey and firmware ownership in `noc_soc`. Needs
    item 1 to be verifiable.
 4. **Step 10.4** — clean-prefix install, packaging, licence and provenance
