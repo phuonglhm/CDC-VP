@@ -755,15 +755,22 @@ This is guidance, not permission to rewrite unrelated files.
 ### Reviewer-only sign-off
 
 - [x] A final human/AI reviewer independently finds no remaining pre-A1
-      blocker. **Signed 2026-07-31**, after a fourth review round. Verdict:
+      blocker. **Signed 2026-07-31**, at the end of the Round 5 review — see
+      section 15. Verdict:
       *"Đủ điều kiện để đi tiếp A-1 — reviewer sign-off: PASS."*
 
       Ticked on the reviewer's instruction, not by the implementer's own
-      judgement. The round-4 findings were seven acceptance and documentation
-      defects — three of them tests that could not observe the defect they were
-      named after, proven by mutation — and a round-5 pass that found one
-      remaining wrong comment (`AWADDR`) and no code, test or roadmap conflict.
-      All are fixed; see sections 14 and 15.
+      judgement. Three review rounds preceded it:
+
+      - **Round 3** (section 14) — seven acceptance and documentation defects,
+        three of them tests that could not observe the defect they were named
+        after, proven by mutation. Sign-off withheld.
+      - **Round 4** (section 14) — four documentation-accuracy defects, no
+        functional defect. Sign-off withheld.
+      - **Round 5** (section 15) — one wrong comment (`AWADDR`), and no code,
+        test or roadmap conflict. Signed.
+
+      All are fixed.
 
 **The implementer must leave the reviewer-only box unchecked. Only after that
 box is checked may the next agent begin Step A-1.** That box is now checked, so
@@ -889,7 +896,13 @@ no std::_Exit in any test
 
 ---
 
-## 14. Round-3 reviewer findings and their remediation — 2026-07-31
+## 14. Round-3 and Round-4 reviewer findings and their remediation — 2026-07-31
+
+Two review rounds are recorded here. Round 3 raised seven findings and withheld
+sign-off; Round 4 re-reviewed the result, found four more, and also withheld it.
+Sign-off came at the end of Round 5, in section 15.
+
+### Round 3 — seven findings
 
 The round-3 reviewer withheld sign-off. The verdict was that the F1/F2/F3
 implementations were correct but that the *acceptance* around them was not: some
@@ -1021,8 +1034,49 @@ git diff --check        clean
 FlooNoC frozen          9a6972a5f9b8117506d1df8a6505ce1da2bc9084, 0 dirty
 ```
 
-The reviewer-only box in section 12 remains unchecked. It is the reviewer's to
-check, not the implementer's, and these findings are why.
+The reviewer-only box in section 12 remained unchecked at the end of Round 3.
+It is the reviewer's to check, not the implementer's, and these findings are
+why. It was later signed; see section 15.
+
+### Round 4 — four findings, all documentation accuracy
+
+No functional defect. All four were places where a document described a
+mechanism that no longer existed, or where an evidence claim outran what had
+actually been checked.
+
+**The negative-control runner was described as something else.** `STATUS.md`
+still said the runner mutates the working tree and restores it on exit, that it
+is kept out of CTest because a concurrent run would corrupt the tree, that
+records are base64-encoded, and it listed six controls. By then the runner
+worked in a private `/tmp` copy per control, stored records as parallel arrays,
+required a specific failure message, and held seventeen. Rewritten, with the
+full seventeen-row table and the real reason it is not in CTest — it rebuilds
+the component seventeen times.
+
+**A claim about the write path was wrong.** The `test_beat_frame_guard` comment
+said an unguarded overrun writes bytes outside the mapping. It does not:
+`absorb_request` reduces a write to the span of the addresses its `WSTRB` bits
+named, so the downstream access stays inside the requested bytes and therefore
+inside the region. The **read** is what over-fetches, because it replays the
+whole beat frame. The write is still refused — the frame is a property of the
+AXI burst, which Step A-3 will put on the wire — but the comment and the
+control's stated defect now say that instead of claiming corruption.
+
+**Step 10.3's scope was stale.** It named `axi_endpoint.hpp` as something to
+stress, from before Step A existed. A-3 removes it from the datapath, so
+stressing it would buy directed coverage of code with a scheduled removal date —
+which is also why 10.3 sits after A-3.
+
+**A checklist line overstated an audit result.** It said the three section 5
+greps "return only historical quotations inside review plans". They also return
+matches outside the review plans; each is a negation, a correction, a dated
+record, or live guidance, so none is an overclaim — but the line now says what
+the greps actually return rather than a tidier version of it.
+
+Also, while confirming the last item, the Step 6 record in
+`AI_HANDOFF_CONTEXT.md` was given an explicit "at the end of Step 6" marker. It
+lists chimney timing as unverified, which was true then and has not been true
+since Steps 8 and 9.
 
 ---
 
