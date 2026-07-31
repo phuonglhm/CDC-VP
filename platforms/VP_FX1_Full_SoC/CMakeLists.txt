@@ -35,7 +35,7 @@ target_link_libraries(vp_fx1_full_soc PRIVATE
 
 if(CDC_ENABLE_SAURIA_NPU_V4)
     target_link_libraries(vp_fx1_full_soc PRIVATE
-        cdc::components::npu_tlm_v4_model)
+        cdc::components::npu_tlm)
 endif()
 
 add_custom_command(TARGET vp_fx1_full_soc POST_BUILD

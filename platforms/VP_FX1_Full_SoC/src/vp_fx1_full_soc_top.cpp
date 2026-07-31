@@ -32,7 +32,7 @@
 #include <adc_tlm.h>     // cdc::components::adc_tlm
 #include <gpio_tlm.h>    // cdc::components::gpio_tlm
 #if CDC_ENABLE_SAURIA_NPU_V4
-#include <npu_tlm_v4_model.h>
+#include <npu_tlm.h>
 #endif
 
 #include <riscv_vp_wrapper.h>
@@ -136,7 +136,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
     cdc::components::adc_tlm adc0;
     cdc::components::gpio_tlm gpio0;   // pin 1 = ROM-code boot-mode strap
 #if CDC_ENABLE_SAURIA_NPU_V4
-    cdc::components::npu_tlm_v4_model npu0;
+    cdc::components::npu_tlm npu0;
 #endif
 
     // ── Signals ─────────────────────────────────────────────────────────────

@@ -27,11 +27,6 @@ add_library(npu_tlm STATIC
     src/npu_tlm.cpp)
 add_library(cdc::components::npu_tlm ALIAS npu_tlm)
 
-# Temporary compatibility targets for platforms that have not migrated to the
-# generic NPU component name yet.
-add_library(npu_tlm_v4_model ALIAS npu_tlm)
-add_library(cdc::components::npu_tlm_v4_model ALIAS npu_tlm)
-
 target_include_directories(npu_tlm
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
