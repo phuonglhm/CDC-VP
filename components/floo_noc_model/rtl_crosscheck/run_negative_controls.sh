@@ -68,9 +68,18 @@ replacements=()
 tests=()
 expects=()
 whys=()
+args=()
 
-# Every field is required. `replacement` is the one exception: deleting a block
-# is a legitimate mutation, so an empty replacement is meaningful.
+# Every field is required. Two are exceptions, and both for a stated reason:
+#
+#   * `replacement` — deleting a block is a legitimate mutation, so an empty
+#     replacement is meaningful;
+#   * `args` — most test executables take none. The trace-comparison targets do
+#     take arguments (stimulus, output, expected), and without this they could
+#     not be used as controls at all: run bare they exit on their usage message,
+#     which is a failure for the wrong reason. Two placeholders are substituted,
+#     `@SRC@` for the mutated source copy and `@EVIDENCE@` for this control's
+#     evidence directory.
 #
 # The expected message in particular used to be optional, and two controls
 # registered an empty one — so they were counted as detected whenever their test
@@ -88,7 +97,7 @@ add_control() {
         fi
     done
     names+=("$1"); files+=("$2"); needles+=("$3"); replacements+=("$4")
-    tests+=("$5"); expects+=("$6"); whys+=("$7")
+    tests+=("$5"); expects+=("$6"); whys+=("$7"); args+=("${8:-}")
 }
 
 add_control \
@@ -311,6 +320,58 @@ add_control \
     "beat frame leaves the region must be refused" \
     "a full-width transfer whose beat frame leaves its target's region was accepted; the read then fetched bytes from outside the mapping, and the write was accepted describing an AXI burst that crosses the region boundary"
 
+# ---- Step A-1: the manager-side response path, against RTL ------------------
+#
+# These three run against `chimney_mgr_rsp_trace_sc`, which replays the shared
+# stimulus and compares every cycle to `chimney_mgr_rsp_expected.csv` — a trace
+# produced by the unmodified frozen `floo_axi_chimney.sv`, not by this model.
+# That makes them the strongest controls in this file: a divergence is measured
+# against hardware rather than against another opinion of the same author.
+#
+# `rlast-ignored` above reinjects the same first defect against the unit test.
+# Both are kept deliberately. The unit test says the module's own contract
+# broke; this one says the RTL disagrees.
+
+A1_ARGS="@SRC@/tests/data/chimney_mgr_rsp_stimulus.csv @EVIDENCE@/model.csv @SRC@/tests/data/chimney_mgr_rsp_expected.csv"
+
+add_control \
+    "rlast-ignored-vs-rtl" \
+    "include/floo_noc_model/axi_chimney.hpp" \
+    'r_rob_.i_rsp_last(i_r_pop_last);' \
+    'r_rob_.i_rsp_last(const_true_);' \
+    "chimney_mgr_rsp_trace_sc" \
+    "trace mismatch" \
+    "every beat of a read burst released a reorder-buffer counter instead of only RLAST, and the RTL counter disagrees from the first beat of the burst" \
+    "${A1_ARGS}"
+
+add_control \
+    "rsp-ready-channel-swapped" \
+    "include/floo_noc_model/axi_chimney.hpp" \
+    '        if (channel == axi_channel::b) {
+            ready = i_b_rob_ready.read();
+        } else if (channel == axi_channel::r) {
+            ready = i_r_rob_ready.read();
+        }' \
+    '        if (channel == axi_channel::b) {
+            ready = i_r_rob_ready.read();
+        } else if (channel == axi_channel::r) {
+            ready = i_b_rob_ready.read();
+        }' \
+    "chimney_mgr_rsp_trace_sc" \
+    "trace mismatch" \
+    "floo_rsp_o.ready was selected by the wrong channel, so a B flit followed the R manager's ready and the reverse" \
+    "${A1_ARGS}"
+
+add_control \
+    "r-pop-id-from-b-payload" \
+    "include/floo_noc_model/axi_chimney.hpp" \
+    'o_r_pop_id.write(static_cast<unsigned>(flit.r.id));' \
+    'o_r_pop_id.write(static_cast<unsigned>(flit.b.id));' \
+    "chimney_mgr_rsp_trace_sc" \
+    "trace mismatch" \
+    "the R counter was released by the id in the B payload rather than the R payload, so a burst decremented the wrong per-id counter" \
+    "${A1_ARGS}"
+
 # ── run them ─────────────────────────────────────────────────────────────────
 detected=0
 missed=0
@@ -366,7 +427,16 @@ PY
         continue
     fi
 
-    if "${build_dir}/tests/${test_name}" >"${evidence}/test.log" 2>&1; then
+    # Placeholders resolve to this control's private copy, never the tree.
+    test_args=()
+    if [[ -n "${args[${index}]}" ]]; then
+        resolved="${args[${index}]//@SRC@/${source_copy}}"
+        resolved="${resolved//@EVIDENCE@/${evidence}}"
+        read -r -a test_args <<<"${resolved}"
+    fi
+
+    if "${build_dir}/tests/${test_name}" "${test_args[@]}" \
+         >"${evidence}/test.log" 2>&1; then
         echo "MISSED ${name}: ${test_name} still passes." >&2
         echo "        Defect: ${whys[${index}]}" >&2
         echo "        See ${evidence}/test.log" >&2

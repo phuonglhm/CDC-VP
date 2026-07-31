@@ -62,8 +62,9 @@ Standalone verification:
 | `test_noc_interconnect_bad_config` | Configurations refused before any traffic, each rejected while still an ordinary function call so teardown is normal: a non-positive clock period; a target on an initiator's node, including the documented default `(0,0)` of a port never placed; a manager moved onto an existing target; zero-sized, address-space-wrapping and overlapping regions; and proof that a refused call consumes no target slot and leaves a port's position intact. A legal layout is still accepted |
 | `test_axi_lanes_odr` | Two translation units including `axi_lanes.hpp` in one link. The only test that can catch a missing `inline` |
 | `test_axi_chimney_manager_response` | The manager-side response unpacker: channel decode, per-channel back-pressure, a request channel refused on the `rsp` link, and the AW→B / AR→multi-beat-R counter release loop |
+| `test_chimney_mgr_rsp_trace_sc` | 97-cycle manager-side response trace against the RTL-captured golden: the AXI manager's B and R channels, `floo_rsp_o.ready`, and both per-id reorder-buffer counters |
 
-All thirty-two tests pass with GCC 11.5.0 and SystemC 2.3.4.
+All thirty-three tests pass with GCC 11.5.0 and SystemC 2.3.4.
 
 Two rows carry a caveat, and they are not the same caveat:
 
@@ -71,10 +72,12 @@ Two rows carry a caveat, and they are not the same caveat:
   counterpart** and so cannot ever be signed. It is the highest-risk correctness
   layer in the component; see `AI_HANDOFF_CONTEXT.md` Step 10.3.
 - `test_axi_chimney_manager_response` covers a module that **does** have an RTL
-  counterpart — the manager-side response path of `hw/floo_axi_chimney.sv`. It is
-  simply not cross-checked yet. That is Step A-1, and until it passes the module
-  is unsigned in the same sense every block was before its own cross-check
-  existed.
+  counterpart — the manager-side response path of `hw/floo_axi_chimney.sv` — and
+  that counterpart is now signed: Step A-1, `run_chimney_mgr_rsp_crosscheck.sh`,
+  97 cycles exact. The unit test is kept alongside the cross-check rather than
+  replaced by it: the unit test says the module's own contract broke, the
+  cross-check says the RTL disagrees, and the `rlast-ignored` /
+  `rlast-ignored-vs-rtl` control pair keeps both statements honest.
 
 ## Accuracy status
 
@@ -92,6 +95,7 @@ RTL-signed blocks:
 | `NoRoB` ordering rule | `hw/floo_rob_wrapper.sv` over the locked axi `axi_demux_id_counters` | 127 cycles exact (`ax_ready_o`/`ax_valid_o`/`rsp_*` per cycle, plus `in_flight`, `prev_dest`, `counter_full`, and every counter and destination register in the bank) |
 | Chimney request-path **timing** | `hw/floo_axi_chimney.sv` in the `floo_test_pkg` parameter set | 141 cycles exact (`aw_ready`/`w_ready`/`ar_ready` and the `req` link's `valid`, channel, destination, `last` and payload per cycle, plus `aw_w_sel_q` and every request-arbiter register) |
 | Inter-node mesh | a grid of `hw/floo_axi_router.sv`, wired as the FlooGen netlist wires it | 1872 node-cycles exact (per node and per network: local inject `ready`, eject `valid`, and the ejected flit's channel, destination, `last` and payload tag, pre-edge and post-edge) |
+| Chimney **manager-side response** | same, driven on `floo_rsp_i` | 97 cycles exact (`axi_in_rsp_o`'s B and R channels qualified by their valid, `floo_rsp_o.ready`, manager-side `aw_ready`/`ar_ready`, and the `NoRoB` counter `in_flight` for two read ids and one write id). The other three chimney runners pin `floo_rsp_in.valid = 1'b0`, so this is the only one that drives the link at all |
 | Chimney response path and subordinate side, **timing** | same, driven from the `req` link | 221 cycles exact (inbound `req` `ready`, the reissued `axi_out` request boundary, the `axi_out` response `ready` signals, the `rsp` link's `valid`/channel/destination/id, plus both metadata FIFO occupancies and every response-arbiter register) |
 
 Each of those blocks is signed **in isolation**: the chimney's **request path** (141 cycles) and its **subordinate side**
@@ -998,17 +1002,17 @@ endpoints on two physical networks, and `noc_interconnect` is the CDC-VP M:N
 fabric adapter. Note item 3's premise was wrong: the mesh was signed against a
 hand-built grid of the frozen `floo_axi_router`, so FlooGen was never needed.
 
-The chimney item is **not** done, and "cross-checked in both directions" was the
-wrong summary of it. Three of the chimney's four quadrants are signed — manager
-request timing (141 cyc), subordinate request reception and response generation
-(221 cyc). The fourth, the manager-side response unpacker
-`axi_chimney_manager_response`, is implemented and unit-tested but has **no RTL
-cross-check**: that is Step A-1.
+The chimney item **is** done as of Step A-1, but "cross-checked in both
+directions" was never the right way to say it — the chimney has four quadrants,
+not two. All four are now signed: manager request timing (141 cyc), subordinate
+request reception and response generation (221 cyc), and the manager-side
+response unpacker `axi_chimney_manager_response` (97 cyc,
+`run_chimney_mgr_rsp_crosscheck.sh`).
 
-**Datapath modelling is therefore not finished either.** Steps A-1 to A-3 are
-datapath work: A-1 signs the unpacker, A-2 assembles a per-node timed chimney
-into `axi_noc`, and A-3 switches `noc_interconnect` off the abstract endpoint
-transactors and onto it. Only after A-3 does the composed manager-AXI-port to
+**Datapath modelling is still not finished.** A-1 signed the last *block*; the
+composed *path* is a separate claim. A-2 assembles a per-node timed chimney into
+`axi_noc`, and A-3 switches `noc_interconnect` off the abstract endpoint
+transactors and onto it. Only after A-3 does the manager-AXI-port to
 subordinate-AXI-port path exist as an RTL-equivalent one.
 
 The authoritative, ordered list is `AI_HANDOFF_CONTEXT.md` section 14, and its
@@ -1019,9 +1023,10 @@ sub-steps deliberately do **not** run in numeric order:
    as `noc_soc_firmware_regression`, validated by three negative controls
    including a reintroduction of the `kSurveyScratch` corruption.
 1b. **Step A** — compose the RTL-signed chimney into the datapath, replacing the
-   abstract endpoint transactors. The manager-side unpacker was the missing
-   fourth quadrant and now exists; next is cross-checking it (A-1). See
-   `AI_HANDOFF_CONTEXT.md` section 14.
+   abstract endpoint transactors. ~~A-1, cross-check the manager-side
+   unpacker.~~ **Done** (2026-07-31): 97 cycles exact, three negative controls
+   detected. Next is **A-2**, assembling a per-node chimney into `axi_noc`, then
+   **A-3**. See `AI_HANDOFF_CONTEXT.md` section 14.
 2. **Step 10.3** — scoreboard-driven stress on the unsigned integration layer
    that remains **above** the chimney once A-3 lands: `noc_interconnect` and its
    TLM-to-AXI mapping. It has no RTL counterpart and every integration defect so

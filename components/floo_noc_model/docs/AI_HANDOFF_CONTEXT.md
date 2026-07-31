@@ -101,8 +101,8 @@ reference RTL merely to make a comparison pass.
   negative controls.
 - Every RTL timing block selected for the v0 vertical slice has an isolated
   cycle cross-check, including the chimney's request path, its subordinate
-  side, and the inter-node mesh. The manager-side response unpacker is the one
-  block that is implemented but **not** yet cross-checked; that is Step A-1.
+  side, its manager-side response unpacker, and the inter-node mesh. As of Step
+  A-1 there is no selected v0 block left uncrossed-checked.
   Statements that the mesh or link timing itself is still only an estimate
   predate Step 9.2 and are wrong.
 - This does **not** make the current TLM-manager-port to TLM-subordinate-port
@@ -275,7 +275,7 @@ against it yet. Step 11 records that work.
 | P0 | Freeze RTL/configuration, supported traffic, timing target, metrics, and integration role | Completed for vertical slice v0; the frozen parameter set in section 6.1 was corrected at Step 9.2 (`OutFifoDepth = 2`) |
 | P1 | Timing-independent address decode, routes, transaction/flit reference behavior, and vectors | Implemented: address map, XY path, and AXI reference behaviour through the endpoint transactors |
 | P2 | Signal-safe coordinate/header/flit/AXI types and address map | Implemented: full `FLOO_TYPEDEF_HDR_T` field set, AXI channel types, and RTL-signed sizing arithmetic. Coordinate widths remain a model choice |
-| P3 | FIFO, route selection, arbitration, router, links, chimney/meta/RoB blocks | Signed: FIFO wrap, XY selector, arbiter, five-port router with output FIFO, chimney **request** timing (141 cyc), chimney **subordinate** side (221 cyc), meta buffer, `NoRoB` gate. **Not signed:** the manager-side response unpacker — implemented and unit-tested, cross-check is Step A-1 |
+| P3 | FIFO, route selection, arbitration, router, links, chimney/meta/RoB blocks | Signed: FIFO wrap, XY selector, arbiter, five-port router with output FIFO, chimney **request** timing (141 cyc), chimney **subordinate** side (221 cyc), chimney **manager-side response** (97 cyc, Step A-1), meta buffer, `NoRoB` gate. Every selected v0 block is signed; what remains unsigned is the composed *path*, Steps A-2 and A-3 |
 | P4 | Router/link topology and endpoint wiring | Implemented: separate `req` and `rsp` meshes (`axi_noc.hpp`) with AXI endpoint transactors, mesh timing signed |
 | P5 | NoC-specific measured counters | Implemented for the router boundary over RTL-signed signals; latency/utilization counters still deliberately deferred, see section 13.6 |
 | P6 | Optional configuration translation | NPU-style operation driver is not applicable; `noc_soc` takes mesh geometry and placement as construction parameters |
@@ -566,7 +566,7 @@ latency table, and the placement rule.
 | `axi_chimney_pack.hpp` | `hw/floo_axi_chimney.sv` `always_comb` blocks, `hw/floo_id_translation.sv` | Flit assembly per channel, both destination-decode modes, `aw_w_sel_q` |
 | `meta_buffer.hpp` | `hw/floo_meta_buffer.sv`, `MaxUniqueIds = 1` branch | Request metadata retention as a plain in-order `fifo_v3`, no ID matching |
 | `rob_order_gate.hpp` | `hw/floo_rob_wrapper.sv`, `NoRoB` branch, over `axi_demux_id_counters` | The same-ID/different-destination stall rule and its per-ID capacity |
-| `axi_chimney.hpp` | `hw/floo_axi_chimney.sv` | Timed AXI/flit conversion: AW/W coupling and request arbiter (signed, 141 cyc); subordinate side and response arbiter (signed, 221 cyc); manager-side response unpacker (**not signed**, Step A-1) |
+| `axi_chimney.hpp` | `hw/floo_axi_chimney.sv` | Timed AXI/flit conversion: AW/W coupling and request arbiter (signed, 141 cyc); subordinate side and response arbiter (signed, 221 cyc); manager-side response unpacker (signed, 97 cyc, Step A-1) |
 | `axi_endpoint.hpp` | **no RTL counterpart** | AXI manager and subordinate transactors: burst assembly, strobes, response routing, ID restoration |
 | `axi_noc.hpp` | FlooGen generated `floo_axi_mesh_noc.sv` | Two meshes, `req` and `rsp`, over shared coordinates |
 | `noc_interconnect.h`, `src/noc_interconnect.cpp` | **no RTL counterpart**; CDC-VP `bus_router` for the socket contract | TLM generic payload to/from the AXI endpoints, M:N tagged sockets, placement, clock gating |
@@ -726,7 +726,7 @@ Behavior:
 - route and lock state reset asynchronously.
 
 This block passes a 12-cycle RTL cross-check. It was the first signed block;
-section 10.11 lists the complete current set of eleven cross-checks.
+section 10.11 lists the complete current set of twelve cross-checks.
 
 ### 9.5 `rr_arb_tree.hpp` and `wormhole_arbiter.hpp`
 
@@ -1326,7 +1326,7 @@ with `axi_endpoint.hpp`. An earlier revision of this section asserted the
 end-to-end claim two paragraphs above this rule, which is exactly the mistake
 the rule exists to prevent.
 
-### 10.11 The eleven signed cross-checks
+### 10.11 The twelve signed cross-checks
 
 Each runner lives in `rtl_crosscheck/`, compares a SystemC trace against the
 unmodified frozen RTL through `compare_traces.py`, and refuses to run if the RTL
@@ -1345,6 +1345,7 @@ and the negative controls; this table is the index.
 | `run_rob_crosscheck.sh` | `floo_rob_wrapper.sv`, `NoRoB` branch | 127 cycles |
 | `run_chimney_timing_crosscheck.sh` | `floo_axi_chimney.sv`, request timing | 141 cycles |
 | `run_chimney_rsp_timing_crosscheck.sh` | `floo_axi_chimney.sv`, response and subordinate side | 221 cycles |
+| `run_chimney_mgr_rsp_crosscheck.sh` | `floo_axi_chimney.sv` + `floo_rob_wrapper.sv`, manager-side response | 97 cycles |
 | `run_mesh_crosscheck.sh` | a grid of `floo_axi_router` | 1872 node-cycles |
 
 Every one of them was validated by injecting defects that must fail; the counts
@@ -1653,7 +1654,7 @@ cross-checking must use the exact locked `common_cells` behavior.
 ### 13.1 Accuracy boundaries
 
 - The selected RTL datapath blocks and inter-node mesh are individually
-  cycle-signed; the eleven cross-checks are indexed in section 10.11.
+  cycle-signed; the twelve cross-checks are indexed in section 10.11.
 - The current integrated TLM path does not instantiate those timed chimney
   classes around the mesh, so the composed TLM-manager-port to
   TLM-subordinate-port latency is not one RTL-equivalent path.
@@ -2441,9 +2442,9 @@ that says nothing.
 | 1 | **10.2** — automated firmware regression | **done** (2026-07-30) |
 | 2 | **pre-A1 cleanup round 1** — `docs/PRE_A1_REVIEW_FIX_PLAN.md` | **done** (2026-07-31), see its checklist for per-item evidence |
 | 3 | **pre-A1 cleanup round 2** — `docs/PRE_A1_REVIEW_ROUND2_FIX_PLAN.md` | implementation complete; round-3 review found further gaps |
-| 4 | **pre-A1 cleanup round 3** — `docs/PRE_A1_REVIEW_ROUND3_FIX_PLAN.md` | **current**; A-1 waits on its reviewer sign-off |
-| 5 | **A-1** — cross-check the manager-side response unpacker | next, after the round-3 reviewer box is checked |
-| 6 | **A-2** — assemble a per-node chimney into `axi_noc` | |
+| 4 | **pre-A1 cleanup rounds 3 to 5** — `docs/PRE_A1_REVIEW_ROUND3_FIX_PLAN.md` | **done** (2026-07-31); reviewer signed at the end of round 5 |
+| 5 | **A-1** — cross-check the manager-side response unpacker | **done** (2026-07-31): 97 cycles exact, three negative controls detected. The chimney's four quadrants are all signed |
+| 6 | **A-2** — assemble a per-node chimney into `axi_noc` | **current** |
 | 7 | **A-3** — drive it from `noc_interconnect` | |
 | 8 | **10.3** — stress the TLM layer that remains above the chimney | |
 | 9 | **10.1** — separate survey and firmware ownership | |
@@ -2681,15 +2682,42 @@ cross-check could not have caught this**: it holds the response link idle, so th
 counters only ever fill. A signed block is signed for the stimulus that reached
 it.
 
-#### A-1 — cross-check the unpacker against RTL — NEXT
+#### A-1 — cross-check the unpacker against RTL — DONE (2026-07-31)
 
-The unpacker's rules are read off the RTL text, which is the same standing this
-project refuses to call "signed". Drive `floo_rsp_in` on the unmodified chimney,
-trace `axi_in_rsp_o` plus `floo_rsp_out_ready` and the R counter, and compare per
-cycle. It would be the twelfth cross-check. Include a multi-beat R burst — the
-RLAST defect above is exactly what such a harness exists to catch.
+`rtl_crosscheck/run_chimney_mgr_rsp_crosscheck.sh`, the twelfth cross-check.
+**97 cycles exact.**
 
-Do not start A-2 before this passes.
+It drives `floo_rsp_i` on the unmodified frozen chimney and compares, per cycle
+and both pre-edge and post-edge: `axi_in_rsp_o`'s B and R channels qualified by
+their valid, `floo_rsp_o.ready`, the manager-side `aw_ready`/`ar_ready`, and the
+`NoRoB` counter `in_flight` for two read ids and one write id. The model side is
+`axi_chimney_request` composed with `axi_chimney_manager_response`, so what is
+signed is the wiring between them — the counter bank alone was already signed by
+`run_rob_crosscheck.sh`.
+
+The stimulus includes the multi-beat R burst this step existed for, plus
+back-pressure held across a valid response and each channel's ready driven low
+while the *other* channel's stays high, which pins the per-channel ready select.
+
+Three things worth carrying forward:
+
+* **The RLAST defect is now caught by RTL.** Reinjecting it
+  (`rlast-ignored-vs-rtl`) makes the model's R counter fall on every beat while
+  the RTL's holds, diverging at the first beat of the burst. Three signed
+  cross-checks could not see this, because all three pin
+  `floo_rsp_in.valid = 1'b0`.
+* **Payload fields are traced qualified by their valid**, because
+  `floo_rsp_chan_t` is a union: B and R payloads alias, so an R flit leaves the
+  RTL's B output holding reinterpreted bits. Comparing those unqualified would
+  compare a SystemVerilog struct layout against a C++ one. Flit content is
+  already signed by `run_chimney_rsp_crosscheck.sh`.
+* **The runner guards `floo_rob_wrapper.sv` as well as `floo_axi_chimney.sv`.**
+  The counter release under test lives in the `NoRoB` branch of the wrapper, so
+  guarding only the chimney file would let the behaviour change unnoticed.
+
+The runner also fails if any traced counter reaches `MaxTxnsPerId`, which would
+mean the stimulus pops more than it pushes and `delta_counter` wrapped — a
+harness defect that both sides would otherwise agree on.
 
 #### A-2 — assemble a per-node chimney and wire it into `axi_noc`
 
@@ -2924,28 +2952,29 @@ The next AI can be given this task:
 > per retired instruction. Do not redesign the socket topology and do not replace
 > it with an NPU-style worker.
 >
-> **Follow the ordered table in section 14, not numeric order.** With 10.2 done,
-> what remains runs:
+> **Follow the ordered table in section 14, not numeric order.** With 10.2 and
+> A-1 done, what remains runs:
 >
 > ```text
-> A-1  ->  A-2  ->  A-3  ->  10.3  ->  10.1  ->  10.4  ->  10.5  ->  11
+> A-2  ->  A-3  ->  10.3  ->  10.1  ->  10.4  ->  10.5  ->  11
 > ```
 >
-> A-1 to A-3 come first because they are part of the v0 completion gate and
+> A-2 and A-3 come first because they are part of the v0 completion gate and
 > because **Step A-3 replaces part of what 10.3 would stress** — stressing the
 > abstract transactors that A-3 is about to delete buys directed coverage of code
 > with a scheduled removal date. 10.3 then outranks 10.1, and 10.1 cannot be
 > verified without 10.2. Section 14 gives the reasoning in full; if this prompt
 > and section 14 ever disagree, section 14 is authoritative.
 >
-> **A-1 first**, and do not skip past it: the manager-side response unpacker
-> `axi_chimney_manager_response` is written and unit-tested but has no RTL
-> cross-check, so it is not signed. Drive `floo_rsp_in` on the unmodified
-> chimney, trace `axi_in_rsp_o`, `floo_rsp_out_ready` and the R counter, and
-> compare per cycle. Include a multi-beat R burst: the RLAST defect recorded
-> under Step A is exactly what such a harness exists to catch, and the
-> request-timing cross-check provably could not see it because it holds the
-> response link idle. Only then A-2 and A-3.
+> **A-2 next.** A-1 is done: `run_chimney_mgr_rsp_crosscheck.sh` signs the
+> manager-side response unpacker at 97 cycles, so every selected v0 block is now
+> RTL-signed and the chimney's four quadrants are complete. What is **not**
+> signed is the composed path: `noc_interconnect` still drives the abstract
+> `axi_endpoint.hpp` transactors, not the timed chimney. A-2 assembles a
+> per-node chimney into `axi_noc` (manager side is `axi_chimney_request` +
+> `axi_chimney_manager_response`, subordinate side is `axi_chimney_response`)
+> with a composition test; A-3 switches the wrapper onto it. Do not report the
+> integrated datapath as RTL-equivalent before A-3 lands.
 >
 > Step 10.3, when its turn comes: extend `test_noc_interconnect` with three
 > concurrent initiators on one RAM target, mixed widths including 6-byte and

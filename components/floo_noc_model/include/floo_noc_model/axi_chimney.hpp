@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: SHL-0.51
 //
 // SystemC mirror of `hw/floo_axi_chimney.sv` in the frozen v0 configuration, at
-// cycle granularity. Three of the chimney's four quadrants live here:
+// cycle granularity. All four of the chimney's quadrants live here, and all
+// four are RTL-signed:
 //
 //   axi_chimney_request           manager AXI  -> `req` link    signed, 141 cyc
 //   axi_chimney_response          `req` link   -> AXI out -> `rsp`
 //                                                              signed, 221 cyc
-//   axi_chimney_manager_response  `rsp` link   -> manager AXI   NOT signed
+//   axi_chimney_manager_response  `rsp` link   -> manager AXI   signed,  97 cyc
 //
 // This is the composition step. Every part it wires together is already
 // RTL-signed on its own:
@@ -42,9 +43,8 @@
 // ## Scope
 //
 // `AtopSupport` with no ATOP in the stimulus, `EnMgrPort = 1`,
-// `MaxUniqueIds = 1`. The class comments below give each module's own scope;
-// `axi_chimney_manager_response` in particular is implemented and unit-tested
-// but has no RTL cross-check yet — that is Step A-1.
+// `MaxUniqueIds = 1`. The class comments below give each module's own scope.
+// All four quadrants are RTL-signed as of Step A-1, the twelfth cross-check.
 
 #pragma once
 
@@ -747,8 +747,16 @@ private:
 /// adds the `b_sel_atop`/`r_sel_atop` bypass around the reorder buffer, which
 /// is deliberately absent here.
 ///
-/// **Verification status: not yet RTL cross-checked.** The rules above are read
-/// off the RTL text; the module they compose is signed, this composition is not.
+/// **Verification status: RTL cross-checked — Step A-1, 97 cycles exact.**
+/// `rtl_crosscheck/run_chimney_mgr_rsp_crosscheck.sh` drives `floo_rsp_i` on
+/// the unmodified frozen `floo_axi_chimney.sv` and compares every cycle of
+/// `axi_in_rsp_o`, `floo_rsp_o.ready` and both per-id reorder-buffer counters
+/// against this module composed with `axi_chimney_request`.
+///
+/// It is the twelfth cross-check and closes the chimney: all four quadrants are
+/// now signed. It exists because the other three hold this link idle —
+/// `tb_floo_axi_chimney_rsp_timing_trace.sv` pins `floo_rsp_in.valid = 1'b0` —
+/// which is how the `RLAST` defect below survived three of them.
 class axi_chimney_manager_response : public sc_core::sc_module {
 public:
     // ---- inbound `rsp` link ---------------------------------------------

@@ -65,11 +65,15 @@ bash rtl_crosscheck/run_chimney_rsp_crosscheck.sh        # chimney response cont
 bash rtl_crosscheck/run_rob_crosscheck.sh                # hw/floo_rob_wrapper.sv, NoRoB
 bash rtl_crosscheck/run_chimney_timing_crosscheck.sh     # chimney request timing
 bash rtl_crosscheck/run_chimney_rsp_timing_crosscheck.sh # chimney subordinate side
+bash rtl_crosscheck/run_chimney_mgr_rsp_crosscheck.sh    # chimney manager response
 bash rtl_crosscheck/run_mesh_crosscheck.sh               # a grid of floo_axi_router
 ```
 
-Eleven runners, and a twelfth is owed: the manager-side response unpacker is
-implemented and unit-tested but not yet cross-checked. That is Step A-1.
+Twelve runners. The twelfth,
+`run_chimney_mgr_rsp_crosscheck.sh`, closed the chimney at Step A-1: it drives
+`floo_rsp_i`, which the other three chimney runners pin low, and compares the
+manager's B/R channels, `floo_rsp_o.ready` and both reorder-buffer counters for
+97 cycles.
 
 The tests are also expected to be seen failing. `run_negative_controls.sh`
 re-injects each defect the model-level tests exist to catch and requires every
@@ -158,10 +162,12 @@ sizing, both chimney flit *content* paths, the `NoRoB` ordering rule, the chimne
 **request-path timing** (141 cycles) and its **subordinate side** (221 cycles),
 and **inter-node mesh timing** (1872 node-cycles).
 
-Not signed: the **manager-side response unpacker**
-(`axi_chimney_manager_response`), which is implemented and unit-tested but has
-no cross-check yet — Step A-1 — and therefore not the composed
-manager-AXI-to-subordinate-AXI path either.
+The **manager-side response unpacker** (`axi_chimney_manager_response`) is
+signed too, 97 cycles, which completes all four chimney quadrants.
+
+Still not signed: the composed **manager-AXI-to-subordinate-AXI** path. Every
+block on it is signed individually, but `noc_interconnect` does not yet
+instantiate the timed chimney — Steps A-2 and A-3.
 
 Each of those is signed in isolation. That is deliberately not a claim that the
 integrated path is signed end to end: the timed chimney (`axi_chimney.hpp`) is

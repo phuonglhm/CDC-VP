@@ -37,9 +37,11 @@
 //
 //   run_chimney_rsp_timing_crosscheck.sh  221 cycles exact
 //
-// What is *not* signed is the manager-side response unpacker
-// (`axi_chimney_manager_response`), and therefore not the composed
-// manager-AXI-to-subordinate-AXI path either. Step A-1.
+//   run_chimney_mgr_rsp_crosscheck.sh      97 cycles exact
+//
+// All four chimney quadrants are signed. What is *not* signed is the composed
+// manager-AXI-to-subordinate-AXI path: `noc_interconnect` still drives the
+// abstract endpoint transactors rather than the timed chimney. Steps A-2, A-3.
 
 #pragma once
 

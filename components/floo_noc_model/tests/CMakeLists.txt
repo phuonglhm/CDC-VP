@@ -120,6 +120,12 @@ target_link_libraries(chimney_rsp_timing_trace_sc PRIVATE
     SystemC::systemc)
 floo_model_test_options(chimney_rsp_timing_trace_sc)
 
+add_executable(chimney_mgr_rsp_trace_sc chimney_mgr_rsp_trace_sc.cpp)
+target_link_libraries(chimney_mgr_rsp_trace_sc PRIVATE
+    cdc::components::floo_noc_model
+    SystemC::systemc)
+floo_model_test_options(chimney_mgr_rsp_trace_sc)
+
 add_executable(chimney_timing_trace_sc chimney_timing_trace_sc.cpp)
 target_link_libraries(chimney_timing_trace_sc PRIVATE
     cdc::components::floo_noc_model
@@ -195,6 +201,13 @@ add_test(
         "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_rsp_timing_stimulus.csv"
         "${CMAKE_CURRENT_BINARY_DIR}/chimney_rsp_timing_model.csv"
         "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_rsp_timing_expected.csv")
+
+add_test(
+    NAME test_chimney_mgr_rsp_trace_sc
+    COMMAND chimney_mgr_rsp_trace_sc
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_mgr_rsp_stimulus.csv"
+        "${CMAKE_CURRENT_BINARY_DIR}/chimney_mgr_rsp_model.csv"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/chimney_mgr_rsp_expected.csv")
 
 add_test(
     NAME test_chimney_timing_trace_sc

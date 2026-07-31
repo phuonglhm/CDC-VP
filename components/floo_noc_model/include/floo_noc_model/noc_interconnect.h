@@ -17,9 +17,9 @@
 //  * **manager request path timing** — signed, 141 cycles;
 //  * **subordinate request reception and response generation** — signed,
 //    221 cycles;
-//  * **manager-side response unpacker** — implemented and unit-tested,
-//    **not signed**: `axi_chimney_manager_response` is new and has no RTL
-//    cross-check yet. That is Step A-1;
+//  * **manager-side response unpacker** — signed, 97 cycles
+//    (`axi_chimney_manager_response`, Step A-1). That completes all four
+//    chimney quadrants;
 //  * **the complete manager-AXI-to-subordinate-AXI composed path** —
 //    **not signed**. The integrated datapath does not even instantiate the
 //    timed chimney: it composes the combinational `axi_chimney_pack.hpp` with
