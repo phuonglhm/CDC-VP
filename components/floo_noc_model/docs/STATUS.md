@@ -27,6 +27,13 @@
 - Step A-3 integrated the complete timed `axi_noc` into `noc_interconnect`.
   The wrapper now drives manager AW/W/AR and subordinate B/R cycle by cycle;
   `axi_endpoint.hpp` is no longer in the production datapath.
+- Step 10.3 added bounded deterministic-random TLM-adapter stress with three
+  concurrent managers and closed the clock-gating proof: production gating now
+  requires both wrapper idle and complete mesh/chimney quiescence.
+- Step 10.1 split `noc_soc` into mandatory, mutually exclusive survey and
+  firmware modes. Firmware mode emits zero synthetic transactions; survey
+  retains RAM/peripheral/DMA coverage; ELF `PT_LOAD` overlap with the reserved
+  final 4 KiB RAM page is rejected before internal SoC construction.
 - P7.6 common SystemC/SV trace format plus route-selector, input-FIFO,
   wormhole-arbiter, and five-port router RTL cross-checks.
 
@@ -62,19 +69,21 @@ Standalone verification:
 | `test_mesh_trace_sc` | 1872 node-cycles of a 3x3 two-network mesh against the RTL-captured golden |
 | `test_router_trace_sc_d2` / `_d0` | 214-cycle router trace against the RTL-captured golden, at output-FIFO depth 2 and 0 |
 | `test_noc_interconnect` | The TLM wrapper contract through A-3's timed chimney path, each item a concrete assertion: payload validation (command, zero length, null pointer, wrapped streaming width, zero-length byte enables); byte-enable to `WSTRB` translation with a disabled byte proven unchanged in target memory; lane placement at `+4` and `+6` and across a beat boundary, checked by direct memory inspection; `DECERR` for an unmapped address distinguished from `SLVERR` for a target that refuses; region-crossing refused; delay contract (incoming delay spent, sub-cycle target latency rounded up, 1.5 and 2.0 cycles both costing 2, measured on four targets sharing one node); reset-time submission and idle-to-active wake-up; a scoreboard over a second initiator's writes; `last_latency_cycles()` excluding the target hold-off; bounded waits and a global watchdog. Round 3 added the 256/257-beat `AxLEN` boundary, sparse multi-beat writes, widened-read policy, top-of-address-space accesses and all four AXI response mappings. A-3 moved it to a 4x4 topology and pins the complete signal-driven no-contention baseline at **10 cycles for one hop and 30 for six** |
+| `test_noc_interconnect_stress` | Step 10.3 bounded deterministic-random stress: three staggered managers contend for one delayed RAM using 1/2/4/6/8/13/24-byte transfers plus sparse multi-beat writes. Per-requester byte and completion scoreboards verify address, data, response, target order, requester attribution and target-delay accounting. It proves the half-cycle injection window is exercised, checks `SLVERR`/unmapped `DECERR`, observes mesh-idle/wrapper-busy as a legal state, requires whole-network quiescence before clock gating, verifies idle wake-up, and bounds every transaction plus the full run with watchdogs |
 | `test_axi_lanes` | `AxSIZE`, `AxLEN`, lane offset and per-beat `WSTRB` for 13 address/length shapes, plus byte-enable holes and short repeating enable arrays. Checked on the fields themselves, not through a target, because a packing error and a matching unpacking error cancel |
 | `test_noc_interconnect_bad_config` | Configurations refused before any traffic, each rejected while still an ordinary function call so teardown is normal: zero or more than eight upstream ports for the frozen 3-bit AXI ID; a non-positive clock period; a target on an initiator's node, including the documented default `(0,0)` of a port never placed; a manager moved onto an existing target; zero-sized, address-space-wrapping and overlapping regions; and proof that a refused call consumes no target slot and leaves a port's position intact. A legal layout is still accepted |
 | `test_axi_lanes_odr` | Two translation units including `axi_lanes.hpp` in one link. The only test that can catch a missing `inline` |
 | `test_axi_chimney_manager_response` | The manager-side response unpacker: channel decode, per-channel back-pressure, a request channel refused on the `rsp` link, and the AW→B / AR→multi-beat-R counter release loop |
 | `test_chimney_mgr_rsp_trace_sc` | 78-cycle manager-side response trace against the RTL-captured golden: the AXI manager's B and R channels in full — id, resp, the whole 64-bit `RDATA`, `RLAST`, `BUSER`/`RUSER` — plus `floo_rsp_o.ready` and both per-id reorder-buffer counters, which must drain to zero |
 
-All thirty-four tests pass with GCC 11.5.0 and SystemC 2.3.4.
+All thirty-five tests pass with GCC 11.5.0 and SystemC 2.3.4.
 
 Two rows carry a caveat, and they are not the same caveat:
 
 - `test_noc_interconnect` covers the TLM wrapper, which has **no RTL
   counterpart** and so cannot ever be signed. It is the highest-risk correctness
-  layer in the component; see `AI_HANDOFF_CONTEXT.md` Step 10.3.
+  layer in the component; Step 10.3 now gives it dedicated multi-initiator
+  stress and seven automated negative controls.
 - `test_axi_chimney_manager_response` covers a module that **does** have an RTL
   counterpart — the manager-side response path of `hw/floo_axi_chimney.sv` — and
   that counterpart is now signed: Step A-1, `run_chimney_mgr_rsp_crosscheck.sh`,
@@ -118,8 +127,8 @@ blocks but is not itself a one-piece RTL equivalence path. The TLM-to-AXI
 manager/subordinate adapters and the wrapper have no RTL counterpart and cannot
 be signed against one; they are covered by model-level integration tests.
 
-Step A changed what the datapath is made of; Step 10.3 now stresses the
-remaining unsigned TLM adaptation layer above it.
+Step A changed what the datapath is made of; Step 10.3 stresses the remaining
+unsigned TLM adaptation layer above it.
 
 ### Corrected router crossbar (2026-07-28)
 
@@ -658,16 +667,19 @@ The one thing `bus_router` has no equivalent for is **placement**: a flat bus
 has no geometry, and here every initiator and target sits on a mesh node.
 `add_target` takes a node and `place_initiator` sets the upstream ports.
 
-Measured on the 2x2 `noc_soc` layout at a 1 ns network clock: 1 hop 21 ns,
-2 hops 24-25 ns, and a four-beat burst at 2 hops 27-28 ns. One extra hop costs
-about a cycle, and so does each extra beat, which is the wormhole packet
-pipelining rather than four separate transactions.
+The old 2x2 endpoint-transactor measurements are historical and do not describe
+the production path. A-3's 4x4 `noc_soc` path drives the complete timed
+`axi_noc` at a 1 ns network clock. Its directed no-contention baseline is
+10 cycles for one hop and 30 cycles for six hops; the platform report provides
+the workload-level figures.
 
 Three behaviours a platform has to plan for, all of them the frozen
 configuration's actual behaviour:
 
-- **One AXI ID per upstream port.** `MaxUniqueIds = 1` makes the response
-  metadata a plain in-order FIFO, so a port's transactions are serialised.
+- **One in-flight blocking transaction per upstream port in the current
+  wrapper.** This comes from one waiter plus `port_busy`, not from
+  `MaxUniqueIds = 1`. The latter selects an in-order metadata FIFO of depth
+  `MaxTxns = 32` and constrains response association/order.
 - **`b_transport` spends simulated time** rather than annotating `delay`. A
   caller using temporal decoupling will find its quantum consumed.
 - **A burst is one packet.** `axi_transaction` now carries a beat vector and
@@ -689,23 +701,24 @@ handed flits to a mesh still in reset, which swallowed them and hung the
 simulation. The wrapper now blocks until reset has elapsed, and `step_once`
 refuses injections while `rst_n` is low.
 
-**Verification status.** The wrapper itself is contract-tested
-(`test_noc_interconnect`): round-trip data, bursts, distance costing cycles,
-debug access bypassing the network, and unmapped addresses reported rather than
-routed. The network underneath is RTL-signed; the endpoint transactors between
-them are not, and cannot be.
+**Verification status.** `test_noc_interconnect` contract-tests the complete
+A-3 TLM-to-signal-driven path, and `test_noc_interconnect_stress` adds bounded
+three-manager scoreboarding plus whole-network quiescence. The hardware blocks
+underneath are RTL-signed individually. The TLM adapters are not, and cannot be,
+because they have no RTL counterpart.
 
-### Endpoints — still not RTL-signable
+### Legacy abstract endpoints — reference/test code only
 
 `include/floo_noc_model/axi_endpoint.hpp` adds manager and subordinate
 transactors that compose the signed pieces: packing, destination decode,
 metadata retention, and the ordering gate.
 
-These remain a transaction-level abstraction with **no RTL counterpart at
+Since A-3 these transactors are no longer in the production datapath. They
+remain a transaction-level reference abstraction with **no RTL counterpart at
 all**, so no timing claim follows from them. `no_rob_order_gate`, the
-transaction-level face of the ordering rule that these transactors call, is the
-same arithmetic as the signed `no_rob_gate` without the clock; it is a
-convenience wrapper, not a second model.
+transaction-level face of the ordering rule that they call, is the same
+arithmetic as the signed `no_rob_gate` without the clock; it is a convenience
+wrapper, not a second model.
 
 ### Chimney: the rules, and what they cost to sign
 
@@ -780,10 +793,10 @@ failing for an unrelated reason as evidence that it covers this defect.
 **Where it runs:** in a private copy of the component under `/tmp`, one per
 control. The working tree is never touched, so an interrupt or a lost machine
 cannot leave a mutated source behind, and two runs cannot collide. It is not
-registered in CTest only because it rebuilds the component twenty-five times
+registered in CTest only because it rebuilds the component thirty-two times
 and belongs in a slower loop than the unit tests.
 
-Twenty-five controls, all detected:
+Thirty-two controls, all detected:
 
 | Control | Test that must fail | Defect it restores |
 |---|---|---|
@@ -812,6 +825,13 @@ Twenty-five controls, all detected:
 | `r-pop-id-from-b-payload` | `chimney_mgr_rsp_trace_sc` | the R counter was released by the id in the B payload rather than the R payload, so a burst decremented the wrong per-id counter |
 | `chimney-node-rob-ready-swapped` | `test_axi_noc_chimney` | the composed A-2 node crossed its private B/R reorder-buffer ready links, so an R response followed B's ordering state and corrupted the stalled R payload |
 | `a3-manager-aw-address-shifted` | `test_noc_interconnect` | the A-3 manager adapter drove an AW address one bus beat away from the original TLM request, so writes completed at the wrong target bytes |
+| `half-cycle-request-reread` | `test_noc_interconnect_stress` | the sample phase consumed a request that arrived after drive, although no AW was presented on the manager signals |
+| `write-requester-metadata-collapsed` | `test_noc_interconnect_stress` | all write source metadata became node zero, so target hold-off was charged to the wrong requester |
+| `response-waiter-collapsed` | `test_noc_interconnect_stress` | every completion was delivered to waiter zero, losing requester ownership |
+| `odd-burst-tail-dropped` | `test_noc_interconnect_stress` | the final byte was omitted from WDATA/WSTRB, corrupting narrow, odd and multi-beat transfers |
+| `clock-gate-does-not-require-both-predicates` | `test_noc_interconnect_stress` | the clock stopped when either wrapper or mesh appeared idle instead of requiring both |
+| `mesh-output-fifo-occupancy-ignored` | `test_floo_mesh` | a stalled output-FIFO flit was omitted from the mesh activity snapshot |
+| `router-packet-locks-ignored` | `test_floo_router` | an open route/arbiter packet lock with empty FIFOs was misclassified as quiescent |
 
 The runner has its own failure mode worth recording, because it produced a false
 pass on its first run. Records were packed into `|`-delimited strings and read
@@ -847,7 +867,7 @@ That twenty-one counts **manual** harness controls only — the ones tabulated
 below, each run by hand against its own cross-check. The manager-side response
 harness added by Step A-1 is validated differently: its six controls are
 **automated**, registered in `run_negative_controls.sh`, and are counted in the
-twenty-five above. They are deliberately not added here, because the two totals
+thirty-two above. They are deliberately not added here, because the two totals
 are different sets and summing them would count the same six twice.
 
 | Injected defect | Harness | Result |
@@ -1051,8 +1071,9 @@ sub-steps deliberately do **not** run in numeric order:
 
 1. ~~**Step 10.2** — an automated real-firmware regression.~~ **Done**
    (2026-07-30): `platforms/noc_soc/tests/run_firmware_regression.sh`, registered
-   as `noc_soc_firmware_regression`, validated by three negative controls
-   including a reintroduction of the `kSurveyScratch` corruption.
+   as `noc_soc_firmware_regression`. Step 10.1 extended it with explicit
+   mode-selection failures, zero-synthetic-ownership assertions and a relocated
+   ELF that must be rejected at the reserved scratch page.
 1b. ~~**Step A** — compose the RTL-signed chimney into the datapath, replacing the
    abstract endpoint transactors.~~ **Done through A-3**. ~~A-1, cross-check the manager-side
    unpacker.~~ **Done** (2026-07-31): 78 cycles exact, six negative controls
@@ -1061,16 +1082,19 @@ sub-steps deliberately do **not** run in numeric order:
    ~~A-3, switch `noc_interconnect` to signal-driven AW/W/AR/B/R.~~ **Done**
    (2026-07-31): 34/34 tests, relevant RTL cross-checks and firmware regression
    pass; integrated baseline is 10 cycles at one hop and 30 at six.
-2. **Step 10.3** — scoreboard-driven stress on the unsigned integration layer
+2. ~~**Step 10.3** — scoreboard-driven stress on the unsigned integration layer
    that remains **above** the chimney: `noc_interconnect` and its
    TLM-to-AXI mapping. It has no RTL counterpart and every integration defect so
    far has been in it. Also closes the unproven clock-gating condition.
    `axi_endpoint.hpp` remains only as legacy test/reference code and is outside
-   this stress target. **This is the next implementation step.**
-3. **Step 10.1** — separate survey and firmware ownership in `noc_soc`. Needs
-   item 1 to be verifiable.
+   this stress target.~~ **Done** (2026-08-01): 35/35 standalone tests,
+   32/32 automated negative controls, all twelve RTL cross-checks, and the
+   rebuilt `noc_soc` firmware/survey regression pass.
+3. ~~**Step 10.1** — separate survey and firmware ownership in `noc_soc`.~~
+   **Done** (2026-08-01): explicit mode selection, zero synthetic firmware
+   traffic, and enforced reserved-page ELF validation.
 4. **Step 10.4** — clean-prefix install, packaging, licence and provenance
-   audit.
+   audit. **This is the next implementation step.**
 5. **Step 10.5** — decide whether `MaxUniqueIds > 1` is required. Only worth it
    for congestion work; see "A constraint of the frozen configuration" above.
 6. **Step 11** — the fast approximately-timed mode, calibrated against this

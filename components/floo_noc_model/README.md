@@ -77,7 +77,9 @@ manager's B/R channels, `floo_rsp_o.ready` and both reorder-buffer counters for
 
 The tests are also expected to be seen failing. `run_negative_controls.sh`
 re-injects each defect the model-level tests exist to catch and requires every
-one of them to be detected:
+one of them to be detected. The current gate detects all 32 mutations, including
+seven Step 10.3 controls for half-cycle injection, requester ownership,
+odd-burst tails, and whole-network quiescence:
 
 ```bash
 bash rtl_crosscheck/run_negative_controls.sh
@@ -155,6 +157,11 @@ cross-checking still requires the complete Bender dependency tree.
 - P9.2: inter-node timing cross-checked against a grid of the real router
   (1872 node-cycles). It found the model missing the output FIFO that every
   generated FlooNoC router has, which cost one cycle per hop.
+- Step 10.3: bounded deterministic-random stress of the unsigned TLM adapters
+  with three concurrent initiators, per-requester scoreboards and timeouts.
+  Router/mesh/chimney occupancy and packet locks now form an explicit
+  `mesh_quiescent()` predicate; the network clock stops only when both wrapper
+  bookkeeping and the complete signal-driven NoC are idle.
 
 RTL-signed so far: XY route selection with lock state, the input FIFO wrap, the
 wormhole arbiter, the five-port router at both output-FIFO depths, the AXI flit
@@ -176,7 +183,8 @@ integrated path is signed end to end: the timed chimney (`axi_chimney.hpp`) is
 instantiated by the trace runners and by `axi_noc`, which is now the wrapper's
 datapath. The TLM-to-AXI manager/subordinate adapters that remain above those
 signal boundaries have no RTL counterpart and cannot be signed against one;
-they are covered by model-level integration tests. The legacy
+they are covered by model-level integration tests, including the three-manager
+`test_noc_interconnect_stress`. The legacy
 `axi_endpoint.hpp` transactors remain only for isolated reference tests.
 
 The router harness uses no shim at all: it compiles the real RTL from the

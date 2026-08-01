@@ -1,45 +1,119 @@
 #include "noc_soc_top.h"
 
-#include <iostream>
-#include <string>
+#include <cmath>
 #include <cstdlib>
+#include <iostream>
+#include <stdexcept>
+#include <string>
 
 #include <systemc>
 
 namespace {
 
-std::string parse_config_path(int argc, char* argv[])
+using cdc::platforms::noc_soc::noc_soc_mode;
+
+struct options {
+    std::string config_path = "platforms/noc_soc/configs/default.yaml";
+    std::string firmware;
+    noc_soc_mode mode = noc_soc_mode::survey;
+    double sim_us = 0.0;
+    bool mode_seen = false;
+    bool help = false;
+};
+
+const char* usage =
+    "usage: noc_soc --mode survey|firmware [--fw image.elf] "
+    "[--sim-us N] [-c config.yaml]";
+
+std::string require_value(
+    int& index, int argc, char* argv[], const std::string& option)
 {
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if ((arg == "-c" || arg == "--config") && i + 1 < argc) {
-            return argv[++i];
+    if (index + 1 >= argc) {
+        throw std::invalid_argument(option + " requires a value");
+    }
+    return argv[++index];
+}
+
+double parse_sim_us(const std::string& text)
+{
+    std::size_t consumed = 0;
+    const double value = std::stod(text, &consumed);
+    if (consumed != text.size() || !std::isfinite(value) || value < 0.0) {
+        throw std::invalid_argument(
+            "--sim-us must be a finite, non-negative number");
+    }
+    return value;
+}
+
+options parse_options(int argc, char* argv[])
+{
+    options result;
+    for (int index = 1; index < argc; ++index) {
+        const std::string arg = argv[index];
+        if (arg == "-h" || arg == "--help") {
+            result.help = true;
+        } else if (arg == "-c" || arg == "--config") {
+            result.config_path = require_value(index, argc, argv, arg);
+        } else if (arg == "--mode") {
+            if (result.mode_seen) {
+                throw std::invalid_argument("--mode may be specified only once");
+            }
+            const auto value = require_value(index, argc, argv, arg);
+            if (value == "survey") {
+                result.mode = noc_soc_mode::survey;
+            } else if (value == "firmware") {
+                result.mode = noc_soc_mode::firmware;
+            } else {
+                throw std::invalid_argument(
+                    "--mode must be 'survey' or 'firmware'");
+            }
+            result.mode_seen = true;
+        } else if (arg == "--fw") {
+            result.firmware = require_value(index, argc, argv, arg);
+        } else if (arg == "--sim-us") {
+            result.sim_us =
+                parse_sim_us(require_value(index, argc, argv, arg));
+        } else {
+            throw std::invalid_argument("unknown option '" + arg + "'");
         }
     }
 
-    return "platforms/noc_soc/configs/default.yaml";
+    if (result.help) {
+        return result;
+    }
+    if (!result.mode_seen) {
+        throw std::invalid_argument(
+            "--mode is required: choose 'survey' or 'firmware'");
+    }
+    if (result.mode == noc_soc_mode::survey && !result.firmware.empty()) {
+        throw std::invalid_argument("survey mode rejects --fw");
+    }
+    if (result.mode == noc_soc_mode::firmware && result.firmware.empty()) {
+        throw std::invalid_argument(
+            "firmware mode requires --fw <image.elf>");
+    }
+    return result;
 }
 
 } // namespace
 
 int sc_main(int argc, char* argv[])
 {
-    const std::string config_path = parse_config_path(argc, argv);
-
-    std::string firmware;
-    double sim_us = 0.0;
-    for (int index = 1; index < argc; ++index) {
-        const std::string arg = argv[index];
-        if (arg == "--fw" && index + 1 < argc) {
-            firmware = argv[++index];
-        } else if (arg == "--sim-us" && index + 1 < argc) {
-            sim_us = std::stod(argv[++index]);
+    try {
+        const auto args = parse_options(argc, argv);
+        if (args.help) {
+            std::cout << usage << '\n';
+            return 0;
         }
-    }
 
-    cdc::platforms::noc_soc::noc_soc_top top(
-        "noc_soc", config_path, firmware, sim_us);
-    sc_core::sc_start();
+        cdc::platforms::noc_soc::noc_soc_top top(
+            "noc_soc", args.config_path, args.mode, args.firmware, args.sim_us);
+        sc_core::sc_start();
+    } catch (const std::exception& error) {
+        std::cerr << "noc_soc: " << error.what() << '\n'
+                  << usage << '\n';
+        return 1;
+    }
 
     return 0;
 }

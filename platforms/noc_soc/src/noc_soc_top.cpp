@@ -2,13 +2,16 @@
 
 #include "noc_soc_top.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
+#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <algorithm>
 #include <set>
 #include <vector>
 
@@ -65,13 +68,146 @@ constexpr std::uint64_t kPlicBase  = 0x0C00'0000, kPlicSize  = 0x40'0000;
 constexpr std::uint64_t kRamBase = 0x8000'0000, kRamSize = 0x100'0000;  // 16 MiB
 /// Final RAM page reserved for the synthetic traffic survey.
 ///
-/// Firmware is linked at the bottom of RAM and uses the first MiB for its
-/// image, buffers, and stack. The survey used to write at `kRamBase` and
-/// `kRamBase + 0x100`, corrupting live firmware instructions. Keep every
-/// synthetic RAM write in this dedicated page instead.
+/// The survey used to write at `kRamBase` and `kRamBase + 0x100`, corrupting
+/// live firmware instructions. Survey mode keeps every synthetic RAM write in
+/// this page, and firmware mode rejects any ELF PT_LOAD range that claims it.
 constexpr std::uint64_t kSurveyScratch = kRamBase + kRamSize - 0x1000;
 constexpr std::size_t   kFlashSize = 16u * 1024u * 1024u;
 constexpr unsigned      kNumPlic = 31;   // sources 1..31, id 0 reserved
+
+std::uint16_t read_u16(
+    const std::vector<std::uint8_t>& bytes, std::size_t offset)
+{
+    if (offset > bytes.size() || bytes.size() - offset < 2) {
+        throw std::invalid_argument("firmware ELF header is truncated");
+    }
+    return static_cast<std::uint16_t>(
+        bytes[offset] | (static_cast<std::uint16_t>(bytes[offset + 1]) << 8));
+}
+
+std::uint32_t read_u32(
+    const std::vector<std::uint8_t>& bytes, std::size_t offset)
+{
+    if (offset > bytes.size() || bytes.size() - offset < 4) {
+        throw std::invalid_argument("firmware ELF header is truncated");
+    }
+    return static_cast<std::uint32_t>(bytes[offset])
+        | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8)
+        | (static_cast<std::uint32_t>(bytes[offset + 2]) << 16)
+        | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
+}
+
+std::string address_range(std::uint64_t first, std::uint64_t last)
+{
+    std::ostringstream text;
+    text << "[0x" << std::hex << first << ", 0x" << last << ')';
+    return text.str();
+}
+
+/// Refuse firmware that claims any byte of the page reserved for survey mode.
+///
+/// `p_memsz`, not only `p_filesz`, is checked so a BSS-only overlap is caught.
+/// The check runs during platform construction, before `sc_start()` and before
+/// the CPU loader can modify RAM.
+void validate_firmware_image(const std::string& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::invalid_argument("cannot open firmware ELF '" + path + "'");
+    }
+    const std::vector<std::uint8_t> bytes{
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()};
+
+    if (bytes.size() < 16 || bytes[0] != 0x7F || bytes[1] != 'E'
+        || bytes[2] != 'L' || bytes[3] != 'F') {
+        throw std::invalid_argument("firmware is not an ELF file: '" + path + "'");
+    }
+    const unsigned elf_class = bytes[4];
+    if (elf_class != 1) {
+        throw std::invalid_argument(
+            "firmware ELF must be ELF32 for the RV32 CPU");
+    }
+    if (bytes[5] != 1) {
+        throw std::invalid_argument(
+            "firmware ELF must use little-endian encoding");
+    }
+
+    constexpr std::size_t header_size = 52;
+    if (bytes.size() < header_size) {
+        throw std::invalid_argument("firmware ELF header is truncated");
+    }
+    constexpr std::uint16_t riscv_machine = 243;
+    if (read_u16(bytes, 18) != riscv_machine) {
+        throw std::invalid_argument(
+            "firmware ELF machine must be RISC-V");
+    }
+    const std::uint64_t ph_offset = read_u32(bytes, 28);
+    const std::uint16_t ph_entry_size = read_u16(bytes, 42);
+    const std::uint16_t ph_count = read_u16(bytes, 44);
+    constexpr std::size_t minimum_ph_size = 32;
+    if (ph_entry_size < minimum_ph_size) {
+        throw std::invalid_argument(
+            "firmware ELF program-header entry is too small");
+    }
+    if (ph_offset > bytes.size()
+        || ph_count > (bytes.size() - static_cast<std::size_t>(ph_offset))
+                / ph_entry_size) {
+        throw std::invalid_argument(
+            "firmware ELF program-header table is truncated");
+    }
+
+    constexpr std::uint32_t pt_load = 1;
+    constexpr std::uint64_t scratch_end = kRamBase + kRamSize;
+    for (std::uint16_t index = 0; index < ph_count; ++index) {
+        const auto ph = static_cast<std::size_t>(ph_offset)
+            + static_cast<std::size_t>(index) * ph_entry_size;
+        if (read_u32(bytes, ph) != pt_load) {
+            continue;
+        }
+        const std::uint64_t address = read_u32(bytes, ph + 12);
+        const std::uint64_t file_size = read_u32(bytes, ph + 16);
+        const std::uint64_t memory_size = read_u32(bytes, ph + 20);
+        if (memory_size < file_size) {
+            throw std::invalid_argument(
+                "firmware PT_LOAD has p_memsz smaller than p_filesz");
+        }
+        if (memory_size == 0) {
+            continue;
+        }
+        constexpr std::uint64_t rv32_address_space = 1ull << 32;
+        if (memory_size > rv32_address_space - address) {
+            throw std::invalid_argument(
+                "firmware PT_LOAD exceeds the RV32 address space");
+        }
+        const auto end = address + memory_size;
+        if (address < scratch_end && kSurveyScratch < end) {
+            throw std::invalid_argument(
+                "firmware PT_LOAD " + address_range(address, end)
+                + " overlaps reserved survey scratch "
+                + address_range(kSurveyScratch, scratch_end));
+        }
+    }
+}
+
+void validate_mode(noc_soc_mode mode, const std::string& firmware)
+{
+    switch (mode) {
+    case noc_soc_mode::survey:
+        if (!firmware.empty()) {
+            throw std::invalid_argument("survey mode rejects a firmware ELF");
+        }
+        return;
+    case noc_soc_mode::firmware:
+        if (firmware.empty()) {
+            throw std::invalid_argument(
+                "firmware mode requires a firmware ELF");
+        }
+        validate_firmware_image(firmware);
+        return;
+    }
+    throw std::invalid_argument("invalid noc_soc execution mode");
+}
 
 // ── Mesh floorplan ─────────────────────────────────────────────────────────
 //
@@ -185,10 +321,8 @@ public:
     tlm_utils::simple_initiator_socket<traffic_stub> bus_socket;
     cdc::components::noc_interconnect* noc = nullptr;
     cdc::cpu::cpu_base* cpu = nullptr;
-    /// When firmware is loaded it owns the DMA; this port must not also try to
-    /// program it, or the two fight over the same channel.
-    bool firmware_drives_dma = false;
-    /// How long to keep running after the survey, so firmware can finish.
+    noc_soc_mode mode = noc_soc_mode::survey;
+    /// Requested measurement/firmware execution window.
     double sim_us = 0.0;
     /// Last time the CPU's retire count advanced. Everything after that is the
     /// CPU idling, and must not be charged to its instructions.
@@ -198,6 +332,9 @@ public:
     std::uint64_t busy_polls = 0;
     std::uint64_t busy_cycles_sum = 0;
     std::uint64_t busy_cycles_max = 0;
+    std::uint64_t synthetic_transactions = 0;
+    std::uint64_t synthetic_ram_writes = 0;
+    std::uint64_t synthetic_dma_register_writes = 0;
 
     SC_HAS_PROCESS(traffic_stub);
 
@@ -216,10 +353,25 @@ private:
         return dx + dy;
     }
 
+    void record_synthetic_access(bool write, std::uint64_t address)
+    {
+        ++synthetic_transactions;
+        if (!write) {
+            return;
+        }
+        if (address >= kRamBase && address < kRamBase + kRamSize) {
+            ++synthetic_ram_writes;
+        }
+        if (address >= kDma0 && address < kDma0 + kMmio) {
+            ++synthetic_dma_register_writes;
+        }
+    }
+
     sc_core::sc_time access(
         bool write, std::uint64_t address, unsigned char* bytes,
         unsigned length, bool expect_ok = true)
     {
+        record_synthetic_access(write, address);
         tlm::tlm_generic_payload trans;
         trans.set_command(write ? tlm::TLM_WRITE_COMMAND : tlm::TLM_READ_COMMAND);
         trans.set_address(address);
@@ -246,9 +398,8 @@ private:
     /// the CPU is fetching. On a flat bus the two would not interact; here they
     /// share links and the cost shows up in the latency figures.
     ///
-    /// Without `--fw`, the probe port drives this experiment. With firmware
-    /// loaded, `run()` skips it and the CPU owns DMA0; the installed RISC-V
-    /// toolchain can build `fw/dma_riscv` for that path.
+    /// Survey mode lets the probe port drive this experiment. Firmware mode
+    /// returns before any probe access, so the CPU owns DMA0 exclusively.
 
     void write32(std::uint64_t address, std::uint32_t value)
     {
@@ -363,6 +514,7 @@ private:
     sc_core::sc_time probe(
         std::uint64_t base, unsigned width, bool& accepted)
     {
+        record_synthetic_access(false, base);
         std::uint64_t value = 0;
         tlm::tlm_generic_payload trans;
         trans.set_command(tlm::TLM_READ_COMMAND);
@@ -380,8 +532,103 @@ private:
         return sc_core::sc_time_stamp() - before;
     }
 
+    void sample_cpu_window()
+    {
+        const double window = sim_us > 0.0
+            ? sim_us
+            : (mode == noc_soc_mode::firmware ? 500.0 : 5.0);
+        const auto step = sc_core::sc_time(window / 200.0, sc_core::SC_US);
+        std::uint64_t previous = cpu != nullptr ? cpu->get_instret() : 0;
+        for (unsigned sample = 0; sample < 200; ++sample) {
+            wait(step);
+            if (cpu == nullptr) {
+                continue;
+            }
+            const auto now = cpu->get_instret();
+            if (now != previous) {
+                previous = now;
+                cpu_active_until = sc_core::sc_time_stamp();
+            }
+        }
+    }
+
+    void report_synthetic_ownership() const
+    {
+        std::cout << "\nnoc_soc synthetic traffic:"
+                  << "\n  transactions " << synthetic_transactions
+                  << "\n  RAM writes " << synthetic_ram_writes
+                  << "\n  DMA register writes "
+                  << synthetic_dma_register_writes << '\n';
+    }
+
+    void report_cpu() const
+    {
+        if (cpu == nullptr) {
+            return;
+        }
+        const auto retired = cpu->get_instret();
+        const auto pc = cpu->get_pc();
+        // Charge only the window in which the CPU was actually retiring.
+        const auto elapsed = cpu_active_until > sc_core::SC_ZERO_TIME
+            ? cpu_active_until
+            : sc_core::sc_time_stamp();
+        const bool idled = cpu_active_until > sc_core::SC_ZERO_TIME
+            && cpu_active_until < sc_core::sc_time_stamp();
+        const bool in_ram = pc >= kRamBase && pc < kRamBase + kRamSize;
+        const bool in_rom = pc < kBootromBase + kBootromSize;
+        const char* region = in_ram ? "RAM" : (in_rom ? "BOOTROM0" : nullptr);
+
+        std::cout << "\n  CPU pc 0x" << std::hex << pc << std::dec
+                  << ", retired " << retired << " instructions in "
+                  << elapsed << '\n';
+        if (region != nullptr && retired != 0) {
+            std::cout << "  " << elapsed.to_seconds() * 1e9
+                          / static_cast<double>(retired)
+                      << " ns per instruction, fetching from " << region
+                      << " over the mesh\n";
+            if (idled) {
+                std::cout << "  (measured over the " << elapsed
+                          << " the CPU was retiring; it then idled until "
+                          << sc_core::sc_time_stamp() << ")\n";
+            }
+            if (!in_ram) {
+                // Without firmware the Bremen ISS traps to `mtvec = 0` at
+                // startup and then executes the backdoor-loaded boot-ROM loop.
+                std::cout << "  (a trap loop, not firmware; use firmware mode "
+                             "for a real workload.)\n";
+            }
+        } else {
+            std::cout << "  the CPU is not executing mapped instructions\n";
+        }
+    }
+
+    void run_firmware_mode()
+    {
+        std::cout << "\nnoc_soc: firmware mode; synthetic survey disabled\n";
+        sample_cpu_window();
+        report_synthetic_ownership();
+        if (noc != nullptr) {
+            const auto count = noc->completed_transactions();
+            std::cout << "\n  firmware traffic: " << count
+                      << " completed transactions, "
+                      << noc->total_latency_cycles() << " network cycles\n"
+                      << "  mesh clocked " << noc->elapsed_cycles()
+                      << " cycles; idle gating requires wrapper and mesh "
+                         "quiescence\n";
+        }
+        report_cpu();
+        sc_core::sc_stop();
+    }
+
     void run()
     {
+        if (mode == noc_soc_mode::firmware) {
+            run_firmware_mode();
+            return;
+        }
+
+        std::cout << "\nnoc_soc: survey mode; synthetic probe owns RAM scratch "
+                     "and DMA0\n";
         std::vector<unsigned char> buffer(64, 0);
 
         // Warm-up, not measured: the mesh holds its reset for a few cycles
@@ -464,6 +711,7 @@ private:
 
         // ── An unmapped address must be reported, not routed ────────────────
         std::uint32_t sink = 0;
+        record_synthetic_access(false, 0x100D'0000);
         tlm::tlm_generic_payload bad;
         bad.set_command(tlm::TLM_READ_COMMAND);
         bad.set_address(0x100D'0000);  // ISP0, reserved and not bound here
@@ -496,10 +744,6 @@ private:
         // column; this port at (3,3) reaching RAM crosses row y=3 and then runs
         // down the same column. Probing dma0 at (1,1) instead shares no link
         // with the DMA at all, and duly reported zero.
-        if (firmware_drives_dma) {
-            std::cout << "\nnoc_soc: firmware owns the DMA; this port is not "
-                         "programming it\n";
-        } else {
         bool quiet_ok = true;
         const auto quiet = probe(kDmaProbeAddr, 4, quiet_ok);
         const auto quiet_cycles =
@@ -554,19 +798,11 @@ private:
                              "  workload, not proof that a 4x4 FlooNoC cannot "
                              "congest.\n";
             }
+        }
         if (!dma_ok) {
-            throw std::runtime_error("noc_soc: the DMA transfer did not verify");
+            throw std::runtime_error(
+                "noc_soc: the DMA transfer did not verify");
         }
-        }
-        }
-
-        // Let the CPU run so its traffic is measurable and it contends with
-        // this survey for links. With firmware loaded that also has to be long
-        // enough for the firmware to finish: it ends in a spin loop, so the
-        // simulation would otherwise be cut off mid-run.
-        const double window = sim_us > 0.0
-            ? sim_us
-            : (firmware_drives_dma ? 500.0 : 5.0);
 
         // Sample the retire count as the window passes, and remember when it
         // last advanced. Firmware ends in `wfi`, so it stops retiring long
@@ -574,19 +810,7 @@ private:
         // whole window would make the per-instruction cost look worse the
         // longer you run. It did exactly that: the same firmware reported
         // 29.7 ns at --sim-us 200, 93.3 at 1000 and 279.8 at 3000.
-        const auto step = sc_core::sc_time(window / 200.0, sc_core::SC_US);
-        std::uint64_t previous = cpu != nullptr ? cpu->get_instret() : 0;
-        for (unsigned sample = 0; sample < 200; ++sample) {
-            wait(step);
-            if (cpu == nullptr) {
-                continue;
-            }
-            const auto now = cpu->get_instret();
-            if (now != previous) {
-                previous = now;
-                cpu_active_until = sc_core::sc_time_stamp();
-            }
-        }
+        sample_cpu_window();
 
         // ── Report ─────────────────────────────────────────────────────────
         std::cout << "\nnoc_soc: RAM at " << kRamNode.x << ',' << kRamNode.y
@@ -618,6 +842,7 @@ private:
                       << '\n';
         }
 
+        report_synthetic_ownership();
         if (noc != nullptr) {
             const auto count = noc->completed_transactions();
             std::cout << "\n  " << count << " transactions, "
@@ -628,61 +853,11 @@ private:
                               / static_cast<double>(count) << " cycles";
             }
             std::cout << "\n  mesh clocked " << noc->elapsed_cycles()
-                      << " cycles (wrapper-idle cycles are skipped;"
-                         " direct mesh-quiescence proof is pending)\n";
+                      << " cycles; idle gating requires wrapper and mesh "
+                         "quiescence\n";
         }
 
-        // Distance has to show up in the numbers, or the geometry is not being
-        // modelled. `uart0` is one hop, `otp0` is four.
-        // ── What a real CPU costs on this interconnect ──────────────────────
-        //
-        // The CPU has been fetching from RAM throughout, one instruction per
-        // fetch, every one of them crossing the mesh. This is the number that
-        // decides whether a cycle-accurate interconnect is affordable for the
-        // workload you have in mind.
-        if (cpu != nullptr) {
-            const auto retired = cpu->get_instret();
-            const auto pc = cpu->get_pc();
-            // Charge only the window in which the CPU was actually retiring.
-            const auto elapsed = cpu_active_until > sc_core::SC_ZERO_TIME
-                ? cpu_active_until
-                : sc_core::sc_time_stamp();
-            const bool idled = cpu_active_until > sc_core::SC_ZERO_TIME
-                && cpu_active_until < sc_core::sc_time_stamp();
-            const bool in_ram = pc >= kRamBase && pc < kRamBase + kRamSize;
-            const bool in_rom = pc < kBootromBase + kBootromSize;
-            const char* region = in_ram ? "RAM" : (in_rom ? "BOOTROM0" : nullptr);
-
-            std::cout << "\n  CPU pc 0x" << std::hex << pc << std::dec
-                      << ", retired " << retired << " instructions in "
-                      << elapsed << '\n';
-            if (region != nullptr && retired != 0) {
-                std::cout << "  " << elapsed.to_seconds() * 1e9
-                              / static_cast<double>(retired)
-                          << " ns per instruction, fetching from " << region
-                          << " over the mesh\n";
-                if (idled) {
-                    std::cout << "  (measured over the " << elapsed
-                              << " the CPU was retiring; it then idled until "
-                              << sc_core::sc_time_stamp() << ")\n";
-                }
-                if (!in_ram) {
-                    // Be precise about what is being measured. Without
-                    // firmware the Bremen ISS traps to `mtvec = 0` at startup —
-                    // it does the same on `bus_router`, so this is the ISS, not
-                    // the interconnect — and then spins on the boot ROM image.
-                    // The fetch traffic is real and the figure is a fair cost
-                    // per fetch, but it is a trap loop, not a workload.
-                    std::cout << "  (a trap loop, not firmware: the ISS traps "
-                                 "to mtvec = 0 without --fw,\n"
-                                 "   which it also does on bus_router. Pass "
-                                 "--fw <elf> for a real workload.)\n";
-                }
-            } else {
-                std::cout << "  the CPU is not executing mapped instructions; "
-                             "pass --fw <elf>\n";
-            }
-        }
+        report_cpu();
 
         // Compared on the network column, not the total: the total also carries
         // each peripheral's own access latency, which has nothing to do with
@@ -758,10 +933,11 @@ struct noc_soc_top::impl : public sc_core::sc_module {
     sc_core::sc_signal<bool> dma0_irq_nonzero;
     /// Reserved PLIC sources.
     sc_core::sc_signal<bool> tie_low;
+    noc_soc_mode execution_mode;
     std::string firmware_path;
 
     impl(sc_core::sc_module_name name, const std::string& config_path,
-         std::string firmware, double sim_microseconds)
+         noc_soc_mode mode, std::string firmware, double sim_microseconds)
         : sc_core::sc_module(name)
         , cpu("cpu")
         , probe("probe")
@@ -795,6 +971,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         , uart0_tx("uart0_tx"), uart1_tx("uart1_tx")
         , trng0_clk("trng0_clk")
         , cmu_idle("cmu_idle", 4)
+        , execution_mode(mode)
         , firmware_path(std::move(firmware))
     {
         // ── Upstream ports and their placement ──────────────────────────────
@@ -812,7 +989,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         probe.bus_socket.bind(noc.cpu_port(2));
         probe.noc = &noc;
         probe.cpu = &cpu;
-        probe.firmware_drives_dma = !firmware_path.empty();
+        probe.mode = execution_mode;
         probe.sim_us = sim_microseconds;
 
         // ── Downstream map. The node is the new argument versus `bus_router`.
@@ -945,7 +1122,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         // This is a backdoor load and deliberately does not cross the NoC —
         // the image is not traffic the design would carry, and charging it to
         // the interconnect would corrupt every number reported below.
-        if (firmware_path.empty()) {
+        if (execution_mode == noc_soc_mode::survey) {
             for (std::uint64_t offset = 0; offset < 0x2000; offset += 4) {
                 ram.load(kSpinLoop, sizeof(kSpinLoop), offset);
                 bootrom.load(kSpinLoop, sizeof(kSpinLoop), offset);
@@ -954,6 +1131,11 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 
         if (!config_path.empty()) {
             std::cout << "noc_soc config: " << config_path << '\n';
+            std::cout << "noc_soc mode: "
+                      << (execution_mode == noc_soc_mode::survey
+                              ? "survey"
+                              : "firmware")
+                      << '\n';
             std::cout << "interconnect: cycle-accurate FlooNoC, 4x4 mesh, "
                          "1 ns network clock\n";
             std::cout << "IPs: UARTx2 I2Cx2 SPIx2 TIMERx2 WDT PWM DMA TRNG CMU "
@@ -1025,7 +1207,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
     /// reports.
     void start_of_simulation() override
     {
-        if (!firmware_path.empty()) {
+        if (execution_mode == noc_soc_mode::firmware) {
             // The ELF loader writes through the CPU's bus, so it can only run
             // once bindings resolve.
             cpu.load_elf(firmware_path);
@@ -1035,10 +1217,14 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 };
 
 noc_soc_top::noc_soc_top(
-    sc_core::sc_module_name name, std::string config_path, std::string firmware,
-    double sim_us)
+    sc_core::sc_module_name name, std::string config_path, noc_soc_mode mode,
+    std::string firmware, double sim_us)
     : sc_core::sc_module(name)
-    , impl_(new impl("impl", config_path, std::move(firmware), sim_us))
+    , impl_([&]() {
+        validate_mode(mode, firmware);
+        return new impl(
+            "impl", config_path, mode, std::move(firmware), sim_us);
+    }())
 {
 }
 

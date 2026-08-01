@@ -55,6 +55,44 @@ public:
         return route_index_[input].read().to_uint();
     }
 
+    /// Model-visible state used by whole-mesh clock-gating proofs.
+    ///
+    /// These are observations of signals/registers that already exist in the
+    /// RTL-signed model. They do not drive the router and therefore cannot
+    /// affect its timing.
+    unsigned input_fifo_occupancy(unsigned input) const
+    {
+        return o_input_occupancy[input].read();
+    }
+    unsigned output_fifo_occupancy(unsigned output) const
+    {
+        if constexpr (OutFifoDepth > 0) {
+            return output_occupancy_[output].read();
+        }
+        return 0;
+    }
+    bool route_locked(unsigned input) const
+    {
+        return route_locked_[input].read();
+    }
+    bool arbiter_locked(unsigned output) const
+    {
+        return o_output_locked[output].read();
+    }
+
+    bool quiescent() const
+    {
+        for (unsigned port = 0; port < num_ports; ++port) {
+            if (input_fifo_occupancy(port) != 0
+                || output_fifo_occupancy(port) != 0
+                || route_locked(port)
+                || arbiter_locked(port)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     SC_HAS_PROCESS(floo_router);
 
     explicit floo_router(sc_core::sc_module_name name)

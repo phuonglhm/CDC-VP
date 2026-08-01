@@ -248,6 +248,29 @@ public:
     /// the floorplan actually moves.
     std::uint64_t last_latency_cycles() const;
 
+    /// Per-upstream-port form of `last_latency_cycles()`.
+    ///
+    /// The unqualified form is a convenient global "most recent completion"
+    /// metric. Under concurrent traffic it can be overwritten by another
+    /// manager in the same delta cycle; this indexed form preserves requester
+    /// ownership and is the one a multi-initiator scoreboard should use.
+    std::uint64_t last_latency_cycles(unsigned port) const;
+
+    /// Passive clock-gating diagnostics.
+    ///
+    /// `mesh_quiescent()` includes both physical meshes and every chimney:
+    /// router input/output FIFO occupancy, route/arbiter locks, live endpoint
+    /// valids, metadata FIFOs and manager-side RoB counters.
+    ///
+    /// `wrapper_idle()` is intentionally separate. The mesh may be empty while
+    /// a request waits in the TLM adapter or for target latency; production
+    /// gating requires both, not equality between them on every cycle.
+    bool mesh_quiescent() const;
+    bool wrapper_idle() const;
+    std::uint64_t clock_gate_transitions() const;
+    std::uint64_t mesh_quiescent_wrapper_busy_cycles() const;
+    std::uint64_t mid_half_cycle_request_arrivals() const;
+
 private:
     struct impl;
     std::unique_ptr<impl> impl_;

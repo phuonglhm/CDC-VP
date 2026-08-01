@@ -26,6 +26,8 @@ flit_t make_flit(std::uint64_t payload, bool last)
 
 class router_testbench : public sc_core::sc_module {
 public:
+    using router_t = floo::model::floo_router<flit_t, 2, 0>;
+
     sc_core::sc_in<bool> i_clk{"i_clk"};
     sc_core::sc_out<bool> o_rst_n{"o_rst_n"};
     sc_core::sc_out<floo::model::coordinate> o_router_id{"o_router_id"};
@@ -50,6 +52,7 @@ public:
         "i_selected", num_ports};
     sc_core::sc_vector<sc_core::sc_in<bool>> i_locked{
         "i_locked", num_ports};
+    router_t* dut = nullptr;
 
     SC_HAS_PROCESS(router_testbench);
 
@@ -172,6 +175,37 @@ private:
                    && i_occupancy[eject].read() == 0,
                "input FIFOs did not drain");
 
+        // A non-last flit with no continuation leaves no FIFO entry behind but
+        // deliberately keeps both the route and wormhole-arbiter packet state
+        // locked. Whole-mesh quiescence must observe those locks, not infer
+        // emptiness from FIFO occupancy alone.
+        wait(i_clk.negedge_event());
+        drive_input(west, make_flit(0xc0, false));
+        settle();
+        wait(i_clk.posedge_event());
+        settle();
+        clear_inputs();
+        wait(i_clk.posedge_event());
+        settle();
+        expect(i_occupancy[west].read() == 0,
+               "lock-only state requires the head flit to leave the FIFO");
+        expect(dut != nullptr && dut->route_locked(west)
+                   && dut->arbiter_locked(east),
+               "an open packet must retain route and arbiter locks");
+        expect(dut != nullptr && !dut->quiescent(),
+               "open packet locks must keep the router non-quiescent");
+
+        wait(i_clk.negedge_event());
+        drive_input(west, make_flit(0xc1, true));
+        settle();
+        wait(i_clk.posedge_event());
+        settle();
+        clear_inputs();
+        wait(i_clk.posedge_event());
+        settle();
+        expect(dut != nullptr && dut->quiescent(),
+               "the final flit must release lock-only quiescence state");
+
         o_out_ready[east].write(false);
         sc_core::sc_stop();
     }
@@ -218,6 +252,7 @@ int sc_main(int, char**)
     dut.i_router_id(router_id);
 
     router_testbench tb{"tb"};
+    tb.dut = &dut;
     tb.i_clk(clk);
     tb.o_rst_n(rst_n);
     tb.o_router_id(router_id);

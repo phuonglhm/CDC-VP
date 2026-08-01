@@ -28,6 +28,8 @@ flit_t make_flit(std::uint64_t payload)
 
 class mesh_testbench : public sc_core::sc_module {
 public:
+    using mesh_t = floo::model::floo_mesh<flit_t, width, height, 2>;
+
     sc_core::sc_in<bool> i_clk{"i_clk"};
     sc_core::sc_out<bool> o_rst_n{"o_rst_n"};
     sc_core::sc_vector<sc_core::sc_out<flit_t>> o_inject_data{
@@ -42,6 +44,7 @@ public:
         "i_eject_valid", num_nodes};
     sc_core::sc_vector<sc_core::sc_out<bool>> o_eject_ready{
         "o_eject_ready", num_nodes};
+    mesh_t* dut = nullptr;
 
     SC_HAS_PROCESS(mesh_testbench);
 
@@ -85,12 +88,17 @@ private:
         wait(i_clk.posedge_event());
         o_rst_n.write(true);
         wait(i_clk.negedge_event());
+        settle();
+        expect(dut != nullptr && dut->quiescent(),
+               "an empty reset-released mesh must report quiescent");
 
         // Inject while destination is blocked. Intermediate router FIFOs must
         // retain the flit and propagate back-pressure without changing data.
         o_inject_data[source].write(make_flit(0x1234));
         o_inject_valid[source].write(true);
         settle();
+        expect(dut != nullptr && !dut->quiescent(),
+               "a live injection boundary must make the mesh non-quiescent");
         expect(i_inject_ready[source].read(),
                "source endpoint could not inject into an empty mesh");
 
@@ -118,6 +126,13 @@ private:
                "flit did not reach destination within the hop timeout");
         expect(i_eject_data[destination].read().payload.to_uint64() == 0x1234,
                "destination payload was corrupted");
+        if (dut != nullptr) {
+            const auto active = dut->activity();
+            expect(!active.quiescent(),
+                   "a stalled ejection must keep mesh activity visible");
+            expect(active.output_fifo_entries != 0,
+                   "a stalled ejection must be accounted in an output FIFO");
+        }
 
         const flit_t stalled_value = i_eject_data[destination].read();
         wait(i_clk.posedge_event());
@@ -133,6 +148,8 @@ private:
         settle();
         expect(!i_eject_valid[destination].read(),
                "destination did not consume the accepted flit");
+        expect(dut != nullptr && dut->quiescent(),
+               "the activity snapshot must clear after the mesh drains");
 
         o_eject_ready[destination].write(false);
         sc_core::sc_stop();
@@ -163,6 +180,7 @@ int sc_main(int, char**)
     dut.i_rst_n(rst_n);
 
     mesh_testbench tb{"tb"};
+    tb.dut = &dut;
     tb.i_clk(clk);
     tb.o_rst_n(rst_n);
 

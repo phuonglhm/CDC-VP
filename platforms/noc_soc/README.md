@@ -15,7 +15,7 @@ Behind its own option, because a cycle-accurate interconnect is slow:
 export CC=/usr/bin/gcc CXX=/usr/bin/g++ PATH=/usr/bin:/bin:$PATH
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCDC_BUILD_NOC_SOC=ON
 cmake --build build --target noc_soc --parallel
-./build/platforms/noc_soc/noc_soc --sim-us 200
+./build/platforms/noc_soc/noc_soc --mode survey --sim-us 200
 ```
 
 With real firmware, which is what the platform exists to run:
@@ -24,7 +24,8 @@ With real firmware, which is what the platform exists to run:
 export PATH=/opt/toolchains/riscv-none-elf/bin:$PATH
 make -C fw/dma_riscv clean
 make -C fw/dma_riscv EXTRA_CFLAGS=-DDMA_BASE=0x10060000u
-./build/platforms/noc_soc/noc_soc --fw fw/dma_riscv/dma_test.elf --sim-us 2000
+./build/platforms/noc_soc/noc_soc \
+  --mode firmware --fw fw/dma_riscv/dma_test.elf --sim-us 2000
 ```
 
 It must print `DMA PASS`. These are the **manual** commands. The automated regression
@@ -55,8 +56,13 @@ A RISC-V CPU (`cdc::cpu::riscv_vp_cpu`), CLINT, PLIC with all 31 sources wired,
 SPI x2, TIMER x2, WDT, PWM, DMA, TRNG, CMU, DMIC, OTP, QSPI (+NOR flash), RTC,
 ADC, GPIO.
 
-Run firmware with `--fw <elf>`. Without it the CPU still runs — see the CPU
-section below for what that measures and what it does not.
+`--mode` is mandatory. `survey` rejects `--fw`; `firmware` requires
+`--fw <elf>`. The two modes deliberately have mutually exclusive ownership:
+
+- survey mode owns the synthetic RAM scratch page, peripheral walk and DMA0
+  experiment;
+- firmware mode gives RAM contents and DMA0 to firmware and emits no synthetic
+  TLM transaction from the probe port.
 
 ## Floorplan
 
@@ -149,7 +155,7 @@ includes both.
 Anything quoting ~30 ns per instruction predates that fix, including the
 calibration baseline in the fast-mode plan.
 
-Without `--fw` the platform preloads a `jal x0, 0` spin loop into the first 8 KiB
+In survey mode the platform preloads a `jal x0, 0` spin loop into the first 8 KiB
 of both RAM and the boot ROM, so the CPU runs from `0x80000000` and reports about
 **21 ns per instruction**. That is deliberately lower than the firmware figure:
 a four-byte loop is pure fetch, while real firmware also loads, stores, and
@@ -167,12 +173,20 @@ model. That deliberately does not cross the NoC: a firmware image is not traffic
 the design would ever carry, and charging it to the interconnect would corrupt
 every number above.
 
-**Synthetic survey traffic stays out of firmware memory.** The survey writes
-only inside the final 4 KiB page of RAM (`kSurveyScratch`). It used to write at
-`kRamBase` and `kRamBase + 0x100`, which is inside the firmware's `.text`: it
-overwrote live instructions, the ISS decoded the debris and trapped, and the
-symptom looked convincingly like a store-path bug in the interconnect. It was
-not. Keep every synthetic RAM access in that page.
+**Synthetic survey traffic never runs in firmware mode.** The firmware report
+must show zero synthetic transactions, zero synthetic RAM writes and zero
+synthetic DMA-register writes. Survey mode keeps its RAM accesses inside the
+final 4 KiB page (`[0x80ff_f000, 0x8100_0000)`), which is an enforced reserved
+region rather than a convention: every little-endian RISC-V ELF32 `PT_LOAD`
+range is checked using `p_memsz` before simulation starts, and an overlap is
+rejected with both the exact ELF range and reserved range. ELF64 is rejected
+because this platform's CPU is RV32.
+
+The survey used to write at `kRamBase` and `kRamBase + 0x100`, inside live
+firmware `.text`. The ISS decoded the overwritten instructions and trapped,
+making an ownership bug look like a NoC store-path defect. Explicit modes remove
+that interference path; the reserved-page check prevents a future ELF from
+silently claiming survey memory.
 
 ## Reading the report honestly
 
@@ -189,23 +203,19 @@ not. Keep every synthetic RAM access in that page.
 
 ## Accuracy
 
-Eleven blocks are RTL-signed against frozen FlooNoC revision `9a6972a`, cycle
-for cycle: the routers and their FIFOs, the wormhole arbiters, the chimney's
-request path (141 cycles) and its subordinate side (221 cycles), the `NoRoB`
-ordering rule, and inter-node timing. The manager-side response unpacker is
-**not** among them — it is implemented and unit-tested, and its cross-check is
-Step A-1. See
+Twelve cross-check runners sign the selected timing blocks against frozen
+FlooNoC revision `9a6972a`, cycle for cycle: route selection, FIFO, arbiter,
+router, AXI sizing, chimney request/response content and timing, `NoRoB`,
+manager-side response unpacking, and inter-node mesh timing. See
 `components/floo_noc_model/docs/STATUS.md` for the evidence and the negative
 controls behind each.
 
-**Read that as eleven isolated proofs, not as a signed platform.** What this
-platform runs is `noc_interconnect` over `axi_noc`, which composes the
-combinational flit-assembly rules with abstract AXI endpoint transactors. The
-*timed* chimney that scored 141 and 221 cycles is a separate class
-(`axi_chimney.hpp`) instantiated only by its trace runners, not by anything
-here. So the latency numbers above contain signed mesh timing but the path as a
-whole is not RTL-equivalent, and the transactors and wrapper have no RTL
-counterpart to sign against.
+**Read those as isolated proofs, not as a signed platform.** Since A-3 this
+platform runs `noc_interconnect` over the complete signal-driven `axi_noc` and
+drives timed chimney AW/W/AR/B/R boundaries cycle by cycle. Every selected
+hardware block is signed individually, but the TLM adapters and their
+composition have no monolithic RTL counterpart. Step 10.3 covers that unsigned
+layer with bounded three-manager scoreboarding, watchdogs and mutation controls.
 
 Three behaviours to keep straight, because two of them are often misattributed:
 
@@ -247,13 +257,14 @@ transactions, which is a wrapper change, and only then deciding whether
 
 - ~~The firmware run is not automated.~~ It is, as of 2026-07-30:
   `tests/run_firmware_regression.sh`, registered as
-  `noc_soc_firmware_regression` under `CDC_BUILD_TESTS`. It runs both images and
-  is validated by three negative controls, including a reintroduction of the
-  `kSurveyScratch` corruption.
-- **Clock gating is not proven.** `noc_interconnect::network_idle()` decides
-  from its own bookkeeping, not from mesh state — `floo_mesh` does not export
-  router occupancy or lock state upward. See `AI_HANDOFF_CONTEXT.md` section
-  13.6b.
+  `noc_soc_firmware_regression` under `CDC_BUILD_TESTS`. It runs both explicit
+  modes, proves zero synthetic ownership in firmware mode, checks invalid mode
+  combinations, and relocates a real ELF into the reserved page to verify the
+  exact conflicting `PT_LOAD` range is rejected before the internal SoC is
+  constructed.
+- ~~Clock gating is not proven.~~ Closed by Step 10.3: the gate requires both
+  wrapper idle and direct mesh/chimney quiescence, with mutation controls for
+  output-FIFO occupancy, packet locks and the two-predicate decision.
 - **`b_transport` spends simulated time** rather than annotating `delay`, so a
   caller relying on temporal decoupling will find its quantum consumed.
 
@@ -261,9 +272,8 @@ transactions, which is a wrapper change, and only then deciding whether
 
 `bus_router` does no work per simulated cycle because it does not simulate
 cycles. This advances a clock and evaluates every router in the mesh on every
-edge. Wrapper-idle cycles are skipped to control cost, but direct
-mesh-quiescence proof is still pending as noted above. Any cycle carrying
-traffic costs real work.
+edge. Wrapper-idle cycles are skipped only when direct mesh/chimney quiescence
+also holds. Any cycle carrying traffic costs real work.
 
 For a platform that must also boot firmware at speed, the usual answer is two
 modes: this one to calibrate, and an approximately-timed model for long runs.

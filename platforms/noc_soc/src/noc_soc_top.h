@@ -9,6 +9,11 @@
 
 namespace cdc::platforms::noc_soc {
 
+enum class noc_soc_mode {
+    survey,
+    firmware,
+};
+
 // A small SoC whose interconnect is the cycle-accurate FlooNoC model instead
 // of `bus_router`.
 //
@@ -18,13 +23,15 @@ namespace cdc::platforms::noc_soc {
 // real network-on-chip.
 class noc_soc_top : public sc_core::sc_module {
 public:
-    /// `firmware` is an optional ELF. Without one the CPU runs a built-in
-    /// spin loop so it produces real instruction-fetch traffic instead of
-    /// trapping on zeroed memory.
+    /// The two traffic-ownership modes are explicit and mutually exclusive.
+    /// Survey mode requires an empty `firmware` path and owns the synthetic RAM,
+    /// peripheral and DMA traffic. Firmware mode requires an ELF and gives RAM
+    /// contents plus DMA0 exclusively to the CPU/firmware path.
     /// `sim_us` bounds the run. Firmware ends in a spin loop, so without a
     /// limit the simulation never returns.
     noc_soc_top(sc_core::sc_module_name name, std::string config_path,
-                std::string firmware = {}, double sim_us = 0.0);
+                noc_soc_mode mode, std::string firmware = {},
+                double sim_us = 0.0);
     ~noc_soc_top() override;
 
 private:

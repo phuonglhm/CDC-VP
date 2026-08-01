@@ -449,6 +449,97 @@ add_control \
     "the enabled bytes must land, in the right order" \
     "the A-3 manager adapter drove an AW address one bus beat away from the original TLM request, so writes completed but changed the wrong target bytes"
 
+# ---- Step 10.3: wrapper stress and proven whole-network quiescence ----------
+
+# A request arriving from another SystemC process during the drive-to-sample
+# half-cycle was never put on AW, but this superseded sampling rule consumed it
+# from adapter state anyway. The staggered three-manager launch reproduces that
+# exact scheduling window and must end at its bounded transaction watchdog.
+add_control \
+    "half-cycle-request-reread" \
+    "src/noc_interconnect.cpp" \
+    '            sample.manager_aw = active && state.has_manager
+                && manager.aw_valid.read() && manager.aw_ready.read();' \
+    '            sample.manager_aw = active && state.has_manager
+                && state.request.has_value()
+                && state.request->is_write
+                && state.request->aw_pending;' \
+    "test_noc_interconnect_stress" \
+    "stress transaction exceeded its per-transaction deadline" \
+    "the sample phase re-read a request that arrived after the drive phase and consumed an AW that was never presented on the manager signals"
+
+# Current A-3 source metadata is the request-link coordinate paired with the
+# subordinate AXI handshake. Collapsing it to manager node zero preserves data
+# delivery but charges target latency to the wrong requester; the per-port
+# latency scoreboard is what makes that ownership error visible.
+add_control \
+    "write-requester-metadata-collapsed" \
+    "src/noc_interconnect.cpp" \
+    '        entry.requester = node_of(capture.requester);' \
+    '        entry.requester = 0;' \
+    "test_noc_interconnect_stress" \
+    "each requester must receive only its own target hold-off" \
+    "write requester metadata was collapsed to node zero, so another manager paid the target hold-off and the real requester reported target time as network latency"
+
+# A functional ownership control independent of the latency sideband above.
+# Completing every response into waiter zero cross-delivers completion state;
+# one of the other two managers must hit its bounded deadline.
+add_control \
+    "response-waiter-collapsed" \
+    "src/noc_interconnect.cpp" \
+    '        auto& parked = *waiters[static_cast<unsigned>(port)];' \
+    '        auto& parked = *waiters[0];' \
+    "test_noc_interconnect_stress" \
+    "stress transaction exceeded its per-transaction deadline" \
+    "responses for all manager IDs completed waiter zero, so requester ownership was lost even though the target accesses themselves still ran"
+
+# Drop exactly the last payload byte before lane packing. Lengths 1, 6, 13 and
+# 24 in the stress vector make the tail observable across narrow, odd and
+# multi-beat shapes.
+add_control \
+    "odd-burst-tail-dropped" \
+    "include/floo_noc_model/axi_lanes.hpp" \
+    '    for (unsigned index = 0; index < length; ++index) {' \
+    '    for (unsigned index = 0; index + 1 < length; ++index) {' \
+    "test_noc_interconnect_stress" \
+    "stress read data must match its requester scoreboard" \
+    "the final byte of every write was omitted from WDATA/WSTRB, corrupting odd-length and multi-beat tails while the transaction still completed"
+
+# The superseded gate trusted wrapper bookkeeping alone. The final response can
+# complete while a registered mesh/chimney state still needs one drain clock;
+# stopping there leaves `mesh_quiescent()` false forever.
+add_control \
+    "clock-gate-does-not-require-both-predicates" \
+    "src/noc_interconnect.cpp" \
+    '            if (wrapper_is_idle && mesh_is_idle) {' \
+    '            if (wrapper_is_idle || mesh_is_idle) {' \
+    "test_noc_interconnect_stress" \
+    "stress transaction exceeded its per-transaction deadline" \
+    "the clock stopped when either layer looked idle; the directed mesh-idle/wrapper-busy target-latency state could never finish"
+
+# FIFO and packet-lock coverage are separate: an output can retain a complete
+# last flit with no lock, while an open packet can retain locks with no FIFO
+# entry. The two directed tests isolate those states.
+add_control \
+    "mesh-output-fifo-occupancy-ignored" \
+    "include/floo_noc_model/floo_mesh.hpp" \
+    '                result.output_fifo_entries +=
+                    router.output_fifo_occupancy(port);' \
+    '' \
+    "test_floo_mesh" \
+    "a stalled ejection must be accounted in an output FIFO" \
+    "the mesh quiescence snapshot ignored registered output FIFO entries, so a stalled ejection looked empty"
+
+add_control \
+    "router-packet-locks-ignored" \
+    "include/floo_noc_model/floo_router.hpp" \
+    '                || route_locked(port)
+                || arbiter_locked(port)' \
+    '' \
+    "test_floo_router" \
+    "open packet locks must keep the router non-quiescent" \
+    "quiescence ignored route and wormhole-arbiter locks, so an open packet with empty FIFOs was declared idle"
+
 # ── run them ─────────────────────────────────────────────────────────────────
 detected=0
 missed=0

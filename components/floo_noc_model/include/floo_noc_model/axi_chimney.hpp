@@ -179,6 +179,20 @@ public:
     bool arb_lock_q() const { return arbiter_.lock_q(); }
     unsigned arb_req_q() const { return arbiter_.req_q(); }
 
+    bool quiescent() const
+    {
+        if (!selects_aw() || arbiter_.valid_q() != 0
+            || arbiter_.lock_q() || arb_locked_.read()) {
+            return false;
+        }
+        for (unsigned id = 0; id < (1u << AxiIdBits); ++id) {
+            if (b_outstanding(id) != 0 || r_outstanding(id) != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 private:
     void bind_b_rob()
     {
@@ -503,6 +517,18 @@ public:
     unsigned arb_rr_q() const { return arbiter_.rr_q(); }
     bool arb_lock_q() const { return arbiter_.lock_q(); }
     unsigned arb_req_q() const { return arbiter_.req_q(); }
+
+    unsigned aw_queue_occupancy() const
+    {
+        return aw_queue_occupancy_.read();
+    }
+
+    bool quiescent() const
+    {
+        return aw_meta_.occupancy() == 0 && ar_meta_.occupancy() == 0
+            && aw_queue_occupancy() == 0 && arbiter_.valid_q() == 0
+            && !arbiter_.lock_q() && !arb_locked_.read();
+    }
 
 private:
     /// `meta_buf_t` in the RTL: the original AXI id plus the request header.

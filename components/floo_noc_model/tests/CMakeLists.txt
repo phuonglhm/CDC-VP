@@ -41,6 +41,15 @@ target_link_libraries(test_noc_interconnect PRIVATE
 floo_model_test_options(test_noc_interconnect)
 add_test(NAME test_noc_interconnect COMMAND test_noc_interconnect)
 
+add_executable(test_noc_interconnect_stress
+    test_noc_interconnect_stress.cpp)
+target_link_libraries(test_noc_interconnect_stress PRIVATE
+    cdc::components::noc_interconnect
+    SystemC::systemc)
+floo_model_test_options(test_noc_interconnect_stress)
+add_test(NAME test_noc_interconnect_stress
+         COMMAND test_noc_interconnect_stress)
+
 # No kernel runs in this one; it only needs `sc_main` to satisfy the linker.
 add_executable(test_axi_lanes test_axi_lanes.cpp)
 target_link_libraries(test_axi_lanes PRIVATE

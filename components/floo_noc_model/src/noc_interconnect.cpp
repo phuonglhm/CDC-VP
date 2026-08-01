@@ -45,6 +45,7 @@ struct noc_iface {
     virtual bool req_eject_valid(unsigned node) const = 0;
     virtual bool req_eject_ready(unsigned node) const = 0;
     virtual axi_req_flit req_eject_data(unsigned node) const = 0;
+    virtual bool mesh_quiescent() const = 0;
 };
 
 template <unsigned Width, unsigned Height>
@@ -87,6 +88,7 @@ struct noc_holder final : noc_iface {
     {
         return noc.chimney(node).i_req_eject_data.read();
     }
+    bool mesh_quiescent() const override { return noc.mesh_quiescent(); }
 };
 
 std::unique_ptr<noc_iface> make_noc(unsigned x, unsigned y, const char* name)
@@ -258,6 +260,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     std::uint64_t completed = 0;
     std::uint64_t latency_sum = 0;
     std::uint64_t last_latency = 0;
+    std::vector<std::uint64_t> last_latency_by_port;
     unsigned in_flight = 0;
     /// Target access latency accumulated per requesting node, so it can be
     /// removed from that node's network-latency figure.
@@ -269,6 +272,10 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     bool out_of_reset = false;
     sc_core::sc_event reset_done;
     sc_core::sc_event work;
+    std::uint64_t clock_gate_count = 0;
+    std::uint64_t mesh_idle_wrapper_busy = 0;
+    std::uint64_t mid_half_request_arrivals = 0;
+    std::vector<bool> manager_request_driven;
 
     SC_HAS_PROCESS(impl);
 
@@ -300,6 +307,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         noc->bind_clock(clk, rst_n);
         nodes.resize(noc->node_count());
         hold_off.assign(noc->node_count(), 0);
+        manager_request_driven.assign(noc->node_count(), false);
+        last_latency_by_port.assign(num_initiators, 0);
         initiator_nodes.assign(num_initiators, node{0, 0});
         waiters.reserve(num_initiators);
         for (unsigned port = 0; port < num_initiators; ++port) {
@@ -448,6 +457,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     {
         clk.write(false);
 
+        std::fill(
+            manager_request_driven.begin(), manager_request_driven.end(), false);
         for (unsigned index = 0; index < nodes.size(); ++index) {
             auto& state = nodes[index];
             auto& manager = noc->manager(index);
@@ -458,6 +469,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             manager.w_valid.write(false);
             manager.ar_valid.write(false);
             if (active && state.has_manager && state.request.has_value()) {
+                manager_request_driven[index] = true;
                 const auto& request = *state.request;
                 if (request.is_write) {
                     manager.aw.write(request.aw);
@@ -529,6 +541,10 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             auto& subordinate = noc->subordinate(index);
             auto& sample = observed[index];
             const bool active = rst_n.read();
+            if (active && state.has_manager && state.request.has_value()
+                && !manager_request_driven[index]) {
+                ++mid_half_request_arrivals;
+            }
 
             sample.manager_aw = active && state.has_manager
                 && manager.aw_valid.read() && manager.aw_ready.read();
@@ -817,6 +833,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             index_of(initiator_nodes[static_cast<unsigned>(port)]));
         const auto charged = index < hold_off.size() ? hold_off[index] : 0;
         last_latency = elapsed > charged ? elapsed - charged : 0;
+        last_latency_by_port[static_cast<unsigned>(port)] = last_latency;
         if (index < hold_off.size()) {
             hold_off[index] = 0;
         }
@@ -1061,11 +1078,15 @@ struct noc_interconnect::impl : public sc_core::sc_module {
 
     /// Ticks the mesh while there is anything to do.
     ///
-    /// A wrapper-idle network is skipped rather than clocked. This keeps a
-    /// mostly-idle platform from paying for the interconnect, but the predicate
-    /// is still an inference from adapter bookkeeping: router/chimney occupancy
-    /// and lock state are not exported yet. Step 10.3 owns the stronger
-    /// `mesh_quiescent()` proof; do not describe this gate as proven exact.
+    /// A clock-gated wait is legal only when both layers agree:
+    ///
+    ///   * `network_idle()` proves the TLM adapters own no pending work;
+    ///   * `mesh_quiescent()` directly observes both meshes and every chimney.
+    ///
+    /// An empty mesh with wrapper work is legitimate (for example target
+    /// latency after the request flits drained), so equality is deliberately
+    /// not required. Wrapper-idle with retained mesh state violates the
+    /// adapter-accounting invariant and is asserted before entering the gate.
     void network_thread()
     {
         rst_n.write(false);
@@ -1077,8 +1098,18 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         reset_done.notify(sc_core::SC_ZERO_TIME);
 
         while (true) {
-            if (network_idle()) {
+            const bool wrapper_is_idle = network_idle();
+            const bool mesh_is_idle = noc->mesh_quiescent();
+            if (mesh_is_idle && !wrapper_is_idle) {
+                ++mesh_idle_wrapper_busy;
+            }
+            if (wrapper_is_idle) {
+                sc_assert(mesh_is_idle);
+            }
+            if (wrapper_is_idle && mesh_is_idle) {
+                ++clock_gate_count;
                 wait(work);
+                continue;
             }
             step_once();
         }
@@ -1278,6 +1309,39 @@ std::uint64_t noc_interconnect::total_latency_cycles() const
 std::uint64_t noc_interconnect::last_latency_cycles() const
 {
     return impl_->last_latency;
+}
+
+std::uint64_t noc_interconnect::last_latency_cycles(unsigned port) const
+{
+    if (port >= impl_->last_latency_by_port.size()) {
+        throw std::out_of_range("noc_interconnect: upstream port out of range");
+    }
+    return impl_->last_latency_by_port[port];
+}
+
+bool noc_interconnect::mesh_quiescent() const
+{
+    return impl_->noc->mesh_quiescent();
+}
+
+bool noc_interconnect::wrapper_idle() const
+{
+    return impl_->network_idle();
+}
+
+std::uint64_t noc_interconnect::clock_gate_transitions() const
+{
+    return impl_->clock_gate_count;
+}
+
+std::uint64_t noc_interconnect::mesh_quiescent_wrapper_busy_cycles() const
+{
+    return impl_->mesh_idle_wrapper_busy;
+}
+
+std::uint64_t noc_interconnect::mid_half_cycle_request_arrivals() const
+{
+    return impl_->mid_half_request_arrivals;
 }
 
 void noc_interconnect::b_transport(

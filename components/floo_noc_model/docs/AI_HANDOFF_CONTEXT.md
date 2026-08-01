@@ -115,8 +115,9 @@ reference RTL merely to make a comparison pass.
 - Not signed, and **not signable against a direct RTL counterpart**: the
   TLM-to-AXI adapters and wrapper logic in `noc_interconnect`. They are a driver
   and collector above real timed AXI signal boundaries. Their functional and
-  composed timing behavior is covered by model-level integration tests and
-  remains the highest-risk correctness layer for Step 10.3.
+  composed timing behavior is covered by model-level integration tests. Step
+  10.3 adds bounded three-manager deterministic-random stress and seven
+  mutation controls specifically for this unsigned layer.
 - `axi_endpoint.hpp` is now legacy reference/test code only. It has no RTL
   counterpart and is no longer in the production datapath.
 
@@ -282,14 +283,14 @@ against it yet. Step 11 records that work.
 | P4 | Router/link topology and endpoint wiring | Implemented: `axi_mesh_noc` preserves the raw `req`/`rsp` fabric; `axi_noc` adds one complete timed chimney per node (A-2), and `noc_interconnect` drives it cycle by cycle (A-3). Mesh timing is signed |
 | P5 | NoC-specific measured counters | Implemented for the router boundary over RTL-signed signals; latency/utilization counters still deliberately deferred, see section 13.6 |
 | P6 | Optional configuration translation | NPU-style operation driver is not applicable; `noc_soc` takes mesh geometry and placement as construction parameters |
-| P7 | Unit, router, mesh, stress, and RTL equivalence tests | 34 SystemC tests pass; twelve RTL cross-checks signed. **Randomized multi-initiator stress is still missing** — see Step 10.3 |
+| P7 | Unit, router, mesh, stress, and RTL equivalence tests | 35 SystemC tests pass; twelve RTL cross-checks signed. Step 10.3 adds bounded deterministic-random stress with three concurrent initiators, per-requester scoreboards and watchdogs |
 | P8 | Standalone build | Implemented with CMake and Make |
-| P9 | SW/platform-visible contract | No register map by design. The platform-visible contract is the address map plus the placement rule that no target may share a node with a manager |
-| P10 | TLM integration | Implemented: `noc_interconnect` is a fabric adapter with M:N tagged sockets, explicit placement and signal-driven timed chimneys, not a target+worker wrapper. A-3 is done; remaining sign-off is Steps 10.1 and 10.3 |
+| P9 | SW/platform-visible contract | No NoC register map by design. The platform-visible contract is the address map, the placement rule that no target may share a node with a manager, and `noc_soc`'s explicit survey/firmware ownership mode plus reserved scratch page |
+| P10 | TLM integration | Implemented and stress-tested: `noc_interconnect` is a fabric adapter with M:N tagged sockets, explicit placement and signal-driven timed chimneys, not a target+worker wrapper. A-3 and Step 10.3 are done; Step 10.1 also separates platform survey/firmware ownership |
 | P11 | CDC-VP CMake component/install/export | Header-only interface target plus the compiled `cdc::components::noc_interconnect`. Clean-prefix install unproven, Step 10.4 |
 | P12 | Platform assembly and packaging | `platforms/noc_soc` assembled and running; packaging unproven, Step 10.4 |
-| P13 | RISC-V/SoC traffic validation | Real firmware (`fw/dma_riscv`) reaches `DMA PASS` over the A-3 signal-driven mesh and the synthetic survey matches all bytes. Automated as `noc_soc_firmware_regression` — Step 10.2 DONE and re-run after A-3. Post-A-3 modeled target time is ~53.2 ns/instruction; this is not host performance |
-| P14 | Coexistence and maintenance | Open. Clock gating is implemented but its quiescence condition is unproven (section 13.6b); the H1 coexistence mode is unstarted (Step 11) |
+| P13 | RISC-V/SoC traffic validation | Real firmware (`fw/dma_riscv`) reaches `DMA PASS` over the A-3 signal-driven mesh and the synthetic survey matches all bytes. Step 10.1 makes the modes explicit, proves zero synthetic transactions in firmware mode, and rejects an ELF claiming the reserved survey page before internal SoC construction. Automated as `noc_soc_firmware_regression`. Post-A-3 modeled target time is ~53.2 ns/instruction; this is not host performance |
+| P14 | Coexistence and maintenance | Partial. Step 10.3 proved detailed-model clock gating against exported mesh/chimney state; the H1 coexistence mode is unstarted (Step 11) |
 
 ### 5.1 Clock-gating interpretation
 
@@ -307,20 +308,16 @@ network is quiescent:
 Do not gate the network merely because no new TLM request arrived in the current
 delta cycle.
 
-**What is actually implemented today does not meet that bar.**
-`noc_interconnect::impl::network_idle()` in `src/noc_interconnect.cpp` skips the
-clock when its own bookkeeping is empty: `in_flight` plus every node's pending
-manager request, partial read data, observed AW/AR source queues, collected
-writes, serving requests and queued subordinate responses. It observes none of
-the router/chimney occupancy and lock conditions above directly, because
-`axi_noc` does not export them. The gate is therefore an *inference from the
-wrapper*, which is exactly the shortcut the paragraph above warns against.
-
-It is probably sound — `in_flight` counts every transaction between injection
-and completion, and both the route lock and the arbiter lock release on an
-accepted `last` flit — but "probably sound" is not a proof, and a stuck lock is
-precisely the failure this check should catch and currently cannot. Closing it
-is part of Step 10.3; see section 13.6b.
+**Step 10.3 now meets that bar.** `floo_router` exports passive input/output
+FIFO occupancy plus route and arbiter lock state; `floo_mesh` aggregates those
+with live injection/ejection boundaries; `axi_noc` additionally checks every
+chimney's metadata, RoB, arbitration and AXI valid state. The resulting
+`mesh_quiescent()` is separate from `network_idle()`, which still represents
+wrapper bookkeeping. The production thread waits with its clock stopped only
+when both predicates are true and asserts the one-way invariant
+`network_idle() => mesh_quiescent()`. Equality is deliberately not required:
+the mesh can be empty while a wrapper request or target delay remains pending.
+See section 13.6b for the directed and mutation evidence.
 
 ---
 
@@ -466,7 +463,7 @@ floo_noc_model/
   src/
     noc_interconnect.cpp         <- A-3 TLM-to-signal adapters; only compiled TU
   tests/
-    CMakeLists.txt               <- registers 34 tests
+    CMakeLists.txt               <- registers 35 tests
     test_reference_model.cpp
     test_stream_fifo.cpp
     test_xy_route_select.cpp
@@ -478,6 +475,7 @@ floo_noc_model/
     test_axi_chimney_pack.cpp
     test_rob_order_gate.cpp
     test_axi_endpoint.cpp
+    test_noc_interconnect_stress.cpp <- Step 10.3 three-manager scoreboard
     test_axi_noc.cpp
     test_axi_noc_chimney.cpp     <- A-2 signal-driven composition
     test_noc_interconnect.cpp    <- A-3 TLM wrapper + 1/6-hop calibration
@@ -588,7 +586,7 @@ latency table, and the placement rule.
 
 The final row remains the layer named in section 2.4: signed timing blocks
 driven by unsigned TLM adaptation code. Treat behavior that lives only there as
-model-level integration behavior and stress it in Step 10.3.
+model-level integration behavior; Step 10.3 supplies its stress evidence.
 
 External `common_cells`, `axi`, and other Bender dependencies are not copied
 into the model. Their exact frozen behavior must be used for RTL cross-checks.
@@ -891,7 +889,7 @@ Two properties learned while signing this, recorded because they will recur:
 
 ### 10.1 Standalone SystemC regression
 
-Thirty-four tests pass with GCC 11.5.0 and SystemC 2.3.4:
+Thirty-five tests pass with GCC 11.5.0 and SystemC 2.3.4:
 
 | Test | Verified behavior |
 |---|---|
@@ -904,6 +902,7 @@ Thirty-four tests pass with GCC 11.5.0 and SystemC 2.3.4:
 | `test_axi_noc` | Legacy abstract endpoints over `axi_mesh_noc`: two separate `req`/`rsp` meshes, independent traffic and structural latency |
 | `test_axi_noc_chimney` | A-2 signal composition: timed source and target chimneys over a 2x2 mesh; two-beat write, three-beat read, B/R back-pressure, downstream-ID rewrite/restoration, metadata/RoB release and no wrong-node leakage |
 | `test_noc_interconnect` | The TLM wrapper contract through A-3's timed chimney path: payload validation; byte-enable/`WSTRB` and lane placement; error classification; region guards; delay rounding; reset and idle wake-up; bounded concurrent second-manager scoreboard; sparse and maximum-length bursts; widened-read policy; top-of-address-space accesses; all four AXI response mappings; and target-delay exclusion. Its 4x4 no-contention calibration is pinned at **10 network cycles for one hop and 30 for six** |
+| `test_noc_interconnect_stress` | Step 10.3 bounded deterministic-random stress: three staggered managers contend for one delayed RAM with 1/2/4/6/8/13/24-byte and sparse multi-beat transfers. Per-requester byte/completion scoreboards, target records, per-transaction deadlines and a global watchdog cover requester attribution, response/order, the half-cycle arrival window, odd tails, error routing, whole-network quiescence and idle wake-up |
 | `test_axi_lanes` | `AxSIZE`, `AxLEN`, lane offset and per-beat `WSTRB` for 13 address/length shapes, plus byte-enable holes and short repeating enable arrays. Checked on the fields themselves, not through a target, because a packing error and a matching unpacking error cancel |
 | `test_noc_interconnect_bad_config` | Configurations refused before any traffic: zero or more than eight upstream ports for the frozen 3-bit ID; a non-positive clock period; self-node target/manager placements; invalid/overlapping regions; and proof rejected calls preserve slots and placement |
 | `test_axi_lanes_odr` | Two translation units including `axi_lanes.hpp` in one link. The only test that can catch a missing `inline` |
@@ -929,10 +928,12 @@ Thirty-four tests pass with GCC 11.5.0 and SystemC 2.3.4:
 | `test_chimney_rsp_timing_trace_sc` | 221-cycle chimney response/subordinate-timing trace against the RTL-captured golden |
 | `test_mesh_trace_sc` | 1872 node-cycles of 3x3 mesh trace against the RTL-captured golden |
 
-The tests are directed and small. They are not a substitute for randomized
-stress or full protocol checking. Fifteen of them replay an RTL-captured golden,
-so they detect a model regression offline, but a golden replay is not the
-cross-check — the cross-check is section 10.11, and it needs Verilator.
+Most tests are directed and small; Step 10.3 adds one bounded,
+deterministic-random multi-initiator scenario. This is not a substitute for a
+full AXI protocol checker or a long multi-seed stress campaign. Fifteen tests
+replay an RTL-captured golden, so they detect a model regression offline, but a
+golden replay is not the cross-check — the cross-check is section 10.11, and it
+needs Verilator.
 
 **The gap this level cannot close:** none of these tests caught the platform bug
 in section 13.10, because that bug lived in `platforms/noc_soc` rather than in
@@ -1580,14 +1581,15 @@ cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCDC_BUILD_NOC_SOC=ON
 cmake --build build --target noc_soc --parallel
 
-# synthetic survey, no firmware
-./build/platforms/noc_soc/noc_soc --sim-us 200
+# synthetic survey
+./build/platforms/noc_soc/noc_soc --mode survey --sim-us 200
 
 # real firmware over the mesh
 export PATH=/opt/toolchains/riscv-none-elf/bin:$PATH
 make -C fw/dma_riscv clean
 make -C fw/dma_riscv EXTRA_CFLAGS=-DDMA_BASE=0x10060000u
-./build/platforms/noc_soc/noc_soc --fw fw/dma_riscv/dma_test.elf --sim-us 2000
+./build/platforms/noc_soc/noc_soc \
+  --mode firmware --fw fw/dma_riscv/dma_test.elf --sim-us 2000
 ```
 
 Those are the **manual** commands. The automated regression builds the firmware
@@ -1684,7 +1686,9 @@ cross-checking must use the exact locked `common_cells` behavior.
 - **The remaining TLM integration layer is not signed and has no direct RTL
   counterpart**: the manager/subordinate adapters and payload mapping in
   `noc_interconnect`. `axi_endpoint.hpp` is legacy reference/test code after
-  A-3. See Step 10.3.
+  A-3. Step 10.3 signs this layer at model-integration level with bounded
+  three-manager scoreboarding and mutation evidence; it still cannot make an
+  RTL-equivalence claim for code that has no RTL counterpart.
 - Combinational SystemC delta-cycle settling is not hardware latency.
 - No timing number should be marketed as cycle-accurate until its path passes
   RTL comparison. Conversely, do not describe a path as an estimate once it has
@@ -1783,21 +1787,22 @@ platform and workload, not a limitation of the frozen RTL architecture. Step
 
 ### 13.5 Verification gaps
 
-- No randomized ready/valid stress **at the TLM layer**. The signed blocks each
-  carry 80 to 100 cycles of deterministic pseudo-random traffic; the wrapper and
-  the transactors above them have only directed tests.
-- No scoreboarding across multiple concurrent initiators.
-- No deadlock/livelock tests.
+- Step 10.3 provides bounded deterministic-random stress **at the TLM layer**:
+  three concurrent initiators, per-requester byte/completion scoreboards,
+  per-transaction deadlines and a global watchdog. It is one fixed-seed,
+  bounded scenario, not a long-duration or multi-seed campaign.
+- Lost-flit/deadlock behavior is bounded in that scenario; there is no formal
+  or exhaustive liveness proof.
 - No throughput/latency regression thresholds.
 - No AXI protocol checker.
 - ~~No automated platform-level test.~~ Closed by Step 10.2. Until then the
   firmware run was manual, which is why the component tests — 28 of them at the
   time — did not catch the bug in section 13.10.
 
-Step 10.3 targets randomized TLM-layer stress, multi-initiator scoreboarding and
-deadlock/livelock detection. Throughput/latency thresholds and an AXI protocol
-checker remain separate gaps; neither should be claimed as closed by any step
-currently on the list.
+Step 10.3 closes the original TLM-layer stress, scoreboarding and bounded-hang
+requirements. Throughput/latency thresholds, multi-seed statistical coverage,
+formal liveness and an AXI protocol checker remain separate gaps; none should
+be inferred from the bounded stress pass.
 
 ### 13.6 Instrumentation gaps
 
@@ -1847,54 +1852,51 @@ Performance work must additionally report a wall-clock metric such as retired
 instructions per host second, host seconds per simulated microsecond, or
 real-time factor.
 
-### 13.6b Clock gating rests on an unproven condition
+### 13.6b Clock gating uses proven whole-network quiescence — CLOSED
 
-Section 5.1 lists six conditions under which stopping the network clock is legal.
-`network_idle()` in `src/noc_interconnect.cpp` checks none of them directly. It
-checks `in_flight` plus the adapter's pending manager request, partial read
-data, observed source queues, collected writes, target-service queue and
-subordinate-response queue — all wrapper bookkeeping.
+Step 10.3 exports passive input/output FIFO occupancy and route/arbiter lock
+state through `floo_router` and `floo_mesh`. `axi_noc::mesh_quiescent()` combines
+both physical meshes with every chimney's request/response arbitration,
+metadata, RoB and live AXI/link valid state.
 
-It cannot do better as the code stands: `floo_mesh` keeps `routers_` private and
-exports no occupancy or lock state, and `axi_noc` exposes only its per-node AXI
-manager/subordinate signals plus the composed chimney. The router *does* expose
-occupancy and lock debug outputs (section 9.6); they simply are not routed
-upward.
+`network_idle()` remains a separate wrapper predicate. The production network
+thread stops its clock only for
+`network_idle() && mesh_quiescent()` and explicitly asserts the one-way
+invariant `network_idle() => mesh_quiescent()`. Equality is intentionally not
+required: the stress test records cycles where the mesh is quiescent while the
+wrapper still owns an un-injected request or target service.
 
-Why this matters rather than being pedantic: the argument that the wrapper's view
-is sufficient depends on the route lock and the arbiter lock always releasing on
-an accepted `last` flit. That is true of the signed RTL, and it is exactly the
-invariant a future change could break — at which point the clock would stop with
-a flit still held, and the symptom would be a hang with no diagnostic.
+Three independent controls keep the proof meaningful:
 
-The fix belongs in Step 10.3: export occupancy and lock state from `floo_mesh`
-and `axi_noc`, add a `mesh_quiescent()` that reads them, and require both wrapper
-idle and mesh quiescence before waiting with the network clock stopped. Assert
-the implication `network_idle() => mesh_quiescent()` at every clock-gating
-decision.
-
-Do not require equality on every cycle. The mesh can legitimately be quiescent
-while the wrapper still owns an un-injected request or a target service is
-pending, so `mesh_quiescent() == network_idle()` is too strong. Until the gate
-itself consumes the mesh predicate and the implication is tested, treat "the
-network clock stops only at proven quiescence" in section 15 as **not met**.
+- changing the gate from AND to OR makes `test_noc_interconnect_stress` hit its
+  bounded deadline;
+- omitting output-FIFO occupancy makes `test_floo_mesh` misclassify a stalled
+  ejection;
+- omitting route/arbiter locks makes `test_floo_router` misclassify an open
+  packet whose FIFOs are empty.
 
 ### 13.7 Integration risks
 
 - A peripheral-style TLM wrapper would be architecturally wrong. `noc_interconnect`
   is a fabric adapter; keep it one.
-- Gating the clock before whole-network quiescence can lose traffic. See 13.6b —
-  this is a live risk, not a hypothetical one.
+- Gating the clock before whole-network quiescence can lose traffic. Step 10.3
+  mitigates this with the production AND predicate, explicit invariant and
+  three mutation controls; preserve all three layers of evidence.
 - A-3 no longer translates a blocking TLM transaction into one atomic NoC
-  action: AW, each W beat, AR, B and R handshake independently. Step 10.3 must
-  still stress those adapters under multi-initiator contention.
+  action: AW, each W beat, AR, B and R handshake independently. Step 10.3 now
+  stresses those adapters under three-initiator contention.
 - **`b_transport` spends simulated time** rather than annotating `delay`. A
   caller relying on temporal decoupling will find its quantum consumed. No step
   currently resolves this; a platform that needs a global quantum has to decide
   whether the NoC opts out of it, and that decision is unmade.
-- Address ownership and the M:N socket topology are now implemented from the
-  CDC-VP platform map. Preserve that platform-derived contract and review it
-  explicitly when the bus map or endpoint set changes.
+- Address ownership and the M:N socket topology are implemented from the CDC-VP
+  platform map. `noc_soc` additionally requires exactly one execution mode:
+  survey owns its reserved RAM page, peripheral walk and DMA0 experiment;
+  firmware owns all firmware RAM contents and DMA0, while the synthetic probe
+  emits zero transactions. Every firmware ELF `PT_LOAD` range is checked with
+  `p_memsz` against `[0x80ff_f000, 0x8100_0000)` before the internal SoC is
+  constructed. Preserve and review both contracts when the bus map or endpoint
+  set changes.
 - **No target may share a node with a manager.** `NoLoopback = 1` makes such a
   placement hang rather than fail. The wrapper refuses it at construction; do not
   remove that guard.
@@ -1927,9 +1929,9 @@ changes, and never assume the component has already been staged or committed.
 
 ### Symptom
 
-`platforms/noc_soc` with `--fw` loads and starts the firmware correctly — its
-UART output appears — and then the Bremen ISS takes a trap to `mtvec = 0`. The
-CPU spins at address 0 for the rest of the run.
+Under the pre-Step 10.1 CLI, `platforms/noc_soc` with `--fw` loaded and started
+the firmware correctly — its UART output appeared — and then the Bremen ISS
+took a trap to `mtvec = 0`. The CPU spun at address 0 for the rest of the run.
 
 ```text
 DMA platform start
@@ -1967,9 +1969,9 @@ The second access wrote `{1, 2, 3, 4}` over live firmware `.text`. At
 `0x0000`. This exactly explains the observed PC pair. The apparent correlation
 with a tight store loop was coincidental.
 
-### Fix
+### Initial containment and final fix
 
-`platforms/noc_soc/src/noc_soc_top.cpp` now reserves the final 4 KiB RAM page:
+The initial containment moved survey RAM writes into the final 4 KiB RAM page:
 
 ```cpp
 constexpr std::uint64_t kSurveyScratch =
@@ -1977,8 +1979,18 @@ constexpr std::uint64_t kSurveyScratch =
 ```
 
 All synthetic RAM warm-up, single-beat correctness, and burst correctness
-writes use that page. The current DMA firmware is linked into the first 1 MiB,
-including its stack and DMA buffers, so the survey no longer aliases it.
+writes use that page. That stopped the current DMA firmware from being
+overwritten, but relying only on its present link layout was not a complete
+ownership contract.
+
+Step 10.1 closes the issue: `--mode survey|firmware` is mandatory and the two
+modes are mutually exclusive. Survey mode owns the scratch page, peripheral
+walk, and synthetic DMA0 experiment. Firmware mode returns before every probe
+access, so firmware owns RAM contents and DMA0 without competition. Before any
+internal platform composition is constructed, each little-endian RISC-V ELF32
+`PT_LOAD` range is checked using `p_memsz`; overlap with
+`[0x80ff_f000, 0x8100_0000)` is rejected with both exact ranges.
+ELF64 is rejected because the platform CPU is RV32.
 
 The similarly observed `riscv_cpu_eval` trap was unrelated. Trace showed
 `mcause = 15`, `mtval = 0x800f_fffc`: that platform maps only 64 KiB of RAM,
@@ -2478,17 +2490,17 @@ that says nothing.
 | 5 | **A-1** — cross-check the manager-side response unpacker | **done** (2026-07-31): 78 cycles exact, six negative controls detected. The chimney's four quadrants are all signed |
 | 6 | **A-2** — assemble a per-node chimney into `axi_noc` | **done** (2026-07-31): `test_axi_noc_chimney`, 56-cycle model-level composition test |
 | 7 | **A-3** — drive it from `noc_interconnect` | **done** (2026-07-31): cycle-driven AW/W/AR/B/R, 34/34 tests, relevant RTL cross-checks and firmware regression pass; baseline 10/30 cycles |
-| 8 | **10.3** — stress the TLM layer that remains above the chimney | **current** |
-| 9 | **10.1** — separate survey and firmware ownership | |
-| 10 | **10.4** — install, packaging, licensing | |
+| 8 | **10.3** — stress the TLM layer that remains above the chimney | **done** (2026-08-01): 35/35 tests, 32/32 controls, all RTL cross-checks and rebuilt platform regression pass |
+| 9 | **10.1** — separate survey and firmware ownership | **done** (2026-08-01): mandatory mutually exclusive modes, zero synthetic firmware traffic, enforced ELF scratch reservation |
+| 10 | **10.4** — install, packaging, licensing | **current** |
 | 11 | **10.5** — wrapper concurrency, and separately `MaxUniqueIds > 1` | |
 | 12 | **11** — the fast approximately-timed mode | |
 
 **Why 10.3 sat after A-3.** A-3 removed the abstract endpoints from the
 production path, so stressing them first would have targeted code scheduled for
-removal. What remains now — randomized multi-initiator stress, deadlock
-detection and proof of the quiescence gate — targets the actual signal-driven
-integration and is still required.
+removal. Step 10.3 therefore targeted the actual signal-driven integration:
+bounded multi-initiator stress, lost-flit detection and proof of the quiescence
+gate.
 
 **A-1, A-2 and A-3 are part of the v0 completion gate**, not work beyond it.
 See section 15.
@@ -2500,8 +2512,8 @@ in section 13.10. They could not: it lived in `platforms/noc_soc`, and a
 component test cannot cover a platform. What was built is a bounded CTest that:
 
 1. builds `fw/dma_riscv` with `EXTRA_CFLAGS=-DDMA_BASE=0x10060000u`;
-2. runs `noc_soc --fw <elf> --sim-us 2000`, the ELF built in a private copy
-   of the firmware sources rather than in the working tree;
+2. runs `noc_soc --mode firmware --fw <elf> --sim-us 2000`, the ELF built in a
+   private copy of the firmware sources rather than in the working tree;
 3. requires `DMA PASS`;
 4. rejects `Taking trap`, `[PC] trapped`, SystemC errors, timeouts, and a final
    CPU PC of zero;
@@ -2511,12 +2523,13 @@ component test cannot cover a platform. What was built is a bounded CTest that:
 quietly dropped.** This step originally asked for a second *image* — a small
 CPU alignment/readback ELF reaching `DONE`. That image does not exist.
 
-What runs instead is the platform's own synthetic survey, with no `--fw`,
-requiring `result   all bytes match`. Describe it accurately:
+What runs instead is the platform's own synthetic survey,
+`--mode survey`, requiring `result   all bytes match`. Describe it accurately:
 
 - it is **not** a second firmware image, and not equivalent to one;
-- it is a **substitute smoke path with reduced and different coverage**: no CPU
-  workload, no DMA programming, no interrupt path;
+- it is a **substitute smoke path with reduced and different coverage**: it
+  programs DMA0 from the synthetic probe, but has no CPU firmware workload or
+  CPU interrupt-handling path;
 - it does **not** uniquely separate a DMA fault from a CPU/NoC fault. The two
   runs share almost all of the interconnect, so the survey passing does not
   clear it. A failure in the firmware run but not the survey is *evidence
@@ -2544,40 +2557,46 @@ defect in section 13.10. Each wrapper defect needs its own focused regression or
 negative control under Step 10.3; Step 10.2 owns platform-level firmware and
 address-ownership failures.
 
-### Step 10.3 — Stress the TLM wrapper
+### Step 10.3 — Stress the TLM wrapper — DONE (2026-08-01)
 
 The routers, FIFOs, arbiters, chimney paths, ordering rule, and mesh timing are
 RTL-signed. The endpoint transactors and TLM wrapper have no RTL counterpart,
 so this is the highest-risk correctness layer in the project.
 
-Extend `test_noc_interconnect` with a bounded, scoreboard-driven scenario:
+The implementation adds a separate `test_noc_interconnect_stress` so the
+directed calibration contract in `test_noc_interconnect` stays focused. Its
+bounded, scoreboard-driven scenario provides:
 
 - three initiators concurrently access the same RAM target;
-- mix reads and writes of 1, 2, 4, 6, and 8 bytes plus multi-beat bursts;
-- include a target with annotated latency;
+- mix reads and writes of 1, 2, 4, 6, 8, 13 and 24 bytes plus a sparse
+  multi-beat transfer;
+- use a target with 3.5 ns annotated latency and verify per-requester hold-off
+  accounting;
 - verify address, data, response, requester ownership, and completion order;
-- cover reset-time submission, idle-to-active wake-up, whole-network
-  quiescence, unmapped accesses, and the self-node placement guard;
+- cover idle-to-active wake-up, whole-network quiescence and unmapped accesses;
 - use per-transaction timeouts and a global watchdog so lost flits fail rather
   than hang.
 
-This test must directly cover the integration defects already found:
-the half-cycle injection race, requester hold-off attribution, newest-versus-
-oldest request metadata, and odd-length burst tails. Firmware/survey address
-ownership is a platform concern and belongs to the Step 10.2 regression and the
-Step 10.1 mode split, not to `test_noc_interconnect`.
+Reset-time submission remains in `test_noc_interconnect`, and the self-node
+placement guard remains in `test_noc_interconnect_bad_config`; together the
+35-test suite covers the full Step 10.3 list without duplicating those focused
+cases in the stress scenario.
 
-**Also close the quiescence gap here** (section 13.6b). Export input/output FIFO
-occupancy and route/arbiter lock state from `floo_mesh` and `axi_noc`, add a
-`mesh_quiescent()` that reads them, and make the clock-gating decision require
-both wrapper idle and mesh quiescence. Assert
-`network_idle() => mesh_quiescent()` whenever the thread is about to wait with
-the clock stopped. Do not assert equality across all cycles: an empty mesh can
-coexist legitimately with wrapper-side work that has not yet been injected.
-Until the production gate consumes this predicate, the definition-of-done
-bullet "the network clock stops only at proven quiescence" is unmet, and a
-future change to the lock-release invariant could show up as an undiagnosable
-hang.
+The stress test directly covers the integration defects already found: the
+half-cycle injection race, requester hold-off attribution, oldest-request
+metadata/order under newer arrivals, and odd-length burst tails.
+Firmware/survey address ownership is a platform concern and belongs to the Step
+10.2 regression and the Step 10.1 mode split, not to
+`test_noc_interconnect_stress`.
+
+The quiescence gap is also closed (section 13.6b). Passive input/output FIFO
+occupancy and route/arbiter locks flow from `floo_router` through `floo_mesh`;
+`axi_noc` combines them with both physical networks and chimney metadata, RoB,
+arbiter and valid state. The clock gate requires wrapper idle **and**
+`mesh_quiescent()`, and the thread asserts
+`network_idle() => mesh_quiescent()`. The stress run also observes the legal
+opposite state — mesh quiescent while wrapper work remains — so no equality
+assumption is hidden in the gate.
 
 Acceptance criteria:
 
@@ -2588,31 +2607,56 @@ Acceptance criteria:
   still pending, proving that equality is not incorrectly required;
 - no test can hang: every wait is bounded and a global watchdog exists.
 
-### Step 10.1 — Separate synthetic-survey and firmware modes
+All acceptance criteria pass. Verification evidence:
 
-Make the two ownership modes explicit and mutually exclusive:
+- fresh standalone build: **35/35 pass** with GCC/G++ 11.5.0 and SystemC 2.3.4;
+- automated mutation runner: **32 detected, 0 missed**, including seven new
+  Step 10.3 controls for half-cycle sampling, requester/response ownership,
+  odd tails, the two-predicate gate, output-FIFO occupancy and packet locks;
+- all twelve SystemC-to-RTL cross-check runners pass unchanged;
+- after rebuilding the parent `noc_soc`, real DMA firmware and the synthetic
+  survey both pass.
 
-- **survey mode:** the synthetic manager may write its reserved RAM scratch
-  page, walk the peripheral map, and own DMA0;
-- **firmware mode:** firmware owns RAM contents and DMA0; synthetic accesses
-  that can modify firmware state or trigger peripheral side effects must not
-  run.
+### Step 10.1 — Separate synthetic-survey and firmware modes — DONE (2026-08-01)
 
-The final 4 KiB RAM page currently avoids the known ELF layout, but it is a
-documented convention rather than an enforced memory-map reservation. A future
-ELF could legitimately use it and recreate the same corruption. Prefer
-disabling destructive synthetic traffic in firmware mode. If a scratch page
-is retained, reserve it in the platform memory contract and validate every ELF
-`PT_LOAD` range against it.
+The two ownership modes are explicit and mutually exclusive:
 
-Acceptance criteria:
+- `--mode survey` rejects `--fw`; the synthetic manager writes only its
+  reserved RAM scratch page, walks the peripheral map, and owns DMA0;
+- `--mode firmware` requires `--fw <image.elf>`; firmware owns RAM contents and
+  DMA0, and the synthetic probe returns before issuing any TLM transaction;
+- omitting `--mode` or naming any other mode is an error rather than an
+  ownership inference.
 
-- survey mode still reports RAM, peripheral, and DMA measurements;
-- firmware mode performs no synthetic RAM write and does not program DMA0;
-- the current DMA firmware still reaches `DMA PASS` — via the Step 10.2
-  regression, not by hand;
-- loading an ELF whose segment overlaps a reserved scratch region fails before
-  simulation starts with the exact conflicting range.
+The final 4 KiB RAM page is now an enforced platform reservation:
+`[0x80ff_f000, 0x8100_0000)`. Before `sc_start()` and before the CPU ELF loader
+touches RAM, the constructor parses every little-endian RISC-V ELF32 `PT_LOAD`,
+uses `p_memsz` so a BSS-only claim is included, and rejects an overlap with the
+exact segment and reservation ranges. ELF64 is rejected because `noc_soc` uses
+an RV32 CPU.
+
+Focused coverage lives in
+`platforms/noc_soc/tests/run_firmware_regression.sh`. It checks missing,
+invalid and conflicting mode selections; relocates the real DMA ELF so a
+`PT_LOAD` enters the scratch page and requires rejection before the
+`noc_soc config:` construction marker; and checks the ownership counters and
+mode-specific reports in both successful runs.
+
+All acceptance criteria pass:
+
+- survey mode still reports RAM, peripheral, and DMA measurements and nonzero
+  synthetic counts: 2,366 transactions, 1,112 RAM writes, and 4 DMA-register
+  writes in the signed-off run;
+- firmware mode reports zero synthetic transactions, RAM writes, and DMA
+  register writes;
+- the current DMA firmware reaches `DMA PASS` through the automated regression;
+- the relocated ELF is rejected before internal SoC construction with the
+  exact conflicting range
+  `[0x80fff000, 0x80fff7a9)` versus
+  `[0x80fff000, 0x81000000)`;
+- a fresh parent build with `CDC_BUILD_TESTS=ON` passes the registered
+  `noc_soc_firmware_regression` CTest (1/1), and the fresh standalone component
+  suite remains 35/35.
 
 ### Step 10.4 — Prove install, packaging, and licensing
 
@@ -2631,7 +2675,8 @@ a successful in-tree link.
 
 ### Step 10.5 — Decide the required outstanding concurrency and downstream-ID policy
 
-Do this only after Steps 10.2, 10.3, 10.1 and 10.4 pass.
+Do this only after the remaining Step 10.4 passes; Steps 10.1, 10.2 and 10.3
+are already done.
 
 Separate two decisions that the earlier roadmap incorrectly combined:
 
@@ -2831,8 +2876,8 @@ both A-3 changes at its injection point: the new indentation and the current
 `capture.strb` storage. A build failure is not counted as detection.
 
 This completes the timed datapath integration, not a new monolithic RTL
-cross-check. The TLM adapters remain model-only code and are the target of Step
-10.3.
+cross-check. The TLM adapters remain model-only code; Step 10.3 subsequently
+covered them with bounded three-manager stress and mutation controls.
 
 ### Step 11 — Build the fast approximately-timed mode — THE POINT OF ALL THIS
 
@@ -2911,7 +2956,7 @@ The v0 slice is not complete until all of the following are true.
 | ordering rules for the selected configuration are verified | **met** — `NoRoB`, 127 cycles |
 | measured timing is separated from analytic estimates | **met** — `noc_counters.hpp` has no analytic tier; keep it that way |
 | CDC-VP integration reflects a fabric, not a fake accelerator peripheral | **met** — `noc_interconnect` is an M:N fabric adapter |
-| the network clock stops only at proven quiescence | **NOT met** — see 13.6b |
+| the network clock stops only at proven quiescence | **met** — production gating requires wrapper idle and exported mesh/chimney quiescence; section 13.6b |
 | licensing and provenance are complete | **NOT met** — see 13.8; closes in Step 10.4 |
 | **the datapath uses the cycle-accurate blocks from AXI manager port to AXI subordinate port** | **met at model integration level** — A-3 drives the timed `axi_noc` cycle by cycle; every selected block is individually RTL-signed, but there is no monolithic full-path RTL harness |
 
@@ -2919,20 +2964,15 @@ Two further criteria that were implicit and should be explicit:
 
 | Added criterion | State |
 |---|---|
-| the unsigned integration layer has scoreboard-driven multi-initiator stress | **NOT met** — a scoreboard and directed coverage exist; randomized stress and deadlock detection do not, Step 10.3 |
+| the unsigned integration layer has scoreboard-driven multi-initiator stress | **met** — Step 10.3 adds bounded deterministic-random three-manager stress, per-transaction deadlines, a global watchdog and seven mutation controls |
 | a platform-level regression runs real firmware unattended | **met** — `noc_soc_firmware_regression`, Step 10.2 |
 
-**Five criteria are unmet.** Counted here explicitly, because an earlier
-revision said "three criteria short" while the tables above marked five — the
-kind of drift that makes a completion gate meaningless:
+**Two criteria are unmet.** Counted here explicitly so the prose and the tables
+remain mechanically consistent:
 
 1. every included leaf has a direct standalone test — `rr_arb_tree.hpp` and
    `meta_buffer.hpp` do not have one;
-2. the network clock stops only at proven mesh quiescence — section 13.6b;
-3. licensing and provenance are complete — section 13.8, Step 10.4;
-4. the integrated datapath uses the timed AXI-manager-to-AXI-subordinate path —
-   **met by A-3**; the remaining wrapper adapters are model-only;
-5. scoreboard-driven wrapper stress is complete — Step 10.3.
+2. licensing and provenance are complete — section 13.8, Step 10.4.
 
 Nothing in this list requires Step 10.5 or Step 11; those are beyond v0.
 
@@ -3037,7 +3077,7 @@ Verilator limitations hit so far, all worked around in the harnesses:
 
 The next AI can be given this task:
 
-> Read `docs/AI_HANDOFF_CONTEXT.md`, then continue **Step 10.3**, the current
+> Read `docs/AI_HANDOFF_CONTEXT.md`, then continue **Step 10.4**, the current
 > item in section 14's authoritative order. Anchor every NoC behavioural
 > decision in the FlooNoC IP at
 > `/home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC` (upstream
@@ -3050,23 +3090,23 @@ The next AI can be given this task:
 > cycle-by-cycle manager AW/W/AR and subordinate B/R. `axi_endpoint.hpp` is
 > legacy reference/test code only. Do not overstate the integrated path as one
 > monolithic RTL cross-check: its hardware blocks are signed individually, but
-> the TLM adapters have no direct RTL counterpart.
+> the TLM adapters have no direct RTL counterpart. Step 10.3 is also complete:
+> their model-level evidence is a bounded deterministic-random three-manager
+> scoreboard, explicit quiescence proof, and seven focused mutation controls.
 >
-> **Follow the ordered table in section 14, not numeric order.** With 10.2 and
-> A-1/A-2/A-3 done, what remains runs:
+> **Follow the ordered table in section 14, not numeric order.** With 10.1,
+> 10.2, A-1/A-2/A-3 and 10.3 done, what remains runs:
 >
 > ```text
-> 10.3  ->  10.1  ->  10.4  ->  10.5  ->  11
+> 10.4  ->  10.5  ->  11
 > ```
 >
-> Step 10.3: extend `test_noc_interconnect` with three
-> concurrent initiators on one RAM target, mixed widths including 6-byte and
-> odd-length tails, bursts, target latency, a scoreboard, per-transaction bounds
-> and a global watchdog — and close the quiescence gap in section 13.6b by
-> exporting mesh occupancy and lock state. Require `mesh_quiescent()` as well as
-> wrapper idle before clock gating, and assert
-> `network_idle() => mesh_quiescent()` at every gating decision; do not require
-> the two predicates to be equal on all cycles.
+> Step 10.1 is complete. Preserve its mandatory, mutually exclusive
+> `--mode survey|firmware` contract, the zero-synthetic-traffic firmware
+> assertions, the survey RAM/peripheral/DMA coverage, and the pre-construction
+> ELF overlap rejection. Step 10.4 must now prove clean-prefix install, an
+> external installed-package consumer, a packaged out-of-tree `noc_soc` run,
+> RPATH, packaging helpers, licences, and provenance.
 >
 > Four constraints to carry in, all established and documented:
 >
@@ -3087,11 +3127,11 @@ The next AI can be given this task:
 >    composition, and A-3 integrates them. `noc_counters.hpp` separates
 >    measured from derived and has no analytic tier; keep it that way.
 > 4. **The TLM adapters and wrapper have no RTL counterpart** and are not
->    RTL-signable. They are a driver and collector around signed timing blocks,
->    which is why randomized wrapper stress and quiescence proof are still
->    required.
+>    RTL-signable. They are a driver and collector around signed timing blocks.
+>    Step 10.3 covers them at model level; preserve its stress, watchdogs,
+>    requester scoreboards, quiescence predicate and mutation controls.
 >
-> After correctness is automated, prove clean-prefix install, external consumer
+> After the ownership split, prove clean-prefix install, external consumer
 > linking, packaged-platform execution, RPATH, licenses and provenance (10.4).
 > Only then decide separately whether the wrapper needs concurrent outstanding
 > transactions and whether the RTL configuration needs `MaxUniqueIds > 1`
@@ -3114,7 +3154,7 @@ The next AI can be given this task:
 > expected output counts before running a step, and confirm the stimulus is still
 > moving before trusting a pass. See section 16 rules 9e to 9i.
 >
-> Re-run the full standalone regression (34 tests) and every registered RTL
+> Re-run the full standalone regression (35 tests) and every registered RTL
 > cross-check after any model change. Use the mandated GCC/G++/PATH environment
 > before every build, preserve unrelated dirty files, and when a milestone is
 > signed off update **sections 2 to 13 as well as section 14** plus `STATUS.md` —

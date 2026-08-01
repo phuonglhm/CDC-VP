@@ -157,6 +157,13 @@ public:
     network_port<axi_req_flit>& req(unsigned node) { return req_[node]; }
     network_port<axi_rsp_flit>& rsp(unsigned node) { return rsp_[node]; }
 
+    mesh_activity req_activity() const { return req_mesh_.activity(); }
+    mesh_activity rsp_activity() const { return rsp_mesh_.activity(); }
+    bool quiescent() const
+    {
+        return req_mesh_.quiescent() && rsp_mesh_.quiescent();
+    }
+
 private:
     floo_mesh<axi_req_flit, Width, Height, InFifoDepth, OutFifoDepth> req_mesh_;
     floo_mesh<axi_rsp_flit, Width, Height, InFifoDepth, OutFifoDepth> rsp_mesh_;
@@ -297,6 +304,18 @@ public:
         return response_.ar_meta_occupancy();
     }
 
+    bool quiescent() const
+    {
+        return request_.quiescent() && response_.quiescent()
+            && !manager_.aw_valid.read() && !manager_.w_valid.read()
+            && !manager_.ar_valid.read() && !manager_.b_valid.read()
+            && !manager_.r_valid.read() && !subordinate_.aw_valid.read()
+            && !subordinate_.w_valid.read() && !subordinate_.ar_valid.read()
+            && !subordinate_.b_valid.read() && !subordinate_.r_valid.read()
+            && !o_req_inject_valid.read() && !i_req_eject_valid.read()
+            && !o_rsp_inject_valid.read() && !i_rsp_eject_valid.read();
+    }
+
 private:
     axi_manager_signals manager_{};
     axi_subordinate_signals subordinate_{};
@@ -392,6 +411,25 @@ public:
     }
     chimney_type& chimney(unsigned node) { return chimneys_[node]; }
     const chimney_type& chimney(unsigned node) const { return chimneys_[node]; }
+
+    mesh_activity req_activity() const { return mesh_.req_activity(); }
+    mesh_activity rsp_activity() const { return mesh_.rsp_activity(); }
+
+    /// True only when both physical meshes and every per-node chimney have no
+    /// retained FIFO entry, packet lock, metadata entry, RoB counter or live
+    /// endpoint valid. This is the production clock-gating predicate.
+    bool mesh_quiescent() const
+    {
+        if (!mesh_.quiescent()) {
+            return false;
+        }
+        for (const auto& chimney : chimneys_) {
+            if (!chimney.quiescent()) {
+                return false;
+            }
+        }
+        return true;
+    }
 
 private:
     axi_mesh_noc<Width, Height, InFifoDepth, OutFifoDepth> mesh_;

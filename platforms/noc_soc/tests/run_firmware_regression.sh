@@ -12,16 +12,17 @@
 #
 # Two runs, and they are **not** two firmware images:
 #
-#   1. `--fw`, the real thing. A RISC-V CPU fetching over the mesh, programming
-#      DMA0 and touching peripherals. It must reach `DMA PASS`.
-#   2. no `--fw`, the platform's built-in synthetic survey. It must reach
-#      `result all bytes match`.
+#   1. `--mode firmware --fw`, the real thing. A RISC-V CPU fetching over the
+#      mesh, programming DMA0 and touching peripherals. It must reach
+#      `DMA PASS`, while the synthetic port reports zero transactions.
+#   2. `--mode survey`, the platform's built-in synthetic survey. It must reach
+#      `result all bytes match` and report RAM, peripheral and DMA measurements.
 #
 # Run 2 is a **substitute smoke path with reduced and different coverage**, not
 # a second firmware image. It exercises the interconnect and the memory path
-# from the platform's own traffic generator, with no CPU workload, no DMA
-# programming and no interrupt path. It is here because it is nearly free and
-# catches gross interconnect breakage quickly.
+# from the platform's own traffic generator, including its own DMA0 experiment,
+# but has no CPU firmware workload or CPU interrupt-handling path. It is here
+# because it is nearly free and catches gross interconnect breakage quickly.
 #
 # Reading the pair: a failure in 1 but not 2 is *evidence towards* a fault in
 # the CPU, DMA or firmware-integration path rather than the interconnect, and a
@@ -142,6 +143,12 @@ if ! command -v riscv-none-elf-nm >/dev/null 2>&1; then
   echo "      skipped its own evidence is worse than no result." >&2
   exit "${SKIP}"
 fi
+if ! command -v riscv-none-elf-objcopy >/dev/null 2>&1 \
+   || ! command -v riscv-none-elf-readelf >/dev/null 2>&1; then
+  echo "SKIP: riscv-none-elf-objcopy/readelf not found. Step 10.1 must prove" >&2
+  echo "      that an overlapping PT_LOAD is rejected with its exact range." >&2
+  exit "${SKIP}"
+fi
 
 actual_base="$(riscv-none-elf-nm "${elf}" \
   | awk '$3 == "__fw_dma_base" { print $1 }')"
@@ -202,9 +209,82 @@ run_image() {
   echo "  ${label}: PASS"
 }
 
+require_log() {
+  local log="$1" text="$2" reason="$3"
+  if ! grep -Fq "${text}" "${log}"; then
+    echo "--- log tail ---" >&2; tail -40 "${log}" >&2
+    fail "${reason}: '${text}' not found (log kept at ${log})"
+  fi
+}
+
+reject_log() {
+  local log="$1" text="$2" reason="$3"
+  if grep -Fq "${text}" "${log}"; then
+    echo "--- log tail ---" >&2; tail -40 "${log}" >&2
+    fail "${reason}: forbidden '${text}' found (log kept at ${log})"
+  fi
+}
+
+expect_rejected() {
+  local label="$1" log="$2" required="$3"
+  shift 3
+
+  if "${noc_soc_bin}" "$@" >"${log}" 2>&1; then
+    echo "--- ${label} log ---" >&2; cat "${log}" >&2
+    fail "${label}: command unexpectedly succeeded"
+  fi
+  require_log "${log}" "${required}" "${label}"
+  echo "  ${label}: PASS"
+}
+
 echo "noc_soc firmware regression"
 echo "  binary:   ${noc_soc_bin}"
 echo "  firmware: ${elf}"
+
+# Mode selection is part of the platform contract, not an inference from
+# whether `--fw` happened to be present.
+expect_rejected "missing explicit mode" "${log_dir}/missing_mode.log" \
+    "noc_soc: --mode is required: choose 'survey' or 'firmware'" \
+    --sim-us 1
+expect_rejected "firmware mode without ELF" \
+    "${log_dir}/firmware_without_elf.log" \
+    "noc_soc: firmware mode requires --fw <image.elf>" \
+    --mode firmware --sim-us 1
+expect_rejected "survey mode with ELF" \
+    "${log_dir}/survey_with_elf.log" \
+    "noc_soc: survey mode rejects --fw" \
+    --mode survey --fw "${elf}" --sim-us 1
+expect_rejected "invalid mode value" "${log_dir}/invalid_mode.log" \
+    "noc_soc: --mode must be 'survey' or 'firmware'" \
+    --mode mixed --sim-us 1
+
+# Move the real firmware's PT_LOAD into the final RAM page. The image need not
+# execute: the platform must reject it before `sc_start()` and print both the
+# exact ELF range and the reserved range.
+overlap_elf="${log_dir}/firmware_overlaps_survey_scratch.elf"
+cp "${elf}" "${overlap_elf}" \
+  || fail "could not create overlap-test ELF"
+read -r original_first original_size < <(
+  riscv-none-elf-readelf -lW "${elf}" \
+    | awk '$1 == "LOAD" { print $4, $6; exit }')
+[[ -n "${original_first:-}" && -n "${original_size:-}" ]] \
+  || fail "could not read the firmware ELF PT_LOAD range"
+readonly scratch_first=0x80fff000
+relocation_delta="$((scratch_first - original_first))"
+riscv-none-elf-objcopy --change-addresses "${relocation_delta}" "${overlap_elf}" \
+  || fail "could not relocate overlap-test ELF"
+read -r overlap_first overlap_size < <(
+  riscv-none-elf-readelf -lW "${overlap_elf}" \
+    | awk '$1 == "LOAD" { print $4, $6; exit }')
+[[ -n "${overlap_first:-}" && -n "${overlap_size:-}" ]] \
+  || fail "could not read the overlap-test ELF PT_LOAD range"
+overlap_last="$(printf '0x%x' "$((overlap_first + overlap_size))")"
+overlap_message="noc_soc: firmware PT_LOAD [${overlap_first}, ${overlap_last}) overlaps reserved survey scratch [0x80fff000, 0x81000000)"
+expect_rejected "reserved scratch overlap" "${log_dir}/overlap.log" \
+    "${overlap_message}" \
+    --mode firmware --fw "${overlap_elf}" --sim-us 1
+reject_log "${log_dir}/overlap.log" "noc_soc config:" \
+    "reserved scratch overlap must fail before internal SoC construction"
 
 # 2000 µs, not 500. The workload needs about 563 µs of modelled time since the
 # wrapper began spending the caller's annotated delay instead of discarding it
@@ -212,10 +292,45 @@ echo "  firmware: ${elf}"
 # ~331 µs. The margin is deliberate — this bound exists to stop a hang, not to
 # assert a performance figure, and a bound tight enough to fail on a timing
 # change is a bound that will keep failing for the wrong reason.
-run_image "firmware (--fw, DMA transfer)" "${log_dir}/firmware.log" \
-          'DMA PASS' --fw "${elf}" --sim-us 2000
+run_image "firmware mode (DMA transfer)" "${log_dir}/firmware.log" \
+          'DMA PASS' --mode firmware --fw "${elf}" --sim-us 2000
 
-run_image "synthetic survey (no --fw)" "${log_dir}/survey.log" \
-          'result   all bytes match' --sim-us 200
+require_log "${log_dir}/firmware.log" "noc_soc mode: firmware" \
+    "firmware mode selection"
+require_log "${log_dir}/firmware.log" \
+    "noc_soc: firmware mode; synthetic survey disabled" \
+    "firmware ownership"
+require_log "${log_dir}/firmware.log" "  transactions 0" \
+    "firmware synthetic-transaction ownership"
+require_log "${log_dir}/firmware.log" "  RAM writes 0" \
+    "firmware RAM ownership"
+require_log "${log_dir}/firmware.log" "  DMA register writes 0" \
+    "firmware DMA ownership"
+reject_log "${log_dir}/firmware.log" "noc_soc: RAM at" \
+    "firmware mode must not run the RAM survey"
+reject_log "${log_dir}/firmware.log" \
+    "noc_soc: DMA memory-to-memory transfer, 512 bytes" \
+    "firmware mode must not program DMA0 from the probe port"
+
+run_image "synthetic survey mode" "${log_dir}/survey.log" \
+          'result   all bytes match' --mode survey --sim-us 200
+
+require_log "${log_dir}/survey.log" "noc_soc mode: survey" \
+    "survey mode selection"
+require_log "${log_dir}/survey.log" "noc_soc: RAM at" \
+    "survey RAM measurements"
+require_log "${log_dir}/survey.log" \
+    "noc_soc: one 32-bit register read per peripheral" \
+    "survey peripheral measurements"
+require_log "${log_dir}/survey.log" \
+    "noc_soc: DMA memory-to-memory transfer, 512 bytes" \
+    "survey DMA measurements"
+if ! grep -Eq '^  RAM writes [1-9][0-9]*$' "${log_dir}/survey.log"; then
+  fail "survey mode issued no synthetic RAM write"
+fi
+if ! grep -Eq '^  DMA register writes [1-9][0-9]*$' \
+      "${log_dir}/survey.log"; then
+  fail "survey mode did not program DMA0"
+fi
 
 echo "noc_soc firmware regression PASS"

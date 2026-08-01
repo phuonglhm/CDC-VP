@@ -7,7 +7,30 @@
 
 #include <systemc>
 
+#include <cstdint>
+
 namespace floo::model {
+
+/// Aggregate, passive view of every state that can retain a flit in one mesh.
+///
+/// Counts rather than a single Boolean make a failed clock-gating assertion
+/// diagnosable: they say whether the residue is a FIFO entry, a wormhole lock,
+/// or a live endpoint boundary.
+struct mesh_activity {
+    std::uint64_t input_fifo_entries{};
+    std::uint64_t output_fifo_entries{};
+    unsigned route_locks{};
+    unsigned arbiter_locks{};
+    unsigned inject_valids{};
+    unsigned eject_valids{};
+
+    bool quiescent() const
+    {
+        return input_fifo_entries == 0 && output_fifo_entries == 0
+            && route_locks == 0 && arbiter_locks == 0
+            && inject_valids == 0 && eject_valids == 0;
+    }
+};
 
 template <
     typename FlitT,
@@ -98,6 +121,35 @@ public:
     {
         return y * Width + x;
     }
+
+    mesh_activity activity() const
+    {
+        mesh_activity result{};
+        for (unsigned node = 0; node < num_nodes; ++node) {
+            if (i_inject_valid[node].read()) {
+                ++result.inject_valids;
+            }
+            if (o_eject_valid[node].read()) {
+                ++result.eject_valids;
+            }
+            for (unsigned port = 0; port < num_ports; ++port) {
+                const auto& router = routers_[node];
+                result.input_fifo_entries +=
+                    router.input_fifo_occupancy(port);
+                result.output_fifo_entries +=
+                    router.output_fifo_occupancy(port);
+                if (router.route_locked(port)) {
+                    ++result.route_locks;
+                }
+                if (router.arbiter_locked(port)) {
+                    ++result.arbiter_locks;
+                }
+            }
+        }
+        return result;
+    }
+
+    bool quiescent() const { return activity().quiescent(); }
 
 private:
     sc_core::sc_vector<floo_router<FlitT, InFifoDepth, OutFifoDepth>> routers_;

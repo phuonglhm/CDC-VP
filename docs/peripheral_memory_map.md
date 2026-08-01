@@ -86,6 +86,15 @@ KiB later without changing its base address.
 | GPIO0 | `0x1016_0000` | `0x0000_1000` | `0x1016_0FFF` | MMIO | GPIO block (`gpio_tlm`), 32 pins. Registers: `0x00 VALUE` (RO), `0x04 OUT` (RW), `0x08 DIR` (RW, 1=output, reset all-inputs); 32-bit accesses only. Pin 1 is the ROM-code boot-mode strap (LOW = boot IFLASH app, HIGH = download probe). No IRQ in this revision (PLIC 24 stays reserved). |
 | RAM0 | `0x8000_0000` | `0x1000_0000` | `0x8FFF_FFFF` | RAM/DDR | Firmware, heap/stack, frame buffers, tensors, weights, and accelerator scratch space. Final integrated SoC target is 256 MiB. |
 
+`noc_soc` is a verification-platform exception to the final RAM0 sizing: it
+instantiates 16 MiB at `[0x8000_0000, 0x8100_0000)` and reserves its final
+4 KiB, `[0x80FF_F000, 0x8100_0000)`, exclusively for the synthetic survey.
+Firmware mode must not claim that page; `noc_soc` checks every little-endian
+RISC-V ELF32 `PT_LOAD` range using `p_memsz` and rejects an overlap before
+constructing its internal SoC composition. ELF64 is outside this RV32
+platform's firmware contract. The reservation is local to `noc_soc` and does
+not shrink the 256 MiB RAM0 allocation or the integrated-SoC buffer plan below.
+
 ## Accelerator Pipeline Buffer Plan
 
 The target data path is:
