@@ -229,10 +229,12 @@ add_control \
 add_control \
     "sparse-beat-renumbering" \
     "src/noc_interconnect.cpp" \
-    '            const std::uint64_t aw_addr = entry.addr;' \
-    '            const std::uint64_t aw_addr = entry.addr
-                - static_cast<std::uint64_t>(
-                      (beat_strb.empty() || beat_strb[0] != 0) ? 0 : bus_bytes);' \
+    '        const std::uint64_t aw_addr = entry.addr;' \
+    '        const std::uint64_t aw_addr = entry.addr
+            - static_cast<std::uint64_t>(
+                  (capture.strb.empty() || capture.strb[0] != 0)
+                      ? 0
+                      : bus_bytes);' \
     "test_noc_interconnect" \
     "not one beat earlier" \
     "a write whose leading beat was fully disabled had its data placed one beat too early, and still reported success"
@@ -412,6 +414,40 @@ add_control \
     "trace mismatch" \
     "the R counter was released by the id in the B payload rather than the R payload, so a burst decremented the wrong per-id counter" \
     "${A1_ARGS}"
+
+# ---- Steps A-2/A-3: integrated signal-driven datapath ----------------------
+#
+# A-2 assembled the three chimney quadrants and both physical meshes into one
+# per-node composition. Swapping these two private ready links is syntactically
+# valid and leaves every standalone chimney test untouched; only a test that
+# really traverses `axi_chimney_node` can observe that B follows the R ordering
+# gate and R follows the B gate.
+add_control \
+    "chimney-node-rob-ready-swapped" \
+    "include/floo_noc_model/axi_noc.hpp" \
+    '        manager_response_.i_b_rob_ready(b_rob_ready_);
+        manager_response_.i_r_rob_ready(r_rob_ready_);' \
+    '        manager_response_.i_b_rob_ready(r_rob_ready_);
+        manager_response_.i_r_rob_ready(b_rob_ready_);' \
+    "test_axi_noc_chimney" \
+    "stalled R must restore ID and preserve every field" \
+    "the composed node crossed the private B/R reorder-buffer ready links, so an R response followed B's ordering state and the stalled R payload was corrupted"
+
+# A-3 replaced the endpoint method calls with per-cycle AXI signal driving.
+# Shift only the AW signal payload, leaving destination decode and the TLM
+# request unchanged. The transaction still builds, routes and returns OKAY, so
+# detection requires the integrated wrapper test to inspect where the bytes
+# actually landed rather than merely seeing a completed response.
+add_control \
+    "a3-manager-aw-address-shifted" \
+    "src/noc_interconnect.cpp" \
+    '                    manager.aw.write(request.aw);' \
+    '                    axi_aw_chan shifted_aw = request.aw;
+                    shifted_aw.addr += bus_bytes;
+                    manager.aw.write(shifted_aw);' \
+    "test_noc_interconnect" \
+    "the enabled bytes must land, in the right order" \
+    "the A-3 manager adapter drove an AW address one bus beat away from the original TLM request, so writes completed but changed the wrong target bytes"
 
 # ── run them ─────────────────────────────────────────────────────────────────
 detected=0

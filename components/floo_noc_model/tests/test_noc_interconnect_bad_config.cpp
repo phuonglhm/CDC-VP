@@ -36,6 +36,33 @@ void check(bool condition, const std::string& message)
 
 int sc_main(int, char**)
 {
+    // ---- manager-ID capacity ----------------------------------------------
+    //
+    // The frozen chimney has a 3-bit manager AXI ID. The wrapper assigns one
+    // ID per upstream port, so ports 0..7 are representable and port 8 is not.
+    // Refuse both an empty manager set and an ID-truncating manager set before
+    // any mesh hierarchy is built.
+    {
+        bool zero_threw = false;
+        try {
+            cdc::components::noc_interconnect bad{
+                "no_managers", 2, 2, 1, 0};
+        } catch (const std::invalid_argument&) {
+            zero_threw = true;
+        }
+        check(zero_threw, "at least one upstream port must be required");
+
+        bool too_many_threw = false;
+        try {
+            cdc::components::noc_interconnect bad{
+                "too_many_managers", 2, 2, 1, 9};
+        } catch (const std::invalid_argument&) {
+            too_many_threw = true;
+        }
+        check(too_many_threw,
+              "a 3-bit manager ID must refuse more than 8 upstream ports");
+    }
+
     // ---- an unusable network clock -----------------------------------------
     //
     // Every latency in the model is counted in network cycles, so a zero period

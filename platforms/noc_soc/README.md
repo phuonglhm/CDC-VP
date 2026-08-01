@@ -97,7 +97,7 @@ Each peripheral gets one register read from the probe port at (3,3):
 
 ```text
   block   node    hops  network   total
-  uart1   (3,2)   1     11 cyc    21 ns
+  uart1   (3,2)   1     10 cyc    20 ns
   timer0  (3,1)   2     15 cyc    15 ns
   wdt0    (2,1)   3     19 cyc    19 ns
   i2c0    (2,0)   4     23 cyc    23 ns
@@ -123,15 +123,19 @@ floorplan.**
 With firmware, this is the number the platform exists to produce:
 
 ```text
-  CPU pc 0x8000047a, retired 10726 instructions in 563183 ns
-  52.506 ns per instruction, fetching from RAM over the mesh
-  (measured over the 563183 ns the CPU was retiring; it then idled until 1500683 ns)
+  CPU pc 0x8000047a, retired 10726 instructions in 570683 ns
+  53.2056 ns per instruction, fetching from RAM over the mesh
+  (measured over the 570683 ns the CPU was retiring; it then idled until 2000683 ns)
 ```
 
-**About 52 ns per instruction**, every fetch crossing the mesh, measured over
+**About 53.2 ns per instruction**, every fetch crossing the mesh, measured over
 the window in which the CPU was actually retiring. Firmware ends in `wfi`, so
 charging the whole run to its instructions would make the same workload look
 slower the longer the simulation is left running.
+
+This is the post-A-3 measurement from 2026-07-31: `noc_interconnect` drives the
+timed per-node chimneys through AXI AW/W/AR/B/R handshakes. The earlier
+52.506 ns figure used the abstract endpoint path.
 
 **This figure was 30.8 ns until 2026-07-30, and the change is a correction, not
 a regression.** The same 10,726 instructions now take 563 µs of modelled time
@@ -227,7 +231,10 @@ Three behaviours to keep straight, because two of them are often misattributed:
 - **PMU0**, whose ~20-signal power-sequencing environment is not reproduced.
 Not on this list any more: the DMA's descriptor traffic. `fw/dma_riscv` programs
 a real transfer and reaches `DMA PASS` over the mesh, so CPU and DMA do contend
-for the same links. The worst observed cost is **+9 cycles**.
+for the same links. A pre-A-3 directed run observed **+9 cycles**; the current
+synthetic survey can also show no positive delta at this light load because the
+wrapper serializes each port. Step 10.3 owns a controlled, scoreboard-driven
+contention workload.
 
 Do not read that as "a 4x4 FlooNoC cannot congest". It is a result for *this
 wrapper* with three masters on *this* workload, and the dominant reason is the
@@ -254,8 +261,9 @@ transactions, which is a wrapper change, and only then deciding whether
 
 `bus_router` does no work per simulated cycle because it does not simulate
 cycles. This advances a clock and evaluates every router in the mesh on every
-edge. Idle cycles are skipped — exact, because with no `valid` asserted
-anywhere every register holds — but any cycle carrying traffic costs real work.
+edge. Wrapper-idle cycles are skipped to control cost, but direct
+mesh-quiescence proof is still pending as noted above. Any cycle carrying
+traffic costs real work.
 
 For a platform that must also boot firmware at speed, the usual answer is two
 modes: this one to calibrate, and an approximately-timed model for long runs.

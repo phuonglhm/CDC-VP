@@ -628,8 +628,8 @@ private:
                               / static_cast<double>(count) << " cycles";
             }
             std::cout << "\n  mesh clocked " << noc->elapsed_cycles()
-                      << " cycles (idle cycles are skipped, which is exact:"
-                         " nothing changes state in them)\n";
+                      << " cycles (wrapper-idle cycles are skipped;"
+                         " direct mesh-quiescence proof is pending)\n";
         }
 
         // Distance has to show up in the numbers, or the geometry is not being

@@ -29,6 +29,7 @@ add_floo_model_test(test_axi_chimney_pack)
 add_floo_model_test(test_rob_order_gate)
 add_floo_model_test(test_axi_endpoint)
 add_floo_model_test(test_axi_noc)
+add_floo_model_test(test_axi_noc_chimney)
 add_floo_model_test(test_axi_chimney_manager_response)
 
 # The TLM wrapper is a compiled target, so its test links that instead of the

@@ -2,7 +2,6 @@
 
 #include "floo_noc_model/noc_interconnect.h"
 
-#include "floo_noc_model/axi_endpoint.hpp"
 #include "floo_noc_model/axi_lanes.hpp"
 #include "floo_noc_model/axi_noc.hpp"
 
@@ -30,27 +29,29 @@ using axi_lanes::pack_write;
 using axi_lanes::shape_of;
 using axi_lanes::unpack_read;
 
-/// Runtime-sized access to a compile-time-sized mesh.
+/// Runtime-sized access to a compile-time-sized, chimney-backed NoC.
 ///
 /// `axi_noc` takes its dimensions as template parameters because `floo_mesh`
-/// sizes its `sc_vector`s from them, and `floo_mesh` is RTL-signed — it is not
-/// worth reworking to gain a runtime dimension. A small dispatch covers the
-/// useful sizes instead.
-struct mesh_iface {
-    virtual ~mesh_iface() = default;
+/// sizes its `sc_vector`s from them. A small dispatch covers the useful sizes
+/// without weakening the signed mesh implementation.
+struct noc_iface {
+    virtual ~noc_iface() = default;
     virtual void bind_clock(
         sc_core::sc_signal<bool>& clk, sc_core::sc_signal<bool>& rst_n) = 0;
     virtual unsigned node_index(unsigned x, unsigned y) const = 0;
     virtual unsigned node_count() const = 0;
-    virtual network_port<axi_req_flit>& req(unsigned node) = 0;
-    virtual network_port<axi_rsp_flit>& rsp(unsigned node) = 0;
+    virtual axi_manager_signals& manager(unsigned node) = 0;
+    virtual axi_subordinate_signals& subordinate(unsigned node) = 0;
+    virtual bool req_eject_valid(unsigned node) const = 0;
+    virtual bool req_eject_ready(unsigned node) const = 0;
+    virtual axi_req_flit req_eject_data(unsigned node) const = 0;
 };
 
 template <unsigned Width, unsigned Height>
-struct mesh_holder final : mesh_iface {
+struct noc_holder final : noc_iface {
     axi_noc<Width, Height> noc;
 
-    explicit mesh_holder(const char* name) : noc(name) {}
+    explicit noc_holder(const char* name) : noc(name) {}
 
     void bind_clock(
         sc_core::sc_signal<bool>& clk, sc_core::sc_signal<bool>& rst_n) override
@@ -66,29 +67,41 @@ struct mesh_holder final : mesh_iface {
     {
         return axi_noc<Width, Height>::num_nodes;
     }
-    network_port<axi_req_flit>& req(unsigned node) override
+    axi_manager_signals& manager(unsigned node) override
     {
-        return noc.req(node);
+        return noc.manager(node);
     }
-    network_port<axi_rsp_flit>& rsp(unsigned node) override
+    axi_subordinate_signals& subordinate(unsigned node) override
     {
-        return noc.rsp(node);
+        return noc.subordinate(node);
+    }
+    bool req_eject_valid(unsigned node) const override
+    {
+        return noc.chimney(node).i_req_eject_valid.read();
+    }
+    bool req_eject_ready(unsigned node) const override
+    {
+        return noc.chimney(node).o_req_eject_ready.read();
+    }
+    axi_req_flit req_eject_data(unsigned node) const override
+    {
+        return noc.chimney(node).i_req_eject_data.read();
     }
 };
 
-std::unique_ptr<mesh_iface> make_mesh(unsigned x, unsigned y, const char* name)
+std::unique_ptr<noc_iface> make_noc(unsigned x, unsigned y, const char* name)
 {
-    if (x == 2 && y == 2) return std::make_unique<mesh_holder<2, 2>>(name);
-    if (x == 3 && y == 3) return std::make_unique<mesh_holder<3, 3>>(name);
-    if (x == 4 && y == 4) return std::make_unique<mesh_holder<4, 4>>(name);
-    if (x == 4 && y == 2) return std::make_unique<mesh_holder<4, 2>>(name);
-    if (x == 2 && y == 4) return std::make_unique<mesh_holder<2, 4>>(name);
+    if (x == 2 && y == 2) return std::make_unique<noc_holder<2, 2>>(name);
+    if (x == 3 && y == 3) return std::make_unique<noc_holder<3, 3>>(name);
+    if (x == 4 && y == 4) return std::make_unique<noc_holder<4, 4>>(name);
+    if (x == 4 && y == 2) return std::make_unique<noc_holder<4, 2>>(name);
+    if (x == 2 && y == 4) return std::make_unique<noc_holder<2, 4>>(name);
 
     std::ostringstream message;
     message << "noc_interconnect: mesh " << x << 'x' << y
-            << " is not instantiated. Add it to make_mesh() in "
+            << " is not instantiated. Add it to make_noc() in "
                "src/noc_interconnect.cpp; the dimensions are template "
-               "parameters of the signed mesh model.";
+               "parameters of the signed NoC model.";
     throw std::invalid_argument(message.str());
 }
 
@@ -119,7 +132,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         /// addresses: `write_bytes[i]` is the byte at `addr + i`, and
         /// `write_enables[i]` says whether it is written.
         ///
-        /// Resolved once, in `absorb_request`, where the original AXI address
+        /// Resolved once, in `accept_subordinate_w`, where the original AXI address
         /// and the original beat numbering are both still in hand. The raw
         /// `write_data`/`write_strb` are deliberately **not** carried past that
         /// point: an earlier version kept them, moved `addr` to the lowest
@@ -142,14 +155,67 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         bool served = false;
     };
 
-    /// Per-node state. A node may host a manager, a subordinate, or both.
+    /// One TLM request being presented on a chimney's manager AXI port.
+    ///
+    /// `port_busy` keeps this to one transaction per upstream port, but AW and
+    /// W are still independent AXI channels. The timed chimney decides their
+    /// ready timing; this state only holds each payload stable until its own
+    /// handshake.
+    struct manager_request {
+        bool is_write = false;
+        coordinate destination{};
+        axi_aw_chan aw{};
+        bool aw_pending = false;
+        std::vector<axi_w_chan> w;
+        std::size_t w_index = 0;
+        axi_ar_chan ar{};
+        bool ar_pending = false;
+
+        bool complete() const
+        {
+            return is_write ? !aw_pending && w_index == w.size()
+                            : !ar_pending;
+        }
+    };
+
+    /// Write-channel state collected from the subordinate AXI boundary.
+    struct write_capture {
+        axi_aw_chan aw{};
+        coordinate requester{};
+        std::vector<std::uint64_t> data;
+        std::vector<std::uint64_t> strb;
+    };
+
+    /// One subordinate response transaction held until the chimney accepts it.
+    struct subordinate_response {
+        bool is_write = false;
+        axi_b_chan b{};
+        std::vector<axi_r_chan> r;
+        std::size_t r_index = 0;
+    };
+
+    /// Per-node signal-adapter state. A node may host a manager, a subordinate,
+    /// or neither; the NoLoopback placement rule prevents it hosting both.
     struct node_state {
-        std::optional<axi_manager_endpoint> manager;
-        std::optional<axi_subordinate_endpoint> subordinate;
+        bool has_manager = false;
+        bool has_subordinate = false;
         /// Which upstream port injects here, if any.
         int initiator_port = -1;
-        std::deque<axi_rsp_flit> outbox;
+        std::optional<manager_request> request;
+        std::vector<std::uint64_t> read_data;
+        std::uint8_t read_resp =
+            to_bits(axi_pkg::axi_resp::okay);
+
+        // Passive source tracking. The subordinate AXI ID is intentionally
+        // rewritten to all ones, so the requester coordinate is observed when
+        // the signed req link hands the AW/AR flit to the chimney, then paired
+        // with the corresponding AXI handshake in FIFO order. This sideband is
+        // used only to exclude target delay from the latency metric.
+        std::deque<coordinate> aw_sources;
+        std::deque<coordinate> ar_sources;
+        std::deque<write_capture> writes;
         std::deque<served_request> serving;
+        std::deque<subordinate_response> responses;
     };
 
     /// A `b_transport` call parked until the network answers it.
@@ -164,7 +230,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     sc_core::sc_signal<bool> clk{"clk"};
     sc_core::sc_signal<bool> rst_n{"rst_n"};
 
-    std::unique_ptr<mesh_iface> mesh;
+    std::unique_ptr<noc_iface> noc;
     sc_core::sc_time period;
 
     std::vector<target_entry> targets;
@@ -182,6 +248,11 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     unsigned initiator_count = 0;
     unsigned target_capacity = 0;
     unsigned mapped_targets = 0;
+
+    static constexpr unsigned axi_id_bits = 3;
+    static constexpr unsigned max_manager_ports = 1u << axi_id_bits;
+    static constexpr std::uint64_t downstream_id =
+        axi_chimney_node<axi_id_bits>::downstream_id;
 
     std::uint64_t cycle = 0;
     std::uint64_t completed = 0;
@@ -204,7 +275,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     impl(sc_core::sc_module_name name, unsigned x, unsigned y,
          unsigned num_targets, unsigned num_initiators, sc_core::sc_time tick)
         : sc_core::sc_module(name)
-        , mesh(make_mesh(x, y, "mesh"))
+        , noc(make_noc(x, y, "noc"))
         , period(tick)
         , mesh_x(x)
         , mesh_y(y)
@@ -215,15 +286,20 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             throw std::invalid_argument(
                 "noc_interconnect: at least one upstream port is required");
         }
+        if (num_initiators > max_manager_ports) {
+            throw std::invalid_argument(
+                "noc_interconnect: the frozen 3-bit AXI ID supports at most "
+                "8 upstream ports");
+        }
         // The public constructor checks the period before this object is
         // created; this is the belt-and-braces copy for a direct construction.
         if (tick <= sc_core::SC_ZERO_TIME) {
             throw std::invalid_argument(
                 "noc_interconnect: the network clock period must be positive");
         }
-        mesh->bind_clock(clk, rst_n);
-        nodes.resize(mesh->node_count());
-        hold_off.assign(mesh->node_count(), 0);
+        noc->bind_clock(clk, rst_n);
+        nodes.resize(noc->node_count());
+        hold_off.assign(noc->node_count(), 0);
         initiator_nodes.assign(num_initiators, node{0, 0});
         waiters.reserve(num_initiators);
         for (unsigned port = 0; port < num_initiators; ++port) {
@@ -239,7 +315,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
 
     unsigned node_of(const coordinate& id) const
     {
-        return mesh->node_index(id.x.to_uint(), id.y.to_uint());
+        return noc->node_index(id.x.to_uint(), id.y.to_uint());
     }
 
     unsigned index_of(node where) const
@@ -247,7 +323,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         if (where.x >= mesh_x || where.y >= mesh_y) {
             throw std::out_of_range("noc_interconnect: node outside the mesh");
         }
-        return mesh->node_index(where.x, where.y);
+        return noc->node_index(where.x, where.y);
     }
 
     int decode(std::uint64_t addr) const
@@ -268,10 +344,9 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         return -1;
     }
 
-    /// Builds the manager endpoints once every target is known. Called lazily
-    /// on the first transaction, because `add_target` runs during platform
-    /// construction and the address map is only complete afterwards.
-    /// No target may share a node with an upstream port.
+    /// Enables the signal adapters after platform placement is complete.
+    /// Called lazily on the first transaction; no target may share a node with
+    /// an upstream port.
     ///
     /// `floo_router` defaults to `NoLoopback = 1`: the Eject-input to
     /// Eject-output crossbar leg is tied to zero, so a flit addressed to the
@@ -338,28 +413,14 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         }
         started = true;
 
-        std::vector<endpoint_region> regions;
-        regions.reserve(targets.size());
-        for (const auto& entry : targets) {
-            if (!entry.mapped) {
-                continue;
-            }
-            regions.push_back(endpoint_region{
-                entry.base, entry.size,
-                coordinate{entry.node % mesh_x, entry.node / mesh_x}});
-        }
-        reference_address_map map{regions};
-
         for (unsigned port = 0; port < initiator_count; ++port) {
             const unsigned index = index_of(initiator_nodes[port]);
             auto& state = nodes[index];
-            if (state.manager.has_value()) {
+            if (state.has_manager) {
                 throw std::runtime_error(
                     "noc_interconnect: two upstream ports on one mesh node");
             }
-            const coordinate id{initiator_nodes[port].x,
-                                initiator_nodes[port].y};
-            state.manager.emplace(id, chimney_destination{map});
+            state.has_manager = true;
             state.initiator_port = static_cast<int>(port);
         }
 
@@ -374,80 +435,137 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             // first time it was accessed, and the platform would simply hang.
             // Refuse it at construction instead.
             auto& state = nodes[entry.node];
-            if (!state.subordinate.has_value()) {
-                state.subordinate.emplace(
-                    coordinate{entry.node % mesh_x, entry.node / mesh_x});
-            }
+            state.has_subordinate = true;
         }
     }
 
-    /// Advances the network one clock. Injects, samples, and applies the
-    /// handshakes, mirroring the discipline the cross-check harnesses use.
+    /// Advances the signal-driven NoC one clock.
+    ///
+    /// Drive at clock-low, sample every AXI handshake, raise the clock, then
+    /// update the adapter state from exactly what was sampled. This is the same
+    /// synchronous-BFM discipline as the RTL cross-checks.
     void step_once()
     {
         clk.write(false);
 
-        // What was actually offered to the mesh this cycle. It has to be
-        // remembered rather than re-read after the wait below: `b_transport`
-        // runs in the caller's process and can push a new request into a
-        // manager while this thread is suspended. Re-reading `has_request()`
-        // then would pop a flit that was never driven onto `inject_valid`, and
-        // it would vanish. That only shows with two managers on the mesh — one
-        // manager always offers while this thread is idle.
-        std::vector<bool> drove_request(nodes.size(), false);
-        std::vector<bool> drove_response(nodes.size(), false);
-
         for (unsigned index = 0; index < nodes.size(); ++index) {
             auto& state = nodes[index];
-            auto& req_port = mesh->req(index);
-            auto& rsp_port = mesh->rsp(index);
+            auto& manager = noc->manager(index);
+            auto& subordinate = noc->subordinate(index);
+            const bool active = rst_n.read();
 
-            const bool has_request =
-                state.manager.has_value() && state.manager->has_request();
-            if (has_request) {
-                req_port.inject_data.write(state.manager->peek_request());
+            manager.aw_valid.write(false);
+            manager.w_valid.write(false);
+            manager.ar_valid.write(false);
+            if (active && state.has_manager && state.request.has_value()) {
+                const auto& request = *state.request;
+                if (request.is_write) {
+                    manager.aw.write(request.aw);
+                    manager.aw_dest.write(request.destination);
+                    manager.aw_valid.write(request.aw_pending);
+                    if (request.w_index < request.w.size()) {
+                        manager.w.write(request.w[request.w_index]);
+                        manager.w_valid.write(true);
+                    }
+                } else {
+                    manager.ar.write(request.ar);
+                    manager.ar_dest.write(request.destination);
+                    manager.ar_valid.write(request.ar_pending);
+                }
             }
-            req_port.inject_valid.write(has_request);
-            req_port.eject_ready.write(state.subordinate.has_value());
-            drove_request[index] = has_request;
 
-            const bool has_response = !state.outbox.empty();
-            if (has_response) {
-                rsp_port.inject_data.write(state.outbox.front());
+            bool response_ready = false;
+            if (active && state.has_manager && state.initiator_port >= 0) {
+                response_ready =
+                    port_busy[static_cast<unsigned>(state.initiator_port)];
             }
-            rsp_port.inject_valid.write(has_response);
-            rsp_port.eject_ready.write(state.manager.has_value());
-            drove_response[index] = has_response;
+            manager.b_ready.write(response_ready);
+            manager.r_ready.write(response_ready);
+
+            subordinate.aw_ready.write(active && state.has_subordinate);
+            subordinate.w_ready.write(active && state.has_subordinate);
+            subordinate.ar_ready.write(active && state.has_subordinate);
+            subordinate.b_valid.write(false);
+            subordinate.r_valid.write(false);
+            if (active && state.has_subordinate && !state.responses.empty()) {
+                const auto& response = state.responses.front();
+                if (response.is_write) {
+                    subordinate.b.write(response.b);
+                    subordinate.b_valid.write(true);
+                } else if (response.r_index < response.r.size()) {
+                    subordinate.r.write(response.r[response.r_index]);
+                    subordinate.r_valid.write(true);
+                }
+            }
         }
 
         wait(period / 2);
 
         struct sampled {
-            bool request_accepted = false;
-            bool response_accepted = false;
-            bool request_arrived = false;
-            axi_req_flit request{};
-            bool response_arrived = false;
-            axi_rsp_flit response{};
+            bool manager_aw = false;
+            bool manager_w = false;
+            bool manager_ar = false;
+            bool manager_b = false;
+            axi_b_chan manager_b_data{};
+            bool manager_r = false;
+            axi_r_chan manager_r_data{};
+
+            bool subordinate_aw = false;
+            axi_aw_chan subordinate_aw_data{};
+            bool subordinate_w = false;
+            axi_w_chan subordinate_w_data{};
+            bool subordinate_ar = false;
+            axi_ar_chan subordinate_ar_data{};
+            bool subordinate_b = false;
+            bool subordinate_r = false;
+
+            bool req_eject = false;
+            axi_req_flit req_eject_data{};
         };
         std::vector<sampled> observed(nodes.size());
         for (unsigned index = 0; index < nodes.size(); ++index) {
             auto& state = nodes[index];
-            auto& req_port = mesh->req(index);
-            auto& rsp_port = mesh->rsp(index);
+            auto& manager = noc->manager(index);
+            auto& subordinate = noc->subordinate(index);
             auto& sample = observed[index];
-            (void)state;
+            const bool active = rst_n.read();
 
-            sample.request_accepted = rst_n.read() && drove_request[index]
-                && req_port.inject_ready.read();
-            sample.response_accepted = rst_n.read() && drove_response[index]
-                && rsp_port.inject_ready.read();
-            sample.request_arrived =
-                state.subordinate.has_value() && req_port.eject_valid.read();
-            sample.request = req_port.eject_data.read();
-            sample.response_arrived =
-                state.manager.has_value() && rsp_port.eject_valid.read();
-            sample.response = rsp_port.eject_data.read();
+            sample.manager_aw = active && state.has_manager
+                && manager.aw_valid.read() && manager.aw_ready.read();
+            sample.manager_w = active && state.has_manager
+                && manager.w_valid.read() && manager.w_ready.read();
+            sample.manager_ar = active && state.has_manager
+                && manager.ar_valid.read() && manager.ar_ready.read();
+            sample.manager_b = active && state.has_manager
+                && manager.b_valid.read() && manager.b_ready.read();
+            sample.manager_b_data = manager.b.read();
+            sample.manager_r = active && state.has_manager
+                && manager.r_valid.read() && manager.r_ready.read();
+            sample.manager_r_data = manager.r.read();
+
+            sample.subordinate_aw = active && state.has_subordinate
+                && subordinate.aw_valid.read()
+                && subordinate.aw_ready.read();
+            sample.subordinate_aw_data = subordinate.aw.read();
+            sample.subordinate_w = active && state.has_subordinate
+                && subordinate.w_valid.read()
+                && subordinate.w_ready.read();
+            sample.subordinate_w_data = subordinate.w.read();
+            sample.subordinate_ar = active && state.has_subordinate
+                && subordinate.ar_valid.read()
+                && subordinate.ar_ready.read();
+            sample.subordinate_ar_data = subordinate.ar.read();
+            sample.subordinate_b = active && state.has_subordinate
+                && subordinate.b_valid.read()
+                && subordinate.b_ready.read();
+            sample.subordinate_r = active && state.has_subordinate
+                && subordinate.r_valid.read()
+                && subordinate.r_ready.read();
+
+            sample.req_eject = active && state.has_subordinate
+                && noc->req_eject_valid(index)
+                && noc->req_eject_ready(index);
+            sample.req_eject_data = noc->req_eject_data(index);
         }
 
         clk.write(true);
@@ -458,17 +576,56 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             auto& state = nodes[index];
             const auto& sample = observed[index];
 
-            if (sample.request_accepted) {
-                state.manager->take_request();
+            if (state.request.has_value()) {
+                auto& request = *state.request;
+                if (sample.manager_aw) {
+                    request.aw_pending = false;
+                }
+                if (sample.manager_w) {
+                    ++request.w_index;
+                }
+                if (sample.manager_ar) {
+                    request.ar_pending = false;
+                }
+                if (request.complete()) {
+                    state.request.reset();
+                }
             }
-            if (sample.response_accepted) {
-                state.outbox.pop_front();
+
+            // Observe the source before applying AXI handshakes. AR can cross
+            // both boundaries in the same cycle; AW emerges from its spill
+            // register later. FIFO pairing handles both cases.
+            if (sample.req_eject) {
+                const auto channel = static_cast<axi_channel>(
+                    sample.req_eject_data.hdr.axi_ch.to_uint());
+                if (channel == axi_channel::aw) {
+                    state.aw_sources.push_back(
+                        sample.req_eject_data.hdr.src_id);
+                } else if (channel == axi_channel::ar) {
+                    state.ar_sources.push_back(
+                        sample.req_eject_data.hdr.src_id);
+                }
             }
-            if (sample.request_arrived) {
-                absorb_request(state, sample.request);
+
+            if (sample.subordinate_aw) {
+                accept_subordinate_aw(state, sample.subordinate_aw_data);
             }
-            if (sample.response_arrived) {
-                absorb_response(state, sample.response);
+            if (sample.subordinate_w) {
+                accept_subordinate_w(state, sample.subordinate_w_data);
+            }
+            if (sample.subordinate_ar) {
+                accept_subordinate_ar(state, sample.subordinate_ar_data);
+            }
+
+            if (sample.subordinate_b || sample.subordinate_r) {
+                accept_subordinate_response(
+                    state, sample.subordinate_b, sample.subordinate_r);
+            }
+            if (sample.manager_b) {
+                accept_manager_b(state, sample.manager_b_data);
+            }
+            if (sample.manager_r) {
+                accept_manager_r(state, sample.manager_r_data);
             }
         }
 
@@ -477,113 +634,182 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         }
     }
 
-    /// A request flit reached a subordinate node.
-    void absorb_request(node_state& state, const axi_req_flit& flit)
+    void accept_subordinate_aw(node_state& state, const axi_aw_chan& aw)
     {
-        state.subordinate->accept_request(flit);
-        const auto channel =
-            static_cast<axi_channel>(flit.hdr.axi_ch.to_uint());
+        if (state.aw_sources.empty()) {
+            throw std::runtime_error(
+                "noc_interconnect: subordinate AW has no req-link source");
+        }
+        write_capture capture{};
+        capture.aw = aw;
+        capture.requester = state.aw_sources.front();
+        state.aw_sources.pop_front();
+        state.writes.push_back(std::move(capture));
+    }
 
-        if (channel == axi_channel::w && flit.hdr.last) {
-            served_request entry{};
-            entry.is_write = true;
-            entry.requester = node_of(flit.hdr.src_id);
-            entry.addr = state.subordinate->pending_write_addr();
-            entry.size_log2 = state.subordinate->pending_write_size();
-            const auto& beat_data = state.subordinate->pending_write_data();
-            const auto& beat_strb = state.subordinate->pending_write_strbs();
-            entry.beats = static_cast<unsigned>(beat_data.size());
-
-            // Resolve every enabled lane to its absolute byte address, here and
-            // only here. `aw_addr` is the AXI address as issued; the beats are
-            // numbered from its bus-aligned base.
-            const std::uint64_t aw_addr = entry.addr;
-            const unsigned lane0 = static_cast<unsigned>(aw_addr % bus_bytes);
-            const std::uint64_t beat0_addr = aw_addr - lane0;
-
-            struct located_byte {
-                std::uint64_t address;
-                unsigned char value;
-            };
-            std::vector<located_byte> located;
-            located.reserve(
-                static_cast<std::size_t>(entry.beats) * bus_bytes);
-
-            for (unsigned beat = 0; beat < entry.beats; ++beat) {
-                for (unsigned lane = 0; lane < bus_bytes; ++lane) {
-                    if (((beat_strb[beat] >> lane) & 1ull) == 0) {
-                        continue;
-                    }
-                    // The frame cannot wrap the address space: a transfer that
-                    // did would have been refused upstream, and reconstructing
-                    // it here would produce addresses below the AW.
-                    const std::uint64_t offset =
-                        static_cast<std::uint64_t>(beat) * bus_bytes + lane;
-                    if (offset > UINT64_MAX - beat0_addr) {
-                        throw std::overflow_error(
-                            "noc_interconnect: write frame wraps the address "
-                            "space");
-                    }
-                    located.push_back(
-                        {beat0_addr + offset,
-                         static_cast<unsigned char>(
-                             (beat_data[beat] >> (8 * lane)) & 0xFF)});
-                }
+    void accept_subordinate_w(node_state& state, const axi_w_chan& w)
+    {
+        if (state.writes.empty()) {
+            throw std::runtime_error(
+                "noc_interconnect: subordinate W arrived before AW");
+        }
+        auto& capture = state.writes.front();
+        capture.data.push_back(w.data);
+        capture.strb.push_back(w.strb);
+        const unsigned expected = static_cast<unsigned>(capture.aw.len) + 1u;
+        if (capture.data.size() > expected) {
+            throw std::runtime_error(
+                "noc_interconnect: subordinate received too many W beats");
+        }
+        if (!w.last) {
+            if (capture.data.size() == expected) {
+                throw std::runtime_error(
+                    "noc_interconnect: final expected W beat lacks WLAST");
             }
+            return;
+        }
+        if (capture.data.size() != expected) {
+            throw std::runtime_error(
+                "noc_interconnect: early WLAST at subordinate");
+        }
 
-            if (located.empty()) {
-                // Every lane disabled. A legal AXI write that changes nothing,
-                // and it must stay side-effect free downstream.
-                entry.byte_length = 0;
-            } else {
-                std::uint64_t lowest = located.front().address;
-                std::uint64_t highest = located.front().address;
-                for (const auto& item : located) {
-                    lowest = std::min(lowest, item.address);
-                    highest = std::max(highest, item.address);
+        served_request entry{};
+        entry.is_write = true;
+        entry.requester = node_of(capture.requester);
+        entry.addr = capture.aw.addr;
+        entry.size_log2 = capture.aw.size;
+        entry.beats = expected;
+
+        // Resolve every enabled lane to its absolute byte address, here and
+        // only here. `aw_addr` is the AXI address as issued; the beats are
+        // numbered from its bus-aligned base.
+        const std::uint64_t aw_addr = entry.addr;
+        const unsigned lane0 = static_cast<unsigned>(aw_addr % bus_bytes);
+        const std::uint64_t beat0_addr = aw_addr - lane0;
+
+        struct located_byte {
+            std::uint64_t address;
+            unsigned char value;
+        };
+        std::vector<located_byte> located;
+        located.reserve(
+            static_cast<std::size_t>(entry.beats) * bus_bytes);
+
+        for (unsigned beat = 0; beat < entry.beats; ++beat) {
+            for (unsigned lane = 0; lane < bus_bytes; ++lane) {
+                if (((capture.strb[beat] >> lane) & 1ull) == 0) {
+                    continue;
                 }
-                entry.addr = lowest;
-                entry.byte_length =
-                    static_cast<unsigned>(highest - lowest + 1);
-                entry.write_bytes.assign(entry.byte_length, 0);
-                entry.write_enables.assign(entry.byte_length, 0);
-                for (const auto& item : located) {
-                    const auto index =
-                        static_cast<std::size_t>(item.address - lowest);
-                    entry.write_bytes[index] = item.value;
-                    entry.write_enables[index] = TLM_BYTE_ENABLED;
+                // The frame cannot wrap the address space: a transfer that
+                // did would have been refused upstream, and reconstructing
+                // it here would produce addresses below the AW.
+                const std::uint64_t offset =
+                    static_cast<std::uint64_t>(beat) * bus_bytes + lane;
+                if (offset > UINT64_MAX - beat0_addr) {
+                    throw std::overflow_error(
+                        "noc_interconnect: write frame wraps the address "
+                        "space");
                 }
+                located.push_back(
+                    {beat0_addr + offset,
+                     static_cast<unsigned char>(
+                         (capture.data[beat] >> (8 * lane)) & 0xFF)});
             }
-            state.serving.push_back(std::move(entry));
-        } else if (channel == axi_channel::ar) {
-            served_request entry{};
-            entry.is_write = false;
-            entry.requester = node_of(flit.hdr.src_id);
-            entry.addr = state.subordinate->pending_read_addr();
-            entry.size_log2 = state.subordinate->pending_read_size();
-            entry.beats = state.subordinate->pending_read_beats();
-            // A read has no strobes: AXI expresses its length as beats times
-            // `ARSIZE`, and a master wanting fewer bytes reads the whole beat
-            // and uses part of it. The wrapper trims at the initiator.
-            entry.byte_length = entry.beats * (1u << entry.size_log2);
-            state.serving.push_back(std::move(entry));
+        }
+
+        if (located.empty()) {
+            // Every lane disabled. A legal AXI write that changes nothing,
+            // and it must stay side-effect free downstream.
+            entry.byte_length = 0;
+        } else {
+            std::uint64_t lowest = located.front().address;
+            std::uint64_t highest = located.front().address;
+            for (const auto& item : located) {
+                lowest = std::min(lowest, item.address);
+                highest = std::max(highest, item.address);
+            }
+            entry.addr = lowest;
+            entry.byte_length =
+                static_cast<unsigned>(highest - lowest + 1);
+            entry.write_bytes.assign(entry.byte_length, 0);
+            entry.write_enables.assign(entry.byte_length, 0);
+            for (const auto& item : located) {
+                const auto index =
+                    static_cast<std::size_t>(item.address - lowest);
+                entry.write_bytes[index] = item.value;
+                entry.write_enables[index] = TLM_BYTE_ENABLED;
+            }
+        }
+        state.serving.push_back(std::move(entry));
+        state.writes.pop_front();
+    }
+
+    void accept_subordinate_ar(node_state& state, const axi_ar_chan& ar)
+    {
+        if (state.ar_sources.empty()) {
+            throw std::runtime_error(
+                "noc_interconnect: subordinate AR has no req-link source");
+        }
+        served_request entry{};
+        entry.is_write = false;
+        entry.requester = node_of(state.ar_sources.front());
+        state.ar_sources.pop_front();
+        entry.addr = ar.addr;
+        entry.size_log2 = ar.size;
+        entry.beats = static_cast<unsigned>(ar.len) + 1u;
+        // A read has no strobes: AXI expresses its length as beats times
+        // `ARSIZE`, and a master wanting fewer bytes reads the whole beat and
+        // uses part of it. The wrapper trims at the initiator.
+        entry.byte_length = entry.beats * (1u << entry.size_log2);
+        state.serving.push_back(std::move(entry));
+    }
+
+    void accept_subordinate_response(
+        node_state& state, bool accepted_b, bool accepted_r)
+    {
+        if (state.responses.empty() || accepted_b == accepted_r) {
+            throw std::runtime_error(
+                "noc_interconnect: invalid subordinate response handshake");
+        }
+        auto& response = state.responses.front();
+        if (accepted_b) {
+            if (!response.is_write) {
+                throw std::runtime_error(
+                    "noc_interconnect: B accepted for a read response");
+            }
+            state.responses.pop_front();
+            return;
+        }
+        if (response.is_write || response.r_index >= response.r.size()) {
+            throw std::runtime_error(
+                "noc_interconnect: R accepted for an invalid read response");
+        }
+        ++response.r_index;
+        if (response.r_index == response.r.size()) {
+            state.responses.pop_front();
         }
     }
 
-    /// A response flit reached a manager node.
-    void absorb_response(node_state& state, const axi_rsp_flit& flit)
+    static std::uint8_t collapse_read_resp(
+        std::uint8_t current, std::uint8_t incoming)
     {
-        const auto done = state.manager->accept_response(flit);
-        if (state.manager->response_incomplete()) {
-            return;  // an intermediate R beat
+        if (axi_pkg::is_error(static_cast<axi_pkg::axi_resp>(current))) {
+            return current;
         }
+        return incoming;
+    }
+
+    void complete_manager_transaction(
+        node_state& state, std::vector<std::uint64_t> data, std::uint8_t resp)
+    {
         const int port = state.initiator_port;
         if (port < 0) {
-            return;
+            throw std::runtime_error(
+                "noc_interconnect: response reached a node without a manager");
         }
         auto& parked = *waiters[static_cast<unsigned>(port)];
-        parked.data = done.data;
-        parked.resp = done.resp;
+        parked.data = std::move(data);
+        parked.resp = resp;
         parked.complete = true;
         ++completed;
         const auto elapsed = cycle - parked.issued_cycle;
@@ -601,8 +827,37 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         parked.done.notify(sc_core::SC_ZERO_TIME);
     }
 
+    void accept_manager_b(node_state& state, const axi_b_chan& b)
+    {
+        if (state.initiator_port < 0
+            || b.id != static_cast<unsigned>(state.initiator_port)) {
+            throw std::runtime_error(
+                "noc_interconnect: B response carries the wrong manager ID");
+        }
+        complete_manager_transaction(state, {}, b.resp);
+    }
+
+    void accept_manager_r(node_state& state, const axi_r_chan& r)
+    {
+        if (state.initiator_port < 0
+            || r.id != static_cast<unsigned>(state.initiator_port)) {
+            throw std::runtime_error(
+                "noc_interconnect: R response carries the wrong manager ID");
+        }
+        state.read_data.push_back(r.data);
+        state.read_resp = collapse_read_resp(state.read_resp, r.resp);
+        if (!r.last) {
+            return;
+        }
+        auto data = std::move(state.read_data);
+        state.read_data.clear();
+        const auto resp = state.read_resp;
+        state.read_resp = to_bits(axi_pkg::axi_resp::okay);
+        complete_manager_transaction(state, std::move(data), resp);
+    }
+
     /// Runs the downstream TLM access for requests whose target latency has
-    /// elapsed, then queues the response flits.
+    /// elapsed, then queues a subordinate AXI response.
     void serve_ready_requests(node_state& state)
     {
         if (state.serving.empty()) {
@@ -629,15 +884,27 @@ struct noc_interconnect::impl : public sc_core::sc_module {
                     : 0;
         }
 
+        subordinate_response response{};
+        response.is_write = entry.is_write;
         if (entry.is_write) {
-            state.outbox.push_back(state.subordinate->respond_write(entry.resp));
+            response.b.id = downstream_id;
+            response.b.resp = entry.resp;
         } else {
-            for (auto& flit :
-                 state.subordinate->respond_read_burst(entry.read_data,
-                                                       entry.resp)) {
-                state.outbox.push_back(flit);
+            response.r.reserve(entry.read_data.size());
+            for (std::size_t beat = 0; beat < entry.read_data.size(); ++beat) {
+                axi_r_chan r{};
+                r.id = downstream_id;
+                r.data = entry.read_data[beat];
+                r.resp = entry.resp;
+                r.last = beat + 1 == entry.read_data.size();
+                response.r.push_back(r);
+            }
+            if (response.r.empty()) {
+                throw std::runtime_error(
+                    "noc_interconnect: a read response needs at least one beat");
             }
         }
+        state.responses.push_back(std::move(response));
         state.serving.pop_front();
     }
 
@@ -687,7 +954,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             entry.ready_at = cycle;
             return;
         }
-        // Already resolved to absolute addresses in `absorb_request`. Nothing
+        // Already resolved to absolute addresses in `accept_subordinate_w`.
+        // Nothing
         // here re-derives a beat number from `entry.addr`, which is what made
         // a fully disabled leading beat drop data.
         std::vector<unsigned char> bytes =
@@ -781,10 +1049,10 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             return false;
         }
         for (const auto& state : nodes) {
-            if (!state.outbox.empty() || !state.serving.empty()) {
-                return false;
-            }
-            if (state.manager.has_value() && state.manager->has_request()) {
+            if (state.request.has_value() || !state.read_data.empty()
+                || !state.aw_sources.empty() || !state.ar_sources.empty()
+                || !state.writes.empty() || !state.serving.empty()
+                || !state.responses.empty()) {
                 return false;
             }
         }
@@ -793,10 +1061,11 @@ struct noc_interconnect::impl : public sc_core::sc_module {
 
     /// Ticks the mesh while there is anything to do.
     ///
-    /// An idle network is skipped rather than clocked. That is exact, not an
-    /// approximation: with no `valid` asserted anywhere, every register in the
-    /// mesh holds its value, so a skipped cycle changes nothing. It also keeps
-    /// a mostly-idle platform from paying for the interconnect.
+    /// A wrapper-idle network is skipped rather than clocked. This keeps a
+    /// mostly-idle platform from paying for the interconnect, but the predicate
+    /// is still an inference from adapter bookkeeping: router/chimney occupancy
+    /// and lock state are not exported yet. Step 10.3 owns the stronger
+    /// `mesh_quiescent()` proof; do not describe this gate as proven exact.
     void network_thread()
     {
         rst_n.write(false);
@@ -831,6 +1100,15 @@ noc_interconnect::noc_interconnect(
     if (clock_period <= sc_core::SC_ZERO_TIME) {
         throw std::invalid_argument(
             "noc_interconnect: the network clock period must be positive");
+    }
+    if (num_initiators == 0) {
+        throw std::invalid_argument(
+            "noc_interconnect: at least one upstream port is required");
+    }
+    if (num_initiators > impl::max_manager_ports) {
+        throw std::invalid_argument(
+            "noc_interconnect: the frozen 3-bit AXI ID supports at most "
+            "8 upstream ports");
     }
 
     impl_ = std::make_unique<impl>("impl", mesh_x, mesh_y, num_targets,
@@ -1139,21 +1417,39 @@ void noc_interconnect::b_transport(
     }
     impl_->port_busy[port] = true;
 
-    axi_transaction txn{};
-    txn.is_write = command == tlm::TLM_WRITE_COMMAND;
-    txn.id = port;  // one AXI ID per upstream port; see the header
-    txn.addr = address;
-    txn.size_log2 = shape.size_log2;
-    if (txn.is_write) {
+    const bool is_write = command == tlm::TLM_WRITE_COMMAND;
+    impl::manager_request request{};
+    request.is_write = is_write;
+    const auto target_node =
+        impl_->targets[static_cast<std::size_t>(first_slot)].node;
+    request.destination =
+        coordinate{target_node % impl_->mesh_x, target_node / impl_->mesh_x};
+    if (is_write) {
+        request.aw.id = port;  // one AXI ID per upstream port; see the header
+        request.aw.addr = address;
+        request.aw.len = static_cast<std::uint8_t>(shape.beats - 1);
+        request.aw.size = static_cast<std::uint8_t>(shape.size_log2);
+        request.aw.burst = 1;
+        request.aw_pending = true;
         const auto view = pack_write(
             trans.get_data_ptr(), length, shape, enables, enable_length);
-        txn.data = view.data;
-        txn.strb = view.strb;
+        request.w.reserve(shape.beats);
+        for (unsigned beat = 0; beat < shape.beats; ++beat) {
+            axi_w_chan w{};
+            w.data = view.data[beat];
+            w.strb = view.strb[beat];
+            w.last = beat + 1 == shape.beats;
+            request.w.push_back(w);
+        }
     } else {
-        txn.read_beats = shape.beats;
+        request.ar.id = port;
+        request.ar.addr = address;
+        request.ar.len = static_cast<std::uint8_t>(shape.beats - 1);
+        request.ar.size = static_cast<std::uint8_t>(shape.size_log2);
+        request.ar.burst = 1;
+        request.ar_pending = true;
         // AXI reads carry no strobes; the requested bytes are selected out of
         // the returned lanes when the response arrives.
-        txn.strb.clear();
     }
 
     auto& parked = *impl_->waiters[port];
@@ -1163,12 +1459,11 @@ void noc_interconnect::b_transport(
     const unsigned node_index = impl_->index_of(impl_->initiator_nodes[port]);
     auto& state = impl_->nodes[node_index];
 
-    // The ordering gate can refuse: with `MaxUniqueIds = 1` an ID in flight to
-    // another destination is serialised. Retry on the next network cycle.
-    while (!state.manager->offer(txn)) {
-        impl_->work.notify(sc_core::SC_ZERO_TIME);
-        sc_core::wait(impl_->period);
+    if (state.request.has_value()) {
+        throw std::logic_error(
+            "noc_interconnect: manager adapter is busy despite port_busy");
     }
+    state.request.emplace(std::move(request));
     ++impl_->in_flight;
     impl_->work.notify(sc_core::SC_ZERO_TIME);
 
@@ -1176,7 +1471,7 @@ void noc_interconnect::b_transport(
         sc_core::wait(parked.done);
     }
 
-    if (!txn.is_write) {
+    if (!is_write) {
         unpack_read(parked.data, trans.get_data_ptr(), length, shape, enables,
                     enable_length);
     }

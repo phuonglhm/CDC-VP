@@ -30,7 +30,7 @@ using namespace floo::model;
 constexpr unsigned mesh_x = 3;
 constexpr unsigned mesh_y = 3;
 constexpr unsigned num_nodes = mesh_x * mesh_y;
-using noc_t = axi_noc<mesh_x, mesh_y>;
+using noc_t = axi_mesh_noc<mesh_x, mesh_y>;
 
 struct node_stimulus {
     bool rq_valid{};

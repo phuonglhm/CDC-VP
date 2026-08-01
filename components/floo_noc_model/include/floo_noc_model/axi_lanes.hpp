@@ -5,8 +5,8 @@
 // Extracted from `src/noc_interconnect.cpp` so it can be tested directly.
 // Asserting the generated `AxSIZE`, `AxLEN` and `WSTRB` through a memory
 // target only ever shows their *effect* after the subordinate has replayed
-// them; the fields themselves are what a real chimney will drive in Step A-3,
-// so they are worth pinning on their own.
+// them; the fields themselves are what the A-3 signal adapter drives into the
+// real timed chimney, so they are worth pinning on their own.
 
 #pragma once
 
@@ -36,10 +36,10 @@ inline constexpr unsigned bus_bytes = 8;
 /// 4-byte access at `+4` was placed in lanes 0..3 and strobed there, so it
 /// would have written the wrong half of the bus.
 ///
-/// The defect was invisible through the abstract endpoint path because the
+/// The defect was invisible through the old abstract endpoint path because the
 /// subordinate side unpacked with the same wrong convention and the two errors
-/// cancelled. It stops cancelling as soon as a real timed chimney is in the
-/// path, which is Step A-3.
+/// cancelled. Step A-3 put the timed chimney in the integrated path, so the
+/// directed field and target-memory checks keep this mapping explicit.
 struct axi_shape {
     /// Bus-aligned address of beat 0.
     std::uint64_t beat0_addr = 0;

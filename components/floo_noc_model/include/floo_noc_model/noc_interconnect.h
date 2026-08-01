@@ -20,13 +20,16 @@
 //  * **manager-side response unpacker** — signed, 78 cycles
 //    (`axi_chimney_manager_response`, Step A-1). That completes all four
 //    chimney quadrants;
-//  * **the complete manager-AXI-to-subordinate-AXI composed path** —
-//    **not signed**. The integrated datapath does not even instantiate the
-//    timed chimney: it composes the combinational `axi_chimney_pack.hpp` with
-//    the abstract `axi_endpoint.hpp` transactors. Step A-3 replaces them.
+//  * **the complete manager-AXI-to-subordinate-AXI composed path** — the
+//    integrated datapath now instantiates all those timed blocks through
+//    `axi_noc` (Step A-3), but there is no one-piece RTL harness for the
+//    composition. Each hardware block is signed separately; the TLM-to-AXI
+//    adapters above the manager/subordinate signal boundaries have no RTL
+//    counterpart and are covered by model-level integration tests.
 //
-// So a transaction's latency here contains signed mesh timing, but the path as
-// a whole is not yet an RTL-equivalent one. Do not quote it as though it were.
+// So a transaction's latency here traverses the signed timing blocks, but the
+// path as a whole is not one monolithic RTL equivalence proof. Do not quote it
+// as though it were.
 //
 // It is also why it is slow. A `bus_router` does no work per simulated cycle
 // because it does not simulate cycles at all; this module advances a clock and
@@ -184,8 +187,12 @@ public:
     /// 2x2   3x3   4x4   4x2   2x4
     /// ```
     ///
-    /// To add one, add a line to `make_mesh()` in `src/noc_interconnect.cpp`.
+    /// To add one, add a line to `make_noc()` in `src/noc_interconnect.cpp`.
     /// That is a one-line change and costs one template instantiation.
+    ///
+    /// `num_initiators` must be 1..8. The wrapper assigns one AXI ID per
+    /// upstream port and the frozen chimney's manager ID is 3 bits; refusing a
+    /// ninth port avoids silent ID truncation and ordering-counter aliasing.
     noc_interconnect(
         sc_core::sc_module_name name,
         unsigned mesh_x,

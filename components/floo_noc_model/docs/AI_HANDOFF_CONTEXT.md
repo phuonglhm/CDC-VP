@@ -12,7 +12,7 @@ changes. The shorter files in this directory remain useful references, but this
 file is intended to provide enough context to resume the work without the
 original chat history.
 
-Status snapshot date: **2026-07-30**.
+Status snapshot date: **2026-07-31**.
 
 Sections 2 to 13 describe the state as it is now, after Steps 1 to 10. Section
 14 keeps the per-step history, including what each step found. If the two ever
@@ -92,11 +92,12 @@ reference RTL merely to make a comparison pass.
 - Golden/reference logic is comparison-only and must never overwrite model
   output.
 - A block is cycle-approximate until it passes an RTL per-cycle cross-check.
-- **Eleven cross-checks are signed** against frozen revision `9a6972a`: the XY
+- **Twelve cross-checks are signed** against frozen revision `9a6972a`: the XY
   route selector, the input FIFO wrap, the wormhole arbiter, the five-port
   router (at `OutFifoDepth` 2 and 0), the AXI sizing arithmetic, chimney request
   content, chimney response content, the `NoRoB` ordering rule, chimney request
-  timing, chimney response/subordinate timing, and inter-node mesh timing.
+  timing, chimney response/subordinate timing, chimney manager-side response
+  timing, and inter-node mesh timing.
   Section 10.11 tabulates them; `docs/STATUS.md` holds the evidence and the
   negative controls.
 - Every RTL timing block selected for the v0 vertical slice has an isolated
@@ -105,17 +106,19 @@ reference RTL merely to make a comparison pass.
   A-1 there is no selected v0 block left uncrossed-checked.
   Statements that the mesh or link timing itself is still only an estimate
   predate Step 9.2 and are wrong.
-- This does **not** make the current TLM-manager-port to TLM-subordinate-port
-  integration one composed RTL-equivalent timing path. `axi_noc.hpp`
-  instantiates the two meshes, while `noc_interconnect` uses the abstract
-  endpoint transactors in `axi_endpoint.hpp`; it does not instantiate the timed
-  chimney classes from `axi_chimney.hpp`.
-- Not signed, and **not signable against a direct RTL counterpart**: the endpoint
-  transactors (`axi_endpoint.hpp`) and the TLM wrapper (`noc_interconnect`).
-  They are a driver and collector built on individually signed rules. Their
-  functional behavior and composed TLM-boundary timing need model-level
-  integration tests; this is now the highest-risk correctness layer, see Step
-  10.3.
+- Step A-2 provides a signal-driven `axi_noc`: one complete timed chimney at
+  every coordinate over the two meshes. Step A-3 now makes it the integrated
+  `noc_interconnect` datapath: the wrapper drives manager AW/W/AR and
+  subordinate B/R cycle by cycle. This means the complete TLM path traverses
+  the individually signed timing blocks; it still does **not** turn their
+  composition into one monolithic RTL cross-check.
+- Not signed, and **not signable against a direct RTL counterpart**: the
+  TLM-to-AXI adapters and wrapper logic in `noc_interconnect`. They are a driver
+  and collector above real timed AXI signal boundaries. Their functional and
+  composed timing behavior is covered by model-level integration tests and
+  remains the highest-risk correctness layer for Step 10.3.
+- `axi_endpoint.hpp` is now legacy reference/test code only. It has no RTL
+  counterpart and is no longer in the production datapath.
 
 ---
 
@@ -273,19 +276,19 @@ against it yet. Step 11 records that work.
 | Phase | FlooNoC interpretation | Current state |
 |---|---|---|
 | P0 | Freeze RTL/configuration, supported traffic, timing target, metrics, and integration role | Completed for vertical slice v0; the frozen parameter set in section 6.1 was corrected at Step 9.2 (`OutFifoDepth = 2`) |
-| P1 | Timing-independent address decode, routes, transaction/flit reference behavior, and vectors | Implemented: address map, XY path, and AXI reference behaviour through the endpoint transactors |
+| P1 | Timing-independent address decode, routes, transaction/flit reference behavior, and vectors | Implemented: address map, XY path, AXI reference behaviour and legacy endpoint reference tests |
 | P2 | Signal-safe coordinate/header/flit/AXI types and address map | Implemented: full `FLOO_TYPEDEF_HDR_T` field set, AXI channel types, and RTL-signed sizing arithmetic. Coordinate widths remain a model choice |
-| P3 | FIFO, route selection, arbitration, router, links, chimney/meta/RoB blocks | Signed: FIFO wrap, XY selector, arbiter, five-port router with output FIFO, chimney **request** timing (141 cyc), chimney **subordinate** side (221 cyc), chimney **manager-side response** (78 cyc, Step A-1), meta buffer, `NoRoB` gate. Every selected v0 block is signed; what remains unsigned is the composed *path*, Steps A-2 and A-3 |
-| P4 | Router/link topology and endpoint wiring | Implemented: separate `req` and `rsp` meshes (`axi_noc.hpp`) with AXI endpoint transactors, mesh timing signed |
+| P3 | FIFO, route selection, arbitration, router, links, chimney/meta/RoB blocks | Signed: FIFO wrap, XY selector, arbiter, five-port router with output FIFO, chimney **request** timing (141 cyc), chimney **subordinate** side (221 cyc), chimney **manager-side response** (78 cyc, Step A-1), meta buffer, `NoRoB` gate. Every selected v0 block is signed; A-2 composes them and model-tests the wiring, but there is no composed RTL harness |
+| P4 | Router/link topology and endpoint wiring | Implemented: `axi_mesh_noc` preserves the raw `req`/`rsp` fabric; `axi_noc` adds one complete timed chimney per node (A-2), and `noc_interconnect` drives it cycle by cycle (A-3). Mesh timing is signed |
 | P5 | NoC-specific measured counters | Implemented for the router boundary over RTL-signed signals; latency/utilization counters still deliberately deferred, see section 13.6 |
 | P6 | Optional configuration translation | NPU-style operation driver is not applicable; `noc_soc` takes mesh geometry and placement as construction parameters |
-| P7 | Unit, router, mesh, stress, and RTL equivalence tests | 33 SystemC tests pass; twelve RTL cross-checks signed. **Randomized multi-initiator stress is still missing** — see Step 10.3 |
+| P7 | Unit, router, mesh, stress, and RTL equivalence tests | 34 SystemC tests pass; twelve RTL cross-checks signed. **Randomized multi-initiator stress is still missing** — see Step 10.3 |
 | P8 | Standalone build | Implemented with CMake and Make |
 | P9 | SW/platform-visible contract | No register map by design. The platform-visible contract is the address map plus the placement rule that no target may share a node with a manager |
-| P10 | TLM integration | Implemented: `noc_interconnect` is a fabric adapter with M:N tagged sockets and explicit placement, not a target+worker wrapper. Sign-off pending, Steps 10.1 to 10.3 |
+| P10 | TLM integration | Implemented: `noc_interconnect` is a fabric adapter with M:N tagged sockets, explicit placement and signal-driven timed chimneys, not a target+worker wrapper. A-3 is done; remaining sign-off is Steps 10.1 and 10.3 |
 | P11 | CDC-VP CMake component/install/export | Header-only interface target plus the compiled `cdc::components::noc_interconnect`. Clean-prefix install unproven, Step 10.4 |
 | P12 | Platform assembly and packaging | `platforms/noc_soc` assembled and running; packaging unproven, Step 10.4 |
-| P13 | RISC-V/SoC traffic validation | Real firmware (`fw/dma_riscv`) reaches `DMA PASS` over the mesh at ~52 ns of modeled target time per instruction. This is a target-timing result, not a host-performance measurement. Automated as `noc_soc_firmware_regression` — Step 10.2 DONE |
+| P13 | RISC-V/SoC traffic validation | Real firmware (`fw/dma_riscv`) reaches `DMA PASS` over the A-3 signal-driven mesh and the synthetic survey matches all bytes. Automated as `noc_soc_firmware_regression` — Step 10.2 DONE and re-run after A-3. Post-A-3 modeled target time is ~53.2 ns/instruction; this is not host performance |
 | P14 | Coexistence and maintenance | Open. Clock gating is implemented but its quiescence condition is unproven (section 13.6b); the H1 coexistence mode is unstarted (Step 11) |
 
 ### 5.1 Clock-gating interpretation
@@ -306,13 +309,12 @@ delta cycle.
 
 **What is actually implemented today does not meet that bar.**
 `noc_interconnect::impl::network_idle()` in `src/noc_interconnect.cpp` skips the
-clock when its own bookkeeping is empty — `in_flight`, each node's `outbox` and
-`serving`, and each manager's `has_request()`. It observes none of the six
-conditions above directly, because it cannot: `floo_mesh` keeps its `routers_`
-vector private and exports no occupancy or lock state upward, and `axi_noc`
-exposes only the per-node `network_port`. The gate is therefore an *inference
-from the wrapper*, which is exactly the shortcut the paragraph above warns
-against.
+clock when its own bookkeeping is empty: `in_flight` plus every node's pending
+manager request, partial read data, observed AW/AR source queues, collected
+writes, serving requests and queued subordinate responses. It observes none of
+the router/chimney occupancy and lock conditions above directly, because
+`axi_noc` does not export them. The gate is therefore an *inference from the
+wrapper*, which is exactly the shortcut the paragraph above warns against.
 
 It is probably sound — `in_flight` counts every transaction between injection
 and completion, and both the route lock and the arbiter lock release on an
@@ -373,33 +375,45 @@ the router cross-check runs at both depths.
 Deferred features must be added only after lower-level equivalence tests stay
 green.
 
-### 6.3 What the datapath now is — closed at Step 9
+### 6.3 What the datapath now is — A-3 integration complete
 
-`floo_mesh<FlitT, ...>` is still the generic single-stream mesh, and it remains
-useful on its own for router-level work. **The AXI datapath is `axi_noc.hpp`**,
-which instantiates two of them — one carrying `axi_req_flit`, one carrying
-`axi_rsp_flit` — over the same coordinates, matching the FlooGen-generated
-`floo_axi_mesh_noc.sv` at the frozen revision. Channel-specific AXI payload
-types exist in `axi_types.hpp` with RTL-signed sizing arithmetic.
+`floo_mesh<FlitT, ...>` is still the generic single-stream mesh. `axi_noc.hpp`
+now exposes two deliberately different compositions:
 
-So the vertical slice may be described as a single-AXI FlooNoC network: two
-physical channels carrying real AXI flit types, with the mesh between them
-cycle-signed.
+- `axi_mesh_noc` is the raw pair of meshes: one carrying `axi_req_flit`, one
+  carrying `axi_rsp_flit`. Mesh cross-checks and legacy endpoint tests use it
+  directly.
+- `axi_noc` is the A-2 signal-driven datapath. It wraps `axi_mesh_noc` with one
+  `axi_chimney_node` per coordinate and exposes AXI manager/subordinate signals.
+  Since A-3, this is the production datapath inside `noc_interconnect`.
 
-**It may not be described as a signed manager-port-to-subordinate-port path**,
-and the reason is structural rather than a documentation nicety. Two different
-things model the network interface:
+`axi_chimney_node` connects `axi_chimney_request` and
+`axi_chimney_manager_response` on the manager side, and
+`axi_chimney_response` on the subordinate side. The B/R pop, RLAST and RoB
+ready loops are internal; an external testbench cannot drive them by hand.
 
-| Header | What it is | Where it is instantiated |
+So the model now contains a complete single-AXI FlooNoC network: AXI signals,
+timed chimneys and two physical meshes. `test_axi_noc_chimney` verifies one
+two-beat write and one three-beat read across a 2x2 composition in 56 cycles,
+including back-pressure, downstream ID `3'b111`, ID restoration, metadata/RoB
+release and no leakage into unused nodes.
+
+**It may not be described as one composed RTL cross-check.** Every block is
+signed individually, A-2's test verifies their SystemC wiring, and A-3's
+wrapper tests exercise the complete TLM path. The TLM adapters have no direct
+RTL counterpart.
+
+| Header/type | What it is | Where it is instantiated |
 |---|---|---|
-| `axi_chimney_pack.hpp` | the combinational flit-assembly rules | `axi_noc.hpp`, i.e. the integrated path |
-| `axi_chimney.hpp` | the **timed** chimney: request arbiter, response arbiter, metadata FIFOs | only `tests/chimney_timing_trace_sc.cpp` and `tests/chimney_rsp_timing_trace_sc.cpp` |
+| `axi_mesh_noc` | raw `req` and `rsp` meshes | RTL mesh runner and legacy endpoint tests |
+| `axi_noc` | one complete timed chimney per node over `axi_mesh_noc` | `test_axi_noc_chimney` and production `noc_interconnect` |
 
-So the 141-cycle and 221-cycle chimney timing results are real, and they are
-proved on a module the integrated platform does not contain. Between the AXI
-endpoint transactors and the mesh sits `axi_chimney_pack.hpp` plus
-`axi_endpoint.hpp`, not the signed timed chimney. Composing them is unfinished
-work, not an accomplished fact — see sections 2.4 and 13.1.
+The wrapper's manager adapter holds AW/W/AR stable to handshake, the
+subordinate adapter reconstructs writes and reads from accepted AXI channels,
+and B/R are held until the timed chimney accepts them. Passive observation of
+the accepted request-link AW/AR header supplies the requester coordinate only
+for target-delay attribution, because the subordinate AXI ID is intentionally
+rewritten to `3'b111`; it does not bypass or drive the datapath.
 
 What else may **not** be claimed is anything in section 6.2.
 
@@ -445,14 +459,14 @@ floo_noc_model/
     meta_buffer.hpp
     rob_order_gate.hpp           <- NoRoB ordering gate
     axi_chimney.hpp              <- timed chimney, request and response
-    axi_endpoint.hpp             <- AXI manager/subordinate transactors
-    axi_noc.hpp                  <- the AXI datapath: req + rsp meshes
+    axi_endpoint.hpp             <- legacy manager/subordinate reference tests
+    axi_noc.hpp                  <- raw mesh pair + per-node chimney composition
     axi_lanes.hpp                <- TLM byte range -> AxSIZE/AxLEN/WSTRB
     noc_interconnect.h           <- TLM wrapper for CDC-VP
   src/
-    noc_interconnect.cpp         <- the only compiled translation unit
+    noc_interconnect.cpp         <- A-3 TLM-to-signal adapters; only compiled TU
   tests/
-    CMakeLists.txt               <- registers 32 tests
+    CMakeLists.txt               <- registers 34 tests
     test_reference_model.cpp
     test_stream_fifo.cpp
     test_xy_route_select.cpp
@@ -465,7 +479,8 @@ floo_noc_model/
     test_rob_order_gate.cpp
     test_axi_endpoint.cpp
     test_axi_noc.cpp
-    test_noc_interconnect.cpp    <- the TLM wrapper contract
+    test_axi_noc_chimney.cpp     <- A-2 signal-driven composition
+    test_noc_interconnect.cpp    <- A-3 TLM wrapper + 1/6-hop calibration
     test_noc_interconnect_bad_config.cpp <- configs refused before traffic
     test_axi_lanes_odr.cpp               <- and _odr_second.cpp: one link
     test_axi_lanes.cpp           <- AxSIZE/AxLEN/WSTRB, checked on the fields
@@ -567,13 +582,13 @@ latency table, and the placement rule.
 | `meta_buffer.hpp` | `hw/floo_meta_buffer.sv`, `MaxUniqueIds = 1` branch | Request metadata retention as a plain in-order `fifo_v3`, no ID matching |
 | `rob_order_gate.hpp` | `hw/floo_rob_wrapper.sv`, `NoRoB` branch, over `axi_demux_id_counters` | The same-ID/different-destination stall rule and its per-ID capacity |
 | `axi_chimney.hpp` | `hw/floo_axi_chimney.sv` | Timed AXI/flit conversion: AW/W coupling and request arbiter (signed, 141 cyc); subordinate side and response arbiter (signed, 221 cyc); manager-side response unpacker (signed, 78 cyc, Step A-1) |
-| `axi_endpoint.hpp` | **no RTL counterpart** | AXI manager and subordinate transactors: burst assembly, strobes, response routing, ID restoration |
-| `axi_noc.hpp` | FlooGen generated `floo_axi_mesh_noc.sv` | Two meshes, `req` and `rsp`, over shared coordinates |
-| `noc_interconnect.h`, `src/noc_interconnect.cpp` | **no RTL counterpart**; CDC-VP `bus_router` for the socket contract | TLM generic payload to/from the AXI endpoints, M:N tagged sockets, placement, clock gating |
+| `axi_endpoint.hpp` | **no RTL counterpart** | Legacy AXI manager/subordinate transactors used only by isolated reference tests after A-3 |
+| `axi_noc.hpp` | FlooGen generated `floo_axi_mesh_noc.sv`, `hw/floo_axi_chimney.sv` | `axi_mesh_noc`: raw `req`/`rsp` mesh pair. `axi_noc`: one complete timed chimney per coordinate over that pair (A-2), now the integrated datapath |
+| `noc_interconnect.h`, `src/noc_interconnect.cpp` | **no RTL counterpart**; CDC-VP `bus_router` for the socket contract | TLM generic payload to cycle-driven manager AW/W/AR and subordinate B/R, M:N tagged sockets, placement and clock gating (A-3) |
 
-The last two rows are the layer named in section 2.4: signed rules assembled by
-unsigned code. Treat any behaviour that lives only there as unverified until
-Step 10.3.
+The final row remains the layer named in section 2.4: signed timing blocks
+driven by unsigned TLM adaptation code. Treat behavior that lives only there as
+model-level integration behavior and stress it in Step 10.3.
 
 External `common_cells`, `axi`, and other Bender dependencies are not copied
 into the model. Their exact frozen behavior must be used for RTL cross-checks.
@@ -827,7 +842,9 @@ Templates:
 
 ```cpp
 floo_mesh<FlitT, Width, Height, InFifoDepth, OutFifoDepth>
-axi_noc<Width, Height, InFifoDepth, OutFifoDepth>   // two of the above
+axi_mesh_noc<Width, Height, InFifoDepth, OutFifoDepth> // raw pair
+axi_noc<Width, Height, InFifoDepth, OutFifoDepth,      // pair + chimneys
+        AxiIdBits, OutIdWidth, MaxTxns, MaxTxnsPerId>
 ```
 
 `floo_mesh` behavior:
@@ -841,9 +858,11 @@ axi_noc<Width, Height, InFifoDepth, OutFifoDepth>   // two of the above
 - uses each router’s Eject output for endpoint ejection;
 - exposes one abstract inject/eject ready/valid endpoint per node.
 
-`axi_noc` puts two of them side by side, one carrying `axi_req_flit` and one
-carrying `axi_rsp_flit`, and exposes a `network_port<FlitT>` per node per
-network. That is the AXI datapath; see section 6.3.
+`axi_mesh_noc` puts two of them side by side, one carrying `axi_req_flit` and
+one carrying `axi_rsp_flit`, and exposes a `network_port<FlitT>` per node per
+network. `axi_noc` owns one `axi_chimney_node` per coordinate and connects every
+raw inject/eject signal internally. Its public boundary is
+`manager(node)`/`subordinate(node)`, with `chimney(node)` for observation.
 
 **Timing status: signed.** The inter-node cross-check compares a 3x3 model mesh
 against a grid of the frozen `floo_axi_router` for 1872 node-cycles. What that
@@ -872,7 +891,7 @@ Two properties learned while signing this, recorded because they will recur:
 
 ### 10.1 Standalone SystemC regression
 
-Thirty-two tests pass with GCC 11.5.0 and SystemC 2.3.4:
+Thirty-four tests pass with GCC 11.5.0 and SystemC 2.3.4:
 
 | Test | Verified behavior |
 |---|---|
@@ -882,10 +901,11 @@ Thirty-two tests pass with GCC 11.5.0 and SystemC 2.3.4:
 | `test_wormhole_arbiter` | Reset priority, selected-ready behavior, packet lock, no interleave, round-robin advancement at two routes |
 | `test_floo_router` | Two contenders for East, stalled output, FIFO occupancy, two-flit packet continuity, waiting requester service. Pinned to `OutFifoDepth = 0` so that branch stays covered |
 | `test_floo_mesh` | 2x2 injection from `(0,0)` to `(1,1)`, unique correct ejection, stable data/valid under destination stall |
-| `test_axi_noc` | Two separate `req`/`rsp` meshes over shared coordinates, independent traffic, per-node port identity |
-| `test_noc_interconnect` | The TLM wrapper contract, each item a concrete assertion: payload validation (command, zero length, null pointer, wrapped streaming width, zero-length byte enables); byte-enable to `WSTRB` translation with a disabled byte proven unchanged in target memory; lane placement at `+4` and `+6` and across a beat boundary, checked by direct memory inspection; `DECERR` for an unmapped address distinguished from `SLVERR` for a target that refuses; region-crossing refused; delay contract (incoming delay spent, sub-cycle target latency rounded up, 1.5 and 2.0 cycles both costing 2, measured on four targets sharing one node); reset-time submission and idle-to-active wake-up; a scoreboard over a second initiator's writes; `last_latency_cycles()` excluding the target hold-off; bounded waits and a global watchdog. Round 3 added: the 256/257-beat `AxLEN` boundary at aligned and offset addresses; sparse multi-beat writes with fully disabled leading, trailing and middle beats; the widened-read policy against a spy target that records every downstream access; a region ending at `UINT64_MAX` written and read back; and the exact AXI-to-TLM response mapping for all four codes |
+| `test_axi_noc` | Legacy abstract endpoints over `axi_mesh_noc`: two separate `req`/`rsp` meshes, independent traffic and structural latency |
+| `test_axi_noc_chimney` | A-2 signal composition: timed source and target chimneys over a 2x2 mesh; two-beat write, three-beat read, B/R back-pressure, downstream-ID rewrite/restoration, metadata/RoB release and no wrong-node leakage |
+| `test_noc_interconnect` | The TLM wrapper contract through A-3's timed chimney path: payload validation; byte-enable/`WSTRB` and lane placement; error classification; region guards; delay rounding; reset and idle wake-up; bounded concurrent second-manager scoreboard; sparse and maximum-length bursts; widened-read policy; top-of-address-space accesses; all four AXI response mappings; and target-delay exclusion. Its 4x4 no-contention calibration is pinned at **10 network cycles for one hop and 30 for six** |
 | `test_axi_lanes` | `AxSIZE`, `AxLEN`, lane offset and per-beat `WSTRB` for 13 address/length shapes, plus byte-enable holes and short repeating enable arrays. Checked on the fields themselves, not through a target, because a packing error and a matching unpacking error cancel |
-| `test_noc_interconnect_bad_config` | Configurations refused before any traffic, each rejected while still an ordinary function call so teardown is normal: a non-positive clock period; a target on an initiator's node, including the documented default `(0,0)` of a port never placed; a manager moved onto an existing target; zero-sized, address-space-wrapping and overlapping regions; and proof that a refused call consumes no target slot and leaves a port's position intact. A legal layout is still accepted |
+| `test_noc_interconnect_bad_config` | Configurations refused before any traffic: zero or more than eight upstream ports for the frozen 3-bit ID; a non-positive clock period; self-node target/manager placements; invalid/overlapping regions; and proof rejected calls preserve slots and placement |
 | `test_axi_lanes_odr` | Two translation units including `axi_lanes.hpp` in one link. The only test that can catch a missing `inline` |
 | `test_axi_chimney_manager_response` | The manager-side response unpacker: channel decode, per-channel back-pressure, and the AW→B / AR→multi-beat-R counter release loop |
 | `test_noc_counters` | Hand-derived accept/stall/high-water counts, per-port identities, conservation across a drained router |
@@ -1188,17 +1208,18 @@ over: `get_axi_chan_width` uses the raw `cfg.UserWidth`, while
 `logic [floo_iomsb(UserWidth):0]`. At `UserWidth == 0` those disagree by one
 bit. No configuration in scope uses zero user width.
 
-### 10.7 Chimney — request path and subordinate side signed; unpacker not
+### 10.7 Chimney — all four quadrants signed
 
 `include/floo_noc_model/axi_chimney_pack.hpp` mirrors the flit-assembly
 `always_comb` blocks of `hw/floo_axi_chimney.sv`, its `gen_route` destination
 rules over `hw/floo_id_translation.sv`, and its `aw_w_sel_q` state.
 `include/floo_noc_model/axi_chimney.hpp` adds the timed wrapper: the request
-arbiter, the response arbiter, and the metadata FIFOs.
+arbiter, the response arbiter, metadata FIFOs and manager-side response
+unpacker.
 
 `tests/test_axi_chimney_pack.cpp` remains a **contract test against the RTL
 text**, not an equivalence proof; keep reading it that way. The equivalence
-proof is four separate cross-checks against the unmodified chimney:
+proof is five separate cross-checks against the unmodified chimney:
 
 | Cross-check | What it compares |
 |---|---|
@@ -1206,10 +1227,12 @@ proof is four separate cross-checks against the unmodified chimney:
 | `run_chimney_rsp_crosscheck.sh` | 8 response flits, content |
 | `run_chimney_timing_crosscheck.sh` | 141 cycles, request-path timing |
 | `run_chimney_rsp_timing_crosscheck.sh` | 221 cycles, response and subordinate side |
+| `run_chimney_mgr_rsp_crosscheck.sh` | 78 cycles, manager-side B/R unpacking, back-pressure and RLAST-qualified counter release |
 
-Isolating the packing was impossible — it is inline `always_comb` — so all four
-instantiate the whole chimney, which also brings in the meta buffer and the
-`NoRoB` gate. That turned out to be the right thing to do anyway.
+Isolating the packing was impossible — it is inline `always_comb` — so the
+content/timing harnesses instantiate the whole chimney, which also brings in
+the meta buffer and the `NoRoB` gate. That turned out to be the right thing to
+do anyway.
 
 **`ChimneyDefaultCfg` sets `CutAx = CutOup = CutRsp = 0`.** An earlier plan for
 Step 8 was to "model the chimney's cuts"; all three are bypassed in the frozen
@@ -1226,7 +1249,7 @@ The upstream `hw/tb/tb_floo_axi_chimney.sv` cannot be reused under Verilator:
 it depends on the class-based `axi_test` package, which Verilator does not
 support. It remains usable under VCS, installed at
 `/opt/synopsys/vcs/X-2025.06/bin/vcs`, if a class-based driver is ever wanted.
-The four harnesses here are hand-written synchronous BFMs instead; see section 16
+The five harnesses here are hand-written synchronous BFMs instead; see section 16
 rules 9f to 9i for the four defects that idiom cost before it worked.
 
 Rules captured from the RTL, all now confirmed by the cross-checks above:
@@ -1307,7 +1330,8 @@ They do not compare:
 
 And they cannot compare, by construction:
 
-- `axi_endpoint.hpp` and `noc_interconnect`, which have no RTL counterpart.
+- the legacy `axi_endpoint.hpp` transactors or the TLM adapters in
+  `noc_interconnect`, which have no RTL counterpart.
 
 What *is* proven: twelve blocks, each in isolation, including the chimney's
 request path, its subordinate side, its manager-side response unpacker, and the
@@ -1319,10 +1343,9 @@ mesh cycle-equivalent — each level needed its own comparison.
 
 That rule applies to the integrated path too, and it is the reason the twelve
 results must not be added up into an end-to-end claim. There is no cross-check
-at the level above them, and the integrated path does not even instantiate the
-same modules: the signed timed chimney (`axi_chimney.hpp`) appears only in its
-three trace runners, while `noc_interconnect` composes `axi_chimney_pack.hpp`
-with `axi_endpoint.hpp`. An earlier revision of this section asserted the
+at the level above them. A-3 now makes the integrated path instantiate the same
+timed chimney and mesh blocks, but the TLM adapters around their AXI signal
+boundaries remain model-only. An earlier revision of this section asserted the
 end-to-end claim two paragraphs above this rule, which is exactly the mistake
 the rule exists to prevent.
 
@@ -1373,7 +1396,7 @@ make BUILD_DIR=/tmp/floo_noc_model_build test
 Expected result:
 
 ```text
-100% tests passed, 0 tests failed out of 32
+100% tests passed, 0 tests failed out of 34
 ```
 
 Using a `/tmp` build directory avoids adding build artifacts to the component.
@@ -1655,22 +1678,23 @@ cross-checking must use the exact locked `common_cells` behavior.
 
 - The selected RTL datapath blocks and inter-node mesh are individually
   cycle-signed; the twelve cross-checks are indexed in section 10.11.
-- The current integrated TLM path does not instantiate those timed chimney
-  classes around the mesh, so the composed TLM-manager-port to
-  TLM-subordinate-port latency is not one RTL-equivalent path.
-- **The two integration layers are not signed and have no direct RTL
-  counterpart**: `axi_endpoint.hpp` and `noc_interconnect`. Every integration
-  defect found so far has been in one of them. See Step 10.3.
+- The current integrated TLM path instantiates those timed chimney classes
+  through `axi_noc` and drives both AXI signal boundaries cycle by cycle.
+  That composition is still not one monolithic RTL-equivalence harness.
+- **The remaining TLM integration layer is not signed and has no direct RTL
+  counterpart**: the manager/subordinate adapters and payload mapping in
+  `noc_interconnect`. `axi_endpoint.hpp` is legacy reference/test code after
+  A-3. See Step 10.3.
 - Combinational SystemC delta-cycle settling is not hardware latency.
 - No timing number should be marketed as cycle-accurate until its path passes
   RTL comparison. Conversely, do not describe a path as an estimate once it has
   passed one — an earlier revision of this document kept calling mesh latency an
   estimate after Step 9.2 had signed it.
-- The current SystemC integration measures **11 cycles at one hop and 30 at
-  six** on a 4x4 mesh. Those figures contain the signed mesh timing but use the
-  abstract endpoint transactors; they are model calibration values, not a
-  composed full-chimney RTL golden. Anything quoting 7 and 16 predates the
-  output-FIFO correction.
+- The current signal-driven SystemC integration measures **10 cycles at one hop
+  and 30 at six** on a 4x4 mesh, excluding target delay. These are model-level
+  integration calibration values over individually signed blocks, not a
+  composed full-path RTL golden. The legacy raw-mesh endpoint test measured
+  11 and 30; 7 and 16 predate the output-FIFO correction.
 
 ### 13.2 Type completeness
 
@@ -1827,13 +1851,15 @@ real-time factor.
 
 Section 5.1 lists six conditions under which stopping the network clock is legal.
 `network_idle()` in `src/noc_interconnect.cpp` checks none of them directly. It
-checks `in_flight`, each node's `outbox` and `serving`, and each manager's
-`has_request()` — all wrapper bookkeeping.
+checks `in_flight` plus the adapter's pending manager request, partial read
+data, observed source queues, collected writes, target-service queue and
+subordinate-response queue — all wrapper bookkeeping.
 
 It cannot do better as the code stands: `floo_mesh` keeps `routers_` private and
-exports no occupancy or lock state, and `axi_noc` exposes only the per-node
-`network_port`. The router *does* expose occupancy and lock debug outputs
-(section 9.6); they simply are not routed upward.
+exports no occupancy or lock state, and `axi_noc` exposes only its per-node AXI
+manager/subordinate signals plus the composed chimney. The router *does* expose
+occupancy and lock debug outputs (section 9.6); they simply are not routed
+upward.
 
 Why this matters rather than being pedantic: the argument that the wrapper's view
 is sufficient depends on the route lock and the arbiter lock always releasing on
@@ -1859,8 +1885,9 @@ network clock stops only at proven quiescence" in section 15 as **not met**.
   is a fabric adapter; keep it one.
 - Gating the clock before whole-network quiescence can lose traffic. See 13.6b —
   this is a live risk, not a hypothetical one.
-- Directly translating a blocking TLM transaction into one atomic NoC action
-  can hide AXI channel ordering and back-pressure.
+- A-3 no longer translates a blocking TLM transaction into one atomic NoC
+  action: AW, each W beat, AR, B and R handshake independently. Step 10.3 must
+  still stress those adapters under multi-initiator contention.
 - **`b_transport` spends simulated time** rather than annotating `delay`. A
   caller relying on temporal decoupling will find its quantum consumed. No step
   currently resolves this; a platform that needs a global quantum has to decide
@@ -1871,6 +1898,9 @@ network clock stops only at proven quiescence" in section 15 as **not met**.
 - **No target may share a node with a manager.** `NoLoopback = 1` makes such a
   placement hang rather than fail. The wrapper refuses it at construction; do not
   remove that guard.
+- The frozen 3-bit manager ID limits `num_initiators` to 1..8. The constructor
+  refuses anything else before instantiating the mesh; do not widen that limit
+  without changing and verifying the chimney configuration.
 
 ### 13.8 Licensing/provenance audit
 
@@ -2281,9 +2311,11 @@ over separate `req` and `rsp` meshes on a 4x4 grid. 24/24 tests pass.
 **The two-network shape is the IP's, not a choice.** `hw/floo_axi_router.sv` is
 literally two `floo_router` instances with identical parameters, one per flit
 type, with two independent `[NumRoutes-1:0]` port arrays. No shared
-arbitration, no shared buffering, no ordering between them. So `axi_noc` is two
-`floo_mesh` instantiations — `floo_mesh` was already templated on `FlitT`, so
-this needed no change to the mesh at all.
+arbitration, no shared buffering, no ordering between them. So the raw fabric
+is two `floo_mesh` instantiations — it was named `axi_noc` at Step 9 and was
+renamed `axi_mesh_noc` when A-2 made `axi_noc` the chimney-backed composition.
+`floo_mesh` was already templated on `FlitT`, so this needed no change to the
+mesh at all.
 
 **FlooGen 0.8.4 is installed and reproducible** via
 `rtl_crosscheck/install_floogen.sh`. Two environment facts it works around:
@@ -2444,21 +2476,19 @@ that says nothing.
 | 3 | **pre-A1 cleanup round 2** — `docs/PRE_A1_REVIEW_ROUND2_FIX_PLAN.md` | implementation complete; round-3 review found further gaps |
 | 4 | **pre-A1 cleanup rounds 3 to 5** — `docs/PRE_A1_REVIEW_ROUND3_FIX_PLAN.md` | **done** (2026-07-31); reviewer signed at the end of round 5 |
 | 5 | **A-1** — cross-check the manager-side response unpacker | **done** (2026-07-31): 78 cycles exact, six negative controls detected. The chimney's four quadrants are all signed |
-| 6 | **A-2** — assemble a per-node chimney into `axi_noc` | **current** |
-| 7 | **A-3** — drive it from `noc_interconnect` | |
-| 8 | **10.3** — stress the TLM layer that remains above the chimney | |
+| 6 | **A-2** — assemble a per-node chimney into `axi_noc` | **done** (2026-07-31): `test_axi_noc_chimney`, 56-cycle model-level composition test |
+| 7 | **A-3** — drive it from `noc_interconnect` | **done** (2026-07-31): cycle-driven AW/W/AR/B/R, 34/34 tests, relevant RTL cross-checks and firmware regression pass; baseline 10/30 cycles |
+| 8 | **10.3** — stress the TLM layer that remains above the chimney | **current** |
 | 9 | **10.1** — separate survey and firmware ownership | |
 | 10 | **10.4** — install, packaging, licensing | |
 | 11 | **10.5** — wrapper concurrency, and separately `MaxUniqueIds > 1` | |
 | 12 | **11** — the fast approximately-timed mode | |
 
-**Why 10.3 sits after A-3.** It was second on an earlier list, on the reasoning
-that the TLM layer was the only unsigned correctness layer. That reasoning no
-longer holds: two cleanup rounds fixed twelve defects in that layer and gave it
-directed coverage, and Step A-3 *replaces* part of what 10.3 would stress.
-Stressing code that is about to be swapped out is wasted work. What remains for
-10.3 afterwards — randomized multi-initiator stress, deadlock detection — is
-still needed and still not done.
+**Why 10.3 sat after A-3.** A-3 removed the abstract endpoints from the
+production path, so stressing them first would have targeted code scheduled for
+removal. What remains now — randomized multi-initiator stress, deadlock
+detection and proof of the quiescence gate — targets the actual signal-driven
+integration and is still required.
 
 **A-1, A-2 and A-3 are part of the v0 completion gate**, not work beyond it.
 See section 15.
@@ -2635,7 +2665,7 @@ Virtual channels, ATOPs, collectives, multicast, reduction, and the
 narrow-wide network remain deferred until an SoC requirement explicitly needs
 them.
 
-### Step A — Compose the signed chimney into the datapath — IN PROGRESS
+### Step A — Compose the signed chimney into the datapath — DONE (2026-07-31)
 
 Chosen over the alternative of leaving the abstract transactors in place and
 only testing them. The goal: the platform's network interface should *be* the
@@ -2648,7 +2678,7 @@ had three:
 |---|---|---|
 | Manager: AXI request → `req` link | `axi_chimney_request` | signed, 141 cycles |
 | Subordinate: `req` → AXI out → B/R → `rsp` | `axi_chimney_response` | signed, 221 cycles |
-| Manager: `rsp` link → B/R to the manager | `axi_chimney_manager_response` | **new**, not yet signed |
+| Manager: `rsp` link → B/R to the manager | `axi_chimney_manager_response` | signed, 78 cycles (A-1) |
 
 `axi_chimney.hpp` had said so all along — "the unpacker are not modelled here" —
 and left `i_b_pop`/`i_r_pop` as inputs for the harness to drive. So Step A is not
@@ -2728,18 +2758,81 @@ wrap detector. It was not one: `CounterWidth = $clog2(MaxTxnsPerId) = 5`, so
 31. The test was dead code. Checking the budget catches an underflow, an extra
 push and a missed pop alike.
 
-#### A-2 — assemble a per-node chimney and wire it into `axi_noc`
+#### A-2 — assemble a per-node chimney and wire it into `axi_noc` — DONE (2026-07-31)
 
-Manager side is `axi_chimney_request` + `axi_chimney_manager_response`;
-subordinate side is `axi_chimney_response`. Add a composition test.
+`axi_noc.hpp` now has three explicit levels:
 
-#### A-3 — switch `noc_interconnect` to the signal-driven chimney
+1. `axi_mesh_noc` preserves the old raw-flit API and exact signed mesh
+   behaviour. `mesh_trace_sc` and the legacy endpoint tests use this type
+   directly.
+2. `axi_chimney_node` composes `axi_chimney_request` plus
+   `axi_chimney_manager_response` on the manager side and
+   `axi_chimney_response` on the subordinate side. It owns every internal
+   response-pop/RLAST/RoB-ready signal.
+3. `axi_noc` instantiates one such node at every coordinate and wires all
+   request/response inject/eject links to `axi_mesh_noc`.
 
-The largest and riskiest piece: the wrapper currently calls methods on
-`axi_endpoint.hpp` and must instead drive AW/W/AR cycle by cycle. It changes code
-that currently runs firmware to `DMA PASS`, which is why Step 10.2 was built
-first. Expect the measured latencies to move — 11 cycles at one hop and 30 at six
-come from the abstract transactors, and a timed chimney has its own cost.
+`test_axi_noc_chimney` drives a 2x2 network through AXI signals. It checks a
+two-beat AW/W write and three-beat AR/R read, manager-side B/R back-pressure,
+stable stalled payloads, `OutIdWidth=3` reissue ID 7 at the subordinate,
+restoration of manager IDs 5 and 3, exact payload fields, RoB and metadata
+release only on accepted B/RLAST, and no traffic at unused nodes. It passes in
+56 cycles. The full standalone regression is 34/34. The automated
+`chimney-node-rob-ready-swapped` negative control crosses the node's private
+B/R RoB-ready bindings; the mutated source still builds and
+`test_axi_noc_chimney` fails on the stalled R payload. This proves that the
+composition test observes these internal links rather than only the two mesh
+boundaries.
+
+After the change, five directly affected RTL checks were re-run unchanged:
+request content 16 flits, request timing 141 cycles, subordinate/response
+timing 221 cycles, manager response 78 cycles, and mesh 1872 node-cycles all
+match. This preserves the individual block signs; A-2 itself is a SystemC
+composition test, **not** an RTL end-to-end cross-check.
+
+#### A-3 — switch `noc_interconnect` to the signal-driven chimney — DONE (2026-07-31)
+
+`noc_interconnect` now instantiates `axi_noc` rather than `axi_mesh_noc` plus
+method-driven endpoints. Its manager adapter holds AW, each W beat, or AR stable
+until the timed chimney handshakes it. Its subordinate adapter accepts AW/W/AR,
+reconstructs the downstream TLM access, then holds B or each R beat until
+accepted. The chimney performs downstream-ID rewrite to 7, metadata retention,
+response routing, manager-ID restoration and `NoRoB` counter release.
+
+Because the subordinate-side ID is intentionally rewritten, target-delay
+attribution passively observes accepted request-link AW/AR headers and pairs
+their source coordinate with the subordinate AXI handshake. That observation
+drives no ready/valid signal and does not bypass the datapath.
+
+The frozen 3-bit manager ID supports ports 0..7, so the constructor now refuses
+zero or more than eight upstream ports before building a mesh.
+
+Verification:
+
+- full standalone regression: **34/34 pass**;
+- `test_noc_interconnect` uses a 4x4 topology, retains the two-manager
+  scoreboard and pins the no-contention integrated baseline at **10 cycles for
+  one hop and 30 for six**, excluding target delay;
+- request content 16 flits, request timing 141 cycles, response content 8
+  flits, subordinate/response timing 221 cycles, manager response 78 cycles and
+  mesh timing 1872 node-cycles all still match RTL;
+- after rebuilding the parent `noc_soc` target against A-3,
+  `run_firmware_regression.sh` passes both real firmware (`DMA PASS`) and the
+  synthetic survey; the firmware retires 10,726 instructions in 570,683 ns of
+  modeled time (~53.2 ns/instruction);
+- the automated `a3-manager-aw-address-shifted` negative control changes only
+  the AW payload driven by the per-cycle adapter. The transaction still routes
+  and completes, but `test_noc_interconnect` catches the bytes at the wrong
+  target addresses.
+
+The model-level negative-control gate was re-run after A-3 with **25 detected,
+0 missed**. The existing `sparse-beat-renumbering` mutation was updated for
+both A-3 changes at its injection point: the new indentation and the current
+`capture.strb` storage. A build failure is not counted as detection.
+
+This completes the timed datapath integration, not a new monolithic RTL
+cross-check. The TLM adapters remain model-only code and are the target of Step
+10.3.
 
 ### Step 11 — Build the fast approximately-timed mode — THE POINT OF ALL THIS
 
@@ -2749,12 +2842,12 @@ a decision on the H1/coexistence path; `platforms/noc_soc/README.md` closes with
 platform is the calibration reference." Nothing calibrates against it yet, so
 the roadmap and the README currently disagree.
 
-The platform reports about **52 ns of modeled target time per retired
-instruction** while fetching through the mesh. That is an accuracy/calibration
-number, not evidence of simulator speed: it says nothing about host wall-clock
-time. Per-cycle evaluation is expected to be more expensive than an
-approximately-timed calculation, but Step 11 must first measure that cost on the
-same host and workload. Report retired instructions per host second, host
+The post-A-3 platform reports about **53.2 ns of modeled target time per retired
+instruction** while fetching through the mesh; the pre-A-3 value was about
+52.5 ns. That is an accuracy/calibration number, not evidence of simulator
+speed. Per-cycle evaluation is expected to be more expensive than an
+approximately-timed calculation, but Step 11 must first measure that cost on
+the same host and workload. Report retired instructions per host second, host
 seconds per simulated microsecond, or real-time factor before claiming that a
 fast mode is required for OS boot.
 
@@ -2785,11 +2878,11 @@ Acceptance criteria:
   *trace lengths* — 141 cycles, 1872 node-cycles — which are how much stimulus
   each harness ran, not latency targets. Confusing the two would have the fast
   mode calibrated against a number that means nothing about latency;
-- and the calibration baseline is re-measured after Step A-3. The current 11
-  cycles at one hop and 30 at six, and the ~52 ns per retired instruction, were
-  all produced with the abstract endpoint transactors in the path. Once the timed chimney replaces them those figures
-  will move, and silently keeping the old ones would calibrate the fast mode
-  against a configuration that no longer exists;
+- use the post-A-3 calibration baseline: the integrated signal-driven path is
+  now **10 cycles at one hop and 30 at six**, excluding target delay. The
+  legacy abstract-endpoint figures were 11 and 30. The post-A-3 platform
+  reports ~53.2 ns of modeled target time per retired instruction; Step 11
+  still needs a separate host-performance baseline;
 - `fw/dma_riscv` reaches `DMA PASS` in both modes;
 - accuracy is compared in modeled target time, while speedup is measured
   separately in host wall-clock metrics on the same workload, build type,
@@ -2814,13 +2907,13 @@ The v0 slice is not complete until all of the following are true.
 | FIFO, route selector, arbiter, and router have RTL trace comparisons | **met**, plus seven more; section 10.11 |
 | the router passes routing, contention, back-pressure, and wormhole tests | **met** |
 | a small req/rsp mesh delivers every flit exactly once | **met** — `test_axi_noc`, and mesh timing signed at 1872 node-cycles |
-| AXI AW/W/AR/B/R transactions survive endpoint-to-endpoint conversion | **met** — `test_axi_endpoint`, and real firmware reaches `DMA PASS` |
+| AXI AW/W/AR/B/R transactions survive the integrated signal-driven path | **met** — A-3 `test_noc_interconnect`, A-2 `test_axi_noc_chimney`, and real firmware reaches `DMA PASS` |
 | ordering rules for the selected configuration are verified | **met** — `NoRoB`, 127 cycles |
 | measured timing is separated from analytic estimates | **met** — `noc_counters.hpp` has no analytic tier; keep it that way |
 | CDC-VP integration reflects a fabric, not a fake accelerator peripheral | **met** — `noc_interconnect` is an M:N fabric adapter |
 | the network clock stops only at proven quiescence | **NOT met** — see 13.6b |
 | licensing and provenance are complete | **NOT met** — see 13.8; closes in Step 10.4 |
-| **the datapath is cycle-accurate from AXI manager port to AXI subordinate port** | **NOT met** — Steps A-2, A-3. A-1 is done; every block is signed, the composed path is not |
+| **the datapath uses the cycle-accurate blocks from AXI manager port to AXI subordinate port** | **met at model integration level** — A-3 drives the timed `axi_noc` cycle by cycle; every selected block is individually RTL-signed, but there is no monolithic full-path RTL harness |
 
 Two further criteria that were implicit and should be explicit:
 
@@ -2837,9 +2930,8 @@ kind of drift that makes a completion gate meaningless:
    `meta_buffer.hpp` do not have one;
 2. the network clock stops only at proven mesh quiescence — section 13.6b;
 3. licensing and provenance are complete — section 13.8, Step 10.4;
-4. the datapath is cycle-accurate from AXI manager port to AXI subordinate
-   port — Steps A-2 and A-3; A-1 is done, so every block is signed but the
-   composed path is not;
+4. the integrated datapath uses the timed AXI-manager-to-AXI-subordinate path —
+   **met by A-3**; the remaining wrapper adapters are model-only;
 5. scoreboard-driven wrapper stress is complete — Step 10.3.
 
 Nothing in this list requires Step 10.5 or Step 11; those are beyond v0.
@@ -2945,48 +3037,29 @@ Verilator limitations hit so far, all worked around in the harnesses:
 
 The next AI can be given this task:
 
-> Read `docs/AI_HANDOFF_CONTEXT.md`, then continue **Direction A** (see Step 10
-> and Step A in section 14); Step 10.2 is done. Anchor every NoC behavioural
+> Read `docs/AI_HANDOFF_CONTEXT.md`, then continue **Step 10.3**, the current
+> item in section 14's authoritative order. Anchor every NoC behavioural
 > decision in the FlooNoC IP at
 > `/home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC` (upstream
 > `https://github.com/pulp-platform/FlooNoC.git`), and in the CDC-VP platform for
 > the socket side.
 >
-> Steps 1 to 9.2 produced eleven isolated RTL cross-checks, indexed in section
-> 10.11, covering the selected router, FIFO, arbitration, chimney and mesh timing
-> blocks. Do not overstate this as one composed TLM-port-to-TLM-port RTL timing
-> proof: `noc_interconnect` uses abstract endpoint transactors rather than the
-> timed chimney classes. Step 10 has already implemented `noc_interconnect` and
-> `platforms/noc_soc`: CPU, DMA and survey traffic cross a 4x4 mesh, and real
-> SoC-map DMA firmware reaches `DMA PASS` at about 52 ns of modeled target time
-> per retired instruction. Do not redesign the socket topology and do not replace
-> it with an NPU-style worker.
+> Twelve isolated RTL cross-checks are indexed in section 10.11, covering the
+> selected router, FIFO, arbitration, chimney and mesh timing blocks. A-3 is
+> complete: `noc_interconnect` now drives the timed `axi_noc` through
+> cycle-by-cycle manager AW/W/AR and subordinate B/R. `axi_endpoint.hpp` is
+> legacy reference/test code only. Do not overstate the integrated path as one
+> monolithic RTL cross-check: its hardware blocks are signed individually, but
+> the TLM adapters have no direct RTL counterpart.
 >
 > **Follow the ordered table in section 14, not numeric order.** With 10.2 and
-> A-1 done, what remains runs:
+> A-1/A-2/A-3 done, what remains runs:
 >
 > ```text
-> A-2  ->  A-3  ->  10.3  ->  10.1  ->  10.4  ->  10.5  ->  11
+> 10.3  ->  10.1  ->  10.4  ->  10.5  ->  11
 > ```
 >
-> A-2 and A-3 come first because they are part of the v0 completion gate and
-> because **Step A-3 replaces part of what 10.3 would stress** — stressing the
-> abstract transactors that A-3 is about to delete buys directed coverage of code
-> with a scheduled removal date. 10.3 then outranks 10.1, and 10.1 cannot be
-> verified without 10.2. Section 14 gives the reasoning in full; if this prompt
-> and section 14 ever disagree, section 14 is authoritative.
->
-> **A-2 next.** A-1 is done: `run_chimney_mgr_rsp_crosscheck.sh` signs the
-> manager-side response unpacker at 78 cycles, so every selected v0 block is now
-> RTL-signed and the chimney's four quadrants are complete. What is **not**
-> signed is the composed path: `noc_interconnect` still drives the abstract
-> `axi_endpoint.hpp` transactors, not the timed chimney. A-2 assembles a
-> per-node chimney into `axi_noc` (manager side is `axi_chimney_request` +
-> `axi_chimney_manager_response`, subordinate side is `axi_chimney_response`)
-> with a composition test; A-3 switches the wrapper onto it. Do not report the
-> integrated datapath as RTL-equivalent before A-3 lands.
->
-> Step 10.3, when its turn comes: extend `test_noc_interconnect` with three
+> Step 10.3: extend `test_noc_interconnect` with three
 > concurrent initiators on one RAM target, mixed widths including 6-byte and
 > odd-length tails, bursts, target latency, a scoreboard, per-transaction bounds
 > and a global watchdog — and close the quiescence gap in section 13.6b by
@@ -3004,18 +3077,19 @@ The next AI can be given this task:
 >    wrapper's single waiter and `port_busy`. The measured +9-cycle contention is
 >    a baseline for that wrapper and workload, not proof that a 4x4 FlooNoC cannot
 >    congest.
-> 2. **`OutFifoDepth = 2`**, hardcoded by every FlooGen router template. The
->    measured end-to-end figures are 11 cycles at one hop and 30 at six; anything
->    quoting 7 and 16 predates that correction.
+> 2. **`OutFifoDepth = 2`**, hardcoded by every FlooGen router template. A-3's
+>    signal-driven integrated baseline is **10 cycles at one hop and 30 at
+>    six**, excluding target delay. The legacy abstract-endpoint path measured
+>    11 and 30; 7 and 16 predate the output-FIFO correction.
 > 3. **The RTL timing blocks are signed individually**: chimney request timing,
 >    chimney subordinate-side timing, chimney manager-side response (A-1), and
->    the mesh. Every selected v0 block is signed. The currently integrated TLM
->    path does not compose the timed chimney classes — that is A-2 and A-3. `noc_counters.hpp` separates measured from derived
->    and has no analytic tier; keep it that way.
-> 4. **The endpoint transactors and the TLM wrapper have no RTL counterpart** and
->    are not RTL-signable. They are a driver and a collector built on signed
->    rules. Every integration defect found so far has been in that layer, which
->    is why Step 10.3 outranks Step 10.1.
+>    the mesh. Every selected v0 block is signed, A-2 model-tests their signal
+>    composition, and A-3 integrates them. `noc_counters.hpp` separates
+>    measured from derived and has no analytic tier; keep it that way.
+> 4. **The TLM adapters and wrapper have no RTL counterpart** and are not
+>    RTL-signable. They are a driver and collector around signed timing blocks,
+>    which is why randomized wrapper stress and quiescence proof are still
+>    required.
 >
 > After correctness is automated, prove clean-prefix install, external consumer
 > linking, packaged-platform execution, RPATH, licenses and provenance (10.4).
@@ -3025,7 +3099,7 @@ The next AI can be given this task:
 > state with a tested per-transaction design. **Step 11, the fast
 > approximately-timed mode calibrated against this model, is unstarted and is
 > the largest item left. Before claiming that it makes OS boot faster, record a
-> host wall-clock baseline; 30 ns/instruction is target timing, not simulator
+> host wall-clock baseline; modeled target time is not simulator
 > throughput.**
 >
 > Do not open the NPU component for architecture questions. Its CMake shape,
@@ -3040,7 +3114,7 @@ The next AI can be given this task:
 > expected output counts before running a step, and confirm the stimulus is still
 > moving before trusting a pass. See section 16 rules 9e to 9i.
 >
-> Re-run the full standalone regression (32 tests) and every registered RTL
+> Re-run the full standalone regression (34 tests) and every registered RTL
 > cross-check after any model change. Use the mandated GCC/G++/PATH environment
 > before every build, preserve unrelated dirty files, and when a milestone is
 > signed off update **sections 2 to 13 as well as section 14** plus `STATUS.md` —

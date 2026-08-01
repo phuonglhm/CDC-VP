@@ -36,7 +36,9 @@ using namespace floo::model;
 
 constexpr unsigned mesh_width = 4;
 constexpr unsigned mesh_height = 4;
-using noc_t = axi_noc<mesh_width, mesh_height>;
+// This test intentionally exercises the pre-A-2 abstract transactors over the
+// raw fabric. `test_axi_noc_chimney` covers the signal-driven composition.
+using noc_t = axi_mesh_noc<mesh_width, mesh_height>;
 
 int failures = 0;
 

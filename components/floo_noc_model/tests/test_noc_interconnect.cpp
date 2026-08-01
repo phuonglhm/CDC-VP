@@ -1142,13 +1142,39 @@ private:
         }
 
         // ---- Distance costs cycles ----------------------------------------
+        //
+        // This is a no-contention calibration point, not a congestion sample.
+        // The second manager has already exercised concurrent traffic above;
+        // drain it before pinning exact hop-count latency.
+        const auto calibration_deadline =
+            sc_core::sc_time_stamp() + sc_core::sc_time(50, sc_core::SC_US);
+        while (!other->finished
+               && sc_core::sc_time_stamp() < calibration_deadline) {
+            wait(sc_core::sc_time(20, sc_core::SC_NS));
+        }
+        check(other->finished,
+              "the second manager must drain before latency calibration");
+
         const auto near_time =
             access(false, near_base, buffer, sizeof(std::uint64_t));
+        const auto near_network_cycles = noc->last_latency_cycles();
         const auto far_time =
             access(false, far_base, buffer, sizeof(std::uint64_t));
+        const auto far_network_cycles = noc->last_latency_cycles();
         check(far_time > near_time,
               "a farther target must cost more than a nearer one");
-        std::cout << "near " << near_time << ", far " << far_time << '\n';
+        check(far_network_cycles > near_network_cycles,
+              "the measured network cycles must grow with hop count");
+        // A-3 calibration baseline through the complete signal-driven path.
+        // The far target annotates 5 ns, which is deliberately absent from
+        // `last_latency_cycles()`: these numbers are the NoC only.
+        check(near_network_cycles == 10,
+              "the one-hop signal-driven baseline must stay at 10 cycles");
+        check(far_network_cycles == 30,
+              "the six-hop signal-driven baseline must stay at 30 cycles");
+        std::cout << "near " << near_time << " (" << near_network_cycles
+                  << " network cycles), far " << far_time << " ("
+                  << far_network_cycles << " network cycles)\n";
 
         // ---- Debug access bypasses the network ----------------------------
         const auto before = sc_core::sc_time_stamp();
@@ -1281,11 +1307,11 @@ int sc_main(int, char**)
 {
     check_response_mapping();
 
-    // A 2x2 mesh: initiator at (0,0), a near memory at (1,0) and a far one at
-    // (1,1), so distance is observable.
+    // A 4x4 mesh: initiator at (0,0), a near memory at (1,0) and a far one at
+    // (3,3), so the A-3 integrated TLM path is measured at one and six hops.
     // Two upstream ports: the driver at (0,0) and a second manager at (0,1),
     // matching how the platform places its CPU and DMA on separate nodes.
-    cdc::components::noc_interconnect noc{"noc", 2, 2, 10, 2};
+    cdc::components::noc_interconnect noc{"noc", 4, 4, 10, 2};
     memory_target near_memory{"near_memory", region_size};
     memory_target far_memory{"far_memory", region_size,
                              sc_core::sc_time(5, sc_core::SC_NS)};
@@ -1311,23 +1337,23 @@ int sc_main(int, char**)
     noc.add_target(near_base, region_size, {1, 0},
                    cdc::components::noc_interconnect::target_kind::memory)
         .bind(near_memory.socket);
-    noc.add_target(far_base, region_size, {1, 1}).bind(far_memory.socket);
-    noc.add_target(oversized_base, region_size, {1, 1})
+    noc.add_target(far_base, region_size, {3, 3}).bind(far_memory.socket);
+    noc.add_target(oversized_base, region_size, {3, 3})
         .bind(small_memory.socket);
-    noc.add_target(zero_base, region_size, {1, 1}).bind(zero_memory.socket);
-    noc.add_target(top_base, region_size, {1, 1},
+    noc.add_target(zero_base, region_size, {3, 3}).bind(zero_memory.socket);
+    noc.add_target(top_base, region_size, {3, 3},
                    cdc::components::noc_interconnect::target_kind::memory)
         .bind(top_memory.socket);
-    noc.add_target(sub_base, region_size, {1, 1}).bind(sub_memory.socket);
-    noc.add_target(frac_base, region_size, {1, 1}).bind(frac_memory.socket);
-    noc.add_target(exact_base, region_size, {1, 1}).bind(exact_memory.socket);
+    noc.add_target(sub_base, region_size, {3, 3}).bind(sub_memory.socket);
+    noc.add_target(frac_base, region_size, {3, 3}).bind(frac_memory.socket);
+    noc.add_target(exact_base, region_size, {3, 3}).bind(exact_memory.socket);
     // Default kind: `mmio`. That is the point of the widened-read tests.
-    noc.add_target(spy_base, region_size, {1, 1}).bind(spy.socket);
+    noc.add_target(spy_base, region_size, {3, 3}).bind(spy.socket);
     // `memory`, so the widened-read policy lets a read through and the beat
     // frame guard is the check under test. Mapped `frame_size`, backed by
     // `frame_storage` — the overrun must be refused by the wrapper, not by the
     // target running out of memory.
-    noc.add_target(frame_base, frame_size, {1, 1},
+    noc.add_target(frame_base, frame_size, {3, 3},
                    cdc::components::noc_interconnect::target_kind::memory)
         .bind(frame_spy.socket);
 

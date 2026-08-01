@@ -71,7 +71,7 @@ bash rtl_crosscheck/run_mesh_crosscheck.sh               # a grid of floo_axi_ro
 
 Twelve runners. The twelfth,
 `run_chimney_mgr_rsp_crosscheck.sh`, closed the chimney at Step A-1: it drives
-`floo_rsp_i`, which the other three chimney runners pin low, and compares the
+`floo_rsp_i`, which the other four chimney runners pin low, and compares the
 manager's B/R channels, `floo_rsp_o.ready` and both reorder-buffer counters for
 78 cycles.
 
@@ -165,17 +165,19 @@ and **inter-node mesh timing** (1872 node-cycles).
 The **manager-side response unpacker** (`axi_chimney_manager_response`) is
 signed too, 78 cycles, which completes all four chimney quadrants.
 
-Still not signed: the composed **manager-AXI-to-subordinate-AXI** path. Every
-block on it is signed individually, but `noc_interconnect` does not yet
-instantiate the timed chimney — Steps A-2 and A-3.
+There is still no one-piece RTL cross-check for the composed
+**manager-AXI-to-subordinate-AXI** path. Every block on it is signed
+individually, and A-2's `test_axi_noc_chimney` now verifies their SystemC
+composition. Since A-3, `noc_interconnect` uses that path and drives AW/W/AR
+and B/R handshakes cycle by cycle.
 
 Each of those is signed in isolation. That is deliberately not a claim that the
 integrated path is signed end to end: the timed chimney (`axi_chimney.hpp`) is
-instantiated only by its three trace runners, while `noc_interconnect` composes
-the combinational `axi_chimney_pack.hpp` with the `axi_endpoint.hpp`
-transactors. Those transactors and the TLM wrapper have no RTL counterpart and
-cannot be signed against one — they are a driver and collector built on signed
-rules.
+instantiated by the trace runners and by `axi_noc`, which is now the wrapper's
+datapath. The TLM-to-AXI manager/subordinate adapters that remain above those
+signal boundaries have no RTL counterpart and cannot be signed against one;
+they are covered by model-level integration tests. The legacy
+`axi_endpoint.hpp` transactors remain only for isolated reference tests.
 
 The router harness uses no shim at all: it compiles the real RTL from the
 Bender-generated file list and keeps the router's own protocol assertions
