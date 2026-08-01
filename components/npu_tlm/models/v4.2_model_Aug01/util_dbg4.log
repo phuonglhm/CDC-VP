@@ -1,0 +1,237 @@
+
+        SystemC 3.0.0-Accellera --- Jun  1 2026 22:05:06
+        Copyright (c) 1996-2024 by all Contributors,
+        ALL RIGHTS RESERVED
+==========================================================
+       SAURIA NPU UTILIZATION OPTIMIZATION TESTBENCH       
+==========================================================
+
+>>> CASE 1: Baseline Single-Tile (K=64) <<<
+  * Simulation Cycles: 352
+  * PE Active Utilization: 18.1818%
+  * Performance: 186.182 GOPS
+
+[FSM State Cycle Breakdown - Case 1: Baseline Single-Tile]
+  * ARRAY_CSWITCH: 1 cycles
+  * ARRAY_FILL: 3 cycles
+  * ARRAY_PREP: 1 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 71 cycles
+  * LAST_WAIT: 13 cycles
+  * START_COMP: 255 cycles
+  * START_FLAGS: 1 cycles
+  * WAIT_CSWITCH: 1 cycles
+  * WAIT_OBUF: 1 cycles
+  * Total Active FSM Cycles: 348 cycles
+
+>>> CASE 2: Double-Buffered Serial Multi-Tiling (4 Tiles, K=64) <<<
+  * Total Compute Cycles (4 Tiles): 14596
+  * Non-Overlapped Wall-Clock: 20864 cycles
+  * Double-Buffered Overlapped Wall-Clock: 19460 cycles
+  * Wall-Clock Latency Reduction: 6.72929%
+
+[FSM State Cycle Breakdown - Case 2: Double-Buffered Serial Multi-Tiling (4 Tiles)]
+  * ARRAY_CSWITCH: 4 cycles
+  * ARRAY_FILL: 12 cycles
+  * ARRAY_PREP: 4 cycles
+  * DONE: 4 cycles
+  * DRAIN_FEED: 284 cycles
+  * LAST_WAIT: 52 cycles
+  * START_COMP: 1020 cycles
+  * START_FLAGS: 4 cycles
+  * WAIT_CSWITCH: 4 cycles
+  * WAIT_OBUF: 4 cycles
+  * Total Active FSM Cycles: 1392 cycles
+
+>>> CASE 3: Weight-Stationary Batching (N=4, K=64) <<<
+[TB] Programming weights ONCE for batch size N=4...
+  * Weight Loading Cycles (T_write_weights): 2304 cycles
+  * Activation Loading Cycles (4 batches): 6144 cycles
+  * Compute Cycles (4 batches): 1408 cycles
+  * Non-Stationary Wall-Clock: 20864 cycles
+  * Weight-Stationary Wall-Clock (N=4): 13952 cycles
+  * Memory Programming Latency Saving: 33.1288%
+
+[FSM State Cycle Breakdown - Case 3: Weight-Stationary Batching (N=4)]
+  * ARRAY_CSWITCH: 4 cycles
+  * ARRAY_FILL: 12 cycles
+  * ARRAY_PREP: 4 cycles
+  * DONE: 4 cycles
+  * DRAIN_FEED: 284 cycles
+  * LAST_WAIT: 52 cycles
+  * START_COMP: 1020 cycles
+  * START_FLAGS: 4 cycles
+  * WAIT_CSWITCH: 4 cycles
+  * WAIT_OBUF: 4 cycles
+  * Total Active FSM Cycles: 1392 cycles
+
+>>> CASE 4: Large Input / Spatial Tiling (8 Tiles, K=64) <<<
+  * Spatial Tiles Run: 8 tiles
+  * Total Compute Cycles: 27238
+  * PE Active Utilization: 1.87973%
+  * Performance: 19.2484 GOPS
+
+[FSM State Cycle Breakdown - Case 4: Spatial Tiling (8 Tiles)]
+  * ARRAY_CSWITCH: 8 cycles
+  * ARRAY_FILL: 24 cycles
+  * ARRAY_PREP: 8 cycles
+  * DONE: 8 cycles
+  * DRAIN_FEED: 568 cycles
+  * LAST_WAIT: 104 cycles
+  * START_COMP: 2040 cycles
+  * START_FLAGS: 8 cycles
+  * WAIT_CSWITCH: 8 cycles
+  * WAIT_OBUF: 8 cycles
+  * Total Active FSM Cycles: 2784 cycles
+
+>>> CASE 5: Wavefront Overlapping (Continuous Zero-Drain Pipeline Simulation) <<<
+
+--- SWEEP TILE COUNT N = 8 ---
+  * Simulation Cycles: 2781
+  * PE Active Utilization: 18.4106%
+  * Performance: 188.525 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (8 Tiles Continuous)]
+  * ARRAY_CSWITCH: 8 cycles
+  * ARRAY_FILL: 24 cycles
+  * ARRAY_PREP: 8 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 568 cycles
+  * LAST_WAIT: 104 cycles
+  * START_COMP: 2040 cycles
+  * START_FLAGS: 8 cycles
+  * WAIT_CSWITCH: 8 cycles
+  * WAIT_OBUF: 8 cycles
+  * Total Active FSM Cycles: 2777 cycles
+
+--- SWEEP TILE COUNT N = 16 ---
+  * Simulation Cycles: 5557
+  * PE Active Utilization: 18.4272%
+  * Performance: 188.695 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (16 Tiles Continuous)]
+  * ARRAY_CSWITCH: 16 cycles
+  * ARRAY_FILL: 48 cycles
+  * ARRAY_PREP: 16 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 1136 cycles
+  * LAST_WAIT: 208 cycles
+  * START_COMP: 4080 cycles
+  * START_FLAGS: 16 cycles
+  * WAIT_CSWITCH: 16 cycles
+  * WAIT_OBUF: 16 cycles
+  * Total Active FSM Cycles: 5553 cycles
+
+--- SWEEP TILE COUNT N = 32 ---
+  * Simulation Cycles: 11109
+  * PE Active Utilization: 18.4355%
+  * Performance: 188.78 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (32 Tiles Continuous)]
+  * ARRAY_CSWITCH: 32 cycles
+  * ARRAY_FILL: 96 cycles
+  * ARRAY_PREP: 32 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 2272 cycles
+  * LAST_WAIT: 416 cycles
+  * START_COMP: 8160 cycles
+  * START_FLAGS: 32 cycles
+  * WAIT_CSWITCH: 32 cycles
+  * WAIT_OBUF: 32 cycles
+  * Total Active FSM Cycles: 11105 cycles
+
+--- SWEEP TILE COUNT N = 64 ---
+  * Simulation Cycles: 22213
+  * PE Active Utilization: 18.4397%
+  * Performance: 188.822 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (64 Tiles Continuous)]
+  * ARRAY_CSWITCH: 64 cycles
+  * ARRAY_FILL: 192 cycles
+  * ARRAY_PREP: 64 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 4544 cycles
+  * LAST_WAIT: 832 cycles
+  * START_COMP: 16320 cycles
+  * START_FLAGS: 64 cycles
+  * WAIT_CSWITCH: 64 cycles
+  * WAIT_OBUF: 64 cycles
+  * Total Active FSM Cycles: 22209 cycles
+
+--- SWEEP TILE COUNT N = 128 ---
+  * Simulation Cycles: 44421
+  * PE Active Utilization: 18.4417%
+  * Performance: 188.843 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (128 Tiles Continuous)]
+  * ARRAY_CSWITCH: 128 cycles
+  * ARRAY_FILL: 384 cycles
+  * ARRAY_PREP: 128 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 9088 cycles
+  * LAST_WAIT: 1664 cycles
+  * START_COMP: 32640 cycles
+  * START_FLAGS: 128 cycles
+  * WAIT_CSWITCH: 128 cycles
+  * WAIT_OBUF: 128 cycles
+  * Total Active FSM Cycles: 44417 cycles
+
+--- SWEEP TILE COUNT N = 256 ---
+  * Simulation Cycles: 88837
+  * PE Active Utilization: 18.4428%
+  * Performance: 188.854 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (256 Tiles Continuous)]
+  * ARRAY_CSWITCH: 256 cycles
+  * ARRAY_FILL: 768 cycles
+  * ARRAY_PREP: 256 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 18176 cycles
+  * LAST_WAIT: 3328 cycles
+  * START_COMP: 65280 cycles
+  * START_FLAGS: 256 cycles
+  * WAIT_CSWITCH: 256 cycles
+  * WAIT_OBUF: 256 cycles
+  * Total Active FSM Cycles: 88833 cycles
+
+--- SWEEP TILE COUNT N = 400 ---
+  * Simulation Cycles: 138805
+  * PE Active Utilization: 18.4431%
+  * Performance: 188.858 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (400 Tiles Continuous)]
+  * ARRAY_CSWITCH: 400 cycles
+  * ARRAY_FILL: 1200 cycles
+  * ARRAY_PREP: 400 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 28400 cycles
+  * LAST_WAIT: 5200 cycles
+  * START_COMP: 102000 cycles
+  * START_FLAGS: 400 cycles
+  * WAIT_CSWITCH: 400 cycles
+  * WAIT_OBUF: 400 cycles
+  * Total Active FSM Cycles: 138801 cycles
+
+--- SWEEP TILE COUNT N = 1000 ---
+  * Simulation Cycles: 347005
+  * PE Active Utilization: 18.4435%
+  * Performance: 188.862 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (1000 Tiles Continuous)]
+  * ARRAY_CSWITCH: 1000 cycles
+  * ARRAY_FILL: 3000 cycles
+  * ARRAY_PREP: 1000 cycles
+  * DONE: 1 cycles
+  * DRAIN_FEED: 71000 cycles
+  * LAST_WAIT: 13000 cycles
+  * START_COMP: 255000 cycles
+  * START_FLAGS: 1000 cycles
+  * WAIT_CSWITCH: 1000 cycles
+  * WAIT_OBUF: 1000 cycles
+  * Total Active FSM Cycles: 347001 cycles
+
+==========================================================
+               PE UTILIZATION VERIFICATION COMPLETE        
+==========================================================
+
+Info: /OSCI/SystemC: Simulation stopped by user.

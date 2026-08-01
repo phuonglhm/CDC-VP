@@ -1,0 +1,75 @@
+
+        SystemC 3.0.0-Accellera --- Jun  1 2026 22:05:06
+        Copyright (c) 1996-2024 by all Contributors,
+        ALL RIGHTS RESERVED
+==========================================================
+       SAURIA NPU UTILIZATION OPTIMIZATION TESTBENCH       
+==========================================================
+
+>>> CASE 1: Baseline Single-Tile (K=64) <<<
+  * Simulation Cycles: -3867
+  * PE Active Utilization: -1.65503%
+  * Performance: -16.9475 GOPS
+
+[FSM State Cycle Breakdown - Case 1: Baseline Single-Tile]
+  * ARRAY_FILL: 3 cycles
+  * ARRAY_PREP: 1 cycles
+  * START_COMP: 499996 cycles
+  * START_FLAGS: 1 cycles
+  * Total Active FSM Cycles: 500001 cycles
+
+>>> CASE 2: Double-Buffered Serial Multi-Tiling (4 Tiles, K=64) <<<
+  * Total Compute Cycles (4 Tiles): -5057228
+  * Non-Overlapped Wall-Clock: 3988 cycles
+  * Double-Buffered Overlapped Wall-Clock: 19456 cycles
+  * Wall-Clock Latency Reduction: -387.864%
+
+[FSM State Cycle Breakdown - Case 2: Double-Buffered Serial Multi-Tiling (4 Tiles)]
+  * ARRAY_FILL: 12 cycles
+  * ARRAY_PREP: 4 cycles
+  * START_COMP: 2014576 cycles
+  * START_FLAGS: 4 cycles
+  * Total Active FSM Cycles: 2014596 cycles
+
+>>> CASE 3: Weight-Stationary Batching (N=4, K=64) <<<
+[TB] Programming weights ONCE for batch size N=4...
+  * Weight Loading Cycles (T_write_weights): 2304 cycles
+  * Activation Loading Cycles (4 batches): 6144 cycles
+  * Compute Cycles (4 batches): -13118726 cycles
+  * Non-Stationary Wall-Clock: 3988 cycles
+  * Weight-Stationary Wall-Clock (N=4): -13106182 cycles
+  * Memory Programming Latency Saving: 328740%
+
+[FSM State Cycle Breakdown - Case 3: Weight-Stationary Batching (N=4)]
+  * ARRAY_FILL: 12 cycles
+  * ARRAY_PREP: 4 cycles
+  * START_COMP: 1999984 cycles
+  * START_FLAGS: 4 cycles
+  * Total Active FSM Cycles: 2000004 cycles
+
+>>> CASE 4: Large Input / Spatial Tiling (8 Tiles, K=64) <<<
+  * Spatial Tiles Run: 8 tiles
+  * Total Compute Cycles: -50395736
+  * PE Active Utilization: -0.00101596%
+  * Performance: -0.0104034 GOPS
+
+[FSM State Cycle Breakdown - Case 4: Spatial Tiling (8 Tiles)]
+  * ARRAY_FILL: 24 cycles
+  * ARRAY_PREP: 8 cycles
+  * START_COMP: 4026848 cycles
+  * START_FLAGS: 8 cycles
+  * Total Active FSM Cycles: 4026888 cycles
+
+>>> CASE 5: Wavefront Overlapping (Continuous Zero-Drain Pipeline Simulation) <<<
+
+--- SWEEP TILE COUNT N = 8 ---
+  * Simulation Cycles: -8566899
+  * PE Active Utilization: -0.00597649%
+  * Performance: -0.0611993 GOPS
+
+[FSM State Cycle Breakdown - Case 5: Wavefront Overlapping (8 Tiles Continuous)]
+  * ARRAY_FILL: 3 cycles
+  * ARRAY_PREP: 1 cycles
+  * START_COMP: 499996 cycles
+  * START_FLAGS: 1 cycles
+  * Total Active FSM Cycles: 500001 cycles
