@@ -1,0 +1,24 @@
+case: conv5x5_demo
+A_shape: 4 32 400
+B_shape: 4 400 32
+C_shape: 4 32 32
+
+# TEST : Conv 5x5 (s=1, Cout=32)
+# WHAT : kernel 5x5
+[RUNTIME CONFIG]
+  ncontexts = 4
+  cxlim     = 40
+  cklim     = 1024
+  act_reps  = 1
+  wei_reps  = 4
+Execution cycles (start -> done) : 4582
+Contraction depth K (MAC/elem)   : 400
+Total MACs                       : 409600
+Throughput (MAC / cycle)         : 89.3933
+Array utilization                : 8.72981 %   (MAC-per-cycle / peak)
+Output throughput (elem / cycle) : 0.223483
+Expected elements : 1024
+Mismatches        : 0
+[RESULT] TEST PASSED: NPU Exact Final matches SAURIA gold_dram with ZERO errors!
+
+status: PASS
