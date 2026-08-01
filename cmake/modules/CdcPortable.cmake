@@ -5,6 +5,12 @@
 # imported target, so they work both in the main build tree and in a standalone
 # platform build that obtained the target via find_package(cdc-components).
 
+# The default preserves the existing developer-facing `out/<target>` layout.
+# Distribution regressions override this with a private directory so concurrent
+# jobs never delete or overwrite one another's package.
+set(CDC_PACKAGE_ROOT "${CMAKE_SOURCE_DIR}/out" CACHE PATH
+    "Root directory for self-contained platform packages")
+
 # Internal: list the libsystemc.so* chain next to the SystemC import.
 function(_cdc_systemc_runtime_libs out_var)
     get_target_property(_loc SystemC::systemc IMPORTED_LOCATION)
@@ -19,7 +25,13 @@ endfunction()
 function(cdc_make_portable target)
     set_target_properties(${target} PROPERTIES
         BUILD_RPATH "$ORIGIN"
-        INSTALL_RPATH "$ORIGIN")
+        INSTALL_RPATH "$ORIGIN"
+        # Package targets copy the executable from the build tree. Make that
+        # binary use the install RPATH too; otherwise CMake appends the absolute
+        # host SystemC directory and the supposedly portable bundle silently
+        # retains a build-machine fallback.
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH_USE_LINK_PATH FALSE)
 
     _cdc_systemc_runtime_libs(_sos)
     foreach(_so ${_sos})
@@ -35,7 +47,7 @@ endfunction()
 #   binary, the bundled .so files and configs/.  Build with:
 #     cmake --build <dir> --target <target>_package
 function(cdc_package_platform target)
-    set(_dest "${CMAKE_SOURCE_DIR}/out/${target}")
+    set(_dest "${CDC_PACKAGE_ROOT}/${target}")
 
     add_custom_target(${target}_package
         COMMAND ${CMAKE_COMMAND} -E rm -rf "${_dest}"
@@ -44,7 +56,7 @@ function(cdc_package_platform target)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "$<TARGET_FILE_DIR:${target}>/configs" "${_dest}/configs"
         DEPENDS ${target}
-        COMMENT "Packaging ${target} -> out/${target} (self-contained)"
+        COMMENT "Packaging ${target} -> ${_dest} (self-contained)"
         VERBATIM)
 
     _cdc_systemc_runtime_libs(_sos)

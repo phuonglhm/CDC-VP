@@ -63,6 +63,54 @@ int sc_main(int, char**)
               "a 3-bit manager ID must refuse more than 8 upstream ports");
     }
 
+    // ---- per-port outstanding capacity ------------------------------------
+    //
+    // The frozen response metadata FIFOs are 32 entries deep. The wrapper may
+    // choose a smaller combined read/write admission limit, but zero would
+    // deadlock every caller and more than 32 would over-promise the signed
+    // configuration's capacity.
+    {
+        bool zero_threw = false;
+        try {
+            cdc::components::noc_interconnect bad{
+                "zero_slots", 2, 2, 1, 1,
+                sc_core::sc_time(1, sc_core::SC_NS), 0};
+        } catch (const std::invalid_argument&) {
+            zero_threw = true;
+        }
+        check(zero_threw,
+              "max_outstanding_per_port zero must be refused");
+
+        bool too_many_threw = false;
+        try {
+            cdc::components::noc_interconnect bad{
+                "too_many_slots", 2, 2, 1, 1,
+                sc_core::sc_time(1, sc_core::SC_NS), 33};
+        } catch (const std::invalid_argument&) {
+            too_many_threw = true;
+        }
+        check(too_many_threw,
+              "max_outstanding_per_port above 32 must be refused");
+    }
+
+    // ---- timing backend ---------------------------------------------------
+    {
+        bool invalid_threw = false;
+        try {
+            cdc::components::noc_interconnect bad{
+                "bad_timing", 2, 2, 1, 1,
+                sc_core::sc_time(1, sc_core::SC_NS),
+                cdc::components::noc_interconnect::
+                    default_max_outstanding_per_port,
+                static_cast<
+                    cdc::components::noc_interconnect::timing_mode>(99)};
+        } catch (const std::invalid_argument&) {
+            invalid_threw = true;
+        }
+        check(invalid_threw,
+              "an unknown timing backend must be refused");
+    }
+
     // ---- an unusable network clock -----------------------------------------
     //
     // Every latency in the model is counted in network cycles, so a zero period

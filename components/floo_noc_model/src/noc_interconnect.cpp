@@ -10,7 +10,6 @@
 #include <cstring>
 #include <deque>
 #include <memory>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <stdexcept>
@@ -157,14 +156,29 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         bool served = false;
     };
 
+    /// A `b_transport` call parked until the network answers it.
+    ///
+    /// One instance lives on each caller's suspended SystemC stack. Adapter
+    /// queues retain its address only until the matching FIFO-ordered B or
+    /// final R response removes it and notifies `done`.
+    struct waiter {
+        sc_core::sc_event done;
+        bool complete = false;
+        unsigned port = 0;
+        std::vector<std::uint64_t> data;
+        std::uint8_t resp = to_bits(axi_pkg::axi_resp::okay);
+        std::uint64_t issued_cycle = 0;
+    };
+
     /// One TLM request being presented on a chimney's manager AXI port.
     ///
-    /// `port_busy` keeps this to one transaction per upstream port, but AW and
-    /// W are still independent AXI channels. The timed chimney decides their
+    /// AW and W are independent AXI channels. The timed chimney decides their
     /// ready timing; this state only holds each payload stable until its own
-    /// handshake.
+    /// handshake. `parked` associates the accepted AW/AR with the caller that
+    /// owns the corresponding FIFO-ordered completion.
     struct manager_request {
         bool is_write = false;
+        waiter* parked = nullptr;
         coordinate destination{};
         axi_aw_chan aw{};
         bool aw_pending = false;
@@ -203,10 +217,9 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         bool has_subordinate = false;
         /// Which upstream port injects here, if any.
         int initiator_port = -1;
-        std::optional<manager_request> request;
-        std::vector<std::uint64_t> read_data;
-        std::uint8_t read_resp =
-            to_bits(axi_pkg::axi_resp::okay);
+        std::deque<manager_request> requests;
+        std::deque<waiter*> write_waiters;
+        std::deque<waiter*> read_waiters;
 
         // Passive source tracking. The subordinate AXI ID is intentionally
         // rewritten to all ones, so the requester coordinate is observed when
@@ -220,15 +233,6 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         std::deque<subordinate_response> responses;
     };
 
-    /// A `b_transport` call parked until the network answers it.
-    struct waiter {
-        sc_core::sc_event done;
-        bool complete = false;
-        std::vector<std::uint64_t> data;
-        std::uint8_t resp = 0;
-        std::uint64_t issued_cycle = 0;
-    };
-
     sc_core::sc_signal<bool> clk{"clk"};
     sc_core::sc_signal<bool> rst_n{"rst_n"};
 
@@ -239,17 +243,22 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     std::vector<node_state> nodes;
     std::vector<std::unique_ptr<cpu_socket_t>> extra_ports;
     std::vector<node> initiator_nodes;
-    std::vector<std::unique_ptr<waiter>> waiters;
-    std::vector<bool> port_busy;
+    std::vector<unsigned> outstanding_by_port;
+    std::vector<unsigned> peak_outstanding_by_port;
     // `sc_event` is neither copyable nor movable, so it cannot live in a
     // plain vector that is assigned into.
-    std::vector<std::unique_ptr<sc_core::sc_event>> port_free;
+    std::vector<std::unique_ptr<sc_core::sc_event>> slot_available;
+    std::vector<std::deque<std::uint64_t>> write_hold_off;
+    std::vector<std::deque<std::uint64_t>> read_hold_off;
 
     unsigned mesh_x = 0;
     unsigned mesh_y = 0;
     unsigned initiator_count = 0;
     unsigned target_capacity = 0;
     unsigned mapped_targets = 0;
+    unsigned max_outstanding_per_port = 0;
+    noc_interconnect::timing_mode timing_backend =
+        noc_interconnect::timing_mode::detailed;
 
     static constexpr unsigned axi_id_bits = 3;
     static constexpr unsigned max_manager_ports = 1u << axi_id_bits;
@@ -262,9 +271,6 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     std::uint64_t last_latency = 0;
     std::vector<std::uint64_t> last_latency_by_port;
     unsigned in_flight = 0;
-    /// Target access latency accumulated per requesting node, so it can be
-    /// removed from that node's network-latency figure.
-    std::vector<std::uint64_t> hold_off;
     bool started = false;
     /// The mesh needs its reset to elapse before it will carry anything. A
     /// `b_transport` issued at time zero would otherwise hand flits to a
@@ -280,7 +286,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     SC_HAS_PROCESS(impl);
 
     impl(sc_core::sc_module_name name, unsigned x, unsigned y,
-         unsigned num_targets, unsigned num_initiators, sc_core::sc_time tick)
+         unsigned num_targets, unsigned num_initiators, sc_core::sc_time tick,
+         unsigned outstanding_limit, noc_interconnect::timing_mode mode)
         : sc_core::sc_module(name)
         , noc(make_noc(x, y, "noc"))
         , period(tick)
@@ -288,6 +295,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         , mesh_y(y)
         , initiator_count(num_initiators)
         , target_capacity(num_targets)
+        , max_outstanding_per_port(outstanding_limit)
+        , timing_backend(mode)
     {
         if (num_initiators == 0) {
             throw std::invalid_argument(
@@ -306,17 +315,15 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         }
         noc->bind_clock(clk, rst_n);
         nodes.resize(noc->node_count());
-        hold_off.assign(noc->node_count(), 0);
         manager_request_driven.assign(noc->node_count(), false);
         last_latency_by_port.assign(num_initiators, 0);
         initiator_nodes.assign(num_initiators, node{0, 0});
-        waiters.reserve(num_initiators);
+        outstanding_by_port.assign(num_initiators, 0);
+        peak_outstanding_by_port.assign(num_initiators, 0);
+        write_hold_off.resize(num_initiators);
+        read_hold_off.resize(num_initiators);
         for (unsigned port = 0; port < num_initiators; ++port) {
-            waiters.push_back(std::make_unique<waiter>());
-        }
-        port_busy.assign(num_initiators, false);
-        for (unsigned port = 0; port < num_initiators; ++port) {
-            port_free.push_back(std::make_unique<sc_core::sc_event>());
+            slot_available.push_back(std::make_unique<sc_core::sc_event>());
         }
 
         SC_THREAD(network_thread);
@@ -468,9 +475,9 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             manager.aw_valid.write(false);
             manager.w_valid.write(false);
             manager.ar_valid.write(false);
-            if (active && state.has_manager && state.request.has_value()) {
+            if (active && state.has_manager && !state.requests.empty()) {
                 manager_request_driven[index] = true;
-                const auto& request = *state.request;
+                const auto& request = state.requests.front();
                 if (request.is_write) {
                     manager.aw.write(request.aw);
                     manager.aw_dest.write(request.destination);
@@ -486,13 +493,10 @@ struct noc_interconnect::impl : public sc_core::sc_module {
                 }
             }
 
-            bool response_ready = false;
-            if (active && state.has_manager && state.initiator_port >= 0) {
-                response_ready =
-                    port_busy[static_cast<unsigned>(state.initiator_port)];
-            }
-            manager.b_ready.write(response_ready);
-            manager.r_ready.write(response_ready);
+            manager.b_ready.write(
+                active && state.has_manager && !state.write_waiters.empty());
+            manager.r_ready.write(
+                active && state.has_manager && !state.read_waiters.empty());
 
             subordinate.aw_ready.write(active && state.has_subordinate);
             subordinate.w_ready.write(active && state.has_subordinate);
@@ -541,7 +545,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             auto& subordinate = noc->subordinate(index);
             auto& sample = observed[index];
             const bool active = rst_n.read();
-            if (active && state.has_manager && state.request.has_value()
+            if (active && state.has_manager && !state.requests.empty()
                 && !manager_request_driven[index]) {
                 ++mid_half_request_arrivals;
             }
@@ -592,19 +596,29 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             auto& state = nodes[index];
             const auto& sample = observed[index];
 
-            if (state.request.has_value()) {
-                auto& request = *state.request;
+            if (!state.requests.empty()) {
+                auto& request = state.requests.front();
                 if (sample.manager_aw) {
+                    if (request.parked == nullptr) {
+                        throw std::logic_error(
+                            "noc_interconnect: accepted AW has no waiter");
+                    }
+                    state.write_waiters.push_back(request.parked);
                     request.aw_pending = false;
                 }
                 if (sample.manager_w) {
                     ++request.w_index;
                 }
                 if (sample.manager_ar) {
+                    if (request.parked == nullptr) {
+                        throw std::logic_error(
+                            "noc_interconnect: accepted AR has no waiter");
+                    }
+                    state.read_waiters.push_back(request.parked);
                     request.ar_pending = false;
                 }
                 if (request.complete()) {
-                    state.request.reset();
+                    state.requests.pop_front();
                 }
             }
 
@@ -663,6 +677,98 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         state.writes.push_back(std::move(capture));
     }
 
+    served_request make_write_served_request(
+        const axi_aw_chan& aw, const coordinate& requester,
+        const std::vector<std::uint64_t>& data,
+        const std::vector<std::uint64_t>& strb)
+    {
+        served_request entry{};
+        entry.is_write = true;
+        entry.requester = node_of(requester);
+        entry.addr = aw.addr;
+        entry.size_log2 = aw.size;
+        entry.beats = static_cast<unsigned>(aw.len) + 1u;
+        if (data.size() != entry.beats || strb.size() != entry.beats) {
+            throw std::logic_error(
+                "noc_interconnect: write replay lacks a complete AXI frame");
+        }
+
+        // Resolve every enabled lane to its absolute byte address, here and
+        // only here. Both timing backends use this function: fast mode is
+        // allowed to approximate time, not lane placement or byte enables.
+        const std::uint64_t aw_addr = entry.addr;
+        const unsigned lane0 = static_cast<unsigned>(aw_addr % bus_bytes);
+        const std::uint64_t beat0_addr = aw_addr - lane0;
+
+        struct located_byte {
+            std::uint64_t address;
+            unsigned char value;
+        };
+        std::vector<located_byte> located;
+        located.reserve(
+            static_cast<std::size_t>(entry.beats) * bus_bytes);
+
+        for (unsigned beat = 0; beat < entry.beats; ++beat) {
+            for (unsigned lane = 0; lane < bus_bytes; ++lane) {
+                if (((strb[beat] >> lane) & 1ull) == 0) {
+                    continue;
+                }
+                const std::uint64_t offset =
+                    static_cast<std::uint64_t>(beat) * bus_bytes + lane;
+                if (offset > UINT64_MAX - beat0_addr) {
+                    throw std::overflow_error(
+                        "noc_interconnect: write frame wraps the address "
+                        "space");
+                }
+                located.push_back(
+                    {beat0_addr + offset,
+                     static_cast<unsigned char>(
+                         (data[beat] >> (8 * lane)) & 0xFF)});
+            }
+        }
+
+        if (located.empty()) {
+            // Every lane disabled. A legal AXI write that changes nothing,
+            // and it must stay side-effect free downstream.
+            entry.byte_length = 0;
+            return entry;
+        }
+
+        std::uint64_t lowest = located.front().address;
+        std::uint64_t highest = located.front().address;
+        for (const auto& item : located) {
+            lowest = std::min(lowest, item.address);
+            highest = std::max(highest, item.address);
+        }
+        entry.addr = lowest;
+        entry.byte_length = static_cast<unsigned>(highest - lowest + 1);
+        entry.write_bytes.assign(entry.byte_length, 0);
+        entry.write_enables.assign(entry.byte_length, 0);
+        for (const auto& item : located) {
+            const auto index =
+                static_cast<std::size_t>(item.address - lowest);
+            entry.write_bytes[index] = item.value;
+            entry.write_enables[index] = TLM_BYTE_ENABLED;
+        }
+        return entry;
+    }
+
+    served_request make_read_served_request(
+        const axi_ar_chan& ar, const coordinate& requester)
+    {
+        served_request entry{};
+        entry.is_write = false;
+        entry.requester = node_of(requester);
+        entry.addr = ar.addr;
+        entry.size_log2 = ar.size;
+        entry.beats = static_cast<unsigned>(ar.len) + 1u;
+        // A read has no strobes: AXI expresses its length as beats times
+        // `ARSIZE`, and a master wanting fewer bytes reads the whole beat and
+        // uses part of it. The wrapper trims at the initiator.
+        entry.byte_length = entry.beats * (1u << entry.size_log2);
+        return entry;
+    }
+
     void accept_subordinate_w(node_state& state, const axi_w_chan& w)
     {
         if (state.writes.empty()) {
@@ -689,74 +795,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
                 "noc_interconnect: early WLAST at subordinate");
         }
 
-        served_request entry{};
-        entry.is_write = true;
-        entry.requester = node_of(capture.requester);
-        entry.addr = capture.aw.addr;
-        entry.size_log2 = capture.aw.size;
-        entry.beats = expected;
-
-        // Resolve every enabled lane to its absolute byte address, here and
-        // only here. `aw_addr` is the AXI address as issued; the beats are
-        // numbered from its bus-aligned base.
-        const std::uint64_t aw_addr = entry.addr;
-        const unsigned lane0 = static_cast<unsigned>(aw_addr % bus_bytes);
-        const std::uint64_t beat0_addr = aw_addr - lane0;
-
-        struct located_byte {
-            std::uint64_t address;
-            unsigned char value;
-        };
-        std::vector<located_byte> located;
-        located.reserve(
-            static_cast<std::size_t>(entry.beats) * bus_bytes);
-
-        for (unsigned beat = 0; beat < entry.beats; ++beat) {
-            for (unsigned lane = 0; lane < bus_bytes; ++lane) {
-                if (((capture.strb[beat] >> lane) & 1ull) == 0) {
-                    continue;
-                }
-                // The frame cannot wrap the address space: a transfer that
-                // did would have been refused upstream, and reconstructing
-                // it here would produce addresses below the AW.
-                const std::uint64_t offset =
-                    static_cast<std::uint64_t>(beat) * bus_bytes + lane;
-                if (offset > UINT64_MAX - beat0_addr) {
-                    throw std::overflow_error(
-                        "noc_interconnect: write frame wraps the address "
-                        "space");
-                }
-                located.push_back(
-                    {beat0_addr + offset,
-                     static_cast<unsigned char>(
-                         (capture.data[beat] >> (8 * lane)) & 0xFF)});
-            }
-        }
-
-        if (located.empty()) {
-            // Every lane disabled. A legal AXI write that changes nothing,
-            // and it must stay side-effect free downstream.
-            entry.byte_length = 0;
-        } else {
-            std::uint64_t lowest = located.front().address;
-            std::uint64_t highest = located.front().address;
-            for (const auto& item : located) {
-                lowest = std::min(lowest, item.address);
-                highest = std::max(highest, item.address);
-            }
-            entry.addr = lowest;
-            entry.byte_length =
-                static_cast<unsigned>(highest - lowest + 1);
-            entry.write_bytes.assign(entry.byte_length, 0);
-            entry.write_enables.assign(entry.byte_length, 0);
-            for (const auto& item : located) {
-                const auto index =
-                    static_cast<std::size_t>(item.address - lowest);
-                entry.write_bytes[index] = item.value;
-                entry.write_enables[index] = TLM_BYTE_ENABLED;
-            }
-        }
-        state.serving.push_back(std::move(entry));
+        state.serving.push_back(make_write_served_request(
+            capture.aw, capture.requester, capture.data, capture.strb));
         state.writes.pop_front();
     }
 
@@ -766,18 +806,9 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             throw std::runtime_error(
                 "noc_interconnect: subordinate AR has no req-link source");
         }
-        served_request entry{};
-        entry.is_write = false;
-        entry.requester = node_of(state.ar_sources.front());
+        const auto requester = state.ar_sources.front();
         state.ar_sources.pop_front();
-        entry.addr = ar.addr;
-        entry.size_log2 = ar.size;
-        entry.beats = static_cast<unsigned>(ar.len) + 1u;
-        // A read has no strobes: AXI expresses its length as beats times
-        // `ARSIZE`, and a master wanting fewer bytes reads the whole beat and
-        // uses part of it. The wrapper trims at the initiator.
-        entry.byte_length = entry.beats * (1u << entry.size_log2);
-        state.serving.push_back(std::move(entry));
+        state.serving.push_back(make_read_served_request(ar, requester));
     }
 
     void accept_subordinate_response(
@@ -815,32 +846,23 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         return incoming;
     }
 
-    void complete_manager_transaction(
-        node_state& state, std::vector<std::uint64_t> data, std::uint8_t resp)
+    void complete_manager_transaction(waiter& parked, std::uint64_t hold_off)
     {
-        const int port = state.initiator_port;
-        if (port < 0) {
-            throw std::runtime_error(
-                "noc_interconnect: response reached a node without a manager");
-        }
-        auto& parked = *waiters[static_cast<unsigned>(port)];
-        parked.data = std::move(data);
-        parked.resp = resp;
         parked.complete = true;
         ++completed;
         const auto elapsed = cycle - parked.issued_cycle;
-        const auto index = static_cast<std::size_t>(
-            index_of(initiator_nodes[static_cast<unsigned>(port)]));
-        const auto charged = index < hold_off.size() ? hold_off[index] : 0;
-        last_latency = elapsed > charged ? elapsed - charged : 0;
-        last_latency_by_port[static_cast<unsigned>(port)] = last_latency;
-        if (index < hold_off.size()) {
-            hold_off[index] = 0;
-        }
+        last_latency = elapsed > hold_off ? elapsed - hold_off : 0;
+        last_latency_by_port[parked.port] = last_latency;
         latency_sum += last_latency;
         if (in_flight > 0) {
             --in_flight;
         }
+        if (outstanding_by_port[parked.port] == 0) {
+            throw std::logic_error(
+                "noc_interconnect: completion underflowed the port slots");
+        }
+        --outstanding_by_port[parked.port];
+        slot_available[parked.port]->notify(sc_core::SC_ZERO_TIME);
         parked.done.notify(sc_core::SC_ZERO_TIME);
     }
 
@@ -851,7 +873,17 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             throw std::runtime_error(
                 "noc_interconnect: B response carries the wrong manager ID");
         }
-        complete_manager_transaction(state, {}, b.resp);
+        const auto port = static_cast<unsigned>(state.initiator_port);
+        if (state.write_waiters.empty() || write_hold_off[port].empty()) {
+            throw std::runtime_error(
+                "noc_interconnect: B response has no FIFO completion owner");
+        }
+        auto* parked = state.write_waiters.front();
+        state.write_waiters.pop_front();
+        const auto charged = write_hold_off[port].front();
+        write_hold_off[port].pop_front();
+        parked->resp = b.resp;
+        complete_manager_transaction(*parked, charged);
     }
 
     void accept_manager_r(node_state& state, const axi_r_chan& r)
@@ -861,16 +893,25 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             throw std::runtime_error(
                 "noc_interconnect: R response carries the wrong manager ID");
         }
-        state.read_data.push_back(r.data);
-        state.read_resp = collapse_read_resp(state.read_resp, r.resp);
+        const auto port = static_cast<unsigned>(state.initiator_port);
+        if (state.read_waiters.empty()) {
+            throw std::runtime_error(
+                "noc_interconnect: R response has no FIFO completion owner");
+        }
+        auto* parked = state.read_waiters.front();
+        parked->data.push_back(r.data);
+        parked->resp = collapse_read_resp(parked->resp, r.resp);
         if (!r.last) {
             return;
         }
-        auto data = std::move(state.read_data);
-        state.read_data.clear();
-        const auto resp = state.read_resp;
-        state.read_resp = to_bits(axi_pkg::axi_resp::okay);
-        complete_manager_transaction(state, std::move(data), resp);
+        if (read_hold_off[port].empty()) {
+            throw std::runtime_error(
+                "noc_interconnect: final R has no target-delay owner");
+        }
+        state.read_waiters.pop_front();
+        const auto charged = read_hold_off[port].front();
+        read_hold_off[port].pop_front();
+        complete_manager_transaction(*parked, charged);
     }
 
     /// Runs the downstream TLM access for requests whose target latency has
@@ -890,16 +931,23 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             return;
         }
         // The wait above is the target's own access latency, not the
-        // interconnect's. Charge it to the requester that caused it, keyed by
-        // the `src_id` the request carried. Attributing it to every waiting
-        // transaction — as an earlier version did — underflows the moment more
-        // than one is in flight.
-        if (entry.requester < hold_off.size()) {
-            hold_off[entry.requester] +=
-                entry.ready_at > entry.served_at
-                    ? entry.ready_at - entry.served_at
-                    : 0;
+        // interconnect's. Preserve it in the same per-channel FIFO order as the
+        // `MaxUniqueIds = 1` response metadata. A single accumulator per
+        // requester is insufficient now that more than one call may be in
+        // flight: the first completion would consume another transaction's
+        // target delay.
+        const auto requester_port = nodes[entry.requester].initiator_port;
+        if (requester_port < 0) {
+            throw std::runtime_error(
+                "noc_interconnect: target delay belongs to no upstream port");
         }
+        const auto target_delay = entry.ready_at > entry.served_at
+            ? entry.ready_at - entry.served_at
+            : 0;
+        auto& delay_fifo = entry.is_write
+            ? write_hold_off[static_cast<unsigned>(requester_port)]
+            : read_hold_off[static_cast<unsigned>(requester_port)];
+        delay_fifo.push_back(target_delay);
 
         subordinate_response response{};
         response.is_write = entry.is_write;
@@ -927,11 +975,12 @@ struct noc_interconnect::impl : public sc_core::sc_module {
 
     /// Issues the real TLM transaction to the mapped peripheral.
     ///
-    /// The delay the peripheral annotates is turned into a per-node hold-off in
-    /// cycles rather than waited on here: waiting inside the network thread
-    /// would freeze every other node's traffic for the duration, which a real
-    /// subordinate does not do.
-    void perform_downstream(served_request& entry)
+    /// `delay` is the caller's current local-time annotation. Detailed mode
+    /// passes zero and later converts the target's increment into a per-node
+    /// hold-off. Fast mode passes incoming plus estimated request time and
+    /// returns the target's nondecreasing annotation to its caller.
+    void perform_downstream_access(
+        served_request& entry, sc_core::sc_time& delay)
     {
         const int slot = decode(entry.addr);
         if (slot < 0) {
@@ -941,7 +990,6 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             // `EXOKAY`, so a failed decode was reported upstream as success.
             entry.resp = to_bits(axi_pkg::axi_resp::decerr);
             entry.read_data.assign(entry.beats, 0);
-            entry.ready_at = cycle;
             return;
         }
         auto& target = targets[static_cast<std::size_t>(slot)];
@@ -968,7 +1016,6 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             // Every lane was disabled. Legal, and it must not be turned into a
             // zero-length TLM access, which targets reject.
             entry.resp = to_bits(axi_pkg::axi_resp::okay);
-            entry.ready_at = cycle;
             return;
         }
         // Already resolved to absolute addresses in `accept_subordinate_w`.
@@ -1016,7 +1063,6 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         payload.set_dmi_allowed(false);
         payload.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
 
-        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
         (*target.socket)->b_transport(payload, delay);
 
         // The request reached a target, so any failure it reports is the
@@ -1042,22 +1088,156 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             }
         }
 
-        // Round **up** to the first cycle on which the response may legally
-        // appear. Truncating turned any latency shorter than one network cycle
-        // into no latency at all, so a target annotating 0.4 cycles answered as
-        // if it were free. A conservative ceiling is the right bias for a
-        // timing model: it never claims a target is faster than it said.
-        //
-        // No sub-cycle residue is carried between transactions. This target
-        // model is not pipelined here, so there is nothing for a residue to
-        // accumulate into; the ceiling is applied per access and documented as
-        // such in the header.
-        const double cycles = delay / period;
+    }
+
+    std::uint64_t rounded_cycles(sc_core::sc_time duration) const
+    {
+        const double cycles = duration / period;
         auto ticks = static_cast<std::uint64_t>(cycles);
         if (static_cast<double>(ticks) < cycles) {
             ++ticks;
         }
+        return ticks;
+    }
+
+    /// Detailed-mode scheduling wrapper.
+    ///
+    /// Waiting inside the network thread would freeze every other node, so the
+    /// target's annotation becomes a cycle-counted hold-off instead.
+    void perform_downstream(served_request& entry)
+    {
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+        perform_downstream_access(entry, delay);
+        // Round **up** to the first cycle on which the response may legally
+        // appear. No sub-cycle residue is carried between transactions.
+        const auto ticks = rounded_cycles(delay);
         entry.ready_at = cycle + ticks;
+    }
+
+    static unsigned manhattan(node from, node to)
+    {
+        const auto dx = from.x > to.x ? from.x - to.x : to.x - from.x;
+        const auto dy = from.y > to.y ? from.y - to.y : to.y - from.y;
+        return dx + dy;
+    }
+
+    /// Calibrated no-contention split used by the fast backend.
+    ///
+    /// The aggregate single-beat read is `4*hops + 6`: 10 cycles at one hop
+    /// and 30 at six, the two post-A-3 detailed baselines. Splitting the fixed
+    /// and hop terms equally lets a downstream target observe request arrival
+    /// time. A write has AW plus N W flits, so it costs N serialization cycles
+    /// beyond an AR. A read pays one cycle for every response beat after the
+    /// first.
+    std::uint64_t fast_request_cycles(
+        unsigned port, unsigned target_node, bool is_write,
+        unsigned beats) const
+    {
+        const node target{
+            target_node % mesh_x,
+            target_node / mesh_x};
+        const auto hops = manhattan(initiator_nodes[port], target);
+        return 2u * hops + 3u + (is_write ? beats : 0u);
+    }
+
+    std::uint64_t fast_response_cycles(
+        unsigned port, unsigned target_node, bool is_write,
+        unsigned beats) const
+    {
+        const node target{
+            target_node % mesh_x,
+            target_node / mesh_x};
+        const auto hops = manhattan(initiator_nodes[port], target);
+        return 2u * hops + 3u
+            + (!is_write && beats > 0 ? beats - 1u : 0u);
+    }
+
+    void fast_transport(
+        unsigned port, int target_slot, tlm::tlm_generic_payload& trans,
+        sc_core::sc_time& delay, const axi_shape& shape,
+        const unsigned char* enables, unsigned enable_length)
+    {
+        while (outstanding_by_port[port] >= max_outstanding_per_port) {
+            sc_core::wait(*slot_available[port]);
+        }
+        ++outstanding_by_port[port];
+        peak_outstanding_by_port[port] =
+            std::max(peak_outstanding_by_port[port],
+                     outstanding_by_port[port]);
+        ++in_flight;
+
+        // Everything after admission is inside the cleanup boundary. In
+        // particular, lane packing and served-request construction allocate;
+        // an exception there must not permanently consume a port slot.
+        try {
+            const bool is_write = trans.is_write();
+            const auto& target =
+                targets[static_cast<std::size_t>(target_slot)];
+            const coordinate requester{
+                initiator_nodes[port].x, initiator_nodes[port].y};
+            served_request entry{};
+            if (is_write) {
+                axi_aw_chan aw{};
+                aw.id = port;
+                aw.addr = trans.get_address();
+                aw.len = static_cast<std::uint8_t>(shape.beats - 1);
+                aw.size = static_cast<std::uint8_t>(shape.size_log2);
+                aw.burst = 1;
+                const auto view = pack_write(
+                    trans.get_data_ptr(), trans.get_data_length(), shape,
+                    enables, enable_length);
+                entry = make_write_served_request(
+                    aw, requester, view.data, view.strb);
+            } else {
+                axi_ar_chan ar{};
+                ar.id = port;
+                ar.addr = trans.get_address();
+                ar.len = static_cast<std::uint8_t>(shape.beats - 1);
+                ar.size = static_cast<std::uint8_t>(shape.size_log2);
+                ar.burst = 1;
+                entry = make_read_served_request(ar, requester);
+            }
+
+            const auto request_cycles =
+                fast_request_cycles(port, target.node, is_write, shape.beats);
+            const auto response_cycles =
+                fast_response_cycles(port, target.node, is_write, shape.beats);
+            const auto network_cycles = request_cycles + response_cycles;
+
+            delay += period * static_cast<double>(request_cycles);
+            const auto before_target = delay;
+            perform_downstream_access(entry, delay);
+            if (delay < before_target) {
+                throw std::runtime_error(
+                    "noc_interconnect: a fast-mode target decreased the "
+                    "annotated delay");
+            }
+            const auto target_cycles = rounded_cycles(delay - before_target);
+            delay = before_target
+                + period * static_cast<double>(
+                    target_cycles + response_cycles);
+
+            if (!is_write) {
+                unpack_read(
+                    entry.read_data, trans.get_data_ptr(),
+                    trans.get_data_length(), shape, enables, enable_length);
+            }
+            trans.set_response_status(tlm_status_for(entry.resp));
+
+            ++completed;
+            last_latency = network_cycles;
+            last_latency_by_port[port] = network_cycles;
+            latency_sum += network_cycles;
+        } catch (...) {
+            --in_flight;
+            --outstanding_by_port[port];
+            slot_available[port]->notify(sc_core::SC_ZERO_TIME);
+            throw;
+        }
+
+        --in_flight;
+        --outstanding_by_port[port];
+        slot_available[port]->notify(sc_core::SC_ZERO_TIME);
     }
 
     bool network_idle() const
@@ -1066,10 +1246,16 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             return false;
         }
         for (const auto& state : nodes) {
-            if (state.request.has_value() || !state.read_data.empty()
-                || !state.aw_sources.empty() || !state.ar_sources.empty()
-                || !state.writes.empty() || !state.serving.empty()
-                || !state.responses.empty()) {
+            if (!state.requests.empty() || !state.write_waiters.empty()
+                || !state.read_waiters.empty() || !state.aw_sources.empty()
+                || !state.ar_sources.empty() || !state.writes.empty()
+                || !state.serving.empty() || !state.responses.empty()) {
+                return false;
+            }
+        }
+        for (unsigned port = 0; port < initiator_count; ++port) {
+            if (outstanding_by_port[port] != 0 || !write_hold_off[port].empty()
+                || !read_hold_off[port].empty()) {
                 return false;
             }
         }
@@ -1089,6 +1275,17 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     /// adapter-accounting invariant and is asserted before entering the gate.
     void network_thread()
     {
+        if (timing_backend == noc_interconnect::timing_mode::fast) {
+            // The hierarchy remains present so both backends have one class and
+            // one placement/address-map contract, but fast traffic never
+            // toggles it. Returning terminates this private clock process and
+            // is the source of the host-side speedup.
+            rst_n.write(true);
+            out_of_reset = true;
+            reset_done.notify(sc_core::SC_ZERO_TIME);
+            return;
+        }
+
         rst_n.write(false);
         for (unsigned reset_cycle = 0; reset_cycle < 4; ++reset_cycle) {
             step_once();
@@ -1119,7 +1316,8 @@ struct noc_interconnect::impl : public sc_core::sc_module {
 noc_interconnect::noc_interconnect(
     sc_core::sc_module_name name, unsigned mesh_x, unsigned mesh_y,
     unsigned num_targets, unsigned num_initiators,
-    sc_core::sc_time clock_period)
+    sc_core::sc_time clock_period, unsigned max_outstanding_per_port,
+    timing_mode mode)
     : sc_core::sc_module(name)
     , target_socket("target_socket")
     , impl_(nullptr)
@@ -1141,9 +1339,20 @@ noc_interconnect::noc_interconnect(
             "noc_interconnect: the frozen 3-bit AXI ID supports at most "
             "8 upstream ports");
     }
+    if (max_outstanding_per_port == 0
+        || max_outstanding_per_port
+            > default_max_outstanding_per_port) {
+        throw std::invalid_argument(
+            "noc_interconnect: max_outstanding_per_port must be in 1..32");
+    }
+    if (mode != timing_mode::detailed && mode != timing_mode::fast) {
+        throw std::invalid_argument(
+            "noc_interconnect: invalid timing mode");
+    }
 
     impl_ = std::make_unique<impl>("impl", mesh_x, mesh_y, num_targets,
-                                   num_initiators, clock_period);
+                                   num_initiators, clock_period,
+                                   max_outstanding_per_port, mode);
 
     target_socket.register_b_transport(
         this, &noc_interconnect::b_transport, 0);
@@ -1319,8 +1528,33 @@ std::uint64_t noc_interconnect::last_latency_cycles(unsigned port) const
     return impl_->last_latency_by_port[port];
 }
 
+unsigned noc_interconnect::outstanding_transactions(unsigned port) const
+{
+    if (port >= impl_->outstanding_by_port.size()) {
+        throw std::out_of_range("noc_interconnect: upstream port out of range");
+    }
+    return impl_->outstanding_by_port[port];
+}
+
+unsigned noc_interconnect::peak_outstanding_transactions(unsigned port) const
+{
+    if (port >= impl_->peak_outstanding_by_port.size()) {
+        throw std::out_of_range("noc_interconnect: upstream port out of range");
+    }
+    return impl_->peak_outstanding_by_port[port];
+}
+
+noc_interconnect::timing_mode
+noc_interconnect::selected_timing_mode() const noexcept
+{
+    return impl_->timing_backend;
+}
+
 bool noc_interconnect::mesh_quiescent() const
 {
+    if (impl_->timing_backend == timing_mode::fast) {
+        return true;
+    }
     return impl_->noc->mesh_quiescent();
 }
 
@@ -1350,18 +1584,19 @@ void noc_interconnect::b_transport(
     impl_->ensure_started();
     const auto port = static_cast<unsigned>(tag);
 
-    // The caller's annotated time is real time it has already accounted for but
-    // not yet spent. This wrapper does not annotate — it spends — so the two
-    // conventions are reconciled here by consuming it before the transaction
-    // enters the network. Dropping it, as an earlier version did, silently made
-    // every temporally decoupled caller's transaction start too early.
-    if (delay > sc_core::SC_ZERO_TIME) {
-        sc_core::wait(delay);
-        delay = sc_core::SC_ZERO_TIME;
-    }
+    if (impl_->timing_backend == timing_mode::detailed) {
+        // The caller's annotated time is real time it has already accounted for
+        // but not yet spent. The detailed backend spends rather than annotates,
+        // so consume it before injection. Fast mode intentionally leaves it
+        // untouched and adds its estimate below.
+        if (delay > sc_core::SC_ZERO_TIME) {
+            sc_core::wait(delay);
+            delay = sc_core::SC_ZERO_TIME;
+        }
 
-    while (!impl_->out_of_reset) {
-        sc_core::wait(impl_->reset_done);
+        while (!impl_->out_of_reset) {
+            sc_core::wait(impl_->reset_done);
+        }
     }
 
     // ---- TLM generic-payload contract -------------------------------------
@@ -1476,14 +1711,29 @@ void noc_interconnect::b_transport(
         }
     }
 
-    while (impl_->port_busy[port]) {
-        sc_core::wait(*impl_->port_free[port]);
+    if (impl_->timing_backend == timing_mode::fast) {
+        impl_->fast_transport(
+            port, first_slot, trans, delay, shape, enables, enable_length);
+        return;
     }
-    impl_->port_busy[port] = true;
+
+    while (impl_->outstanding_by_port[port]
+           >= impl_->max_outstanding_per_port) {
+        sc_core::wait(*impl_->slot_available[port]);
+    }
+    ++impl_->outstanding_by_port[port];
+    impl_->peak_outstanding_by_port[port] =
+        std::max(impl_->peak_outstanding_by_port[port],
+                 impl_->outstanding_by_port[port]);
 
     const bool is_write = command == tlm::TLM_WRITE_COMMAND;
+    impl::waiter parked{};
+    parked.port = port;
+    parked.issued_cycle = impl_->cycle;
+
     impl::manager_request request{};
     request.is_write = is_write;
+    request.parked = &parked;
     const auto target_node =
         impl_->targets[static_cast<std::size_t>(first_slot)].node;
     request.destination =
@@ -1516,18 +1766,9 @@ void noc_interconnect::b_transport(
         // the returned lanes when the response arrives.
     }
 
-    auto& parked = *impl_->waiters[port];
-    parked.complete = false;
-    parked.issued_cycle = impl_->cycle;
-
     const unsigned node_index = impl_->index_of(impl_->initiator_nodes[port]);
     auto& state = impl_->nodes[node_index];
-
-    if (state.request.has_value()) {
-        throw std::logic_error(
-            "noc_interconnect: manager adapter is busy despite port_busy");
-    }
-    state.request.emplace(std::move(request));
+    state.requests.push_back(std::move(request));
     ++impl_->in_flight;
     impl_->work.notify(sc_core::SC_ZERO_TIME);
 
@@ -1540,9 +1781,6 @@ void noc_interconnect::b_transport(
                     enable_length);
     }
     trans.set_response_status(tlm_status_for(parked.resp));
-
-    impl_->port_busy[port] = false;
-    impl_->port_free[port]->notify(sc_core::SC_ZERO_TIME);
 
     // Time was spent, not annotated: the transaction really walked the mesh.
     delay = sc_core::SC_ZERO_TIME;

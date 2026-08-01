@@ -267,12 +267,10 @@ change latency and throughput. Do not reopen that decision merely because a
 simple functional fabric is faster.
 
 The guide also says that a fast Direction-1 baseline normally exists in
-parallel. This component is the Direction-2 workstream, and no FlooNoC-specific
-H1 implementation exists yet. **That decision is still open and is now the
-largest unscheduled item**: the detailed cycle-stepped model is explicitly
-described as the calibration reference for a future approximately-timed mode
-(`platforms/noc_soc/README.md`, "Why it is slow"), but nothing calibrates
-against it yet. Step 11 records that work.
+parallel. Step 11 now provides that coexistence path inside the same
+`noc_interconnect` class: detailed mode remains the Direction-2 calibration
+reference, while fast mode reuses its functional replay and annotates a
+calibrated no-contention estimate for long runs.
 
 | Phase | FlooNoC interpretation | Current state |
 |---|---|---|
@@ -283,14 +281,14 @@ against it yet. Step 11 records that work.
 | P4 | Router/link topology and endpoint wiring | Implemented: `axi_mesh_noc` preserves the raw `req`/`rsp` fabric; `axi_noc` adds one complete timed chimney per node (A-2), and `noc_interconnect` drives it cycle by cycle (A-3). Mesh timing is signed |
 | P5 | NoC-specific measured counters | Implemented for the router boundary over RTL-signed signals; latency/utilization counters still deliberately deferred, see section 13.6 |
 | P6 | Optional configuration translation | NPU-style operation driver is not applicable; `noc_soc` takes mesh geometry and placement as construction parameters |
-| P7 | Unit, router, mesh, stress, and RTL equivalence tests | 35 SystemC tests pass; twelve RTL cross-checks signed. Step 10.3 adds bounded deterministic-random stress with three concurrent initiators, per-requester scoreboards and watchdogs |
+| P7 | Unit, router, mesh, stress, and RTL equivalence tests | 37 SystemC tests pass; twelve RTL cross-checks signed. Step 10.3 adds bounded deterministic-random stress with three concurrent initiators; Step 10.5 adds bounded same-port concurrency; Step 11 adds detailed/fast calibration |
 | P8 | Standalone build | Implemented with CMake and Make |
 | P9 | SW/platform-visible contract | No NoC register map by design. The platform-visible contract is the address map, the placement rule that no target may share a node with a manager, and `noc_soc`'s explicit survey/firmware ownership mode plus reserved scratch page |
-| P10 | TLM integration | Implemented and stress-tested: `noc_interconnect` is a fabric adapter with M:N tagged sockets, explicit placement and signal-driven timed chimneys, not a target+worker wrapper. A-3 and Step 10.3 are done; Step 10.1 also separates platform survey/firmware ownership |
-| P11 | CDC-VP CMake component/install/export | Header-only interface target plus the compiled `cdc::components::noc_interconnect`. Clean-prefix install unproven, Step 10.4 |
-| P12 | Platform assembly and packaging | `platforms/noc_soc` assembled and running; packaging unproven, Step 10.4 |
-| P13 | RISC-V/SoC traffic validation | Real firmware (`fw/dma_riscv`) reaches `DMA PASS` over the A-3 signal-driven mesh and the synthetic survey matches all bytes. Step 10.1 makes the modes explicit, proves zero synthetic transactions in firmware mode, and rejects an ELF claiming the reserved survey page before internal SoC construction. Automated as `noc_soc_firmware_regression`. Post-A-3 modeled target time is ~53.2 ns/instruction; this is not host performance |
-| P14 | Coexistence and maintenance | Partial. Step 10.3 proved detailed-model clock gating against exported mesh/chimney state; the H1 coexistence mode is unstarted (Step 11) |
+| P10 | TLM integration | Implemented and stress-tested: `noc_interconnect` is a fabric adapter with M:N tagged sockets, explicit placement, bounded concurrent detailed calls, and construction-selected detailed/fast timing. A-3 and Steps 10.1, 10.3, 10.5 and 11 are done |
+| P11 | CDC-VP CMake component/install/export | Header-only interface target plus the compiled `cdc::components::noc_interconnect`. Step 10.4's registered packaging regression proves clean-prefix installation and independent downstream consumption of the compiled target |
+| P12 | Platform assembly and packaging | `platforms/noc_soc` assembled and running. `noc_soc_packaging_regression` rebuilds the self-contained package under a private root and checks exact `$ORIGIN` RPATH, local SystemC resolution, runtime execution, licences and provenance |
+| P13 | RISC-V/SoC traffic validation | Real firmware (`fw/dma_riscv`) reaches `DMA PASS` in detailed and fast timing; survey matches all bytes in both. Step 10.1 makes traffic ownership explicit and rejects an ELF claiming the reserved page. Automated as `noc_soc_firmware_regression`. Step 11 separates ~53.14 modeled ns/instruction from the recorded 8.12 s versus 0.08 s host measurements |
+| P14 | Coexistence and maintenance | Implemented. Step 10.3 proves detailed-model clock gating; Step 11 adds the construction-selected fast backend and calibration/firmware gates without weakening the detailed path |
 
 ### 5.1 Clock-gating interpretation
 
@@ -463,7 +461,7 @@ floo_noc_model/
   src/
     noc_interconnect.cpp         <- A-3 TLM-to-signal adapters; only compiled TU
   tests/
-    CMakeLists.txt               <- registers 35 tests
+    CMakeLists.txt               <- registers 37 tests
     test_reference_model.cpp
     test_stream_fifo.cpp
     test_xy_route_select.cpp
@@ -476,6 +474,8 @@ floo_noc_model/
     test_rob_order_gate.cpp
     test_axi_endpoint.cpp
     test_noc_interconnect_stress.cpp <- Step 10.3 three-manager scoreboard
+    test_noc_interconnect_concurrency.cpp <- Step 10.5 same-port queue/slots
+    test_noc_interconnect_fast.cpp <- Step 11 detailed/fast calibration
     test_axi_noc.cpp
     test_axi_noc_chimney.cpp     <- A-2 signal-driven composition
     test_noc_interconnect.cpp    <- A-3 TLM wrapper + 1/6-hop calibration
@@ -889,7 +889,7 @@ Two properties learned while signing this, recorded because they will recur:
 
 ### 10.1 Standalone SystemC regression
 
-Thirty-five tests pass with GCC 11.5.0 and SystemC 2.3.4:
+Thirty-six tests pass with GCC 11.5.0 and SystemC 2.3.4:
 
 | Test | Verified behavior |
 |---|---|
@@ -903,8 +903,10 @@ Thirty-five tests pass with GCC 11.5.0 and SystemC 2.3.4:
 | `test_axi_noc_chimney` | A-2 signal composition: timed source and target chimneys over a 2x2 mesh; two-beat write, three-beat read, B/R back-pressure, downstream-ID rewrite/restoration, metadata/RoB release and no wrong-node leakage |
 | `test_noc_interconnect` | The TLM wrapper contract through A-3's timed chimney path: payload validation; byte-enable/`WSTRB` and lane placement; error classification; region guards; delay rounding; reset and idle wake-up; bounded concurrent second-manager scoreboard; sparse and maximum-length bursts; widened-read policy; top-of-address-space accesses; all four AXI response mappings; and target-delay exclusion. Its 4x4 no-contention calibration is pinned at **10 network cycles for one hop and 30 for six** |
 | `test_noc_interconnect_stress` | Step 10.3 bounded deterministic-random stress: three staggered managers contend for one delayed RAM with 1/2/4/6/8/13/24-byte and sparse multi-beat transfers. Per-requester byte/completion scoreboards, target records, per-transaction deadlines and a global watchdog cover requester attribution, response/order, the half-cycle arrival window, odd tails, error routing, whole-network quiescence and idle wake-up |
+| `test_noc_interconnect_concurrency` | Step 10.5 launches seven calls from independent SystemC threads through one upstream socket. With capacity set to two it proves saturation/back-pressure, separate read/write FIFO order, simultaneous B/R ownership, data/error ownership, slot release, per-transaction target-delay exclusion and final quiescence |
+| `test_noc_interconnect_fast` | Step 11 drives identical traffic through detailed and fast instances over one through six hops, 1/2/4/8-byte widths and 32-byte bursts. The hard tolerance is one cycle. It also checks incoming annotation, rounded target delay, zero internal time advance, error/data/target-effect equivalence, sparse unaligned writes, exception-time slot cleanup and mesh bypass. This is model-to-model calibration, not RTL equivalence |
 | `test_axi_lanes` | `AxSIZE`, `AxLEN`, lane offset and per-beat `WSTRB` for 13 address/length shapes, plus byte-enable holes and short repeating enable arrays. Checked on the fields themselves, not through a target, because a packing error and a matching unpacking error cancel |
-| `test_noc_interconnect_bad_config` | Configurations refused before any traffic: zero or more than eight upstream ports for the frozen 3-bit ID; a non-positive clock period; self-node target/manager placements; invalid/overlapping regions; and proof rejected calls preserve slots and placement |
+| `test_noc_interconnect_bad_config` | Configurations refused before any traffic: zero or more than eight upstream ports for the frozen 3-bit ID; per-port outstanding capacity outside 1..32; unknown timing backend; a non-positive clock period; self-node target/manager placements; invalid/overlapping regions; and proof rejected calls preserve slots and placement |
 | `test_axi_lanes_odr` | Two translation units including `axi_lanes.hpp` in one link. The only test that can catch a missing `inline` |
 | `test_axi_chimney_manager_response` | The manager-side response unpacker: channel decode, per-channel back-pressure, and the AW→B / AR→multi-beat-R counter release loop |
 | `test_noc_counters` | Hand-derived accept/stall/high-water counts, per-port identities, conservation across a drained router |
@@ -1778,12 +1780,37 @@ responses preserve the required order; the `NoRoB` gate separately allows
 multiple requests of the same input ID to the same destination, up to its
 counter capacity.
 
-The present CDC-VP wrapper nevertheless allows at most one transaction in flight
-per upstream TLM port because `noc_interconnect` has one waiter per port and
-holds `port_busy` until that transaction completes. The observed **+9-cycle**
-worst contention is consequently a result for the current wrapper, three-master
-platform and workload, not a limitation of the frozen RTL architecture. Step
-10.5 must distinguish wrapper concurrency from downstream-ID configuration.
+Step 10.5 removes the former wrapper-only one-in-flight limit. Each upstream
+TLM port now admits a bounded number of calls (default and hard maximum 32),
+queues manager requests, and retains one completion record per call.
+Independent B and R waiter FIFOs preserve the selected one-ID ordering rule.
+The constructor may lower the bound to apply earlier back-pressure.
+
+This does **not** enable the `MaxUniqueIds > 1` branch. There is no current SoC
+requirement for downstream out-of-order matching, and enabling it would require
+new RTL evidence for `floo_meta_buffer.sv`'s `id_queue`, allocation, matching
+and back-pressure. The previously measured **+9-cycle** contention remains a
+historical baseline for the old single-waiter wrapper and its exact workload;
+it is not the Step 10.5 throughput result.
+
+Step 11 adds a second timing backend without adding a second functional
+interconnect. `timing_mode::fast` uses the same validation, decode, lane/byte-
+enable shaping, mapped target call and response classification as detailed
+mode. It bypasses mesh evaluation and annotates:
+
+```text
+read  = 4 * Manhattan_hops + 6 + (beats - 1) cycles
+write = 4 * Manhattan_hops + 6 + beats       cycles
+```
+
+The target's own delay is rounded up per access in both modes. Fast mode's
+interconnect code preserves incoming local time and never waits; its downstream
+targets must also annotate latency rather than call `wait()` in their own
+`b_transport`. Detailed mode spends the incoming annotation and returns zero.
+The fast estimate is explicitly
+**no-contention**: it does not claim link back-pressure, packet locks, FIFO/
+metadata occupancy, contention or clock-gating activity. Blocking-call order
+and functional target effects remain preserved.
 
 ### 13.5 Verification gaps
 
@@ -1795,6 +1822,12 @@ platform and workload, not a limitation of the frozen RTL architecture. Step
   or exhaustive liveness proof.
 - No throughput/latency regression thresholds.
 - No AXI protocol checker.
+- Assert-enabled detailed `noc_soc` still exposes its intentional contract
+  mismatch with Bremen: detailed mode spends incoming delay and returns zero,
+  while the CPU requires nondecreasing local annotation. Step 11 closes the
+  platform need with fast mode, which preserves/increases the annotation and
+  reaches `DMA PASS` in an assert-enabled build. Do not use detailed mode with a
+  caller whose quantum keeper requires LT semantics.
 - ~~No automated platform-level test.~~ Closed by Step 10.2. Until then the
   firmware run was manual, which is why the component tests — 28 of them at the
   time — did not catch the bug in section 13.10.
@@ -1885,10 +1918,13 @@ Three independent controls keep the proof meaningful:
 - A-3 no longer translates a blocking TLM transaction into one atomic NoC
   action: AW, each W beat, AR, B and R handshake independently. Step 10.3 now
   stresses those adapters under three-initiator contention.
-- **`b_transport` spends simulated time** rather than annotating `delay`. A
-  caller relying on temporal decoupling will find its quantum consumed. No step
-  currently resolves this; a platform that needs a global quantum has to decide
-  whether the NoC opts out of it, and that decision is unmade.
+- **The timing backend must match the caller's synchronization contract.**
+  Detailed `b_transport` spends simulated time and returns zero, so a caller
+  requiring nondecreasing quantum-keeper annotation must not use it. Step 11
+  closes the long-run platform requirement with fast mode: the interconnect
+  preserves/increases `delay` and does not wait. Fast-mode downstream targets
+  must follow the same LT convention and annotate their latency; a target that
+  calls `wait()` still advances global time and violates that contract.
 - Address ownership and the M:N socket topology are implemented from the CDC-VP
   platform map. `noc_soc` additionally requires exactly one execution mode:
   survey owns its reserved RAM page, peripheral walk and DMA0 experiment;
@@ -1904,14 +1940,24 @@ Three independent controls keep the proof meaningful:
   refuses anything else before instantiating the mesh; do not widen that limit
   without changing and verifying the chimney configuration.
 
-### 13.8 Licensing/provenance audit
+### 13.8 Licensing/provenance audit — CLOSED (2026-08-01)
 
 Hardware-derived files use SPDX `SHL-0.51`; some reference/test files use
-SPDX `Apache-2.0`. The component currently ships `LICENSES/SHL-0.51.txt`.
+SPDX `Apache-2.0`. All 18 installed FlooNoC headers have one of those two
+identifiers: 15 SHL-0.51 and 3 Apache-2.0.
 
-Before packaging, audit whether an Apache-2.0 license text and a provenance file
-must also be installed. Do not remove existing SPDX headers. The final SDK must
-ship all required license and provenance material for code compiled into it.
+The clean-prefix development package installs both licence texts, the CDC-VP
+NOTICE and `PROVENANCE.md` under
+`share/licenses/cdc-components/floo_noc_model`. The provenance record pins
+FlooNoC, common_cells and axi to the exact revisions used by the model and
+distinguishes RTL-derived headers from original CDC-VP integration code.
+
+The `noc_soc` binary bundle additionally contains the Bremen RISC-V VP MIT
+licence and `THIRD_PARTY.md`, because the CPU is linked statically, plus the
+Apache-2.0 text applicable to CDC-VP and the bundled SystemC runtime. Preserve
+these package commands whenever a new static or copied runtime dependency is
+added. `noc_soc_packaging_regression` is the executable audit for this section;
+do not replace it with an unrecorded manual sign-off.
 
 ### 13.9 Repository hygiene
 
@@ -2006,8 +2052,10 @@ while the probe linker placed its stack at the top of a 1 MiB region.
 - Standalone model regression: **28/28 CTest tests passed** from a clean build
   directory.
 
-Do not remove `port_busy`/`port_free` or change `MaxUniqueIds` as a fix for this
-incident; neither was causal.
+The old `port_busy`/`port_free` serialization and `MaxUniqueIds` were not causal
+for this incident. Step 10.5 later replaced the serialization with a complete
+per-transaction design; it did not change the ownership split or
+`MaxUniqueIds`.
 
 ### Three wrapper bugs already found and fixed during this work
 
@@ -2019,9 +2067,10 @@ them were visible with a single manager on the mesh:
   process could push a request into a manager during that wait, and the flit
   was popped without ever being driven — it vanished. Fixed by remembering what
   was actually driven.
-- **Hold-off underflow.** The target's access latency was discounted from every
-  waiting transaction, which underflows as soon as more than one is in flight.
-  Fixed by charging it to the requesting node, keyed by the request's `src_id`.
+- **Hold-off underflow.** The target's access latency was once discounted from
+  every waiting transaction. A-3 first keyed it by requesting node; Step 10.5
+  completed the fix for same-port concurrency by retaining the delay with each
+  direction's FIFO-ordered completion.
 - **Front-versus-back mix-up.** `axi_subordinate_endpoint::pending_*()` returned
   the *oldest* outstanding request while `absorb_request` used them to describe
   the request that had just **arrived**. With one manager the two are the same
@@ -2042,16 +2091,16 @@ that already hosts an upstream port. `floo_router` defaults to
 undeliverable and wedges that port for good — the platform hung silently the
 first time the boot ROM was put on the CPU's node.
 
-## 14. Step history and required next work
+## 14. Step history and continuation policy
 
-Steps 1 to 9.2 are done; each entry records what it produced and, where it
+Steps 1 through 11 are done; each entry records what it produced and, where it
 applies, what defect it found. Read those before touching the block they signed —
 several of them exist because an earlier assumption was wrong, and the reasoning
 matters more than the result.
 
-Step 10 is implemented but unsigned. **Its sub-steps do not run in numeric
-order**; the execution order and the reason for it are in the table under Step 10.
-Step 11 is unstarted.
+Step 10's sub-steps did not run in numeric order; the execution order and the
+reason for it remain in the table as history. Step 11 is complete; there is no
+later numbered roadmap item.
 
 ### Step 1 — RTL cross-check the FIFO — DONE (2026-07-28)
 
@@ -2356,20 +2405,18 @@ with **no ID matching**; the `id_queue` keyed by AXI ID is the
 order per direction. One destination gives that; two do not, because `NoRoB`
 only serialises the *same* AXI ID to a different destination. The v0 integration
 must therefore prevent transactions sharing one metadata FIFO from returning
-out of order — the current wrapper's single input ID plus its one-in-flight
-policy does so — or freeze a configuration with multiple downstream IDs and
-ID-based response matching. Derived from the RTL text, not demonstrated against
-a full-system RTL simulation.
+out of order or freeze a configuration with multiple downstream IDs and
+ID-based response matching. Step 10.5 chooses the former: one input/downstream
+ID, FIFO manager-request queues, and separate FIFO B/R completion owners.
+`NoRoB` prevents the same input ID changing destination while requests remain
+outstanding, and same-destination traffic retains channel order.
 
 Later clarification: this constrains response ordering and downstream-ID use; it
-does **not** mean only one request may be outstanding. See the corrected current
-state in section 13.4. The CDC-VP wrapper's one-in-flight limit is imposed by
-`port_busy` and its single waiter, not by this metadata FIFO.
-
-**Still not signed:** inter-node timing (needs the generated top elaborated
-against the model — the harness does not exist), the chimney's response-path
-timing and subordinate side, and the endpoint transactors themselves, which
-have no RTL counterpart.
+does **not** mean only one request may be outstanding. See the implemented
+bounded concurrency state in section 13.4. The FIFO/NoRoB behavior is
+RTL-signed at leaf level; the wrapper request/completion queues are model-level
+integration code with no RTL counterpart and are covered by
+`test_noc_interconnect_concurrency` plus mutation controls.
 
 ### Step 9.1 — Sign the chimney response path and subordinate side — DONE (2026-07-29)
 
@@ -2454,24 +2501,26 @@ Together they had all nine nodes deadlocked by cycle 139 of 208. **Check the
 stimulus is still live before trusting a pass** — count the last cycle each
 node accepted an injection.
 
-### Step 10 — CDC-VP TLM integration — IMPLEMENTED; SIGN-OFF NEXT
+### Step 10 — CDC-VP TLM integration — IMPLEMENTED AND SIGNED OFF
 
-The handoff previously called the integration design the next step, but the
-code has moved past that point:
+This is a historical checkpoint. The handoff previously called the integration
+design the next step, but the code has moved past that point:
 
 - `noc_interconnect` presents a `bus_router`-like TLM target interface plus
   multiple tagged upstream ports and explicit mesh placement;
 - `platforms/noc_soc` instantiates a 4x4 network with CPU, DMA, and survey
   managers, and routes RAM plus the SoC peripheral map through it;
-- blocking TLM accesses spend simulated time while traversing the network;
+- detailed blocking TLM accesses spend simulated time while traversing the
+  network; Step 11 later added the fast annotated backend;
 - `network_idle()` stops mesh clock evaluation when there is no in-flight
   work, and the `work` event restarts it;
 - `test_noc_interconnect` covers the wrapper contract at component level;
 - real SoC-map DMA firmware reaches `DMA PASS` through the NoC.
 
-The integration is therefore a working proof of implementation, not a design
-task. The next work is to turn that proof into a stable, automated contract.
-Do not restart the socket-topology design from scratch.
+The integration was therefore a working proof of implementation, not a design
+task. Steps 10.1 through 10.5 and Step 11 subsequently turned that proof into
+the current automated contract. Do not restart the socket-topology design from
+scratch.
 
 #### Execution order — the single authoritative list
 
@@ -2492,9 +2541,9 @@ that says nothing.
 | 7 | **A-3** — drive it from `noc_interconnect` | **done** (2026-07-31): cycle-driven AW/W/AR/B/R, 34/34 tests, relevant RTL cross-checks and firmware regression pass; baseline 10/30 cycles |
 | 8 | **10.3** — stress the TLM layer that remains above the chimney | **done** (2026-08-01): 35/35 tests, 32/32 controls, all RTL cross-checks and rebuilt platform regression pass |
 | 9 | **10.1** — separate survey and firmware ownership | **done** (2026-08-01): mandatory mutually exclusive modes, zero synthetic firmware traffic, enforced ELF scratch reservation |
-| 10 | **10.4** — install, packaging, licensing | **current** |
-| 11 | **10.5** — wrapper concurrency, and separately `MaxUniqueIds > 1` | |
-| 12 | **11** — the fast approximately-timed mode | |
+| 10 | **10.4** — install, packaging, licensing | **done** (2026-08-01): clean-prefix consumer, portable bundle run, `$ORIGIN` RPATH, licences and provenance |
+| 11 | **10.5** — wrapper concurrency, and separately `MaxUniqueIds > 1` | **done** (2026-08-01): bounded same-port queues/slots, FIFO completion ownership; one downstream ID retained |
+| 12 | **11** — the fast approximately-timed mode | **done** (2026-08-01): calibrated LT backend, both firmware modes, 37/37 tests and 39/39 controls |
 
 **Why 10.3 sat after A-3.** A-3 removed the abstract endpoints from the
 production path, so stressing them first would have targeted code scheduled for
@@ -2658,57 +2707,121 @@ All acceptance criteria pass:
   `noc_soc_firmware_regression` CTest (1/1), and the fresh standalone component
   suite remains 35/35.
 
-### Step 10.4 — Prove install, packaging, and licensing
+### Step 10.4 — Prove install, packaging, and licensing — DONE (2026-08-01)
 
-Once integration regressions pass:
+All sign-off requirements pass and are reproduced by one registered runner:
 
-- install into a clean prefix with `cmake --install`;
-- build a minimal external consumer using only the installed package, linking
-  `cdc::components::noc_interconnect` rather than the header-only target;
-- run the packaged `noc_soc` outside the build tree and verify SystemC RPATH;
-- exercise `cdc_make_portable` and `cdc_package_platform`;
-- audit Apache-2.0 and SHL-0.51 license texts plus source provenance;
-- update `STATUS.md`, the verification matrix, and this handoff.
+```bash
+./platforms/noc_soc/tests/run_packaging_regression.sh
+```
 
-Sign-off requires a clean-prefix consumer and packaged-platform run, not only
-a successful in-tree link.
+`noc_soc_packaging_regression` is also registered in the parent CTest suite
+with labels `packaging;distribution`. It configures a fresh Release child build
+with its own install prefix and `CDC_PACKAGE_ROOT`; the inner build disables
+tests, so running this gate cannot recursively register itself. Temporary roots
+also prevent two jobs from deleting or overwriting the same `out/noc_soc`.
+Verified after automation on 2026-08-01: the registered CTest passes 1/1 in
+29.30 seconds; retained direct-run evidence is under
+`/tmp/floo_noc_packaging_regression.IkFfCD`.
 
-### Step 10.5 — Decide the required outstanding concurrency and downstream-ID policy
+- a Release parent build installs successfully into the empty prefix
+  created for that run;
+- the independently configured fixture
+  `tests/installed_consumer` uses only
+  `find_package(cdc-components CONFIG REQUIRED)` and links the compiled
+  `cdc::components::noc_interconnect`; it prints
+  `installed noc_interconnect consumer PASS`;
+- `noc_soc_package` exercises both `cdc_make_portable` and
+  `cdc_package_platform`, producing `out/noc_soc` outside the build tree;
+- the packaged executable has exactly `RPATH=$ORIGIN`, with no build directory
+  or `/opt/systemc` fallback, and `ldd` resolves `libsystemc.so.2.3` beside the
+  executable;
+- with `LD_LIBRARY_PATH` removed, the packaged survey reports all bytes match,
+  and the complete packaged-binary firmware regression also reaches
+  `DMA PASS`;
+- all 18 installed headers carry an expected SPDX identifier; the installed
+  package and binary bundle contain byte-identical Apache-2.0, SHL-0.51 and
+  FlooNoC provenance records. The binary bundle additionally ships the static
+  CPU's MIT licence, CDC-VP NOTICE and third-party inventory.
 
-Do this only after the remaining Step 10.4 passes; Steps 10.1, 10.2 and 10.3
-are already done.
+The runner compares the installed header manifest to the source manifest before
+counting SPDX identifiers, so a newly added header cannot silently disappear
+from the install set. It scopes the 18-header claim to
+`include/floo_noc_model`; unrelated component headers in the parent prefix are
+not incorrectly charged to this gate. It reuses
+`run_firmware_regression.sh` through `NOC_SOC_BIN` rather than maintaining a
+second firmware oracle.
 
-Separate two decisions that the earlier roadmap incorrectly combined:
+The original `cdc_make_portable` implementation left
+`$ORIGIN:/opt/systemc-2.3.4/lib64` in the build executable copied into the
+bundle. `BUILD_WITH_INSTALL_RPATH=TRUE` now makes the packaged build-tree
+binary use the intended install RPATH, while
+`INSTALL_RPATH_USE_LINK_PATH=FALSE` prevents absolute host link paths from
+being appended.
 
-1. **Concurrent outstanding transactions at one TLM upstream port.** The frozen
-   `MaxUniqueIds = 1` branch has read and write metadata FIFOs of depth
-   `MaxTxns = 32`; it does not impose a one-outstanding limit. The current limit
-   comes from `noc_interconnect` using one waiter and one `port_busy` bit per
-   port. A concurrency implementation needs a per-transaction queue or slot,
-   unambiguous completion association, bounded capacity, and ordering tests. It
-   can initially retain `MaxUniqueIds = 1` when responses are guaranteed to
-   preserve FIFO order.
-2. **Multiple downstream AXI IDs and out-of-order response matching.** If the
-   requirement needs these, freeze a new configuration with
-   `MaxUniqueIds > 1` and cross-check the `id_queue` branch of
-   `floo_meta_buffer.sv`, ID allocation/matching and back-pressure against RTL.
+### Step 10.5 — Outstanding concurrency and downstream-ID policy — DONE (2026-08-01)
 
-`MaxUniqueIds` and `BRoBType`/`RRoBType` are independent configuration fields.
-Raising `MaxUniqueIds` does not by itself replace `NoRoB`. Re-sign
-`rob_order_gate.hpp` or model another RoB branch only if the frozen RoB type also
-changes.
+The two decisions are closed separately.
 
-Do **not** obtain more traffic by merely deleting `port_busy`. The existing
-wrapper has only one waiter and one completion record per port, so that shortcut
-would lose transaction association. Redesign the wrapper state and tests first.
+1. **Concurrent calls at one TLM upstream port: implemented.**
+   `noc_interconnect` now admits a bounded number of `b_transport` calls per
+   port, queues their manager requests, and keeps one caller-owned waiter until
+   the matching completion. B and R have independent FIFO waiter queues because
+   the frozen metadata has independent write/read FIFOs. The constructor bound
+   defaults to 32, may be lowered, and is rejected outside 1..32.
+2. **Multiple downstream AXI IDs: not required and not enabled.**
+   `MaxUniqueIds = 1`, `NoRoB`, and the all-ones downstream reissue ID remain
+   frozen. No current CDC-VP/noc_soc requirement needs out-of-order downstream
+   matching. Enabling `MaxUniqueIds > 1` would be a separate future feature
+   requiring a new configuration and an RTL cross-check of
+   `floo_meta_buffer.sv`'s `id_queue`, ID allocation/matching and
+   back-pressure.
 
-The current three-manager platform's observed worst contention of **+9 cycles**
-is a useful baseline for that exact implementation and workload. It is not proof
-that the frozen configuration or a 4x4 FlooNoC cannot congest.
+The former `port_busy` deletion is therefore not the implementation. It is
+replaced by:
 
-Virtual channels, ATOPs, collectives, multicast, reduction, and the
-narrow-wide network remain deferred until an SoC requirement explicitly needs
-them.
+- a per-node FIFO of manager requests, each pointing to its suspended caller;
+- a per-port admission count and event, with current/peak diagnostics;
+- independent FIFO B/R completion-owner queues;
+- independent per-port B/R target-delay FIFOs, so one completion cannot consume
+  another outstanding call's peripheral delay;
+- completion-time slot release and whole-wrapper quiescence checks that include
+  every queue and sideband.
+
+`test_noc_interconnect_concurrency` uses seven SystemC traffic threads on one socket and
+a configured bound of two. It proves the bound saturates but is never exceeded,
+reads and writes complete in FIFO issue order, simultaneous B/R traffic retains
+separate owners, data and error status return to the correct callers, each call
+excludes only its own target delay, all slots release, every access completes
+once, and wrapper plus mesh drain to quiescence. Invalid bounds 0 and 33 are covered by
+`test_noc_interconnect_bad_config`.
+
+Verification evidence at the Step 10.5 close (Step 11 later raises the totals):
+
+- focused `test_noc_interconnect`, stress, concurrency and bad-config tests:
+  4/4 pass;
+- automated negative controls then: **35 detected, 0 missed**, including the four
+  new same-port mutations for response owner, capacity off-by-one, reversed
+  request order and dropped target delay;
+- fresh full component regression then: **36/36 pass**;
+- a fresh **Release** parent build passes
+  `noc_soc_firmware_regression` 1/1 (`DMA PASS` plus survey). The supported
+  platform command has always selected Release.
+
+An assert-enabled parent build exposes a pre-existing timing-contract mismatch,
+not a Step 10.5 queue failure: `noc_interconnect` spends an incoming annotated
+delay and returns zero, while Bremen's `CombinedMemoryInterface` asserts that a
+target never decreases its quantum-keeper local delay (`mem.h:65`). Release
+disables that upstream `assert`, which is why the signed firmware regression
+passes. Do not hide this as concurrency evidence. Step 11 later resolved the
+long-run need with a separate fast backend that preserves/increases annotation;
+the detailed backend deliberately retains its spending contract.
+
+`MaxUniqueIds` and `BRoBType`/`RRoBType` remain independent configuration
+fields. Raising `MaxUniqueIds` would not itself replace `NoRoB`; change and
+re-sign the RoB only if a future frozen configuration changes that field too.
+Virtual channels, ATOPs, collectives, multicast, reduction, and the narrow-wide
+network remain deferred until an SoC requirement explicitly needs them.
 
 ### Step A — Compose the signed chimney into the datapath — DONE (2026-07-31)
 
@@ -2879,66 +2992,80 @@ This completes the timed datapath integration, not a new monolithic RTL
 cross-check. The TLM adapters remain model-only code; Step 10.3 subsequently
 covered them with bounded three-manager stress and mutation controls.
 
-### Step 11 — Build the fast approximately-timed mode — THE POINT OF ALL THIS
+### Step 11 — Build the fast approximately-timed mode — DONE (2026-08-01)
 
-Not started, and the largest unscheduled item in the project. Section 5 requires
-a decision on the H1/coexistence path; `platforms/noc_soc/README.md` closes with
-"this one to calibrate, and an approximately-timed model for long runs. This
-platform is the calibration reference." Nothing calibrates against it yet, so
-the roadmap and the README currently disagree.
+The H1/H2 coexistence decision is closed with **one interconnect class and two
+construction-selected timing backends**:
 
-The post-A-3 platform reports about **53.2 ns of modeled target time per retired
-instruction** while fetching through the mesh; the pre-A-3 value was about
-52.5 ns. That is an accuracy/calibration number, not evidence of simulator
-speed. Per-cycle evaluation is expected to be more expensive than an
-approximately-timed calculation, but Step 11 must first measure that cost on
-the same host and workload. Report retired instructions per host second, host
-seconds per simulated microsecond, or real-time factor before claiming that a
-fast mode is required for OS boot.
+- `timing_mode::detailed` is unchanged as the calibration reference. It drives
+  AW/W/AR/B/R through the timed chimneys and mesh, spends incoming and network
+  time, and returns zero annotation.
+- `timing_mode::fast` shares validation, address decode, AXI lane/byte-enable
+  shaping, target replay, target-error mapping and placement. It terminates the
+  private mesh clock process, never injects a flit, preserves incoming local
+  time and returns its estimate in `delay`.
 
-Why an approximately-timed backend is now tractable: the no-contention platform
-samples follow approximately **4 cycles per hop plus a fixed cost**, consistent
-with the input and output spill registers in each traversed router. Treat this as
-a calibration hypothesis, not a universal exact law. Verify it over more hop
-counts, access widths and bursts; contention and back-pressure require either an
-explicit approximation or a declared out-of-scope condition.
+The fast estimate is pinned in code and test:
 
-Suggested shape:
+```text
+read  cycles = 4 * Manhattan_hops + 6 + (beats - 1)
+write cycles = 4 * Manhattan_hops + 6 + beats
+```
 
-- one interconnect class, two timing back-ends chosen at construction;
-- the fast back-end annotates `delay` instead of spending simulated time, which
-  also resolves the temporal-decoupling risk in section 13.7;
-- a host-performance baseline for the detailed cycle-stepped backend before the fast
-  backend is implemented;
-- a calibration test that runs the same stimulus through both back-ends and
-  requires the fast one to stay within a declared tolerance of the signed one,
-  per hop count and per access width;
-- the tolerance is a number in the test, not a comment. If it has to be widened,
-  that is a visible diff.
+The request/response split presents estimated request arrival time to the
+target. The target's incremental annotation is then rounded up to the next
+network cycle, matching detailed mode, before the response estimate is added.
+A target that decreases the annotation is rejected. The interconnect itself
+does not wait; downstream targets selected for fast mode must likewise annotate
+latency rather than call `wait()` inside `b_transport`.
 
-Acceptance criteria:
+`test_noc_interconnect_fast` instantiates both backends and applies the same
+stimulus over one through six hops, 1/2/4/8-byte accesses and 32-byte bursts.
+The declared calibration tolerance is **one cycle**. It separately verifies
+zero fast-mode internal time advance, incoming-delay preservation, rounded
+1.5-cycle target delay, read/write data and target effects, subordinate errors,
+sparse unaligned byte enables, target-exception slot cleanup, quiescence and
+mesh bypass. This is model-to-model calibration; it is not a thirteenth RTL
+cross-check.
 
-- the fast mode reproduces the **end-to-end latency figures in section 13.1**
-  within the declared tolerance. Not section 10.11: that table lists cross-check
-  *trace lengths* — 141 cycles, 1872 node-cycles — which are how much stimulus
-  each harness ran, not latency targets. Confusing the two would have the fast
-  mode calibrated against a number that means nothing about latency;
-- use the post-A-3 calibration baseline: the integrated signal-driven path is
-  now **10 cycles at one hop and 30 at six**, excluding target delay. The
-  legacy abstract-endpoint figures were 11 and 30. The post-A-3 platform
-  reports ~53.2 ns of modeled target time per retired instruction; Step 11
-  still needs a separate host-performance baseline;
-- `fw/dma_riscv` reaches `DMA PASS` in both modes;
-- accuracy is compared in modeled target time, while speedup is measured
-  separately in host wall-clock metrics on the same workload, build type,
-  machine and measurement window;
-- the detailed cycle-stepped mode remains the calibration reference, and every
-  published timing number states whether its complete path is RTL-signed or
-  includes the abstract TLM integration layer.
+The approximation boundary is explicit: fast mode does not estimate
+contention, link back-pressure, router/packet locks, FIFO or metadata occupancy,
+or clock-gating activity. It preserves blocking-call invocation order and
+functional effects. Use detailed mode for congestion and cycle-accurate
+questions.
 
-Do not delete or weaken the detailed path to make the fast one look good. Its
-signed blocks and model-level integration measurements are the references that
-give the fast mode its claim to accuracy.
+Verification evidence:
+
+- full component regression: **37/37 pass** with GCC/G++ 11.5.0 and SystemC
+  2.3.4;
+- mutation gate: **39 detected, 0 missed**. Four Step 11 mutations independently
+  remove hop cost, incoming delay, target-delay ceiling and functional target
+  replay;
+- Release `noc_soc_firmware_regression`: 1/1 pass. The script runs firmware and
+  survey in both timing modes; firmware reaches `DMA PASS` in each;
+- assert-enabled fast firmware: `DMA PASS`, so Bremen's nondecreasing quantum-
+  keeper assertion is satisfied without relying on `NDEBUG`;
+- detailed RTL-facing blocks remain unchanged; the twelve existing RTL
+  cross-checks remain the hardware evidence.
+
+Host performance and modeled accuracy were measured separately on the same
+AlmaLinux host, Release binary, ELF and 2 ms firmware window:
+
+```text
+timing     host wall   retired   modeled active time   ns/instruction
+detailed   8.12 s      10726     570 us                53.1419
+fast       0.08 s      10726     570 us                53.1419
+```
+
+This single sample is about **101x** faster. It is not a performance guarantee;
+host load, compiler/build type and window must accompany any future number.
+Modeled time is the calibration result, while host wall time is the speed
+result.
+
+Detailed mode still intentionally violates Bremen's LT expectation by spending
+incoming local time. That is no longer hidden: `noc_soc --noc-timing fast` is
+the temporal-decoupling/long-run path, and `--noc-timing detailed` is the
+cycle-stepped reference.
 
 ---
 
@@ -2957,7 +3084,7 @@ The v0 slice is not complete until all of the following are true.
 | measured timing is separated from analytic estimates | **met** — `noc_counters.hpp` has no analytic tier; keep it that way |
 | CDC-VP integration reflects a fabric, not a fake accelerator peripheral | **met** — `noc_interconnect` is an M:N fabric adapter |
 | the network clock stops only at proven quiescence | **met** — production gating requires wrapper idle and exported mesh/chimney quiescence; section 13.6b |
-| licensing and provenance are complete | **NOT met** — see 13.8; closes in Step 10.4 |
+| licensing and provenance are complete | **met** — `noc_soc_packaging_regression` byte-compares the clean-prefix and binary-package records: Apache-2.0, SHL-0.51, NOTICE, pinned FlooNoC provenance, CPU MIT and third-party inventory |
 | **the datapath uses the cycle-accurate blocks from AXI manager port to AXI subordinate port** | **met at model integration level** — A-3 drives the timed `axi_noc` cycle by cycle; every selected block is individually RTL-signed, but there is no monolithic full-path RTL harness |
 
 Two further criteria that were implicit and should be explicit:
@@ -2967,14 +3094,13 @@ Two further criteria that were implicit and should be explicit:
 | the unsigned integration layer has scoreboard-driven multi-initiator stress | **met** — Step 10.3 adds bounded deterministic-random three-manager stress, per-transaction deadlines, a global watchdog and seven mutation controls |
 | a platform-level regression runs real firmware unattended | **met** — `noc_soc_firmware_regression`, Step 10.2 |
 
-**Two criteria are unmet.** Counted here explicitly so the prose and the tables
+**One criterion is unmet.** Counted here explicitly so the prose and the tables
 remain mechanically consistent:
 
 1. every included leaf has a direct standalone test — `rr_arb_tree.hpp` and
    `meta_buffer.hpp` do not have one;
-2. licensing and provenance are complete — section 13.8, Step 10.4.
 
-Nothing in this list requires Step 10.5 or Step 11; those are beyond v0.
+Step 10.5 and Step 11 were beyond this original v0 gate; both are now complete.
 
 ---
 
@@ -3077,88 +3203,48 @@ Verilator limitations hit so far, all worked around in the harnesses:
 
 The next AI can be given this task:
 
-> Read `docs/AI_HANDOFF_CONTEXT.md`, then continue **Step 10.4**, the current
-> item in section 14's authoritative order. Anchor every NoC behavioural
-> decision in the FlooNoC IP at
+> Read `docs/AI_HANDOFF_CONTEXT.md`. The numbered roadmap through **Step 11 is
+> complete**; do not silently invent a Step 12. Review the requested new work
+> against the remaining verification gaps in sections 13.5, 13.6 and 15, and
+> get an explicit scope decision before opening a new feature. Anchor every NoC
+> behavioural decision in the FlooNoC IP at
 > `/home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC` (upstream
 > `https://github.com/pulp-platform/FlooNoC.git`), and in the CDC-VP platform for
 > the socket side.
 >
-> Twelve isolated RTL cross-checks are indexed in section 10.11, covering the
-> selected router, FIFO, arbitration, chimney and mesh timing blocks. A-3 is
-> complete: `noc_interconnect` now drives the timed `axi_noc` through
-> cycle-by-cycle manager AW/W/AR and subordinate B/R. `axi_endpoint.hpp` is
-> legacy reference/test code only. Do not overstate the integrated path as one
-> monolithic RTL cross-check: its hardware blocks are signed individually, but
-> the TLM adapters have no direct RTL counterpart. Step 10.3 is also complete:
-> their model-level evidence is a bounded deterministic-random three-manager
-> scoreboard, explicit quiescence proof, and seven focused mutation controls.
+> Preserve the Step 10.5 decision and evidence. One upstream TLM port supports
+> bounded concurrent calls through per-transaction request slots and separate
+> FIFO B/R completion owners. The bound defaults to 32 and is restricted to
+> 1..32. `MaxUniqueIds = 1`, `NoRoB`, and the constant downstream reissue ID
+> remain frozen; no current requirement justifies enabling the unverified
+> `id_queue` branch. `test_noc_interconnect_concurrency` and its four mutation
+> controls are the regression gate for that policy.
 >
-> **Follow the ordered table in section 14, not numeric order.** With 10.1,
-> 10.2, A-1/A-2/A-3 and 10.3 done, what remains runs:
+> Preserve Step 11's one-class/two-backend contract. Detailed mode spends time
+> and remains the cycle-stepped calibration reference. Fast mode preserves
+> incoming annotation and uses the no-contention formulas `4*hops+6+(beats-1)`
+> for reads and `4*hops+6+beats` for writes. It shares functional target replay
+> but does not model contention, back-pressure, locks, occupancy or clock
+> gating. The interconnect and every fast-mode downstream target must annotate
+> rather than call `wait()`. `test_noc_interconnect_fast` owns the hard one-cycle calibration
+> tolerance; widening it requires explicit technical justification.
 >
-> ```text
-> 10.4  ->  10.5  ->  11
-> ```
->
-> Step 10.1 is complete. Preserve its mandatory, mutually exclusive
-> `--mode survey|firmware` contract, the zero-synthetic-traffic firmware
-> assertions, the survey RAM/peripheral/DMA coverage, and the pre-construction
-> ELF overlap rejection. Step 10.4 must now prove clean-prefix install, an
-> external installed-package consumer, a packaged out-of-tree `noc_soc` run,
-> RPATH, packaging helpers, licences, and provenance.
->
-> Four constraints to carry in, all established and documented:
->
-> 1. **`MaxUniqueIds = 1`** makes the chimney's metadata a plain in-order FIFO
->    with no ID matching, so responses must preserve FIFO order. It does not
->    impose a one-outstanding limit: the RTL metadata FIFO has depth
->    `MaxTxns = 32`. The current one-transaction-per-port limit comes from the
->    wrapper's single waiter and `port_busy`. The measured +9-cycle contention is
->    a baseline for that wrapper and workload, not proof that a 4x4 FlooNoC cannot
->    congest.
-> 2. **`OutFifoDepth = 2`**, hardcoded by every FlooGen router template. A-3's
->    signal-driven integrated baseline is **10 cycles at one hop and 30 at
->    six**, excluding target delay. The legacy abstract-endpoint path measured
->    11 and 30; 7 and 16 predate the output-FIFO correction.
-> 3. **The RTL timing blocks are signed individually**: chimney request timing,
->    chimney subordinate-side timing, chimney manager-side response (A-1), and
->    the mesh. Every selected v0 block is signed, A-2 model-tests their signal
->    composition, and A-3 integrates them. `noc_counters.hpp` separates
->    measured from derived and has no analytic tier; keep it that way.
-> 4. **The TLM adapters and wrapper have no RTL counterpart** and are not
->    RTL-signable. They are a driver and collector around signed timing blocks.
->    Step 10.3 covers them at model level; preserve its stress, watchdogs,
->    requester scoreboards, quiescence predicate and mutation controls.
->
-> After the ownership split, prove clean-prefix install, external consumer
-> linking, packaged-platform execution, RPATH, licenses and provenance (10.4).
-> Only then decide separately whether the wrapper needs concurrent outstanding
-> transactions and whether the RTL configuration needs `MaxUniqueIds > 1`
-> (10.5). Never remove `port_busy` without replacing the single-waiter completion
-> state with a tested per-transaction design. **Step 11, the fast
-> approximately-timed mode calibrated against this model, is unstarted and is
-> the largest item left. Before claiming that it makes OS boot faster, record a
-> host wall-clock baseline; modeled target time is not simulator
-> throughput.**
+> Twelve isolated RTL cross-checks cover the selected timing blocks, while the
+> TLM adapters have no direct RTL counterpart. Do not call a fast-mode
+> calibration or a model-to-model comparison RTL equivalence. Preserve the
+> full 37-test component regression, 39 mutation controls, dual-timing firmware
+> regression and the registered `noc_soc_packaging_regression`; the latter owns
+> the clean-prefix consumer, portable package/RPATH and licence/provenance
+> gates.
 >
 > Do not open the NPU component for architecture questions. Its CMake shape,
 > test registration, and platform/SDK packaging patterns are reusable; its
 > register map, socket structure, and worker model are not.
 >
-> Harness discipline for any new cycle comparison: synchronous BFM idiom — drive
-> at `clk = 0`, sample pre-edge, raise the clock, sample post-edge, no phase
-> offsets. Do not copy the `ApplTime`/`TestTime` arithmetic of the two chimney
-> content harnesses; four defects came from it. Keep the far side of every
-> interface permanently ready, observe the DUT with concurrent monitors, compute
-> expected output counts before running a step, and confirm the stimulus is still
-> moving before trusting a pass. See section 16 rules 9e to 9i.
->
-> Re-run the full standalone regression (35 tests) and every registered RTL
-> cross-check after any model change. Use the mandated GCC/G++/PATH environment
-> before every build, preserve unrelated dirty files, and when a milestone is
-> signed off update **sections 2 to 13 as well as section 14** plus `STATUS.md` —
-> see rule 10b for why that is called out explicitly.
+> Use the mandated GCC/G++/PATH environment before every build, keep generated
+> output under `/tmp` or ignored directories, preserve unrelated dirty files,
+> and update sections 2 to 13 as well as section 14 and `STATUS.md` after the
+> milestone.
 
 If a dependency cannot be resolved without network access or a tool install,
 record the precise missing artifact and proceed with other safe, local,

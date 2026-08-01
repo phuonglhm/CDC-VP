@@ -139,10 +139,10 @@ add_control \
 add_control \
     "incoming-delay-dropped" \
     "src/noc_interconnect.cpp" \
-    '    if (delay > sc_core::SC_ZERO_TIME) {
-        sc_core::wait(delay);
-        delay = sc_core::SC_ZERO_TIME;
-    }' \
+    '        if (delay > sc_core::SC_ZERO_TIME) {
+            sc_core::wait(delay);
+            delay = sc_core::SC_ZERO_TIME;
+        }' \
     '' \
     "test_noc_interconnect" \
     "incoming delay must be spent" \
@@ -232,7 +232,7 @@ add_control \
     '        const std::uint64_t aw_addr = entry.addr;' \
     '        const std::uint64_t aw_addr = entry.addr
             - static_cast<std::uint64_t>(
-                  (capture.strb.empty() || capture.strb[0] != 0)
+                  (strb.empty() || strb[0] != 0)
                       ? 0
                       : bus_bytes);' \
     "test_noc_interconnect" \
@@ -461,9 +461,9 @@ add_control \
     '            sample.manager_aw = active && state.has_manager
                 && manager.aw_valid.read() && manager.aw_ready.read();' \
     '            sample.manager_aw = active && state.has_manager
-                && state.request.has_value()
-                && state.request->is_write
-                && state.request->aw_pending;' \
+                && !state.requests.empty()
+                && state.requests.front().is_write
+                && state.requests.front().aw_pending;' \
     "test_noc_interconnect_stress" \
     "stress transaction exceeded its per-transaction deadline" \
     "the sample phase re-read a request that arrived after the drive phase and consumed an AW that was never presented on the manager signals"
@@ -475,23 +475,108 @@ add_control \
 add_control \
     "write-requester-metadata-collapsed" \
     "src/noc_interconnect.cpp" \
-    '        entry.requester = node_of(capture.requester);' \
-    '        entry.requester = 0;' \
+    '        entry.is_write = true;
+        entry.requester = node_of(requester);' \
+    '        entry.is_write = true;
+        entry.requester = 0;' \
     "test_noc_interconnect_stress" \
-    "each requester must receive only its own target hold-off" \
-    "write requester metadata was collapsed to node zero, so another manager paid the target hold-off and the real requester reported target time as network latency"
+    "B response has no FIFO completion owner" \
+    "write requester metadata was collapsed to node zero, so the per-channel target-delay record no longer belonged to the manager receiving the response"
 
-# A functional ownership control independent of the latency sideband above.
-# Completing every response into waiter zero cross-delivers completion state;
-# one of the other two managers must hit its bounded deadline.
+# Step 10.5 keeps one downstream ID and therefore must preserve FIFO ownership
+# itself. Redirecting the incoming R status to the newest waiter cross-delivers
+# the first request's error while all calls still return.
 add_control \
-    "response-waiter-collapsed" \
+    "same-port-response-owner-collapsed" \
     "src/noc_interconnect.cpp" \
-    '        auto& parked = *waiters[static_cast<unsigned>(port)];' \
-    '        auto& parked = *waiters[0];' \
-    "test_noc_interconnect_stress" \
-    "stress transaction exceeded its per-transaction deadline" \
-    "responses for all manager IDs completed waiter zero, so requester ownership was lost even though the target accesses themselves still ran"
+    '        parked->resp = collapse_read_resp(parked->resp, r.resp);' \
+    '        state.read_waiters.back()->resp =
+            collapse_read_resp(state.read_waiters.back()->resp, r.resp);' \
+    "test_noc_interconnect_concurrency" \
+    "same-port read response must return to its owning caller" \
+    "a read response status was delivered to the newest same-port waiter instead of the FIFO owner selected by the frozen one-ID policy"
+
+# The admission comparison is deliberately tested at the boundary. Changing
+# >= to > admits a third call into a wrapper configured for two.
+add_control \
+    "same-port-capacity-off-by-one" \
+    "src/noc_interconnect.cpp" \
+    '    while (impl_->outstanding_by_port[port]
+           >= impl_->max_outstanding_per_port) {' \
+    '    while (impl_->outstanding_by_port[port]
+           > impl_->max_outstanding_per_port) {' \
+    "test_noc_interconnect_concurrency" \
+    "same-port admission must stop at configured capacity" \
+    "the per-port bound admitted capacity plus one concurrent b_transport call"
+
+# The wrapper queue is the issue order seen by the single-ID chimney. Reversing
+# it still moves correct data, but violates FIFO completion order.
+add_control \
+    "same-port-request-order-reversed" \
+    "src/noc_interconnect.cpp" \
+    '    state.requests.push_back(std::move(request));' \
+    '    state.requests.push_front(std::move(request));' \
+    "test_noc_interconnect_concurrency" \
+    "same-port read completions must preserve FIFO issue order" \
+    "concurrent calls were injected newest-first even though MaxUniqueIds equals one"
+
+# Target delay belongs to one completion, not a requester-wide accumulator.
+# Dropping the per-response sideband makes the latency metric charge peripheral
+# time as network time while functional data still passes.
+add_control \
+    "same-port-target-delay-dropped" \
+    "src/noc_interconnect.cpp" \
+    '        delay_fifo.push_back(target_delay);' \
+    '        delay_fifo.push_back(0);' \
+    "test_noc_interconnect_concurrency" \
+    "each same-port completion must exclude its own target delay" \
+    "the per-transaction target delay was discarded before the FIFO-ordered response completed"
+
+# Step 11 calibrates the LT estimate against placement. Removing the request
+# half of the hop term leaves functional accesses passing but makes distant
+# targets too cheap.
+add_control \
+    "fast-hop-cost-removed" \
+    "src/noc_interconnect.cpp" \
+    '        return 2u * hops + 3u + (is_write ? beats : 0u);' \
+    '        return 0u * hops + 3u + (is_write ? beats : 0u);' \
+    "test_noc_interconnect_fast" \
+    "fast estimate must retain hop and burst serialization terms" \
+    "the approximately-timed request path ignored Manhattan distance"
+
+# A quantum keeper owns the incoming annotation. Fast mode may add to it but
+# must never consume or replace it.
+add_control \
+    "fast-incoming-delay-dropped" \
+    "src/noc_interconnect.cpp" \
+    '            delay += period * static_cast<double>(request_cycles);' \
+    '            delay = period * static_cast<double>(request_cycles);' \
+    "test_noc_interconnect_fast" \
+    "fast mode must preserve incoming delay and add its own latency" \
+    "the fast backend replaced the caller's local time instead of preserving it"
+
+# Both backends conservatively ceil each peripheral annotation to the network
+# clock. Truncation would recreate the old sub-cycle target-delay bug.
+add_control \
+    "fast-target-delay-truncated" \
+    "src/noc_interconnect.cpp" \
+    '            const auto target_cycles = rounded_cycles(delay - before_target);' \
+    '            const auto target_cycles = static_cast<std::uint64_t>(
+                (delay - before_target) / period);' \
+    "test_noc_interconnect_fast" \
+    "fast delay must include calibrated network and rounded target" \
+    "the fast backend truncated a fractional target cycle instead of rounding up"
+
+# Fast is timing-abstract, not function-abstract. Removing the shared
+# downstream replay must be observed as wrong read data/target effects.
+add_control \
+    "fast-functional-replay-bypassed" \
+    "src/noc_interconnect.cpp" \
+    '            perform_downstream_access(entry, delay);' \
+    '            if (false) perform_downstream_access(entry, delay);' \
+    "test_noc_interconnect_fast" \
+    "fast and detailed reads must return identical bytes" \
+    "the fast timing path bypassed the mapped target instead of abstracting only time"
 
 # Drop exactly the last payload byte before lane packing. Lengths 1, 6, 13 and
 # 24 in the stress vector make the tail observable across narrow, odd and

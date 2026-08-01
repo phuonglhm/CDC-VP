@@ -42,26 +42,28 @@
 //    and every target sits on a mesh node, and distance costs cycles. Ports
 //    default to node (0,0); call `place_initiator` / pass a node to
 //    `add_target` to lay the system out.
-//  * **One AXI ID per initiator, and one transaction in flight per port** —
-//    but these come from different places, and conflating them has caused
-//    wrong conclusions about congestion.
+//  * **One AXI ID per initiator, with bounded concurrent transactions per
+//    port** — these are separate policy choices.
 //
 //    The *ID* is the frozen configuration's doing: `ChimneyDefaultCfg` sets
 //    `MaxUniqueIds = 1`, which makes the chimney's response metadata a plain
 //    in-order FIFO with no ID matching, so responses must return in request
 //    order.
 //
-//    The *one-in-flight* limit is this wrapper's own: one waiter and one
-//    `port_busy` bit per upstream port. `MaxUniqueIds = 1` does **not** impose
-//    it — the RTL metadata FIFOs are `MaxTxns = 32` deep. Anyone measuring
-//    contention should know that the ceiling they are hitting is here, not in
-//    FlooNoC.
-//  * **`b_transport` consumes simulated time directly** rather than annotating
-//    `delay`. The transaction is walked through the network cycle by cycle, so
-//    the time it takes is spent, not estimated. A caller relying on temporal
-//    decoupling will find its quantum consumed.
+//    The wrapper therefore keeps independent FIFO completion queues for B and
+//    R and admits up to `max_outstanding_per_port` calls on one upstream port.
+//    The default and hard maximum are 32, matching the frozen metadata FIFO
+//    depth. A smaller constructor value is useful when a platform deliberately
+//    wants tighter back-pressure. Increasing this bound past 32, or allowing
+//    out-of-order response matching, requires a new FlooNoC configuration and
+//    an RTL cross-check of the `MaxUniqueIds > 1` metadata path.
+//  * **Timing is a construction-time policy.** `timing_mode::detailed` walks
+//    the signed signal-driven network cycle by cycle and spends simulated time.
+//    `timing_mode::fast` uses the same payload checks and downstream replay but
+//    annotates a calibrated no-contention estimate instead.
 //
-//    The full delay contract, because "spends time" alone does not say enough:
+//    The detailed delay contract, because "spends time" alone does not say
+//    enough:
 //
 //     - **An incoming non-zero `delay` is waited out before injection**, then
 //       cleared. It is time the caller had accounted for but not yet spent, and
@@ -80,6 +82,25 @@
 //       this interconnect should annotate their latency rather than wait for
 //       it. A target that must block needs its own thread and a decoupled
 //       response path, which this wrapper does not provide.
+//
+//    The fast delay contract is deliberately different:
+//
+//     - **The interconnect itself waits for neither incoming nor newly
+//       estimated time.** The incoming delay is preserved, the calibrated
+//       request delay is presented to the target, and target plus response
+//       latency are returned in `delay`. This LT contract requires downstream
+//       targets to annotate latency too. A target that calls `wait()` inside
+//       its own `b_transport` will still advance global time and is therefore
+//       incompatible with the fast backend.
+//     - **The estimate is a no-contention model:** four cycles per Manhattan
+//       hop plus six fixed cycles, with one extra cycle per write-data beat or
+//       per read beat after the first. The constants are pinned against the
+//       detailed 10-cycle one-hop and 30-cycle six-hop calibration points.
+//     - **Target delay is rounded up per access** exactly as in detailed mode.
+//     - **Contention, link back-pressure, router locks and clock-gating
+//       activity are not estimated.** Use detailed mode for those questions.
+//       Fast mode preserves blocking-call order and functional target effects,
+//       but its latency must not be described as cycle accurate.
 //  * **Bursts are split into beats, and one burst is at most 256 of them.**
 //    A payload longer than the AXI data width becomes several beats and costs
 //    several flits. `AxLEN` is 8 bits and encodes `beats - 1`, so a single AXI
@@ -162,6 +183,17 @@ public:
         memory,
     };
 
+    /// Selects the timing backend without changing the socket or address-map
+    /// interface.
+    enum class timing_mode {
+        detailed,
+        fast,
+    };
+
+    /// Frozen `ChimneyDefaultCfg.MaxTxns`. The wrapper uses a conservative
+    /// combined read/write admission bound of this size per upstream port.
+    static constexpr unsigned default_max_outstanding_per_port = 32;
+
     /// Primary upstream port, matching `bus_router::target_socket`.
     cpu_socket_t target_socket;
 
@@ -193,13 +225,27 @@ public:
     /// `num_initiators` must be 1..8. The wrapper assigns one AXI ID per
     /// upstream port and the frozen chimney's manager ID is 3 bits; refusing a
     /// ninth port avoids silent ID truncation and ordering-counter aliasing.
+    ///
+    /// `max_outstanding_per_port` must be 1..32. In detailed mode it bounds concurrent
+    /// `b_transport` calls admitted on one tagged upstream socket. Calls above
+    /// the bound wait for a slot; they are not dropped or assigned a new AXI
+    /// ID. Read completions remain FIFO among reads and write completions FIFO
+    /// among writes, as required by the frozen `MaxUniqueIds = 1` branch.
+    ///
+    /// `mode` defaults to `detailed` for source compatibility. Fast mode is the
+    /// long-run LT backend: it invokes the same mapped target and reports the
+    /// same TLM response/data effects, but returns an annotated no-contention
+    /// estimate and never injects a flit into the cycle-stepped mesh.
     noc_interconnect(
         sc_core::sc_module_name name,
         unsigned mesh_x,
         unsigned mesh_y,
         unsigned num_targets,
         unsigned num_initiators = 1,
-        sc_core::sc_time clock_period = sc_core::sc_time(1, sc_core::SC_NS));
+        sc_core::sc_time clock_period = sc_core::sc_time(1, sc_core::SC_NS),
+        unsigned max_outstanding_per_port =
+            default_max_outstanding_per_port,
+        timing_mode mode = timing_mode::detailed);
     ~noc_interconnect() override;
 
     /// Map the next target region and return its initiator socket to bind.
@@ -255,6 +301,15 @@ public:
     /// manager in the same delta cycle; this indexed form preserves requester
     /// ownership and is the one a multi-initiator scoreboard should use.
     std::uint64_t last_latency_cycles(unsigned port) const;
+
+    /// Current and peak admitted calls for one upstream port. The peak is a
+    /// diagnostic proving whether a workload actually exercised concurrency;
+    /// it never exceeds the constructor's admission bound.
+    unsigned outstanding_transactions(unsigned port) const;
+    unsigned peak_outstanding_transactions(unsigned port) const;
+
+    /// The construction-time backend. It never changes during simulation.
+    timing_mode selected_timing_mode() const noexcept;
 
     /// Passive clock-gating diagnostics.
     ///

@@ -10,16 +10,18 @@
 # component test still passed. A stale platform binary produces the same class
 # of symptom. Both are caught here in seconds.
 #
-# Two runs, and they are **not** two firmware images:
+# Four runs, and they are **not** four firmware images:
 #
-#   1. `--mode firmware --fw`, the real thing. A RISC-V CPU fetching over the
-#      mesh, programming DMA0 and touching peripherals. It must reach
-#      `DMA PASS`, while the synthetic port reports zero transactions.
-#   2. `--mode survey`, the platform's built-in synthetic survey. It must reach
-#      `result all bytes match` and report RAM, peripheral and DMA measurements.
+#   1. Firmware over `--noc-timing detailed`, the calibration reference.
+#   2. The same firmware over `--noc-timing fast`, the Step 11 LT path. Both
+#      must reach `DMA PASS`, while the synthetic port reports zero traffic.
+#   3. The platform's built-in survey over detailed timing.
+#   4. The same survey over fast timing, proving its blocking probe consumes
+#      the returned annotation. Both must reach `result all bytes match` and
+#      report RAM, peripheral and DMA measurements.
 #
-# Run 2 is a **substitute smoke path with reduced and different coverage**, not
-# a second firmware image. It exercises the interconnect and the memory path
+# Runs 3/4 are a **substitute smoke path with reduced and different coverage**, not
+# another firmware image. It exercises the interconnect and the memory path
 # from the platform's own traffic generator, including its own DMA0 experiment,
 # but has no CPU firmware workload or CPU interrupt-handling path. It is here
 # because it is nearly free and catches gross interconnect breakage quickly.
@@ -257,6 +259,10 @@ expect_rejected "survey mode with ELF" \
 expect_rejected "invalid mode value" "${log_dir}/invalid_mode.log" \
     "noc_soc: --mode must be 'survey' or 'firmware'" \
     --mode mixed --sim-us 1
+expect_rejected "invalid NoC timing value" \
+    "${log_dir}/invalid_noc_timing.log" \
+    "noc_soc: --noc-timing must be 'detailed' or 'fast'" \
+    --mode survey --noc-timing mixed --sim-us 1
 
 # Move the real firmware's PT_LOAD into the final RAM page. The image need not
 # execute: the platform must reject it before `sc_start()` and print both the
@@ -292,28 +298,59 @@ reject_log "${log_dir}/overlap.log" "noc_soc config:" \
 # ~331 µs. The margin is deliberate — this bound exists to stop a hang, not to
 # assert a performance figure, and a bound tight enough to fail on a timing
 # change is a bound that will keep failing for the wrong reason.
-run_image "firmware mode (DMA transfer)" "${log_dir}/firmware.log" \
-          'DMA PASS' --mode firmware --fw "${elf}" --sim-us 2000
+run_image "firmware mode, detailed NoC (DMA transfer)" \
+          "${log_dir}/firmware_detailed.log" \
+          'DMA PASS' --mode firmware --noc-timing detailed \
+          --fw "${elf}" --sim-us 2000
 
-require_log "${log_dir}/firmware.log" "noc_soc mode: firmware" \
+require_log "${log_dir}/firmware_detailed.log" "noc_soc mode: firmware" \
     "firmware mode selection"
-require_log "${log_dir}/firmware.log" \
+require_log "${log_dir}/firmware_detailed.log" \
+    "interconnect timing: detailed cycle-stepped FlooNoC" \
+    "detailed NoC timing selection"
+require_log "${log_dir}/firmware_detailed.log" \
     "noc_soc: firmware mode; synthetic survey disabled" \
     "firmware ownership"
-require_log "${log_dir}/firmware.log" "  transactions 0" \
+require_log "${log_dir}/firmware_detailed.log" "  transactions 0" \
     "firmware synthetic-transaction ownership"
-require_log "${log_dir}/firmware.log" "  RAM writes 0" \
+require_log "${log_dir}/firmware_detailed.log" "  RAM writes 0" \
     "firmware RAM ownership"
-require_log "${log_dir}/firmware.log" "  DMA register writes 0" \
+require_log "${log_dir}/firmware_detailed.log" "  DMA register writes 0" \
     "firmware DMA ownership"
-reject_log "${log_dir}/firmware.log" "noc_soc: RAM at" \
+reject_log "${log_dir}/firmware_detailed.log" "noc_soc: RAM at" \
     "firmware mode must not run the RAM survey"
-reject_log "${log_dir}/firmware.log" \
+reject_log "${log_dir}/firmware_detailed.log" \
     "noc_soc: DMA memory-to-memory transfer, 512 bytes" \
     "firmware mode must not program DMA0 from the probe port"
 
+run_image "firmware mode, fast NoC (DMA transfer)" \
+          "${log_dir}/firmware_fast.log" \
+          'DMA PASS' --mode firmware --noc-timing fast \
+          --fw "${elf}" --sim-us 2000
+require_log "${log_dir}/firmware_fast.log" \
+    "interconnect timing: fast approximately-timed FlooNoC" \
+    "fast NoC timing selection"
+require_log "${log_dir}/firmware_fast.log" \
+    "noc_soc: firmware mode; synthetic survey disabled" \
+    "fast firmware ownership"
+require_log "${log_dir}/firmware_fast.log" "  transactions 0" \
+    "fast firmware synthetic-transaction ownership"
+require_log "${log_dir}/firmware_fast.log" "  RAM writes 0" \
+    "fast firmware RAM ownership"
+require_log "${log_dir}/firmware_fast.log" "  DMA register writes 0" \
+    "fast firmware DMA ownership"
+require_log "${log_dir}/firmware_fast.log" \
+    "cycle-stepped mesh bypassed in fast mode" \
+    "fast backend isolation"
+require_log "${log_dir}/firmware_fast.log" \
+    "through the fast NoC estimate" \
+    "fast firmware modeled-time report"
+reject_log "${log_dir}/firmware_fast.log" "noc_soc: RAM at" \
+    "fast firmware mode must not run the RAM survey"
+
 run_image "synthetic survey mode" "${log_dir}/survey.log" \
-          'result   all bytes match' --mode survey --sim-us 200
+          'result   all bytes match' --mode survey --noc-timing detailed \
+          --sim-us 200
 
 require_log "${log_dir}/survey.log" "noc_soc mode: survey" \
     "survey mode selection"
@@ -332,5 +369,24 @@ if ! grep -Eq '^  DMA register writes [1-9][0-9]*$' \
       "${log_dir}/survey.log"; then
   fail "survey mode did not program DMA0"
 fi
+
+run_image "synthetic survey mode, fast NoC" \
+          "${log_dir}/survey_fast.log" \
+          'result   all bytes match' --mode survey --noc-timing fast \
+          --sim-us 200
+require_log "${log_dir}/survey_fast.log" \
+    "interconnect timing: fast approximately-timed FlooNoC" \
+    "fast survey timing selection"
+require_log "${log_dir}/survey_fast.log" "noc_soc: RAM at" \
+    "fast survey RAM measurements"
+require_log "${log_dir}/survey_fast.log" \
+    "noc_soc: one 32-bit register read per peripheral" \
+    "fast survey peripheral measurements"
+require_log "${log_dir}/survey_fast.log" \
+    "noc_soc: DMA memory-to-memory transfer, 512 bytes" \
+    "fast survey DMA measurements"
+require_log "${log_dir}/survey_fast.log" \
+    "cycle-stepped mesh bypassed in fast mode" \
+    "fast survey backend isolation"
 
 echo "noc_soc firmware regression PASS"

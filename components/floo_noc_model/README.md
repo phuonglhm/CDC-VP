@@ -1,4 +1,4 @@
-# FlooNoC cycle-level SystemC model
+# FlooNoC detailed and approximately-timed SystemC model
 
 This component is a FlooNoC-native Direction-2 model. The SAURIA/NPU model is
 used only as a process and packaging reference; no accelerator-specific
@@ -49,6 +49,120 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+## Installed package
+
+The compiled wrapper is exported as
+`cdc::components::noc_interconnect`; `cdc::components::floo_noc_model` is the
+header-only target beneath it. Step 10.4 verifies the compiled target from an
+independent source tree:
+
+```bash
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+$CC -dumpfullversion
+$CXX --version | head
+
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP
+cmake -S . -B /tmp/cdc-vp-install-build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCDC_BUILD_NOC_SOC=ON \
+  -DCDC_BUILD_TESTS=OFF \
+  -DCDC_BUILD_MINI_TLM=OFF \
+  -DCDC_BUILD_CPU_EVAL=ON \
+  -DCDC_BUILD_CUSTOM_SOC=OFF
+cmake --build /tmp/cdc-vp-install-build --parallel
+cmake --install /tmp/cdc-vp-install-build \
+  --prefix /tmp/cdc-vp-install-prefix
+
+cmake -S components/floo_noc_model/tests/installed_consumer \
+  -B /tmp/floo-installed-consumer \
+  -DCMAKE_PREFIX_PATH=/tmp/cdc-vp-install-prefix \
+  -DSYSTEMC_HOME=/opt/systemc-2.3.4
+cmake --build /tmp/floo-installed-consumer --parallel
+/tmp/floo-installed-consumer/floo_noc_installed_consumer
+```
+
+The prefix includes the Apache-2.0 and SHL-0.51 texts, CDC-VP NOTICE and
+`PROVENANCE.md` under
+`share/licenses/cdc-components/floo_noc_model`.
+
+The commands above are useful for inspecting one stage manually. The complete
+Step 10.4 gate is automated and registered with the parent CTest suite:
+
+```bash
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP
+./platforms/noc_soc/tests/run_packaging_regression.sh
+```
+
+It rebuilds into a private temporary directory, runs this installed consumer,
+checks the installed header manifest/SPDX identifiers and byte-compares every
+development-package licence/provenance record. It then continues with the
+binary-package checks documented by `platforms/noc_soc`.
+
+## Wrapper concurrency policy
+
+Step 10.5 keeps the frozen FlooNoC `MaxUniqueIds = 1` configuration. No current
+SoC requirement needs out-of-order downstream response matching, so the
+unverified `id_queue` branch is not enabled.
+
+`noc_interconnect` nevertheless supports concurrent `b_transport` calls through
+one upstream port in detailed mode. The outstanding bound defaults to 32,
+matching `ChimneyDefaultCfg.MaxTxns`:
+
+```cpp
+cdc::components::noc_interconnect noc{
+    "noc", 4, 4, num_targets, num_initiators,
+    sc_core::sc_time(1, sc_core::SC_NS), 32,
+    cdc::components::noc_interconnect::timing_mode::detailed};
+```
+
+The bound must be 1..32. Calls beyond it wait for a slot. Requests and
+completions use independent FIFO queues for reads and writes, so the constant
+downstream ID remains sufficient as long as the frozen FIFO-order contract is
+preserved. `outstanding_transactions(port)` and
+`peak_outstanding_transactions(port)` expose admission diagnostics.
+
+## Timing backends
+
+Step 11 keeps one socket/address-map class and selects its timing backend at
+construction:
+
+```cpp
+cdc::components::noc_interconnect fast_noc{
+    "noc", 4, 4, num_targets, num_initiators,
+    sc_core::sc_time(1, sc_core::SC_NS),
+    cdc::components::noc_interconnect::default_max_outstanding_per_port,
+    cdc::components::noc_interconnect::timing_mode::fast};
+```
+
+- `detailed` is the default and the calibration reference. It drives the
+  chimney/mesh signals cycle by cycle, spends incoming and network time, and
+  returns `delay == SC_ZERO_TIME`.
+- `fast` uses the same validation, address decode, AXI lane/byte-enable shaping,
+  mapped target and response mapping. The interconnect does not tick the mesh
+  or wait; it preserves incoming local time and returns target plus estimated
+  network time in `delay`. Downstream targets used with this backend must also
+  annotate latency rather than call `wait()` in their own `b_transport`.
+
+The fast no-contention estimate is:
+
+```text
+read  cycles = 4 * Manhattan_hops + 6 + (beats - 1)
+write cycles = 4 * Manhattan_hops + 6 + beats
+```
+
+Target delay is conservatively rounded up to the next network clock exactly as
+in detailed mode. The fixed/hop terms are calibrated to the detailed 10-cycle
+one-hop and 30-cycle six-hop read baselines. `test_noc_interconnect_fast`
+compares both backends over 1..6 hops, 1/2/4/8-byte accesses and 32-byte bursts
+with a hard one-cycle tolerance.
+
+Fast mode does **not** estimate contention, link back-pressure, router locks,
+metadata occupancy or clock-gating activity. Blocking calls retain invocation
+order and functional target effects, but use detailed mode for any congestion
+or cycle-accuracy question.
+
 ## RTL cross-check
 
 Each harness runs one shared CSV stimulus through both the SystemC model and the
@@ -77,9 +191,9 @@ manager's B/R channels, `floo_rsp_o.ready` and both reorder-buffer counters for
 
 The tests are also expected to be seen failing. `run_negative_controls.sh`
 re-injects each defect the model-level tests exist to catch and requires every
-one of them to be detected. The current gate detects all 32 mutations, including
-seven Step 10.3 controls for half-cycle injection, requester ownership,
-odd-burst tails, and whole-network quiescence:
+one of them to be detected. The current gate detects all 39 mutations, including
+Step 10.5 controls for same-port capacity/ownership and Step 11 controls for
+hop cost, incoming-delay preservation, target rounding and functional replay:
 
 ```bash
 bash rtl_crosscheck/run_negative_controls.sh
@@ -196,4 +310,5 @@ wrapper presenting the same interface as `cdc::components::bus_router` plus mesh
 placement, and `platforms/noc_soc`, a small SoC that uses it. Both are separate
 from the header-only model so a standalone user pays for neither.
 
-See `docs/STATUS.md` for verified coverage and the next implementation step.
+See `docs/STATUS.md` for verified coverage. Step 11 completed the planned
+detailed/fast coexistence path; there is no later numbered roadmap item.

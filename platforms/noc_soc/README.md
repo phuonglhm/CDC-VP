@@ -1,7 +1,7 @@
 # noc_soc
 
-The CDC-VP peripheral set on a cycle-accurate FlooNoC interconnect instead of
-`bus_router`.
+The CDC-VP peripheral set on a FlooNoC interconnect instead of `bus_router`,
+with a detailed cycle-stepped backend and a calibrated fast backend.
 
 It is a separate platform on purpose. The peripherals and their addresses are
 the same as `VP_FX1_Full_SoC` (see `docs/peripheral_memory_map.md`), so the
@@ -15,7 +15,8 @@ Behind its own option, because a cycle-accurate interconnect is slow:
 export CC=/usr/bin/gcc CXX=/usr/bin/g++ PATH=/usr/bin:/bin:$PATH
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCDC_BUILD_NOC_SOC=ON
 cmake --build build --target noc_soc --parallel
-./build/platforms/noc_soc/noc_soc --mode survey --sim-us 200
+./build/platforms/noc_soc/noc_soc \
+  --mode survey --noc-timing detailed --sim-us 200
 ```
 
 With real firmware, which is what the platform exists to run:
@@ -25,10 +26,21 @@ export PATH=/opt/toolchains/riscv-none-elf/bin:$PATH
 make -C fw/dma_riscv clean
 make -C fw/dma_riscv EXTRA_CFLAGS=-DDMA_BASE=0x10060000u
 ./build/platforms/noc_soc/noc_soc \
-  --mode firmware --fw fw/dma_riscv/dma_test.elf --sim-us 2000
+  --mode firmware --noc-timing detailed \
+  --fw fw/dma_riscv/dma_test.elf --sim-us 2000
 ```
 
-It must print `DMA PASS`. These are the **manual** commands. The automated regression
+For long runs select the Step 11 backend:
+
+```sh
+./build/platforms/noc_soc/noc_soc \
+  --mode firmware --noc-timing fast \
+  --fw fw/dma_riscv/dma_test.elf --sim-us 2000
+```
+
+Both must print `DMA PASS`. `--noc-timing` defaults to `detailed` for command
+compatibility, but scripts should name it explicitly. These are the **manual**
+commands. The automated regression
 (`platforms/noc_soc/tests/run_firmware_regression.sh`) does not use them: it
 builds the firmware in a private copy of its sources under its own log
 directory, so it needs no in-source `make clean`, leaves the working tree
@@ -48,6 +60,57 @@ Two things about that build line:
   since the wrapper began spending the caller's annotated delay; the margin is
   there to stop a hang, not to assert a performance figure.
 
+## Portable package
+
+Build the ignored `out/noc_soc` bundle with:
+
+```bash
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+$CC -dumpfullversion
+$CXX --version | head
+
+cmake --build build --target noc_soc_package --parallel
+```
+
+The package contains the executable, `configs/`, the SystemC shared-library
+chain and all applicable licence/provenance records. The executable has exactly
+`RPATH=$ORIGIN`; it must not retain `/opt/systemc` or a build-directory
+fallback. A self-contained smoke run is:
+
+```bash
+cd /tmp
+env -u LD_LIBRARY_PATH \
+  /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/out/noc_soc/noc_soc \
+  -c /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/out/noc_soc/configs/default.yaml \
+  --mode survey --sim-us 20
+```
+
+Step 10.4 also runs the full firmware regression against this packaged binary,
+not only the in-tree executable.
+
+The reproducible distribution sign-off is one command:
+
+```bash
+./platforms/noc_soc/tests/run_packaging_regression.sh
+```
+
+The same runner is registered as `noc_soc_packaging_regression` in CTest and
+labelled `packaging;distribution`. It performs a fresh Release build and clean
+install, builds the standalone installed consumer, validates the FlooNoC header
+manifest/SPDX identifiers, byte-compares the development and binary-package
+licence/provenance files, asserts exact `RPATH=$ORIGIN`, proves with `ldd` that
+SystemC resolves beside the executable, runs the packaged config with
+`LD_LIBRARY_PATH` unset, and invokes the full firmware/survey regression against
+the packaged binary.
+
+Each run overrides `CDC_PACKAGE_ROOT` with its private temporary directory.
+The default remains `out/`, so manual `noc_soc_package` usage is unchanged, but
+parallel CI/developer jobs cannot delete or overwrite one another's artifact.
+Set `PACKAGING_KEEP_ARTIFACTS=1` when the successful evidence tree should be
+retained.
+
 ## What is on it
 
 A RISC-V CPU (`cdc::cpu::riscv_vp_cpu`), CLINT, PLIC with all 31 sources wired,
@@ -63,6 +126,16 @@ ADC, GPIO.
   experiment;
 - firmware mode gives RAM contents and DMA0 to firmware and emits no synthetic
   TLM transaction from the probe port.
+
+`--noc-timing detailed|fast` is independent of traffic ownership:
+
+- `detailed` drives the signed SystemC chimney/mesh blocks cycle by cycle and is
+  the calibration reference;
+- `fast` preserves functional target effects and annotates a no-contention
+  placement/burst estimate. It does not model contention, router back-pressure,
+  locks, FIFO occupancy or clock-gating activity. It requires downstream
+  targets to annotate their latency; a target that calls `wait()` inside
+  `b_transport` is not compatible with this LT path.
 
 ## Floorplan
 
@@ -155,6 +228,21 @@ includes both.
 Anything quoting ~30 ns per instruction predates that fix, including the
 calibration baseline in the fast-mode plan.
 
+Step 11 ran the same Release binary, ELF and 2 ms firmware window on the same
+AlmaLinux host:
+
+```text
+timing     host wall   retired   modeled active time   ns/instruction
+detailed   8.12 s      10726     570 us                53.1419
+fast       0.08 s      10726     570 us                53.1419
+```
+
+That is about **101x** in this one measurement. It is not a portable performance
+guarantee: host load, compiler, build type and measurement window all matter.
+The modeled-time agreement is the accuracy result; host wall time is the
+speed result. Fast firmware also passes in an assert-enabled build, proving its
+nondecreasing delay annotation satisfies the Bremen quantum keeper.
+
 In survey mode the platform preloads a `jal x0, 0` spin loop into the first 8 KiB
 of both RAM and the boot ROM, so the CPU runs from `0x80000000` and reports about
 **21 ns per instruction**. That is deliberately lower than the firmware figure:
@@ -219,19 +307,19 @@ layer with bounded three-manager scoreboarding, watchdogs and mutation controls.
 
 Three behaviours to keep straight, because two of them are often misattributed:
 
-- **One transaction in flight per upstream port** — this is the *wrapper's*
-  limit, not the RTL's. `noc_interconnect` keeps one waiter and one `port_busy`
-  bit per port. The frozen `MaxUniqueIds = 1` branch of `floo_meta_buffer.sv`
-  has read and write metadata FIFOs of depth `MaxTxns = 32` and imposes no such
-  limit.
+- **Bounded concurrent calls per upstream port** — Step 10.5 gives
+  `noc_interconnect` per-transaction request slots and separate FIFO B/R
+  completion owners. The default and hard bound are 32, matching the frozen
+  metadata depth; a platform may configure a smaller bound.
 - **One AXI ID per upstream port** — but note what `MaxUniqueIds = 1` actually
   constrains. It governs the *downstream reissued* IDs: the chimney reissues all
   non-atomic traffic under one ID and keeps response metadata in a plain
   in-order FIFO with no ID matching, so responses must come back in request
   order. That the wrapper also presents a single *input* ID upstream is wrapper
   policy, not something the parameter forces.
-- **`b_transport` spends simulated time** rather than annotating `delay`. A
-  caller relying on temporal decoupling will find its quantum consumed.
+- **Timing contract depends on the selected backend.** Detailed
+  `b_transport` spends simulated time and returns zero delay. Fast preserves
+  the incoming annotation and adds its estimate without waiting.
 
 ## Not wired yet
 
@@ -242,16 +330,16 @@ Three behaviours to keep straight, because two of them are often misattributed:
 Not on this list any more: the DMA's descriptor traffic. `fw/dma_riscv` programs
 a real transfer and reaches `DMA PASS` over the mesh, so CPU and DMA do contend
 for the same links. A pre-A-3 directed run observed **+9 cycles**; the current
-synthetic survey can also show no positive delta at this light load because the
-wrapper serializes each port. Step 10.3 owns a controlled, scoreboard-driven
-contention workload.
+synthetic survey can also show no positive delta at this light load because its
+CPU, DMA and probe each make blocking calls from one process and therefore do
+not saturate Step 10.5's same-port capacity. Step 10.3 owns a controlled,
+scoreboard-driven cross-port contention workload; the component's
+`test_noc_interconnect_concurrency` owns same-port saturation.
 
 Do not read that as "a 4x4 FlooNoC cannot congest". It is a result for *this
-wrapper* with three masters on *this* workload, and the dominant reason is the
-one-transaction-per-port limit in `noc_interconnect` described above — not the
-RTL. Generating real congestion means giving the wrapper concurrent outstanding
-transactions, which is a wrapper change, and only then deciding whether
-`MaxUniqueIds > 1` is also required. The two are separate decisions.
+wrapper with three masters on *this* workload, not the RTL's capacity.
+Step 10.5 deliberately retains `MaxUniqueIds = 1`: no current SoC requirement
+needs the unverified downstream `id_queue`/out-of-order matching branch.
 
 ## Known gaps
 
@@ -265,8 +353,12 @@ transactions, which is a wrapper change, and only then deciding whether
 - ~~Clock gating is not proven.~~ Closed by Step 10.3: the gate requires both
   wrapper idle and direct mesh/chimney quiescence, with mutation controls for
   output-FIFO occupancy, packet locks and the two-predicate decision.
-- **`b_transport` spends simulated time** rather than annotating `delay`, so a
-  caller relying on temporal decoupling will find its quantum consumed.
+- Detailed mode still intentionally spends time, so Bremen's assert-enabled
+  quantum keeper rejects that backend's decreasing local annotation at
+  `mem.h:65`. Fast mode is the supported temporal-decoupling path and passes
+  the same assert-enabled firmware workload.
+- Fast timing is calibrated for no contention only. It must not be used to
+  answer congestion, back-pressure, router-lock or clock-gating questions.
 
 ## Why it is slow
 
@@ -275,6 +367,6 @@ cycles. This advances a clock and evaluates every router in the mesh on every
 edge. Wrapper-idle cycles are skipped only when direct mesh/chimney quiescence
 also holds. Any cycle carrying traffic costs real work.
 
-For a platform that must also boot firmware at speed, the usual answer is two
-modes: this one to calibrate, and an approximately-timed model for long runs.
-This platform is the calibration reference.
+Step 11 now provides both modes: detailed for calibration and interconnect
+analysis, fast for long firmware runs. `test_noc_interconnect_fast` keeps their
+no-contention latency relationship within a hard one-cycle tolerance.

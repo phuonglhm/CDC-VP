@@ -384,6 +384,14 @@ private:
         sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
         const auto before = sc_core::sc_time_stamp();
         bus_socket->b_transport(trans, delay);
+        // Detailed mode has already spent the access time and returns zero.
+        // Fast mode returns the same modeled cost as an annotation; this
+        // blocking survey thread synchronizes it so both reports use elapsed
+        // simulated time. Temporally decoupled CPU traffic keeps the annotation
+        // in its quantum keeper instead.
+        if (delay > sc_core::SC_ZERO_TIME) {
+            wait(delay);
+        }
         if (expect_ok && !trans.is_response_ok()) {
             throw std::runtime_error("noc_soc: access failed at address "
                                      + std::to_string(address));
@@ -528,6 +536,9 @@ private:
         sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
         const auto before = sc_core::sc_time_stamp();
         bus_socket->b_transport(trans, delay);
+        if (delay > sc_core::SC_ZERO_TIME) {
+            wait(delay);
+        }
         accepted = trans.is_response_ok();
         return sc_core::sc_time_stamp() - before;
     }
@@ -584,8 +595,14 @@ private:
         if (region != nullptr && retired != 0) {
             std::cout << "  " << elapsed.to_seconds() * 1e9
                           / static_cast<double>(retired)
-                      << " ns per instruction, fetching from " << region
-                      << " over the mesh\n";
+                      << " ns per instruction, fetching from " << region;
+            if (noc != nullptr
+                && noc->selected_timing_mode()
+                    == cdc::components::noc_interconnect::timing_mode::fast) {
+                std::cout << " through the fast NoC estimate\n";
+            } else {
+                std::cout << " over the cycle-stepped mesh\n";
+            }
             if (idled) {
                 std::cout << "  (measured over the " << elapsed
                           << " the CPU was retiring; it then idled until "
@@ -611,10 +628,17 @@ private:
             const auto count = noc->completed_transactions();
             std::cout << "\n  firmware traffic: " << count
                       << " completed transactions, "
-                      << noc->total_latency_cycles() << " network cycles\n"
-                      << "  mesh clocked " << noc->elapsed_cycles()
-                      << " cycles; idle gating requires wrapper and mesh "
-                         "quiescence\n";
+                      << noc->total_latency_cycles();
+            if (noc->selected_timing_mode()
+                == cdc::components::noc_interconnect::timing_mode::fast) {
+                std::cout << " estimated no-contention network cycles\n"
+                          << "  cycle-stepped mesh bypassed in fast mode\n";
+            } else {
+                std::cout << " measured network cycles\n"
+                          << "  mesh clocked " << noc->elapsed_cycles()
+                          << " cycles; idle gating requires wrapper and mesh "
+                             "quiescence\n";
+            }
         }
         report_cpu();
         sc_core::sc_stop();
@@ -775,27 +799,20 @@ private:
             if (busy_cycles_max <= quiet_cycles) {
                 // Not a broken measurement, but be precise about the cause.
                 //
-                // The one-transaction-per-port limit is the *wrapper's*:
-                // `noc_interconnect` keeps one waiter and one `port_busy` bit
-                // per upstream port. It is not what `MaxUniqueIds = 1` does —
-                // that selects an in-order metadata FIFO with no ID matching,
-                // whose depth is `MaxTxns = 32`, and it constrains response
-                // *ordering*, not the number of outstanding requests.
-                //
-                // So this figure describes this wrapper on this workload. It is
-                // not a property of FlooNoC, and not evidence that a 4x4 mesh
-                // cannot congest.
+                // Step 10.5 permits bounded concurrent calls on one port, but
+                // this survey's probe, CPU and DMA each issue blocking calls
+                // from one process. It therefore does not saturate that new
+                // capacity. MaxUniqueIds = 1 still constrains downstream
+                // response ordering, not the number of wrapper calls admitted.
                 std::cout << "  no contention at this load, and it is not a "
                              "measurement artefact.\n"
-                             "  Cause: this wrapper allows one transaction in "
-                             "flight per upstream port\n"
-                             "  (one waiter plus port_busy). The RTL does not: "
-                             "MaxUniqueIds = 1 selects an\n"
-                             "  in-order metadata FIFO of depth MaxTxns = 32 "
-                             "and constrains response\n"
-                             "  ordering, not outstanding count. This is a "
-                             "result for this wrapper and\n"
-                             "  workload, not proof that a 4x4 FlooNoC cannot "
+                             "  Cause: this workload has one blocking issuer "
+                             "per upstream port, so it does not\n"
+                             "  saturate Step 10.5's bounded same-port "
+                             "concurrency. MaxUniqueIds = 1\n"
+                             "  constrains downstream response order, not "
+                             "outstanding count. This result\n"
+                             "  is not proof that a 4x4 FlooNoC cannot "
                              "congest.\n";
             }
         }
@@ -846,15 +863,25 @@ private:
         if (noc != nullptr) {
             const auto count = noc->completed_transactions();
             std::cout << "\n  " << count << " transactions, "
-                      << noc->total_latency_cycles() << " network cycles";
+                      << noc->total_latency_cycles()
+                      << (noc->selected_timing_mode()
+                                  == cdc::components::noc_interconnect::
+                                      timing_mode::fast
+                              ? " estimated no-contention network cycles"
+                              : " measured network cycles");
             if (count != 0) {
                 std::cout << ", mean "
                           << static_cast<double>(noc->total_latency_cycles())
                               / static_cast<double>(count) << " cycles";
             }
-            std::cout << "\n  mesh clocked " << noc->elapsed_cycles()
-                      << " cycles; idle gating requires wrapper and mesh "
-                         "quiescence\n";
+            if (noc->selected_timing_mode()
+                == cdc::components::noc_interconnect::timing_mode::fast) {
+                std::cout << "\n  cycle-stepped mesh bypassed in fast mode\n";
+            } else {
+                std::cout << "\n  mesh clocked " << noc->elapsed_cycles()
+                          << " cycles; idle gating requires wrapper and mesh "
+                             "quiescence\n";
+            }
         }
 
         report_cpu();
@@ -934,15 +961,23 @@ struct noc_soc_top::impl : public sc_core::sc_module {
     /// Reserved PLIC sources.
     sc_core::sc_signal<bool> tie_low;
     noc_soc_mode execution_mode;
+    noc_timing_mode interconnect_timing;
     std::string firmware_path;
 
     impl(sc_core::sc_module_name name, const std::string& config_path,
-         noc_soc_mode mode, std::string firmware, double sim_microseconds)
+         noc_soc_mode mode, noc_timing_mode timing, std::string firmware,
+         double sim_microseconds)
         : sc_core::sc_module(name)
         , cpu("cpu")
         , probe("probe")
         // Three AXI managers: the CPU, the DMA, and the latency survey.
-        , noc("noc", 4, 4, kTargetCount, /*num_initiators=*/3)
+        , noc("noc", 4, 4, kTargetCount, /*num_initiators=*/3,
+              sc_core::sc_time(1, sc_core::SC_NS),
+              cdc::components::noc_interconnect::
+                  default_max_outstanding_per_port,
+              timing == noc_timing_mode::fast
+                  ? cdc::components::noc_interconnect::timing_mode::fast
+                  : cdc::components::noc_interconnect::timing_mode::detailed)
         , ram("ram", kRamSize)
         , bootrom("bootrom", kBootromSize, /*read_only=*/true)
         , clint("clint", cpu)
@@ -972,6 +1007,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         , trng0_clk("trng0_clk")
         , cmu_idle("cmu_idle", 4)
         , execution_mode(mode)
+        , interconnect_timing(timing)
         , firmware_path(std::move(firmware))
     {
         // ── Upstream ports and their placement ──────────────────────────────
@@ -1136,8 +1172,13 @@ struct noc_soc_top::impl : public sc_core::sc_module {
                               ? "survey"
                               : "firmware")
                       << '\n';
-            std::cout << "interconnect: cycle-accurate FlooNoC, 4x4 mesh, "
-                         "1 ns network clock\n";
+            if (interconnect_timing == noc_timing_mode::fast) {
+                std::cout << "interconnect timing: fast approximately-timed "
+                             "FlooNoC, 4x4 placement, 1 ns calibration clock\n";
+            } else {
+                std::cout << "interconnect timing: detailed cycle-stepped "
+                             "FlooNoC, 4x4 mesh, 1 ns network clock\n";
+            }
             std::cout << "IPs: UARTx2 I2Cx2 SPIx2 TIMERx2 WDT PWM DMA TRNG CMU "
                          "DMIC OTP QSPI(+flash) RTC ADC GPIO | RAM 16 MiB @ "
                          "0x8000_0000 | CLINT + PLIC | RISC-V CPU\n";
@@ -1218,12 +1259,12 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 
 noc_soc_top::noc_soc_top(
     sc_core::sc_module_name name, std::string config_path, noc_soc_mode mode,
-    std::string firmware, double sim_us)
+    noc_timing_mode timing, std::string firmware, double sim_us)
     : sc_core::sc_module(name)
     , impl_([&]() {
         validate_mode(mode, firmware);
         return new impl(
-            "impl", config_path, mode, std::move(firmware), sim_us);
+            "impl", config_path, mode, timing, std::move(firmware), sim_us);
     }())
 {
 }

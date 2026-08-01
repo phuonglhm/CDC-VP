@@ -11,19 +11,22 @@
 namespace {
 
 using cdc::platforms::noc_soc::noc_soc_mode;
+using cdc::platforms::noc_soc::noc_timing_mode;
 
 struct options {
     std::string config_path = "platforms/noc_soc/configs/default.yaml";
     std::string firmware;
     noc_soc_mode mode = noc_soc_mode::survey;
+    noc_timing_mode timing = noc_timing_mode::detailed;
     double sim_us = 0.0;
     bool mode_seen = false;
+    bool timing_seen = false;
     bool help = false;
 };
 
 const char* usage =
     "usage: noc_soc --mode survey|firmware [--fw image.elf] "
-    "[--sim-us N] [-c config.yaml]";
+    "[--noc-timing detailed|fast] [--sim-us N] [-c config.yaml]";
 
 std::string require_value(
     int& index, int argc, char* argv[], const std::string& option)
@@ -70,6 +73,21 @@ options parse_options(int argc, char* argv[])
             result.mode_seen = true;
         } else if (arg == "--fw") {
             result.firmware = require_value(index, argc, argv, arg);
+        } else if (arg == "--noc-timing") {
+            if (result.timing_seen) {
+                throw std::invalid_argument(
+                    "--noc-timing may be specified only once");
+            }
+            const auto value = require_value(index, argc, argv, arg);
+            if (value == "detailed") {
+                result.timing = noc_timing_mode::detailed;
+            } else if (value == "fast") {
+                result.timing = noc_timing_mode::fast;
+            } else {
+                throw std::invalid_argument(
+                    "--noc-timing must be 'detailed' or 'fast'");
+            }
+            result.timing_seen = true;
         } else if (arg == "--sim-us") {
             result.sim_us =
                 parse_sim_us(require_value(index, argc, argv, arg));
@@ -107,7 +125,8 @@ int sc_main(int argc, char* argv[])
         }
 
         cdc::platforms::noc_soc::noc_soc_top top(
-            "noc_soc", args.config_path, args.mode, args.firmware, args.sim_us);
+            "noc_soc", args.config_path, args.mode, args.timing,
+            args.firmware, args.sim_us);
         sc_core::sc_start();
     } catch (const std::exception& error) {
         std::cerr << "noc_soc: " << error.what() << '\n'

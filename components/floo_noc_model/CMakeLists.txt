@@ -87,3 +87,22 @@ endif()
 install(TARGETS floo_noc_model EXPORT cdc-components-targets
     INCLUDES DESTINATION include)
 install(DIRECTORY include/ DESTINATION include)
+
+# The installed headers contain both FlooNoC-derived SHL-0.51 code and
+# CDC-VP-authored Apache-2.0 integration/reference code. Install both licence
+# texts, the project NOTICE and the exact upstream revision record alongside
+# the development package.
+set(FLOO_NOC_MODEL_LICENSE_DEST
+    "share/licenses/cdc-components/floo_noc_model")
+get_filename_component(FLOO_NOC_MODEL_REPO_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES/SHL-0.51.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/PROVENANCE.md"
+    DESTINATION "${FLOO_NOC_MODEL_LICENSE_DEST}")
+install(FILES "${FLOO_NOC_MODEL_REPO_ROOT}/LICENSE"
+    DESTINATION "${FLOO_NOC_MODEL_LICENSE_DEST}"
+    RENAME "Apache-2.0.txt")
+install(FILES "${FLOO_NOC_MODEL_REPO_ROOT}/NOTICE"
+    DESTINATION "${FLOO_NOC_MODEL_LICENSE_DEST}"
+    RENAME "NOTICE.txt")
