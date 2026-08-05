@@ -6,7 +6,7 @@ CDC-VP RISC-V full SoC.
 The default SAURIA model is bundled under:
 
 ```text
-components/npu_tlm/models/v4.2_model
+components/npu_tlm/models/v4.2_model_Aug01
 ```
 
 Set `SAURIA_NPU_ROOT` at CMake configure time only when an external model tree
@@ -53,6 +53,13 @@ RISC-V software
 
 Native MMIO requests are executed by the NPU worker thread so that one
 SystemC process owns the V4.2 host-interface signals.
+
+The Aug01 rich executor uses its own byte-addressed DRAM vector. The bridge
+translates system physical buffer addresses to RAM-relative model addresses,
+copies rich-operation inputs from system RAM before a queue push, keeps the
+gated NPU clock running while either lane is active, and copies completed
+outputs back to system RAM. Firmware must therefore program full physical RAM
+addresses in all rich address registers.
 
 ## Built Instance
 
@@ -522,7 +529,7 @@ driver/sauria_golden.h
 - Rich instruction registers are write-only because V4.2 defines no host
   readback path for them.
 - Native execution does not update compatibility `STATUS` or `IRQ_STATUS`.
-  Native software must poll native control.
+  Native software must use only the status behavior provided by the model.
 - Native SRAM windows use V4.2 row/subword host encoding, not linear byte
   addressing.
 - Only fields present in V4.2 `PerfCounters` have counter offsets.

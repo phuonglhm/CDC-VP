@@ -276,6 +276,12 @@ inline constexpr std::uint32_t STATUS_IDLE  = 1u << 3;
 inline constexpr std::uint32_t IRQ_DONE  = 1u << 0;
 inline constexpr std::uint32_t IRQ_ERROR = 1u << 1;
 
+inline constexpr std::uint32_t RICH_OPCODE_SET_NSPLIT = 0x05u;
+inline constexpr std::uint32_t RICH_OPCODE_GEMM_FUSED = 0x12u;
+inline constexpr std::uint32_t RICH_OPCODE_FUSED_ATTN = 0x13u;
+inline constexpr std::uint32_t RICH_OPCODE_LAYERNORM  = 0x14u;
+inline constexpr std::uint32_t RICH_OPCODE_ELEM_WISE  = 0x15u;
+
 inline constexpr std::uint32_t FORMAT_INT8_INT8_INT32 = 1u;
 inline constexpr std::uint32_t FORMAT_INT8_INT8_INT8  = 2u;
 inline constexpr std::uint32_t OP_GEMM                 = 0u;

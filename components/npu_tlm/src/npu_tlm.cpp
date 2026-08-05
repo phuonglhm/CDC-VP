@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <sstream>
 #include <vector>
@@ -36,6 +37,7 @@ constexpr std::uint32_t kInt8Bytes = 1;
 constexpr std::uint32_t kInt32Bytes = 4;
 constexpr std::uint32_t kConfigRegisterBytes = 42 * sizeof(std::uint32_t);
 constexpr std::uint32_t kRichModelBase = 0x4000'0000;
+constexpr std::uint32_t kRichElementBytes = sizeof(float);
 
 struct vp_alias_range {
     std::uint32_t alias_base;
@@ -238,6 +240,32 @@ struct npu_tlm::impl : public sc_core::sc_module {
             static_cast<std::uint32_t>(error_code::none);
     };
 
+    struct rich_parameters {
+        std::uint32_t in_addr = 0;
+        std::uint32_t weight_addr = 0;
+        std::uint32_t out_addr = 0;
+        std::uint32_t bias_addr = 0;
+        std::uint32_t m = 32;
+        std::uint32_t k = 32;
+        std::uint32_t n = 32;
+        std::uint32_t stride = 1;
+        std::uint32_t has_skip = 0;
+        std::uint32_t skip_addr = 0;
+        std::uint32_t q_gamma_a_addr = 0;
+        std::uint32_t k_b_addr = 0;
+        std::uint32_t v_beta_addr = 0;
+        std::uint32_t seq_len = 0;
+        std::uint32_t heads_dim_mode = 0;
+        std::uint32_t head_dim_eps_scale_a = 0;
+    };
+
+    struct rich_job {
+        std::uint32_t opcode = 0;
+        std::uint32_t output_phys = 0;
+        std::uint32_t output_offset = 0;
+        std::uint32_t output_size = 0;
+    };
+
     npu_tlm& owner;
     sc_core::sc_time access_latency;
 
@@ -270,6 +298,10 @@ struct npu_tlm::impl : public sc_core::sc_module {
     fx1::PerfCounters perf;
     std::uint32_t native_mvm_k = 0;
     std::uint32_t native_total_contexts = 0;
+    std::vector<std::uint8_t> rich_dram;
+    rich_parameters rich_params;
+    std::deque<rich_job> rich_jobs_a;
+    std::deque<rich_job> rich_jobs_b;
 
     register_file regs;
     sc_core::sc_event work_event;
@@ -314,6 +346,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
         core.i_select(buffer_select);
         core.i_total_contexts(total_contexts);
         core.attach_perf(&perf);
+        core.set_dram(&rich_dram);
         perf.X = kCols;
         perf.Y = kRows;
 
@@ -332,6 +365,37 @@ struct npu_tlm::impl : public sc_core::sc_module {
     }
 
     bool busy() const { return (regs.status & STATUS_BUSY) != 0u; }
+
+    std::size_t rich_queue_a_size() const
+    {
+        return core.decoder_inst ? core.decoder_inst->get_queue_a_size() : 0u;
+    }
+
+    std::size_t rich_queue_b_size() const
+    {
+        return core.decoder_inst ? core.decoder_inst->get_queue_b_size() : 0u;
+    }
+
+    std::uint32_t rich_state_a() const
+    {
+        return core.decoder_inst
+                   ? static_cast<std::uint32_t>(core.decoder_inst->get_state_a())
+                   : 0u;
+    }
+
+    std::uint32_t rich_state_b() const
+    {
+        return core.decoder_inst
+                   ? static_cast<std::uint32_t>(core.decoder_inst->get_state_b())
+                   : 0u;
+    }
+
+    bool rich_active() const
+    {
+        return !rich_jobs_a.empty() || !rich_jobs_b.empty() ||
+               rich_queue_a_size() != 0u || rich_queue_b_size() != 0u ||
+               rich_state_a() != 0u || rich_state_b() != 0u;
+    }
 
     void abort_native_request()
     {
@@ -361,6 +425,10 @@ struct npu_tlm::impl : public sc_core::sc_module {
         perf.reset();
         native_mvm_k = 0;
         native_total_contexts = 0;
+        rich_params = rich_parameters{};
+        rich_jobs_a.clear();
+        rich_jobs_b.clear();
+        rich_dram.clear();
         update_irq();
     }
 
@@ -475,6 +543,10 @@ struct npu_tlm::impl : public sc_core::sc_module {
         }
 
         if (offset == CTRL) {
+            if (rich_active() && (value & CTRL_START) != 0u) {
+                regs.last_error = static_cast<std::uint32_t>(error_code::busy);
+                return tlm::TLM_COMMAND_ERROR_RESPONSE;
+            }
             if (busy() && (value & (CTRL_START | CTRL_SOFT_RESET)) != 0u) {
                 regs.last_error = static_cast<std::uint32_t>(error_code::busy);
                 return tlm::TLM_COMMAND_ERROR_RESPONSE;
@@ -810,6 +882,199 @@ struct npu_tlm::impl : public sc_core::sc_module {
         }
     }
 
+    bool rich_address_value(std::uint32_t model_address,
+                            std::uint32_t value,
+                            std::uint32_t& forwarded)
+    {
+        std::uint32_t* field = nullptr;
+        switch (model_address) {
+        case 0x4000'0400u: field = &rich_params.in_addr; break;
+        case 0x4000'0404u: field = &rich_params.weight_addr; break;
+        case 0x4000'0408u: field = &rich_params.out_addr; break;
+        case 0x4000'040Cu: field = &rich_params.bias_addr; break;
+        case 0x4000'0434u: field = &rich_params.skip_addr; break;
+        case 0x4000'0444u: field = &rich_params.q_gamma_a_addr; break;
+        case 0x4000'0448u: field = &rich_params.k_b_addr; break;
+        case 0x4000'044Cu: field = &rich_params.v_beta_addr; break;
+        default: return true;
+        }
+
+        *field = value;
+        if (value == 0u) {
+            forwarded = 0u;
+            return true;
+        }
+        if (value < kRamBase || value >= kRamBase + kRamSize) {
+            return false;
+        }
+        forwarded = value - static_cast<std::uint32_t>(kRamBase);
+        return true;
+    }
+
+    void update_rich_parameter(std::uint32_t model_address,
+                               std::uint32_t value)
+    {
+        switch (model_address) {
+        case 0x4000'0410u: rich_params.m = value; break;
+        case 0x4000'0414u: rich_params.k = value; break;
+        case 0x4000'0418u: rich_params.n = value; break;
+        case 0x4000'0424u: rich_params.stride = value; break;
+        case 0x4000'0430u: rich_params.has_skip = value; break;
+        case 0x4000'0450u: rich_params.seq_len = value; break;
+        case 0x4000'0454u: rich_params.heads_dim_mode = value; break;
+        case 0x4000'0458u: rich_params.head_dim_eps_scale_a = value; break;
+        default: break;
+        }
+    }
+
+    bool checked_bytes(std::uint64_t elements, std::uint32_t element_bytes,
+                       std::uint32_t& bytes) const
+    {
+        if (elements == 0u || element_bytes == 0u ||
+            elements > std::numeric_limits<std::uint32_t>::max() /
+                           element_bytes) {
+            return false;
+        }
+        const std::uint64_t total = elements * element_bytes;
+        bytes = static_cast<std::uint32_t>(total);
+        return true;
+    }
+
+    bool stage_rich_range(std::uint32_t physical, std::uint32_t size,
+                          error_code& error)
+    {
+        if (!physical_ram_range(physical, size)) {
+            error = error_code::invalid_address;
+            return false;
+        }
+        const std::uint32_t offset =
+            physical - static_cast<std::uint32_t>(kRamBase);
+        const std::uint64_t end = static_cast<std::uint64_t>(offset) + size;
+        if (end > rich_dram.size()) {
+            rich_dram.resize(static_cast<std::size_t>(end), 0u);
+        }
+
+        std::vector<std::uint8_t> data;
+        if (!dma_read(physical, data, size)) {
+            error = error_code::dma_read;
+            return false;
+        }
+        std::copy(data.begin(), data.end(), rich_dram.begin() + offset);
+        return true;
+    }
+
+    bool prepare_rich_job(std::uint32_t opcode, rich_job& job,
+                          error_code& error)
+    {
+        error = error_code::none;
+        job.opcode = opcode;
+        if (opcode == RICH_OPCODE_SET_NSPLIT) {
+            return true;
+        }
+
+        std::uint32_t input_size = 0;
+        std::uint32_t weight_size = 0;
+        std::uint32_t output_size = 0;
+        if (opcode == RICH_OPCODE_GEMM_FUSED) {
+            if (!checked_bytes(static_cast<std::uint64_t>(rich_params.m) *
+                                   rich_params.k,
+                               kRichElementBytes, input_size) ||
+                !checked_bytes(static_cast<std::uint64_t>(rich_params.k) *
+                                   rich_params.n,
+                               kRichElementBytes, weight_size) ||
+                !checked_bytes(static_cast<std::uint64_t>(rich_params.m) *
+                                   rich_params.n,
+                               kRichElementBytes, output_size)) {
+                error = error_code::invalid_dimensions;
+                return false;
+            }
+            if (!stage_rich_range(rich_params.in_addr, input_size, error) ||
+                !stage_rich_range(rich_params.weight_addr, weight_size, error)) {
+                return false;
+            }
+            if (rich_params.bias_addr != 0u) {
+                std::uint32_t bias_size = 0;
+                if (!checked_bytes(rich_params.n, kRichElementBytes, bias_size) ||
+                    !stage_rich_range(rich_params.bias_addr, bias_size, error)) {
+                    return false;
+                }
+            }
+            if (rich_params.has_skip != 0u &&
+                !stage_rich_range(rich_params.skip_addr, output_size, error)) {
+                return false;
+            }
+        } else if (opcode == RICH_OPCODE_FUSED_ATTN) {
+            if (!checked_bytes(
+                    static_cast<std::uint64_t>(rich_params.seq_len) *
+                        rich_params.head_dim_eps_scale_a,
+                    kRichElementBytes, input_size)) {
+                error = error_code::invalid_dimensions;
+                return false;
+            }
+            output_size = input_size;
+            if (!stage_rich_range(rich_params.q_gamma_a_addr, input_size, error) ||
+                !stage_rich_range(rich_params.k_b_addr, input_size, error) ||
+                !stage_rich_range(rich_params.v_beta_addr, input_size, error)) {
+                return false;
+            }
+        } else if (opcode == RICH_OPCODE_LAYERNORM) {
+            if (!checked_bytes(
+                    static_cast<std::uint64_t>(rich_params.seq_len) *
+                        rich_params.heads_dim_mode,
+                    kRichElementBytes, input_size) ||
+                !checked_bytes(rich_params.heads_dim_mode, kRichElementBytes,
+                               weight_size)) {
+                error = error_code::invalid_dimensions;
+                return false;
+            }
+            output_size = input_size;
+            if (!stage_rich_range(rich_params.in_addr, input_size, error) ||
+                !stage_rich_range(rich_params.q_gamma_a_addr, weight_size, error) ||
+                !stage_rich_range(rich_params.v_beta_addr, weight_size, error)) {
+                return false;
+            }
+        } else if (opcode == RICH_OPCODE_ELEM_WISE) {
+            if (!checked_bytes(rich_params.seq_len, kRichElementBytes,
+                               input_size)) {
+                error = error_code::invalid_dimensions;
+                return false;
+            }
+            output_size = input_size;
+            if (rich_params.heads_dim_mode == 1u) {
+                const std::uint32_t stride =
+                    rich_params.stride == 0u ? 2u : rich_params.stride;
+                if (!checked_bytes(rich_params.seq_len / stride,
+                                   kRichElementBytes, output_size)) {
+                    error = error_code::invalid_dimensions;
+                    return false;
+                }
+            }
+            if (!stage_rich_range(rich_params.q_gamma_a_addr, input_size, error) ||
+                (rich_params.heads_dim_mode == 0u &&
+                 !stage_rich_range(rich_params.k_b_addr, input_size, error))) {
+                return false;
+            }
+        } else {
+            error = error_code::invalid_operation;
+            return false;
+        }
+
+        if (!physical_ram_range(rich_params.out_addr, output_size)) {
+            error = error_code::invalid_address;
+            return false;
+        }
+        job.output_phys = rich_params.out_addr;
+        job.output_offset =
+            rich_params.out_addr - static_cast<std::uint32_t>(kRamBase);
+        job.output_size = output_size;
+        const std::uint64_t output_end =
+            static_cast<std::uint64_t>(job.output_offset) + output_size;
+        if (output_end > rich_dram.size()) {
+            rich_dram.resize(static_cast<std::size_t>(output_end), 0u);
+        }
+        return true;
+    }
+
     tlm::tlm_response_status native_write(std::uint32_t address,
                                           std::uint32_t value)
     {
@@ -835,6 +1100,38 @@ struct npu_tlm::impl : public sc_core::sc_module {
             perf.reset();
         }
 
+        std::uint32_t forwarded_value = value;
+        update_rich_parameter(model_address, value);
+        if (!rich_address_value(model_address, value, forwarded_value)) {
+            return tlm::TLM_ADDRESS_ERROR_RESPONSE;
+        }
+
+        rich_job pending_job;
+        error_code rich_error = error_code::none;
+        if (instruction_start &&
+            !prepare_rich_job(value & 0xFFu, pending_job, rich_error)) {
+            return rich_error == error_code::invalid_address
+                       ? tlm::TLM_ADDRESS_ERROR_RESPONSE
+                       : tlm::TLM_GENERIC_ERROR_RESPONSE;
+        }
+
+        // Register 0x458 is intentionally shared by integer head_dim/eps_shift
+        // and floating-point scale_a. Re-issue its integer interpretation for
+        // ATTN/LAYERNORM before the instruction snapshot is pushed.
+        if (instruction_start &&
+            (pending_job.opcode == RICH_OPCODE_FUSED_ATTN ||
+             pending_job.opcode == RICH_OPCODE_LAYERNORM)) {
+            sauria::host_data_t integer_data;
+            sauria::host_mask_t integer_mask;
+            integer_data.data.fill(0.0);
+            integer_mask.data.fill(false);
+            integer_data[0] = rich_params.head_dim_eps_scale_a;
+            integer_mask[0] = true;
+            if (!core_host_write(0x4000'0458u, integer_data, integer_mask)) {
+                return tlm::TLM_COMMAND_ERROR_RESPONSE;
+            }
+        }
+
         sauria::host_data_t data;
         sauria::host_mask_t mask;
         data.data.fill(0.0);
@@ -845,33 +1142,33 @@ struct npu_tlm::impl : public sc_core::sc_module {
             for (std::uint32_t lane = 0; lane < 4; ++lane) {
                 data[lane] = static_cast<double>(
                     static_cast<std::int8_t>(
-                        (value >> (lane * 8)) & 0xFFu));
+                        (forwarded_value >> (lane * 8)) & 0xFFu));
                 mask[lane] = true;
             }
         } else if (is_packed_byte_address(model_address)) {
             for (std::uint32_t lane = 0; lane < 4; ++lane) {
                 data[lane] =
-                    static_cast<double>((value >> (lane * 8)) & 0xFFu);
+                    static_cast<double>((forwarded_value >> (lane * 8)) & 0xFFu);
                 mask[lane] = true;
             }
         } else if (is_packed_half_address(model_address)) {
             const std::uint32_t first_lane =
                 ((model_address & 0xFFFFu) >> 1) & 3u;
-            data[first_lane] = static_cast<double>(value & 0xFFFFu);
+            data[first_lane] = static_cast<double>(forwarded_value & 0xFFFFu);
             mask[first_lane] = true;
             if (first_lane + 1u < 4u) {
                 data[first_lane + 1u] =
-                    static_cast<double>((value >> 16) & 0xFFFFu);
+                    static_cast<double>((forwarded_value >> 16) & 0xFFFFu);
                 mask[first_lane + 1u] = true;
             }
         } else if (is_rich_float_address(model_address)) {
-            data[0] = static_cast<double>(bits_to_float(value));
+            data[0] = static_cast<double>(bits_to_float(forwarded_value));
             mask[0] = true;
         } else {
-            data[0] = static_cast<double>(value);
+            data[0] = static_cast<double>(forwarded_value);
             mask[0] = true;
             if (local == 0u) {
-                const std::uint32_t upper = (value >> 16) & 0xFFu;
+                const std::uint32_t upper = (forwarded_value >> 16) & 0xFFu;
                 data[2] = static_cast<double>(upper);
                 mask[2] = upper != 0u;
             }
@@ -883,9 +1180,17 @@ struct npu_tlm::impl : public sc_core::sc_module {
             total_contexts.write(native_total_contexts);
             mvm_k.write(native_mvm_k);
         }
-        return core_host_write(model_address, data, mask)
-                   ? tlm::TLM_OK_RESPONSE
-                   : tlm::TLM_COMMAND_ERROR_RESPONSE;
+        if (!core_host_write(model_address, data, mask)) {
+            return tlm::TLM_COMMAND_ERROR_RESPONSE;
+        }
+        if (instruction_start) {
+            if (model_address == 0x4000'0310u) {
+                rich_jobs_a.push_back(pending_job);
+            } else {
+                rich_jobs_b.push_back(pending_job);
+            }
+        }
+        return tlm::TLM_OK_RESPONSE;
     }
 
     tlm::tlm_response_status native_read(std::uint32_t address,
@@ -1164,6 +1469,42 @@ struct npu_tlm::impl : public sc_core::sc_module {
             sc_core::wait(delay);
         }
         return trans.get_response_status() == tlm::TLM_OK_RESPONSE;
+    }
+
+    bool complete_rich_job(const rich_job& job)
+    {
+        if (job.output_size == 0u) {
+            return true;
+        }
+        const std::uint64_t end =
+            static_cast<std::uint64_t>(job.output_offset) + job.output_size;
+        if (end > rich_dram.size()) {
+            return false;
+        }
+        std::vector<std::uint8_t> output(
+            rich_dram.begin() + job.output_offset,
+            rich_dram.begin() + static_cast<std::size_t>(end));
+        if (!dma_write(job.output_phys, output)) {
+            return false;
+        }
+        return true;
+    }
+
+    void service_rich_completions()
+    {
+        const std::size_t queued_a = rich_queue_a_size();
+        while (rich_jobs_a.size() > queued_a) {
+            const rich_job job = rich_jobs_a.front();
+            rich_jobs_a.pop_front();
+            complete_rich_job(job);
+        }
+
+        const std::size_t queued_b = rich_queue_b_size();
+        while (rich_jobs_b.size() > queued_b) {
+            const rich_job job = rich_jobs_b.front();
+            rich_jobs_b.pop_front();
+            complete_rich_job(job);
+        }
     }
 
     error_code validate_job(std::uint32_t& source_span) const
@@ -1548,8 +1889,9 @@ void npu_tlm::worker_thread()
         }
 
         while (reset_n.read()) {
+            impl_->service_rich_completions();
             if (!impl_->job_pending && !impl_->soft_reset_pending &&
-                !impl_->native_pending) {
+                !impl_->native_pending && !impl_->rich_active()) {
                 impl_->set_clock_running(false);
                 wait(impl_->work_event | reset_n.negedge_event());
                 if (!reset_n.read()) {
@@ -1582,6 +1924,14 @@ void npu_tlm::worker_thread()
 
             if (impl_->native_pending) {
                 impl_->service_native_request();
+                continue;
+            }
+
+            if (impl_->rich_active()) {
+                if (!impl_->wait_clock()) {
+                    break;
+                }
+                impl_->service_rich_completions();
             }
         }
 
