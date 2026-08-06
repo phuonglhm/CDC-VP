@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <utility>
 
 namespace cdc::components {
 
@@ -101,6 +102,10 @@ void dma_tlm::trace(sc_core::sc_trace_file *tf) const {
       sc_core::sc_trace(tf, m_channels[i].ftr, prefix + ".ftr");
       sc_core::sc_trace(tf, m_channels[i].status, prefix + ".status");
    }
+}
+
+void dma_tlm::set_channel_start_observer(channel_start_observer observer) {
+   m_channel_start_observer = std::move(observer);
 }
 
 void dma_tlm::b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay) {
@@ -400,6 +405,9 @@ void dma_tlm::start_channel(unsigned int channel, uint32_t pc, bool nonsecure) {
    state.mfifo.clear();
    std::cout << sc_core::sc_time_stamp() << " [DMA] DMAGO channel " << channel << " pc=" << hex32(pc)
              << " ns=" << nonsecure << '\n';
+   if (m_channel_start_observer) {
+      m_channel_start_observer(channel);
+   }
    schedule_channel(channel);
 }
 

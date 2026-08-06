@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * FX1 hardware enumeration and non-destructive register diagnostics.
+ * FX1/noc_soc hardware enumeration and non-destructive register diagnostics.
  *
  * Base addresses come only from soc_memory_map.h. Register offsets without a
  * shared firmware ABI header are the small, read-only/RW subset documented by
  * the corresponding component model. No decode-miss access is attempted:
  * the Bremen CPU would turn that TLM error into a synchronous exception owned
- * by the FreeRTOS trap handler.
+ * by the FreeRTOS trap handler. FREERTOS_NOC_SOC excludes FX1 ABI windows
+ * that the FlooNoC platform does not instantiate and reports them as absent.
  */
 
 #include "hw_diag.h"
@@ -143,6 +144,7 @@ static void print_field(const char *text, size_t width) {
 struct scan_summary {
   uint32_t implemented;
   uint32_t reserved;
+  uint32_t absent;
   uint32_t mismatches;
 };
 
@@ -214,6 +216,17 @@ static void scan_reserved(struct scan_summary *summary, const char *name,
   uart_puts("----------  ----------  reserved\n");
 }
 
+#if defined(FREERTOS_NOC_SOC)
+static void scan_absent(struct scan_summary *summary, const char *name,
+                        uint32_t base) {
+  ++summary->absent;
+  uart_puts("  ");
+  print_field(name, 9u);
+  uart_put_hex32("", base, "  ");
+  uart_puts("----------  ----------  absent\n");
+}
+#endif
+
 struct qspi_saved_state {
   uint32_t ctrl;
   uint32_t cmd;
@@ -269,18 +282,28 @@ static uint32_t qspi_read_jedec(int *done_seen, int *done_cleared) {
 }
 
 void hw_scan_run(void) {
-  struct scan_summary summary = {0u, 0u, 0u};
+  struct scan_summary summary = {0u, 0u, 0u, 0u};
   const uint32_t i2c_idle = CDC_I2C_STATUS_FMTEMPTY | CDC_I2C_STATUS_HOSTIDLE |
                             CDC_I2C_STATUS_TARGETIDLE | CDC_I2C_STATUS_RXEMPTY |
                             CDC_I2C_STATUS_TXEMPTY | CDC_I2C_STATUS_ACQEMPTY;
   const uint32_t jedec = qspi_read_jedec(NULL, NULL);
 
+#if defined(FREERTOS_NOC_SOC)
+  uart_puts("\n=== FlooNoC SoC Hardware Scan ===\n");
+#else
   uart_puts("\n=== FX1 Hardware Scan ===\n");
+#endif
   uart_puts("  IP       BASE        PROBE       VALUE       RESULT\n");
   uart_puts("  -------- ----------  ----------  ----------  --------\n");
 
   scan_probe(&summary, "BOOTROM0", CDC_BOOTROM_BASE, 0u, 0u, 0u, "mapped");
+#if defined(FREERTOS_NOC_SOC)
+  /* Declared by the shared FX1 ABI, but noc_soc does not instantiate it.
+   * Report the architectural gap without issuing an unmapped CPU access. */
+  scan_absent(&summary, "IFLASH0", CDC_IFLASH_BASE);
+#else
   scan_probe(&summary, "IFLASH0", CDC_IFLASH_BASE, 0u, 0u, 0u, "mapped");
+#endif
   scan_probe(&summary, "CLINT0", CDC_CLINT_BASE, CDC_CLINT_MTIME, 0u, 0u,
              "mtime");
   scan_probe(&summary, "PLIC0", CDC_PLIC_BASE, CDC_PLIC_THRESHOLD, 0u,
@@ -301,8 +324,12 @@ void hw_scan_run(void) {
              0xFFFFFFFFu, "idle");
   scan_probe(&summary, "CMU0", CDC_CMU0_BASE, CMU_CLK_ENABLES, 0x0Fu, 0x0Fu,
              "clocks-on");
+#if defined(FREERTOS_NOC_SOC)
+  scan_absent(&summary, "PMU0", CDC_PMU0_BASE);
+#else
   scan_probe(&summary, "PMU0", CDC_PMU0_BASE, PMU_CONTROL, 0x180u, 0x1F1u,
              "active");
+#endif
   scan_probe(&summary, "DMIC0", CDC_DMIC0_BASE, DMIC_STATUS,
              DMIC_STATUS_FIFO_EMPTY, DMIC_STATUS_FIFO_EMPTY, "fifo-empty");
   scan_probe(&summary, "OTP0", CDC_OTP0_BASE, OTP_MODEL_WORDS, 256u,
@@ -336,11 +363,21 @@ void hw_scan_run(void) {
 
   if (summary.mismatches == 0u) {
     uart_put_u32("HW_SCAN PASS implemented=", summary.implemented, " ");
+#if defined(FREERTOS_NOC_SOC)
+    uart_put_u32("reserved=", summary.reserved, " ");
+    uart_put_u32("absent=", summary.absent, "\n");
+#else
     uart_put_u32("reserved=", summary.reserved, "\n");
+#endif
   } else {
     uart_put_u32("HW_SCAN FAIL mismatches=", summary.mismatches, " ");
     uart_put_u32("implemented=", summary.implemented, " ");
+#if defined(FREERTOS_NOC_SOC)
+    uart_put_u32("reserved=", summary.reserved, " ");
+    uart_put_u32("absent=", summary.absent, "\n");
+#else
     uart_put_u32("reserved=", summary.reserved, "\n");
+#endif
   }
 }
 
@@ -455,6 +492,7 @@ static void reg_test_timer1(void) {
              cleared, 0u, asserted == 1u && cleared == 0u);
 }
 
+#if !defined(FREERTOS_NOC_SOC)
 static void reg_test_pmu_w1c(void) {
   const uint32_t old_enable = mmio_read(CDC_PMU0_BASE, PMU_INTR_ENABLE);
 
@@ -469,6 +507,7 @@ static void reg_test_pmu_w1c(void) {
   reg_record("W1C", "PMU0.INTR_STATE", CDC_PMU0_BASE + PMU_INTR_STATE, cleared,
              0u, asserted == 1u && cleared == 0u);
 }
+#endif
 
 static void reg_test_adc_w1c(void) {
   const uint32_t old_control = mmio_read(CDC_ADC0_BASE, ADC_CONTROL);
@@ -502,7 +541,11 @@ static void reg_test_qspi_w1c(void) {
 static void reg_print_results(void) {
   uint32_t passed = 0u;
 
+#if defined(FREERTOS_NOC_SOC)
+  uart_puts("\n=== FlooNoC SoC Safe Register Test ===\n");
+#else
   uart_puts("\n=== FX1 Safe Register Test ===\n");
+#endif
   uart_puts("  TYPE  REGISTER                   WRITE ADDR  WRITE VALUE  "
             "READ ADDR   READ VALUE   RESULT\n");
   uart_puts("  ----  -------------------------  ----------  -----------  "
@@ -568,7 +611,9 @@ void reg_test_run(void) {
   reg_ro("TRNG0.SAMPLE_CNT1", CDC_TRNG0_BASE, TRNG_SAMPLE_CNT1, 0xFFFFu,
          0xFFFFFFFFu);
   reg_ro("CMU0.CLK_ENABLES", CDC_CMU0_BASE, CMU_CLK_ENABLES, 0x0Fu, 0x0Fu);
+#if !defined(FREERTOS_NOC_SOC)
   reg_ro("PMU0.CONTROL", CDC_PMU0_BASE, PMU_CONTROL, 0x180u, 0x1F1u);
+#endif
   reg_ro("DMIC0.STATUS", CDC_DMIC0_BASE, DMIC_STATUS, DMIC_STATUS_FIFO_EMPTY,
          DMIC_STATUS_FIFO_EMPTY);
   reg_ro("OTP0.MODEL_WORDS", CDC_OTP0_BASE, OTP_MODEL_WORDS, 256u, 0xFFFFFFFFu);
@@ -591,7 +636,9 @@ void reg_test_run(void) {
   reg_rw("DMA0.INTEN", CDC_DMA0_BASE, CDC_DMA_INTEN, 0x5A5A5A5Au, 0xFFFFFFFFu);
   reg_rw("TRNG0.IMR", CDC_TRNG0_BASE, TRNG_IMR, 0x0Au, 0x0Fu);
   reg_rw("CMU0.CLK_ENABLES", CDC_CMU0_BASE, CMU_CLK_ENABLES, 0x05u, 0x0Fu);
+#if !defined(FREERTOS_NOC_SOC)
   reg_rw("PMU0.INTR_ENABLE", CDC_PMU0_BASE, PMU_INTR_ENABLE, 1u, 1u);
+#endif
   reg_rw("DMIC0.FIFO_WM", CDC_DMIC0_BASE, DMIC_FIFO_WM, 8u, 0xFFFFFFFFu);
   reg_rw("OTP0.CHECK_TIMEOUT", CDC_OTP0_BASE, OTP_CHECK_TIMEOUT, 0x1234u,
          0xFFFFFFFFu);
@@ -608,7 +655,9 @@ void reg_test_run(void) {
   /* Functional sticky-cause checks: observe hardware/software set, W1C,
    * then leave the interrupt source masked and state cleared. */
   reg_test_timer1();
+#if !defined(FREERTOS_NOC_SOC)
   reg_test_pmu_w1c();
+#endif
   reg_test_adc_w1c();
   reg_test_qspi_w1c();
 

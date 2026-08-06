@@ -124,13 +124,23 @@ public:
 
    SC_HAS_PROCESS(Testbench);
 
-   Testbench(sc_core::sc_module_name name, ram_tlm &ram)
+   struct channel_start_record {
+      unsigned int count = 0;
+      unsigned int channel = 0;
+      sc_core::sc_time at{sc_core::SC_ZERO_TIME};
+      bool command_returned = false;
+      bool observed_before_return = false;
+   };
+
+   Testbench(sc_core::sc_module_name name, ram_tlm &ram,
+             channel_start_record &channel_start)
        : sc_core::sc_module(name)
        , initiator_socket("initiator_socket")
        , reset_n("reset_n")
        , irq("irq")
        , irq_abort("irq_abort")
        , m_ram(ram)
+       , m_channel_start(channel_start)
        , m_errors(0) {
       SC_THREAD(run);
    }
@@ -144,6 +154,7 @@ private:
    static const uint32_t EVENT_DONE = 3;
 
    ram_tlm &m_ram;
+   channel_start_record &m_channel_start;
    unsigned int m_errors;
 
    void run() {
@@ -171,7 +182,21 @@ private:
       write32(dma_tlm::INTEN, 1u << EVENT_DONE);
       write32(dma_tlm::DBGINST0, debug_inst0(0xA0, 0x00));
       write32(dma_tlm::DBGINST1, debug_inst1(PROGRAM_ADDR));
+      m_channel_start.command_returned = false;
       write32(dma_tlm::DBGCMD, 0);
+      m_channel_start.command_returned = true;
+      expect_eq("channel-start observer count", m_channel_start.count, 1);
+      expect_eq("channel-start observer channel", m_channel_start.channel, 0);
+      if (!m_channel_start.observed_before_return ||
+          m_channel_start.at > sc_core::sc_time_stamp()) {
+         ++m_errors;
+         std::cout << "[TB][FAIL] channel-start observer must fire inside "
+                      "DBGCMD handling before b_transport returns\n";
+      } else {
+         std::cout << "[TB][PASS] channel-start observer fired at "
+                   << m_channel_start.at
+                   << " before the DBGCMD call returned\n";
+      }
       wait(200, sc_core::SC_NS);
       settle_outputs();
 
@@ -348,7 +373,17 @@ int sc_main(int argc, char *argv[]) {
 
    dma_tlm dut("dma_tlm");
    ram_tlm ram("ram", 4096);
-   Testbench tb("tb", ram);
+   Testbench::channel_start_record channel_start;
+   Testbench tb("tb", ram, channel_start);
+
+   dut.set_channel_start_observer(
+       [&channel_start](unsigned int channel) {
+          ++channel_start.count;
+          channel_start.channel = channel;
+          channel_start.at = sc_core::sc_time_stamp();
+          channel_start.observed_before_return =
+              !channel_start.command_returned;
+       });
 
    sc_core::sc_signal<bool> rst_n_sig("rst_n_sig");
    sc_core::sc_signal<uint32_t> irq_sig("irq_sig");

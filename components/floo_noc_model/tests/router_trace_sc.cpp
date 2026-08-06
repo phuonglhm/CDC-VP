@@ -191,6 +191,8 @@ int run(int argc, char* argv[], const std::vector<stimulus>& stimuli)
             "out_ready", num_ports};
         sc_core::sc_vector<sc_core::sc_signal<unsigned>> occupancy{
             "occupancy", num_ports};
+        sc_core::sc_vector<sc_core::sc_signal<unsigned>> output_occupancy{
+            "output_occupancy", num_ports};
         sc_core::sc_vector<sc_core::sc_signal<unsigned>> selected{
             "selected", num_ports};
         sc_core::sc_vector<sc_core::sc_signal<bool>> locked{
@@ -211,6 +213,7 @@ int run(int argc, char* argv[], const std::vector<stimulus>& stimuli)
             dut.o_valid[port](out_valid[port]);
             dut.i_ready[port](out_ready[port]);
             dut.o_input_occupancy[port](occupancy[port]);
+            dut.o_output_occupancy[port](output_occupancy[port]);
             dut.o_output_selected[port](selected[port]);
             dut.o_output_locked[port](locked[port]);
 
@@ -221,6 +224,7 @@ int run(int argc, char* argv[], const std::vector<stimulus>& stimuli)
             counters.i_out_valid[port](out_valid[port]);
             counters.i_out_ready[port](out_ready[port]);
             counters.i_input_occupancy[port](occupancy[port]);
+            counters.i_output_occupancy[port](output_occupancy[port]);
         }
 
         std::ofstream trace(argv[2]);

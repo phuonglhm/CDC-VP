@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -34,12 +35,26 @@ public:
     /// contents plus DMA0 exclusively to the CPU/firmware path.
     /// `sim_us` bounds the run. Firmware ends in a spin loop, so without a
     /// limit the simulation never returns.
+    /// `measure_baseline` installs the Step 12.7 passive measurement observer
+    /// and prints its report at the end of the run. It is off by default: the
+    /// observer classifies every completion, and a regression should not carry
+    /// instrumentation it does not read.
     noc_soc_top(sc_core::sc_module_name name, std::string config_path,
                 noc_soc_mode mode,
                 noc_timing_mode timing = noc_timing_mode::detailed,
                 std::string firmware = {},
-                double sim_us = 0.0);
+                double sim_us = 0.0,
+                bool measure_baseline = false,
+                std::string metrics_path = {});
     ~noc_soc_top() override;
+
+    /// Configure UART0's host-side pin bridge before sc_start(). File replay
+    /// is deterministic and intended for CI; the loopback TCP backend is for
+    /// interactive use. Both paths enter the real UART RX FIFO and reach
+    /// firmware through PLIC source 1.
+    void set_uart0_socket(std::uint16_t port, bool wait_for_client);
+    void set_uart0_rx_file(const std::string& path,
+                           std::uint64_t start_delay_us = 0);
 
 private:
     struct impl;

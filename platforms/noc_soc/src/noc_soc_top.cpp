@@ -3,8 +3,12 @@
 #include "noc_soc_top.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -20,6 +24,7 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include <floo_noc_model/noc_interconnect.h>
+#include <floo_noc_model/noc_metrics.hpp>
 
 #include <clint_tlm.h>
 #include <plic_tlm.h>
@@ -27,6 +32,7 @@
 
 #include <memory_tlm.h>
 #include <uart.h>          // UartTLM                    (global)
+#include <uart_host_bridge.h>
 #include <i2c.h>           // i2c                        (global)
 #include <spi_tlm.h>       // cdc::components::spi_tlm
 #include <timer.h>         // cdc::components::Timer
@@ -42,6 +48,8 @@
 #include <rtc_tlm.h>       // cdc::components::rtc_tlm
 #include <adc_tlm.h>       // cdc::components::adc_tlm
 #include <gpio_tlm.h>      // cdc::components::gpio_tlm
+
+#include <soc/noc_dashboard_protocol.h>
 
 namespace cdc::platforms::noc_soc {
 namespace {
@@ -253,6 +261,14 @@ constexpr node kIoNode   {2, 3};   // rtc0, adc0, gpio0
 
 constexpr unsigned kTargetCount = 23;  // 20 peripherals, CLINT, PLIC, BOOTROM
 
+/// Supplied by CMake so a measurement baseline records what it was built with.
+/// A latency number from a Debug build means something different from the same
+/// number in Release, and an artifact that does not say which is not evidence.
+#ifndef NOC_SOC_BUILD_TYPE
+#define NOC_SOC_BUILD_TYPE "unknown"
+#endif
+constexpr const char* kBuildType = NOC_SOC_BUILD_TYPE;
+
 /// A spin loop, `jal x0, 0`, little endian. Without firmware the CPU would
 /// fetch zeroed RAM, trap, and fetch more zeros — a trap storm that says
 /// nothing about the interconnect. This gives it a valid instruction to fetch
@@ -327,6 +343,830 @@ public:
     /// Last time the CPU's retire count advanced. Everything after that is the
     /// CPU idling, and must not be charged to its instructions.
     sc_core::sc_time cpu_active_until = sc_core::SC_ZERO_TIME;
+
+    // ── Step 12.7 measurement baseline ──────────────────────────────────────
+    //
+    // Everything below is passive. It is fed by `noc_interconnect`'s completion
+    // observer, which reports each transaction where its latency becomes final,
+    // and it never issues traffic, consumes time or touches a payload.
+    //
+    // The observer exists because `last_latency_cycles()` cannot attribute
+    // anything under concurrent traffic: it holds only the most recent
+    // completion. PLIC claim and PLIC complete are the same target at the same
+    // address, separated only by direction, so polling a global afterwards
+    // would attribute one to the other.
+
+    using transaction_metrics = floo::model::transaction_metrics;
+
+    bool baseline_enabled = false;
+    noc_timing_mode timing = noc_timing_mode::detailed;
+    std::string firmware_path;
+    std::string metrics_path;
+    transaction_metrics all_stats;
+    std::array<transaction_metrics, 3> manager_stats;
+    transaction_metrics plic_claim_stats;
+    transaction_metrics plic_complete_stats;
+    transaction_metrics cpu_ram_quiet_stats;
+    transaction_metrics cpu_ram_dma_active_stats;
+    transaction_metrics cpu_mmio_stats;
+    transaction_metrics dma_manager_stats;
+    static constexpr unsigned kTargetRamIndex = 0;
+    static constexpr unsigned kTargetPlicIndex = 1;
+    static constexpr unsigned kTargetOtherIndex = 2;
+    static constexpr unsigned kTargetMetricCount = 3;
+    std::array<transaction_metrics, kTargetMetricCount> target_stats;
+    std::array<
+        std::array<transaction_metrics, kTargetMetricCount>, 3> flow_stats;
+
+    /// Modeled time from the DMA channel's architectural start transition to
+    /// the completion interrupt asserting. The start comes from dma_tlm's
+    /// passive channel observer; using completion of the CPU's DBGCMD write
+    /// would begin after the DMA had already been scheduled and incorrectly
+    /// omit the NoC response path.
+    sc_core::sc_time dma_start_at{sc_core::SC_ZERO_TIME};
+    bool dma_start_pending = false;
+    unsigned dma_completion_samples = 0;
+    sc_core::sc_time dma_completion_min{sc_core::SC_ZERO_TIME};
+    sc_core::sc_time dma_completion_max{sc_core::SC_ZERO_TIME};
+    sc_core::sc_time dma_completion_total{sc_core::SC_ZERO_TIME};
+
+    /// PLIC context 0 claim/complete register. A read claims, a write
+    /// completes; the address is identical, which is why direction is part of
+    /// the classification rather than an afterthought.
+    static constexpr std::uint64_t kPlicClaimAddr = kPlicBase + 0x20'0004;
+    static constexpr unsigned kCpuPortIndex = 0;
+    static constexpr unsigned kDmaPortIndex = 1;
+    static constexpr unsigned kProbePortIndex = 2;
+
+    static unsigned target_metric_index(std::uint64_t address)
+    {
+        if (address >= kRamBase && address < kRamBase + kRamSize) {
+            return kTargetRamIndex;
+        }
+        if (address >= kPlicBase && address < kPlicBase + kPlicSize) {
+            return kTargetPlicIndex;
+        }
+        return kTargetOtherIndex;
+    }
+
+    void observe_completion(
+        const cdc::components::noc_interconnect::completion& done)
+    {
+        all_stats.add(done.length, done.latency_cycles);
+        const unsigned target = target_metric_index(done.address);
+        target_stats[target].add(done.length, done.latency_cycles);
+        if (done.port < manager_stats.size()) {
+            manager_stats[done.port].add(done.length, done.latency_cycles);
+            flow_stats[done.port][target].add(
+                done.length, done.latency_cycles);
+        }
+        if (done.port == kDmaPortIndex) {
+            dma_manager_stats.add(done.length, done.latency_cycles);
+            return;
+        }
+        if (done.port != kCpuPortIndex) {
+            return;
+        }
+
+        if (done.address == kPlicClaimAddr) {
+            if (done.is_write) {
+                plic_complete_stats.add(done.length, done.latency_cycles);
+            } else {
+                plic_claim_stats.add(done.length, done.latency_cycles);
+            }
+            return;
+        }
+        if (done.address >= kRamBase && done.address < kRamBase + kRamSize) {
+            // "While DMA is active" means the DMA manager had at least one
+            // transaction admitted at the moment this one completed. It is a
+            // classification, not a claim that the two overlapped for their
+            // whole flight; a CPU access is short enough that the distinction
+            // rarely matters, and stating the rule is better than implying a
+            // stronger one.
+            if (noc->outstanding_transactions(kDmaPortIndex) > 0) {
+                cpu_ram_dma_active_stats.add(
+                    done.length, done.latency_cycles);
+            } else {
+                cpu_ram_quiet_stats.add(done.length, done.latency_cycles);
+            }
+            return;
+        }
+        cpu_mmio_stats.add(done.length, done.latency_cycles);
+    }
+
+    void note_dma_channel_start(unsigned channel)
+    {
+        if (channel != 0) {
+            return;
+        }
+        dma_start_at = sc_core::sc_time_stamp();
+        dma_start_pending = true;
+    }
+
+    /// Called by the impl when the DMA completion line rises. The signal
+    /// lives up there; the accounting lives here, next to everything else the
+    /// end-of-run report needs.
+    void note_dma_completion_irq()
+    {
+        if (!dma_start_pending) {
+            return;
+        }
+        dma_start_pending = false;
+        const auto elapsed = sc_core::sc_time_stamp() - dma_start_at;
+        if (dma_completion_samples == 0 || elapsed < dma_completion_min) {
+            dma_completion_min = elapsed;
+        }
+        if (elapsed > dma_completion_max) {
+            dma_completion_max = elapsed;
+        }
+        dma_completion_total += elapsed;
+        ++dma_completion_samples;
+    }
+
+    static void print_latency(
+        const char* label, const transaction_metrics& stats)
+    {
+        std::cout << "    " << label << ": n=" << stats.transactions();
+        if (stats.transactions() == 0) {
+            std::cout << " (not exercised)\n";
+            return;
+        }
+        const auto& latency = stats.latency();
+        std::cout << " min=" << latency.min()
+                  << " mean=" << latency.mean()
+                  << " max=" << latency.max() << " cycles\n";
+        std::cout << "      payload=" << stats.payload_bytes()
+                  << " bytes p50=" << latency.percentile(50, 100)
+                  << " p95=" << latency.percentile(95, 100)
+                  << " p99=" << latency.percentile(99, 100)
+                  << " cycles\n";
+    }
+
+    struct mesh_summary {
+        std::uint64_t accepted_flits = 0;
+        std::uint64_t accepted_packets = 0;
+        std::uint64_t stall_cycles = 0;
+        std::uint64_t busy_cycles = 0;
+        unsigned input_high_water = 0;
+        unsigned output_high_water = 0;
+        double peak_link_utilisation = 0.0;
+        double peak_link_stall_ratio = 0.0;
+        unsigned peak_x = 0;
+        unsigned peak_y = 0;
+        unsigned peak_port = 0;
+    };
+
+    static mesh_summary summarise_mesh(
+        const floo::model::mesh_counter_snapshot& mesh,
+        std::uint64_t measurement_cycles = 0)
+    {
+        mesh_summary result{};
+        for (std::size_t node_index = 0;
+             node_index < mesh.routers.size(); ++node_index) {
+            const auto& router = mesh.routers[node_index];
+            for (unsigned port = 0;
+                 port < floo::model::router_counter_snapshot::num_ports;
+                 ++port) {
+                const auto& output = router.outputs[port];
+                result.accepted_flits += output.accepted_flits;
+                result.accepted_packets += output.accepted_packets;
+                result.stall_cycles += output.stall_cycles;
+                result.busy_cycles += output.busy_cycles;
+                result.input_high_water = std::max(
+                    result.input_high_water,
+                    router.input_buffers[port].high_water);
+                result.output_high_water = std::max(
+                    result.output_high_water,
+                    router.output_buffers[port].high_water);
+
+                // Eject is an endpoint boundary, not an inter-router link.
+                if (port == floo::model::to_port(
+                                floo::model::direction::eject)) {
+                    continue;
+                }
+                const std::uint64_t denominator = measurement_cycles == 0
+                    ? router.counted_cycles : measurement_cycles;
+                const double utilisation = denominator == 0
+                    ? 0.0
+                    : static_cast<double>(output.accepted_flits)
+                        / static_cast<double>(denominator);
+                const double stall_ratio = output.busy_cycles == 0
+                    ? 0.0
+                    : static_cast<double>(output.stall_cycles)
+                        / static_cast<double>(output.busy_cycles);
+                if (utilisation > result.peak_link_utilisation) {
+                    result.peak_link_utilisation = utilisation;
+                    result.peak_x =
+                        static_cast<unsigned>(node_index % mesh.width);
+                    result.peak_y =
+                        static_cast<unsigned>(node_index / mesh.width);
+                    result.peak_port = port;
+                }
+                result.peak_link_stall_ratio =
+                    std::max(result.peak_link_stall_ratio, stall_ratio);
+            }
+        }
+        return result;
+    }
+
+    static void print_mesh_summary(
+        const char* channel,
+        const floo::model::mesh_counter_snapshot& mesh)
+    {
+        const auto measurement_cycles = static_cast<std::uint64_t>(
+            sc_core::sc_time_stamp()
+            / sc_core::sc_time(1, sc_core::SC_NS));
+        const auto summary = summarise_mesh(mesh, measurement_cycles);
+        std::cout << "    " << channel << ": "
+                  << summary.accepted_flits << " accepted flits, "
+                  << summary.accepted_packets << " packets, "
+                  << summary.stall_cycles << " output stall cycles\n"
+                  << "      peak directed-link utilisation "
+                  << summary.peak_link_utilisation * 100.0 << "% at ("
+                  << summary.peak_x << ',' << summary.peak_y << ") "
+                  << floo::model::to_string(
+                         floo::model::direction_from_port(summary.peak_port))
+                  << "; peak stall ratio "
+                  << summary.peak_link_stall_ratio * 100.0 << "%\n"
+                  << "      FIFO high-water input="
+                  << summary.input_high_water << " output="
+                  << summary.output_high_water << '\n';
+    }
+
+    void require_metrics_consistent() const
+    {
+        const transaction_metrics* const buckets[] = {
+            &all_stats,
+            &manager_stats[0],
+            &manager_stats[1],
+            &manager_stats[2],
+            &plic_claim_stats,
+            &plic_complete_stats,
+            &cpu_ram_quiet_stats,
+            &cpu_ram_dma_active_stats,
+            &cpu_mmio_stats,
+            &dma_manager_stats,
+        };
+        for (const auto* bucket : buckets) {
+            if (!bucket->valid()) {
+                throw std::runtime_error(
+                    "noc_soc: metric counter overflow or invalid histogram");
+            }
+        }
+        if (noc == nullptr) {
+            throw std::logic_error("noc_soc: metrics have no interconnect");
+        }
+        if (all_stats.transactions() != noc->completed_transactions()
+            || all_stats.latency().sum() != noc->total_latency_cycles()) {
+            throw std::runtime_error(
+                "noc_soc: transaction histogram does not reconcile with NoC "
+                "completion totals");
+        }
+        for (const auto& target : target_stats) {
+            if (!target.valid()) {
+                throw std::runtime_error(
+                    "noc_soc: target metric counter overflow or invalid "
+                    "histogram");
+            }
+        }
+        for (const auto& manager : flow_stats) {
+            for (const auto& flow : manager) {
+                if (!flow.valid()) {
+                    throw std::runtime_error(
+                        "noc_soc: flow metric counter overflow or invalid "
+                        "histogram");
+                }
+            }
+        }
+        std::uint64_t manager_transactions = 0;
+        std::uint64_t manager_bytes = 0;
+        for (const auto& manager : manager_stats) {
+            manager_transactions += manager.transactions();
+            manager_bytes += manager.payload_bytes();
+        }
+        if (manager_transactions != all_stats.transactions()
+            || manager_bytes != all_stats.payload_bytes()) {
+            throw std::runtime_error(
+                "noc_soc: per-manager metrics do not reconcile with global "
+                "totals");
+        }
+
+        std::uint64_t target_transactions = 0;
+        std::uint64_t target_bytes = 0;
+        for (const auto& target : target_stats) {
+            target_transactions += target.transactions();
+            target_bytes += target.payload_bytes();
+        }
+        if (target_transactions != all_stats.transactions()
+            || target_bytes != all_stats.payload_bytes()) {
+            throw std::runtime_error(
+                "noc_soc: per-target metrics do not reconcile with global "
+                "totals");
+        }
+
+        std::uint64_t flow_transactions = 0;
+        std::uint64_t flow_bytes = 0;
+        for (unsigned manager = 0; manager < manager_stats.size(); ++manager) {
+            std::uint64_t row_transactions = 0;
+            std::uint64_t row_bytes = 0;
+            for (unsigned target = 0; target < kTargetMetricCount; ++target) {
+                const auto& flow = flow_stats[manager][target];
+                row_transactions += flow.transactions();
+                row_bytes += flow.payload_bytes();
+            }
+            if (row_transactions != manager_stats[manager].transactions()
+                || row_bytes != manager_stats[manager].payload_bytes()) {
+                throw std::runtime_error(
+                    "noc_soc: traffic-matrix row does not reconcile with its "
+                    "manager total");
+            }
+            flow_transactions += row_transactions;
+            flow_bytes += row_bytes;
+        }
+        if (flow_transactions != all_stats.transactions()
+            || flow_bytes != all_stats.payload_bytes()) {
+            throw std::runtime_error(
+                "noc_soc: traffic matrix does not reconcile with global "
+                "totals");
+        }
+        for (unsigned target = 0; target < kTargetMetricCount; ++target) {
+            std::uint64_t column_transactions = 0;
+            std::uint64_t column_bytes = 0;
+            for (unsigned manager = 0; manager < manager_stats.size();
+                 ++manager) {
+                column_transactions +=
+                    flow_stats[manager][target].transactions();
+                column_bytes += flow_stats[manager][target].payload_bytes();
+            }
+            if (column_transactions != target_stats[target].transactions()
+                || column_bytes != target_stats[target].payload_bytes()) {
+                throw std::runtime_error(
+                    "noc_soc: traffic-matrix column does not reconcile with "
+                    "its target total");
+            }
+        }
+    }
+
+    static std::string json_escape(const std::string& value)
+    {
+        std::ostringstream escaped;
+        escaped << '"';
+        for (const unsigned char byte : value) {
+            switch (byte) {
+            case '"': escaped << "\\\""; break;
+            case '\\': escaped << "\\\\"; break;
+            case '\b': escaped << "\\b"; break;
+            case '\f': escaped << "\\f"; break;
+            case '\n': escaped << "\\n"; break;
+            case '\r': escaped << "\\r"; break;
+            case '\t': escaped << "\\t"; break;
+            default:
+                if (byte < 0x20) {
+                    escaped << "\\u00" << std::hex << std::setw(2)
+                            << std::setfill('0')
+                            << static_cast<unsigned>(byte) << std::dec
+                            << std::setfill(' ');
+                } else {
+                    escaped << static_cast<char>(byte);
+                }
+            }
+        }
+        escaped << '"';
+        return escaped.str();
+    }
+
+    static std::string generated_utc()
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t epoch = std::chrono::system_clock::to_time_t(now);
+        std::tm utc{};
+#if defined(_POSIX_VERSION)
+        gmtime_r(&epoch, &utc);
+#else
+        const std::tm* converted = std::gmtime(&epoch);
+        if (converted == nullptr) {
+            return "unavailable";
+        }
+        utc = *converted;
+#endif
+        std::ostringstream text;
+        text << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+        return text.str();
+    }
+
+    static void write_metric(
+        std::ostream& out, double value, const char* unit, const char* source,
+        std::uint64_t samples = 0, const char* formula = nullptr)
+    {
+        out << "{\"value\":" << std::setprecision(12) << value
+            << ",\"unit\":" << json_escape(unit)
+            << ",\"source\":" << json_escape(source);
+        if (samples != 0) {
+            out << ",\"samples\":" << samples;
+        }
+        if (formula != nullptr) {
+            out << ",\"formula\":" << json_escape(formula);
+        }
+        out << '}';
+    }
+
+    static void write_null_metric(
+        std::ostream& out, const char* unit, const char* source,
+        std::uint64_t samples = 0)
+    {
+        out << "{\"value\":null,\"unit\":" << json_escape(unit)
+            << ",\"source\":" << json_escape(source);
+        if (samples != 0) {
+            out << ",\"samples\":" << samples;
+        }
+        out << '}';
+    }
+
+    static void write_transaction_metrics(
+        std::ostream& out, const transaction_metrics& metrics,
+        const char* name = nullptr)
+    {
+        out << '{';
+        if (name != nullptr) {
+            out << "\"name\":" << json_escape(name) << ',';
+        }
+        out << "\"transactions\":";
+        write_metric(
+            out, static_cast<double>(metrics.transactions()), "transactions",
+            "M", metrics.transactions());
+        out << ",\"payload_bytes\":";
+        write_metric(
+            out, static_cast<double>(metrics.payload_bytes()), "bytes", "M",
+            metrics.transactions());
+        out << ",\"latency_cycles\":{";
+        const auto& latency = metrics.latency();
+        const auto write_latency = [&](const char* field, double value) {
+            out << json_escape(field) << ':';
+            write_metric(
+                out, value, "cycles", "M", metrics.transactions());
+        };
+        if (metrics.transactions() == 0) {
+            const char* fields[] = {"min", "mean", "p50", "p95", "p99", "max"};
+            for (unsigned index = 0; index < 6; ++index) {
+                if (index != 0) out << ',';
+                out << json_escape(fields[index]) << ':';
+                write_null_metric(out, "cycles", "M");
+            }
+        } else {
+            write_latency("min", static_cast<double>(latency.min()));
+            out << ',';
+            write_latency("mean", latency.mean());
+            out << ',';
+            write_latency(
+                "p50", static_cast<double>(latency.percentile(50, 100)));
+            out << ',';
+            write_latency(
+                "p95", static_cast<double>(latency.percentile(95, 100)));
+            out << ',';
+            write_latency(
+                "p99", static_cast<double>(latency.percentile(99, 100)));
+            out << ',';
+            write_latency("max", static_cast<double>(latency.max()));
+        }
+        out << "}}";
+    }
+
+    static void write_mesh(
+        std::ostream& out, const char* channel,
+        const floo::model::mesh_counter_snapshot& mesh)
+    {
+        out << "{\"channel\":" << json_escape(channel)
+            << ",\"width\":" << mesh.width
+            << ",\"height\":" << mesh.height
+            << ",\"routers\":[";
+        for (std::size_t node = 0; node < mesh.routers.size(); ++node) {
+            if (node != 0) out << ',';
+            const auto& router = mesh.routers[node];
+            out << "{\"x\":" << node % mesh.width
+                << ",\"y\":" << node / mesh.width
+                << ",\"counted_cycles\":" << router.counted_cycles;
+            const auto write_ports = [&](
+                const char* field,
+                const auto& ports,
+                const auto& buffers) {
+                out << ',' << json_escape(field) << ":[";
+                for (unsigned port = 0;
+                     port < floo::model::router_counter_snapshot::num_ports;
+                     ++port) {
+                    if (port != 0) out << ',';
+                    out << "{\"port\":"
+                        << json_escape(floo::model::to_string(
+                               floo::model::direction_from_port(port)))
+                        << ",\"accepted_flits\":"
+                        << ports[port].accepted_flits
+                        << ",\"accepted_packets\":"
+                        << ports[port].accepted_packets
+                        << ",\"stall_cycles\":" << ports[port].stall_cycles
+                        << ",\"busy_cycles\":" << ports[port].busy_cycles
+                        << ",\"occupancy_sum\":"
+                        << buffers[port].occupancy_sum
+                        << ",\"occupancy_high_water\":"
+                        << buffers[port].high_water << '}';
+                }
+                out << ']';
+            };
+            write_ports("inputs", router.inputs, router.input_buffers);
+            write_ports("outputs", router.outputs, router.output_buffers);
+            out << '}';
+        }
+        out << "]}";
+    }
+
+    void write_metrics_json(
+        const cdc::components::noc_interconnect::detailed_counters& counters)
+    {
+        if (metrics_path.empty()) {
+            return;
+        }
+        const std::string temporary = metrics_path + ".tmp";
+        std::ofstream out(temporary, std::ios::trunc);
+        if (!out) {
+            throw std::runtime_error(
+                "noc_soc: cannot create metrics file '" + temporary + "'");
+        }
+
+        const std::uint64_t modeled_cycles = static_cast<std::uint64_t>(
+            sc_core::sc_time_stamp()
+            / sc_core::sc_time(1, sc_core::SC_NS));
+        const auto request_summary =
+            summarise_mesh(counters.request, modeled_cycles);
+        const auto response_summary =
+            summarise_mesh(counters.response, modeled_cycles);
+        const double seconds = sc_core::sc_time_stamp().to_seconds();
+        const double throughput = seconds == 0.0
+            ? 0.0
+            : static_cast<double>(all_stats.transactions()) / seconds / 1e6;
+        const double bandwidth = seconds == 0.0
+            ? 0.0
+            : static_cast<double>(all_stats.payload_bytes()) / seconds / 1e9;
+        const bool contention_available =
+            cpu_ram_quiet_stats.transactions() != 0
+            && cpu_ram_dma_active_stats.transactions() != 0;
+        const double contention = contention_available
+            ? cpu_ram_dma_active_stats.latency().mean()
+                - cpu_ram_quiet_stats.latency().mean()
+            : 0.0;
+
+        out << "{\n"
+            << "\"schema\":\"floo-noc-metrics-v1\",\n"
+            << "\"provenance\":{"
+            << "\"generated_utc\":" << json_escape(generated_utc()) << ','
+            << "\"git_revision\":null,\"git_dirty\":null,"
+            << "\"source_patch_sha256\":null,"
+            << "\"platform_binary\":\"unavailable\","
+            << "\"platform_sha256\":null,"
+            << "\"firmware\":" << json_escape(firmware_path) << ','
+            << "\"firmware_sha256\":null,"
+            << "\"build_type\":" << json_escape(kBuildType) << ','
+            << "\"host_cc\":\"unavailable\","
+            << "\"host_cxx\":\"unavailable\","
+            << "\"systemc_version\":"
+            << json_escape(sc_core::sc_version()) << "},\n"
+            << "\"configuration\":{"
+            << "\"timing_mode\":\"detailed\","
+            << "\"topology\":{\"width\":4,\"height\":4},"
+            << "\"routing\":\"XY\","
+            << "\"port_order\":[\"North\",\"East\",\"South\",\"West\","
+               "\"Eject\"],"
+            << "\"clock_period_ns\":1.0,"
+            << "\"input_fifo_depth\":2,\"output_fifo_depth\":2,"
+            << "\"max_outstanding_per_manager\":"
+            << cdc::components::noc_interconnect::
+                   default_max_outstanding_per_port
+            << ",\"managers\":["
+            << "{\"name\":\"cpu\",\"x\":" << kCpuNode.x
+            << ",\"y\":" << kCpuNode.y << "},"
+            << "{\"name\":\"dma\",\"x\":" << kDmaNode.x
+            << ",\"y\":" << kDmaNode.y << "},"
+            << "{\"name\":\"probe\",\"x\":" << kProbeNode.x
+            << ",\"y\":" << kProbeNode.y << "}]},\n"
+            << "\"workload\":{\"name\":\"FreeRTOS concurrent\","
+               "\"kind\":\"firmware\",\"seed\":null},\n"
+            << "\"measurement_window\":{"
+            << "\"warmup_cycles\":0,\"start_cycle\":0,"
+            << "\"end_cycle\":" << modeled_cycles << ','
+            << "\"counted_cycles\":" << modeled_cycles
+            // Firmware injection was not stopped at this fixed boundary.
+            // Instantaneous quiescence is not the D3 stop-and-drain contract.
+            << ",\"drained\":false"
+            << "},\n"
+            << "\"transaction_metrics\":{\"global\":";
+        write_transaction_metrics(out, all_stats);
+        out << ",\"classes\":[";
+        const struct {
+            const char* name;
+            const transaction_metrics* metrics;
+        } classes[] = {
+            {"cpu_plic_claim", &plic_claim_stats},
+            {"cpu_plic_complete", &plic_complete_stats},
+            {"cpu_ram_dma_idle", &cpu_ram_quiet_stats},
+            {"cpu_ram_dma_active", &cpu_ram_dma_active_stats},
+            {"cpu_other_mmio", &cpu_mmio_stats},
+            {"dma_all", &dma_manager_stats},
+            {"manager_cpu", &manager_stats[0]},
+            {"manager_dma", &manager_stats[1]},
+            {"manager_probe", &manager_stats[2]},
+            {"target_ram", &target_stats[kTargetRamIndex]},
+            {"target_plic", &target_stats[kTargetPlicIndex]},
+            {"target_other_mmio", &target_stats[kTargetOtherIndex]},
+            {"flow_cpu_ram", &flow_stats[kCpuPortIndex][kTargetRamIndex]},
+            {"flow_cpu_plic", &flow_stats[kCpuPortIndex][kTargetPlicIndex]},
+            {"flow_cpu_other_mmio",
+             &flow_stats[kCpuPortIndex][kTargetOtherIndex]},
+            {"flow_dma_ram", &flow_stats[kDmaPortIndex][kTargetRamIndex]},
+            {"flow_dma_plic", &flow_stats[kDmaPortIndex][kTargetPlicIndex]},
+            {"flow_dma_other_mmio",
+             &flow_stats[kDmaPortIndex][kTargetOtherIndex]},
+            {"flow_probe_ram", &flow_stats[kProbePortIndex][kTargetRamIndex]},
+            {"flow_probe_plic",
+             &flow_stats[kProbePortIndex][kTargetPlicIndex]},
+            {"flow_probe_other_mmio",
+             &flow_stats[kProbePortIndex][kTargetOtherIndex]},
+        };
+        for (unsigned index = 0; index < sizeof(classes) / sizeof(classes[0]);
+             ++index) {
+            if (index != 0) out << ',';
+            write_transaction_metrics(
+                out, *classes[index].metrics, classes[index].name);
+        }
+        out << "]},\n\"physical_meshes\":[";
+        write_mesh(out, "request", counters.request);
+        out << ',';
+        write_mesh(out, "response", counters.response);
+        out << "],\n\"derived_metrics\":{"
+            << "\"transaction_throughput_mtrans_s\":";
+        write_metric(
+            out, throughput, "Mtrans/s", "D", all_stats.transactions(),
+            "completed transactions / measured time");
+        out << ",\"payload_bandwidth_gb_s\":";
+        write_metric(
+            out, bandwidth, "GB/s", "D", all_stats.transactions(),
+            "completed payload bytes / measured time");
+        out << ",\"request_peak_link_utilisation\":";
+        write_metric(
+            out, request_summary.peak_link_utilisation * 100.0, "%", "D", 0,
+            "accepted flits / counted cycles");
+        out << ",\"response_peak_link_utilisation\":";
+        write_metric(
+            out, response_summary.peak_link_utilisation * 100.0, "%", "D", 0,
+            "accepted flits / counted cycles");
+        out << ",\"request_peak_stall_ratio\":";
+        write_metric(
+            out, request_summary.peak_link_stall_ratio * 100.0, "%", "D", 0,
+            "stall cycles / busy cycles");
+        out << ",\"response_peak_stall_ratio\":";
+        write_metric(
+            out, response_summary.peak_link_stall_ratio * 100.0, "%", "D", 0,
+            "stall cycles / busy cycles");
+        out << ",\"ram_contention_delta\":";
+        if (contention_available) {
+            write_metric(
+                out, contention, "cycles", "D",
+                cpu_ram_dma_active_stats.transactions(),
+                "mean CPU RAM latency with DMA active - idle");
+        } else {
+            write_null_metric(out, "cycles", "D");
+        }
+        out << "},\n"
+            << "\"availability\":{\"router_counters\":true,"
+               "\"area\":false,\"power\":false,\"energy_per_flit\":false},\n"
+            << "\"warnings\":["
+            << "\"firmware diagnostic starts after reset with zero explicit "
+               "warm-up and cannot drain an active CPU; use noc_benchmark for "
+               "the D3 selectable measurement contract\","
+            << "\"area, power and energy are unavailable pending calibrated "
+               "RTL evidence\","
+            << "\"binary and firmware hashes are added by the archival runner, "
+               "not by this in-process JSON writer\""
+            << "]\n}\n";
+        out.flush();
+        if (!out) {
+            std::remove(temporary.c_str());
+            throw std::runtime_error(
+                "noc_soc: failed while writing metrics file '"
+                + temporary + "'");
+        }
+        out.close();
+        if (std::rename(temporary.c_str(), metrics_path.c_str()) != 0) {
+            std::remove(temporary.c_str());
+            throw std::runtime_error(
+                "noc_soc: cannot atomically publish metrics file '"
+                + metrics_path + "'");
+        }
+    }
+
+    void publish_live_metrics()
+    {
+        if (!baseline_enabled || metrics_path.empty()
+            || timing != noc_timing_mode::detailed) {
+            throw std::logic_error(
+                "live dashboard requires detailed mode and --noc-metrics FILE");
+        }
+        require_metrics_consistent();
+        write_metrics_json(noc->detailed_counter_snapshot());
+    }
+
+    void report_baseline()
+    {
+        require_metrics_consistent();
+
+        std::cout << "\nnoc_soc measurement baseline\n";
+        std::cout << "  conditions\n"
+                  << "    timing mode:      "
+                  << (timing == noc_timing_mode::fast
+                          ? "fast (estimated, NOT a measurement)"
+                          : "detailed cycle-stepped")
+                  << "\n"
+                  << "    modeled window:   " << sim_us
+                  << " us\n"
+                  << "    network clock:    1 ns per cycle\n"
+                  << "    floorplan:        4x4 mesh; cpu " << kCpuNode.x << ","
+                  << kCpuNode.y << " dma " << kDmaNode.x << "," << kDmaNode.y
+                  << " ram " << kRamNode.x << "," << kRamNode.y << " plic "
+                  << kBootNode.x << "," << kBootNode.y << "\n"
+                  << "    build type:       " << kBuildType << "\n"
+                  << "    firmware:         "
+                  << (firmware_path.empty() ? "(none)" : firmware_path)
+                  << "\n";
+
+        if (timing == noc_timing_mode::fast) {
+            std::cout << "  WARNING: fast mode bypasses the cycle-stepped mesh."
+                      << " These are no-contention\n"
+                      << "           estimates and must not be reported as"
+                      << " measured latency or contention.\n";
+        }
+
+        std::cout << "  CPU-port network latency, by classified operation\n";
+        print_latency("PLIC claim      (read  0x0c200004)", plic_claim_stats);
+        print_latency("PLIC complete   (write 0x0c200004)", plic_complete_stats);
+        print_latency("RAM, DMA idle                     ", cpu_ram_quiet_stats);
+        print_latency("RAM, DMA active                   ",
+                      cpu_ram_dma_active_stats);
+        print_latency("other CPU MMIO                    ", cpu_mmio_stats);
+
+        if (cpu_ram_quiet_stats.transactions() != 0
+            && cpu_ram_dma_active_stats.transactions() != 0) {
+            std::cout << "    contention delta (mean RAM, active - idle): "
+                      << (cpu_ram_dma_active_stats.latency().mean()
+                          - cpu_ram_quiet_stats.latency().mean())
+                      << " cycles\n";
+        } else {
+            std::cout << "    contention delta: not available; one RAM bucket"
+                      << " was never exercised\n";
+        }
+
+        std::cout << "  DMA manager port\n";
+        print_latency("DMA-issued transactions           ", dma_manager_stats);
+        if (dma_completion_samples != 0) {
+            std::cout << "    channel start to completion interrupt: n="
+                      << dma_completion_samples
+                      << " min=" << dma_completion_min
+                      << " mean="
+                      << (dma_completion_total / dma_completion_samples)
+                      << " max=" << dma_completion_max << "\n";
+        } else {
+            std::cout << "    channel start to completion interrupt: not"
+                      << " exercised\n";
+        }
+
+        std::cout << "  per-manager totals\n";
+        static const char* const port_names[] = {"cpu", "dma", "probe"};
+        for (unsigned port = 0; port < 3; ++port) {
+            std::cout << "    " << port_names[port]
+                      << ": peak outstanding "
+                      << noc->peak_outstanding_transactions(port) << '\n';
+        }
+        std::cout << "    all managers: " << noc->completed_transactions()
+                  << " completed transactions, " << noc->total_latency_cycles()
+                  << " total network cycles\n";
+
+        if (timing != noc_timing_mode::fast) {
+            const auto counters = noc->detailed_counter_snapshot();
+            std::cout << "  cycle-stepped mesh\n"
+                      << "    mesh clocked " << noc->elapsed_cycles()
+                      << " cycles\n"
+                      << "    clock-gate transitions "
+                      << noc->clock_gate_transitions() << '\n'
+                      << "    mesh quiescent while wrapper busy "
+                      << noc->mesh_quiescent_wrapper_busy_cycles()
+                      << " cycles\n";
+            std::cout << "  production router counters\n";
+            print_mesh_summary("request mesh ", counters.request);
+            print_mesh_summary("response mesh", counters.response);
+            if (!metrics_path.empty()) {
+                write_metrics_json(counters);
+                std::cout << "  metrics JSON: " << metrics_path << '\n';
+            }
+        }
+        std::cout << "  These are observations for this fixed window. No"
+                  << " threshold is implied.\n";
+    }
+
 
     /// Latency of the CSR polls issued while the DMA was transferring.
     std::uint64_t busy_polls = 0;
@@ -641,6 +1481,9 @@ private:
             }
         }
         report_cpu();
+        if (baseline_enabled) {
+            report_baseline();
+        }
         sc_core::sc_stop();
     }
 
@@ -915,6 +1758,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
     cdc::components::plic_tlm plic;
 
     UartTLM uart0, uart1;
+    cdc::components::uart_host_bridge uart0_host;
     i2c i2c0, i2c1;
     cdc::components::spi_tlm spi0, spi1;
     spi_dummy spi0_peri, spi1_peri;
@@ -963,10 +1807,12 @@ struct noc_soc_top::impl : public sc_core::sc_module {
     noc_soc_mode execution_mode;
     noc_timing_mode interconnect_timing;
     std::string firmware_path;
+    std::string uart0_control_candidate;
 
     impl(sc_core::sc_module_name name, const std::string& config_path,
          noc_soc_mode mode, noc_timing_mode timing, std::string firmware,
-         double sim_microseconds)
+         double sim_microseconds, bool measure_baseline,
+         std::string metrics_output)
         : sc_core::sc_module(name)
         , cpu("cpu")
         , probe("probe")
@@ -983,6 +1829,7 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         , clint("clint", cpu)
         , plic("plic", cpu, kNumPlic)
         , uart0("uart0"), uart1("uart1")
+        , uart0_host("uart0_host")
         , i2c0("i2c0"), i2c1("i2c1")
         , spi0("spi0"), spi1("spi1")
         , spi0_peri("spi0_peri"), spi1_peri("spi1_peri")
@@ -1028,6 +1875,28 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         probe.mode = execution_mode;
         probe.sim_us = sim_microseconds;
 
+        probe.baseline_enabled = measure_baseline;
+        probe.timing = timing;
+        probe.firmware_path = firmware_path;
+        probe.metrics_path = std::move(metrics_output);
+        if (measure_baseline) {
+            // Passive by contract: the observer only classifies and
+            // accumulates. It must not wait, must not throw, and calls nothing
+            // on the interconnect but a const accessor.
+            noc.set_completion_observer(
+                [this](
+                    const cdc::components::noc_interconnect::completion& done) {
+                    probe.observe_completion(done);
+                });
+            dma0.set_channel_start_observer(
+                [this](unsigned channel) {
+                    probe.note_dma_channel_start(channel);
+                });
+            SC_METHOD(forward_dma_completion_irq);
+            sensitive << dma0_irq_nonzero;
+            dont_initialize();
+        }
+
         // ── Downstream map. The node is the new argument versus `bus_router`.
         noc.add_target(kRamBase, kRamSize, kRamNode,
                        cdc::components::noc_interconnect::target_kind::memory)
@@ -1066,6 +1935,11 @@ struct noc_soc_top::impl : public sc_core::sc_module {
         uart0.tx(uart0_tx); uart0.irq(uart0_irq);
         uart1.tx(uart1_tx); uart1.irq(uart1_irq);
         SC_METHOD(monitor_uart0); sensitive << uart0_tx; dont_initialize();
+        // Pin-side host input. It idles unless the CLI selects file replay or
+        // TCP; injected bytes still traverse UART0, PLIC source 1 and CPU MMIO
+        // over FlooNoC rather than entering firmware through a backdoor.
+        uart0_host.rx_out(uart0.rx);
+        uart0_host.tx_in(uart0_tx);
 
         i2c0.irq(i2c0_irq); i2c1.irq(i2c1_irq);
 
@@ -1187,7 +2061,40 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 
     void monitor_uart0()
     {
-        std::cout << uart0_tx.read();
+        static constexpr char marker[] = CDC_NOC_DASHBOARD_REQUEST;
+        const char byte = static_cast<char>(uart0_tx.read());
+
+        if (uart0_control_candidate.empty()) {
+            if (byte == marker[0]) {
+                uart0_control_candidate.push_back(byte);
+                return;
+            }
+            std::cout << byte;
+            std::cout.flush();
+            return;
+        }
+
+        uart0_control_candidate.push_back(byte);
+        const std::size_t index = uart0_control_candidate.size() - 1u;
+        if (index >= sizeof(marker) - 1u || byte != marker[index]) {
+            std::cout << uart0_control_candidate;
+            uart0_control_candidate.clear();
+            std::cout.flush();
+            return;
+        }
+        if (uart0_control_candidate.size() != sizeof(marker) - 1u) {
+            return;
+        }
+
+        uart0_control_candidate.clear();
+        try {
+            probe.publish_live_metrics();
+            std::cout << "\nnoc_soc live metrics snapshot: "
+                      << probe.metrics_path << '\n';
+        } catch (const std::exception& error) {
+            std::cout << "\nnoc_soc live dashboard unavailable: "
+                      << error.what() << '\n';
+        }
         std::cout.flush();
     }
 
@@ -1216,6 +2123,15 @@ struct noc_soc_top::impl : public sc_core::sc_module {
                 std::cout << "[IRQ] " << source.name << " asserted at "
                           << sc_core::sc_time_stamp() << '\n';
             }
+        }
+    }
+
+    /// The DMA completion line lives here; the measurement accounting lives in
+    /// the probe, which owns the end-of-run report.
+    void forward_dma_completion_irq()
+    {
+        if (dma0_irq_nonzero.read()) {
+            probe.note_dma_completion_irq();
         }
     }
 
@@ -1259,16 +2175,32 @@ struct noc_soc_top::impl : public sc_core::sc_module {
 
 noc_soc_top::noc_soc_top(
     sc_core::sc_module_name name, std::string config_path, noc_soc_mode mode,
-    noc_timing_mode timing, std::string firmware, double sim_us)
+    noc_timing_mode timing, std::string firmware, double sim_us,
+    bool measure_baseline, std::string metrics_path)
     : sc_core::sc_module(name)
     , impl_([&]() {
         validate_mode(mode, firmware);
         return new impl(
-            "impl", config_path, mode, timing, std::move(firmware), sim_us);
+            "impl", config_path, mode, timing, std::move(firmware), sim_us,
+            measure_baseline, std::move(metrics_path));
     }())
 {
 }
 
 noc_soc_top::~noc_soc_top() = default;
+
+void noc_soc_top::set_uart0_socket(
+    std::uint16_t port, bool wait_for_client)
+{
+    impl_->uart0_host.listen_on(port, wait_for_client);
+}
+
+void noc_soc_top::set_uart0_rx_file(
+    const std::string& path, std::uint64_t start_delay_us)
+{
+    impl_->uart0_host.replay_file(
+        path, sc_core::sc_time(static_cast<double>(start_delay_us),
+                              sc_core::SC_US));
+}
 
 } // namespace cdc::platforms::noc_soc

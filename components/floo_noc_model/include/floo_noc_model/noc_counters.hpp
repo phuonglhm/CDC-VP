@@ -30,9 +30,11 @@
 
 #include "floo_noc_model/floo_types.hpp"
 
+#include <array>
 #include <cstdint>
 #include <ostream>
 #include <systemc>
+#include <vector>
 
 namespace floo::model {
 
@@ -57,11 +59,34 @@ struct buffer_counters {
     std::uint64_t occupancy_sum{};
 };
 
+/// One immutable router snapshot. The port order is the RTL enum order:
+/// North, East, South, West, Eject.
+struct router_counter_snapshot {
+    static constexpr unsigned num_ports = 5;
+
+    std::uint64_t counted_cycles{};
+    std::array<port_counters, num_ports> inputs{};
+    std::array<port_counters, num_ports> outputs{};
+    std::array<buffer_counters, num_ports> input_buffers{};
+    std::array<buffer_counters, num_ports> output_buffers{};
+};
+
+/// Runtime-sized snapshot of one physical request or response mesh.
+struct mesh_counter_snapshot {
+    unsigned width{};
+    unsigned height{};
+    std::vector<router_counter_snapshot> routers;
+};
+
 /// Passive counter block for `floo_router`. Bind its inputs to the same
 /// signals the router is already bound to; it drives nothing.
 template <typename FlitT, unsigned NumPorts = 5>
 class router_counters : public sc_core::sc_module {
 public:
+    static_assert(
+        NumPorts == router_counter_snapshot::num_ports,
+        "FlooNoC production counters require the five RTL router ports");
+
     sc_core::sc_in<bool> i_clk{"i_clk"};
     sc_core::sc_in<bool> i_rst_n{"i_rst_n"};
 
@@ -77,6 +102,8 @@ public:
 
     sc_core::sc_vector<sc_core::sc_in<unsigned>> i_input_occupancy{
         "i_input_occupancy", NumPorts};
+    sc_core::sc_vector<sc_core::sc_in<unsigned>> i_output_occupancy{
+        "i_output_occupancy", NumPorts};
 
     SC_HAS_PROCESS(router_counters);
 
@@ -95,7 +122,15 @@ public:
     const port_counters& output(unsigned port) const { return outputs_[port]; }
     const buffer_counters& buffer(unsigned port) const
     {
-        return buffers_[port];
+        return input_buffers_[port];
+    }
+    const buffer_counters& input_buffer(unsigned port) const
+    {
+        return input_buffers_[port];
+    }
+    const buffer_counters& output_buffer(unsigned port) const
+    {
+        return output_buffers_[port];
     }
 
     /// Derived: fraction of counted cycles in which this port accepted a
@@ -113,7 +148,16 @@ public:
     {
         return counted_cycles_ == 0
             ? 0.0
-            : static_cast<double>(buffers_[port].occupancy_sum)
+            : static_cast<double>(input_buffers_[port].occupancy_sum)
+                / static_cast<double>(counted_cycles_);
+    }
+
+    /// Derived: mean output-buffer occupancy.
+    double mean_output_occupancy(unsigned port) const
+    {
+        return counted_cycles_ == 0
+            ? 0.0
+            : static_cast<double>(output_buffers_[port].occupancy_sum)
                 / static_cast<double>(counted_cycles_);
     }
 
@@ -123,8 +167,22 @@ public:
         for (unsigned port = 0; port < NumPorts; ++port) {
             inputs_[port] = port_counters{};
             outputs_[port] = port_counters{};
-            buffers_[port] = buffer_counters{};
+            input_buffers_[port] = buffer_counters{};
+            output_buffers_[port] = buffer_counters{};
         }
+    }
+
+    router_counter_snapshot snapshot() const
+    {
+        router_counter_snapshot result{};
+        result.counted_cycles = counted_cycles_;
+        for (unsigned port = 0; port < NumPorts; ++port) {
+            result.inputs[port] = inputs_[port];
+            result.outputs[port] = outputs_[port];
+            result.input_buffers[port] = input_buffers_[port];
+            result.output_buffers[port] = output_buffers_[port];
+        }
+        return result;
     }
 
     /// Measured counters first, derived ratios clearly separated. No analytic
@@ -139,7 +197,8 @@ public:
                 << " accepted_packets " << inputs_[port].accepted_packets
                 << " stall_cycles " << inputs_[port].stall_cycles
                 << " busy_cycles " << inputs_[port].busy_cycles
-                << " occupancy_high_water " << buffers_[port].high_water
+                << " occupancy_high_water "
+                << input_buffers_[port].high_water
                 << '\n';
         }
         for (unsigned port = 0; port < NumPorts; ++port) {
@@ -148,6 +207,8 @@ public:
                 << " accepted_packets " << outputs_[port].accepted_packets
                 << " stall_cycles " << outputs_[port].stall_cycles
                 << " busy_cycles " << outputs_[port].busy_cycles
+                << " occupancy_high_water "
+                << output_buffers_[port].high_water
                 << '\n';
         }
         out << "# derived from the measured counters above\n";
@@ -161,7 +222,8 @@ private:
     std::uint64_t counted_cycles_{};
     port_counters inputs_[NumPorts]{};
     port_counters outputs_[NumPorts]{};
-    buffer_counters buffers_[NumPorts]{};
+    buffer_counters input_buffers_[NumPorts]{};
+    buffer_counters output_buffers_[NumPorts]{};
 
     void sample()
     {
@@ -177,11 +239,18 @@ private:
             observe(outputs_[port], i_out_valid[port].read(),
                     i_out_ready[port].read(), i_out_data[port].read());
 
-            const unsigned occupancy = i_input_occupancy[port].read();
-            buffers_[port].occupancy_sum += occupancy;
-            if (occupancy > buffers_[port].high_water) {
-                buffers_[port].high_water = occupancy;
-            }
+            sample_buffer(
+                input_buffers_[port], i_input_occupancy[port].read());
+            sample_buffer(
+                output_buffers_[port], i_output_occupancy[port].read());
+        }
+    }
+
+    static void sample_buffer(buffer_counters& counters, unsigned occupancy)
+    {
+        counters.occupancy_sum += occupancy;
+        if (occupancy > counters.high_water) {
+            counters.high_water = occupancy;
         }
     }
 

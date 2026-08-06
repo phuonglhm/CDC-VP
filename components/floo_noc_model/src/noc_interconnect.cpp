@@ -45,6 +45,9 @@ struct noc_iface {
     virtual bool req_eject_ready(unsigned node) const = 0;
     virtual axi_req_flit req_eject_data(unsigned node) const = 0;
     virtual bool mesh_quiescent() const = 0;
+    virtual mesh_counter_snapshot req_counter_snapshot() const = 0;
+    virtual mesh_counter_snapshot rsp_counter_snapshot() const = 0;
+    virtual void reset_counters() = 0;
 };
 
 template <unsigned Width, unsigned Height>
@@ -88,6 +91,15 @@ struct noc_holder final : noc_iface {
         return noc.chimney(node).i_req_eject_data.read();
     }
     bool mesh_quiescent() const override { return noc.mesh_quiescent(); }
+    mesh_counter_snapshot req_counter_snapshot() const override
+    {
+        return noc.req_counter_snapshot();
+    }
+    mesh_counter_snapshot rsp_counter_snapshot() const override
+    {
+        return noc.rsp_counter_snapshot();
+    }
+    void reset_counters() override { noc.reset_counters(); }
 };
 
 std::unique_ptr<noc_iface> make_noc(unsigned x, unsigned y, const char* name)
@@ -168,6 +180,11 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         std::vector<std::uint64_t> data;
         std::uint8_t resp = to_bits(axi_pkg::axi_resp::okay);
         std::uint64_t issued_cycle = 0;
+        // Carried only so a completion can be classified by the observer.
+        // Nothing in the datapath reads these.
+        std::uint64_t address = 0;
+        unsigned length = 0;
+        bool is_write = false;
     };
 
     /// One TLM request being presented on a chimney's manager AXI port.
@@ -270,6 +287,27 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     std::uint64_t latency_sum = 0;
     std::uint64_t last_latency = 0;
     std::vector<std::uint64_t> last_latency_by_port;
+    noc_interconnect::completion_observer completion_hook;
+
+    /// Passive by construction: it is handed a value, cannot reach the
+    /// datapath, and is called after all bookkeeping for this completion is
+    /// final so an observer reading a const accessor sees a consistent state.
+    void notify_completion(
+        unsigned port, std::uint64_t address, unsigned length, bool is_write,
+        std::uint64_t latency)
+    {
+        if (!completion_hook) {
+            return;
+        }
+        noc_interconnect::completion record{};
+        record.port = port;
+        record.address = address;
+        record.length = length;
+        record.is_write = is_write;
+        record.latency_cycles = latency;
+        record.at_cycle = cycle;
+        completion_hook(record);
+    }
     unsigned in_flight = 0;
     bool started = false;
     /// The mesh needs its reset to elapse before it will carry anything. A
@@ -863,6 +901,9 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         }
         --outstanding_by_port[parked.port];
         slot_available[parked.port]->notify(sc_core::SC_ZERO_TIME);
+        notify_completion(
+            parked.port, parked.address, parked.length, parked.is_write,
+            last_latency);
         parked.done.notify(sc_core::SC_ZERO_TIME);
     }
 
@@ -1228,6 +1269,9 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             last_latency = network_cycles;
             last_latency_by_port[port] = network_cycles;
             latency_sum += network_cycles;
+            notify_completion(
+                port, trans.get_address(), trans.get_data_length(), is_write,
+                network_cycles);
         } catch (...) {
             --in_flight;
             --outstanding_by_port[port];
@@ -1536,6 +1580,11 @@ unsigned noc_interconnect::outstanding_transactions(unsigned port) const
     return impl_->outstanding_by_port[port];
 }
 
+void noc_interconnect::set_completion_observer(completion_observer observer)
+{
+    impl_->completion_hook = std::move(observer);
+}
+
 unsigned noc_interconnect::peak_outstanding_transactions(unsigned port) const
 {
     if (port >= impl_->peak_outstanding_by_port.size()) {
@@ -1548,6 +1597,26 @@ noc_interconnect::timing_mode
 noc_interconnect::selected_timing_mode() const noexcept
 {
     return impl_->timing_backend;
+}
+
+noc_interconnect::detailed_counters
+noc_interconnect::detailed_counter_snapshot() const
+{
+    if (impl_->timing_backend != timing_mode::detailed) {
+        throw std::logic_error(
+            "noc_interconnect: router counters are unavailable in fast mode");
+    }
+    return {impl_->noc->req_counter_snapshot(),
+            impl_->noc->rsp_counter_snapshot()};
+}
+
+void noc_interconnect::reset_detailed_counters()
+{
+    if (impl_->timing_backend != timing_mode::detailed) {
+        throw std::logic_error(
+            "noc_interconnect: router counters are unavailable in fast mode");
+    }
+    impl_->noc->reset_counters();
 }
 
 bool noc_interconnect::mesh_quiescent() const
@@ -1730,6 +1799,9 @@ void noc_interconnect::b_transport(
     impl::waiter parked{};
     parked.port = port;
     parked.issued_cycle = impl_->cycle;
+    parked.address = address;
+    parked.length = length;
+    parked.is_write = is_write;
 
     impl::manager_request request{};
     request.is_write = is_write;

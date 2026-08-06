@@ -151,6 +151,63 @@ private:
         expect(dut != nullptr && dut->quiescent(),
                "the activity snapshot must clear after the mesh drains");
 
+        if (dut != nullptr) {
+            const auto measured = dut->counter_snapshot();
+            const unsigned local =
+                floo::model::to_port(floo::model::direction::eject);
+            const unsigned east =
+                floo::model::to_port(floo::model::direction::east);
+            const unsigned north =
+                floo::model::to_port(floo::model::direction::north);
+            const unsigned south =
+                floo::model::to_port(floo::model::direction::south);
+            const unsigned west =
+                floo::model::to_port(floo::model::direction::west);
+            const unsigned turn = mesh_t::node_index(1, 0);
+
+            expect(measured.width == width && measured.height == height
+                       && measured.routers.size() == num_nodes,
+                   "counter snapshot must preserve the production topology");
+            expect(measured.routers[source].inputs[local].accepted_flits == 1,
+                   "source Eject input must count the injected flit once");
+            expect(measured.routers[source].outputs[east].accepted_flits == 1,
+                   "source East output must count the first routed hop");
+            expect(measured.routers[turn].inputs[west].accepted_flits == 1
+                       && measured.routers[turn]
+                              .outputs[north]
+                              .accepted_flits == 1,
+                   "turn router must count the West-to-North hop");
+            expect(measured.routers[destination]
+                           .inputs[south]
+                           .accepted_flits == 1
+                       && measured.routers[destination]
+                              .outputs[local]
+                              .accepted_flits == 1,
+                   "destination router must count the final ejection");
+            expect(measured.routers[destination]
+                           .output_buffers[local]
+                           .high_water != 0,
+                   "stalled ejection must raise output FIFO high-water");
+
+            dut->reset_counters();
+            const auto cleared = dut->counter_snapshot();
+            for (const auto& router : cleared.routers) {
+                expect(router.counted_cycles == 0,
+                       "measurement reset must clear counted cycles");
+                for (unsigned port = 0;
+                     port < floo::model::router_counter_snapshot::num_ports;
+                     ++port) {
+                    expect(router.inputs[port].accepted_flits == 0
+                               && router.outputs[port].accepted_flits == 0
+                               && router.input_buffers[port].high_water == 0
+                               && router.output_buffers[port].high_water == 0,
+                           "measurement reset must clear every router bucket");
+                }
+            }
+            expect(dut->quiescent(),
+                   "measurement reset must not change drained mesh state");
+        }
+
         o_eject_ready[destination].write(false);
         sc_core::sc_stop();
     }

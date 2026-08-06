@@ -51,6 +51,119 @@
   response mapping, but annotates a calibrated no-contention estimate instead
   of ticking the mesh. The estimate is checked from one to six hops over narrow,
   full-width and burst traffic with a hard one-cycle tolerance.
+- Gate V0-CLOSE added direct standalone tests for the last two uncovered leaf
+  interfaces, `rr_arb_tree.hpp` and `meta_buffer.hpp`, plus executable
+  mutations. The original close was 40/40 component tests and 42/42 controls;
+  the metrics work later raised the current gate to 41/41 and 51/51.
+- Step 12.0 froze the FreeRTOS/`noc_soc` contract and added
+  `fw/freertos_noc_soc`: a mandatory `NPU=0` profile whose linker ends at
+  `0x80fff000` and whose checker validates the entry, stack and every ELF
+  `PT_LOAD`. Its 700 ms fast-mode compatibility probe boots the reused
+  scheduler, CLINT tick and TIMER0/PLIC path with zero synthetic firmware
+  traffic.
+- Step 12.1 replaced that compatibility application with a dedicated minimum
+  `FreeRTOS NoC` image. Priority-1 and priority-2 tasks complete eight strict
+  notification ping-pong rounds (16 ordered handoffs), then print
+  `FreeRTOS NoC PASS`. Its bounded self-checking fast runner and a separate
+  6 ms detailed smoke both pass with zero synthetic traffic.
+- Step 12.2 added independent CLINT and TIMER0/PLIC proofs while keeping the
+  level-121 scheduler image reproducible. Three `vTaskDelay(1 ms)` wakes prove
+  the 1 kHz tick; exactly three level-sensitive TIMER0 interrupts are cleared
+  device-first and completed through PLIC source 4. The self-checking 50 ms
+  fast run and a 9 ms detailed smoke pass with zero synthetic traffic.
+- Step 12.3 added a sequenced FreeRTOS DMA task at build level 123. Its channel
+  program and buffers are linker-bounded firmware objects; completion is one
+  direct ISR notification through PLIC source 7, with event W1C before claim
+  completion and no polling acceptance. The task verifies channel state,
+  interrupt cleanup, final SAR/DAR and all 32 bytes. The self-checking 100 ms
+  fast run and 12 ms detailed smoke pass with no abort and zero synthetic
+  traffic.
+- Step 12.4 made build level 124 the default and overlapped every earlier
+  proof: two priority-1 CPU tasks driving their own RAM buffers and one checked
+  NoC-crossing MMIO register each, a free-running TIMER0 through PLIC source 4,
+  and repeated 4 KiB DMA transfers completing through source 7, with a
+  supervisor task as the only printer. Forward progress is required at every
+  checkpoint, and concurrency is proved by counting worker words strictly
+  between a DMA launch and its completion interrupt. Two earlier formulations
+  were rejected by their own checks: a 32-byte transfer is shorter than one CPU
+  iteration and showed zero overlap, and TIMER0 at the Step 12.2 rate saturated
+  the phase with trap handling. The 500 ms fast run passes with zero synthetic
+  traffic and is byte-identical across repeats, and a 45 ms detailed run
+  reaches the same acceptance at about 45x the host cost.
+- Step 12.5 registered the FreeRTOS acceptance as
+  `noc_soc_freertos_regression` (labels `firmware;freertos`, skip 77, timeout
+  900). Its runner is a thin platform-level wrapper over the existing staged
+  contract rather than a second oracle. It now drives levels 121, 122, 123,
+  124 and 128, so the independent reproducibility of the earlier stages is
+  checked, not asserted. The packaging gate runs the strongest level 128
+  image against the packaged executable with `LD_LIBRARY_PATH` unset.
+- Step 12.6 added the platform/firmware control registry, since extended for the
+  host-assisted dashboard:
+  `noc_soc_freertos_negative_controls`: **11 detected, 0 missed**. Each
+  control records two expectations — what the runner must name and what the
+  platform log must contain — so a mutation that merely broke the build cannot
+  score as a detection, and absence-based evidence is written `!text` with the
+  clean run required to have produced it. Writing them produced two findings:
+  a wrong DMA destination must land where nothing else is verified, and the
+  CLINT control cannot be written on the firmware side at all because the
+  existing compile-time address assertions already reject that whole
+  misconfiguration class. Two additional controls pin the Step 12.4 proof
+  itself: final-generation RAM corruption and loss of in-flight worker
+  progress. The eighth keeps the CLI task present but removes UART RX/PLIC
+  arming, proving host commands are not accepted through a fake firmware path.
+  The ninth removes the dashboard's private UART request while leaving its
+  visible CLI acknowledgement intact. Controls ten and eleven corrupt a
+  hardware-scan identity and bypass the register test's RW pattern write.
+- Step 12.7 recorded the measurement baseline. `noc_interconnect` gained a
+  passive completion observer, because PLIC claim and PLIC complete are the
+  same target at the same address separated only by direction, so no
+  per-target counter can split them and polling a global afterwards attributes
+  one to the other. The archived artifact at
+  `platforms/noc_soc/evidence/noc_baseline.txt` carries its own provenance and
+  no thresholds. DMA start-to-interrupt timing begins at the DMA channel's
+  architectural `STOPPED -> EXECUTING` transition; using completion of the
+  DBGCMD NoC transaction was rejected because that response arrives after the
+  channel has already started. The same workload in fast mode leaves
+  the DMA-active RAM bucket empty, which demonstrates rather than asserts that
+  fast mode cannot answer a contention question. Production request/response
+  router counters are now attached after D1 of the metric-dashboard roadmap;
+  the archival runner requires their flit/stall/FIFO records and stores the
+  versioned JSON plus rendered dashboard beside the text baseline. A final
+  continuation review rebuilt from fresh `/tmp` trees, passed the 40/40 suite,
+  four-level FreeRTOS regression and 42/42 component controls, and reproduced
+  the detailed artifact. It also made the completeness runner validate anchored
+  numeric provenance/manager/mesh/tick records, preserve dirty source as a
+  checksummed patch alongside revision and firmware/platform hashes, and write
+  CTest evidence into the binary tree rather than the source tree.
+- Step 12.8 added the FreeRTOS UART console without changing levels 121 to 125.
+  The `noc_soc` platform now accepts deterministic UART0 file replay and a
+  bidirectional loopback TCP socket in firmware mode. Both enter the pin-side
+  UART RX FIFO; PLIC source 1 and the existing FreeRTOS ISR queue deliver bytes
+  to the new level-128 CLI. Its parser is released only after the complete
+  level-124 workload reports PASS. The final CLI has `help`, `soc`,
+  `noc_dashboard`, `hw_scan` and `reg_test`. `noc_dashboard` sends a private
+  UART request to `noc_soc`; in detailed mode with `--noc-metrics`, the
+  platform atomically publishes live JSON and `tools/noc_cli.py` renders it
+  with the same full `noc_dashboard.py` used offline. The scan verifies 22
+  mapped blocks while safely reporting three reserved and two absent windows;
+  the restoring register matrix passes 37/37. The five-level regression,
+  packaged level-128 run, 11/11 mutation registry, UART bridge unit test and
+  host-client TCP protocol test pass. A TCP session must wait for
+  `FreeRTOS NoC CLI ready` before sending a burst because `--uart0-wait`
+  synchronises client connection, not firmware RX arming.
+- FlooNoC metrics D0-D6 v1 is complete. Both production physical meshes expose
+  passive router counters; transaction completion has exact histograms and
+  manager/target/flow attribution; `noc_soc --noc-metrics` writes diagnostic
+  firmware JSON; and the separate production-wrapper `noc_benchmark` owns the
+  drainable warm-up/measure/stop/drain path required for conservation and DSE.
+  `noc_dashboard.py` renders JSON without third-party dependencies, while
+  `noc_sweep.py` writes per-run evidence, aggregate JSON/CSV and refuses failed,
+  undrained or constraint-rejected winners. The 15 required metrics mutations
+  are all covered: the full component registry passes 51/51 and the separate
+  D3-D6 platform registry passes 10/10, including one behavioural mutation per
+  synthetic workload. D7 area/power remains explicitly unavailable pending
+  calibrated RTL evidence. See
+  `docs/NOC_METRICS_DASHBOARD_IMPLEMENTATION.md`.
 - P7.6 common SystemC/SV trace format plus route-selector, input-FIFO,
   wormhole-arbiter, and five-port router RTL cross-checks.
 
@@ -68,6 +181,8 @@ Standalone verification:
 | `test_axi_types` | Hand-computed AXI channel widths, channel-to-link mapping, reserved-bit padding, `OutIdWidth` independence |
 | `test_axi_sizing_trace` | 8-configuration sizing table against the RTL-captured golden |
 | `test_axi_chimney_pack` | Flit assembly per channel, both destination-decode modes, AW/W select FSM |
+| `test_rr_arb_tree` | The round-robin tree directly: `NumIn` 1, 4 and 5 (the router's own non-power-of-two width); no/one/competing requests; `rr_q`-selected priority; the `lock_q ? req_q : req_i` path; request bits above `NumIn` ignored; and `next_rr()` walking above the pointer and wrapping through the lower mask |
+| `test_meta_buffer` | The `MaxUniqueIds == 1` metadata FIFO directly: the all-ones downstream ID at five `OutIdWidth` values including 63; independent read/write state; three-entry FIFO order with the payload checked whole; exact full/outstanding transitions; overflow and underflow both refused; invalid construction rejected on both sides of the boundary |
 | `test_rob_order_gate` | The `NoRoB` admission arithmetic exposed to the transactors: destination stall, the `2**$clog2(MaxRoTxnsPerId) - 1` capacity, and the global `full_o` stalling an unrelated idle ID |
 | `test_axi_endpoint` | Manager/subordinate composition: AW/W coupling, response routing to the requester, AXI ID restoration, ordering-gate release |
 | `test_route_trace_sc` | Directed CSV trace and fixed expected route/lock result |
@@ -88,6 +203,7 @@ Standalone verification:
 | `test_noc_interconnect` | The TLM wrapper contract through A-3's timed chimney path, each item a concrete assertion: payload validation (command, zero length, null pointer, wrapped streaming width, zero-length byte enables); byte-enable to `WSTRB` translation with a disabled byte proven unchanged in target memory; lane placement at `+4` and `+6` and across a beat boundary, checked by direct memory inspection; `DECERR` for an unmapped address distinguished from `SLVERR` for a target that refuses; region-crossing refused; delay contract (incoming delay spent, sub-cycle target latency rounded up, 1.5 and 2.0 cycles both costing 2, measured on four targets sharing one node); reset-time submission and idle-to-active wake-up; a scoreboard over a second initiator's writes; `last_latency_cycles()` excluding the target hold-off; bounded waits and a global watchdog. Round 3 added the 256/257-beat `AxLEN` boundary, sparse multi-beat writes, widened-read policy, top-of-address-space accesses and all four AXI response mappings. A-3 moved it to a 4x4 topology and pins the complete signal-driven no-contention baseline at **10 cycles for one hop and 30 for six** |
 | `test_noc_interconnect_stress` | Step 10.3 bounded deterministic-random stress: three staggered managers contend for one delayed RAM using 1/2/4/6/8/13/24-byte transfers plus sparse multi-beat writes. Per-requester byte and completion scoreboards verify address, data, response, target order, requester attribution and target-delay accounting. It proves the half-cycle injection window is exercised, checks `SLVERR`/unmapped `DECERR`, observes mesh-idle/wrapper-busy as a legal state, requires whole-network quiescence before clock gating, verifies idle wake-up, and bounds every transaction plus the full run with watchdogs |
 | `test_noc_interconnect_concurrency` | Step 10.5 same-port concurrency: seven `b_transport` calls from independent SystemC threads share one upstream socket; a configured capacity of two is saturated; read/write FIFO completion order, simultaneous B/R ownership, data/error ownership, slot release, per-transaction target-delay exclusion and final quiescence are checked with bounded watchdogs |
+| `test_noc_interconnect_observer` | Step 12.7 passive completion observer: one record per completion in both timing modes, correct requester/address/length/direction, per-record latencies summing to the interconnect's own total, concurrent managers keeping their own attribution, and identical traffic with and without an observer producing the same transaction count and measured latency |
 | `test_noc_interconnect_fast` | Step 11 model-to-model calibration, not RTL equivalence: detailed and fast instances receive the same reads/writes over one through six Manhattan hops, 1/2/4/8-byte widths and 32-byte bursts. A hard one-cycle tolerance pins network timing; exact checks cover incoming-delay preservation, target-delay ceiling, zero internal time advance, sparse unaligned writes, data/error equivalence, target effects, exception-time slot cleanup and mesh bypass |
 | `test_axi_lanes` | `AxSIZE`, `AxLEN`, lane offset and per-beat `WSTRB` for 13 address/length shapes, plus byte-enable holes and short repeating enable arrays. Checked on the fields themselves, not through a target, because a packing error and a matching unpacking error cancel |
 | `test_noc_interconnect_bad_config` | Configurations refused before any traffic, each rejected while still an ordinary function call so teardown is normal: zero or more than eight upstream ports for the frozen 3-bit AXI ID; a per-port outstanding bound outside 1..32; an unknown timing backend; a non-positive clock period; a target on an initiator's node, including the documented default `(0,0)` of a port never placed; a manager moved onto an existing target; zero-sized, address-space-wrapping and overlapping regions; and proof that a refused call consumes no target slot and leaves a port's position intact. A legal layout is still accepted |
@@ -95,7 +211,7 @@ Standalone verification:
 | `test_axi_chimney_manager_response` | The manager-side response unpacker: channel decode, per-channel back-pressure, a request channel refused on the `rsp` link, and the AW→B / AR→multi-beat-R counter release loop |
 | `test_chimney_mgr_rsp_trace_sc` | 78-cycle manager-side response trace against the RTL-captured golden: the AXI manager's B and R channels in full — id, resp, the whole 64-bit `RDATA`, `RLAST`, `BUSER`/`RUSER` — plus `floo_rsp_o.ready` and both per-id reorder-buffer counters, which must drain to zero |
 
-All thirty-seven tests pass with GCC 11.5.0 and SystemC 2.3.4.
+All forty tests pass with GCC 11.5.0 and SystemC 2.3.4.
 
 Two rows carry a caveat, and they are not the same caveat:
 
@@ -822,10 +938,10 @@ failing for an unrelated reason as evidence that it covers this defect.
 **Where it runs:** in a private copy of the component under `/tmp`, one per
 control. The working tree is never touched, so an interrupt or a lost machine
 cannot leave a mutated source behind, and two runs cannot collide. It is not
-registered in CTest only because it rebuilds the component thirty-five times
+registered in CTest only because it rebuilds the component forty-two times
 and belongs in a slower loop than the unit tests.
 
-Thirty-five controls, all detected:
+Forty-two controls, all detected:
 
 | Control | Test that must fail | Defect it restores |
 |---|---|---|
@@ -864,6 +980,13 @@ Thirty-five controls, all detected:
 | `clock-gate-does-not-require-both-predicates` | `test_noc_interconnect_stress` | the clock stopped when either wrapper or mesh appeared idle instead of requiring both |
 | `mesh-output-fifo-occupancy-ignored` | `test_floo_mesh` | a stalled output-FIFO flit was omitted from the mesh activity snapshot |
 | `router-packet-locks-ignored` | `test_floo_router` | an open route/arbiter packet lock with empty FIFOs was misclassified as quiescent |
+| `completion-observer-attribution-lost` | `test_noc_interconnect_observer` | every completion was attributed to port 0, which is the attribution loss the observer exists to prevent |
+| `fast-hop-cost-removed` | `test_noc_interconnect_fast` | the approximately-timed request path ignored Manhattan distance |
+| `fast-incoming-delay-dropped` | `test_noc_interconnect_fast` | the fast backend replaced the caller's local time instead of preserving it |
+| `fast-target-delay-truncated` | `test_noc_interconnect_fast` | the fast backend truncated a fractional target cycle instead of rounding up |
+| `fast-functional-replay-bypassed` | `test_noc_interconnect_fast` | the fast timing path bypassed the mapped target instead of abstracting only time |
+| `rr-arb-tree-wrap-ignored` | `test_rr_arb_tree` | the `FairArb` pointer stopped wrapping through the lower request mask, so once no requester sat above `rr_q` the arbiter walked off its inputs instead of returning to the lowest one |
+| `meta-buffer-overflow-accepted` | `test_meta_buffer` | the metadata FIFO accepted a push beyond `MaxTxns`, modelling a deeper buffer than the frozen `fifo_v3` has and losing the back-pressure the chimney relies on |
 
 The runner has its own failure mode worth recording, because it produced a false
 pass on its first run. Records were packed into `|`-delimited strings and read
@@ -1141,4 +1264,6 @@ sub-steps deliberately do **not** run in numeric order:
    pass in both modes. On the recorded AlmaLinux host, the same Release
    firmware/ELF/2 ms window took 8.12 s detailed and 0.08 s fast (~101x in this
    single sample), while both retired 10,726 instructions and reported
-   53.1419 ns/instruction. There is no later numbered roadmap item.
+   53.1419 ns/instruction. Step 12 is now explicitly authorised and specified
+   by `docs/NOC_SOC_FREERTOS_ROADMAP.md`; this sentence records the Step 11
+   snapshot rather than the current roadmap boundary.

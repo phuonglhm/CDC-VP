@@ -23,7 +23,13 @@
 #define configUSE_PREEMPTION            1
 #define configUSE_TIME_SLICING          1
 #define configUSE_IDLE_HOOK             1
-#define configUSE_TICK_HOOK             0
+/* Overridable from the build so a measurement profile can install a tick hook
+ * without changing this default. Every existing image keeps 0: a hook that runs
+ * on every tick is instrumentation, and instrumentation does not belong in a
+ * signed acceptance image. */
+#ifndef configUSE_TICK_HOOK
+    #define configUSE_TICK_HOOK         0
+#endif
 #define configCPU_CLOCK_HZ              ( 1000000 )
 #define configTICK_RATE_HZ              ( 1000 )
 #define configMAX_PRIORITIES            ( 8 )

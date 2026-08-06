@@ -21,12 +21,16 @@ CHIP_EXT := $(PORT_DIR)/chip_specific_extensions/RISCV_MTIME_CLINT_no_extensions
 
 NPU ?= 1
 TFLM ?= 0
+EXTRA_CFLAGS ?=
+TARGET ?= freertos_fx1.elf
+LINKER_SCRIPT ?= linker.ld
+DISASSEMBLY ?= freertos_fx1.dis
 
 ARCH    := -march=rv32imac_zicsr -mabi=ilp32
 INCS    := -I. -Iinclude -Imodels -I../common/include \
            -I$(FREERTOS)/include -I$(PORT_DIR) -I$(CHIP_EXT)
 CFLAGS  := $(ARCH) -Os -g -ffreestanding -nostdlib -fno-pic -Wall -Wextra \
-           -ffunction-sections -fdata-sections $(INCS)
+           -ffunction-sections -fdata-sections $(INCS) $(EXTRA_CFLAGS)
 ifeq ($(NPU),1)
 CFLAGS  += -DDEMO_NPU=1
 endif
@@ -57,19 +61,17 @@ endif
 CXXFLAGS := $(filter-out -ffreestanding,$(CFLAGS)) -std=c++17 \
             -fno-exceptions -fno-rtti -fno-threadsafe-statics \
             -fno-use-cxa-atexit -Wno-unused-parameter
-LDFLAGS := -T linker.ld -Wl,--gc-sections
+LDFLAGS := -T $(LINKER_SCRIPT) -Wl,--gc-sections
 
 KERNEL_SRCS := $(FREERTOS)/tasks.c $(FREERTOS)/list.c $(FREERTOS)/queue.c \
                $(FREERTOS)/portable/MemMang/heap_4.c \
                $(PORT_DIR)/port.c
 ASM_SRCS    := startup/start.S $(PORT_DIR)/portASM.S
-APP_SRCS    := src/main.c src/cli.c src/hw_diag.c src/libc_min.c \
+APP_SRCS    ?= src/main.c src/cli.c src/hw_diag.c src/libc_min.c \
                bsp/uart.c bsp/plic.c
 ifeq ($(NPU),1)
 APP_SRCS    += bsp/npu_v4.c
 endif
-
-TARGET := freertos_fx1.elf
 
 all: $(TARGET)
 
@@ -99,14 +101,14 @@ $(TFLM_LIB):
 	@false
 
 $(TARGET): $(ASM_SRCS) $(KERNEL_SRCS) $(APP_SRCS) $(TFLM_OBJS) \
-           $(TFLM_LINK) linker.ld FreeRTOSConfig.h
+           $(TFLM_LINK) $(LINKER_SCRIPT) FreeRTOSConfig.h
 	@test -f $(FREERTOS)/tasks.c || \
 	    { echo "ERROR: FreeRTOS kernel missing - run tools/third_party/setup_third_party.sh"; exit 1; }
 	$(CC) $(CFLAGS) $(LDFLAGS) $(ASM_SRCS) $(KERNEL_SRCS) $(APP_SRCS) \
 	    $(TFLM_OBJS) $(TFLM_LINK) -lgcc -o $@
-	$(OBJDUMP) -d $@ > freertos_fx1.dis
+	$(OBJDUMP) -d $@ > $(DISASSEMBLY)
 
 clean:
-	rm -rf $(TARGET) freertos_fx1.dis build
+	rm -rf $(TARGET) $(DISASSEMBLY) build
 
 .PHONY: all clean

@@ -58,6 +58,8 @@ int sc_main(int, char**)
         "out_ready", num_ports};
     sc_core::sc_vector<sc_core::sc_signal<unsigned>> occupancy{
         "occupancy", num_ports};
+    sc_core::sc_vector<sc_core::sc_signal<unsigned>> output_occupancy{
+        "output_occupancy", num_ports};
     sc_core::sc_vector<sc_core::sc_signal<unsigned>> selected{
         "selected", num_ports};
     sc_core::sc_vector<sc_core::sc_signal<bool>> locked{"locked", num_ports};
@@ -78,6 +80,7 @@ int sc_main(int, char**)
         dut.o_valid[port](out_valid[port]);
         dut.i_ready[port](out_ready[port]);
         dut.o_input_occupancy[port](occupancy[port]);
+        dut.o_output_occupancy[port](output_occupancy[port]);
         dut.o_output_selected[port](selected[port]);
         dut.o_output_locked[port](locked[port]);
 
@@ -88,6 +91,7 @@ int sc_main(int, char**)
         counters.i_out_valid[port](out_valid[port]);
         counters.i_out_ready[port](out_ready[port]);
         counters.i_input_occupancy[port](occupancy[port]);
+        counters.i_output_occupancy[port](output_occupancy[port]);
     }
 
     const auto idle_flit = [&]() {
@@ -192,6 +196,8 @@ int sc_main(int, char**)
           "a stalled output must not accept a transfer");
     check(counters.output(port_east).stall_cycles > 0,
           "a stalled output asserting valid must record stall cycles");
+    check(counters.output_buffer(port_east).high_water == 2,
+          "the stalled output FIFO must reach its depth-two high-water mark");
 
     // Release the stall and drain, then check conservation across the router.
     for (int cycle = 0; cycle < 8; ++cycle) {
@@ -216,10 +222,33 @@ int sc_main(int, char**)
               "output busy cycles must split into accepted and stalled");
         check(counters.buffer(port).high_water <= 2,
               "occupancy cannot exceed the configured depth");
+        check(counters.output_buffer(port).high_water <= 2,
+              "output occupancy cannot exceed the configured depth");
     }
     check(total_in == total_out,
           "a drained router must emit exactly what it accepted");
     check(total_in > 0, "the conservation check must not pass vacuously");
+
+    // Phase C: packet count is not another name for flit count. A two-flit
+    // packet has one non-last transfer and exactly one last transfer.
+    counters.reset_counts();
+    auto packet_flit = east_bound;
+    packet_flit.hdr.last = false;
+    drive(true, 1u << port_west, 0x1F, packet_flit);
+    tick();
+    packet_flit.hdr.last = true;
+    drive(true, 1u << port_west, 0x1F, packet_flit);
+    tick();
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        drive(true, 0x00, 0x1F, idle_flit());
+        tick();
+    }
+    check(counters.input(port_west).accepted_flits == 2
+              && counters.input(port_west).accepted_packets == 1,
+          "a two-flit input packet must increment packet count only on last");
+    check(counters.output(port_east).accepted_flits == 2
+              && counters.output(port_east).accepted_packets == 1,
+          "a two-flit output packet must increment packet count only on last");
 
     if (failures == 0) {
         std::cout << "PASS: router measured counters\n";

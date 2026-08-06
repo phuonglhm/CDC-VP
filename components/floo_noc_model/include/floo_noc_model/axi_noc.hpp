@@ -159,6 +159,19 @@ public:
 
     mesh_activity req_activity() const { return req_mesh_.activity(); }
     mesh_activity rsp_activity() const { return rsp_mesh_.activity(); }
+    mesh_counter_snapshot req_counter_snapshot() const
+    {
+        return req_mesh_.counter_snapshot();
+    }
+    mesh_counter_snapshot rsp_counter_snapshot() const
+    {
+        return rsp_mesh_.counter_snapshot();
+    }
+    void reset_counters()
+    {
+        req_mesh_.reset_counters();
+        rsp_mesh_.reset_counters();
+    }
     bool quiescent() const
     {
         return req_mesh_.quiescent() && rsp_mesh_.quiescent();
@@ -414,6 +427,15 @@ public:
 
     mesh_activity req_activity() const { return mesh_.req_activity(); }
     mesh_activity rsp_activity() const { return mesh_.rsp_activity(); }
+    mesh_counter_snapshot req_counter_snapshot() const
+    {
+        return mesh_.req_counter_snapshot();
+    }
+    mesh_counter_snapshot rsp_counter_snapshot() const
+    {
+        return mesh_.rsp_counter_snapshot();
+    }
+    void reset_counters() { mesh_.reset_counters(); }
 
     /// True only when both physical meshes and every per-node chimney have no
     /// retained FIFO entry, packet lock, metadata entry, RoB counter or live

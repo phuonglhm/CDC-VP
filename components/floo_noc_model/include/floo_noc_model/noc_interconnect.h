@@ -136,7 +136,10 @@
 
 #pragma once
 
+#include "floo_noc_model/noc_counters.hpp"
+
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -308,8 +311,68 @@ public:
     unsigned outstanding_transactions(unsigned port) const;
     unsigned peak_outstanding_transactions(unsigned port) const;
 
+    /// One completed transaction, reported where its latency becomes final.
+    ///
+    /// This exists because `last_latency_cycles()` cannot attribute anything
+    /// under concurrent traffic: it holds only the most recent completion, so
+    /// a platform monitor that polls it later may read a different manager's
+    /// transaction. Sampling at the completion point removes the race, and
+    /// carrying the address and command lets the observer classify without the
+    /// interconnect having to know what any particular register means.
+    struct completion {
+        /// Upstream port that issued it.
+        unsigned port = 0;
+        /// Address as presented by the caller, before any beat alignment.
+        std::uint64_t address = 0;
+        /// Payload length in bytes, as presented by the caller.
+        unsigned length = 0;
+        bool is_write = false;
+        /// Network cycles only. A target's own access latency is charged as a
+        /// hold-off at its node and is excluded, exactly as for
+        /// `last_latency_cycles()`.
+        std::uint64_t latency_cycles = 0;
+        /// Network cycle at which it completed. Zero in fast mode, which does
+        /// not advance a network clock.
+        std::uint64_t at_cycle = 0;
+    };
+
+    using completion_observer = std::function<void(const completion&)>;
+
+    /// Install a passive observer, or an empty function to remove one.
+    ///
+    /// The observer is called synchronously from the completion path, so it
+    /// must be cheap, must not throw, and must not call anything on this
+    /// object other than a `const` accessor. In particular it must never
+    /// `wait()`: the model is mid-completion and consuming time there would
+    /// change the very numbers being measured.
+    ///
+    /// It fires in both timing modes. In fast mode the latency reported is the
+    /// no-contention estimate, which is what fast mode computes; it is not a
+    /// measurement, and anything derived from it must not be called one.
+    void set_completion_observer(completion_observer observer);
+
     /// The construction-time backend. It never changes during simulation.
     timing_mode selected_timing_mode() const noexcept;
+
+    /// Passive measured counters from both physical meshes.
+    ///
+    /// FlooNoC carries requests and responses on separate fabrics over the
+    /// same coordinates, so combining them here would hide which direction
+    /// was congested. The snapshots retain one router record per node in
+    /// row-major order and the canonical RTL port order
+    /// North/East/South/West/Eject.
+    struct detailed_counters {
+        floo::model::mesh_counter_snapshot request;
+        floo::model::mesh_counter_snapshot response;
+    };
+
+    /// Snapshot/reset the detailed mesh's passive counters.
+    ///
+    /// Fast mode never clocks or traverses the mesh, so accepting a fast-mode
+    /// snapshot as measurement would manufacture zeros that look real. Both
+    /// functions therefore throw `std::logic_error` in fast mode.
+    detailed_counters detailed_counter_snapshot() const;
+    void reset_detailed_counters();
 
     /// Passive clock-gating diagnostics.
     ///

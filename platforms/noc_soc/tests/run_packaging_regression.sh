@@ -13,7 +13,8 @@
 #   * the packaged executable has exactly RPATH=$ORIGIN;
 #   * libsystemc resolves from beside that executable with LD_LIBRARY_PATH unset;
 #   * the packaged config runs a survey;
-#   * the existing full firmware/survey regression passes against the package.
+#   * the existing full firmware/survey regression passes against the package;
+#   * FreeRTOS level 128 accepts UART replay and completes its CLI session.
 #
 # Exit codes: 0 pass, 1 fail, 77 skipped when the RISC-V firmware toolchain is
 # unavailable. Set PACKAGING_KEEP_ARTIFACTS=1 to retain a successful temporary
@@ -254,5 +255,25 @@ if [[ ${firmware_status} -eq ${SKIP} ]]; then
 fi
 [[ ${firmware_status} -eq 0 ]] \
     || fail "packaged firmware regression failed"
+
+# The RTOS and UART CLI must also run on the package consumer, not only on the
+# development binary. Step 12.8 retains every level-124 marker and adds the
+# host-bridge/file-replay path, so it is the strongest single packaged image.
+# Independent reproduction of the earlier stages remains the responsibility of
+# `noc_soc_freertos_regression`.
+set +e
+env -u LD_LIBRARY_PATH \
+    NOC_SOC_BIN="${package_bin}" \
+    FREERTOS_STEPS="12.8" \
+    LOG_DIR="${evidence_dir}/freertos" \
+    "${script_dir}/run_freertos_regression.sh"
+freertos_status=$?
+set -e
+if [[ ${freertos_status} -eq ${SKIP} ]]; then
+    echo "SKIP: packaged FreeRTOS gate needs the RISC-V toolchain" >&2
+    exit "${SKIP}"
+fi
+[[ ${freertos_status} -eq 0 ]] \
+    || fail "packaged FreeRTOS regression failed"
 
 echo "noc_soc packaging regression PASS"

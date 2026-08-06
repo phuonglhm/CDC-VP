@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <vector>
 
 #include <systemc>
@@ -101,6 +102,17 @@ public:
    explicit dma_tlm(sc_core::sc_module_name name);
    void trace(sc_core::sc_trace_file *tf) const;
 
+   /// Install a passive observer for a channel's STOPPED -> EXECUTING
+   /// transition, or an empty function to remove it.
+   ///
+   /// The callback runs synchronously at the architectural start point, before
+   /// the worker is released. It must not throw or wait. This is intentionally
+   /// earlier than completion of the register transaction that carried DMAGO:
+   /// platform timing code uses it to measure channel-start-to-interrupt time
+   /// without omitting the NoC response path after the DMA already started.
+   using channel_start_observer = std::function<void(unsigned int channel)>;
+   void set_channel_start_observer(channel_start_observer observer);
+
 private:
    static const unsigned int NUM_CHANNELS = 8;
    static const unsigned int NUM_EVENTS = 32;
@@ -166,6 +178,7 @@ private:
    bool m_debug_busy;
    bool m_manager_nonsecure;
    bool m_irq_abort_level;
+   channel_start_observer m_channel_start_observer;
 
    sc_core::sc_event m_channel_start_event;
    sc_core::sc_event m_output_changed;

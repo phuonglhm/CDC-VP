@@ -47,6 +47,107 @@ directory, so it needs no in-source `make clean`, leaves the working tree
 untouched, and two runs cannot collide. Build by hand like this only when
 driving the platform yourself.
 
+## FlooNoC metrics dashboard and DSE
+
+The machine-readable/report path is separate from the old human survey output.
+Build both executables:
+
+```bash
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+$CC -dumpfullversion
+$CXX --version | head -n 1
+
+cmake --build build --target noc_soc noc_benchmark --parallel
+```
+
+`noc_soc --noc-metrics FILE` measures the real firmware workload. That fixed
+window normally ends while the CPU is still active, so it is diagnostic and is
+reported as not drained.
+
+The FreeRTOS CLI can request the same complete dashboard through the UART TCP
+bridge. This is host-assisted because firmware cannot execute a host Python
+process:
+
+```text
+noc_dashboard command
+  -> private UART TX request
+  -> noc_soc atomically publishes live metrics JSON
+  -> tools/noc_cli.py invokes the existing tools/noc_dashboard.py
+  -> full dashboard appears in the interactive terminal
+```
+
+Start `noc_soc` with all three required options:
+
+```bash
+./build/platforms/noc_soc/noc_soc \
+  --mode firmware \
+  --noc-timing detailed \
+  --fw fw/freertos_noc_soc/freertos_noc_soc.elf \
+  --sim-us 100000 \
+  --noc-metrics /tmp/noc_cli_live.json \
+  --uart0-socket 5555 \
+  --uart0-wait
+```
+
+Then connect with the dashboard-aware client instead of `nc`:
+
+```bash
+python3 tools/noc_cli.py \
+  --port 5555 \
+  --metrics /tmp/noc_cli_live.json
+```
+
+After `FreeRTOS NoC CLI ready`, enter `noc_dashboard`. The renderer and schema
+are identical to the standalone Python flow. The live firmware window remains
+`drained: false`; use `noc_benchmark` below for a drained, selectable DSE
+measurement. Fast mode deliberately reports the request as unavailable rather
+than inventing detailed counters.
+
+For a complete selectable measurement, use the drainable production-wrapper
+benchmark:
+
+```bash
+./build/platforms/noc_soc/noc_benchmark \
+  --workload fairness --topology 4x4 \
+  --transactions 64 --warmup-transactions 2 \
+  --workers-per-manager 8 --injection-gap-cycles 0 \
+  --read-percent 50 --burst-bytes 8 --seed 17 \
+  --noc-metrics /tmp/floo_noc_metrics.json
+
+python3 tools/noc_dashboard.py /tmp/floo_noc_metrics.json
+```
+
+Run a topology/load sweep with:
+
+```bash
+python3 tools/noc_sweep.py \
+  --benchmark build/platforms/noc_soc/noc_benchmark \
+  --output-dir /tmp/floo_noc_sweep \
+  --topologies 2x2,3x3,4x4 --workers 1,4,8 \
+  --workload fairness --transactions 64 \
+  --objective max-bandwidth
+```
+
+Only detailed, successful, drained rows satisfying all constraints can win.
+Area, power and energy are unavailable and are not used for selection. Full
+metric definitions, caveats and regression commands are in
+`components/floo_noc_model/docs/NOC_METRICS_DASHBOARD_IMPLEMENTATION.md`.
+
+Run the bounded positive and mutation regressions with:
+
+```bash
+NOC_BENCHMARK_BIN=build/platforms/noc_soc/noc_benchmark \
+NOC_DASHBOARD_TOOL=tools/noc_dashboard.py \
+platforms/noc_soc/tests/run_metrics_regression.sh
+
+NOC_INTERCONNECT_LIBRARY=build/components/floo_noc_model/libnoc_interconnect.a \
+NOC_DASHBOARD_TOOL=tools/noc_dashboard.py \
+NOC_SWEEP_TOOL=tools/noc_sweep.py \
+platforms/noc_soc/tests/run_metrics_negative_controls.sh
+```
+
 Two things about that build line:
 
 - The `DMA_BASE` override is required. `fw/dma_riscv` defaults to the
@@ -88,7 +189,8 @@ env -u LD_LIBRARY_PATH \
 ```
 
 Step 10.4 also runs the full firmware regression against this packaged binary,
-not only the in-tree executable.
+not only the in-tree executable, and the current package gate adds the
+FreeRTOS level-128 UART CLI acceptance to that packaged run.
 
 The reproducible distribution sign-off is one command:
 
@@ -102,8 +204,8 @@ install, builds the standalone installed consumer, validates the FlooNoC header
 manifest/SPDX identifiers, byte-compares the development and binary-package
 licence/provenance files, asserts exact `RPATH=$ORIGIN`, proves with `ldd` that
 SystemC resolves beside the executable, runs the packaged config with
-`LD_LIBRARY_PATH` unset, and invokes the full firmware/survey regression against
-the packaged binary.
+`LD_LIBRARY_PATH` unset, and invokes the full firmware/survey regression and
+the FreeRTOS level-128 acceptance against the packaged binary.
 
 Each run overrides `CDC_PACKAGE_ROOT` with its private temporary directory.
 The default remains `out/`, so manual `noc_soc_package` usage is unchanged, but
@@ -136,6 +238,20 @@ ADC, GPIO.
   locks, FIFO occupancy or clock-gating activity. It requires downstream
   targets to annotate their latency; a target that calls `wait()` inside
   `b_transport` is not compatible with this LT path.
+
+Firmware mode can optionally drive UART0 from the host:
+
+- `--uart0-rx-file FILE [--uart0-rx-delay-us N]` replays bytes
+  deterministically for CI;
+- `--uart0-socket PORT [--uart0-wait]` opens a bidirectional TCP console on
+  `127.0.0.1`.
+
+Both paths enter the real UART0 RX FIFO. Firmware receives bytes through PLIC
+source 1 and UART MMIO over FlooNoC; neither path writes a firmware queue or
+parser directly. Host input is rejected in survey mode. For the FreeRTOS
+level-128 image, wait for `FreeRTOS NoC CLI ready` before typing into a TCP
+client. See `fw/freertos_noc_soc/README.md` for complete build, interactive and
+file-replay commands.
 
 ## Floorplan
 
@@ -350,6 +466,26 @@ needs the unverified downstream `id_queue`/out-of-order matching branch.
   combinations, and relocates a real ELF into the reserved page to verify the
   exact conflicting `PT_LOAD` range is rejected before the internal SoC is
   constructed.
+- ~~The FreeRTOS bring-up is not automated.~~ It is, as of Step 12.5:
+  `tests/run_freertos_regression.sh`, registered as
+  `noc_soc_freertos_regression` under `CDC_BUILD_TESTS` and labelled
+  `firmware;freertos`. It drives the staged acceptance contract in
+  `fw/freertos_noc_soc/run_step_regression.sh` for levels 121, 122, 123, 124
+  and 128, so the scheduler, CLINT, TIMER0/PLIC, DMA, concurrent-workload and
+  UART CLI proofs each stay independently reproducible.
+- ~~The FreeRTOS regression is not qualified.~~ It is, as of Step 12.6 and the
+  later host-assisted dashboard extension:
+  `tests/run_freertos_negative_controls.sh`, registered as
+  `noc_soc_freertos_negative_controls` and labelled
+  `negative-controls;extended;freertos`. Eleven controls put back a corrupted
+  DMA destination, a wrong PLIC source, an omitted claim completion, a dead
+  CLINT tick, a synthetic access in firmware mode, final-generation RAM
+  corruption, lost in-flight worker progress, a CLI whose UART RX/PLIC path
+  was never armed, and an accepted dashboard command whose private host request
+  was omitted. Two additional controls corrupt a hardware-scan identity and
+  bypass the safe register test's RW pattern write. Each must build, run inside
+  the normal bounds and fail for its own named reason. Result: 11 detected,
+  0 missed.
 - ~~Clock gating is not proven.~~ Closed by Step 10.3: the gate requires both
   wrapper idle and direct mesh/chimney quiescence, with mutation controls for
   output-FIFO occupancy, packet locks and the two-predicate decision.

@@ -625,12 +625,166 @@ add_control \
     "open packet locks must keep the router non-quiescent" \
     "quiescence ignored route and wormhole-arbiter locks, so an open packet with empty FIFOs was declared idle"
 
+# ---- Gate V0-CLOSE: the last two leaves without a direct test ---------------
+#
+# `rr_arb_tree.hpp` and `meta_buffer.hpp` were the two included leaves with no
+# standalone test — the final unmet v0 definition-of-done criterion. Both were
+# already covered *indirectly*, by the 152-cycle wormhole-arbiter cross-check
+# and the 221-cycle chimney subordinate-side cross-check respectively, so this
+# was a modular-testability gap rather than an untested datapath.
+#
+# The direct tests close the criterion; these controls stop them closing it
+# vacuously. A leaf test that never fails proves nothing about the leaf, which
+# is the whole reason this registry exists.
+
+add_control \
+    "rr-arb-tree-wrap-ignored" \
+    "include/floo_noc_model/rr_arb_tree.hpp" \
+    '        return upper.empty ? lower.cnt : upper.cnt;' \
+    '        return upper.cnt;' \
+    "test_rr_arb_tree" \
+    "next_rr must wrap to the lower mask when nothing is above" \
+    "the FairArb pointer stopped wrapping through the lower request mask, so once no requester sat above rr_q the arbiter walked off its inputs instead of returning to the lowest one"
+
+add_control \
+    "meta-buffer-overflow-accepted" \
+    "include/floo_noc_model/meta_buffer.hpp" \
+    '        if (write_full()) {
+            throw std::runtime_error("meta_buffer: write buffer overflow");
+        }
+' \
+    '' \
+    "test_meta_buffer" \
+    "a write past MaxTxns must be refused" \
+    "the metadata FIFO accepted a push beyond MaxTxns, modelling a deeper buffer than the frozen fifo_v3 has and losing the back-pressure the chimney relies on"
+
+add_control \
+    "completion-observer-attribution-lost" \
+    "src/noc_interconnect.cpp" \
+    '        notify_completion(
+            parked.port, parked.address, parked.length, parked.is_write,
+            last_latency);' \
+    '        notify_completion(
+            0, parked.address, parked.length, parked.is_write,
+            last_latency);' \
+    "test_noc_interconnect_observer" \
+    "each concurrent manager must be reported exactly once" \
+    "every completion was attributed to port 0, which is exactly the attribution loss the observer exists to avoid"
+
+# D1 metrics dashboard controls. Production counters are evidence only if they
+# sample the real router boundary, distinguish accepted from stalled traffic,
+# and observe both input and output FIFO state.
+add_control \
+    "router-counter-stall-counted-as-accepted" \
+    "include/floo_noc_model/noc_counters.hpp" \
+    '        if (!ready) {
+            ++counters.stall_cycles;
+            return;
+        }' \
+    '        if (!ready) {
+            ++counters.stall_cycles;
+        }' \
+    "test_noc_counters" \
+    "the input and output spill registers together hold four flits" \
+    "a refused valid cycle was counted as both stalled and accepted, inflating delivered flits and utilisation"
+
+add_control \
+    "router-counter-invalid-counted-as-stall" \
+    "include/floo_noc_model/noc_counters.hpp" \
+    '        if (!valid) {
+            return;
+        }' \
+    '        if (!valid) {
+            ++counters.stall_cycles;
+            return;
+        }' \
+    "test_noc_counters" \
+    "input busy cycles must split into accepted and stalled" \
+    "a cycle with valid low was reported as a blocked transfer even though no flit was offered"
+
+add_control \
+    "router-counter-last-ignored" \
+    "include/floo_noc_model/noc_counters.hpp" \
+    '        if (flit.hdr.last) {
+            ++counters.accepted_packets;
+        }' \
+    '        if (true) {
+            ++counters.accepted_packets;
+        }' \
+    "test_noc_counters" \
+    "a two-flit input packet must increment packet count only on last" \
+    "every accepted flit incremented packet count, so multi-flit packets were overcounted"
+
+add_control \
+    "router-counter-input-high-water-disabled" \
+    "include/floo_noc_model/noc_counters.hpp" \
+    '        if (occupancy > counters.high_water) {
+            counters.high_water = occupancy;
+        }' \
+    '' \
+    "test_noc_counters" \
+    "a drained spill register never holds more than one flit" \
+    "the observer accumulated occupancy samples but never recorded input FIFO high-water state"
+
+add_control \
+    "router-counter-output-occupancy-ignored" \
+    "include/floo_noc_model/noc_counters.hpp" \
+    '            sample_buffer(
+                output_buffers_[port], i_output_occupancy[port].read());' \
+    '' \
+    "test_noc_counters" \
+    "the stalled output FIFO must reach its depth-two high-water mark" \
+    "the observer stopped sampling output FIFO state, so a saturated output looked empty in the dashboard"
+
+add_control \
+    "metrics-percentile-rank-off-by-one" \
+    "include/floo_noc_model/noc_metrics.hpp" \
+    '            if (cumulative >= rank) {' \
+    '            if (cumulative > rank) {' \
+    "test_noc_metrics" \
+    "P50 must use the exact nearest-rank sample" \
+    "the exact histogram skipped the sample whose cumulative count equals the nearest rank, shifting percentiles one bin into the tail"
+
+add_control \
+    "metrics-target-delay-included" \
+    "src/noc_interconnect.cpp" \
+    '        last_latency = elapsed > hold_off ? elapsed - hold_off : 0;' \
+    '        last_latency = elapsed;' \
+    "test_noc_interconnect" \
+    "a target's own latency must not be counted as network latency" \
+    "the completion observer reported target service time as NoC latency, inflating every delayed target bucket"
+
+add_control \
+    "metrics-payload-bytes-count-transactions" \
+    "include/floo_noc_model/noc_metrics.hpp" \
+    '        bytes_ += payload_bytes;' \
+    '        ++bytes_;' \
+    "test_noc_metrics" \
+    "transaction bucket must reconcile count, bytes and latency" \
+    "the useful-payload counter incremented once per transaction instead of adding the completed payload length"
+
+add_control \
+    "production-router-counter-miswired" \
+    "include/floo_noc_model/floo_mesh.hpp" \
+    '                    counters.i_out_valid[port](router_out_valid_[index]);' \
+    '                    counters.i_out_valid[port](router_in_valid_[index]);' \
+    "test_floo_mesh" \
+    "source East output must count the first routed hop" \
+    "the production observer sampled input valid as output valid, so standalone counter tests still passed while the real mesh report was wrong"
+
 # ── run them ─────────────────────────────────────────────────────────────────
 detected=0
 missed=0
+selected=0
+control_filter="${FLOO_NEGATIVE_CONTROL_FILTER:-}"
 
 for index in "${!names[@]}"; do
     name="${names[${index}]}"
+    if [[ -n "${control_filter}" \
+          && ",${control_filter}," != *",${name},"* ]]; then
+        continue
+    fi
+    selected=$((selected + 1))
     evidence="${work_dir}/${name}"
     mkdir -p "${evidence}"
 
@@ -715,6 +869,10 @@ done
 echo
 echo "negative controls: ${detected} detected, ${missed} missed"
 echo "evidence kept under ${work_dir}"
+if [[ ${selected} -eq 0 ]]; then
+    echo "FAIL: negative-control filter selected no registered control" >&2
+    exit 1
+fi
 if [[ ${missed} -ne 0 ]]; then
     echo "FAIL: every control must build, run, and fail for its own reason" >&2
     exit 1

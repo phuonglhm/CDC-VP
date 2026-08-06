@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cdc-vp.local/schemas/floo-noc-metrics-v1.json",
+  "title": "FlooNoC measured metrics v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "provenance",
+    "configuration",
+    "workload",
+    "measurement_window",
+    "transaction_metrics",
+    "physical_meshes",
+    "availability",
+    "warnings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "floo-noc-metrics-v1"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generated_utc",
+        "git_revision",
+        "git_dirty",
+        "platform_binary",
+        "firmware",
+        "build_type",
+        "host_cc",
+        "host_cxx",
+        "systemc_version"
+      ],
+      "properties": {
+        "generated_utc": { "type": "string" },
+        "git_revision": { "type": ["string", "null"] },
+        "git_dirty": { "type": ["boolean", "null"] },
+        "source_patch_sha256": { "type": ["string", "null"] },
+        "platform_binary": { "type": "string" },
+        "platform_sha256": { "type": ["string", "null"] },
+        "firmware": { "type": "string" },
+        "firmware_sha256": { "type": ["string", "null"] },
+        "build_type": { "type": "string" },
+        "host_cc": { "type": "string" },
+        "host_cxx": { "type": "string" },
+        "systemc_version": { "type": "string" }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "required": [
+        "timing_mode",
+        "topology",
+        "routing",
+        "port_order",
+        "clock_period_ns",
+        "managers"
+      ],
+      "properties": {
+        "timing_mode": {
+          "enum": ["detailed", "fast"]
+        },
+        "topology": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "routing": { "const": "XY" },
+        "port_order": {
+          "const": ["North", "East", "South", "West", "Eject"]
+        },
+        "clock_period_ns": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "input_fifo_depth": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "output_fifo_depth": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "max_outstanding_per_manager": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "managers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/placedEndpoint" }
+        },
+        "targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/placedEndpoint" }
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "kind", "seed"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": {
+          "enum": ["firmware", "synthetic"]
+        },
+        "seed": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "measurement_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "warmup_cycles",
+        "start_cycle",
+        "end_cycle",
+        "counted_cycles",
+        "drained"
+      ],
+      "properties": {
+        "warmup_cycles": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_cycle": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_cycle": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "counted_cycles": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "drained": { "type": "boolean" }
+      }
+    },
+    "transaction_metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["global", "classes"],
+      "properties": {
+        "global": { "$ref": "#/$defs/transactionBucket" },
+        "classes": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/namedTransactionBucket" }
+            ]
+          }
+        }
+      }
+    },
+    "traffic_accounting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offered_transactions", "delivered_transactions"],
+      "properties": {
+        "offered_transactions": { "$ref": "#/$defs/metric" },
+        "delivered_transactions": { "$ref": "#/$defs/metric" }
+      }
+    },
+    "physical_meshes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/physicalMesh" }
+    },
+    "derived_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/metric"
+      }
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "router_counters",
+        "area",
+        "power",
+        "energy_per_flit"
+      ],
+      "properties": {
+        "router_counters": { "type": "boolean" },
+        "area": { "const": false },
+        "power": { "const": false },
+        "energy_per_flit": { "const": false }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "placedEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "x", "y"],
+      "properties": {
+        "name": { "type": "string" },
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit", "source"],
+      "properties": {
+        "value": { "type": ["number", "integer", "string", "null"] },
+        "unit": { "type": "string" },
+        "source": {
+          "enum": ["M", "D", "A", "S"]
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "formula": { "type": "string" }
+      }
+    },
+    "transactionBucket": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "transactions",
+        "payload_bytes",
+        "latency_cycles"
+      ],
+      "properties": {
+        "transactions": { "$ref": "#/$defs/metric" },
+        "payload_bytes": { "$ref": "#/$defs/metric" },
+        "latency_cycles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "mean", "p50", "p95", "p99", "max"],
+          "properties": {
+            "min": { "$ref": "#/$defs/metric" },
+            "mean": { "$ref": "#/$defs/metric" },
+            "p50": { "$ref": "#/$defs/metric" },
+            "p95": { "$ref": "#/$defs/metric" },
+            "p99": { "$ref": "#/$defs/metric" },
+            "max": { "$ref": "#/$defs/metric" }
+          }
+        }
+      }
+    },
+    "namedTransactionBucket": {
+      "allOf": [
+        { "$ref": "#/$defs/transactionBucket" },
+        {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" }
+          },
+          "required": ["name"]
+        }
+      ]
+    },
+    "portCounters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "port",
+        "accepted_flits",
+        "accepted_packets",
+        "stall_cycles",
+        "busy_cycles",
+        "occupancy_sum",
+        "occupancy_high_water"
+      ],
+      "properties": {
+        "port": {
+          "enum": ["North", "East", "South", "West", "Eject"]
+        },
+        "accepted_flits": { "type": "integer", "minimum": 0 },
+        "accepted_packets": { "type": "integer", "minimum": 0 },
+        "stall_cycles": { "type": "integer", "minimum": 0 },
+        "busy_cycles": { "type": "integer", "minimum": 0 },
+        "occupancy_sum": { "type": "integer", "minimum": 0 },
+        "occupancy_high_water": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "router": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "counted_cycles", "inputs", "outputs"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "counted_cycles": { "type": "integer", "minimum": 0 },
+        "inputs": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/portCounters" }
+        },
+        "outputs": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/portCounters" }
+        }
+      }
+    },
+    "physicalMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "width", "height", "routers"],
+      "properties": {
+        "channel": { "enum": ["request", "response"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "routers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/router" }
+        }
+      }
+    }
+  }
+}

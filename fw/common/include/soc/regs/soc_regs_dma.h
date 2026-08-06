@@ -40,11 +40,22 @@
 #define CDC_DMA_DAR(n)  (CDC_DMA_DAR0 + (n) * CDC_DMA_CH_AXI_STRIDE)
 #define CDC_DMA_CCR(n)  (CDC_DMA_CCR0 + (n) * CDC_DMA_CH_AXI_STRIDE)
 
+/* ---- CCR transfer-shape fields --------------------------------------- */
+#define CDC_DMA_CCR_SRC_INC              (1u << 0)
+#define CDC_DMA_CCR_SRC_BURST_SIZE_SHIFT 1u
+#define CDC_DMA_CCR_SRC_BURST_LEN_SHIFT  4u
+#define CDC_DMA_CCR_DST_INC              (1u << 14)
+#define CDC_DMA_CCR_DST_BURST_SIZE_SHIFT 15u
+#define CDC_DMA_CCR_DST_BURST_LEN_SHIFT  18u
+
 /* ---- Debug interface -------------------------------------------------- */
 #define CDC_DMA_DBGSTATUS     0xD00u
 #define CDC_DMA_DBGCMD        0xD04u
+#define CDC_DMA_DBGINST0      0xD08u
+#define CDC_DMA_DBGINST1      0xD0Cu
 
 /* ---- Reset value ------------------------------------------------------ */
 #define CDC_DMA_CCR_RESET_VALUE 0x00800200u
+#define CDC_DMA_STATUS_STOPPED   0x0u
 
 #endif /* CDC_SOC_REGS_DMA_H */

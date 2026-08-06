@@ -1,0 +1,59 @@
+# noc_soc NoC and RTOS measurement baseline
+#
+# Diagnostic evidence, not a timing-closure claim. No pass/fail
+# threshold is attached to any number here, and none should be added
+# until repeatability across clean runs and host load has been
+# measured. Router utilisation, FIFO occupancy and stall cycles are
+# absent because router_counters is not wired through the mesh
+# composition; see the Step 12.7 notes in the roadmap.
+#
+# recorded:        2026-08-03T10:13:21Z
+# git revision:    e6fc6f4 (dirty)
+# source patch:    noc_baseline.source.patch
+# source patch sha256: bef223413a01a25bb06776f2a8b93ea9529cb859f4dc31c329e67b4639e3d421
+# firmware:        level 125
+# firmware sha256: 1d34d1834fbb4a8ef9fa7431113a2bb2ef504157230128255e192a27cfd2ee7e
+# platform sha256: 3eb75df1d9a148c9dc1b3957be7e1b18cb6933c12974884608620df3c1754755
+# host CC:         11.5.0
+# host CXX:        g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+# platform binary: /tmp/cdc_vp_step127_fix_build/platforms/noc_soc/noc_soc
+
+noc_soc measurement baseline
+  conditions
+    timing mode:      detailed cycle-stepped
+    modeled window:   45000 us
+    network clock:    1 ns per cycle
+    floorplan:        4x4 mesh; cpu 0,0 dma 0,3 ram 0,1 plic 3,0
+    build type:       Release
+    firmware:         /tmp/noc_soc_baseline.EUPwR0/freertos_noc_soc_step_125.elf
+  CPU-port network latency, by classified operation
+    PLIC claim      (read  0x0c200004): n=249 min=18 mean=18.008 max=19 cycles
+    PLIC complete   (write 0x0c200004): n=124 min=19 mean=19.0081 max=20 cycles
+    RAM, DMA idle                     : n=769225 min=10 mean=10.3284 max=11 cycles
+    RAM, DMA active                   : n=6041 min=10 mean=11.4344 max=22 cycles
+    other CPU MMIO                    : n=3079 min=10 mean=11.6726 max=24 cycles
+    contention delta (mean RAM, active - idle): 1.10592 cycles
+  DMA manager port
+    DMA-issued transactions           : n=8262 min=14 mean=17.9762 max=25 cycles
+    channel start to completion interrupt: n=5 min=562 ns mean=46174600 ps max=57601 ns
+  per-manager totals
+    cpu: peak outstanding 1
+    dma: peak outstanding 1
+    probe: peak outstanding 0
+    all managers: 786980 completed transactions, 8205272 total network cycles
+  cycle-stepped mesh
+    mesh clocked 15942398 cycles
+    clock-gate transitions 774978
+    mesh quiescent while wrapper busy 775751 cycles
+  Router utilisation, FIFO occupancy and stall cycles are NOT reported: `router_counters`
+  is not wired through the mesh composition. See the Step 12.7 notes.
+  These are observations for this fixed window. No threshold is implied.
+
+  RTOS tick jitter (platform/RTOS metric, NOT a NoC metric: CLINT
+  drives MTIP straight into the CPU; only the mtime read and the
+  interrupted code's own traffic cross the network)
+    RTOS tick period us=1000
+    RTOS tick samples=20
+    RTOS tick interval min us=994
+    RTOS tick interval max us=1006
+    RTOS tick deviation max us=6

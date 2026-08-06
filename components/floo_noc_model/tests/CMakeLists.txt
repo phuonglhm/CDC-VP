@@ -24,8 +24,11 @@ add_floo_model_test(test_wormhole_arbiter)
 add_floo_model_test(test_floo_router)
 add_floo_model_test(test_floo_mesh)
 add_floo_model_test(test_noc_counters)
+add_floo_model_test(test_noc_metrics)
 add_floo_model_test(test_axi_types)
 add_floo_model_test(test_axi_chimney_pack)
+add_floo_model_test(test_rr_arb_tree)
+add_floo_model_test(test_meta_buffer)
 add_floo_model_test(test_rob_order_gate)
 add_floo_model_test(test_axi_endpoint)
 add_floo_model_test(test_axi_noc)
@@ -58,6 +61,15 @@ target_link_libraries(test_noc_interconnect_concurrency PRIVATE
 floo_model_test_options(test_noc_interconnect_concurrency)
 add_test(NAME test_noc_interconnect_concurrency
          COMMAND test_noc_interconnect_concurrency)
+
+add_executable(test_noc_interconnect_observer
+    test_noc_interconnect_observer.cpp)
+target_link_libraries(test_noc_interconnect_observer PRIVATE
+    cdc::components::noc_interconnect
+    SystemC::systemc)
+floo_model_test_options(test_noc_interconnect_observer)
+add_test(NAME test_noc_interconnect_observer
+         COMMAND test_noc_interconnect_observer)
 
 add_executable(test_noc_interconnect_fast
     test_noc_interconnect_fast.cpp)

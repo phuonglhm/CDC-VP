@@ -4,6 +4,7 @@
 
 #include "floo_noc_model/floo_router.hpp"
 #include "floo_noc_model/floo_types.hpp"
+#include "floo_noc_model/noc_counters.hpp"
 
 #include <systemc>
 
@@ -68,6 +69,7 @@ public:
     explicit floo_mesh(sc_core::sc_module_name name)
         : sc_core::sc_module(name)
         , routers_("routers", num_nodes)
+        , router_counters_("router_counters", num_nodes)
         , router_ids_("router_ids", num_nodes)
         , router_in_data_("router_in_data", num_nodes * num_ports)
         , router_in_valid_("router_in_valid", num_nodes * num_ports)
@@ -75,7 +77,10 @@ public:
         , router_out_data_("router_out_data", num_nodes * num_ports)
         , router_out_valid_("router_out_valid", num_nodes * num_ports)
         , router_out_ready_("router_out_ready", num_nodes * num_ports)
-        , router_occupancy_("router_occupancy", num_nodes * num_ports)
+        , router_input_occupancy_(
+              "router_input_occupancy", num_nodes * num_ports)
+        , router_output_occupancy_(
+              "router_output_occupancy", num_nodes * num_ports)
         , router_selected_("router_selected", num_nodes * num_ports)
         , router_locked_("router_locked", num_nodes * num_ports)
     {
@@ -85,9 +90,12 @@ public:
                 router_ids_[node].write(coordinate{x, y});
 
                 auto& router = routers_[node];
+                auto& counters = router_counters_[node];
                 router.i_clk(i_clk);
                 router.i_rst_n(i_rst_n);
                 router.i_router_id(router_ids_[node]);
+                counters.i_clk(i_clk);
+                counters.i_rst_n(i_rst_n);
 
                 for (unsigned port = 0; port < num_ports; ++port) {
                     const unsigned index = signal_index(node, port);
@@ -97,9 +105,23 @@ public:
                     router.o_data[port](router_out_data_[index]);
                     router.o_valid[port](router_out_valid_[index]);
                     router.i_ready[port](router_out_ready_[index]);
-                    router.o_input_occupancy[port](router_occupancy_[index]);
+                    router.o_input_occupancy[port](
+                        router_input_occupancy_[index]);
+                    router.o_output_occupancy[port](
+                        router_output_occupancy_[index]);
                     router.o_output_selected[port](router_selected_[index]);
                     router.o_output_locked[port](router_locked_[index]);
+
+                    counters.i_in_data[port](router_in_data_[index]);
+                    counters.i_in_valid[port](router_in_valid_[index]);
+                    counters.i_in_ready[port](router_in_ready_[index]);
+                    counters.i_out_data[port](router_out_data_[index]);
+                    counters.i_out_valid[port](router_out_valid_[index]);
+                    counters.i_out_ready[port](router_out_ready_[index]);
+                    counters.i_input_occupancy[port](
+                        router_input_occupancy_[index]);
+                    counters.i_output_occupancy[port](
+                        router_output_occupancy_[index]);
                 }
             }
         }
@@ -151,8 +173,30 @@ public:
 
     bool quiescent() const { return activity().quiescent(); }
 
+    mesh_counter_snapshot counter_snapshot() const
+    {
+        mesh_counter_snapshot result{};
+        result.width = Width;
+        result.height = Height;
+        result.routers.reserve(num_nodes);
+        for (const auto& counters : router_counters_) {
+            result.routers.push_back(counters.snapshot());
+        }
+        return result;
+    }
+
+    /// Measurement-only reset. It changes no router, FIFO, link or endpoint
+    /// state and must be called at a stable measurement-window boundary.
+    void reset_counters()
+    {
+        for (auto& counters : router_counters_) {
+            counters.reset_counts();
+        }
+    }
+
 private:
     sc_core::sc_vector<floo_router<FlitT, InFifoDepth, OutFifoDepth>> routers_;
+    sc_core::sc_vector<router_counters<FlitT, num_ports>> router_counters_;
     sc_core::sc_vector<sc_core::sc_signal<coordinate>> router_ids_;
 
     sc_core::sc_vector<sc_core::sc_signal<FlitT>> router_in_data_;
@@ -162,7 +206,8 @@ private:
     sc_core::sc_vector<sc_core::sc_signal<bool>> router_out_valid_;
     sc_core::sc_vector<sc_core::sc_signal<bool>> router_out_ready_;
 
-    sc_core::sc_vector<sc_core::sc_signal<unsigned>> router_occupancy_;
+    sc_core::sc_vector<sc_core::sc_signal<unsigned>> router_input_occupancy_;
+    sc_core::sc_vector<sc_core::sc_signal<unsigned>> router_output_occupancy_;
     sc_core::sc_vector<sc_core::sc_signal<unsigned>> router_selected_;
     sc_core::sc_vector<sc_core::sc_signal<bool>> router_locked_;
 

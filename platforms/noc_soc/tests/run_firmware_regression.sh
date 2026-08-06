@@ -213,7 +213,7 @@ run_image() {
 
 require_log() {
   local log="$1" text="$2" reason="$3"
-  if ! grep -Fq "${text}" "${log}"; then
+  if ! grep -Fq -- "${text}" "${log}"; then
     echo "--- log tail ---" >&2; tail -40 "${log}" >&2
     fail "${reason}: '${text}' not found (log kept at ${log})"
   fi
@@ -221,7 +221,7 @@ require_log() {
 
 reject_log() {
   local log="$1" text="$2" reason="$3"
-  if grep -Fq "${text}" "${log}"; then
+  if grep -Fq -- "${text}" "${log}"; then
     echo "--- log tail ---" >&2; tail -40 "${log}" >&2
     fail "${reason}: forbidden '${text}' found (log kept at ${log})"
   fi
@@ -243,6 +243,20 @@ echo "noc_soc firmware regression"
 echo "  binary:   ${noc_soc_bin}"
 echo "  firmware: ${elf}"
 
+# Host-input controls must be discoverable from the executable rather than
+# existing only in a README. Help is intentionally valid without `--mode`.
+help_log="${log_dir}/help.log"
+"${noc_soc_bin}" --help >"${help_log}" 2>&1 \
+    || fail "noc_soc --help failed"
+for option in \
+    "--uart0-socket PORT" \
+    "--uart0-wait" \
+    "--uart0-rx-file FILE" \
+    "--uart0-rx-delay-us N"; do
+    require_log "${help_log}" "${option}" "UART0 host option discoverability"
+done
+echo "  UART host options in --help: PASS"
+
 # Mode selection is part of the platform contract, not an inference from
 # whether `--fw` happened to be present.
 expect_rejected "missing explicit mode" "${log_dir}/missing_mode.log" \
@@ -263,6 +277,26 @@ expect_rejected "invalid NoC timing value" \
     "${log_dir}/invalid_noc_timing.log" \
     "noc_soc: --noc-timing must be 'detailed' or 'fast'" \
     --mode survey --noc-timing mixed --sim-us 1
+expect_rejected "UART wait without socket" \
+    "${log_dir}/uart_wait_without_socket.log" \
+    "noc_soc: --uart0-wait requires --uart0-socket" \
+    --mode survey --uart0-wait --sim-us 1
+expect_rejected "UART replay delay without file" \
+    "${log_dir}/uart_delay_without_file.log" \
+    "noc_soc: --uart0-rx-delay-us requires --uart0-rx-file" \
+    --mode survey --uart0-rx-delay-us 1 --sim-us 1
+expect_rejected "UART host input in survey mode" \
+    "${log_dir}/uart_input_in_survey.log" \
+    "noc_soc: UART0 host input requires --mode firmware" \
+    --mode survey --uart0-rx-file unused --sim-us 1
+expect_rejected "UART socket above TCP port range" \
+    "${log_dir}/uart_socket_out_of_range.log" \
+    "noc_soc: --uart0-socket is out of range" \
+    --mode survey --uart0-socket 65536 --sim-us 1
+expect_rejected "non-decimal UART socket" \
+    "${log_dir}/uart_socket_not_decimal.log" \
+    "noc_soc: --uart0-socket must be an unsigned decimal number" \
+    --mode survey --uart0-socket 12x --sim-us 1
 
 # Move the real firmware's PT_LOAD into the final RAM page. The image need not
 # execute: the platform must reject it before `sc_start()` and print both the

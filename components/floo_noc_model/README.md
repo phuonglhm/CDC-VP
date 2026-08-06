@@ -311,4 +311,5 @@ placement, and `platforms/noc_soc`, a small SoC that uses it. Both are separate
 from the header-only model so a standalone user pays for neither.
 
 See `docs/STATUS.md` for verified coverage. Step 11 completed the planned
-detailed/fast coexistence path; there is no later numbered roadmap item.
+detailed/fast coexistence path. The explicitly authorised post-Step-11
+FreeRTOS work is specified in `docs/NOC_SOC_FREERTOS_ROADMAP.md`.

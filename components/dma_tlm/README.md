@@ -26,6 +26,10 @@ The model follows the local `wdt_tlm` component style: a single `sc_module`, exp
   - `DMASEV`, `DMAWFE`
   - `DMAEND`, `DMAKILL`
 - TLM master memory access through `master_socket`.
+- Passive channel-start observation at the architectural
+  `STOPPED -> EXECUTING` transition. The callback runs before the worker is
+  released and is intended for platform instrumentation; it must not wait or
+  throw.
 - Event interrupt reporting through `INT_EVENT_RIS`, `INTMIS`, `INTCLR`, and `irq`.
 - Fault reporting through `FSRC`, `FTRn`, and `irq_abort` for unsupported instructions, invalid operands, and failed memory transactions.
 
@@ -83,6 +87,11 @@ Test 2: Debug launch and memory transfer
   `DBGINST0` is written with the encoded `DMAGO` instruction bytes,
   `DBGINST1` is written with the program counter `0x00000100`, and writing
   `DBGCMD` dispatches the debug instruction.
+- A passive observer must report channel 0 synchronously before the `DBGCMD`
+  register transaction returns. This pins the true DMA-start boundary used by
+  platform start-to-interrupt measurement; no strict timestamp inequality is
+  required because this programmer's-view register path annotates zero target
+  delay.
 - After allowing the transfer to run, the test verifies the destination RAM
   exactly matches the 32-byte source pattern, `CSR0` has returned to stopped,
   `SAR0` advanced to `0x00000220`, `DAR0` advanced to `0x00000320`, and

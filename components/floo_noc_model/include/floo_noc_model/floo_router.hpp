@@ -43,6 +43,8 @@ public:
 
     sc_core::sc_vector<sc_core::sc_out<unsigned>> o_input_occupancy{
         "o_input_occupancy", num_ports};
+    sc_core::sc_vector<sc_core::sc_out<unsigned>> o_output_occupancy{
+        "o_output_occupancy", num_ports};
     sc_core::sc_vector<sc_core::sc_out<unsigned>> o_output_selected{
         "o_output_selected", num_ports};
     sc_core::sc_vector<sc_core::sc_out<bool>> o_output_locked{
@@ -66,10 +68,7 @@ public:
     }
     unsigned output_fifo_occupancy(unsigned output) const
     {
-        if constexpr (OutFifoDepth > 0) {
-            return output_occupancy_[output].read();
-        }
-        return 0;
+        return o_output_occupancy[output].read();
     }
     bool route_locked(unsigned input) const
     {
@@ -105,7 +104,6 @@ public:
         , arb_data_("arb_data", num_ports)
         , arb_valid_("arb_valid", num_ports)
         , arb_ready_("arb_ready", num_ports)
-        , output_occupancy_("output_occupancy", num_ports)
         , input_fifos_("input_fifos", num_ports)
         , route_selectors_("route_selectors", num_ports)
         , output_arbiters_("output_arbiters", num_ports)
@@ -174,7 +172,7 @@ public:
                 fifo.o_data(o_data[output]);
                 fifo.o_valid(o_valid[output]);
                 fifo.i_ready(i_ready[output]);
-                fifo.o_occupancy(output_occupancy_[output]);
+                fifo.o_occupancy(o_output_occupancy[output]);
             }
         } else {
             // `gen_no_out_fifo`: a straight pass-through.
@@ -203,6 +201,7 @@ private:
             o_data[output].write(arb_data_[output].read());
             o_valid[output].write(arb_valid_[output].read());
             arb_ready_[output].write(i_ready[output].read());
+            o_output_occupancy[output].write(0);
         }
     }
 
@@ -216,7 +215,6 @@ private:
     sc_core::sc_vector<sc_core::sc_signal<FlitT>> arb_data_;
     sc_core::sc_vector<sc_core::sc_signal<bool>> arb_valid_;
     sc_core::sc_vector<sc_core::sc_signal<bool>> arb_ready_;
-    sc_core::sc_vector<sc_core::sc_signal<unsigned>> output_occupancy_;
 
     sc_core::sc_vector<stream_fifo_optimal_wrap<FlitT, InFifoDepth>>
         input_fifos_;

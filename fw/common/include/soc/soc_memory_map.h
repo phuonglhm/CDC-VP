@@ -94,6 +94,7 @@
 
 /* ---- PLIC register offsets (from CDC_PLIC_BASE), hart0 M-mode -------- */
 #define CDC_PLIC_PRIORITY(id) (0x000000u + 4u * (id))  /* per-source prio   */
+#define CDC_PLIC_PENDING      0x001000u                /* raw source lines  */
 #define CDC_PLIC_ENABLE       0x002000u                /* enable bitfield   */
 #define CDC_PLIC_THRESHOLD    0x200000u                /* context threshold */
 #define CDC_PLIC_CLAIM        0x200004u                /* claim / complete  */
