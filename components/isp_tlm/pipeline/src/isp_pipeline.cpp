@@ -181,7 +181,7 @@ void isp_pipeline::reset_registers() {
    config_.lsc.grid_height = 12;
    std::uint32_t nx = 16 + 1;
    std::uint32_t ny = 12 + 1;
-   
+
    // True optical center (1-based from geometric -51.35, -121.48 shift)
    // Assuming roughly 2688x1520 dimensions for the default generator
    float default_w = 2688.0f;
@@ -193,7 +193,7 @@ void isp_pipeline::reset_registers() {
          for (std::uint32_t x = 0; x < nx; ++x) {
             float px = static_cast<float>(x) * (default_w / config_.lsc.grid_width);
             float py = static_cast<float>(y) * (default_h / config_.lsc.grid_height);
-            
+
             float dx = (px - OPTICAL_CENTER_X) / (default_w / 2.0f);
             float dy = (py - OPTICAL_CENTER_Y) / (default_h / 2.0f);
             float dist2 = dx * dx + dy * dy;
@@ -800,6 +800,9 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    }
 
    const isp_config cfg = config_;
+   // AWB gains committed by frame N apply to white balance in frame N+1.
+   const float feedback_awb_r_gain = awb_r_gain_;
+   const float feedback_awb_b_gain = awb_b_gain_;
 
    const std::size_t raw_pixels = static_cast<std::size_t>(width_) * height_;
    const std::size_t rgb_pixels = raw_pixels * 3u;
@@ -845,12 +848,13 @@ void isp_pipeline::run(const std::uint16_t *raw_in, std::vector<std::uint8_t> &y
    }
 
    wb_config wb_cfg = cfg.wb;
-   wb_cfg.r_gain = cfg.wb.is_enable ? cfg.wb.r_gain : 1.0f;
-   wb_cfg.b_gain = cfg.wb.is_enable ? cfg.wb.b_gain : 1.0f;
-   if (cfg.awb.is_enable) {
-      wb_cfg.r_gain *= awb_r_gain_;
-      wb_cfg.b_gain *= awb_b_gain_;
-   }
+   wb_cfg.r_gain = cfg.wb.is_enable
+                        ? cfg.wb.r_gain * feedback_awb_r_gain
+                        : 1.0f;
+   wb_cfg.b_gain = cfg.wb.is_enable
+                        ? cfg.wb.b_gain * feedback_awb_b_gain
+                        : 1.0f;
+
    wb_.process(demosaic_out_.data(), wb_out_.data(), width_, height_, wb_cfg);
 
    ccm_.process(wb_out_.data(), ccm_out_.data(), width_, height_, cfg.ccm);

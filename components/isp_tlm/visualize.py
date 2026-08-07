@@ -345,6 +345,10 @@ def main():
     plt.savefig(output_cmp, dpi=150)
     print(f"Saved comparison visualization to {output_cmp}")
 
+    # Show image using matplotlib
+    plt.show(block=False)
+    print("\n[VIEWER] Close the matplotlib window to continue...")
+
     # Print YUV stats if available
     if yuv_preview is not None:
         print(f"\nOutput statistics:")

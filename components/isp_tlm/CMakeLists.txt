@@ -58,6 +58,14 @@ install(TARGETS isp_tlm EXPORT cdc-components-targets
 install(DIRECTORY core/include/ DESTINATION include)
 install(DIRECTORY pipeline/include/ DESTINATION include)
 
+# ------------------------------------------------------------------------------
+# SystemC streaming testbenches (block-level + full pipeline)
+# Each individual block testbench (`tb_*.cpp`) is fully standalone — it does
+# NOT depend on the original C++ reference library. The full-pipeline
+# testbench (`tb_pipeline.cpp`) DOES depend on `cdc::components::isp_tlm`
+# for golden comparison.
+# ------------------------------------------------------------------------------
 if(CDC_BUILD_TESTS)
    add_subdirectory(tests)
+   add_subdirectory(systemc)
 endif()

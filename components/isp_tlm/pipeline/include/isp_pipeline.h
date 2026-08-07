@@ -68,6 +68,16 @@ public:
       return config_;
    }
 
+   // Direct accessors used by the SystemC testbench to prime the AWB
+   // from the reference pipeline's WB output (a 12-bit RGB frame that
+   // already matches what the SystemC streaming AWB would see after
+   // demosaic + WB).
+   const std::vector<std::uint16_t>& wb_output() const { return wb_out_; }
+
+   // Final R/B AWB gains the reference pipeline used.
+   float awb_r_gain() const { return awb_r_gain_; }
+   float awb_b_gain() const { return awb_b_gain_; }
+
 private:
    std::uint32_t status_reg() const;
    std::uint32_t bayer_pattern_reg() const;

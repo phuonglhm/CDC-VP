@@ -217,9 +217,9 @@ int sc_main(int argc, char *argv[]) {
          probe.write(REG_BIT_DEPTH, &iq_cfg.bit_depth, 4);
          probe.write(REG_BAYER_PATTERN, &iq_cfg.bayer_pattern, 4);
 
-std::uint32_t enable_32;
+         std::uint32_t enable_32;
 
-        // BLC
+         // BLC
          enable_32 = iq_cfg.blc_enable;
          probe.write(REG_BLC_ENABLE, &enable_32, 4);
          enable_32 = iq_cfg.blc_linear;
@@ -277,12 +277,12 @@ std::uint32_t enable_32;
          probe.write(REG_LSC_GRID_W, &iq_cfg.lsc_grid_w, 4);
          probe.write(REG_LSC_GRID_H, &iq_cfg.lsc_grid_h, 4);
 
-// DG
-        enable_32 = iq_cfg.dg_enable;
-        probe.write(REG_DG_ENABLE, &enable_32, 4);
-        probe.write(REG_DG_AUTO, &iq_cfg.dg_auto, 4);
-        std::uint32_t dg_gain = iq_cfg.dg_gain;
-        probe.write(REG_DG_GAIN, &dg_gain, 4);
+         // DG
+         enable_32 = iq_cfg.dg_enable;
+         probe.write(REG_DG_ENABLE, &enable_32, 4);
+         probe.write(REG_DG_AUTO, &iq_cfg.dg_auto, 4);
+         std::uint32_t dg_gain = iq_cfg.dg_gain;
+         probe.write(REG_DG_GAIN, &dg_gain, 4);
 
          // CSC
          enable_32 = iq_cfg.csc_enable;
@@ -308,14 +308,14 @@ std::uint32_t enable_32;
          enable_32 = iq_cfg.gc_enable;
          probe.write(REG_GC_ENABLE, &enable_32, 4);
 
-// CSE
-        enable_32 = iq_cfg.cse_enable;
-        probe.write(REG_CSE_ENABLE, &enable_32, 4);
-        probe.write(REG_CSE_SAT_GAIN, &iq_cfg.cse_sat_gain, 4);
+         // CSE
+         enable_32 = iq_cfg.cse_enable;
+         probe.write(REG_CSE_ENABLE, &enable_32, 4);
+         probe.write(REG_CSE_SAT_GAIN, &iq_cfg.cse_sat_gain, 4);
 
-        // CSC Standard
-        std::uint32_t csc_std = iq_cfg.csc_standard;
-        probe.write(REG_CSC_STANDARD, &csc_std, 4);
+         // CSC Standard
+         std::uint32_t csc_std = iq_cfg.csc_standard;
+         probe.write(REG_CSC_STANDARD, &csc_std, 4);
 
          // YUV420
          enable_32 = iq_cfg.yuv420_enable;
@@ -381,12 +381,8 @@ std::uint32_t enable_32;
    std::cout << "Triggering ISP pipeline..." << std::endl;
    ctrl = CTRL_ENABLE | CTRL_START;
 
-   // Because we're processing single frame, we need to run the pipeline a few times for STATS block
-   // to stabilize.
-   for (int i = 0; i < 2; i++) {
-      probe.write(REG_CTRL, &ctrl, 4);
-      sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
-   }
+   probe.write(REG_CTRL, &ctrl, 4);
+   sc_start(1, SC_MS); // Run simulation for 1ms to complete processing
 
    // Write output
    if (!ensure_parent_directory(output_path)) {
@@ -408,7 +404,8 @@ std::uint32_t enable_32;
    std::cout << "Output size: " << yuv_size << " bytes" << std::endl;
 
    // Write metadata JSON
-   write_json_metadata(metadata_path, width, height, bit_depth, bayer_pattern, iq_cfg.csc_standard, input_path, "yuv420p");
+   write_json_metadata(metadata_path, width, height, bit_depth, bayer_pattern, iq_cfg.csc_standard,
+                       input_path, "yuv420p");
 
    return 0;
 }
