@@ -16,6 +16,8 @@
 template<unsigned int BITS = 10>
 class isp_dgain : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_dgain);
+
     static constexpr unsigned DLY_CLK = 2;
     static constexpr unsigned GAIN_ARRAY_SIZE = 100;
     static constexpr unsigned GAIN_ARRAY_BITS = 7;
@@ -56,8 +58,6 @@ public:
         SC_THREAD(reset_handler);
         sensitive << rst_n.neg();
 
-        init_default_gains();
-
         for (unsigned i = 0; i < DLY_CLK; i++) {
             m_href_delay[i] = false;
             m_vsync_delay[i] = false;
@@ -79,16 +79,6 @@ private:
     bool m_href_delay[DLY_CLK];
     bool m_vsync_delay[DLY_CLK];
     uint16_t m_data_delay[DLY_CLK];
-
-    std::array<uint8_t, GAIN_ARRAY_SIZE> m_gain_array;
-
-    void init_default_gains() {
-        for (unsigned i = 0; i < GAIN_ARRAY_SIZE; i++) {
-            double gain = 1.0 + (double)i * 0.01;
-            m_gain_array[i] = (uint8_t)(gain * 128.0);
-            if (m_gain_array[i] < 128) m_gain_array[i] = 128;
-        }
-    }
 
     void process_thread() {
         o_href.write(false);
@@ -156,17 +146,24 @@ private:
             gain_idx = (gain_idx >= GAIN_ARRAY_SIZE) ? (GAIN_ARRAY_SIZE - 1) : gain_idx;
             m_applied_index = gain_idx;
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
-                uint16_t gain = m_gain_array[gain_idx];
-                uint32_t result = ((uint32_t)m_data_delay[DLY_CLK - 1] * gain) >> 7;
+            if (enable.read() && m_href_delay[DLY_CLK - 1]) {
+                const uint16_t gain = i_dgain_array[gain_idx].read();
+                const uint32_t result =
+                    static_cast<uint32_t>(
+                        m_data_delay[DLY_CLK - 1]) * gain;
                 out_data = (result > MAX_VAL) ? MAX_VAL : (uint16_t)result;
-                m_pixel_count++;
+            } else if (!enable.read()) {
+                out_data = m_data_delay[DLY_CLK - 1];
             }
 
             o_raw.write(out_data);
             o_href.write(out_href);
             o_vsync.write(out_vsync);
             o_applied_index.write(m_applied_index);
+
+            if (curr_href && m_in_frame) {
+                m_pixel_count++;
+            }
 
             m_prev_vsync = curr_vsync;
             m_prev_href = curr_href;

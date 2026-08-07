@@ -23,6 +23,8 @@
 
 class isp_2dnr : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_2dnr);
+
     static constexpr unsigned DLY_CLK = 30;
     static constexpr unsigned WINDOW_SIZE = 9;
     static constexpr unsigned HALF_WIN = WINDOW_SIZE / 2;
@@ -78,6 +80,22 @@ public:
     const Nr2dMetricsCollector& get_metrics() const { return m_metrics; }
 
     void set_image_size(unsigned w, unsigned h) { m_metrics.set_config(w, h); }
+
+    bool set_difference_entry(unsigned index, uint8_t value) {
+        if (index >= m_diff_lut.size()) {
+            return false;
+        }
+        m_diff_lut[index] = value;
+        return true;
+    }
+
+    bool set_weight_entry(unsigned index, uint8_t value) {
+        if (index >= m_weight_lut.size() || value > 31) {
+            return false;
+        }
+        m_weight_lut[index] = value;
+        return true;
+    }
 
 private:
     int m_pixel_count;
@@ -182,7 +200,7 @@ private:
             bool out_href = m_href_delay[DLY_CLK - 1];
             bool out_vsync = m_vsync_delay[DLY_CLK - 1];
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
+            if (enable.read() && m_href_delay[DLY_CLK - 1]) {
                 uint8_t center = m_y_delay[DLY_CLK - 1];
 
                 uint8_t filtered = apply_weighted_filter(center);
@@ -197,6 +215,10 @@ private:
 
                 int diff = (int)center - (int)filtered;
                 m_metrics.record_noise_reduction(diff);
+            } else if (!enable.read()) {
+                out_y = m_y_delay[DLY_CLK - 1];
+                out_u = m_u_delay[DLY_CLK - 1];
+                out_v = m_v_delay[DLY_CLK - 1];
             }
 
             o_data_y.write(out_y);

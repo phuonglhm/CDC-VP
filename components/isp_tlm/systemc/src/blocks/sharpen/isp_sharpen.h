@@ -23,6 +23,8 @@
 
 class isp_sharpen : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_sharpen);
+
     static constexpr unsigned DLY_CLK = 15;
     static constexpr unsigned WINDOW_SIZE = 9;
     static constexpr unsigned HALF_WIN = WINDOW_SIZE / 2;
@@ -80,6 +82,14 @@ public:
     const SharpenMetricsCollector& get_metrics() const { return m_metrics; }
 
     void set_image_size(unsigned w, unsigned h) { m_metrics.set_config(w, h); }
+
+    bool set_kernel_entry(unsigned row, unsigned column, int value) {
+        if (row >= WINDOW_SIZE || column >= WINDOW_SIZE) {
+            return false;
+        }
+        m_kernel[row][column] = value;
+        return true;
+    }
 
 private:
     int m_pixel_count;
@@ -195,7 +205,7 @@ private:
             bool out_href = m_href_delay[DLY_CLK - 1];
             bool out_vsync = m_vsync_delay[DLY_CLK - 1];
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
+            if (enable.read() && m_href_delay[DLY_CLK - 1]) {
                 uint8_t y_center = m_y_delay[DLY_CLK - 1];
 
                 int32_t sum = apply_9x9_kernel(y_center);
@@ -218,6 +228,10 @@ private:
                 if (diff > 10 || diff < -10) {
                     m_metrics.record_edge_enhancement();
                 }
+            } else if (!enable.read()) {
+                out_y = m_y_delay[DLY_CLK - 1];
+                out_u = m_u_delay[DLY_CLK - 1];
+                out_v = m_v_delay[DLY_CLK - 1];
             }
 
             o_data_y.write(out_y);

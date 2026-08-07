@@ -19,6 +19,8 @@
 template<unsigned int BITS = 10>
 class isp_gamma : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_gamma);
+
     static constexpr unsigned DLY_CLK = 2;
     static constexpr unsigned LUT_SIZE = 1 << BITS;
 
@@ -69,6 +71,16 @@ public:
     const GammaMetricsCollector& get_metrics() const { return m_metrics; }
 
     void set_image_size(unsigned w, unsigned h) { m_metrics.set_config(w, h); }
+
+    bool set_lut_entry(unsigned index, uint16_t value) {
+        if (index >= LUT_SIZE || value > MAX_VAL) {
+            return false;
+        }
+        m_lut_r[index] = value;
+        m_lut_g[index] = value;
+        m_lut_b[index] = value;
+        return true;
+    }
 
 private:
     static constexpr uint16_t MAX_VAL = (1 << BITS) - 1;
@@ -168,7 +180,7 @@ private:
             bool out_href = m_href_delay[DLY_CLK - 1];
             bool out_vsync = m_vsync_delay[DLY_CLK - 1];
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
+            if (enable.read() && m_href_delay[DLY_CLK - 1]) {
                 uint16_t r_in = m_r_delay[DLY_CLK - 1];
                 uint16_t g_in = m_g_delay[DLY_CLK - 1];
                 uint16_t b_in = m_b_delay[DLY_CLK - 1];
@@ -188,6 +200,10 @@ private:
                 m_metrics.record_mem_read();
                 m_metrics.record_mem_read();
                 m_metrics.record_mem_read();
+            } else if (!enable.read()) {
+                out_r = m_r_delay[DLY_CLK - 1];
+                out_g = m_g_delay[DLY_CLK - 1];
+                out_b = m_b_delay[DLY_CLK - 1];
             }
 
             o_data_r.write(out_r);

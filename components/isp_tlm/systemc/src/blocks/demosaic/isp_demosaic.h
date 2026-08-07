@@ -1,32 +1,37 @@
 /*
- * DEMOSAIC (Demosaicing/Bayer CFA Interpolation) Block
- * Converts Bayer RAW to full RGB using bilinear interpolation
- * Pipeline latency: 9 cycles (RTL DLY_CLK = 9)
- * Matches RTL: isp_demosaic.v / isp_cfa.v
+ * CFA demosaic model.
  *
- * Algorithm: Bilinear CFA Interpolation
- * - Build 5x5 window with line buffer
- * - Red extraction: filter based on pattern
- * - Green extraction: bilinear interpolation
- * - Blue extraction: filter based on pattern
- * - Handle all 4 Bayer patterns (RGGB, GRBG, GBRG, BGGR)
+ * This implementation is deliberately streaming: it keeps the current and
+ * previous RAW rows, uses all causally available same-colour neighbours, and
+ * emits one RGB sample for every input sample. A one-pixel look-ahead within
+ * each row plus a fixed token pipeline preserves href/vsync and drains the
+ * final pixels after input VSYNC rises. At the top/left image boundaries,
+ * missing neighbours fall back to the centre sample.
  */
 
 #ifndef ISP_DEMOSAIC_H
 #define ISP_DEMOSAIC_H
 
 #include <systemc>
-#include <array>
+
+#include <algorithm>
+#include <cstdint>
+#include <vector>
+
+#include "blocks/demosaic/demosaic_metrics.h"
 #include "common/common_defs.h"
 #include "common/isp_types.h"
-#include "blocks/demosaic/demosaic_metrics.h"
 
-template<unsigned int BITS = 10, BayerPattern BAYER = BayerPattern::RGGB>
+template<unsigned int BITS = 10,
+         BayerPattern BAYER = BayerPattern::RGGB>
 class isp_demosaic : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_demosaic);
+
+    static_assert(BITS > 0 && BITS <= 16,
+                  "demosaic supports 1-16 bit RAW samples");
+
     static constexpr unsigned DLY_CLK = 9;
-    static constexpr unsigned WINDOW_SIZE = 5;
-    static constexpr unsigned HALF_WIN = WINDOW_SIZE / 2;
 
     sc_in<bool> pclk{"pclk"};
     sc_in<bool> rst_n{"rst_n"};
@@ -38,19 +43,12 @@ public:
 
     sc_out<bool> o_href{"o_href"};
     sc_out<bool> o_vsync{"o_vsync"};
-
     sc_out<uint16_t> o_r{"o_r"};
     sc_out<uint16_t> o_g{"o_g"};
     sc_out<uint16_t> o_b{"o_b"};
 
-    isp_demosaic(const sc_module_name& name)
+    explicit isp_demosaic(const sc_module_name& name)
         : sc_module(name)
-        , m_pixel_count(0)
-        , m_line_count(0)
-        , m_frame_count(0)
-        , m_prev_vsync(false)
-        , m_prev_href(false)
-        , m_in_frame(false)
     {
         SC_THREAD(process_thread);
         sensitive << pclk.pos();
@@ -59,306 +57,301 @@ public:
         SC_THREAD(reset_handler);
         sensitive << rst_n.neg();
 
-        for (unsigned i = 0; i < DLY_CLK; i++) {
-            m_href_delay[i] = false;
-            m_vsync_delay[i] = false;
-            for (unsigned j = 0; j < WINDOW_SIZE; j++) {
-                for (unsigned k = 0; k < WINDOW_SIZE; k++) {
-                    m_window[i][j][k] = 0;
-                }
-            }
-        }
-
-        for (unsigned i = 0; i < DLY_CLK; i++) {
-            m_x_delay[i] = 0;
-            m_y_delay[i] = 0;
-        }
+        clear_pipeline();
     }
 
     DemosaicMetricsCollector& get_metrics() { return m_metrics; }
-    const DemosaicMetricsCollector& get_metrics() const { return m_metrics; }
+    const DemosaicMetricsCollector& get_metrics() const {
+        return m_metrics;
+    }
 
-    void set_image_size(unsigned w, unsigned h) { m_metrics.set_config(w, h); }
+    // Kept public for compatibility with the existing block-level diagnostic
+    // code. It counts valid RGB samples emitted by the delayed interface.
+    unsigned m_pixels_output = 0;
+
+    // Kept for compatibility with earlier diagnostics. The array is a simple
+    // input-sample delay and is not used as a substitute for line storage.
+    uint16_t m_raw_delay[DLY_CLK]{};
+
+    void set_image_size(unsigned width, unsigned height)
+    {
+        image_width_ = width;
+        image_height_ = height;
+        previous_row_.assign(image_width_, 0);
+        current_row_.assign(image_width_, 0);
+        m_metrics.set_config(width, height);
+    }
 
 private:
-    static constexpr uint16_t MAX_VAL = (1 << BITS) - 1;
+    static constexpr uint16_t MAX_VAL =
+        static_cast<uint16_t>((uint32_t{1} << BITS) - 1U);
 
-    int m_pixel_count;
-    int m_line_count;
-    int m_frame_count;
-    bool m_prev_vsync;
-    bool m_prev_href;
-    bool m_in_frame;
+    struct RgbToken {
+        bool href = false;
+        bool vsync = false;
+        uint16_t r = 0;
+        uint16_t g = 0;
+        uint16_t b = 0;
+    };
 
-    bool m_href_delay[DLY_CLK];
-    bool m_vsync_delay[DLY_CLK];
-    uint16_t m_window[DLY_CLK][WINDOW_SIZE][WINDOW_SIZE];
-    unsigned m_x_delay[DLY_CLK];
-    unsigned m_y_delay[DLY_CLK];
-
+    unsigned image_width_ = 0;
+    unsigned image_height_ = 0;
+    unsigned pixel_count_ = 0;
+    unsigned line_count_ = 0;
+    unsigned frame_count_ = 0;
+    bool previous_vsync_ = false;
+    bool previous_href_ = false;
+    bool in_frame_ = false;
+    std::vector<uint16_t> previous_row_;
+    std::vector<uint16_t> current_row_;
+    RgbToken token_delay_[DLY_CLK];
     DemosaicMetricsCollector m_metrics;
 
-    void process_thread() {
+    void clear_pipeline()
+    {
+        for (unsigned index = 0; index < DLY_CLK; ++index) {
+            token_delay_[index] = {};
+            m_raw_delay[index] = 0;
+        }
+    }
+
+    void clear_outputs()
+    {
         o_href.write(false);
         o_vsync.write(false);
         o_r.write(0);
         o_g.write(0);
         o_b.write(0);
+    }
 
+    void reset_state()
+    {
+        pixel_count_ = 0;
+        line_count_ = 0;
+        frame_count_ = 0;
+        previous_vsync_ = false;
+        previous_href_ = false;
+        in_frame_ = false;
+        m_pixels_output = 0;
+        std::fill(previous_row_.begin(), previous_row_.end(), 0);
+        std::fill(current_row_.begin(), current_row_.end(), 0);
+        clear_pipeline();
+    }
+
+    static unsigned bayer_colour(unsigned x, unsigned y)
+    {
+        const bool odd_x = (x & 1U) != 0;
+        const bool odd_y = (y & 1U) != 0;
+        switch (BAYER) {
+            case BayerPattern::RGGB:
+                return odd_y ? (odd_x ? 2U : 1U)
+                             : (odd_x ? 1U : 0U);
+            case BayerPattern::GRBG:
+                return odd_y ? (odd_x ? 1U : 2U)
+                             : (odd_x ? 0U : 1U);
+            case BayerPattern::GBRG:
+                return odd_y ? (odd_x ? 1U : 0U)
+                             : (odd_x ? 2U : 1U);
+            case BayerPattern::BGGR:
+                return odd_y ? (odd_x ? 0U : 1U)
+                             : (odd_x ? 1U : 2U);
+        }
+        return 1U;
+    }
+
+    uint16_t row_sample(unsigned row,
+                        unsigned column,
+                        unsigned current_y) const
+    {
+        if (row == current_y) {
+            return current_row_[column];
+        }
+        return previous_row_[column];
+    }
+
+    uint16_t interpolate_colour(unsigned x,
+                                unsigned y,
+                                unsigned target_colour,
+                                uint16_t centre) const
+    {
+        if (bayer_colour(x, y) == target_colour ||
+            image_width_ == 0) {
+            return centre;
+        }
+
+        uint32_t sum = 0;
+        unsigned samples = 0;
+        for (int row_offset = -1; row_offset <= 0; ++row_offset) {
+            if (row_offset < 0 && y == 0) {
+                continue;
+            }
+            const unsigned row =
+                row_offset < 0 ? y - 1U : y;
+            for (int column_offset = -1;
+                 column_offset <= 1; ++column_offset) {
+                int candidate_x =
+                    static_cast<int>(x) + column_offset;
+                candidate_x = std::max(
+                    0,
+                    std::min(candidate_x,
+                             static_cast<int>(image_width_ - 1U)));
+                const unsigned column =
+                    static_cast<unsigned>(candidate_x);
+                if (row == y && column == x) {
+                    continue;
+                }
+                if (bayer_colour(column, row) == target_colour) {
+                    sum += row_sample(row, column, y);
+                    ++samples;
+                }
+            }
+        }
+        return samples == 0
+                   ? centre
+                   : static_cast<uint16_t>(sum / samples);
+    }
+
+    RgbToken make_pixel_token(unsigned x, unsigned y) const
+    {
+        RgbToken token;
+        token.href = true;
+        token.vsync = false;
+        const uint16_t centre = current_row_[x] & MAX_VAL;
+        if (!enable.read()) {
+            token.r = centre;
+            token.g = centre;
+            token.b = centre;
+            return token;
+        }
+        token.r = interpolate_colour(x, y, 0U, centre);
+        token.g = interpolate_colour(x, y, 1U, centre);
+        token.b = interpolate_colour(x, y, 2U, centre);
+        return token;
+    }
+
+    void shift_pipeline(const RgbToken& input)
+    {
+        for (unsigned index = DLY_CLK - 1; index > 0; --index) {
+            token_delay_[index] = token_delay_[index - 1U];
+            m_raw_delay[index] = m_raw_delay[index - 1U];
+        }
+        token_delay_[0] = input;
+        const RgbToken& output = token_delay_[DLY_CLK - 1U];
+        o_href.write(output.href);
+        o_vsync.write(output.vsync);
+        o_r.write(output.href ? output.r : 0);
+        o_g.write(output.href ? output.g : 0);
+        o_b.write(output.href ? output.b : 0);
+        if (output.href) {
+            ++m_pixels_output;
+            m_metrics.record_pixel();
+            m_metrics.record_r_pixel();
+            m_metrics.record_g_pixel();
+            m_metrics.record_b_pixel();
+            m_metrics.record_active_cycle();
+        }
+    }
+
+    void process_thread()
+    {
+        clear_outputs();
         while (true) {
             wait();
-
             if (!rst_n.read()) {
-                m_pixel_count = 0;
-                m_line_count = -1;
-                m_in_frame = false;
-                for (unsigned i = 0; i < DLY_CLK; i++) {
-                    m_href_delay[i] = false;
-                    m_vsync_delay[i] = false;
-                    m_x_delay[i] = 0;
-                    m_y_delay[i] = 0;
-                }
+                reset_state();
+                clear_outputs();
                 continue;
             }
 
-            bool curr_href = i_href.read();
-            bool curr_vsync = i_vsync.read();
-            uint16_t curr_pixel = i_raw.read();
-
-            bool vsync_fall = m_prev_vsync && !curr_vsync;
-            bool vsync_rise = !m_prev_vsync && curr_vsync;
-            bool href_rise = !m_prev_href && curr_href;
+            const bool href = i_href.read();
+            const bool vsync = i_vsync.read();
+            const bool vsync_fall = previous_vsync_ && !vsync;
+            const bool vsync_rise = !previous_vsync_ && vsync;
+            const bool href_rise = !previous_href_ && href;
+            const bool href_fall = previous_href_ && !href;
 
             if (vsync_fall) {
-                m_frame_count++;
-                m_line_count = -1;
-                m_pixel_count = 0;
-                m_in_frame = true;
+                ++frame_count_;
+                line_count_ = 0;
+                pixel_count_ = 0;
+                in_frame_ = true;
+                m_pixels_output = 0;
+                std::fill(previous_row_.begin(),
+                          previous_row_.end(), 0);
+                std::fill(current_row_.begin(),
+                          current_row_.end(), 0);
                 m_metrics.record_frame();
             }
-            if (vsync_rise) {
-                m_in_frame = false;
-            }
-            if (href_rise && m_in_frame) {
-                m_line_count++;
-                m_pixel_count = 0;
+
+            if (href_rise && in_frame_) {
+                if (previous_href_) {
+                    ++line_count_;
+                } else if (pixel_count_ != 0) {
+                    ++line_count_;
+                }
+                pixel_count_ = 0;
+                if (image_width_ == 0) {
+                    current_row_.clear();
+                } else {
+                    current_row_.assign(image_width_, 0);
+                }
                 m_metrics.record_line();
             }
 
-            m_metrics.record_total_cycle();
-
-            for (unsigned i = DLY_CLK - 1; i > 0; i--) {
-                m_href_delay[i] = m_href_delay[i - 1];
-                m_vsync_delay[i] = m_vsync_delay[i - 1];
-                m_x_delay[i] = m_x_delay[i - 1];
-                m_y_delay[i] = m_y_delay[i - 1];
-                for (unsigned j = 0; j < WINDOW_SIZE; j++) {
-                    for (unsigned k = 0; k < WINDOW_SIZE; k++) {
-                        m_window[i][j][k] = m_window[i - 1][j][k];
-                    }
+            RgbToken token;
+            token.vsync = vsync;
+            if (href && in_frame_) {
+                const uint16_t raw = i_raw.read() & MAX_VAL;
+                if (image_width_ == 0) {
+                    current_row_.push_back(raw);
+                } else if (pixel_count_ < image_width_) {
+                    current_row_[pixel_count_] = raw;
                 }
+                m_raw_delay[0] = raw;
+                if (pixel_count_ > 0 &&
+                    pixel_count_ - 1U < current_row_.size()) {
+                    token = make_pixel_token(
+                        pixel_count_ - 1U, line_count_);
+                }
+                ++pixel_count_;
+            } else if (href_fall && in_frame_ &&
+                       pixel_count_ != 0 &&
+                       !current_row_.empty()) {
+                const unsigned last =
+                    std::min<unsigned>(
+                        pixel_count_,
+                        static_cast<unsigned>(current_row_.size())) -
+                    1U;
+                token = make_pixel_token(last, line_count_);
+                previous_row_ = current_row_;
             }
 
-            m_href_delay[0] = curr_href && m_in_frame;
-            m_vsync_delay[0] = curr_vsync;
-            m_x_delay[0] = (unsigned)m_pixel_count;
-            m_y_delay[0] = (unsigned)m_line_count;
-
-            for (unsigned k = WINDOW_SIZE - 1; k > 0; k--) {
-                m_window[0][k][0] = m_window[0][k - 1][0];
-            }
-            m_window[0][0][0] = curr_pixel;
-
-            uint16_t out_r = 0, out_g = 0, out_b = 0;
-            bool out_href = m_href_delay[DLY_CLK - 1];
-            bool out_vsync = m_vsync_delay[DLY_CLK - 1];
-
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
-                unsigned x = m_x_delay[DLY_CLK - 1];
-                unsigned y = m_y_delay[DLY_CLK - 1];
-
-                interpolate_rgb(x, y, out_r, out_g, out_b);
-
-                m_metrics.record_pixel();
-                m_metrics.record_r_pixel();
-                m_metrics.record_g_pixel();
-                m_metrics.record_b_pixel();
-                m_metrics.record_active_cycle();
+            if (vsync_rise) {
+                in_frame_ = false;
             }
 
-            o_r.write(out_r);
-            o_g.write(out_g);
-            o_b.write(out_b);
-            o_href.write(out_href);
-            o_vsync.write(out_vsync);
-
-            if (curr_href && m_in_frame) {
-                m_pixel_count++;
-            }
-
-            m_prev_vsync = curr_vsync;
-            m_prev_href = curr_href;
+            m_metrics.record_total_cycle();
+            shift_pipeline(token);
+            previous_vsync_ = vsync;
+            previous_href_ = href;
         }
     }
 
-    void reset_handler() {
+    void reset_handler()
+    {
         wait();
-        m_pixel_count = 0;
-        m_line_count = -1;
-        m_frame_count = 0;
-        m_in_frame = false;
-        m_prev_vsync = false;
-        m_prev_href = false;
-        for (unsigned i = 0; i < DLY_CLK; i++) {
-            m_href_delay[i] = false;
-            m_vsync_delay[i] = false;
-            m_x_delay[i] = 0;
-            m_y_delay[i] = 0;
-        }
+        reset_state();
         m_metrics.reset();
-    }
-
-    void interpolate_rgb(unsigned x, unsigned y, uint16_t& r, uint16_t& g, uint16_t& b) {
-        unsigned ch = get_bayer_channel(x, y);
-
-        r = g = b = 0;
-
-        if (ch == 0) {
-            r = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN];
-            g = bilinear_green(x, y);
-            b = bilinear_blue_rggb(x, y);
-        } else if (ch == 1) {
-            g = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN];
-            r = bilinear_red_grbg(x, y);
-            b = bilinear_blue_grbg(x, y);
-        } else if (ch == 2) {
-            g = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN];
-            r = bilinear_red_gbrg(x, y);
-            b = bilinear_blue_gbrg(x, y);
-        } else {
-            b = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN];
-            r = bilinear_red_bggr(x, y);
-            g = bilinear_green(x, y);
-        }
-
-        r = clamp(r);
-        g = clamp(g);
-        b = clamp(b);
-    }
-
-    unsigned get_bayer_channel(unsigned x, unsigned y) {
-        bool odd_y = (y & 1);
-        bool odd_x = (x & 1);
-
-        switch (BAYER) {
-            case BayerPattern::RGGB:
-                return odd_y ? (odd_x ? 3 : 2) : (odd_x ? 1 : 0);
-            case BayerPattern::GRBG:
-                return odd_y ? (odd_x ? 3 : 0) : (odd_x ? 1 : 2);
-            case BayerPattern::GBRG:
-                return odd_y ? (odd_x ? 0 : 3) : (odd_x ? 1 : 2);
-            case BayerPattern::BGGR:
-                return odd_y ? (odd_x ? 1 : 0) : (odd_x ? 3 : 2);
-            default:
-                return odd_y ? (odd_x ? 3 : 2) : (odd_x ? 1 : 0);
-        }
-    }
-
-    uint16_t bilinear_green(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t g00 = m_window[DLY_CLK - 1][h-1][h];
-        uint16_t g10 = m_window[DLY_CLK - 1][h+1][h];
-        uint16_t g01 = m_window[DLY_CLK - 1][h][h-1];
-        uint16_t g11 = m_window[DLY_CLK - 1][h][h+1];
-
-        uint16_t gh = (g00 + g10) >> 1;
-        uint16_t gv = (g01 + g11) >> 1;
-
-        return (gh + gv) >> 1;
-    }
-
-    uint16_t bilinear_red_rggb(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t r00 = m_window[DLY_CLK - 1][h-1][h-1];
-        uint16_t r10 = m_window[DLY_CLK - 1][h-1][h+1];
-        uint16_t r01 = m_window[DLY_CLK - 1][h+1][h-1];
-        uint16_t r11 = m_window[DLY_CLK - 1][h+1][h+1];
-
-        return (r00 + r10 + r01 + r11) >> 2;
-    }
-
-    uint16_t bilinear_blue_rggb(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t b00 = m_window[DLY_CLK - 1][h-1][h-1];
-        uint16_t b10 = m_window[DLY_CLK - 1][h-1][h+1];
-        uint16_t b01 = m_window[DLY_CLK - 1][h+1][h-1];
-        uint16_t b11 = m_window[DLY_CLK - 1][h+1][h+1];
-
-        return (b00 + b10 + b01 + b11) >> 2;
-    }
-
-    uint16_t bilinear_red_grbg(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t r00 = m_window[DLY_CLK - 1][h-1][h];
-        uint16_t r10 = m_window[DLY_CLK - 1][h+1][h];
-
-        return (r00 + r10) >> 1;
-    }
-
-    uint16_t bilinear_blue_grbg(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t b00 = m_window[DLY_CLK - 1][h][h-1];
-        uint16_t b10 = m_window[DLY_CLK - 1][h][h+1];
-
-        return (b00 + b10) >> 1;
-    }
-
-    uint16_t bilinear_red_gbrg(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t r00 = m_window[DLY_CLK - 1][h][h-1];
-        uint16_t r10 = m_window[DLY_CLK - 1][h][h+1];
-
-        return (r00 + r10) >> 1;
-    }
-
-    uint16_t bilinear_blue_gbrg(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t b00 = m_window[DLY_CLK - 1][h-1][h];
-        uint16_t b10 = m_window[DLY_CLK - 1][h+1][h];
-
-        return (b00 + b10) >> 1;
-    }
-
-    uint16_t bilinear_red_bggr(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t r00 = m_window[DLY_CLK - 1][h-1][h-1];
-        uint16_t r10 = m_window[DLY_CLK - 1][h-1][h+1];
-        uint16_t r01 = m_window[DLY_CLK - 1][h+1][h-1];
-        uint16_t r11 = m_window[DLY_CLK - 1][h+1][h+1];
-
-        return (r00 + r10 + r01 + r11) >> 2;
-    }
-
-    uint16_t bilinear_blue_bggr(unsigned x, unsigned y) {
-        unsigned h = HALF_WIN;
-        uint16_t b00 = m_window[DLY_CLK - 1][h-1][h-1];
-        uint16_t b10 = m_window[DLY_CLK - 1][h-1][h+1];
-        uint16_t b01 = m_window[DLY_CLK - 1][h+1][h-1];
-        uint16_t b11 = m_window[DLY_CLK - 1][h+1][h+1];
-
-        return (b00 + b10 + b01 + b11) >> 2;
-    }
-
-    inline uint16_t clamp(uint32_t val) {
-        if (val > MAX_VAL) return MAX_VAL;
-        return (uint16_t)val;
     }
 };
 
-using isp_demosaic_10b_rggb = isp_demosaic<10, BayerPattern::RGGB>;
-using isp_demosaic_10b_grbg = isp_demosaic<10, BayerPattern::GRBG>;
-using isp_demosaic_10b_gbrg = isp_demosaic<10, BayerPattern::GBRG>;
-using isp_demosaic_10b_bggr = isp_demosaic<10, BayerPattern::BGGR>;
-using isp_demosaic_8b_rggb = isp_demosaic<8, BayerPattern::RGGB>;
+using isp_demosaic_10b_rggb =
+    isp_demosaic<10, BayerPattern::RGGB>;
+using isp_demosaic_10b_grbg =
+    isp_demosaic<10, BayerPattern::GRBG>;
+using isp_demosaic_10b_gbrg =
+    isp_demosaic<10, BayerPattern::GBRG>;
+using isp_demosaic_10b_bggr =
+    isp_demosaic<10, BayerPattern::BGGR>;
 
-#endif // ISP_DEMOSAIC_H
+#endif  // ISP_DEMOSAIC_H

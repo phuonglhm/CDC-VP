@@ -4,15 +4,11 @@
  * Pipeline latency: 9 cycles (RTL DLY_CLK = 9)
  * Matches RTL: isp_csc.v
  *
- * BT.601 Algorithm:
- *   Y  = (77*R + 150*G + 29*B) >> 8
- *   U  = (-43*R - 85*G + 128*B + 32768) >> 8
- *   V  = (128*R - 107*G - 21*B + 32768) >> 8
- *
- * BT.709 Algorithm (simplified):
- *   Y  = (186*R + 622*G + 62*B) >> 10
- *   U  = (-101*R - 348*G + 449*B + 229376) >> 10
- *   V  = (449*R - 408*G - 41*B + 229376) >> 10
+ * Inputs are normalized from BITS-wide RGB to 8-bit full range.
+ * Conversion-standard encoding:
+ *   1: BT.709 full range
+ *   2: BT.601 full range
+ *   0/3: reserved (zero output)
  */
 
 #ifndef ISP_CSC_H
@@ -26,7 +22,14 @@
 template<unsigned int BITS = 10>
 class isp_csc : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_csc);
+
+    static_assert(BITS > 0 && BITS <= 16,
+                  "CSC supports RGB sample widths from 1 through 16 bits");
+
     static constexpr unsigned DLY_CLK = 9;
+    static constexpr uint8_t CSC_BT709 = 1;
+    static constexpr uint8_t CSC_BT601 = 2;
 
     sc_in<bool> pclk{"pclk"};
     sc_in<bool> rst_n{"rst_n"};
@@ -80,6 +83,9 @@ public:
     unsigned get_frame_count() const { return m_frame_count >= 0 ? (unsigned)m_frame_count : 0; }
 
 private:
+    static constexpr uint32_t MAX_SAMPLE =
+        (uint32_t{1} << BITS) - uint32_t{1};
+
     int m_pixel_count;
     int m_line_count;
     int m_frame_count;
@@ -99,8 +105,8 @@ private:
         o_href.write(false);
         o_vsync.write(false);
         o_y.write(0);
-        o_u.write(128);
-        o_v.write(128);
+        o_u.write(0);
+        o_v.write(0);
 
         while (true) {
             wait();
@@ -158,40 +164,49 @@ private:
             m_g_delay[0] = curr_g;
             m_b_delay[0] = curr_b;
 
-            uint8_t out_y = 0, out_u = 128, out_v = 128;
+            uint8_t out_y = 0, out_u = 0, out_v = 0;
             bool out_href = m_href_delay[DLY_CLK - 1];
             bool out_vsync = m_vsync_delay[DLY_CLK - 1];
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
+            // The delayed href is authoritative here.  Do not gate with the
+            // current frame state: delayed pixels must drain after input vsync
+            // has already ended the frame.
+            if (enable.read() && out_href) {
                 uint16_t r_in = m_r_delay[DLY_CLK - 1];
                 uint16_t g_in = m_g_delay[DLY_CLK - 1];
                 uint16_t b_in = m_b_delay[DLY_CLK - 1];
 
                 uint8_t standard = i_conv_standard.read();
+                int32_t y_val = 0, u_val = 0, v_val = 0;
+                bool converted = false;
 
-                int32_t y_val, u_val, v_val;
-
-                if (standard == 0) {
+                if (standard == CSC_BT601) {
                     convert_bt601(r_in, g_in, b_in, y_val, u_val, v_val);
                     m_metrics.record_bt601();
-                } else {
+                    converted = true;
+                } else if (standard == CSC_BT709) {
                     convert_bt709(r_in, g_in, b_in, y_val, u_val, v_val);
                     m_metrics.record_bt709();
+                    converted = true;
                 }
 
-                out_y = (uint8_t)y_val;
-                out_u = (uint8_t)u_val;
-                out_v = (uint8_t)v_val;
+                // Encodings 0 and 3 are reserved and deliberately retain the
+                // zero defaults above.
+                if (converted) {
+                    out_y = static_cast<uint8_t>(y_val);
+                    out_u = static_cast<uint8_t>(u_val);
+                    out_v = static_cast<uint8_t>(v_val);
 
-                m_metrics.record_rgb_to_yuv();
-                m_metrics.record_y_pixel();
-                m_metrics.record_u_pixel();
-                m_metrics.record_v_pixel();
-                m_metrics.record_pixel();
-                m_metrics.record_active_cycle();
-                m_metrics.record_mul();
-                m_metrics.record_mul();
-                m_metrics.record_mul();
+                    m_metrics.record_rgb_to_yuv();
+                    m_metrics.record_y_pixel();
+                    m_metrics.record_u_pixel();
+                    m_metrics.record_v_pixel();
+                    m_metrics.record_pixel();
+                    m_metrics.record_active_cycle();
+                    m_metrics.record_mul();
+                    m_metrics.record_mul();
+                    m_metrics.record_mul();
+                }
             }
 
             o_y.write(out_y);
@@ -225,35 +240,47 @@ private:
         m_metrics.reset();
     }
 
-    void convert_bt601(uint16_t r, uint16_t g, uint16_t b, int32_t& y, int32_t& u, int32_t& v) {
-        int32_t r_int = (int32_t)r;
-        int32_t g_int = (int32_t)g;
-        int32_t b_int = (int32_t)b;
-
-        y = (77 * r_int + 150 * g_int + 29 * b_int) >> 8;
-        u = (-43 * r_int - 85 * g_int + 128 * b_int + 32768) >> 8;
-        v = (128 * r_int - 107 * g_int - 21 * b_int + 32768) >> 8;
-
-        y = clamp_8bit(y);
-        u = clamp_8bit(u);
-        v = clamp_8bit(v);
+    static uint8_t normalize_to_8bit(uint16_t value) {
+        const uint32_t bounded =
+            value > MAX_SAMPLE ? MAX_SAMPLE : static_cast<uint32_t>(value);
+        return static_cast<uint8_t>(
+            (bounded * 255U + MAX_SAMPLE / 2U) / MAX_SAMPLE);
     }
 
-    void convert_bt709(uint16_t r, uint16_t g, uint16_t b, int32_t& y, int32_t& u, int32_t& v) {
-        int32_t r_int = (int32_t)r;
-        int32_t g_int = (int32_t)g;
-        int32_t b_int = (int32_t)b;
-
-        y = (186 * r_int + 622 * g_int + 62 * b_int) >> 10;
-        u = (-101 * r_int - 348 * g_int + 449 * b_int + 229376) >> 10;
-        v = (449 * r_int - 408 * g_int - 41 * b_int + 229376) >> 10;
-
-        y = clamp_8bit(y);
-        u = clamp_8bit(u);
-        v = clamp_8bit(v);
+    // Round signed fixed-point values symmetrically to nearest, with exact
+    // halves rounded away from zero.
+    static int32_t round_div_256(int32_t value) {
+        return value >= 0 ? (value + 128) / 256
+                          : -((-value + 128) / 256);
     }
 
-    inline int32_t clamp_8bit(int32_t val) {
+    static void convert_bt601(uint16_t r, uint16_t g, uint16_t b,
+                              int32_t& y, int32_t& u, int32_t& v) {
+        const int32_t r8 = normalize_to_8bit(r);
+        const int32_t g8 = normalize_to_8bit(g);
+        const int32_t b8 = normalize_to_8bit(b);
+
+        y = clamp_8bit(round_div_256(77 * r8 + 150 * g8 + 29 * b8));
+        u = clamp_8bit(round_div_256(-43 * r8 - 85 * g8 + 128 * b8) +
+                       128);
+        v = clamp_8bit(round_div_256(128 * r8 - 107 * g8 - 21 * b8) +
+                       128);
+    }
+
+    static void convert_bt709(uint16_t r, uint16_t g, uint16_t b,
+                              int32_t& y, int32_t& u, int32_t& v) {
+        const int32_t r8 = normalize_to_8bit(r);
+        const int32_t g8 = normalize_to_8bit(g);
+        const int32_t b8 = normalize_to_8bit(b);
+
+        y = clamp_8bit(round_div_256(54 * r8 + 183 * g8 + 18 * b8));
+        u = clamp_8bit(round_div_256(-29 * r8 - 99 * g8 + 128 * b8) +
+                       128);
+        v = clamp_8bit(round_div_256(128 * r8 - 116 * g8 - 12 * b8) +
+                       128);
+    }
+
+    static int32_t clamp_8bit(int32_t val) {
         if (val < 0) return 0;
         if (val > 255) return 255;
         return val;

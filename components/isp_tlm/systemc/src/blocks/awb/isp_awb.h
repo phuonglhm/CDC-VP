@@ -22,6 +22,8 @@
 template<unsigned int BITS = 10, BayerPattern BAYER = BayerPattern::RGGB>
 class isp_awb : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_awb);
+
     sc_in<bool> pclk{"pclk"};
     sc_in<bool> rst_n{"rst_n"};
     sc_in<bool> enable{"enable"};

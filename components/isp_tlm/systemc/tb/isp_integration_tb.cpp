@@ -15,6 +15,7 @@
 #include <fstream>
 #include <cmath>
 #include <vector>
+#include <chrono>
 
 using namespace sc_core;
 using namespace sc_dt;
@@ -60,7 +61,11 @@ struct IspPerformanceMetrics {
     uint64_t total_cycles;
     uint64_t active_cycles;
     double throughput_fps;
+    double peak_throughput_fps;
     double pixels_per_cycle;
+
+    // Wall-clock time (for simulation performance analysis)
+    double wall_time_ms;
 
     // Operations
     uint64_t total_pixels;
@@ -73,7 +78,9 @@ struct IspPerformanceMetrics {
         total_cycles = 0;
         active_cycles = 0;
         throughput_fps = 0.0;
+        peak_throughput_fps = 0.0;
         pixels_per_cycle = 0.0;
+        wall_time_ms = 0.0;
         total_pixels = 0;
         frames_processed = 0;
         block_metrics.clear();
@@ -217,6 +224,13 @@ public:
     sc_signal<bool> s_ldci_href{"s_ldci_href"}, s_ldci_vsync{"s_ldci_vsync"};
     sc_signal<uint8_t> s_ldci_y{"s_ldci_y"}, s_ldci_u{"s_ldci_u"}, s_ldci_v{"s_ldci_v"};
 
+    // Debug signals for early pipeline stages
+    sc_signal<isp_data_t> s_blc_out{"s_blc_out"};
+    sc_signal<bool> s_blc_out_href{"s_blc_out_href"};
+
+    // Testbench-only: connect demosaic output directly for debugging
+    sc_signal<isp_data_t> s_dem_test_r{"s_dem_test_r"}, s_dem_test_g{"s_dem_test_g"}, s_dem_test_b{"s_dem_test_b"};
+
     // SHARPEN output
     sc_signal<bool> s_sharp_href{"s_sharp_href"}, s_sharp_vsync{"s_sharp_vsync"};
     sc_signal<uint8_t> s_sharp_y{"s_sharp_y"}, s_sharp_u{"s_sharp_u"}, s_sharp_v{"s_sharp_v"};
@@ -244,6 +258,8 @@ public:
     IspPerformanceMetrics metrics;
     sc_time sim_start_time;
     sc_time sim_end_time;
+    std::chrono::high_resolution_clock::time_point wall_start_time;
+    std::chrono::high_resolution_clock::time_point wall_end_time;
 
     unsigned test_width;
     unsigned test_height;
@@ -252,6 +268,13 @@ public:
     // Real image buffer (loaded from .raw file)
     std::vector<isp_data_t> raw_image_buffer;  // size = test_width * test_height
     bool use_real_image = false;
+
+    // Output buffer for YUV data (captured from LDCI)
+    std::vector<uint8_t> y_output_buffer;  // Y plane
+    std::vector<uint8_t> u_output_buffer;  // U plane (half resolution)
+    std::vector<uint8_t> v_output_buffer;  // V plane (half resolution)
+    std::string output_yuv_path = "../output/output.yuv";
+    std::string output_metadata_path = "../output/output.yuv.json";
 
     // Pixel counters for blocks without MetricsCollector (DGAIN, LSC, LDCI)
     uint64_t dgain_pixel_count = 0;
@@ -697,6 +720,7 @@ private:
         // Propagate image size to all block metrics collectors
         propagate_image_size();
 
+        wall_start_time = std::chrono::high_resolution_clock::now();
         sim_start_time = sc_time_stamp();
 
         // Send test frames
@@ -709,12 +733,16 @@ private:
         wait(2000, SC_NS);
 
         sim_end_time = sc_time_stamp();
+        wall_end_time = std::chrono::high_resolution_clock::now();
 
         // Calculate metrics
         calculate_metrics();
 
         // Print results
         print_metrics();
+
+        // Save output YUV
+        save_output_yuv();
 
         // Stop simulation
         sc_stop();
@@ -752,13 +780,40 @@ private:
     }
 
     void ldci_counter_thread() {
-        // Count pixels flowing out of LDCI
-        while (true) {
+        // Capture YUV data from CSC output
+        unsigned captured_count = 0;
+        unsigned target_count = test_width * test_height;
+
+        unsigned chroma_w = (test_width + 1) / 2;
+        unsigned chroma_h = (test_height + 1) / 2;
+        y_output_buffer.reserve(test_width * test_height);
+        u_output_buffer.reserve(chroma_w * chroma_h);
+        v_output_buffer.reserve(chroma_w * chroma_h);
+
+        while (captured_count < target_count) {
             wait(s_pclk.posedge_event());
-            if (s_ldci_href.read()) {
+
+            bool csc_h = s_csc_href.read();
+
+            if (csc_h) {
                 ldci_pixel_count++;
+
+                uint8_t y_val = s_csc_y.read();
+                uint8_t u_val = s_csc_u.read();
+                uint8_t v_val = s_csc_v.read();
+
+                y_output_buffer.push_back(y_val);
+                if (y_output_buffer.size() % 2 == 1) {
+                    u_output_buffer.push_back(u_val);
+                    v_output_buffer.push_back(v_val);
+                }
+
+                captured_count++;
             }
         }
+
+        std::cout << "\n[CSC] Captured " << y_output_buffer.size()
+                  << " Y pixels, " << u_output_buffer.size() << " UV pairs" << std::endl;
     }
 
     void send_frame() {
@@ -914,10 +969,24 @@ private:
         metrics.frames_processed = test_frames;
         metrics.active_cycles = metrics.total_cycles;
 
-        // FPS = clock_freq / pixels_per_frame (peak throughput if 100% utilization)
+        // Wall-clock time
+        auto wall_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            wall_end_time - wall_start_time);
+        metrics.wall_time_ms = wall_duration.count();
+
+        // Peak throughput = hardware capability (if 100% utilization)
         double pixels_per_frame = (double)test_width * test_height;
         double peak_fps = clock_freq_mhz * 1e6 / pixels_per_frame;
-        metrics.throughput_fps = peak_fps;
+
+        // Actual FPS = frames / simulated_time (in seconds)
+        double elapsed_s = elapsed_ns / 1e9;
+        double actual_fps = metrics.frames_processed / elapsed_s;
+
+        // Use actual FPS (simulation-based throughput)
+        metrics.throughput_fps = actual_fps;
+
+        // Store peak for reference
+        metrics.peak_throughput_fps = peak_fps;
 
         if (metrics.total_cycles > 0) {
             metrics.pixels_per_cycle = (double)metrics.total_pixels / metrics.total_cycles;
@@ -937,13 +1006,17 @@ private:
         std::cout << "  Total Cycles:        " << std::setw(12) << metrics.total_cycles << std::endl;
         std::cout << "  Active Cycles:       " << std::setw(12) << metrics.active_cycles << std::endl;
         std::cout << "  Elapsed Time:        " << std::fixed << std::setprecision(3)
-                  << elapsed_ns / 1e6 << " ms" << std::endl;
+                  << elapsed_ns / 1e6 << " ms (simulated)" << std::endl;
+        std::cout << "  Wall Time:          " << std::fixed << std::setprecision(1)
+                  << metrics.wall_time_ms << " ms (real)" << std::endl;
         std::cout << "  Utilization:         " << std::fixed << std::setprecision(2)
                   << (100.0 * metrics.active_cycles / metrics.total_cycles) << "%" << std::endl;
 
         std::cout << "\n[THROUGHPUT]" << std::endl;
-        std::cout << "  Throughput:          " << std::fixed << std::setprecision(2)
-                  << metrics.throughput_fps << " FPS" << std::endl;
+        std::cout << "  Peak FPS:           " << std::fixed << std::setprecision(2)
+                  << metrics.peak_throughput_fps << " FPS (hardware)" << std::endl;
+        std::cout << "  Actual FPS:         " << std::fixed << std::setprecision(2)
+                  << metrics.throughput_fps << " FPS (simulated)" << std::endl;
         std::cout << "  Pixels/Cycle:        " << std::fixed << std::setprecision(4)
                   << metrics.pixels_per_cycle << std::endl;
         std::cout << "  Pixels Processed:    " << std::setw(12) << metrics.total_pixels << std::endl;
@@ -992,6 +1065,55 @@ private:
         std::cout << "  METRICS SUMMARY: LDCI (signal-monitored)\n";
         std::cout << std::string(60, '=') << "\n";
         std::cout << "  Pixels Processed:  " << ldci_pixel_count << "\n";
+    }
+
+    void save_output_yuv() {
+        if (y_output_buffer.empty()) {
+            std::cout << "\n[OUTPUT] No YUV data captured" << std::endl;
+            return;
+        }
+
+        // Ensure output directory exists
+        std::string dir = "output";
+        std::string cmd = "mkdir -p " + dir;
+        system(cmd.c_str());
+
+        // Write YUV420 NV12 file
+        std::ofstream yuv_file(output_yuv_path, std::ios::binary);
+        if (!yuv_file.is_open()) {
+            std::cerr << "\n[ERROR] Could not create " << output_yuv_path << std::endl;
+            return;
+        }
+
+        // Write Y plane
+        for (uint8_t y : y_output_buffer) {
+            yuv_file.write(reinterpret_cast<const char*>(&y), 1);
+        }
+
+        // Write UV interleaved (NV12 format)
+        for (size_t i = 0; i < u_output_buffer.size() && i < v_output_buffer.size(); i++) {
+            yuv_file.write(reinterpret_cast<const char*>(&u_output_buffer[i]), 1);
+            yuv_file.write(reinterpret_cast<const char*>(&v_output_buffer[i]), 1);
+        }
+
+        yuv_file.close();
+
+        // Write metadata JSON
+        std::ofstream json_file(output_metadata_path);
+        if (json_file.is_open()) {
+            json_file << "{\n";
+            json_file << "  \"width\": " << test_width << ",\n";
+            json_file << "  \"height\": " << test_height << ",\n";
+            json_file << "  \"format\": \"yuv420p\",\n";
+            json_file << "  \"source_raw\": \"../input/D65_raw_2688x1520_5376.raw\",\n";
+            json_file << "  \"frames\": 1\n";
+            json_file << "}\n";
+            json_file.close();
+        }
+
+        std::cout << "\n[OUTPUT] Saved YUV to " << output_yuv_path << std::endl;
+        std::cout << "         Y plane: " << y_output_buffer.size() << " bytes" << std::endl;
+        std::cout << "         UV plane: " << u_output_buffer.size() << " bytes each" << std::endl;
     }
 
     void save_metrics_to_file(const std::string& filename) {

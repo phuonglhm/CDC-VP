@@ -16,6 +16,8 @@
 template<unsigned int BITS = 10, BayerPattern BAYER = BayerPattern::RGGB>
 class isp_wb : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_wb);
+
     static constexpr unsigned DLY_CLK = 3;
 
     sc_in<bool> pclk{"pclk"};
@@ -151,7 +153,7 @@ private:
             bool out_href = m_href_delay[DLY_CLK - 1];
             bool out_vsync = m_vsync_delay[DLY_CLK - 1];
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
+            if (enable.read() && m_href_delay[DLY_CLK - 1]) {
                 uint16_t in_pixel = m_data_delay[DLY_CLK - 1];
                 unsigned x = m_x_delay[DLY_CLK - 1];
                 unsigned y = m_y_delay[DLY_CLK - 1];
@@ -179,6 +181,8 @@ private:
                 m_metrics.record_mul();
 
                 out_data = (uint16_t)corrected;
+            } else if (!enable.read()) {
+                out_data = m_data_delay[DLY_CLK - 1];
             }
 
             o_data.write(out_data);

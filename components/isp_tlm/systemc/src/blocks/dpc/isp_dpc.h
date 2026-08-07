@@ -24,6 +24,8 @@
 template<unsigned int BITS = 10, BayerPattern BAYER = BayerPattern::RGGB>
 class isp_dpc : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_dpc);
+
     static constexpr unsigned DLY_CLK = 10;
     static constexpr unsigned WINDOW_SIZE = 5;
     static constexpr unsigned HALF_WIN = WINDOW_SIZE / 2;
@@ -61,6 +63,7 @@ public:
         for (unsigned i = 0; i < DLY_CLK; i++) {
             m_href_delay[i] = false;
             m_vsync_delay[i] = false;
+            m_raw_delay[i] = 0;
             for (unsigned j = 0; j < WINDOW_SIZE; j++) {
                 for (unsigned k = 0; k < WINDOW_SIZE; k++) {
                     m_window[i][j][k] = 0;
@@ -91,6 +94,7 @@ private:
 
     bool m_href_delay[DLY_CLK];
     bool m_vsync_delay[DLY_CLK];
+    uint16_t m_raw_delay[DLY_CLK];
     uint16_t m_window[DLY_CLK][WINDOW_SIZE][WINDOW_SIZE];
     unsigned m_x_delay[DLY_CLK];
     unsigned m_y_delay[DLY_CLK];
@@ -112,6 +116,7 @@ private:
                 for (unsigned i = 0; i < DLY_CLK; i++) {
                     m_href_delay[i] = false;
                     m_vsync_delay[i] = false;
+            m_raw_delay[i] = 0;
                     m_x_delay[i] = 0;
                     m_y_delay[i] = 0;
                 }
@@ -147,6 +152,7 @@ private:
             for (unsigned i = DLY_CLK - 1; i > 0; i--) {
                 m_href_delay[i] = m_href_delay[i - 1];
                 m_vsync_delay[i] = m_vsync_delay[i - 1];
+                m_raw_delay[i] = m_raw_delay[i - 1];
                 m_x_delay[i] = m_x_delay[i - 1];
                 m_y_delay[i] = m_y_delay[i - 1];
                 for (unsigned j = 0; j < WINDOW_SIZE; j++) {
@@ -158,6 +164,7 @@ private:
 
             m_href_delay[0] = curr_href && m_in_frame;
             m_vsync_delay[0] = curr_vsync;
+            m_raw_delay[0] = curr_pixel;
             m_x_delay[0] = (unsigned)m_pixel_count;
             m_y_delay[0] = (unsigned)m_line_count;
 
@@ -172,17 +179,14 @@ private:
             bool out_href = m_href_delay[DLY_CLK - 1];
             bool out_vsync = m_vsync_delay[DLY_CLK - 1];
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
-                unsigned x = m_x_delay[DLY_CLK - 1];
-                unsigned y = m_y_delay[DLY_CLK - 1];
-
+            if (enable.read() && m_href_delay[DLY_CLK - 1]) {
                 uint16_t center = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN];
                 uint16_t threshold = i_threshold.read();
 
                 bool is_defect = detect_defect(center, threshold);
 
                 if (is_defect) {
-                    out_data = interpolate_defect(x, y);
+                    out_data = interpolate_defect();
                     m_metrics.record_corrected();
                     m_metrics.record_active_cycle();
                 } else {
@@ -190,6 +194,8 @@ private:
                 }
 
                 m_metrics.record_pixel();
+            } else if (!enable.read()) {
+                out_data = m_raw_delay[DLY_CLK - 1];
             }
 
             o_raw.write(out_data);
@@ -216,6 +222,7 @@ private:
         for (unsigned i = 0; i < DLY_CLK; i++) {
             m_href_delay[i] = false;
             m_vsync_delay[i] = false;
+            m_raw_delay[i] = 0;
             m_x_delay[i] = 0;
             m_y_delay[i] = 0;
         }
@@ -263,11 +270,10 @@ private:
         return is_hot || is_dead;
     }
 
-    uint16_t interpolate_defect(unsigned x, unsigned y) {
+    uint16_t interpolate_defect() {
         uint16_t p0 = m_window[DLY_CLK - 1][HALF_WIN - 2][HALF_WIN - 2];
         uint16_t p1 = m_window[DLY_CLK - 1][HALF_WIN - 2][HALF_WIN];
         uint16_t p2 = m_window[DLY_CLK - 1][HALF_WIN - 1][HALF_WIN - 1];
-        uint16_t p3 = m_window[DLY_CLK - 1][HALF_WIN - 1][HALF_WIN + 1];
         uint16_t p4 = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN - 2];
         uint16_t p5 = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN];
         uint16_t p6 = m_window[DLY_CLK - 1][HALF_WIN][HALF_WIN + 2];

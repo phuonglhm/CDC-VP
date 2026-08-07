@@ -16,6 +16,8 @@
 template<unsigned int BITS = 10, unsigned int WIDTH = 2048, unsigned int HEIGHT = 1536>
 class isp_crop : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_crop);
+
     sc_in<bool> pclk{"pclk"};
     sc_in<bool> rst_n{"rst_n"};
     sc_in<bool> enable{"enable"};
@@ -123,11 +125,13 @@ private:
 
             m_metrics.record_total_cycle();
 
-            uint16_t out_data = 0;
-            bool out_href = false;
+            const bool input_valid = curr_href && m_in_frame;
+            const bool block_enabled = enable.read();
+            uint16_t out_data = block_enabled ? 0 : curr_data;
+            bool out_href = !block_enabled && input_valid;
             bool out_vsync = curr_vsync;
 
-            if (enable.read() && m_in_frame && curr_href) {
+            if (block_enabled && input_valid) {
                 m_metrics.record_input_pixel();
 
                 unsigned x = (unsigned)m_pixel_count;
@@ -151,7 +155,6 @@ private:
                     out_data = curr_data;
                     out_href = true;
                     m_metrics.record_active_cycle();
-                    m_pixel_count++;
                 } else {
                     m_metrics.record_cropped_pixel();
                     m_metrics.record_stall_cycle();
@@ -159,7 +162,11 @@ private:
                         m_metrics.record_crop_right();
                     }
                 }
-            } else if (curr_href && m_in_frame) {
+            } else {
+                m_in_crop_window = false;
+            }
+
+            if (input_valid) {
                 m_pixel_count++;
             }
 

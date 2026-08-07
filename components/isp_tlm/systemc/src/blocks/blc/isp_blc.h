@@ -14,6 +14,8 @@
 template<unsigned int BITS>
 class isp_blc : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_blc);
+
     sc_in<bool> pclk{"pclk"};
     sc_in<bool> rst_n{"rst_n"};
     sc_in<bool> enable{"enable"};
@@ -105,7 +107,7 @@ private:
             m_metrics.record_total_cycle();
 
             // Combinational output - drive immediately
-            uint16_t out_data = 0;
+            uint16_t out_data = enable.read() ? 0 : curr_data;
             bool out_href = curr_href;
             bool out_vsync = curr_vsync;
 
@@ -136,9 +138,10 @@ private:
                 m_metrics.record_active_cycle();
                 if (corrected >= MAX) m_metrics.record_saturation_clip();
 
-                m_pixel_count++;
                 out_data = corrected;
-            } else if (curr_href) {
+            }
+
+            if (curr_href && m_in_frame) {
                 m_pixel_count++;
             }
 

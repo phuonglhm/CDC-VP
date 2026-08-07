@@ -1,147 +1,148 @@
-cmake_minimum_required(VERSION 3.10)
-project(isp_tlm_systemc)
+cmake_minimum_required(VERSION 3.21)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(isp_systemc_model LANGUAGES CXX)
+    enable_testing()
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Find SystemC
-find_package(SystemC REQUIRED)
-
-if(NOT SystemC_FOUND)
-    message(FATAL_ERROR "SystemC not found. Please set SystemC_ROOT or install SystemC.")
+if(NOT TARGET SystemC::systemc)
+    set(SYSTEMC_HOME "/opt/systemc-2.3.4" CACHE PATH
+        "Accellera SystemC installation prefix")
+    find_path(ISP_SYSTEMC_INCLUDE_DIR
+        NAMES systemc systemc.h
+        HINTS "${SYSTEMC_HOME}/include")
+    find_library(ISP_SYSTEMC_LIBRARY
+        NAMES systemc
+        HINTS "${SYSTEMC_HOME}/lib" "${SYSTEMC_HOME}/lib64")
+    if(NOT ISP_SYSTEMC_INCLUDE_DIR OR NOT ISP_SYSTEMC_LIBRARY)
+        message(FATAL_ERROR
+            "SystemC was not found; set SYSTEMC_HOME to the installation prefix")
+    endif()
+    add_library(SystemC::systemc UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(SystemC::systemc PROPERTIES
+        IMPORTED_LOCATION "${ISP_SYSTEMC_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ISP_SYSTEMC_INCLUDE_DIR}")
+    get_filename_component(ISP_SYSTEMC_LIBRARY_DIR
+        "${ISP_SYSTEMC_LIBRARY}" DIRECTORY)
+    set(CMAKE_BUILD_RPATH "${ISP_SYSTEMC_LIBRARY_DIR}")
 endif()
 
-message(STATUS "SystemC include dir: ${SystemC_INCLUDE_DIRS}")
-message(STATUS "SystemC libraries: ${SystemC_LIBRARIES}")
+find_package(Threads REQUIRED)
 
-# Include directories
-include_directories(
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/common
-    ${CMAKE_SOURCE_DIR}/src/base
-    ${CMAKE_SOURCE_DIR}/src/utils
-    ${CMAKE_SOURCE_DIR}/src/blocks
-    ${CMAKE_SOURCE_DIR}/src/pipeline
-    ${SystemC_INCLUDE_DIRS}
-)
+add_library(isp_systemc_model STATIC
+    src/registers/isp_register_bank.cpp)
+add_library(cdc::components::isp_systemc_model ALIAS isp_systemc_model)
 
-# Enable debug symbols by default
-set(CMAKE_BUILD_TYPE Debug)
+target_include_directories(isp_systemc_model
+    PUBLIC
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>")
+target_compile_features(isp_systemc_model PUBLIC cxx_std_17)
+target_link_libraries(isp_systemc_model
+    PUBLIC
+        SystemC::systemc
+        Threads::Threads)
 
-# Compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
+if(MSVC)
+    target_compile_options(isp_systemc_model PRIVATE /W4)
+else()
+    target_compile_options(isp_systemc_model PRIVATE
+        -Wall -Wextra -Wpedantic)
+endif()
 
-#=============================================================================
-# Source file groups
-#=============================================================================
+if(DEFINED CDC_BUILD_TESTS)
+    set(_isp_tests_default "${CDC_BUILD_TESTS}")
+else()
+    set(_isp_tests_default ON)
+endif()
+option(ISP_SYSTEMC_BUILD_TESTS
+    "Build the register-driven ISP SystemC tests"
+    "${_isp_tests_default}")
+unset(_isp_tests_default)
 
-# Common utilities
-set(COMMON_SOURCES
-    src/common/isp_types.h
-    src/common/isp_params.h
-    src/common/common_defs.h
-)
+if(ISP_SYSTEMC_BUILD_TESTS)
+    function(isp_add_test target source)
+        add_executable("${target}" "${source}")
+        target_link_libraries("${target}" PRIVATE isp_systemc_model)
+        if(MSVC)
+            target_compile_options("${target}" PRIVATE /W4 /WX)
+        else()
+            target_compile_options("${target}" PRIVATE
+                -Wall -Wextra -Wpedantic -Werror
+                -Wno-overloaded-virtual)
+        endif()
+        add_test(NAME "${target}" COMMAND "${target}")
+    endfunction()
 
-# Base classes (none - using standalone blocks)
-set(BASE_SOURCES
-)
+    isp_add_test(isp_register_bank_test
+        tests/isp_register_bank_test.cpp)
+    isp_add_test(isp_vip_i420_test
+        tests/vip_i420_test.cpp)
+    isp_add_test(isp_frame_memory_test
+        tests/test_isp_frame_memory.cpp)
+    isp_add_test(isp_control_target_test
+        tests/test_isp_control_target.cpp)
+    isp_add_test(isp_axi_lite_adapter_test
+        tests/test_isp_axi_lite_adapter.cpp)
+    isp_add_test(isp_csc_test
+        tests/csc_test.cpp)
+    isp_add_test(isp_top_job_test
+        tests/isp_top_memory_job_test.cpp)
 
-# Utils
-set(UTILS_SOURCES
-    src/utils/line_buffer.h
-    src/utils/timing_adapter.h
-    src/utils/window_buffer.h
-)
+    set(_isp_ctest_targets
+        isp_register_bank_test
+        isp_vip_i420_test
+        isp_frame_memory_test
+        isp_control_target_test
+        isp_axi_lite_adapter_test
+        isp_csc_test
+        isp_top_job_test)
 
-# Block headers (placeholder - implementation in separate files)
-file(GLOB BLOCK_HEADERS "src/blocks/*/*.h")
-file(GLOB BLOCK_SRCS "src/blocks/*/*.cpp")
+    add_executable(isp_colorchecker_model_test
+        tests/colorchecker_model_test.cpp)
+    target_link_libraries(isp_colorchecker_model_test
+        PRIVATE isp_systemc_model)
+    if(MSVC)
+        target_compile_options(isp_colorchecker_model_test PRIVATE /W4 /WX)
+    else()
+        target_compile_options(isp_colorchecker_model_test PRIVATE
+            -Wall -Wextra -Wpedantic -Werror
+            -Wno-overloaded-virtual)
+    endif()
 
-# Pipeline
-set(PIPELINE_SOURCES
-    src/pipeline/isp_top.h
-    src/pipeline/isp_config.h
-)
+    set(ISP_COLORCHECKER_RAW "" CACHE FILEPATH
+        "Path to a 2592x1536 RAW12 RGGB little-endian fixture")
+    option(ISP_SYSTEMC_RUN_COLORCHECKER_TEST
+        "Register the long full-frame ColorChecker validation with CTest"
+        OFF)
+    if(ISP_SYSTEMC_RUN_COLORCHECKER_TEST)
+        if(NOT ISP_COLORCHECKER_RAW)
+            message(FATAL_ERROR
+                "ISP_SYSTEMC_RUN_COLORCHECKER_TEST requires "
+                "-DISP_COLORCHECKER_RAW=/path/to/input.raw")
+        endif()
+        if(NOT EXISTS "${ISP_COLORCHECKER_RAW}")
+            message(FATAL_ERROR
+                "ISP_COLORCHECKER_RAW does not exist: "
+                "${ISP_COLORCHECKER_RAW}")
+        endif()
+        add_test(NAME isp_colorchecker_model_test
+            COMMAND isp_colorchecker_model_test "${ISP_COLORCHECKER_RAW}")
+        set_tests_properties(isp_colorchecker_model_test PROPERTIES
+            LABELS "long;colorchecker")
+        list(APPEND _isp_ctest_targets isp_colorchecker_model_test)
+    endif()
 
-#=============================================================================
-# Testbench
-#=============================================================================
-set(TESTBENCH_SOURCES
-    tb/isp_tb.cpp
-)
-
-#=============================================================================
-# Build options
-#=============================================================================
-
-# Option to build with trace
-option(ENABLE_TRACE "Enable VCD tracing" ON)
-
-#=============================================================================
-# Main executable
-#=============================================================================
-add_executable(isp_tb
-    ${TESTBENCH_SOURCES}
-    ${BLOCK_SRCS}
-)
-
-target_link_libraries(isp_tb ${SystemC_LIBRARIES})
-
-# Set include directories for target
-target_include_directories(isp_tb PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/common
-    ${CMAKE_SOURCE_DIR}/src/base
-    ${CMAKE_SOURCE_DIR}/src/utils
-    ${CMAKE_SOURCE_DIR}/src/blocks
-    ${CMAKE_SOURCE_DIR}/src/pipeline
-    ${SystemC_INCLUDE_DIRS}
-)
-
-#=============================================================================
-# Optional: Build example blocks individually for testing
-#=============================================================================
-
-# Example: Build DPC block test
-# add_executable(test_dpc
-#     tb/test_dpc.cpp
-#     src/blocks/dpc/sc_dpc.cpp
-# )
-# target_link_libraries(test_dpc ${SystemC_LIBRARIES})
-
-#=============================================================================
-# BLC Standalone Testbench
-#=============================================================================
-add_executable(blc_tb
-    tb/blc_tb.cpp
-)
-
-target_link_libraries(blc_tb ${SystemC_LIBRARIES})
-
-target_include_directories(blc_tb PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/common
-    ${CMAKE_SOURCE_DIR}/src/base
-    ${CMAKE_SOURCE_DIR}/src/utils
-    ${CMAKE_SOURCE_DIR}/src/blocks
-    ${CMAKE_SOURCE_DIR}/src/metrics
-    ${CMAKE_SOURCE_DIR}/src/pipeline
-    ${SystemC_INCLUDE_DIRS}
-)
-
-#=============================================================================
-# Installation (optional)
-#=============================================================================
-install(TARGETS isp_tb blc_tb DESTINATION bin)
-
-# Print configuration summary
-message(STATUS "")
-message(STATUS "==================================")
-message(STATUS "ISP TLM SystemC Configuration")
-message(STATUS "==================================")
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "SystemC: ${SystemC_INCLUDE_DIRS}")
-message(STATUS "Enable trace: ${ENABLE_TRACE}")
-message(STATUS "==================================")
+    # CMake-only convenience entry point. This builds every registered ISP
+    # test and runs CTest from this binary directory. When the long test option
+    # is enabled, the selected RAW fixture is included automatically.
+    add_custom_target(isp_systemc_check
+        COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
+        DEPENDS ${_isp_ctest_targets}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        COMMENT "Running ISP SystemC tests"
+        USES_TERMINAL)
+endif()

@@ -17,6 +17,8 @@
 template<unsigned int BITS = 10, BayerPattern BAYER = BayerPattern::RGGB>
 class isp_oecf : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_oecf);
+
     static constexpr unsigned DLY_CLK = 1;
     static constexpr unsigned LUT_SIZE = 1 << BITS;
 
@@ -58,6 +60,21 @@ public:
     OecfMetricsCollector& get_metrics() { return m_metrics; }
 
     void set_image_size(unsigned w, unsigned h) { m_metrics.set_config(w, h); }
+
+    bool set_lut_entry(unsigned channel,
+                       unsigned index,
+                       uint16_t value) {
+        if (channel >= 4 || index >= LUT_SIZE || value > MAX_VAL) {
+            return false;
+        }
+        switch (channel) {
+            case 0: m_lut_r[index] = value; break;
+            case 1: m_lut_gr[index] = value; break;
+            case 2: m_lut_gb[index] = value; break;
+            default: m_lut_b[index] = value; break;
+        }
+        return true;
+    }
 
 private:
     static constexpr uint16_t MAX_VAL = (1 << BITS) - 1;
@@ -138,12 +155,12 @@ private:
             bool out_href = m_href_delay;
             bool out_vsync = m_vsync_delay;
 
-            if (enable.read() && m_in_frame && curr_href) {
+            if (enable.read() && m_href_delay) {
                 unsigned x = (unsigned)m_pixel_count;
                 unsigned y = (unsigned)m_line_count;
                 unsigned ch = get_bayer_channel(x, y);
 
-                out_data = lut_lookup(curr_data, ch);
+                out_data = lut_lookup(m_data_delay, ch);
                 m_metrics.record_lut_read();
                 m_metrics.record_pixel();
                 m_metrics.record_active_cycle();
@@ -153,13 +170,17 @@ private:
                 else if (ch == 1) m_metrics.record_gr_channel();
                 else if (ch == 2) m_metrics.record_gb_channel();
                 else m_metrics.record_b_channel();
-
-                m_pixel_count++;
+            } else if (!enable.read()) {
+                out_data = m_data_delay;
             }
 
             o_raw.write(out_data);
             o_href.write(out_href);
             o_vsync.write(out_vsync);
+
+            if (curr_href && m_in_frame) {
+                m_pixel_count++;
+            }
 
             m_prev_vsync = curr_vsync;
             m_prev_href = curr_href;

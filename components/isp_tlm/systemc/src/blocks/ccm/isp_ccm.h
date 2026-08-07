@@ -23,6 +23,8 @@
 template<unsigned int BITS = 10>
 class isp_ccm : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_ccm);
+
     static constexpr unsigned DLY_CLK = 4;
 
     sc_in<bool> pclk{"pclk"};
@@ -164,7 +166,7 @@ private:
             bool out_href = m_href_delay[DLY_CLK - 1];
             bool out_vsync = m_vsync_delay[DLY_CLK - 1];
 
-            if (enable.read() && m_in_frame && m_href_delay[DLY_CLK - 1]) {
+            if (enable.read() && m_href_delay[DLY_CLK - 1]) {
                 uint16_t r_in = m_r_delay[DLY_CLK - 1];
                 uint16_t g_in = m_g_delay[DLY_CLK - 1];
                 uint16_t b_in = m_b_delay[DLY_CLK - 1];
@@ -232,6 +234,10 @@ private:
                 if (saturated) {
                     m_metrics.record_saturation();
                 }
+            } else if (!enable.read()) {
+                out_r = m_r_delay[DLY_CLK - 1];
+                out_g = m_g_delay[DLY_CLK - 1];
+                out_b = m_b_delay[DLY_CLK - 1];
             }
 
             o_r.write(out_r);

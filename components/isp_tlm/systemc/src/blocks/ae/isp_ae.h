@@ -23,6 +23,8 @@
 template<unsigned int BITS = 10>
 class isp_ae : public sc_module {
 public:
+    SC_HAS_PROCESS(isp_ae);
+
     sc_in<bool> pclk{"pclk"};
     sc_in<bool> rst_n{"rst_n"};
     sc_in<bool> enable{"enable"};
@@ -200,14 +202,19 @@ private:
             skewness = third_moment / (std_dev * std_dev * std_dev);
         }
 
-        uint16_t skewness_fixed = (uint16_t)(skewness * 256.0);
-        if (skewness_fixed > 65535) skewness_fixed = 65535;
+        const double scaled_skewness = skewness * 256.0;
+        const uint16_t skewness_fixed =
+            scaled_skewness <= 0.0
+                ? 0
+                : (scaled_skewness >= 65535.0
+                       ? 65535
+                       : static_cast<uint16_t>(scaled_skewness));
 
         o_ae_result_skewness.write(skewness_fixed);
         m_metrics.record_skewness(skewness);
 
         uint8_t center_target = i_center_illuminance.read();
-        uint16_t target_skewness = i_skewness.read();
+        (void)i_skewness.read();
 
         int8_t response = 0;
         if (mean < center_target * 8) {
