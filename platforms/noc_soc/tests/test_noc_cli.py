@@ -83,39 +83,104 @@ def main() -> int:
             print(direct.stderr.decode(errors="replace"), file=sys.stderr)
             return 1
 
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(1)
-        port = listener.getsockname()[1]
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                str(pathlib.Path(sys.argv[1]).resolve()),
-                "--port", str(port),
-                "--metrics", str(metrics),
-                "--dashboard", str(dashboard),
-                "--snapshot-timeout", "2",
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        connection, _ = listener.accept()
-        connection.sendall(b"before\n")
-        time.sleep(0.1)
-        unpublished = root / "metrics.json.tmp"
-        unpublished.write_text(fixture_json, encoding="utf-8")
-        unpublished.replace(metrics)
-        connection.sendall(marker + b"after\n")
-        connection.close()
-        listener.close()
-        stdout, stderr = process.communicate(timeout=5)
-        if process.returncode != 0:
+        def session(extra_args):
+            """One real TCP session ending in a dashboard request."""
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(pathlib.Path(sys.argv[1]).resolve()),
+                    "--port", str(port),
+                    "--metrics", str(metrics),
+                    "--dashboard", str(dashboard),
+                    "--snapshot-timeout", "2",
+                ] + extra_args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            connection, _ = listener.accept()
+            connection.sendall(b"before\n")
+            time.sleep(0.1)
+            unpublished = root / "metrics.json.tmp"
+            unpublished.write_text(fixture_json, encoding="utf-8")
+            unpublished.replace(metrics)
+            connection.sendall(marker + b"after\n")
+            connection.close()
+            listener.close()
+            stdout, stderr = process.communicate(timeout=10)
+            return process.returncode, stdout, stderr
+
+        code, stdout, stderr = session([])
+        if code != 0:
             print(stderr.decode(errors="replace"), file=sys.stderr)
             return 1
         expected = b"before\n" + direct.stdout + b"after\n"
         if stdout != expected:
             print(f"host client output ordering mismatch: {stdout!r}",
+                  file=sys.stderr)
+            return 1
+
+        # --peripheral-baseline must reach the renderer. Compared against the
+        # renderer invoked directly with the same flag, so the client cannot
+        # quietly drop it and still look like it worked: without the merge the
+        # firmware report renders fine, just with two empty columns.
+        firmware = dashboard_contract.fixture()
+        for entry in firmware["peripheral_map"]["blocks"]:
+            entry["survey_network_cycles"] = dashboard_contract.metric(
+                None, "cycles", "M")
+            entry["survey_total_ns"] = dashboard_contract.metric(
+                None, "ns", "M")
+        fixture_json = json.dumps(firmware)
+        metrics.write_text(fixture_json, encoding="utf-8")
+        baseline = root / "survey.json"
+        baseline.write_text(json.dumps(dashboard_contract.fixture()),
+                            encoding="utf-8")
+        merged = subprocess.run(
+            [sys.executable, str(dashboard), str(metrics),
+             "--peripheral-baseline", str(baseline)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if merged.returncode != 0:
+            print(merged.stderr.decode(errors="replace"), file=sys.stderr)
+            return 1
+        if b"from a SEPARATE run" not in merged.stdout:
+            print("baseline merge produced no provenance line",
+                  file=sys.stderr)
+            return 1
+
+        code, stdout, stderr = session(
+            ["--peripheral-baseline", str(baseline)])
+        if code != 0:
+            print(stderr.decode(errors="replace"), file=sys.stderr)
+            return 1
+        expected = b"before\n" + merged.stdout + b"after\n"
+        if stdout != expected:
+            print("host client did not pass --peripheral-baseline to the "
+                  f"renderer: {stdout!r}", file=sys.stderr)
+            return 1
+
+        missing = subprocess.run(
+            [
+                sys.executable,
+                str(pathlib.Path(sys.argv[1]).resolve()),
+                "--port", "1",
+                "--metrics", str(metrics),
+                "--dashboard", str(dashboard),
+                "--peripheral-baseline", str(root / "absent.json"),
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if missing.returncode != 2 or b"peripheral baseline not found" not in \
+                missing.stderr:
+            print("missing baseline was not rejected before connecting",
                   file=sys.stderr)
             return 1
 

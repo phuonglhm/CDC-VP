@@ -134,7 +134,56 @@ def load_metrics(path: pathlib.Path) -> dict[str, Any]:
                            "M", f"traffic_accounting.{name}")
     for name, metric in data.get("derived_metrics", {}).items():
         require_source(metric, "D", f"derived_metrics.{name}")
+    validate_peripheral_map(data.get("peripheral_map"))
     return data
+
+
+def validate_peripheral_map(peripherals: Any) -> None:
+    """Check the optional peripheral map before anything is rendered.
+
+    The section is optional because a metrics file written by `noc_benchmark`
+    has no SoC floorplan to describe. What is not optional is the labelling: a
+    latency column here may be null, but it may never be anything except [M].
+    Placement is the only part that is static, and it is carried as plain
+    integers so it cannot be mistaken for a measurement.
+    """
+    if peripherals is None:
+        return
+    if not isinstance(peripherals, dict):
+        raise DashboardError("peripheral_map must be a JSON object")
+    reference = require(peripherals, "reference", "peripheral_map")
+    for field in ("name", "x", "y"):
+        require(reference, field, "peripheral_map.reference")
+    blocks = require(peripherals, "blocks", "peripheral_map")
+    if not isinstance(blocks, list):
+        raise DashboardError("peripheral_map.blocks must be an array")
+    seen: set[str] = set()
+    for index, block in enumerate(blocks):
+        where = f"peripheral_map.blocks[{index}]"
+        if not isinstance(block, dict):
+            raise DashboardError(f"{where} must be a JSON object")
+        name = require(block, "name", where)
+        # A duplicated block would double-count in the reader's head even
+        # though each row is individually correct.
+        if name in seen:
+            raise DashboardError(
+                f"peripheral_map lists block {name!r} more than once"
+            )
+        seen.add(name)
+        for field in ("x", "y", "hops"):
+            value = require(block, field, where)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise DashboardError(
+                    f"{where}.{field} must be an integer, got {value!r}"
+                )
+        for field in (
+            "transactions",
+            "network_cycles_mean",
+            "survey_network_cycles",
+            "survey_total_ns",
+        ):
+            require_source(require(block, field, where), "M",
+                           f"{where}.{field}")
 
 
 def metric_value(metric: dict[str, Any]) -> Any:
@@ -279,7 +328,209 @@ def hotspots(data: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
-def render(data: dict[str, Any], top_count: int) -> str:
+def merge_peripheral_baseline(
+    data: dict[str, Any],
+    baseline: dict[str, Any],
+    source: pathlib.Path,
+) -> dict[str, Any]:
+    """Fill this run's empty survey columns from a separate survey run.
+
+    This is sound only because of what the survey columns are: the cost of one
+    directed register read to a block, which is a property of the floorplan and
+    the mesh, not of the workload. A firmware run cannot produce them at all —
+    it is forbidden from issuing synthetic traffic — so without this the two
+    columns are structurally empty rather than merely unmeasured.
+
+    What makes it sound is also what has to be checked. Latency depends on
+    placement, so a baseline whose block set, topology or node assignment
+    differs describes a different SoC and is refused rather than merged. The
+    traffic columns are never touched: those belong to this run alone.
+    """
+    target = data.get("peripheral_map")
+    if target is None:
+        raise DashboardError(
+            "this metrics file has no peripheral_map to merge a baseline into"
+        )
+    donor = baseline.get("peripheral_map")
+    if donor is None:
+        raise DashboardError(f"'{source}' has no peripheral_map")
+
+    if baseline["configuration"].get("timing_mode") != "detailed":
+        raise DashboardError(
+            f"'{source}' was produced in fast mode; its latencies are "
+            "no-contention estimates, not measurements"
+        )
+    if baseline["configuration"]["topology"] != data["configuration"][
+            "topology"]:
+        raise DashboardError(
+            f"'{source}' has a different topology; its per-block latencies "
+            "describe another mesh"
+        )
+
+    donor_blocks = {block["name"]: block for block in donor["blocks"]}
+    if set(donor_blocks) != {block["name"] for block in target["blocks"]}:
+        raise DashboardError(
+            f"'{source}' maps a different set of blocks; the address map "
+            "changed between the two runs"
+        )
+
+    filled = 0
+    available = 0
+    for block in target["blocks"]:
+        other = donor_blocks[block["name"]]
+        if (other["x"], other["y"]) != (block["x"], block["y"]):
+            raise DashboardError(
+                f"block {block['name']!r} sits at "
+                f"({other['x']},{other['y']}) in '{source}' but at "
+                f"({block['x']},{block['y']}) here; latency depends on "
+                "placement"
+            )
+        for field in ("survey_network_cycles", "survey_total_ns"):
+            if other[field].get("value") is None:
+                continue
+            available += 1
+            if block[field].get("value") is None:
+                block[field] = dict(other[field])
+                filled += 1
+        if other.get("survey_accepted") is False:
+            block["survey_accepted"] = False
+
+    if available == 0:
+        raise DashboardError(
+            f"'{source}' carries no survey measurements; run it with "
+            "--mode survey"
+        )
+    return {
+        "path": str(source),
+        "reference": donor["reference"],
+        "filled": filled,
+        "workload": baseline["workload"].get("name", "unknown"),
+        "generated": baseline["provenance"].get("generated_utc", "unknown"),
+    }
+
+
+def optional_cell(metric: dict[str, Any], suffix: str = "",
+                  decimals: int = 3) -> str:
+    """Render a measured cell, or a dash when this run did not measure it.
+
+    A dash is load-bearing. The alternative that keeps suggesting itself is to
+    fill the gap from the no-contention formula, and that would put an [A]
+    estimate in a column labelled [M] for every block the workload never
+    touched.
+    """
+    value = metric.get("value")
+    if value is None:
+        return "-"
+    return format_number(value, decimals) + suffix
+
+
+def peripheral_section(
+    data: dict[str, Any], baseline: dict[str, Any] | None = None
+) -> list[str]:
+    peripherals = data.get("peripheral_map")
+    output = section(6, "PERIPHERAL MAP & LATENCY")
+    if peripherals is None:
+        output.append(
+            "No SoC peripheral map in this file; it was produced by a "
+            "synthetic benchmark rather than by noc_soc."
+        )
+        return output
+
+    reference = peripherals["reference"]
+    blocks = peripherals["blocks"]
+    output.append(
+        f"Hops are from {reference['name']} at "
+        f"({reference['x']},{reference['y']}); another manager sees a "
+        "different distance to the same block."
+    )
+    if baseline is not None:
+        donor = baseline["reference"]
+        output.append(
+            f"Survey columns: {baseline['filled']} cells from a SEPARATE run, "
+            f"{baseline['path']}"
+        )
+        output.append(
+            f"  ({baseline['workload']}, {baseline['generated']}), measured "
+            f"from {donor['name']} at ({donor['x']},{donor['y']}) - not from "
+            f"{reference['name']}, and not from this run's traffic."
+        )
+    output += table(
+        [
+            "Block",
+            "Node",
+            "Hops",
+            "Trans",
+            "Mean net",
+            "Survey net",
+            "Survey total",
+            "Src",
+        ],
+        [
+            [
+                block["name"],
+                f"({block['x']},{block['y']})",
+                str(block["hops"]),
+                optional_cell(block["transactions"], decimals=0),
+                optional_cell(block["network_cycles_mean"], " cyc"),
+                optional_cell(block["survey_network_cycles"], " cyc",
+                              decimals=0),
+                optional_cell(block["survey_total_ns"], " ns", decimals=0),
+                "[M]",
+            ]
+            for block in blocks
+        ],
+    )
+    output.append(
+        "Node and hops are [S] floorplan. 'Trans'/'Mean net' are this run's "
+        "own traffic, network cycles only."
+    )
+    output.append(
+        "'Survey net'/'Survey total' come from one directed register read per "
+        "block and exist in survey mode only;"
+    )
+    output.append(
+        "  the total additionally carries the peripheral's own access "
+        "latency, which the completion observer excludes."
+    )
+    refused = [
+        block["name"] for block in blocks
+        if block.get("survey_accepted") is False
+    ]
+    if refused:
+        output.append(
+            "Register refused by the IP (the latency is still real, the "
+            "register choice was not): " + ", ".join(refused) + "."
+        )
+    untouched = [
+        block["name"] for block in blocks
+        if block["transactions"].get("value") in (0, None)
+    ]
+    if untouched:
+        output.append(
+            f"No traffic from this workload to {len(untouched)} of "
+            f"{len(blocks)} blocks: " + ", ".join(untouched) + "."
+        )
+    # Naming these matters more than it looks: an empty survey cell here is a
+    # block that was never probed, which is not the same statement as a block
+    # that was probed and found fast.
+    unprobed = [
+        block["name"] for block in blocks
+        if block["survey_network_cycles"].get("value") is None
+    ]
+    if unprobed:
+        output.append(
+            f"Never probed by a survey, so no directed-read latency exists "
+            f"for {len(unprobed)} of {len(blocks)} blocks: "
+            + ", ".join(unprobed) + "."
+        )
+    return output
+
+
+def render(
+    data: dict[str, Any],
+    top_count: int,
+    baseline: dict[str, Any] | None = None,
+) -> str:
     config = data["configuration"]
     topology = config["topology"]
     workload = data["workload"]
@@ -486,7 +737,9 @@ def render(data: dict[str, Any], top_count: int) -> str:
         ],
     )
 
-    output += section(6, "HARDWARE DECISION INPUTS")
+    output += peripheral_section(data, baseline)
+
+    output += section(7, "HARDWARE DECISION INPUTS")
     availability = data["availability"]
     output += table(
         ["Metric", "Value", "Reason"],
@@ -518,7 +771,7 @@ def render(data: dict[str, Any], top_count: int) -> str:
         "No DSE winner is selected by this single-configuration report."
     )
 
-    output += section(7, "SUMMARY & CONCLUSIONS")
+    output += section(8, "SUMMARY & CONCLUSIONS")
     if hot:
         peak = hot[0]
         output.append(
@@ -565,6 +818,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=pathlib.Path,
         help="write the report to a file instead of stdout",
     )
+    parser.add_argument(
+        "--peripheral-baseline",
+        type=pathlib.Path,
+        help=(
+            "a --mode survey metrics file whose per-block directed-read "
+            "latencies fill this run's empty survey columns; refused unless "
+            "its topology, block set and placement match"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.top <= 0:
         parser.error("--top must be positive")
@@ -574,7 +836,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        report = render(load_metrics(args.metrics), args.top)
+        data = load_metrics(args.metrics)
+        baseline = None
+        if args.peripheral_baseline is not None:
+            baseline = merge_peripheral_baseline(
+                data, load_metrics(args.peripheral_baseline),
+                args.peripheral_baseline)
+        report = render(data, args.top, baseline)
         if args.output is None:
             sys.stdout.write(report)
         else:

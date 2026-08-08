@@ -32,6 +32,7 @@ under Apache-2.0 and have no direct RTL counterpart:
 
 - `include/floo_noc_model/noc_interconnect.h`;
 - `include/floo_noc_model/axi_lanes.hpp`;
+- `include/floo_noc_model/noc_metrics.hpp`;
 - `include/floo_noc_model/reference_model.hpp`;
 - `src/noc_interconnect.cpp`.
 

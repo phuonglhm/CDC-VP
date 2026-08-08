@@ -1,0 +1,153 @@
+Đọc hiểu NoC Metrics Dashboard - platform noc_soc
+Số liệu trích từ run thật ngày 2026-08-06, firmware FreeRTOS level 128,
+detailed timing, mesh 4x4, network clock 1 ns/cycle.
+
+Dashboard trả lời một câu hỏi mà flat bus không trả lời được:
+"đặt block ở đâu trên mesh thì tốn bao nhiêu, và có chỗ nào nghẽn không".
+
+
+[1] INPUT - cấu hình của run
+	- Ghi lại điều kiện đo. Một con số latency không kèm cấu hình thì không
+	  phải bằng chứng.
+	- Topology 4x4 XY, 3 manager: cpu@(0,0), dma@(0,3), probe@(3,3).
+	- Timing = detailed: mesh chạy từng cycle. Nếu là fast thì mọi số
+	  latency chỉ là estimate no-contention, không phải đo.
+	- Measured 73.729.334 cycles, Warm-up 0, Drained = no.
+	- Drained = no nghĩa là cửa sổ đo kết thúc lúc CPU vẫn đang chạy. Đây là
+	  báo cáo diagnostic, không dùng để chốt lựa chọn cấu hình. Muốn số liệu
+	  chốt thì dùng noc_benchmark (có warm-up, stop, drain, conservation).
+
+
+[2] MEASUREMENT - tổng lượng traffic
+	- 835.149 transaction, 3.282.340 byte payload.
+	- Trung bình 3,9 byte/transaction. Đây là dấu hiệu workload CPU-bound:
+	  chủ yếu instruction fetch và MMIO 4 byte, không phải data streaming.
+	- Payload bandwidth 0,045 GB/s. Con số thấp này là đặc tính workload,
+	  không phải giới hạn của NoC. Xem [5] để thấy mạng còn rỗi tới mức nào.
+	- Jain fairness và average hop count để unavailable vì chỉ tính được cho
+	  synthetic benchmark, nơi mọi manager do tool điều khiển.
+
+
+[3] LATENCY DASHBOARD - phân bố độ trễ theo loại traffic
+	- Đơn vị là network cycle, đã loại access latency của target.
+	- All traffic: mean 10,397, P50 10, P95 11, P99 14. Phân bố rất chụm.
+	- Hai dòng quan trọng nhất là cặp so sánh có kiểm soát:
+		CPU -> RAM khi DMA idle:   816.411 mẫu, mean 10,304
+		CPU -> RAM khi DMA active:   6.014 mẫu, mean 11,456
+	- Chênh 1,152 cycle chính là contention: cùng target, cùng quãng đường,
+	  chỉ khác việc DMA có đang chiếm link hay không. Flat bus không sinh ra
+	  được con số này vì không có link để chia sẻ.
+	- PLIC claim 18,008 và PLIC complete 19,008 tách riêng được là nhờ
+	  completion observer. Hai thao tác này cùng một địa chỉ, chỉ khác chiều
+	  đọc/ghi, nên không counter theo target nào tách nổi.
+	- DMA all mean 17,939, cao hơn CPU vì DMA ở xa RAM hơn (2 hops so với 1)
+	  và phát burst nhiều beat.
+
+
+[4] MANAGER -> TARGET TRAFFIC - ai nói chuyện với ai
+	- CPU -> RAM: 822.425 transaction, chiếm ~98,5% toàn bộ traffic.
+	- CPU -> PLIC 446, CPU -> other MMIO 4.016, DMA -> RAM 8.262.
+	- Ba dòng probe đều bằng 0. Đây không phải bảng trống mà là bằng chứng:
+	  ở firmware mode, synthetic probe không phát bất kỳ transaction nào.
+	  Hợp đồng ownership này có negative control canh
+	  (firmware-survey-ownership-broken).
+
+
+[5] HOTSPOTS - link nào đang chịu tải
+	- Peak: response (0,1) South, 954.632 flit, utilisation 1,295%,
+	  stall 0,000%, FIFO high-water 1.
+	- Toàn bộ 10 dòng đều Status OK, stall 0%, FIFO chưa bao giờ quá 1/2.
+	- Kết luận: mesh 4x4 thừa sức cho workload này, NoC không phải bottleneck.
+	  Muốn tìm điểm gãy thì phải ép tải bằng noc_benchmark.
+	- Hai link nặng nhất đều nằm ở cột x=0, đúng tuyến CPU(0,0) <-> RAM(0,1),
+	  khớp với [4].
+
+
+[6] PERIPHERAL MAP & LATENCY - bảng floorplan
+	- Mỗi block mapped kèm node, hop count, và chi phí truy cập.
+	- Bốn cột latency đến từ hai nguồn khác nhau, không được lẫn:
+		Trans / Mean net : traffic thật của run này, chỉ network cycle.
+		Survey net / total: một directed register read cho mỗi block, lấy từ
+		                    run --mode survey riêng, nạp qua
+		                    --peripheral-baseline.
+	- Cột Survey total mang thêm access latency của chính IP. Lấy hiệu
+	  total - net ra được độ trễ nội tại: spi0 và qspi0 20 ns, uart0 và trng0
+	  10 ns, i2c0 và timer0 0 ns.
+	- Cảnh báo quan trọng, dashboard in ngay trên đầu bảng: cột Hops tính từ
+	  cpu(0,0) còn cột Survey đo từ probe(3,3). Không so trực tiếp hai cột.
+	  Ví dụ ram: Mean net 10,388 (1 hop từ CPU) và Survey net 27 (5 hop từ
+	  probe) đều đúng, chỉ là hai quãng đường khác nhau.
+	- Latency đo được bám sát floor lý thuyết 4*hops + 6:
+		ram    1 hop  floor 10  đo 10,388
+		uart0  1 hop  floor 10  đo 10,496
+		dma0   2 hops floor 14  đo 14,441
+		plic   3 hops floor 18  đo 18,323
+		timer0 4 hops floor 22  đo 22,519
+	  Ở tải thấp, detailed mode hội tụ về đúng no-contention estimate. Điều
+	  này xác nhận latency đang bị chi phối bởi khoảng cách chứ không phải
+	  tranh chấp.
+	- Đánh giá floorplan: RAM đặt cách CPU 1 hop trong khi mang 98,5% traffic
+	  là đặt đúng chỗ. timer0 nằm xa 4 hops nhưng chỉ 243 transaction, tổng
+	  phí thêm khoảng 3.000 cycle trên 73,7 triệu cycle, không đáng đổi.
+	- 17/23 block không có traffic: FreeRTOS level 128 chỉ dùng RAM, CLINT,
+	  PLIC, UART0, TIMER0, DMA0. Ô trống là sự thật về firmware, không phải
+	  thiếu số liệu.
+	- 3 block không có cột Survey: bootrom không được survey đọc; CLINT và
+	  PLIC cố tình không probe vì đọc thanh ghi claim của PLIC sẽ claim một
+	  interrupt, tức là probe làm thay đổi chính cái máy đang đo.
+
+
+[7] HARDWARE DECISION INPUTS
+	- Area, Power, Energy/flit đều unavailable, kèm lý do.
+	- Đây là chủ ý: chưa có RTL synthesis và power flow đã calibrate thì
+	  không điền số. Không dùng placeholder.
+
+
+[8] SUMMARY & CONCLUSIONS
+	- Peak link 1,295% utilisation, 0% stall.
+	- CPU RAM contention delta 1,152 cycle.
+	- Ba dòng WARNING nhắc lại giới hạn của run: chưa drain, chưa có
+	  area/power, hash binary/firmware do archival runner ghi chứ không phải
+	  JSON writer này.
+	- Legend: [M] measured, [D] derived, [A] analytic, [S] static/spec.
+	  Mọi ô latency trong dashboard đều [M] hoặc để trống. Không có ô nào
+	  được lấp bằng công thức estimate.
+
+
+Kết luận cho run này
+	- Workload FreeRTOS level 128 là CPU-bound, không phải bandwidth-bound.
+	- NoC 4x4 chưa hề là bottleneck: utilisation cao nhất 1,3%, stall 0%.
+	- Latency quyết định bởi placement, không bởi contention. Contention có
+	  tồn tại, đo được, và bằng 1,152 cycle khi DMA hoạt động.
+	- Floorplan hiện tại hợp lý với workload này.
+
+
+Những gì báo cáo này KHÔNG khẳng định
+	- Không phải RTL equivalence. Các block timing bên dưới đã signed riêng
+	  lẻ, nhưng lớp TLM adapter không có RTL counterpart.
+	- Không phải kết quả DSE. Cửa sổ đo chưa drain, chưa có warm-up.
+	- Không có ngưỡng pass/fail nào. Mọi số ở đây là quan sát cho cửa sổ cố
+	  định này.
+	- Fast mode không thay thế được báo cáo này: nó không mô hình contention,
+	  back-pressure, occupancy hay clock gating.
+
+
+Cách tái tạo
+	# baseline floorplan, chạy một lần
+	./build/platforms/noc_soc/noc_soc --mode survey \
+	  --noc-timing detailed --sim-us 200 --noc-metrics /tmp/noc_survey.json
+
+	# terminal 1
+	./build/platforms/noc_soc/noc_soc --mode firmware \
+	  --noc-timing detailed --fw fw/freertos_noc_soc/freertos_noc_soc.elf \
+	  --sim-us 10000000 --noc-metrics /tmp/noc_cli_live.json \
+	  --uart0-socket 5555 --uart0-wait
+
+	# terminal 2, đợi "FreeRTOS NoC CLI ready" rồi gõ noc_dashboard
+	python3 tools/noc_cli.py --port 5555 \
+	  --metrics /tmp/noc_cli_live.json \
+	  --peripheral-baseline /tmp/noc_survey.json
+
+	# hoặc render offline từ file JSON
+	python3 tools/noc_dashboard.py /tmp/noc_cli_live.json \
+	  --peripheral-baseline /tmp/noc_survey.json

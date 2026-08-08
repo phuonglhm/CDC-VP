@@ -32,6 +32,10 @@ struct options {
     bool uart0_rx_file_seen = false;
     bool uart0_rx_delay_seen = false;
     bool metrics_path_seen = false;
+    /// `--noc-baseline` given explicitly, as opposed to the observer that
+    /// `--noc-metrics` switches on as a side effect. The text baseline artifact
+    /// stays firmware-only; the JSON does not.
+    bool baseline_requested = false;
     bool help = false;
 };
 
@@ -127,6 +131,7 @@ options parse_options(int argc, char* argv[])
             result.timing_seen = true;
         } else if (arg == "--noc-baseline") {
             result.measure_baseline = true;
+            result.baseline_requested = true;
         } else if (arg == "--noc-metrics") {
             if (result.metrics_path_seen) {
                 throw std::invalid_argument(
@@ -187,10 +192,16 @@ options parse_options(int argc, char* argv[])
         throw std::invalid_argument(
             "firmware mode requires --fw <image.elf>");
     }
-    // The baseline report is written from the firmware-mode path, and survey
-    // mode owns its own synthetic traffic, so measuring there would classify
-    // the probe's transactions as if they were a workload's.
-    if (result.measure_baseline && result.mode != noc_soc_mode::firmware) {
+    // The text baseline report is written from the firmware-mode path only. It
+    // describes a software workload, and survey mode has none — its traffic is
+    // the synthetic probe.
+    //
+    // `--noc-metrics` is deliberately not restricted the same way. The JSON
+    // names its own workload kind, so a survey run is labelled `synthetic`
+    // rather than passed off as firmware, and the survey is the only run that
+    // can measure a peripheral's own access latency for the dashboard's
+    // peripheral map.
+    if (result.baseline_requested && result.mode != noc_soc_mode::firmware) {
         throw std::invalid_argument(
             "--noc-baseline requires --mode firmware");
     }

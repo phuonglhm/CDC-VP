@@ -83,10 +83,19 @@ def wait_for_snapshot(
 
 
 def render_dashboard(
-    dashboard: pathlib.Path, metrics: pathlib.Path
+    dashboard: pathlib.Path,
+    metrics: pathlib.Path,
+    peripheral_baseline: pathlib.Path | None = None,
 ) -> int:
+    command = [sys.executable, str(dashboard), str(metrics)]
+    # Passed straight through rather than merged here. The renderer owns the
+    # topology, block-set and placement checks that make a cross-run merge
+    # legitimate, and duplicating them in the client would give two answers to
+    # the same question.
+    if peripheral_baseline is not None:
+        command += ["--peripheral-baseline", str(peripheral_baseline)]
     result = subprocess.run(
-        [sys.executable, str(dashboard), str(metrics)],
+        command,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -115,6 +124,15 @@ def parse_args() -> argparse.Namespace:
         type=pathlib.Path,
         default=pathlib.Path(__file__).resolve().with_name("noc_dashboard.py"),
     )
+    parser.add_argument(
+        "--peripheral-baseline",
+        type=pathlib.Path,
+        help=(
+            "a --mode survey metrics file supplying the per-block "
+            "directed-read latencies a firmware run cannot measure; passed to "
+            "noc_dashboard.py, which refuses a mismatched floorplan"
+        ),
+    )
     parser.add_argument("--snapshot-timeout", type=float, default=10.0)
     return parser.parse_args()
 
@@ -130,6 +148,14 @@ def main() -> int:
     if not args.dashboard.is_file():
         print(f"noc_cli: dashboard tool not found: {args.dashboard}",
               file=sys.stderr)
+        return 2
+    # Checked before the session opens rather than at the first `noc_dashboard`
+    # command. A typo here would otherwise surface minutes into an interactive
+    # run, after the firmware had already reached CLI ready.
+    if args.peripheral_baseline is not None \
+            and not args.peripheral_baseline.is_file():
+        print("noc_cli: peripheral baseline not found: "
+              f"{args.peripheral_baseline}", file=sys.stderr)
         return 2
 
     try:
@@ -187,7 +213,9 @@ def main() -> int:
                         print(f"\nHOST DASHBOARD ERROR: {error}", file=sys.stderr)
                         failed = True
                         continue
-                    if render_dashboard(args.dashboard, args.metrics) != 0:
+                    if render_dashboard(
+                            args.dashboard, args.metrics,
+                            args.peripheral_baseline) != 0:
                         failed = True
     except KeyboardInterrupt:
         return 130

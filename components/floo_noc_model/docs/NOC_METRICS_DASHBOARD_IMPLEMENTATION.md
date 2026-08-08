@@ -291,6 +291,109 @@ ctest --test-dir /tmp/cdc_vp_noc_metrics \
   --output-on-failure -R 'noc_soc_metrics|noc_soc_sweep|noc_soc_cli_dashboard'
 ```
 
+## 7.1 Peripheral map section (2026-08-06)
+
+Dashboard section `[6] PERIPHERAL MAP & LATENCY` reports every mapped target of
+`noc_soc` with its node, its hop distance and whatever latency the run could
+measure. `HARDWARE DECISION INPUTS` and `SUMMARY & CONCLUSIONS` moved to `[7]`
+and `[8]`.
+
+The section exists because a flat bus has no equivalent of it: on `bus_router`
+every peripheral is equidistant, and here the placement is what decides the
+latency. It is optional in the schema — a `noc_benchmark` file has no SoC
+floorplan and renders a one-line note instead.
+
+Two measurement paths fill the same rows, and they are not interchangeable:
+
+| Columns | Source | Available in |
+|---|---|---|
+| `Trans`, `Mean net` | the passive completion observer, per block | both modes |
+| `Survey net`, `Survey total` | one directed register read per block | survey mode only |
+
+`Survey total` is the only number that carries a peripheral's **own** access
+latency. The completion observer cannot supply it: a target's delay is charged
+as a hold-off at its node and is excluded from `latency_cycles` by design. That
+is why the survey columns were not simply derived from the observer.
+
+`hops` needs a reference port, because a hop count is a property of a pair of
+nodes. The file names it — probe `(3,3)` in survey mode, CPU `(0,0)` in firmware
+mode — rather than leaving the reader to assume it. Comparing a CPU-side hop
+count against a probe-side latency is the specific mistake the survey's own
+console note warns about.
+
+Every latency cell is `[M]` or null. A block the workload never touched renders
+`-`, never a no-contention estimate: filling those gaps from `4*hops+6` would
+put an `[A]` value in a column labelled `[M]`. `require_source` rejects a
+relabelled cell, and `test_noc_dashboard.py` injects that mutation.
+
+`--noc-metrics` is now accepted in **survey** mode, since the survey is the only
+run allowed to issue a directed read at every block. The JSON labels itself
+`"kind": "synthetic"` there. `--noc-baseline`, which writes the text measurement
+artifact for a software workload, remains firmware-only.
+
+Firmware mode is unchanged with respect to synthetic traffic: it still issues
+none, and the block rows come only from observing firmware's own transactions.
+
+### Merging a survey baseline
+
+Because a firmware run cannot produce the survey columns *at all*, they are
+structurally empty there rather than merely unmeasured. `--peripheral-baseline`
+fills them from a separate survey run:
+
+```bash
+python3 tools/noc_dashboard.py /tmp/noc_fw.json \
+  --peripheral-baseline /tmp/noc_survey.json
+```
+
+This is sound only because of what those columns are: the cost of one directed
+register read to a block, which is a property of the floorplan and the mesh
+rather than of the workload. What makes it sound is also what is enforced — the
+baseline is refused unless its topology, block set and every block's node match,
+and unless it was produced in detailed mode, since a fast-mode file would smuggle
+a no-contention estimate into a measured column. The traffic columns are never
+merged; they belong to the run being reported.
+
+The header states the provenance on every render: how many cells came from
+another run, which file, its workload and timestamp, and the reference port it
+measured from — `probe (3,3)`, which is **not** the `cpu (0,0)` the hop column
+uses. Reading a probe-side latency against a CPU-side hop count is the specific
+error this line exists to prevent.
+
+`tools/noc_cli.py` takes the same option and passes it through to the renderer,
+so the live FreeRTOS `noc_dashboard` command gets the merged table too. The
+client does not re-implement the merge checks — the renderer owns them, and two
+answers to the same question is how they drift apart. `test_noc_cli.py` compares
+the session output byte-for-byte against the renderer invoked directly with the
+same flag, because a dropped flag still renders a perfectly valid report, just
+with two empty columns; that mutation is verified to fail the test.
+
+Three blocks stay empty even with a baseline, and the footnote names them:
+`bootrom` is never read by the survey, and **CLINT and PLIC are deliberately not
+probed** — reading the PLIC claim register *claims* an interrupt, so a latency
+probe there would change the machine it is measuring. RAM is recorded from the
+survey's existing one-beat read rather than by adding an access.
+
+Reproduce both:
+
+```bash
+./build/platforms/noc_soc/noc_soc --mode survey \
+  --noc-timing detailed --sim-us 200 --noc-metrics /tmp/noc_survey.json
+python3 tools/noc_dashboard.py /tmp/noc_survey.json
+
+./build/platforms/noc_soc/noc_soc --mode firmware \
+  --noc-timing detailed --fw fw/freertos_noc_soc/freertos_noc_soc.elf \
+  --sim-us 40000 --noc-metrics /tmp/noc_fw.json
+python3 tools/noc_dashboard.py /tmp/noc_fw.json
+```
+
+Evidence, 2026-08-06: the survey run reproduces the console table exactly
+(uart0 5 hops 26 cyc/36 ns, uart1 1 hop 10 cyc/20 ns), and per-block counts
+reconcile with the global total and with the existing `target_*` classes —
+84,616 completions split across blocks with none unattributed. Gates re-run:
+`test_noc_dashboard.py`, `test_noc_cli.py`, `test_noc_sweep.py`, D3-D5 metrics
+regression, 10/10 D3-D6 mutation controls, the platform firmware/survey
+regression and the five-level FreeRTOS regression.
+
 ## 8. Remaining optional extensions
 
 These are not blockers for D0-D6 v1:

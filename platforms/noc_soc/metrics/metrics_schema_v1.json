@@ -171,6 +171,18 @@
         "delivered_transactions": { "$ref": "#/$defs/metric" }
       }
     },
+    "peripheral_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "blocks"],
+      "properties": {
+        "reference": { "$ref": "#/$defs/placedEndpoint" },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mappedBlock" }
+        }
+      }
+    },
     "physical_meshes": {
       "type": "array",
       "minItems": 2,
@@ -213,6 +225,31 @@
         "name": { "type": "string" },
         "x": { "type": "integer", "minimum": 0 },
         "y": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "mappedBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "x",
+        "y",
+        "hops",
+        "transactions",
+        "network_cycles_mean",
+        "survey_network_cycles",
+        "survey_total_ns"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "hops": { "type": "integer", "minimum": 0 },
+        "transactions": { "$ref": "#/$defs/metric" },
+        "network_cycles_mean": { "$ref": "#/$defs/metric" },
+        "survey_network_cycles": { "$ref": "#/$defs/metric" },
+        "survey_total_ns": { "$ref": "#/$defs/metric" },
+        "survey_accepted": { "type": "boolean" }
       }
     },
     "metric": {

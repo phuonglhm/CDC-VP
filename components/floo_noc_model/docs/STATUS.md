@@ -1,5 +1,18 @@
 # Implementation status
 
+## Architecture document technical sign-off v1.4
+
+**PASS, closed 2026-08-07.** The mandatory closure gate was executed on a
+manifest-bound working-tree snapshot: 41/41 SystemC component tests, 51/51
+mutation controls detected with zero missed, and 12/12 isolated RTL
+cross-check runners against clean FlooNoC `9a6972a`. Raw transcripts, complete
+hashes, scope qualifications and the 132-file tested-source manifest are under
+`docs/signoff/v1.4/`; `SIGNOFF.md` is the audit entry point.
+
+This is block-level RTL sign-off plus model-level verification of the TLM
+integration layer. It is not a claim of monolithic manager-to-subordinate RTL
+equivalence, silicon timing/PPA, or support for deferred v0 features.
+
 ## Completed
 
 - P0 scope frozen against FlooNoC revision `9a6972a`.

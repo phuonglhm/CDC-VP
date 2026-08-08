@@ -261,6 +261,90 @@ constexpr node kIoNode   {2, 3};   // rtc0, adc0, gpio0
 
 constexpr unsigned kTargetCount = 23;  // 20 peripherals, CLINT, PLIC, BOOTROM
 
+/// Every mapped target with its address window and its node, in report order.
+///
+/// One table with two consumers, deliberately. Survey mode probes these blocks
+/// and measures a whole `b_transport`, so it can report the peripheral's own
+/// access latency as well as the network's. Firmware mode probes nothing — it
+/// owes the zero-synthetic-transaction contract — so the same rows are filled
+/// from the passive completion observer, which sees only network cycles.
+///
+/// Two guards keep this list honest, because it is maintained beside the
+/// `add_target` calls rather than generated from them:
+///
+/// - a `static_assert` that it has exactly `kTargetCount` entries, so adding a
+///   target without adding a row fails the build;
+/// - `require_metrics_consistent()` rejects a per-block total larger than the
+///   global one, which is what overlapping windows would produce.
+///
+/// Neither catches a row pointing at the wrong node or the wrong base address.
+/// The survey does: it probes every block through the real address map, and
+/// `[6] PERIPHERAL MAP & LATENCY` then shows the observer's mean beside the
+/// probe's own measurement, where a mismatched window shows up as a block that
+/// was probed but recorded no traffic.
+struct block_info {
+    const char* name;
+    std::uint64_t base;
+    std::uint64_t size;
+    node where;
+};
+
+constexpr block_info kBlockMap[] = {
+    {"ram",     kRamBase,     kRamSize,     kRamNode},
+    {"bootrom", kBootromBase, kBootromSize, kBootNode},
+    {"clint",   kClintBase,   kClintSize,   kUart0Node},
+    {"plic",    kPlicBase,    kPlicSize,    kBootNode},
+    {"uart0",   kUart0,  kMmio, kUart0Node},
+    {"i2c0",    kI2c0,   kMmio, kSerial0},
+    {"spi0",    kSpi0,   kMmio, kSerial0},
+    {"timer0",  kTimer0, kMmio, kTimer0N},
+    {"wdt0",    kWdt0,   kMmio, kCtrlNode},
+    {"pwm0",    kPwm0,   kMmio, kCtrlNode},
+    {"dma0",    kDma0,   kMmio, kDmaRegs},
+    {"trng0",   kTrng0,  kMmio, kTrngNode},
+    {"cmu0",    kCmu0,   kMmio, kClkNode},
+    {"dmic0",   kDmic0,  kMmio, kClkNode},
+    {"otp0",    kOtp0,   kMmio, kBootNode},
+    {"qspi0",   kQspi0,  kMmio, kBootNode},
+    {"uart1",   kUart1,  kMmio, kUart1Node},
+    {"i2c1",    kI2c1,   kMmio, kSerial1},
+    {"spi1",    kSpi1,   kMmio, kSerial1},
+    {"timer1",  kTimer1, kMmio, kTimer1N},
+    {"rtc0",    kRtc0,   kMmio, kIoNode},
+    {"adc0",    kAdc0,   kMmio, kIoNode},
+    {"gpio0",   kGpio0,  kMmio, kIoNode},
+};
+
+constexpr unsigned kBlockCount =
+    static_cast<unsigned>(sizeof(kBlockMap) / sizeof(kBlockMap[0]));
+
+static_assert(kBlockCount == kTargetCount,
+              "the reported block map must cover every placed target");
+
+/// Manhattan distance in mesh nodes. Under XY routing this is the hop count.
+constexpr unsigned manhattan_hops(node from, node to)
+{
+    const auto dx = from.x > to.x ? from.x - to.x : to.x - from.x;
+    const auto dy = from.y > to.y ? from.y - to.y : to.y - from.y;
+    return dx + dy;
+}
+
+/// Index into `kBlockMap`, or `kBlockCount` when the address is unmapped.
+///
+/// An unmapped address is not an error here: the survey deliberately issues one
+/// to prove it is refused rather than routed, and that access must not be
+/// charged to a neighbouring block.
+inline unsigned block_index(std::uint64_t address)
+{
+    for (unsigned index = 0; index < kBlockCount; ++index) {
+        const auto& block = kBlockMap[index];
+        if (address >= block.base && address - block.base < block.size) {
+            return index;
+        }
+    }
+    return kBlockCount;
+}
+
 /// Supplied by CMake so a measurement baseline records what it was built with.
 /// A latency number from a Debug build means something different from the same
 /// number in Release, and an artifact that does not say which is not evidence.
@@ -378,6 +462,26 @@ public:
     std::array<
         std::array<transaction_metrics, kTargetMetricCount>, 3> flow_stats;
 
+    /// Per-block traffic, keyed by `kBlockMap`. Filled by the completion
+    /// observer in either mode, so a firmware run reports the blocks its own
+    /// software actually touched rather than a synthetic walk of the map.
+    std::array<transaction_metrics, kBlockCount> block_stats;
+
+    /// What survey mode's directed register read cost, per block.
+    ///
+    /// `total` is the whole `b_transport`, so it carries the peripheral's own
+    /// access latency; `network_cycles` is the interconnect's share alone. The
+    /// completion observer cannot supply the first of those — it reports
+    /// network cycles with the target hold-off already excluded — which is why
+    /// this is recorded separately instead of derived from `block_stats`.
+    struct block_survey_result {
+        bool measured = false;
+        bool accepted = true;
+        std::uint64_t network_cycles = 0;
+        sc_core::sc_time total{sc_core::SC_ZERO_TIME};
+    };
+    std::array<block_survey_result, kBlockCount> block_survey;
+
     /// Modeled time from the DMA channel's architectural start transition to
     /// the completion interrupt asserting. The start comes from dma_tlm's
     /// passive channel observer; using completion of the CPU's DBGCMD write
@@ -415,6 +519,10 @@ public:
         all_stats.add(done.length, done.latency_cycles);
         const unsigned target = target_metric_index(done.address);
         target_stats[target].add(done.length, done.latency_cycles);
+        const unsigned block = block_index(done.address);
+        if (block < kBlockCount) {
+            block_stats[block].add(done.length, done.latency_cycles);
+        }
         if (done.port < manager_stats.size()) {
             manager_stats[done.port].add(done.length, done.latency_cycles);
             flow_stats[done.port][target].add(
@@ -628,6 +736,24 @@ public:
                     "noc_soc: target metric counter overflow or invalid "
                     "histogram");
             }
+        }
+        // Per-block counts must not exceed the global total. They are a
+        // partition of the mapped traffic, so an over-count means one
+        // completion was attributed to two blocks — the failure mode an
+        // overlapping window in `kBlockMap` would produce.
+        std::uint64_t block_total = 0;
+        for (const auto& block : block_stats) {
+            if (!block.valid()) {
+                throw std::runtime_error(
+                    "noc_soc: per-block metric counter overflow or invalid "
+                    "histogram");
+            }
+            block_total += block.transactions();
+        }
+        if (block_total > all_stats.transactions()) {
+            throw std::runtime_error(
+                "noc_soc: per-block transaction counts exceed the global "
+                "total; the block map windows overlap");
         }
         for (const auto& manager : flow_stats) {
             for (const auto& flow : manager) {
@@ -877,6 +1003,82 @@ public:
         out << "]}";
     }
 
+    /// The peripheral floorplan with whatever latency this run can support.
+    ///
+    /// The hop column needs one reference port, because hops are a property of
+    /// a *pair* of nodes. Survey mode issues everything from the probe at
+    /// (3,3); firmware traffic is dominated by the CPU at (0,0). Naming the
+    /// reference in the file rather than assuming it is what stops the reader
+    /// comparing a CPU-side hop count against a probe-side latency — the
+    /// mistake the survey's own console note warns about.
+    ///
+    /// Placement (`x`, `y`, `hops`) is static floorplan arithmetic and is
+    /// written as plain integers. Every latency field is `[M]`, and is null
+    /// when this run did not measure it: a firmware run leaves the survey
+    /// columns null, and a block no software touched leaves the traffic
+    /// columns null. Nothing here is estimated to fill a gap.
+    void write_peripheral_map(std::ostream& out) const
+    {
+        const bool firmware = mode == noc_soc_mode::firmware;
+        const node reference = firmware ? kCpuNode : kProbeNode;
+
+        out << "\"peripheral_map\":{\"reference\":{\"name\":"
+            << (firmware ? "\"cpu\"" : "\"probe\"")
+            << ",\"x\":" << reference.x << ",\"y\":" << reference.y
+            << "},\"blocks\":[";
+        for (unsigned index = 0; index < kBlockCount; ++index) {
+            const auto& block = kBlockMap[index];
+            const auto& survey = block_survey[index];
+            const auto& traffic = block_stats[index];
+            if (index != 0) {
+                out << ',';
+            }
+            out << "{\"name\":" << json_escape(block.name)
+                << ",\"x\":" << block.where.x
+                << ",\"y\":" << block.where.y
+                << ",\"hops\":" << manhattan_hops(reference, block.where)
+                << ",\"transactions\":";
+            write_metric(
+                out, static_cast<double>(traffic.transactions()),
+                "transactions", "M");
+            out << ",\"network_cycles_mean\":";
+            if (traffic.transactions() != 0) {
+                write_metric(
+                    out, traffic.latency().mean(), "cycles", "M",
+                    traffic.transactions(),
+                    "mean interconnect cycles, target hold-off excluded");
+            } else {
+                write_null_metric(out, "cycles", "M");
+            }
+            out << ",\"survey_network_cycles\":";
+            if (survey.measured) {
+                write_metric(
+                    out, static_cast<double>(survey.network_cycles), "cycles",
+                    "M", 1, "directed single-register read, network only");
+            } else {
+                write_null_metric(out, "cycles", "M");
+            }
+            out << ",\"survey_total_ns\":";
+            if (survey.measured) {
+                write_metric(
+                    out,
+                    survey.total / sc_core::sc_time(1, sc_core::SC_NS),
+                    "ns", "M", 1,
+                    "directed single-register read, network plus the "
+                    "peripheral's own access latency");
+            } else {
+                write_null_metric(out, "ns", "M");
+            }
+            // Only meaningful alongside a survey measurement: a refusal still
+            // travels the network both ways, so its latency is real while its
+            // register choice was wrong.
+            out << ",\"survey_accepted\":"
+                << (survey.measured && !survey.accepted ? "false" : "true")
+                << '}';
+        }
+        out << "]}";
+    }
+
     void write_metrics_json(
         const cdc::components::noc_interconnect::detailed_counters& counters)
     {
@@ -945,8 +1147,14 @@ public:
             << ",\"y\":" << kDmaNode.y << "},"
             << "{\"name\":\"probe\",\"x\":" << kProbeNode.x
             << ",\"y\":" << kProbeNode.y << "}]},\n"
-            << "\"workload\":{\"name\":\"FreeRTOS concurrent\","
-               "\"kind\":\"firmware\",\"seed\":null},\n"
+            // Survey mode may now write this file too, and it is a synthetic
+            // walk of the peripheral map, not a firmware workload. Saying
+            // "firmware" there would misdescribe the only traffic in the run.
+            << "\"workload\":{\"name\":"
+            << (mode == noc_soc_mode::firmware
+                    ? "\"FreeRTOS concurrent\",\"kind\":\"firmware\""
+                    : "\"synthetic peripheral survey\",\"kind\":\"synthetic\"")
+            << ",\"seed\":null},\n"
             << "\"measurement_window\":{"
             << "\"warmup_cycles\":0,\"start_cycle\":0,"
             << "\"end_cycle\":" << modeled_cycles << ','
@@ -994,7 +1202,9 @@ public:
             write_transaction_metrics(
                 out, *classes[index].metrics, classes[index].name);
         }
-        out << "]},\n\"physical_meshes\":[";
+        out << "]},\n";
+        write_peripheral_map(out);
+        out << ",\n\"physical_meshes\":[";
         write_mesh(out, "request", counters.request);
         out << ',';
         write_mesh(out, "response", counters.response);
@@ -1188,9 +1398,7 @@ public:
 private:
     static unsigned hops(node from, node to)
     {
-        const auto dx = from.x > to.x ? from.x - to.x : to.x - from.x;
-        const auto dy = from.y > to.y ? from.y - to.y : to.y - from.y;
-        return dx + dy;
+        return manhattan_hops(from, to);
     }
 
     void record_synthetic_access(bool write, std::uint64_t address)
@@ -1511,6 +1719,20 @@ private:
         std::memset(buffer.data(), 0, buffer.size());
         const auto ram_read =
             access(false, kSurveyScratch, buffer.data(), sizeof(pattern));
+        // RAM's row in the reported block map. It is the one memory-like block
+        // the survey already reads, so it costs nothing extra to record. The
+        // boot ROM is not read at all here, and CLINT and PLIC are deliberately
+        // never probed: reading the PLIC claim register *claims* an interrupt,
+        // so a latency probe there would change the machine it is measuring.
+        {
+            const unsigned block = block_index(kSurveyScratch);
+            if (block < kBlockCount) {
+                block_survey[block] = block_survey_result{
+                    true, true,
+                    noc != nullptr ? noc->last_latency_cycles() : 0,
+                    ram_read};
+            }
+        }
         std::uint64_t read_back = 0;
         std::memcpy(&read_back, buffer.data(), sizeof(read_back));
         if (read_back != pattern) {
@@ -1569,11 +1791,22 @@ private:
             bool accepted = true;
             const auto latency =
                 probe(entry.base + entry.offset, entry.width, accepted);
+            const std::uint64_t network =
+                noc != nullptr ? noc->last_latency_cycles() : 0;
             results.push_back(probe_result{
                 entry.name, entry.where, hops(kProbeNode, entry.where),
-                latency,
-                noc != nullptr ? noc->last_latency_cycles() : 0,
-                accepted});
+                latency, network, accepted});
+
+            // Same numbers into the reported block map. `last_latency_cycles()`
+            // is safe to read here and only here: the survey is the only
+            // issuer in this phase, so the most recent completion is this
+            // probe's. Firmware mode has concurrent managers and must use the
+            // observer instead.
+            const unsigned block = block_index(entry.base + entry.offset);
+            if (block < kBlockCount) {
+                block_survey[block] = block_survey_result{
+                    true, accepted, network, latency};
+            }
         }
 
         // ── An unmapped address must be reported, not routed ────────────────
@@ -1738,6 +1971,16 @@ private:
             throw std::runtime_error(
                 "noc_soc: a five-hop peripheral did not cost the network more "
                 "than a one-hop one");
+        }
+
+        // The survey is the only run that can measure a peripheral's own
+        // access latency, because it is the only one allowed to issue a
+        // directed read at every block. Publishing the same JSON the firmware
+        // path publishes is what lets one dashboard render both.
+        if (!metrics_path.empty() && timing != noc_timing_mode::fast) {
+            require_metrics_consistent();
+            write_metrics_json(noc->detailed_counter_snapshot());
+            std::cout << "\n  metrics JSON: " << metrics_path << '\n';
         }
 
         sc_core::sc_stop();

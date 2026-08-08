@@ -66,6 +66,35 @@ cmake --build build --target noc_soc noc_benchmark --parallel
 window normally ends while the CPU is still active, so it is diagnostic and is
 reported as not drained.
 
+The same option is accepted in **survey** mode, where the JSON labels itself
+`"kind": "synthetic"`. The reason is dashboard section `[6] PERIPHERAL MAP &
+LATENCY`: survey mode is the only run allowed to issue a directed register read
+at every block, so it is the only one that can report a peripheral's **own**
+access latency alongside the network's. Firmware mode fills the same rows from
+the passive completion observer, which reports network cycles only, and issues
+no synthetic traffic to do it. Blocks the workload never touched render `-`
+rather than an estimate.
+
+`--noc-baseline`, which writes the text measurement artifact for a software
+workload, remains firmware-only.
+
+To see all four latency columns in a firmware report, hand the dashboard a
+survey run as a baseline:
+
+```bash
+./build/platforms/noc_soc/noc_soc --mode survey \
+  --noc-timing detailed --sim-us 200 --noc-metrics /tmp/noc_survey.json
+
+python3 tools/noc_dashboard.py /tmp/noc_fw.json \
+  --peripheral-baseline /tmp/noc_survey.json
+```
+
+The merge is refused unless the topology, block set and every block's node
+match, and unless the baseline is a detailed run. The header records that the
+survey columns came from a different run and from the probe port, not from the
+CPU the hop column uses. CLINT and PLIC stay empty on purpose: reading the PLIC
+claim register claims an interrupt, so probing it would change the machine.
+
 The FreeRTOS CLI can request the same complete dashboard through the UART TCP
 bridge. This is host-assisted because firmware cannot execute a host Python
 process:
@@ -96,8 +125,14 @@ Then connect with the dashboard-aware client instead of `nc`:
 ```bash
 python3 tools/noc_cli.py \
   --port 5555 \
-  --metrics /tmp/noc_cli_live.json
+  --metrics /tmp/noc_cli_live.json \
+  --peripheral-baseline /tmp/noc_survey.json
 ```
+
+`--peripheral-baseline` is optional and is passed straight to
+`noc_dashboard.py`. Without it, section `[6]`'s two survey columns are empty in
+a firmware session, because firmware mode issues no synthetic traffic and so
+cannot probe a peripheral directly.
 
 After `FreeRTOS NoC CLI ready`, enter `noc_dashboard`. The renderer and schema
 are identical to the standalone Python flow. The live firmware window remains

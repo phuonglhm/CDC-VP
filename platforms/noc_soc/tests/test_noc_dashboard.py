@@ -63,6 +63,35 @@ def mesh(channel):
     }
 
 
+def block(name, x, y, hops, transactions, mean, survey_net, survey_total,
+          accepted=True):
+    return {
+        "name": name,
+        "x": x,
+        "y": y,
+        "hops": hops,
+        "transactions": metric(transactions, "transactions", "M"),
+        "network_cycles_mean": metric(mean, "cycles", "M"),
+        "survey_network_cycles": metric(survey_net, "cycles", "M"),
+        "survey_total_ns": metric(survey_total, "ns", "M"),
+        "survey_accepted": accepted,
+    }
+
+
+def peripheral_map():
+    return {
+        "reference": {"name": "probe", "x": 3, "y": 3},
+        "blocks": [
+            # Measured on both paths.
+            block("uart0", 1, 0, 5, 12, 11.5, 26, 36),
+            # Surveyed, but this workload never touched it.
+            block("spi0", 2, 0, 4, 0, None, 23, 43, accepted=False),
+            # Firmware traffic only: no survey columns.
+            block("clint", 1, 0, 5, 400, 9.25, None, None),
+        ],
+    }
+
+
 def fixture():
     return {
         "schema": "floo-noc-metrics-v1",
@@ -93,6 +122,7 @@ def fixture():
                 bucket("flow_cpu_ram"),
             ],
         },
+        "peripheral_map": peripheral_map(),
         "physical_meshes": [mesh("request"), mesh("response")],
         "derived_metrics": {
             "transaction_throughput_mtrans_s": metric(
@@ -131,6 +161,18 @@ def main():
             "[3] LATENCY DASHBOARD",
             "[4] MANAGER -> TARGET TRAFFIC",
             "[5] HOTSPOTS",
+            "[6] PERIPHERAL MAP & LATENCY",
+            "[7] HARDWARE DECISION INPUTS",
+            "[8] SUMMARY & CONCLUSIONS",
+            "Hops are from probe at (3,3)",
+            # The block's two measured paths, and the two dashes that say this
+            # run measured only one of them.
+            "26 cyc",
+            "36 ns",
+            "11.500 cyc",
+            "Register refused by the IP",
+            "spi0",
+            "No traffic from this workload to 1 of 3 blocks",
             "request",
             "80.000",
             "Area",
@@ -202,6 +244,184 @@ def main():
                 mislabeled.stderr:
             print("dashboard accepted a mislabeled measured metric",
                   file=sys.stderr)
+            return 1
+
+        # A latency column in the peripheral map may be null, but never
+        # anything other than measured. This is the mutation that matters:
+        # relabelling a cell [A] is exactly how a no-contention estimate would
+        # get into a table the reader takes for measurement.
+        estimated = fixture()
+        estimated["peripheral_map"]["blocks"][0][
+            "survey_network_cycles"]["source"] = "A"
+        metrics.write_text(json.dumps(estimated), encoding="utf-8")
+        analytic = subprocess.run(
+            [sys.executable, str(script), str(metrics)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if analytic.returncode == 0 or "survey_network_cycles" not in \
+                analytic.stderr:
+            print("dashboard accepted an analytic peripheral latency",
+                  file=sys.stderr)
+            return 1
+
+        duplicated = fixture()
+        duplicated["peripheral_map"]["blocks"].append(
+            duplicated["peripheral_map"]["blocks"][0])
+        metrics.write_text(json.dumps(duplicated), encoding="utf-8")
+        repeated = subprocess.run(
+            [sys.executable, str(script), str(metrics)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if repeated.returncode == 0 or "more than once" not in \
+                repeated.stderr:
+            print("dashboard accepted a duplicated peripheral block",
+                  file=sys.stderr)
+            return 1
+
+        no_hops = fixture()
+        del no_hops["peripheral_map"]["blocks"][0]["hops"]
+        metrics.write_text(json.dumps(no_hops), encoding="utf-8")
+        incomplete_block = subprocess.run(
+            [sys.executable, str(script), str(metrics)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if incomplete_block.returncode == 0 or "hops" not in \
+                incomplete_block.stderr:
+            print("dashboard accepted a peripheral block without placement",
+                  file=sys.stderr)
+            return 1
+
+        # --peripheral-baseline: a survey run's directed-read latencies fill
+        # the columns a firmware run cannot produce at all.
+        firmware = fixture()
+        for entry in firmware["peripheral_map"]["blocks"]:
+            entry["survey_network_cycles"] = metric(None, "cycles", "M")
+            entry["survey_total_ns"] = metric(None, "ns", "M")
+        metrics.write_text(json.dumps(firmware), encoding="utf-8")
+        survey = pathlib.Path(temp) / "survey.json"
+        survey.write_text(json.dumps(fixture()), encoding="utf-8")
+        merged = subprocess.run(
+            [sys.executable, str(script), str(metrics),
+             "--peripheral-baseline", str(survey)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if merged.returncode != 0:
+            print(merged.stderr, file=sys.stderr)
+            return 1
+        for marker in ("from a SEPARATE run", "26 cyc", "36 ns",
+                       "measured from probe at (3,3)"):
+            if marker not in merged.stdout:
+                print(f"missing merged-baseline marker: {marker}",
+                      file=sys.stderr)
+                print(merged.stdout, file=sys.stderr)
+                return 1
+        # The traffic columns still belong to this run alone.
+        if "12" not in merged.stdout:
+            print("merge lost this run's own traffic counts", file=sys.stderr)
+            return 1
+
+        # Latency depends on placement, so a baseline describing another
+        # floorplan is a different SoC and must be refused, not merged.
+        moved = fixture()
+        moved["peripheral_map"]["blocks"][0]["x"] = 2
+        survey.write_text(json.dumps(moved), encoding="utf-8")
+        misplaced = subprocess.run(
+            [sys.executable, str(script), str(metrics),
+             "--peripheral-baseline", str(survey)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if misplaced.returncode == 0 or "depends on placement" not in \
+                misplaced.stderr:
+            print("dashboard merged a baseline with a moved block",
+                  file=sys.stderr)
+            return 1
+
+        renamed = fixture()
+        renamed["peripheral_map"]["blocks"][0]["name"] = "uart9"
+        survey.write_text(json.dumps(renamed), encoding="utf-8")
+        different_map = subprocess.run(
+            [sys.executable, str(script), str(metrics),
+             "--peripheral-baseline", str(survey)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if different_map.returncode == 0 or "different set of blocks" not in \
+                different_map.stderr:
+            print("dashboard merged a baseline with a different block set",
+                  file=sys.stderr)
+            return 1
+
+        # A fast-mode file carries no-contention estimates. Merging one would
+        # put an analytic number in a measured column through the back door.
+        estimated_baseline = fixture()
+        estimated_baseline["configuration"]["timing_mode"] = "fast"
+        survey.write_text(json.dumps(estimated_baseline), encoding="utf-8")
+        fast_baseline = subprocess.run(
+            [sys.executable, str(script), str(metrics),
+             "--peripheral-baseline", str(survey)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if fast_baseline.returncode == 0 or "fast mode" not in \
+                fast_baseline.stderr:
+            print("dashboard merged a fast-mode baseline", file=sys.stderr)
+            return 1
+
+        # A firmware file has no survey measurements to give; silently
+        # merging nothing would look like success.
+        survey.write_text(json.dumps(firmware), encoding="utf-8")
+        empty_baseline = subprocess.run(
+            [sys.executable, str(script), str(metrics),
+             "--peripheral-baseline", str(survey)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if empty_baseline.returncode == 0 or "no survey measurements" not in \
+                empty_baseline.stderr:
+            print("dashboard accepted a baseline with nothing to merge",
+                  file=sys.stderr)
+            return 1
+
+        metrics.write_text(json.dumps(fixture()), encoding="utf-8")
+
+        # The section is optional: noc_benchmark has no SoC floorplan, and its
+        # files must keep rendering.
+        without_map = fixture()
+        del without_map["peripheral_map"]
+        metrics.write_text(json.dumps(without_map), encoding="utf-8")
+        benchmark = subprocess.run(
+            [sys.executable, str(script), str(metrics)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if benchmark.returncode != 0 or \
+                "No SoC peripheral map" not in benchmark.stdout:
+            print("dashboard rejected a file without a peripheral map",
+                  file=sys.stderr)
+            print(benchmark.stderr, file=sys.stderr)
             return 1
 
     print("PASS: FlooNoC terminal dashboard")

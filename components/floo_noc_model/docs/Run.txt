@@ -1,0 +1,49 @@
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP
+
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+
+$CC -dumpfullversion
+$CXX --version | head -n 1
+
+cmake --build build --target noc_soc --parallel
+
+./build/platforms/noc_soc/noc_soc \
+  --mode survey \
+  --noc-timing detailed \
+  --sim-us 200 \
+  --noc-metrics /tmp/noc_survey.json
+
+#Terminal 1 
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP
+
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+
+$CC -dumpfullversion
+$CXX --version | head -n 1
+
+cmake --build build --target noc_soc --parallel
+
+source tools/third_party/setup_env.sh
+make -C fw/freertos_noc_soc NOC_STEP=128 check
+
+./build/platforms/noc_soc/noc_soc \
+  --mode firmware \
+  --noc-timing detailed \
+  --fw fw/freertos_noc_soc/freertos_noc_soc.elf \
+  --sim-us 10000000 \
+  --noc-metrics /tmp/noc_cli_live.json \
+  --uart0-socket 5555 \
+  --uart0-wait
+
+#Terminal 2 
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP
+
+python3 tools/noc_cli.py \
+  --port 5555 \
+  --metrics /tmp/noc_cli_live.json \
+  --peripheral-baseline /tmp/noc_survey.json
+

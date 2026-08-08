@@ -12,7 +12,14 @@ changes. The shorter files in this directory remain useful references, but this
 file is intended to provide enough context to resume the work without the
 original chat history.
 
-Status snapshot date: **2026-08-05**.
+Status snapshot date: **2026-08-07**.
+
+The architecture document technical sign-off v1.4 is closed **PASS** on a
+manifest-bound dirty CDC-VP working-tree snapshot: 41/41 component tests,
+51/51 mutation controls and 12/12 isolated RTL cross-check runners passed.
+Use `docs/signoff/v1.4/SIGNOFF.md` as the audit entry point. Its scope boundary
+is deliberate: the TLM adapter is model-level verified, not RTL-equivalent,
+and there is still no monolithic end-to-end RTL harness.
 
 Sections 2 to 13 describe the state as it is now, after Steps 1 to 10. Section
 14 keeps the per-step history, including what each step found. If the two ever
@@ -1950,8 +1957,9 @@ Three independent controls keep the proof meaningful:
 ### 13.8 Licensing/provenance audit — CLOSED (2026-08-01)
 
 Hardware-derived files use SPDX `SHL-0.51`; some reference/test files use
-SPDX `Apache-2.0`. All 18 installed FlooNoC headers have one of those two
-identifiers: 15 SHL-0.51 and 3 Apache-2.0.
+SPDX `Apache-2.0`. All 19 installed FlooNoC headers have one of those two
+identifiers: 15 SHL-0.51 and 4 Apache-2.0. The fourth Apache header is
+`noc_metrics.hpp`; older counts predated the metrics/dashboard work.
 
 The clean-prefix development package installs both licence texts, the CDC-VP
 NOTICE and `PROVENANCE.md` under
@@ -2751,7 +2759,7 @@ Verified after automation on 2026-08-01: the registered CTest passes 1/1 in
 - with `LD_LIBRARY_PATH` removed, the packaged survey reports all bytes match,
   and the complete packaged-binary firmware regression also reaches
   `DMA PASS`;
-- all 18 installed headers carry an expected SPDX identifier; the installed
+- all 19 installed headers carry an expected SPDX identifier; the installed
   package and binary bundle contain byte-identical Apache-2.0, SHL-0.51 and
   FlooNoC provenance records. The binary bundle additionally ships the static
   CPU's MIT licence, CDC-VP NOTICE and third-party inventory.
@@ -3377,6 +3385,23 @@ warm-up/reset/measure/stop/drain, offered/delivered reconciliation and boundary
 flit conservation. `noc_dashboard.py` renders the versioned JSON, and
 `noc_sweep.py` writes per-run evidence plus aggregate JSON/CSV and refuses any
 failed, undrained or constraint-rejected winner.
+
+Extended 2026-08-06 with dashboard section `[6] PERIPHERAL MAP & LATENCY`, an
+optional `peripheral_map` in the schema listing every mapped `noc_soc` target
+with its node and hop distance. Survey mode contributes the only column that
+carries a peripheral's own access latency, because the completion observer
+excludes the target hold-off by design; firmware mode fills the traffic columns
+from that observer and still issues no synthetic transactions. `--noc-metrics`
+is therefore now accepted in survey mode, labelled `"kind": "synthetic"`, while
+`--noc-baseline` stays firmware-only. Untouched blocks render `-`; a
+no-contention estimate must never fill an `[M]` column, and
+`test_noc_dashboard.py` injects the relabelling mutation that would.
+`noc_dashboard.py --peripheral-baseline` merges a survey run's directed-read
+columns into a firmware report, refusing any baseline whose topology, block set
+or block placement differs, or which was produced in fast mode; the merged
+provenance and its different reference port are printed on every render. CLINT
+and PLIC are deliberately never probed, because reading the PLIC claim register
+claims an interrupt.
 
 The denominator correction is part of the contract: throughput and directed
 link utilisation divide by all modeled cycles in the measurement window, while
