@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Three chips on a 2x2 mesh. Three, not four: the fourth node must host the
+# boot ROM, global control and global RAM, and noc_interconnect refuses a
+# target on a node that already hosts an initiator (the router's NoLoopback
+# tie-off). See docs/TPU_V3_PHASE0_AUDIT.md §5 and decision record D1.
+#
+# This is the Phase 8 bring-up configuration.
+
+platform: tpu_v3_soc
+name: mesh_2x2
+
+mesh_x: 2
+mesh_y: 2
+chips: 3
+
+svm_size_bytes: 16MiB
+global_ram_size_bytes: 512MiB
+
+mxu_backend: fast
+mxu_arithmetic: bf16_fp32
+noc_timing: fast

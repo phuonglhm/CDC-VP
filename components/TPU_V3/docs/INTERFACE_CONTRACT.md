@@ -1,0 +1,236 @@
+# TPU_V3 TLM Interface Contract
+
+Binding on every component under `components/TPU_V3` and on the TPU_V3
+platform. It expands plan §13 into rules a reviewer can check mechanically.
+
+A component that violates one of these is broken even if its own tests pass,
+because the failure mode is almost always somewhere else: a deadlock in the
+detailed NoC, a response attributed to the wrong requester, or a partial write
+that looks like data corruption.
+
+---
+
+## 1. Generic payload
+
+On entry to any TPU_V3 `b_transport` / `transport_dbg`:
+
+| Field | Rule on entry | Rule on return |
+| --- | --- | --- |
+| `command` | read or write only | unchanged |
+| `address` | byte address, absolute in the platform map | unchanged |
+| `data_ptr` | non-null when `data_length > 0` | unchanged |
+| `data_length` | > 0 | unchanged |
+| `streaming_width` | must be 0 or ≥ `data_length` | unchanged |
+| `byte_enable_ptr` | null, or a pattern of `byte_enable_length` | unchanged |
+| `response_status` | ignored | **always set** |
+| `dmi_allowed` | ignored | set false |
+
+`TLM_COMMAND_ERROR_RESPONSE` for a command that is neither read nor write.
+`TLM_BURST_ERROR_RESPONSE` for a wrapped streaming transfer, an unsupported
+width, or a misaligned MMIO access. `TLM_ADDRESS_ERROR_RESPONSE` for an address
+that does not decode. `TLM_GENERIC_ERROR_RESPONSE` for a target that decoded
+the access and refused it.
+
+A target never returns `TLM_INCOMPLETE_RESPONSE`. If a caller sees one, a path
+returned without setting status, which is a defect in the target and not a
+condition for the caller to handle.
+
+**Errors are never converted to zero data.** A failed read leaves the caller's
+buffer untouched and sets an error status.
+
+## 2. Byte enables
+
+Memory-like targets honour arbitrary byte-enable patterns, including
+non-contiguous ones, on both read and write. `byte_enable_length` may be
+shorter than `data_length`, in which case the pattern repeats — the standard
+TLM rule.
+
+MMIO targets require all-ones over the four bytes of the register. A
+partial-strobe register write is refused with `TLM_BURST_ERROR_RESPONSE`, not
+applied as a read-modify-write. Read-modify-write on a register with
+write-1-to-clear or clear-on-read bits does the wrong thing silently, so the
+model refuses instead of guessing.
+
+## 3. Timing
+
+**Short latency is annotated, never waited.**
+
+```cpp
+// correct
+void b_transport(tlm::tlm_generic_payload& t, sc_core::sc_time& delay) {
+    do_access(t);
+    delay += access_latency_;          // annotate
+}
+
+// wrong: stalls the detailed NoC's mesh driver
+void b_transport(tlm::tlm_generic_payload& t, sc_core::sc_time& delay) {
+    do_access(t);
+    wait(access_latency_);             // never do this in a TPU_V3 target
+}
+```
+
+The second form freezes every node in the mesh, not just this target, because
+one SystemC process advances the network clock. This is the single most
+important rule in this document.
+
+* `delay` on entry may be non-zero; a target adds to it and does not clear it.
+* `transport_dbg` never advances time and never annotates delay.
+* Long work runs in the component's own `SC_THREAD`, which may `wait()` freely.
+* `b_transport` must never wait for accelerator completion. An MXU start write
+  enqueues and returns in the same delta cycle.
+* Timing mode is chosen at construction, never changed during simulation, and
+  is reported in metrics.
+
+## 4. Asynchronous accelerator contract
+
+Every long-running operation in TPU_V3 follows the same shape:
+
+1. firmware programs descriptor registers;
+2. firmware writes the start bit; the write returns immediately, `busy` sets in
+   the same access;
+3. a worker thread performs the work and consumes simulated time;
+4. on completion the worker sets `done`, clears `busy`, updates counters and
+   asserts the level IRQ;
+5. firmware acknowledges by writing 1 to the `done` bit (W1C), which deasserts
+   the IRQ.
+
+Constraints:
+
+* a start write while `busy` is set is refused — `busy` stays, the descriptor
+  is not overwritten, and an `overrun` counter increments. Queueing a second
+  job behind the first would need an ordering contract that does not exist yet.
+* reset during an active job abandons it: `busy` clears, `done` does **not**
+  set, `abort_count` increments, the IRQ deasserts, and any admission slot is
+  released. Cleanup happens on success, error, reset and exception alike.
+* `error` is a separate status bit from `done` with a latched cause code. An
+  errored job asserts the IRQ exactly like a completed one, because firmware
+  must be woken either way.
+
+## 5. Concurrency and ownership
+
+* **No mutable global or static state.** Two MXUs in the same core, and 16
+  cores in one simulation, share nothing. A `static` scratch buffer in a
+  compute kernel is a defect even when tests pass single-threaded, because
+  SystemC processes interleave at `wait()` boundaries.
+* Every in-flight request carries an identifiable owner (requester id / port
+  index). Counters and latency are attributed to that owner, never to "the most
+  recent" anything. `noc_interconnect::last_latency_cycles()` without a port
+  argument is a global convenience accessor and must not be used for
+  attribution.
+* Completion queues preserve the ordering the upstream protocol requires. The
+  frozen NoC has `MaxUniqueIds = 1`, so responses are FIFO within reads and
+  FIFO within writes on one port; nothing downstream may reorder them.
+* Tests exercise simultaneous MXU 0 / MXU 1, simultaneous core 0 / core 1, and
+  concurrent NoC traffic. A concurrency test without a watchdog is not a test —
+  a deadlock must fail, not hang the suite.
+
+## 6. Access widths and vector granularity
+
+| Target class | Widths | Alignment | Byte enables |
+| --- | --- | --- | --- |
+| memory (`SVM`, RAM, ROM) | any size from 1 to 64 bytes | any | arbitrary |
+| MMIO register file | 4 only | 4-byte natural | all-ones only |
+
+A memory target must accept any payload from 1 to 64 bytes. 64 is the size of
+one RVV register at VLEN=512, so it is the largest a single access can need.
+
+**There is no vector-instruction boundary at this interface, and no component
+here may invent one.** This is decision record **D7**; an earlier version of
+this section got it wrong, so the reasoning is worth stating rather than just
+the rule.
+
+The old wording said SVM must accept a 64-byte vector transfer as one
+transaction and that splitting it "inside the model" would fabricate
+arbitration events. That assumed the ISS hands over a whole vector access. It
+does not. RISC-V VP++ decomposes vector loads and stores inside
+`vp/src/core/common/v.h`, one call per active element, before the CDC-VP
+wrapper is reached; `data_memory_if` carries no vector-access boundary to
+recover. The assumption was also wrong in principle: masked, strided, indexed
+and fault-only-first accesses cannot be one contiguous transaction under any
+backend, because they touch a subset, a non-contiguous set, a computed set, or
+a set truncated by a fault.
+
+The rules that follow from it:
+
+* the wrapper and every target **must not** infer, group or reassemble vector
+  instruction boundaries — guessing where one ended is not a measurement;
+* with the current backend one request usually carries one active element, but
+  that is a property of **that backend**, not an invariant anything may rely on;
+* 1..64-byte payload support is proven with a **synthetic initiator**. VP++ is
+  not required to emit a 64-byte payload, and its absence from a VP++ trace is
+  not a defect;
+* counters are named for what they measure — `tlm_request_count`,
+  `transferred_bytes`, `error_count`, `arbitration_event_count` — and never
+  `vector_instruction_count`, `vector_register_count`, or a hardware bus
+  transaction count;
+* any timing or NoC figure produced this way records **`VP++ element-wise
+  granularity`**, and arbitration-event counts must never be offered as
+  evidence of equivalence with TPU hardware.
+
+## 7. NoC-facing rules
+
+The endpoint is the only TPU_V3 component that talks to `noc_interconnect`, and
+it absorbs every constraint the interconnect imposes:
+
+* **Burst limit.** The bus is 8 bytes wide and one AXI burst is at most 256
+  beats, so the largest accepted frame is 2048 bytes at bus alignment and fewer
+  at an offset — `ceil((address % 8 + length) / 8) <= 256`. The interconnect
+  **refuses** a longer payload rather than splitting it. The endpoint therefore
+  splits, and its chunking contract states: chunks are bus-aligned except
+  possibly the first; chunks are issued in ascending address order; the first
+  failing chunk stops the transfer and its status is returned; bytes already
+  transferred stay transferred and the completion reports how many; every chunk
+  is attributed to the originating requester in metrics.
+* **Local bypass.** An address inside this chip's own aperture is never handed
+  to the interconnect. This is required for correctness, not only for
+  efficiency — see the NoLoopback blocker in `TPU_V3_PHASE0_AUDIT.md` §5.1.
+* **Outstanding bound.** At most `max_outstanding_per_port` (≤ 32) concurrent
+  calls per upstream port. Above the bound the endpoint waits for a slot; it
+  does not drop, reorder or re-tag.
+* **Target kind.** Regions are registered with the `target_kind` from
+  `ADDRESS_MAP.md` §7. Declaring MMIO as `memory` to make a widened read
+  succeed is forbidden.
+
+## 8. Debug transport
+
+`transport_dbg` is for host-side loading and test setup:
+
+* it never advances simulated time and never annotates delay;
+* it bypasses arbitration and latency but **not** decode or bounds checks —
+  a debug write outside a region fails like any other;
+* it does not update performance counters, because a loader is not workload
+  traffic. Counting it would corrupt every metric that follows;
+* it may write `GLOBAL_BOOT_ROM`, which refuses ordinary writes.
+
+## 9. DMI
+
+Disabled. Every target sets `dmi_allowed = false` and returns false from
+`get_direct_mem_ptr`. Enabling DMI is a phase of its own: it needs an
+invalidation contract for every path that can change memory behind a granted
+pointer, and it would silently bypass exactly the counters and latency the
+platform exists to produce.
+
+## 10. Configuration validation
+
+Configuration objects are validated in the constructor and throw
+`std::invalid_argument` with an actionable message naming the field, the
+offending value and the accepted range. Validation happens before any socket is
+bound, so a bad configuration fails during elaboration rather than on the first
+transaction.
+
+Frozen values that must be rejected rather than accepted-and-warned:
+`cores != 2`, `mxu.rows != 128`, `mxu.columns != 128`, `mxu.count_per_core != 2`,
+`xlen != 32`, `vlen != 512`, `elen != 64`, RVV version other than `"1.0"`.
+
+## 11. Reviewer checklist
+
+- [ ] no `wait()` on any path reachable from `b_transport`
+- [ ] `response_status` set on every return path, including early errors
+- [ ] no `static` or global mutable state
+- [ ] every counter update attributed to a named requester
+- [ ] reset path releases slots and clears in-flight state
+- [ ] errors surfaced, never turned into zero data
+- [ ] address arithmetic in 64-bit with an overflow check
+- [ ] no address constant outside `address_map.h`
+- [ ] concurrency test has a watchdog
+- [ ] a negative control exists for each new protocol rule

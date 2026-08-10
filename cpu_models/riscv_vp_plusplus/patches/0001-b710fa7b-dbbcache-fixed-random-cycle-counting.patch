@@ -1,0 +1,53 @@
+From b710fa7be2643b42cee92f5bbcb8cead4c0ed282 Mon Sep 17 00:00:00 2001
+From: Manfred SCHLAEGL <manfred.schlaegl@gmx.at>
+Date: Wed, 10 Dec 2025 16:06:53 +0100
+Subject: [PATCH] vp: core: dbbcache: fixed random cycle counting bug (e.g.
+ mcycles)
+
+Before this fix, the start-value used for the cycle counter in
+dbbcache was not properly initialized which could lead to random start
+values (e.g. in mcycles).
+
+Background: In the initialization, we first start with the dummy block.
+Then, we use the switch block methods (find_create_block or
+switch_block_dummy) to properly set up the real initial block.
+These switch methods transfer over the cycles of the last block to the
+new block by accessing the tail element (curEntryIdx+1) of the last block.
+In the init-case, the start block is also the dummy block and since
+curEntryIdx is set to 0, the transfer accesses the second entry of
+this dummyBlock which is not properly initialized.
+
+Fix: Set curEntryIdx to -1 in the initialization -> the cycle transfer
+in the switch block methods uses the first entry of the dummy block,
+which is properly initialized to 0.
+
+Signed-off-by: Manfred SCHLAEGL <manfred.schlaegl@gmx.at>
+---
+ vp/src/core/common/dbbcache.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/vp/src/core/common/dbbcache.h b/vp/src/core/common/dbbcache.h
+index 2454dfd6..f4821adf 100644
+--- a/vp/src/core/common/dbbcache.h
++++ b/vp/src/core/common/dbbcache.h
+@@ -605,7 +605,7 @@ class DBBCache_T : public DBBCacheBase_T<arch, T_uxlen_t, T_instr_memory_if> {
+ 	std::unordered_map<uint64_t, Block *> blockmap;
+ 	Block *curBlock;
+ 	Block dummyBlock = Block(0, *this);
+-	int32_t curEntryIdx = 0;
++	int32_t curEntryIdx = -1;
+ 
+ 	bool slow_path = false;
+ 	Block fastDisableBlock = Block(0, *this);
+@@ -902,7 +902,7 @@ class DBBCache_T : public DBBCacheBase_T<arch, T_uxlen_t, T_instr_memory_if> {
+ 
+ 		/* use dummyBlock (and its first entry) as valid predecessor */
+ 		curBlock = &dummyBlock;
+-		curEntryIdx = 0;
++		curEntryIdx = -1;
+ 
+ 		/* use disable block entries to indicate disabled fast path */
+ 		slow_path = false;
+-- 
+2.52.0
+

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The largest system Revision 1 can build: eight chips, sixteen RV32GCV harts,
+# thirty-two 128x128 MXUs.
+#
+# Eight chips on sixteen nodes is not a floorplan preference. The frozen
+# FlooNoC chimney manager id is three bits, so noc_interconnect accepts at most
+# eight upstream initiators and plan §4.4 gives each chip exactly one. The
+# remaining nodes carry the global targets. A 32-core system means 16 chips and
+# is outside Revision 1 — see decision record D2 for everything that would have
+# to change together.
+#
+# Host cost once real storage exists (Phase 3 onwards): 16 SVMs x 16 MiB =
+# 256 MiB, plus 1 GiB of global RAM. Reduce svm_size_bytes for a bring-up run
+# on a small host; the run is then labelled as such in the report.
+
+platform: tpu_v3_soc
+name: mesh_4x4
+
+mesh_x: 4
+mesh_y: 4
+chips: 8
+
+svm_size_bytes: 16MiB
+global_ram_size_bytes: 1GiB
+
+mxu_backend: fast
+mxu_arithmetic: bf16_fp32
+noc_timing: fast

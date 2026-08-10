@@ -79,3 +79,13 @@ if(CDC_BUILD_NOC_SOC)
       message(STATUS "Skipping noc_soc: cdc::components::noc_interconnect is not available")
    endif()
 endif()
+
+# TPU_V3 SoC. Off by default; see components/TPU_V3/docs/.
+if(CDC_BUILD_TPU_V3_SOC)
+   if(TARGET cdc::components::tpu_v3_common)
+      add_subdirectory(TPU_V3_SoC)
+   else()
+      message(STATUS
+          "Skipping TPU_V3_SoC: cdc::components::tpu_v3_common is not available")
+   endif()
+endif()

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Smallest useful configuration: one chip, and only core 0 is exercised by the
+# firmware. The hardware still contains two cores — plan §4.1 freezes that —
+# so this file differs from single_chip.yaml only in intent and in the
+# workload that will be attached to it from Phase 5 onwards.
+#
+# Format: 'key: value', one per line. Not YAML; see src/config_loader.h.
+
+platform: tpu_v3_soc
+name: single_core
+
+mesh_x: 2
+mesh_y: 2
+chips: 1
+
+# Reference capacity (decision record D6): the full architectural window.
+# A smaller value is permitted for bring-up or stress runs and is reported as
+# such; it is not the TPU_V3 reference result.
+svm_size_bytes: 16MiB
+global_ram_size_bytes: 256MiB
+
+mxu_backend: fast
+mxu_arithmetic: bf16_fp32
+noc_timing: fast

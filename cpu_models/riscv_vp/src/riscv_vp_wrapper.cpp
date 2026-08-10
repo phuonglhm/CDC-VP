@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "riscv_vp_wrapper.h"
 #include <cstdlib>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 
 #include <cdc/cpu/elf_loader.h>
 
@@ -70,8 +73,30 @@ struct riscv_vp_cpu::impl {
 
 riscv_vp_cpu::riscv_vp_cpu(sc_core::sc_module_name name, const cpu_config& config)
     : cpu_base(name, config)
-    , impl_(std::make_unique<impl>())
 {
+    // Decision record D5: reject what this backend cannot honour, never ignore
+    // it. The Bremen ISS is instantiated as hart 0 and this wrapper's reset
+    // vector is fixed, so a platform asking for anything else must find out
+    // during elaboration rather than from firmware that cannot tell its cores
+    // apart. This backend is not the TPU_V3 runtime; `riscv_vp_plusplus` is.
+    if (config.hart_id != 0) {
+        throw std::invalid_argument(
+            "riscv_vp_cpu: cpu_config.hart_id = " + std::to_string(config.hart_id)
+            + " is not supported. This backend is single-core and is "
+              "constructed as hart 0. Use a multi-hart backend.");
+    }
+    if (config.reset_pc_specified() && config.reset_pc != kResetPc) {
+        std::ostringstream message;
+        message << "riscv_vp_cpu: cpu_config.reset_pc = 0x" << std::hex
+                << config.reset_pc << " is not supported; this backend resets at 0x"
+                << kResetPc
+                << std::dec
+                << ". Leave reset_pc unspecified to accept that default, or use "
+                   "a backend with a configurable reset vector.";
+        throw std::invalid_argument(message.str());
+    }
+
+    impl_ = std::make_unique<impl>();
 }
 
 riscv_vp_cpu::~riscv_vp_cpu() = default;

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One TPU chip: two RV32GCV harts, two SVMs, four 128x128 MXUs.
+# The chip sits on node (0,0); the global targets sit on node (1,1).
+
+platform: tpu_v3_soc
+name: single_chip
+
+mesh_x: 2
+mesh_y: 2
+chips: 1
+
+svm_size_bytes: 16MiB
+global_ram_size_bytes: 256MiB
+
+mxu_backend: fast
+mxu_arithmetic: bf16_fp32
+noc_timing: fast

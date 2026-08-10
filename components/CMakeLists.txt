@@ -50,6 +50,12 @@ add_subdirectory(rtc_tlm)
 set(FLOO_NOC_MODEL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(floo_noc_model)
 
+# TPU_V3 components. Gated on the platform switch so the default build, and
+# every existing platform, is unaffected by work in progress here.
+if(CDC_BUILD_TPU_V3_SOC)
+   add_subdirectory(TPU_V3)
+endif()
+
  add_subdirectory(isp_tlm)  # TEMP: WIP, missing headers — re-enable when it builds
 
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
