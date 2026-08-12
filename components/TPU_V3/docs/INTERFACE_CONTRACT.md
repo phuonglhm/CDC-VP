@@ -76,8 +76,8 @@ important rule in this document.
 * `delay` on entry may be non-zero; a target adds to it and does not clear it.
 * `transport_dbg` never advances time and never annotates delay.
 * Long work runs in the component's own `SC_THREAD`, which may `wait()` freely.
-* `b_transport` must never wait for accelerator completion. An MXU start write
-  enqueues and returns in the same delta cycle.
+* `b_transport` must never wait for accelerator completion. An SA, DMA or
+  ImageTransform start write enqueues and returns in the same delta cycle.
 * Timing mode is chosen at construction, never changed during simulation, and
   is reported in metrics.
 
@@ -106,10 +106,85 @@ Constraints:
   errored job asserts the IRQ exactly like a completed one, because firmware
   must be woken either way.
 
+### 4.1 NEO-CORE block boundaries
+
+Decision D15, finally ratified on 2026-08-12, separates three interfaces that
+must not be collapsed into one generic internal AXI fabric:
+
+* **AXI4-Lite control:** each active engine has a 32-bit MMIO target. It is
+  in-order, has no bursts or IDs, accepts at most one transaction per control
+  initiator, and follows this document's 4-byte MMIO rules. VP++ and the
+  authorized external inbound adapter are its initiators. The SystemC model
+  represents the transactions, not signal-level AW/W/B/AR/R channel timing.
+* **Native local data:** VP++ local accesses, the DMA local port, SA and
+  ImageTransform plus authorized inbound chip/NoC traffic issue requests to
+  `neo_local_sram_fabric`. This is a pipelined request/response interface into
+  physically banked core SRAM, not AXI and not a full data crossbar.
+* **External AXI4/NoC:** the DMA external port and VP++ instruction/global-data
+  path reach chip/global/remote memory through the external adapter and chip
+  NoC endpoint. The CPU path is required to fetch from global boot ROM. Inbound
+  remote MMIO/SRAM traffic traverses the reverse adapters into the appropriate
+  local plane. Full AXI semantics stop at this boundary; SA and ImageTransform
+  do not become external AXI4 masters in Revision 1.
+
+The native local request contains requester identity, absolute byte address,
+read/write command, transfer size, write data and byte strobes. Its response
+contains read data and an explicit status. Revision 1 is strictly in order and
+allows at most one outstanding request per requester. Each SRAM bank has an
+independent deterministic round-robin arbiter: same-bank conflicts
+back-pressure the loser, while different banks may progress concurrently.
+
+The RTL-facing shape is a conventional ready/valid pair: request
+`valid/ready`, `address`, `write`, `size`, `wdata`, `wstrb`; response
+`valid/ready`, `rdata`, `error`. Requester identity may be implicit in a
+dedicated port and is explicit after arbitration. Signal names may follow the
+RTL coding standard, but dropping ready/back-pressure or error propagation is
+not a legal simplification.
+
+Completion is reported only after all physical beats of one logical request
+finish. Ordering is guaranteed per requester and per bank; a multi-beat access
+is not an atomic primitive against another requester. Firmware must use the
+accelerator completion/status synchronization rules rather than depend on an
+undocumented wide-access atomicity.
+
+The number of banks, physical data width, low-order bank mapping and pipeline
+depth are validated construction-time configuration. Tests and reports state
+their actual values; this contract does not freeze 256 bits or any other
+illustrative datapath width before SRAM-macro, clock and PD inputs exist.
+
+**DMA is independent.** `neo_dma` is implemented and owned under TPU_V3. It
+must not include, instantiate or call Sauria's DMA, and must not obtain direct
+pointers to core SRAM or global-memory backing. Every transferred byte crosses
+its native local initiator and external bridge as applicable and observes
+normal decode, arbitration, byte-enable, response and metrics rules.
+
+**The SA boundary is matrix multiplication.** The Sauria adapter may retain
+only the PE array and the minimum feeder/sequencer/result-collection logic
+needed to implement the accepted GEMM descriptor. OBP, RCE, NPU profile
+routing, NPU instruction decoding, Sauria DMA and other unrelated NPU-top
+behavior are outside the NEO SA contract. Operand and result traffic uses the
+native SRAM port; the SA has no external AXI4 master port.
+
+**The Transform boundary is source-controlled.** Im2Col and Col2Im are exposed
+only when their semantics and implementation are traced to an approved NPU-team
+revision. Existing Im2Col-related logic embedded in an IFMAP feeder is not by
+itself evidence of a standalone Transform component. PSM output addressing is
+not automatically Col2Im. While the NPU team confirms the missing block,
+`TRANSFORM_CONTROL` may elaborate as an unavailable capability, but it must
+reject `start` and report that state explicitly; it must never return a fake
+successful transform. When available, its tensor traffic uses the native SRAM
+port; it has no external AXI4 master port.
+
+SA geometry and datatype are runtime-reportable, construction-time properties.
+The accepted bring-up pair is the verified v4.2 64x64 configuration. A 128x128
+selection is legal only after the NPU-team source, adapter, golden regression
+and resource/scalability checks pass. No configuration or manifest may call a
+64x64 run 128x128.
+
 ## 5. Concurrency and ownership
 
-* **No mutable global or static state.** Two MXUs in the same core, and 16
-  cores in one simulation, share nothing. A `static` scratch buffer in a
+* **No mutable global or static state.** SA, DMA and ImageTransform instances,
+  and 16 cores in one simulation, share nothing. A `static` scratch buffer in a
   compute kernel is a defect even when tests pass single-threaded, because
   SystemC processes interleave at `wait()` boundaries.
 * Every in-flight request carries an identifiable owner (requester id / port
@@ -120,15 +195,16 @@ Constraints:
 * Completion queues preserve the ordering the upstream protocol requires. The
   frozen NoC has `MaxUniqueIds = 1`, so responses are FIFO within reads and
   FIFO within writes on one port; nothing downstream may reorder them.
-* Tests exercise simultaneous MXU 0 / MXU 1, simultaneous core 0 / core 1, and
-  concurrent NoC traffic. A concurrency test without a watchdog is not a test —
+* Tests exercise simultaneous SA / DMA / ImageTransform / external-inbound
+  activity, simultaneous core 0 / core 1, and concurrent NoC traffic. A
+  concurrency test without a watchdog is not a test —
   a deadlock must fail, not hang the suite.
 
 ## 6. Access widths and vector granularity
 
 | Target class | Widths | Alignment | Byte enables |
 | --- | --- | --- | --- |
-| memory (`SVM`, RAM, ROM) | any size from 1 to 64 bytes | any | arbitrary |
+| memory (`CORE_SRAM`, RAM, ROM) | any size from 1 to 64 bytes | any | arbitrary |
 | MMIO register file | 4 only | 4-byte natural | all-ones only |
 
 A memory target must accept any payload from 1 to 64 bytes. 64 is the size of
@@ -139,7 +215,7 @@ here may invent one.** This is decision record **D7**; an earlier version of
 this section got it wrong, so the reasoning is worth stating rather than just
 the rule.
 
-The old wording said SVM must accept a 64-byte vector transfer as one
+The old wording said core SRAM must accept a 64-byte vector transfer as one
 transaction and that splitting it "inside the model" would fabricate
 arbitration events. That assumed the ISS hands over a whole vector access. It
 does not. RISC-V VP++ decomposes vector loads and stores inside
@@ -160,9 +236,13 @@ The rules that follow from it:
   not required to emit a 64-byte payload, and its absence from a VP++ trace is
   not a defect;
 * counters are named for what they measure — `tlm_request_count`,
-  `transferred_bytes`, `error_count`, `arbitration_event_count` — and never
+  `physical_beat_count`, `bank_conflict_count`, `transferred_bytes`,
+  `error_count`, `arbitration_event_count` — and never
   `vector_instruction_count`, `vector_register_count`, or a hardware bus
   transaction count;
+* if `neo_local_sram_fabric` splits one TLM payload across physical beats or
+  banks, it records one TLM request and the actual number of physical beats;
+  neither value may be silently presented as the other;
 * any timing or NoC figure produced this way records **`VP++ element-wise
   granularity`**, and arbitration-event counts must never be offered as
   evidence of equivalence with TPU hardware.
@@ -219,8 +299,12 @@ bound, so a bad configuration fails during elaboration rather than on the first
 transaction.
 
 Frozen values that must be rejected rather than accepted-and-warned:
-`cores != 2`, `mxu.rows != 128`, `mxu.columns != 128`, `mxu.count_per_core != 2`,
-`xlen != 32`, `vlen != 512`, `elen != 64`, RVV version other than `"1.0"`.
+`cores != 2`, an SA count other than one per core, a DMA count other than one
+per core, an ImageTransform count other than one per core, SA geometry other
+than the explicitly supported 64x64 bring-up or promoted 128x128 target,
+`xlen != 32`, `vlen != 512`, `elen != 64`, or an RVV version other than
+`"1.0"`. A configuration requesting 128x128 must fail unless the selected NPU
+source and adapter have passed the 128x128 promotion gate.
 
 ## 11. Reviewer checklist
 

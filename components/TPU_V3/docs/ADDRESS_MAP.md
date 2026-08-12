@@ -1,14 +1,19 @@
 # TPU_V3 Address Map
 
-Status: **frozen for Phase 1**. Region *layout* and *strides* below are the
-architectural contract. Two *capacities* remain configurable and are marked as
-such; changing a capacity may not change any base address.
+Status: **NEO-CORE rebaseline approved by D14; D15 interconnect finally
+ratified 2026-08-12; C++ migration pending Phase 3**.
+Top-level/chip/core aperture bases and strides remain unchanged. The core-local
+MMIO subregions are renamed/reassigned below for one SA, one independent DMA
+and one ImageTransform engine. Changing an engine geometry or SRAM capacity
+may not change a base address.
 
-The single source of truth is `components/TPU_V3/common/include/tpu_v3/address_map.h`.
-This document explains it; the header defines it, and
-`components/TPU_V3/common/tests/test_address_map.cpp` proves the properties
-claimed here. If the two ever disagree, the header and its test win and this
-file is the bug.
+After the Phase 3 migration, the single executable source of truth is
+`components/TPU_V3/common/include/tpu_v3/address_map.h`, with properties proved
+by `components/TPU_V3/common/tests/test_address_map.cpp`. At the D15 rebaseline
+point that header still carries the Phase 1 `SVM`/`MXU0`/`MXU1` names. The
+mismatch is deliberate but temporary: D14/D15 and the table in §4 define the new
+contract, and Phase 3 must update the header, generated firmware names and test
+together before any new component is integrated.
 
 ---
 
@@ -19,7 +24,7 @@ From plan §12:
 1. every RV32-visible physical address is below 4 GiB — the map ends exactly at
    `0x1_0000_0000`, and nothing is placed above it;
 2. every region base and size is a power of two and naturally aligned;
-3. SVM capacity fits inside its core aperture (see §5);
+3. core SRAM capacity fits inside its core aperture (see §5);
 4. no two chip or core apertures overlap — enumerated and proven by test;
 5. address arithmetic is done in `std::uint64_t` and checked for overflow even
    though the target is RV32;
@@ -95,27 +100,44 @@ Offsets from `core_base`:
 
 | Offset | Size | Region | Kind |
 | --- | --- | --- | --- |
-| `0x0000_0000` | 16 MiB window | `SVM` | memory (see §5) |
+| `0x0000_0000` | 16 MiB window | `CORE_SRAM` | memory (see §5) |
 | `0x0100_0000` | 64 KiB | `CORE_CONTROL` | mmio |
-| `0x0101_0000` | 64 KiB | `MXU0_CONTROL` | mmio |
-| `0x0102_0000` | 64 KiB | `MXU1_CONTROL` | mmio |
-| `0x0103_0000` | 64 KiB | `CORE_COUNTERS` | mmio |
-| `0x0104_0000` | — | reserved to `0x01FF_FFFF` | — |
+| `0x0101_0000` | 64 KiB | `SA_CONTROL` | mmio |
+| `0x0102_0000` | 64 KiB | `DMA_CONTROL` | mmio |
+| `0x0103_0000` | 64 KiB | `TRANSFORM_CONTROL` | mmio |
+| `0x0104_0000` | 64 KiB | `CORE_COUNTERS` | mmio |
+| `0x0105_0000` | — | reserved to `0x01FF_FFFF` | — |
 
-**There is one address per resource.** A core reaching its own SVM, the sibling
+The `*_CONTROL` and `*_COUNTERS` windows are reached through the 32-bit
+AXI4-Lite control plane. `CORE_SRAM` is reached locally through the native NEO
+Local SRAM Fabric and is exported through adapters for sibling/remote/debug
+access. The common physical addresses do not imply that these regions use one
+internal protocol.
+
+Each accelerator window contains its descriptor, status, error, IRQ-enable and
+performance registers. `SA_CONTROL` reports the instantiated geometry; 64x64
+is the current v4.2 bring-up value and 128x128 is accepted only after the NPU
+team's promotion gate. `DMA_CONTROL` belongs to the standalone TPU_V3 DMA and
+must not expose Sauria DMA registers. `TRANSFORM_CONTROL` exposes an operation
+selector for Im2Col/Col2Im only after both operations have a verified NPU-team
+contract; unimplemented operation values return a defined error rather than
+silently falling back.
+
+**There is one address per resource.** A core reaching its own SRAM, the sibling
 core in the same chip reaching it, a remote chip reaching it, and the host
 loader reaching it all use the same `core_base(chip, core) + offset`. There is
 no separate "local alias" window. What differs is the *path*: the core-local
-fabric recognises its own core aperture and does not leave the core, the
-chip-local fabric recognises the sibling aperture and does not leave the chip,
-and only an address outside the chip aperture reaches the NoC endpoint. That is
-the plan §11.5/§11.8 local-bypass requirement expressed as a decode rule rather
-than as a second address.
+decoder sends local SRAM data to the native banked-SRAM fabric and local MMIO
+to AXI4-Lite without leaving the core; the chip-local fabric recognises the
+sibling aperture and does not leave the chip; and only an address outside the
+chip aperture reaches the NoC endpoint. That is the plan §11.7/§11.8
+local-containment requirement expressed as a decode rule rather than as a
+second address.
 
 ## 5. Window versus capacity
 
 Two memory regions have a window larger than the storage that may sit behind
-it: SVM (16 MiB window) and global RAM (1 GiB window).
+it: core SRAM (16 MiB window) and global RAM (1 GiB window).
 
 **The window always decodes. The capacity is what is backed.** These are
 separate properties and the code keeps them in separate fields — `region::size`
@@ -132,14 +154,14 @@ The rule, in full:
 4. an access outside the window does not decode at all.
 
 Rule 3 is the whole reason the two are separate. If the map shrank to the
-instantiated capacity, an address just past the SVM would be *unmapped* in a
+instantiated capacity, an address just past core SRAM would be *unmapped* in a
 bring-up configuration and *valid* in the reference one, so the same firmware
 pointer bug would produce a decode error on one run and silent data corruption
 on another. The decoded map must not depend on how much memory was
 instantiated, and `test_address_map.cpp::decoded_extent_does_not_depend_on_capacity`
 proves it does not.
 
-### SVM capacity
+### Core SRAM capacity
 
 | | |
 | --- | --- |
@@ -153,8 +175,8 @@ platform report labels them as such; they are not the TPU_V3 reference result.
 
 D6 supersedes the temporary 4 MiB of Phase 0 decision P0-6.
 
-Host cost, once Phase 3 gives SVM real storage: the largest configuration
-(8 chips) is 16 SVMs × 16 MiB = 256 MiB, plus global RAM.
+Host cost, once Phase 3 gives core SRAM real storage: the largest Revision 1
+configuration (8 chips) is 16 SRAMs × 16 MiB = 256 MiB, plus global RAM.
 
 ### Global RAM capacity
 
@@ -171,6 +193,9 @@ bandwidth and must not be described as one.
 
 Every `*_CONTROL` and `*_COUNTERS` region is a 32-bit register file:
 
+* core-local control transport is 32-bit AXI4-Lite, represented at transaction
+  level in the SystemC model;
+
 * supported widths: **4 bytes only**;
 * alignment: naturally aligned to 4 bytes;
 * a 1, 2 or 8 byte access, or a misaligned 4-byte access, returns
@@ -182,10 +207,12 @@ Every `*_CONTROL` and `*_COUNTERS` region is a 32-bit register file:
   state, not an error, so that a firmware register sweep does not have to know
   the implementation status of every offset.
 
-Memory-like regions (`GLOBAL_BOOT_ROM`, `GLOBAL_RAM_OR_HBM`, `SVM`) accept 1,
+Memory-like regions (`GLOBAL_BOOT_ROM`, `GLOBAL_RAM_OR_HBM`, `CORE_SRAM`) accept 1,
 2, 4, 8 and vector-sized (up to 64-byte) accesses with arbitrary byte enables.
 `GLOBAL_BOOT_ROM` refuses writes from the simulated fabric; the host loader
-writes it through the debug transport.
+writes it through the debug transport. Local `CORE_SRAM` traffic uses the
+native SRAM data plane; external traffic reaches the same target through an
+adapter, not through an internal full AXI data crossbar.
 
 ## 7. NoC target kinds
 
@@ -201,12 +228,12 @@ them apart.
 | `GLOBAL_CONTROL` | `mmio` |
 | chip aperture (whole 128 MiB, when a chip is mapped as a NoC target) | `mmio` |
 
-The chip aperture is declared `mmio` even though most of it is SVM. It is the
+The chip aperture is declared `mmio` even though most of it is core SRAM. It is the
 conservative answer: the aperture contains real MMIO, the interconnect maps a
 region not a mixture, and an `mmio` declaration causes a widened read to be
 *refused* rather than silently satisfied from a neighbouring register. The cost
-is that remote vector-width reads of a chip's SVM must be bus-aligned. If that
-becomes a real limitation, the fix is to map SVM as a separate `memory`
+is that remote vector-width reads of a chip's SRAM must be bus-aligned. If that
+becomes a real limitation, the fix is to map core SRAM as a separate `memory`
 sub-region — a map change, made deliberately, not a `target_kind` downgrade.
 
 ## 8. Firmware view
@@ -220,7 +247,7 @@ correct state, not an omission.
 
 ## 9. Capacity arithmetic
 
-Worst case, all eight chips populated, SVM at its 16 MiB reference capacity:
+Worst case, all eight chips populated, core SRAM at its 16 MiB reference capacity:
 
 ```text
 chip apertures      8 * 128 MiB = 1024 MiB

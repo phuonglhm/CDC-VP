@@ -185,7 +185,11 @@ int main(void)
     if (trap_count != 1u) {
         return TCHK_TRAP_COUNT;
     }
-    if (trap_mcause != 13u) {  /* EXC_LOAD_PAGE_FAULT */
+    /* EXC_LOAD_ACCESS_FAULT. Cause 5, not 13: the harness answers with a TLM
+     * error, and decision record D13 makes a failed *bus* access an access
+     * fault. A page fault would require address translation to have failed,
+     * and this core runs with satp.MODE = Bare. */
+    if (trap_mcause != 5u) {
         return TCHK_MCAUSE;
     }
     if (trap_mtval != (unsigned int)(unsigned long)&vsrc[FAULT_ELEMENT]) {
@@ -263,21 +267,25 @@ int main(void)
 
     /* ── 4. RV32 indexed access with index EEW=64 ───────────────────────────
      *
-     * Recorded, not judged. Plan §11.2 lists an "RV32 restriction on 64-bit
-     * vector index EEW", but index EEW 64 does not exceed this machine's
-     * ELEN 64, so it is not self-evident that the instruction must be illegal.
-     * Asserting either outcome here would be encoding a guess about the spec
-     * into a gate.
+     * Asserted now, not merely recorded. When this image was written it was
+     * unclear whether the instruction had to be illegal, so the probe published
+     * the outcome and left the verdict to the Spike differential run. That run
+     * settled it: RVV 1.0 §18.2 states the V extension does not support EEW=64
+     * for index values when XLEN=32, and §7.3 requires an illegal-instruction
+     * exception for an unsupported offset EEW. Spike raises it; VP++ did not,
+     * which became audit finding F12 and then the D12 conformance patch.
      *
-     * So the firmware executes it, survives either result, and publishes what
-     * happened. The Spike differential run decides who is right — which is
-     * exactly what an independent oracle is for.
+     * The published words stay, because the differential corpus compares them
+     * on both models.
      */
     trap_action = TRAP_ACTION_SKIP;
     trap_count = 0;
     __asm__ volatile("vluxei64.v v8, (%0), v16" : : "r"(vsrc) : "memory");
     store_word(SIM_EEW64_TRAPPED, trap_count != 0u ? 1u : 0u);
     store_word(SIM_EEW64_MCAUSE, trap_count != 0u ? trap_mcause : 0u);
+    if (trap_count != 1u || trap_mcause != 2u) {  /* illegal instruction */
+        return TCHK_INDEX_EEW64;
+    }
 
     trap_action = TRAP_ACTION_ABORT;
     return SIM_EXIT_PASS;

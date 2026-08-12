@@ -76,12 +76,12 @@ set(TPU_V3_VPP_LINKED FALSE)
 
 # If the VP++ component was skipped (no checkout), the manifest still has to say
 # something true rather than emit empty fields.
-foreach(_vpp_var RISCV_VP_PLUSPLUS_REVISION RISCV_VP_PLUSPLUS_BACKPORT
-                 RISCV_VP_PLUSPLUS_PATCH_NAME RISCV_VP_PLUSPLUS_PATCH_SHA256)
-    if(NOT DEFINED ${_vpp_var})
-        set(${_vpp_var} "unknown")
-    endif()
-endforeach()
+if(NOT DEFINED RISCV_VP_PLUSPLUS_REVISION)
+    set(RISCV_VP_PLUSPLUS_REVISION "unknown")
+endif()
+if(NOT DEFINED RISCV_VP_PLUSPLUS_PATCH_SERIES)
+    set(RISCV_VP_PLUSPLUS_PATCH_SERIES "")
+endif()
 
 add_custom_command(TARGET tpu_v3_soc_package POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -115,9 +115,7 @@ add_custom_command(TARGET tpu_v3_soc_package POST_BUILD
             -DSPIKE_REVISION=${TPU_V3_SPIKE_REVISION}
             -DSPIKE_LINKED=${TPU_V3_SPIKE_LINKED}
             -DVPP_BASE_REVISION=${RISCV_VP_PLUSPLUS_REVISION}
-            -DVPP_BACKPORT_REVISION=${RISCV_VP_PLUSPLUS_BACKPORT}
-            -DVPP_PATCH_NAME=${RISCV_VP_PLUSPLUS_PATCH_NAME}
-            -DVPP_PATCH_SHA256=${RISCV_VP_PLUSPLUS_PATCH_SHA256}
+            "-DVPP_PATCH_SERIES=${RISCV_VP_PLUSPLUS_PATCH_SERIES}"
             -DVPP_LINKED=${TPU_V3_VPP_LINKED}
             -DSAURIA_OPTION_ENABLED=${CDC_ENABLE_SAURIA_NPU_V4}
             -DSAURIA_LINKED=${TPU_V3_SAURIA_LINKED}

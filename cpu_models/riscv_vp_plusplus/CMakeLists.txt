@@ -8,16 +8,27 @@
 # excluded, and the audit shows none of it is needed. See
 # components/TPU_V3/docs/TPU_V3_PHASE2_AUDIT.md §4.
 
-# ── the pinned source: base revision plus one approved backport ──────────────
+# ── the pinned source: a base revision plus an approved patch series ─────────
 #
-# Effective source = BASE_REVISION + BACKPORT_REVISION.
+# Effective source = BASE_REVISION + the patches in `patches/`, applied in
+# filename order.
 #
 # The base is the newest upstream revision that builds against SystemC 2.3.4;
 # master requires SystemC 3.0.1 (upstream commit 6f6ec679) and CDC-VP is built
-# against 2.3.4 throughout. The backport fixes audit finding F11, where the ISS
-# charged ~2.29 s of bogus simulated time before its first instruction and left
-# `mcycle` wrong from reset. It touches two lines of `dbbcache.h` and uses no
-# SystemC API, so it can be carried without the rest of master.
+# against 2.3.4 throughout.
+#
+# Two kinds of patch live in the series, and the distinction is deliberate:
+#
+#   *upstream backport*  — a commit that exists upstream, carried back onto the
+#                          base pin. Identified by its upstream SHA, and it
+#                          disappears the day the pin moves past it.
+#   *downstream          — a fix with no upstream counterpart, written here.
+#    conformance patch*    It does **not** disappear when the pin moves; it has
+#                          to be re-checked against the new base, and ideally
+#                          offered upstream.
+#
+# Calling both "backports" would hide exactly the difference that matters when
+# someone later bumps the pin, so the series records which each one is.
 #
 # **This file verifies; it never patches.** `fetch_riscv_vp_plusplus.sh` is the
 # only thing allowed to modify the checkout. A configure step that silently
@@ -26,24 +37,37 @@
 set(RISCV_VP_PLUSPLUS_REVISION "7a36fe859cae242f513ca6ad16ab8238f1e82977"
     CACHE STRING
     "Base ics-jku/riscv-vp-plusplus revision (tag 2025.09); see TPU_V3_PHASE2_AUDIT.md §1")
-set(RISCV_VP_PLUSPLUS_BACKPORT "b710fa7be2643b42cee92f5bbcb8cead4c0ed282"
-    CACHE STRING
-    "Approved F11 backport commit applied on top of the base revision")
-# Cached so the platform's build manifest can read them: plain variables do not
-# escape this directory scope, and the manifest must record the exact patch it
-# was built with.
-set(RISCV_VP_PLUSPLUS_PATCH_NAME
-    "0001-b710fa7b-dbbcache-fixed-random-cycle-counting.patch"
-    CACHE STRING "Filename of the approved F11 backport patch")
-set(RISCV_VP_PLUSPLUS_PATCH_SHA256
-    "16758c959a534e71c23254599ac7229c0ff85d3b4e1dc67ee3c82cc96f23b8ad"
-    CACHE STRING "Content hash of the approved F11 backport patch")
+
+# The series, as `file|kind|reference|sha256|why` records. The separator is `|`
+# and not `;` because `;` is CMake's list separator and would split a record
+# mid-field; for the same reason the reason text must stay semicolon-free. Cached so the
+# platform's build manifest can read them back: plain variables do not escape
+# this directory scope, and the manifest must record the exact source that was
+# compiled.
+set(RISCV_VP_PLUSPLUS_PATCH_SERIES
+    "0001-b710fa7b-dbbcache-fixed-random-cycle-counting.patch|upstream-backport|b710fa7be2643b42cee92f5bbcb8cead4c0ed282|16758c959a534e71c23254599ac7229c0ff85d3b4e1dc67ee3c82cc96f23b8ad|F11: the ISS banked ~2.29 s of simulated time before its first instruction and mcycle was wrong from reset (D8)"
+    "0002-d12-rv32-index-eew64-illegal.patch|downstream-conformance|audit F12|de147236d885b6a76584ad1ac83da6f4d6cab975a0464b40acdb9c619090a319|F12: RVV 1.0 18.2 forbids index EEW=64 when XLEN=32, so all 32 RV32 indexed encodings must raise an illegal instruction (D12)"
+    "0003-d13-bus-error-is-an-access-fault.patch|downstream-conformance|audit F13|c3535b21b849581af340b755ad1d22c33647c88dc3b9659072b75fd7fefce84b|F13: a failed bus access reported a page fault on a core with satp.MODE=Bare, but it must be an access fault chosen by access origin (D13)"
+    CACHE STRING "Approved patch series applied on top of the base revision")
+
+# The *result*, as `path|sha256` records: exactly which files the series is
+# allowed to have changed, and exactly what each must contain afterwards.
+#
+# Reverse-applying each patch, which is all the earlier version did, proves that
+# the recorded changes are present. It does not prove that *nothing else* is:
+# an extra local edit elsewhere in the file, or in a file no patch touches,
+# passes every reverse-apply check. Hashing the outcome closes that, and it does
+# so read-only — the verification never has to modify the checkout to find out
+# what is in it.
+set(RISCV_VP_PLUSPLUS_PATCHED_FILES
+    "vp/src/core/common/dbbcache.h|7674449c57ccd419e788e8bb8d5d7fe99b4b85426214b3c113c29af532f481d9"
+    "vp/src/core/common/mem.h|98004612efcde708db7078f3ee522445ab871f7acf549061b741e716897bcb1a"
+    "vp/src/core/rv32/iss_ctemplate.cpp|32054e9454ce0bf64719a81d9c1f0a40929a79596f543971aa8b73a9edd57139"
+    CACHE STRING "Files the patch series changes, with their post-patch content hashes")
 
 set(RISCV_VP_PLUSPLUS_DIR "${CMAKE_SOURCE_DIR}/third_party/riscv-vp-plusplus"
     CACHE PATH "Path to the riscv-vp-plusplus checkout")
 set(VPP "${RISCV_VP_PLUSPLUS_DIR}/vp/src")
-set(RISCV_VP_PLUSPLUS_PATCH
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/${RISCV_VP_PLUSPLUS_PATCH_NAME}")
 
 set(_vpp_fetch_hint
     "Run:\n    ${CMAKE_CURRENT_SOURCE_DIR}/fetch_riscv_vp_plusplus.sh")
@@ -51,18 +75,6 @@ set(_vpp_fetch_hint
 if(NOT EXISTS "${VPP}/core/rv32/iss.cpp")
     message(FATAL_ERROR
         "RISC-V VP++ not found at ${VPP}.\n${_vpp_fetch_hint}")
-endif()
-
-# The patch is identified by content. A patch file edited in place would
-# otherwise pass every check here while changing what gets compiled.
-file(SHA256 "${RISCV_VP_PLUSPLUS_PATCH}" _vpp_patch_sha)
-if(NOT _vpp_patch_sha STREQUAL RISCV_VP_PLUSPLUS_PATCH_SHA256)
-    message(FATAL_ERROR
-        "The F11 backport patch has changed.\n"
-        "  expected SHA256 ${RISCV_VP_PLUSPLUS_PATCH_SHA256}\n"
-        "  found            ${_vpp_patch_sha}\n"
-        "If this is intentional, update RISCV_VP_PLUSPLUS_PATCH_SHA256 and the "
-        "build manifest, and re-run the Phase 2 gate.")
 endif()
 
 find_program(RISCV_VP_PLUSPLUS_GIT git)
@@ -77,30 +89,115 @@ if(RISCV_VP_PLUSPLUS_GIT AND EXISTS "${RISCV_VP_PLUSPLUS_DIR}/.git")
             "RISC-V VP++ checkout is at ${_vpp_head} but the audited base is "
             "${RISCV_VP_PLUSPLUS_REVISION}.\n${_vpp_fetch_hint}\n"
             "To change the pin instead, update RISCV_VP_PLUSPLUS_REVISION *and* "
-            "re-run the Phase 2 audit — upstream master requires SystemC 3.0.1.")
+            "re-run the Phase 2 audit — upstream master requires SystemC 3.0.1, "
+            "and the downstream conformance patches must be re-checked against "
+            "the new base rather than assumed to still be needed.")
+    endif()
+endif()
+
+set(_vpp_series_summary "")
+foreach(_vpp_record IN LISTS RISCV_VP_PLUSPLUS_PATCH_SERIES)
+    string(REPLACE "|" ";" _vpp_fields "${_vpp_record}")
+    list(GET _vpp_fields 0 _vpp_file)
+    list(GET _vpp_fields 1 _vpp_kind)
+    list(GET _vpp_fields 2 _vpp_ref)
+    list(GET _vpp_fields 3 _vpp_sha)
+    list(GET _vpp_fields 4 _vpp_why)
+    set(_vpp_path "${CMAKE_CURRENT_SOURCE_DIR}/patches/${_vpp_file}")
+
+    if(NOT EXISTS "${_vpp_path}")
+        message(FATAL_ERROR "Approved patch missing: ${_vpp_path}\n${_vpp_fetch_hint}")
     endif()
 
-    # Applied-ness is checked by reverse-applying the patch: it succeeds only
-    # when the tree already contains exactly this change. Grepping for the
-    # changed lines would also pass on a tree that had been edited by hand to
-    # look similar.
+    # Each patch is identified by content. A patch file edited in place would
+    # otherwise pass every check here while changing what gets compiled.
+    file(SHA256 "${_vpp_path}" _vpp_actual_sha)
+    if(NOT _vpp_actual_sha STREQUAL _vpp_sha)
+        message(FATAL_ERROR
+            "Patch ${_vpp_file} has changed.\n"
+            "  expected SHA256 ${_vpp_sha}\n"
+            "  found            ${_vpp_actual_sha}\n"
+            "If this is intentional, update RISCV_VP_PLUSPLUS_PATCH_SERIES and the "
+            "build manifest, and re-run the Phase 2 gate.")
+    endif()
+
+    if(RISCV_VP_PLUSPLUS_GIT AND EXISTS "${RISCV_VP_PLUSPLUS_DIR}/.git")
+        # Applied-ness is checked by reverse-applying: that succeeds only when
+        # the tree already contains exactly this change. Grepping for the
+        # changed lines would also pass on a tree edited by hand to look
+        # similar.
+        execute_process(
+            COMMAND "${RISCV_VP_PLUSPLUS_GIT}" -C "${RISCV_VP_PLUSPLUS_DIR}"
+                    apply --reverse --check "${_vpp_path}"
+            RESULT_VARIABLE _vpp_applied
+            OUTPUT_QUIET ERROR_QUIET)
+        if(NOT _vpp_applied EQUAL 0)
+            message(FATAL_ERROR
+                "Approved patch ${_vpp_file} (${_vpp_kind}, ${_vpp_ref}) is not "
+                "applied to ${RISCV_VP_PLUSPLUS_DIR}.\n"
+                "  ${_vpp_why}\n"
+                "${_vpp_fetch_hint}")
+        endif()
+    endif()
+
+    string(APPEND _vpp_series_summary "\n    ${_vpp_kind}  ${_vpp_ref}")
+endforeach()
+
+# ── the result, not just the ingredients ─────────────────────────────────────
+#
+# Every file the series touches must contain exactly what the series produces,
+# and no other file may be modified at all.
+set(_vpp_expected_files "")
+foreach(_vpp_record IN LISTS RISCV_VP_PLUSPLUS_PATCHED_FILES)
+    string(REPLACE "|" ";" _vpp_fields "${_vpp_record}")
+    list(GET _vpp_fields 0 _vpp_rel)
+    list(GET _vpp_fields 1 _vpp_want)
+    list(APPEND _vpp_expected_files "${_vpp_rel}")
+
+    set(_vpp_abs "${RISCV_VP_PLUSPLUS_DIR}/${_vpp_rel}")
+    if(NOT EXISTS "${_vpp_abs}")
+        message(FATAL_ERROR "Patched file missing: ${_vpp_abs}\n${_vpp_fetch_hint}")
+    endif()
+    file(SHA256 "${_vpp_abs}" _vpp_got)
+    if(NOT _vpp_got STREQUAL _vpp_want)
+        message(FATAL_ERROR
+            "RISC-V VP++ source does not match the approved patch series.\n"
+            "  file             ${_vpp_rel}\n"
+            "  expected SHA256  ${_vpp_want}\n"
+            "  found            ${_vpp_got}\n"
+            "The checkout has been edited, or the series changed without its "
+            "recorded result being updated. Reset and re-run:\n${_vpp_fetch_hint}")
+    endif()
+endforeach()
+
+if(RISCV_VP_PLUSPLUS_GIT AND EXISTS "${RISCV_VP_PLUSPLUS_DIR}/.git")
+    # ...and nothing outside that set may be modified. `--untracked-files=no`
+    # deliberately ignores stray new files: they cannot change what is compiled,
+    # because the source list is explicit.
     execute_process(
         COMMAND "${RISCV_VP_PLUSPLUS_GIT}" -C "${RISCV_VP_PLUSPLUS_DIR}"
-                apply --reverse --check "${RISCV_VP_PLUSPLUS_PATCH}"
-        RESULT_VARIABLE _vpp_backport_applied
-        OUTPUT_QUIET ERROR_QUIET)
-    if(NOT _vpp_backport_applied EQUAL 0)
-        message(FATAL_ERROR
-            "The approved F11 backport (${RISCV_VP_PLUSPLUS_BACKPORT}) is not "
-            "applied to ${RISCV_VP_PLUSPLUS_DIR}.\n"
-            "Without it the ISS banks ~2.29 s of simulated time before its "
-            "first instruction and `mcycle` is wrong from reset.\n"
-            "${_vpp_fetch_hint}")
-    endif()
+                status --porcelain --untracked-files=no
+        OUTPUT_VARIABLE _vpp_status
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    string(REPLACE "\n" ";" _vpp_status_lines "${_vpp_status}")
+    foreach(_vpp_line IN LISTS _vpp_status_lines)
+        string(STRIP "${_vpp_line}" _vpp_line)
+        if(_vpp_line STREQUAL "")
+            continue()
+        endif()
+        string(REGEX REPLACE "^[A-Z?! ]+[ \t]+" "" _vpp_changed "${_vpp_line}")
+        if(NOT _vpp_changed IN_LIST _vpp_expected_files)
+            message(FATAL_ERROR
+                "RISC-V VP++ checkout has a modification the approved series "
+                "does not account for:\n  ${_vpp_changed}\n"
+                "Only these files may differ from the base revision:\n"
+                "  ${_vpp_expected_files}\n${_vpp_fetch_hint}")
+        endif()
+    endforeach()
 
     message(STATUS
-        "RISC-V VP++: base ${RISCV_VP_PLUSPLUS_REVISION} "
-        "+ F11 backport ${RISCV_VP_PLUSPLUS_BACKPORT}")
+        "RISC-V VP++: base ${RISCV_VP_PLUSPLUS_REVISION}${_vpp_series_summary}")
 endif()
 
 # Boost is header-only for the pieces used here (boost/format and

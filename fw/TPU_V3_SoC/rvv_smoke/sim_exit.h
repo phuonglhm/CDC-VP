@@ -85,10 +85,106 @@
  * resumption and fail a correct machine. */
 #define SIM_PHASE_MARK (SIM_EXIT_ADDR + 104)
 
+/* ── F5 concurrency probe results ────────────────────────────────────────────
+ *
+ * One block per hart, in that hart's own memory, so the two never write to the
+ * same words and a leak cannot be manufactured by the test itself.
+ */
+#define SIM_FP_HART              (SIM_EXIT_ADDR + 128)
+#define SIM_FP_FRM               (SIM_EXIT_ADDR + 132)
+#define SIM_FP_EXPECTED          (SIM_EXIT_ADDR + 136)
+#define SIM_FP_ITERATIONS        (SIM_EXIT_ADDR + 140)
+#define SIM_FP_RESULT_MISMATCHES (SIM_EXIT_ADDR + 144)
+#define SIM_FP_FLAG_MISMATCHES   (SIM_EXIT_ADDR + 148)
+#define SIM_FP_FRM_MISMATCHES    (SIM_EXIT_ADDR + 152)
+#define SIM_FP_FIRST_BAD_VALUE   (SIM_EXIT_ADDR + 156)
+#define SIM_FP_FIRST_BAD_FLAGS   (SIM_EXIT_ADDR + 160)
+#define SIM_FP_LAST_RESULT       (SIM_EXIT_ADDR + 164)
+
+/* ── D12 / D13 conformance gate ──────────────────────────────────────────────
+ *
+ * Two downstream conformance patches, one image.
+ *
+ * D12: all 32 RV32 indexed encodings with index EEW=64 must raise an illegal
+ * instruction, and must do so *before* they count a load/store, touch the bus
+ * or dirty `mstatus.VS`. Those three are what distinguishes a check placed at
+ * the decode site from one placed inside `vLoadStore()`.
+ *
+ * D13: a failed bus access must report an **access** fault whose cause follows
+ * what the access was for, never a page fault. All six origins are exercised,
+ * because deriving the cause from the TLM command alone gets fetch wrong and
+ * AMO wrong.
+ */
+#define SIM_D12_TRAP_MASK   (SIM_EXIT_ADDR + 192)  /* bit per encoding: 4 unit + 28 segment */
+#define SIM_D12_MCAUSE_OK   (SIM_EXIT_ADDR + 196)  /* 1 = every one of them was cause 2 */
+#define SIM_D12_VSTART_KEPT (SIM_EXIT_ADDR + 200)  /* 1 = vstart survived all 32 */
+#define SIM_D12_VD_KEPT     (SIM_EXIT_ADDR + 204)  /* 1 = the destination register survived */
+#define SIM_D12_VS_KEPT     (SIM_EXIT_ADDR + 208)  /* 2 = all 32 stayed Clean, 3 = one dirtied VS */
+#define SIM_D12_PHASE_BEGIN (SIM_EXIT_ADDR + 212)  /* host zeroes its access counter here */
+#define SIM_D12_PHASE_END   (SIM_EXIT_ADDR + 216)  /* host snapshots its access counts here */
+
+#define SIM_D13_FETCH_MCAUSE  (SIM_EXIT_ADDR + 224)
+#define SIM_D13_FETCH_MTVAL   (SIM_EXIT_ADDR + 228)
+#define SIM_D13_LOAD_MCAUSE   (SIM_EXIT_ADDR + 232)
+#define SIM_D13_LOAD_MTVAL    (SIM_EXIT_ADDR + 236)
+#define SIM_D13_STORE_MCAUSE  (SIM_EXIT_ADDR + 240)
+#define SIM_D13_STORE_MTVAL   (SIM_EXIT_ADDR + 244)
+#define SIM_D13_VLOAD_MCAUSE  (SIM_EXIT_ADDR + 248)
+#define SIM_D13_VLOAD_MTVAL   (SIM_EXIT_ADDR + 252)
+#define SIM_D13_VLOAD_VSTART  (SIM_EXIT_ADDR + 256)
+#define SIM_D13_VSTORE_MCAUSE (SIM_EXIT_ADDR + 260)
+#define SIM_D13_VSTORE_MTVAL  (SIM_EXIT_ADDR + 264)
+#define SIM_D13_VSTORE_VSTART (SIM_EXIT_ADDR + 268)
+#define SIM_D13_AMO_MCAUSE    (SIM_EXIT_ADDR + 272)
+#define SIM_D13_AMO_MTVAL     (SIM_EXIT_ADDR + 276)
+/* A target that refuses with TLM_GENERIC_ERROR_RESPONSE rather than
+ * TLM_ADDRESS_ERROR_RESPONSE. Both mean "the target said no" and both must
+ * become the same guest access fault; the protocol-error statuses must not,
+ * and that half is checked by a separate run of the harness. */
+#define SIM_D13_GENERIC_MCAUSE (SIM_EXIT_ADDR + 280)
+#define SIM_D13_GENERIC_MTVAL  (SIM_EXIT_ADDR + 284)
+
+/* ── interrupt gate ──────────────────────────────────────────────────────────
+ *
+ * A request/ack pair rather than the host driving lines on a timer. The
+ * firmware says which line it wants raised; the host raises it and echoes the
+ * line back in `SIM_IRQ_ACK`. That keeps the two sides in step under temporal
+ * decoupling, where "wait a while and hope the other process ran" is a race
+ * whose failure looks like a dead interrupt line.
+ *
+ * `SIM_IRQ_HEARTBEAT` exists so the spin loop produces bus traffic. A pure
+ * register spin never yields, so the host's process would never get to run and
+ * the interrupt would never arrive — a hang that looks exactly like a broken
+ * `set_irq()`.
+ */
+#define SIM_IRQ_REQUEST   (SIM_EXIT_ADDR + 320)
+#define SIM_IRQ_ACK       (SIM_EXIT_ADDR + 324)
+#define SIM_IRQ_HEARTBEAT (SIM_EXIT_ADDR + 328)
+
+#define SIM_IRQ_NONE           0u
+#define SIM_IRQ_LINE_SOFTWARE  3u   /* MSIP */
+#define SIM_IRQ_LINE_TIMER     7u   /* MTIP */
+#define SIM_IRQ_LINE_EXTERNAL 11u   /* MEIP */
+
+#define SIM_IRQ_SOFTWARE_MCAUSE (SIM_EXIT_ADDR + 332)
+#define SIM_IRQ_SOFTWARE_COUNT  (SIM_EXIT_ADDR + 336)
+#define SIM_IRQ_TIMER_MCAUSE    (SIM_EXIT_ADDR + 340)
+#define SIM_IRQ_TIMER_COUNT     (SIM_EXIT_ADDR + 344)
+#define SIM_IRQ_EXTERNAL_MCAUSE (SIM_EXIT_ADDR + 348)
+#define SIM_IRQ_EXTERNAL_COUNT  (SIM_EXIT_ADDR + 352)
+#define SIM_IRQ_MASKED_COUNT    (SIM_EXIT_ADDR + 356)
+#define SIM_IRQ_TOTAL           (SIM_EXIT_ADDR + 360)
+/* Sampled inside the wait loop. Without them a line that never fires is
+ * indistinguishable from one the firmware never enabled. */
+#define SIM_IRQ_MSTATUS         (SIM_EXIT_ADDR + 364)
+#define SIM_IRQ_MIE             (SIM_EXIT_ADDR + 368)
+#define SIM_IRQ_MIP             (SIM_EXIT_ADDR + 372)
+
 /* What the trap handler tells `crt0` to do next. */
 #define TRAP_ACTION_ABORT  0u  /* unhandled: report and stop */
 #define TRAP_ACTION_RESUME 1u  /* mret with mepc unchanged: re-run the instruction */
 #define TRAP_ACTION_SKIP   2u  /* mret with mepc + 4: step over a 32-bit instruction */
+#define TRAP_ACTION_RESUME_AT 3u /* mret to `trap_resume_pc` */
 
 #define SIM_EXIT_KIND_NORMAL  0u
 #define SIM_EXIT_KIND_TRAPPED 1u

@@ -61,6 +61,10 @@ SECTIONS
         __vdata_end = .;
     } > RAM
 
+    /* The end of the region, for probes that must straddle it. Same value the
+     * harness uses for its probe memory. */
+    __ram_end = ORIGIN(RAM) + LENGTH(RAM);
+
     . = ALIGN(16);
     __stack_bottom = .;
     . = . + 0x4000;                 /* 16 KiB */

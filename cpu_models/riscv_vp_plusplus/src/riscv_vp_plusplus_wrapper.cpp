@@ -312,10 +312,20 @@ void riscv_vp_plusplus_cpu::start_of_simulation()
 
 void riscv_vp_plusplus_cpu::initialise_iss()
 {
-    // `false, false` are `use_dbbcache` and `use_lscache`. They stay off until
-    // their TLM transparency is measured; see the header.
-    impl_->iss.init(&impl_->mem_if, /*use_dbbcache=*/true,
-                    &impl_->mem_if, /*use_lscache=*/true, &impl_->clint,
+    // Both ISS-internal caches stay off (P2-5). `dbbcache` caches decoded basic
+    // blocks and elides the repeated instruction fetches that go with them, so
+    // with it on the TLM socket no longer sees every fetch and the "all CPU
+    // traffic traverses CDC-VP TLM" rule (plan §11.2, `INTERFACE_CONTRACT.md`
+    // §9) is quietly false. `lscache` has no DMI behind it here and is less
+    // dangerous, but its transparency is equally unmeasured.
+    //
+    // These were briefly `true` while F11 was being diagnosed — the F11 defect
+    // lives in `dbbcache` — and the comment above them still said `false`,
+    // which is why nobody noticed. `dbbcache_and_lscache_stay_disabled` in
+    // `test_riscv_vp_plusplus.cpp` now asserts the observable consequence
+    // rather than trusting a comment.
+    impl_->iss.init(&impl_->mem_if, /*use_dbbcache=*/false,
+                    &impl_->mem_if, /*use_lscache=*/false, &impl_->clint,
                     static_cast<std::uint32_t>(entry_pc_), kFallbackStackTop);
 }
 

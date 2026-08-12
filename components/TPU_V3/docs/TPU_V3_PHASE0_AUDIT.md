@@ -1,12 +1,21 @@
 # TPU_V3 Phase 0 — Source, Toolchain and License Audit
 
+> **Historical architecture notice (D14/D15, final 2026-08-12):** this audit remains the
+> evidence for Phase 0 dependency, NoC, toolchain, packaging and provenance
+> findings. Its old two-MXU/SVM composition and optional-Sauria role are
+> superseded. The current NEO-CORE is VP++ + core SRAM + independent TPU_V3 DMA
+> + one Sauria SA + Im2Col/Col2Im Transform. Its interconnect is 32-bit
+> AXI4-Lite control + native banked-SRAM local data + a bidirectional external
+> AXI4/NoC bridge; there is no internal full AXI data crossbar.
+
 Audit date: 2026-08-08
 Auditor: implementation agent, following `TPU_V3_IMPLEMENTATION_PLAN.md` §16
 Phase 0.
 
-> **Superseded in part.** `TPU_V3_DECISION_RECORD.md` (approved 2026-08-08,
-> decisions D1–D6) is the implementation authority where it and this file
-> disagree. In particular decisions **P0-6** (SVM default), **P0-7** (MXU data
+> **Superseded in part.** `TPU_V3_DECISION_RECORD.md` (initial approval
+> 2026-08-08, amended through D15 on 2026-08-12) is the implementation
+> authority where it and this file disagree. In particular decisions **P0-6**
+> (SVM default), **P0-7** (MXU data
 > types) and **P0-9** (`cpu_base` extension) have been replaced — see §9.
 > Everything else here is a measurement and still stands.
 

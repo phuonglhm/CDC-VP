@@ -1,0 +1,132 @@
+<mxfile host="app.diagrams.net" modified="2026-08-12T00:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="neo-core-d15" name="NEO-CORE D15">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="outer" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;strokeColor=#374151;fillColor=#FFFFFF;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="1120" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="title" value="NEO-CORE Architecture — D15 Interconnect Split" style="text;html=1;align=center;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="290" y="70" width="620" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="vp" value="RISC-V VP++ RV32GCV Hart" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;strokeColor=#374151;fillColor=#F3F4F6;fontStyle=1;fontSize=16;verticalAlign=top;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="360" y="120" width="480" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="scalar" value="Scalar execution&lt;br&gt;(RV32)" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#6B7280;fillColor=#FFFFFF;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="385" y="165" width="190" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="rvv" value="RVV 1.0&lt;br&gt;VLEN = 512" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#6B7280;fillColor=#FFFFFF;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="625" y="165" width="190" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="control_fabric" value="AXI4-Lite Control Fabric — 32-bit register access only" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;strokeColor=#2563EB;fillColor=#DBEAFE;fontStyle=1;fontSize=15;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="120" y="290" width="880" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="core_regs" value="Core Control&lt;br&gt;&amp;amp; Counters" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#2563EB;fillColor=#EFF6FF;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="100" y="400" width="170" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="dma" value="NEO DMA&lt;br&gt;&lt;font style=&quot;font-size:12px&quot;&gt;AXI4-Lite control&lt;br&gt;Native local port&lt;br&gt;External port&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#374151;fillColor=#F9FAFB;fontStyle=1;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="310" y="390" width="180" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="sa" value="SAURIA Matrix Engine&lt;br&gt;&lt;font style=&quot;font-size:12px&quot;&gt;64×64 bring-up&lt;br&gt;128×128 target&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#374151;fillColor=#F9FAFB;fontStyle=1;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="530" y="390" width="190" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="transform" value="ImageTransform&lt;br&gt;&lt;font style=&quot;font-size:12px&quot;&gt;Im2Col + Col2Im&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#374151;fillColor=#F9FAFB;fontStyle=1;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="760" y="390" width="200" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="local_fabric" value="NEO Local SRAM Fabric — native ready/valid, banked arbitration (DATA)" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;strokeColor=#16A34A;fillColor=#DCFCE7;fontStyle=1;fontSize=15;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="120" y="590" width="880" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="sram" value="Banked Core SRAM&lt;br&gt;&lt;font style=&quot;font-size:12px&quot;&gt;16 MiB logical address space&lt;br&gt;bank count / width / pipeline configurable&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;strokeColor=#15803D;fillColor=#F0FDF4;fontStyle=1;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="390" y="690" width="400" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="external_bridge" value="Bidirectional&lt;br&gt;AXI4 / NoC Bridge&lt;br&gt;&lt;font style=&quot;font-size:12px&quot;&gt;Outbound: VP++ + DMA&lt;br&gt;Inbound: MMIO + SRAM&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;strokeColor=#7C3AED;fillColor=#F3E8FF;fontStyle=1;fontSize=15;fontColor=#4C1D95;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="370" width="110" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="noc" value="Chip Fabric /&lt;br&gt;2D Mesh NoC" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;strokeColor=#7C3AED;fillColor=#FAF5FF;fontStyle=1;fontSize=15;fontColor=#4C1D95;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="425" width="150" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_vp_control" value="MMIO" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#2563EB;endArrow=block;endFill=1;fontColor=#1E40AF;" edge="1" parent="1" source="vp" target="control_fabric">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_ctrl_core" value="control" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#2563EB;endArrow=block;endFill=1;fontColor=#1E40AF;" edge="1" parent="1" source="control_fabric" target="core_regs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_ctrl_dma" value="control" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#2563EB;endArrow=block;endFill=1;fontColor=#1E40AF;" edge="1" parent="1" source="control_fabric" target="dma">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_ctrl_sa" value="control" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#2563EB;endArrow=block;endFill=1;fontColor=#1E40AF;" edge="1" parent="1" source="control_fabric" target="sa">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_ctrl_transform" value="control" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#2563EB;endArrow=block;endFill=1;fontColor=#1E40AF;" edge="1" parent="1" source="control_fabric" target="transform">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_vp_local" value="Scalar + RVV local load/store" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#16A34A;endArrow=block;endFill=1;fontColor=#166534;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="360" y="200" as="sourcePoint" />
+            <mxPoint x="120" y="617" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="70" y="200" />
+              <mxPoint x="70" y="617" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_dma_local" value="local data" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#16A34A;endArrow=block;endFill=1;fontColor=#166534;" edge="1" parent="1" source="dma" target="local_fabric">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_sa_local" value="operands / results" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#16A34A;endArrow=block;endFill=1;fontColor=#166534;" edge="1" parent="1" source="sa" target="local_fabric">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_transform_local" value="tensor data" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#16A34A;endArrow=block;endFill=1;fontColor=#166534;" edge="1" parent="1" source="transform" target="local_fabric">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_local_sram" value="physical bank beats" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#16A34A;startArrow=block;startFill=1;endArrow=block;endFill=1;fontColor=#166534;" edge="1" parent="1" source="local_fabric" target="sram">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_vp_external" value="fetch / global access" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#7C3AED;endArrow=block;endFill=1;fontColor=#6D28D9;" edge="1" parent="1" source="vp" target="external_bridge">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1085" y="175" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_dma_external" value="bulk external" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#7C3AED;endArrow=block;endFill=1;fontColor=#6D28D9;" edge="1" parent="1" source="dma" target="external_bridge">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="510" y="540" />
+              <mxPoint x="1085" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_inbound_control" value="inbound MMIO" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;strokeColor=#7C3AED;endArrow=block;endFill=1;fontColor=#6D28D9;" edge="1" parent="1" source="external_bridge" target="control_fabric">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_inbound_sram" value="inbound SRAM" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;dashed=1;strokeColor=#7C3AED;endArrow=block;endFill=1;fontColor=#6D28D9;" edge="1" parent="1" source="external_bridge" target="local_fabric">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_bridge_noc" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=3;strokeColor=#7C3AED;startArrow=block;startFill=1;endArrow=block;endFill=1;" edge="1" parent="1" source="external_bridge" target="noc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend_control" value="Blue: control only" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#1E40AF;" vertex="1" parent="1">
+          <mxGeometry x="70" y="770" width="140" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_local" value="Green: local SRAM data" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#166534;" vertex="1" parent="1">
+          <mxGeometry x="210" y="770" width="160" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_external" value="Purple: external / inbound" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#6D28D9;" vertex="1" parent="1">
+          <mxGeometry x="800" y="770" width="190" height="20" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,348 @@
+diff --git a/vp/src/core/rv32/iss_ctemplate.cpp b/vp/src/core/rv32/iss_ctemplate.cpp
+index 1e1e8895..660a850f 100644
+--- a/vp/src/core/rv32/iss_ctemplate.cpp
++++ b/vp/src/core/rv32/iss_ctemplate.cpp
+@@ -2035,6 +2035,33 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXEI64_V) {
++					/*
++					 * CDC-VP downstream conformance patch (decision record D12).
++					 *
++					 * RVV 1.0 §18.2: "the V extension does not support EEW=64
++					 * for index values when XLEN=32". §7.3: "An implementation
++					 * must raise an illegal instruction exception if the EEW is
++					 * not supported for offset elements."
++					 *
++					 * The rule is about the *index* EEW, so it covers all 32
++					 * encodings that carry one: the four unit forms and the 28
++					 * segment forms `v[sl][ou]xseg[2-8]ei64.v`. Spike applies it
++					 * to all of them through a single `VI_CHECK_ST_INDEX`; here
++					 * each decode site has to say it, so every one of the 32
++					 * carries this check.
++					 *
++					 * This is the RV32 translation unit, so the restriction is
++					 * expressed by refusing the encodings rather than by an XLEN
++					 * test; the RV64 file is untouched and keeps all 32.
++					 *
++					 * Raised *first*, before stats.inc_loadstore() and
++					 * prepInstr(). An illegal instruction must not be counted,
++					 * must not produce bus traffic, and must not set
++					 * mstatus.VS to Dirty -- prepInstr() does the last of those,
++					 * so a check further inside vLoadStore() would already be
++					 * too late.
++					 */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2067,6 +2094,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXEI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2099,6 +2129,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXEI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -2131,6 +2164,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXEI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -2323,6 +2359,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXSEG2EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2355,6 +2394,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXSEG2EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2387,6 +2429,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXSEG2EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -2419,6 +2464,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXSEG2EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -2611,6 +2659,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXSEG3EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2643,6 +2694,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXSEG3EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2675,6 +2729,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXSEG3EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -2707,6 +2764,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXSEG3EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -2899,6 +2959,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXSEG4EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2931,6 +2994,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXSEG4EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -2963,6 +3029,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXSEG4EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -2995,6 +3064,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXSEG4EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -3187,6 +3259,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXSEG5EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -3219,6 +3294,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXSEG5EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -3251,6 +3329,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXSEG5EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -3283,6 +3364,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXSEG5EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -3475,6 +3559,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXSEG6EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -3507,6 +3594,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXSEG6EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -3539,6 +3629,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXSEG6EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -3571,6 +3664,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXSEG6EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -3763,6 +3859,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXSEG7EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -3795,6 +3894,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXSEG7EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -3827,6 +3929,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXSEG7EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -3859,6 +3964,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXSEG7EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -4051,6 +4159,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLUXSEG8EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -4083,6 +4194,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VLOXSEG8EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::load, 64, VExt::load_store_type_t::indexed);
+@@ -4115,6 +4229,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSUXSEG8EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);
+@@ -4147,6 +4264,9 @@ void ISS_CT::exec_steps(const bool debug_single_step) {
+ 				OP_END();
+ 
+ 				OP_CASE(VSOXSEG8EI64_V) {
++					/* D12: index EEW=64 is not supported at XLEN=32.
++					 * See the comment on VLUXEI64_V above. */
++					RAISE_ILLEGAL_INSTRUCTION();
+ 					stats.inc_loadstore();
+ 					v_ext.prepInstr(true, true, false);
+ 					v_ext.vLoadStore(VExt::load_store_t::store, 64, VExt::load_store_type_t::indexed);

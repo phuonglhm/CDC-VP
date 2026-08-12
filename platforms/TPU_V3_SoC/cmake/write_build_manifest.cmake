@@ -40,9 +40,8 @@
 #   SPIKE_REVISION
 #   SPIKE_LINKED       TRUE/FALSE
 #   VPP_BASE_REVISION      RISC-V VP++ base commit
-#   VPP_BACKPORT_REVISION  approved F11 backport commit applied on top
-#   VPP_PATCH_NAME         patch filename under cpu_models/riscv_vp_plusplus/patches
-#   VPP_PATCH_SHA256       content hash of that patch
+#   VPP_PATCH_SERIES       the approved patch series, one `file|kind|ref|sha|why`
+#                          record per entry, in application order
 #   VPP_LINKED             TRUE/FALSE
 #   SAURIA_OPTION_ENABLED  repository-wide CMake option, TRUE/FALSE
 #   SAURIA_LINKED          linked into this executable, TRUE/FALSE
@@ -145,14 +144,57 @@ _json_escape(_systemc "${SYSTEMC_HOME}")
 _json_escape(_mxu_backend "${MXU_BACKEND}")
 _json_escape(_spike_revision "${SPIKE_REVISION}")
 
-# The VP++ source is base + one approved backport, so recording a single
-# revision would describe source that was never compiled. All four fields are
-# needed to reconstruct it exactly.
+# The VP++ source is a base revision plus a patch series, so recording a single
+# revision would describe source that was never compiled. Every field needed to
+# reconstruct it exactly is emitted, including which patches are upstream
+# backports and which are downstream conformance fixes with no upstream
+# counterpart -- the two behave differently the day the pin moves.
 _json_escape(_vpp_base "${VPP_BASE_REVISION}")
-_json_escape(_vpp_backport "${VPP_BACKPORT_REVISION}")
-_json_escape(_vpp_patch_name "${VPP_PATCH_NAME}")
-_json_escape(_vpp_patch_sha256 "${VPP_PATCH_SHA256}")
 _bool_json(_vpp_linked_json "${VPP_LINKED}")
+
+set(_vpp_patch_json "")
+set(_vpp_effective "${VPP_BASE_REVISION}")
+set(_vpp_first TRUE)
+foreach(_record IN LISTS VPP_PATCH_SERIES)
+    string(REPLACE "|" ";" _fields "${_record}")
+    list(LENGTH _fields _n)
+    if(NOT _n EQUAL 5)
+        message(FATAL_ERROR "malformed VPP_PATCH_SERIES record: ${_record}")
+    endif()
+    list(GET _fields 0 _pfile)
+    list(GET _fields 1 _pkind)
+    list(GET _fields 2 _pref)
+    list(GET _fields 3 _psha)
+    list(GET _fields 4 _pwhy)
+    _json_escape(_pfile "${_pfile}")
+    _json_escape(_pkind "${_pkind}")
+    _json_escape(_pref "${_pref}")
+    _json_escape(_psha "${_psha}")
+    _json_escape(_pwhy "${_pwhy}")
+    if(NOT _vpp_first)
+        string(APPEND _vpp_patch_json ",")
+    endif()
+    set(_vpp_first FALSE)
+    string(APPEND _vpp_patch_json "
+        {
+          \"kind\": \"${_pkind}\",
+          \"reference\": \"${_pref}\",
+          \"reason\": \"${_pwhy}\",
+          \"patch_file\": \"cpu_models/riscv_vp_plusplus/patches/${_pfile}\",
+          \"patch_sha256\": \"${_psha}\"
+        }")
+    # `effective_source` has to name something reconstructible. An upstream
+    # backport is named by its commit; a downstream patch has no commit, so it
+    # is named by its file, which together with the hash above identifies it
+    # exactly. "+audit F12" would identify nothing.
+    if(_pkind STREQUAL "upstream-backport")
+        string(APPEND _vpp_effective "+${_pref}")
+    else()
+        get_filename_component(_pstem "${_pfile}" NAME_WE)
+        string(APPEND _vpp_effective "+${_pstem}")
+    endif()
+endforeach()
+_json_escape(_vpp_effective "${_vpp_effective}")
 
 file(WRITE "${MANIFEST_PATH}"
 "{
@@ -202,16 +244,10 @@ file(WRITE "${MANIFEST_PATH}"
       \"role\": \"runtime RV32GCV hart (scalar + RVV 1.0)\",
       \"base_revision\": \"${_vpp_base}\",
       \"base_revision_tag\": \"2025.09\",
-      \"backports\": [
-        {
-          \"upstream_commit\": \"${_vpp_backport}\",
-          \"summary\": \"vp: core: dbbcache: fixed random cycle counting bug (e.g. mcycles)\",
-          \"reason\": \"TPU_V3 audit finding F11: without it the ISS banks ~2.29 s of simulated time before its first instruction and mcycle is wrong from reset\",
-          \"patch_file\": \"cpu_models/riscv_vp_plusplus/patches/${_vpp_patch_name}\",
-          \"patch_sha256\": \"${_vpp_patch_sha256}\"
-        }
+      \"patch_series\": [${_vpp_patch_json}
       ],
-      \"effective_source\": \"${_vpp_base}+${_vpp_backport}\",
+      \"patch_series_note\": \"Applied in filename order. 'upstream-backport' entries vanish when the pin moves past them; 'downstream-conformance' entries have no upstream counterpart and must be re-checked against any new base.\",
+      \"effective_source\": \"${_vpp_effective}\",
       \"linked\": ${_vpp_linked_json},
       \"license\": \"MIT\"
     },

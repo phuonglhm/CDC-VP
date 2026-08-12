@@ -1,21 +1,30 @@
 # TPU_V3 Phase 2 — RISC-V VP++ Pre-Integration Audit
 
+> **Historical architecture notice (D14/D15, final 2026-08-12):** the CPU/RVV evidence,
+> fixes and closure gates in this audit remain valid. References to future SVM,
+> MXU or optional Sauria-backend work describe the pre-D14 plan and are
+> superseded by core SRAM, independent TPU_V3 DMA, one Sauria SA and one
+> Im2Col/Col2Im Transform engine. D15 splits its interconnect into 32-bit
+> AXI4-Lite control, native banked-SRAM local data and a bidirectional external
+> AXI4/NoC bridge.
+
 Audit date: 2026-08-08
 Scope: decision record **D3** (RV32GCV runtime), plan §11.2 "Pre-integration
 audit and pinning" and the Phase 2 gate.
 
 Every claim below was produced by a command run on this host or by reading the
-fetched source at a named revision. Where something has not been measured yet it
-is listed in §9 as outstanding, not asserted.
+fetched source at a named revision. Residual scope limits and later-phase work
+are listed explicitly in §9 rather than presented as Phase 2 evidence.
 
 **Headline: the runtime is viable and is pinned, but not at upstream `master`.**
 Upstream master requires SystemC 3.0.1; CDC-VP is built against SystemC 2.3.4.
 The newest revision that builds against 2.3.4 without extra dependencies is the
 `2025.09` release tag, and it costs nothing in RVV functionality.
 
-**Effective source is that tag plus exactly one approved upstream backport**
-(`b710fa7b`), which fixes finding F11. The mechanism is recorded, hashed,
-script-applied and CMake-verified; see F11.
+**Effective source is that tag plus an approved patch series** — the upstream
+backport `b710fa7b`, which fixes F11, and the two downstream conformance patches
+D12 and D13. The mechanism is recorded, hashed, script-applied and
+CMake-verified; see F11–F13.
 
 ---
 
@@ -27,14 +36,15 @@ script-applied and CMake-verified; see F11.
 | **Pinned base revision** | `7a36fe859cae242f513ca6ad16ab8238f1e82977` |
 | Tag at that commit | `2025.09` |
 | **Approved backport** | `b710fa7be2643b42cee92f5bbcb8cead4c0ed282` (F11) |
-| **Effective source** | base + backport |
+| **Downstream conformance patches** | D12 (RV32 index EEW=64), D13 (bus-error access-fault causes) |
+| **Effective source** | base + the approved three-patch series |
 | Acquisition | `cpu_models/riscv_vp_plusplus/fetch_riscv_vp_plusplus.sh` |
 | Commit date | 2025-09-08 13:52:31 +0900 |
 | Commit subject | `vp: core: mem: Removed invalid quantum keeper assert check for blocking transport calls` |
 | License | MIT (Univ. Bremen 2017–2018, JKU Linz 2022–2023) |
 | Local path | `third_party/riscv-vp-plusplus` (gitignored, not vendored) |
 | Role | runtime RV32GCV hart — scalar + RVV 1.0 |
-| Pin status | **candidate**; promoted by the Phase 2 gate (D3) |
+| Pin status | **frozen for TPU_V3 Phase 2**; Release and Debug gates passed (D3) |
 
 Rejected alternatives, with the measured reason:
 
@@ -241,7 +251,17 @@ values with no configuration change and no relabelling.
 | Freestanding RV32GCV smoke image (D4) | `fw/TPU_V3_SoC/rvv_smoke/` — `crt0.S`, `link.ld`, `main.c`, no libc or libm | `make verify`: ISA attributes report `v1p0` and `zvl512b1p0`, and every required vector instruction is in the disassembly |
 | The image executed through the backend, with observed TLM traffic | `cpu_models/riscv_vp_plusplus/tests/test_rvv_smoke.cpp` | `rvv_smoke_execution` |
 | D10 vector-trap gate: mid-vector fault, `vstart` resumption, `mstatus.VS`, reserved `vtype`, EEW=64 probe | `fw/TPU_V3_SoC/rvv_smoke/trap_main.c`, `tests/test_rvv_trap.cpp` | `rvv_vector_trap` |
+| F5 concurrency control: two harts, different rounding modes, measured interleaving | `fw/TPU_V3_SoC/rvv_smoke/fp_main.c`, `tests/test_fp_concurrency.cpp` | `fp_concurrency_normal`, `fp_concurrency_swapped` |
 | F11 backport, applied and verified | `fetch_riscv_vp_plusplus.sh`, `patches/`, CMake verification, manifest | `rvv_smoke_execution` (two harts, 1 ms watchdog, mcycle checks); refusal verified by reverting the patch |
+| ISS caches confirmed off, and pinned by a test | `riscv_vp_plusplus_wrapper.cpp`; `rvv_smoke_execution` | reads (fetches + loads) must be ≥ instructions retired: 1849 ≥ 1403 with the caches off, 770 < 1406 with them on |
+| Interrupt delivery: software, timer, external; cause, `mie` masking, level-triggered clear | `fw/TPU_V3_SoC/rvv_smoke/irq_main.c`, `tests/test_irq.cpp` | `interrupt_delivery` — `set_irq()` had never been executed by a test before this |
+| Portable executable containing the backend | `cpu_models/riscv_vp_plusplus/portable/` | `riscv_vp_plusplus_portable` — runs from a directory holding only the binary, its SystemC libraries and one ELF, with `LD_LIBRARY_PATH` cleared |
+| Spike oracle at the audited pin, standalone | `cpu_models/riscv_vp_plusplus/oracle/fetch_spike.sh` → `third_party/riscv-isa-sim` | built and run; never linked into the platform or a package (D3) |
+| Differential corpus: one image, both models, 71-field canonical signature | `fw/TPU_V3_SoC/rvv_smoke/sig_layout.h`, `sig_main.c`, `crt0_sig.S`, `link_dram.ld`; `oracle/test_spike_differential.cpp` | `spike_differential` — **64 matched, 7 XFAIL (D9), 0 OPEN, 0 unexplained** |
+| D12 conformance patch: all 32 RV32 index-EEW=64 encodings are illegal | `patches/0002-…`, `fw/TPU_V3_SoC/rvv_smoke/conf_main.c` | `conformance_patches`; all 32 independently check `mcause`, `vstart` and VS placement, and the negative control is verified |
+| D13 conformance patch: a bus error is an access fault chosen by origin | `patches/0003-…`, `fw/TPU_V3_SoC/rvv_smoke/conf_main.c` | `conformance_patches` (six origins plus the generic-refusal response); negative control verified the same way |
+| Patch mechanism generalised from one patch to a verified series | `fetch_riscv_vp_plusplus.sh`, `CMakeLists.txt`, `write_build_manifest.cmake` | configure prints the series and refuses if any member is missing or its hash changed; the manifest records kind, reference, file and hash per patch |
+| Patch guard proves the *result*, not just the ingredients | `RISCV_VP_PLUSPLUS_PATCHED_FILES` in `CMakeLists.txt` | each patched file's post-patch content is hashed and no other file may be modified; both controls verified — a stray edit inside a patched file and a stray edit in an untouched file each abort configure |
 | TLM global quantum guard | `riscv_vp_plusplus_wrapper.cpp` | without it the ISS silently retires nothing in Release |
 | `cpu_config.hart_id` / `.reset_pc` as static properties (D5) | `cpu_models/include/cdc/cpu/cpu_base.h` | `riscv_vp_plusplus_backend` |
 | `riscv_vp` refuses a hart id or reset vector it cannot honour (D5) | `cpu_models/riscv_vp/src/riscv_vp_wrapper.cpp` | build of every existing platform still passes |
@@ -434,13 +454,50 @@ between. `softfloat_exceptionFlags` is the weaker one: it **accumulates**, so
 one hart's flags are visible to another with no interleaving hazard required at
 all.
 
-**Required Phase 2 control:** two instances executing FP work with *different*
-`frm` values, interleaved, checked against the Spike oracle. It must assert the
-**exception flags as well as the numeric results** — a run can produce the right
-number with the wrong flags, and flags are what firmware tests. If it fails, the
-wrapper saves and restores all three globals around each ISS run slice.
+**Control implemented and run** — `fp_concurrency_normal` and
+`fp_concurrency_swapped`, over `fw/TPU_V3_SoC/rvv_smoke/fp_main.c`.
 
-Do not assume this is fine because a single-core test passed.
+Design, and why each part is there:
+
+* the operands cannot agree between modes. `1.0f + 1.5 x 2^-24` sits 0.75 ulp
+  above 1.0, so round-to-nearest yields `0x3f800001` and round-toward-zero
+  `0x3f800000`. A hart inheriting the other's mode computes a visibly different
+  number rather than a rounding-invisible one;
+* hart 0 truncates, hart 1 rounds to nearest, and each re-sets `frm` **every
+  iteration** — 200 iterations each;
+* both numeric results and `fflags` are asserted, per iteration. Flags matter
+  independently: `softfloat_exceptionFlags` accumulates, so a leak there needs
+  no interleaving hazard at all;
+* both creation orders are run as separate cases, because creation order decides
+  which hart SystemC schedules first;
+* the interleaving is **measured, not assumed**. The harness counts how often
+  the accessing hart changes and fails below 100. A green result from two harts
+  that ran one after the other would be evidence of nothing.
+
+Result:
+
+| | normal order | swapped order |
+| --- | --- | --- |
+| hart switches | 1890 | 1889 |
+| accesses (hart 0 / hart 1) | 3352 / 3354 | 3352 / 3354 |
+| result mismatches | 0 | 0 |
+| `fflags` mismatches | 0 | 0 |
+| `frm` readback mismatches | 0 | 0 |
+
+**No leak observed**, under roughly one hart switch every 3.5 accesses, in Debug
+and Release.
+
+Consequently the save/restore mitigation is **not** implemented. There is no
+demonstrated failure to justify it, and adding it would remove the evidence that
+would justify it later.
+
+What this does **not** prove, and why the control stays in the regression: it
+shows the FP paths *these instructions* take call `set_fp_rm()` before use. It
+does not show that every FP path does — `set_fp_rm()` has only two call sites in
+`v.h`. Any new consumer of the shared globals must be re-checked against this
+control, and the **Phase 4 BF16 adapter (F4) is exactly such a consumer**: it
+will write `softfloat_roundingMode`, `softfloat_detectTininess` and
+`softfloat_exceptionFlags` itself.
 
 ### F6 — `BusLock` lives in the platform layer
 
@@ -529,147 +586,162 @@ behaviour and would remove exactly the BF16 primitives F4 wants for Phase 4.
 CDC-VP therefore builds a private `softfloat_vpp` target from VP++'s own source
 set and defines.
 
-### F12 — RV32 index EEW=64 is accepted, and the plan's wording needs a spec citation
+### F12 — RV32 index EEW=64 was wrongly accepted — **FIXED (D12)**
 
-Plan §11.2 lists an "RV32 restriction on 64-bit vector index EEW" as a required
-check. Measured: VP++ executes `vluxei64.v` on this RV32 hart **without
-raising an illegal instruction**.
+Plan §11.2 lists an "RV32 restriction on 64-bit vector index EEW". Measured
+before the fix: VP++ executed `vluxei64.v` on this RV32 hart without raising an
+illegal instruction.
 
-Whether that is a defect is not self-evident, and this audit does not claim it
-is. Index EEW 64 does not exceed this machine's ELEN of 64, so "reserved on
-RV32" needs to be pinned to a specific RVV 1.0 clause before it can be a
-pass/fail criterion. Encoding either expectation into a gate now would be
-asserting a reading of the spec rather than testing one.
+When first recorded this audit declined to call it a defect, because index EEW
+64 does not exceed this machine's ELEN of 64. That doubt was misplaced, and the
+reason is worth keeping: **ELEN is not the yardstick here, XLEN is.**
 
-So the trap image **records** the outcome — `SIM_EEW64_TRAPPED` and
-`SIM_EEW64_MCAUSE` in the exit block — and asserts nothing about it. The Spike
-differential run is what settles it: an independent oracle disagreeing is
-evidence, a guess in our own test is not. Whichever way it resolves, plan §11.2
-gains a spec citation.
+**Specification.** RVV 1.0 §18.2, defining the `V` extension: *"The V extension
+supports all vector load and store instructions … except the V extension does
+not support EEW=64 for index values when XLEN=32."* §7.3 supplies the
+enforcement rule: *"An implementation must raise an illegal instruction
+exception if the EEW is not supported for offset elements"*, and notes that a
+profile may cap index EEW at XLEN below ELEN.
 
-### F11 — bogus cycle baseline before the first instruction — **RESOLVED by an approved backport**
-
-Symptom, when the smoke image was first run through the wrapper: the core
-retired zero instructions, produced no TLM traffic, and the run ended at the
-watchdog. `gdb` at the first `quantum_keeper.sync()`, reached *before any
-instruction executed*:
-
-```text
-#0  rv32::ISS::exec_steps (...) at iss_ctemplate.cpp:316   quantum_keeper.sync();
-#1  rv32::ISS::run (...)
-$1 = {m_value = 2292084375000}   // quantum keeper local time, picoseconds
-$2 = {m_value = 10000}           // cycle_time = 10 ns, correct
-```
-
-2.29 **seconds** of simulated time, banked before the first fetch. The core then
-slept through it, which is why a 200 ms watchdog saw an apparently dead CPU.
-
-Cause: `commit_cycles()` runs on the first slow-path pass and does
+**Root cause.** Spike enforces it explicitly in `VI_CHECK_ST_INDEX`:
 
 ```cpp
-uint64_t cycle_counter_raw = dbbcache.get_cycle_counter_raw();
-uint64_t cycle_counter_raw_inc = cycle_counter_raw - cycle_counter_raw_last;  // last = 0
-quantum_keeper.inc(sc_time(cycle_counter_raw_inc, SC_NS));
+require(elt_width <= std::min(P.VU.ELEN, (reg_t)P.get_xlen()));
 ```
 
-and `DBBCache_T::get_cycle_counter_raw()` reads
-`curBlock->entries[curEntryIdx + 1].cycle_counter_raw`. With `curEntryIdx = 0`
-that is the dummy block's `entries[1]`, which is never initialised;
-`entries[0].cycle_counter_raw` *is* explicitly zeroed.
+VP++ has no XLEN-dependent check anywhere in its vector unit.
+`vp/src/core/common/v.h` is written against a fixed `typedef uint64_t
+xlen_reg_t; // TODO change to generic`, so an RV32 hart runs the RV64 index
+path.
 
-#### Resolution: controlled backport of upstream `b710fa7b`
+**Fix: downstream conformance patch, decision record D12.** All **32** encodings
+that carry an index EEW raise an illegal instruction in the RV32 decode: the
+four unit forms `v[sl][ou]xei64.v` and the 28 segment forms
+`v[sl][ou]xseg[2-8]ei64.v`.
 
-Approved 2026-08-10. The upstream fix is two lines in `dbbcache.h`,
-`curEntryIdx = 0` → `curEntryIdx = -1` in the member initialiser and in the
-block-switch path, so the dummy block's zeroed `entries[0]` is used as the
-predecessor. It touches no SystemC API and applies cleanly to the base pin,
-which is what makes it safe to carry alone rather than migrating to master.
+The segment forms are not an afterthought. The first version of this patch
+covered only the four unit forms, and the corpus did not notice because it
+probes `vluxei64.v` — 28 encodings stayed wrong behind a green gate. The
+restriction is on the *index* EEW, which every one of the 32 carries; Spike
+applies it to all of them through one `VI_CHECK_ST_INDEX`. The gate now asserts
+a 32-bit mask, and a patch covering only the unit forms is rejected (verified). Expressed by
+refusing the encodings in `vp/src/core/rv32/iss_ctemplate.cpp` rather than by an
+XLEN test, because that file *is* the RV32 build; the RV64 file is untouched and
+keeps all 32.
 
-| | |
+**Placement is part of the fix, not an implementation detail.** The check is the
+first statement of each `OP_CASE`, before `stats.inc_loadstore()` and before
+`prepInstr()`. A check inside `vLoadStore()` — the obvious place, and where the
+index-EEW arithmetic already lives — would produce the right `mcause` and still
+be wrong: `prepInstr()` sets `mstatus.VS` to Dirty before it runs, so an
+instruction that never executed would have dirtied vector state. Gate
+`conformance_patches` measures all five consequences, and `mstatus.VS` staying
+Clean is the one that pins the placement.
+
+Measured after the fix: all 32 trap with `mcause` 2, `vstart` and the
+destination register unchanged, `mstatus.VS` still Clean, and **zero** bus
+requests to the operand buffer. Spike and VP++ agree exactly on both F12 fields
+in the differential corpus.
+
+### F13 — an unmapped access reported a page fault — **FIXED (D13)**
+
+Found by the differential corpus, not predicted by the source review.
+
+The corpus runs a vector load off the end of RAM. Spike reported `mcause` 5,
+`EXC_LOAD_ACCESS_FAULT`; VP++ reported `mcause` 13, `EXC_LOAD_PAGE_FAULT`.
+
+**Correction to an earlier draft of this finding.** It said the core is
+constructed with `mmu == nullptr`. That is wrong: `riscv_vp_plusplus_wrapper.cpp`
+passes `&mmu` to `CombinedMemoryInterface`. The conclusion is unchanged, for a
+better reason — `satp.MODE` is Bare, so no translation is performed and no page
+fault can arise however the MMU object is wired.
+
+That correction also rules out the tempting fix. Choosing the cause from
+`mmu != nullptr` would have been wrong in exactly this configuration, and would
+have quietly become wrong again the day an MMU is enabled. The rule has to be
+about *where the failure happened*, not about which objects exist:
+
+| Failure | Cause |
 | --- | --- |
-| Base revision | `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`) |
-| Backport | `b710fa7be2643b42cee92f5bbcb8cead4c0ed282` |
-| Patch | `cpu_models/riscv_vp_plusplus/patches/0001-b710fa7b-dbbcache-fixed-random-cycle-counting.patch` |
-| Patch SHA256 | `16758c959a534e71c23254599ac7229c0ff85d3b4e1dc67ee3c82cc96f23b8ad` |
-| Effective source | base + backport, recorded in `BUILD_MANIFEST.json` |
+| translation, PTE or permission, inside the MMU | page fault, 12 / 13 / 15 |
+| bus, decode or target refusal, after translation | access fault, by origin |
 
-Mechanism, and the division of responsibility that makes it auditable:
+**Root cause.** `CombinedMemoryInterface_T::_do_transaction` in
+`vp/src/core/common/mem.h` mapped *any* TLM error to a page fault, without
+reading the response status and without regard to the origin of the access.
 
-* `cpu_models/riscv_vp_plusplus/fetch_riscv_vp_plusplus.sh` is the **only** thing
-  permitted to modify the checkout. It verifies the patch's SHA256, checks out
-  the exact base revision, applies the patch, and verifies the result by
-  reverse-applying it. It is idempotent and refuses a checkout carrying local
-  modifications that are not this patch.
-* CMake **verifies and never patches**. A configure step that edited
-  third-party source would make the compiled binary depend on when CMake last
-  ran. It checks the patch hash, the base SHA, and applied-ness — the last by
-  reverse-apply, not by grepping for the changed lines, which a hand-edited tree
-  could also satisfy.
+**Fix: downstream conformance patch, decision record D13.** `MemoryAccessType`
+is threaded from the caller down into `_do_transaction`, and the cause follows
+the origin:
 
-Measured, before and after, two harts:
-
-| | before | after |
-| --- | --- | --- |
-| First TLM request at | 2.29 s | **0 s** |
-| Simulated time at end | 2 292 112 075 ns | **28 030 ns** |
-| `mcycle` start / mid / end | 4623 / 7047 / 7456 | **15 / 2439 / 2848** |
-| Watchdog needed | 60 s | **1 ms** |
-| Functional RVV checks | passed | passed |
-
-#### Correction: the offset was never a stable value
-
-An earlier revision of this finding reported the offset as "deterministic across
-runs and across Debug and Release", and inferred from that a baseline-subtraction
-workaround might be viable. That inference was wrong, and the evidence arrived
-from the negative control.
-
-With the patch reverted and **two** harts instead of one, the offset was
-46 080 ns on hart 0 and 0 s on hart 7 — neither the 2 292 084 375 ns measured
-with a single hart, nor equal to each other. The value tracks whatever happens
-to sit in the uninitialised entry, so it varies with process layout and hart
-count. Upstream's word "random" is accurate; my single-configuration
-reproducibility was a coincidence of one binary. **Baseline subtraction could
-never have worked**, and the decision to backport rather than compensate was the
-correct one for a reason stronger than the one originally recorded.
-
-#### What is deliberately *not* backported with it
-
-| Commit | Why not |
+| Access origin | `mcause` |
 | --- | --- |
-| `7a936cce` "fixed fast quantum" | a larger change to quantum accounting; needs its own audit before Phase 7 |
-| `52d376d4` AMO atomicity / lost bus lock | needs a multi-hart AMO contention test before Phase 6. A single-threaded differential run against Spike cannot demonstrate atomicity between harts |
+| instruction fetch | 1, instruction access fault |
+| load, including vector load | 5, load access fault |
+| store, AMO, vector store | 7, store/AMO access fault |
 
-Bundling them would put three unrelated behaviour changes behind one gate.
+Deriving the cause from the TLM command alone would have been the easy version
+and would have been wrong twice: an instruction fetch is a TLM read, and an AMO
+that fails on its read half must still report 7 — the privileged specification
+has no "AMO load access fault".
 
-#### Regression
+**TLM response policy.** Only `TLM_ADDRESS_ERROR_RESPONSE` and
+`TLM_GENERIC_ERROR_RESPONSE` — a target legitimately refusing the access —
+become a guest trap. `TLM_INCOMPLETE_RESPONSE` and the command, burst and
+byte-enable protocol errors are model or integration defects and now raise a
+`std::runtime_error` instead. Turning one of those into a guest fault would hand
+firmware a plausible trap for a bug it cannot have caused, and bury the real
+failure.
 
-`rvv_smoke_execution` is the standing gate. It runs **two harts** with a **1 ms**
-watchdog and fails if any of these regress:
+**Residual, recorded rather than left to be rediscovered.** A bus error during a
+page-table walk is reported as a load access fault, because `mmu_memory_if` does
+not carry the originating access type. Strictly it should report the origin's
+type. Widening that interface is outside D13's scope and the path is unreachable
+at `satp.MODE = Bare`; the comment in `mem.h` says so at the call site.
 
-* the first TLM request carries a startup time offset above 1 µs;
-* `mcycle` does not start at a plausible reset baseline;
-* the three firmware-sampled `mcycle` values are not strictly increasing;
-* either hart fails to complete within the watchdog.
+Measured after the fix, in gate `conformance_patches`: fetch 1, scalar load 5,
+scalar store 7, vector load 5, vector store 7, AMO 7, each with `mtval` at the
+faulting address and `vstart` naming the element for both vector cases.
 
-The watchdog size is itself part of the gate: 1 ms is generous for a 28 µs
-workload and far below any plausible recurrence of the defect, so a return
-fails here instead of being absorbed by a longer bound. Both the CMake refusal
-and the runtime failure were verified by reverting the patch. Debug and Release
-produce identical results.
+### D9 re-audit — three of the five named commits are unreachable at rv32gcv
 
-If upstream publishes an official backport on a SystemC 2.3-compatible branch,
-move the pin to that commit, delete the local patch, and re-run the whole
-Phase 2 gate.
+Decision record D9 names five post-pin scalar-FP commits and requires the corpus
+to carry each as an expected diff, failing both on an *unexpected* diff and on an
+expected one *disappearing*. The list was assembled from commit titles. Read
+against the pinned rv32 source, and then measured, only two of the five produce
+an observable difference at the target ISA.
 
-### F10 — `core/rv32/iss.h` includes a platform header
+| Commit | What it changes in **rv32** | Reachable at rv32gcv? | Measured |
+| --- | --- | --- | --- |
+| `63524fbb` fmax/fmin NaN | v2.2 semantics for F, D and Zfh; plus an `f16_isNaN` mask fix | **yes**, via `fmin.s`/`fmax.s`/`fmin.d` | 4 XFAIL fields |
+| `14e7fff5` FP load/store dirty bit and disabled-float trap | adds `fp_prepare_instr()` and `fp_set_dirty()` to the F, D and Zfh load/store cases | **yes**, via `flw` | 3 XFAIL fields |
+| `c7140542` fsh/fsw raw value | rv32 hunks are `FSH` (`f16(RS2).v` → `u16`) and `FSD` (`f64(RS2).v` → `u64`) | **no** | `fsd_raw_*`, `fsw_raw` all match |
+| `91777991` `fmv_x_h` raw value | Zfh only | **no** | both models raise illegal instruction |
+| `b92c01d8` float load/store harmonisation | address type widths: `uint64_t`→`uxlen_t` for FLH/FSH, `uint32_t`→`uxlen_t` for FLD/FSD | **no** | `flw_nanbox_hi`, `fsd_raw_*` match |
 
-```cpp
-#include "platform/gd32/nuclei_core/nuclei_csr.h"
-```
+Two distinct reasons for "no", and they are worth separating:
 
-A core header reaching into a specific vendor platform. It is header-only and
-compiles, so it is not a blocker, but it means `vp/src` must stay on the include
-path and the `platform/` directory cannot be pruned from the fetched tree.
+* **Zfh is not in the target ISA.** `fsh`, `flh`, `fadd.h` and `fmv.x.h` must
+  raise an illegal instruction, and the corpus asserts exactly that on both
+  models rather than recording an expected diff — the rule set for this gate.
+  Measured: all four trap with `mcause` 2 on both models.
+* **The change is a no-op at XLEN=32.** `FSD`'s `f64(RS2).v` already returns
+  `regs[idx].v` unchanged, so `u64(RS2)` is the same value; and `uxlen_t` *is*
+  `uint32_t` on rv32, so `b92c01d8` cannot alter an rv32 address computation.
+  `FSW` at the pin already used the raw `u32(RS2)` accessor.
+
+**Resolved: D9's wording is amended, its inventory is not.** All five commits
+stay in the upstream provenance record — dropping them would lose the fact that
+this pin predates them. The *expected-diff table* holds only the two observable
+commits, seven fields in total, and the "an expected diff that disappeared is a
+failure" rule applies to exactly those seven.
+
+The other three keep their coverage as ordinary regression checks rather than as
+expected diffs: `91777991` is asserted to be an illegal instruction on both
+models, and `c7140542` and `b92c01d8` are asserted to be exact matches. That is
+the right shape — they are not differences to be tolerated, they are agreements
+to be maintained — and it removes the trap in the original wording, where an
+expected diff that never appears is indistinguishable from one that vanished.
 
 ## 8. Upgrade path to upstream master
 
@@ -687,24 +759,36 @@ the scalar fixes in §3) requires, as one coordinated change:
 Until then the pin stays at `2025.09` and §3's fix list is covered by
 differential testing.
 
-## 9. Not yet measured — the rest of the Phase 2 gate
+## 9. Closure status and residual scope limits
 
-Listed so nothing here is mistaken for cleared:
+The Phase 2 gate is closed. The following items are explicit scope limits or
+later-phase work, retained so they are not mistaken for missing measurements:
 
-* the pinned Spike oracle has not been built, and no differential corpus has
-  been run. Preflight done: the pin `16c0b601...` is still upstream `HEAD`, all
-  build dependencies (autoconf, automake, g++, make, dtc, python3, boost) are
-  present, and the repository is small;
-* **F12** — whether `vluxei64.v` should be illegal on RV32 is recorded but
-  undecided; the differential run resolves it and plan §11.2 then gains a spec
-  citation;
-* traps for illegal vector configuration, `vstart` restart behaviour,
-  `mstatus.VS` transitions and the RV32 64-bit index EEW restriction are
-  untested;
+* nothing from the Phase 2 gate list remains open. F12 and F13 were fixed
+  under D12 and D13 rather than accepted as carried deviations, and the
+  differential corpus is at 64 matched / 7 XFAIL / 0 open / 0 unexplained;
+* three things this audit had asserted but not measured were found wrong on
+  review, and each now has a test rather than a claim:
+  the ISS caches were enabled while the code comment beside them said
+  otherwise (P2-5); D12 covered 4 of the 32 encodings that carry an index EEW;
+  and the portable-executable requirement was met by no binary — the unit tests
+  carry an absolute SystemC RPATH and the packaged platform does not link the
+  backend. The pattern is the lesson: every one was a *documented* property
+  with no gate behind it;
+* `TPU_V3_VPP_LINKED` in the platform manifest is still `FALSE`, and that is
+  correct — the platform instantiates no core before Phase 5. The
+  portable-executable requirement is met by `rvv_runner`, not by the platform
+  binary, and the manifest describes the package rather than the test tree;
+* the AMO cases from §3 are still not in a corpus. A single-hart differential
+  run cannot demonstrate atomicity between harts, which is why `52d376d4`
+  keeps its own pre-Phase-6 multi-hart test rather than being folded in here;
 * `use_dbbcache` / `use_lscache` TLM transparency is unmeasured — they stay off;
-* the §3 scalar-FP and AMO cases are not yet in a corpus;
-* the F5 interleaved-`frm` concurrency control does not exist yet, and it must
-  assert exception flags as well as results;
+* the corpus compares *architecturally visible* state only: values the program
+  itself computes and stores. Two models that disagree internally but hide it
+  from the program will match. Reading each simulator's private register file
+  would compare more, but through two different debug interfaces, where a
+  difference in the interfaces is indistinguishable from a difference in the
+  models;
 * **full architectural reset is undecided.** `reset_cpu()` today is a restart at
   the reset PC plus cache reinitialisation (F8); GPRs, FP/vector registers,
   CSRs, `vstart`, `instret`, pending interrupts and privilege level survive it.
@@ -715,16 +799,26 @@ Listed so nothing here is mistaken for cleared:
 
 | # | Decision | Value | Rationale |
 | --- | --- | --- | --- |
-| P2-1 | VP++ candidate revision | `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`) | newest revision building against SystemC 2.3.4 with no added dependencies; costs no RVV functionality |
+| P2-1 | VP++ frozen revision | `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`) | newest revision building against SystemC 2.3.4 with no added dependencies; costs no RVV functionality |
 | P2-2 | Do not migrate SystemC in Phase 2 | stay on 2.3.4 | a 3.0.x migration is repository-wide and would invalidate the FlooNoC cross-check evidence |
-| P2-3 | VP++ acquisition | fetch into `third_party/riscv-vp-plusplus`, no vendoring, **no unrecorded patching — only the approved F11 upstream backport** | D3 and plan rule 11. Amended 2026-08-10: a recorded, content-hashed, script-applied and CMake-verified upstream backport is auditable in a way an unrecorded edit is not |
+| P2-3 | VP++ acquisition | fetch into `third_party/riscv-vp-plusplus`, no vendoring, **no unrecorded patching**; apply only the approved F11 backport and D12/D13 downstream conformance patches | D3 and plan rule 11. Each patch is classified, content-hashed, script-applied, CMake-verified and recorded in the package manifest |
 | P2-4 | Compiled scope | the nine translation units in §4 plus softfloat | excludes Qt, VNC, gdb-mc, nlohmann and every upstream platform |
-| P2-5 | DMI and ISS caches | no DMI ranges, no `InstrMemoryProxy`, `use_dbbcache = use_lscache = false` | all CPU traffic must traverse CDC-VP TLM; cache transparency unmeasured |
+| P2-5 | DMI and ISS caches | no DMI ranges, no `InstrMemoryProxy`, `use_dbbcache = use_lscache = false` | all CPU traffic must traverse CDC-VP TLM; cache transparency unmeasured. **Now enforced by a test**: the flags were briefly `true` during F11 diagnosis while the comment beside them still said `false`, and nothing caught it. `rvv_smoke_execution` requires reads ≥ instructions retired, which `dbbcache` breaks immediately |
 | P2-6 | Vector access granularity | accept element-wise traffic, label it in metrics; amend `INTERFACE_CONTRACT.md` §6 | the ISS splits before the model sees it; the alternatives are forking upstream or guessing |
 | P2-7 | BF16 conversion for Phase 4 | reuse vendored softfloat `f32_to_bf16` / `bf16_to_f32` / `s_roundPackToBF16` | IEEE-correct and already in the build; removes the riskiest part of D6 |
 | P2-8 | §3 fix list | becomes required differential-corpus cases, except F11 which is backported | the rest are unavailable at any 2.3-compatible revision |
 | P2-9 | F11 | backport upstream `b710fa7b` onto the base pin; no baseline subtraction, no SystemC 3.0.1 migration | two lines, no SystemC API dependency, applies cleanly; the offset is not a stable value so compensation was never viable |
 | P2-10 | F11 closure | **a Phase 2 closure gate** — Phase 2 is not complete while `mcycle` is wrong | later phases build timing on it; deferring to Phase 7 would mean discovering it under load |
+| P2-11 | Differential method | one image compiled once, run on both models, comparing a firmware-written canonical signature block located by the `begin_signature` / `end_signature` symbols | comparing what the *program* can see is the one interface both models are obliged to implement identically; comparing private register files would compare two debug interfaces instead |
+| P2-12 | Oracle isolation | Spike runs as a **child process**, never linked | a linked oracle would share the allocator, the build flags and — decisively — one copy of Berkeley SoftFloat's process-global rounding state, the exact hazard F5 exists to guard |
+| P2-13 | Corpus image placement | linked at `0x8000_0000` with its own `link_dram.ld`, while the three VP++-only images stay at 0 | Spike's boot ROM sits at `0x1000` and shadows a flat image based at 0, with no option to move it; `0x8000_0000` is also `GLOBAL_RAM_OR_HBM`, so the corpus runs where Phase 10 firmware will. Rebasing the three passing gates at closure time would risk three green results for no gain — Phase 5 should do it |
+| P2-14 | Expected-diff table provenance | every entry derived by reading the pinned VP++ source *before* the first run | a table filled in from observed output cannot fail: it agrees with the model by construction. All seven predicted XFAILs materialised, which is what made the two that did not — F12 and F13 — worth reporting |
+| P2-15 | Patch taxonomy | the series distinguishes `upstream-backport` from `downstream-conformance` in the script, the CMake verification and the manifest | they behave differently when the pin moves: a backport disappears, a downstream patch has to be re-checked against the new base and ideally offered upstream. Calling both "backports" would hide the one fact a future maintainer needs |
+| P2-16 | Where a conformance check goes | at the decode site, before `stats.inc_loadstore()` and `prepInstr()` — not inside `vLoadStore()` | `prepInstr()` dirties `mstatus.VS`. A check further in would produce the right `mcause`, satisfy the oracle comparison, and still let an instruction that never executed count a load, drive the bus and modify architectural state |
 
 P2-6 changes a written contract and should be confirmed before Phase 3 depends
 on the SVM counter semantics.
+
+P2-13 leaves the repository with two firmware memory layouts. That is a
+deliberate, dated trade-off and not a permanent one: Phase 5 should move the
+remaining three images to the real address map and delete `link.ld`.

@@ -50,7 +50,8 @@ An AI agent implementing this plan must follow these rules:
     portable package unless the package explicitly contains and launches it.
 13. Prefer static linking for CPU/ISS backends used by the portable platform.
 14. All long-running accelerator operations must be asynchronous from MMIO
-    `b_transport`; a register access must not block until an MXU job completes.
+    `b_transport`; a register access must not block until an SA, DMA or
+    ImageTransform job completes.
 15. Keep this document's status table and decision log current when a phase or
     architectural decision changes.
 
@@ -62,8 +63,12 @@ Each NoC node represents one TPU chip. Each TPU chip contains two TPU cores.
 The final platform must:
 
 - execute RV32 scalar and RISC-V Vector 1.0 firmware;
-- expose two 128x128 MXUs per TPU core;
-- provide one Shared Vector Memory per TPU core;
+- compose each TPU/NEO core from one VP++ hart, one shared SRAM, one independent
+  TPU_V3 DMA, one Sauria matrix engine, one Im2Col/Col2Im Transform engine and
+  a D15 split interconnect: 32-bit AXI4-Lite control, native banked-SRAM local
+  data, and AXI4 only at the bidirectional chip-NoC external boundary;
+- integrate the verified 64x64 Sauria source first and preserve a gated upgrade
+  path to the NPU team's 128x128 source;
 - connect chips, global memory, and system resources through a 2D mesh NoC;
 - support functional/fast full-system simulation;
 - support selected detailed timing experiments without overclaiming accuracy;
@@ -89,13 +94,23 @@ TPU_V3 SoC
 Each TPU core contains:
 
 ```text
-TPU Core
-├── One RISC-V scalar execution context
-├── One RISC-V Vector execution unit
-├── One Shared Vector Memory
-├── MXU 0: 128 x 128 processing elements
-└── MXU 1: 128 x 128 processing elements
+TPU Core / NEO-CORE
+├── One RISC-V VP++ RV32GCV hart (Scalar + RVV)
+├── One shared core SRAM
+├── One independent TPU_V3 DMA
+├── One Sauria matrix engine
+├── One ImageTransform engine (Im2Col + Col2Im)
+├── One 32-bit AXI4-Lite control fabric
+├── One native NEO Local SRAM Fabric
+└── One bidirectional external AXI4/NoC bridge
 ```
+
+This D15 interconnect split was finally ratified by the project owner on
+2026-08-12. It is a frozen implementation requirement, not an optional backend
+or illustrative proposal. The physical SRAM bank count, local data width, bank
+mapping and pipeline depth remain open parameters because freezing those needs
+SRAM-macro, frequency and PD evidence; that open physical tuning does not
+reopen the three-plane protocol architecture.
 
 ### 4.2 RISC-V Vector architecture
 
@@ -116,28 +131,32 @@ They are not two independent CPUs and are not connected through a software-
 visible MMIO accelerator interface. RISC-V VP++ is the selected implementation
 of both portions of this hart; Spike is only its external differential oracle.
 
-RVV 1.0 already provides reduction and permutation instruction groups. For
-Revision 1, those TRP-like functions are exercised through the VP++ RVV
-backend rather than a separately timed Transpose/Reduction/Permute component.
-This is a functional abstraction, not a claim that Google TPU v3 implements
-TRP inside an RVV hart. A dedicated TRP block remains an explicit architecture
-decision if separate data paths, commands, counters or timing are required.
+RVV 1.0 reduction and permutation instructions remain part of the VP++ hart.
+They are unrelated to D14's `ImageTransform` block: that accelerator performs
+tensor-layout Im2Col/Col2Im operations and has its own MMIO/TLM contract.
 
-### 4.3 MXU dimensions
+### 4.3 Sauria matrix-engine geometry
 
-Each MXU has a logical physical shape of exactly 128 rows by 128 columns.
-There are two independent MXUs in each TPU core.
+There is exactly one Sauria matrix engine in each NEO-CORE. The implementation
+is staged:
 
-The architectural dimension must remain 128x128 even if an analytical backend
-is used. A 32x32 Sauria instance must not be presented as an exact 128x128 MXU.
+1. the current bring-up geometry is the verified v4.2 64x64 configuration;
+2. the architectural destination is the NPU team's future 128x128 source.
+
+Geometry is a construction-time reported property. A 64x64 build must not be
+described as 128x128. A 128x128 request must be rejected until the new source,
+adapter, golden regression and scalability gate pass.
 
 ### 4.4 NoC attachment policy
 
 The two TPU cores in one chip connect to a chip-local fabric. The chip-local
 fabric aggregates traffic into one NoC endpoint per chip.
 
-Do not expose the scalar CPU, RVV unit, both MXUs, and SVM as unrelated NoC
-managers. Local traffic must remain local when possible.
+Do not expose the hart, SA, Transform, DMA and SRAM as unrelated NoC managers.
+One aggregated endpoint represents the chip to the mesh. Inside a NEO-CORE,
+local data uses the native SRAM fabric and control uses AXI4-Lite; neither is
+exposed as an unrelated NoC manager. Local traffic must remain local when
+possible.
 
 ## 5. Explicitly Unfrozen Decisions
 
@@ -147,16 +166,20 @@ resolved by a documented decision:
 - mesh width and height;
 - total number of chips;
 - global HBM/RAM capacity;
-- Shared Vector Memory capacity per core;
-- SVM port count and arbitration policy;
+- core SRAM capacity per core beyond the retained 16 MiB reference;
+- physical SRAM bank count, native data width, low-order bank mapping and
+  pipeline/register-slice depth (D15 freezes per-bank deterministic round-robin
+  and at most one outstanding request per requester, not these PD parameters);
 - chip-local and core-local address strides;
-- MXU production data types: INT8, FP16, BF16, FP32, or a supported subset;
-- MXU pipeline depth, clock rate, and detailed latency formula;
-- CPU, VPU, MXU, SVM, and NoC clock ratios;
+- exact datatype available in the 64x64 Sauria bring-up and the NPU team's
+  128x128 delivery; D6 BF16 x BF16 -> FP32 remains the target contract;
+- SA pipeline depth, clock rate, and detailed latency formula;
+- CPU, SA, Transform, DMA, SRAM, and NoC clock ratios;
 - cache presence and cache coherence policy;
-- DMA ownership: per core, per chip, or platform-level;
-- whether a dedicated TRP component is required beyond the provisional RVV
-  functional abstraction;
+- final DMA descriptor depth, burst policy and timing constants (ownership is
+  frozen per-core and independent of Sauria by D14);
+- NPU-team Transform source revision and the exact Im2Col/Col2Im layout,
+  padding, stride, overlap/accumulation and datatype contract;
 - final workload set and image input format.
 
 Earlier ideas such as a fixed 4x4 mesh, exactly 32 TPU cores, or a mandatory
@@ -165,10 +188,11 @@ may be introduced later as named configurations or workloads after approval.
 
 > **Partly resolved on 2026-08-08** by `TPU_V3_DECISION_RECORD.md`. Still
 > configurable, but now with an approved reference value rather than a
-> placeholder: SVM capacity per core (16 MiB reference, D6), MXU production
+> placeholder: core SRAM capacity per core (16 MiB reference, D6), SA target
 > arithmetic (BF16 × BF16 → FP32, D6), global RAM capacity (256 MiB bring-up
-> default, D6). Also settled: DMA ownership and cache policy remain open, but a
-> 32-core system is explicitly **outside Revision 1** and requires the
+> default, D6). D14 settles DMA ownership and the NEO-CORE composition; cache
+> policy remains open. A 32-core system is explicitly **outside Revision 1**
+> and requires the
 > coordinated change listed in D2. See §23 for the current state of each.
 
 ## 6. Terminology
@@ -179,19 +203,23 @@ Use these names consistently in code and documentation:
 | --- | --- |
 | `TPU_V3 SoC` | Complete SystemC/TLM platform executable |
 | `TPU chip` | One NoC node containing exactly two TPU cores |
-| `TPU core` | One RV32GCV hart, one SVM, and two MXUs |
+| `NEO-CORE` / `TPU core` | One VP++ hart, one SRAM, one independent DMA, one Sauria SA, one ImageTransform engine, AXI4-Lite control and a native local-SRAM data fabric |
 | `Scalar core` | Scalar execution portion of the RISC-V VP++ RV32GCV hart |
 | `VPU` | RVV 1.0 vector execution portion of the same RISC-V VP++ hart |
-| `TRP functionality` | Revision 1 reduction/permutation functionality abstracted through RVV; a separate hardware block is not yet frozen |
-| `MXU` | 128x128 matrix multiply unit |
-| `SVM` | Shared Vector Memory local to one TPU core |
+| `SA` / `Sauria matrix engine` | Matrix-multiply-only accelerator; 64x64 bring-up, 128x128 target |
+| `Core SRAM` | Shared local memory in one NEO-CORE; successor name for the old SVM contract |
+| `ImageTransform` | NPU-team Im2Col/Col2Im block behind a TPU_V3 adapter |
+| `NEO DMA` | Independent TPU_V3 DMA; never the Sauria DMA |
+| `NEO control fabric` | 32-bit AXI4-Lite MMIO decoder, represented at transaction level |
+| `NEO Local SRAM Fabric` | Native pipelined request/response fabric with per-bank arbitration; not AXI |
+| `NEO external bridge` | Bidirectional adapter for outbound VP++/DMA and inbound remote traffic at the AXI4/chip-NoC boundary |
 | `Chip local fabric` | Arbitration and decode between two cores and the NoC endpoint |
 | `NoC endpoint` | Bidirectional interface between one TPU chip and one mesh router |
 | `Fast model` | Functionally correct, approximately timed or untimed model |
 | `Detailed model` | More detailed timing model with explicitly stated evidence |
 
-Avoid using the unqualified word `core` when it could mean RISC-V hart, TPU
-core, Sauria NPU core, or MXU processing element.
+Avoid using the unqualified word `core` when it could mean RISC-V hart,
+NEO-CORE, Sauria NPU core, or SA processing element.
 
 ## 7. Target Architecture
 
@@ -218,23 +246,31 @@ core, Sauria NPU core, or MXU processing element.
 One TPU core is composed as follows:
 
 ```text
-                   RISC-V VP++ RV32GCV hart
-                 +-----------+------------+
-                 | Scalar     | RVV 1.0    |
-                 | execution  | VLEN=512   |
-                 +-----------+------------+
-                              |
-                      Core Local Fabric
-                   +----------+----------+
-                   |          |          |
-                  SVM       MXU 0      MXU 1
-                            128x128     128x128
+                         RISC-V VP++ RV32GCV hart
+                           Scalar + RVV 1.0/512
+                              | control
+                    32-bit AXI4-Lite Control Fabric
+                    |          |         |          |
+                 core regs  NEO DMA   Sauria SA  ImageTransform
+                               |          |          |
+                       native local-data requesters
+                               |          |          |
+                        NEO Local SRAM Fabric
+                                  |
+                         physically banked SRAM
+
+               VP++ fetch/global + NEO DMA external
+                              ↕
+                       AXI4 / Chip-NoC Bridge
 ```
 
-The RVV unit uses normal RISC-V load/store instructions to access memory. MXUs
-are controlled asynchronously through a documented register/descriptor
-interface and move tensor data through local TLM master interfaces or an
-explicit DMA path.
+The RVV unit uses normal RISC-V load/store instructions through the same VP++
+memory path as scalar execution. Address decode sends local memory operations
+to the native SRAM plane and register operations to AXI4-Lite. SA, DMA and
+ImageTransform are asynchronous AXI4-Lite-controlled engines; their local bulk
+data uses native ports. The independent DMA owns bulk external movement. VP++
+also crosses the external boundary for boot-ROM instruction fetch and explicit
+global accesses; SA and ImageTransform do not.
 
 ## 8. Existing Assets and Their Roles
 
@@ -283,7 +319,7 @@ RISC-V VP++ integrates RVV 1.0 into its RV32 and RV64 ISSs. One VP++ RV32 ISS
 therefore provides both the Scalar Unit and the RVV VPU of a TPU core. Do not
 compose the Bremen scalar ISS with a separately advancing Spike vector ISS,
 and do not instantiate the complete upstream VP++ platform per core. CDC-VP
-continues to own memory, SVM, interrupt controllers, devices and the NoC; the
+continues to own core SRAM, interrupt controllers, devices and the NoC; the
 new backend is a thin wrapper around the required VP++ ISS/library pieces.
 
 Spike remains pinned as an independent standalone golden/differential model.
@@ -306,14 +342,26 @@ Existing CDC-VP integration:
 
 Use these as:
 
-- a reference implementation of systolic-array behavior;
-- a reference for feeder, SRAM, controller, and partial-sum behavior;
-- a source for a detailed MXU adapter only after the 128x128 mapping is
-  specified and verified;
-- a reference for asynchronous accelerator control and DMA integration.
+- the implementation source for the matrix-multiply-only Sauria adapter;
+- the implementation source for Im2Col/Col2Im only where the NPU team identifies
+  and verifies those functions;
+- a reference for the minimum feeder/sequencer/result-collection logic required
+  by matrix multiplication;
+- golden/case data for source-to-adapter equivalence tests.
 
-The currently integrated instance is 32x32 and is an NPU top, not a bare
-128x128 MXU. It cannot be reused unchanged as the final detailed MXU.
+The v4.2 tree is an NPU top and cannot be reused unchanged. The verified
+bring-up target is 64x64. The matrix adapter excludes NPU profile routing,
+instruction decoder, OBP/RCE, Sauria DMA and unrelated NPU-top behavior. The
+NPU team will provide the 128x128 extension later.
+
+The source audit found Im2Col-related address generation embedded in the IFMAP
+feeder but did not establish a standalone Col2Im block. Do not guess that
+behavior. Record the Transform delivery as pending until the NPU team supplies
+or identifies its module, configuration contract and golden tests.
+
+`control/sauria_dma.h` is explicitly out of scope. The NEO DMA is designed and
+implemented under TPU_V3 with TLM sockets; it never directly copies through the
+Sauria SRAM or DRAM backing pointers.
 
 ### 8.4 CDC-VP packaging infrastructure
 
@@ -394,7 +442,7 @@ TPU targets must therefore:
 - return immediately from control-register writes;
 - launch long jobs in worker threads;
 - signal completion using status registers and interrupts;
-- never wait for MXU completion inside MMIO `b_transport`.
+- never wait for SA, DMA or ImageTransform completion inside MMIO `b_transport`.
 
 ### 9.5 No multicast/collectives
 
@@ -437,7 +485,9 @@ CDC-VP/
 │       │   ├── INTERFACE_CONTRACT.md
 │       │   ├── TIMING_MODEL.md
 │       │   ├── RVV_MODEL.md
-│       │   ├── MXU_MODEL.md
+│       │   ├── SAURIA_MATRIX_MODEL.md
+│       │   ├── IMAGE_TRANSFORM_MODEL.md
+│       │   ├── DMA_MODEL.md
 │       │   └── VERIFICATION_PLAN.md
 │       ├── common/
 │       │   ├── CMakeLists.txt
@@ -445,28 +495,43 @@ CDC-VP/
 │       │   ├── include/tpu_v3/address_map.h
 │       │   ├── include/tpu_v3/tlm_extensions.h
 │       │   └── include/tpu_v3/types.h
-│       ├── shared_vector_memory/
+│       ├── core_sram/
 │       │   ├── CMakeLists.txt
-│       │   ├── include/tpu_v3/svm/shared_vector_memory.h
-│       │   ├── include/tpu_v3/svm/svm_config.h
-│       │   ├── src/shared_vector_memory.cpp
-│       │   └── tests/test_shared_vector_memory.cpp
-│       ├── mxu/
+│       │   ├── include/tpu_v3/sram/core_sram.h
+│       │   ├── include/tpu_v3/sram/sram_config.h
+│       │   ├── src/core_sram.cpp
+│       │   └── tests/test_core_sram.cpp
+│       ├── dma/
 │       │   ├── CMakeLists.txt
-│       │   ├── include/tpu_v3/mxu/mxu_if.h
-│       │   ├── include/tpu_v3/mxu/mxu_config.h
-│       │   ├── include/tpu_v3/mxu/mxu_fast.h
-│       │   ├── include/tpu_v3/mxu/mxu_sauria_adapter.h
-│       │   ├── src/mxu_fast.cpp
-│       │   ├── src/mxu_sauria_adapter.cpp
+│       │   ├── include/tpu_v3/dma/neo_dma.h
+│       │   ├── include/tpu_v3/dma/dma_config.h
+│       │   ├── src/neo_dma.cpp
+│       │   └── tests/
+│       ├── sauria_matrix/
+│       │   ├── CMakeLists.txt
+│       │   ├── include/tpu_v3/sa/sauria_matrix_if.h
+│       │   ├── include/tpu_v3/sa/sauria_matrix_config.h
+│       │   ├── include/tpu_v3/sa/sauria_matrix_adapter.h
+│       │   ├── src/sauria_matrix_adapter.cpp
+│       │   └── tests/
+│       ├── image_transform/
+│       │   ├── CMakeLists.txt
+│       │   ├── include/tpu_v3/transform/image_transform_if.h
+│       │   ├── include/tpu_v3/transform/image_transform_config.h
+│       │   ├── src/image_transform_adapter.cpp
 │       │   └── tests/
 │       ├── tpu_core/
 │       │   ├── CMakeLists.txt
 │       │   ├── include/tpu_v3/core/tpu_core.h
-│       │   ├── include/tpu_v3/core/core_local_fabric.h
+│       │   ├── include/tpu_v3/core/neo_control_fabric.h
+│       │   ├── include/tpu_v3/core/neo_local_sram_fabric.h
+│       │   ├── include/tpu_v3/core/local_sram_fabric_config.h
+│       │   ├── include/tpu_v3/core/neo_external_bridge.h
 │       │   ├── include/tpu_v3/core/core_registers.h
 │       │   ├── src/tpu_core.cpp
-│       │   ├── src/core_local_fabric.cpp
+│       │   ├── src/neo_control_fabric.cpp
+│       │   ├── src/neo_local_sram_fabric.cpp
+│       │   ├── src/neo_external_bridge.cpp
 │       │   └── tests/
 │       ├── tpu_chip/
 │       │   ├── CMakeLists.txt
@@ -506,8 +571,10 @@ CDC-VP/
 │       ├── CMakeLists.txt
 │       ├── common/
 │       ├── drivers/
-│       │   ├── mxu/
-│       │   ├── svm/
+│       │   ├── sauria_matrix/
+│       │   ├── image_transform/
+│       │   ├── dma/
+│       │   ├── core_sram/
 │       │   └── platform/
 │       ├── linker/
 │       └── tests/
@@ -546,17 +613,42 @@ struct rvv_config {
     std::string version = "1.0";
 };
 
-struct mxu_config {
-    unsigned rows = 128;
-    unsigned columns = 128;
-    unsigned count_per_core = 2;
-    mxu_backend backend = mxu_backend::fast;
+struct sauria_matrix_config {
+    unsigned rows = 64;       // bring-up; 128 only after promotion gate
+    unsigned columns = 64;
+    unsigned count_per_core = 1;
+    std::string source_revision;
+    matrix_datatype datatype;
+};
+
+struct dma_config {
+    unsigned count_per_core = 1;
+    unsigned max_burst_bytes;
+};
+
+struct image_transform_config {
+    unsigned count_per_core = 1;
+    bool im2col_available;
+    bool col2im_available;
+    std::string source_revision;
+};
+
+struct local_sram_fabric_config {
+    unsigned data_width_bits;       // required; no architectural default
+    unsigned bank_count;            // required; no architectural default
+    bank_mapping mapping = bank_mapping::low_order_interleaved;
+    unsigned pipeline_stages;       // required PD/timing input
+    unsigned max_outstanding_per_requester = 1;
+    arbitration_policy arbitration = arbitration_policy::round_robin;
 };
 
 struct tpu_core_config {
     rvv_config rvv;
-    mxu_config mxu;
-    std::uint64_t svm_size_bytes;
+    sauria_matrix_config sa;
+    dma_config dma;
+    image_transform_config transform;
+    local_sram_fabric_config local_sram_fabric;
+    std::uint64_t sram_size_bytes;
 };
 
 struct tpu_chip_config {
@@ -571,8 +663,15 @@ struct tpu_soc_config {
 };
 ```
 
-Construction must reject invalid frozen values such as `cores != 2`,
-`mxu.rows != 128`, `mxu.columns != 128`, or incompatible RVV parameters.
+Construction must reject invalid frozen values such as `cores != 2`, counts
+other than one SA/DMA/Transform per core, geometry other than verified 64x64 or
+promoted 128x128, an unavailable requested Transform operation, or incompatible
+RVV parameters. Requesting 128x128 before its promotion gate is an error. It
+must also reject a zero/non-byte-multiple local data width, a zero/non-power-of-
+two bank count, unsupported bank mapping, `max_outstanding_per_requester != 1`
+or an arbitration policy other than deterministic round-robin. Reference YAML
+must state the open physical values explicitly; the C++ schema must not hide a
+256-bit assumption in a default initializer.
 
 ### 11.2 RV32GCV CPU backend
 
@@ -617,7 +716,7 @@ The backend must provide:
 
 Instruction fetches, scalar loads/stores, vector loads/stores, and MMIO must
 ultimately traverse SystemC/TLM. VP++ internal/platform RAM must not silently
-bypass SVM, global memory, or the NoC.
+bypass core SRAM, global memory, or the NoC.
 
 If the first integration uses a mirrored memory for bring-up, it must be a
 temporary phase explicitly disabled before the NoC integration gate.
@@ -634,7 +733,16 @@ temporary phase explicitly disabled before the NoC integration gate.
 - vector load/store, integer, fixed-point, FP, mask, reduction, and permutation
   groups required by full V;
 - precise illegal instruction and memory traps;
-- RV32 restriction on 64-bit vector index EEW;
+- RV32 restriction on 64-bit vector index EEW. RVV 1.0 §18.2: *"the V extension
+  does not support EEW=64 for index values when XLEN=32"*, and §7.3: *"An
+  implementation must raise an illegal instruction exception if the EEW is not
+  supported for offset elements"* — ELEN is not the yardstick here, XLEN is.
+  VP++ accepted all 32 indexed EEW=64 encodings — the four unit forms and the 28
+  segment forms (audit **F12**); fixed by the D12 downstream conformance patch
+  and gated by `conformance_patches`;
+- trap cause for a failed bus access: an access fault chosen by access origin
+  (1 fetch, 5 load, 7 store/AMO), never a page fault, since `satp.MODE` is Bare
+  (audit **F13**, decision record **D13**);
 - `vstart` restart state after a **mid-vector trap** (decision record D10).
   Interrupt-driven restart is *not* checkable: VP++ has no interrupt check in
   its per-element vector loop, so a vector instruction is atomic with respect
@@ -676,14 +784,11 @@ If any frozen parameter is unsupported, Phase 2 stops and records the mismatch;
 it must not silently lower VLEN/ELEN or relabel another configuration as the
 TPU_V3 reference.
 
-### 11.3 Shared Vector Memory
+### 11.3 Core SRAM
 
-The SVM is local to one TPU core and shared by:
-
-- scalar/RVV memory traffic;
-- MXU 0;
-- MXU 1;
-- optional DMA or chip endpoint traffic.
+The SRAM is local to one NEO-CORE and shared by scalar/RVV traffic, the
+independent DMA, the Sauria matrix engine, the ImageTransform engine and
+authorized chip/NoC traffic.
 
 Initial required properties:
 
@@ -694,25 +799,32 @@ Initial required properties:
 - any payload from 1 to 64 bytes, verified with a synthetic initiator (D7);
 - byte-enable support;
 - range and overflow checks;
-- multiple initiator arbitration;
+- one logical address space mapped to configurable physical banks (D15);
+- deterministic round-robin arbitration per bank and back-pressure on bank
+  conflict, with independent-bank progress;
+- at most one outstanding native request per requester in Revision 1;
 - annotated access latency;
-- counters per requester;
+- TLM-request, physical-beat, bank-conflict, byte and latency counters per
+  requester;
 - debug transport for ELF/test initialization;
 - reset policy documented explicitly.
 
 #### Access granularity and counter naming (D7)
 
-There is no vector-instruction boundary at the SVM interface. RISC-V VP++
+There is no vector-instruction boundary at the SRAM interface. RISC-V VP++
 decomposes vector accesses per active element before the CDC-VP wrapper sees
 them, and masked, strided, indexed and fault-only-first accesses could not be
 one contiguous transaction under any backend.
 
-The SVM therefore:
+The SRAM therefore:
 
 - accepts any 1..64-byte payload, but never requires a 64-byte one;
 - must **not** infer, group or reassemble vector instruction boundaries;
-- names its counters `tlm_request_count`, `transferred_bytes`, `error_count`
-  and `arbitration_event_count`, counted per TLM request;
+- names its counters `tlm_request_count`, `physical_beat_count`,
+  `bank_conflict_count`, `transferred_bytes`, `error_count` and
+  `arbitration_event_count`, with each counter's unit stated explicitly;
+- records one TLM request and the actual number of physical beats if the native
+  fabric splits a payload; neither number is relabelled as the other;
 - must **not** expose `vector_instruction_count`, `vector_register_count` or
   anything described as a hardware bus transaction count;
 - records `VP++ element-wise granularity` alongside any timing figure derived
@@ -720,30 +832,30 @@ The SVM therefore:
   with TPU hardware.
 
 That one request usually carries one active element is a property of the
-current backend, not an SVM invariant.
+current backend, not an SRAM invariant.
 
 Initial coherence policy:
 
 - no hidden caches;
 - one coherent backing store;
 - program-visible ordering follows blocking TLM completion;
-- MXU completion interrupt/status acts as the synchronization boundary;
+- accelerator completion interrupt/status acts as the synchronization boundary;
 - any future cache requires a separate coherence decision and test plan.
 
-The SVM must not call `wait()` inside `b_transport` when used behind detailed
+The SRAM must not call `wait()` inside `b_transport` when used behind detailed
 NoC paths. Long internal operations, if any, use worker threads.
 
-### 11.4 MXU interface
+### 11.4 Sauria matrix engine
 
-Define a backend-independent `mxu_if` before implementing Sauria adaptation.
+Define a geometry-aware `sauria_matrix_if` before extracting source. It is one
+engine per core and implements matrix multiplication only.
 
 Required logical parameters:
 
 ```text
-Rows             : 128
-Columns          : 128
-Instances/core   : 2
-Operation class  : GEMM first; convolution lowering may be added later
+Rows/Columns     : 64x64 bring-up; 128x128 after NPU-team promotion
+Instances/core   : 1
+Operation class  : GEMM
 ```
 
 Required control contract:
@@ -755,71 +867,113 @@ Required control contract:
 - M, N, K dimensions;
 - input/output strides;
 - data type selection from the supported production set;
-- optional accumulate/bias/activation controls only after specification;
+- optional accumulation only after specification;
 - performance counters;
 - W1C or explicit completion acknowledgment semantics.
 
+The registers are a 32-bit AXI4-Lite target. Operand/result traffic uses a
+native local-SRAM requester port; the SA is not an external AXI4/NoC master.
 MMIO start must enqueue work and return. Completion occurs asynchronously.
 
-#### Fast MXU backend
+The 64x64 adapter is built first from the verified v4.2 source. It retains only
+the SA PE array and minimum required feeder/sequencer/result collector. It must
+exclude Sauria DMA, NPU profile routing, instruction decoder, OBP/RCE and other
+unrelated NPU-top behavior. Source-to-adapter regression must compare results
+against the same Sauria golden cases at the same geometry and datatype.
 
-Implement first. It must:
+The 128x128 promotion keeps this firmware-visible interface unchanged. It must
+audit masks and counters wider than 64, address arithmetic, memory capacity,
+elaboration cost, reset and datatype behavior. The NPU-team source revision is
+recorded in the build manifest.
 
-- produce numerically correct reference results;
-- tile arbitrary supported M/N/K around a logical 128x128 array;
-- expose a deterministic approximate latency model;
-- handle partial edge tiles;
-- report bytes read/written, operations, utilization estimate, and busy cycles;
-- support two concurrent instances per core without shared static state.
+### 11.5 Independent NEO DMA
 
-#### Sauria/detailed backend
+The DMA is owned by TPU_V3, not Sauria. Required contract:
 
-Implement only after the fast backend and interface are stable.
+- one 32-bit AXI4-Lite MMIO target, one native local-SRAM requester port and
+  one external AXI4/NoC-facing initiator per core;
+- source/destination address, length, direction/control, busy/done/error and
+  level IRQ;
+- legal burst chunking, deterministic partial-error semantics and byte counts;
+- no direct pointer to core SRAM/global memory and no Sauria DMA dependency;
+- one native local-SRAM requester port and one external AXI4/NoC-facing port;
+- all traffic observes the D15 local-fabric and NoC endpoint constraints;
+- reset aborts active transfer and releases all accounting.
 
-Before coding, audit:
+### 11.6 ImageTransform engine
 
-- whether the model is safely parameterizable to 128x128;
-- hard-coded 32-bit row/column masks;
-- SRAM capacity and address generation assumptions;
-- signal-level host interface behavior;
-- internal `wait()` behavior;
-- data types;
-- reset and clock ownership;
-- license and redistribution conditions.
+One engine per core provides Im2Col and Col2Im. The implementation and semantic
+contract must be traced to an approved NPU-team revision. Required descriptor
+fields include tensor bases, dimensions, layout, datatype, kernel, stride,
+padding and dilation; Col2Im additionally defines overlap/accumulation behavior.
 
-Allowed outcomes:
+The current v4.2 source contains Im2Col-related IFMAP address generation but no
+standalone Col2Im block has been established. Do not implement a guessed inverse
+or relabel PSM output addressing. Until source arrives, advertise the capability
+as unavailable and reject start explicitly. This open input does not block
+SRAM/control/local-fabric/DMA/SA64 work.
 
-1. a true parameterized 128x128 Sauria-derived backend with verification;
-2. a tiled 32x32 approximation clearly labeled as such;
-3. retain the fast 128x128 model as the full-system backend and use detailed
-   Sauria only for limited microarchitectural experiments.
+### 11.7 NEO control, local-SRAM and external fabrics
 
-Do not instantiate a full detailed 128x128 PE hierarchy across every MXU in a
-large mesh without measuring elaboration time, host memory, and runtime first.
+The D15 split is an architectural RTL contract, not only a SystemC naming
+convention.
 
-### 11.5 Core-local fabric
+**AXI4-Lite control fabric responsibilities:**
 
-Responsibilities:
+- decode 32-bit VP++ and authorized inbound MMIO accesses to core, DMA, SA,
+  ImageTransform and counter registers;
+- remain in order with no bursts or AXI IDs and accept at most one transaction
+  per control initiator;
+- enforce 4-byte alignment, full strobes and response propagation;
+- be represented at transaction level without claiming channel-cycle accuracy.
 
-- decode CPU/RVV accesses to SVM, MXU 0, MXU 1, and chip/global space;
-- arbitrate local initiators;
-- route MXU master traffic to SVM or chip/global memory;
-- prevent local traffic from entering the global NoC unnecessarily;
-- preserve response ownership under concurrent requests;
-- expose per-route counters;
-- enforce address alignment and target access policy.
+**NEO Local SRAM Fabric responsibilities:**
+
+- decode VP++ local data and native DMA/SA/ImageTransform requests to the
+  logical shared SRAM, with authorized inbound traffic as a named requester;
+- map the logical SRAM onto configurable physical banks;
+- arbitrate independently per bank using deterministic round-robin;
+- begin with at most one outstanding request per requester and preserve
+  response ownership;
+- allow different banks to progress concurrently and back-pressure same-bank
+  conflicts;
+- expose TLM-request, physical-beat, bank-conflict, byte and latency counters;
+- enforce bounds, byte strobes and target response policy;
+- never expose a direct pointer to backing storage and never become a full AXI
+  data crossbar.
+
+**External bridge responsibilities:**
+
+- connect VP++ instruction/global traffic and the independent DMA's external
+  port to AXI4/chip-global/NoC traffic;
+- decode inbound remote MMIO to AXI4-Lite and inbound remote SRAM traffic to a
+  named native requester; never bypass local arbitration;
+- preserve requester ownership and partial-error accounting;
+- prevent local SRAM/MMIO traffic from entering the global NoC unnecessarily;
+- keep SA and ImageTransform as local-SRAM requesters, not NoC masters.
+
+The native `request` includes requester identity, byte address, command, size,
+write data and strobes; `response` includes read data and explicit status. The
+physical data width, number of banks, low-order bank mapping and pipeline depth
+remain validated construction-time parameters until SRAM-macro, frequency and
+PD inputs are available. Do not freeze an illustrative 256-bit width in an API
+or serialized schema.
 
 The address map must be centralized in `address_map.h`. No component may carry
 an independent copy of base addresses.
 
-### 11.6 TPU core
+### 11.8 TPU core / NEO-CORE
 
 One `tpu_core` instance owns:
 
 - one RISC-V VP++ RV32GCV CPU backend;
-- one SVM;
-- two MXUs;
-- one core-local fabric;
+- one shared core SRAM;
+- one independent TPU_V3 DMA;
+- one Sauria matrix engine;
+- one ImageTransform engine;
+- one 32-bit AXI4-Lite control fabric;
+- one native banked-SRAM data fabric;
+- one bidirectional external AXI4/NoC bridge;
 - core-local interrupt aggregation;
 - core ID and globally unique hart ID;
 - reset and optional clock-domain adapters.
@@ -832,7 +986,7 @@ hart_id = chip_linear_id * 2 + core_id
 
 The mapping must be tested and visible to firmware through `mhartid`.
 
-### 11.7 TPU chip
+### 11.9 TPU chip
 
 One `tpu_chip` instance owns exactly two `tpu_core` instances plus one
 chip-local fabric and one NoC endpoint.
@@ -847,7 +1001,7 @@ Responsibilities:
 - expose chip-level metrics;
 - implement reset sequencing.
 
-### 11.8 NoC endpoint
+### 11.10 NoC endpoint
 
 The endpoint must be bidirectional:
 
@@ -868,7 +1022,7 @@ NoC protocol changes require dedicated negative controls and cross-checks. Do
 not make TPU-specific changes directly in routing primitives if the behavior
 belongs in an endpoint adapter.
 
-### 11.9 Platform top
+### 11.11 Platform top
 
 `platforms/TPU_V3_SoC` owns system composition, not reusable IP behavior.
 
@@ -898,9 +1052,10 @@ GLOBAL_RAM_OR_HBM
 CHIP_APERTURE(chip_id)
   CORE_APERTURE(core_id)
     CORE_CONTROL
-    SVM
-    MXU0_CONTROL
-    MXU1_CONTROL
+    CORE_SRAM
+    SA_CONTROL
+    DMA_CONTROL
+    TRANSFORM_CONTROL
     CORE_COUNTERS
   CHIP_CONTROL
   CHIP_COUNTERS
@@ -910,7 +1065,7 @@ Rules:
 
 1. All RV32-visible physical addresses must fit below 4 GiB.
 2. Regions must be power-of-two aligned where practical.
-3. SVM capacity must fit within its core aperture.
+3. Core SRAM capacity must fit within its core aperture.
 4. No two chip/core apertures may overlap.
 5. Address calculations must check 64-bit overflow even though RV32 is used.
 6. MMIO accesses must define supported widths and alignment.
@@ -952,7 +1107,8 @@ All TPU_V3 components must use one documented contract.
 - completion queues preserve the required ordering contract;
 - reset during an active job has documented abort behavior;
 - slot/accounting cleanup occurs on success, error, reset, and exception;
-- tests exercise simultaneous MXU 0/MXU 1 and dual-core requests.
+- tests exercise simultaneous SA/DMA/ImageTransform/external-inbound and
+  dual-core requests.
 
 ## 14. Accuracy and Performance Strategy
 
@@ -963,8 +1119,9 @@ The platform needs multiple fidelity levels.
 Use for firmware, software integration, multi-chip workloads, and long runs.
 
 - RISC-V VP++ functional RV32GCV execution;
-- fast/analytical 128x128 MXU;
-- approximately timed SVM/local fabric;
+- extracted Sauria matrix engine at its reported geometry/datatype;
+- independent DMA and verified ImageTransform capabilities;
+- approximately timed AXI4-Lite control and native banked-SRAM fabrics;
 - FlooNoC fast timing when contention is not the study target;
 - deterministic results and metrics.
 
@@ -975,14 +1132,15 @@ Use for routing, arbitration, link back-pressure, and contention experiments.
 - detailed FlooNoC backend;
 - nonblocking/annotating targets;
 - small or controlled workloads;
-- no claim that CPU/MXU timing is cycle accurate unless separately calibrated.
+- no claim that CPU/SA/Transform/DMA timing is cycle accurate unless separately calibrated.
 
-### 14.3 MXU detailed mode
+### 14.3 Sauria promotion/detail mode
 
-Use for selected single-MXU or single-core experiments.
+Use for selected single-SA or single-core experiments and for promoting the NPU
+team's 128x128 source.
 
-- Sauria-derived behavior where verified;
-- explicit scope and array mapping;
+- Sauria behavior only at verified geometry/datatype/source revision;
+- explicit SA-only extraction scope and array mapping;
 - measured host runtime and memory before scaling;
 - separate results from full-system fast-mode results.
 
@@ -992,7 +1150,7 @@ Do not claim:
 
 - Google TPUv3 RTL equivalence;
 - cycle-accurate RVV or Google TPU timing from RISC-V VP++;
-- exact 128x128 timing from a 32x32 tiled approximation;
+- exact 128x128 behavior or timing from the 64x64 bring-up source;
 - full-system cycle accuracy merely because detailed NoC is enabled;
 - multicast behavior when it is implemented as repeated unicast.
 
@@ -1009,13 +1167,23 @@ option(CDC_BUILD_TPU_V3_SOC
 option(CDC_BUILD_TPU_V3_TESTS
     "Build TPU_V3 component tests" ON)
 
-set(TPU_V3_MXU_BACKEND "fast" CACHE STRING
-    "TPU_V3 MXU backend: fast or sauria")
+option(TPU_V3_ENABLE_SAURIA_MATRIX
+    "Build the matrix-only Sauria adapter" ON)
+
+option(TPU_V3_ENABLE_IMAGE_TRANSFORM
+    "Build the verified NPU-team Im2Col/Col2Im adapter" OFF)
+
+set(TPU_V3_SA_GEOMETRY "64x64" CACHE STRING
+    "TPU_V3 Sauria geometry: 64x64 or promoted 128x128")
 ```
 
 Add a pinned RISC-V VP++ source path/cache variable with a clear failure if
 missing. Keep the optional Spike reference path separate so a production
-runtime build cannot accidentally acquire a Spike dependency.
+runtime build cannot accidentally acquire a Spike dependency. The TPU_V3 SA
+target consumes selected headers/source through its own adapter and must not
+link `cdc::components::npu_tlm` or instantiate `NpuTop`. The existing
+`CDC_ENABLE_SAURIA_NPU_V4` option remains for legacy platforms and is not the
+NEO-CORE matrix-selection switch.
 
 ### 15.2 Component targets
 
@@ -1023,8 +1191,10 @@ Expected exported targets:
 
 ```text
 cdc::components::tpu_v3_common
-cdc::components::tpu_v3_svm
-cdc::components::tpu_v3_mxu
+cdc::components::tpu_v3_core_sram
+cdc::components::tpu_v3_dma
+cdc::components::tpu_v3_sauria_matrix
+cdc::components::tpu_v3_image_transform
 cdc::components::tpu_v3_core
 cdc::components::tpu_v3_chip
 cdc::components::tpu_v3_noc_endpoint
@@ -1078,9 +1248,10 @@ export SAURIA_NPU_ROOT=/home/duyptt_HW/Documents/work/fx1/hw/tlm/MP1_V1.1/v4.2_m
 cmake -S . -B build-tpu-v3 \
     -DCDC_BUILD_TPU_V3_SOC=ON \
     -DCDC_BUILD_TPU_V3_TESTS=ON \
-    -DCDC_ENABLE_SAURIA_NPU_V4=ON \
     -DSAURIA_NPU_ROOT="$SAURIA_NPU_ROOT" \
-    -DTPU_V3_MXU_BACKEND=fast
+    -DTPU_V3_ENABLE_SAURIA_MATRIX=ON \
+    -DTPU_V3_ENABLE_IMAGE_TRANSFORM=OFF \
+    -DTPU_V3_SA_GEOMETRY=64x64
 
 cmake --build build-tpu-v3 \
     --target tpu_v3_soc \
@@ -1119,7 +1290,8 @@ out/tpu_v3_soc/
 - Locate or provision a compiler supporting `rv32gcv_zvl512b` and `ilp32d`.
 - Create `ARCHITECTURE.md`, `INTERFACE_CONTRACT.md`, and `ADDRESS_MAP.md`.
 - Resolve initial SVM capacity and MXU data types, or mark them as config
-  values with explicit temporary defaults.
+  values with explicit temporary defaults. **Historical Phase 0 wording:** D14
+  renames these to core SRAM and Sauria SA and supersedes the old composition.
 
 #### Gate
 
@@ -1213,171 +1385,190 @@ vlenb read == 64
   - reverting the backport makes both the configure step and the test fail.
 - Any third-party patch is recorded: patch file under
   `cpu_models/riscv_vp_plusplus/patches/`, content hash checked, applied only by
-  the acquisition script, and base + backport + hash + effective source written
-  into `BUILD_MANIFEST.json`.
+  the acquisition script, and base revision + per-patch kind/reference/hash +
+  effective source written into `BUILD_MANIFEST.json`.
 
-### Phase 3: Shared Vector Memory
-
-#### Tasks
-
-- Implement deterministic sparse 4 KiB page-backed storage for SVM and global
-  RAM; do not eagerly allocate their logical capacities.
-- Keep decoded window, instantiated capacity and allocated host backing as
-  three separate quantities.
-- Make unallocated pages read as zero, allocate only pages touched by writes,
-  and release all pages on reset.
-- Implement bounds, byte enables, cross-page transactions, and reset policy.
-- Implement multiple tagged/requester ports.
-- Implement approximate latency without blocking `b_transport`.
-- Accept any 1..64-byte payload, exercised by a synthetic initiator (D7).
-- Implement debug initialization.
-- Add logical-capacity, current/peak backing-byte and page-count counters, plus
-  concurrent requester tests.
-- Name the access counters `tlm_request_count`, `transferred_bytes`,
-  `error_count` and `arbitration_event_count`, counted per TLM request (D7).
-
-#### Gate
-
-- Every payload size from 1 to 64 bytes passes, driven by a synthetic
-  initiator. The 64-byte case is **not** required to come from VP++: it
-  decomposes vector accesses per active element, so a VP++ trace containing no
-  64-byte payload is expected, not a defect (D7).
-- No SVM counter is named `vector_instruction_count`,
-  `vector_register_count` or a hardware bus transaction count, and nothing in
-  SVM infers, groups or reassembles a vector instruction boundary (D7).
-- Any timing figure derived from these counters carries
-  `VP++ element-wise granularity`.
-- Out-of-range, overflow, bad byte enable, and reset tests pass.
-- Unallocated reads return zero; a first write allocates only the touched
-  page(s); boundary-crossing writes preserve byte enables; reset releases the
-  backing pages.
-- Concurrent CPU/MXU-style traffic preserves data and owner attribution.
-- Same results are produced with counters enabled and disabled.
-- `mesh_4x4` (1.25 GiB logical storage) elaborates without eagerly committing
-  1.25 GiB of host memory.
-
-### Phase 4: MXU fast backend
+### Phase 3: NEO core SRAM, split fabrics and map migration
 
 #### Tasks
 
-- Freeze initial register/descriptor contract.
-- Implement backend-independent `mxu_if`.
-- Implement functional 128x128 fast model.
-- Implement asynchronous worker and level IRQ.
-- Implement partial edge tiles and arbitrary supported M/N/K.
-- Add data-type-specific golden reference.
-- Instantiate and run two independent MXUs.
+- Rename the Phase 1 SVM/MXU address symbols to the D14 `CORE_SRAM`,
+  `SA_CONTROL`, `DMA_CONTROL` and `TRANSFORM_CONTROL` contract; update C++ map,
+  tests, config serialization and generated firmware names together.
+- Implement deterministic sparse 4 KiB page-backed storage for core SRAM and
+  global RAM; do not eagerly allocate logical capacity.
+- Implement the transaction-level 32-bit AXI4-Lite control decoder: in order,
+  4-byte accesses, full strobes, no bursts or IDs, and at most one transaction
+  per control initiator.
+- Define the native local-SRAM request/response types and implement
+  `neo_local_sram_fabric` with named requester ownership, configurable physical
+  banks, deterministic per-bank round-robin arbitration, back-pressure and
+  independent-bank progress.
+- Add validated configuration/report fields for physical data width, bank
+  count, low-order bank mapping and pipeline depth. Do not freeze 256 bits
+  without SRAM-macro, frequency and PD evidence.
+- Keep decoded window, capacity and allocated backing separate; cover bounds,
+  byte enables, cross-page traffic, reset and debug initialization.
+- Accept every 1..64-byte payload and retain D7 element-wise counter semantics.
+- Route synthetic CPU, SA, DMA and Transform native requesters to SRAM and
+  error targets; include a named external-inbound requester and route synthetic
+  CPU/inbound control accesses to each AXI4-Lite target. No block-specific
+  compute is required yet.
 
 #### Gate
 
-- GEMM results match a simple trusted C++ golden model.
-- Boundary dimensions around 127/128/129 pass.
-- Two MXUs run concurrently with independent state and completion.
-- MMIO start returns immediately.
-- Reset during idle and active operation follows the documented contract.
-- Timing and utilization counters are deterministic.
+- The legacy `SVM`/`MXU0_CONTROL`/`MXU1_CONTROL` symbols are absent from current
+  architecture config and new firmware-visible address generation; historical
+  audits may still quote them.
+- Address-map non-overlap, decode, all 1..64-byte widths, byte enables,
+  cross-page, reset, sparse allocation and requester attribution tests pass.
+- AXI4-Lite alignment/strobe/error tests pass; no accelerator bulk payload is
+  routed through the control fabric.
+- Same-bank round-robin, different-bank concurrency, back-pressure, response
+  ownership and TLM-request-versus-physical-beat counters pass under watchdog.
+- Inbound remote SRAM/MMIO traffic traverses the adapters and normal
+  arbitration; an attempted bypass is covered by a negative test.
+- No target waits inside `b_transport`; arbitration/timing is deterministic.
+- No source file or public type named `neo_axi_fabric` remains after migration.
+- `mesh_4x4` logical memory elaborates without eager host commitment.
 
-### Phase 5: Single TPU core
+### Phase 4: Independent NEO DMA
 
 #### Tasks
 
-- Implement core-local address decoder and arbiter.
-- Instantiate RV32GCV, SVM, MXU 0, and MXU 1.
-- Wire interrupts and core reset.
-- Generate unique core/hart IDs.
-- Build firmware drivers for MXU/SVM.
-- Run an RVV-preprocess -> MXU -> RVV-postprocess pipeline.
+- Freeze DMA descriptor/status/IRQ and partial-transfer semantics.
+- Implement one TPU_V3 DMA per core with an AXI4-Lite MMIO target, native
+  local-SRAM requester and external AXI4/NoC-facing initiator.
+- Split transfers to legal downstream burst sizes and propagate the first error
+  with completed-byte accounting.
+- Add reset/abort, overlap, odd-length, boundary and concurrent-request tests.
+- Add a source/build guard proving no Sauria DMA header or symbol is used.
 
 #### Gate
 
-- One firmware ELF boots on the core.
-- RVV reads/writes SVM through TLM.
-- Firmware launches both MXUs and handles completion IRQs.
-- Final output matches golden data.
-- Unmapped and misaligned accesses fail predictably.
-- No global NoC is required for local-only workload completion.
+- DMA copies only through observable native local-SRAM transactions and the
+  external AXI4/NoC-facing path; local and external byte counts conserve.
+- A negative control using a failing destination proves response propagation and
+  partial-byte accounting.
+- No direct SRAM/global backing pointer and no `control/sauria_dma.h` dependency
+  exists.
+- MMIO start returns immediately; completion/error IRQ is level-sensitive.
 
-### Phase 6: Dual-core TPU chip
+### Phase 5: Sauria matrix engine, 64x64 bring-up
 
 #### Tasks
 
-- Instantiate exactly two TPU cores.
-- Implement chip-local fabric and address apertures.
-- Implement `mhartid = chip_id * 2 + core_id`.
-- Add outbound arbitration and inbound target decode.
-- Add chip reset and counters.
-- Test simultaneous firmware on both harts.
+- Pin and record the NPU-team v4.2 source revision and redistribution policy.
+- Freeze `sauria_matrix_if` and the geometry/datatype reporting contract.
+- Extract/wrap matrix multiplication plus only required feeder/sequencer/result
+  collection; exclude Sauria DMA, profile/instruction top, OBP and RCE.
+- Connect operand/result accesses through the native local-SRAM port rather
+  than direct source backing; do not add an external AXI4 master.
+- Port the source golden cases for the selected verified 64x64 datatype.
+- Measure elaboration, host memory and runtime for one engine and two cores.
 
 #### Gate
 
-- Both cores boot and report unique IDs.
-- Both cores can run independent workloads concurrently.
-- One core cannot corrupt the other core's private SVM accidentally.
-- Authorized remote/debug access maps to the intended core.
-- Outbound request ownership and responses remain correct under concurrency.
+- Source NPU and extracted adapter match on the accepted 64x64 corpus.
+- GEMM dimensions, edge tiles, asynchronous start, IRQ, reset and errors pass.
+- Dependency review proves unrelated NPU-top blocks and Sauria DMA are absent.
+- Reports and manifests say `64x64` and the actual datatype; no 128x128/BF16
+  claim is made without evidence.
 
-### Phase 7: Single-chip NoC integration
+### Phase 6: ImageTransform extraction
 
 #### Tasks
 
-- Connect one TPU chip endpoint to FlooNoC.
-- Add global RAM/HBM target.
-- Implement local-address bypass.
-- Implement legal burst chunking.
-- Run firmware from a defined boot/global memory arrangement.
-- Verify fast and detailed NoC compatibility.
+- Obtain from the NPU team the source revision, interfaces and golden tests for
+  both Im2Col and Col2Im.
+- Define tensor layout, kernel, stride, padding, dilation, datatype and Col2Im
+  overlap/accumulation semantics before implementation.
+- Implement one adapter with a 32-bit AXI4-Lite MMIO target and native
+  local-SRAM requester; do not add an external AXI4 master.
+- Cross-check both operations against NPU-team golden output, including edge
+  dimensions and overlapping Col2Im contributions.
 
 #### Gate
 
-- Chip can read/write global RAM through the NoC.
-- Local SVM/MMIO traffic does not enter the NoC.
-- Transfers larger than 2048 bytes are chunked correctly.
-- No target blocks the detailed mesh driver.
-- Reset and error paths leave the mesh and endpoint idle.
+- Every exposed operation maps to traced NPU-team source and a golden test.
+- A missing operation is reported unavailable and rejects start; no placeholder
+  returns success.
+- Im2Col and Col2Im round-trip tests are used only where the mathematical/layout
+  contract says a round trip is valid.
 
-### Phase 8: Multi-chip mesh and NoC scalability
+This phase is waiting for NPU-team clarification if v4.2 has no standalone
+Transform module. That wait does not block Phases 3–5.
+
+### Phase 7: Single NEO-CORE integration
 
 #### Tasks
 
-- Bring up a 2x2 mesh first.
-- Assign one coordinate and one aggregated manager identity per chip.
-- Test inter-chip reads/writes and global memory traffic.
-- Add deterministic contention tests.
-- Measure current 8-manager limit behavior.
-- If more than eight chips are required, widen manager identity/configuration
-  with FlooNoC RTL/model evidence and negative controls.
-- Resolve bidirectional same-node target placement safely.
+- Instantiate VP++ RV32GCV, core SRAM, NEO DMA, Sauria SA64, ImageTransform and
+  the AXI4-Lite control, native local-SRAM and external bridge components.
+- Wire reset and per-engine level interrupts.
+- Add firmware drivers for SRAM, DMA, SA and ImageTransform.
+- Run `DMA -> Im2Col -> SA -> Col2Im -> RVV` using SRAM descriptors/buffers.
 
 #### Gate
 
-- 2x2 mesh completes concurrent inter-chip traffic without deadlock.
-- Source/destination data and response ownership are correct.
-- Detailed metrics satisfy transaction/flit conservation.
-- Fast mode matches detailed no-contention functional effects and stays within
-  its documented latency tolerance.
-- Any manager-ID extension is cross-checked and guarded by configuration tests.
+- One firmware ELF boots and controls every available block through MMIO.
+- Control traffic is visible on AXI4-Lite, local data on the native SRAM
+  fabric, and remote data on the external bridge; final data matches the
+  accepted golden model.
+- Scalar and RVV remain one hart/memory path; no second vector processor exists.
+- Unmapped, unavailable, misaligned, reset and injected-error cases fail
+  predictably under watchdogs.
 
-### Phase 9: Sauria/detailed MXU feasibility
-
-This phase may proceed after the fast MXU contract is stable. It must not block
-functional full-system progress.
+### Phase 8: Dual-core TPU chip
 
 #### Tasks
 
-- Audit parameterization to 128x128.
-- Decide true 128x128, tiled approximation, or limited detailed model.
-- Implement adapter behind the unchanged `mxu_if`.
-- Cross-check small matrices and boundary cases against fast/golden model.
-- Measure elaboration and runtime at one MXU, one core, and one chip.
-- Define the maximum supported detailed configuration.
+- Instantiate exactly two NEO-COREs with unique hart IDs.
+- Implement chip-local aperture decode, outbound arbitration and inbound route.
+- Test simultaneous CPU, DMA, SA and Transform traffic on both cores.
+- Close the pre-existing multi-hart AMO and full architectural reset gates.
 
 #### Gate
 
-- Functional results match the accepted golden model.
-- Timing/accuracy scope is documented honestly.
-- Detailed backend can be selected by CMake/config without changing firmware.
-- Full-system configurations refuse impractical detailed combinations rather
-  than exhausting host resources unexpectedly.
+- Both harts boot and run independent workloads concurrently.
+- One core cannot corrupt the other core's private SRAM accidentally.
+- Authorized remote/debug accesses map to the intended core.
+- Ownership, IRQs and responses remain correct under cross-engine contention.
+
+### Phase 9: NoC integration and mesh scalability
+
+#### Tasks
+
+- Close D1 owner-aware local bypass before co-locating manager/target endpoints.
+- Connect one dual-core chip and global RAM to FlooNoC; validate local containment
+  and legal burst chunking.
+- Bring up a 2x2 mesh, then allowed Revision 1 configurations up to eight chips.
+- Test inter-chip DMA and CPU traffic, contention, errors and reset.
+- Keep any manager-ID widening/32-core work as its separate coordinated change.
+
+#### Gate
+
+- Local SRAM/MMIO traffic injects zero NoC flits; remote traffic routes normally.
+- Transfers larger than the NoC frame limit are chunked with defined partial
+  failure semantics.
+- 2x2 concurrent inter-chip traffic completes without deadlock or response
+  misattribution and detailed conservation checks pass.
+- Missing/wrong local-owner mappings fail at elaboration.
+
+### Phase 9B: Sauria 128x128 promotion
+
+This phase begins when the NPU team supplies the updated source. It does not
+block 64x64 bring-up, but it is required before claiming the 128x128 target.
+
+#### Tasks and gate
+
+- Pin source and audit all masks, widths, address generators and memory sizing
+  affected by 128 rows/columns.
+- Reuse the Phase 5 interface and corpus, add 127/128/129 and full-array cases,
+  and verify the actual supported datatype contract.
+- Measure one engine, two-core chip and selected mesh scalability.
+- Permit `TPU_V3_SA_GEOMETRY=128x128` only after configure-time provenance and
+  runtime geometry checks pass; otherwise reject it.
 
 ### Phase 10: Firmware and workload integration
 
@@ -1386,7 +1577,7 @@ functional full-system progress.
 - Add startup code and per-hart stacks.
 - Add trap/interrupt handling.
 - Add RVV compile flags and intrinsic/assembly tests.
-- Add MXU and SVM drivers.
+- Add core SRAM, NEO DMA, Sauria matrix and ImageTransform drivers.
 - Add global memory allocator or fixed buffer contract.
 - Add host-side tensor/image loader.
 - Add named workloads rather than baking one workload into architecture.
@@ -1399,7 +1590,7 @@ functional full-system progress.
 - Multi-hart startup is deterministic.
 - Workloads produce golden outputs.
 - Input data and outputs traverse documented memory paths.
-- Timeout/error reporting identifies chip, core, MXU, PC, and status.
+- Timeout/error reporting identifies chip, core, engine, PC, descriptor and status.
 
 ### Phase 11: Metrics, performance, and stress
 
@@ -1413,7 +1604,7 @@ CPU/RVV:
 - vector loads/stores and bytes;
 - approximate execution cycles.
 
-MXU:
+Sauria matrix engine:
 
 - jobs;
 - MAC operations;
@@ -1423,11 +1614,23 @@ MXU:
 - stalls by cause;
 - error/reset counts.
 
-SVM/local fabric:
+DMA and ImageTransform:
 
-- accesses and bytes per requester;
-- arbitration stalls;
-- conflicts;
+- jobs and operation type;
+- bytes read/written;
+- busy cycles, partial transfers, errors and reset/abort counts.
+
+AXI4-Lite control fabric:
+
+- reads/writes by target;
+- decode/alignment/strobe errors;
+- response latency totals/maxima.
+
+Core SRAM/NEO Local SRAM Fabric:
+
+- TLM requests, physical beats and bytes per requester;
+- arbitration stalls and bank conflicts;
+- independent-bank overlap;
 - latency totals/maxima.
 
 NoC:
@@ -1456,7 +1659,7 @@ NoC:
 - Record source revisions and build configuration.
 - Run from a temporary directory without source-tree access.
 - Inspect runtime dependencies and RPATH.
-- Run packaged smoke, RVV, MXU, single-chip, and selected mesh tests.
+- Run packaged smoke, RVV, SRAM, DMA, SA, Transform, single-chip, and selected mesh tests.
 - Archive test manifest and checksums.
 
 #### Gate
@@ -1475,16 +1678,19 @@ license/provenance records and a reproducible build manifest.
 | --- | --- | --- |
 | Unit | RVV config/CSR | VLEN/ELEN/SEW/LMUL and illegal configs |
 | Unit | RVV instructions | Integer, FP, mask, reduction, permutation, load/store |
-| Unit | SVM | Widths, byte enables, boundaries, concurrency, reset |
-| Unit | MXU | GEMM golden, dimensions, data types, async IRQ, reset |
-| Unit | Core fabric | Decode, arbitration, local bypass, errors |
+| Unit | Core SRAM | Widths, byte enables, sparse pages, boundaries, concurrency, reset |
+| Unit | NEO DMA | TLM-only copies, burst splitting, partial errors, async IRQ, reset |
+| Unit | Sauria SA | Source golden, 64x64 geometry, data type, async IRQ, reset |
+| Unit | ImageTransform | NPU-team Im2Col/Col2Im golden, layouts, overlap, unavailable capability |
+| Unit | AXI4-Lite control fabric | 32-bit decode, alignment/strobes, ordering and errors |
+| Unit | NEO Local SRAM Fabric | Bank decode, round-robin, back-pressure, ownership, independent-bank progress and errors |
 | Unit | Chip fabric | Two-core ownership, inbound/outbound routing |
 | Unit | NoC endpoint | placement, chunking, completion, partial errors |
-| Integration | Single core | RVV -> SVM -> dual MXU -> RVV |
-| Integration | Single chip | two harts, two SVMs, four MXUs |
+| Integration | Single core | DMA -> Im2Col -> SA -> Col2Im -> RVV over core SRAM |
+| Integration | Single chip | two harts, two SRAMs, two DMAs, two SAs, two Transform engines |
 | Integration | NoC | global RAM and remote chip traffic |
 | System | Firmware | boot, IRQ, drivers, workload completion |
-| Stress | Concurrency | simultaneous harts/MXUs/NoC traffic |
+| Stress | Concurrency | simultaneous harts/DMA/SA/Transform/NoC traffic |
 | Negative | Fault injection | decode, ordering, reset, chunking, IRQ defects detected |
 | Package | Distribution | clean build and source-independent execution |
 
@@ -1508,20 +1714,35 @@ Mitigation:
 - do not write a custom RVV implementation or combine two independently
   advancing ISSs unless a separate architecture decision justifies it.
 
-### R2. Sauria 32x32 versus required 128x128
+### R2. Sauria 64x64 bring-up versus 128x128 target
 
-Risk: existing Sauria cannot represent the required MXU unchanged.
+Risk: existing v4.2 Sauria verifies 64x64, while the target 128x128 source is a
+future NPU-team delivery. Hard-coded 64-bit masks or address assumptions can
+make a nominal template change incorrect.
 
 Mitigation:
 
-- make the 128x128 fast backend the first functional source;
-- keep Sauria behind a stable adapter;
-- audit hard-coded widths before parameterization;
-- label tiled approximations accurately.
+- integrate only the verified 64x64 source first behind a geometry-aware adapter;
+- reject 128x128 until source, golden and width/resource gates pass;
+- audit hard-coded masks/address widths during promotion;
+- report actual geometry and datatype in every run and package.
+
+### R2A. Transform delivery and semantics
+
+Risk: v4.2 has Im2Col-related feeder logic but no established standalone
+Col2Im block. Guessing Col2Im layout or overlap behavior can produce plausible
+but wrong images.
+
+Mitigation:
+
+- obtain module/interface/golden tests from the NPU team;
+- expose unavailable capability rather than a fake implementation;
+- trace every copied/extracted path to an immutable source revision;
+- do not equate PSM output addressing with Col2Im without evidence.
 
 ### R3. Simulation scalability
 
-Risk: many chips times two cores times two detailed 128x128 MXUs can make
+Risk: many chips times two cores and detailed 64x64/128x128 SAs can make
 elaboration and runtime impractical.
 
 Mitigation:
@@ -1611,18 +1832,23 @@ The TPU_V3 project is complete only when all of the following are true:
 
 1. The SoC hierarchy matches the frozen specification.
 2. Every chip contains exactly two TPU cores.
-3. Every TPU core contains one RV32GCV hart, one SVM, and two logical 128x128
-   MXUs.
+3. Every NEO-CORE contains one RV32GCV hart, one core SRAM, one independent
+   TPU_V3 DMA, one Sauria matrix engine, one Im2Col/Col2Im Transform engine and
+   the D15 split: 32-bit AXI4-Lite control, native banked-SRAM local data and an
+   bidirectional external AXI4/NoC bridge; no internal full AXI data crossbar
+   exists.
 4. RVV 1.0 reports XLEN 32, VLEN 512, ELEN 64, and executes the required full-V
    instruction groups.
-5. RVV memory traffic uses TLM and interacts with SVM/global memory correctly.
-6. Both MXUs in one core can execute concurrently and return correct results.
+5. RVV memory traffic uses TLM and interacts with core SRAM/global memory correctly.
+6. DMA, SA and ImageTransform execute asynchronously and concurrently with
+   correct data, ownership, errors and level interrupts.
 7. Both TPU cores in one chip can boot and run concurrently with unique IDs.
 8. Multiple chips communicate through the parameterized 2D mesh without
    deadlock or response misattribution.
 9. Local accesses bypass the global NoC.
 10. Large tensor transfers are safely chunked to legal NoC bursts.
-11. Fast and detailed modes have documented, tested accuracy boundaries.
+11. 64x64 bring-up and promoted 128x128 modes have documented, tested geometry,
+    datatype and accuracy boundaries.
 12. Firmware, drivers, and at least one end-to-end workload pass golden checks.
 13. Metrics pass conservation and noninterference tests.
 14. Component, platform, firmware, stress, negative-control, and packaging
@@ -1632,6 +1858,22 @@ The TPU_V3 project is complete only when all of the following are true:
 16. The packaged executable runs without the source/build tree.
 
 ## 21. Immediate Next Actions
+
+Current D14/D15 work, in order (updated 2026-08-12):
+
+1. Migrate `architecture_config` and `address_map` from the legacy two-MXU/SVM
+   names to one SA, one independent DMA, one Transform engine and core SRAM.
+2. Implement Phase 3 core SRAM, 32-bit AXI4-Lite control fabric and native
+   banked-SRAM data fabric, leaving bank count/width/pipeline depth configurable.
+3. Implement Phase 4 NEO DMA with a build/test guard against Sauria DMA use.
+4. Pin the accepted v4.2 source and perform the Phase 5 matrix-only dependency
+   extraction audit before writing the adapter.
+5. Ask the NPU team to identify/provide the standalone Im2Col/Col2Im Transform
+   module, semantic contract and golden tests, and separately provide the later
+   128x128 Sauria source.
+
+Items below are retained as closure history for Phases 0–2; they are not the
+current execution queue.
 
 Done (2026-08-08):
 
@@ -1643,7 +1885,7 @@ Done (2026-08-08):
    cross-toolchain.~~ The runtime role was later reassigned to RISC-V VP++ by
    D3; the VP++ candidate SHA is deliberately still open pending its audit.
 
-Phase 2, done (2026-08-08) — evidence in `docs/TPU_V3_PHASE2_AUDIT.md`:
+Phase 2, done (2026-08-10) — evidence in `docs/TPU_V3_PHASE2_AUDIT.md`:
 
 6. ~~Fetch RISC-V VP++, audit it, select an immutable candidate SHA, record
    MIT/transitive dependency provenance, do not vendor.~~ Pinned at
@@ -1659,32 +1901,39 @@ Phase 2, done (2026-08-08) — evidence in `docs/TPU_V3_PHASE2_AUDIT.md`:
     `reset_pc_unspecified` sentinel, because `0` is a legitimate reset vector
     under the TPU_V3 map and cannot also mean "unset".
 
-Phase 2, outstanding, in order:
+Additional Phase 2 closure evidence:
 
-8. Build the freestanding RV32GCV smoke environment: `-ffreestanding
+8. ~~Build the freestanding RV32GCV smoke environment: `-ffreestanding
    -nostdlib -nostartfiles`, a project-owned `crt0.S`, linker script, stack
    setup, trap entry and pass/fail reporting, depending on neither libc nor
-   libm (D4).
-9. Build and disassemble the RV32GCV smoke ELF listed in Phase 2, and check its
-   ISA attributes.
-11. Execute the smoke ELF through `cdc::cpu::riscv_vp_plusplus` and *observe*
+   libm (D4).~~
+9. ~~Build and disassemble the RV32GCV smoke ELF listed in Phase 2, and check its
+   ISA attributes.~~
+11. ~~Execute the smoke ELF through `cdc::cpu::riscv_vp_plusplus` and observe
     fetch, scalar, vector and MMIO traffic on the TLM socket — routing it there
-    is proven, traffic on it is not yet.
-12. Build the pinned Spike oracle and run the differential corpus, which must
-    include the scalar-FP and AMO cases from audit §3 that are unavailable at
-    the pinned revision.
+    is proven, traffic on it is not yet.~~ Closed with 2096 observed requests
+    and the 14-check RVV smoke gate.
+12. ~~Build the pinned Spike oracle and run the differential corpus.~~ Done as
+    `spike_differential` (D11). Spike is built at pin `16c0b601...` by
+    `oracle/fetch_spike.sh` and run as a child process; one image
+    (`rvv_sig.elf`) executes on both models and a 71-field canonical signature
+    block is compared word by word. Result: **64 matched, 7 XFAIL against D9's
+    reachable commits, 0 OPEN, 0 unexplained** — Debug and Release.
+    The AMO cases stay out: a single-hart differential run cannot demonstrate
+    atomicity between harts, so `52d376d4` keeps its own pre-Phase-6 test.
 13. ~~Add the vector-trap tests.~~ Done as `rvv_vector_trap` (D10): a fault at
     element 5 of a vector load resumes from `vstart` with elements below it
     provably not re-accessed; `mstatus.VS` Off makes a vector instruction
     illegal and Initial becomes Dirty; a reserved `vtype` sets `vill` and zeroes
-    `vl` without trapping. The RV32 index-EEW=64 outcome is **recorded, not
-    asserted** — see audit F12; the differential run decides it and this section
-    then gains a spec citation.
-14. Add the audit §F5 control: two instances running FP work with different
-    `frm` values interleaved. `softfloat_roundingMode`,
-    `softfloat_detectTininess` and `softfloat_exceptionFlags` are process-global
-    — `THREAD_LOCAL` expands to nothing — so the control must assert exception
-    **flags** as well as numeric results.
+    `vl` without trapping. The RV32 index-EEW=64 outcome was **recorded, not
+    asserted** until the differential run decided it; the image now asserts it,
+    §11.2 carries the citation, and the model is fixed under D12.
+14. ~~Add the audit §F5 control.~~ Done as `fp_concurrency_normal` /
+    `fp_concurrency_swapped`: two harts with different `frm`, 200 iterations
+    each, operands whose two roundings differ, results **and** `fflags`
+    asserted per iteration, both creation orders, and the interleaving measured
+    (1890 hart switches) rather than assumed. No leak observed, so the
+    save/restore mitigation is deliberately not implemented.
 
 Resolved 2026-08-10:
 
@@ -1697,16 +1946,16 @@ Two upstream fixes are deliberately *not* taken with it, each needing its own
 evidence first:
 
 17. `7a936cce` "fixed fast quantum" — a larger change to quantum accounting.
-    Audit it separately **before Phase 7**.
+    Audit it separately **before Phase 9**.
 18. `52d376d4` AMO atomicity / lost bus lock — needs a **multi-hart AMO
-    contention test before Phase 6**. A single-threaded differential run against
+    contention test before Phase 8**. A single-threaded differential run against
     Spike cannot demonstrate atomicity between harts.
 
 Optional, in parallel: ask upstream for a maintenance backport on a SystemC
 2.3-compatible branch. If they publish one, move the pin to that commit, drop
 the local patch, and re-run the whole Phase 2 gate.
 
-Due before Phase 5, and not a Phase 5 discovery:
+Due before Phase 7, and not a Phase 7 discovery:
 
 15. Decide full architectural core reset semantics (audit §F8). `reset_cpu()` is
     a restart at the reset PC plus cache reinitialisation; it clears none of the
@@ -1716,13 +1965,13 @@ Due before Phase 5, and not a Phase 5 discovery:
 
 Also outstanding:
 
-* **Phase 7 prerequisite, not a Phase 8 item:** the owner-aware local bypass in
+* **Phase 9 prerequisite:** the owner-aware local bypass in
   `noc_interconnect` (D1). It needs a cross-checked change to an RTL-signed
   component and its own negative controls — a missing or wrong owner mapping
   must fail during elaboration, and a local access must inject zero flits.
 
-Do not begin full mesh composition or detailed Sauria scaling before the RVV
-functional backend and single-core contracts pass their gates.
+Do not begin full mesh composition or claim 128x128 before the corresponding
+D14 phase and promotion gates pass.
 
 ## 22. Status Table
 
@@ -1731,18 +1980,19 @@ Update this table when work progresses.
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | Plan document | Complete | This file |
-| Decision record D1-D7 | Approved (D1-D6 2026-08-08, D7 2026-08-10) | `docs/TPU_V3_DECISION_RECORD.md` |
+| Decision record D1-D15 | Final approved through D15 interconnect ratification (2026-08-12) | `docs/TPU_V3_DECISION_RECORD.md` |
 | Phase 0: audit/baseline | Complete (2026-08-08) | `docs/TPU_V3_PHASE0_AUDIT.md`, `docs/ARCHITECTURE.md`, `docs/ADDRESS_MAP.md`, `docs/INTERFACE_CONTRACT.md` |
 | Phase 1: skeleton/package | Complete (2026-08-08), review findings closed | `out/tpu_v3_soc/` runs with `RPATH=$ORIGIN` and no source-tree path; ctest `tpu_v3_address_map`, `tpu_v3_architecture_config`, `tpu_v3_soc_cli`, `tpu_v3_soc_packaging_regression` all pass |
-| Decision-record synchronization | Documentation/build contracts complete; CPU configuration and sparse backing remain Phase 2/3 code | `docs/TPU_V3_DECISION_RECORD.md` synchronization table |
-| Phase 2: RV32GCV backend | **In progress** (2026-08-10) | Audit, pin, build proof and execution complete — `docs/TPU_V3_PHASE2_AUDIT.md`. VP++ pinned at `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`); `cdc::cpu::riscv_vp_plusplus` builds against SystemC 2.3.4; D5 `cpu_config` implemented; the freestanding RV32GCV image executes through the wrapper with 1006 observed TLM requests and all 14 RVV checks passing (`riscv_vp_plusplus_backend`, `rvv_smoke_execution`). **F11 closed** by the approved backport of upstream `b710fa7b`: first TLM request at 0 s, `mcycle` 15 → 2439 → 2848, verified in Debug and Release on two harts, and both the configure check and the runtime gate were shown to fail when the patch is reverted. D10 vector-trap gate passes (`rvv_vector_trap`). **Outstanding before Phase 2 can be declared complete:** the F5 interleaved-`frm` control, and the Spike oracle with its differential corpus — audit §9 |
-| Phase 3: SVM | Not started | — |
-| Phase 4: fast MXU | Not started | — |
-| Phase 5: single core | Not started | — |
-| Phase 6: dual-core chip | Not started | — |
-| Phase 7: single-chip NoC | Not started | — |
-| Phase 8: multi-chip mesh | Not started | — |
-| Phase 9: detailed MXU | Not started | — |
+| D14/D15 rebaseline synchronization | Final architecture documents and D15 diagram complete; C++ config/address/fabric migration begins Phase 3 | Decision-record synchronization table and `docs/neo_core_architecture-d15.drawio` |
+| Phase 2: RV32GCV backend | **Complete** (2026-08-10), review findings closed | Audit, pin, build proof and execution complete — `docs/TPU_V3_PHASE2_AUDIT.md`. VP++ pinned at `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`); `cdc::cpu::riscv_vp_plusplus` builds against SystemC 2.3.4; D5 `cpu_config` implemented; the freestanding RV32GCV image executes through the wrapper with 2096 observed TLM requests and all 14 RVV checks passing (`riscv_vp_plusplus_backend`, `rvv_smoke_execution`). **F11 closed** by the approved backport of upstream `b710fa7b`: first TLM request at 0 s, `mcycle` 15 → 2439 → 2848, verified in Debug and Release on two harts, and both the configure check and the runtime gate were shown to fail when the patch is reverted. D10 vector-trap gate and the F5 concurrency control both pass (`rvv_vector_trap`, `fp_concurrency_normal`, `fp_concurrency_swapped`). **Spike differential corpus complete** (D11): one image on both models, 71-field signature, **64 matched / 7 XFAIL / 0 OPEN / 0 unexplained**, green in Debug and Release. The two findings it produced were fixed, not accepted: **D12** (all 32 RV32 index-EEW=64 encodings, unit and segment, raise an illegal instruction at the decode site) and **D13** (a failed bus access is an access fault chosen by origin). Both have a `conformance_patches` gate and a verified negative control. Also closed in this pass: the ISS caches were found enabled contrary to P2-5 and are now off and pinned by a test; `set_irq()` gained its first gate (`interrupt_delivery`); and the portable-executable requirement is met by `riscv_vp_plusplus_portable`, which runs the backend from a directory containing only the binary, its SystemC libraries and one ELF |
+| Phase 3: core SRAM + split fabrics + map migration | Not started | D14/D15 contract ready |
+| Phase 4: independent NEO DMA | Not started | Must prove no Sauria DMA dependency |
+| Phase 5: Sauria SA 64x64 extraction | Not started | v4.2 source audit/golden required |
+| Phase 6: Im2Col/Col2Im Transform | Waiting for NPU-team source clarification | Does not block Phases 3–5 |
+| Phase 7: single NEO-CORE | Not started | — |
+| Phase 8: dual-core chip | Not started | — |
+| Phase 9: NoC/mesh | Not started | D1 prerequisite |
+| Phase 9B: Sauria 128x128 promotion | Waiting for NPU-team delivery | 64x64 must remain explicitly labelled until then |
 | Phase 10: firmware/workloads | Not started | — |
 | Phase 11: metrics/stress | Not started | — |
 | Phase 12: packaging/signoff | Not started | — |
@@ -1752,8 +2002,15 @@ Update this table when work progresses.
 | Decision | Value | Status |
 | --- | --- | --- |
 | TPU cores per chip | 2 | Frozen |
-| MXUs per TPU core | 2 | Frozen |
-| MXU dimensions | 128x128 PE | Frozen |
+| Sauria matrix engines per NEO-CORE | 1 | Frozen by D14; supersedes 2 MXUs/core |
+| SA geometry | 64x64 verified bring-up; 128x128 target from NPU team | Staged and gated by D14 |
+| DMA per NEO-CORE | 1 independent TPU_V3 DMA | Frozen by D14; Sauria DMA forbidden |
+| ImageTransform per NEO-CORE | 1, Im2Col + Col2Im | Frozen composition; source/interface pending NPU team |
+| Control plane | 32-bit AXI4-Lite, in order, no bursts or IDs | Frozen by D15; SystemC is transaction-level, not channel-cycle accurate |
+| Local data plane | Native pipelined request/response fabric into physically banked SRAM | Frozen by D15; no internal full AXI data crossbar |
+| Local-fabric arbitration | Deterministic round-robin per bank; one outstanding request/requester initially | Frozen by D15 |
+| Local-fabric physical parameters | Data width, bank count/mapping and pipeline depth | Open pending SRAM macro, frequency and PD inputs; construction-time reported configuration |
+| External data plane | Bidirectional AXI4/NoC bridge for outbound VP++/DMA and inbound remote traffic | Frozen by D15; DMA owns bulk movement, while SA and ImageTransform remain local-SRAM requesters |
 | VPU ISA | RISC-V V | Frozen |
 | RVV version | 1.0 | Frozen |
 | XLEN | 32 | Frozen |
@@ -1761,24 +2018,27 @@ Update this table when work progresses.
 | ELEN | 64 bits | Frozen |
 | NoC topology | Parameterized 2D mesh | Frozen concept, dimensions open |
 | NoC attachment | One aggregated endpoint per chip | Frozen |
-| RV32GCV runtime | RISC-V VP++ (`ics-jku/riscv-vp-plusplus`), MIT | Selected by D3; immutable candidate SHA and verified pin remain Phase 2 work |
-| RVV differential reference | Spike `16c0b60119f65a648643cf5d41e4e38e871f0bad` (2026-08-07), BSD-3-Clause | Golden/reference-only role under D3; not the TPU runtime backend |
+| RV32GCV runtime | RISC-V VP++ (`ics-jku/riscv-vp-plusplus`), MIT | Phase 2 complete at the recorded pin and approved patch series |
+| RVV differential reference | Spike `16c0b60119f65a648643cf5d41e4e38e871f0bad` (2026-08-07), BSD-3-Clause | Built and in use as the Phase 2 oracle (D3, D11). Child process only; never linked into the platform or a package |
 | Cross toolchain | xPack `riscv-none-elf` GCC 15.2.0-1, `/opt/toolchains/xpack-riscv-none-elf-gcc-15.2.0-1` | Pinned (D4); Phase 2 uses a freestanding `-nostdlib` environment |
-| Full-system MXU backend | Fast analytical 128x128 first | Planned; the only selectable backend, enforced at CMake configure time |
-| Detailed MXU backend | Sauria-derived, experimental only | Open (D6); not selectable until it builds, runs and has a redistribution policy |
+| Matrix backend | Sauria matrix-only adapter | 64x64 first, 128x128 after NPU-team promotion; source revision and datatype reported |
 | Maximum chips | 8 chips / 16 cores | **Revision 1 backend limit** (D2), from the 3-bit NoC manager id. 32 cores = 16 chips is a separate coordinated change |
 | Mesh dimensions | Configurable within 2x2, 3x3, 4x4, 4x2, 2x4 | Frozen set, choice open |
-| Address map layout | Frozen (`docs/ADDRESS_MAP.md`) | Bases, strides and window sizes frozen; two capacities configurable |
+| Address map layout | D14/D15 rebaseline (`docs/ADDRESS_MAP.md`) | Top/chip/core apertures retained; core-local symbols/MMIO migration is Phase 3 |
 | Window vs capacity | Full window always decodes; capacity is separately reported and the target refuses above it | Frozen (D6) |
-| SVM capacity | **Reference 16 MiB** per core (the full window); smaller values are labelled bring-up | Frozen reference (D6, supersedes P0-6) |
+| Core SRAM capacity | **Reference 16 MiB** per core (the full window); smaller values are labelled bring-up | D6 retained and renamed by D14 |
 | Global RAM size | Configurable, 256 MiB bring-up default, 1 GiB window | Open capacity (D6); simulated backing memory, not a model of TPU v3 HBM |
 | Host-memory backing | Sparse deterministic 4 KiB pages; logical capacity is not eagerly allocated | Frozen implementation contract for Phase 3 (D6) |
-| MXU arithmetic | **BF16 x BF16 with IEEE FP32 accumulation**, fixed accumulation order | Frozen reference (D6, supersedes P0-7). INT8 x INT8 -> INT32 is an optional later extension |
-| Same-node initiator/target | Keep `NoLoopback=1`; owner-aware local bypass | Approved (D1). **Phase 7 prerequisite**, blocks Phase 8 |
+| SA target arithmetic | **BF16 x BF16 with IEEE FP32 accumulation**, fixed accumulation order | D6 target retained; v4.2 bring-up must report its actual supported datatype and is not reference equivalence |
+| Same-node initiator/target | Keep `NoLoopback=1`; owner-aware local bypass | Approved (D1). **Phase 9 prerequisite** |
 | Hart id / reset PC | Static fields in `cdc::cpu::cpu_config` | Approved (D5, supersedes P0-9). No default no-op virtual setters |
 | Vector memory access granularity | Element-wise, as VP++ issues it; no fork, no inferred coalescing; counters named for TLM requests | Approved (D7) |
-| Full architectural core reset | Undecided | **Open — due before Phase 5.** Today's `reset_cpu()` is a restart plus cache reinit, not a reset; see `docs/TPU_V3_PHASE2_AUDIT.md` F8 |
-| Dedicated TRP block | Revision 1 provisionally covers reduction/permutation through RVV | Open; add a separate component only after interface/timing requirements are approved |
+| Full architectural core reset | Undecided | **Open — due before Phase 7.** Today's `reset_cpu()` is a restart plus cache reinit, not a reset; see `docs/TPU_V3_PHASE2_AUDIT.md` F8 |
+| Differential method | One image on both models; compare a firmware-written 71-field signature block located by linker symbols; Spike as a child process, never linked | Approved (D11). `spike_differential` |
+| RV32 index EEW=64 | All 32 indexed encodings — unit and segment — raise an illegal instruction at the RV32 decode site | Fixed (D12), downstream conformance patch. Audit F12 |
+| Trap cause for a failed bus access | Access fault by origin — 1 fetch, 5 load, 7 store/AMO; page faults only from MMU translation | Fixed (D13), downstream conformance patch. Audit F13 |
+| VP++ patch series | Base pin + `upstream-backport` and `downstream-conformance` patches, hash-verified at configure time and recorded per-patch in the manifest | Approved (D8 mechanism, extended by D12/D13) |
+| Transform block | NPU-team Im2Col/Col2Im engine | Required by D14; exact source and semantics open, never substituted by RVV reduction/permutation |
 | Four-image workload | Optional future named workload | Not frozen |
 
-The authority for D1–D6 is `docs/TPU_V3_DECISION_RECORD.md`.
+The authority for D1–D15 is `docs/TPU_V3_DECISION_RECORD.md`.

@@ -66,9 +66,10 @@ _start:
  *
  * Calls `trap_handler(mcause, mepc, mtval)`, which decides what happens next:
  *
- *   TRAP_ACTION_ABORT   report and stop        (the default handler)
- *   TRAP_ACTION_RESUME  mret, mepc unchanged   re-run the faulting instruction
- *   TRAP_ACTION_SKIP    mret, mepc + 4         step over a 32-bit instruction
+ *   TRAP_ACTION_ABORT      report and stop        (the default handler)
+ *   TRAP_ACTION_RESUME     mret, mepc unchanged   re-run the faulting instruction
+ *   TRAP_ACTION_SKIP       mret, mepc + 4         step over a 32-bit instruction
+ *   TRAP_ACTION_RESUME_AT  mret to `trap_resume_pc`
  *
  * `trap_handler` is weak, so an image that does not define one keeps the old
  * behaviour: any trap is a defect and stops the run. Resuming by default would
@@ -109,13 +110,25 @@ trap_entry:
     mv      t0, a0                       /* action */
 
     /* TRAP_ACTION_SKIP: step over the 32-bit instruction that trapped. */
-    li      t1, 2
+    li      t1, TRAP_ACTION_SKIP
     bne     t0, t1, 1f
     csrr    t2, mepc
     addi    t2, t2, 4
     csrw    mepc, t2
 1:
-    beqz    t0, 2f                       /* TRAP_ACTION_ABORT */
+    /* TRAP_ACTION_RESUME_AT: continue at `trap_resume_pc` instead.
+     *
+     * Needed for faults that cannot be stepped over: an instruction-fetch fault
+     * leaves `mepc` pointing at unmapped memory, so `mepc + 4` is unmapped too
+     * and skipping would fault forever. The handler names a recovery point
+     * instead. */
+    li      t1, TRAP_ACTION_RESUME_AT
+    bne     t0, t1, 2f
+    la      t2, trap_resume_pc
+    lw      t2, 0(t2)
+    csrw    mepc, t2
+2:
+    beqz    t0, 3f                       /* TRAP_ACTION_ABORT */
 
     lw      ra, 0(sp)
     lw      t0, 4(sp)
@@ -136,7 +149,7 @@ trap_entry:
     addi    sp, sp, 80
     mret
 
-2:  /* unhandled */
+3:  /* unhandled */
     csrr    a2, mcause
     csrr    a3, mepc
     csrr    a4, mtval
@@ -147,6 +160,15 @@ trap_entry:
 
 /* Default handler: every trap is a defect. Overridden by images that
  * deliberately provoke one. */
+/* Recovery point for TRAP_ACTION_RESUME_AT. Weak so every image links; the
+ * one image that uses the action defines it strongly. */
+    .section .data
+    .align 2
+    .weak trap_resume_pc
+trap_resume_pc:
+    .word 0
+    .section .text, "ax"
+
     .weak trap_handler
     .type trap_handler, @function
 trap_handler:

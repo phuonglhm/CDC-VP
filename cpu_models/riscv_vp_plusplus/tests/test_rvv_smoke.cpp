@@ -414,6 +414,22 @@ int sc_main(int argc, char* argv[])
         CHECK(mem.vector_buffer_requests > 0);
         CHECK(cpu.get_instret() > 100);
 
+        // ── P2-5 gate: the ISS-internal caches are off ──────────────────────
+        //
+        // Every instruction the core retires must have been fetched over the
+        // socket, so reads (fetches *plus* data loads) cannot be fewer than
+        // instructions retired. `dbbcache` caches decoded basic blocks and
+        // elides the fetches that go with them, which breaks that inequality
+        // immediately: measured 1006 requests against 1403 retired with the
+        // cache on, versus 1849 reads against 1403 retired with it off.
+        //
+        // This exists because the flags were briefly `true` while F11 was being
+        // diagnosed — F11 lives in `dbbcache` — while the comment beside them
+        // still read `false`. A contract asserted only in a comment is not
+        // asserted. The rule itself is plan §11.2 and `INTERFACE_CONTRACT.md`
+        // §9: all CPU traffic traverses CDC-VP TLM.
+        CHECK(mem.read_requests >= cpu.get_instret());
+
         // ── F11 gate ────────────────────────────────────────────────────────
         //
         // The first workload request must not already carry a large simulated

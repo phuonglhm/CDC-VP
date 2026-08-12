@@ -1,0 +1,167 @@
+diff --git a/vp/src/core/common/mem.h b/vp/src/core/common/mem.h
+index ff421e22..e41a4f91 100644
+--- a/vp/src/core/common/mem.h
++++ b/vp/src/core/common/mem.h
+@@ -65,7 +65,32 @@ struct CombinedMemoryInterface_T : public sc_core::sc_module,
+ 		return mmu->translate_virtual_to_physical_addr(vaddr, type);
+ 	}
+ 
+-	inline void _do_transaction(tlm::tlm_command cmd, uint64_t addr, uint8_t *data, unsigned num_bytes) {
++	/*
++	 * CDC-VP downstream conformance patch (decision record D13).
++	 *
++	 * Translates a failed *bus* access into the trap the privileged
++	 * specification requires for one, which is an **access** fault -- not a
++	 * page fault.
++	 *
++	 * Page faults (12/13/15) describe a failure of address *translation*: a
++	 * missing or invalid PTE, or a permission denied by one. They are raised
++	 * inside the MMU, and mmu.h already does that. Everything reaching this
++	 * function has already been translated; a failure here is the memory
++	 * system refusing a physical address, which is cause 1, 5 or 7 depending
++	 * on what the access was for.
++	 *
++	 * The distinction is not cosmetic. With satp.MODE = Bare there is no
++	 * translation at all, so a page fault cannot legitimately occur, yet the
++	 * unpatched code reports one for every unmapped address. Bare-metal
++	 * handlers routinely branch on exactly that difference.
++	 *
++	 * The access type is threaded in from the caller rather than inferred from
++	 * `cmd`: an instruction fetch is a TLM read, so deriving the cause from the
++	 * command alone would report an instruction-fetch failure as a load fault.
++	 * An AMO is likewise reported as store/AMO whichever half of it failed.
++	 */
++	inline void _do_transaction(tlm::tlm_command cmd, uint64_t addr, uint8_t *data, unsigned num_bytes,
++	                            MemoryAccessType access_type) {
+ 		trans.set_command(cmd);
+ 		trans.set_address(addr);
+ 		trans.set_data_ptr(data);
+@@ -87,17 +112,51 @@ struct CombinedMemoryInterface_T : public sc_core::sc_module,
+ 			if (iss.trace_enabled())
+ 				std::cout << "WARNING: core memory transaction failed for address 0x" << std::hex << addr << std::dec
+ 				          << " -> raise trap" << std::endl;
+-			if (cmd == tlm::TLM_READ_COMMAND)
+-				raise_trap(EXC_LOAD_PAGE_FAULT, addr);
+-			else if (cmd == tlm::TLM_WRITE_COMMAND)
+-				raise_trap(EXC_STORE_AMO_PAGE_FAULT, addr);
+-			else
++
++			if (cmd != tlm::TLM_READ_COMMAND && cmd != tlm::TLM_WRITE_COMMAND)
+ 				throw std::runtime_error("TLM command must be read or write");
++
++			/*
++			 * Only a target that legitimately refused the access becomes a
++			 * guest trap. The remaining statuses describe a broken transaction
++			 * -- a protocol violation, or an initiator that was never answered
++			 * -- and those are defects in the model or its integration, not
++			 * something the guest did. Turning one into a guest fault would
++			 * hand the firmware a plausible-looking trap for a bug it cannot
++			 * have caused, and hide the real failure.
++			 */
++			switch (trans.get_response_status()) {
++				case tlm::TLM_ADDRESS_ERROR_RESPONSE:
++				case tlm::TLM_GENERIC_ERROR_RESPONSE:
++					break;
++				default:
++					throw std::runtime_error(
++					    std::string("core memory transaction failed with a protocol error (") +
++					    trans.get_response_string() + ") -- this is a model or integration defect, not a guest fault");
++			}
++
++			switch (access_type) {
++				case FETCH:
++					raise_trap(EXC_INSTR_ACCESS_FAULT, addr);
++					break;
++				case LOAD:
++					raise_trap(EXC_LOAD_ACCESS_FAULT, addr);
++					break;
++				case STORE:
++					raise_trap(EXC_STORE_AMO_ACCESS_FAULT, addr);
++					break;
++			}
+ 		}
+ 	}
+ 
++	/*
++	 * `access_type` says what the access is *for*, and is used only to pick the
++	 * cause of a bus-error trap (D13). It deliberately does not affect
++	 * translation: `v2p` has already run at every call site, with whatever type
++	 * upstream passes it, and this patch does not change that.
++	 */
+ 	template <typename T>
+-	inline T _raw_load_data(uint64_t addr) {
++	inline T _raw_load_data(uint64_t addr, MemoryAccessType access_type = LOAD) {
+ 		// NOTE: a DMI load will not context switch (SystemC) and not modify the memory, hence should be able to
+ 		// postpone the lock after the dmi access
+ 		bus_lock->wait_for_access_rights(iss.get_hart_id());
+@@ -117,7 +176,7 @@ struct CombinedMemoryInterface_T : public sc_core::sc_module,
+ 			}
+ 		}
+ 
+-		_do_transaction(tlm::TLM_READ_COMMAND, addr, (uint8_t *)&ans, sizeof(T));
++		_do_transaction(tlm::TLM_READ_COMMAND, addr, (uint8_t *)&ans, sizeof(T), access_type);
+ 
+ 		/*
+ 		 * A transaction may lead to a context switch. The other context may issue transaction handled via dmi.
+@@ -130,7 +189,7 @@ struct CombinedMemoryInterface_T : public sc_core::sc_module,
+ 	}
+ 
+ 	template <typename T>
+-	inline void _raw_store_data(uint64_t addr, T value) {
++	inline void _raw_store_data(uint64_t addr, T value, MemoryAccessType access_type = STORE) {
+ 		bus_lock->wait_for_access_rights(iss.get_hart_id());
+ 
+ 		for (auto &e : dmi_ranges) {
+@@ -147,7 +206,7 @@ struct CombinedMemoryInterface_T : public sc_core::sc_module,
+ 			}
+ 		}
+ 
+-		_do_transaction(tlm::TLM_WRITE_COMMAND, addr, (uint8_t *)&value, sizeof(T));
++		_do_transaction(tlm::TLM_WRITE_COMMAND, addr, (uint8_t *)&value, sizeof(T), access_type);
+ 		atomic_unlock();
+ 
+ 		/* see comment in _raw_load_data */
+@@ -164,6 +223,15 @@ struct CombinedMemoryInterface_T : public sc_core::sc_module,
+ 		_raw_store_data(v2p(addr, STORE), value);
+ 	}
+ 
++	/*
++	 * Page-table walks. A bus error while reading a PTE should be reported as
++	 * an access fault of the *originating* access type, which this interface
++	 * does not carry; the default LOAD is therefore not exactly right for a
++	 * walk on behalf of a fetch or a store. Widening `mmu_memory_if` to fix it
++	 * is outside D13's scope, and it is unreachable in TPU_V3, where
++	 * satp.MODE is Bare and no walk ever happens. Recorded rather than left
++	 * for someone to rediscover.
++	 */
+ 	uint64_t mmu_load_pte64(uint64_t addr) override {
+ 		return _raw_load_data<uint64_t>(addr);
+ 	}
+@@ -202,17 +270,23 @@ struct CombinedMemoryInterface_T : public sc_core::sc_module,
+ 		 *
+ 		 */
+ 		if ((addr & 0xFFF) == 0xFFE) {
+-			return (_raw_load_data<uint16_t>(v2p(addr + 2, FETCH)) << 16) |
+-			       (_raw_load_data<uint16_t>(v2p(addr + 0, FETCH)) << 0);
++			return (_raw_load_data<uint16_t>(v2p(addr + 2, FETCH), FETCH) << 16) |
++			       (_raw_load_data<uint16_t>(v2p(addr + 0, FETCH), FETCH) << 0);
+ 		}
+ 
+-		return _raw_load_data<uint32_t>(v2p(addr, FETCH));
++		return _raw_load_data<uint32_t>(v2p(addr, FETCH), FETCH);
+ 	}
+ 
+ 	template <typename T>
+ 	T _atomic_load_data(uint64_t addr) {
+ 		bus_lock->lock(iss.get_hart_id());
+-		return _load_data<T>(addr);
++		/*
++		 * D13: an AMO reports cause 7 whichever half of it failed -- the
++		 * privileged specification has no "AMO load access fault". Translation
++		 * still happens as a LOAD, exactly as upstream does it; only the
++		 * bus-error cause differs.
++		 */
++		return _raw_load_data<T>(v2p(addr, LOAD), STORE);
+ 	}
+ 	template <typename T>
+ 	void _atomic_store_data(uint64_t addr, T value) {
