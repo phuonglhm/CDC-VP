@@ -501,10 +501,11 @@ CDC-VP/
 │       │   ├── include/tpu_v3/sram/sram_config.h
 │       │   ├── src/core_sram.cpp
 │       │   └── tests/test_core_sram.cpp
-│       ├── dma/
+│       ├── neo_dma/
 │       │   ├── CMakeLists.txt
+│       │   ├── DMA_MODEL.md
 │       │   ├── include/tpu_v3/dma/neo_dma.h
-│       │   ├── include/tpu_v3/dma/dma_config.h
+│       │   ├── include/tpu_v3/dma/dma_registers.h
 │       │   ├── src/neo_dma.cpp
 │       │   └── tests/
 │       ├── sauria_matrix/
@@ -604,6 +605,14 @@ Do not create `build/` directories inside component source directories.
 > test an ordinary program. `tpu_core/tpu_core.h` itself is Phase 7; the
 > directory carries the name it will have then rather than being renamed
 > later.
+>
+> Added by Phase 4: `neo_dma/`, holding the component and `DMA_MODEL.md`. The
+> directory is `neo_dma/` rather than the `dma/` this sketch first showed, so
+> that nothing in the tree reads as a second copy of the shared
+> `components/dma_tlm`; §11.5 names the same path. Its register map lives in
+> `dma_registers.h` rather than a `dma_config.h`, because the configuration
+> that matters — geometry, burst bound, apertures — is a handful of fields on
+> the module while the frozen part is the programming model.
 
 ## 11. Component Specifications
 
@@ -897,15 +906,176 @@ recorded in the build manifest.
 
 ### 11.5 Independent NEO DMA
 
-The DMA is owned by TPU_V3, not Sauria. Required contract:
+The DMA is owned by TPU_V3, not Sauria. It is a new TPU_V3 component at
+`components/TPU_V3/neo_dma`; it is **not** the repository-wide
+`components/dma_tlm` component under a different name.
+
+#### Existing `components/dma_tlm` review and reuse boundary
+
+The existing model was reviewed on 2026-08-13. Its GCC 11.5 / SystemC 2.3.4
+baseline test passes, but its architecture is a PL330-style, eight-channel,
+32-event, microprogrammed DMA with `DMAMOV`/`DMALD`/`DMAST`, debug-command
+launch and one generic TLM master socket. That is useful prior art, but it is
+not the NEO-CORE programming or data-path contract.
+
+`components/dma_tlm` remains unchanged because `noc_soc`,
+`VP_FX1_Full_SoC` and the existing DMA platform use it. `neo_dma` must not:
+
+- inherit from, contain, wrap or link `cdc::components::dma_tlm`;
+- expose its PL330 register map, channel programs, debug launch path, MFIFO or
+  event-vector IRQ model;
+- route local SRAM traffic through its single generic TLM master socket.
+
+The new implementation may reuse only generic design patterns: an event-driven
+worker `SC_THREAD`, correctly formed TLM initiator payloads, response checking,
+and the existing CMake/testbench style. If common helper code is ever extracted,
+it must have no PL330 state or behavior and both original-platform regressions
+must remain green.
+
+#### Revision 1 public boundary
+
+There is one DMA instance and one descriptor slot per NEO-CORE. There is no
+descriptor queue, scatter/gather list, microcode engine or multiple DMA channel
+model in Revision 1. Its public boundary is:
+
+```cpp
+tlm_utils::simple_target_socket<neo_dma> control;
+sc_core::sc_port<sram::neo_local_sram_if> local;
+tlm_utils::simple_initiator_socket<neo_dma> external;
+sc_core::sc_out<bool> irq;
+void reset();
+```
+
+- `control` is an absolute-address, 32-bit AXI4-Lite TLM target bound behind
+  `neo_control_fabric` at `DMA_CONTROL`.
+- `local` issues `neo_local_request` with requester identity
+  `neo_requester::dma`; it never sees or stores a backing-memory pointer.
+- `external` carries only non-local traffic through `neo_external_bridge` and
+  the chip/NoC endpoint.
+- `irq` is one level signal. It is asserted for successful completion or error
+  while enabled and remains asserted until the corresponding W1C status is
+  acknowledged. Reset/abort does not masquerade as successful completion.
+- `reset()` is called by the NEO-CORE's synchronous hierarchical reset path;
+  the DMA does not invent an independent reset domain.
+
+All public addresses and address arithmetic use `std::uint64_t`, even though
+the Revision 1 map occupies the RV32 4 GiB space. Length and individual native
+request sizes remain explicitly bounded before narrowing.
+
+#### Revision 1 programming model
+
+The first implementation freezes the following 32-bit register layout within
+the 64 KiB `DMA_CONTROL` window. Unlisted offsets are reserved and never alias
+implemented registers.
+
+| Offset | Register | Access and semantics |
+| ---: | --- | --- |
+| `0x000` | `ID` | RO, NEO DMA identity |
+| `0x004` | `VERSION` | RO, programming-model version |
+| `0x008` | `CONTROL` | W1S: bit 0 `START`, bit 1 `ABORT` |
+| `0x00C` | `STATUS` | RO/W1C: bit 0 `BUSY`, bit 1 `DONE`, bit 2 `ERROR`, bit 3 `ABORTED` (`BUSY` is RO) |
+| `0x010` | `SRC_ADDR_LO` | RW while idle |
+| `0x014` | `SRC_ADDR_HI` | RW while idle |
+| `0x018` | `DST_ADDR_LO` | RW while idle |
+| `0x01C` | `DST_ADDR_HI` | RW while idle |
+| `0x020` | `LENGTH` | RW while idle; non-zero byte count |
+| `0x024` | `IRQ_ENABLE` | RW; bit 0 enables completion/error IRQ |
+| `0x028` | `ERROR_CAUSE` | RO, latched first error |
+| `0x02C` | `BYTES_DONE_LO` | RO, destination bytes committed for the current/last job |
+| `0x030` | `BYTES_DONE_HI` | RO |
+| `0x034` | `TRANSFER_COUNT` | RO, accepted jobs |
+| `0x038` | `ERROR_COUNT` | RO |
+| `0x03C` | `ABORT_COUNT` | RO |
+| `0x040` | `OVERRUN_COUNT` | RO, rejected `START` while busy |
+| `0x044` | `LOCAL_BYTES_LO` | RO, native local-SRAM bytes moved |
+| `0x048` | `LOCAL_BYTES_HI` | RO |
+| `0x04C` | `EXTERNAL_BYTES_LO` | RO, external-path bytes moved |
+| `0x050` | `EXTERNAL_BYTES_HI` | RO |
+
+`ERROR_CAUSE` values are stable in Revision 1: `0` none, `1` invalid/zero
+length, `2` address overflow, `3` unsupported endpoint combination, `4` source
+unmapped/straddling, `5` destination unmapped/straddling, `6` local read,
+`7` local write, `8` external read, `9` external write, and `10` internal model
+failure. Reset and explicit abort are not reported as transfer errors.
+
+The target accepts exactly one naturally aligned 4-byte access with full
+strobes, rejects wrapped streaming payloads, sets `dmi_allowed=false`, and sets
+a response on every return path. It also implements `transport_dbg` with the
+same absolute-address decode and bounds, but without workload counters or
+timing. An address at `DMA_CONTROL + 0x1000` must not alias offset zero.
+
+Writing `START` snapshots the descriptor, sets `BUSY`, notifies the worker and
+returns without waiting for data movement. Descriptor validation is the first
+worker action; an invalid descriptor therefore completes as an asynchronous
+error under the same status/IRQ contract as a downstream failure. `BUSY` is
+visible before the register transaction returns. Descriptor writes and a
+second `START` while busy return `TLM_GENERIC_ERROR_RESPONSE`; a second start
+additionally increments `OVERRUN_COUNT` and may not overwrite the active
+snapshot. A write that requests `START` and `ABORT` together is rejected with
+no state change. The worker owns all long-running reads, writes and simulated
+waits.
+
+#### Supported routes and transfer semantics
+
+Revision 1 supports exactly two directions, inferred from absolute address
+classification rather than from a redundant direction bit:
+
+1. core-local SRAM → external/chip/global/NoC-visible memory;
+2. external/chip/global/NoC-visible memory → core-local SRAM.
+
+A descriptor with both endpoints local, both endpoints external, an unmapped
+endpoint, integer overflow, or a source/destination span crossing a region
+boundary is rejected with a defined descriptor/address error. Supporting
+local-to-local, external-to-external or scatter/gather is a later explicit
+revision, not behavior to infer in Phase 4.
+
+The worker uses a bounded staging buffer of at most one legal external frame.
+Local requests are split into 1..64-byte native accesses. External requests
+obey the current 8-byte/256-beat limit:
+`ceil((address % 8 + length) / 8) <= 256`; therefore the maximum payload is
+2048 bytes only when aligned and is smaller at a lane offset. Chunks are issued
+in ascending address order and never cross the source or destination region.
+
+`BYTES_DONE` counts destination bytes committed, not source bytes fetched or
+payload bytes merely named. A successful boundary response and its byte count
+are recorded before the worker consumes the returned annotated delay, so a
+reset during that delay cannot hide memory effects that already occurred. The
+first failing local/native or external TLM chunk stops the job, latches the
+origin-specific `ERROR_CAUSE`, leaves earlier destination chunks committed,
+sets `ERROR`, clears `BUSY` and asserts the level IRQ when enabled. No later
+chunk may issue. Local/external request, byte, error, chunk and latency counters
+remain separately attributable; no beat count is relabelled as a request or
+hardware transaction count. On success both path byte totals equal `LENGTH`.
+On error/abort they need not equal: each equals its own successful boundary
+transactions, while `BYTES_DONE` equals only committed destination bytes and
+any source data still in the staging buffer is explicitly not completion.
+
+`reset()` and explicit `ABORT` advance a job generation so an old worker cannot
+resume under a new state epoch. Reset during an active job clears `BUSY`,
+`DONE`, `ERROR` and `ABORTED`, deasserts IRQ, increments `ABORT_COUNT`, releases
+admission and prevents further chunks. Explicit abort clears `BUSY`, sets the
+sticky `ABORTED` bit, increments `ABORT_COUNT` and does not assert the
+completion/error IRQ. Bytes committed before either form of abort remain
+committed and are reported in `BYTES_DONE`. An active-job reset keeps that
+job-local committed count *and its ownership of the register*, so a native or
+external access still in flight can still report the bytes it committed —
+"snapshot" understates it, because the count may still rise until a new
+`START` claims the register. A reset with no active job initializes it to
+zero. Path traffic counters follow the opposite rule: `reset()` clears them and
+opens a new counter epoch, and a request from the closed epoch must not
+re-populate them, matching what `neo_local_sram_fabric` already does with
+old-generation responses. Conservation between the two is therefore a
+per-epoch property. Neither path attempts rollback. A request
+blocked in the native fabric must observe its `aborted` response and unwind. An
+old job must not write completion/error state or counters into a new epoch.
+
+Required contract summary:
 
 - one 32-bit AXI4-Lite MMIO target, one native local-SRAM requester port and
   one external AXI4/NoC-facing initiator per core;
-- source/destination address, length, direction/control, busy/done/error and
-  level IRQ;
+- source/destination address, length, control, busy/done/error and level IRQ;
 - legal burst chunking, deterministic partial-error semantics and byte counts;
 - no direct pointer to core SRAM/global memory and no Sauria DMA dependency;
-- one native local-SRAM requester port and one external AXI4/NoC-facing port;
 - all traffic observes the D15 local-fabric and NoC endpoint constraints;
 - reset aborts active transfer and releases all accounting.
 
@@ -1449,23 +1619,66 @@ vlenb read == 64
 
 #### Tasks
 
-- Freeze DMA descriptor/status/IRQ and partial-transfer semantics.
-- Implement one TPU_V3 DMA per core with an AXI4-Lite MMIO target, native
-  local-SRAM requester and external AXI4/NoC-facing initiator.
-- Split transfers to legal downstream burst sizes and propagate the first error
-  with completed-byte accounting.
-- Add reset/abort, overlap, odd-length, boundary and concurrent-request tests.
-- Add a source/build guard proving no Sauria DMA header or symbol is used.
+- Create `components/TPU_V3/neo_dma` and its `DMA_MODEL.md`; do not modify or
+  link the shared PL330-style `components/dma_tlm`.
+- Implement the §11.5 single-descriptor register model, absolute 64 KiB decode,
+  AXI4-Lite validation and side-effect-free debug transport.
+- Bind one native local-SRAM port as `neo_requester::dma` and one external TLM
+  initiator; implement only local→external and external→local in Revision 1.
+- Snapshot the descriptor on `START`, set `BUSY` before returning, and execute
+  the transfer in an event-driven worker `SC_THREAD`.
+- Implement overflow-safe route/span validation, 1..64-byte local chunking and
+  external chunks respecting the 8-byte/256-beat frame formula.
+- Stop on the first error with destination-committed `BYTES_DONE`, a latched
+  origin-specific cause and no transaction after the failing chunk.
+- Implement level completion/error IRQ, W1C acknowledgement, start-while-busy
+  rejection, overrun accounting, explicit abort and reset generation handling.
+- Add source/build guards proving no `dma_tlm.h`, `cdc::components::dma_tlm`,
+  Sauria DMA header/symbol or direct SRAM/global backing pointer is used.
+- Keep the existing `dma_tlm`, `noc_soc`, `VP_FX1_Full_SoC` and DMA-platform
+  regressions green as non-regression evidence for the reuse boundary.
+
+#### Required tests
+
+- Every register's reset/access/W1C behavior; exact 4-byte aligned MMIO, full
+  strobes, invalid command, wrapped streaming, null pointer and 64 KiB bounds.
+- A negative alias control at `DMA_CONTROL + 0x1000` and normal/debug agreement.
+- Local→external and external→local copies at lengths 1, 2, 3, 7, 8, 15, 16,
+  63, 64, 65, an external-frame edge, and a multi-frame transfer.
+- Odd addresses, local/native 64-byte boundaries, external lane offsets,
+  top-of-region spans, overflow and region-straddling descriptors.
+- Observable requester attribution: every local access is
+  `neo_requester::dma`; every non-local access reaches the external stub and no
+  local byte leaks there.
+- A failing destination on a later chunk proves first-error propagation,
+  committed-byte accounting and absence of transactions after failure.
+- Reset/abort before start, during incoming delay, during native arbitration,
+  after partial completion and during an external transaction; all cases run
+  under a watchdog and prove the old job cannot publish into the new epoch.
+- Concurrent synthetic CPU/SA/Transform pressure on the local fabric proves DMA
+  back-pressure, response ownership and lack of direct-memory bypass.
+- START-while-busy and descriptor-write-while-busy negative controls; success
+  and error IRQ remain level until W1C, while reset deasserts IRQ without DONE.
+- Counter conservation: successful transfer bytes reconcile at source,
+  destination, local fabric and external path; partial/error/abort cases
+  reconcile each path against its successful transactions and count only
+  destination-committed bytes in `BYTES_DONE`.
 
 #### Gate
 
 - DMA copies only through observable native local-SRAM transactions and the
-  external AXI4/NoC-facing path; local and external byte counts conserve.
+  external AXI4/NoC-facing path; successful jobs have equal path byte totals,
+  while partial jobs reconcile each total against the successful transactions
+  actually observed on that path.
 - A negative control using a failing destination proves response propagation and
   partial-byte accounting.
 - No direct SRAM/global backing pointer and no `control/sauria_dma.h` dependency
   exists.
 - MMIO start returns immediately; completion/error IRQ is level-sensitive.
+- The shared `components/dma_tlm` has no TPU_V3-specific changes and all of its
+  existing consumers still build and pass their regressions.
+- Release and Debug TPU_V3 suites, packaging regression and watchdog cases pass
+  with zero unexplained skip or hang.
 
 ### Phase 5: Sauria matrix engine, 64x64 bring-up
 
@@ -1549,6 +1762,43 @@ Transform module. That wait does not block Phases 3–5.
 - Ownership, IRQs and responses remain correct under cross-engine contention.
 
 ### Phase 9: NoC integration and mesh scalability
+
+#### Mandatory pre-Phase-9 NoC rebaseline
+
+Phases 4–8 retain the signed FlooNoC v0 transport unchanged. That baseline is
+`single-AXI`: separate physical `req` and `rsp` meshes, one physical/virtual
+channel per mesh, and a 64-bit AXI data path. It does **not** provide a
+control/data traffic class split, a wide data network or modeled virtual
+channels. The Phase 4 DMA must therefore remain width-independent and obey the
+current NoC frame/chunking contract; this rebaseline is not permission to alter
+FlooNoC during DMA bring-up.
+
+Before any Phase 9 implementation begins, use the pinned FlooNoC RTL and
+FlooGen configuration as evidence and freeze all of the following:
+
+1. **Traffic classification:** the address, opcode and/or source rules that
+   classify every CPU, DMA, SA, Transform, SRAM and MMIO transaction as control
+   or data, including responses and error traffic. Classification must be
+   deterministic at the NEO-CORE/NoC boundary.
+2. **Transport structure:** keep a shared network, add control/data virtual
+   channels, or instantiate separate narrow-control and wide-data physical
+   networks. A virtual channel separates queues and arbitration only; it does
+   not create a wider physical data path. Therefore a throughput requirement
+   for a wider data path cannot be closed by “adding one VC” alone.
+3. **Widths and adaptation:** freeze control width, data width, flit format,
+   burst/frame limits, width conversion and chunking rules in both directions.
+4. **Protocol behavior:** freeze arbitration priority/fairness, ordering
+   domains, buffering/credit or ready-valid back-pressure, response ownership,
+   deadlock/head-of-line-blocking expectations and reset of in-flight traffic.
+5. **RTL verification impact:** define the block and integration RTL
+   cross-checks, contention/negative controls, conservation assertions and
+   package/metrics updates required by the selected configuration. A new VC or
+   narrow/wide network is a new signed configuration; the v0 evidence cannot
+   simply be inherited.
+
+No implementation choice may be inferred from the architecture diagram alone.
+Record the selected alternative and its RTL/FlooGen evidence in the decision
+record before proceeding with the tasks below.
 
 #### Tasks
 
@@ -1886,7 +2136,10 @@ Current D14/D15 work, in order (updated 2026-08-12):
    `tpu_v3_core_sram`, `tpu_v3_local_sram_fabric`, `tpu_v3_control_fabric` and
    `tpu_v3_external_bridge`. The three physical values have no default and the
    schema refuses zero.
-3. Implement Phase 4 NEO DMA with a build/test guard against Sauria DMA use.
+3. ~~Implement Phase 4 NEO DMA with a build/test guard against Sauria DMA
+   use.~~ Done. `tpu_v3_neo_dma`, gated by `tpu_v3_neo_dma` and
+   `neo_dma_independence`; the guard covers the shared PL330-style component
+   and DMI as well as Sauria, and fails when a forbidden include is added.
 4. Pin the accepted v4.2 source and perform the Phase 5 matrix-only dependency
    extraction audit before writing the adapter.
 5. Ask the NPU team to identify/provide the standalone Im2Col/Col2Im Transform
@@ -1902,9 +2155,15 @@ Carried out of Phase 3 as scheduled work, not as open findings:
 7. Phase 9 must assert `!neo_external_bridge::blocks_on_arbitration()` when the
    detailed NoC backend is selected: an `arbitrated` fabric on the inbound path
    would stall the one process that advances the mesh clock.
-8. Phase 7 composes the three fabrics, the SRAM and the hart into a
-   `tpu_core`. Until then the fabrics are proved as components and the platform
+8. Phase 7 composes the three fabrics, the SRAM, the DMA and the hart into a
+   `tpu_core`. Until then they are proved as components and the platform
    instantiates the memories only, and its report says so.
+9. Phase 7 must bind the DMA's `external` port to `neo_external_bridge`, not to
+   a memory. The DMA classifies core MMIO as external and relies on the bridge
+   to refuse it; the two were tested separately in Phases 3 and 4 and are first
+   wired together in Phase 7.
+10. Phase 11 must state which local-fabric timing mode produced any DMA
+    throughput figure, and must not quote `chunk_latency` as bandwidth.
 
 Items below are retained as closure history for Phases 0–2; they are not the
 current execution queue.
@@ -2003,6 +2262,11 @@ Also outstanding:
   `noc_interconnect` (D1). It needs a cross-checked change to an RTL-signed
   component and its own negative controls — a missing or wrong owner mapping
   must fail during elaboration, and a local access must inject zero flits.
+* **Phase 9 NoC architecture rebaseline:** retain FlooNoC v0 unchanged through
+  Phase 8, then freeze the control/data classification, shared-VC versus
+  narrow/wide-physical-network choice, both widths, arbitration, ordering,
+  back-pressure and the corresponding RTL verification scope. This is a hard
+  entry gate for Phase 9, not an implementation detail to decide while coding.
 
 Do not begin full mesh composition or claim 128x128 before the corresponding
 D14 phase and promotion gates pass.
@@ -2017,15 +2281,15 @@ Update this table when work progresses.
 | Decision record D1-D16 | Final approved through D15 interconnect ratification (2026-08-12); D16 added by Phase 3 | `docs/TPU_V3_DECISION_RECORD.md` |
 | Phase 0: audit/baseline | Complete (2026-08-08) | `docs/TPU_V3_PHASE0_AUDIT.md`, `docs/ARCHITECTURE.md`, `docs/ADDRESS_MAP.md`, `docs/INTERFACE_CONTRACT.md` |
 | Phase 1: skeleton/package | Complete (2026-08-08), review findings closed | `out/tpu_v3_soc/` runs with `RPATH=$ORIGIN` and no source-tree path; ctest `tpu_v3_address_map`, `tpu_v3_architecture_config`, `tpu_v3_soc_cli`, `tpu_v3_soc_packaging_regression` all pass |
-| D14/D15 rebaseline synchronization | **Complete.** Architecture documents, the D15 diagram and the C++ config/address/fabric migration all agree | Decision-record synchronization table, `docs/neo_core_architecture-d15.drawio`, and the Phase 3 gate evidence below |
+| D14/D15 rebaseline synchronization | **Complete.** Architecture documents, the D15 diagram and the C++ config/address/fabric migration all agree | Decision-record synchronization table, `docs/neo_core_architecture-d15.jpg`, and the Phase 3 gate evidence below |
 | Phase 2: RV32GCV backend | **Complete** (2026-08-10), review findings closed | Audit, pin, build proof and execution complete — `docs/TPU_V3_PHASE2_AUDIT.md`. VP++ pinned at `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`); `cdc::cpu::riscv_vp_plusplus` builds against SystemC 2.3.4; D5 `cpu_config` implemented; the freestanding RV32GCV image executes through the wrapper with 2096 observed TLM requests and all 14 RVV checks passing (`riscv_vp_plusplus_backend`, `rvv_smoke_execution`). **F11 closed** by the approved backport of upstream `b710fa7b`: first TLM request at 0 s, `mcycle` 15 → 2439 → 2848, verified in Debug and Release on two harts, and both the configure check and the runtime gate were shown to fail when the patch is reverted. D10 vector-trap gate and the F5 concurrency control both pass (`rvv_vector_trap`, `fp_concurrency_normal`, `fp_concurrency_swapped`). **Spike differential corpus complete** (D11): one image on both models, 71-field signature, **64 matched / 7 XFAIL / 0 OPEN / 0 unexplained**, green in Debug and Release. The two findings it produced were fixed, not accepted: **D12** (all 32 RV32 index-EEW=64 encodings, unit and segment, raise an illegal instruction at the decode site) and **D13** (a failed bus access is an access fault chosen by origin). Both have a `conformance_patches` gate and a verified negative control. Also closed in this pass: the ISS caches were found enabled contrary to P2-5 and are now off and pinned by a test; `set_irq()` gained its first gate (`interrupt_delivery`); and the portable-executable requirement is met by `riscv_vp_plusplus_portable`, which runs the backend from a directory containing only the binary, its SystemC libraries and one ELF |
 | Phase 3: core SRAM + split fabrics + map migration | **Complete** (2026-08-12) | **Map migration.** `CORE_SRAM`, `SA_CONTROL`, `DMA_CONTROL`, `TRANSFORM_CONTROL` and a relocated `CORE_COUNTERS` replace the Phase 1 `SVM`/`MXU0`/`MXU1` symbols; 115 regions at 8 chips, non-overlap proved at every legal chip count and capacity; `TPU_V3_MXU_BACKEND` retired in favour of `TPU_V3_SA_GEOMETRY`, whose refusal of `128x128` and of an unnamed geometry each have a negative control in the packaging regression. The legacy names are absent from the schema, the shipped configurations, the manifest and the packaged address-map output, and two independent regressions fail if they return. **Host backing.** `sparse_memory` gives deterministic 4 KiB pages: an unallocated page reads as zero and costs nothing, a write commits only touched pages, a fully masked write commits none, reset releases them, and a refused access leaves the caller's buffer untouched. `mesh_4x4` reports 1.25 GiB logical with 0 B allocated and peaks near 10 MiB of RSS, bounded by the CLI regression's own `ru_maxrss` check. **Core SRAM.** Window and capacity are separate fields; an access above the capacity is `capacity_error` and never an alias; every payload from 1 to 64 bytes works at every alignment; byte enables, cross-page transfers, counters and a debug path that bypasses the counters but not the bounds all pass. **AXI4-Lite control fabric.** Five register files behind one in-order decoder; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes and wrapped streaming are each refused with the documented status; an unmapped address is an address error; a target's own refusal is propagated and counted apart; one transaction per initiator is enforced against a target that deliberately re-enters; an overlapping control map is refused during elaboration. A 64-byte accelerator payload is refused, which is how bulk data is kept off the control plane. **Native local-SRAM fabric.** 128-bit x 4 banks (provisional), low-order interleaved; one 64-byte request is one request and four beats, and an unaligned one is five — the D7 distinction, measured. Three requesters on one bank are serialised, back-pressured and share the bank within a quarter of each other; three on different banks run with zero conflicts and carry more traffic in the same wall of simulated time; response ownership holds under contention; all five named requesters reach both storage and the error path; an unattached requester throws. **External bridge.** Inbound SRAM traffic is arbitrated as `external_inbound` and its bytes reconcile exactly with the SRAM's own totals, which is the bypass negative control given that `core_sram` exposes no backing pointer; inbound MMIO reaches the addressed register file through the control plane and gets the same refusals a local access would; an outbound access naming this core is refused and counted, and the external stub never sees it. **Blocking.** No TLM target waits; the control fabric never waits; the local fabric's default `annotated` mode never waits and its `arbitrated` mode is the one that proves the arbitration (decision record D16). No source file or public type is named `neo_axi_fabric`. **Review round (2026-08-12).** Four contract defects were found and fixed, each with a negative control that fails when the fix is reverted: the bridge forwarded TLM's repeating `byte_enable` pattern into a plane that has no repeat rule, overreading the initiator's array for any payload longer than the pattern; the one-outstanding-request-per-requester rule of D15 was assumed rather than enforced, so two processes sharing an identity interleaved under one name; `reset()` cleared `waiting[]` and `busy` without waking anyone, hanging any requester blocked in arbitration; and outbound local containment tested containment instead of overlap, forwarding a transfer that began inside the core and ran past it. Two counter definitions were tightened in the same pass — a refused request is still a request, and `transferred_bytes` counts bytes moved rather than bytes named — along with the debug path's command handling and its STATUS answer. **Cleanup review.** Reset generation is captured before input-delay consumption, old requests cannot repopulate a new counter epoch, `aborted` explicitly permits already-completed partial bytes, and the bridge now applies common payload validation consistently to inbound/outbound normal/debug traffic. Each behavior has a regression that checks both the refusal/abort and absence of side effects. 19/19 `tpu_v3` tests pass in both Release and Debug with zero skips |
-| Phase 4: independent NEO DMA | Not started | Must prove no Sauria DMA dependency; the native local port it needs exists and is gated |
+| Phase 4: independent NEO DMA | **Complete** (2026-08-13) | `components/TPU_V3/neo_dma` plus `DMA_MODEL.md`. **Programming model.** The frozen §11.5 register map over an absolute 64 KiB decode; reserved offsets read zero and `DMA_CONTROL + 0x1000` does not alias offset zero; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes, wrapped streaming and a bad command are each refused with the documented status, and a null pointer is answered rather than thrown because this target is reachable from a remote master. `transport_dbg` agrees with `b_transport` register for register and is side-effect free. **Data path.** One native requester (`neo_requester::dma`) and one external initiator; local→external and external→local only, classified by absolute address with no direction bit. Copies verified at lengths 1, 2, 3, 7, 8, 15, 16, 63, 64, 65, 2048 and 5000 in both directions at odd source and destination offsets; local accesses split to 1..64 bytes and external frames obey `address % 8 + length <= 2048`, checked by the target rather than trusted. **Refusals.** Zero length, both endpoints local, both external, a span straddling the SRAM boundary in either direction, and a span ending above the 4 GiB RV32 limit each latch their own cause and commit nothing. **Partial failure.** A destination refused inside the third frame stops the job with `external_write`, `BYTES_DONE` = 4096 — destination bytes committed, not the 5120 fetched — exactly three external transactions attempted and none after the failure. **IRQ.** Level, raised for completion and error alike, held across time until W1C, deasserted by acknowledgement, never raised by an abort. Driven by one process (a SystemC signal refuses two writers) with immediate notification so it settles within one delta. **Epochs.** Explicit abort clears `BUSY`, sets sticky `ABORTED`, counts an abort and raises nothing; reset does the same without `ABORTED`, keeps the committed count, and neither lets the abandoned worker publish afterwards. A reset landing while the DMA was queued behind another requester on a contended bank unwinds without hanging. **Independence.** `neo_dma_independence` scans the sources with comments stripped, the emitted symbols and the CMake link interface; adding `#include "tpu_v3/sram/core_sram.h"` makes it fail. **Review round (2026-08-13).** Two High defects were found in reset/abort semantics and fixed. A start request was delivered as a bare event, so a `START` issued while the old worker was parked — which firmware may legitimately do, because both paths clear `BUSY` at once — reached nobody and the new job held `BUSY` for ever; it is now a flag that survives the gap. And `BYTES_DONE` was published at the end of a chunk rather than as each destination access landed, so a reset arriving between a commit and its report froze a count *lower* than memory held. Both were invisible to the first test, which settled for microseconds before restarting and only checked that the destination held *at least* the reported bytes; the phase now parks the worker deterministically inside a blocking external target and checks the byte past `BYTES_DONE` is still filler. A third rule fell out of the fix: a transaction still in flight at reset completes afterwards and its bytes are deliberately left unattributed, since the epoch that could have claimed them is gone and attributing them to whatever job started next is what §11.5 forbids. `tpu_v3_neo_dma` also no longer links `tpu_v3_core_sram` — the native-port interface was split into `tpu_v3_native_port`, and the guard now refuses that link edge as well. **Second review round (2026-08-13).** One more High: the fix above guarded `BYTES_DONE` on epoch sameness, which also swallowed a commit made *before* a reset — a native access writes beats into SRAM, waits for arbitration, the reset lands, and the access then returns reporting bytes that are genuinely in memory. The guard is now ownership of the register, which a reset does not transfer and a new `START` does, so an interrupted job keeps reporting into its own snapshot while a later job is never polluted. Every earlier reset case copied local→external, so the native destination path had no coverage at all; two phases were added, one resetting the DMA mid-native-access and one resetting the *fabric* so the request returns `aborted` with a partial byte count, the latter on an isolated SRAM/fabric/DMA instance because `fabric.reset()` clears counters the main conservation check relies on. Also settled: the DMA now clears its path traffic counters on reset and keeps only its event counters, so that when Phase 7 resets the DMA and the fabric together their totals still reconcile — conservation is a per-epoch property and the test states the epoch; an idle `ABORT` is documented and tested as accepted-and-ignored rather than counted; and `chunks_issued` became `chunks_completed`, since a failing chunk was issued and is not counted. **Third review round (2026-08-13).** A last High in the same area: `reset()` cleared the path traffic counters but an old in-flight request still added its response to them, so an epoch that had just been zeroed came back reading `LOCAL_BYTES=64, LOCAL_REQUESTS=1`. `neo_local_sram_fabric` already excluded old-generation responses from its own counters, so the DMA was also drifting away from the component it must reconcile with. A `traffic_epoch_`, advanced by `reset()` and not by `ABORT`, is captured before each transaction and gates the path counters; `BYTES_DONE` keeps its separate ownership rule, because "how much of this job's destination was committed" and "how much traffic did this path carry in this window" are different questions and a reset ends the window without ending the job's claim. A hierarchical-reset phase now resets the DMA and the fabric together mid-request, drains, and requires all three: `BYTES_DONE` equal to the bytes SRAM holds, DMA path counters zero, and DMA/fabric reconciling — then a fresh job reconciling again in the new epoch. Three documentation sites that still described the superseded straggler rule, called the path counters lifetime totals, or said "snapshot at reset" were corrected. Eleven negative controls confirm the behavioural gates bite, plus one for the guard itself. `components/dma_tlm` is untouched, and `dma_tlm` with all ten `noc_soc` regressions pass while `dma_platform` and `vp_fx1_full_soc` build |
 | Phase 5: Sauria SA 64x64 extraction | Not started | v4.2 source audit/golden required |
 | Phase 6: Im2Col/Col2Im Transform | Waiting for NPU-team source clarification | Does not block Phases 3–5. `TRANSFORM_CONTROL` elaborates today and reports its capability as unavailable rather than faking readiness |
 | Phase 7: single NEO-CORE | Not started | Composes the Phase 3 fabrics, the SRAM and the Phase 2 hart. Must select `annotated` fabric timing (D16) |
 | Phase 8: dual-core chip | Not started | — |
-| Phase 9: NoC/mesh | Not started | D1 prerequisite; must also assert the external bridge does not block on arbitration (D16) |
+| Phase 9: NoC/mesh | Not started; mandatory NoC rebaseline before implementation | D1 prerequisite; freeze control/data classification, shared/VC versus narrow/wide physical transport, widths, arbitration, ordering, back-pressure and RTL verification scope; also assert the external bridge does not block on arbitration (D16) |
 | Phase 9B: Sauria 128x128 promotion | Waiting for NPU-team delivery | 64x64 must remain explicitly labelled until then |
 | Phase 10: firmware/workloads | Not started | — |
 | Phase 11: metrics/stress | Not started | — |
@@ -2038,12 +2302,16 @@ Update this table when work progresses.
 | TPU cores per chip | 2 | Frozen |
 | Sauria matrix engines per NEO-CORE | 1 | Frozen by D14; supersedes 2 MXUs/core |
 | SA geometry | 64x64 verified bring-up; 128x128 target from NPU team | Staged and gated by D14 |
-| DMA per NEO-CORE | 1 independent TPU_V3 DMA | Frozen by D14; Sauria DMA forbidden |
+| DMA per NEO-CORE | 1 independent TPU_V3 DMA | Frozen by D14; implemented in Phase 4 as `tpu_v3_neo_dma`. Sauria DMA and the shared PL330-style component both forbidden, gated by `neo_dma_independence` |
+| NEO DMA implementation boundary | New `components/TPU_V3/neo_dma`; do not modify, wrap, inherit or link `components/dma_tlm` | Approved Phase 4 rebaseline under D14/D15 (2026-08-13); shared DMA remains owned by its existing platforms |
+| NEO DMA programming model | One descriptor/in-flight job, no queue or microcode; local→external and external→local only in Revision 1 | Approved Phase 4 baseline; absolute 64-bit address arithmetic, register and error semantics frozen in §11.5 |
 | ImageTransform per NEO-CORE | 1, Im2Col + Col2Im | Frozen composition; source/interface pending NPU team |
 | Control plane | 32-bit AXI4-Lite, in order, no bursts or IDs | Frozen by D15; SystemC is transaction-level, not channel-cycle accurate |
 | Local data plane | Native pipelined request/response fabric into physically banked SRAM | Frozen by D15; no internal full AXI data crossbar |
 | Local-fabric arbitration | Deterministic round-robin per bank; one outstanding request/requester initially | Frozen by D15; implemented and gated by `tpu_v3_local_sram_fabric` |
 | Local-fabric timing mode | `annotated` (default, never waits) or `arbitrated` (blocks on a real per-bank arbiter) | Approved (D16). Every TLM target still never waits; a timing figure must name the mode |
+| DMA byte accounting | `BYTES_DONE` counts destination bytes committed; path totals count each path's own successful boundary transactions | Frozen in Phase 4 (plan §11.5). Source bytes in the staging buffer are explicitly not completion |
+| DMA reset/abort | Both advance a job epoch; abort is reported as `ABORTED`, never as `DONE`; committed bytes are never rolled back | Frozen in Phase 4 |
 | Local-fabric physical parameters | Data width, bank count/mapping and pipeline depth | **Still open** pending SRAM macro, frequency and PD inputs. The C++ schema has no default and refuses zero; the shipped configurations state 128-bit x 4 banks x 2 stages and every report prints them labelled provisional |
 | External data plane | Bidirectional AXI4/NoC bridge for outbound VP++/DMA and inbound remote traffic | Frozen by D15; DMA owns bulk movement, while SA and ImageTransform remain local-SRAM requesters |
 | VPU ISA | RISC-V V | Frozen |
@@ -2051,6 +2319,8 @@ Update this table when work progresses.
 | XLEN | 32 | Frozen |
 | VLEN | 512 bits | Frozen |
 | ELEN | 64 bits | Frozen |
+| Current NoC transport baseline | FlooNoC v0 `single-AXI`: separate physical `req`/`rsp` meshes, one physical/virtual channel per mesh, 64-bit AXI data path; control and bulk data are not separated | Retained unchanged through Phase 8; it does not imply a TPU_V3 final transport choice |
+| Phase 9 control/data transport | Open: shared network, control/data VCs, or separate narrow-control/wide-data physical networks; control/data widths also open | **Mandatory pre-Phase-9 rebaseline.** Freeze from pinned RTL/FlooGen evidence together with classification, arbitration, ordering, back-pressure and a fresh RTL verification scope; VCs alone do not widen the data path |
 | NoC topology | Parameterized 2D mesh | Frozen concept, dimensions open |
 | NoC attachment | One aggregated endpoint per chip | Frozen |
 | RV32GCV runtime | RISC-V VP++ (`ics-jku/riscv-vp-plusplus`), MIT | Phase 2 complete at the recorded pin and approved patch series |

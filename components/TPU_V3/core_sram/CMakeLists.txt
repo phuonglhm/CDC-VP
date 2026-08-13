@@ -17,6 +17,7 @@ target_include_directories(tpu_v3_core_sram
 
 target_link_libraries(tpu_v3_core_sram
     PUBLIC
+        cdc::components::tpu_v3_native_port
         cdc::components::tpu_v3_common
         SystemC::systemc)
 

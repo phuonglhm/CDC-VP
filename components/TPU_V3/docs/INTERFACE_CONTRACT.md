@@ -135,6 +135,17 @@ Constraints:
 * `error` is a separate status bit from `done` with a latched cause code. An
   errored job asserts the IRQ exactly like a completed one, because firmware
   must be woken either way.
+* an abandoned job is **not** a completed one. Reset and explicit abort clear
+  `busy` without setting `done`, and an explicit abort is reported through its
+  own sticky status bit so a driver can tell "I stopped this" from "this
+  finished".
+
+`neo_dma` is the first component built to this shape; `neo_dma/DMA_MODEL.md`
+records how each clause landed, including the two that only became concrete
+once something implemented them: validation runs in the worker rather than in
+the start write, so an invalid descriptor reports through the same status and
+IRQ path as a downstream failure; and a completion byte count means bytes
+committed at the destination, never bytes fetched into a staging buffer.
 
 ### 4.1 NEO-CORE block boundaries
 

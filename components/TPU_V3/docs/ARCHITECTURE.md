@@ -23,7 +23,7 @@ instantiates the memories only and says so in its report. Decision record D16
 records the one question D15 left open: where the local-data plane is allowed
 to block. See the editable
 [D15 draw.io source](neo_core_architecture-d15.drawio) and its rendered
-[SVG](neo_core_architecture-d15.svg) or [PNG](neo_core_architecture-d15.png).
+[JPG](neo_core_architecture-d15.jpg).
 This is the project-defined NEO-CORE implementation architecture, not a claim
 about Google TPUv3's unpublished internal interconnect.
 

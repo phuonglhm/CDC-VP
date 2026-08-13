@@ -6,11 +6,12 @@ VLEN 512), one shared core SRAM, one Sauria matrix engine, one independent DMA
 and one ImageTransform engine, behind the split control / local-data /
 external interconnect of decision record D15.
 
-**Status: Phase 3 of 12.** Configuration, the address map, packaging, the
-RV32GCV backend (Phase 2), sparsely page-backed core SRAM and the three
-NEO-CORE fabrics exist. No hart, matrix engine, DMA, transform engine or NoC is
-instantiated in the platform yet, and the platform binary says so in its own
-output. Nothing here produces a workload result.
+**Status: Phase 4 of 12.** Configuration, the address map, packaging, the
+RV32GCV backend (Phase 2), sparsely page-backed core SRAM, the three NEO-CORE
+fabrics and the independent DMA exist. Nothing is composed into a core and
+nothing is instantiated in the platform beyond the memories yet, and the
+platform binary says so in its own output. Nothing here produces a workload
+result.
 
 ## Where to start
 
@@ -57,7 +58,7 @@ cd build-tpu-v3 && ctest -L tpu_v3 --output-on-failure
 | `cdc::components::tpu_v3_common` | 1, 3 | `types.h`, `address_map.h`, `architecture_config.h`, `sparse_memory.h`. Plain C++, no SystemC — a configuration object, an address calculation and a page-backed store are testable without an elaboration. |
 | `cdc::components::tpu_v3_core_sram` | 3 | the shared core SRAM: window/capacity policy, sparse page backing, byte enables, counters, debug transport |
 | `cdc::components::tpu_v3_tpu_core` | 3 | the D15 split — `neo_control_fabric` (32-bit AXI4-Lite), `neo_local_sram_fabric` (native banked data plane), `neo_external_bridge`, and the core-local register files. `tpu_core` itself is Phase 7. |
-| `cdc::components::tpu_v3_dma` | 4 | the independent NEO DMA |
+| `cdc::components::tpu_v3_neo_dma` | 4 | the independent NEO DMA — see [neo_dma/DMA_MODEL.md](neo_dma/DMA_MODEL.md) |
 | `cdc::components::tpu_v3_sauria_matrix` | 5 | `sauria_matrix_if` plus the extracted 64x64 engine |
 | `cdc::components::tpu_v3_image_transform` | 6 | Im2Col / Col2Im, pending the NPU-team source |
 | `cdc::components::tpu_v3_chip` | 8 | two cores and the chip-local fabric |

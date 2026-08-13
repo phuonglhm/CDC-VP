@@ -808,6 +808,18 @@ DMA is a new TPU_V3 component and is completely independent of Sauria. It must:
 - never include, instantiate or call `control/sauria_dma.h`;
 - never copy through a direct pointer to SRAM/global-memory backing.
 
+**Implemented in Phase 4** as `components/TPU_V3/neo_dma`, with
+`neo_dma/DMA_MODEL.md` as its programming reference. The independence
+requirement was widened during that phase, not weakened: the shared
+PL330-style `components/dma_tlm` is forbidden on the same terms as Sauria's
+DMA, because it is the component someone would actually reach for. The
+distinction the guard draws is between an *include* and an *identifier* —
+naming `address_map::core_sram_window` is right, since the window is a fact
+about the map, while including `core_sram.h` would mean the DMA had reached
+past its native port to the storage behind it. A guard that banned the
+identifier would forbid correct code along with wrong code, and the usual next
+step is that someone weakens or deletes the guard.
+
 ### Sauria matrix-engine staging
 
 The matrix engine keeps only matrix multiplication and the minimum verified
@@ -969,7 +981,7 @@ Phase 3:
 | Set BF16 operands with FP32 accumulation as the target SA arithmetic | Complete as a contract; not proven by the v4.2 bring-up type | D6/D14 |
 | Integrate Sauria 64x64 first and promote the NPU-team 128x128 delivery later | Planned | D14 promotion gate |
 | Obtain verified Im2Col/Col2Im source from the NPU team | Open external input; does not block SRAM/fabric/DMA/SA64 | D14 Transform boundary |
-| Keep TPU_V3 DMA independent of Sauria DMA | Approved; implementation pending | D14 DMA boundary |
+| Keep TPU_V3 DMA independent of Sauria DMA | Complete | D14 DMA boundary; `tpu_v3_neo_dma` implemented in Phase 4 and gated by `neo_dma_independence`, which scans the sources with comments stripped, the emitted symbols and the CMake link interface. The guard covers the shared PL330-style `components/dma_tlm` and DMI as well as Sauria, and it fails when a forbidden include is added |
 | Replace default no-op CPU setters with D5 `cpu_config` properties | Complete | Phase 2 wrapper and configuration tests |
 | Retire legacy `TPU_V3_MXU_BACKEND` and validate `TPU_V3_SA_GEOMETRY` | Complete | The CMake variable, the compiled-in value, `--version` and the manifest are all `TPU_V3_SA_GEOMETRY`; `128x128` and an unnamed geometry are both refused at configure time, with the packaging regression's negative control covering each |
 | Make build provenance valid without Git and separate build/package revisions | Complete | Manifest schema 2 and packaging regression |
