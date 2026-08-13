@@ -20,9 +20,12 @@ phase must not be declared complete until its gate passes.
 /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/
 ├── components/TPU_V3/            # Reusable TPU component models
 ├── cpu_models/riscv_vp_plusplus/ # RV32GCV runtime backend (scalar + RVV)
+├── platforms/riscv_vpp_compiler_vp/ # Single-hart compiler-enablement platform
+├── fw/riscv_vpp_compiler_vp/     # Freestanding SDK and compiler demos
 ├── platforms/TPU_V3_SoC/         # SoC platform composition and executable
 ├── fw/TPU_V3_SoC/                # Bare-metal firmware and drivers
 ├── build-tpu-v3/                 # Out-of-source build directory
+├── out/riscv_vpp_compiler_vp/    # Portable pre-Phase-5 compiler handoff
 └── out/tpu_v3_soc/               # Portable packaged binary
 ```
 
@@ -75,6 +78,13 @@ The final platform must:
 - build through the CDC-VP top-level CMake project;
 - produce a portable package under `out/tpu_v3_soc/`;
 - run without depending on the CDC-VP source tree at runtime.
+
+Before accelerator Phase 5, the project also delivers a deliberately smaller
+single-hart **RISC-V VP++ Compiler Enablement VP**. It exists so the compiler
+team can compile and execute RV32GCV programs without waiting for Sauria,
+ImageTransform, dual-core composition or the mesh. It is a separate platform
+deliverable, not a reduced NEO-CORE and not evidence that the final TPU_V3 SoC
+is complete.
 
 ## 4. Frozen Architectural Decisions
 
@@ -1352,6 +1362,14 @@ option(TPU_V3_ENABLE_SAURIA_MATRIX
 option(TPU_V3_ENABLE_IMAGE_TRANSFORM
     "Build the verified NPU-team Im2Col/Col2Im adapter" OFF)
 
+# Phase 4.5. Deliberately not conditioned on CDC_BUILD_TPU_V3_SOC: the compiler
+# handoff contains no NoC, no accelerator and no NEO composition, so requiring
+# the SoC option to build it would make the package depend on parts it must not
+# contain -- and would make a compiler team's build break for reasons that have
+# nothing to do with them.
+option(CDC_BUILD_RISCV_VPP_COMPILER_VP
+    "Build the RISC-V VP++ Compiler Enablement VP handoff platform" OFF)
+
 set(TPU_V3_SA_GEOMETRY "64x64" CACHE STRING
     "TPU_V3 Sauria geometry: 64x64 or promoted 128x128")
 ```
@@ -1391,6 +1409,8 @@ Every reusable component target must:
 ### 15.3 Platform targets
 
 ```text
+riscv_vpp_compiler_vp
+riscv_vpp_compiler_vp_package
 tpu_v3_soc
 tpu_v3_soc_package
 ```
@@ -1398,9 +1418,17 @@ tpu_v3_soc_package
 Use:
 
 ```cmake
+cdc_make_portable(riscv_vpp_compiler_vp)
+cdc_package_platform(riscv_vpp_compiler_vp)
 cdc_make_portable(tpu_v3_soc)
 cdc_package_platform(tpu_v3_soc)
 ```
+
+`riscv_vpp_compiler_vp` is the Phase 4.5 single-hart compiler handoff. It links
+the same `cdc::cpu::riscv_vp_plusplus` backend that later goes into every
+NEO-CORE, but it does not link FlooNoC, Sauria, ImageTransform, the NEO DMA or
+the NEO local/control fabrics. `tpu_v3_soc` remains the final multi-core/multi-
+chip platform; neither target is an alias for the other.
 
 Extend package commands to include:
 
@@ -1453,6 +1481,40 @@ out/tpu_v3_soc/
 ├── licenses/
 └── BUILD_MANIFEST.json
 ```
+
+The earlier compiler-team handoff is a separate package:
+
+```text
+out/riscv_vpp_compiler_vp/
+├── riscv_vpp_compiler_vp
+├── libsystemc.so*
+├── configs/
+├── sdk/
+│   ├── Makefile
+│   ├── common/{crt0.S, link.ld, link.ld.in, host_io.c, host_io.h}
+│   ├── include/compiler_vp/host_io_map.h
+│   └── examples/{scalar_hello, rvv_vector_add}/main.c
+├── examples/
+│   ├── scalar_hello/
+│   └── rvv_vector_add/
+├── docs/
+│   ├── COMPILER_QUICKSTART.md
+│   ├── ISA_ABI_CONTRACT.md
+│   └── MEMORY_MAP.md
+├── licenses/
+│   ├── Apache-2.0.txt, CDC-VP-NOTICE.txt, THIRD_PARTY.md
+│   ├── RISCV-VP-PLUSPLUS.MIT.txt
+│   └── BERKELEY-SOFTFLOAT-3d.BSD-3-Clause.txt
+└── BUILD_MANIFEST.json
+```
+
+The last two are not optional and not documentation. The executable statically
+links the RISC-V VP++ ISS (MIT) and the Berkeley SoftFloat release vendored
+inside it (BSD-3-Clause), and both licences require their notice to accompany a
+binary distribution. SoftFloat ships no standalone licence file upstream — the
+notice is the header of each of its source files — so the package extracts it
+from a file that was actually compiled rather than carrying a transcription that
+nothing compares against the code.
 
 ## 16. Implementation Phases and Gates
 
@@ -1679,6 +1741,233 @@ vlenb read == 64
   existing consumers still build and pass their regressions.
 - Release and Debug TPU_V3 suites, packaging regression and watchdog cases pass
   with zero unexplained skip or hang.
+
+### Phase 4.5: RISC-V VP++ Compiler Enablement VP
+
+**Complete (2026-08-13).** Delivered as `platforms/riscv_vpp_compiler_vp` and
+`fw/riscv_vpp_compiler_vp`, behind `CDC_BUILD_RISCV_VPP_COMPILER_VP`. See §17
+for what was built and what was found; `platforms/riscv_vpp_compiler_vp/docs/MEMORY_MAP.md`
+is the reference this section calls for, and it is the authority on the map
+wherever it and this section differ.
+
+One finding is worth reading before writing another platform: the two watchdogs
+required below are **not sufficient on their own**, and the shortfall is
+ordinary rather than exotic. Both are polled between slices of `sc_start()`, so
+neither can end a run whose hart has stopped returning to the SystemC kernel —
+and an image whose entry point lands on memory it never wrote does exactly that,
+trapping, vectoring to an `mtvec` its startup never set, and faulting on the
+fault. It retires nothing and never reaches a quantum boundary, so both bounds
+are armed and neither is ever read again. Any later phase that runs guest code
+under a time or instruction budget inherits this.
+
+This phase is an explicit project-owner priority before Phase 5. It turns the
+portable Phase 2 backend proof into a supported compiler-team deliverable. It
+does **not** add a second processor and does **not** compose a NEO-CORE.
+
+#### Architectural boundary
+
+The platform contains exactly one architectural hart:
+
+```text
+RISC-V VP++ Compiler Enablement VP
+├── one RISC-V VP++ RV32GCV hart
+│   ├── scalar execution: RV32 IMAFDC + Zicsr + Zifencei
+│   └── vector execution: RVV 1.0, VLEN=512, ELEN=64, vlenb=64
+├── one SystemC/TLM address decoder
+├── program/data RAM
+└── simulator-only control target
+    ├── character output
+    ├── exit/pass/fail
+    └── diagnostic status
+```
+
+Scalar and vector execution are parts of the **same** VP++ hart. They share PC,
+GPRs, vector registers, CSRs, privilege/trap state, `mhartid` and one TLM memory
+path. There is no scalar-to-vector MMIO command, second hart, vector doorbell or
+independent vector memory master.
+
+The CPU is named **RISC-V VP++ RV32GCV hart**. It is the functional SystemC/TLM
+instruction-set model in `cpu_models/riscv_vp_plusplus`, based on the pinned
+`ics-jku/riscv-vp-plusplus` source and approved patch series from Phase 2. It is
+not Rocket, BOOM, CV32E40P, VexRiscv or any other named RTL microarchitecture,
+and the package must not imply pipeline- or cycle-accurate behavior.
+
+The compiler contract is frozen to:
+
+```text
+architecture string : rv32gcv_zvl512b
+ABI                 : ilp32d
+XLEN                : 32
+RVV                 : 1.0
+VLEN                : 512 bits
+ELEN                : 64 bits
+vlenb               : 64
+hart count          : 1
+execution profile   : bare-metal / freestanding
+```
+
+The exact compiler-VP memory and host-I/O register layout must be written once
+in `platforms/riscv_vpp_compiler_vp/docs/MEMORY_MAP.md` and shared with firmware
+through one generated or common header. The initial profile shall place
+program/data RAM at the TPU_V3 global-RAM base `0x8000_0000`, honour the ELF
+entry point, and reserve a clearly labelled **simulator-only** host-I/O window
+inside the currently unmapped low-address space. Reuse the existing Phase 2
+exit protocol where practical; if its `0x000F_0000` window is retained, extend
+that one contract rather than inventing a second exit address. The host-I/O
+window is not a TPU_V3 architectural peripheral and must not leak into the
+full-SoC firmware ABI.
+
+#### Explicit non-goals
+
+- No FlooNoC or other mesh is instantiated or linked. A VP does not require a
+  NoC to execute an ELF; the mesh remains a Phase 9 full-SoC concern.
+- No Sauria, ImageTransform, NEO DMA, core SRAM, NEO local fabric, NEO control
+  fabric or NEO external bridge is instantiated.
+- No second hart, Linux, CLINT, PLIC, MMU, cache, GUI, Qt or VNC platform is
+  introduced.
+- No libc/newlib dependency is required for the first handoff. `Hello World`
+  uses a documented freestanding MMIO `putchar`/`puts` shim. Supporting hosted
+  `printf`, syscalls or an OS is a later and separately gated feature.
+- Spike remains a standalone development oracle. It is not linked, copied or
+  invoked by the compiler-team runtime package.
+- The package does not model target TPU pipeline timing, memory bandwidth or
+  NoC latency and must not publish such numbers.
+
+#### Repository and build tasks
+
+- Add an independent top-level option
+  `CDC_BUILD_RISCV_VPP_COMPILER_VP`, default `OFF`, so building this handoff does
+  not require `CDC_BUILD_TPU_V3_SOC`, Sauria or a NoC build.
+- Create `platforms/riscv_vpp_compiler_vp` with a platform top, CLI, config,
+  documentation and packaging regression. Do not duplicate or fork the VP++
+  CPU implementation.
+- Link `cdc::cpu::riscv_vp_plusplus` statically and use the existing Phase 2
+  `rvv_runner` as proven reference code. Refactor common loader/memory/exit
+  helpers only when this removes duplication without weakening the existing
+  `riscv_vp_plusplus_portable` gate.
+- Add `fw/riscv_vpp_compiler_vp` with project-owned `crt0.S`, trap entry, linker
+  script, host-I/O headers, make rules and examples. All target compile commands
+  use `-march=rv32gcv_zvl512b -mabi=ilp32d`; the initial examples remain
+  `-ffreestanding -nostdlib -nostartfiles`.
+- Load arbitrary valid RV32 ELF files through the CPU debug/TLM loader path,
+  validate every loadable segment against the compiler-VP map, and start at the
+  ELF entry point. Reject malformed, RV64, out-of-range and overlapping-MMIO
+  images with a non-zero host exit code and a useful diagnostic.
+- Route instruction fetch, scalar load/store, vector load/store and host-I/O
+  MMIO through observable SystemC/TLM transactions. No direct pointer from the
+  CPU backend to RAM is permitted.
+- Provide both an instruction-retired watchdog and a simulated-time watchdog;
+  a non-terminating guest must fail deterministically rather than hang the
+  packaging or CI job.
+- Implement at least these CLI options: `--elf`, `--config`, `--hart-id`,
+  `--max-instructions`, `--timeout`, `--trace`, `--dump-signature`,
+  `--print-config`, `--version` and `--help`. Unsupported values fail instead
+  of silently falling back.
+- `--print-config` and `--version` report the exact ISA/ABI/VLEN/ELEN values,
+  one-hart count, functional/approximately-timed status, memory map, host
+  compiler/SystemC version, CDC-VP revision, VP++ base revision and every
+  effective VP++ patch/hash.
+- Add `riscv_vpp_compiler_vp` and `riscv_vpp_compiler_vp_package`, using
+  `cdc_make_portable` and `cdc_package_platform`. Add all SDK, example, license,
+  provenance and manifest files explicitly; do not assume the base packaging
+  helper knows about them.
+
+#### Required demonstrations
+
+**Scalar Hello World** is a freestanding RV32 program. It emits, through the
+simulator-only TLM console, at least:
+
+```text
+Hello from RISC-V VP++ RV32GCV
+XLEN=32
+hart_id=0
+SCALAR HELLO: PASS
+```
+
+It must not rely on host `printf`, a source-tree file, an external terminal
+process or a separately installed VP++ executable. Disable compiler
+auto-vectorization for this example and verify its application body contains no
+vector instruction, so it is real scalar-path evidence.
+
+**RVV Vector Add** is a freestanding program compiled for the frozen ISA/ABI.
+It adds arrays with RVV, compares every result against a scalar golden result,
+reads `vlenb`, and emits at least:
+
+```text
+RVV=1.0
+VLEN=512
+vlenb=64
+VECTOR ADD: PASS
+```
+
+Its disassembly must contain actual `vsetvli`/`vsetivli`, vector load,
+`vadd` and vector store instructions. Prefer a C RVV-intrinsic example for the
+compiler-team handoff and retain a known assembly/inline-assembly reference so
+a compiler-codegen failure can be distinguished from a simulator failure.
+
+#### Packaging gate
+
+The reference flow is:
+
+```bash
+cd /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP
+
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+$CC -dumpfullversion
+$CXX --version | head
+
+cmake -S . -B build-riscv-vpp-compiler-vp \
+    -DCDC_BUILD_RISCV_VPP_COMPILER_VP=ON \
+    -DCDC_BUILD_TPU_V3_SOC=OFF \
+    -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build-riscv-vpp-compiler-vp \
+    --target riscv_vpp_compiler_vp_package \
+    --clean-first \
+    -j"$(nproc)"
+
+./out/riscv_vpp_compiler_vp/riscv_vpp_compiler_vp \
+    --elf ./out/riscv_vpp_compiler_vp/examples/scalar_hello/scalar_hello.elf
+
+./out/riscv_vpp_compiler_vp/riscv_vpp_compiler_vp \
+    --elf ./out/riscv_vpp_compiler_vp/examples/rvv_vector_add/rvv_vector_add.elf
+```
+
+All of the following must hold before Phase 4.5 is complete:
+
+- both demonstrations print their exact PASS marker and exit zero under bounded
+  instruction and simulated-time watchdogs;
+- `--print-config` proves `rv32gcv_zvl512b`, `ilp32d`, RVV 1.0, XLEN 32,
+  VLEN 512, ELEN 64, `vlenb=64`, one hart and no NoC;
+- ELF attributes and disassembly are checked, not inferred from compiler flags;
+- scalar/vector fetch and data traffic are observed on TLM, and invalid TLM
+  responses become deterministic guest/host failures according to the Phase 2
+  conformance contract;
+- bad ELF class/machine, an out-of-map segment, an MMIO-overlapping segment,
+  missing file, guest fail exit and both watchdog expirations are negative
+  tests with no crash or hang;
+- a source/link/manifest guard proves FlooNoC, Sauria, NEO DMA, Spike, GUI and
+  full upstream VP++ platform code are absent from the binary and package;
+- the package runs from an otherwise empty temporary directory with no source
+  tree, build tree, `LD_LIBRARY_PATH`, externally installed VP++ executable or
+  host SystemC fallback;
+- `ldd`/`readelf`, license inventory and `BUILD_MANIFEST.json` agree with the
+  shipped files and `$ORIGIN` runtime resolution;
+- Phase 2 CPU/conformance/differential regressions and the existing
+  `riscv_vp_plusplus_portable` test remain green in Release and Debug;
+- a packaged ELF built by the documented external cross-toolchain commands can
+  be substituted for the bundled examples and produces the same result.
+
+#### Reuse in the final TPU_V3 platform
+
+Phase 4.5 creates no throwaway CPU. Phase 7 instantiates this same
+`cdc::cpu::riscv_vp_plusplus` backend once per NEO-CORE; Phase 8 gives each hart
+a unique `mhartid`; Phase 9 routes non-local traffic through FlooNoC. Compiler
+code generation remains `rv32gcv_zvl512b`/`ilp32d`. Multi-hart startup, linker
+layout, synchronization, workload partitioning and local/global placement are
+runtime/firmware responsibilities, not reasons to fork the compiler backend.
 
 ### Phase 5: Sauria matrix engine, 64x64 bring-up
 
@@ -2122,7 +2411,7 @@ The TPU_V3 project is complete only when all of the following are true:
 
 ## 21. Immediate Next Actions
 
-Current D14/D15 work, in order (updated 2026-08-12):
+Current work, in order (updated 2026-08-13):
 
 1. ~~Migrate `architecture_config` and `address_map` from the legacy
    two-MXU/SVM names to one SA, one independent DMA, one Transform engine and
@@ -2140,29 +2429,38 @@ Current D14/D15 work, in order (updated 2026-08-12):
    use.~~ Done. `tpu_v3_neo_dma`, gated by `tpu_v3_neo_dma` and
    `neo_dma_independence`; the guard covers the shared PL330-style component
    and DMI as well as Sauria, and fails when a forbidden include is added.
-4. Pin the accepted v4.2 source and perform the Phase 5 matrix-only dependency
+4. ~~Implement and package Phase 4.5 `riscv_vpp_compiler_vp` for the compiler
+   team. Keep it to one RV32GCV hart, RAM and simulator-only host I/O; do not
+   pull in FlooNoC or call it a NEO-CORE.~~ Done. `platforms/riscv_vpp_compiler_vp`
+   and `fw/riscv_vpp_compiler_vp`, behind `CDC_BUILD_RISCV_VPP_COMPILER_VP`,
+   gated by `riscv_vpp_compiler_vp_cli`, `riscv_vpp_compiler_vp_independence`
+   and `riscv_vpp_compiler_vp_packaging`. The boundary is enforced against the
+   sources, the emitted symbols, the link interface, the VP++ compile list and
+   the shipped bundle, and the distribution gate configures with
+   `CDC_BUILD_TPU_V3_SOC=OFF`.
+5. Pin the accepted v4.2 source and perform the Phase 5 matrix-only dependency
    extraction audit before writing the adapter.
-5. Ask the NPU team to identify/provide the standalone Im2Col/Col2Im Transform
+6. Ask the NPU team to identify/provide the standalone Im2Col/Col2Im Transform
    module, semantic contract and golden tests, and separately provide the later
    128x128 Sauria source.
 
 Carried out of Phase 3 as scheduled work, not as open findings:
 
-6. Phase 5 and Phase 7 must select `local_fabric_timing::annotated` for
+7. Phase 5 and Phase 7 must select `local_fabric_timing::annotated` for
    full-system runs. `arbitrated` consumes the caller's quantum, so a VP++ hart
    behind it loses temporal decoupling on every local load and store (decision
    record D16).
-7. Phase 9 must assert `!neo_external_bridge::blocks_on_arbitration()` when the
+8. Phase 9 must assert `!neo_external_bridge::blocks_on_arbitration()` when the
    detailed NoC backend is selected: an `arbitrated` fabric on the inbound path
    would stall the one process that advances the mesh clock.
-8. Phase 7 composes the three fabrics, the SRAM, the DMA and the hart into a
+9. Phase 7 composes the three fabrics, the SRAM, the DMA and the hart into a
    `tpu_core`. Until then they are proved as components and the platform
    instantiates the memories only, and its report says so.
-9. Phase 7 must bind the DMA's `external` port to `neo_external_bridge`, not to
+10. Phase 7 must bind the DMA's `external` port to `neo_external_bridge`, not to
    a memory. The DMA classifies core MMIO as external and relies on the bridge
    to refuse it; the two were tested separately in Phases 3 and 4 and are first
    wired together in Phase 7.
-10. Phase 11 must state which local-fabric timing mode produced any DMA
+11. Phase 11 must state which local-fabric timing mode produced any DMA
     throughput figure, and must not quote `chunk_latency` as bandwidth.
 
 Items below are retained as closure history for Phases 0–2; they are not the
@@ -2284,7 +2582,8 @@ Update this table when work progresses.
 | D14/D15 rebaseline synchronization | **Complete.** Architecture documents, the D15 diagram and the C++ config/address/fabric migration all agree | Decision-record synchronization table, `docs/neo_core_architecture-d15.jpg`, and the Phase 3 gate evidence below |
 | Phase 2: RV32GCV backend | **Complete** (2026-08-10), review findings closed | Audit, pin, build proof and execution complete — `docs/TPU_V3_PHASE2_AUDIT.md`. VP++ pinned at `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`); `cdc::cpu::riscv_vp_plusplus` builds against SystemC 2.3.4; D5 `cpu_config` implemented; the freestanding RV32GCV image executes through the wrapper with 2096 observed TLM requests and all 14 RVV checks passing (`riscv_vp_plusplus_backend`, `rvv_smoke_execution`). **F11 closed** by the approved backport of upstream `b710fa7b`: first TLM request at 0 s, `mcycle` 15 → 2439 → 2848, verified in Debug and Release on two harts, and both the configure check and the runtime gate were shown to fail when the patch is reverted. D10 vector-trap gate and the F5 concurrency control both pass (`rvv_vector_trap`, `fp_concurrency_normal`, `fp_concurrency_swapped`). **Spike differential corpus complete** (D11): one image on both models, 71-field signature, **64 matched / 7 XFAIL / 0 OPEN / 0 unexplained**, green in Debug and Release. The two findings it produced were fixed, not accepted: **D12** (all 32 RV32 index-EEW=64 encodings, unit and segment, raise an illegal instruction at the decode site) and **D13** (a failed bus access is an access fault chosen by origin). Both have a `conformance_patches` gate and a verified negative control. Also closed in this pass: the ISS caches were found enabled contrary to P2-5 and are now off and pinned by a test; `set_irq()` gained its first gate (`interrupt_delivery`); and the portable-executable requirement is met by `riscv_vp_plusplus_portable`, which runs the backend from a directory containing only the binary, its SystemC libraries and one ELF |
 | Phase 3: core SRAM + split fabrics + map migration | **Complete** (2026-08-12) | **Map migration.** `CORE_SRAM`, `SA_CONTROL`, `DMA_CONTROL`, `TRANSFORM_CONTROL` and a relocated `CORE_COUNTERS` replace the Phase 1 `SVM`/`MXU0`/`MXU1` symbols; 115 regions at 8 chips, non-overlap proved at every legal chip count and capacity; `TPU_V3_MXU_BACKEND` retired in favour of `TPU_V3_SA_GEOMETRY`, whose refusal of `128x128` and of an unnamed geometry each have a negative control in the packaging regression. The legacy names are absent from the schema, the shipped configurations, the manifest and the packaged address-map output, and two independent regressions fail if they return. **Host backing.** `sparse_memory` gives deterministic 4 KiB pages: an unallocated page reads as zero and costs nothing, a write commits only touched pages, a fully masked write commits none, reset releases them, and a refused access leaves the caller's buffer untouched. `mesh_4x4` reports 1.25 GiB logical with 0 B allocated and peaks near 10 MiB of RSS, bounded by the CLI regression's own `ru_maxrss` check. **Core SRAM.** Window and capacity are separate fields; an access above the capacity is `capacity_error` and never an alias; every payload from 1 to 64 bytes works at every alignment; byte enables, cross-page transfers, counters and a debug path that bypasses the counters but not the bounds all pass. **AXI4-Lite control fabric.** Five register files behind one in-order decoder; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes and wrapped streaming are each refused with the documented status; an unmapped address is an address error; a target's own refusal is propagated and counted apart; one transaction per initiator is enforced against a target that deliberately re-enters; an overlapping control map is refused during elaboration. A 64-byte accelerator payload is refused, which is how bulk data is kept off the control plane. **Native local-SRAM fabric.** 128-bit x 4 banks (provisional), low-order interleaved; one 64-byte request is one request and four beats, and an unaligned one is five — the D7 distinction, measured. Three requesters on one bank are serialised, back-pressured and share the bank within a quarter of each other; three on different banks run with zero conflicts and carry more traffic in the same wall of simulated time; response ownership holds under contention; all five named requesters reach both storage and the error path; an unattached requester throws. **External bridge.** Inbound SRAM traffic is arbitrated as `external_inbound` and its bytes reconcile exactly with the SRAM's own totals, which is the bypass negative control given that `core_sram` exposes no backing pointer; inbound MMIO reaches the addressed register file through the control plane and gets the same refusals a local access would; an outbound access naming this core is refused and counted, and the external stub never sees it. **Blocking.** No TLM target waits; the control fabric never waits; the local fabric's default `annotated` mode never waits and its `arbitrated` mode is the one that proves the arbitration (decision record D16). No source file or public type is named `neo_axi_fabric`. **Review round (2026-08-12).** Four contract defects were found and fixed, each with a negative control that fails when the fix is reverted: the bridge forwarded TLM's repeating `byte_enable` pattern into a plane that has no repeat rule, overreading the initiator's array for any payload longer than the pattern; the one-outstanding-request-per-requester rule of D15 was assumed rather than enforced, so two processes sharing an identity interleaved under one name; `reset()` cleared `waiting[]` and `busy` without waking anyone, hanging any requester blocked in arbitration; and outbound local containment tested containment instead of overlap, forwarding a transfer that began inside the core and ran past it. Two counter definitions were tightened in the same pass — a refused request is still a request, and `transferred_bytes` counts bytes moved rather than bytes named — along with the debug path's command handling and its STATUS answer. **Cleanup review.** Reset generation is captured before input-delay consumption, old requests cannot repopulate a new counter epoch, `aborted` explicitly permits already-completed partial bytes, and the bridge now applies common payload validation consistently to inbound/outbound normal/debug traffic. Each behavior has a regression that checks both the refusal/abort and absence of side effects. 19/19 `tpu_v3` tests pass in both Release and Debug with zero skips |
-| Phase 4: independent NEO DMA | **Complete** (2026-08-13) | `components/TPU_V3/neo_dma` plus `DMA_MODEL.md`. **Programming model.** The frozen §11.5 register map over an absolute 64 KiB decode; reserved offsets read zero and `DMA_CONTROL + 0x1000` does not alias offset zero; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes, wrapped streaming and a bad command are each refused with the documented status, and a null pointer is answered rather than thrown because this target is reachable from a remote master. `transport_dbg` agrees with `b_transport` register for register and is side-effect free. **Data path.** One native requester (`neo_requester::dma`) and one external initiator; local→external and external→local only, classified by absolute address with no direction bit. Copies verified at lengths 1, 2, 3, 7, 8, 15, 16, 63, 64, 65, 2048 and 5000 in both directions at odd source and destination offsets; local accesses split to 1..64 bytes and external frames obey `address % 8 + length <= 2048`, checked by the target rather than trusted. **Refusals.** Zero length, both endpoints local, both external, a span straddling the SRAM boundary in either direction, and a span ending above the 4 GiB RV32 limit each latch their own cause and commit nothing. **Partial failure.** A destination refused inside the third frame stops the job with `external_write`, `BYTES_DONE` = 4096 — destination bytes committed, not the 5120 fetched — exactly three external transactions attempted and none after the failure. **IRQ.** Level, raised for completion and error alike, held across time until W1C, deasserted by acknowledgement, never raised by an abort. Driven by one process (a SystemC signal refuses two writers) with immediate notification so it settles within one delta. **Epochs.** Explicit abort clears `BUSY`, sets sticky `ABORTED`, counts an abort and raises nothing; reset does the same without `ABORTED`, keeps the committed count, and neither lets the abandoned worker publish afterwards. A reset landing while the DMA was queued behind another requester on a contended bank unwinds without hanging. **Independence.** `neo_dma_independence` scans the sources with comments stripped, the emitted symbols and the CMake link interface; adding `#include "tpu_v3/sram/core_sram.h"` makes it fail. **Review round (2026-08-13).** Two High defects were found in reset/abort semantics and fixed. A start request was delivered as a bare event, so a `START` issued while the old worker was parked — which firmware may legitimately do, because both paths clear `BUSY` at once — reached nobody and the new job held `BUSY` for ever; it is now a flag that survives the gap. And `BYTES_DONE` was published at the end of a chunk rather than as each destination access landed, so a reset arriving between a commit and its report froze a count *lower* than memory held. Both were invisible to the first test, which settled for microseconds before restarting and only checked that the destination held *at least* the reported bytes; the phase now parks the worker deterministically inside a blocking external target and checks the byte past `BYTES_DONE` is still filler. A third rule fell out of the fix: a transaction still in flight at reset completes afterwards and its bytes are deliberately left unattributed, since the epoch that could have claimed them is gone and attributing them to whatever job started next is what §11.5 forbids. `tpu_v3_neo_dma` also no longer links `tpu_v3_core_sram` — the native-port interface was split into `tpu_v3_native_port`, and the guard now refuses that link edge as well. **Second review round (2026-08-13).** One more High: the fix above guarded `BYTES_DONE` on epoch sameness, which also swallowed a commit made *before* a reset — a native access writes beats into SRAM, waits for arbitration, the reset lands, and the access then returns reporting bytes that are genuinely in memory. The guard is now ownership of the register, which a reset does not transfer and a new `START` does, so an interrupted job keeps reporting into its own snapshot while a later job is never polluted. Every earlier reset case copied local→external, so the native destination path had no coverage at all; two phases were added, one resetting the DMA mid-native-access and one resetting the *fabric* so the request returns `aborted` with a partial byte count, the latter on an isolated SRAM/fabric/DMA instance because `fabric.reset()` clears counters the main conservation check relies on. Also settled: the DMA now clears its path traffic counters on reset and keeps only its event counters, so that when Phase 7 resets the DMA and the fabric together their totals still reconcile — conservation is a per-epoch property and the test states the epoch; an idle `ABORT` is documented and tested as accepted-and-ignored rather than counted; and `chunks_issued` became `chunks_completed`, since a failing chunk was issued and is not counted. **Third review round (2026-08-13).** A last High in the same area: `reset()` cleared the path traffic counters but an old in-flight request still added its response to them, so an epoch that had just been zeroed came back reading `LOCAL_BYTES=64, LOCAL_REQUESTS=1`. `neo_local_sram_fabric` already excluded old-generation responses from its own counters, so the DMA was also drifting away from the component it must reconcile with. A `traffic_epoch_`, advanced by `reset()` and not by `ABORT`, is captured before each transaction and gates the path counters; `BYTES_DONE` keeps its separate ownership rule, because "how much of this job's destination was committed" and "how much traffic did this path carry in this window" are different questions and a reset ends the window without ending the job's claim. A hierarchical-reset phase now resets the DMA and the fabric together mid-request, drains, and requires all three: `BYTES_DONE` equal to the bytes SRAM holds, DMA path counters zero, and DMA/fabric reconciling — then a fresh job reconciling again in the new epoch. Three documentation sites that still described the superseded straggler rule, called the path counters lifetime totals, or said "snapshot at reset" were corrected. Eleven negative controls confirm the behavioural gates bite, plus one for the guard itself. `components/dma_tlm` is untouched, and `dma_tlm` with all ten `noc_soc` regressions pass while `dma_platform` and `vp_fx1_full_soc` build |
+| Phase 4: independent NEO DMA | **Complete** (2026-08-13) | `components/TPU_V3/neo_dma` plus `DMA_MODEL.md`. **Programming model.** The frozen §11.5 register map over an absolute 64 KiB decode; reserved offsets read zero and `DMA_CONTROL + 0x1000` does not alias offset zero; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes, wrapped streaming and a bad command are each refused with the documented status, and a null pointer is answered rather than thrown because this target is reachable from a remote master. `transport_dbg` agrees with `b_transport` register for register and is side-effect free. **Data path.** One native requester (`neo_requester::dma`) and one external initiator; local→external and external→local only, classified by absolute address with no direction bit. Copies verified at lengths 1, 2, 3, 7, 8, 15, 16, 63, 64, 65, 2048 and 5000 in both directions at odd source and destination offsets; local accesses split to 1..64 bytes and external frames obey `address % 8 + length <= 2048`, checked by the target rather than trusted. **Refusals.** Zero length, both endpoints local, both external, a span straddling the SRAM boundary in either direction, and a span ending above the 4 GiB RV32 limit each latch their own cause and commit nothing. **Partial failure.** A destination refused inside the third frame stops the job with `external_write`, `BYTES_DONE` = 4096 — destination bytes committed, not the 5120 fetched — exactly three external transactions attempted and none after the failure. **IRQ.** Level, raised for completion and error alike, held across time until W1C, deasserted by acknowledgement, never raised by an abort. Driven by one process (a SystemC signal refuses two writers) with immediate notification so it settles within one delta. **Epochs.** Explicit abort clears `BUSY`, sets sticky `ABORTED`, counts an abort and raises nothing; reset does the same without `ABORTED`, keeps the committed count, and neither lets the abandoned worker publish a completion, an error or a path counter afterwards — `BYTES_DONE` is the exception and is governed by register ownership instead, so an interrupted job may still raise it until a new `START` claims the register. A reset landing while the DMA was queued behind another requester on a contended bank unwinds without hanging. **Independence.** `neo_dma_independence` scans the sources with comments stripped, the emitted symbols and the CMake link interface; adding `#include "tpu_v3/sram/core_sram.h"` makes it fail. **Review round (2026-08-13).** Two High defects were found in reset/abort semantics and fixed. A start request was delivered as a bare event, so a `START` issued while the old worker was parked — which firmware may legitimately do, because both paths clear `BUSY` at once — reached nobody and the new job held `BUSY` for ever; it is now a flag that survives the gap. And `BYTES_DONE` was published at the end of a chunk rather than as each destination access landed, so a reset arriving between a commit and its report froze a count *lower* than memory held. Both were invisible to the first test, which settled for microseconds before restarting and only checked that the destination held *at least* the reported bytes; the phase now parks the worker deterministically inside a blocking external target and checks the byte past `BYTES_DONE` is still filler. A third rule fell out of the fix: a transaction still in flight at reset completes afterwards and its bytes are deliberately left unattributed, since the epoch that could have claimed them is gone and attributing them to whatever job started next is what §11.5 forbids. `tpu_v3_neo_dma` also no longer links `tpu_v3_core_sram` — the native-port interface was split into `tpu_v3_native_port`, and the guard now refuses that link edge as well. **Second review round (2026-08-13).** One more High: the fix above guarded `BYTES_DONE` on epoch sameness, which also swallowed a commit made *before* a reset — a native access writes beats into SRAM, waits for arbitration, the reset lands, and the access then returns reporting bytes that are genuinely in memory. The guard is now ownership of the register, which a reset does not transfer and a new `START` does, so an interrupted job keeps reporting into its own snapshot while a later job is never polluted. Every earlier reset case copied local→external, so the native destination path had no coverage at all; two phases were added, one resetting the DMA mid-native-access and one resetting the *fabric* so the request returns `aborted` with a partial byte count, the latter on an isolated SRAM/fabric/DMA instance because `fabric.reset()` clears counters the main conservation check relies on. Also settled: the DMA now clears its path traffic counters on reset and keeps only its event counters, so that when Phase 7 resets the DMA and the fabric together their totals still reconcile — conservation is a per-epoch property and the test states the epoch; an idle `ABORT` is documented and tested as accepted-and-ignored rather than counted; and `chunks_issued` became `chunks_completed`, since a failing chunk was issued and is not counted. **Third review round (2026-08-13).** A last High in the same area: `reset()` cleared the path traffic counters but an old in-flight request still added its response to them, so an epoch that had just been zeroed came back reading `LOCAL_BYTES=64, LOCAL_REQUESTS=1`. `neo_local_sram_fabric` already excluded old-generation responses from its own counters, so the DMA was also drifting away from the component it must reconcile with. A `traffic_epoch_`, advanced by `reset()` and not by `ABORT`, is captured before each transaction and gates the path counters; `BYTES_DONE` keeps its separate ownership rule, because "how much of this job's destination was committed" and "how much traffic did this path carry in this window" are different questions and a reset ends the window without ending the job's claim. A hierarchical-reset phase now resets the DMA and the fabric together mid-request, drains, and requires all three: `BYTES_DONE` equal to the bytes SRAM holds, DMA path counters zero, and DMA/fabric reconciling — then a fresh job reconciling again in the new epoch. Three documentation sites that still described the superseded straggler rule, called the path counters lifetime totals, or said "snapshot at reset" were corrected. Eleven negative controls confirm the behavioural gates bite, plus one for the guard itself. `components/dma_tlm` is untouched, and `dma_tlm` with all ten `noc_soc` regressions pass while `dma_platform` and `vp_fx1_full_soc` build |
+| Phase 4.5: RISC-V VP++ Compiler Enablement VP | **Complete** (2026-08-13) | `platforms/riscv_vpp_compiler_vp` plus `fw/riscv_vpp_compiler_vp` and `docs/MEMORY_MAP.md`. **Boundary.** One architectural RV32GCV hart, one TLM address decoder, program/data RAM and a simulator-only host-I/O target. `CDC_BUILD_RISCV_VPP_COMPILER_VP` is independent of `CDC_BUILD_TPU_V3_SOC`, and the packaging gate configures with the latter `OFF` so the handoff cannot quietly acquire the SoC tree. `cdc::cpu::riscv_vp_plusplus` is reused, not forked. **Map.** RAM at the TPU_V3 global-RAM base `0x8000_0000`, size configurable; the host-I/O window retains the Phase 2 exit protocol at `0x000F_0000` with the same four words at the same offsets and adds console, identity and measurement registers at 0x400 and above. One header, `compiler_vp/host_io_map.h`, is compiled by the platform, included by `crt0.S` from assembly, and preprocessed into the linker script, so the image's load address cannot drift from the address the platform maps. **Demonstrations.** Both print their exact PASS markers and exit zero. `scalar_hello` cross-checks the toolchain's `__riscv_xlen` against the platform's XLEN, `mhartid` against the configured hart id and `misa` against every letter of the frozen ISA, so its banner is a result rather than four literals; it is built with auto-vectorization off and *verified by disassembly* to contain no vector instruction. `rvv_vector_add` adds 1024 elements three ways — scalar golden, `<riscv_vector.h>` intrinsics and a hand-written `vsetvli`/`vle32.v`/`vadd.vv`/`vse32.v` loop, both kept `noinline` so a codegen failure stays distinguishable from a model failure — and earns `RVV=1.0` from behaviour, by observing that a reserved `vsew` sets `vtype.vill` and zeroes `vl` without trapping. **Observability.** No DMI (refused and counted), no ISS decode or load-store cache, so instruction fetch comes out at exactly one TLM transaction per retired instruction and the report prints the ratio. Fetch is separated from data by address, which required the shipped linker script to emit three program headers instead of the usual single RWX segment: with one segment every load is inside an executable segment and the split is meaningless. Vector traffic is *enforced*, not asserted — the intrinsic loop declares, from its own element count, the 3072 data accesses it must cause, and the platform fails the run if the bus does not see them. **Refusals.** Not an ELF, truncated, ELF64, wrong machine, big-endian, non-`ET_EXEC`, a float ABI other than `ilp32d` read from `e_flags`, an architecture string that is not `rv32*` or one guaranteeing a minimum vector length above 512 read from `.riscv.attributes`, a segment outside RAM or overlapping the host-I/O window or another segment, and an entry point outside RAM — each with its own exit code and a diagnostic naming the field. A scalar-only ISA string and a missing attributes section are accepted and reported, since checking scalar code generation is half the job. **Watchdogs, and a defect the gate found.** The two the plan asks for are not sufficient, and the shortfall is not exotic: both are polled between slices of `sc_start()`, and an image whose entry point lands on memory it never wrote traps, vectors to an `mtvec` its startup never set, and faults on the fault — retiring nothing and never reaching a quantum boundary, so neither bound is ever read again and the run hangs indefinitely with both armed. One mistyped load address in a linker script produces it. The decoder now recognises an unbroken run of 1024 refused accesses as a fault loop and throws, which is the only way out of a SystemC process that will not yield, and a `--wall-timeout` host thread is the backstop for whatever that does not cover. **Package.** `out/riscv_vpp_compiler_vp/` carries the binary at `RPATH=$ORIGIN`, the SystemC runtime, configs, both demonstrations with their disassembly, the SDK that built them, the map document, licences and a manifest recording the ISA/ABI/VLEN/ELEN/`vlenb`/hart count, the accuracy disclaimer, the VP++ base revision with every patch and hash, and every non-goal as absent. The gate moves the bundle, runs both demonstrations from it with no source tree and `LD_LIBRARY_PATH` unset, rebuilds the vector example from the shipped SDK with the documented commands, substitutes it, and requires identical guest output. **Independence.** `riscv_vpp_compiler_vp_independence` scans the sources with comments *and string literals* stripped — the `--version` banner has to be able to name what is absent — the emitted symbols, the CMake link interface, and the VP++ compile list for any `platform/`, Qt or VNC source; the packaging gate repeats the symbol and file-listing halves on the shipped bundle. **Evidence.** 103 CLI checks, the boundary gate and the distribution gate pass in Release and Debug; nine negative controls confirm each new gate bites when its fix is reverted, including the single-RWX-segment linker script (which reproduces `1024 of 3072 accesses`) and the disabled fault-loop detector (which reproduces the hang). TPU_V3 stays 35/35 in Release and Debug. **Review round (2026-08-13).** Two High defects, both in the package rather than the model. The package target *succeeded* without a cross toolchain, producing a bundle with neither demonstration and recording it as one `false` in a manifest field — a bundle that looks shippable and is not, and a packaging test that skipped rather than failed would have kept CI green over it. The executable still builds without the toolchain, deliberately, but `check_package_contents.cmake` now runs last in the package target and refuses an incomplete bundle, and the distribution gate has no skip at all. And the package shipped only CDC-VP's own Apache-2.0 while the binary statically links the RISC-V VP++ ISS (MIT) and Berkeley SoftFloat (BSD-3-Clause) — a redistribution blocker. Both licences are now shipped, SoftFloat's extracted at package time from a source file that was actually compiled because upstream ships no standalone licence file, `THIRD_PARTY.md` lists both, and the gate checks the text and not merely the filename. Two Medium: the firmware was generated *into* `fw/`, so Release and Debug clobbered each other's images and a read-only checkout could not build — it is now copied into the build tree and built there, and with `-ffile-prefix-map` and a two-stage compile the two build types produce byte-identical examples carrying no build-machine path. And the CLI accepted values `std::` accepts but a watchdog cannot: `--timeout nan` disarmed the simulated-time watchdog while `--print-config` still reported it armed, because every comparison against a NaN is false; `hart_id: 4294967296` in a configuration file truncated to hart 0; a leading `-` wrapped to an enormous limit. All are refused, on both the command-line and the file path. Also delivered: `COMPILER_QUICKSTART.md` and `ISA_ABI_CONTRACT.md`, which §15.3 names and the first package omitted, and §15.3's `sdk/` file list rebaselined to the delivered names. Six further negative controls confirm each fix bites |
 | Phase 5: Sauria SA 64x64 extraction | Not started | v4.2 source audit/golden required |
 | Phase 6: Im2Col/Col2Im Transform | Waiting for NPU-team source clarification | Does not block Phases 3–5. `TRANSFORM_CONTROL` elaborates today and reports its capability as unavailable rather than faking readiness |
 | Phase 7: single NEO-CORE | Not started | Composes the Phase 3 fabrics, the SRAM and the Phase 2 hart. Must select `annotated` fabric timing (D16) |
@@ -2324,6 +2623,8 @@ Update this table when work progresses.
 | NoC topology | Parameterized 2D mesh | Frozen concept, dimensions open |
 | NoC attachment | One aggregated endpoint per chip | Frozen |
 | RV32GCV runtime | RISC-V VP++ (`ics-jku/riscv-vp-plusplus`), MIT | Phase 2 complete at the recorded pin and approved patch series |
+| Compiler enablement VP | One RV32GCV hart, TLM program/data RAM and simulator-only host I/O; no NoC and no accelerator/NEO composition | Approved pre-Phase-5 deliverable (Phase 4.5). Output is `out/riscv_vpp_compiler_vp/`; it reuses, rather than forks, `cdc::cpu::riscv_vp_plusplus` |
+| Compiler handoff ISA/ABI | `rv32gcv_zvl512b`, `ilp32d`; XLEN=32, RVV 1.0, VLEN=512, ELEN=64, `vlenb=64` | Frozen for the Phase 4.5 package and unchanged when the same hart is replicated in later NEO-COREs |
 | RVV differential reference | Spike `16c0b60119f65a648643cf5d41e4e38e871f0bad` (2026-08-07), BSD-3-Clause | Built and in use as the Phase 2 oracle (D3, D11). Child process only; never linked into the platform or a package |
 | Cross toolchain | xPack `riscv-none-elf` GCC 15.2.0-1, `/opt/toolchains/xpack-riscv-none-elf-gcc-15.2.0-1` | Pinned (D4); Phase 2 uses a freestanding `-nostdlib` environment |
 | Matrix backend | Sauria matrix-only adapter | 64x64 first, 128x128 after NPU-team promotion; source revision and datatype reported |

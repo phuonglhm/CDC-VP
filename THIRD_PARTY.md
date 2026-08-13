@@ -13,6 +13,8 @@ The external CPU core is **not** bundled in this repository. It is fetched into
 | Component | Where | Upstream | License | Used by |
 |---|---|---|---|---|
 | RISC-V VP (Bremen) | `third_party/riscv-vp` | `agra-uni-bremen/riscv-vp` | **MIT** | `riscv_vp` CPU backend |
+| RISC-V VP++ | `third_party/riscv-vp-plusplus` (gitignored, fetched by `cpu_models/riscv_vp_plusplus/fetch_riscv_vp_plusplus.sh`) | [`ics-jku/riscv-vp-plusplus`](https://github.com/ics-jku/riscv-vp-plusplus) | **MIT**; see `third_party/riscv-vp-plusplus/LICENSE` | `riscv_vp_plusplus` RV32GCV CPU backend. **Statically linked** into `riscv_vpp_compiler_vp`, which ships the licence as `licenses/RISCV-VP-PLUSPLUS.MIT.txt` |
+| Berkeley SoftFloat, Release 3d | `third_party/riscv-vp-plusplus/vp/src/vendor/softfloat` (vendored inside VP++) | [John R. Hauser](http://www.jhauser.us/arithmetic/SoftFloat.html) | **BSD-3-Clause**; upstream ships no standalone licence file, the notice is the header of every source file | scalar and vector floating point in the `riscv_vp_plusplus` backend. **Statically linked** into `riscv_vpp_compiler_vp`, which extracts the notice from a compiled source into `licenses/BERKELEY-SOFTFLOAT-3d.BSD-3-Clause.txt` |
 | FreeRTOS-Kernel V11.2.0 | `third_party/FreeRTOS-Kernel` (gitignored, fetched by `tools/third_party/setup_third_party.sh`) | `FreeRTOS/FreeRTOS-Kernel` | **MIT** | `fw/freertos_fx1` RTOS firmware |
 | SystemC | `/opt/systemc-2.3.4` (host) | Accellera | Apache-2.0 | all |
 | RISC-V toolchain | host install | xpack `riscv-none-elf` GCC | GCC runtime exception | firmware (`fw/`) |

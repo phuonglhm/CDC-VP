@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The same machine with both watchdogs pulled in far enough that a runaway image
+# is stopped in under a second of wall clock.
+#
+# Shipped rather than kept in the test tree because it is what a compiler team
+# wants on the day their code generation produces an infinite loop: the default
+# limits describe a second of simulated time, and waiting that out to discover
+# a hang is exactly the friction that makes people disable watchdogs. The two
+# demonstration images finish well inside these bounds — the vector one retires
+# well under a million instructions — so nothing here trades safety for
+# coverage.
+#
+# It is also the configuration the watchdog negative tests use, which is the
+# other reason it ships: a limit that only exists in a test is a limit nobody
+# has confirmed is usable.
+
+platform: riscv_vpp_compiler_vp
+name: tight_watchdog
+
+ram_size_bytes: 64MiB
+hart_id: 0
+
+max_instructions: 5000000
+timeout_ns: 50000000
+wall_timeout_seconds: 60
+
+trace_limit: 0

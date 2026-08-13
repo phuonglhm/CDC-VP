@@ -80,6 +80,21 @@ if(CDC_BUILD_NOC_SOC)
    endif()
 endif()
 
+# The RISC-V VP++ Compiler Enablement VP (plan §16, Phase 4.5). Off by default,
+# and deliberately not conditioned on CDC_BUILD_TPU_V3_SOC: the handoff contains
+# no NoC, no accelerator and no NEO composition, so it must build without them.
+if(CDC_BUILD_RISCV_VPP_COMPILER_VP)
+   if(TARGET cdc::cpu::riscv_vp_plusplus)
+      add_subdirectory(riscv_vpp_compiler_vp)
+   else()
+      message(FATAL_ERROR
+          "CDC_BUILD_RISCV_VPP_COMPILER_VP=ON but cdc::cpu::riscv_vp_plusplus "
+          "is not available. This platform is the VP++ hart with RAM around "
+          "it; without the hart there is nothing to package. Fetch the pinned "
+          "checkout with cpu_models/riscv_vp_plusplus/fetch_riscv_vp_plusplus.sh.")
+   endif()
+endif()
+
 # TPU_V3 SoC. Off by default; see components/TPU_V3/docs/.
 if(CDC_BUILD_TPU_V3_SOC)
    if(TARGET cdc::components::tpu_v3_common)

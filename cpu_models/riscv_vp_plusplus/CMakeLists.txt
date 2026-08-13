@@ -291,6 +291,11 @@ target_link_libraries(riscv_vp_plusplus
     PUBLIC  SystemC::systemc
     PRIVATE softfloat_vpp pthread)
 
-if(CDC_BUILD_TPU_V3_TESTS)
+# `AND CDC_BUILD_TPU_V3_SOC` keeps the previous meaning now that this directory
+# is also reached from the Phase 4.5 compiler-enablement build. These are the
+# TPU_V3 Phase 2 gates — the Spike oracle, the differential corpus, the D12/D13
+# conformance images — and a compiler-handoff build has no business requiring
+# them, or the cross toolchain and Spike checkout they need.
+if(CDC_BUILD_TPU_V3_TESTS AND CDC_BUILD_TPU_V3_SOC)
     add_subdirectory(tests)
 endif()

@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The default configuration: the machine the shipped examples are built for.
+#
+# Format: 'key: value', one per line. Not YAML; see src/cli.h.
+
+platform: riscv_vpp_compiler_vp
+name: default
+
+# 64 MiB at 0x8000_0000. The base is not configurable — it is the TPU_V3
+# global-RAM base, and the shipped linker script takes it from the same header
+# the platform compiles against (compiler_vp/host_io_map.h).
+ram_size_bytes: 64MiB
+
+hart_id: 0
+
+# Both watchdogs are armed, and they describe the same amount of work: the ISS
+# cycle time is 10 ns, so 1 s of simulated time is 100 million cycles and, at
+# roughly one instruction per cycle, about 100 million instructions. A run that
+# trips one of them is stuck rather than merely large — and which one it trips
+# is the diagnosis. Instructions exhausted with time to spare is a spin; time
+# exhausted with instructions to spare is a stall.
+max_instructions: 100000000
+timeout_ns: 1000000000
+
+# The backstop, in wall-clock seconds. Both bounds above are polled between
+# slices of simulation, so neither can end a run whose hart has stopped
+# returning to the kernel at all -- which one mistyped load address in a linker
+# script is enough to produce. Only this can. It is a wall-clock bound, so when
+# it fires depends on the machine and nothing may be concluded from it beyond
+# "this did not finish". 0 disables it.
+wall_timeout_seconds: 600
+
+# Bus tracing off. `--trace` turns it on for one run without editing this file.
+trace_limit: 0

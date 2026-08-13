@@ -1,0 +1,124 @@
+/* SPDX-License-Identifier: Apache-2.0
+ *
+ * Linker script for `riscv_vpp_compiler_vp` images.
+ *
+ * Preprocessed, not hand-written: `MEMORY` takes its origin and length from
+ * `compiler_vp/host_io_map.h`, the same header the platform compiles against.
+ * A linker script with the base typed into it would be a second copy of the
+ * map, and the failure it produces — an image linked one region away from where
+ * the platform maps RAM — looks like a broken simulator rather than a stale
+ * constant. The generated `link.ld` is shipped beside this file so a team that
+ * would rather not preprocess anything can use it directly.
+ *
+ * ── three program headers, and why it matters here ──────────────────────────
+ *
+ * The obvious script for a flat bare-metal image emits one RWX PT_LOAD covering
+ * everything, which is honest about a machine with no MMU and is what the Phase
+ * 2 smoke image does.
+ *
+ * It cannot be done that way here. The platform separates instruction fetch
+ * from data traffic by asking whether an address falls in a loadable
+ * *executable* segment — VP++ carries both on one socket and marks neither, so
+ * the address is the only thing left to ask (see `platform_top.h`). With one
+ * RWX segment covering the whole image that question answers "yes" for every
+ * address, every load is counted as a fetch, and the measurement window that is
+ * supposed to prove vector loads reached the bus sees only the stores.
+ *
+ * That is not a cosmetic miscount: it is the difference between the package
+ * being able to demonstrate the property the Phase 4.5 gate asks for and only
+ * appearing to. So `.text` gets an R+X segment of its own, `.rodata` a
+ * read-only one, and everything writable a third. Splitting them is also what
+ * anyone reading the map or the disassembly expects, and it removes the one
+ * RWX segment that needed `--no-warn-rwx-segments` to link quietly.
+ */
+
+#include "compiler_vp/host_io_map.h"
+
+OUTPUT_ARCH(riscv)
+ENTRY(_start)
+
+MEMORY
+{
+    RAM (rwxa) : ORIGIN = COMPILER_VP_RAM_BASE, LENGTH = COMPILER_VP_RAM_SIZE_DEFAULT
+}
+
+PHDRS
+{
+    text   PT_LOAD FLAGS(5);   /* R E */
+    rodata PT_LOAD FLAGS(4);   /* R   */
+    data   PT_LOAD FLAGS(6);   /* RW  */
+}
+
+SECTIONS
+{
+    . = ORIGIN(RAM);
+
+    .text : ALIGN(4)
+    {
+        KEEP(*(.text.init))         /* _start first; the entry point is honoured
+                                     * from the ELF header, but keeping startup
+                                     * at the base keeps a disassembly readable */
+        *(.text .text.*)
+    } > RAM :text
+
+    /* No page alignment between the segments, deliberately.
+     *
+     * The conventional `. = ALIGN(4096)` here would not work anyway — with
+     * `> RAM` in force, GNU ld allocates from the memory region's own pointer
+     * and assignments to `.` between output sections do not move it — but it
+     * is also not wanted. There is no MMU and no loader that could map these
+     * separately, so page alignment would buy nothing and pad the file. What
+     * the split is for is that the three ranges are *distinct and correctly
+     * flagged*, which is what makes an address enough to tell a fetch from a
+     * data access. */
+
+    .rodata : ALIGN(8)
+    {
+        *(.rodata .rodata.*)
+        *(.srodata .srodata.*)
+    } > RAM :rodata
+
+    .data : ALIGN(8)
+    {
+        /* Normally supplied by the toolchain's default script, which `-T`
+         * replaces. `gp` addresses +/-2 KiB around itself, so it is placed
+         * 0x800 into the small-data area. Without this, `la gp,
+         * __global_pointer$` in crt0 fails to link. */
+        PROVIDE(__global_pointer$ = . + 0x800);
+        *(.data .data.*)
+        *(.sdata .sdata.*)
+    } > RAM :data
+
+    .bss (NOLOAD) : ALIGN(8)
+    {
+        __bss_start = .;
+        *(.bss .bss.*)
+        *(.sbss .sbss.*)
+        *(COMMON)
+        __bss_end = .;
+    } > RAM :data
+
+    /* Vector buffers are 64-byte aligned: one RVV register at VLEN=512 is 64
+     * bytes, and a misaligned buffer turns an alignment defect into a data
+     * defect that reads like an arithmetic error. */
+    .vdata (NOLOAD) : ALIGN(64)
+    {
+        __vdata_start = .;
+        *(.vdata .vdata.*)
+        __vdata_end = .;
+    } > RAM :data
+
+    /* The stack follows the image rather than sitting at the top of the region.
+     * The region length above is the *default* RAM size; a run configured with
+     * `--ram-size` smaller than the default would put a top-of-region stack
+     * outside memory, and the first push would take an access fault with no
+     * obvious cause. Growing down from the end of the image cannot do that. */
+    . = ALIGN(16);
+    __stack_bottom = .;
+    . = . + 0x8000;                 /* 32 KiB */
+    __stack_top = .;
+
+    __image_end = .;
+
+    /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
+}

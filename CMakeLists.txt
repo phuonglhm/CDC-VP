@@ -28,6 +28,17 @@ option(CDC_BUILD_TPU_V3_SOC
 option(CDC_BUILD_TPU_V3_TESTS
     "Build TPU_V3 component tests" ON)
 
+# The RISC-V VP++ Compiler Enablement VP (plan §16, Phase 4.5): one RV32GCV
+# hart, TLM RAM and a simulator-only host-I/O target, packaged for a compiler
+# team.
+#
+# Independent of CDC_BUILD_TPU_V3_SOC on purpose. The handoff contains no NoC,
+# no Sauria and no NEO composition, so requiring the SoC option to build it
+# would make the package depend on parts it must not contain — and would make a
+# compiler team's build break for reasons that have nothing to do with them.
+option(CDC_BUILD_RISCV_VPP_COMPILER_VP
+    "Build the RISC-V VP++ Compiler Enablement VP handoff platform" OFF)
+
 # The matrix-engine geometry this binary is built for. It replaces the retired
 # TPU_V3_MXU_BACKEND: after D14 the selectable property is not which of two
 # MXU implementations to compile, it is which Sauria delivery the build
@@ -103,7 +114,8 @@ if(CDC_BUILD_TESTS OR (CDC_BUILD_TPU_V3_SOC AND CDC_BUILD_TPU_V3_TESTS))
 endif()
 
 add_subdirectory(components)
-if(CDC_BUILD_CPU_EVAL OR CDC_BUILD_CUSTOM_SOC OR CDC_BUILD_TPU_V3_SOC)
+if(CDC_BUILD_CPU_EVAL OR CDC_BUILD_CUSTOM_SOC OR CDC_BUILD_TPU_V3_SOC
+   OR CDC_BUILD_RISCV_VPP_COMPILER_VP)
     add_subdirectory(cpu_models)
 endif()
 add_subdirectory(platforms)

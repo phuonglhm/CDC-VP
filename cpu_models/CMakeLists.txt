@@ -31,7 +31,12 @@ endif()
 # a *vector* hart while they need the one they already validated against; making
 # this a CDC_CPU_BACKEND value would offer every platform a swap that has not
 # been qualified for it.
-if(CDC_BUILD_TPU_V3_SOC)
+#
+# Also built for the Phase 4.5 compiler-enablement handoff, which reuses this
+# exact target rather than forking it: the hart a compiler team validates
+# against must be the hart Phase 7 instantiates per NEO-CORE, or the validation
+# stops meaning anything the day the SoC is assembled.
+if(CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_RISCV_VPP_COMPILER_VP)
     if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/riscv-vp-plusplus/vp/src/core/rv32/iss.cpp")
         add_subdirectory(riscv_vp_plusplus)
     else()
