@@ -595,6 +595,15 @@ Do not create `build/` directories inside component source directories.
 >
 > Present after Phase 1: `docs/`, `common/` (`types.h`, `address_map.h`,
 > `architecture_config.h`, sources and tests).
+>
+> Added by Phase 3: `common/include/tpu_v3/sparse_memory.h`, `core_sram/`, and
+> `tpu_core/` holding `neo_control_fabric`, `neo_local_sram_fabric`,
+> `neo_external_bridge` and `core_registers`. `sparse_memory.h` sits in
+> `common/` rather than under `core_sram/` because both the core SRAM and the
+> platform's global RAM need it and it contains no SystemC, which keeps its
+> test an ordinary program. `tpu_core/tpu_core.h` itself is Phase 7; the
+> directory carries the name it will have then rather than being renamed
+> later.
 
 ## 11. Component Specifications
 
@@ -1429,6 +1438,10 @@ vlenb read == 64
 - Inbound remote SRAM/MMIO traffic traverses the adapters and normal
   arbitration; an attempted bypass is covered by a negative test.
 - No target waits inside `b_transport`; arbitration/timing is deterministic.
+  Decision record D16 states which components this binds and why the local
+  fabric's `arbitrated` mode — the one in which round-robin fairness is a
+  behaviour rather than an estimate — is nonetheless allowed to block its own
+  requesters.
 - No source file or public type named `neo_axi_fabric` remains after migration.
 - `mesh_4x4` logical memory elaborates without eager host commitment.
 
@@ -1861,16 +1874,37 @@ The TPU_V3 project is complete only when all of the following are true:
 
 Current D14/D15 work, in order (updated 2026-08-12):
 
-1. Migrate `architecture_config` and `address_map` from the legacy two-MXU/SVM
-   names to one SA, one independent DMA, one Transform engine and core SRAM.
-2. Implement Phase 3 core SRAM, 32-bit AXI4-Lite control fabric and native
-   banked-SRAM data fabric, leaving bank count/width/pipeline depth configurable.
+1. ~~Migrate `architecture_config` and `address_map` from the legacy
+   two-MXU/SVM names to one SA, one independent DMA, one Transform engine and
+   core SRAM.~~ Done in Phase 3. The legacy names are absent from the
+   configuration schema, the map, the shipped configurations, the CMake
+   variables, the manifest and the packaged `--print-address-map` output, and
+   both the CLI regression and the packaging regression fail if they reappear.
+2. ~~Implement Phase 3 core SRAM, 32-bit AXI4-Lite control fabric and native
+   banked-SRAM data fabric, leaving bank count/width/pipeline depth
+   configurable.~~ Done — `tpu_v3_core_sram` and `tpu_v3_tpu_core`, gated by
+   `tpu_v3_core_sram`, `tpu_v3_local_sram_fabric`, `tpu_v3_control_fabric` and
+   `tpu_v3_external_bridge`. The three physical values have no default and the
+   schema refuses zero.
 3. Implement Phase 4 NEO DMA with a build/test guard against Sauria DMA use.
 4. Pin the accepted v4.2 source and perform the Phase 5 matrix-only dependency
    extraction audit before writing the adapter.
 5. Ask the NPU team to identify/provide the standalone Im2Col/Col2Im Transform
    module, semantic contract and golden tests, and separately provide the later
    128x128 Sauria source.
+
+Carried out of Phase 3 as scheduled work, not as open findings:
+
+6. Phase 5 and Phase 7 must select `local_fabric_timing::annotated` for
+   full-system runs. `arbitrated` consumes the caller's quantum, so a VP++ hart
+   behind it loses temporal decoupling on every local load and store (decision
+   record D16).
+7. Phase 9 must assert `!neo_external_bridge::blocks_on_arbitration()` when the
+   detailed NoC backend is selected: an `arbitrated` fabric on the inbound path
+   would stall the one process that advances the mesh clock.
+8. Phase 7 composes the three fabrics, the SRAM and the hart into a
+   `tpu_core`. Until then the fabrics are proved as components and the platform
+   instantiates the memories only, and its report says so.
 
 Items below are retained as closure history for Phases 0–2; they are not the
 current execution queue.
@@ -1980,18 +2014,18 @@ Update this table when work progresses.
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | Plan document | Complete | This file |
-| Decision record D1-D15 | Final approved through D15 interconnect ratification (2026-08-12) | `docs/TPU_V3_DECISION_RECORD.md` |
+| Decision record D1-D16 | Final approved through D15 interconnect ratification (2026-08-12); D16 added by Phase 3 | `docs/TPU_V3_DECISION_RECORD.md` |
 | Phase 0: audit/baseline | Complete (2026-08-08) | `docs/TPU_V3_PHASE0_AUDIT.md`, `docs/ARCHITECTURE.md`, `docs/ADDRESS_MAP.md`, `docs/INTERFACE_CONTRACT.md` |
 | Phase 1: skeleton/package | Complete (2026-08-08), review findings closed | `out/tpu_v3_soc/` runs with `RPATH=$ORIGIN` and no source-tree path; ctest `tpu_v3_address_map`, `tpu_v3_architecture_config`, `tpu_v3_soc_cli`, `tpu_v3_soc_packaging_regression` all pass |
-| D14/D15 rebaseline synchronization | Final architecture documents and D15 diagram complete; C++ config/address/fabric migration begins Phase 3 | Decision-record synchronization table and `docs/neo_core_architecture-d15.drawio` |
+| D14/D15 rebaseline synchronization | **Complete.** Architecture documents, the D15 diagram and the C++ config/address/fabric migration all agree | Decision-record synchronization table, `docs/neo_core_architecture-d15.drawio`, and the Phase 3 gate evidence below |
 | Phase 2: RV32GCV backend | **Complete** (2026-08-10), review findings closed | Audit, pin, build proof and execution complete — `docs/TPU_V3_PHASE2_AUDIT.md`. VP++ pinned at `7a36fe859cae242f513ca6ad16ab8238f1e82977` (tag `2025.09`); `cdc::cpu::riscv_vp_plusplus` builds against SystemC 2.3.4; D5 `cpu_config` implemented; the freestanding RV32GCV image executes through the wrapper with 2096 observed TLM requests and all 14 RVV checks passing (`riscv_vp_plusplus_backend`, `rvv_smoke_execution`). **F11 closed** by the approved backport of upstream `b710fa7b`: first TLM request at 0 s, `mcycle` 15 → 2439 → 2848, verified in Debug and Release on two harts, and both the configure check and the runtime gate were shown to fail when the patch is reverted. D10 vector-trap gate and the F5 concurrency control both pass (`rvv_vector_trap`, `fp_concurrency_normal`, `fp_concurrency_swapped`). **Spike differential corpus complete** (D11): one image on both models, 71-field signature, **64 matched / 7 XFAIL / 0 OPEN / 0 unexplained**, green in Debug and Release. The two findings it produced were fixed, not accepted: **D12** (all 32 RV32 index-EEW=64 encodings, unit and segment, raise an illegal instruction at the decode site) and **D13** (a failed bus access is an access fault chosen by origin). Both have a `conformance_patches` gate and a verified negative control. Also closed in this pass: the ISS caches were found enabled contrary to P2-5 and are now off and pinned by a test; `set_irq()` gained its first gate (`interrupt_delivery`); and the portable-executable requirement is met by `riscv_vp_plusplus_portable`, which runs the backend from a directory containing only the binary, its SystemC libraries and one ELF |
-| Phase 3: core SRAM + split fabrics + map migration | Not started | D14/D15 contract ready |
-| Phase 4: independent NEO DMA | Not started | Must prove no Sauria DMA dependency |
+| Phase 3: core SRAM + split fabrics + map migration | **Complete** (2026-08-12) | **Map migration.** `CORE_SRAM`, `SA_CONTROL`, `DMA_CONTROL`, `TRANSFORM_CONTROL` and a relocated `CORE_COUNTERS` replace the Phase 1 `SVM`/`MXU0`/`MXU1` symbols; 115 regions at 8 chips, non-overlap proved at every legal chip count and capacity; `TPU_V3_MXU_BACKEND` retired in favour of `TPU_V3_SA_GEOMETRY`, whose refusal of `128x128` and of an unnamed geometry each have a negative control in the packaging regression. The legacy names are absent from the schema, the shipped configurations, the manifest and the packaged address-map output, and two independent regressions fail if they return. **Host backing.** `sparse_memory` gives deterministic 4 KiB pages: an unallocated page reads as zero and costs nothing, a write commits only touched pages, a fully masked write commits none, reset releases them, and a refused access leaves the caller's buffer untouched. `mesh_4x4` reports 1.25 GiB logical with 0 B allocated and peaks near 10 MiB of RSS, bounded by the CLI regression's own `ru_maxrss` check. **Core SRAM.** Window and capacity are separate fields; an access above the capacity is `capacity_error` and never an alias; every payload from 1 to 64 bytes works at every alignment; byte enables, cross-page transfers, counters and a debug path that bypasses the counters but not the bounds all pass. **AXI4-Lite control fabric.** Five register files behind one in-order decoder; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes and wrapped streaming are each refused with the documented status; an unmapped address is an address error; a target's own refusal is propagated and counted apart; one transaction per initiator is enforced against a target that deliberately re-enters; an overlapping control map is refused during elaboration. A 64-byte accelerator payload is refused, which is how bulk data is kept off the control plane. **Native local-SRAM fabric.** 128-bit x 4 banks (provisional), low-order interleaved; one 64-byte request is one request and four beats, and an unaligned one is five — the D7 distinction, measured. Three requesters on one bank are serialised, back-pressured and share the bank within a quarter of each other; three on different banks run with zero conflicts and carry more traffic in the same wall of simulated time; response ownership holds under contention; all five named requesters reach both storage and the error path; an unattached requester throws. **External bridge.** Inbound SRAM traffic is arbitrated as `external_inbound` and its bytes reconcile exactly with the SRAM's own totals, which is the bypass negative control given that `core_sram` exposes no backing pointer; inbound MMIO reaches the addressed register file through the control plane and gets the same refusals a local access would; an outbound access naming this core is refused and counted, and the external stub never sees it. **Blocking.** No TLM target waits; the control fabric never waits; the local fabric's default `annotated` mode never waits and its `arbitrated` mode is the one that proves the arbitration (decision record D16). No source file or public type is named `neo_axi_fabric`. **Review round (2026-08-12).** Four contract defects were found and fixed, each with a negative control that fails when the fix is reverted: the bridge forwarded TLM's repeating `byte_enable` pattern into a plane that has no repeat rule, overreading the initiator's array for any payload longer than the pattern; the one-outstanding-request-per-requester rule of D15 was assumed rather than enforced, so two processes sharing an identity interleaved under one name; `reset()` cleared `waiting[]` and `busy` without waking anyone, hanging any requester blocked in arbitration; and outbound local containment tested containment instead of overlap, forwarding a transfer that began inside the core and ran past it. Two counter definitions were tightened in the same pass — a refused request is still a request, and `transferred_bytes` counts bytes moved rather than bytes named — along with the debug path's command handling and its STATUS answer. **Cleanup review.** Reset generation is captured before input-delay consumption, old requests cannot repopulate a new counter epoch, `aborted` explicitly permits already-completed partial bytes, and the bridge now applies common payload validation consistently to inbound/outbound normal/debug traffic. Each behavior has a regression that checks both the refusal/abort and absence of side effects. 19/19 `tpu_v3` tests pass in both Release and Debug with zero skips |
+| Phase 4: independent NEO DMA | Not started | Must prove no Sauria DMA dependency; the native local port it needs exists and is gated |
 | Phase 5: Sauria SA 64x64 extraction | Not started | v4.2 source audit/golden required |
-| Phase 6: Im2Col/Col2Im Transform | Waiting for NPU-team source clarification | Does not block Phases 3–5 |
-| Phase 7: single NEO-CORE | Not started | — |
+| Phase 6: Im2Col/Col2Im Transform | Waiting for NPU-team source clarification | Does not block Phases 3–5. `TRANSFORM_CONTROL` elaborates today and reports its capability as unavailable rather than faking readiness |
+| Phase 7: single NEO-CORE | Not started | Composes the Phase 3 fabrics, the SRAM and the Phase 2 hart. Must select `annotated` fabric timing (D16) |
 | Phase 8: dual-core chip | Not started | — |
-| Phase 9: NoC/mesh | Not started | D1 prerequisite |
+| Phase 9: NoC/mesh | Not started | D1 prerequisite; must also assert the external bridge does not block on arbitration (D16) |
 | Phase 9B: Sauria 128x128 promotion | Waiting for NPU-team delivery | 64x64 must remain explicitly labelled until then |
 | Phase 10: firmware/workloads | Not started | — |
 | Phase 11: metrics/stress | Not started | — |
@@ -2008,8 +2042,9 @@ Update this table when work progresses.
 | ImageTransform per NEO-CORE | 1, Im2Col + Col2Im | Frozen composition; source/interface pending NPU team |
 | Control plane | 32-bit AXI4-Lite, in order, no bursts or IDs | Frozen by D15; SystemC is transaction-level, not channel-cycle accurate |
 | Local data plane | Native pipelined request/response fabric into physically banked SRAM | Frozen by D15; no internal full AXI data crossbar |
-| Local-fabric arbitration | Deterministic round-robin per bank; one outstanding request/requester initially | Frozen by D15 |
-| Local-fabric physical parameters | Data width, bank count/mapping and pipeline depth | Open pending SRAM macro, frequency and PD inputs; construction-time reported configuration |
+| Local-fabric arbitration | Deterministic round-robin per bank; one outstanding request/requester initially | Frozen by D15; implemented and gated by `tpu_v3_local_sram_fabric` |
+| Local-fabric timing mode | `annotated` (default, never waits) or `arbitrated` (blocks on a real per-bank arbiter) | Approved (D16). Every TLM target still never waits; a timing figure must name the mode |
+| Local-fabric physical parameters | Data width, bank count/mapping and pipeline depth | **Still open** pending SRAM macro, frequency and PD inputs. The C++ schema has no default and refuses zero; the shipped configurations state 128-bit x 4 banks x 2 stages and every report prints them labelled provisional |
 | External data plane | Bidirectional AXI4/NoC bridge for outbound VP++/DMA and inbound remote traffic | Frozen by D15; DMA owns bulk movement, while SA and ImageTransform remain local-SRAM requesters |
 | VPU ISA | RISC-V V | Frozen |
 | RVV version | 1.0 | Frozen |
@@ -2024,11 +2059,11 @@ Update this table when work progresses.
 | Matrix backend | Sauria matrix-only adapter | 64x64 first, 128x128 after NPU-team promotion; source revision and datatype reported |
 | Maximum chips | 8 chips / 16 cores | **Revision 1 backend limit** (D2), from the 3-bit NoC manager id. 32 cores = 16 chips is a separate coordinated change |
 | Mesh dimensions | Configurable within 2x2, 3x3, 4x4, 4x2, 2x4 | Frozen set, choice open |
-| Address map layout | D14/D15 rebaseline (`docs/ADDRESS_MAP.md`) | Top/chip/core apertures retained; core-local symbols/MMIO migration is Phase 3 |
+| Address map layout | D14/D15 rebaseline (`docs/ADDRESS_MAP.md`) | Top/chip/core apertures retained; the core-local symbol and MMIO migration landed in Phase 3 and the legacy names are gated out of generated output |
 | Window vs capacity | Full window always decodes; capacity is separately reported and the target refuses above it | Frozen (D6) |
 | Core SRAM capacity | **Reference 16 MiB** per core (the full window); smaller values are labelled bring-up | D6 retained and renamed by D14 |
 | Global RAM size | Configurable, 256 MiB bring-up default, 1 GiB window | Open capacity (D6); simulated backing memory, not a model of TPU v3 HBM |
-| Host-memory backing | Sparse deterministic 4 KiB pages; logical capacity is not eagerly allocated | Frozen implementation contract for Phase 3 (D6) |
+| Host-memory backing | Sparse deterministic 4 KiB pages; logical capacity is not eagerly allocated | Implemented (D6). `sparse_memory`; `mesh_4x4` is 1.25 GiB logical at ~10 MiB of RSS |
 | SA target arithmetic | **BF16 x BF16 with IEEE FP32 accumulation**, fixed accumulation order | D6 target retained; v4.2 bring-up must report its actual supported datatype and is not reference equivalence |
 | Same-node initiator/target | Keep `NoLoopback=1`; owner-aware local bypass | Approved (D1). **Phase 9 prerequisite** |
 | Hart id / reset PC | Static fields in `cdc::cpu::cpu_config` | Approved (D5, supersedes P0-9). No default no-op virtual setters |
@@ -2041,4 +2076,4 @@ Update this table when work progresses.
 | Transform block | NPU-team Im2Col/Col2Im engine | Required by D14; exact source and semantics open, never substituted by RVV reduction/permutation |
 | Four-image workload | Optional future named workload | Not frozen |
 
-The authority for D1–D15 is `docs/TPU_V3_DECISION_RECORD.md`.
+The authority for D1–D16 is `docs/TPU_V3_DECISION_RECORD.md`.

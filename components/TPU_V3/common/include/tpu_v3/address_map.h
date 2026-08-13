@@ -10,10 +10,17 @@
 // `docs/ADDRESS_MAP.md` explains the layout and the reasoning; this header
 // defines it and `tests/test_address_map.cpp` proves the properties both
 // claim. Everything here is `constexpr` and free of SystemC.
+//
+// Rebaselined in Phase 3 to the D14/D15 contract: `CORE_SRAM` replaces `SVM`,
+// and the two MXU control windows become `SA_CONTROL`, `DMA_CONTROL` and
+// `TRANSFORM_CONTROL` for the one matrix engine, the one independent DMA and
+// the one ImageTransform engine a NEO-CORE owns. The top-level, chip and core
+// aperture bases and strides did not move.
 
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "tpu_v3/types.h"
@@ -63,37 +70,45 @@ inline constexpr std::uint64_t chip_counters_size = 0x0001'0000ull;   // 64 KiB
 
 inline constexpr std::uint64_t core_aperture_stride = 0x0200'0000ull; // 32 MiB
 
-inline constexpr std::uint64_t svm_offset = 0x0000'0000ull;
+inline constexpr std::uint64_t core_sram_offset = 0x0000'0000ull;
 /// Window, not capacity.
 ///
-/// The whole window always decodes to the SVM target, whatever capacity is
-/// instantiated. An access above the instantiated capacity is the SVM's error
-/// to report, not a hole in the map — see `ADDRESS_MAP.md` §5 and decision
-/// record D6. Mapping only the capacity would make the same address unmapped
-/// in one configuration and valid in another, so a firmware pointer bug would
-/// change symptom with the SVM size.
-inline constexpr std::uint64_t svm_window = 0x0100'0000ull;           // 16 MiB
+/// The whole window always decodes to the core SRAM target, whatever capacity
+/// is instantiated. An access above the instantiated capacity is the SRAM's
+/// error to report, not a hole in the map — see `ADDRESS_MAP.md` §5 and
+/// decision record D6. Mapping only the capacity would make the same address
+/// unmapped in one configuration and valid in another, so a firmware pointer
+/// bug would change symptom with the SRAM size.
+inline constexpr std::uint64_t core_sram_window = 0x0100'0000ull;     // 16 MiB
 
+/// Core-local MMIO, all reached through the 32-bit AXI4-Lite control plane
+/// (D15). One 64 KiB register file each; the engine geometry or SRAM capacity
+/// may change without any of these bases moving.
 inline constexpr std::uint64_t core_control_offset = 0x0100'0000ull;
 inline constexpr std::uint64_t core_control_size = 0x0001'0000ull;    // 64 KiB
 
-inline constexpr std::uint64_t mxu_control_offset = 0x0101'0000ull;
-inline constexpr std::uint64_t mxu_control_stride = 0x0001'0000ull;   // 64 KiB
-inline constexpr std::uint64_t mxu_control_size = 0x0001'0000ull;     // 64 KiB
+inline constexpr std::uint64_t sa_control_offset = 0x0101'0000ull;
+inline constexpr std::uint64_t sa_control_size = 0x0001'0000ull;      // 64 KiB
 
-inline constexpr std::uint64_t core_counters_offset = 0x0103'0000ull;
+inline constexpr std::uint64_t dma_control_offset = 0x0102'0000ull;
+inline constexpr std::uint64_t dma_control_size = 0x0001'0000ull;     // 64 KiB
+
+inline constexpr std::uint64_t transform_control_offset = 0x0103'0000ull;
+inline constexpr std::uint64_t transform_control_size = 0x0001'0000ull; // 64 KiB
+
+inline constexpr std::uint64_t core_counters_offset = 0x0104'0000ull;
 inline constexpr std::uint64_t core_counters_size = 0x0001'0000ull;   // 64 KiB
 
-/// SVM capacity bounds.
+/// Core SRAM capacity bounds.
 ///
 /// The reference configuration instantiates the **full 16 MiB window** per
 /// core (decision record D6, superseding the temporary 4 MiB of Phase 0
 /// decision P0-6). Smaller capacities stay available for explicitly labelled
 /// bring-up or stress configurations; they are not the TPU_V3 reference
 /// result.
-inline constexpr std::uint64_t svm_min_capacity = 0x0000'1000ull;     // 4 KiB
-inline constexpr std::uint64_t svm_max_capacity = svm_window;         // 16 MiB
-inline constexpr std::uint64_t svm_default_capacity = svm_window;     // 16 MiB
+inline constexpr std::uint64_t core_sram_min_capacity = 0x0000'1000ull; // 4 KiB
+inline constexpr std::uint64_t core_sram_max_capacity = core_sram_window;
+inline constexpr std::uint64_t core_sram_default_capacity = core_sram_window;
 
 /// Global RAM capacity bounds. 256 MiB is a configurable bring-up default
 /// (decision record D6); it is simulated backing memory and is not a model of
@@ -121,11 +136,6 @@ constexpr bool valid_core(core_id_t core) noexcept
     return core < cores_per_chip;
 }
 
-constexpr bool valid_mxu(mxu_id_t mxu) noexcept
-{
-    return mxu < mxus_per_core;
-}
-
 constexpr std::uint64_t chip_base(chip_id_t chip) noexcept
 {
     return chip_aperture_base + std::uint64_t{chip} * chip_aperture_stride;
@@ -146,9 +156,9 @@ constexpr std::uint64_t core_base(chip_id_t chip, core_id_t core) noexcept
     return chip_base(chip) + std::uint64_t{core} * core_aperture_stride;
 }
 
-constexpr std::uint64_t svm_base(chip_id_t chip, core_id_t core) noexcept
+constexpr std::uint64_t core_sram_base(chip_id_t chip, core_id_t core) noexcept
 {
-    return core_base(chip, core) + svm_offset;
+    return core_base(chip, core) + core_sram_offset;
 }
 
 constexpr std::uint64_t core_control(chip_id_t chip, core_id_t core) noexcept
@@ -156,11 +166,20 @@ constexpr std::uint64_t core_control(chip_id_t chip, core_id_t core) noexcept
     return core_base(chip, core) + core_control_offset;
 }
 
-constexpr std::uint64_t mxu_control(chip_id_t chip, core_id_t core,
-                                    mxu_id_t mxu) noexcept
+constexpr std::uint64_t sa_control(chip_id_t chip, core_id_t core) noexcept
 {
-    return core_base(chip, core) + mxu_control_offset
-        + std::uint64_t{mxu} * mxu_control_stride;
+    return core_base(chip, core) + sa_control_offset;
+}
+
+constexpr std::uint64_t dma_control(chip_id_t chip, core_id_t core) noexcept
+{
+    return core_base(chip, core) + dma_control_offset;
+}
+
+constexpr std::uint64_t transform_control(chip_id_t chip,
+                                          core_id_t core) noexcept
+{
+    return core_base(chip, core) + transform_control_offset;
 }
 
 constexpr std::uint64_t core_counters(chip_id_t chip, core_id_t core) noexcept
@@ -201,19 +220,23 @@ struct region {
     /// Bytes actually backed by storage, `<= size`.
     ///
     /// Equal to `size` for every region except a memory window whose
-    /// instantiated capacity is smaller: SVM below 16 MiB, and global RAM
-    /// below 1 GiB. The window still decodes; the target owns the refusal
+    /// instantiated capacity is smaller: core SRAM below 16 MiB, and global
+    /// RAM below 1 GiB. The window still decodes; the target owns the refusal
     /// above `capacity` and must never alias the access into valid storage.
     ///
     /// Keeping the two separate is what stops the same address being unmapped
     /// in one configuration and valid in another, which would make a firmware
     /// pointer bug change symptom with the memory size.
+    ///
+    /// It is also not the *allocated* backing: Phase 3 storage is sparsely
+    /// page-backed (D6), so a 16 MiB capacity commits 16 MiB of address space
+    /// and only the touched 4 KiB pages of host memory.
     std::uint64_t capacity = 0;
 
     region_kind kind = region_kind::mmio;
 
-    /// Stable identifier, e.g. `chip0.core1.mxu0_control`. Owned by the
-    /// returned object, so it stays valid independently of the enumeration.
+    /// Stable identifier, e.g. `chip0.core1.sa_control`. Owned by the returned
+    /// object, so it stays valid independently of the enumeration.
     std::string name;
     /// `max_chips` when the region is global.
     chip_id_t chip = max_chips;
@@ -224,6 +247,14 @@ struct region {
     bool is_partially_backed() const noexcept { return capacity < size; }
 };
 
+/// Number of regions a core aperture contributes: SRAM plus the five
+/// AXI4-Lite register files (core, SA, DMA, Transform, counters).
+inline constexpr std::size_t regions_per_core = 6;
+/// Chip control plus chip counters.
+inline constexpr std::size_t regions_per_chip_level = 2;
+/// Boot ROM, global control, global RAM.
+inline constexpr std::size_t global_regions = 3;
+
 /// Every region a system with `chips` chips exposes, global regions first,
 /// then chips in ascending order.
 ///
@@ -232,7 +263,7 @@ struct region {
 /// Throws `std::invalid_argument` if `chips` exceeds `max_chips` or a capacity
 /// is out of range or not a power of two.
 std::vector<region> enumerate_regions(unsigned chips,
-                                      std::uint64_t svm_capacity,
+                                      std::uint64_t core_sram_capacity,
                                       std::uint64_t global_ram_capacity);
 
 /// Find the region whose **decoded extent** contains `[address, length)`, or

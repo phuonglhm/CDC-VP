@@ -4,6 +4,12 @@
 // component. Deliberately free of SystemC and TLM: a configuration object and
 // an address calculation must be testable, and reusable, without elaborating a
 // simulation.
+//
+// Rebaselined by decision records D14 (NEO-CORE composition) and D15
+// (control/local-data/external interconnect split). The Phase 1 vocabulary —
+// one SVM and two 128x128 MXUs per core — is gone from here; it survives only
+// in the Phase 0–2 audit documents, which are historical evidence and are not
+// rewritten.
 
 #pragma once
 
@@ -15,22 +21,27 @@ namespace cdc::components::tpu_v3 {
 /// Linear chip index within the SoC, `0 .. max_chips - 1`.
 using chip_id_t = std::uint32_t;
 
-/// Core index within a chip. Exactly two cores per chip are frozen, so this is
-/// always 0 or 1.
+/// Core index within a chip. Exactly two NEO-COREs per chip are frozen, so
+/// this is always 0 or 1.
 using core_id_t = std::uint32_t;
-
-/// MXU index within a core. Exactly two MXUs per core are frozen.
-using mxu_id_t = std::uint32_t;
 
 /// Architectural RISC-V hart id, visible to firmware through `mhartid`.
 using hart_id_t = std::uint32_t;
 
-/// Frozen counts (plan §4.1, §4.3). A component that finds a different value
-/// in its configuration must refuse to construct, not adapt.
+/// Frozen counts (plan §4.1, decision record D14). A component that finds a
+/// different value in its configuration must refuse to construct, not adapt.
 inline constexpr unsigned cores_per_chip = 2;
-inline constexpr unsigned mxus_per_core = 2;
-inline constexpr unsigned mxu_rows = 128;
-inline constexpr unsigned mxu_columns = 128;
+inline constexpr unsigned sa_per_core = 1;
+inline constexpr unsigned dma_per_core = 1;
+inline constexpr unsigned transform_per_core = 1;
+
+/// Sauria matrix-engine geometry. Two named pairs exist and no others: the
+/// verified v4.2 bring-up array, and the architectural destination that only
+/// the NPU team's promotion gate may unlock (D14).
+inline constexpr unsigned sa_bringup_rows = 64;
+inline constexpr unsigned sa_bringup_columns = 64;
+inline constexpr unsigned sa_target_rows = 128;
+inline constexpr unsigned sa_target_columns = 128;
 
 /// Upper bound on chips in this revision.
 ///
@@ -41,7 +52,7 @@ inline constexpr unsigned mxu_columns = 128;
 /// see `docs/TPU_V3_PHASE0_AUDIT.md` §5.2.
 inline constexpr unsigned max_chips = 8;
 
-/// `mhartid = chip_linear_id * 2 + core_id` (plan §11.6).
+/// `mhartid = chip_linear_id * 2 + core_id` (plan §11.8).
 constexpr hart_id_t hart_id_of(chip_id_t chip, core_id_t core) noexcept
 {
     return static_cast<hart_id_t>(chip * cores_per_chip + core);
@@ -57,32 +68,44 @@ constexpr core_id_t core_of_hart(hart_id_t hart) noexcept
     return static_cast<core_id_t>(hart % cores_per_chip);
 }
 
-/// Which MXU implementation a core instantiates. Selectable by CMake and by
-/// configuration; it must never change a firmware-visible architectural
-/// result, only timing and reported fidelity (plan §14).
-enum class mxu_backend {
-    /// Functional analytical 128x128 model. The full-system default.
-    fast,
-    /// Sauria-derived detailed model. Scope is decided in Phase 9; until then
-    /// selecting it is a configuration error, not a silent fallback.
-    sauria,
-};
-
-/// MXU numeric contract (decision record D6).
+/// Matrix-engine numeric contract (decision record D6).
 ///
 /// This is an architectural property, not a backend detail: changing it
 /// changes the results, so it is named in the configuration, in the report and
 /// in the package manifest rather than being implied by whichever kernel got
-/// compiled.
-enum class mxu_arithmetic {
+/// compiled. A bring-up run on a datatype the v4.2 source happens to support
+/// must report *that* datatype and must never be presented as the reference.
+enum class matrix_datatype {
     /// The TPU_V3 reference path: BF16 operands, IEEE FP32 accumulation, with
     /// a fixed accumulation order so results are deterministic across hosts.
     /// Follows the public Cloud TPU description of TPU matrix multiplication.
     bf16_fp32,
+    /// A datatype the verified v4.2 bring-up configuration supports. Useful
+    /// integration evidence only; it is not BF16 equivalence (D6, D14).
+    fp16_fp32,
     /// Optional quantized extension: INT8 operands, INT32 accumulation. It
     /// must be selected explicitly and never replaces the reference path.
-    /// Not implemented before Phase 4.
     int8_int32,
+};
+
+/// How a logical core-SRAM address maps onto physical banks (D15).
+///
+/// Only one mapping exists today. It is an enumeration rather than an implied
+/// constant because the mapping is a physical-implementation choice that the
+/// SRAM macro and floorplan may change, and a report that does not name it is
+/// not interpretable.
+enum class bank_mapping {
+    /// Bank index = (address / bytes_per_beat) % bank_count. Consecutive beats
+    /// of one sequential burst land on consecutive banks.
+    low_order_interleaved,
+};
+
+/// Per-bank arbitration policy on the native local-data plane (D15).
+enum class arbitration_policy {
+    /// Deterministic rotating priority. Deterministic is the requirement, not
+    /// a preference: an arbiter whose outcome depends on host scheduling makes
+    /// every contention measurement unreproducible.
+    round_robin,
 };
 
 /// Which NoC timing backend the platform asks `noc_interconnect` for.
@@ -93,16 +116,18 @@ enum class noc_timing {
     detailed,
 };
 
-const char* to_string(mxu_backend backend) noexcept;
-const char* to_string(mxu_arithmetic arithmetic) noexcept;
+const char* to_string(matrix_datatype datatype) noexcept;
+const char* to_string(bank_mapping mapping) noexcept;
+const char* to_string(arbitration_policy policy) noexcept;
 const char* to_string(noc_timing timing) noexcept;
 
-/// Parse a backend/timing name. Throws `std::invalid_argument` naming the
+/// Parse an enumeration name. Throws `std::invalid_argument` naming the
 /// accepted values; there is no default-on-unknown, because a typo that
-/// silently selects the fast backend would invalidate every number a detailed
-/// run produced.
-mxu_backend mxu_backend_from_string(const std::string& text);
-mxu_arithmetic mxu_arithmetic_from_string(const std::string& text);
+/// silently selected another datatype or arbiter would invalidate every number
+/// the run produced.
+matrix_datatype matrix_datatype_from_string(const std::string& text);
+bank_mapping bank_mapping_from_string(const std::string& text);
+arbitration_policy arbitration_policy_from_string(const std::string& text);
 noc_timing noc_timing_from_string(const std::string& text);
 
 } // namespace cdc::components::tpu_v3

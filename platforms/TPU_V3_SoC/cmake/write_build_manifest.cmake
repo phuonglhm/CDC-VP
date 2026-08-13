@@ -36,7 +36,7 @@
 #   CXX_COMPILER_VERSION
 #   CMAKE_VERSION_USED
 #   SYSTEMC_HOME
-#   MXU_BACKEND        backend compiled into the binary
+#   SA_GEOMETRY        matrix-engine geometry compiled into the binary
 #   SPIKE_REVISION
 #   SPIKE_LINKED       TRUE/FALSE
 #   VPP_BASE_REVISION      RISC-V VP++ base commit
@@ -141,7 +141,7 @@ _json_escape(_cxx_id "${CXX_COMPILER_ID}")
 _json_escape(_cxx_version "${CXX_COMPILER_VERSION}")
 _json_escape(_cmake_version "${CMAKE_VERSION_USED}")
 _json_escape(_systemc "${SYSTEMC_HOME}")
-_json_escape(_mxu_backend "${MXU_BACKEND}")
+_json_escape(_sa_geometry "${SA_GEOMETRY}")
 _json_escape(_spike_revision "${SPIKE_REVISION}")
 
 # The VP++ source is a base revision plus a patch series, so recording a single
@@ -202,7 +202,7 @@ file(WRITE "${MANIFEST_PATH}"
   \"generated_utc\": \"${_generated}\",
   \"platform\": \"${_platform}\",
   \"phase\": 1,
-  \"phase_note\": \"Phase 1 skeleton: configuration, address map and packaging. No cores, MXUs, SVM or NoC are instantiated yet.\",
+  \"phase_note\": \"Phase 3: configuration, the D14/D15 address map, sparsely page-backed core SRAM and the global RAM store. The control and local-SRAM fabrics exist as tested components but are not composed into a core until Phase 7; no hart, DMA, matrix engine, transform engine or NoC is instantiated yet.\",
   \"source\": {
     \"repository\": \"CDC-VP\",
     \"revision_available\": ${_available_json},
@@ -225,9 +225,9 @@ file(WRITE "${MANIFEST_PATH}"
     \"rpath\": \"$ORIGIN\"
   },
   \"configuration\": {
-    \"mxu_backend\": \"${_mxu_backend}\",
-    \"mxu_backend_note\": \"Compiled into the binary. A configuration selecting a different backend is refused at run time.\",
-    \"mxu_arithmetic\": \"BF16 x BF16 with IEEE FP32 accumulation (decision record D6)\",
+    \"sa_geometry\": \"${_sa_geometry}\",
+    \"sa_geometry_note\": \"Compiled into the binary. A configuration selecting a different geometry is refused at run time; 128x128 additionally awaits the NPU-team promotion gate, and no build, manifest or report may call the 64x64 bring-up array 128x128 (decision record D14).\",
+    \"sa_arithmetic\": \"BF16 x BF16 with IEEE FP32 accumulation (decision record D6)\",
     \"max_chips\": 8,
     \"max_chips_reason\": \"Revision 1 backend limit: frozen FlooNoC chimney manager id is 3 bits; one aggregated NoC manager per chip\"
   },

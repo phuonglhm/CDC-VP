@@ -19,38 +19,46 @@ option(CDC_BUILD_TESTS "Build component/platform tests" ON)
 option(CDC_ENABLE_SAURIA_NPU_V4
     "Enable the optional external SAURIA v4 SystemC model" OFF)
 
-# TPU_V3: 2D-mesh NoC SoC with RV32GCV cores and 128x128 MXUs.
-# Default OFF so the existing default build is untouched; see
+# TPU_V3: 2D-mesh NoC SoC with RV32GCV NEO-COREs, one Sauria matrix engine,
+# one independent DMA and one ImageTransform engine per core (decision record
+# D14). Default OFF so the existing default build is untouched; see
 # components/TPU_V3/docs/TPU_V3_IMPLEMENTATION_PLAN.md.
 option(CDC_BUILD_TPU_V3_SOC
     "Build the TPU_V3 NoC SoC platform" OFF)
 option(CDC_BUILD_TPU_V3_TESTS
     "Build TPU_V3 component tests" ON)
 
-set(TPU_V3_MXU_BACKEND "fast" CACHE STRING
-    "TPU_V3 MXU backend: fast (sauria is not implemented yet)")
-set_property(CACHE TPU_V3_MXU_BACKEND PROPERTY STRINGS fast sauria)
+# The matrix-engine geometry this binary is built for. It replaces the retired
+# TPU_V3_MXU_BACKEND: after D14 the selectable property is not which of two
+# MXU implementations to compile, it is which Sauria delivery the build
+# contains — the verified 64x64 bring-up array, or the 128x128 target the NPU
+# team has not shipped.
+set(TPU_V3_SA_GEOMETRY "64x64" CACHE STRING
+    "TPU_V3 Sauria matrix-engine geometry: 64x64 (128x128 awaits its promotion gate)")
+set_property(CACHE TPU_V3_SA_GEOMETRY PROPERTY STRINGS 64x64 128x128)
 
 # `set_property(... STRINGS ...)` only populates a GUI drop-down; it validates
-# nothing on the command line. Without this check `-DTPU_V3_MXU_BACKEND=typo`
+# nothing on the command line. Without this check `-DTPU_V3_SA_GEOMETRY=typo`
 # configures happily and the value is copied verbatim into the package
-# manifest, which then names a backend the binary does not contain.
+# manifest, which then names a geometry the binary does not contain.
 #
-# `sauria` is refused rather than accepted-and-unused: decision record D6 says
-# the Sauria backend is not selectable until it builds, runs and has a verified
-# redistribution policy (Phase 9). Offering it as a configure-time choice that
-# silently produces the fast model is exactly the mislabelling D6 forbids.
+# `128x128` is refused rather than accepted-and-unused. D14 makes it an NPU-team
+# delivery behind a promotion gate that cannot have passed, because the source
+# has not arrived; offering it as a configure-time choice that silently
+# produces the 64x64 array is precisely the mislabelling D14 forbids — "no
+# build, manifest or report may identify the 64x64 bring-up engine as 128x128."
 if(CDC_BUILD_TPU_V3_SOC)
-    if(TPU_V3_MXU_BACKEND STREQUAL "sauria")
+    if(TPU_V3_SA_GEOMETRY STREQUAL "128x128")
         message(FATAL_ERROR
-            "TPU_V3_MXU_BACKEND=sauria is not implemented. The available "
-            "Sauria model is a 32x32 FP16/INT16 NPU top, not a 128x128 MXU "
-            "(decision record D6, Phase 9). Use -DTPU_V3_MXU_BACKEND=fast.")
-    elseif(NOT TPU_V3_MXU_BACKEND STREQUAL "fast")
+            "TPU_V3_SA_GEOMETRY=128x128 is not available. The 128x128 Sauria "
+            "engine is an NPU-team delivery that has not arrived, so its "
+            "promotion gate cannot have passed (decision record D14). Use "
+            "-DTPU_V3_SA_GEOMETRY=64x64.")
+    elseif(NOT TPU_V3_SA_GEOMETRY STREQUAL "64x64")
         message(FATAL_ERROR
-            "TPU_V3_MXU_BACKEND='${TPU_V3_MXU_BACKEND}' is not a known "
-            "backend. Accepted values are: fast. ('sauria' is reserved for "
-            "Phase 9 and is currently refused.)")
+            "TPU_V3_SA_GEOMETRY='${TPU_V3_SA_GEOMETRY}' is not a known "
+            "geometry. Accepted values are: 64x64. ('128x128' is reserved for "
+            "the D14 promotion gate and is currently refused.)")
     endif()
 endif()
 

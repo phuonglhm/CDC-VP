@@ -213,7 +213,7 @@ find_package(Boost 1.70 REQUIRED)
 # ships 218 sources with no BF16, VP++ ships 230 including `f32_to_bf16.c`,
 # `bf16_to_f32.c` and `s_roundPackToBF16.c`. Reusing the wrong copy would
 # silently change floating-point behaviour, and the BF16 primitives are exactly
-# what the Phase 4 MXU arithmetic contract (D6) reuses.
+# what the Phase 5 matrix-engine arithmetic contract (D6) reuses.
 #
 # A glob is right here, unusually: the directory is a vendored dependency at a
 # pinned immutable revision, so the file set cannot change without the pin

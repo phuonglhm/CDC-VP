@@ -23,8 +23,6 @@ using cdc::components::tpu_v3::core_id_t;
 using cdc::components::tpu_v3::cores_per_chip;
 using cdc::components::tpu_v3::hart_id_of;
 using cdc::components::tpu_v3::max_chips;
-using cdc::components::tpu_v3::mxu_id_t;
-using cdc::components::tpu_v3::mxus_per_core;
 
 namespace {
 
@@ -80,11 +78,12 @@ void fixed_bases_match_the_document()
     CHECK(am::core_base(0, 1) == 0xC2000000ull);
     CHECK(am::core_base(7, 1) == 0xFA000000ull);
 
-    CHECK(am::svm_base(0, 0) == 0xC0000000ull);
+    CHECK(am::core_sram_base(0, 0) == 0xC0000000ull);
     CHECK(am::core_control(0, 0) == 0xC1000000ull);
-    CHECK(am::mxu_control(0, 0, 0) == 0xC1010000ull);
-    CHECK(am::mxu_control(0, 0, 1) == 0xC1020000ull);
-    CHECK(am::core_counters(0, 0) == 0xC1030000ull);
+    CHECK(am::sa_control(0, 0) == 0xC1010000ull);
+    CHECK(am::dma_control(0, 0) == 0xC1020000ull);
+    CHECK(am::transform_control(0, 0) == 0xC1030000ull);
+    CHECK(am::core_counters(0, 0) == 0xC1040000ull);
     CHECK(am::chip_control(0) == 0xC4000000ull);
     CHECK(am::chip_counters(0) == 0xC4010000ull);
 }
@@ -99,7 +98,7 @@ void everything_fits_below_4_gib()
 
     for (unsigned chips = 1; chips <= max_chips; ++chips) {
         const auto regions = am::enumerate_regions(
-            chips, am::svm_default_capacity, am::global_ram_default_capacity);
+            chips, am::core_sram_default_capacity, am::global_ram_default_capacity);
         for (const auto& r : regions) {
             CHECK_MSG(r.base + r.size <= 0x100000000ull,
                       r.name + " ends above 4 GiB");
@@ -109,16 +108,16 @@ void everything_fits_below_4_gib()
 
 void all_regions_are_disjoint()
 {
-    // Every legal chip count, and every SVM capacity extreme. The decoded map
+    // Every legal chip count, and every core-SRAM capacity extreme. The map
     // is the same in all of them — capacity moves `capacity`, never `size` —
     // and this is what proves it: an overlap appearing only at one capacity
     // would mean the decode had started depending on the memory size.
     for (unsigned chips = 1; chips <= max_chips; ++chips) {
-        for (std::uint64_t svm :
-             {am::svm_min_capacity, am::svm_default_capacity,
-              am::svm_max_capacity}) {
+        for (std::uint64_t sram :
+             {am::core_sram_min_capacity, am::core_sram_default_capacity,
+              am::core_sram_max_capacity}) {
             const auto regions = am::enumerate_regions(
-                chips, svm, am::global_ram_min_capacity);
+                chips, sram, am::global_ram_min_capacity);
 
             for (std::size_t i = 0; i < regions.size(); ++i) {
                 for (std::size_t j = i + 1; j < regions.size(); ++j) {
@@ -129,7 +128,7 @@ void all_regions_are_disjoint()
                     CHECK_MSG(!overlap,
                               a.name + " overlaps " + b.name + " at chips="
                                   + std::to_string(chips)
-                                  + " svm=" + std::to_string(svm));
+                                  + " sram=" + std::to_string(sram));
                 }
             }
         }
@@ -141,10 +140,10 @@ void decoded_extent_does_not_depend_on_capacity()
     // Decision record D6 and ADDRESS_MAP.md §5: the full window always
     // decodes. If the map shrank with the capacity, the same address would be
     // unmapped in one configuration and valid in another, and a firmware
-    // pointer bug would change symptom with the SVM size.
-    const auto small = am::enumerate_regions(2, am::svm_min_capacity,
+    // pointer bug would change symptom with the core SRAM size.
+    const auto small = am::enumerate_regions(2, am::core_sram_min_capacity,
                                              am::global_ram_min_capacity);
-    const auto large = am::enumerate_regions(2, am::svm_max_capacity,
+    const auto large = am::enumerate_regions(2, am::core_sram_max_capacity,
                                              am::global_ram_max_capacity);
 
     CHECK(small.size() == large.size());
@@ -157,12 +156,12 @@ void decoded_extent_does_not_depend_on_capacity()
     }
 
     // ...while `capacity` is what actually tracks the configuration.
-    const auto* svm = am::find_region(small, am::svm_base(0, 0), 4);
-    CHECK(svm != nullptr);
-    if (svm != nullptr) {
-        CHECK(svm->size == am::svm_window);
-        CHECK(svm->capacity == am::svm_min_capacity);
-        CHECK(svm->is_partially_backed());
+    const auto* sram = am::find_region(small, am::core_sram_base(0, 0), 4);
+    CHECK(sram != nullptr);
+    if (sram != nullptr) {
+        CHECK(sram->size == am::core_sram_window);
+        CHECK(sram->capacity == am::core_sram_min_capacity);
+        CHECK(sram->is_partially_backed());
     }
 
     const auto* ram = am::find_region(large, am::global_ram_base, 4);
@@ -173,41 +172,41 @@ void decoded_extent_does_not_depend_on_capacity()
         CHECK(!ram->is_partially_backed());
     }
 
-    // At the reference capacity the SVM window is fully backed.
+    // At the reference capacity the core SRAM window is fully backed.
     const auto reference = am::enumerate_regions(
-        1, am::svm_default_capacity, am::global_ram_default_capacity);
-    const auto* full = am::find_region(reference, am::svm_base(0, 0), 4);
+        1, am::core_sram_default_capacity, am::global_ram_default_capacity);
+    const auto* full = am::find_region(reference, am::core_sram_base(0, 0), 4);
     CHECK(full != nullptr);
     if (full != nullptr) {
-        CHECK(full->capacity == am::svm_window);
+        CHECK(full->capacity == am::core_sram_window);
         CHECK(!full->is_partially_backed());
     }
 }
 
 void unbacked_addresses_decode_but_are_not_backed()
 {
-    const auto regions = am::enumerate_regions(1, am::svm_min_capacity,
+    const auto regions = am::enumerate_regions(1, am::core_sram_min_capacity,
                                                am::global_ram_min_capacity);
 
-    const std::uint64_t base = am::svm_base(0, 0);
-    const std::uint64_t above = base + am::svm_min_capacity;
+    const std::uint64_t base = am::core_sram_base(0, 0);
+    const std::uint64_t above = base + am::core_sram_min_capacity;
 
-    const auto* svm = am::find_region(regions, above, 4);
-    CHECK_MSG(svm != nullptr,
-              "an address inside the SVM window above the capacity must still "
-              "decode to the SVM, so the target reports the error");
-    if (svm != nullptr) {
-        CHECK(svm->name == "chip0.core0.svm");
-        CHECK(!am::backs(*svm, above, 4));
-        CHECK(am::backs(*svm, base, 4));
-        CHECK(am::backs(*svm, above - 4, 4));
+    const auto* sram = am::find_region(regions, above, 4);
+    CHECK_MSG(sram != nullptr,
+              "an address inside the core SRAM window above the capacity must "
+              "still decode to the SRAM, so the target reports the error");
+    if (sram != nullptr) {
+        CHECK(sram->name == "chip0.core0.sram");
+        CHECK(!am::backs(*sram, above, 4));
+        CHECK(am::backs(*sram, base, 4));
+        CHECK(am::backs(*sram, above - 4, 4));
         // A transfer straddling the capacity boundary is not backed either.
-        CHECK(!am::backs(*svm, above - 2, 4));
+        CHECK(!am::backs(*sram, above - 2, 4));
     }
 
     // The byte immediately past the window belongs to core_control, not to a
-    // hole and not to the SVM.
-    const auto* next = am::find_region(regions, base + am::svm_window, 4);
+    // hole and not to the SRAM.
+    const auto* next = am::find_region(regions, base + am::core_sram_window, 4);
     CHECK(next != nullptr);
     if (next != nullptr) {
         CHECK(next->name == "chip0.core0.control");
@@ -219,14 +218,19 @@ void region_names_are_unique()
     // Non-overlap alone would not catch two regions given the same identity,
     // and the name is what a metrics report attributes traffic to.
     const auto regions = am::enumerate_regions(max_chips,
-                                               am::svm_default_capacity,
+                                               am::core_sram_default_capacity,
                                                am::global_ram_default_capacity);
     std::set<std::string> names;
     for (const auto& r : regions) {
         CHECK_MSG(names.insert(r.name).second, "duplicate region name " + r.name);
     }
-    // 3 global + 8 chips * (2 chip-level + 2 cores * 5 core-level)
-    CHECK(regions.size() == 3 + 8 * (2 + 2 * 5));
+    // 3 global + 8 chips * (2 chip-level + 2 cores * 6 core-level)
+    CHECK(regions.size()
+          == am::global_regions
+                 + max_chips
+                       * (am::regions_per_chip_level
+                          + cores_per_chip * am::regions_per_core));
+    CHECK(regions.size() == 3 + 8 * (2 + 2 * 6));
 }
 
 void every_named_resource_is_inside_its_aperture()
@@ -245,16 +249,18 @@ void every_named_resource_is_inside_its_aperture()
             const std::uint64_t size = am::core_aperture_stride;
 
             CHECK(am::contains(cbase, csize, base, size));
-            CHECK(am::contains(base, size, am::svm_base(chip, core),
-                               am::svm_max_capacity));
+            CHECK(am::contains(base, size, am::core_sram_base(chip, core),
+                               am::core_sram_window));
             CHECK(am::contains(base, size, am::core_control(chip, core),
                                am::core_control_size));
             CHECK(am::contains(base, size, am::core_counters(chip, core),
                                am::core_counters_size));
-            for (mxu_id_t mxu = 0; mxu < mxus_per_core; ++mxu) {
-                CHECK(am::contains(base, size, am::mxu_control(chip, core, mxu),
-                                   am::mxu_control_size));
-            }
+            CHECK(am::contains(base, size, am::sa_control(chip, core),
+                               am::sa_control_size));
+            CHECK(am::contains(base, size, am::dma_control(chip, core),
+                               am::dma_control_size));
+            CHECK(am::contains(base, size, am::transform_control(chip, core),
+                               am::transform_control_size));
         }
     }
 }
@@ -299,24 +305,34 @@ void hart_ids_are_unique_and_reversible()
 
 void find_region_locates_and_rejects()
 {
-    const auto regions = am::enumerate_regions(2, am::svm_default_capacity,
+    const auto regions = am::enumerate_regions(2, am::core_sram_default_capacity,
                                                am::global_ram_default_capacity);
 
-    const auto* svm = am::find_region(regions, am::svm_base(1, 1), 64);
-    CHECK(svm != nullptr);
-    if (svm != nullptr) {
-        CHECK(svm->name == "chip1.core1.svm");
-        CHECK(svm->kind == am::region_kind::memory);
-        CHECK(svm->chip == 1);
-        CHECK(svm->core == 1);
+    const auto* sram = am::find_region(regions, am::core_sram_base(1, 1), 64);
+    CHECK(sram != nullptr);
+    if (sram != nullptr) {
+        CHECK(sram->name == "chip1.core1.sram");
+        CHECK(sram->kind == am::region_kind::memory);
+        CHECK(sram->chip == 1);
+        CHECK(sram->core == 1);
     }
 
-    const auto* mxu = am::find_region(regions, am::mxu_control(0, 1, 1), 4);
-    CHECK(mxu != nullptr);
-    if (mxu != nullptr) {
-        CHECK(mxu->name == "chip0.core1.mxu1_control");
-        CHECK(mxu->kind == am::region_kind::mmio);
+    const auto* dma = am::find_region(regions, am::dma_control(0, 1), 4);
+    CHECK(dma != nullptr);
+    if (dma != nullptr) {
+        CHECK(dma->name == "chip0.core1.dma_control");
+        CHECK(dma->kind == am::region_kind::mmio);
     }
+
+    // The D14 windows are distinct resources, not one strided array: an
+    // off-by-one in the offsets would still produce three regions, so the
+    // test names each one at its own address.
+    const auto* sa = am::find_region(regions, am::sa_control(1, 0), 4);
+    CHECK(sa != nullptr && sa->name == "chip1.core0.sa_control");
+    const auto* transform =
+        am::find_region(regions, am::transform_control(1, 0), 4);
+    CHECK(transform != nullptr
+          && transform->name == "chip1.core0.transform_control");
 
     // A chip that is not instantiated does not decode.
     CHECK(am::find_region(regions, am::chip_base(5), 4) == nullptr);
@@ -332,14 +348,14 @@ void find_region_locates_and_rejects()
 void enumerate_rejects_bad_arguments()
 {
     CHECK(throws_invalid_argument(
-        [] { am::enumerate_regions(0, am::svm_default_capacity,
+        [] { am::enumerate_regions(0, am::core_sram_default_capacity,
                                    am::global_ram_default_capacity); }));
     CHECK(throws_invalid_argument(
-        [] { am::enumerate_regions(max_chips + 1, am::svm_default_capacity,
+        [] { am::enumerate_regions(max_chips + 1, am::core_sram_default_capacity,
                                    am::global_ram_default_capacity); }));
     // Above the 16 MiB window.
     CHECK(throws_invalid_argument(
-        [] { am::enumerate_regions(1, am::svm_max_capacity * 2,
+        [] { am::enumerate_regions(1, am::core_sram_max_capacity * 2,
                                    am::global_ram_default_capacity); }));
     // Not a power of two.
     CHECK(throws_invalid_argument(
@@ -347,7 +363,7 @@ void enumerate_rejects_bad_arguments()
                                    am::global_ram_default_capacity); }));
     // Global RAM above its window.
     CHECK(throws_invalid_argument(
-        [] { am::enumerate_regions(1, am::svm_default_capacity,
+        [] { am::enumerate_regions(1, am::core_sram_default_capacity,
                                    am::global_ram_max_capacity * 2); }));
 }
 

@@ -198,8 +198,14 @@ echo "packaged configuration runs PASS"
   && env -u LD_LIBRARY_PATH ./tpu_v3_soc --config configs/mesh_4x4.yaml \
          --print-address-map ) >"${evidence_dir}/address_map.log" 2>&1 \
     || fail "packaged --print-address-map failed"
-grep -q 'chip7.core1.mxu1_control' "${evidence_dir}/address_map.log" \
+grep -q 'chip7.core1.transform_control' "${evidence_dir}/address_map.log" \
     || fail "packaged address map is incomplete"
+# The Phase 3 migration gate, checked on the packaged binary rather than only
+# in the build tree: the legacy Phase 1 names must be gone from generated,
+# firmware-visible address output (historical audits may still quote them).
+if grep -qiE 'svm|mxu' "${evidence_dir}/address_map.log"; then
+    fail "the packaged address map still emits the pre-D14 SVM/MXU names"
+fi
 
 env -u LD_LIBRARY_PATH "${moved_bin}" --version \
     >"${evidence_dir}/version.log" 2>&1 \
@@ -260,16 +266,20 @@ require(match is not None, "--version does not report a revision")
 require(match.group(1) == source["build_revision"],
         f"--version says {match.group(1)}, manifest says {source['build_revision']}")
 
-# The MXU backend is chosen at build time and the binary refuses any other, so
-# the manifest cannot name a backend that did not run.
-backend = manifest["configuration"]["mxu_backend"]
-require(backend == "fast", f"unexpected MXU backend {backend!r}")
-match = re.search(r"MXU backend     : (\S+)", version_text)
-require(match is not None, "--version does not report the MXU backend")
-require(match.group(1) == backend,
-        f"--version says backend {match.group(1)}, manifest says {backend}")
-require("BF16" in manifest["configuration"]["mxu_arithmetic"],
-        "the MXU arithmetic contract is not recorded")
+# The matrix-engine geometry is chosen at build time and the binary refuses any
+# other, so the manifest cannot name a geometry that did not run. Decision
+# record D14: no build, manifest or report may call the 64x64 bring-up array
+# 128x128.
+geometry = manifest["configuration"]["sa_geometry"]
+require(geometry == "64x64", f"unexpected SA geometry {geometry!r}")
+match = re.search(r"SA geometry     : (\S+)", version_text)
+require(match is not None, "--version does not report the SA geometry")
+require(match.group(1) == geometry,
+        f"--version says geometry {match.group(1)}, manifest says {geometry}")
+require("BF16" in manifest["configuration"]["sa_arithmetic"],
+        "the matrix arithmetic contract is not recorded")
+require("promotion gate" in manifest["configuration"]["sa_geometry_note"],
+        "the manifest does not record why 128x128 is unavailable")
 
 # The manifest must not claim a dependency the binary does not contain: Spike
 # is pinned but not linked until Phase 2, and saying otherwise would put a
@@ -315,7 +325,7 @@ cmake \
     -DCXX_COMPILER_VERSION=11.5.0 \
     -DCMAKE_VERSION_USED=3.31.8 \
     -DSYSTEMC_HOME="${systemc_home}" \
-    -DMXU_BACKEND=fast \
+    -DSA_GEOMETRY=64x64 \
     -DSPIKE_REVISION=16c0b60119f65a648643cf5d41e4e38e871f0bad \
     -DSPIKE_LINKED=FALSE \
     -DSAURIA_OPTION_ENABLED=TRUE \
@@ -346,14 +356,17 @@ assert sauria["selectable"] is False, sauria
 print("no-git manifest PASS")
 PY
 
-# ── negative control: an invalid MXU backend must not configure ──────────────
+# ── negative control: an invalid SA geometry must not configure ──────────────
 #
 # `set_property(... STRINGS ...)` only fills a GUI drop-down; without an
 # explicit check a typo configured happily and was copied verbatim into the
-# manifest, naming a backend the binary does not contain.
+# manifest, naming a geometry the binary does not contain. `128x128` is in the
+# list because it is the one a well-meaning user would actually type: it is the
+# architectural destination, and it is precisely the value D14 forbids a build
+# from claiming before the NPU-team promotion gate.
 
-for bad_backend in not_a_backend sauria; do
-    if cmake -S "${repo_root}" -B "${work_dir}/badcfg_${bad_backend}" \
+for bad_geometry in not_a_geometry 128x128; do
+    if cmake -S "${repo_root}" -B "${work_dir}/badcfg_${bad_geometry}" \
         -DCMAKE_BUILD_TYPE=Release \
         -DSYSTEMC_HOME="${systemc_home}" \
         -DCDC_BUILD_TPU_V3_SOC=ON \
@@ -363,13 +376,13 @@ for bad_backend in not_a_backend sauria; do
         -DCDC_BUILD_CPU_EVAL=OFF \
         -DCDC_BUILD_CUSTOM_SOC=OFF \
         -DCDC_BUILD_NOC_SOC=OFF \
-        -DTPU_V3_MXU_BACKEND="${bad_backend}" \
-        >"${evidence_dir}/badcfg_${bad_backend}.log" 2>&1; then
-        fail "TPU_V3_MXU_BACKEND=${bad_backend} configured successfully"
+        -DTPU_V3_SA_GEOMETRY="${bad_geometry}" \
+        >"${evidence_dir}/badcfg_${bad_geometry}.log" 2>&1; then
+        fail "TPU_V3_SA_GEOMETRY=${bad_geometry} configured successfully"
     fi
-    grep -q "TPU_V3_MXU_BACKEND" "${evidence_dir}/badcfg_${bad_backend}.log" \
-        || fail "the ${bad_backend} refusal does not name TPU_V3_MXU_BACKEND"
+    grep -q "TPU_V3_SA_GEOMETRY" "${evidence_dir}/badcfg_${bad_geometry}.log" \
+        || fail "the ${bad_geometry} refusal does not name TPU_V3_SA_GEOMETRY"
 done
-echo "MXU backend validation PASS"
+echo "SA geometry validation PASS"
 
 echo "tpu_v3_soc packaging regression PASS"

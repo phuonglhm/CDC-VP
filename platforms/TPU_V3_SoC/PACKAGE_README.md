@@ -27,13 +27,17 @@ appear in.
 
 ## What this build actually does
 
-**Phase 1 of the implementation plan.** It reads a configuration, validates it
-against the frozen architecture, elaborates a SystemC top level, and reports
-the machine it is configured for.
+**Phase 3 of the implementation plan.** It reads a configuration, validates it
+against the frozen architecture, elaborates a SystemC top level with one
+sparsely page-backed core SRAM per NEO-CORE and the global RAM store, and
+reports the machine it is configured for.
 
-It does **not** yet instantiate cores, MXUs, SVM or the NoC. The binary says so
-in its own output. Nothing it prints is a simulation result, and no timing
-number can be quoted from it, because it does not produce any.
+It does **not** yet instantiate a hart, the matrix engine, the DMA, the
+transform engine or the NoC, and it does not compose the NEO-CORE fabrics —
+those exist as tested components in the source tree and are wired into a core
+in Phase 7. The binary says so in its own output. Nothing it prints is a
+simulation result, and no timing number can be quoted from it, because it does
+not produce any.
 
 The phases that add those components are listed in
 `components/TPU_V3/docs/TPU_V3_IMPLEMENTATION_PLAN.md` in the source
@@ -46,8 +50,11 @@ It is not YAML, despite the file extension. An unknown key is an error rather
 than a warning, so a typo cannot leave a run silently using a default.
 
 Accepted keys: `platform`, `name`, `mesh_x`, `mesh_y`, `chips`,
-`svm_size_bytes`, `global_ram_size_bytes`, `mxu_backend`, `mxu_arithmetic`,
-`noc_timing`. Sizes accept `K`/`KiB`, `M`/`MiB`, `G`/`GiB` suffixes.
+`core_sram_size_bytes`, `global_ram_size_bytes`, `sa_geometry`, `sa_datatype`,
+`sa_source_revision`, `dma_max_burst_bytes`, `local_sram_data_width_bits`,
+`local_sram_banks`, `local_sram_bank_mapping`, `local_sram_pipeline_stages`,
+`local_sram_arbitration`, `noc_timing`. Sizes accept `K`/`KiB`, `M`/`MiB`,
+`G`/`GiB` suffixes.
 
 ## Limits this build enforces
 
@@ -58,24 +65,37 @@ Accepted keys: `platform`, `name`, `mesh_x`, `mesh_y`, `chips`,
   instantiates;
 * one mesh node must be left free for the global targets, because the NoC
   refuses a target on a node that hosts an initiator;
-* MXU geometry is fixed at 128x128, two per core, two cores per chip. A
-  configuration saying otherwise is rejected, not adapted;
-* the **MXU backend is chosen when this binary is compiled**. A configuration
+* one matrix engine, one DMA and one transform engine per NEO-CORE, two cores
+  per chip. A configuration saying otherwise is rejected, not adapted;
+* the matrix geometry is the verified **64x64** bring-up array. 128x128 is the
+  architectural destination and is refused until the NPU team's promotion gate
+  passes; no build, manifest or report may call the bring-up array 128x128;
+* the **geometry is chosen when this binary is compiled**. A configuration
   selecting a different one is refused, so `BUILD_MANIFEST.json` cannot name a
-  backend that did not run.
+  geometry that did not run;
+* the local-SRAM datapath width, bank count and pipeline depth have **no
+  default**. They are physical values still pending the SRAM macro, clock
+  target and PD constraints, so the configuration must state them and the
+  report prints them labelled "provisional".
 
 ## Memory windows versus capacity
 
-SVM has a 16 MiB window per core and global RAM a 1 GiB window. The instantiated
-capacity may be smaller — `--print-address-map` annotates any region whose
-window is larger than its storage.
+Core SRAM has a 16 MiB window per NEO-CORE and global RAM a 1 GiB window. The
+instantiated capacity may be smaller — `--print-address-map` annotates any
+region whose window is larger than its storage.
 
 The whole window always decodes. An access above the capacity is an error from
 the target, never an alias into valid storage, so the decoded map does not
 change with the memory size.
 
-The reference SVM capacity is the full 16 MiB. A smaller value is a bring-up
-configuration and the report labels it as one.
+The reference core SRAM capacity is the full 16 MiB. A smaller value is a
+bring-up configuration and the report labels it as one.
+
+Behind the capacity there is a third quantity: **host memory**. Storage is
+backed sparsely in deterministic 4 KiB pages, so the largest configuration
+describes 1.25 GiB of logical memory and commits only the pages something has
+actually written. The report prints logical memory and allocated backing side
+by side; they are different numbers and neither may be quoted as the other.
 
 ## Licences
 

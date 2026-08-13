@@ -42,20 +42,22 @@ std::string core_prefix(chip_id_t chip, core_id_t core)
 } // namespace
 
 std::vector<region> enumerate_regions(unsigned chips,
-                                      std::uint64_t svm_capacity,
+                                      std::uint64_t core_sram_capacity,
                                       std::uint64_t global_ram_capacity)
 {
     require_range("chips", chips, 1, max_chips);
-    require_range("svm_capacity", svm_capacity, svm_min_capacity,
-                  svm_max_capacity);
-    require_power_of_two("svm_capacity", svm_capacity);
+    require_range("core_sram_capacity", core_sram_capacity,
+                  core_sram_min_capacity, core_sram_max_capacity);
+    require_power_of_two("core_sram_capacity", core_sram_capacity);
     require_range("global_ram_capacity", global_ram_capacity,
                   global_ram_min_capacity, global_ram_max_capacity);
     require_power_of_two("global_ram_capacity", global_ram_capacity);
 
     std::vector<region> regions;
-    // 3 global + per chip: 2 chip-level + 2 cores * 5 core-level.
-    regions.reserve(3 + std::size_t{chips} * (2 + cores_per_chip * 5));
+    regions.reserve(global_regions
+                    + std::size_t{chips}
+                        * (regions_per_chip_level
+                           + cores_per_chip * regions_per_core));
 
     // `size` is the decoded extent and never depends on a capacity; only
     // `capacity` does. An MMIO register file backs its whole window, so the
@@ -86,17 +88,18 @@ std::vector<region> enumerate_regions(unsigned chips,
         for (core_id_t core = 0; core < cores_per_chip; ++core) {
             const std::string prefix = core_prefix(chip, core);
 
-            regions.push_back(memory(svm_base(chip, core), svm_window,
-                                     svm_capacity, prefix + "svm", chip, core));
+            regions.push_back(memory(core_sram_base(chip, core),
+                                     core_sram_window, core_sram_capacity,
+                                     prefix + "sram", chip, core));
             regions.push_back(mmio(core_control(chip, core), core_control_size,
                                    prefix + "control", chip, core));
-            for (mxu_id_t mxu = 0; mxu < mxus_per_core; ++mxu) {
-                regions.push_back(mmio(mxu_control(chip, core, mxu),
-                                       mxu_control_size,
-                                       prefix + "mxu" + std::to_string(mxu)
-                                           + "_control",
-                                       chip, core));
-            }
+            regions.push_back(mmio(sa_control(chip, core), sa_control_size,
+                                   prefix + "sa_control", chip, core));
+            regions.push_back(mmio(dma_control(chip, core), dma_control_size,
+                                   prefix + "dma_control", chip, core));
+            regions.push_back(mmio(transform_control(chip, core),
+                                   transform_control_size,
+                                   prefix + "transform_control", chip, core));
             regions.push_back(mmio(core_counters(chip, core),
                                    core_counters_size, prefix + "counters",
                                    chip, core));

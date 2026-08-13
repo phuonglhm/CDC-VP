@@ -7,9 +7,10 @@ What they cannot cover is what this file does: the parser, the command-line
 overrides, and — most importantly — that a bad configuration is *refused* at
 the platform boundary rather than silently normalised.
 
-Roughly half of these are negative controls. A validator that accepts
-``mxu.rows = 64`` is worse than no validator, because the run it permits
-produces numbers that look exactly like real ones.
+Roughly half of these are negative controls. A validator that accepts a
+128x128 matrix geometry the NPU team has not delivered is worse than no
+validator, because the run it permits produces numbers that look exactly like
+real ones and carry a name no source backs.
 
 Usage: test_tpu_v3_cli.py <tpu_v3_soc binary> <configs dir>
 """
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import resource
 import subprocess
 import sys
 import tempfile
@@ -80,7 +82,9 @@ def test_help_and_version(binary: str) -> None:
     for key in (
         "--config",
         "--chips",
-        "--mxu-backend",
+        "--sa-geometry",
+        "--core-sram-size",
+        "--local-sram-banks",
         "--noc-timing",
         "--print-address-map",
     ):
@@ -91,7 +95,7 @@ def test_help_and_version(binary: str) -> None:
         "build type",
         "CDC-VP revision",
         "compiler",
-        "MXU backend",
+        "SA geometry",
         "SystemC",
     ):
         check(key in version, f"--version does not report {key!r}")
@@ -111,18 +115,36 @@ def test_shipped_configs_all_run(binary: str, configs: pathlib.Path) -> None:
             f"{config.name}: report does not name the timing backend",
         )
         check("status         : OK" in text, f"{config.name}: no OK status")
+        # The geometry must be named, and must be the verified bring-up array.
+        # Decision record D14: no build, manifest or report may call it
+        # 128x128.
         check(
-            "128x128" in text, f"{config.name}: MXU geometry is not reported"
+            "64x64 bring-up" in text,
+            f"{config.name}: SA geometry is not reported",
         )
         # A numeric result is not interpretable without its arithmetic.
         check(
-            "MXU arithmetic       : bf16_fp32" in text,
-            f"{config.name}: MXU arithmetic is not reported",
+            "matrix datatype      : bf16_fp32" in text,
+            f"{config.name}: matrix datatype is not reported",
         )
         check(
             "reference capacity" in text,
-            f"{config.name}: shipped configs must use the D6 reference SVM",
+            f"{config.name}: shipped configs must use the D6 reference core "
+            f"SRAM capacity",
         )
+        # D15 leaves the fabric's physical values open; wherever they appear
+        # they must appear labelled.
+        check(
+            "provisional" in text,
+            f"{config.name}: the open D15 fabric values are not labelled "
+            f"provisional",
+        )
+        # The legacy Phase 1 vocabulary must be gone from generated output.
+        for legacy in ("svm", "SVM", "mxu", "MXU"):
+            check(
+                legacy not in text,
+                f"{config.name}: the report still says {legacy!r}",
+            )
 
     names = {c.stem for c in found}
     check(
@@ -137,7 +159,11 @@ def test_largest_config_is_the_documented_maximum(
     text = expect_ok(binary, "--config", str(configs / "mesh_4x4.yaml"))
     check("chips                : 8 of 8" in text, "mesh_4x4 is not 8 chips")
     check("hart 15" in text, "mesh_4x4 does not reach hart 15")
-    check("MXUs                 : 32" in text, "mesh_4x4 is not 32 MXUs")
+    check(
+        "matrix engines       : 16" in text,
+        "mesh_4x4 is not 16 matrix engines",
+    )
+    check("DMA engines          : 16" in text, "mesh_4x4 is not 16 DMAs")
 
 
 def test_address_map_output(binary: str, configs: pathlib.Path) -> None:
@@ -148,13 +174,21 @@ def test_address_map_output(binary: str, configs: pathlib.Path) -> None:
         "0x00000000",  # boot ROM
         "0x80000000",  # global RAM
         "0xc0000000",  # chip 0 aperture
-        "chip7.core1.mxu1_control",
+        "chip7.core1.sa_control",
+        "chip7.core1.dma_control",
+        "chip7.core1.transform_control",
+        "chip0.core0.sram",
         "global.ram",
     ):
         check(needle in text, f"address map output is missing {needle!r}")
 
-    # 3 global + 8 chips * (2 chip-level + 2 cores * 5 core-level)
-    check("(99 regions)" in text, f"unexpected region count:\n{text[:200]}")
+    # The Phase 3 migration gate: the legacy names are absent from generated,
+    # firmware-visible address output. Historical audits may still quote them.
+    for legacy in ("svm", "mxu"):
+        check(legacy not in text, f"address map still emits {legacy!r}")
+
+    # 3 global + 8 chips * (2 chip-level + 2 cores * 6 core-level)
+    check("(115 regions)" in text, f"unexpected region count:\n{text[:200]}")
 
 
 def test_window_and_capacity_are_reported_separately(
@@ -163,40 +197,45 @@ def test_window_and_capacity_are_reported_separately(
     """Decision record D6: the full window decodes; capacity is separate.
 
     The failure this guards against is subtle. If the map shrank to the
-    instantiated capacity, an address just above the SVM would be *unmapped* in
-    a bring-up configuration and *valid* in the reference one, so the same
-    firmware pointer bug would report a decode error on one run and corrupt
-    data on another.
+    instantiated capacity, an address just above the core SRAM would be
+    *unmapped* in a bring-up configuration and *valid* in the reference one, so
+    the same firmware pointer bug would report a decode error on one run and
+    corrupt data on another.
     """
     config = str(configs / "single_chip.yaml")
 
-    # Reference: the SVM window is fully backed, so nothing is annotated.
+    # Reference: the window is fully backed, so nothing is annotated.
     reference = expect_ok(binary, "--config", config, "--print-address-map")
-    svm_lines = [ln for ln in reference.splitlines() if "core0.svm" in ln]
-    check(len(svm_lines) == 1, f"expected one core0.svm line, got {svm_lines}")
-    if svm_lines:
-        check("0x01000000" in svm_lines[0], "SVM window is not 16 MiB")
+    sram_lines = [ln for ln in reference.splitlines() if "core0.sram" in ln]
+    check(len(sram_lines) == 1, f"expected one core0.sram line, got {sram_lines}")
+    if sram_lines:
+        check("0x01000000" in sram_lines[0], "core SRAM window is not 16 MiB")
         check(
-            "backed" not in svm_lines[0],
-            f"reference SVM should be fully backed: {svm_lines[0]}",
+            "backed" not in sram_lines[0],
+            f"the reference core SRAM should be fully backed: {sram_lines[0]}",
         )
 
     # Bring-up: same window, smaller storage, and the difference is stated.
     bringup = expect_ok(
-        binary, "--config", config, "--svm-size", "1MiB", "--print-address-map"
+        binary,
+        "--config",
+        config,
+        "--core-sram-size",
+        "1MiB",
+        "--print-address-map",
     )
-    svm_lines = [ln for ln in bringup.splitlines() if "core0.svm" in ln]
-    check(len(svm_lines) == 1, f"expected one core0.svm line, got {svm_lines}")
-    if svm_lines:
+    sram_lines = [ln for ln in bringup.splitlines() if "core0.sram" in ln]
+    check(len(sram_lines) == 1, f"expected one core0.sram line, got {sram_lines}")
+    if sram_lines:
         check(
-            "0x01000000" in svm_lines[0],
-            f"the SVM window must not shrink with the capacity: {svm_lines[0]}",
+            "0x01000000" in sram_lines[0],
+            f"the window must not shrink with the capacity: {sram_lines[0]}",
         )
         check(
-            "[backed 1 MiB of 16 MiB" in svm_lines[0],
-            f"the backed capacity is not reported: {svm_lines[0]}",
+            "[backed 1 MiB of 16 MiB" in sram_lines[0],
+            f"the backed capacity is not reported: {sram_lines[0]}",
         )
-        check("never an alias" in svm_lines[0], "alias policy is not stated")
+        check("never an alias" in sram_lines[0], "alias policy is not stated")
 
     # The core control register file must sit immediately above the window in
     # both, which is what proves the window did not move.
@@ -224,11 +263,19 @@ def test_overrides_apply_in_any_order(binary: str, configs: pathlib.Path) -> Non
     before = expect_ok(binary, "--chips", "3", "--config", config)
     check("chips                : 3 of 8" in before, "--chips before --config")
 
-    sized = expect_ok(binary, "--config", config, "--svm-size", "8MiB")
-    check("SVM per core         : 8 MiB" in sized, "--svm-size 8MiB")
+    sized = expect_ok(binary, "--config", config, "--core-sram-size", "8MiB")
+    check(
+        "core SRAM per core   : 8 MiB" in sized, "--core-sram-size 8MiB"
+    )
 
-    hexed = expect_ok(binary, "--config", config, "--svm-size", "0x100000")
-    check("SVM per core         : 1 MiB" in hexed, "--svm-size hex")
+    hexed = expect_ok(binary, "--config", config, "--core-sram-size", "0x100000")
+    check("core SRAM per core   : 1 MiB" in hexed, "--core-sram-size hex")
+
+    banks = expect_ok(binary, "--config", config, "--local-sram-banks", "8")
+    check(
+        "128-bit x 8 banks" in banks,
+        "--local-sram-banks is not reflected in the report",
+    )
 
     named = expect_ok(binary, "--config", config, "--name", "experiment_7")
     check("'experiment_7'" in named, "--name override")
@@ -253,39 +300,58 @@ def test_frozen_architecture_is_refused(binary: str, configs: pathlib.Path) -> N
     # Four chips on 2x2 leaves no node for the global targets.
     expect_rejected(binary, "NoLoopback", "--config", config, "--chips", "4")
 
-    # The MXU backend is a *build-time* choice. A configuration asking for a
-    # different one must fail naming the CMake variable, because the package
+    # The matrix geometry is a *build-time* choice. A configuration asking for
+    # a different one must fail naming the CMake variable, because the package
     # manifest records the compiled value: honouring the file silently would
-    # make the manifest describe a run it did not describe.
+    # make the manifest describe a run it did not describe, and decision
+    # record D14 forbids any build, manifest or report calling the 64x64
+    # bring-up array 128x128.
     #
-    # (The component-level "not implemented until Phase 9" refusal is a
+    # (The component-level "the promotion gate has not passed" refusal is a
     # separate rule with its own unit test; this platform rule fires first
     # because it is more specific about what to change.)
     expect_rejected(
         binary,
-        "TPU_V3_MXU_BACKEND=fast",
+        "TPU_V3_SA_GEOMETRY=64x64",
         "--config",
         config,
-        "--mxu-backend",
-        "sauria",
+        "--sa-geometry",
+        "128x128",
     )
 
-    # Arithmetic is a numeric contract, not a backend detail: an unimplemented
-    # one must not quietly produce BF16/FP32 results under another name.
+    # An unnamed geometry has neither a source nor golden tests.
     expect_rejected(
         binary,
-        "mxu.arithmetic",
+        "TPU_V3_SA_GEOMETRY=64x64",
         "--config",
         config,
-        "--mxu-arithmetic",
+        "--sa-geometry",
+        "32x32",
+    )
+
+    # The datatype is a numeric contract: an unimplemented one must not quietly
+    # produce BF16/FP32 results under another name.
+    expect_rejected(
+        binary,
+        "sa.datatype",
+        "--config",
+        config,
+        "--sa-datatype",
         "int8_int32",
     )
 
-    # SVM above its 16 MiB window, and a non-power-of-two capacity.
-    expect_rejected(binary, "svm_size_bytes", "--config", config,
-                    "--svm-size", "32MiB")
+    # Core SRAM above its 16 MiB window, and a non-power-of-two capacity.
+    expect_rejected(binary, "sram_size_bytes", "--config", config,
+                    "--core-sram-size", "32MiB")
     expect_rejected(binary, "power of two", "--config", config,
-                    "--svm-size", "3145728")
+                    "--core-sram-size", "3145728")
+
+    # D15's open physical values are refused when not stated, and when stated
+    # as something no bank decoder would be built from.
+    expect_rejected(binary, "power of two", "--config", config,
+                    "--local-sram-banks", "6")
+    expect_rejected(binary, "no architectural default", "--config", config,
+                    "--local-sram-banks", "0")
 
 
 def test_bad_command_lines(binary: str, configs: pathlib.Path) -> None:
@@ -297,7 +363,10 @@ def test_bad_command_lines(binary: str, configs: pathlib.Path) -> None:
     # A typo in an enum must not silently select the default.
     expect_rejected(binary, "detaild", "--config", config,
                     "--noc-timing", "detaild")
-    expect_rejected(binary, "suffix", "--config", config, "--svm-size", "4Mib!")
+    expect_rejected(binary, "suffix", "--config", config,
+                    "--core-sram-size", "4Mib!")
+    expect_rejected(binary, "ROWSxCOLUMNS", "--config", config,
+                    "--sa-geometry", "64by64")
 
 
 def test_config_file_syntax(binary: str) -> None:
@@ -311,15 +380,18 @@ def test_config_file_syntax(binary: str) -> None:
             "platform: tpu_v3_soc   # trailing comment\n"
             "name: from_file\n"
             "chips: 2\n"
-            "svm_size_bytes: 8MiB\n"
+            "core_sram_size_bytes: 8MiB\n"
         )
         text = expect_ok(binary, "--config", str(good))
         check("'from_file'" in text, "name from file")
         check("chips                : 2 of 8" in text, "chips from file")
-        check("SVM per core         : 8 MiB" in text, "svm size from file")
+        check(
+            "core SRAM per core   : 8 MiB" in text,
+            "core SRAM size from file",
+        )
 
         unknown = root / "unknown.yaml"
-        unknown.write_text("platform: tpu_v3_soc\nmxu_rows: 64\n")
+        unknown.write_text("platform: tpu_v3_soc\nsa_rows: 64\n")
         expect_rejected(binary, "unknown configuration key",
                         "--config", str(unknown))
 
@@ -358,20 +430,63 @@ def test_config_file_syntax(binary: str) -> None:
         check("'comments_only'" in text, "name falls back to the file stem")
 
 
-def test_report_is_honest_about_phase_1(binary: str, configs: pathlib.Path) -> None:
-    """The skeleton must not read as a working simulator.
+def test_report_is_honest_about_phase_3(binary: str, configs: pathlib.Path) -> None:
+    """A partial platform must not read as a working simulator.
 
-    A platform that printed a full hierarchy while instantiating nothing is
-    exactly how a Phase 1 skeleton gets mistaken for a Phase 7 model.
+    A platform that printed a full hierarchy while instantiating memories and
+    nothing else is exactly how a Phase 3 tree gets mistaken for a Phase 7
+    model.
     """
     text = expect_ok(binary, "--config", str(configs / "single_chip.yaml"))
-    check("Phase 1 skeleton" in text, "report does not say it is a skeleton")
-    check("TPU cores            : no" in text, "report claims cores exist")
-    check("MXUs                 : no" in text, "report claims MXUs exist")
-    check("NoC / global memory  : no" in text, "report claims a NoC exists")
+    check("This is the Phase 3 platform" in text, "report does not say which phase")
+    check("core SRAM            : yes" in text, "report denies the SRAM exists")
+    check("RV32GCV hart         : no" in text, "report claims a hart exists")
+    check("Sauria matrix engine : no" in text, "report claims an SA exists")
+    check("NEO DMA              : no" in text, "report claims a DMA exists")
+    check("NoC                  : no" in text, "report claims a NoC exists")
     check(
         "SystemC elaboration  : yes" in text,
         "report does not confirm the SystemC elaboration ran",
+    )
+
+
+def test_largest_memory_config_costs_almost_nothing(
+    binary: str, configs: pathlib.Path
+) -> None:
+    """The Phase 3 gate: ``mesh_4x4`` elaborates without eager host commitment.
+
+    ``mesh_4x4`` describes 1.25 GiB of logical memory — sixteen 16 MiB core
+    SRAMs plus a 1 GiB global RAM. Decision record D6 requires that to cost a
+    few megabytes of host memory until firmware writes to it, and a
+    ``std::vector`` per target would commit all of it before a single
+    instruction ran.
+
+    Both halves are checked. The report says how much backing is allocated,
+    which catches a target that quietly pre-touched its pages; the child's peak
+    RSS catches the case the report cannot see, where the memory is committed
+    somewhere the counters do not know about.
+    """
+    before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    text = expect_ok(binary, "--config", str(configs / "mesh_4x4.yaml"))
+    after = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+
+    check("logical total        : 1280 MiB" in text,
+          f"mesh_4x4 does not describe 1.25 GiB of logical memory:\n{text[-800:]}")
+    check("host backing in use  : 0 B" in text,
+          "an untouched configuration must commit no backing at all")
+    check("sparse pages" in text, "the backing policy is not stated")
+
+    # ru_maxrss is in kilobytes on Linux and is a high-water mark across every
+    # child this process has reaped, so it can only be read as an upper bound —
+    # which is exactly what is wanted here. 256 MiB is generous: the observed
+    # figure is around 10 MiB, and anything approaching the logical size would
+    # mean the storage was allocated eagerly.
+    peak_kib = max(before, after)
+    check(
+        peak_kib < 256 * 1024,
+        f"a child peaked at {peak_kib // 1024} MiB of RSS; mesh_4x4 describes "
+        f"1.25 GiB of logical memory and must not commit it (decision record "
+        f"D6)",
     )
 
 
@@ -399,7 +514,8 @@ def main(argv: list[str]) -> int:
     test_frozen_architecture_is_refused(binary, configs)
     test_bad_command_lines(binary, configs)
     test_config_file_syntax(binary)
-    test_report_is_honest_about_phase_1(binary, configs)
+    test_report_is_honest_about_phase_3(binary, configs)
+    test_largest_memory_config_costs_almost_nothing(binary, configs)
 
     if failures:
         print(f"\n{len(failures)} check(s) failed", file=sys.stderr)

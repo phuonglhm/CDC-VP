@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# The largest system Revision 1 can build: eight chips, sixteen RV32GCV harts,
-# thirty-two 128x128 MXUs.
+# The largest system Revision 1 can build: eight chips, sixteen NEO-COREs,
+# sixteen Sauria matrix engines, sixteen DMAs and sixteen transform engines.
 #
 # Eight chips on sixteen nodes is not a floorplan preference. The frozen
 # FlooNoC chimney manager id is three bits, so noc_interconnect accepts at most
@@ -10,9 +10,11 @@
 # is outside Revision 1 — see decision record D2 for everything that would have
 # to change together.
 #
-# Host cost once real storage exists (Phase 3 onwards): 16 SVMs x 16 MiB =
-# 256 MiB, plus 1 GiB of global RAM. Reduce svm_size_bytes for a bring-up run
-# on a small host; the run is then labelled as such in the report.
+# Logical memory: 16 core SRAMs x 16 MiB = 256 MiB, plus 1 GiB of global RAM.
+# That is address space, not host memory: Phase 3 backs both sparsely in 4 KiB
+# pages, so an untouched configuration costs its page index and nothing else
+# (decision record D6). Reduce core_sram_size_bytes for a bring-up run on a
+# small host; the run is then labelled as such in the report.
 
 platform: tpu_v3_soc
 name: mesh_4x4
@@ -21,9 +23,27 @@ mesh_x: 4
 mesh_y: 4
 chips: 8
 
-svm_size_bytes: 16MiB
+core_sram_size_bytes: 16MiB
 global_ram_size_bytes: 1GiB
 
-mxu_backend: fast
-mxu_arithmetic: bf16_fp32
+# The verified v4.2 bring-up array. 128x128 is the architectural destination
+# and is refused until the NPU team's promotion gate passes (decision record
+# D14); no build, manifest or report may call this engine 128x128.
+sa_geometry: 64x64
+sa_datatype: bf16_fp32
+
+# NEO Local SRAM Fabric — the native local-data plane (decision record D15).
+#
+# These three numbers are PROVISIONAL. D15 leaves the datapath width, the bank
+# count and the pipeline depth to the target SRAM macro, the clock target and
+# PD constraints, and forbids an illustrative width becoming an architectural
+# constant. They are stated here, in the open, rather than defaulted inside the
+# C++ schema — which is why the schema refuses zero and every report that uses
+# them prints the word "provisional".
+local_sram_data_width_bits: 128
+local_sram_banks: 4
+local_sram_bank_mapping: low_order_interleaved
+local_sram_pipeline_stages: 2
+local_sram_arbitration: round_robin
+
 noc_timing: fast

@@ -40,6 +40,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | D13 | Trap cause for a failed bus access (F13) | **Downstream conformance patch.** Page faults only from MMU translation; a bus, decode or target failure is an access fault chosen by access origin — 1 fetch, 5 load, 7 store/AMO. Protocol errors are model defects, not guest faults |
 | D14 | NEO-CORE architecture rebaseline | One VP++ RV32GCV hart, one shared core SRAM, one independent TPU_V3 DMA, one Sauria matrix engine and one Im2Col/Col2Im Transform engine. Integrate verified 64x64 Sauria first; promote to the NPU team's 128x128 source later. Never reuse the Sauria DMA. Its original single AXI-like-fabric wording is superseded by D15 |
 | D15 | NEO-CORE internal interconnect | Split control and data: 32-bit AXI4-Lite for MMIO control; a native, pipelined, banked-SRAM request/response fabric for internal bulk data; full AXI4 only at the external chip/NoC boundary. NEO DMA owns bulk external movement; the required VP++ instruction/global path also exits through that boundary. Do not build a full AXI data crossbar inside NEO-CORE |
+| D16 | Where the local-data plane may block | `neo_local_sram_fabric` has two timing modes. `annotated` is the default and never waits, so it is safe behind any NoC-reachable target; `arbitrated` blocks on a real per-bank round-robin arbiter and is the only mode in which fairness and back-pressure are behaviours rather than estimates. Every TLM target still never waits. A timing figure must name the mode that produced it |
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -962,19 +963,19 @@ Phase 3:
 
 | Item | Status | Evidence / remaining implementation |
 | --- | --- | --- |
-| Record D1-D15 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration is Phase 3 |
-| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one SA + Transform + split control/data fabrics | Documentation complete; implementation pending | D14/D15, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md` and the plan |
-| Rename SVM to core SRAM while retaining the 16 MiB window/capacity contract | Documentation complete; C++ symbol migration pending Phase 3 | D6 as amended by D14 |
+| Record D1-D16 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3 |
+| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one SA + Transform + split control/data fabrics | Documentation complete; SRAM and all three fabrics implemented and gated; DMA/SA/Transform pending Phases 4-6; composition pending Phase 7 | D14/D15, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and `tpu_v3_local_sram_fabric` / `tpu_v3_control_fabric` / `tpu_v3_external_bridge` |
+| Rename SVM to core SRAM while retaining the 16 MiB window/capacity contract | Complete | D6 as amended by D14; `address_map.h`, `architecture_config.h`, the four shipped configurations and the packaged `--print-address-map` output all use `CORE_SRAM`, and both the CLI regression and the packaging regression fail if the legacy names reappear |
 | Set BF16 operands with FP32 accumulation as the target SA arithmetic | Complete as a contract; not proven by the v4.2 bring-up type | D6/D14 |
 | Integrate Sauria 64x64 first and promote the NPU-team 128x128 delivery later | Planned | D14 promotion gate |
 | Obtain verified Im2Col/Col2Im source from the NPU team | Open external input; does not block SRAM/fabric/DMA/SA64 | D14 Transform boundary |
 | Keep TPU_V3 DMA independent of Sauria DMA | Approved; implementation pending | D14 DMA boundary |
 | Replace default no-op CPU setters with D5 `cpu_config` properties | Complete | Phase 2 wrapper and configuration tests |
-| Retire legacy `TPU_V3_MXU_BACKEND` and validate `TPU_V3_SA_GEOMETRY` | Pending Phase 3/5 migration | 64x64 accepted first; 128x128 gated by D14 |
+| Retire legacy `TPU_V3_MXU_BACKEND` and validate `TPU_V3_SA_GEOMETRY` | Complete | The CMake variable, the compiled-in value, `--version` and the manifest are all `TPU_V3_SA_GEOMETRY`; `128x128` and an unnamed geometry are both refused at configure time, with the packaging regression's negative control covering each |
 | Make build provenance valid without Git and separate build/package revisions | Complete | Manifest schema 2 and packaging regression |
-| Align core SRAM window/capacity decode behavior with D6/D14 | Legacy behavior complete; symbol migration pending Phase 3 | Code, tests and `ADDRESS_MAP.md` |
+| Align core SRAM window/capacity decode behavior with D6/D14 | Complete | `core_sram` classifies an access above the capacity as `capacity_error` and never aliases it; `tpu_v3_core_sram`, `tpu_v3_address_map` and the CLI regression each check it |
 | Separate the global Sauria option from linked/selectable binary state | Complete | Manifest and packaging regression |
-| Require sparse host backing for the maximum logical memory configuration | Contract complete; Phase 3 code pending | D6 and the Phase 3 gate |
+| Require sparse host backing for the maximum logical memory configuration | Complete | `sparse_memory` with deterministic 4 KiB pages; `mesh_4x4` reports 1.25 GiB logical with 0 B allocated and peaks around 10 MiB of RSS, checked by `tpu_v3_sparse_memory` and by the CLI regression's own `ru_maxrss` bound |
 | Replace the Spike runtime plan with RISC-V VP++ and retain Spike as a golden reference | Complete | D3; effective source `7a36fe85...` + approved F11/D12/D13 patch series, backend builds and passes `riscv_vp_plusplus_backend` |
 | Backport `b710fa7b` and make F11 a Phase 2 closure gate | Complete | D8; `rvv_smoke_execution` runs two harts under a 1 ms watchdog with `mcycle` 15 → 2439 → 2848 |
 | Scalar-FP fixes as expected diffs | Complete, wording amended | D9 as amended: all five stay in the upstream inventory, only `63524fbb` and `14e7fff5` are expected diffs (7 fields), and the disappearing-diff rule applies to exactly those seven. `91777991` is asserted illegal on both models, `c7140542` and `b92c01d8` asserted to match — regression checks, not tolerated differences |
@@ -989,6 +990,127 @@ Phase 3:
 Phase 0 remains accepted and the Phase 1 build/package gate remains passed.
 Every Phase 2 gate has a passing test in Debug and Release, and both
 conformance patches have a verified negative control. No Phase 2 item is open.
-D14/D15 do not invalidate those CPU results. The core SRAM/control/local-fabric
-and address-name migration and the new NEO-CORE components remain Phase 3
-onward work.
+D14/D15 do not invalidate those CPU results.
+
+Phase 3 closed the core SRAM, the three D15 fabrics and the address-name
+migration; D16 below records the one question Phase 3 had to answer that D15
+did not. What remains for later phases is the DMA (Phase 4), the matrix engine
+(Phase 5), the transform engine (Phase 6) and the composition of all of them
+into a `tpu_core` (Phase 7).
+
+## D16. Where the local-data plane is allowed to block
+
+### Decision
+
+`neo_local_sram_fabric` has two timing modes, selected at construction:
+
+* **`annotated`** — loosely timed. No process ever waits. Bank occupancy is
+  tracked as a busy-until timestamp and the resulting serialisation is added to
+  the caller's `delay`. This is the **default** and the only mode permitted on
+  any path reachable from a TLM target that the detailed NoC can reach.
+* **`arbitrated`** — approximately timed. Requesters block on a real per-bank
+  arbiter with deterministic rotating priority.
+
+Both modes decode identically, split into identical beats, and return identical
+data and status. Only how contention is charged differs.
+
+### Why two modes exist
+
+The Phase 3 gate asks for two things that pull against each other:
+"same-bank round-robin ... back-pressure ... pass under watchdog", and "no
+target waits inside `b_transport`".
+
+Annotation alone cannot satisfy the first. With every request processed in call
+order and nothing ever queued, there is never more than one contender at the
+arbiter, so a round-robin arbiter and a fixed-priority one produce byte-for-byte
+identical results. "Deterministic round-robin arbitration" would then be an
+assertion in a document with no test capable of failing, which is the failure
+mode this project has already had to fix once (audit §5a).
+
+Blocking alone cannot satisfy the second. `INTERFACE_CONTRACT.md` §3 exists
+because one SystemC process advances the detailed mesh clock, so a target that
+waits freezes every node in the network and not merely itself.
+
+Two modes resolve it honestly rather than by weakening either requirement.
+The contention properties are proved where blocking is safe — a closed
+core-local bench with a watchdog — and the default mode keeps the property that
+makes the fabric safe to place behind a NoC-reachable target.
+
+### The rule, stated precisely
+
+"No target waits inside `b_transport`" binds:
+
+* every TLM **target**: `core_sram` and `mmio_register_file` never wait;
+* `neo_control_fabric`: never waits, in any configuration;
+* `neo_local_sram_fabric` in `annotated` mode: never waits;
+* `neo_external_bridge`: waits only if the fabric behind it was built
+  `arbitrated`, which is why `blocks_on_arbitration()` exists and why the
+  bridge's own report names the mode it got.
+
+A platform that attaches an `arbitrated` fabric to the chip/NoC path is
+misconfigured. Phase 9 must assert `!bridge.blocks_on_arbitration()` when the
+detailed NoC backend is selected.
+
+### Reset while a requester is blocked
+
+Blocking creates a second obligation that annotation never had: a reset must
+release the requesters it interrupts.
+
+`reset()` bumps a generation counter, clears every bank, and notifies every
+bank's event. A request carrying an older generation abandons itself at its
+next resume point — waiting for a grant, holding a bank, or draining the
+pipeline — and returns `neo_status::aborted` with whatever beats had already
+completed. Beats that landed before the reset stay landed; the beat in flight
+is dropped rather than written.
+
+This is `ARCHITECTURE.md` §6 applied to the fabric: an in-flight job is
+abandoned, and silently completing one that was reset mid-flight would be worse
+than either alternative. The first implementation cleared `waiting[]` and
+`busy` without waking anybody, which left a blocked requester both
+unselectable and unwoken — it waited forever for a grant no arbiter could
+issue. It presents as a deadlock, so the gate for it is a watchdog test that
+resets in the middle of contention.
+
+`in_flight_` is deliberately *not* cleared by reset: the processes owning those
+flags are still unwinding out of `b_access` and their guards release them.
+
+The generation is captured when `b_access` accepts the request, **before** it
+consumes any caller-supplied temporal-decoupling delay. A reset during that
+delay therefore aborts the old request before arbitration or storage access;
+the request cannot resume under the new generation. Reset also starts a new
+counter epoch. An old-generation request still returns its own partial
+`bytes`/`beats` and `aborted` status to its caller, but its unwind does not add
+those values or an error to the freshly cleared counters. This preserves both
+the meaning of reset and the invariant `request_count >= error_count`.
+
+### One request in flight per requester
+
+D15 allows exactly one, and a blocking call enforces it only while one process
+owns one requester identity. Two processes sharing an identity overlap the
+moment the first waits for a bank, and from then on their beats interleave
+under one name: the arbiter sees one contender where there are two, the
+counters stay plausible, and the response ownership the fabric promises is
+gone. The fabric therefore keeps a per-requester in-flight flag and throws on a
+second entry, released by a guard on every path out including the one where the
+storage throws.
+
+### Consequence for temporal decoupling
+
+`arbitrated` mode consumes the caller's unconsumed quantum before it can
+contend — a requester still carrying `delay` is not "here yet", and charging it
+against another requester's present would be meaningless. That means a VP++
+hart attached to an `arbitrated` fabric synchronises to global time on every
+local load and store, which removes the benefit of temporal decoupling.
+
+This is a real cost and it is deferred deliberately, not overlooked. Phase 5
+and Phase 7 must select `annotated` for full-system runs and reserve
+`arbitrated` for the contention studies of Phase 11. Any timing figure must
+name which mode produced it, exactly as `noc_timing` already has to be named.
+
+### What would reopen this
+
+A third mode that queues requests without blocking the caller — a genuine
+approximately-timed fabric with non-blocking transport — would make both modes
+unnecessary. It is not built now because nothing in Phase 3 needs it and
+because the payload-ownership and response-routing contract such a mode
+requires does not exist yet (D15 fixes one outstanding request per requester).

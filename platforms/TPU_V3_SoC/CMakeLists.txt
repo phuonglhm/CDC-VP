@@ -27,14 +27,17 @@ target_compile_definitions(tpu_v3_soc PRIVATE
     TPU_V3_SOC_BUILD_TYPE="$<IF:$<BOOL:${CMAKE_BUILD_TYPE}>,${CMAKE_BUILD_TYPE},unspecified>"
     TPU_V3_SOC_GIT_REVISION="${TPU_V3_GIT_REVISION}"
     TPU_V3_SOC_COMPILER="${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
-    # The backend compiled into *this* binary. The platform refuses a
-    # configuration asking for anything else, so the manifest, `--version` and
-    # the runtime cannot disagree about which MXU produced a result.
-    TPU_V3_SOC_MXU_BACKEND="${TPU_V3_MXU_BACKEND}")
+    # The matrix-engine geometry compiled into *this* binary. The platform
+    # refuses a configuration asking for anything else, so the manifest,
+    # `--version` and the runtime cannot disagree about which engine produced a
+    # result — which is the D14 rule that no build may call the 64x64 bring-up
+    # array 128x128.
+    TPU_V3_SOC_SA_GEOMETRY="${TPU_V3_SA_GEOMETRY}")
 
 target_link_libraries(tpu_v3_soc PRIVATE
     SystemC::systemc
-    cdc::components::tpu_v3_common)
+    cdc::components::tpu_v3_common
+    cdc::components::tpu_v3_core_sram)
 
 add_custom_command(TARGET tpu_v3_soc POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -111,7 +114,7 @@ add_custom_command(TARGET tpu_v3_soc_package POST_BUILD
             -DCXX_COMPILER_VERSION=${CMAKE_CXX_COMPILER_VERSION}
             -DCMAKE_VERSION_USED=${CMAKE_VERSION}
             -DSYSTEMC_HOME=${SYSTEMC_HOME}
-            -DMXU_BACKEND=${TPU_V3_MXU_BACKEND}
+            -DSA_GEOMETRY=${TPU_V3_SA_GEOMETRY}
             -DSPIKE_REVISION=${TPU_V3_SPIKE_REVISION}
             -DSPIKE_LINKED=${TPU_V3_SPIKE_LINKED}
             -DVPP_BASE_REVISION=${RISCV_VP_PLUSPLUS_REVISION}

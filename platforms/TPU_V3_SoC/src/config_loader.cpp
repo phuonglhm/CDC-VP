@@ -38,8 +38,8 @@ std::string trim(const std::string& text)
 /// Decimal, `0x` hex, or a binary suffix (`K`/`KiB`, `M`/`MiB`, `G`/`GiB`).
 ///
 /// Rejects trailing garbage rather than stopping at it: `strtoull` happily
-/// reads `4Mib` as 4, and a silently 4-byte SVM would be a very confusing
-/// failure three phases later.
+/// reads `4Mib` as 4, and a silently 4-byte core SRAM would be a very
+/// confusing failure three phases later.
 std::uint64_t parse_unsigned(const std::string& where, const std::string& text)
 {
     const std::string value = trim(text);
@@ -110,22 +110,69 @@ void apply_key(const std::string& where, const std::string& key,
         config.mesh_y = parse_unsigned_small(where, value);
     } else if (key == "chips") {
         config.chips = parse_unsigned_small(where, value);
-    } else if (key == "svm_size_bytes") {
+    } else if (key == "core_sram_size_bytes") {
         const std::uint64_t size = parse_unsigned(where, value);
         for (auto& core : config.chip.core) {
-            core.svm_size_bytes = size;
+            core.sram_size_bytes = size;
         }
     } else if (key == "global_ram_size_bytes") {
         config.global_ram_size_bytes = parse_unsigned(where, value);
-    } else if (key == "mxu_backend") {
-        const auto backend = tpu::mxu_backend_from_string(value);
-        for (auto& core : config.chip.core) {
-            core.mxu.backend = backend;
+    } else if (key == "sa_geometry") {
+        // One key rather than two, so a half-set geometry — 64 rows and 128
+        // columns — cannot be expressed at all.
+        const auto cross = value.find('x');
+        if (cross == std::string::npos) {
+            throw std::runtime_error(
+                where + ": sa_geometry must be written as ROWSxCOLUMNS, for "
+                        "example '64x64'; got '"
+                + value + "'");
         }
-    } else if (key == "mxu_arithmetic") {
-        const auto arithmetic = tpu::mxu_arithmetic_from_string(value);
+        const unsigned rows =
+            parse_unsigned_small(where, value.substr(0, cross));
+        const unsigned columns =
+            parse_unsigned_small(where, value.substr(cross + 1));
         for (auto& core : config.chip.core) {
-            core.mxu.arithmetic = arithmetic;
+            core.sa.rows = rows;
+            core.sa.columns = columns;
+        }
+    } else if (key == "sa_datatype") {
+        const auto datatype = tpu::matrix_datatype_from_string(value);
+        for (auto& core : config.chip.core) {
+            core.sa.datatype = datatype;
+        }
+    } else if (key == "sa_source_revision") {
+        for (auto& core : config.chip.core) {
+            core.sa.source_revision = value;
+        }
+    } else if (key == "dma_max_burst_bytes") {
+        const std::uint64_t size = parse_unsigned(where, value);
+        for (auto& core : config.chip.core) {
+            core.dma.max_burst_bytes = size;
+        }
+    } else if (key == "local_sram_data_width_bits") {
+        const unsigned width = parse_unsigned_small(where, value);
+        for (auto& core : config.chip.core) {
+            core.local_sram_fabric.data_width_bits = width;
+        }
+    } else if (key == "local_sram_banks") {
+        const unsigned banks = parse_unsigned_small(where, value);
+        for (auto& core : config.chip.core) {
+            core.local_sram_fabric.bank_count = banks;
+        }
+    } else if (key == "local_sram_bank_mapping") {
+        const auto mapping = tpu::bank_mapping_from_string(value);
+        for (auto& core : config.chip.core) {
+            core.local_sram_fabric.mapping = mapping;
+        }
+    } else if (key == "local_sram_pipeline_stages") {
+        const unsigned stages = parse_unsigned_small(where, value);
+        for (auto& core : config.chip.core) {
+            core.local_sram_fabric.pipeline_stages = stages;
+        }
+    } else if (key == "local_sram_arbitration") {
+        const auto policy = tpu::arbitration_policy_from_string(value);
+        for (auto& core : config.chip.core) {
+            core.local_sram_fabric.arbitration = policy;
         }
     } else if (key == "noc_timing") {
         config.timing = tpu::noc_timing_from_string(value);
@@ -133,8 +180,11 @@ void apply_key(const std::string& where, const std::string& key,
         throw std::runtime_error(
             where + ": unknown configuration key '" + key
             + "'. Accepted keys are: platform, name, mesh_x, mesh_y, chips, "
-              "svm_size_bytes, global_ram_size_bytes, mxu_backend, "
-              "mxu_arithmetic, noc_timing");
+              "core_sram_size_bytes, global_ram_size_bytes, sa_geometry, "
+              "sa_datatype, sa_source_revision, dma_max_burst_bytes, "
+              "local_sram_data_width_bits, local_sram_banks, "
+              "local_sram_bank_mapping, local_sram_pipeline_stages, "
+              "local_sram_arbitration, noc_timing");
     }
 }
 
@@ -152,6 +202,23 @@ std::string take_value(int argc, char** argv, int& index,
 
 } // namespace
 
+tpu::tpu_soc_config default_config()
+{
+    // Decision record D15 leaves the local-SRAM datapath width, bank count and
+    // pipeline depth open, so the component schema has no default for them and
+    // refuses zero — a default-constructed `tpu_soc_config` deliberately does
+    // not validate. The platform has to supply something to be runnable
+    // without `--config`, and this is the one place it does: named, in the
+    // open, and printed with the word "provisional" in every report that uses
+    // it. Hiding these numbers in a member initialiser is exactly what D15
+    // forbids.
+    tpu::tpu_soc_config config;
+    for (auto& core : config.chip.core) {
+        core.local_sram_fabric = tpu::provisional_local_sram_fabric();
+    }
+    return config;
+}
+
 tpu::tpu_soc_config load_config_file(const std::string& path)
 {
     std::ifstream file(path);
@@ -160,7 +227,7 @@ tpu::tpu_soc_config load_config_file(const std::string& path)
                                  + '\'');
     }
 
-    tpu::tpu_soc_config config;
+    tpu::tpu_soc_config config = default_config();
     // A file that never sets `name` is still traceable: default to its stem.
     const auto slash = path.find_last_of('/');
     const auto stem_begin = slash == std::string::npos ? 0 : slash + 1;
@@ -255,18 +322,24 @@ cli_options parse_command_line(int argc, char** argv,
             apply_key(arg, "mesh_x", take_value(argc, argv, i, arg), config);
         } else if (arg == "--mesh-y") {
             apply_key(arg, "mesh_y", take_value(argc, argv, i, arg), config);
-        } else if (arg == "--svm-size") {
-            apply_key(arg, "svm_size_bytes", take_value(argc, argv, i, arg),
-                      config);
+        } else if (arg == "--core-sram-size") {
+            apply_key(arg, "core_sram_size_bytes",
+                      take_value(argc, argv, i, arg), config);
         } else if (arg == "--global-ram-size") {
             apply_key(arg, "global_ram_size_bytes",
                       take_value(argc, argv, i, arg), config);
-        } else if (arg == "--mxu-backend") {
-            apply_key(arg, "mxu_backend", take_value(argc, argv, i, arg),
+        } else if (arg == "--sa-geometry") {
+            apply_key(arg, "sa_geometry", take_value(argc, argv, i, arg),
                       config);
-        } else if (arg == "--mxu-arithmetic") {
-            apply_key(arg, "mxu_arithmetic", take_value(argc, argv, i, arg),
+        } else if (arg == "--sa-datatype") {
+            apply_key(arg, "sa_datatype", take_value(argc, argv, i, arg),
                       config);
+        } else if (arg == "--local-sram-banks") {
+            apply_key(arg, "local_sram_banks", take_value(argc, argv, i, arg),
+                      config);
+        } else if (arg == "--local-sram-data-width-bits") {
+            apply_key(arg, "local_sram_data_width_bits",
+                      take_value(argc, argv, i, arg), config);
         } else if (arg == "--noc-timing") {
             apply_key(arg, "noc_timing", take_value(argc, argv, i, arg),
                       config);
@@ -300,11 +373,16 @@ std::string usage_text(const std::string& program)
         << "  --chips <n>                number of TPU chips (1..8)\n"
         << "  --mesh-x <n>               mesh width\n"
         << "  --mesh-y <n>               mesh height\n"
-        << "  --svm-size <bytes>         SVM capacity per core (K/M/G "
-           "suffixes accepted)\n"
+        << "  --core-sram-size <bytes>   core SRAM capacity per NEO-CORE "
+           "(K/M/G suffixes accepted)\n"
         << "  --global-ram-size <bytes>  global RAM/HBM capacity\n"
-        << "  --mxu-backend <fast|sauria>\n"
-        << "  --mxu-arithmetic <bf16_fp32|int8_int32>\n"
+        << "  --sa-geometry <RxC>        matrix-engine geometry; 64x64 "
+           "(128x128 awaits its gate)\n"
+        << "  --sa-datatype <bf16_fp32|fp16_fp32|int8_int32>\n"
+        << "  --local-sram-banks <n>     physical banks behind core SRAM "
+           "(provisional, D15)\n"
+        << "  --local-sram-data-width-bits <n>   bank access width "
+           "(provisional, D15)\n"
         << "  --noc-timing <fast|detailed>\n"
         << "  --time-limit-ns <n>        stop after this much simulated time\n"
         << "  --print-address-map        print every mapped region and exit\n"
@@ -312,9 +390,14 @@ std::string usage_text(const std::string& program)
         << "  --help                     this text\n"
         << '\n'
         << "Configuration keys (one 'key: value' per line, '#' comments):\n"
-        << "  platform, name, mesh_x, mesh_y, chips, svm_size_bytes,\n"
-        << "  global_ram_size_bytes, mxu_backend, mxu_arithmetic, "
-           "noc_timing\n"
+        << "  platform, name, mesh_x, mesh_y, chips, core_sram_size_bytes,\n"
+        << "  global_ram_size_bytes, sa_geometry, sa_datatype, "
+           "sa_source_revision,\n"
+        << "  dma_max_burst_bytes, local_sram_data_width_bits, "
+           "local_sram_banks,\n"
+        << "  local_sram_bank_mapping, local_sram_pipeline_stages, "
+           "local_sram_arbitration,\n"
+        << "  noc_timing\n"
         << '\n'
         << "Command-line options override the configuration file regardless "
            "of order.\n";

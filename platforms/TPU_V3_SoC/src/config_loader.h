@@ -15,6 +15,18 @@
 
 namespace cdc::platforms::tpu_v3_soc {
 
+/// The platform's starting point, before any file or override is applied.
+///
+/// It is a named function rather than a default-constructed
+/// `tpu_soc_config` because decision record D15 leaves the local-SRAM datapath
+/// width, bank count and pipeline depth open: the component schema has no
+/// default for them and refuses zero, so a default-constructed configuration
+/// deliberately does not validate. Supplying the provisional values *here*,
+/// once, in the platform, is what keeps `tpu_v3_soc` runnable without
+/// `--config` while leaving the component free of a hidden physical constant.
+/// Every report prints the values and the word "provisional".
+components::tpu_v3::tpu_soc_config default_config();
+
 /// Parse a configuration file.
 ///
 /// The format is a **restricted `key: value` subset**, not YAML. It supports
@@ -24,7 +36,7 @@ namespace cdc::platforms::tpu_v3_soc {
 /// other platforms; calling it YAML in documentation would be a lie that
 /// someone eventually relies on.
 ///
-/// An unknown key is an **error**, not a warning. A typo in `mxu_backend` that
+/// An unknown key is an **error**, not a warning. A typo in `sa_geometry` that
 /// was ignored would leave the run using the default while the file says
 /// otherwise, and the resulting numbers would be untraceable to their
 /// configuration.

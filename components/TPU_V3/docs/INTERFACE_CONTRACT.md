@@ -45,6 +45,25 @@ non-contiguous ones, on both read and write. `byte_enable_length` may be
 shorter than `data_length`, in which case the pattern repeats — the standard
 TLM rule.
 
+**The repeating pattern stops at the adapter.** The native local-data plane
+carries `wstrb` as one byte per data byte, because that is what it is in RTL;
+there is no repeat rule there. Any component translating a TLM payload into a
+native request must therefore *expand* the pattern to `data_length` bytes.
+Forwarding `byte_enable_ptr` unchanged reads past the end of the initiator's
+array for every payload longer than the pattern, and applies whatever it finds
+— a wrong result and an overread at once. A non-null pointer with
+`byte_enable_length == 0` describes no bytes and cannot be repeated into
+anything; it is refused with `TLM_BURST_ERROR_RESPONSE`.
+
+A fully masked write is legal, transfers nothing, allocates no page-backed
+storage and must not be counted as if it had moved a payload.
+
+The bridge applies the command, streaming-width and byte-enable-shape rules at
+all four boundaries: inbound/outbound `b_transport` and inbound/outbound
+`transport_dbg`. Debug transport bypasses timing and workload counters, not
+payload validity. A malformed debug request returns zero bytes and is not
+forwarded to either the native SRAM plane or the external target.
+
 MMIO targets require all-ones over the four bytes of the register. A
 partial-strobe register write is refused with `TLM_BURST_ERROR_RESPONSE`, not
 applied as a read-modify-write. Read-modify-write on a register with
@@ -72,6 +91,17 @@ void b_transport(tlm::tlm_generic_payload& t, sc_core::sc_time& delay) {
 The second form freezes every node in the mesh, not just this target, because
 one SystemC process advances the network clock. This is the single most
 important rule in this document.
+
+**Who it binds, exactly.** Every TLM *target* — core SRAM, every register file,
+every future engine — and every component on a path the detailed NoC can reach.
+`neo_control_fabric` never waits in any configuration. `neo_local_sram_fabric`
+has two timing modes (decision record D16): `annotated`, the default, never
+waits and is the only mode permitted behind a NoC-reachable target;
+`arbitrated` blocks its own requesters on a real per-bank round-robin arbiter,
+which is what a ready/valid interface does and the only way fairness and
+back-pressure become behaviours rather than estimates. `neo_external_bridge`
+inherits whichever mode its fabric was built with and reports it, because a
+bridge on the inbound path must not be the one that stalls the mesh.
 
 * `delay` on entry may be non-zero; a target adds to it and does not clear it.
 * `transport_dbg` never advances time and never annotates delay.
@@ -150,7 +180,16 @@ undocumented wide-access atomicity.
 The number of banks, physical data width, low-order bank mapping and pipeline
 depth are validated construction-time configuration. Tests and reports state
 their actual values; this contract does not freeze 256 bits or any other
-illustrative datapath width before SRAM-macro, clock and PD inputs exist.
+illustrative datapath width before SRAM-macro, clock and PD inputs exist. The
+C++ schema therefore carries **no default** for the three physical values and
+refuses zero: a number nobody chose is exactly what would become an
+architectural constant by accident. The shipped configurations state them and
+every report that uses them prints the word "provisional".
+
+An access is refused with an explicit status and transfers nothing. The plane
+distinguishes a decode miss from a capacity overrun, because a driver reacts
+differently to a wrong pointer and to a configuration too small for its
+workload, and D6 forbids aliasing the second into valid storage.
 
 **DMA is independent.** `neo_dma` is implemented and owned under TPU_V3. It
 must not include, instantiate or call Sauria's DMA, and must not obtain direct
@@ -183,6 +222,12 @@ and resource/scalability checks pass. No configuration or manifest may call a
 
 ## 5. Concurrency and ownership
 
+* **No direct pointer into backing storage.** `core_sram` exposes no `data()`,
+  no `raw()` and no `get_direct_mem_ptr()`, and that omission is load-bearing:
+  it is what makes "no accelerator bypasses arbitration" a structural property
+  rather than a convention. The check that keeps it true as the tree grows is a
+  conservation one — the bytes the SRAM recorded must reconcile with the bytes
+  the fabric carried, which `test_neo_external_bridge` asserts.
 * **No mutable global or static state.** SA, DMA and ImageTransform instances,
   and 16 cores in one simulation, share nothing. A `static` scratch buffer in a
   compute kernel is a defect even when tests pass single-threaded, because
@@ -240,6 +285,13 @@ The rules that follow from it:
   `error_count`, `arbitration_event_count` — and never
   `vector_instruction_count`, `vector_register_count`, or a hardware bus
   transaction count;
+* the request count includes **refused** requests, so `request_count >=
+  error_count` always holds and the failure rate is a ratio of two numbers
+  counting the same thing. A counter that silently dropped failures would hide
+  exactly the case worth looking at;
+* `transferred_bytes` is bytes **moved**, not bytes named. A masked write
+  moves fewer bytes than its payload length, and counting the payload would
+  credit the model with bandwidth it never carried;
 * if `neo_local_sram_fabric` splits one TLM payload across physical beats or
   banks, it records one TLM request and the actual number of physical beats;
   neither value may be silently presented as the other;
@@ -264,6 +316,13 @@ it absorbs every constraint the interconnect imposes:
 * **Local bypass.** An address inside this chip's own aperture is never handed
   to the interconnect. This is required for correctness, not only for
   efficiency — see the NoLoopback blocker in `TPU_V3_PHASE0_AUDIT.md` §5.1.
+  The test is **overlap**, not containment: a transfer that begins inside the
+  aperture and runs past it is not *contained* by it, and one byte of local
+  traffic in the mesh is still local traffic in the mesh. A transfer that
+  overlaps a region without lying inside it decodes to two targets at once and
+  is refused with `TLM_ADDRESS_ERROR_RESPONSE`, because there is no correct
+  answer for which should have answered. All of it is computed with the
+  overflow-safe comparison of plan §12 rule 5.
 * **Outstanding bound.** At most `max_outstanding_per_port` (≤ 32) concurrent
   calls per upstream port. Above the bound the endpoint waits for a slot; it
   does not drop, reorder or re-tag.
@@ -280,6 +339,12 @@ it absorbs every constraint the interconnect imposes:
   a debug write outside a region fails like any other;
 * it does not update performance counters, because a loader is not workload
   traffic. Counting it would corrupt every metric that follows;
+* it applies the same command rule as `b_transport`: a command that is neither
+  read nor write returns 0. Treating "not a write" as "a read" turns
+  `TLM_IGNORE_COMMAND` into a read that overwrites the caller's buffer;
+* it answers every register identically to `b_transport`. A debug read that
+  disagreed would make a loader and the firmware it loaded see different
+  hardware;
 * it may write `GLOBAL_BOOT_ROM`, which refuses ordinary writes.
 
 ## 9. DMI

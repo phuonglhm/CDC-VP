@@ -1,19 +1,20 @@
 # TPU_V3 Address Map
 
-Status: **NEO-CORE rebaseline approved by D14; D15 interconnect finally
-ratified 2026-08-12; C++ migration pending Phase 3**.
-Top-level/chip/core aperture bases and strides remain unchanged. The core-local
-MMIO subregions are renamed/reassigned below for one SA, one independent DMA
-and one ImageTransform engine. Changing an engine geometry or SRAM capacity
+Status: **NEO-CORE rebaseline approved by D14; D15 interconnect ratified
+2026-08-12; the C++ migration landed in Phase 3**.
+Top-level/chip/core aperture bases and strides are unchanged. The core-local
+MMIO subregions are renamed and reassigned below for one SA, one independent
+DMA and one ImageTransform engine. Changing an engine geometry or SRAM capacity
 may not change a base address.
 
-After the Phase 3 migration, the single executable source of truth is
+The single executable source of truth is
 `components/TPU_V3/common/include/tpu_v3/address_map.h`, with properties proved
-by `components/TPU_V3/common/tests/test_address_map.cpp`. At the D15 rebaseline
-point that header still carries the Phase 1 `SVM`/`MXU0`/`MXU1` names. The
-mismatch is deliberate but temporary: D14/D15 and the table in §4 define the new
-contract, and Phase 3 must update the header, generated firmware names and test
-together before any new component is integrated.
+by `components/TPU_V3/common/tests/test_address_map.cpp`. The Phase 1
+`SVM`/`MXU0`/`MXU1` names are gone from it, from the configuration schema, from
+the shipped configurations, from the build manifest and from the packaged
+`--print-address-map` output; both `tpu_v3_soc_cli` and
+`tpu_v3_soc_packaging_regression` fail if any of them reappears. Historical
+audits may still quote them, and are not rewritten.
 
 ---
 
@@ -98,6 +99,10 @@ core_base(chip_id, core_id) = chip_base(chip_id) + core_id * 0x0200_0000
 
 Offsets from `core_base`:
 
+A system with `chips` chips exposes `3 + chips * (2 + 2 * 6)` regions: three
+global, two per chip and six per core. At the eight-chip maximum that is 115,
+which is what `--print-address-map` prints and what the tests assert.
+
 | Offset | Size | Region | Kind |
 | --- | --- | --- | --- |
 | `0x0000_0000` | 16 MiB window | `CORE_SRAM` | memory (see §5) |
@@ -175,8 +180,20 @@ platform report labels them as such; they are not the TPU_V3 reference result.
 
 D6 supersedes the temporary 4 MiB of Phase 0 decision P0-6.
 
-Host cost, once Phase 3 gives core SRAM real storage: the largest Revision 1
-configuration (8 chips) is 16 SRAMs × 16 MiB = 256 MiB, plus global RAM.
+### Window, capacity and host memory are three quantities, not two
+
+Phase 3 added the third. Storage is backed sparsely in deterministic 4 KiB
+pages (D6): an unallocated page reads as zero and consumes nothing, and the
+first write commits only the pages it touches.
+
+So the largest Revision 1 configuration — 8 chips, 16 SRAMs × 16 MiB plus a
+1 GiB global RAM — describes 1.25 GiB of *logical* memory and costs a few
+megabytes of host memory until firmware writes to it. The measured figure for
+`mesh_4x4` is around 10 MiB of peak RSS, and `tpu_v3_soc_cli` bounds it.
+
+The platform report prints logical memory and allocated backing side by side
+for exactly this reason: read apart, the two are routinely mistaken for each
+other, and quoting either as the other misstates what the model costs to run.
 
 ### Global RAM capacity
 
@@ -196,7 +213,10 @@ Every `*_CONTROL` and `*_COUNTERS` region is a 32-bit register file:
 * core-local control transport is 32-bit AXI4-Lite, represented at transaction
   level in the SystemC model;
 
-* supported widths: **4 bytes only**;
+* supported widths: **4 bytes only**. This is also what keeps accelerator bulk
+  data off the control plane (D15): a 64-byte vector payload is refused here
+  rather than split into sixteen register accesses no AXI4-Lite decoder would
+  perform;
 * alignment: naturally aligned to 4 bytes;
 * a 1, 2 or 8 byte access, or a misaligned 4-byte access, returns
   `TLM_BURST_ERROR_RESPONSE` — it is never silently widened, narrowed or split;

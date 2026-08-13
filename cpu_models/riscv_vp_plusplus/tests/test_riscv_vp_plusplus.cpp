@@ -239,7 +239,7 @@ void softfloat_state_is_process_global()
     // source. `softfloat.h` declares these `THREAD_LOCAL`, but the macro is
     // defined empty when nothing sets it — and nothing does, in upstream's
     // CMake or ours. So they are plain globals shared by every ISS instance in
-    // the process, and by the Phase 4 MXU BF16 adapter.
+    // the process, and by the Phase 5 Sauria BF16 adapter.
     //
     // This matters because `v.h::set_fp_rm()` writes the rounding mode from
     // `fcsr.frm`, and `softfloat_exceptionFlags` *accumulates*: one hart's

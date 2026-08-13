@@ -17,9 +17,27 @@ chips: 1
 # Reference capacity (decision record D6): the full architectural window.
 # A smaller value is permitted for bring-up or stress runs and is reported as
 # such; it is not the TPU_V3 reference result.
-svm_size_bytes: 16MiB
+core_sram_size_bytes: 16MiB
 global_ram_size_bytes: 256MiB
 
-mxu_backend: fast
-mxu_arithmetic: bf16_fp32
+# The verified v4.2 bring-up array. 128x128 is the architectural destination
+# and is refused until the NPU team's promotion gate passes (decision record
+# D14); no build, manifest or report may call this engine 128x128.
+sa_geometry: 64x64
+sa_datatype: bf16_fp32
+
+# NEO Local SRAM Fabric — the native local-data plane (decision record D15).
+#
+# These three numbers are PROVISIONAL. D15 leaves the datapath width, the bank
+# count and the pipeline depth to the target SRAM macro, the clock target and
+# PD constraints, and forbids an illustrative width becoming an architectural
+# constant. They are stated here, in the open, rather than defaulted inside the
+# C++ schema — which is why the schema refuses zero and every report that uses
+# them prints the word "provisional".
+local_sram_data_width_bits: 128
+local_sram_banks: 4
+local_sram_bank_mapping: low_order_interleaved
+local_sram_pipeline_stages: 2
+local_sram_arbitration: round_robin
+
 noc_timing: fast

@@ -4,8 +4,13 @@
 //
 // The positive cases here are cheap; the negative ones are the point. Plan
 // §11.1 requires construction to *reject* a wrong frozen value, and a
-// validator that silently accepts `mxu.rows = 64` would let a whole
-// measurement campaign run on a model that is not the specified machine.
+// validator that silently accepted a 128x128 geometry would let a whole
+// measurement campaign report the verified 64x64 bring-up array under the name
+// of a machine the NPU team has not delivered.
+//
+// Rebaselined for D14/D15: one Sauria matrix engine, one independent DMA and
+// one ImageTransform engine per NEO-CORE, and a local-SRAM fabric whose
+// physical parameters have no architectural default.
 
 #include "tpu_v3/address_map.h"
 #include "tpu_v3/architecture_config.h"
@@ -63,6 +68,13 @@ tpu::tpu_soc_config good_config()
     config.mesh_x = 2;
     config.mesh_y = 2;
     config.chips = 1;
+    // D15 leaves the physical fabric parameters open, so the schema has no
+    // default and every configuration — including a test's — has to state
+    // them. That is the intended friction: it is what stops an illustrative
+    // datapath width becoming an architectural constant by accident.
+    for (auto& core : config.chip.core) {
+        core.local_sram_fabric = tpu::provisional_local_sram_fabric();
+    }
     return config;
 }
 
@@ -73,26 +85,45 @@ void defaults_are_the_frozen_architecture()
 
     const auto& core = config.chip.core[0];
     CHECK(config.chip.cores == 2);
-    CHECK(core.mxu.rows == 128);
-    CHECK(core.mxu.columns == 128);
-    CHECK(core.mxu.count_per_core == 2);
-    CHECK(core.mxu.backend == tpu::mxu_backend::fast);
+
+    // D14: one matrix engine, one DMA, one ImageTransform engine per core.
+    CHECK(core.sa.count_per_core == 1);
+    CHECK(core.dma.count_per_core == 1);
+    CHECK(core.transform.count_per_core == 1);
+
+    // The verified v4.2 bring-up array. 128x128 is the destination, not the
+    // default, and nothing may report the one as the other.
+    CHECK(core.sa.rows == 64);
+    CHECK(core.sa.columns == 64);
+    CHECK(core.sa.geometry() == "64x64");
+    CHECK(!core.sa.is_target_geometry());
+    CHECK(core.sa.source_revision.empty());
+
     // Decision record D6: BF16 operands, IEEE FP32 accumulation. This
     // supersedes the temporary INT8 + FP32 proposal of Phase 0 (P0-7).
-    CHECK(core.mxu.arithmetic == tpu::mxu_arithmetic::bf16_fp32);
+    CHECK(core.sa.datatype == tpu::matrix_datatype::bf16_fp32);
+
+    // D14: the standalone Transform block has not been located, so both
+    // operations must default to unavailable rather than to a guessed inverse.
+    CHECK(!core.transform.im2col_available);
+    CHECK(!core.transform.col2im_available);
+
     CHECK(core.rvv.xlen == 32);
     CHECK(core.rvv.vlen == 512);
     CHECK(core.rvv.elen == 64);
     CHECK(core.rvv.vlenb() == 64);
     CHECK(core.rvv.version == "1.0");
+
     // D6: the reference configuration instantiates the full 16 MiB window,
     // superseding the temporary 4 MiB of P0-6.
-    CHECK(core.svm_size_bytes == am::svm_default_capacity);
-    CHECK(am::svm_default_capacity == am::svm_window);
-    CHECK(am::svm_default_capacity == 16u * 1024 * 1024);
+    CHECK(core.sram_size_bytes == am::core_sram_default_capacity);
+    CHECK(am::core_sram_default_capacity == am::core_sram_window);
+    CHECK(am::core_sram_default_capacity == 16u * 1024 * 1024);
 
     CHECK(config.harts() == 2);
-    CHECK(config.mxus() == 4);
+    CHECK(config.matrix_engines() == 2);
+    CHECK(config.dma_engines() == 2);
+    CHECK(config.transform_engines() == 2);
 }
 
 void derived_counts_scale_with_chips()
@@ -104,8 +135,15 @@ void derived_counts_scale_with_chips()
     config.validate();
 
     CHECK(config.harts() == 16);
-    CHECK(config.mxus() == 32);
+    CHECK(config.matrix_engines() == 16);
     CHECK(config.mesh_nodes() == 16);
+
+    // 16 x 16 MiB of core SRAM plus 256 MiB of global RAM. This is logical
+    // address space; D6 requires it to be sparsely backed, so it is not a host
+    // allocation and `test_sparse_memory` is what proves that separately.
+    CHECK(config.logical_memory_bytes()
+          == 16ull * am::core_sram_default_capacity
+                 + am::global_ram_default_capacity);
 
     // Chips take low node indices row-major; the globals take the last node,
     // which at 8 chips on a 4x4 mesh is comfortably clear of every chip.
@@ -128,26 +166,26 @@ void frozen_values_are_rejected()
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
-            c.chip.core[0].mxu.rows = 64;
+            c.chip.core[0].sa.count_per_core = 2;
             c.validate();
         },
-        "mxu.rows"));
+        "sa.count_per_core"));
 
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
-            c.chip.core[1].mxu.columns = 256;
+            c.chip.core[0].dma.count_per_core = 0;
             c.validate();
         },
-        "mxu.columns"));
+        "dma.count_per_core"));
 
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
-            c.chip.core[0].mxu.count_per_core = 1;
+            c.chip.core[1].transform.count_per_core = 2;
             c.validate();
         },
-        "mxu.count_per_core"));
+        "transform.count_per_core"));
 
     CHECK(rejected_naming(
         [] {
@@ -192,22 +230,181 @@ void frozen_values_are_rejected()
         "core1"));
 }
 
+void the_matrix_geometry_contract_is_enforced()
+{
+    // The whole point of D14's two-stage plan. Asking for the destination
+    // geometry today must fail: the NPU team has not delivered the 128x128
+    // source, so its promotion gate cannot have passed, and quietly running
+    // the 64x64 array under that name is the outcome the rule exists to stop.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].sa.rows = 128;
+            c.chip.core[0].sa.columns = 128;
+            c.validate();
+        },
+        "promotion gate"));
+
+    // An unnamed geometry has neither a source nor golden tests.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].sa.rows = 32;
+            c.chip.core[0].sa.columns = 32;
+            c.validate();
+        },
+        "sa.geometry"));
+
+    // Half a promotion is still not 128x128.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[1].sa.columns = 128;
+            c.validate();
+        },
+        "sa.geometry"));
+
+    // Same reasoning for arithmetic: a configuration asking for INT8/INT32
+    // must not quietly get BF16/FP32 results. The extension is optional and
+    // additive (D6); it never replaces the reference path.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].sa.datatype = tpu::matrix_datatype::int8_int32;
+            c.validate();
+        },
+        "sa.datatype"));
+
+    // fp16_fp32 is accepted, because a v4.2 bring-up run on a datatype the
+    // source supports is legitimate integration evidence — provided it is
+    // named. The report is what stops it being read as the BF16 reference.
+    tpu::tpu_soc_config bringup = good_config();
+    bringup.chip.core[0].sa.datatype = tpu::matrix_datatype::fp16_fp32;
+    bringup.chip.core[1].sa.datatype = tpu::matrix_datatype::fp16_fp32;
+    bringup.validate();
+    CHECK(tpu::describe(bringup).find("fp16_fp32") != std::string::npos);
+}
+
+void an_available_transform_must_name_its_source()
+{
+    // D14: existing Im2Col-related address generation inside an IFMAP feeder
+    // is not a standalone Transform block, and Col2Im may not be inferred from
+    // PSM write ordering. Marking either available without naming an approved
+    // revision is how a guessed inverse would get into a result.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].transform.col2im_available = true;
+            c.validate();
+        },
+        "transform.source_revision"));
+
+    tpu::tpu_soc_config sourced = good_config();
+    for (auto& core : sourced.chip.core) {
+        core.transform.im2col_available = true;
+        core.transform.source_revision = "npu-v4.2-hypothetical";
+    }
+    sourced.validate();
+}
+
+void the_open_fabric_parameters_have_no_default()
+{
+    // D15's rule, made mechanical: the schema must not carry a physical value
+    // that nobody chose. A default-constructed configuration is therefore
+    // *invalid*, and the message has to say why rather than complain about a
+    // range.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c;
+            c.validate();
+        },
+        "no architectural default"));
+
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].local_sram_fabric.bank_count = 0;
+            c.validate();
+        },
+        "local_sram_banks"));
+
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].local_sram_fabric.pipeline_stages = 0;
+            c.validate();
+        },
+        "local_sram_pipeline_stages"));
+
+    // Physical sanity, once a value has been stated.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].local_sram_fabric.data_width_bits = 12;
+            c.validate();
+        },
+        "multiple of 8"));
+
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].local_sram_fabric.data_width_bits = 24;
+            c.validate();
+        },
+        "power of two"));
+
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].local_sram_fabric.bank_count = 6;
+            c.validate();
+        },
+        "power of two"));
+
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].local_sram_fabric.max_outstanding_per_requester = 2;
+            c.validate();
+        },
+        "max_outstanding_per_requester"));
+
+    // A capacity smaller than one bank stripe would leave banks no address
+    // selects, so the arbitration a report described would have been measured
+    // on a structure the configuration does not describe.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            for (auto& core : c.chip.core) {
+                core.local_sram_fabric.data_width_bits = 1024;
+                core.local_sram_fabric.bank_count = 64;
+                core.sram_size_bytes = am::core_sram_min_capacity;
+            }
+            c.validate();
+        },
+        "bank stripe"));
+
+    const auto fabric = tpu::provisional_local_sram_fabric();
+    CHECK(fabric.bytes_per_beat() == 16);
+    CHECK(fabric.stripe_bytes() == 64);
+}
+
 void capacities_are_range_and_alignment_checked()
 {
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
-            c.chip.core[0].svm_size_bytes = am::svm_max_capacity * 2;
-            c.chip.core[1].svm_size_bytes = am::svm_max_capacity * 2;
+            c.chip.core[0].sram_size_bytes = am::core_sram_max_capacity * 2;
+            c.chip.core[1].sram_size_bytes = am::core_sram_max_capacity * 2;
             c.validate();
         },
-        "svm_size_bytes"));
+        "sram_size_bytes"));
 
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
-            c.chip.core[0].svm_size_bytes = 0x300000; // 3 MiB
-            c.chip.core[1].svm_size_bytes = 0x300000;
+            c.chip.core[0].sram_size_bytes = 0x300000; // 3 MiB
+            c.chip.core[1].sram_size_bytes = 0x300000;
             c.validate();
         },
         "power of two"));
@@ -220,31 +417,42 @@ void capacities_are_range_and_alignment_checked()
         },
         "global_ram_size_bytes"));
 
-    // Mismatched SVM sizes between the two cores in a chip: the enumeration
+    // Mismatched SRAM sizes between the two cores in a chip: the enumeration
     // uses core 0's value, so accepting this would map core 1 wrongly. Both
     // values here are individually legal, so this reaches the cross-core rule
     // rather than tripping the range check first.
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
-            c.chip.core[1].svm_size_bytes = am::svm_default_capacity / 2;
+            c.chip.core[1].sram_size_bytes =
+                am::core_sram_default_capacity / 2;
             c.validate();
         },
-        "same SVM capacity"));
+        "same core SRAM capacity"));
 
     // The extremes must be accepted, or the bounds are wrong rather than the
     // configuration.
     tpu::tpu_soc_config low = good_config();
-    low.chip.core[0].svm_size_bytes = am::svm_min_capacity;
-    low.chip.core[1].svm_size_bytes = am::svm_min_capacity;
+    low.chip.core[0].sram_size_bytes = am::core_sram_min_capacity;
+    low.chip.core[1].sram_size_bytes = am::core_sram_min_capacity;
     low.global_ram_size_bytes = am::global_ram_min_capacity;
     low.validate();
 
     tpu::tpu_soc_config high = good_config();
-    high.chip.core[0].svm_size_bytes = am::svm_max_capacity;
-    high.chip.core[1].svm_size_bytes = am::svm_max_capacity;
+    high.chip.core[0].sram_size_bytes = am::core_sram_max_capacity;
+    high.chip.core[1].sram_size_bytes = am::core_sram_max_capacity;
     high.global_ram_size_bytes = am::global_ram_max_capacity;
     high.validate();
+
+    // The DMA's chunk bound follows the smallest downstream limit (plan §9.3),
+    // so a request for more must be refused rather than silently clamped.
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].dma.max_burst_bytes = 4096;
+            c.validate();
+        },
+        "dma.max_burst_bytes"));
 }
 
 void noc_limits_are_enforced_at_configuration_time()
@@ -298,59 +506,34 @@ void noc_limits_are_enforced_at_configuration_time()
     CHECK(three.global_node().x == 1 && three.global_node().y == 1);
 }
 
-void sauria_backend_is_refused_until_phase_9()
-{
-    // Selecting an unimplemented backend must fail loudly. Falling back to the
-    // fast model would produce results labelled "detailed" that are not.
-    CHECK(rejected_naming(
-        [] {
-            tpu::tpu_soc_config c = good_config();
-            c.chip.core[0].mxu.backend = tpu::mxu_backend::sauria;
-            c.validate();
-        },
-        "Phase 9"));
-}
-
-void quantized_arithmetic_is_refused_until_it_exists()
-{
-    // Same reasoning as the backend: a configuration asking for INT8/INT32
-    // must not quietly get BF16/FP32 results. The extension is optional and
-    // additive (D6); it never replaces the reference path.
-    CHECK(rejected_naming(
-        [] {
-            tpu::tpu_soc_config c = good_config();
-            c.chip.core[0].mxu.arithmetic = tpu::mxu_arithmetic::int8_int32;
-            c.validate();
-        },
-        "mxu.arithmetic"));
-
-    CHECK(tpu::mxu_arithmetic_from_string("bf16_fp32")
-          == tpu::mxu_arithmetic::bf16_fp32);
-    CHECK(tpu::mxu_arithmetic_from_string("int8_int32")
-          == tpu::mxu_arithmetic::int8_int32);
-    CHECK(std::string(tpu::to_string(tpu::mxu_arithmetic::bf16_fp32))
-          == "bf16_fp32");
-    CHECK(rejected_naming([] { tpu::mxu_arithmetic_from_string("bf16"); },
-                          "bf16"));
-}
-
 void enum_parsing_round_trips_and_rejects_typos()
 {
-    CHECK(tpu::mxu_backend_from_string("fast") == tpu::mxu_backend::fast);
-    CHECK(tpu::mxu_backend_from_string("sauria") == tpu::mxu_backend::sauria);
+    CHECK(tpu::matrix_datatype_from_string("bf16_fp32")
+          == tpu::matrix_datatype::bf16_fp32);
+    CHECK(tpu::matrix_datatype_from_string("int8_int32")
+          == tpu::matrix_datatype::int8_int32);
+    CHECK(tpu::bank_mapping_from_string("low_order_interleaved")
+          == tpu::bank_mapping::low_order_interleaved);
+    CHECK(tpu::arbitration_policy_from_string("round_robin")
+          == tpu::arbitration_policy::round_robin);
     CHECK(tpu::noc_timing_from_string("fast") == tpu::noc_timing::fast);
     CHECK(tpu::noc_timing_from_string("detailed") == tpu::noc_timing::detailed);
 
-    CHECK(std::string(tpu::to_string(tpu::mxu_backend::fast)) == "fast");
+    CHECK(std::string(tpu::to_string(tpu::matrix_datatype::bf16_fp32))
+          == "bf16_fp32");
+    CHECK(std::string(tpu::to_string(tpu::bank_mapping::low_order_interleaved))
+          == "low_order_interleaved");
     CHECK(std::string(tpu::to_string(tpu::noc_timing::detailed)) == "detailed");
 
-    // A typo must not silently select a backend: "detaild" quietly meaning
-    // "fast" would mislabel every latency figure in the run.
+    // A typo must not silently select a mode: "detaild" quietly meaning "fast"
+    // would mislabel every latency figure in the run.
     CHECK(rejected_naming([] { tpu::noc_timing_from_string("detaild"); },
                           "detaild"));
-    CHECK(rejected_naming([] { tpu::mxu_backend_from_string("FAST"); }, "FAST"));
-    CHECK(rejected_naming([] { tpu::mxu_backend_from_string(""); },
-                          "accepted values"));
+    CHECK(rejected_naming([] { tpu::matrix_datatype_from_string("bf16"); },
+                          "bf16"));
+    CHECK(rejected_naming([] { tpu::noc_timing_from_string("FAST"); }, "FAST"));
+    CHECK(rejected_naming([] { tpu::bank_mapping_from_string("xor"); },
+                          "low_order_interleaved"));
 }
 
 void description_reports_what_it_ran()
@@ -361,28 +544,48 @@ void description_reports_what_it_ran()
 
     const std::string text = tpu::describe(config);
     CHECK(text.find("single_chip") != std::string::npos);
-    CHECK(text.find("128x128") != std::string::npos);
     CHECK(text.find("VLEN=512") != std::string::npos);
     CHECK(text.find("vlenb=64") != std::string::npos);
     CHECK(text.find("hart 0") != std::string::npos);
     CHECK(text.find("hart 1") != std::string::npos);
+
+    // The geometry must be named, and must not be the promotion target.
+    CHECK(text.find("64x64 bring-up") != std::string::npos);
+    CHECK(text.find("matrix source        : not integrated") != std::string::npos);
+
     // The timing backend and the arithmetic must be named in any output that
     // could be quoted: neither a latency nor a numeric result is interpretable
     // without them.
     CHECK(text.find("NoC timing backend") != std::string::npos);
-    CHECK(text.find("MXU arithmetic       : bf16_fp32") != std::string::npos);
+    CHECK(text.find("matrix datatype      : bf16_fp32") != std::string::npos);
     CHECK(text.find("reference capacity") != std::string::npos);
 
+    // D15's open physical values must appear with their provisional label
+    // wherever they appear at all.
+    CHECK(text.find("128-bit x 4 banks") != std::string::npos);
+    CHECK(text.find("low_order_interleaved") != std::string::npos);
+    CHECK(text.find("provisional") != std::string::npos);
+
+    // Logical memory is address space, not a host commitment (D6).
+    CHECK(text.find("sparsely page-backed") != std::string::npos);
+
     const std::string map = tpu::describe_address_map(config);
-    CHECK(map.find("chip0.core1.mxu1_control") != std::string::npos);
+    CHECK(map.find("chip0.core1.sa_control") != std::string::npos);
+    CHECK(map.find("chip0.core1.dma_control") != std::string::npos);
+    CHECK(map.find("chip0.core1.transform_control") != std::string::npos);
+    CHECK(map.find("chip0.core0.sram") != std::string::npos);
     CHECK(map.find("global.ram") != std::string::npos);
-    // The reference SVM fully backs its window, so nothing is annotated;
+    // The legacy names must be gone from generated output, which is the
+    // firmware-visible half of the Phase 3 migration gate.
+    CHECK(map.find("svm") == std::string::npos);
+    CHECK(map.find("mxu") == std::string::npos);
+    // The reference core SRAM fully backs its window, so nothing is annotated;
     // global RAM at the 256 MiB default does not, so it is.
     CHECK(map.find("global.ram  [backed 256 MiB of 1 GiB") != std::string::npos);
 
     tpu::tpu_soc_config bringup = good_config();
-    bringup.chip.core[0].svm_size_bytes = 1024 * 1024;
-    bringup.chip.core[1].svm_size_bytes = 1024 * 1024;
+    bringup.chip.core[0].sram_size_bytes = 1024 * 1024;
+    bringup.chip.core[1].sram_size_bytes = 1024 * 1024;
     bringup.validate();
     const std::string small = tpu::describe(bringup);
     CHECK(small.find("bring-up configuration") != std::string::npos);
@@ -397,10 +600,11 @@ int main()
     defaults_are_the_frozen_architecture();
     derived_counts_scale_with_chips();
     frozen_values_are_rejected();
+    the_matrix_geometry_contract_is_enforced();
+    an_available_transform_must_name_its_source();
+    the_open_fabric_parameters_have_no_default();
     capacities_are_range_and_alignment_checked();
     noc_limits_are_enforced_at_configuration_time();
-    sauria_backend_is_refused_until_phase_9();
-    quantized_arithmetic_is_refused_until_it_exists();
     enum_parsing_round_trips_and_rejects_typos();
     description_reports_what_it_ran();
 

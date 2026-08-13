@@ -9,7 +9,8 @@
 
 add_library(tpu_v3_common STATIC
     src/address_map.cpp
-    src/architecture_config.cpp)
+    src/architecture_config.cpp
+    src/sparse_memory.cpp)
 add_library(cdc::components::tpu_v3_common ALIAS tpu_v3_common)
 
 target_include_directories(tpu_v3_common

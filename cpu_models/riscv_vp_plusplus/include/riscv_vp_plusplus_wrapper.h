@@ -9,12 +9,12 @@
 //
 // ## What is deliberately *not* used from upstream
 //
-// CDC-VP owns the memory map, SVM, interrupt controllers, devices and the NoC,
-// so this wrapper embeds only the ISS and its memory interface:
+// CDC-VP owns the memory map, core SRAM, interrupt controllers, devices and
+// the NoC, so this wrapper embeds only the ISS and its memory interface:
 //
 //  * **no DMI.** `dmi_add()` is never called and `InstrMemoryProxy` is never
 //    installed. Both exist upstream to bypass TLM for speed; either would let
-//    fetches and loads miss SVM, the NoC and every counter (plan §11.2 memory
+//    fetches and loads miss core SRAM, the NoC and every counter (plan §11.2
 //    integration rule, `INTERFACE_CONTRACT.md` §9).
 //  * **no `dbbcache` / `lscache`.** Whether these ISS-internal caches are
 //    TLM-transparent has not been measured, so they stay off until it is.

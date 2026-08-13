@@ -15,7 +15,13 @@ two-MXU/SVM/Sauria-experimental composition and D14's temporary single
 AXI-like-fabric wording. Phase 0 through Phase 2 evidence remains valid, but
 its old accelerator hierarchy is historical only.
 
-D15 received final project-owner ratification on 2026-08-12. See the editable
+D15 received final project-owner ratification on 2026-08-12, and Phase 3
+implemented it: `core_sram`, `neo_control_fabric`, `neo_local_sram_fabric` and
+`neo_external_bridge` exist, are gated, and carry the D14 names. What Phase 3
+did not do is compose them — that is Phase 7, and until then the platform
+instantiates the memories only and says so in its report. Decision record D16
+records the one question D15 left open: where the local-data plane is allowed
+to block. See the editable
 [D15 draw.io source](neo_core_architecture-d15.drawio) and its rendered
 [SVG](neo_core_architecture-d15.svg) or [PNG](neo_core_architecture-d15.png).
 This is the project-defined NEO-CORE implementation architecture, not a claim
@@ -137,7 +143,16 @@ small RTL-realizable structure: per-bank arbitration, back-pressure, explicit
 response status and optional register slices. Its number of SRAM banks, data
 width, bank mapping and pipeline depth are configuration values pending the
 target SRAM macro, frequency and PD constraints. The architecture therefore
-does not freeze an arbitrary 256-bit local datapath.
+does not freeze an arbitrary 256-bit local datapath — and the C++ schema goes
+further by having no default at all for those three values, so a number nobody
+chose cannot become a constant by accident. The shipped configurations state
+128-bit x 4 banks x 2 pipeline stages and every report prints them labelled
+provisional.
+
+The local plane has two timing modes (D16). `annotated` never waits and is what
+a full-system run uses; `arbitrated` blocks its requesters on a real per-bank
+round-robin arbiter and is what proves the fairness and back-pressure the
+architecture claims. Any contention figure must name which one produced it.
 
 Five distinct paths matter for correctness and for what timing numbers mean:
 
@@ -183,6 +198,10 @@ only source that may cross the external boundary.
 * One coherent backing store per core SRAM. No caches anywhere in the initial
   architecture — not "caches disabled", **absent**. Adding one is a separate
   coherence decision with its own test plan (plan §11.3).
+* Storage is backed sparsely in deterministic 4 KiB pages (D6). Logical memory
+  and host memory are different quantities and neither may be quoted as the
+  other: the largest Revision 1 configuration describes 1.25 GiB and resides in
+  about 10 MiB until firmware writes to it.
 * Program-visible ordering follows blocking TLM completion: when `b_transport`
   returns, the effect is globally visible to everything on that fabric.
 * An asynchronous DMA, SA or transform job is *not* ordered against the hart by

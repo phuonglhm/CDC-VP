@@ -2,9 +2,10 @@
 //
 // `tpu_v3_soc` entry point.
 //
-// Phase 1 behaviour: read a configuration, validate it, elaborate the SystemC
-// top level, run an empty simulation, and report. See `tpu_v3_soc_top.h` for
-// what is deliberately not built yet.
+// Phase 3 behaviour: read a configuration, validate it, elaborate the SystemC
+// top level with one sparsely page-backed core SRAM per NEO-CORE and the
+// global RAM store, run an empty simulation, and report. See
+// `tpu_v3_soc_top.h` for what is deliberately not built yet.
 
 #include <cstdlib>
 #include <exception>
@@ -33,31 +34,33 @@ namespace {
 #ifndef TPU_V3_SOC_COMPILER
 #define TPU_V3_SOC_COMPILER "unknown"
 #endif
-#ifndef TPU_V3_SOC_MXU_BACKEND
-#define TPU_V3_SOC_MXU_BACKEND "fast"
+#ifndef TPU_V3_SOC_SA_GEOMETRY
+#define TPU_V3_SOC_SA_GEOMETRY "64x64"
 #endif
 
 void print_version()
 {
     std::cout << "tpu_v3_soc (CDC-VP TPU_V3 platform)\n"
-              << "  phase           : 1 (skeleton and packaging)\n"
+              << "  phase           : 3 (core SRAM, split fabrics, map "
+                 "migration)\n"
               << "  build type      : " << TPU_V3_SOC_BUILD_TYPE << '\n'
               << "  CDC-VP revision : " << TPU_V3_SOC_GIT_REVISION << '\n'
               << "  compiler        : " << TPU_V3_SOC_COMPILER << '\n'
-              << "  MXU backend     : " << TPU_V3_SOC_MXU_BACKEND << '\n'
+              << "  SA geometry     : " << TPU_V3_SOC_SA_GEOMETRY
+              << "  (bring-up; 128x128 awaits its D14 promotion gate)\n"
               << "  SystemC         : " << sc_core::sc_version() << '\n';
 }
 
-/// The MXU backend is chosen when the platform is *compiled*
-/// (`-DTPU_V3_MXU_BACKEND=...`), not when it is run. A configuration file
-/// asking for a different one must fail rather than run the compiled backend
+/// The matrix-engine geometry is chosen when the platform is *compiled*
+/// (`-DTPU_V3_SA_GEOMETRY=...`), not when it is run. A configuration file
+/// asking for a different one must fail rather than run the compiled engine
 /// under the other name: the package manifest records the compiled value, so
 /// silently honouring the file would make the manifest describe a run it did
-/// not describe.
-bool backend_matches_this_build(cdc::components::tpu_v3::mxu_backend requested)
+/// not describe — and decision record D14 forbids exactly that for 128x128.
+bool geometry_matches_this_build(
+    const cdc::components::tpu_v3::sauria_matrix_config& requested)
 {
-    return std::string(cdc::components::tpu_v3::to_string(requested))
-        == std::string(TPU_V3_SOC_MXU_BACKEND);
+    return requested.geometry() == std::string(TPU_V3_SOC_SA_GEOMETRY);
 }
 
 } // namespace
@@ -69,7 +72,7 @@ int sc_main(int argc, char* argv[])
 
     const std::string program = argc > 0 ? argv[0] : "tpu_v3_soc";
 
-    tpu::tpu_soc_config config;
+    tpu::tpu_soc_config config = platform::default_config();
     platform::cli_options options;
 
     // Configuration errors are reported as messages and a non-zero exit, not
@@ -95,15 +98,15 @@ int sc_main(int argc, char* argv[])
     // this is the platform's own rule and it must not depend on the component
     // validator having run first.
     for (const auto& core : config.chip.core) {
-        if (backend_matches_this_build(core.mxu.backend)) {
+        if (geometry_matches_this_build(core.sa)) {
             continue;
         }
-        std::cerr << "tpu_v3_soc: the configuration selects MXU backend '"
-                  << tpu::to_string(core.mxu.backend)
-                  << "', but this executable was built with "
-                     "TPU_V3_MXU_BACKEND=" TPU_V3_SOC_MXU_BACKEND
-                     ". Reconfigure the build, or select '"
-                     TPU_V3_SOC_MXU_BACKEND "' in the configuration.\n";
+        std::cerr << "tpu_v3_soc: the configuration selects SA geometry "
+                  << core.sa.geometry()
+                  << ", but this executable was built with "
+                     "TPU_V3_SA_GEOMETRY=" TPU_V3_SOC_SA_GEOMETRY
+                     ". Reconfigure the build, or select "
+                     TPU_V3_SOC_SA_GEOMETRY " in the configuration.\n";
         return EXIT_FAILURE;
     }
 
