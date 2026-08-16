@@ -1,0 +1,24 @@
+case: demo_strided_32x32
+A_shape: 4 32 144
+B_shape: 4 144 32
+C_shape: 4 32 32
+
+# TEST : Strided conv 3x3 s=2 (32x32 array)
+# WHAT : 3x3 kernel, stride 2, dilation 1; exercises the activation strided address generator.
+[RUNTIME CONFIG]
+  ncontexts = 4
+  cxlim     = 40
+  cklim     = 1024
+  act_reps  = 1
+  wei_reps  = 4
+Execution cycles (start -> done) : 2578
+Contraction depth K (MAC/elem)   : 144
+Total MACs                       : 147456
+Throughput (MAC / cycle)         : 57.1978
+Array utilization                : 5.58573 %   (MAC-per-cycle / peak)
+Output throughput (elem / cycle) : 0.397207
+Expected elements : 1024
+Mismatches        : 0
+[RESULT] TEST PASSED: NPU Exact Final matches SAURIA gold_dram with ZERO errors!
+
+status: PASS

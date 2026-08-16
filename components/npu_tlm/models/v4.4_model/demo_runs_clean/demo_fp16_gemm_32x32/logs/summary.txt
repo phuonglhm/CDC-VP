@@ -1,0 +1,18 @@
+case: demo_fp16_gemm_32x32
+A_shape: 1 32 64
+B_shape: 1 64 32
+C_shape: 1 32 32
+
+# TEST : FP16 GeMM 32x32
+# WHAT : Cin=64, Cout=32, 32x32 output on the 32x32 array; FP16 half-precision, float32 accumulate, round-to-fp16 at output; verify within 16 ULP (FP add non-associative).
+[RUNTIME CONFIG]
+  ncontexts = 1
+  cxlim     = 64
+  cklim     = 1024
+  act_reps  = 1
+  wei_reps  = 1
+Expected elements : 1024
+Mismatches        : 0
+[RESULT] TEST PASSED: NPU FP16 matches SAURIA gold_dram within 16 ULP (exact=1023, tol=1, max=1 ULP)!
+
+status: PASS

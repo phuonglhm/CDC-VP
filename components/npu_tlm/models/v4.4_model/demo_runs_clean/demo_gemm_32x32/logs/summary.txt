@@ -1,0 +1,24 @@
+case: demo_gemm_32x32
+A_shape: 1 32 64
+B_shape: 1 64 32
+C_shape: 1 32 32
+
+# TEST : GeMM 32x32
+# WHAT : 1x1 conv / GeMM, Cin=64, Cout=32, 32x32 output on the 32x32 array.
+[RUNTIME CONFIG]
+  ncontexts = 1
+  cxlim     = 64
+  cklim     = 1024
+  act_reps  = 1
+  wei_reps  = 1
+Execution cycles (start -> done) : 550
+Contraction depth K (MAC/elem)   : 64
+Total MACs                       : 65536
+Throughput (MAC / cycle)         : 119.156
+Array utilization                : 11.6364 %   (MAC-per-cycle / peak)
+Output throughput (elem / cycle) : 1.86182
+Expected elements : 1024
+Mismatches        : 0
+[RESULT] TEST PASSED: NPU Exact Final matches SAURIA gold_dram with ZERO errors!
+
+status: PASS
