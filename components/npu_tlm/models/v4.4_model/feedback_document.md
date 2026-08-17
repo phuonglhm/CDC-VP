@@ -77,17 +77,17 @@ The **`FX1_NSPLIT`** register (MMIO address `0x40000214`) controls how the $Y\_D
   * **Lane B Execution Scope**: Rows $\text{NSPLIT} \dots (\text{Y\_DIM} - 1)$ $\rightarrow$ **Rows 32 to 63** (**32 rows total**).
 
 ### 3.2. C++ Source Initialization & Decoding
-In [`config_regs.h:L154`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/config_regs.h#L154):
+In `config_regs.h:L154`:
 ```cpp
 uint32_t r_nsplit{Y_DIM / 2}; // Evaluates to 32 for Y_DIM = 64
 ```
 
-In [`control/instruction_decoder.h:L182,L361`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/control/instruction_decoder.h#L182):
+In `control/instruction_decoder.h:L182,L361`:
 ```cpp
 uint32_t r_nsplit{32}; // Default split (32 rows Lane A, 32 rows Lane B)
 ```
 
-In [`npu_top.h:L1389-L1395`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/npu_top.h#L1389-L1395):
+In `npu_top.h:L1389-L1395`:
 ```cpp
 uint32_t nsplit = s_nsplit.read();
 if (nsplit == 0) {
@@ -101,7 +101,7 @@ if (nsplit == 0) {
 
 ## 4. AXI DMA Controller Specification (Software User Guide)
 
-The **SAURIA AXI DMA Engine** ([`control/sauria_dma.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/control/sauria_dma.h)) provides high-speed, 4-channel burst data transfers between system DRAM and local SRAM scratchpad banks.
+The **SAURIA AXI DMA Engine** (`control/sauria_dma.h`) provides high-speed, 4-channel burst data transfers between system DRAM and local SRAM scratchpad banks.
 
 ```
                                 SYSTEM DRAM
@@ -156,7 +156,7 @@ bool is_any_read_active() const;       // Check if any read channel is busy
 
 ## 5. OBP Activation LUT Specification (Lane A & Lane B)
 
-The **Output Post-Processing Block (OBP)** in [`psm/obp_top.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/psm/obp_top.h) implements a 4-stage post-processing epilogue pipeline. **Stage 3** houses a 64-lane parallel SRAM Activation LUT.
+The **Output Post-Processing Block (OBP)** in `psm/obp_top.h` implements a 4-stage post-processing epilogue pipeline. **Stage 3** houses a 64-lane parallel SRAM Activation LUT.
 
 ```
                               STAGE 3: ACTIVATION LUT (OBP)
@@ -178,7 +178,7 @@ The **Output Post-Processing Block (OBP)** in [`psm/obp_top.h`](file:///data/XPU
 * **Lane B LUT Base Address (`FX1_LUT_B_BASE`)**: `0x40180000` (Local MMIO Offset: `0x00180000` = `LUT_OFFSET + 0x00040000`).
 * **Capacity & Structure**: **16 KB (16,384 bytes)** per lane.
   * $64 \text{ parallel PE lanes} \times 256 \text{ entries/lane} \times 1 \text{ byte/entry}$.
-  * Declared in [`psm/obp_top.h:L89`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/psm/obp_top.h#L89) as `uint8_t lut_ram[Y_DIM][256];` (where `Y_DIM = 64`).
+  * Declared in `psm/obp_top.h:L89` as `uint8_t lut_ram[Y_DIM][256];` (where `Y_DIM = 64`).
 
 ### 5.2. Index Clamping & Lookup Formula
 Signed 8-bit quantization values $v \in [-128, 127]$ are clamped and mapped to an unsigned 8-bit SRAM index $\in [0, 255]$:
@@ -215,7 +215,7 @@ for (int l = 0; l < Y_DIM; l++)
 
 ## 6. 64-bit Rich Instruction Format (`INST_LO` / `INST_HI`)
 
-Rich instructions are formatted as 64-bit words submitted via MMIO configuration registers into [`control/instruction_decoder.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/control/instruction_decoder.h).
+Rich instructions are formatted as 64-bit words submitted via MMIO configuration registers into `control/instruction_decoder.h`.
 
 ### 6.1. Bitfield Layout
 ```
@@ -249,7 +249,7 @@ Rich instructions are formatted as 64-bit words submitted via MMIO configuration
 
 ## 7. `FX1_RICH_HEADS_DIM_MODE` Register Specification
 
-Mapped at MMIO Address **`0x40000454`** (Offset `0x00454`) in [`control/instruction_decoder.h:L235-L242`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/control/instruction_decoder.h#L235-L242).
+Mapped at MMIO Address **`0x40000454`** (Offset `0x00454`) in `control/instruction_decoder.h:L235-L242`.
 
 ### 7.1. Packed Bitfield Structure
 ```
@@ -291,7 +291,7 @@ else if (addr == 0x40000454) {
 
 ## 8. Reconfigurable Compute Engine (RCE) & Reduction Engine (RE)
 
-Defined in [`psm/re_rce.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/psm/re_rce.h). The RCE manages non-linear lookups (`exp`, `recip`, `rsqrt`) while the RE coordinates reduction operations.
+Defined in `psm/re_rce.h`. The RCE manages non-linear lookups (`exp`, `recip`, `rsqrt`) while the RE coordinates reduction operations.
 
 ### 8.1. RCE Non-linear Lookup Opcodes (`rce_lut_op_t`)
 * `LUT_OP_EXP = 0` ($e^x$ lookup for Softmax Pass 2).
@@ -321,10 +321,10 @@ float lookup_exp(float x) {
 * **Full Sequence Tensor Additions**: $147$ checkpoints require multi-tile buffer streaming past local SRAM 280 KB scratch limits.
 
 ### 9.2. Recent Hardware & Model Fixes Applied
-1. **Dual-Queue DMA Bank Assignment**: Corrected Queue B DMA read destination (`m_dma->start_read(2, ...)` for Operand A and `m_dma->start_read(3, ...)` for Operand B) in [`control/instruction_decoder.h:L719-L727`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/control/instruction_decoder.h#L719-L727).
+1. **Dual-Queue DMA Bank Assignment**: Corrected Queue B DMA read destination (`m_dma->start_read(2, ...)` for Operand A and `m_dma->start_read(3, ...)` for Operand B) in `control/instruction_decoder.h:L719-L727`.
 2. **1D Channel Bias Vector Broadcasting**: Added channel dimension wrapping ($D=768 / D=3072$) with address thresholding (`addr < 0x00180000`) to separate 1D bias vectors from 2D sequence tensors.
 3. **Scale Parameter Sanitization**: Normalized uninitialized floating-point scales (`scale_a`, `scale_b`, `scale_out`) in `emulate_elem_wise` to `1.0`.
-4. **PWL Interpolation**: Added PWL linear interpolation and mathematical fallbacks in [`psm/re_rce.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/psm/re_rce.h).
+4. **PWL Interpolation**: Added PWL linear interpolation and mathematical fallbacks in `psm/re_rce.h`.
 
 ---
 
