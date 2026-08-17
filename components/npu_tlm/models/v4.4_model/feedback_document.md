@@ -2,8 +2,6 @@
 
 > **Document Name**: `feedback_document.md`  
 > **Target System**: SAURIA NPU Core v4.4 SystemC Cycle-Accurate Model  
-> **Date**: August 16, 2026
-
 ---
 
 ## 1. Executive Summary & Architecture Overview
