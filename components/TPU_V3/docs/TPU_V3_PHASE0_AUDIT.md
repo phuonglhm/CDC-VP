@@ -261,14 +261,23 @@ at the pinned SHA — rather than being copied into the repository.
 | Bundled model copies | `components/npu_tlm/models/v4.2_model` and `.../v4.2_model_Aug01` |
 | External model root | `/home/duyptt_HW/Documents/work/fx1/hw/tlm/MP1_V1.1/v4.2_model` — present |
 | Override | `SAURIA_NPU_ROOT` cache/env variable; the bundled `v4.2_model_Aug01` is the fallback |
-| Array dimensions | **32 x 32** — `sauria_targets.h` defines `FP16_32x32` and `int16_32x32`, both with X=32, Y=32 |
-| Data types | FP16 (`SAURIA_DT_FP16`) and INT16 (`SAURIA_DT_INT16`) |
+| Array dimensions | **Superseded — see `TPU_V3_PHASE5_AUDIT.md` §3.** This row read "32 x 32 — `sauria_targets.h` defines `FP16_32x32` and `int16_32x32`". `sauria_targets.h` actually defines **eight** profiles including `int8_64x64` (X=64, Y=64) and `FP16_64x64`. The 32x32 reading was incomplete, and Phase 5 depends on the profile it missed |
+| Data types | **Superseded.** This row read "FP16 and INT16". INT8 is also present, and `int8_64x64` is INT8 activation/weight with INT32 accumulation — exactly the set plan §11.4 asks for |
 | License | upstream `bsc-loca/sauria` architecture, `Apache-2.0 WITH SHL-2.1`; the SystemC implementation is internal-only and is **not** shipped in public CDC-VP. See `licenses/SAURIA.PROVENANCE.md` and `licenses/SAURIA.SHL-2.1`. |
 
-This confirms plan §8.3 and §11.4: the available Sauria instance is a 32x32 NPU
-top, not a bare 128x128 MXU, and it offers FP16/INT16 rather than the INT8/BF16
-set a TPU-class MXU would normally advertise. It cannot be used unchanged as
-the detailed MXU. No Sauria source has been copied by this audit, and TPU_V3
+**This paragraph is superseded; it is kept because the Phase 5 audit is a
+correction of it and a deleted claim cannot be corrected.** It read: "the
+available Sauria instance is a 32x32 NPU top, not a bare 128x128 MXU, and it
+offers FP16/INT16 rather than the INT8/BF16 set a TPU-class MXU would normally
+advertise."
+
+Two of those three claims are wrong. The source offers eight profiles, among
+them `int8_64x64` at X=64, Y=64 with INT8 in and INT32 out — the geometry and
+datatype Phase 5 requires, already present and needing no new profile. What
+remains true, and is the part that matters, is that it is an **NPU top rather
+than a bare MXU**: the 64x64 array is reached only through a composition that
+also contains the Sauria DMA, an instruction decoder, OBP and RCE, so it still
+cannot be used unchanged. See `TPU_V3_PHASE5_AUDIT.md` §3 and §4. No Sauria source has been copied by this audit, and TPU_V3
 adds no new Sauria redistribution obligation while the Sauria backend is off.
 
 **Redistribution rule carried into Phase 12:** the TPU_V3 package must refuse to

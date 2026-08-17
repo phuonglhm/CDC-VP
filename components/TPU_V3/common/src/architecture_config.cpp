@@ -138,12 +138,28 @@ void sauria_matrix_config::validate(const std::string& context) const
                "the bring-up array 128x128");
     }
 
-    if (datatype == matrix_datatype::int8_int32) {
-        reject(context, "sa.datatype", to_string(datatype),
-               "the quantized extension is not implemented. The TPU_V3 "
-               "reference arithmetic is BF16 operands with IEEE FP32 "
-               "accumulation (decision record D6). Use 'bf16_fp32'");
-    }
+    // No datatype is refused here any more, and the reason is worth recording.
+    //
+    // This used to reject `int8_int32` as "not implemented". That was true and
+    // right until Phase 5, whose whole deliverable is the verified v4.2
+    // `int8_64x64` profile — INT8 operands, INT32 accumulation — which D6
+    // explicitly permits as an opt-in quantized extension. A schema that
+    // refuses the only arithmetic the source actually provides would make the
+    // phase unconfigurable.
+    //
+    // What D6 forbids is not selecting INT8. It is INT8 *replacing* the
+    // BF16/FP32 reference path, and letting a bring-up run be read as BF16
+    // equivalence. That is a reporting property, not a validation one, so it
+    // is enforced where it can actually be broken: `describe()` names the
+    // arithmetic each datatype really performs and says outright when it is
+    // not the reference path.
+    //
+    // The remaining check belongs to the engine, not the schema: the pinned
+    // v4.2 source has **no BF16 profile in any geometry**, so an instantiated
+    // Sauria engine must refuse a datatype its source cannot provide. That
+    // refusal lives in the Phase 5 configuration gate, because it depends on
+    // which source is pinned, while this validator must keep working for the
+    // platform configurations that instantiate no engine at all.
 }
 
 void dma_config::validate(const std::string& context) const
@@ -346,6 +362,50 @@ void tpu_soc_config::validate() const
                "capacity (core0 = "
                    + std::to_string(chip.core[0].sram_size_bytes) + ')');
     }
+
+    // The same argument, for everything `describe()` reports from core 0.
+    //
+    // `describe()` prints `chip.core[0]`'s matrix geometry, datatype and source
+    // revision and calls them the configuration's. Nothing stopped a caller
+    // giving core 1 different ones, so a two-core chip could run half its
+    // matrix work on an arithmetic the report never mentioned — the exact
+    // mislabelling D6 and D14 forbid, arrived at from the other direction.
+    //
+    // Refusing divergence is the right fix rather than reporting both, because
+    // there is no configuration this project wants in which the two SAs of one
+    // chip disagree about their numeric contract or their source. If that ever
+    // changes, the report has to change with it, and this check is what will
+    // force the conversation.
+    if (chip.core[0].sa.datatype != chip.core[1].sa.datatype) {
+        reject(context, "chip.core1.sa.datatype",
+               to_string(chip.core[1].sa.datatype),
+               std::string("both cores in a chip must use the same matrix "
+                           "arithmetic (core0 = ")
+                   + to_string(chip.core[0].sa.datatype)
+                   + "). Reports name core 0's datatype for the whole "
+                     "configuration, so a differing core 1 would be invisible");
+    }
+    if (chip.core[0].sa.source_revision != chip.core[1].sa.source_revision) {
+        reject(context, "chip.core1.sa.source_revision",
+               chip.core[1].sa.source_revision.empty()
+                   ? std::string("(empty)")
+                   : chip.core[1].sa.source_revision,
+               "both cores in a chip must be extracted from the same Sauria "
+               "source revision (core0 = "
+                   + (chip.core[0].sa.source_revision.empty()
+                          ? std::string("(empty)")
+                          : chip.core[0].sa.source_revision)
+                   + "). Reports and the build manifest name core 0's");
+    }
+    if (chip.core[0].sa.rows != chip.core[1].sa.rows
+        || chip.core[0].sa.columns != chip.core[1].sa.columns) {
+        reject(context, "chip.core1.sa.geometry", chip.core[1].sa.geometry(),
+               "both cores in a chip must use the same matrix geometry (core0 = "
+                   + chip.core[0].sa.geometry()
+                   + "). Reports name core 0's geometry, and decision record "
+                     "D14 forbids a build or report calling one array by "
+                     "another's name");
+    }
 }
 
 bool mesh_size_supported(unsigned mesh_x, unsigned mesh_y) noexcept
@@ -385,7 +445,7 @@ std::string describe(const tpu_soc_config& config)
         << sa_per_core << " per core, " << core0.sa.geometry()
         << " bring-up; 128x128 is the promotion target)\n"
         << "  matrix datatype      : " << to_string(core0.sa.datatype)
-        << "  (BF16 operands, IEEE FP32 accumulation)\n"
+        << "  (" << matrix_datatype_note(core0.sa.datatype) << ")\n"
         << "  matrix source        : "
         << (core0.sa.source_revision.empty()
                 ? std::string("not integrated (Phase 5)")
@@ -518,6 +578,23 @@ const char* to_string(noc_timing timing) noexcept
         return "detailed";
     }
     return "unknown";
+}
+
+const char* matrix_datatype_note(matrix_datatype datatype) noexcept
+{
+    switch (datatype) {
+    case matrix_datatype::bf16_fp32:
+        return "BF16 operands, IEEE FP32 accumulation - the TPU_V3 reference "
+               "path (decision record D6)";
+    case matrix_datatype::fp16_fp32:
+        return "FP16 operands, FP32 accumulation - a v4.2 bring-up datatype, "
+               "NOT the BF16 reference path and not evidence of BF16 "
+               "equivalence";
+    case matrix_datatype::int8_int32:
+        return "INT8 operands, INT32 accumulation - D6's opt-in quantized "
+               "extension, NOT the BF16 reference path";
+    }
+    return "unknown arithmetic";
 }
 
 matrix_datatype matrix_datatype_from_string(const std::string& text)

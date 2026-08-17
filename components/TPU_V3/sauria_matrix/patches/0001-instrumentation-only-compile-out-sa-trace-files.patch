@@ -1,0 +1,316 @@
+Instrumentation-only: compile out every Sauria trace-file writer.
+
+This patch changes no arithmetic, no control flow and no timing. It adds a
+`SAURIA_TRACE_FILES` switch, default 0, and puts the two `dump_mac_*` bodies and
+their three call sites behind it, and replaces all nine `static std::ofstream`
+trace objects with a null-buffer `std::ostream` when the switch is off.
+
+## Why the TPU_V3 adapter cannot compile the source without it
+
+The source writes CSV traces through function-local `static std::ofstream`
+objects. Two problems, and they are separate.
+
+**1. The array's writers run unconditionally.** `dump_mac_matrix()` and
+`dump_mac_cell()` are reached from the compute process gated only on ordinary
+functional conditions (`raw_cswitch_any_a && !raw_cswitch_q_a`,
+`local_cswitch_rise`), not on `SAURIA_DEBUG`, which only ever routed `DBG_COUT`.
+`dump_mac_cell()` is called from inside the per-processing-element inner loop and
+calls `f.flush()` on every invocation: on the 64x64 `int8_64x64` profile that is
+up to 4096 flushed writes per column-switch event, into a `trace_sysc/`
+directory that may not exist.
+
+**2. A `static` local is shared by every instantiation of the enclosing
+template**, so the two matrix engines of a two-core NEO-CORE chip would share one
+file handle and one `header_written` flag. CDC-VP's `INTERFACE_CONTRACT.md`
+forbids mutable global or static state between instances, in terms that name this
+case: "a `static` scratch buffer in a compute kernel is a defect even when tests
+pass single-threaded, because SystemC processes interleave at `wait()`
+boundaries."
+
+## Why the feeders and the PSM are included, having first been left out
+
+The first version of this patch touched only `sa_array.h`, on the reasoning that
+the feeder and PSM writers are each gated at run time on the instance name
+containing `NpuTop_std`, and are therefore unreachable from an extracted
+composition that never uses that name. The adapter enforces the naming rule, and
+the two-instance gate passed.
+
+That reasoning was wrong, and running an actual GEMM is what showed it. The
+run-time guard covers the *writes*; it does not cover the **construction**. An
+`ofstream` creates its file when it is constructed, and
+
+    static std::ofstream raw_wei_trace("trace_sysc/weight_raw_buf.csv");
+    static bool raw_header = false;
+    ...
+    if (inst_name.find("NpuTop_std") != std::string::npos) { ... }
+
+in `wei_feeder.h` declares the stream *outside* the guard. The first real matrix
+job produced `trace_sysc/weight_raw_buf.csv` — an empty file, from a composition
+that never uses the reserved name. The two-instance gate had not caught it
+because it never ran a job that reached the weight feeder's fetch path.
+
+So the naming rule is now a second line of defence rather than the only one. All
+nine writers get the same treatment, in `npu_top.h` too even though `NpuTop` is
+excluded, because "no trace file is ever created" is a property that is worth
+being able to state without qualification.
+
+The replacement is `std::ostream name(nullptr)`: a stream with no buffer, whose
+insertions set `badbit` and write nowhere. It is a one-line substitution per site,
+so the surrounding control flow is untouched and the diff is reviewable as a
+mechanical transformation rather than as a rewrite.
+
+Offered upstream to the NPU team. Carried downstream meanwhile under the same
+policy as the RISC-V VP++ conformance patches: recorded as a file, verified by
+content hash, and applied only to a build-tree copy -- never to the source in
+place, which other components share.
+
+diff -ru orig/data_feeder/ifmap_feeder.h new/data_feeder/ifmap_feeder.h
+--- orig/data_feeder/ifmap_feeder.h	2026-08-17 14:41:10.481351426 +0700
++++ new/data_feeder/ifmap_feeder.h	2026-08-17 14:41:10.499351433 +0700
+@@ -1231,7 +1231,14 @@
+ 
+                 if (inst_name.find("NpuTop_std") != std::string::npos)
+                 {
++                    #if SAURIA_TRACE_FILES
+                     static std::ofstream ifmap_pop_trace("trace_sysc/ifmap_pop_logical.csv");
++                    #else
++                    // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++                    // ofstream is what creates the file, and that happens even where
++                    // the writes below are gated on the instance name.
++                    static std::ostream ifmap_pop_trace(nullptr);
++                    #endif
+                     static bool ifmap_pop_header = false;
+                     static uint32_t dbg_ifmap_rows = 0;
+ 
+diff -ru orig/data_feeder/wei_feeder.h new/data_feeder/wei_feeder.h
+--- orig/data_feeder/wei_feeder.h	2026-08-17 14:41:10.481351426 +0700
++++ new/data_feeder/wei_feeder.h	2026-08-17 14:41:10.499351433 +0700
+@@ -347,7 +347,14 @@
+ 
+                 if (inst_name.find("NpuTop_std") != std::string::npos)
+                 {
++                    #if SAURIA_TRACE_FILES
+                     static std::ofstream wei_raw_trace("trace_sysc/weight_sram_flat.csv");
++                    #else
++                    // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++                    // ofstream is what creates the file, and that happens even where
++                    // the writes below are gated on the instance name.
++                    static std::ostream wei_raw_trace(nullptr);
++                    #endif
+                     static bool wei_raw_header = false;
+                     static uint32_t wei_raw_count = 0;
+ 
+@@ -377,7 +384,14 @@
+                 {
+                     wei_flat_buf.push_back(mem_data[x]);
+                 }
++                #if SAURIA_TRACE_FILES
+                 static std::ofstream raw_wei_trace("trace_sysc/weight_raw_buf.csv");
++                #else
++                // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++                // ofstream is what creates the file, and that happens even where
++                // the writes below are gated on the instance name.
++                static std::ostream raw_wei_trace(nullptr);
++                #endif
+                 static bool raw_header = false;
+                 static uint32_t raw_count = 0;
+ 
+@@ -796,7 +810,14 @@
+ 
+                 if (inst_name.find("NpuTop_std") != std::string::npos)
+                 {
++                    #if SAURIA_TRACE_FILES
+                     static std::ofstream wei_pop_trace("trace_sysc/weight_pop_logical.csv");
++                    #else
++                    // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++                    // ofstream is what creates the file, and that happens even where
++                    // the writes below are gated on the instance name.
++                    static std::ostream wei_pop_trace(nullptr);
++                    #endif
+                     static bool wei_pop_header = false;
+                     static uint32_t dbg_wei_rows = 0;
+ 
+diff -ru orig/debug.h new/debug.h
+--- orig/debug.h	2026-08-17 14:41:10.458351417 +0700
++++ new/debug.h	2026-08-17 14:41:10.489351429 +0700
+@@ -17,6 +17,25 @@
+ #define SAURIA_DEBUG 1
+ #endif
+ 
++// Trace-file emission, separate from SAURIA_DEBUG and OFF by default.
++//
++// SAURIA_DEBUG only routes DBG_COUT. It has never controlled the CSV writers in
++// sa_array/ifmap_feeder/wei_feeder/psm_top, which are function-local
++// `static std::ofstream` objects -- shared by every instance of their enclosing
++// template, and in sa_array's case reached unconditionally from the compute
++// process and flushed once per processing element.
++//
++// Two problems follow. A host integrating this model as a component cannot have
++// process-global mutable state shared between two instances of an accelerator.
++// And on a 64x64 array, dump_mac_cell() performs 4096 flushed writes per
++// column-switch event.
++//
++// This switch compiles that machinery out. It is diagnostic-only: no
++// arithmetic, no control flow and no timing changes with it.
++#ifndef SAURIA_TRACE_FILES
++#define SAURIA_TRACE_FILES 0
++#endif
++
+ namespace sauria
+ {
+     struct NullSink
+diff -ru orig/npu_top.h new/npu_top.h
+--- orig/npu_top.h	2026-08-17 14:41:10.458351417 +0700
++++ new/npu_top.h	2026-08-17 14:41:10.500351433 +0700
+@@ -1417,7 +1417,21 @@
+                 act_vector_t<Y_DIM, T_ACT> act_vec = s_act_arr_to_array_a.read();
+                 wei_vector_t<X_DIM, T_WEI> wei_vec = s_wei_arr_to_array_a.read();
+ 
++                #if SAURIA_TRACE_FILES
++
+                 static std::ofstream sa_stream_trace("trace_sysc/sa_input_stream.csv");
++
++                #else
++
++                // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++
++                // ofstream is what creates the file, and that happens even where
++
++                // the writes below are gated on the instance name.
++
++                static std::ostream sa_stream_trace(nullptr);
++
++                #endif
+                 static bool sa_stream_header = false;
+                 static uint32_t sa_stream_count = 0;
+ 
+@@ -1502,7 +1516,21 @@
+                 return;
+             }
+ 
++            #if SAURIA_TRACE_FILES
++
+             static std::ofstream sa_stream_trace("trace_sysc/sa_input_stream_physical_std.csv");
++
++            #else
++
++            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++
++            // ofstream is what creates the file, and that happens even where
++
++            // the writes below are gated on the instance name.
++
++            static std::ostream sa_stream_trace(nullptr);
++
++            #endif
+             static bool header_written = false;
+             static bool prev_clear = false;
+             static bool active_dump = false;
+diff -ru orig/psm/psm_top.h new/psm/psm_top.h
+--- orig/psm/psm_top.h	2026-08-17 14:41:10.448351414 +0700
++++ new/psm/psm_top.h	2026-08-17 14:41:10.499351433 +0700
+@@ -117,7 +117,21 @@
+                 return;
+             }
+ 
++            #if SAURIA_TRACE_FILES
++
+             static std::ofstream psm_trace("trace_sysc/psm_write_trace.csv");
++
++            #else
++
++            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++
++            // ofstream is what creates the file, and that happens even where
++
++            // the writes below are gated on the instance name.
++
++            static std::ostream psm_trace(nullptr);
++
++            #endif
+             static bool psm_trace_header = false;
+             static uint32_t psm_trace_count = 0;
+ 
+diff -ru orig/systolic_array/sa_array.h new/systolic_array/sa_array.h
+--- orig/systolic_array/sa_array.h	2026-08-17 14:41:10.481351426 +0700
++++ new/systolic_array/sa_array.h	2026-08-17 14:41:10.500351433 +0700
+@@ -71,7 +71,15 @@
+ 
+         void dump_mac_matrix(uint32_t context, const std::string &tag, uint32_t start_y, uint32_t end_y)
+         {
++#if SAURIA_TRACE_FILES
++            #if SAURIA_TRACE_FILES
+             static std::ofstream f("trace_sysc/sa_macq_dump.csv");
++            #else
++            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++            // ofstream is what creates the file, and that happens even where
++            // the writes below are gated on the instance name.
++            static std::ostream f(nullptr);
++            #endif
+             static bool header_written = false;
+             if (!header_written)
+             {
+@@ -93,11 +101,22 @@
+                 }
+             }
+             f.flush();
++#else
++            (void)context; (void)tag; (void)start_y; (void)end_y;
++#endif
+         }
+ 
+         void dump_mac_cell(uint32_t context, int y, int x, const std::string &tag)
+         {
++#if SAURIA_TRACE_FILES
++            #if SAURIA_TRACE_FILES
+             static std::ofstream f("trace_sysc/sa_macq_cell_dump.csv");
++            #else
++            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
++            // ofstream is what creates the file, and that happens even where
++            // the writes below are gated on the instance name.
++            static std::ostream f(nullptr);
++            #endif
+             static bool header_written = false;
+             if (!header_written)
+             {
+@@ -114,6 +133,9 @@
+               << sc_time_stamp()
+               << "\n";
+             f.flush();
++#else
++            (void)context; (void)y; (void)x; (void)tag;
++#endif
+         }
+ 
+         SC_HAS_PROCESS(SystolicArray);
+@@ -215,7 +237,9 @@
+             if (raw_cswitch_any_a && !raw_cswitch_q_a)
+             {
+                 cswitch_context_latched_a = i_context_id_a.read();
++#if SAURIA_TRACE_FILES
+                 dump_mac_matrix(cswitch_context_latched_a, "before_raw_cswitch_A", 0, nsplit);
++#endif
+             }
+             raw_cswitch_q_a = raw_cswitch_any_a;
+ 
+@@ -231,7 +255,9 @@
+             if (raw_cswitch_any_b && !raw_cswitch_q_b)
+             {
+                 cswitch_context_latched_b = i_context_id_b.read();
++#if SAURIA_TRACE_FILES
+                 dump_mac_matrix(cswitch_context_latched_b, "before_raw_cswitch_B", nsplit, Y_DIM);
++#endif
+             }
+             raw_cswitch_q_b = raw_cswitch_any_b;
+ 
+@@ -308,8 +334,10 @@
+ 
+                     if (local_cswitch_rise)
+                     {
++#if SAURIA_TRACE_FILES
+                         uint32_t ctx = (y < (int)nsplit) ? cswitch_context_latched_a : cswitch_context_latched_b;
+                         dump_mac_cell(ctx, y, x, "after_local_cswitch");
++#endif
+                     }
+ 
+                     if (x == 0)

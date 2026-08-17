@@ -264,25 +264,84 @@ void the_matrix_geometry_contract_is_enforced()
         },
         "sa.geometry"));
 
-    // Same reasoning for arithmetic: a configuration asking for INT8/INT32
-    // must not quietly get BF16/FP32 results. The extension is optional and
-    // additive (D6); it never replaces the reference path.
+    // Arithmetic is *not* refused here any more, and the change is deliberate.
+    //
+    // `int8_int32` used to be rejected as unimplemented. Phase 5 implements
+    // exactly it — the verified v4.2 `int8_64x64` profile — and D6 permits it
+    // as an opt-in quantized extension, so a schema that refuses the only
+    // arithmetic the source provides would make the phase unconfigurable.
+    // What D6 actually forbids is INT8 being read *as* the BF16 reference, and
+    // that is checked below on the report, where it can be broken.
+    tpu::tpu_soc_config quantized = good_config();
+    quantized.chip.core[0].sa.datatype = tpu::matrix_datatype::int8_int32;
+    quantized.chip.core[1].sa.datatype = tpu::matrix_datatype::int8_int32;
+    quantized.validate();
+
+    // Every non-reference datatype must be *named* and must be *disclaimed* in
+    // the same breath. The report used to print the datatype followed by a
+    // hard-coded "(BF16 operands, IEEE FP32 accumulation)", so an FP16 run
+    // printed a BF16 claim beside the word `fp16_fp32` and the old test, which
+    // only looked for the name, passed anyway.
+    for (auto datatype : {tpu::matrix_datatype::fp16_fp32,
+                          tpu::matrix_datatype::int8_int32}) {
+        tpu::tpu_soc_config bringup = good_config();
+        bringup.chip.core[0].sa.datatype = datatype;
+        bringup.chip.core[1].sa.datatype = datatype;
+        bringup.validate();
+
+        const std::string report = tpu::describe(bringup);
+        CHECK(report.find(tpu::to_string(datatype)) != std::string::npos);
+        CHECK(report.find("NOT the BF16 reference path") != std::string::npos);
+        // The specific regression: no BF16 claim anywhere in a non-BF16 report.
+        CHECK(report.find("BF16 operands") == std::string::npos);
+    }
+
+    // The two cores of a chip must agree about everything the report reads from
+    // core 0. Until this check existed a caller could give core 1 a different
+    // datatype, source revision or geometry and the report would describe only
+    // core 0 — so half the matrix work ran on an arithmetic nothing mentioned.
+    //
+    // Each case changes **core 1 only**, which is exactly what the tests above
+    // could not catch: they assign both cores together, so a per-core hole is
+    // invisible to them by construction.
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
-            c.chip.core[0].sa.datatype = tpu::matrix_datatype::int8_int32;
+            c.chip.core[1].sa.datatype = tpu::matrix_datatype::int8_int32;
             c.validate();
         },
-        "sa.datatype"));
+        "chip.core1.sa.datatype"));
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[1].sa.source_revision = "some-other-revision";
+            c.validate();
+        },
+        "chip.core1.sa.source_revision"));
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[1].sa.rows = tpu::sa_target_rows;
+            c.chip.core[1].sa.columns = tpu::sa_target_columns;
+            c.validate();
+        },
+        "chip.core1.sa"));
 
-    // fp16_fp32 is accepted, because a v4.2 bring-up run on a datatype the
-    // source supports is legitimate integration evidence — provided it is
-    // named. The report is what stops it being read as the BF16 reference.
-    tpu::tpu_soc_config bringup = good_config();
-    bringup.chip.core[0].sa.datatype = tpu::matrix_datatype::fp16_fp32;
-    bringup.chip.core[1].sa.datatype = tpu::matrix_datatype::fp16_fp32;
-    bringup.validate();
-    CHECK(tpu::describe(bringup).find("fp16_fp32") != std::string::npos);
+    // Agreeing on a non-default value is still fine — the rule is agreement,
+    // not "must be the default".
+    tpu::tpu_soc_config agreed = good_config();
+    agreed.chip.core[0].sa.source_revision = "v4.2-pinned";
+    agreed.chip.core[1].sa.source_revision = "v4.2-pinned";
+    agreed.validate();
+
+    // ...and the reference path still says so.
+    tpu::tpu_soc_config reference = good_config();
+    const std::string reference_report = tpu::describe(reference);
+    CHECK(reference_report.find("bf16_fp32") != std::string::npos);
+    CHECK(reference_report.find("BF16 operands, IEEE FP32 accumulation")
+          != std::string::npos);
+    CHECK(reference_report.find("NOT the BF16 reference path")
+          == std::string::npos);
 }
 
 void an_available_transform_must_name_its_source()

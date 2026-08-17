@@ -41,6 +41,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | D14 | NEO-CORE architecture rebaseline | One VP++ RV32GCV hart, one shared core SRAM, one independent TPU_V3 DMA, one Sauria matrix engine and one Im2Col/Col2Im Transform engine. Integrate verified 64x64 Sauria first; promote to the NPU team's 128x128 source later. Never reuse the Sauria DMA. Its original single AXI-like-fabric wording is superseded by D15 |
 | D15 | NEO-CORE internal interconnect | Split control and data: 32-bit AXI4-Lite for MMIO control; a native, pipelined, banked-SRAM request/response fabric for internal bulk data; full AXI4 only at the external chip/NoC boundary. NEO DMA owns bulk external movement; the required VP++ instruction/global path also exits through that boundary. Do not build a full AXI data crossbar inside NEO-CORE |
 | D16 | Where the local-data plane may block | `neo_local_sram_fabric` has two timing modes. `annotated` is the default and never waits, so it is safe behind any NoC-reachable target; `arbitrated` blocks on a real per-bank round-robin arbiter and is the only mode in which fairness and back-pressure are behaviours rather than estimates. Every TLM target still never waits. A timing figure must name the mode that produced it |
+| D17 | Sauria matrix adapter shape | **Buffered tile staging.** Operands are prefetched from core SRAM into private staging stores over `neo_local_sram_if`, the array runs against those stores at the source's own timing, results are written back the same way. Pass-through is not implemented: the source has feeder compute stalls but no SRAM-side response handshake, so a late read is captured as valid data. SRAM-B holds one physical 64-lane vector per K step and zero-pads partial N. Prefetch and writeback stay fully in D16's scope. Only `source_compute_time` may be called cycle-correlated. Requires hash-verified instrumentation-only patches and a binary gate proving the selected closure has no mutable function-local static state |
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -975,7 +976,7 @@ Phase 3:
 
 | Item | Status | Evidence / remaining implementation |
 | --- | --- | --- |
-| Record D1-D16 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3 |
+| Record D1-D17 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3; D17 added by the Phase 5 source audit |
 | Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one SA + Transform + split control/data fabrics | Documentation complete; SRAM and all three fabrics implemented and gated; DMA/SA/Transform pending Phases 4-6; composition pending Phase 7 | D14/D15, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and `tpu_v3_local_sram_fabric` / `tpu_v3_control_fabric` / `tpu_v3_external_bridge` |
 | Rename SVM to core SRAM while retaining the 16 MiB window/capacity contract | Complete | D6 as amended by D14; `address_map.h`, `architecture_config.h`, the four shipped configurations and the packaged `--print-address-map` output all use `CORE_SRAM`, and both the CLI regression and the packaging regression fail if the legacy names reappear |
 | Set BF16 operands with FP32 accumulation as the target SA arithmetic | Complete as a contract; not proven by the v4.2 bring-up type | D6/D14 |
@@ -1126,3 +1127,216 @@ approximately-timed fabric with non-blocking transport — would make both modes
 unnecessary. It is not built now because nothing in Phase 3 needs it and
 because the payload-ownership and response-routing contract such a mode
 requires does not exist yet (D15 fixes one outstanding request per requester).
+
+## D17. The Sauria matrix adapter is a buffered tile-staging design
+
+### Decision
+
+Phase 5's adapter **stages tiles**. Operands are prefetched from core SRAM into
+private staging stores over `neo_local_sram_if`, the Sauria array runs against
+those stores at its own signal-level timing, and results are written back the
+same way:
+
+```text
+CORE_SRAM
+   │  native local-SRAM fabric
+   ▼
+prefetch controller
+   ▼
+A/B tile staging store ──> Sauria feeders ──> 64x64 array ──> PSM
+                                                               │
+                                                               ▼
+                                                        C staging store
+                                                               │
+                                                               ▼
+                                                      writeback controller
+                                                               ▼
+                                                           CORE_SRAM
+```
+
+Job state is `IDLE → PREFETCH_A/B → COMPUTE → WRITEBACK_C → DONE/ERROR`.
+
+SRAM-A receives A in the source's channel-major layout. SRAM-B receives exactly
+one physical X-lane vector per K step: firmware's `B[K][N]` row fills lanes
+`0..N-1` and lanes `N..X-1` are zero. Flattening `K*N` across vectors is
+forbidden because it crosses B-row boundaries whenever `N != X`.
+
+**Pass-through — one native transaction per SRAM access — is not implemented**,
+and is reconsidered only if the NPU team supplies a feeder/controller interface
+with `ready`/`valid` or another genuine stall mechanism.
+
+### Why
+
+The source **does** have stall signalling, and an earlier draft of this record
+wrongly said it had none. The feeders drive `o_stall` (`ifmap_feeder.h:81`,
+`wei_feeder.h:79`), the controller consumes it as `i_act_stall`/`i_wei_stall`
+(`main_controller.h:54`, `:60`) and gates the compute pipeline on it
+(`main_controller.h:564`).
+
+What the source lacks is a **memory-side response handshake**. There is no
+`mem_ready`, no `response_valid` and no way to defer a read's capture: the
+feeder recovers data on a fixed schedule,
+
+```cpp
+bool mem_data_valid = rden_q2;   // ifmap_feeder.h:509
+rden_q2 = rden_q1;
+rden_q1 = false;
+```
+
+an unconditional two-cycle shift register. The existing feeder stalls throttle
+the *compute* pipeline; they cannot postpone that capture, because nothing in
+the SRAM port can tell the feeder the data is not there yet.
+
+That is what makes pass-through unsafe rather than merely slow. Routing each
+access through the `arbitrated` local fabric lets a bank conflict return late,
+and because the capture window cannot move, the feeder latches whatever the
+port happens to be driving. The result is not degraded timing — it is **wrong
+data**, and it is wrong in a way that looks like an arithmetic defect.
+
+Making pass-through correct would mean editing the feeders and the controller to
+carry back-pressure. That is a change to the source, and it destroys the one
+thing the extraction exists to establish: a differential against unmodified
+Sauria. An adapter that had to modify the source before it could be compared
+with the source proves nothing about the source.
+
+Buffering is also RTL-realizable and consistent with the source's own on-chip
+SRAM organization: the array is fed from SRAM-A/SRAM-B and drains to SRAM-C
+rather than from a system memory, so staging follows the structure the model
+already has instead of working around it.
+
+That is deliberately weaker than "buffering is what the hardware does". No
+Sauria RTL was examined for this decision — the SystemC model is not the RTL
+(see `TPU_V3_PHASE5_AUDIT.md` §2) — so a claim about what the hardware does
+would be unsupported.
+
+### What this constrains
+
+* The staging controllers reach core SRAM **only** through `neo_local_sram_if`.
+  No backing pointer, matching the rule `core_sram` already enforces by
+  exposing none.
+* **No `SauriaDma`.** The controllers move data internally; the adapter is not
+  an external AXI master, and plan §11.5 already gave TPU_V3 its own DMA.
+* Sauria's `Sram` is **replaced**, not wrapped. The tile store must present the
+  same signal-level interface and the same latency the feeders expect.
+* The feeders, the array, the PSM and their **functional compute logic and
+  timing are unmodified**. A diagnostic-only hygiene patch is permitted, and
+  required — see below. It is recorded and hash-verified like the VP++ series,
+  and it may not touch arithmetic, control flow or timing.
+* Native transactions are issued from an `SC_THREAD`. A blocking transaction is
+  never called from one of Sauria's `SC_METHOD` processes.
+
+### The source is not instance-clean, and the adapter may not ship it as is
+
+The dependency audit inventoried which modules to keep and missed what is
+*inside* them. The kept modules carry mutable process-global state and write
+trace files from the compute path:
+
+| Where | What |
+|---|---|
+| `debug.h:16` | `#ifndef SAURIA_DEBUG / #define SAURIA_DEBUG 1` — debug defaults **on** |
+| `sa_array.h:74`, `:100` | `static std::ofstream` writing `trace_sysc/sa_macq*.csv`, behind no macro, reachable from compute |
+| `ifmap_feeder.h:1234` | `static std::ofstream`, gated by a **runtime instance-name test**, not a macro |
+| `wei_feeder.h`, `psm_top.h` | four more `static std::ofstream` |
+
+Seven `trace_sysc/*.csv` writers in total. A function-local `static` is shared
+by every instance of the template, so two NEO-CORE SAs share one file handle and
+one set of counters.
+
+`INTERFACE_CONTRACT.md` §"No mutable global or static state" already forbids
+this, in terms that fit exactly: "a `static` scratch buffer in a compute kernel
+is a defect even when tests pass single-threaded, because SystemC processes
+interleave at `wait()` boundaries."
+
+`-DSAURIA_DEBUG=0` alone does **not** fix it, because the worst offenders are
+not macro-guarded at all. So Phase 5 requires:
+
+* `SAURIA_DEBUG=0` **and** `SAURIA_TRACE_FILES=0` are mandatory for the adapter
+  build, not defaults a caller may override;
+* a controlled **instrumentation-only patch set** that compiles out every trace
+  stream and static debug object, carried like the VP++ downstream conformance
+  patches: ordered patch files, a set hash, and the post-patch source hash
+  recorded beside the base and oracle hashes in `TPU_V3_PHASE5_AUDIT.md` §1;
+* a gate that elaborates **two** SA instances and requires that no `trace_sysc/`
+  directory is created, that they share no state, and that their results are
+  independent.
+
+The Phase 5 implementation satisfies this with two ordered patches, a run-time
+two-adapter independence test and an `nm` gate that refuses every Sauria
+function-local-static symbol in both Release and Debug binaries.
+
+### Buffer semantics under reset and error
+
+These are settled here rather than discovered during the register-map freeze,
+because firmware behaviour depends on them:
+
+* **Firmware must not modify the A, B or C regions between `START` and
+  completion.** The adapter does not snapshot them and does not detect the
+  modification.
+* **Prefetch is not an atomic snapshot.** Operands are read over several
+  transactions; a concurrent writer produces a torn mixture, and that is the
+  firmware's defect, not the engine's.
+* **Writeback is not atomic either.** Data already written before a reset or an
+  error **stays written**. The C region after a failed job is partially updated,
+  and the completed byte count is the only thing that says how far it got.
+* **Reset abandons the old job, and NEO-CORE reset is hierarchical.** The
+  adapter generation prevents an old worker from publishing completion, error,
+  timing or new-epoch traffic counters. The local fabric must be reset in the
+  same hierarchy so a queued old beat returns `aborted` before it reaches SRAM.
+  Resetting only the adapter cannot retract a request already accepted by the
+  fabric; this is an integration error, not a supported reset sequence.
+* **A replacement START is not an event that can be lost.** It remains pending
+  while the one sequencer thread unwinds an abandoned blocking native access.
+  The new job owns `C_BYTES_DONE` as soon as it is accepted, so a late response
+  from the old generation cannot pollute the new job's register account.
+* **On explicit abort:** `busy` clears, `aborted` sets, `done` does not set, no
+  IRQ is raised, and the abort counter increments. **On execution error:**
+  `busy` clears, `error` sets, the error counter increments and the shared
+  completion/error IRQ is raised when enabled. Reset clears live status and IRQ
+  without reporting an explicit abort event.
+* **Accumulation and C-preload are refused** for the whole of Phase 5. Whether
+  a partially written C region may be accumulated into is a semantics question
+  this record does not answer, and an engine that silently accumulated into
+  torn data would be the worst possible answer to it.
+
+### Relationship to D16
+
+Buffering does not remove this adapter from D16's scope. Prefetch and writeback
+are ordinary local-data-plane traffic and are subject to D16 in full.
+
+What buffering does is keep D16's latency and back-pressure **out of Sauria's
+compute pipeline** — the one place that cannot absorb it. Contention is paid
+during `PREFETCH_*` and `WRITEBACK_C`, where a controller is free to wait,
+rather than during `COMPUTE`, where nothing is.
+
+### What may and may not be claimed about timing
+
+The adapter reports its time split:
+
+```text
+total_time = prefetch_time + source_compute_time + writeback_time
+```
+
+Only `source_compute_time` is cycle-correlated with the Sauria source. The other
+two are this adapter's own traffic through a fabric the source never had.
+
+**No report, manifest or measurement may describe the adapter as a whole as
+cycle-accurate against the Sauria RTL.** The correlated part is one of three
+terms, and it is reported separately so the distinction survives being quoted.
+
+### Source pin
+
+Phase 5 requires `TPU_V3_SAURIA_ROOT` to name
+`components/npu_tlm/models/v4.2_model`, verified against the hash recorded in
+`TPU_V3_PHASE5_AUDIT.md` §1.
+
+The `v4.2_model_Aug01` fallback is **not** used by Phase 5: it is a different
+source with different golden vectors, so a differential against it answers a
+different question. The shared fallback inside `components/npu_tlm` is left
+alone — other consumers depend on it, and changing which copy *they* silently
+get is not Phase 5's decision to make.
+
+The exact compiler input is the base hash plus the ordered patch set; the
+post-patch tree and the three-file `demo_gemm_64x64` oracle each have their own
+hash. Release and Debug binaries are scanned for Itanium `_ZZN6sauria...`
+symbols so redirecting a trace to a null stream cannot masquerade as removal of
+the shared static state.

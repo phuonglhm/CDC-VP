@@ -329,16 +329,32 @@ def test_frozen_architecture_is_refused(binary: str, configs: pathlib.Path) -> N
         "32x32",
     )
 
-    # The datatype is a numeric contract: an unimplemented one must not quietly
-    # produce BF16/FP32 results under another name.
-    expect_rejected(
-        binary,
-        "sa.datatype",
-        "--config",
-        config,
-        "--sa-datatype",
-        "int8_int32",
-    )
+    # The datatype is a numeric contract, and the rule is not "refuse the ones
+    # we have not built" — it is "never let one be read as another".
+    #
+    # `int8_int32` is accepted now: Phase 5 extracts the verified v4.2
+    # `int8_64x64` profile, and D6 permits INT8/INT32 as an opt-in quantized
+    # extension. What must hold is that the report names it *and* disclaims it
+    # in the same breath, because the report is where a bring-up run gets
+    # mistaken for the BF16 reference.
+    for datatype in ("int8_int32", "fp16_fp32"):
+        result = run(binary, "--config", config, "--sa-datatype", datatype,
+                     "--print-address-map")
+        check(result.returncode == 0,
+              f"--sa-datatype {datatype} was refused: {result.stderr}")
+
+        described = run(binary, "--config", config, "--sa-datatype", datatype)
+        check(datatype in described.stdout,
+              f"the report does not name {datatype}:\n{described.stdout}")
+        check("NOT the BF16 reference path" in described.stdout,
+              f"the report does not disclaim {datatype} as non-reference:\n"
+              f"{described.stdout}")
+        # The regression this replaces: the report printed the datatype's name
+        # followed by a hard-coded "(BF16 operands, IEEE FP32 accumulation)",
+        # so a non-BF16 run carried a BF16 claim and the old check passed.
+        check("BF16 operands" not in described.stdout,
+              f"the {datatype} report still makes a BF16 claim:\n"
+              f"{described.stdout}")
 
     # Core SRAM above its 16 MiB window, and a non-power-of-two capacity.
     expect_rejected(binary, "sram_size_bytes", "--config", config,

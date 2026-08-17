@@ -1,0 +1,464 @@
+Instrumentation-only: remove the static state left by patch 0001.
+
+Patch 0001 stopped trace files from being created, but its null-stream fallback
+still instantiated the stream, header flag and counters as function-local
+statics.  The feeder's DBG_COUT-only counters were also still compiled when
+SAURIA_DEBUG=0.  Those objects are shared by every instance of a template and
+violate TPU_V3's no-mutable-static-state contract even when they affect only
+diagnostics.
+
+This follow-up puts complete trace blocks behind SAURIA_TRACE_FILES and complete
+DBG_COUT blocks behind SAURIA_DEBUG.  Both switches are forced to zero by the
+TPU_V3 target.  No arithmetic, address generation, handshake or wait changes.
+
+diff -ru a/data_feeder/ifmap_feeder.h b/data_feeder/ifmap_feeder.h
+--- a/data_feeder/ifmap_feeder.h
++++ b/data_feeder/ifmap_feeder.h
+@@ -541,6 +541,7 @@
+                     // last_appended_word_addr = use_word_addr;
+                 }
+ 
++#if SAURIA_DEBUG
+                 static int dbg_mem_word_count = 0;
+                 // bool dbg_word_interesting =
+                 //     (use_word_addr < 40) ||
+@@ -569,6 +570,7 @@
+                 }
+ 
+                 dbg_mem_word_count++;
++#endif
+ 
+                 // Emit all sliding vectors that are now available
+                 // while (act_emit_count < i_act_incntlim.read())
+@@ -747,6 +749,7 @@
+                             row_fifos[y].push(v);
+                         }
+ 
++#if SAURIA_DEBUG
+                         static int dbg_feed_vec_count = 0;
+                         std::string inst_name = this->name();
+ 
+@@ -776,6 +779,7 @@
+                         }
+ 
+                         dbg_feed_vec_count++;
++#endif
+                         act_emit_count++;
+                     }
+                 }
+@@ -929,6 +933,7 @@
+                                     rden_q1 = true;
+                                     issued_read = true;
+ 
++#if SAURIA_DEBUG
+                                     static int dbg_ifmap_demand_req_count = 0;
+                                     std::string inst_name = this->name();
+ 
+@@ -951,6 +956,7 @@
+ 
+                                         dbg_ifmap_demand_req_count++;
+                                     }
++#endif
+                                 }
+                             }
+                         }
+@@ -965,6 +971,7 @@
+                     {
+                         final_addr = i_act_base_addr.read() + addr_reg;
+                     }
++#if SAURIA_DEBUG
+                     static int dbg_word_req_count = 0;
+                     std::string inst_name = this->name();
+ 
+@@ -1010,6 +1017,7 @@
+                     }
+ 
+                     dbg_ifmap_read_count++;
++#endif
+ 
+                     if (!sauria_addr_mode)
+                     {
+@@ -1128,6 +1136,7 @@
+ 
+             o_stall.write(act_should_stall);
+ 
++#if SAURIA_DEBUG
+             // Optional debug
+             static int dbg_ifmap_stall_count = 0;
+             std::string inst_name_for_stall = this->name();
+@@ -1146,6 +1155,7 @@
+ 
+                 dbg_ifmap_stall_count++;
+             }
++#endif
+ 
+             // 2. Pop and Shift Activations (Wavefront Skew Lines)
+             // ---------------------------------------------------------
+@@ -1227,18 +1237,12 @@
+                 o_act_arr.write(act_out);
+ 
+                 // Dump only real logical vectors, not tail flush zeros.
++#if SAURIA_TRACE_FILES
+                 std::string inst_name = this->name();
+ 
+                 if (inst_name.find("NpuTop_std") != std::string::npos)
+                 {
+-                    #if SAURIA_TRACE_FILES
+                     static std::ofstream ifmap_pop_trace("trace_sysc/ifmap_pop_logical.csv");
+-                    #else
+-                    // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-                    // ofstream is what creates the file, and that happens even where
+-                    // the writes below are gated on the instance name.
+-                    static std::ostream ifmap_pop_trace(nullptr);
+-                    #endif
+                     static bool ifmap_pop_header = false;
+                     static uint32_t dbg_ifmap_rows = 0;
+ 
+@@ -1274,6 +1278,7 @@
+                         dbg_ifmap_rows++;
+                     }
+                 }
++#endif
+ 
+                 if (had_real_vector && act_pop_count < effective_k)
+                 {
+@@ -1291,6 +1296,7 @@
+             o_act_done.write(act_pop_done);
+             o_act_til_done.write(act_pop_done);
+ 
++#if SAURIA_DEBUG
+             static int dbg_act_done_count = 0;
+             if (this->name() && dbg_act_done_count < 128)
+             {
+@@ -1310,6 +1316,7 @@
+ 
+                 dbg_act_done_count++;
+             }
++#endif
+ 
+             // 3. Update status flags
+             bool empty = row_fifos[0].empty();
+diff -ru a/data_feeder/wei_feeder.h b/data_feeder/wei_feeder.h
+--- a/data_feeder/wei_feeder.h
++++ b/data_feeder/wei_feeder.h
+@@ -308,6 +308,7 @@
+                     skew_regs[i].assign(i, static_cast<T_WEI>(0));
+                 }
+ 
++#if SAURIA_DEBUG
+                 static int dbg_weight_clear_count = 0;
+                 if (dbg_weight_clear_count < 16)
+                 {
+@@ -318,6 +319,7 @@
+                               << std::endl;
+                 }
+                 dbg_weight_clear_count++;
++#endif
+ 
+                 // return;
+             }
+@@ -343,18 +345,11 @@
+                     pending_word_addr_q.pop();
+                 }
+ 
++#if SAURIA_TRACE_FILES
+                 std::string inst_name = this->name();
+-
+                 if (inst_name.find("NpuTop_std") != std::string::npos)
+                 {
+-                    #if SAURIA_TRACE_FILES
+                     static std::ofstream wei_raw_trace("trace_sysc/weight_sram_flat.csv");
+-                    #else
+-                    // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-                    // ofstream is what creates the file, and that happens even where
+-                    // the writes below are gated on the instance name.
+-                    static std::ostream wei_raw_trace(nullptr);
+-                    #endif
+                     static bool wei_raw_header = false;
+                     static uint32_t wei_raw_count = 0;
+ 
+@@ -378,20 +373,16 @@
+ 
+                     wei_raw_trace.flush();
+                 }
++#endif
+ 
+                 // Append one SRAMB word into flat weight buffer.
+                 for (int x = 0; x < X_DIM; x++)
+                 {
+                     wei_flat_buf.push_back(mem_data[x]);
+                 }
+-                #if SAURIA_TRACE_FILES
++#if SAURIA_TRACE_FILES
++                std::string inst_name = this->name();
+                 static std::ofstream raw_wei_trace("trace_sysc/weight_raw_buf.csv");
+-                #else
+-                // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-                // ofstream is what creates the file, and that happens even where
+-                // the writes below are gated on the instance name.
+-                static std::ostream raw_wei_trace(nullptr);
+-                #endif
+                 static bool raw_header = false;
+                 static uint32_t raw_count = 0;
+ 
+@@ -423,6 +414,9 @@
+ 
+                     raw_count++;
+                 }
++#endif
++#if SAURIA_DEBUG
++                std::string inst_name = this->name();
+                 static int dbg_wei_mem_word_count = 0;
+                 if (inst_name.find("NpuTop_std") != std::string::npos &&
+                     dbg_wei_mem_word_count < 32)
+@@ -443,6 +437,7 @@
+                 }
+ 
+                 dbg_wei_mem_word_count++;
++#endif
+ 
+                 // Emit logical B_Mat_mvm vectors once enough flat data is available.
+                 // Layout weight follow row-major
+@@ -555,8 +550,8 @@
+                             col_fifos[x].push(v);
+                         }
+ 
++#if SAURIA_DEBUG
+                         std::string inst_name = this->name();
+-
+                         static int dbg_wei_feed_count = 0;
+ 
+                         if (inst_name.find("NpuTop_std") != std::string::npos &&
+@@ -584,6 +579,7 @@
+ 
+                             dbg_wei_feed_count++;
+                         }
++#endif
+ 
+                         wei_emit_count++;
+                     }
+@@ -681,6 +677,7 @@
+ 
+                             rden_q1 = true;
+ 
++#if SAURIA_DEBUG
+                             static int dbg_wei_req_count = 0;
+                             std::string inst_name = this->name();
+ 
+@@ -696,6 +693,7 @@
+                             }
+ 
+                             dbg_wei_req_count++;
++#endif
+ 
+                             wei_word_req_idx++;
+                         }
+@@ -806,18 +804,12 @@
+                 o_wei_arr.write(wei_out);
+ 
+                 // Dump only real logical vectors, not tail flush zeros.
++#if SAURIA_TRACE_FILES
+                 std::string inst_name = this->name();
+ 
+                 if (inst_name.find("NpuTop_std") != std::string::npos)
+                 {
+-                    #if SAURIA_TRACE_FILES
+                     static std::ofstream wei_pop_trace("trace_sysc/weight_pop_logical.csv");
+-                    #else
+-                    // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-                    // ofstream is what creates the file, and that happens even where
+-                    // the writes below are gated on the instance name.
+-                    static std::ostream wei_pop_trace(nullptr);
+-                    #endif
+                     static bool wei_pop_header = false;
+                     static uint32_t dbg_wei_rows = 0;
+ 
+@@ -854,6 +846,7 @@
+                         dbg_wei_rows++;
+                     }
+                 }
++#endif
+ 
+                 if (had_real_vector && wei_pop_count < wei_k_len)
+                 {
+@@ -872,6 +865,7 @@
+             o_wei_done.write(wei_pop_done);
+             o_wei_til_done.write(wei_pop_done);
+ 
++#if SAURIA_DEBUG
+             static int dbg_wei_done_count = 0;
+             if (this->name() && dbg_wei_done_count < 128)
+             {
+@@ -892,6 +886,7 @@
+ 
+                 dbg_wei_done_count++;
+             }
++#endif
+ 
+             // 3. Update status flags
+             bool empty = col_fifos[0].empty();
+diff -ru a/npu_top.h b/npu_top.h
+--- a/npu_top.h
++++ b/npu_top.h
+@@ -1417,21 +1417,8 @@
+                 act_vector_t<Y_DIM, T_ACT> act_vec = s_act_arr_to_array_a.read();
+                 wei_vector_t<X_DIM, T_WEI> wei_vec = s_wei_arr_to_array_a.read();
+ 
+-                #if SAURIA_TRACE_FILES
+-
++#if SAURIA_TRACE_FILES
+                 static std::ofstream sa_stream_trace("trace_sysc/sa_input_stream.csv");
+-
+-                #else
+-
+-                // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-
+-                // ofstream is what creates the file, and that happens even where
+-
+-                // the writes below are gated on the instance name.
+-
+-                static std::ostream sa_stream_trace(nullptr);
+-
+-                #endif
+                 static bool sa_stream_header = false;
+                 static uint32_t sa_stream_count = 0;
+ 
+@@ -1467,6 +1454,7 @@
+                     sa_stream_trace << "\n";
+                     sa_stream_count++;
+                 }
++#endif
+ 
+                 dbg_ref_cycle++;
+             }
+@@ -1511,26 +1499,13 @@
+ 
+         void debug_sa_input_stream_dump()
+         {
++#if SAURIA_TRACE_FILES
+             if (!i_rstn.read())
+             {
+                 return;
+             }
+ 
+-            #if SAURIA_TRACE_FILES
+-
+             static std::ofstream sa_stream_trace("trace_sysc/sa_input_stream_physical_std.csv");
+-
+-            #else
+-
+-            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-
+-            // ofstream is what creates the file, and that happens even where
+-
+-            // the writes below are gated on the instance name.
+-
+-            static std::ostream sa_stream_trace(nullptr);
+-
+-            #endif
+             static bool header_written = false;
+             static bool prev_clear = false;
+             static bool active_dump = false;
+@@ -1575,6 +1550,7 @@
+             {
+                 return;
+             }
++#endif
+         }
+ 
+         void debug_execution_monitor()
+diff -ru a/psm/psm_top.h b/psm/psm_top.h
+--- a/psm/psm_top.h
++++ b/psm/psm_top.h
+@@ -110,6 +110,7 @@
+             uint32_t shift,
+             const psum_vector_t<Y_DIM, T_PSUM> &data)
+         {
++#if SAURIA_TRACE_FILES
+             // Only dump STD instance, avoid std/approx/gated duplicated traces.
+             std::string inst_name = this->name();
+             if (inst_name.find("NpuTop_std") == std::string::npos)
+@@ -117,21 +118,7 @@
+                 return;
+             }
+ 
+-            #if SAURIA_TRACE_FILES
+-
+             static std::ofstream psm_trace("trace_sysc/psm_write_trace.csv");
+-
+-            #else
+-
+-            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-
+-            // ofstream is what creates the file, and that happens even where
+-
+-            // the writes below are gated on the instance name.
+-
+-            static std::ostream psm_trace(nullptr);
+-
+-            #endif
+             static bool psm_trace_header = false;
+             static uint32_t psm_trace_count = 0;
+ 
+@@ -161,6 +148,12 @@
+             psm_trace.flush();
+ 
+             psm_trace_count++;
++#else
++            (void)context;
++            (void)addr;
++            (void)shift;
++            (void)data;
++#endif
+         }
+ 
+         uint32_t get_write_limit_vectors()
+diff -ru a/systolic_array/sa_array.h b/systolic_array/sa_array.h
+--- a/systolic_array/sa_array.h
++++ b/systolic_array/sa_array.h
+@@ -72,14 +72,7 @@
+         void dump_mac_matrix(uint32_t context, const std::string &tag, uint32_t start_y, uint32_t end_y)
+         {
+ #if SAURIA_TRACE_FILES
+-            #if SAURIA_TRACE_FILES
+             static std::ofstream f("trace_sysc/sa_macq_dump.csv");
+-            #else
+-            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-            // ofstream is what creates the file, and that happens even where
+-            // the writes below are gated on the instance name.
+-            static std::ostream f(nullptr);
+-            #endif
+             static bool header_written = false;
+             if (!header_written)
+             {
+@@ -109,14 +102,7 @@
+         void dump_mac_cell(uint32_t context, int y, int x, const std::string &tag)
+         {
+ #if SAURIA_TRACE_FILES
+-            #if SAURIA_TRACE_FILES
+             static std::ofstream f("trace_sysc/sa_macq_cell_dump.csv");
+-            #else
+-            // SAURIA_TRACE_FILES=0: a null-buffer stream. Constructing the
+-            // ofstream is what creates the file, and that happens even where
+-            // the writes below are gated on the instance name.
+-            static std::ostream f(nullptr);
+-            #endif
+             static bool header_written = false;
+             if (!header_written)
+             {
+diff -ru a/debug.h b/debug.h
+--- a/debug.h
++++ b/debug.h
+@@ -46,10 +46,9 @@
+         NullSink &operator<<(std::ostream &(*)(std::ostream &)) { return *this; } // std::endl, std::flush
+         NullSink &operator<<(std::ios_base &(*)(std::ios_base &)) { return *this; } // std::hex, std::dec
+     };
+-    inline NullSink &dbg_sink()
++    inline NullSink dbg_sink()
+     {
+-        static NullSink s;
+-        return s;
++        return {};
+     }
+ }
+ 

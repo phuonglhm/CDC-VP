@@ -28,6 +28,13 @@ option(CDC_BUILD_TPU_V3_SOC
 option(CDC_BUILD_TPU_V3_TESTS
     "Build TPU_V3 component tests" ON)
 
+# Phase 5's Sauria matrix engine. Off by default and it must stay that way: the
+# Sauria SystemC implementation is internal-only (licenses/SAURIA.PROVENANCE.md),
+# so a default build must not acquire it and Phase 12 must be able to produce a
+# package that demonstrably does not contain it.
+option(CDC_BUILD_TPU_V3_SAURIA_MATRIX
+    "Build the TPU_V3 Sauria matrix engine (requires the pinned v4.2 source)" OFF)
+
 # The RISC-V VP++ Compiler Enablement VP (plan §16, Phase 4.5): one RV32GCV
 # hart, TLM RAM and a simulator-only host-I/O target, packaged for a compiler
 # team.

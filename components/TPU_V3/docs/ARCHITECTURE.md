@@ -21,7 +21,9 @@ implemented it: `core_sram`, `neo_control_fabric`, `neo_local_sram_fabric` and
 did not do is compose them — that is Phase 7, and until then the platform
 instantiates the memories only and says so in its report. Decision record D16
 records the one question D15 left open: where the local-data plane is allowed
-to block. See the editable
+to block. Phase 4 subsequently delivered the independent NEO DMA, and Phase 5
+delivered the standalone 64x64 INT8/INT32 Sauria matrix engine; neither changes
+the fact that their full NEO-CORE composition is Phase 7. See the editable
 [D15 draw.io source](neo_core_architecture-d15.drawio) and its rendered
 [JPG](neo_core_architecture-d15.jpg).
 This is the project-defined NEO-CORE implementation architecture, not a claim
@@ -99,9 +101,11 @@ irreproducible golden comparison is not a test. The model must also define and
 test BF16 round-to-nearest-even conversion, special values, and its subnormal
 policy.
 
-An INT8 × INT8 → INT32 quantized path may be added later. It is selected
-explicitly, it is additive, and it never replaces the reference path. Until it
-exists, asking for it is a configuration error rather than a silent fallback.
+Phase 5 implements an INT8 × INT8 → INT32 quantized bring-up path from the
+pinned `int8_64x64` Sauria source. It is selected explicitly, is additive, and
+does not replace the BF16/FP32 reference destination. The capability register
+reports only INT8/INT32 for this engine; asking it for BF16 or FP16 is a
+configuration refusal rather than a silent fallback.
 
 The v4.2 64x64 bring-up model does not by itself prove this BF16 contract. Any
 bring-up run using a datatype currently supported by Sauria must identify that
@@ -154,6 +158,23 @@ a full-system run uses; `arbitrated` blocks its requesters on a real per-bank
 round-robin arbiter and is what proves the fairness and back-pressure the
 architecture claims. Any contention figure must name which one produced it.
 
+The matrix engine is the one requester that cannot meet the plane on those
+terms, and decision record **D17** records why and what follows. The Sauria
+source has feeder-to-controller compute stalls, but its SRAM ports have no
+response-valid or ready input: a read is captured on a fixed two-cycle schedule
+that a memory cannot defer. A late answer from an arbitrated bank would
+therefore be latched as though it were data. So the engine **stages tiles** —
+operands are prefetched into private staging stores over `neo_local_sram_if`,
+the array runs against those stores at the source's own timing, and results are
+written back the same way.
+
+Prefetch and writeback are ordinary local-plane traffic and remain fully within
+D16. What staging buys is that D16's back-pressure is paid where a controller
+can wait, instead of inside a compute pipeline that cannot. The cost is that
+only the compute term of a matrix run is cycle-correlated with the Sauria
+source; `total_time = prefetch + source_compute + writeback`, and no report may
+call the whole thing cycle-accurate.
+
 Five distinct paths matter for correctness and for what timing numbers mean:
 
 **Hart path.** Instruction fetch, scalar load/store and vector load/store leave
@@ -173,8 +194,12 @@ TLM routing, arbitration, bounds checks and response status.
 **Matrix path.** The Sauria matrix engine is a target for control and an
 initiator on the native SRAM fabric for operand/result traffic. It contains
 only the matrix-multiply function and the minimum feeder/result-collection
-machinery required to run it. NPU-top functions unrelated to matrix
-multiplication are outside this block. It is not a full AXI4 NoC master.
+machinery required to run it. The source `ConfigRegs` remains inside as the
+signal-level configuration distributor; it is not the firmware interface,
+which is TPU_V3's separate `SA_CONTROL` AXI4-Lite target. NPU-top functions
+unrelated to matrix multiplication are outside this block. It is not a full
+AXI4 NoC master. Phase 5 supports one tile with `M,N <= 64`; each B row occupies
+one 64-lane staging vector and unused columns are zero-padded.
 
 **Transform path.** One ImageTransform engine implements Im2Col and Col2Im. It
 is controlled through AXI4-Lite MMIO and reads/writes core SRAM through its
@@ -241,10 +266,12 @@ cross-domain adapters in the initial architecture. The NoC has its own clock
 Reset is synchronous and hierarchical: platform → chip → core → component. Each
 component documents what an active-reset does to work in flight. For DMA, SA
 and ImageTransform that means: an in-flight job is abandoned, `busy` clears,
-`done` does **not**
-set, an abort is counted, and any admission slot is released. Silently
-completing a job that was reset mid-flight would be worse than either
-alternative.
+`done` does **not** set, live IRQ/status are cleared, and any admission slot is
+released. An explicit firmware abort is counted separately; reset is not
+reported as an abort event. For SA and DMA the component and native local fabric
+are reset in the same hierarchy; resetting only the requester cannot retract a
+native request already accepted by the fabric. Silently completing a queued old
+beat after a hierarchical reset would be worse than either alternative.
 
 ## 7. Fidelity levels
 
@@ -253,7 +280,7 @@ construction, and every reported number must name which was used.
 
 | Level | CPU | SA / Transform / DMA | NoC | Use |
 | --- | --- | --- | --- | --- |
-| 64x64 bring-up | RISC-V VP++ functional + approximate cost | extracted Sauria 64x64 plus verified transform availability; independent DMA | fast or detailed | block and single-core integration |
+| 64x64 bring-up | RISC-V VP++ functional + approximate cost | extracted INT8/INT32 Sauria 64x64; independent DMA; Transform unavailable until its source gate passes | fast or detailed | block and single-core integration |
 | NoC detailed | RISC-V VP++ functional + approximate cost | same functional engines, reported geometry/datatype | `timing_mode::detailed` | contention, routing, back-pressure |
 | 128x128 target | RISC-V VP++ functional + approximate cost | NPU-team 128x128 Sauria update behind the same contract | either | target NEO-CORE integration after promotion gate |
 

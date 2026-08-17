@@ -117,6 +117,17 @@ enum class noc_timing {
 };
 
 const char* to_string(matrix_datatype datatype) noexcept;
+
+/// What this datatype's arithmetic actually is, and whether it is the TPU_V3
+/// reference path.
+///
+/// It exists because the report used to print the datatype's *name* followed by
+/// a hard-coded "(BF16 operands, IEEE FP32 accumulation)" — so an `fp16_fp32`
+/// bring-up run printed a BF16 claim next to the word `fp16_fp32`, which is
+/// precisely what D6 forbids ("do not claim BF16 equivalence from an FP16
+/// bring-up run") and what D14 requires reports to get right. The note is
+/// derived from the datatype so the two cannot disagree again.
+const char* matrix_datatype_note(matrix_datatype datatype) noexcept;
 const char* to_string(bank_mapping mapping) noexcept;
 const char* to_string(arbitration_policy policy) noexcept;
 const char* to_string(noc_timing timing) noexcept;
