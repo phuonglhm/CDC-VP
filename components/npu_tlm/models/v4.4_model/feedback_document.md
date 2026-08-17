@@ -2,7 +2,6 @@
 
 > **Document Name**: `feedback_document.md`  
 > **Target System**: SAURIA NPU Core v4.4 SystemC Cycle-Accurate Model  
-> **Workspace Location**: `/data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.4_model/feedback_document.md`  
 > **Date**: August 16, 2026
 
 ---
