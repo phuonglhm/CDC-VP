@@ -123,10 +123,11 @@ Each accelerator window contains its descriptor, status, error, IRQ-enable and
 performance registers. `SA_CONTROL` reports the instantiated geometry; 64x64
 is the current v4.2 bring-up value and 128x128 is accepted only after the NPU
 team's promotion gate. `DMA_CONTROL` belongs to the standalone TPU_V3 DMA and
-must not expose Sauria DMA registers. `TRANSFORM_CONTROL` exposes an operation
-selector for Im2Col/Col2Im only after both operations have a verified NPU-team
-contract; unimplemented operation values return a defined error rather than
-silently falling back.
+must not expose Sauria DMA registers. `TRANSFORM_CONTROL` exposes independently
+gated operation values. D18 enables the pinned Im2Col operation; Col2Im remains
+visible only as an unavailable selector value whose `START` returns a defined
+error without tensor traffic. One verified direction never implies the other,
+and there is no silent fallback.
 
 **There is one address per resource.** A core reaching its own SRAM, the sibling
 core in the same chip reaching it, a remote chip reaching it, and the host

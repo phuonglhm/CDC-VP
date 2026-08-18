@@ -37,6 +37,26 @@ conventions.
 
 An AI agent implementing this plan must follow these rules:
 
+**Mandatory host-toolchain preflight.** Run the following block in the same
+shell session or command invocation immediately before every configure, build,
+test or simulator run. Do not rely on exports made by an earlier tool call.
+Skipping this preflight has caused the build/simulation environment to hang.
+If either sanity command fails or resolves to another compiler, stop and fix
+the environment before continuing.
+
+```bash
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export PATH=/usr/bin:/bin:$PATH
+# sanity
+$CC -dumpfullversion
+$CXX --version | head
+```
+
+This selects the host compiler used to build CDC-VP. It does not replace the
+pinned RISC-V cross-toolchain used to build guest firmware; invoke that
+toolchain through the documented absolute path or CMake configuration.
+
 1. Read this file completely before changing source code.
 2. Read repository-level instructions and relevant component documentation.
 3. Inspect the working tree before editing and preserve unrelated user changes.
@@ -67,7 +87,8 @@ The final platform must:
 
 - execute RV32 scalar and RISC-V Vector 1.0 firmware;
 - compose each TPU/NEO core from one VP++ hart, one shared SRAM, one independent
-  TPU_V3 DMA, one Sauria matrix engine, one Im2Col/Col2Im Transform engine and
+  TPU_V3 DMA, one Sauria matrix engine, one source-gated ImageTransform engine
+  (D18 Revision 1 exposes Im2Col and explicitly refuses Col2Im), and
   a D15 split interconnect: 32-bit AXI4-Lite control, native banked-SRAM local
   data, and AXI4 only at the bidirectional chip-NoC external boundary;
 - integrate the verified 64x64 Sauria source first and preserve a gated upgrade
@@ -109,7 +130,7 @@ TPU Core / NEO-CORE
 ├── One shared core SRAM
 ├── One independent TPU_V3 DMA
 ├── One Sauria matrix engine
-├── One ImageTransform engine (Im2Col + Col2Im)
+├── One ImageTransform engine (Im2Col; Col2Im unavailable in Revision 1)
 ├── One 32-bit AXI4-Lite control fabric
 ├── One native NEO Local SRAM Fabric
 └── One bidirectional external AXI4/NoC bridge
@@ -143,7 +164,8 @@ of both portions of this hart; Spike is only its external differential oracle.
 
 RVV 1.0 reduction and permutation instructions remain part of the VP++ hart.
 They are unrelated to D14's `ImageTransform` block: that accelerator performs
-tensor-layout Im2Col/Col2Im operations and has its own MMIO/TLM contract.
+the source-gated tensor-layout Im2Col operation and has its own MMIO/TLM
+contract. Col2Im is not an RVV substitute; it is simply unavailable under D18.
 
 ### 4.3 Sauria matrix-engine geometry
 
@@ -188,8 +210,9 @@ resolved by a documented decision:
 - cache presence and cache coherence policy;
 - final DMA descriptor depth, burst policy and timing constants (ownership is
   frozen per-core and independent of Sauria by D14);
-- NPU-team Transform source revision and the exact Im2Col/Col2Im layout,
-  padding, stride, overlap/accumulation and datatype contract;
+- future NPU-team Col2Im source revision, layout and overlap/accumulation
+  contract. D18 has frozen the Revision 1 Im2Col source, CHW/row-major layout,
+  INT8 datatype, stride/dilation and no-padding subset (all fields zero);
 - final workload set and image input format.
 
 Earlier ideas such as a fixed 4x4 mesh, exactly 32 TPU cores, or a mandatory
@@ -218,7 +241,7 @@ Use these names consistently in code and documentation:
 | `VPU` | RVV 1.0 vector execution portion of the same RISC-V VP++ hart |
 | `SA` / `Sauria matrix engine` | Matrix-multiply-only accelerator; 64x64 bring-up, 128x128 target |
 | `Core SRAM` | Shared local memory in one NEO-CORE; successor name for the old SVM contract |
-| `ImageTransform` | NPU-team Im2Col/Col2Im block behind a TPU_V3 adapter |
+| `ImageTransform` | TPU_V3 adapter exposing pinned Im2Col; Col2Im remains an independently gated, unavailable future capability |
 | `NEO DMA` | Independent TPU_V3 DMA; never the Sauria DMA |
 | `NEO control fabric` | 32-bit AXI4-Lite MMIO decoder, represented at transaction level |
 | `NEO Local SRAM Fabric` | Native pipelined request/response fabric with per-bank arbitration; not AXI |
@@ -353,8 +376,8 @@ Existing CDC-VP integration:
 Use these as:
 
 - the implementation source for the matrix-multiply-only Sauria adapter;
-- the implementation source for Im2Col/Col2Im only where the NPU team identifies
-  and verifies those functions;
+- the pinned evidence source for D18 Im2Col, and for Col2Im only if the NPU
+  team later identifies and verifies that independent function;
 - a reference for the minimum feeder/sequencer/result-collection logic required
   by matrix multiplication;
 - golden/case data for source-to-adapter equivalence tests.
@@ -387,10 +410,11 @@ the selected matrix closure; TPU_V3's separate `SA_CONTROL` remains the sole
 firmware interface. The NPU team will provide the 128x128 extension later;
 requesting 128x128 against v4.2 remains an error.
 
-The source audit found Im2Col-related address generation embedded in the IFMAP
-feeder but did not establish a standalone Col2Im block. Do not guess that
-behavior. Record the Transform delivery as pending until the NPU team supplies
-or identifies its module, configuration contract and golden tests.
+The Phase 6 audit traced the IFMAP address generation, CHW layout and
+cross-correlation golden into the D18 standalone Im2Col adapter. It found no
+Col2Im block or overlap contract. Do not guess that behavior: keep its
+capability zero until the NPU team supplies source, configuration semantics and
+golden tests. See `TPU_V3_PHASE6_AUDIT.md`.
 
 `control/sauria_dma.h` is explicitly out of scope. The NEO DMA is designed and
 implemented under TPU_V3 with TLM sockets; it never directly copies through the
@@ -550,9 +574,12 @@ CDC-VP/
 │       │   └── tests/
 │       ├── image_transform/
 │       │   ├── CMakeLists.txt
-│       │   ├── include/tpu_v3/transform/image_transform_if.h
-│       │   ├── include/tpu_v3/transform/image_transform_config.h
-│       │   ├── src/image_transform_adapter.cpp
+│       │   ├── IMAGE_TRANSFORM_MODEL.md
+│       │   ├── include/tpu_v3/transform/im2col.h
+│       │   ├── include/tpu_v3/transform/image_transform.h
+│       │   ├── include/tpu_v3/transform/image_transform_registers.h
+│       │   ├── src/im2col.cpp
+│       │   ├── src/image_transform.cpp
 │       │   └── tests/
 │       ├── tpu_core/
 │       │   ├── CMakeLists.txt
@@ -679,8 +706,8 @@ struct dma_config {
 
 struct image_transform_config {
     unsigned count_per_core = 1;
-    bool im2col_available;
-    bool col2im_available;
+    bool im2col_available;          // enabled at Phase 7 with D18 exact pin
+    bool col2im_available;          // false until a future promotion gate
     std::string source_revision;
 };
 
@@ -1122,16 +1149,25 @@ Required contract summary:
 
 ### 11.6 ImageTransform engine
 
-One engine per core provides Im2Col and Col2Im. The implementation and semantic
-contract must be traced to an approved NPU-team revision. Required descriptor
-fields include tensor bases, dimensions, layout, datatype, kernel, stride,
-padding and dilation; Col2Im additionally defines overlap/accumulation behavior.
+One engine per core has independently reported transform capabilities. D18
+freezes Revision 1 Im2Col: signed INT8 contiguous CHW input, row-major
+`[OH*OW][C*KH*KW]` output, `c,ky,kx` column order, stride/dilation and all four
+padding values equal to zero. Required registers include source/destination,
+dimensions, kernel, stride, dilation, padding, operation/datatype, derived
+shape, status/error, IRQ and byte/request counters.
 
-The current v4.2 source contains Im2Col-related IFMAP address generation but no
-standalone Col2Im block has been established. Do not implement a guessed inverse
-or relabel PSM output addressing. Until source arrives, advertise the capability
-as unavailable and reject start explicitly. This open input does not block
-SRAM/control/local-fabric/DMA/SA64 work.
+The engine is a 32-bit AXI4-Lite target and a native local-SRAM requester. It
+stages the input through native transactions and writes matrix rows through the
+same port, with no external master or SRAM backing pointer. This staging is a
+functional TLM implementation and not a claim about RTL line-buffer timing.
+
+No standalone Col2Im block or overlap/accumulation contract exists in v4.2.
+The capability stays zero and a selected Col2Im `START` must complete as
+`unavailable_operation` without SRAM traffic. Do not implement a guessed
+inverse or relabel PSM output addressing. Lack of Col2Im does not block forward
+inference: after SA, RVV can post-process and interpret the output-feature
+matrix. See D18, `TPU_V3_PHASE6_AUDIT.md` and
+`image_transform/IMAGE_TRANSFORM_MODEL.md`.
 
 ### 11.7 NEO control, local-SRAM and external fabrics
 
@@ -1390,9 +1426,8 @@ option(CDC_BUILD_TPU_V3_TESTS
 option(CDC_BUILD_TPU_V3_SAURIA_MATRIX
     "Build the TPU_V3 Sauria matrix engine (requires pinned v4.2 source)" OFF)
 
-# Future Phase 6 option, added only after the NPU-team source/golden gate exists:
-# option(CDC_BUILD_TPU_V3_IMAGE_TRANSFORM
-#     "Build the verified NPU-team Im2Col/Col2Im adapter" OFF)
+option(CDC_BUILD_TPU_V3_IMAGE_TRANSFORM
+    "Build the pinned TPU_V3 Im2Col-only ImageTransform adapter" OFF)
 
 # Phase 4.5. Deliberately not conditioned on CDC_BUILD_TPU_V3_SOC: the compiler
 # handoff contains no NoC, no accelerator and no NEO composition, so requiring
@@ -2052,25 +2087,31 @@ runtime/firmware responsibilities, not reasons to fork the compiler backend.
 
 #### Tasks
 
-- Obtain from the NPU team the source revision, interfaces and golden tests for
-  both Im2Col and Col2Im.
-- Define tensor layout, kernel, stride, padding, dilation, datatype and Col2Im
-  overlap/accumulation semantics before implementation.
+- Audit and hash-pin the v4.2 IFMAP address generator, CHW layout helper and
+  convolution golden that establish Im2Col semantics.
+- Define the accepted Im2Col tensor layout, kernel, stride, dilation, padding
+  and datatype; advertise Col2Im separately as unavailable because its source
+  and overlap/accumulation semantics were not found.
 - Implement one adapter with a 32-bit AXI4-Lite MMIO target and native
   local-SRAM requester; do not add an external AXI4 master.
-- Cross-check both operations against NPU-team golden output, including edge
-  dimensions and overlapping Col2Im contributions.
+- Cross-check the extracted Im2Col order against the pinned NPU-team
+  convolution golden by factoring the convolution through Im2Col plus an
+  independent integer GEMM.
+- Gate asynchronous start, MMIO protocol, native traffic/counters, IRQ/W1C,
+  reset/abort/replacement-start epochs and dependency independence.
 
 #### Gate
 
-- Every exposed operation maps to traced NPU-team source and a golden test.
+- Every advertised capability maps to traced NPU-team source and a golden test.
 - A missing operation is reported unavailable and rejects start; no placeholder
   returns success.
-- Im2Col and Col2Im round-trip tests are used only where the mathematical/layout
-  contract says a round trip is valid.
+- Col2Im selection produces `unavailable_operation` and no native SRAM traffic.
+- The adapter has no NPU-top, Sauria, DMA, external-master or SRAM-backing
+  dependency.
 
-This phase is waiting for NPU-team clarification if v4.2 has no standalone
-Transform module. That wait does not block Phases 3–5.
+**Complete 2026-08-18 for D18 Im2Col-only Revision 1.** See
+`TPU_V3_PHASE6_AUDIT.md`. A future Col2Im delivery is a promotion, not an open
+implementation item inside this completed phase.
 
 ### Phase 7: Single NEO-CORE integration
 
@@ -2080,7 +2121,9 @@ Transform module. That wait does not block Phases 3–5.
   the AXI4-Lite control, native local-SRAM and external bridge components.
 - Wire reset and per-engine level interrupts.
 - Add firmware drivers for SRAM, DMA, SA and ImageTransform.
-- Run `DMA -> Im2Col -> SA -> Col2Im -> RVV` using SRAM descriptors/buffers.
+- Run `DMA -> Im2Col -> SA -> RVV` using SRAM descriptors/buffers. RVV performs
+  post-processing and interprets/reshapes the output-feature matrix; do not add
+  a placeholder Col2Im operation.
 
 #### Gate
 
@@ -2291,12 +2334,12 @@ license/provenance records and a reproducible build manifest.
 | Unit | Core SRAM | Widths, byte enables, sparse pages, boundaries, concurrency, reset |
 | Unit | NEO DMA | TLM-only copies, burst splitting, partial errors, async IRQ, reset |
 | Unit | Sauria SA | Source golden, 64x64 geometry, data type, async IRQ, reset |
-| Unit | ImageTransform | NPU-team Im2Col/Col2Im golden, layouts, overlap, unavailable capability |
+| Unit | ImageTransform | pinned Im2Col convolution golden, exact CHW/matrix order, stride/dilation, padding/datatype/Col2Im refusals, unavailable capability |
 | Unit | AXI4-Lite control fabric | 32-bit decode, alignment/strobes, ordering and errors |
 | Unit | NEO Local SRAM Fabric | Bank decode, round-robin, back-pressure, ownership, independent-bank progress and errors |
 | Unit | Chip fabric | Two-core ownership, inbound/outbound routing |
 | Unit | NoC endpoint | placement, chunking, completion, partial errors |
-| Integration | Single core | DMA -> Im2Col -> SA -> Col2Im -> RVV over core SRAM |
+| Integration | Single core | DMA -> Im2Col -> SA -> RVV over core SRAM; Col2Im remains unavailable |
 | Integration | Single chip | two harts, two SRAMs, two DMAs, two SAs, two Transform engines |
 | Integration | NoC | global RAM and remote chip traffic |
 | System | Firmware | boot, IRQ, drivers, workload completion |
@@ -2337,16 +2380,18 @@ Mitigation:
 - audit hard-coded masks/address widths during promotion;
 - report actual geometry and datatype in every run and package.
 
-### R2A. Transform delivery and semantics
+### R2A. Transform capability promotion
 
-Risk: v4.2 has Im2Col-related feeder logic but no established standalone
+Risk: Phase 6 has a verified Im2Col-only component, but v4.2 has no established
 Col2Im block. Guessing Col2Im layout or overlap behavior can produce plausible
-but wrong images.
+but wrong images and falsely expand the advertised capability.
 
 Mitigation:
 
-- obtain module/interface/golden tests from the NPU team;
-- expose unavailable capability rather than a fake implementation;
+- retain the D18 Im2Col source/layout/golden pins;
+- expose Col2Im as unavailable rather than a fake implementation;
+- obtain Col2Im module/interface/overlap semantics/golden tests from the NPU
+  team before any promotion;
 - trace every copied/extracted path to an immutable source revision;
 - do not equate PSM output addressing with Col2Im without evidence.
 
@@ -2443,7 +2488,9 @@ The TPU_V3 project is complete only when all of the following are true:
 1. The SoC hierarchy matches the frozen specification.
 2. Every chip contains exactly two TPU cores.
 3. Every NEO-CORE contains one RV32GCV hart, one core SRAM, one independent
-   TPU_V3 DMA, one Sauria matrix engine, one Im2Col/Col2Im Transform engine and
+   TPU_V3 DMA, one Sauria matrix engine, one source-gated ImageTransform engine
+   whose advertised operations are verified (D18 requires Im2Col and explicitly
+   permits Col2Im to remain unavailable), and
    the D15 split: 32-bit AXI4-Lite control, native banked-SRAM local data and an
    bidirectional external AXI4/NoC bridge; no internal full AXI data crossbar
    exists.
@@ -2469,7 +2516,7 @@ The TPU_V3 project is complete only when all of the following are true:
 
 ## 21. Immediate Next Actions
 
-Current work, in order (updated 2026-08-13):
+Current work, in order (updated 2026-08-18):
 
 1. ~~Migrate `architecture_config` and `address_map` from the legacy
    two-MXU/SVM names to one SA, one independent DMA, one Transform engine and
@@ -2496,19 +2543,23 @@ Current work, in order (updated 2026-08-13):
    sources, the emitted symbols, the link interface, the VP++ compile list and
    the shipped bundle, and the distribution gate configures with
    `CDC_BUILD_TPU_V3_SOC=OFF`.
-5. Pin the accepted v4.2 source and perform the Phase 5 matrix-only dependency
-   extraction audit before writing the adapter.
-6. Ask the NPU team to identify/provide the standalone Im2Col/Col2Im Transform
-   module, semantic contract and golden tests, and separately provide the later
-   128x128 Sauria source.
+5. ~~Pin the accepted v4.2 source, complete the matrix-only dependency audit and
+   implement the 64x64 adapter.~~ Done in Phase 5 with D17 buffered staging.
+6. ~~Audit and implement the available ImageTransform direction.~~ Done in
+   Phase 6 under D18: Im2Col is pinned and gated; Col2Im is recorded unavailable
+   and is not a blocker for the forward path.
+7. Compose one NEO-CORE in Phase 7: VP++ RV32GCV, SRAM/fabrics, DMA, SA64 and
+   Im2Col. Add firmware drivers and run `DMA -> Im2Col -> SA -> RVV`.
+8. Separately obtain future NPU-team deliveries for Col2Im and Sauria 128x128;
+   neither may be advertised before its own promotion gate.
 
 Carried out of Phase 3 as scheduled work, not as open findings:
 
-7. Phase 5 and Phase 7 must select `local_fabric_timing::annotated` for
+9. Phase 5 and Phase 7 must select `local_fabric_timing::annotated` for
    full-system runs. `arbitrated` consumes the caller's quantum, so a VP++ hart
    behind it loses temporal decoupling on every local load and store (decision
    record D16).
-8. Phase 9 must assert `!neo_external_bridge::blocks_on_arbitration()` when the
+10. Phase 9 must assert `!neo_external_bridge::blocks_on_arbitration()` when the
    detailed NoC backend is selected: an `arbitrated` fabric on the inbound path
    would stall the one process that advances the mesh clock.
 9. Phase 7 composes the three fabrics, the SRAM, the DMA and the hart into a
@@ -2634,7 +2685,7 @@ Update this table when work progresses.
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | Plan document | Complete | This file |
-| Decision record D1-D17 | Final approved through D15 interconnect ratification (2026-08-12); D16 implemented by Phase 3; D17 (buffered tile-staging matrix adapter) added by the source audit and implemented by Phase 5 (2026-08-17) | `docs/TPU_V3_DECISION_RECORD.md` |
+| Decision record D1-D18 | Final approved through D15 interconnect ratification (2026-08-12); D16 implemented by Phase 3; D17 implemented by Phase 5; D18 freezes the Im2Col-only ImageTransform baseline implemented by Phase 6 (2026-08-18) | `docs/TPU_V3_DECISION_RECORD.md` |
 | Phase 0: audit/baseline | Complete (2026-08-08) | `docs/TPU_V3_PHASE0_AUDIT.md`, `docs/ARCHITECTURE.md`, `docs/ADDRESS_MAP.md`, `docs/INTERFACE_CONTRACT.md` |
 | Phase 1: skeleton/package | Complete (2026-08-08), review findings closed | `out/tpu_v3_soc/` runs with `RPATH=$ORIGIN` and no source-tree path; ctest `tpu_v3_address_map`, `tpu_v3_architecture_config`, `tpu_v3_soc_cli`, `tpu_v3_soc_packaging_regression` all pass |
 | D14/D15 rebaseline synchronization | **Complete.** Architecture documents, the D15 diagram and the C++ config/address/fabric migration all agree | Decision-record synchronization table, `docs/neo_core_architecture-d15.jpg`, and the Phase 3 gate evidence below |
@@ -2642,8 +2693,8 @@ Update this table when work progresses.
 | Phase 3: core SRAM + split fabrics + map migration | **Complete** (2026-08-12) | **Map migration.** `CORE_SRAM`, `SA_CONTROL`, `DMA_CONTROL`, `TRANSFORM_CONTROL` and a relocated `CORE_COUNTERS` replace the Phase 1 `SVM`/`MXU0`/`MXU1` symbols; 115 regions at 8 chips, non-overlap proved at every legal chip count and capacity; `TPU_V3_MXU_BACKEND` retired in favour of `TPU_V3_SA_GEOMETRY`, whose refusal of `128x128` and of an unnamed geometry each have a negative control in the packaging regression. The legacy names are absent from the schema, the shipped configurations, the manifest and the packaged address-map output, and two independent regressions fail if they return. **Host backing.** `sparse_memory` gives deterministic 4 KiB pages: an unallocated page reads as zero and costs nothing, a write commits only touched pages, a fully masked write commits none, reset releases them, and a refused access leaves the caller's buffer untouched. `mesh_4x4` reports 1.25 GiB logical with 0 B allocated and peaks near 10 MiB of RSS, bounded by the CLI regression's own `ru_maxrss` check. **Core SRAM.** Window and capacity are separate fields; an access above the capacity is `capacity_error` and never an alias; every payload from 1 to 64 bytes works at every alignment; byte enables, cross-page transfers, counters and a debug path that bypasses the counters but not the bounds all pass. **AXI4-Lite control fabric.** Five register files behind one in-order decoder; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes and wrapped streaming are each refused with the documented status; an unmapped address is an address error; a target's own refusal is propagated and counted apart; one transaction per initiator is enforced against a target that deliberately re-enters; an overlapping control map is refused during elaboration. A 64-byte accelerator payload is refused, which is how bulk data is kept off the control plane. **Native local-SRAM fabric.** 128-bit x 4 banks (provisional), low-order interleaved; one 64-byte request is one request and four beats, and an unaligned one is five — the D7 distinction, measured. Three requesters on one bank are serialised, back-pressured and share the bank within a quarter of each other; three on different banks run with zero conflicts and carry more traffic in the same wall of simulated time; response ownership holds under contention; all five named requesters reach both storage and the error path; an unattached requester throws. **External bridge.** Inbound SRAM traffic is arbitrated as `external_inbound` and its bytes reconcile exactly with the SRAM's own totals, which is the bypass negative control given that `core_sram` exposes no backing pointer; inbound MMIO reaches the addressed register file through the control plane and gets the same refusals a local access would; an outbound access naming this core is refused and counted, and the external stub never sees it. **Blocking.** No TLM target waits; the control fabric never waits; the local fabric's default `annotated` mode never waits and its `arbitrated` mode is the one that proves the arbitration (decision record D16). No source file or public type is named `neo_axi_fabric`. **Review round (2026-08-12).** Four contract defects were found and fixed, each with a negative control that fails when the fix is reverted: the bridge forwarded TLM's repeating `byte_enable` pattern into a plane that has no repeat rule, overreading the initiator's array for any payload longer than the pattern; the one-outstanding-request-per-requester rule of D15 was assumed rather than enforced, so two processes sharing an identity interleaved under one name; `reset()` cleared `waiting[]` and `busy` without waking anyone, hanging any requester blocked in arbitration; and outbound local containment tested containment instead of overlap, forwarding a transfer that began inside the core and ran past it. Two counter definitions were tightened in the same pass — a refused request is still a request, and `transferred_bytes` counts bytes moved rather than bytes named — along with the debug path's command handling and its STATUS answer. **Cleanup review.** Reset generation is captured before input-delay consumption, old requests cannot repopulate a new counter epoch, `aborted` explicitly permits already-completed partial bytes, and the bridge now applies common payload validation consistently to inbound/outbound normal/debug traffic. Each behavior has a regression that checks both the refusal/abort and absence of side effects. 19/19 `tpu_v3` tests pass in both Release and Debug with zero skips |
 | Phase 4: independent NEO DMA | **Complete** (2026-08-13) | `components/TPU_V3/neo_dma` plus `DMA_MODEL.md`. **Programming model.** The frozen §11.5 register map over an absolute 64 KiB decode; reserved offsets read zero and `DMA_CONTROL + 0x1000` does not alias offset zero; 1-, 2-, 8- and 64-byte payloads, misalignment, partial strobes, wrapped streaming and a bad command are each refused with the documented status, and a null pointer is answered rather than thrown because this target is reachable from a remote master. `transport_dbg` agrees with `b_transport` register for register and is side-effect free. **Data path.** One native requester (`neo_requester::dma`) and one external initiator; local→external and external→local only, classified by absolute address with no direction bit. Copies verified at lengths 1, 2, 3, 7, 8, 15, 16, 63, 64, 65, 2048 and 5000 in both directions at odd source and destination offsets; local accesses split to 1..64 bytes and external frames obey `address % 8 + length <= 2048`, checked by the target rather than trusted. **Refusals.** Zero length, both endpoints local, both external, a span straddling the SRAM boundary in either direction, and a span ending above the 4 GiB RV32 limit each latch their own cause and commit nothing. **Partial failure.** A destination refused inside the third frame stops the job with `external_write`, `BYTES_DONE` = 4096 — destination bytes committed, not the 5120 fetched — exactly three external transactions attempted and none after the failure. **IRQ.** Level, raised for completion and error alike, held across time until W1C, deasserted by acknowledgement, never raised by an abort. Driven by one process (a SystemC signal refuses two writers) with immediate notification so it settles within one delta. **Epochs.** Explicit abort clears `BUSY`, sets sticky `ABORTED`, counts an abort and raises nothing; reset does the same without `ABORTED`, keeps the committed count, and neither lets the abandoned worker publish a completion, an error or a path counter afterwards — `BYTES_DONE` is the exception and is governed by register ownership instead, so an interrupted job may still raise it until a new `START` claims the register. A reset landing while the DMA was queued behind another requester on a contended bank unwinds without hanging. **Independence.** `neo_dma_independence` scans the sources with comments stripped, the emitted symbols and the CMake link interface; adding `#include "tpu_v3/sram/core_sram.h"` makes it fail. **Review round (2026-08-13).** Two High defects were found in reset/abort semantics and fixed. A start request was delivered as a bare event, so a `START` issued while the old worker was parked — which firmware may legitimately do, because both paths clear `BUSY` at once — reached nobody and the new job held `BUSY` for ever; it is now a flag that survives the gap. And `BYTES_DONE` was published at the end of a chunk rather than as each destination access landed, so a reset arriving between a commit and its report froze a count *lower* than memory held. Both were invisible to the first test, which settled for microseconds before restarting and only checked that the destination held *at least* the reported bytes; the phase now parks the worker deterministically inside a blocking external target and checks the byte past `BYTES_DONE` is still filler. A third rule fell out of the fix: a transaction still in flight at reset completes afterwards and its bytes are deliberately left unattributed, since the epoch that could have claimed them is gone and attributing them to whatever job started next is what §11.5 forbids. `tpu_v3_neo_dma` also no longer links `tpu_v3_core_sram` — the native-port interface was split into `tpu_v3_native_port`, and the guard now refuses that link edge as well. **Second review round (2026-08-13).** One more High: the fix above guarded `BYTES_DONE` on epoch sameness, which also swallowed a commit made *before* a reset — a native access writes beats into SRAM, waits for arbitration, the reset lands, and the access then returns reporting bytes that are genuinely in memory. The guard is now ownership of the register, which a reset does not transfer and a new `START` does, so an interrupted job keeps reporting into its own snapshot while a later job is never polluted. Every earlier reset case copied local→external, so the native destination path had no coverage at all; two phases were added, one resetting the DMA mid-native-access and one resetting the *fabric* so the request returns `aborted` with a partial byte count, the latter on an isolated SRAM/fabric/DMA instance because `fabric.reset()` clears counters the main conservation check relies on. Also settled: the DMA now clears its path traffic counters on reset and keeps only its event counters, so that when Phase 7 resets the DMA and the fabric together their totals still reconcile — conservation is a per-epoch property and the test states the epoch; an idle `ABORT` is documented and tested as accepted-and-ignored rather than counted; and `chunks_issued` became `chunks_completed`, since a failing chunk was issued and is not counted. **Third review round (2026-08-13).** A last High in the same area: `reset()` cleared the path traffic counters but an old in-flight request still added its response to them, so an epoch that had just been zeroed came back reading `LOCAL_BYTES=64, LOCAL_REQUESTS=1`. `neo_local_sram_fabric` already excluded old-generation responses from its own counters, so the DMA was also drifting away from the component it must reconcile with. A `traffic_epoch_`, advanced by `reset()` and not by `ABORT`, is captured before each transaction and gates the path counters; `BYTES_DONE` keeps its separate ownership rule, because "how much of this job's destination was committed" and "how much traffic did this path carry in this window" are different questions and a reset ends the window without ending the job's claim. A hierarchical-reset phase now resets the DMA and the fabric together mid-request, drains, and requires all three: `BYTES_DONE` equal to the bytes SRAM holds, DMA path counters zero, and DMA/fabric reconciling — then a fresh job reconciling again in the new epoch. Three documentation sites that still described the superseded straggler rule, called the path counters lifetime totals, or said "snapshot at reset" were corrected. Eleven negative controls confirm the behavioural gates bite, plus one for the guard itself. `components/dma_tlm` is untouched, and `dma_tlm` with all ten `noc_soc` regressions pass while `dma_platform` and `vp_fx1_full_soc` build |
 | Phase 4.5: RISC-V VP++ Compiler Enablement VP | **Complete** (2026-08-14) | `platforms/riscv_vpp_compiler_vp` plus `fw/riscv_vpp_compiler_vp` and `docs/MEMORY_MAP.md`. **Boundary.** One architectural RV32GCV hart, one TLM address decoder, program/data RAM and a simulator-only host-I/O target. `CDC_BUILD_RISCV_VPP_COMPILER_VP` is independent of `CDC_BUILD_TPU_V3_SOC`, and the packaging gate configures with the latter `OFF` so the handoff cannot quietly acquire the SoC tree. `cdc::cpu::riscv_vp_plusplus` is reused, not forked. **Map.** RAM at the TPU_V3 global-RAM base `0x8000_0000`, size configurable; the host-I/O window retains the Phase 2 exit protocol at `0x000F_0000` with the same four words at the same offsets and adds console, identity and measurement registers at 0x400 and above. One header, `compiler_vp/host_io_map.h`, is compiled by the platform, included by `crt0.S` from assembly, and preprocessed into the linker script, so the image's load address cannot drift from the address the platform maps. **Demonstrations.** Both print their exact PASS markers and exit zero. `scalar_hello` cross-checks the toolchain's `__riscv_xlen` against the platform's XLEN, `mhartid` against the configured hart id and `misa` against every letter of the frozen ISA, so its banner is a result rather than four literals; it is built with auto-vectorization off and *verified by disassembly* to contain no vector instruction. `rvv_vector_add` adds 1024 elements three ways — scalar golden, `<riscv_vector.h>` intrinsics and a hand-written `vsetvli`/`vle32.v`/`vadd.vv`/`vse32.v` loop, both kept `noinline` so a codegen failure stays distinguishable from a model failure — and earns `RVV=1.0` from behaviour, by observing that a reserved `vsew` sets `vtype.vill` and zeroes `vl` without trapping. **Observability.** No DMI (refused and counted), no ISS decode or load-store cache, so instruction fetch comes out at exactly one TLM transaction per retired instruction and the report prints the ratio. Fetch is separated from data by address, which required the shipped linker script to emit three program headers instead of the usual single RWX segment: with one segment every load is inside an executable segment and the split is meaningless. Vector traffic is *enforced*, not asserted — the intrinsic loop declares, from its own element count, the 3072 data accesses it must cause, and the platform fails the run if the bus does not see them. **Refusals.** Not an ELF, truncated, ELF64, wrong machine, big-endian, non-`ET_EXEC`, a float ABI other than `ilp32d` read from `e_flags`, an architecture string that is not `rv32*` or one guaranteeing a minimum vector length above 512 read from `.riscv.attributes`, a segment outside RAM or overlapping the host-I/O window or another segment, and an entry point outside RAM — each with its own exit code and a diagnostic naming the field. A scalar-only ISA string and a missing attributes section are accepted and reported, since checking scalar code generation is half the job. **Watchdogs, and a defect the gate found.** The two the plan asks for are not sufficient, and the shortfall is not exotic: both are polled between slices of `sc_start()`, and an image whose entry point lands on memory it never wrote traps, vectors to an `mtvec` its startup never set, and faults on the fault — retiring nothing and never reaching a quantum boundary, so neither bound is ever read again and the run hangs indefinitely with both armed. One mistyped load address in a linker script produces it. The decoder now recognises an unbroken run of 1024 refused accesses as a fault loop and throws, which is the only way out of a SystemC process that will not yield, and a `--wall-timeout` host thread is the backstop for whatever that does not cover. **Package.** `out/riscv_vpp_compiler_vp/` carries the binary at `RPATH=$ORIGIN`, the SystemC runtime, configs, both demonstrations with their disassembly, the SDK that built them, the map document, licences and a manifest recording the ISA/ABI/VLEN/ELEN/`vlenb`/hart count, the accuracy disclaimer, the VP++ base revision with every patch and hash, and every non-goal as absent. The gate moves the bundle, runs both demonstrations from it with no source tree and `LD_LIBRARY_PATH` unset, rebuilds the vector example from the shipped SDK with the documented commands, substitutes it, and requires identical guest output. **Independence.** `riscv_vpp_compiler_vp_independence` scans the sources with comments *and string literals* stripped — the `--version` banner has to be able to name what is absent — the emitted symbols, the CMake link interface, and the VP++ compile list for any `platform/`, Qt or VNC source; the packaging gate repeats the symbol and file-listing halves on the shipped bundle. **Evidence.** 103 CLI checks, the boundary gate and the distribution gate pass in Release and Debug; nine negative controls confirm each new gate bites when its fix is reverted, including the single-RWX-segment linker script (which reproduces `1024 of 3072 accesses`) and the disabled fault-loop detector (which reproduces the hang). TPU_V3 stays 35/35 in Release and Debug. **Review round (2026-08-14).** Two High defects, both in the package rather than the model. The package target *succeeded* without a cross toolchain, producing a bundle with neither demonstration and recording it as one `false` in a manifest field — a bundle that looks shippable and is not, and a packaging test that skipped rather than failed would have kept CI green over it. The executable still builds without the toolchain, deliberately, but `check_package_contents.cmake` now runs last in the package target and refuses an incomplete bundle, and the distribution gate has no skip at all. And the package shipped only CDC-VP's own Apache-2.0 while the binary statically links the RISC-V VP++ ISS (MIT) and Berkeley SoftFloat (BSD-3-Clause) — a redistribution blocker. Both licences are now shipped, SoftFloat's extracted at package time from a source file that was actually compiled because upstream ships no standalone licence file, `THIRD_PARTY.md` lists both, and the gate checks the text and not merely the filename. Two Medium: the firmware was generated *into* `fw/`, so Release and Debug clobbered each other's images and a read-only checkout could not build — it is now copied into the build tree and built there, and with `-ffile-prefix-map` and a two-stage compile the two build types produce byte-identical examples carrying no build-machine path. And the CLI accepted values `std::` accepts but a watchdog cannot: `--timeout nan` disarmed the simulated-time watchdog while `--print-config` still reported it armed, because every comparison against a NaN is false; `hart_id: 4294967296` in a configuration file truncated to hart 0; a leading `-` wrapped to an enormous limit. All are refused, on both the command-line and the file path. Also delivered: `COMPILER_QUICKSTART.md` and `ISA_ABI_CONTRACT.md`, which §15.3 names and the first package omitted, and §15.3's `sdk/` file list rebaselined to the delivered names. Six further negative controls confirm each fix bites |
-| Phase 5: Sauria SA 64x64 extraction | **Complete** (2026-08-17), review findings closed | `components/TPU_V3/sauria_matrix` and `docs/TPU_V3_PHASE5_AUDIT.md`. The target locally pins `v4.2_model` at base hash `418a8d88...`, pins the three-file `demo_gemm_64x64` oracle separately, applies two instrumentation-only patches to a build-tree copy and identifies the compiled tree as `c1931405...`; the shared `npu_tlm` fallback and source tree are untouched. `sauria_matrix_if` and the geometry-independent 32-bit AXI4-Lite `SA_CONTROL` ABI are frozen. D17 buffered staging prefetches A/B through `neo_local_sram_if`, runs the fixed-latency source closure, and writes C back over the same port; one physical 64-lane B vector is used per K and inactive N lanes are zero-padded. Source/config/template reports agree on `int8_64x64`, INT8/INT32 and 18/18/17; omitted/32x32/128x128/BF16 selections are refused. Direct staging and native-fabric paths match the pinned 64x64x256 oracle exactly; a strided 7x13x5 edge case and a 64x64x64 ViT-derived projection match independent INT32 oracles. The source ViT executable was run but its matrix operations are emulation-only with zero SA counters, so it is explicitly not claimed as an array golden; untiled QKV 64x64x192 is refused. Source, symbol and link-interface gates prove `SystolicArray`/feeders/Control/PSM are present while `NpuTop`, Sauria DMA, decoder, OBP, RCE and reduction are absent; source `ConfigRegs` is retained only as the internal distributor. Async START, level IRQ/W1C, error causes, reset/abort generations, replacement START and counter epochs pass. Two full adapters elaborate independently, create no traces and emit no Sauria function-local-static symbols. Review-host measurements: one functional adapter 1.12 s / 11,764 KiB peak RSS; two-adapter elaboration <0.01 s / 13,488 KiB (host VP measurements, not RTL/PD estimates). Final result: 14/14 `sauria` and 35/35 `tpu_v3` pass in both Release and Debug |
-| Phase 6: Im2Col/Col2Im Transform | Waiting for NPU-team source clarification | Does not block Phases 3–5. `TRANSFORM_CONTROL` elaborates today and reports its capability as unavailable rather than faking readiness |
+| Phase 5: Sauria SA 64x64 extraction | **Complete** (2026-08-18), review findings closed | `components/TPU_V3/sauria_matrix` and `docs/TPU_V3_PHASE5_AUDIT.md`. The target locally pins `v4.2_model` at base hash `418a8d88...`, pins the three-file `demo_gemm_64x64` oracle separately, applies two instrumentation-only patches to a build-tree copy and identifies the compiled tree as `c1931405...`; the shared `npu_tlm` fallback and source tree are untouched. `sauria_matrix_if` and the geometry-independent 32-bit AXI4-Lite `SA_CONTROL` ABI are frozen. D17 buffered staging prefetches A/B through `neo_local_sram_if`, runs the fixed-latency source closure, and writes C back over the same port; one physical 64-lane B vector is used per K and inactive N lanes are zero-padded. Source/config/template reports agree on `int8_64x64`, INT8/INT32 and 18/18/17; omitted/32x32/128x128/BF16 selections are refused. Direct staging and native-fabric paths match the pinned 64x64x256 oracle exactly; a strided 7x13x5 edge case and a 64x64x64 ViT-derived projection match independent INT32 oracles. The source ViT executable was run but its matrix operations are emulation-only with zero SA counters, so it is explicitly not claimed as an array golden; untiled QKV 64x64x192 is refused. Source, symbol and link-interface gates prove `SystolicArray`/feeders/Control/PSM are present while `NpuTop`, Sauria DMA, decoder, OBP, RCE and reduction are absent; source `ConfigRegs` is retained only as the internal distributor. `ROWS_ACTIVE` is explicitly limited by the source host port to writable rows 0..31 at Y=64; upper rows remain reset-active, while zero-filled staging and M-bounded writeback preserve exact edge results. Async START, level IRQ/W1C, error causes, reset/abort generations, replacement START and counter epochs pass; `SA_CONTROL` now reconciles a C write whose successful native response returns after ABORT/reset until the next START transfers counter ownership. Two full adapters elaborate independently, create no traces and emit no Sauria function-local-static symbols. Review-host measurements: one functional adapter 1.12 s / 11,764 KiB peak RSS; two-adapter elaboration <0.01 s / 13,488 KiB (host VP measurements, not RTL/PD estimates). Final result: 14/14 `sauria` and 35/35 `tpu_v3` pass in both Release and Debug; parallel `--repeat until-fail:10 -j4` records 140/140 Sauria executions per configuration, so the one earlier unlogged 7/14 run remains a non-reproduced observation rather than a classified defect |
+| Phase 6: ImageTransform | **Complete** (2026-08-18) for D18 Im2Col-only Revision 1 | `components/TPU_V3/image_transform`, `IMAGE_TRANSFORM_MODEL.md` and `docs/TPU_V3_PHASE6_AUDIT.md`. Pinned CHW INT8 Im2Col passes the NPU convolution golden and MMIO/native/reset gates; Col2Im is explicitly unavailable and causes no SRAM traffic. Standalone component gate 3/3 and full `tpu_v3` regression 38/38, zero skips |
 | Phase 7: single NEO-CORE | Not started | Composes the Phase 3 fabrics, the SRAM and the Phase 2 hart. Must select `annotated` fabric timing (D16) |
 | Phase 8: dual-core chip | Not started | — |
 | Phase 9: NoC/mesh | Not started; mandatory NoC rebaseline before implementation | D1 prerequisite; freeze control/data classification, shared/VC versus narrow/wide physical transport, widths, arbitration, ordering, back-pressure and RTL verification scope; also assert the external bridge does not block on arbitration (D16) |
@@ -2662,7 +2713,7 @@ Update this table when work progresses.
 | DMA per NEO-CORE | 1 independent TPU_V3 DMA | Frozen by D14; implemented in Phase 4 as `tpu_v3_neo_dma`. Sauria DMA and the shared PL330-style component both forbidden, gated by `neo_dma_independence` |
 | NEO DMA implementation boundary | New `components/TPU_V3/neo_dma`; do not modify, wrap, inherit or link `components/dma_tlm` | Approved Phase 4 rebaseline under D14/D15 (2026-08-13); shared DMA remains owned by its existing platforms |
 | NEO DMA programming model | One descriptor/in-flight job, no queue or microcode; local→external and external→local only in Revision 1 | Approved Phase 4 baseline; absolute 64-bit address arithmetic, register and error semantics frozen in §11.5 |
-| ImageTransform per NEO-CORE | 1, Im2Col + Col2Im | Frozen composition; source/interface pending NPU team |
+| ImageTransform per NEO-CORE | 1; Im2Col available in D18 Revision 1, Col2Im unavailable | Frozen composition and Im2Col semantics; Col2Im requires a future source/golden promotion |
 | Control plane | 32-bit AXI4-Lite, in order, no bursts or IDs | Frozen by D15; SystemC is transaction-level, not channel-cycle accurate |
 | Local data plane | Native pipelined request/response fabric into physically banked SRAM | Frozen by D15; no internal full AXI data crossbar |
 | Local-fabric arbitration | Deterministic round-robin per bank; one outstanding request/requester initially | Frozen by D15; implemented and gated by `tpu_v3_local_sram_fabric` |
@@ -2702,7 +2753,7 @@ Update this table when work progresses.
 | RV32 index EEW=64 | All 32 indexed encodings — unit and segment — raise an illegal instruction at the RV32 decode site | Fixed (D12), downstream conformance patch. Audit F12 |
 | Trap cause for a failed bus access | Access fault by origin — 1 fetch, 5 load, 7 store/AMO; page faults only from MMU translation | Fixed (D13), downstream conformance patch. Audit F13 |
 | VP++ patch series | Base pin + `upstream-backport` and `downstream-conformance` patches, hash-verified at configure time and recorded per-patch in the manifest | Approved (D8 mechanism, extended by D12/D13) |
-| Transform block | NPU-team Im2Col/Col2Im engine | Required by D14; exact source and semantics open, never substituted by RVV reduction/permutation |
+| Transform block | Pinned D18 Im2Col engine; future Col2Im capability separate | Im2Col complete. Col2Im source and overlap semantics open; it is never substituted by RVV or inferred from PSM ordering |
 | Sauria matrix adapter shape | Buffered tile staging: prefetch operands into private staging stores over `neo_local_sram_if`, run the array at the source's own timing, write results back. No pass-through, because the source has no SRAM-side response handshake. One physical X-lane B vector per K, with inactive N lanes zero-padded | Approved by D17; implemented and edge-gated in Phase 5 |
 | Sauria source hygiene | The selected closure's trace/debug state is compiled out by an ordered, hash-verified two-patch set; binary-symbol, no-trace and two-full-adapter gates prove instance cleanliness | Implemented by Phase 5; patched tree `c1931405...` |
 | Four-image workload | Optional future named workload | Not frozen |

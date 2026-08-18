@@ -35,6 +35,12 @@ option(CDC_BUILD_TPU_V3_TESTS
 option(CDC_BUILD_TPU_V3_SAURIA_MATRIX
     "Build the TPU_V3 Sauria matrix engine (requires the pinned v4.2 source)" OFF)
 
+# Phase 6's source-traced ImageTransform engine. Like the matrix extraction it
+# is opt-in: configuring the component verifies an internal NPU-team v4.2 pin,
+# while an ordinary CDC-VP build must remain independent of that delivery.
+option(CDC_BUILD_TPU_V3_IMAGE_TRANSFORM
+    "Build the TPU_V3 Im2Col ImageTransform engine (requires pinned v4.2 evidence)" OFF)
+
 # The RISC-V VP++ Compiler Enablement VP (plan §16, Phase 4.5): one RV32GCV
 # hart, TLM RAM and a simulator-only host-I/O target, packaged for a compiler
 # team.
@@ -116,7 +122,10 @@ include(CdcPortable)
 # TPU_V3 has its own switch, so it is included here: otherwise
 # -DCDC_BUILD_TESTS=OFF -DCDC_BUILD_TPU_V3_TESTS=ON would register tests that
 # CTest never sees.
-if(CDC_BUILD_TESTS OR (CDC_BUILD_TPU_V3_SOC AND CDC_BUILD_TPU_V3_TESTS))
+if(CDC_BUILD_TESTS
+   OR (CDC_BUILD_TPU_V3_TESTS
+       AND (CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_TPU_V3_SAURIA_MATRIX
+            OR CDC_BUILD_TPU_V3_IMAGE_TRANSFORM)))
     enable_testing()
 endif()
 

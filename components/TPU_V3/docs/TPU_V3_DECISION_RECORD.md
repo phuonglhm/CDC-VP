@@ -8,6 +8,8 @@ Architecture rebaseline date: 2026-08-11
 
 D15 final ratification date: 2026-08-12
 
+D18 Im2Col-only baseline date: 2026-08-18
+
 Scope: TPU_V3 Phase 2 onward
 
 This document records the decisions made after the Phase 0 and Phase 1 review
@@ -38,10 +40,11 @@ boundaries of the CDC-VP TPU_V3 model.
 | D11 | Differential method and oracle isolation | One image compiled once, run on both models, comparing a firmware-written canonical signature block located by linker symbols. Spike runs as a child process and is never linked into anything |
 | D12 | RV32 index EEW=64 (F12) | **Downstream conformance patch**, not an accepted deviation. All 32 RV32 indexed encodings with index EEW=64 — four unit forms and 28 segment forms — raise an illegal instruction at the decode site, before `stats.inc_loadstore()` and `prepInstr()` |
 | D13 | Trap cause for a failed bus access (F13) | **Downstream conformance patch.** Page faults only from MMU translation; a bus, decode or target failure is an access fault chosen by access origin — 1 fetch, 5 load, 7 store/AMO. Protocol errors are model defects, not guest faults |
-| D14 | NEO-CORE architecture rebaseline | One VP++ RV32GCV hart, one shared core SRAM, one independent TPU_V3 DMA, one Sauria matrix engine and one Im2Col/Col2Im Transform engine. Integrate verified 64x64 Sauria first; promote to the NPU team's 128x128 source later. Never reuse the Sauria DMA. Its original single AXI-like-fabric wording is superseded by D15 |
+| D14 | NEO-CORE architecture rebaseline | One VP++ RV32GCV hart, one shared core SRAM, one independent TPU_V3 DMA, one Sauria matrix engine and one ImageTransform engine with source-gated operations. Integrate verified 64x64 Sauria first; promote to the NPU team's 128x128 source later. Never reuse the Sauria DMA. Its original single AXI-like-fabric wording is superseded by D15 and its temporary assumption that both transform directions arrive together is superseded by D18 |
 | D15 | NEO-CORE internal interconnect | Split control and data: 32-bit AXI4-Lite for MMIO control; a native, pipelined, banked-SRAM request/response fabric for internal bulk data; full AXI4 only at the external chip/NoC boundary. NEO DMA owns bulk external movement; the required VP++ instruction/global path also exits through that boundary. Do not build a full AXI data crossbar inside NEO-CORE |
 | D16 | Where the local-data plane may block | `neo_local_sram_fabric` has two timing modes. `annotated` is the default and never waits, so it is safe behind any NoC-reachable target; `arbitrated` blocks on a real per-bank round-robin arbiter and is the only mode in which fairness and back-pressure are behaviours rather than estimates. Every TLM target still never waits. A timing figure must name the mode that produced it |
 | D17 | Sauria matrix adapter shape | **Buffered tile staging.** Operands are prefetched from core SRAM into private staging stores over `neo_local_sram_if`, the array runs against those stores at the source's own timing, results are written back the same way. Pass-through is not implemented: the source has feeder compute stalls but no SRAM-side response handshake, so a late read is captured as valid data. SRAM-B holds one physical 64-lane vector per K step and zero-pads partial N. Prefetch and writeback stay fully in D16's scope. Only `source_compute_time` may be called cycle-correlated. Requires hash-verified instrumentation-only patches and a binary gate proving the selected closure has no mutable function-local static state |
+| D18 | Phase 6 ImageTransform capability | **Im2Col-only Revision 1.** Extract the CHW INT8, no-padding, cross-correlation address order proven by the pinned v4.2 IFMAP/layout/golden evidence into a standalone buffered engine. All four padding fields must be zero. Output is row-major `[OH*OW][C*KH*KW]`. Col2Im is absent from the audited source: its capability bit stays zero and a requested start returns `unavailable_operation` without SRAM traffic. This does not block the forward-inference pipeline `DMA -> Im2Col -> SA -> RVV`; no guessed inverse or fake success is permitted |
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -776,7 +779,7 @@ NEO-CORE
 ├── one shared core SRAM
 ├── one independent TPU_V3 DMA
 ├── one Sauria matrix engine
-├── one ImageTransform engine (Im2Col + Col2Im)
+├── one ImageTransform engine (source-gated operations; current subset in D18)
 └── one internal transaction fabric (its protocol split is superseded by D15)
 ```
 
@@ -843,18 +846,18 @@ datatype is useful integration evidence only and must report the actual type.
 
 ### Transform source boundary
 
-Im2Col and Col2Im must come from an approved NPU-team source revision. The
-current v4.2 tree contains Im2Col-related address generation embedded in the
-IFMAP feeder; no standalone Col2Im block has been established by the audit.
-Therefore:
+This original D14 boundary is refined by D18. Transform operations remain
+independently source-gated: Phase 6 has approved and implemented the pinned
+v4.2 Im2Col subset, while Col2Im still has no identified implementation or
+overlap/accumulation contract. Therefore:
 
-- ask the NPU team for the Transform module, its configuration contract,
-  golden tests and supported layouts;
+- use the exact Im2Col source/layout/golden pins recorded by D18;
+- ask the NPU team separately for any future Col2Im module, configuration
+  contract, golden tests and supported layouts;
 - do not infer Col2Im from PSM write ordering or implement a guessed inverse;
-- while the source is pending, the component may expose an unavailable
-  capability and reject start explicitly, but it may not report fake success;
-- the missing Transform delivery does not block core SRAM, internal fabrics,
-  independent DMA or 64x64 SA work.
+- unavailable Col2Im must reject start explicitly and may not report fake
+  success;
+- lack of Col2Im does not block the Revision 1 forward-inference pipeline.
 
 ### Rebaseline consequences
 
@@ -865,7 +868,8 @@ historical Phase 0–2 audit evidence:
 - `MXU0_CONTROL` and `MXU1_CONTROL` as current register names;
 - Sauria only as a late optional Phase 9 backend;
 - DMA ownership being open or reusing the Sauria DMA;
-- treating Im2Col/Col2Im as an optional software-only step.
+- treating the available Im2Col accelerator as an optional software-only step,
+  or treating unavailable Col2Im as though it were implemented.
 
 Phase 3 starts by migrating architecture configuration/address names and by
 implementing core SRAM plus the D15 control/data interconnect split. The
@@ -976,12 +980,12 @@ Phase 3:
 
 | Item | Status | Evidence / remaining implementation |
 | --- | --- | --- |
-| Record D1-D17 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3; D17 added by the Phase 5 source audit |
-| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one SA + Transform + split control/data fabrics | Documentation complete; SRAM and all three fabrics implemented and gated; DMA/SA/Transform pending Phases 4-6; composition pending Phase 7 | D14/D15, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and `tpu_v3_local_sram_fabric` / `tpu_v3_control_fabric` / `tpu_v3_external_bridge` |
+| Record D1-D18 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3; D17 and D18 record the Phase 5/6 adapter decisions |
+| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one SA + Transform + split control/data fabrics | Component implementations and gates complete through Phase 6; composition pending Phase 7 | D14-D18, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and the component audits |
 | Rename SVM to core SRAM while retaining the 16 MiB window/capacity contract | Complete | D6 as amended by D14; `address_map.h`, `architecture_config.h`, the four shipped configurations and the packaged `--print-address-map` output all use `CORE_SRAM`, and both the CLI regression and the packaging regression fail if the legacy names reappear |
 | Set BF16 operands with FP32 accumulation as the target SA arithmetic | Complete as a contract; not proven by the v4.2 bring-up type | D6/D14 |
-| Integrate Sauria 64x64 first and promote the NPU-team 128x128 delivery later | Planned | D14 promotion gate |
-| Obtain verified Im2Col/Col2Im source from the NPU team | Open external input; does not block SRAM/fabric/DMA/SA64 | D14 Transform boundary |
+| Integrate Sauria 64x64 first and promote the NPU-team 128x128 delivery later | 64x64 complete; 128x128 open | D14/D17 and Phase 5 audit |
+| Obtain verified transform source | Im2Col complete; Col2Im remains an optional future promotion and is explicitly unavailable | D18 and Phase 6 audit |
 | Keep TPU_V3 DMA independent of Sauria DMA | Complete | D14 DMA boundary; `tpu_v3_neo_dma` implemented in Phase 4 and gated by `neo_dma_independence`, which scans the sources with comments stripped, the emitted symbols and the CMake link interface. The guard covers the shared PL330-style `components/dma_tlm` and DMI as well as Sauria, and it fails when a forbidden include is added |
 | Replace default no-op CPU setters with D5 `cpu_config` properties | Complete | Phase 2 wrapper and configuration tests |
 | Retire legacy `TPU_V3_MXU_BACKEND` and validate `TPU_V3_SA_GEOMETRY` | Complete | The CMake variable, the compiled-in value, `--version` and the manifest are all `TPU_V3_SA_GEOMETRY`; `128x128` and an unnamed geometry are both refused at configure time, with the packaging regression's negative control covering each |
@@ -1340,3 +1344,92 @@ post-patch tree and the three-file `demo_gemm_64x64` oracle each have their own
 hash. Release and Debug binaries are scanned for Itanium `_ZZN6sauria...`
 symbols so redirecting a trace to a null stream cannot masquerade as removal of
 the shared static state.
+
+## D18. Phase 6 is an Im2Col-only ImageTransform baseline
+
+### Decision
+
+Revision 1 exposes **Im2Col only**. The audited v4.2 tree contains the address
+generation required to lower an input feature map into matrix rows, but it
+contains no identified Col2Im implementation or overlap/accumulation contract.
+Those two capabilities are therefore independent: accepting Im2Col does not
+authorize inventing the reverse operation.
+
+The standalone TPU_V3 component implements this frozen transform:
+
+```text
+input     signed INT8, CHW contiguous
+window    cross-correlation order c, ky, kx
+output    signed INT8, row-major [OH * OW][C * KH * KW]
+OH        1 + (H - (KH - 1) * dilation_h - 1) / stride_h
+OW        1 + (W - (KW - 1) * dilation_w - 1) / stride_w
+padding   unsupported; all four padding fields must be zero
+```
+
+This is a **no-padding** contract. Zero values disable padding; they do not
+request implicit zero-fill outside the tensor. The pinned v4.2 contract has no
+padding field, so adding that convention would be an invention.
+
+### Source and extraction boundary
+
+The evidence boundary is the pinned NPU-team `v4.2_model` tree:
+
+| Evidence | SHA-256 | What it establishes |
+| --- | --- | --- |
+| `data_feeder/ifmap_feeder.h` | `156334177cfe1682faac049ce48745d9657ed4fcd5d58eb1c0bf5bffa3692ba0` | IFMAP window/stride/dilation address order |
+| `driver/libsauria_mem.h` | `d5310c80b5e283a1ae133e9ba7b05d74c3559056f2a6ebd42f607391e328c982` | flattened CHW layout |
+| `driver/sauria_golden.h` | `57327c4c91c7dcc1fa2d95509fee6f83e60eea96bf80be68afbd589a67aaae3b` | cross-correlation output semantics used by the differential gate |
+
+`ifmap_feeder.h` is not copied wholesale. It is coupled to Sauria FIFO, skew,
+controller and signal-level SRAM timing, so importing it as a nominal
+standalone transform would retain unrelated matrix-engine behavior. The
+address semantics are extracted into `components/TPU_V3/image_transform`, and
+the build refuses a changed evidence hash until it is audited and rebaselined.
+The golden gate factors the pinned NPU convolution reference through the new
+Im2Col matrix and an independent integer GEMM; it therefore checks the layout,
+stride and dilation rather than comparing two copies of the same helper.
+
+### Adapter and timing boundary
+
+The component has one 32-bit AXI4-Lite target, one
+`neo_local_sram_if` requester and one level completion/error IRQ. `START`
+returns immediately and one `SC_THREAD` performs the job. The input tensor is
+prefetched through the native port into private staging, and output matrix rows
+are written back through that same port in transfers no larger than 64 bytes.
+There is no external AXI master and no pointer to SRAM backing.
+
+This is a functional TLM staging policy. It preserves source-visible ordering
+and exposes arbitration/errors/traffic, but it is not a claim about an RTL line
+buffer, feeder schedule or cycle count. Reset/abort generation and traffic
+epoch rules match the DMA/SA rules already frozen by the project: committed
+destination bytes remain committed, an abandoned worker cannot publish stale
+status, and a replacement `START` cannot be lost.
+
+### Col2Im and forward inference
+
+Col2Im remains explicitly unavailable:
+
+* its capability bit is zero;
+* selecting it and issuing `START` completes with `ERROR` and
+  `unavailable_operation`;
+* it causes no local-SRAM transaction;
+* a non-empty free-form source string is not allowed to turn it on in the
+  common architecture configuration.
+
+This does **not** block the current forward-inference model. After Im2Col and
+SA matrix multiplication, the result is already the output-feature matrix;
+RVV/software can apply bias/activation and interpret or reshape its rows as the
+output tensor. Col2Im becomes necessary for operations that scatter and
+accumulate overlapping columns, such as some backward-data, transposed
+convolution or explicit fold workloads. Those are outside Revision 1. A future
+Col2Im delivery needs its own source pin, mathematical layout and overlap rule,
+golden tests and an explicit decision-record promotion.
+
+Consequently Phase 7 uses:
+
+```text
+DMA -> Im2Col -> Sauria matrix engine -> RVV
+```
+
+It must not insert a placeholder Col2Im step or report the pipeline as a
+round-trip transform.

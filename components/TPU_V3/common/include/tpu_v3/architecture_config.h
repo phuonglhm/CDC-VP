@@ -90,12 +90,16 @@ struct dma_config {
     void validate(const std::string& context) const;
 };
 
-/// The one ImageTransform engine (Im2Col + Col2Im).
+/// The one ImageTransform engine.
 ///
-/// Both operations default to unavailable, which is the honest state: the
-/// standalone NPU-team Transform block has not been located, and D14 forbids
-/// inferring Col2Im from PSM write ordering. An unavailable operation must be
-/// refused explicitly at `start`; it must never report a fake success.
+/// Phase 6 traced and implemented Im2Col from the pinned v4.2 IFMAP/layout
+/// evidence. Col2Im has no identified NPU-team source and remains forbidden.
+/// Availability still defaults false here because the platform does not link
+/// the Phase 6 component until Phase 7 composition; a Phase 7 configuration
+/// that enables Im2Col must name the exact pinned source below.
+inline constexpr const char* im2col_source_revision =
+    "v4.2-ifmap@156334177cfe1682faac049ce48745d9657ed4fcd5d58eb1c0bf5bffa3692ba0";
+
 struct image_transform_config {
     unsigned count_per_core = transform_per_core;
     bool im2col_available = false;

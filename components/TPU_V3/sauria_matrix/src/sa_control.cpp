@@ -111,12 +111,22 @@ void sa_control::snapshot_engine()
 
 void sa_control::observe_completion()
 {
+    // ABORT/reset clear the firmware-visible BUSY bit immediately, while the
+    // adapter may still be unwinding from a blocking native transaction. A
+    // successful response can therefore add committed C bytes after the first
+    // snapshot. Keep reconciling the abandoned owner's registers until a new
+    // START claims C_BYTES_DONE. Do this before the BUSY early-return that used
+    // to make the first, possibly short snapshot permanent.
+    if (abandoned_accounting_open_) {
+        snapshot_engine();
+    }
     if ((status_ & status_bit::busy) == 0 || engine_.busy()) {
         return;
     }
 
     status_ &= ~status_bit::busy;
     snapshot_engine();
+    abandoned_accounting_open_ = false;
     error_cause_ = engine_.last_error();
     if (error_cause_ == error_cause::none) {
         status_ |= status_bit::done;
@@ -135,8 +145,10 @@ void sa_control::reset()
     const bool was_busy = (status_ & status_bit::busy) != 0;
     engine_.reset();
     if (was_busy) {
+        abandoned_accounting_open_ = true;
         snapshot_engine();
     } else {
+        abandoned_accounting_open_ = false;
         c_bytes_done_ = 0;
         local_requests_ = 0;
         local_bytes_ = 0;
@@ -186,6 +198,17 @@ bool sa_control::check_control_rules(tlm::tlm_generic_payload& trans)
 std::uint32_t sa_control::read_register(std::uint64_t offset) const
 {
     const engine_identity identity = engine_.identity();
+    // A register read must not have to wait for the next SA clock edge to see a
+    // late native response. These values remain owned by the abandoned job
+    // until START transfers ownership; W1C of ABORTED does not close it.
+    const std::uint64_t visible_c_bytes = abandoned_accounting_open_
+        ? engine_.committed_bytes() : c_bytes_done_;
+    const std::uint64_t visible_local_requests = abandoned_accounting_open_
+        ? engine_.local_requests() : local_requests_;
+    const std::uint64_t visible_local_bytes = abandoned_accounting_open_
+        ? engine_.local_bytes() : local_bytes_;
+    const sauria_matrix_if::timing visible_timing = abandoned_accounting_open_
+        ? engine_.last_timing() : timing_;
     switch (offset) {
     case reg::id: return identity_value;
     case reg::version: return model_version;
@@ -209,14 +232,14 @@ std::uint32_t sa_control::read_register(std::uint64_t offset) const
     case reg::job_count: return low32(job_count_);
     case reg::error_count: return low32(error_count_);
     case reg::abort_count: return low32(abort_count_);
-    case reg::c_bytes_done_lo: return low32(c_bytes_done_);
-    case reg::c_bytes_done_hi: return high32(c_bytes_done_);
-    case reg::prefetch_ns: return saturate32(timing_.prefetch_ns);
-    case reg::compute_ns: return saturate32(timing_.compute_ns);
-    case reg::writeback_ns: return saturate32(timing_.writeback_ns);
-    case reg::local_requests: return low32(local_requests_);
-    case reg::local_bytes_lo: return low32(local_bytes_);
-    case reg::local_bytes_hi: return high32(local_bytes_);
+    case reg::c_bytes_done_lo: return low32(visible_c_bytes);
+    case reg::c_bytes_done_hi: return high32(visible_c_bytes);
+    case reg::prefetch_ns: return saturate32(visible_timing.prefetch_ns);
+    case reg::compute_ns: return saturate32(visible_timing.compute_ns);
+    case reg::writeback_ns: return saturate32(visible_timing.writeback_ns);
+    case reg::local_requests: return low32(visible_local_requests);
+    case reg::local_bytes_lo: return low32(visible_local_bytes);
+    case reg::local_bytes_hi: return high32(visible_local_bytes);
     case reg::overrun_count: return low32(overrun_count_);
     case reg::geometry: return (identity.rows << 16) | identity.columns;
     case reg::capability: return identity.capability;
@@ -264,6 +287,7 @@ bool sa_control::write_register(std::uint64_t offset, std::uint32_t value)
         if (abort) {
             if ((status_ & status_bit::busy) != 0) {
                 engine_.abort();
+                abandoned_accounting_open_ = true;
                 status_ &= ~status_bit::busy;
                 status_ |= status_bit::aborted;
                 ++abort_count_;
@@ -280,6 +304,13 @@ bool sa_control::write_register(std::uint64_t offset, std::uint32_t value)
             status_ &= ~(status_bit::done | status_bit::error
                          | status_bit::aborted);
             error_cause_ = error_cause::none;
+            // START is the ownership boundary. Capture the abandoned job one
+            // last time before engine.submit() changes the engine's owner, then
+            // initialise the new job's completion account.
+            if (abandoned_accounting_open_) {
+                snapshot_engine();
+            }
+            abandoned_accounting_open_ = false;
             c_bytes_done_ = 0;
             timing_ = {};
             const submit_status submitted = engine_.submit(programmed_);

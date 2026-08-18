@@ -215,15 +215,15 @@ routing, NPU instruction decoding, Sauria DMA and other unrelated NPU-top
 behavior are outside the NEO SA contract. Operand and result traffic uses the
 native SRAM port; the SA has no external AXI4 master port.
 
-**The Transform boundary is source-controlled.** Im2Col and Col2Im are exposed
-only when their semantics and implementation are traced to an approved NPU-team
-revision. Existing Im2Col-related logic embedded in an IFMAP feeder is not by
-itself evidence of a standalone Transform component. PSM output addressing is
-not automatically Col2Im. While the NPU team confirms the missing block,
-`TRANSFORM_CONTROL` may elaborate as an unavailable capability, but it must
-reject `start` and report that state explicitly; it must never return a fake
-successful transform. When available, its tensor traffic uses the native SRAM
-port; it has no external AXI4 master port.
+**The Transform boundary is capability- and source-controlled.** D18 approves
+only the pinned v4.2 Im2Col subset: signed INT8 CHW input, row-major
+`[OH*OW][C*KH*KW]` output, stride/dilation, and no padding (all four descriptor
+padding fields must be zero). Its
+tensor traffic uses the native SRAM port and it has no external AXI4 master.
+Col2Im is independent, not implied by the existence of Im2Col or by PSM output
+addressing. Its capability bit is zero; selecting it and starting must report
+`unavailable_operation` without SRAM traffic. A configuration string alone may
+not enable it, and no missing operation may return fake success.
 
 SA geometry and datatype are runtime-reportable, construction-time properties.
 The accepted bring-up pair is the verified v4.2 64x64 configuration. A 128x128

@@ -189,18 +189,35 @@ int sc_main(int, char*[])
 
     // Abort is immediate, sticky and deliberately does not raise completion.
     CHECK(wr(sa::reg::control, sa::control_bit::start) == tlm::TLM_OK_RESPONSE);
+    engine.committed = 4;
+    engine.requests = 2;
+    engine.bytes = 9;
     CHECK(wr(sa::reg::control, sa::control_bit::abort) == tlm::TLM_OK_RESPONSE);
     CHECK((rd(sa::reg::status) & sa::status_bit::aborted) != 0);
     CHECK(!engine.running && !irq.read());
     CHECK(rd(sa::reg::abort_count) == 1);
+    CHECK(rd(sa::reg::c_bytes_done_lo) == 4);
+
+    // A native response may land after ABORT cleared BUSY. Acknowledging the
+    // sticky status does not transfer ownership of C_BYTES_DONE; the old job's
+    // late committed bytes and traffic must remain visible until another START.
+    CHECK(wr(sa::reg::status, sa::status_bit::aborted) == tlm::TLM_OK_RESPONSE);
+    engine.committed = 8;
+    engine.requests = 3;
+    engine.bytes = 13;
+    CHECK(rd(sa::reg::c_bytes_done_lo) == 8);
+    CHECK(rd(sa::reg::local_requests) == 3);
+    CHECK(rd(sa::reg::local_bytes_lo) == 13);
+    sc_core::sc_start(20, sc_core::SC_NS);
+    CHECK(rd(sa::reg::c_bytes_done_lo) == 8);
 
     // Debug writes are side-effect free: a loader cannot start a job.
     CHECK(cpu.debug_write(base + sa::reg::control, sa::control_bit::start) == 4);
     CHECK(!engine.running);
 
     // Reset abandons the engine, clears status/IRQ and preserves event history.
-    CHECK(wr(sa::reg::status, sa::status_bit::aborted) == tlm::TLM_OK_RESPONSE);
     CHECK(wr(sa::reg::control, sa::control_bit::start) == tlm::TLM_OK_RESPONSE);
+    CHECK(rd(sa::reg::c_bytes_done_lo) == 0);
     dut.reset();
     sc_core::sc_start(sc_core::SC_ZERO_TIME);
     CHECK(rd(sa::reg::status) == 0 && !irq.read() && engine.resets == 1);

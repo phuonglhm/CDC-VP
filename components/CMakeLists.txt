@@ -50,9 +50,11 @@ add_subdirectory(rtc_tlm)
 set(FLOO_NOC_MODEL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(floo_noc_model)
 
-# TPU_V3 components. Gated on the platform switch so the default build, and
-# every existing platform, is unaffected by work in progress here.
-if(CDC_BUILD_TPU_V3_SOC)
+# TPU_V3 reusable components. The SoC switch brings in the common Phase 1-4
+# tree, while either extracted accelerator may also be built and gated on its
+# own. All three switches default OFF, so existing platforms remain unaffected.
+if(CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_TPU_V3_SAURIA_MATRIX
+   OR CDC_BUILD_TPU_V3_IMAGE_TRANSFORM)
    add_subdirectory(TPU_V3)
 endif()
 

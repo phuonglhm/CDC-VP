@@ -669,6 +669,17 @@ still intentionally absent: any `M` or `N` above 64 is refused as
 `dimension_exceeds_array`; this is a stated capability limit, not a silent
 split.
 
+There is a source-controlled limitation behind that edge result.
+`ConfigRegs::ROWS_ACTIVE` iterates over `Y_DIM` but accepts a bit only when
+`byte_idx < 4`; its host port therefore programs rows 0..31 and cannot deassert
+rows 32..63 at the 64-row Phase 5 geometry. Those upper bits remain at the
+source's power-on value of `true`. The adapter does **not** claim to have loaded
+all 64 mask bits: inactive staging rows are zero-filled and writeback reads only
+components `0..M-1`, which is why the 7x13x5 edge result remains exact. Changing
+the source reset value of the upper mask bits would break the full 64x64 golden
+case and requires a new source revision or an explicit wider register contract;
+it must not be hidden by the phrase "byte-spread writes the row mask".
+
 The source's ViT program was also built and run. It prints PASS, but all nine
 matrix operations take its `[EMULATION]` path; the Sauria control state remains
 idle and the final source counters report zero cycles, zero MACs and zero PE
@@ -698,6 +709,19 @@ cannot retract a native request already accepted by the fabric; firmware must
 treat the affected C region as undefined until the adapter has unwound, and
 only `C_BYTES_DONE` may be used to identify committed output.
 
+Review found that `SA_CONTROL` defeated that ownership rule by taking one
+snapshot immediately after ABORT cleared `BUSY`. If an accepted C write returned
+afterwards, the adapter correctly increased its committed count but
+`observe_completion()` returned forever because firmware-visible `BUSY` was
+already zero; `C_BYTES_DONE` could under-report by one native chunk (at most 64
+bytes). The control target now keeps an abandoned-accounting owner open through
+ABORT and active reset. Clock edges reconcile its snapshot, and MMIO/debug reads
+consult the live owner so they do not wait for another edge. W1C of `ABORTED`
+does not transfer ownership; the next `START` does. The boundary test commits a
+C write inside a blocking target, aborts and acknowledges status before the
+response returns, then requires both memory and `C_BYTES_DONE` to report exactly
+four bytes. Reverting the reconciliation makes that test fail.
+
 ## 8. Phase 5 completion evidence
 
 The implemented closure is `SystolicArray`, PE, `IfmapFeeder`, `WeightFeeder`,
@@ -716,13 +740,21 @@ predictions):
 | one adapter, source golden + 7x13x5 + ViT-derived projection | 1.12 s | 11,764 KiB |
 | two full adapters, elaboration/reset/identity | < 0.01 s at timer resolution | 13,488 KiB |
 
-Final regressions on 2026-08-17:
+Final regressions and review stress on 2026-08-18:
 
 * Release: 14/14 `sauria` and 35/35 `tpu_v3` pass;
 * Debug: 14/14 `sauria` and 35/35 `tpu_v3` pass;
 * source/config/provenance, dependency closure, two-instance hygiene,
   function-local-static, golden, edge, async control/IRQ and reset/abort epoch
   gates all pass;
+* one earlier Debug `ctest -R sauria -j4` invocation reported 7/14 failures,
+  but retained no individual failing test or useful failure output. It did not
+  reproduce in clean, serial or parallel reruns. The final parallel stress gate
+  used `--repeat until-fail:10 -j4` and recorded 140/140 passing test executions
+  in each of Release and Debug. This is retained as a **non-reproduced flaky
+  observation**, not classified as a product defect and not hidden with
+  `RUN_SERIAL`. If it recurs, the exact failing test, command and
+  `Testing/Temporary/LastTest.log` must be preserved before any fix is proposed;
 * `git diff --check` is clean.
 
 A full **Debug all-target** build still reaches an unrelated existing ISP test

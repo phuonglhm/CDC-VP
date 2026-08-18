@@ -177,16 +177,21 @@ void image_transform_config::validate(const std::string& context) const
                   "decision record D14, one ImageTransform engine per "
                   "NEO-CORE");
 
-    // Availability is a claim about a source revision, so it cannot be
-    // asserted without naming one. The failure this prevents is a
-    // configuration that marks Col2Im available, elaborates, and produces
-    // numbers from an inferred inverse that no NPU-team source defines.
-    if ((im2col_available || col2im_available) && source_revision.empty()) {
-        reject(context, "transform.source_revision", "(empty)",
-               "an available Im2Col/Col2Im must name the approved NPU-team "
-               "revision it came from (decision record D14). No standalone "
-               "Transform block has been located yet, and Col2Im may not be "
-               "inferred from PSM write ordering");
+    // D18 exposes only what Phase 6 can trace. Col2Im has no source or overlap
+    // contract, so even a non-empty free-form revision must not enable it.
+    if (col2im_available) {
+        reject(context, "transform.col2im_available", "true",
+               "Phase 6 found no Col2Im implementation or semantic contract; "
+               "it must remain unavailable until a separately reviewed "
+               "NPU-team delivery is promoted");
+    }
+    if (im2col_available && source_revision != im2col_source_revision) {
+        reject(context, "transform.source_revision",
+               source_revision.empty() ? "(empty)" : source_revision,
+               std::string("available Im2Col is pinned to '")
+                   + im2col_source_revision
+                   + "'; audit and rebaseline before selecting another "
+                     "source");
     }
 }
 

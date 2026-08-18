@@ -122,17 +122,29 @@ int sc_main(int, char*[])
               "the Phase 5 composition");
     }
 
-    // `ROWS_ACTIVE` and `COLS_ACTIVE` must be byte-spread. They are bit masks:
-    // `ConfigRegs` decodes eight active-row bits per host lane, and at 64 active
-    // columns the value reaches 0xFFFFFFFF, which the floating-point host bus
-    // cannot carry in one lane without loss. The source's own testbench
-    // documents that trap against itself.
+    // `ROWS_ACTIVE` and `COLS_ACTIVE` use the byte-spread host encoding. This
+    // does not mean ROWS_ACTIVE is a writable 64-bit register: ConfigRegs has
+    // four host lanes and its `byte_idx < 4` guard leaves rows 32..63 at their
+    // power-on value (true) for Y_DIM=64. The adapter relies on zero-filled
+    // inactive staging rows and M-bounded writeback for edge jobs; the Phase 5
+    // audit records that source limitation explicitly. At 64 active columns the
+    // low mask also reaches 0xFFFFFFFF, which one float host lane cannot carry
+    // without loss. The source's own testbench documents that separate trap.
     for (const auto& write : writes) {
         if (write.address == ::sauria::CFG_ACT_OFFSET + 0x00u
             || write.address == ::sauria::WEI_COLS_ACTIVE) {
             check(write.how == sauria_tpu::config_write::encoding::byte_spread,
                   std::string(write.name)
                       + " is a bit mask and must be written byte-spread");
+        }
+    }
+
+    for (const auto& write : writes) {
+        if (write.address == ::sauria::CFG_ACT_OFFSET + 0x00u) {
+            check(write.value == 0xFFFFFFFFu,
+                  "the 64-row source mask must expose exactly its writable "
+                  "low 32 bits; rows 32..63 are source reset state, not a "
+                  "successfully programmed host value");
         }
     }
 

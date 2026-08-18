@@ -96,11 +96,14 @@ struct config_write {
         lane0,
         /// Byte `i` of the value in lane `i`, all four lanes masked.
         ///
-        /// Required for the bit-mask registers — `ConfigRegs` decodes
-        /// `ROWS_ACTIVE` as eight active-row bits per lane — and it is also the
-        /// only lossless way to carry a value at or above 2^24, because the host
-        /// bus is floating point. The source's own testbench documents that trap
-        /// against itself: `write_reg32_all` casts through `float`, so a mask of
+        /// Required for the source's 32-bit bit-mask registers and values that
+        /// cannot survive one float host lane. `ConfigRegs` decodes eight
+        /// `ROWS_ACTIVE` bits from each of its four host lanes, so only rows
+        /// 0..31 are writable even when Y_DIM=64; rows 32..63 retain the source's
+        /// power-on value of true. Phase 5 deliberately records that source
+        /// limitation rather than claiming this encoding programs all 64 rows.
+        /// The source's own testbench also documents the float trap against
+        /// itself: `write_reg32_all` casts through `float`, so a mask of
         /// `0xFFFFFFFF` written that way arrives as something else entirely.
         byte_spread,
     };

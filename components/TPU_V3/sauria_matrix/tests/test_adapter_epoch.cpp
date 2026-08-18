@@ -14,12 +14,18 @@
 #include <vector>
 
 #include <systemc>
+#include <tlm>
+#include <tlm_utils/simple_initiator_socket.h>
 
+#include "tpu_v3/address_map.h"
+#include "tpu_v3/sauria/sa_control.h"
+#include "tpu_v3/sauria/sa_registers.h"
 #include "tpu_v3/sauria/sauria_matrix_adapter.h"
 #include "tpu_v3/sram/native_port.h"
 
 namespace sa = cdc::components::tpu_v3::sauria;
 namespace sram = cdc::components::tpu_v3::sram;
+namespace am = cdc::components::tpu_v3::address_map;
 
 namespace {
 
@@ -51,6 +57,20 @@ public:
     void arm()
     {
         block_next_ = true;
+        block_writes_only_ = false;
+        commit_before_release_ = false;
+        entered_ = false;
+    }
+
+    /// Park the next write after its bytes have entered memory but before the
+    /// response reaches the adapter. This is the ABORT/C_BYTES_DONE race: the
+    /// control snapshot sees zero, then the late successful response attributes
+    /// bytes that are already physically present in C.
+    void arm_committed_write()
+    {
+        block_next_ = true;
+        block_writes_only_ = true;
+        commit_before_release_ = true;
         entered_ = false;
     }
 
@@ -63,12 +83,20 @@ public:
                   sc_core::sc_time& delay) override
     {
         response = {};
-        if (block_next_) {
+        const bool matches_block = block_next_
+            && (!block_writes_only_
+                || request.command == sram::neo_command::write);
+        if (matches_block) {
             block_next_ = false;
+            if (commit_before_release_) {
+                access(request, response);
+            }
             entered_ = true;
             entered_event_.notify(sc_core::SC_ZERO_TIME);
             sc_core::wait(release_event_);
-            response.status = sram::neo_status::aborted;
+            if (!commit_before_release_) {
+                response.status = sram::neo_status::aborted;
+            }
             return;
         }
         access(request, response);
@@ -113,9 +141,45 @@ private:
 
     std::vector<unsigned char> bytes_;
     bool block_next_ = false;
+    bool block_writes_only_ = false;
+    bool commit_before_release_ = false;
     bool entered_ = false;
     sc_core::sc_event entered_event_;
     sc_core::sc_event release_event_;
+};
+
+class control_master : public sc_core::sc_module {
+public:
+    tlm_utils::simple_initiator_socket<control_master> socket{"socket"};
+    explicit control_master(sc_core::sc_module_name name) : sc_module(name) {}
+
+    tlm::tlm_response_status write(std::uint64_t address, std::uint32_t value)
+    {
+        tlm::tlm_generic_payload trans;
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+        trans.set_command(tlm::TLM_WRITE_COMMAND);
+        trans.set_address(address);
+        trans.set_data_ptr(reinterpret_cast<unsigned char*>(&value));
+        trans.set_data_length(4);
+        trans.set_streaming_width(4);
+        socket->b_transport(trans, delay);
+        return trans.get_response_status();
+    }
+
+    std::uint32_t read(std::uint64_t address)
+    {
+        std::uint32_t value = 0xdeadbeef;
+        tlm::tlm_generic_payload trans;
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        trans.set_address(address);
+        trans.set_data_ptr(reinterpret_cast<unsigned char*>(&value));
+        trans.set_data_length(4);
+        trans.set_streaming_width(4);
+        socket->b_transport(trans, delay);
+        CHECK(trans.get_response_status() == tlm::TLM_OK_RESPONSE);
+        return value;
+    }
 };
 
 class scenario : public sc_core::sc_module {
@@ -155,9 +219,19 @@ int sc_main(int, char*[])
 
     sc_core::sc_clock clock("clock", 10, sc_core::SC_NS);
     sc_core::sc_signal<bool> rstn("rstn");
+    sc_core::sc_signal<bool> irq("irq");
     adapter.i_clk(clock);
     adapter.i_rstn(rstn);
     adapter.local_port.bind(memory);
+
+    const std::uint64_t control_base = am::sa_control(0, 0);
+    sa::sa_control_config control_config;
+    control_config.control_base = control_base;
+    sa::sa_control control("sa_control", control_config, adapter);
+    control_master cpu("cpu");
+    control.i_clk(clock);
+    control.irq(irq);
+    cpu.socket.bind(control.control);
 
     const auto store8 = [&](std::uint64_t address, std::int8_t value) {
         unsigned char byte = static_cast<unsigned char>(value);
@@ -249,6 +323,64 @@ int sc_main(int, char*[])
         CHECK(adapter.committed_bytes() == sizeof(std::int32_t));
         CHECK(adapter.local_requests() == 3);
         CHECK(adapter.local_bytes() == 6);
+
+        // Firmware-visible ABORT accounting. The C write commits inside the
+        // target and is then held before b_access returns. ABORT therefore takes
+        // its first snapshot at zero bytes. Once the response is released the
+        // adapter must attribute all four bytes to the abandoned owner, and the
+        // control register must reconcile even though BUSY and ABORTED have both
+        // already been cleared/acknowledged.
+        const sa::job late_write = make_job(0x400);
+        store8(late_write.a_address, 7);
+        store8(late_write.b_address, -3);
+        const std::uint64_t requests_before = adapter.local_requests();
+        const std::uint64_t bytes_before = adapter.local_bytes();
+
+        const auto wr = [&](std::uint64_t offset, std::uint32_t value) {
+            return cpu.write(control_base + offset, value);
+        };
+        const auto rd = [&](std::uint64_t offset) {
+            return cpu.read(control_base + offset);
+        };
+        CHECK(wr(sa::reg::dim_m, late_write.m) == tlm::TLM_OK_RESPONSE);
+        CHECK(wr(sa::reg::dim_n, late_write.n) == tlm::TLM_OK_RESPONSE);
+        CHECK(wr(sa::reg::dim_k, late_write.k) == tlm::TLM_OK_RESPONSE);
+        CHECK(wr(sa::reg::a_addr_lo,
+                 static_cast<std::uint32_t>(late_write.a_address))
+              == tlm::TLM_OK_RESPONSE);
+        CHECK(wr(sa::reg::b_addr_lo,
+                 static_cast<std::uint32_t>(late_write.b_address))
+              == tlm::TLM_OK_RESPONSE);
+        CHECK(wr(sa::reg::c_addr_lo,
+                 static_cast<std::uint32_t>(late_write.c_address))
+              == tlm::TLM_OK_RESPONSE);
+        CHECK(wr(sa::reg::datatype, late_write.datatype)
+              == tlm::TLM_OK_RESPONSE);
+
+        memory.arm_committed_write();
+        CHECK(wr(sa::reg::control, sa::control_bit::start)
+              == tlm::TLM_OK_RESPONSE);
+        if (!memory.entered()) {
+            sc_core::wait(memory.entered_event());
+        }
+        CHECK(load32(late_write.c_address) == -21);
+        CHECK(adapter.committed_bytes() == 0);
+        CHECK(wr(sa::reg::control, sa::control_bit::abort)
+              == tlm::TLM_OK_RESPONSE);
+        CHECK(rd(sa::reg::c_bytes_done_lo) == 0);
+        CHECK(wr(sa::reg::status, sa::status_bit::aborted)
+              == tlm::TLM_OK_RESPONSE);
+        memory.release();
+        for (unsigned i = 0;
+             i < 20 && adapter.committed_bytes() != sizeof(std::int32_t); ++i) {
+            sc_core::wait(sc_core::sc_time(10, sc_core::SC_NS));
+        }
+        CHECK(adapter.committed_bytes() == sizeof(std::int32_t));
+        CHECK(rd(sa::reg::c_bytes_done_lo) == sizeof(std::int32_t));
+        CHECK(rd(sa::reg::local_requests) == requests_before + 3);
+        CHECK(rd(sa::reg::local_bytes_lo) == bytes_before + 6);
+        CHECK(rd(sa::reg::status) == 0);
+        CHECK(!irq.read());
     });
 
     sc_core::sc_start(sc_core::sc_time(10, sc_core::SC_MS));

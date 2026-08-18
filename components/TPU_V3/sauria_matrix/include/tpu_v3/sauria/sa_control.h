@@ -76,6 +76,13 @@ private:
     std::uint64_t local_requests_ = 0;
     std::uint64_t local_bytes_ = 0;
     sauria_matrix_if::timing timing_;
+
+    /// ABORT and active reset release admission immediately, but a native write
+    /// already accepted by the fabric may return afterwards with bytes that are
+    /// already in C. The abandoned job keeps ownership of C_BYTES_DONE until the
+    /// next START; while this flag is set, register reads and clock-edge
+    /// snapshots reconcile against the engine's still-live accounting.
+    bool abandoned_accounting_open_ = false;
 };
 
 } // namespace cdc::components::tpu_v3::sauria

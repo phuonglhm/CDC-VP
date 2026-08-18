@@ -82,7 +82,11 @@ inline constexpr std::uint64_t abort_count = 0x058;   ///< RO
 
 /// Bytes the engine has committed to the C region for the job that owns this
 /// register. Non-atomic writeback means a failed job leaves C partially
-/// updated, and this is the only thing that says how far it got (D17).
+/// updated, and this is the only thing that says how far it got (D17). ABORT or
+/// active reset releases BUSY immediately but does not revoke that ownership: a
+/// native write already accepted by the fabric may return later, so this count
+/// can still rise until the next START claims it. Clearing ABORTED by W1C does
+/// not freeze the count.
 inline constexpr std::uint64_t c_bytes_done_lo = 0x05C;  ///< RO
 inline constexpr std::uint64_t c_bytes_done_hi = 0x060;
 

@@ -21,11 +21,14 @@ implemented it: `core_sram`, `neo_control_fabric`, `neo_local_sram_fabric` and
 did not do is compose them — that is Phase 7, and until then the platform
 instantiates the memories only and says so in its report. Decision record D16
 records the one question D15 left open: where the local-data plane is allowed
-to block. Phase 4 subsequently delivered the independent NEO DMA, and Phase 5
-delivered the standalone 64x64 INT8/INT32 Sauria matrix engine; neither changes
-the fact that their full NEO-CORE composition is Phase 7. See the editable
-[D15 draw.io source](neo_core_architecture-d15.drawio) and its rendered
-[JPG](neo_core_architecture-d15.jpg).
+to block. Phase 4 subsequently delivered the independent NEO DMA, Phase 5
+delivered the standalone 64x64 INT8/INT32 Sauria matrix engine, and Phase 6
+delivered the Im2Col-only ImageTransform engine under D18. None changes the
+fact that their full NEO-CORE composition is Phase 7. The editable
+[D15/D18 draw.io source](neo_core_architecture-d15.drawio) carries the current
+capability label. The existing [D15 JPG](neo_core_architecture-d15.jpg) is the
+pre-D18 topology render and still shows both transform directions; D18 and the
+editable source are authoritative until that image is re-rendered.
 This is the project-defined NEO-CORE implementation architecture, not a claim
 about Google TPUv3's unpublished internal interconnect.
 
@@ -52,7 +55,7 @@ tpu_core / NEO-CORE
 ├── core_sram                                  one shared SRAM
 ├── dma                                        independent CDC-VP DMA
 ├── sauria_matrix_engine                       one SA; 64x64 bring-up, 128x128 target
-├── image_transform_engine                     Im2Col + Col2Im
+├── image_transform_engine                     Im2Col; Col2Im unavailable (D18)
 └── external_bridge                            bidirectional AXI4 / chip-NoC boundary
 ```
 
@@ -201,13 +204,20 @@ unrelated to matrix multiplication are outside this block. It is not a full
 AXI4 NoC master. Phase 5 supports one tile with `M,N <= 64`; each B row occupies
 one 64-lane staging vector and unused columns are zero-padded.
 
-**Transform path.** One ImageTransform engine implements Im2Col and Col2Im. It
-is controlled through AXI4-Lite MMIO and reads/writes core SRAM through its
-native data port. The implementation is imported or extracted from the NPU
-team's source behind a TPU_V3 adapter. The current v4.2 IFMAP feeder contains
-Im2Col-related address generation, but no standalone Col2Im block has yet been
-established; Col2Im must not be invented or inferred from PSM output layout
-while that source and its semantic contract are pending.
+**Transform path.** One ImageTransform engine currently implements the D18
+Im2Col subset. It is controlled through AXI4-Lite MMIO and reads/writes core
+SRAM through its native data port. Its source-visible order is extracted from
+the pinned v4.2 IFMAP/layout/golden evidence: signed INT8 contiguous CHW becomes
+row-major `[OH*OW][C*KH*KW]`, with stride and dilation and with all padding
+fields required to be zero. The adapter stages input and writes matrix rows;
+that is a functional TLM policy, not an RTL line-buffer or cycle claim.
+
+No Col2Im implementation or overlap/accumulation rule exists in the audited
+tree. Its capability bit is zero and a requested `START` produces
+`unavailable_operation` with no tensor traffic. This does not block forward
+inference: Sauria's result is already the output-feature matrix, and RVV can
+perform post-processing and reshape/interpret it. Col2Im remains a future
+source-gated capability for workloads that require scatter/overlap-add.
 
 **Remote path.** An address outside the core aperture goes to the chip-local
 fabric; an address outside the chip aperture goes to the NoC endpoint. This is
@@ -248,7 +258,7 @@ Per core, level-sensitive, aggregated in the core:
 | --- | --- |
 | SA complete/error | level, held until acknowledged through the SA status register |
 | DMA complete/error | level, one independent DMA instance per core |
-| ImageTransform complete/error | level, operation identifies Im2Col or Col2Im |
+| ImageTransform complete/error | level; Im2Col is available and an unavailable Col2Im request completes as a defined error |
 | core-local fabric error | level, latched cause |
 
 The aggregate line reaches the hart as machine external interrupt (cause 11)
@@ -280,7 +290,7 @@ construction, and every reported number must name which was used.
 
 | Level | CPU | SA / Transform / DMA | NoC | Use |
 | --- | --- | --- | --- | --- |
-| 64x64 bring-up | RISC-V VP++ functional + approximate cost | extracted INT8/INT32 Sauria 64x64; independent DMA; Transform unavailable until its source gate passes | fast or detailed | block and single-core integration |
+| 64x64 bring-up | RISC-V VP++ functional + approximate cost | extracted INT8/INT32 Sauria 64x64; independent DMA; pinned Im2Col-only Transform | fast or detailed | block and single-core integration |
 | NoC detailed | RISC-V VP++ functional + approximate cost | same functional engines, reported geometry/datatype | `timing_mode::detailed` | contention, routing, back-pressure |
 | 128x128 target | RISC-V VP++ functional + approximate cost | NPU-team 128x128 Sauria update behind the same contract | either | target NEO-CORE integration after promotion gate |
 
@@ -303,7 +313,7 @@ RTL equivalence.
 | `core_sram` | storage, byte enables, arbitration, per-requester counters | `wait()` inside `b_transport` |
 | `neo_dma` | descriptor execution and TLM data movement | include or call the Sauria DMA; touch backing memory directly |
 | `sauria_matrix_engine` | GEMM semantics, Sauria adapter, async worker, counters | retain unrelated NPU-top behavior; claim 64x64 is 128x128 |
-| `image_transform_engine` | Im2Col/Col2Im descriptors and verified transform semantics | guess missing Col2Im behavior |
+| `image_transform_engine` | pinned Im2Col descriptor/layout, async execution and capability refusal | guess missing Col2Im behavior or advertise it available |
 | `neo_control_fabric` | 32-bit AXI4-Lite MMIO decode and response routing | carry accelerator bulk data; claim signal-level AXI accuracy |
 | `neo_local_sram_fabric` | native per-bank arbitration, back-pressure, ownership and counters | become a full AXI data crossbar; expose backing pointers |
 | `external_bridge` | adapt outbound VP++/DMA and inbound remote traffic at the chip/NoC boundary | let SA/ImageTransform bypass local SRAM staging or inbound traffic bypass arbitration |
@@ -319,14 +329,13 @@ a backend. The local SRAM plane is native by architecture, not “AXI-like.”
 
 ## 9. Known architectural blockers
 
-**The NPU-team delivery boundary is not yet complete.** The v4.2 source proves
-a 64x64 Sauria configuration and contains Im2Col-related address generation,
-but the standalone Transform block, especially Col2Im, has not been located.
-The 128x128 Sauria extension is also a future NPU-team delivery. This does not
-block core SRAM, D15 fabrics or independent DMA work. It does block declaring
-the Transform gate or 128x128 promotion gate complete. Both deliveries require
-an immutable source revision, interface audit, provenance record and
-cross-check against the accepted NPU-team golden tests.
+**Two NPU-team promotion inputs remain open.** Phase 6 has completed the
+Im2Col-only gate from pinned v4.2 evidence, but Col2Im has not been located and
+remains unavailable. The 128x128 Sauria extension is also a future NPU-team
+delivery. Neither blocks the Revision 1 forward-inference pipeline. Either
+promotion requires an immutable source revision, interface audit, provenance
+record and cross-check against accepted golden tests before its capability can
+be advertised.
 
 **Multi-chip NoC traffic is blocked in the current NoC wrapper.**
 `noc_interconnect` refuses any target on a node that hosts any upstream port,

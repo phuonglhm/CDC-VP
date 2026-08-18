@@ -6,21 +6,23 @@ VLEN 512), one shared core SRAM, one Sauria matrix engine, one independent DMA
 and one ImageTransform engine, behind the split control / local-data /
 external interconnect of decision record D15.
 
-**Status: Phase 4 of 12.** Configuration, the address map, packaging, the
-RV32GCV backend (Phase 2), sparsely page-backed core SRAM, the three NEO-CORE
-fabrics and the independent DMA exist. Nothing is composed into a core and
-nothing is instantiated in the platform beyond the memories yet, and the
-platform binary says so in its own output. Nothing here produces a workload
-result.
+**Status: Phase 6 of 12 complete.** Configuration, the address map, packaging,
+the RV32GCV backend, sparsely page-backed core SRAM, the three NEO-CORE
+fabrics, independent DMA, extracted 64x64 INT8/INT32 Sauria engine and the
+Im2Col-only ImageTransform component exist and are gated. Nothing is composed
+into a NEO-CORE yet — that is Phase 7 — and the platform manifest must still
+report every unlinked component honestly.
 
 ## Where to start
 
 | Document | What it answers |
 | --- | --- |
 | [docs/TPU_V3_IMPLEMENTATION_PLAN.md](docs/TPU_V3_IMPLEMENTATION_PLAN.md) | what is being built, in what order, and what each phase gate requires |
-| [docs/TPU_V3_DECISION_RECORD.md](docs/TPU_V3_DECISION_RECORD.md) | D1–D16, approved. The authority where it and any other document disagree |
+| [docs/TPU_V3_DECISION_RECORD.md](docs/TPU_V3_DECISION_RECORD.md) | D1–D18, approved. The authority where it and any other document disagree |
 | [docs/TPU_V3_PHASE0_AUDIT.md](docs/TPU_V3_PHASE0_AUDIT.md) | measured facts: revisions, toolchain, licences, and the constraints the existing NoC imposes. P0-6, P0-7 and P0-9 are superseded by the decision record |
 | [docs/TPU_V3_PHASE2_AUDIT.md](docs/TPU_V3_PHASE2_AUDIT.md) | the RV32GCV backend: findings F1–F13, the patch series, and the Spike differential result |
+| [docs/TPU_V3_PHASE5_AUDIT.md](docs/TPU_V3_PHASE5_AUDIT.md) | the pinned and extracted 64x64 Sauria matrix engine |
+| [docs/TPU_V3_PHASE6_AUDIT.md](docs/TPU_V3_PHASE6_AUDIT.md) | the pinned Im2Col source/layout/golden evidence and the explicit Col2Im boundary |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | what the machine is — hierarchy, data paths, ordering, fidelity levels |
 | [docs/ADDRESS_MAP.md](docs/ADDRESS_MAP.md) | every region, and the rules the map satisfies |
 | [docs/INTERFACE_CONTRACT.md](docs/INTERFACE_CONTRACT.md) | the TLM rules every component here must follow, with a reviewer checklist |
@@ -30,13 +32,18 @@ result.
 Off by default. The existing CDC-VP build is unaffected when it is off.
 
 ```bash
-export CC=/usr/bin/gcc CXX=/usr/bin/g++
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
 export PATH=/usr/bin:/bin:$PATH
+# sanity
+$CC -dumpfullversion
+$CXX --version | head
 
 cmake -S . -B build-tpu-v3 \
     -DCMAKE_BUILD_TYPE=Release \
     -DCDC_BUILD_TPU_V3_SOC=ON \
     -DCDC_BUILD_TPU_V3_TESTS=ON \
+    -DCDC_BUILD_TPU_V3_IMAGE_TRANSFORM=ON \
     -DTPU_V3_SA_GEOMETRY=64x64
 
 cmake --build build-tpu-v3 --target tpu_v3_soc -j"$(nproc)"
@@ -60,7 +67,7 @@ cd build-tpu-v3 && ctest -L tpu_v3 --output-on-failure
 | `cdc::components::tpu_v3_tpu_core` | 3 | the D15 split — `neo_control_fabric` (32-bit AXI4-Lite), `neo_local_sram_fabric` (native banked data plane), `neo_external_bridge`, and the core-local register files. `tpu_core` itself is Phase 7. |
 | `cdc::components::tpu_v3_neo_dma` | 4 | the independent NEO DMA — see [neo_dma/DMA_MODEL.md](neo_dma/DMA_MODEL.md) |
 | `cdc::components::tpu_v3_sauria_matrix` | 5 | `sauria_matrix_if` plus the extracted 64x64 engine |
-| `cdc::components::tpu_v3_image_transform` | 6 | Im2Col / Col2Im, pending the NPU-team source |
+| `cdc::components::tpu_v3_image_transform` | 6 | pinned CHW INT8 Im2Col engine; Col2Im is explicitly unavailable — see [image_transform/IMAGE_TRANSFORM_MODEL.md](image_transform/IMAGE_TRANSFORM_MODEL.md) |
 | `cdc::components::tpu_v3_chip` | 8 | two cores and the chip-local fabric |
 | `cdc::components::tpu_v3_noc_endpoint` | 9 | placement, chunking, local bypass |
 

@@ -103,8 +103,8 @@ void defaults_are_the_frozen_architecture()
     // supersedes the temporary INT8 + FP32 proposal of Phase 0 (P0-7).
     CHECK(core.sa.datatype == tpu::matrix_datatype::bf16_fp32);
 
-    // D14: the standalone Transform block has not been located, so both
-    // operations must default to unavailable rather than to a guessed inverse.
+    // Phase 6 built Im2Col, but the platform does not compose/link it until
+    // Phase 7. Col2Im has no source and remains unavailable in every phase.
     CHECK(!core.transform.im2col_available);
     CHECK(!core.transform.col2im_available);
 
@@ -346,14 +346,21 @@ void the_matrix_geometry_contract_is_enforced()
 
 void an_available_transform_must_name_its_source()
 {
-    // D14: existing Im2Col-related address generation inside an IFMAP feeder
-    // is not a standalone Transform block, and Col2Im may not be inferred from
-    // PSM write ordering. Marking either available without naming an approved
-    // revision is how a guessed inverse would get into a result.
+    // D18: no value in source_revision can make the missing Col2Im real.
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();
             c.chip.core[0].transform.col2im_available = true;
+            c.chip.core[0].transform.source_revision = "invented-col2im";
+            c.validate();
+        },
+        "transform.col2im_available"));
+
+    CHECK(rejected_naming(
+        [] {
+            tpu::tpu_soc_config c = good_config();
+            c.chip.core[0].transform.im2col_available = true;
+            c.chip.core[0].transform.source_revision = "wrong-revision";
             c.validate();
         },
         "transform.source_revision"));
@@ -361,7 +368,7 @@ void an_available_transform_must_name_its_source()
     tpu::tpu_soc_config sourced = good_config();
     for (auto& core : sourced.chip.core) {
         core.transform.im2col_available = true;
-        core.transform.source_revision = "npu-v4.2-hypothetical";
+        core.transform.source_revision = tpu::im2col_source_revision;
     }
     sourced.validate();
 }

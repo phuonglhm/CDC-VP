@@ -36,3 +36,8 @@ add_subdirectory(neo_dma)
 # the default TPU_V3 build neither needs the pinned Sauria source nor acquires a
 # dependency on it.
 add_subdirectory(sauria_matrix)
+
+# Phase 6. The subdirectory returns immediately unless the transform option is
+# on. Im2Col is implemented from the pinned v4.2 semantics; Col2Im remains an
+# explicit unavailable capability until the NPU team supplies it.
+add_subdirectory(image_transform)
