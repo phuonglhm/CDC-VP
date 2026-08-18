@@ -60,7 +60,7 @@ Below is the detailed specification and hardware audit for the control, queue, i
 | **`FX1_QUEUE_B_STATUS`** | N/A | *Internal C++ Queue* | Queue depth/fullness is managed in `control/instruction_decoder.h` (`std::queue<SauriaRichInstruction> queue_b`). Not exposed as a host MMIO readback CSR. |
 | **`FX1_NSPLIT`** | `0x40000214` | **EXISTS (Default: 32)** | Host R/W MMIO register (`CFG_CON_OFFSET + 0x14`). **Default value is `32`** (`Y_DIM / 2` for default $64 \times 64$ PE geometry), assigning **32 rows to Lane A** ($0 \dots 31$) and **32 rows to Lane B** ($32 \dots 63$). Can also be modified dynamically via ISA Opcode `0x05` (`SET_NSPLIT`). |
 | **`FX1_LUT_A_BASE`** | `0x40140000` | **EXISTS** | Host R/W MMIO base address for **Lane A OBP Activation LUT** (16 KB SRAM, $64 \times 256$ entries). |
-| **`FX1_LUT_B_BASE`** | `0x40180000` | **EXISTS** | Host R/W MMIO base address for **Lane B OBP Activation LUT** (`LUT_OFFSET + 0x00040000`, 16 KB SRAM, $64 \times 256$ entries). |
+| **`FX1_LUT_B_BASE`** | `0x40160000` | **EXISTS** | Host R/W MMIO base address for **Lane B OBP Activation LUT** (`LUT_OFFSET + 0x00040000`, 16 KB SRAM, $64 \times 256$ entries). |
 | **`FX1_DMA_BYTES_READ`**| N/A | *Perf Counter Field* | Measured dynamically by the 60-metric instrumentation engine (`fx1::PerfCounters::ddr_read_bytes` in `instrumentation/perf_counters.h`). Reported in simulation performance logs. |
 | **`FX1_DMA_BYTES_WRITTEN`**| N/A | *Perf Counter Field* | Measured dynamically by the 60-metric instrumentation engine (`fx1::PerfCounters::ddr_write_bytes` in `instrumentation/perf_counters.h`). Reported in simulation performance logs. |
 
@@ -175,7 +175,7 @@ The **Output Post-Processing Block (OBP)** in `psm/obp_top.h` implements a 4-sta
 
 ### 5.1. Memory Geometry & Base Addresses
 * **Lane A LUT Base Address (`FX1_LUT_A_BASE`)**: `0x40140000` (Local MMIO Offset: `0x00140000`).
-* **Lane B LUT Base Address (`FX1_LUT_B_BASE`)**: `0x40180000` (Local MMIO Offset: `0x00180000` = `LUT_OFFSET + 0x00040000`).
+* **Lane B LUT Base Address (`FX1_LUT_B_BASE`)**: `0x40160000` (Local MMIO Offset: `0x00160000` = `LUT_OFFSET + 0x00040000`).
 * **Capacity & Structure**: **16 KB (16,384 bytes)** per lane.
   * $64 \text{ parallel PE lanes} \times 256 \text{ entries/lane} \times 1 \text{ byte/entry}$.
   * Declared in `psm/obp_top.h:L89` as `uint8_t lut_ram[Y_DIM][256];` (where `Y_DIM = 64`).

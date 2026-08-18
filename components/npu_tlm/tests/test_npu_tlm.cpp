@@ -28,8 +28,8 @@ constexpr std::uint32_t kDstOffset = 0x0003'0000;
 // Exercise a non-power-of-two reduction dimension here; the full-SoC
 // firmware regression independently covers K=64.
 constexpr std::uint32_t kK = 17;
-constexpr std::uint32_t kRows = 32;
-constexpr std::uint32_t kCols = 32;
+constexpr std::uint32_t kRows = 64;
+constexpr std::uint32_t kCols = 64;
 
 void settle()
 {
@@ -44,7 +44,7 @@ int sc_main(int, char*[])
     cdc::components::bus_router bus("bus", 2, 2);
     cdc::components::memory_tlm ram("ram", 2u * 1024u * 1024u);
     cdc::components::npu_tlm npu(
-        "npu", sc_core::sc_time(2, sc_core::SC_NS));
+        "npu", sc_core::sc_time(1.25, sc_core::SC_NS));
     cdc::test::tlm_probe probe("probe");
     sc_core::sc_signal<bool> reset_n("reset_n");
     sc_core::sc_signal<bool> irq("irq");
@@ -88,7 +88,7 @@ int sc_main(int, char*[])
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
         CDC_CHECK(irq.read() == false);
 
-        // V4.2 native control/profile and SRAM windows are the primary ABI.
+        // V4.4 native control/profile and SRAM windows are the primary ABI.
         CDC_CHECK(write_native(NATIVE_CFG_PROFILE, PROFILE_V1_SAURIA) ==
                   tlm::TLM_OK_RESPONSE);
         CDC_CHECK(read_native(NATIVE_CFG_PROFILE) == PROFILE_V1_SAURIA);
@@ -100,9 +100,23 @@ int sc_main(int, char*[])
         // Sparse rich/OBP/RCE regions use compact aliases within the aperture.
         constexpr std::uint32_t rich_m = 32u;
         CDC_CHECK(write_native(RICH_M, rich_m) == tlm::TLM_OK_RESPONSE);
-        CDC_CHECK(read_native(RICH_M) == rich_m);
+        constexpr std::uint32_t lane_63_lut_word = 0xA5A4'A3A2u;
+        CDC_CHECK(write_native(OBP_A_LUT_BASE + OBP_A_LUT_SIZE - 4u,
+                               lane_63_lut_word) == tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_A_LUT_BASE + OBP_A_LUT_SIZE - 4u) ==
+                  lane_63_lut_word);
+        CDC_CHECK(write_native(OBP_B_LUT_BASE + OBP_B_LUT_SIZE - 4u,
+                               lane_63_lut_word) == tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_B_LUT_BASE + OBP_B_LUT_SIZE - 4u) ==
+                  lane_63_lut_word);
         CDC_CHECK(read_native(PERF_EXEC_CYCLES) == 0u);
         CDC_CHECK(read_native(PERF_EXEC_CYCLES_HI) == 0u);
+        CDC_CHECK(read_native(PERF_PROCESSING_CYCLES) == 0u);
+        CDC_CHECK(read_native(PERF_DDR_READ_BYTES) == 0u);
+        CDC_CHECK(read_native(PERF_M) == 0u);
+        CDC_CHECK(read_native(PERF_K) == 0u);
+        CDC_CHECK(read_native(PERF_N) == 0u);
+        CDC_CHECK(read_native(PERF_M_HI) == 0u);
 
         std::vector<std::uint8_t> activations(kRows * kK);
         std::vector<std::uint8_t> weights(kK * kCols);
@@ -206,6 +220,8 @@ int sc_main(int, char*[])
                   activations.size() + weights.size());
         CDC_CHECK(read_reg(BYTES_WRITTEN) ==
                   kRows * kCols * sizeof(std::int32_t));
+        CDC_CHECK(read_native(PERF_PROCESSING_CYCLES) != 0u);
+        CDC_CHECK(read_native(PERF_MAC_ENGINE_CYCLES) != 0u);
         settle();
         CDC_CHECK(irq.read() == true);
 

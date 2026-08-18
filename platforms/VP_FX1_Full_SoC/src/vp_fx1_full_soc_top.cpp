@@ -214,7 +214,7 @@ struct vp_fx1_full_soc_top::impl : public sc_core::sc_module {
         , adc0("adc0")
         , gpio0("gpio0")
 #if CDC_ENABLE_SAURIA_NPU_V4
-        , npu0("npu0", sc_core::sc_time(2, sc_core::SC_NS))
+        , npu0("npu0", sc_core::sc_time(1.25, sc_core::SC_NS))
 #endif
         , uart0_tx("uart0_tx"), uart1_tx("uart1_tx")
         , trng0_clk("trng0_clk")

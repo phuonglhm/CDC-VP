@@ -28,16 +28,41 @@ using namespace npu_tlm_reg;
 
 constexpr std::uint64_t kRamBase = 0x8000'0000ULL;
 constexpr std::uint64_t kRamSize = 0x1000'0000ULL;
-constexpr std::uint32_t kRows = 32;
-constexpr std::uint32_t kCols = 32;
-constexpr std::uint32_t kMaxK = 1024 - kCols;
+constexpr std::uint32_t kArrayRows = sauria::Y;
+constexpr std::uint32_t kArrayCols = sauria::X;
+constexpr std::uint32_t kSoftwareRows = kArrayRows;
+constexpr std::uint32_t kSoftwareCols = kArrayCols;
+constexpr std::uint32_t kSoftwareRowSubwords = kSoftwareRows / 4;
+constexpr std::uint32_t kSoftwareMaxK = 1024 - kSoftwareCols;
+static_assert(kSoftwareRows == 64 && kSoftwareCols == 64);
+static_assert((kSoftwareRows % 4) == 0);
+constexpr std::uint32_t kSramASubwords = kArrayRows / 4;
+constexpr std::uint32_t kSramBSubwords = kArrayCols / 4;
+constexpr std::uint32_t kSramCSubwords = kArrayRows / 4;
+
+constexpr std::uint32_t log2_power_of_two(std::uint32_t value)
+{
+    std::uint32_t shift = 0;
+    while ((std::uint32_t{1} << shift) < value) {
+        ++shift;
+    }
+    return shift;
+}
+
+static_assert((kSramASubwords & (kSramASubwords - 1)) == 0);
+static_assert((kSramBSubwords & (kSramBSubwords - 1)) == 0);
+static_assert((kSramCSubwords & (kSramCSubwords - 1)) == 0);
+constexpr std::uint32_t kSramAShift = log2_power_of_two(kSramASubwords);
+constexpr std::uint32_t kSramBShift = log2_power_of_two(kSramBSubwords);
+constexpr std::uint32_t kSramCShift = log2_power_of_two(kSramCSubwords);
 constexpr std::uint32_t kCoreTimeoutCycles = 50'000;
 constexpr std::uint32_t kStatusPollCycles = 8;
 constexpr std::uint32_t kInt8Bytes = 1;
 constexpr std::uint32_t kInt32Bytes = 4;
 constexpr std::uint32_t kConfigRegisterBytes = 42 * sizeof(std::uint32_t);
 constexpr std::uint32_t kRichModelBase = 0x4000'0000;
-constexpr std::uint32_t kRichElementBytes = sizeof(float);
+constexpr std::uint32_t kRichElementBytes = sizeof(sauria::act_t);
+constexpr std::uint32_t kRichPsumBytes = sizeof(sauria::psum_t);
 
 struct vp_alias_range {
     std::uint32_t alias_base;
@@ -46,27 +71,26 @@ struct vp_alias_range {
 };
 
 constexpr std::array<vp_alias_range, 14> kTableAliases{{
-    {0x0002'0000, 0x2000, 0x0014'0000},
-    {0x0002'2000, 0x1000, 0x0015'0000},
-    {0x0002'3000, 0x1000, 0x0018'0000},
-    {0x0002'4000, 0x1000, 0x0019'0000},
-    {0x0002'5000, 0x2000, 0x0016'0000},
-    {0x0002'7000, 0x1000, 0x0017'0000},
-    {0x0002'8000, 0x1000, 0x001A'0000},
-    {0x0002'9000, 0x1000, 0x001B'0000},
-    {0x0002'A000, 0x1000, 0x0020'0000},
-    {0x0002'B000, 0x1000, 0x0021'0000},
-    {0x0002'C000, 0x1000, 0x0022'0000},
-    {0x0002'D000, 0x1000, 0x0023'0000},
-    {0x0002'E000, 0x1000, 0x0024'0000},
-    {0x0002'F000, 0x1000, 0x0025'0000},
+    {OBP_A_LUT_BASE, OBP_A_LUT_SIZE, 0x0014'0000},
+    {OBP_A_BIAS_BASE, OBP_A_BIAS_SIZE, 0x0015'0000},
+    {OBP_A_SCALE_BASE, OBP_A_SCALE_SIZE, 0x0018'0000},
+    {OBP_A_SHIFT_BASE, OBP_A_SHIFT_SIZE, 0x0019'0000},
+    {OBP_B_LUT_BASE, OBP_B_LUT_SIZE, 0x0016'0000},
+    {OBP_B_BIAS_BASE, OBP_B_BIAS_SIZE, 0x0017'0000},
+    {OBP_B_SCALE_BASE, OBP_B_SCALE_SIZE, 0x001A'0000},
+    {OBP_B_SHIFT_BASE, OBP_B_SHIFT_SIZE, 0x001B'0000},
+    {RCE_A_EXP_BASE, RCE_A_EXP_SIZE, 0x0020'0000},
+    {RCE_A_RECIP_BASE, RCE_A_RECIP_SIZE, 0x0021'0000},
+    {RCE_A_RSQRT_BASE, RCE_A_RSQRT_SIZE, 0x0022'0000},
+    {RCE_B_EXP_BASE, RCE_B_EXP_SIZE, 0x0023'0000},
+    {RCE_B_RECIP_BASE, RCE_B_RECIP_SIZE, 0x0024'0000},
+    {RCE_B_RSQRT_BASE, RCE_B_RSQRT_SIZE, 0x0025'0000},
 }};
 
-// Match the V4.2 FVP bridge build. INT8 jobs are staged as exact integer-valued
-// floats, while the float core also supports V4.2 rich-instruction scale fields.
 using core_type =
-    sauria::NpuTop<32, 32, float, float, float,
-                   1024, 1024, 2048, 16, 64, 1>;
+    sauria::NpuTop<kArrayCols, kArrayRows,
+                   sauria::act_t, sauria::wei_t, sauria::psum_t,
+                   16, kArrayCols + kArrayRows, 1>;
 
 sauria::PeConfig exact_int8_config()
 {
@@ -148,22 +172,22 @@ std::int32_t multiply_by_quantized_multiplier(std::int32_t value,
 std::uint32_t make_sram_a_addr(std::uint32_t phys_addr,
                                std::uint32_t sub_word)
 {
-    return sauria::SRAMA_OFFSET | (phys_addr << sauria::SHIFT_A) |
-           (sub_word & sauria::MASK_A);
+    return sauria::SRAMA_OFFSET | (phys_addr << kSramAShift) |
+           (sub_word & (kSramASubwords - 1));
 }
 
 std::uint32_t make_sram_b_addr(std::uint32_t phys_addr,
                                std::uint32_t sub_word)
 {
-    return sauria::SRAMB_OFFSET | (phys_addr << sauria::SHIFT_B) |
-           (sub_word & sauria::MASK_B);
+    return sauria::SRAMB_OFFSET | (phys_addr << kSramBShift) |
+           (sub_word & (kSramBSubwords - 1));
 }
 
 std::uint32_t make_sram_c_addr(std::uint32_t phys_addr,
                                std::uint32_t sub_word)
 {
-    return sauria::SRAMC_OFFSET | (phys_addr << sauria::SHIFT_C) |
-           (sub_word & sauria::MASK_C);
+    return sauria::SRAMC_OFFSET | (phys_addr << kSramCShift) |
+           (sub_word & (kSramCSubwords - 1));
 }
 
 sauria::SauriaLayerDesc make_gemm_as_conv1x1_desc(std::uint32_t rows,
@@ -210,8 +234,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         std::uint32_t scratch_addr = 0;
         std::uint32_t src_size = 0;
         std::uint32_t dst_size = 0;
-        std::uint32_t width = kCols;
-        std::uint32_t height = kRows;
+        std::uint32_t width = kSoftwareCols;
+        std::uint32_t height = kSoftwareRows;
         std::uint32_t src_stride = 0;
         std::uint32_t format = FORMAT_INT8_INT8_INT32;
         std::uint32_t op_mode = OP_GEMM;
@@ -245,9 +269,9 @@ struct npu_tlm::impl : public sc_core::sc_module {
         std::uint32_t weight_addr = 0;
         std::uint32_t out_addr = 0;
         std::uint32_t bias_addr = 0;
-        std::uint32_t m = 32;
-        std::uint32_t k = 32;
-        std::uint32_t n = 32;
+        std::uint32_t m = kArrayRows;
+        std::uint32_t k = kArrayCols;
+        std::uint32_t n = kArrayCols;
         std::uint32_t stride = 1;
         std::uint32_t has_skip = 0;
         std::uint32_t skip_addr = 0;
@@ -269,7 +293,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
     npu_tlm& owner;
     sc_core::sc_time access_latency;
 
-    /* Gated core clock: a free-running sc_clock at the 2 ns core period
+    /* Gated core clock: a free-running clock at the configured core period
      * dominates simulation cost for the whole platform even while the NPU
      * is idle (~5e8 edges per simulated second). The clock thread below only
      * toggles while the worker consumes edges through wait_clock(). */
@@ -315,6 +339,10 @@ struct npu_tlm::impl : public sc_core::sc_module {
         tlm::TLM_INCOMPLETE_RESPONSE;
     bool native_pending = false;
     bool native_active = false;
+    bool software_run_active = false;
+    bool native_run_active = false;
+    bool rich_run_active = false;
+    std::uint32_t native_run_cycles = 0;
     sc_core::sc_event native_done_event;
 
     impl(sc_core::sc_module_name name,
@@ -347,8 +375,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         core.i_total_contexts(total_contexts);
         core.attach_perf(&perf);
         core.set_dram(&rich_dram);
-        perf.X = kCols;
-        perf.Y = kRows;
+        perf.X = kArrayCols;
+        perf.Y = kArrayRows;
 
         core_rst_n.write(false);
         core_soft_reset.write(false);
@@ -422,6 +450,10 @@ struct npu_tlm::impl : public sc_core::sc_module {
         regs = register_file{};
         job_pending = false;
         soft_reset_pending = false;
+        software_run_active = false;
+        native_run_active = false;
+        rich_run_active = false;
+        native_run_cycles = 0;
         perf.reset();
         native_mvm_k = 0;
         native_total_contexts = 0;
@@ -434,6 +466,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
 
     void finish_success()
     {
+        software_run_active = false;
         regs.status = STATUS_DONE | STATUS_IDLE;
         regs.irq_status |= IRQ_DONE;
         regs.last_error = static_cast<std::uint32_t>(error_code::none);
@@ -442,6 +475,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
 
     void finish_error(error_code code)
     {
+        software_run_active = false;
         regs.status = STATUS_ERROR | STATUS_IDLE;
         regs.irq_status |= IRQ_ERROR;
         regs.last_error = static_cast<std::uint32_t>(code);
@@ -450,6 +484,9 @@ struct npu_tlm::impl : public sc_core::sc_module {
 
     tlm::tlm_response_status read_reg(std::uint32_t offset, std::uint32_t& value)
     {
+        if (read_perf(offset, value)) {
+            return tlm::TLM_OK_RESPONSE;
+        }
         switch (offset) {
         case CTRL:               value = regs.ctrl; break;
         case STATUS:             value = regs.status; break;
@@ -512,6 +549,12 @@ struct npu_tlm::impl : public sc_core::sc_module {
 
     tlm::tlm_response_status write_reg(std::uint32_t offset, std::uint32_t value)
     {
+        std::uint32_t perf_low_address = 0;
+        if (is_perf_low(offset) ||
+            perf_low_for_high(offset, perf_low_address)) {
+            return tlm::TLM_COMMAND_ERROR_RESPONSE;
+        }
+
         if (offset == STATUS) {
             if ((value & STATUS_DONE) != 0u) {
                 regs.status &= ~STATUS_DONE;
@@ -568,6 +611,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
                     regs.cycle_count = 0;
                     regs.bytes_read = 0;
                     regs.bytes_written = 0;
+                    software_run_active = true;
                     job_pending = true;
                     work_event.notify(sc_core::SC_ZERO_TIME);
                     update_irq();
@@ -796,8 +840,25 @@ struct npu_tlm::impl : public sc_core::sc_module {
         case PERF_ACTIVE_PE_CYCLES:  return perf.active_pe_cycles;
         case PERF_TOTAL_PE_CYCLES:   return perf.total_pe_cycles;
         case PERF_TOTAL_CYCLES:      return perf.total_cycles;
+        case PERF_M:                 return perf.M;
+        case PERF_K:                 return perf.K;
+        case PERF_N:                 return perf.N;
         case PERF_SA_CYCLES:         return perf.sa_cycles;
         case PERF_OBP_CYCLES:        return perf.obp_cycles;
+        case PERF_PROCESSING_CYCLES: return perf.processing_cycles;
+        case PERF_TRANSFER_CYCLES:   return perf.transfer_cycles;
+        case PERF_MAC_ENGINE_CYCLES: return perf.mac_engine_cycles;
+        case PERF_DMA_ENGINE_CYCLES: return perf.dma_engine_cycles;
+        case PERF_ACTIVATION_ENGINE_CYCLES:
+            return perf.activation_engine_cycles;
+        case PERF_POOLING_ENGINE_CYCLES:
+            return perf.pooling_engine_cycles;
+        case PERF_REDUCTION_ENGINE_CYCLES:
+            return perf.reduction_engine_cycles;
+        case PERF_DDR_READ_BYTES:    return perf.ddr_read_bytes;
+        case PERF_DDR_WRITE_BYTES:   return perf.ddr_write_bytes;
+        case PERF_DMA_READ_CYCLES:   return perf.dma_read_cycles_raw;
+        case PERF_DMA_WRITE_CYCLES:  return perf.dma_write_cycles_raw;
         default:                     return 0;
         }
     }
@@ -810,8 +871,22 @@ struct npu_tlm::impl : public sc_core::sc_module {
                address == PERF_ACTIVE_PE_CYCLES ||
                address == PERF_TOTAL_PE_CYCLES ||
                address == PERF_TOTAL_CYCLES ||
+               address == PERF_M ||
+               address == PERF_K ||
+               address == PERF_N ||
                address == PERF_SA_CYCLES ||
-               address == PERF_OBP_CYCLES;
+               address == PERF_OBP_CYCLES ||
+               address == PERF_PROCESSING_CYCLES ||
+               address == PERF_TRANSFER_CYCLES ||
+               address == PERF_MAC_ENGINE_CYCLES ||
+               address == PERF_DMA_ENGINE_CYCLES ||
+               address == PERF_ACTIVATION_ENGINE_CYCLES ||
+               address == PERF_POOLING_ENGINE_CYCLES ||
+               address == PERF_REDUCTION_ENGINE_CYCLES ||
+               address == PERF_DDR_READ_BYTES ||
+               address == PERF_DDR_WRITE_BYTES ||
+               address == PERF_DMA_READ_CYCLES ||
+               address == PERF_DMA_WRITE_CYCLES;
     }
 
     bool perf_low_for_high(std::uint32_t address,
@@ -836,11 +911,53 @@ struct npu_tlm::impl : public sc_core::sc_module {
         case PERF_TOTAL_CYCLES_HI:
             low_address = PERF_TOTAL_CYCLES;
             return true;
+        case PERF_M_HI:
+            low_address = PERF_M;
+            return true;
+        case PERF_K_HI:
+            low_address = PERF_K;
+            return true;
+        case PERF_N_HI:
+            low_address = PERF_N;
+            return true;
         case PERF_SA_CYCLES_HI:
             low_address = PERF_SA_CYCLES;
             return true;
         case PERF_OBP_CYCLES_HI:
             low_address = PERF_OBP_CYCLES;
+            return true;
+        case PERF_PROCESSING_CYCLES_HI:
+            low_address = PERF_PROCESSING_CYCLES;
+            return true;
+        case PERF_TRANSFER_CYCLES_HI:
+            low_address = PERF_TRANSFER_CYCLES;
+            return true;
+        case PERF_MAC_ENGINE_CYCLES_HI:
+            low_address = PERF_MAC_ENGINE_CYCLES;
+            return true;
+        case PERF_DMA_ENGINE_CYCLES_HI:
+            low_address = PERF_DMA_ENGINE_CYCLES;
+            return true;
+        case PERF_ACTIVATION_ENGINE_CYCLES_HI:
+            low_address = PERF_ACTIVATION_ENGINE_CYCLES;
+            return true;
+        case PERF_POOLING_ENGINE_CYCLES_HI:
+            low_address = PERF_POOLING_ENGINE_CYCLES;
+            return true;
+        case PERF_REDUCTION_ENGINE_CYCLES_HI:
+            low_address = PERF_REDUCTION_ENGINE_CYCLES;
+            return true;
+        case PERF_DDR_READ_BYTES_HI:
+            low_address = PERF_DDR_READ_BYTES;
+            return true;
+        case PERF_DDR_WRITE_BYTES_HI:
+            low_address = PERF_DDR_WRITE_BYTES;
+            return true;
+        case PERF_DMA_READ_CYCLES_HI:
+            low_address = PERF_DMA_READ_CYCLES;
+            return true;
+        case PERF_DMA_WRITE_CYCLES_HI:
+            low_address = PERF_DMA_WRITE_CYCLES;
             return true;
         default:
             return false;
@@ -927,6 +1044,29 @@ struct npu_tlm::impl : public sc_core::sc_module {
         }
     }
 
+    std::uint32_t rich_num_heads() const
+    {
+        const std::uint32_t heads =
+            (rich_params.heads_dim_mode & 0xFFFF'0000u) != 0u
+                ? rich_params.heads_dim_mode & 0xFFFFu
+                : rich_params.heads_dim_mode;
+        return heads == 0u ? 1u : heads;
+    }
+
+    std::uint32_t rich_dimension() const
+    {
+        return (rich_params.heads_dim_mode & 0xFFFF'0000u) != 0u
+                   ? (rich_params.heads_dim_mode >> 16) & 0xFFu
+                   : rich_params.heads_dim_mode;
+    }
+
+    std::uint32_t rich_elementwise_mode() const
+    {
+        return (rich_params.heads_dim_mode & 0xFFFF'0000u) != 0u
+                   ? (rich_params.heads_dim_mode >> 24) & 0xFFu
+                   : rich_params.heads_dim_mode;
+    }
+
     bool checked_bytes(std::uint64_t elements, std::uint32_t element_bytes,
                        std::uint32_t& bytes) const
     {
@@ -994,7 +1134,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
             }
             if (rich_params.bias_addr != 0u) {
                 std::uint32_t bias_size = 0;
-                if (!checked_bytes(rich_params.n, kRichElementBytes, bias_size) ||
+                if (!checked_bytes(rich_params.n, kRichPsumBytes, bias_size) ||
                     !stage_rich_range(rich_params.bias_addr, bias_size, error)) {
                     return false;
                 }
@@ -1004,8 +1144,10 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 return false;
             }
         } else if (opcode == RICH_OPCODE_FUSED_ATTN) {
+            const std::uint32_t num_heads = rich_num_heads();
             if (!checked_bytes(
                     static_cast<std::uint64_t>(rich_params.seq_len) *
+                        num_heads *
                         rich_params.head_dim_eps_scale_a,
                     kRichElementBytes, input_size)) {
                 error = error_code::invalid_dimensions;
@@ -1018,11 +1160,12 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 return false;
             }
         } else if (opcode == RICH_OPCODE_LAYERNORM) {
+            const std::uint32_t dimension = rich_dimension();
             if (!checked_bytes(
                     static_cast<std::uint64_t>(rich_params.seq_len) *
-                        rich_params.heads_dim_mode,
+                        dimension,
                     kRichElementBytes, input_size) ||
-                !checked_bytes(rich_params.heads_dim_mode, kRichElementBytes,
+                !checked_bytes(dimension, kRichElementBytes,
                                weight_size)) {
                 error = error_code::invalid_dimensions;
                 return false;
@@ -1034,13 +1177,14 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 return false;
             }
         } else if (opcode == RICH_OPCODE_ELEM_WISE) {
+            const std::uint32_t mode = rich_elementwise_mode();
             if (!checked_bytes(rich_params.seq_len, kRichElementBytes,
                                input_size)) {
                 error = error_code::invalid_dimensions;
                 return false;
             }
             output_size = input_size;
-            if (rich_params.heads_dim_mode == 1u) {
+            if (mode == 1u) {
                 const std::uint32_t stride =
                     rich_params.stride == 0u ? 2u : rich_params.stride;
                 if (!checked_bytes(rich_params.seq_len / stride,
@@ -1050,7 +1194,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 }
             }
             if (!stage_rich_range(rich_params.q_gamma_a_addr, input_size, error) ||
-                (rich_params.heads_dim_mode == 0u &&
+                (mode != 1u &&
                  !stage_rich_range(rich_params.k_b_addr, input_size, error))) {
                 return false;
             }
@@ -1078,7 +1222,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
     tlm::tlm_response_status native_write(std::uint32_t address,
                                           std::uint32_t value)
     {
-        if (!owner.reset_n.read() || !core_rst_n.read() || busy()) {
+        if (!owner.reset_n.read() || !core_rst_n.read() ||
+            software_run_active) {
             return tlm::TLM_COMMAND_ERROR_RESPONSE;
         }
 
@@ -1092,11 +1237,15 @@ struct npu_tlm::impl : public sc_core::sc_module {
             model_address & sauria::SAURIA_MEM_ADDR_MASK;
         const bool native_start =
             !is_alias && region == sauria::CFG_REGS_OFFSET &&
-            local == 0u && value != 0u;
+            local == 0u && (value & 0xFFu) != 0u;
         const bool instruction_start =
             model_address == 0x4000'0310u ||
             model_address == 0x4000'0314u;
-        if (native_start || instruction_start) {
+        if ((native_start && (native_run_active || rich_run_active)) ||
+            (instruction_start && native_run_active)) {
+            return tlm::TLM_COMMAND_ERROR_RESPONSE;
+        }
+        if (native_start || (instruction_start && !rich_run_active)) {
             perf.reset();
         }
 
@@ -1164,14 +1313,15 @@ struct npu_tlm::impl : public sc_core::sc_module {
         } else if (is_rich_float_address(model_address)) {
             data[0] = static_cast<double>(bits_to_float(forwarded_value));
             mask[0] = true;
+        } else if (!is_alias && region == sauria::CFG_REGS_OFFSET &&
+                   local == 0u) {
+            data[0] = static_cast<double>(forwarded_value & 0xFFu);
+            mask[0] = true;
+            data[2] = static_cast<double>((forwarded_value >> 16) & 0xFFu);
+            mask[2] = ((forwarded_value >> 16) & 0xFFu) != 0u;
         } else {
             data[0] = static_cast<double>(forwarded_value);
             mask[0] = true;
-            if (local == 0u) {
-                const std::uint32_t upper = (forwarded_value >> 16) & 0xFFu;
-                data[2] = static_cast<double>(upper);
-                mask[2] = upper != 0u;
-            }
         }
 
         update_native_sideband(model_address, value);
@@ -1189,6 +1339,20 @@ struct npu_tlm::impl : public sc_core::sc_module {
             } else {
                 rich_jobs_b.push_back(pending_job);
             }
+            rich_run_active = true;
+            regs.status = STATUS_BUSY;
+            regs.irq_status = 0;
+            regs.last_error = static_cast<std::uint32_t>(error_code::none);
+            update_irq();
+        }
+        if (native_start) {
+            native_run_active = true;
+            native_run_cycles = 0;
+            regs.status = STATUS_BUSY;
+            regs.irq_status = 0;
+            regs.last_error = static_cast<std::uint32_t>(error_code::none);
+            regs.cycle_count = 0;
+            update_irq();
         }
         return tlm::TLM_OK_RESPONSE;
     }
@@ -1199,7 +1363,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         if (read_perf(address, value)) {
             return tlm::TLM_OK_RESPONSE;
         }
-        if (!owner.reset_n.read() || !core_rst_n.read() || busy()) {
+        if (!owner.reset_n.read() || !core_rst_n.read() ||
+            software_run_active) {
             return tlm::TLM_COMMAND_ERROR_RESPONSE;
         }
 
@@ -1234,6 +1399,11 @@ struct npu_tlm::impl : public sc_core::sc_module {
                      0xFFFFu)
                     << 16;
             }
+        } else if (model_address == sauria::CFG_REGS_OFFSET) {
+            value = static_cast<std::uint32_t>(std::llround(data[0])) & 0xFFu;
+            value |= (static_cast<std::uint32_t>(std::llround(data[2])) &
+                      0xFFu)
+                     << 16;
         } else {
             value = static_cast<std::uint32_t>(std::llround(data[0]));
         }
@@ -1248,7 +1418,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         if (command == native_command::read && read_perf(address, value)) {
             return tlm::TLM_OK_RESPONSE;
         }
-        if (!owner.reset_n.read() || !core_rst_n.read() || busy() ||
+        if (!owner.reset_n.read() || !core_rst_n.read() ||
+            software_run_active ||
             native_active) {
             return tlm::TLM_COMMAND_ERROR_RESPONSE;
         }
@@ -1314,12 +1485,12 @@ struct npu_tlm::impl : public sc_core::sc_module {
         sauria::sauria_compute_core_fields(desc, target, fields);
 
         /*
-         * V4.2 PROFILE_V1_SAURIA path uses the SAURIA address generators and
+         * PROFILE_V1_SAURIA uses the SAURIA address generators and
          * PSM schedule. The
          * previous port selected V4_LINEAR but only programmed three control
          * words; that leaves the unified feeders waiting forever on their
          * first synchronized vector.  Program the complete native single-tile
-         * schedule used by the V4.2 reference testbench.
+         * schedule used by the reference testbench.
          */
         if (!write_scalar(sauria::CFG_REGS_OFFSET |
                               sauria::CFG_PROFILE_ADDR,
@@ -1358,7 +1529,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
         };
 
         return
-            // Activation feeder: compatibility counters plus native addr-gen.
+            // Activation feeder: software counters plus native address generation.
             wr(sauria::CFG_ACT_OFFSET + 0x04, regs.k_dimension) &&
             wr(sauria::CFG_ACT_OFFSET + 0x08,
                fields[sauria::F_CFG_XSTEP]) &&
@@ -1490,27 +1661,62 @@ struct npu_tlm::impl : public sc_core::sc_module {
         return true;
     }
 
-    void service_rich_completions()
+    bool service_rich_completions()
     {
         const std::size_t queued_a = rich_queue_a_size();
         while (rich_jobs_a.size() > queued_a) {
             const rich_job job = rich_jobs_a.front();
             rich_jobs_a.pop_front();
-            complete_rich_job(job);
+            if (!complete_rich_job(job)) {
+                return false;
+            }
         }
 
         const std::size_t queued_b = rich_queue_b_size();
         while (rich_jobs_b.size() > queued_b) {
             const rich_job job = rich_jobs_b.front();
             rich_jobs_b.pop_front();
-            complete_rich_job(job);
+            if (!complete_rich_job(job)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void service_external_runs()
+    {
+        if (native_run_active) {
+            ++native_run_cycles;
+            regs.cycle_count = native_run_cycles;
+            if (core_deadlock.read()) {
+                native_run_active = false;
+                finish_error(error_code::core_deadlock);
+            } else if (core_done.read()) {
+                native_run_active = false;
+                finish_success();
+            } else if (native_run_cycles >= kCoreTimeoutCycles) {
+                native_run_active = false;
+                finish_error(error_code::core_timeout);
+            }
+        }
+
+        if (rich_run_active) {
+            if (!service_rich_completions()) {
+                rich_run_active = false;
+                rich_jobs_a.clear();
+                rich_jobs_b.clear();
+                finish_error(error_code::dma_write);
+            } else if (!rich_active()) {
+                rich_run_active = false;
+                finish_success();
+            }
         }
     }
 
     error_code validate_job(std::uint32_t& source_span) const
     {
-        if (regs.width != kCols || regs.height != kRows ||
-            regs.k_dimension == 0u || regs.k_dimension > kMaxK) {
+        if (regs.width != kSoftwareCols || regs.height != kSoftwareRows ||
+            regs.k_dimension == 0u || regs.k_dimension > kSoftwareMaxK) {
             return error_code::invalid_dimensions;
         }
         if (regs.format != FORMAT_INT8_INT8_INT32) {
@@ -1527,15 +1733,16 @@ struct npu_tlm::impl : public sc_core::sc_module {
         }
 
         const std::uint64_t span64 =
-            static_cast<std::uint64_t>(stride) * (kRows - 1) +
+            static_cast<std::uint64_t>(stride) * (kSoftwareRows - 1) +
             regs.k_dimension;
         if (span64 > std::numeric_limits<std::uint32_t>::max()) {
             return error_code::invalid_size;
         }
         source_span = static_cast<std::uint32_t>(span64);
 
-        const std::uint32_t weights_need = regs.k_dimension * kCols;
-        const std::uint32_t dst_need = kRows * kCols * sizeof(std::int32_t);
+        const std::uint32_t weights_need = regs.k_dimension * kSoftwareCols;
+        const std::uint32_t dst_need =
+            kSoftwareRows * kSoftwareCols * sizeof(std::int32_t);
         if (regs.src_size < source_span ||
             regs.weights_size < weights_need ||
             regs.dst_size < dst_need) {
@@ -1562,7 +1769,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
 
         const std::uint32_t stride =
             regs.src_stride == 0u ? regs.k_dimension : regs.src_stride;
-        const std::uint32_t weights_need = regs.k_dimension * kCols;
+        const std::uint32_t weights_need = regs.k_dimension * kSoftwareCols;
 
         std::vector<std::uint8_t> activations;
         std::vector<std::uint8_t> weights;
@@ -1585,52 +1792,53 @@ struct npu_tlm::impl : public sc_core::sc_module {
         buffer_select.write(sc_dt::sc_bv<3>("000"));
 
         const sauria::SauriaTarget* target =
-            sauria::sauria_find_target("int8_32x32");
+            sauria::sauria_find_target("int8_64x64");
         if (target == nullptr) {
             return error_code::invalid_format;
         }
         const sauria::SauriaLayerDesc desc =
-            make_gemm_as_conv1x1_desc(kRows, kCols, regs.k_dimension,
-                                      kRows, kCols);
+            make_gemm_as_conv1x1_desc(kSoftwareRows, kSoftwareCols,
+                                      regs.k_dimension,
+                                      kSoftwareRows, kSoftwareCols);
 
         /*
          * Present the firmware's row-major GEMM operands as a 1x1 convolution:
          *   A [Cin][1][W]       = activation[row][k]
          *   B [Cout][Cin][1][1] = weight[k][col]
-         * The V4.2 driver then provides the exact native SRAM byte layout.
+         * The V4.4 driver then provides the exact native SRAM byte layout.
          */
         std::vector<double> native_a(
-            static_cast<std::size_t>(regs.k_dimension) * kRows);
+            static_cast<std::size_t>(regs.k_dimension) * kSoftwareRows);
         std::vector<double> native_b(
-            static_cast<std::size_t>(kCols) * regs.k_dimension);
+            static_cast<std::size_t>(kSoftwareCols) * regs.k_dimension);
         std::vector<double> native_c(
-            static_cast<std::size_t>(kCols) * kRows, 0.0);
+            static_cast<std::size_t>(kSoftwareCols) * kSoftwareRows, 0.0);
         for (std::uint32_t k = 0; k < regs.k_dimension; ++k) {
-            for (std::uint32_t row = 0; row < kRows; ++row) {
-                native_a[static_cast<std::size_t>(k) * kRows + row] =
+            for (std::uint32_t row = 0; row < kSoftwareRows; ++row) {
+                native_a[static_cast<std::size_t>(k) * kSoftwareRows + row] =
                     static_cast<std::int8_t>(
                         activations[static_cast<std::size_t>(row) * stride +
                                     k]);
             }
         }
-        for (std::uint32_t col = 0; col < kCols; ++col) {
+        for (std::uint32_t col = 0; col < kSoftwareCols; ++col) {
             for (std::uint32_t k = 0; k < regs.k_dimension; ++k) {
                 native_b[static_cast<std::size_t>(col) *
                              regs.k_dimension +
                          k] =
                     static_cast<std::int8_t>(
-                        weights[static_cast<std::size_t>(k) * kCols + col]);
+                        weights[static_cast<std::size_t>(k) * kSoftwareCols + col]);
             }
         }
 
         const sauria::SauriaRunInputs native =
             sauria::sauria_prepare(
                 *target, desc,
-                native_a.data(), regs.k_dimension, 1, kRows,
-                native_b.data(), kCols, regs.k_dimension, 1, 1,
-                native_c.data(), kCols, 1, kRows);
+                native_a.data(), regs.k_dimension, 1, kSoftwareRows,
+                native_b.data(), kSoftwareCols, regs.k_dimension, 1, 1,
+                native_c.data(), kSoftwareCols, 1, kSoftwareRows);
 
-        // One public wrapper job is one complete 32x32 output tile.
+        // One software-facing job is one complete 64x64 output tile.
         mvm_k.write(regs.k_dimension);
         total_contexts.write(1u);
 
@@ -1658,7 +1866,9 @@ struct npu_tlm::impl : public sc_core::sc_module {
                                     native.initial_dram[begin + loaded]));
                         }
                         const std::uint32_t address =
-                            sram_offset | ((phys << 3) | sw);
+                            sram_offset == sauria::SRAMA_OFFSET
+                                ? make_sram_a_addr(phys, sw)
+                                : make_sram_b_addr(phys, sw);
                         if (!core_host_write(address, data, full_mask)) {
                             return false;
                         }
@@ -1679,12 +1889,12 @@ struct npu_tlm::impl : public sc_core::sc_module {
          * repeated jobs deterministic if a future model version stops clearing
          * SRAM C as part of soft reset.
          */
-        for (std::uint32_t col = 0; col < kCols; ++col) {
-            for (std::uint32_t sw = 0; sw < 8; ++sw) {
+        for (std::uint32_t col = 0; col < kSoftwareCols; ++col) {
+            for (std::uint32_t sw = 0; sw < kSoftwareRowSubwords; ++sw) {
                 sauria::host_data_t data;
                 data.data.fill(0.0f);
                 const std::uint32_t address =
-                    make_sram_c_addr(col * kRows, sw);
+                    make_sram_c_addr(col * kSoftwareRows, sw);
                 if (!core_host_write(address, data, full_mask)) {
                     return error_code::reset_aborted;
                 }
@@ -1725,13 +1935,13 @@ struct npu_tlm::impl : public sc_core::sc_module {
         }
 
         std::vector<std::uint8_t> output(
-            kRows * kCols * sizeof(std::int32_t), 0);
+            kSoftwareRows * kSoftwareCols * sizeof(std::int32_t), 0);
         // Native C layout is [output channel][spatial row].
-        for (std::uint32_t col = 0; col < kCols; ++col) {
-            for (std::uint32_t sw = 0; sw < 8; ++sw) {
+        for (std::uint32_t col = 0; col < kSoftwareCols; ++col) {
+            for (std::uint32_t sw = 0; sw < kSoftwareRowSubwords; ++sw) {
                 sauria::host_data_t data;
                 const std::uint32_t address =
-                    make_sram_c_addr(col * kRows, sw);
+                    make_sram_c_addr(col * kSoftwareRows, sw);
                 if (!core_host_read(address, data)) {
                     return error_code::reset_aborted;
                 }
@@ -1740,7 +1950,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
                     const std::int32_t value =
                         static_cast<std::int32_t>(std::llround(data[lane]));
                     const std::size_t offset =
-                        (static_cast<std::size_t>(row) * kCols + col) *
+                        (static_cast<std::size_t>(row) * kSoftwareCols + col) *
                         sizeof(value);
                     std::memcpy(output.data() + offset, &value, sizeof(value));
                 }
@@ -1748,20 +1958,20 @@ struct npu_tlm::impl : public sc_core::sc_module {
         }
 
         /*
-         * Match the V4.2 FVP bridge's exact-output contract. The cycle model
+         * Preserve the software-facing exact-output contract. The cycle model
          * still runs above and supplies completion timing and performance
          * counters, while software receives the bit-exact INT32 accumulators
-         * expected by the CDC GEMM ABI and the TFLM delegate.
+         * expected by the CDC 64x64 GEMM ABI.
          */
-        for (std::uint32_t row = 0; row < kRows; ++row) {
-            for (std::uint32_t col = 0; col < kCols; ++col) {
+        for (std::uint32_t row = 0; row < kSoftwareRows; ++row) {
+            for (std::uint32_t col = 0; col < kSoftwareCols; ++col) {
                 std::int64_t accumulator = 0;
                 for (std::uint32_t k = 0; k < regs.k_dimension; ++k) {
                     const auto activation = static_cast<std::int8_t>(
                         activations[static_cast<std::size_t>(row) * stride +
                                     k]);
                     const auto weight = static_cast<std::int8_t>(
-                        weights[static_cast<std::size_t>(k) * kCols + col]);
+                        weights[static_cast<std::size_t>(k) * kSoftwareCols + col]);
                     accumulator +=
                         static_cast<std::int32_t>(activation) *
                         static_cast<std::int32_t>(weight);
@@ -1769,7 +1979,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
 
                 const std::int32_t value = clamp_i64(accumulator);
                 const std::size_t offset =
-                    (static_cast<std::size_t>(row) * kCols + col) *
+                    (static_cast<std::size_t>(row) * kSoftwareCols + col) *
                     sizeof(value);
                 std::memcpy(output.data() + offset, &value, sizeof(value));
             }
@@ -1827,17 +2037,17 @@ void npu_tlm::b_transport(tlm::tlm_generic_payload& trans,
     }
 
     const std::uint32_t offset = static_cast<std::uint32_t>(address);
-    const bool compatibility_access =
+    const bool software_access =
         offset >= WRAPPER_BASE &&
         offset < WRAPPER_BASE + WRAPPER_WINDOW_SIZE;
-    const std::uint32_t compatibility_offset =
-        compatibility_access ? offset - WRAPPER_BASE : 0u;
+    const std::uint32_t software_offset =
+        software_access ? offset - WRAPPER_BASE : 0u;
 
     std::uint32_t value = 0;
     tlm::tlm_response_status status = tlm::TLM_COMMAND_ERROR_RESPONSE;
     if (trans.get_command() == tlm::TLM_READ_COMMAND) {
-        status = compatibility_access
-                     ? impl_->read_reg(compatibility_offset, value)
+        status = software_access
+                     ? impl_->read_reg(software_offset, value)
                      : impl_->submit_native(
                            impl::native_command::read, offset, value);
         if (status == tlm::TLM_OK_RESPONSE) {
@@ -1845,8 +2055,8 @@ void npu_tlm::b_transport(tlm::tlm_generic_payload& trans,
         }
     } else if (trans.get_command() == tlm::TLM_WRITE_COMMAND) {
         std::memcpy(&value, data, sizeof(value));
-        status = compatibility_access
-                     ? impl_->write_reg(compatibility_offset, value)
+        status = software_access
+                     ? impl_->write_reg(software_offset, value)
                      : impl_->submit_native(
                            impl::native_command::write, offset, value);
     }
@@ -1889,9 +2099,10 @@ void npu_tlm::worker_thread()
         }
 
         while (reset_n.read()) {
-            impl_->service_rich_completions();
+            impl_->service_external_runs();
             if (!impl_->job_pending && !impl_->soft_reset_pending &&
-                !impl_->native_pending && !impl_->rich_active()) {
+                !impl_->native_pending && !impl_->native_run_active &&
+                !impl_->rich_run_active) {
                 impl_->set_clock_running(false);
                 wait(impl_->work_event | reset_n.negedge_event());
                 if (!reset_n.read()) {
@@ -1927,11 +2138,10 @@ void npu_tlm::worker_thread()
                 continue;
             }
 
-            if (impl_->rich_active()) {
+            if (impl_->native_run_active || impl_->rich_run_active) {
                 if (!impl_->wait_clock()) {
                     break;
                 }
-                impl_->service_rich_completions();
             }
         }
 

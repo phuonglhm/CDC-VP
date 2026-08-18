@@ -8,8 +8,8 @@
 
 #define UART_TX (*(volatile uint8_t *)(uintptr_t)CDC_UART0_BASE)
 
-#define NPU_M 32u
-#define NPU_N 32u
+#define NPU_M 64u
+#define NPU_N 64u
 #define NPU_K 64u
 
 #define NPU_SRC_ADDR_VALUE (CDC_VPU_OUT0_BASE)

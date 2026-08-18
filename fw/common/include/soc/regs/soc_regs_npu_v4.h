@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * SAURIA NPU V4.2 register ABI. Offsets are relative to CDC_NPU0_BASE.
+ * SAURIA NPU V4.4 register ABI. Offsets are relative to CDC_NPU0_BASE.
  * All accesses are aligned 32-bit little-endian words.
  */
 #ifndef CDC_SOC_REGS_NPU_V4_H
@@ -36,7 +36,7 @@
 #define CDC_NPU_LAST_ERROR          (CDC_NPU_WRAPPER_BASE + 0x101Cu)
 #define CDC_NPU_CORE_ID             (CDC_NPU_WRAPPER_BASE + 0x1020u)
 
-/* Optional parameters used by the CDC compatibility GEMM path. */
+/* Optional parameters used by the CDC software-facing 64x64 GEMM path. */
 #define CDC_NPU_INPUT_OFFSET        (CDC_NPU_WRAPPER_BASE + 0x1100u)
 #define CDC_NPU_WEIGHT_OFFSET       (CDC_NPU_WRAPPER_BASE + 0x1104u)
 #define CDC_NPU_OUTPUT_OFFSET       (CDC_NPU_WRAPPER_BASE + 0x1108u)
@@ -56,11 +56,25 @@
 #define CDC_NPU_PERF_ACTIVE_PE_CYCLES 0x120Cu
 #define CDC_NPU_PERF_TOTAL_PE_CYCLES  0x1210u
 #define CDC_NPU_PERF_TOTAL_CYCLES   0x1214u
+#define CDC_NPU_PERF_M              0x1218u
+#define CDC_NPU_PERF_K              0x121Cu
+#define CDC_NPU_PERF_N              0x1220u
 #define CDC_NPU_PERF_SA_CYCLES      0x1224u
 #define CDC_NPU_PERF_OBP_CYCLES     0x1228u
+#define CDC_NPU_PERF_PROCESSING_CYCLES 0x1280u
+#define CDC_NPU_PERF_TRANSFER_CYCLES 0x1284u
+#define CDC_NPU_PERF_MAC_ENGINE_CYCLES 0x1288u
+#define CDC_NPU_PERF_DMA_ENGINE_CYCLES 0x128Cu
+#define CDC_NPU_PERF_ACTIVATION_ENGINE_CYCLES 0x1290u
+#define CDC_NPU_PERF_POOLING_ENGINE_CYCLES 0x1294u
+#define CDC_NPU_PERF_REDUCTION_ENGINE_CYCLES 0x1298u
+#define CDC_NPU_PERF_DDR_READ_BYTES 0x129Cu
+#define CDC_NPU_PERF_DDR_WRITE_BYTES 0x12A0u
+#define CDC_NPU_PERF_DMA_READ_CYCLES 0x12A4u
+#define CDC_NPU_PERF_DMA_WRITE_CYCLES 0x12A8u
 
 /*
- * Raw/native SAURIA MP1 V1.1 V4.2 offsets. Write CFG_PROFILE before any
+ * Raw/native SAURIA MP1 V1.1 V4.4 offsets. Write CFG_PROFILE before any
  * profile-dependent configuration register.
  */
 #define CDC_NPU_PROFILE_V1_SAURIA              0u
@@ -166,7 +180,7 @@
 #define CDC_NPU_NATIVE_X_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x40u)
 #define CDC_NPU_NATIVE_Y_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x44u)
 
-/* Compact VP aliases for sparse V4.2 rich-instruction, OBP and RCE regions. */
+/* Compact VP aliases for sparse V4.4 rich-instruction, OBP and RCE regions. */
 #define CDC_NPU_VP_RICH_ALIAS_BASE          0x00010000u
 #define CDC_NPU_VP_RICH_INST_LO_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x300u)
 #define CDC_NPU_VP_RICH_INST_HI_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x304u)
@@ -201,21 +215,33 @@
 #define CDC_NPU_VP_RICH_SCALE_OUT           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x460u)
 
 #define CDC_NPU_VP_OBP_A_LUT_BASE           0x00020000u
-#define CDC_NPU_VP_OBP_A_LUT_SIZE           0x00002000u
-#define CDC_NPU_VP_OBP_A_BIAS_BASE          0x00022000u
-#define CDC_NPU_VP_OBP_A_SCALE_BASE         0x00023000u
-#define CDC_NPU_VP_OBP_A_SHIFT_BASE         0x00024000u
-#define CDC_NPU_VP_OBP_B_LUT_BASE           0x00025000u
-#define CDC_NPU_VP_OBP_B_LUT_SIZE           0x00002000u
-#define CDC_NPU_VP_OBP_B_BIAS_BASE          0x00027000u
-#define CDC_NPU_VP_OBP_B_SCALE_BASE         0x00028000u
-#define CDC_NPU_VP_OBP_B_SHIFT_BASE         0x00029000u
-#define CDC_NPU_VP_RCE_A_EXP_BASE           0x0002A000u
-#define CDC_NPU_VP_RCE_A_RECIP_BASE         0x0002B000u
-#define CDC_NPU_VP_RCE_A_RSQRT_BASE         0x0002C000u
-#define CDC_NPU_VP_RCE_B_EXP_BASE           0x0002D000u
-#define CDC_NPU_VP_RCE_B_RECIP_BASE         0x0002E000u
-#define CDC_NPU_VP_RCE_B_RSQRT_BASE         0x0002F000u
+#define CDC_NPU_VP_OBP_A_LUT_SIZE           0x00004000u
+#define CDC_NPU_VP_OBP_A_BIAS_BASE          0x00024000u
+#define CDC_NPU_VP_OBP_A_BIAS_SIZE          0x00000100u
+#define CDC_NPU_VP_OBP_A_SCALE_BASE         0x00025000u
+#define CDC_NPU_VP_OBP_A_SCALE_SIZE         0x00000100u
+#define CDC_NPU_VP_OBP_A_SHIFT_BASE         0x00026000u
+#define CDC_NPU_VP_OBP_A_SHIFT_SIZE         0x00000100u
+#define CDC_NPU_VP_OBP_B_LUT_BASE           0x00028000u
+#define CDC_NPU_VP_OBP_B_LUT_SIZE           0x00004000u
+#define CDC_NPU_VP_OBP_B_BIAS_BASE          0x0002C000u
+#define CDC_NPU_VP_OBP_B_BIAS_SIZE          0x00000100u
+#define CDC_NPU_VP_OBP_B_SCALE_BASE         0x0002D000u
+#define CDC_NPU_VP_OBP_B_SCALE_SIZE         0x00000100u
+#define CDC_NPU_VP_OBP_B_SHIFT_BASE         0x0002E000u
+#define CDC_NPU_VP_OBP_B_SHIFT_SIZE         0x00000100u
+#define CDC_NPU_VP_RCE_A_EXP_BASE           0x00032000u
+#define CDC_NPU_VP_RCE_A_EXP_SIZE           0x00000100u
+#define CDC_NPU_VP_RCE_A_RECIP_BASE         0x00033000u
+#define CDC_NPU_VP_RCE_A_RECIP_SIZE         0x00000200u
+#define CDC_NPU_VP_RCE_A_RSQRT_BASE         0x00034000u
+#define CDC_NPU_VP_RCE_A_RSQRT_SIZE         0x00000800u
+#define CDC_NPU_VP_RCE_B_EXP_BASE           0x00035000u
+#define CDC_NPU_VP_RCE_B_EXP_SIZE           0x00000100u
+#define CDC_NPU_VP_RCE_B_RECIP_BASE         0x00036000u
+#define CDC_NPU_VP_RCE_B_RECIP_SIZE         0x00000200u
+#define CDC_NPU_VP_RCE_B_RSQRT_BASE         0x00037000u
+#define CDC_NPU_VP_RCE_B_RSQRT_SIZE         0x00000800u
 
 /* Simulation-only 64-bit performance counter ABI. */
 #define CDC_NPU_PERF_EXEC_CYCLES_HI         0x1240u
@@ -224,8 +250,22 @@
 #define CDC_NPU_PERF_ACTIVE_PE_CYCLES_HI    0x124Cu
 #define CDC_NPU_PERF_TOTAL_PE_CYCLES_HI     0x1250u
 #define CDC_NPU_PERF_TOTAL_CYCLES_HI        0x1254u
+#define CDC_NPU_PERF_M_HI                   0x1258u
+#define CDC_NPU_PERF_K_HI                   0x125Cu
+#define CDC_NPU_PERF_N_HI                   0x1260u
 #define CDC_NPU_PERF_SA_CYCLES_HI           0x1264u
 #define CDC_NPU_PERF_OBP_CYCLES_HI          0x1268u
+#define CDC_NPU_PERF_PROCESSING_CYCLES_HI   0x1300u
+#define CDC_NPU_PERF_TRANSFER_CYCLES_HI     0x1304u
+#define CDC_NPU_PERF_MAC_ENGINE_CYCLES_HI   0x1308u
+#define CDC_NPU_PERF_DMA_ENGINE_CYCLES_HI   0x130Cu
+#define CDC_NPU_PERF_ACTIVATION_ENGINE_CYCLES_HI 0x1310u
+#define CDC_NPU_PERF_POOLING_ENGINE_CYCLES_HI 0x1314u
+#define CDC_NPU_PERF_REDUCTION_ENGINE_CYCLES_HI 0x1318u
+#define CDC_NPU_PERF_DDR_READ_BYTES_HI      0x131Cu
+#define CDC_NPU_PERF_DDR_WRITE_BYTES_HI     0x1320u
+#define CDC_NPU_PERF_DMA_READ_CYCLES_HI     0x1324u
+#define CDC_NPU_PERF_DMA_WRITE_CYCLES_HI    0x1328u
 
 #define CDC_NPU_CTRL_ENABLE         (1u << 0)
 #define CDC_NPU_CTRL_START          (1u << 1)
