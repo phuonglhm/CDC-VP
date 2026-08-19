@@ -79,6 +79,9 @@ sa_control::sa_control(sc_core::sc_module_name name, sa_control_config config,
 
     SC_METHOD(observe_completion);
     sensitive << i_clk.pos();
+
+    SC_METHOD(drive_irq);
+    sensitive << irq_event_;
     dont_initialize();
 
     irq.initialize(false);
@@ -94,11 +97,17 @@ void sa_control::drive_irq()
 
 void sa_control::update_irq()
 {
-    // The register transaction has already changed the architectural state.
-    // Drive the level in the same evaluation phase so software observes a
-    // single delta of output latency, rather than an extra delta introduced by
-    // an internal event/SC_METHOD hop.
-    drive_irq();
+    // Keep one writer process for the `sc_signal`, but wake it immediately.
+    //
+    // Calling `drive_irq()` straight from here was correct in the standalone
+    // bench and wrong in a NEO-CORE: the register paths run in whichever
+    // process issued the MMIO — the hart's thread once a core is composed —
+    // while `observe_completion` runs as a clocked method, so the signal
+    // acquired two drivers and SystemC refused the elaboration at the first
+    // completion. `neo_dma` and `image_transform` already resolve it this way,
+    // and notifying rather than deferring keeps the level visible after one
+    // delta, which is the convention Phase 6 settled on.
+    irq_event_.notify();
 }
 
 void sa_control::snapshot_engine()

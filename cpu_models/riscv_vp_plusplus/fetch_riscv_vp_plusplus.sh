@@ -56,6 +56,7 @@ readonly PATCH_SERIES=(
     "0001-b710fa7b-dbbcache-fixed-random-cycle-counting.patch 16758c959a534e71c23254599ac7229c0ff85d3b4e1dc67ee3c82cc96f23b8ad upstream-backport"
     "0002-d12-rv32-index-eew64-illegal.patch                   de147236d885b6a76584ad1ac83da6f4d6cab975a0464b40acdb9c619090a319 downstream-conformance"
     "0003-d13-bus-error-is-an-access-fault.patch               c3535b21b849581af340b755ad1d22c33647c88dc3b9659072b75fd7fefce84b downstream-conformance"
+    "0004-d19-cycle-baseline-survives-reset.patch             e1ce2d42f3fd30114b35240098a49e6df6ce091c5389d308d5fe1afe8a351054 downstream-conformance"
 )
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

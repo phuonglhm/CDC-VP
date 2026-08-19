@@ -48,6 +48,7 @@ set(RISCV_VP_PLUSPLUS_PATCH_SERIES
     "0001-b710fa7b-dbbcache-fixed-random-cycle-counting.patch|upstream-backport|b710fa7be2643b42cee92f5bbcb8cead4c0ed282|16758c959a534e71c23254599ac7229c0ff85d3b4e1dc67ee3c82cc96f23b8ad|F11: the ISS banked ~2.29 s of simulated time before its first instruction and mcycle was wrong from reset (D8)"
     "0002-d12-rv32-index-eew64-illegal.patch|downstream-conformance|audit F12|de147236d885b6a76584ad1ac83da6f4d6cab975a0464b40acdb9c619090a319|F12: RVV 1.0 18.2 forbids index EEW=64 when XLEN=32, so all 32 RV32 indexed encodings must raise an illegal instruction (D12)"
     "0003-d13-bus-error-is-an-access-fault.patch|downstream-conformance|audit F13|c3535b21b849581af340b755ad1d22c33647c88dc3b9659072b75fd7fefce84b|F13: a failed bus access reported a page fault on a core with satp.MODE=Bare, but it must be an access fault chosen by access origin (D13)"
+    "0004-d19-cycle-baseline-survives-reset.patch|downstream-conformance|decision record D19|e1ce2d42f3fd30114b35240098a49e6df6ce091c5389d308d5fe1afe8a351054|D19: `init()` zeroed the cycle baseline while the dbbcache accumulator survived it, so the first commit after a hart reset re-added the whole pre-reset count into simulated time"
     CACHE STRING "Approved patch series applied on top of the base revision")
 
 # The *result*, as `path|sha256` records: exactly which files the series is
@@ -62,7 +63,7 @@ set(RISCV_VP_PLUSPLUS_PATCH_SERIES
 set(RISCV_VP_PLUSPLUS_PATCHED_FILES
     "vp/src/core/common/dbbcache.h|7674449c57ccd419e788e8bb8d5d7fe99b4b85426214b3c113c29af532f481d9"
     "vp/src/core/common/mem.h|98004612efcde708db7078f3ee522445ab871f7acf549061b741e716897bcb1a"
-    "vp/src/core/rv32/iss_ctemplate.cpp|32054e9454ce0bf64719a81d9c1f0a40929a79596f543971aa8b73a9edd57139"
+    "vp/src/core/rv32/iss_ctemplate.cpp|6f55dab250b8301fa61611d870ea5381548f8040b940f84f2b7e2fc04a94bc14"
     CACHE STRING "Files the patch series changes, with their post-patch content hashes")
 
 set(RISCV_VP_PLUSPLUS_DIR "${CMAKE_SOURCE_DIR}/third_party/riscv-vp-plusplus"

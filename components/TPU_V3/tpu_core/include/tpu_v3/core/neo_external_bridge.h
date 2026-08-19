@@ -45,6 +45,7 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include "tpu_v3/core/neo_local_sram_fabric.h"
+#include "tpu_v3/core/neo_payload_rules.h"
 
 namespace cdc::components::tpu_v3::core {
 
@@ -59,6 +60,21 @@ struct core_aperture_spec {
     std::uint64_t sram_window = 0;
 };
 
+/// The named initiators that leave a NEO-CORE (D15). Closed, like every other
+/// requester list in this core: outbound traffic with no owner would be the
+/// one path whose metrics nothing could be traced back to.
+enum class outbound_initiator : unsigned {
+    /// VP++ instruction fetch and global data. Architecturally required — the
+    /// reset PC is in `GLOBAL_BOOT_ROM`, outside the core.
+    cpu = 0,
+    /// The independent NEO DMA's external port; the bulk mover.
+    dma = 1,
+};
+
+inline constexpr unsigned outbound_initiator_count = 2;
+
+const char* to_string(outbound_initiator initiator) noexcept;
+
 class neo_external_bridge : public sc_core::sc_module {
 public:
     neo_external_bridge(sc_core::sc_module_name name, core_aperture_spec spec,
@@ -70,8 +86,19 @@ public:
     /// fabric's `external_inbound` initiator port.
     tlm_utils::simple_initiator_socket<neo_external_bridge> inbound_control;
 
-    /// From inside the core towards chip/global/remote memory.
-    tlm_utils::simple_target_socket<neo_external_bridge> local_outbound;
+    /// From inside the core towards chip/global/remote memory, one socket per
+    /// named outbound initiator and indexed by `outbound_initiator`.
+    ///
+    /// A vector rather than one socket because a NEO-CORE has exactly two
+    /// things that leave it — the hart, which must reach global boot ROM for
+    /// its first fetch, and the DMA, which is the bulk mover (D15) — and
+    /// `INTERFACE_CONTRACT.md` §5 requires every in-flight request to carry an
+    /// identifiable owner. One shared socket would have made outbound traffic
+    /// the one path in the core with no owner, and SystemC would have refused
+    /// the second bind anyway.
+    sc_core::sc_vector<
+        tlm_utils::simple_target_socket_tagged<neo_external_bridge>>
+        local_outbound;
     /// To the chip-local fabric or NoC endpoint.
     tlm_utils::simple_initiator_socket<neo_external_bridge> external;
 
@@ -104,6 +131,8 @@ public:
     {
         return outbound_requests_;
     }
+    /// Outbound requests attributed to one initiator.
+    std::uint64_t outbound_requests(outbound_initiator initiator) const;
     /// Outbound accesses refused for naming an address inside this core.
     ///
     /// This should stay at zero in a correct system. It is counted rather than
@@ -123,9 +152,10 @@ private:
     void inbound_b_transport(tlm::tlm_generic_payload& trans,
                              sc_core::sc_time& delay);
     unsigned int inbound_transport_dbg(tlm::tlm_generic_payload& trans);
-    void outbound_b_transport(tlm::tlm_generic_payload& trans,
+    void outbound_b_transport(int id, tlm::tlm_generic_payload& trans,
                               sc_core::sc_time& delay);
-    unsigned int outbound_transport_dbg(tlm::tlm_generic_payload& trans);
+    unsigned int outbound_transport_dbg(int id,
+                                        tlm::tlm_generic_payload& trans);
 
     bool in_sram(std::uint64_t address, std::uint64_t length) const noexcept;
     bool in_core(std::uint64_t address, std::uint64_t length) const noexcept;
@@ -153,15 +183,13 @@ private:
     std::uint64_t inbound_mmio_requests_ = 0;
     std::uint64_t inbound_rejected_ = 0;
     std::uint64_t outbound_requests_ = 0;
+    std::uint64_t outbound_by_initiator_[outbound_initiator_count] = {};
     std::uint64_t outbound_local_refused_ = 0;
 };
 
-/// Map a native local-plane status onto a TLM response.
-///
-/// Kept in one place because the mapping is a policy, not a detail: a decode
-/// miss and a capacity overrun are different conditions and must not collapse
-/// into one generic error, and neither may become `TLM_OK_RESPONSE` with zero
-/// data (`INTERFACE_CONTRACT.md` §1).
-tlm::tlm_response_status to_tlm_response(sram::neo_status status) noexcept;
+// `to_tlm_response`, the payload rules and the byte-enable expansion now live
+// in `neo_payload_rules.h`, shared with `neo_hart_port`. They were private to
+// this file until Phase 7 added a second TLM-to-native converter; one copy of
+// the expansion rule is the point, not the tidiness.
 
 } // namespace cdc::components::tpu_v3::core

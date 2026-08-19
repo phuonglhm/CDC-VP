@@ -1,0 +1,26 @@
+--- a/vp/src/core/rv32/iss_ctemplate.cpp
++++ b/vp/src/core/rv32/iss_ctemplate.cpp
+@@ -7077,7 +7077,22 @@
+ 	uint64_t hartId = get_hart_id();
+ 	dbbcache.init(use_dbbcache, isa_config, hartId, instr_mem, opMap, fast_abort_and_fdd_labelPtr, entrypoint);
+ 	lscache.init(use_lscache, hartId, data_mem);
+-	cycle_counter_raw_last = 0;
++	/*
++	 * D19: baseline against what the cycle accumulator actually holds.
++	 *
++	 * `commit_cycles()` charges `dbbcache.get_cycle_counter_raw() -
++	 * cycle_counter_raw_last` to both the cycle counter and the quantum
++	 * keeper. Zeroing the baseline is right on the first call, when the
++	 * accumulator is zero too, and wrong on every later one: `init()` is also
++	 * how a hart is reset, the accumulator survives that, and the next commit
++	 * therefore re-adds the whole pre-reset count -- into simulated time, not
++	 * merely into a counter.
++	 *
++	 * Reading the accumulator instead is the same fix upstream b710fa7b made
++	 * for the startup case, stated generally: the baseline is whatever has
++	 * already been accumulated, which is zero at construction.
++	 */
++	cycle_counter_raw_last = dbbcache.get_cycle_counter_raw();
+ }
+ 
+ void ISS_CT::sys_exit() {

@@ -12,6 +12,8 @@ D18 Im2Col-only baseline date: 2026-08-18
 
 D19 hart reset contract ratification date: 2026-08-18
 
+D21 distribution boundary date: 2026-08-19
+
 D20 architectural block naming date: 2026-08-18
 
 Scope: TPU_V3 Phase 2 onward
@@ -49,8 +51,9 @@ boundaries of the CDC-VP TPU_V3 model.
 | D16 | Where the local-data plane may block | `neo_local_sram_fabric` has two timing modes. `annotated` is the default and never waits, so it is safe behind any NoC-reachable target; `arbitrated` blocks on a real per-bank round-robin arbiter and is the only mode in which fairness and back-pressure are behaviours rather than estimates. Every TLM target still never waits. A timing figure must name the mode that produced it |
 | D17 | MXU adapter shape for the Sauria backend | **Buffered tile staging.** Operands are prefetched from core SRAM into private staging stores over `neo_local_sram_if`, the array runs against those stores at the source's own timing, results are written back the same way. Pass-through is not implemented: the source has feeder compute stalls but no SRAM-side response handshake, so a late read is captured as valid data. SRAM-B holds one physical 64-lane vector per K step and zero-pads partial N. Prefetch and writeback stay fully in D16's scope. Only `source_compute_time` may be called cycle-correlated. Requires hash-verified instrumentation-only patches and a binary gate proving the selected closure has no mutable function-local static state |
 | D18 | Phase 6 Transform capability | **Im2Col-only Revision 1.** Extract the CHW INT8, no-padding, cross-correlation address order proven by the pinned v4.2 IFMAP/layout/golden evidence into a standalone buffered Transform block. All four padding fields must be zero. Output is row-major `[OH*OW][C*KH*KW]`. Col2Im is absent from the audited source: its capability bit stays zero and a requested start returns `unavailable_operation` without SRAM traffic. This does not block the forward-inference pipeline `DMA -> Transform (Im2Col) -> MXU -> RVV`; no guessed inverse or fake success is permitted |
-| D19 | Full architectural reset for a NEO-CORE hart | **Full deterministic reset implemented in the VP++ wrapper.** The register, CSR and vector state is all publicly reachable and needs no upstream patch, so `reset_cpu()` stops being a restart. Two items stay explicit rather than hidden: the cycle counter has no wrapper-only answer yet and is the one candidate for a fourth D8-mechanism patch, and reviving a terminated hart is out of Revision 1 scope and refused loudly. Four state classes, not one rule: identity/configuration preserved (`mhartid`, `misa`, `vlenb`); specification-defined fields set per the privileged spec, `vtype`/`vl` among them; `sp` written by `init()`; and the remainder zeroed for reproducibility rather than because the spec requires it — with `time`/`mtime` outside all four as live CLINT state. Reset also releases the LR/SC reservation and bus lock, flushes the MMU TLB, and wakes a hart parked in `WFI`. `RegFile_T::reset_zero()` is not a register-file clear and `csrs` must never be reset by struct assignment. Gated by enumerating `csrs.register_mapping`, which covers every CSR with backing storage; derived views and live time CSRs are asserted separately |
+| D19 | Full architectural reset for a NEO-CORE hart | **Full deterministic reset implemented in the VP++ wrapper.** The register, CSR and vector state is all publicly reachable and needs no upstream patch, so `reset_cpu()` stops being a restart. Two items stay explicit rather than hidden: the cycle counter turned out to need the fourth D8-mechanism patch and has it (`0004-d19-cycle-baseline-survives-reset.patch`), and reviving a terminated hart is out of Revision 1 scope and refused loudly. Implementation also found that a hart parked in `wfi` is not resumed by reset — the wake is necessary, not sufficient. Four state classes, not one rule: identity/configuration preserved (`mhartid`, `misa`, `vlenb`); specification-defined fields set per the privileged spec, `vtype`/`vl` among them; `sp` written by `init()`; and the remainder zeroed for reproducibility rather than because the spec requires it — with `time`/`mtime` outside all four as live CLINT state. Reset also releases the LR/SC reservation and bus lock, flushes the MMU TLB, and wakes a hart parked in `WFI`. `RegFile_T::reset_zero()` is not a register-file clear and `csrs` must never be reset by struct assignment. Gated by enumerating `csrs.register_mapping`, which covers every CSR with backing storage; derived views and live time CSRs are asserted separately |
 | D20 | Architectural block names | The NEO-CORE architecture and reports call the matrix-multiplication block **MXU** and the tensor-layout block **Transform**. **Sauria** is used only for source/backend provenance, and **Im2Col** is the currently implemented Transform operation, not the block name. Existing code/ABI identifiers (`sauria_matrix`, `image_transform`, `SA_CONTROL`) remain unchanged by this documentation-only naming decision |
+| D21 | Distribution boundary for a NEO-CORE binary | **Internal-build artifact.** CDC-VP may go public; a binary containing a NEO-CORE does not. The platform composes cores only in the internal configuration (both accelerator options on) and instantiates none in the default/public one, whose manifest keeps `sauria.linked` and `sauria.selectable` false. A placeholder MXU to give a public build a nominal NEO-CORE is refused |
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -1660,6 +1663,50 @@ it.
 This is why this decision does not claim "no patch anywhere". It claims the
 register, CSR and vector state needs none, which is the part F8 opened.
 
+### What the Phase 7 implementation measured
+
+Added 2026-08-19, when the contract was implemented. Two of the things this
+decision left open have answers now, and one of them contradicts what the
+decision assumed.
+
+**The cycle counter needed the fourth patch, and it is applied.** The
+measurement D19 asked for rather than assumed: with the hart executing across
+a reset, `mcycle` did not drop, because `ISS::init()` sets
+`cycle_counter_raw_last = 0` while the dbbcache accumulator survives, so the
+first `commit_cycles()` afterwards re-added the entire pre-reset count. No
+wrapper-only path exists — the accumulator is private and
+`cycle_counter_raw_last` is protected — and the obvious workaround, forcing a
+commit to absorb the stale delta, would push exactly that count into the
+quantum keeper, which is the thing this decision said must not happen.
+
+So `0004-d19-cycle-baseline-survives-reset.patch` baselines against
+`dbbcache.get_cycle_counter_raw()` instead of zero. It is a
+`downstream-conformance` patch in D12's sense, carried under the D8 mechanism
+with its content hash, its post-patch file hash and its manifest entry. It is
+the same fix upstream `b710fa7b` made for the startup case, stated generally:
+the baseline is whatever has already been accumulated, which is zero at
+construction and is not zero at a reset.
+
+**A hart parked in `wfi` is not resumed by reset, and the earlier wording here
+was wrong.** This decision said `maybe_interrupt_pending()` "wakes the hart".
+It is necessary and it is not sufficient. VP++ implements the instruction as
+`while (!has_local_pending_enabled_interrupts()) wait(wfi_event);`, and reset
+has just zeroed `mie`, so the woken hart re-evaluates the condition, finds it
+false, and sleeps again without ever fetching from the reset vector.
+
+The structural reason is the one the terminated-hart case already has: the
+blocking wait sits inside the ISS's instruction execution and nothing outside
+it can unwind the loop. Making the call fabricate a pending enabled interrupt
+would exit the loop and is refused — it would hand firmware a completion it
+never received. So Revision 1 resets a **running or trapped** hart; a hart
+idling in `wfi` keeps its reset state but does not restart, and a platform must
+not rely on resetting an idle hart to make it run. Lifting it needs a further
+downstream patch and is not in this decision's scope.
+
+`test_architectural_reset` asserts the limitation rather than only recording
+it, on the D10 precedent: if a future backend does resume such a hart, that
+check fails and this section is what has to be corrected.
+
 ### What this reset does not cover
 
 Named so they are not mistaken for cleared items:
@@ -1774,3 +1821,63 @@ Changing those identifiers requires a separate compatibility-controlled code
 migration. Until then, documentation must describe them as retained
 implementation identifiers for MXU and Transform rather than as architectural
 block names.
+
+## D21. The NEO-CORE binary is an internal-build artifact
+
+Decision date: 2026-08-19. Project-owner decision, taken when Phase 7 finished
+the composition and platform integration had to choose a shape.
+
+### Decision
+
+CDC-VP may become a public repository. **A binary containing a NEO-CORE is
+internal-use only** and is not part of that release.
+
+The consequence for the platform is a build split, not a feature flag:
+
+* **Public configuration** — both accelerator options off, which is the
+  default. `tpu_v3_soc` instantiates no NEO-CORE, says so in its report, and
+  its manifest keeps `sauria.global_option_enabled`, `sauria.linked` and
+  `sauria.selectable` all false. This is the configuration
+  `tpu_v3_soc_packaging_regression` asserts, and those three assertions stay.
+* **Internal configuration** — `CDC_BUILD_TPU_V3_SAURIA_MATRIX=ON` and
+  `CDC_BUILD_TPU_V3_IMAGE_TRANSFORM=ON`. `tpu_v3_soc` composes real
+  NEO-COREs, and the manifest declares `linked` true. That package is not
+  published.
+
+### Why
+
+`licenses/SAURIA.PROVENANCE.md` separates two things that are easy to run
+together. Building internally against the external SystemC implementation is
+what `SAURIA_NPU_ROOT` exists for and is explicitly contemplated. *Publishing*
+a binary containing it is not: "a public CDC-VP source release does not include
+the external implementation or an NPU-enabled binary", and doing so needs the
+rights owner's separate approval and a confirmed licence for that
+implementation.
+
+So `SAURIA_LINKED=FALSE` in the packaged manifest is not a stale line waiting
+for Phase 7 to update it. It is a property the public package has to keep, and
+the packaging regression is what keeps it.
+
+### What this forbids
+
+**A placeholder MXU so that a public build can still have a "NEO-CORE".** D14
+freezes one MXU per core and the constructor validates the count, so a core
+without one does not elaborate — which is the correct behaviour and must not be
+worked around. Plan §10 already states the general form: an exported target
+that links and does nothing is worse than a missing one, because a platform can
+depend on it and appear to work. A public NEO-CORE with a stub matrix engine
+would be exactly that, and every timing or throughput number taken from it
+would describe nothing.
+
+A public build therefore has **no** NEO-CORE, and its report says so rather
+than presenting a reduced one.
+
+### Recorded consequence for a public release
+
+This working tree contains `components/npu_tlm/models/v4.2_model`, the external
+SystemC implementation itself. The provenance notice describes a public tree as
+one that does *not* contain it. Whoever prepares a public release has to
+reconcile those two facts — by stripping those directories, or by obtaining the
+approval the notice calls for. It is recorded here because it is invisible
+until release day and expensive to discover then; it is not a Phase 7 item and
+nothing in Phase 7 depends on the answer.

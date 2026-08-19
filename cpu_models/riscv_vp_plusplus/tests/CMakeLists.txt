@@ -178,3 +178,15 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../oracle" oracle)
 # Added from here for the same reason as the oracle: it needs `RVV_SMOKE_ELF`
 # and the `rvv_smoke_image` target, both defined above.
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../portable" portable)
+
+# Decision record D19: the architectural hart reset. Runs a small hand-checked
+# RV32V image to dirty the state, resets, and audits every class the contract
+# names -- including the `mcycle` measurement D19 asked for rather than assumed.
+add_executable(test_architectural_reset test_architectural_reset.cpp)
+target_link_libraries(test_architectural_reset PRIVATE
+    cdc::cpu::riscv_vp_plusplus
+    SystemC::systemc)
+add_test(NAME architectural_reset COMMAND test_architectural_reset)
+set_tests_properties(architectural_reset PROPERTIES
+    LABELS "tpu_v3;cpu;unit"
+    TIMEOUT 300)

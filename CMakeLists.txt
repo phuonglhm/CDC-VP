@@ -129,9 +129,15 @@ if(CDC_BUILD_TESTS
     enable_testing()
 endif()
 
-add_subdirectory(components)
+# cpu_models before components, because that is the direction the dependency
+# runs: Phase 7's NEO-CORE composition owns a VP++ hart, and it decides whether
+# to build itself with `if(TARGET cdc::cpu::riscv_vp_plusplus)`. With the old
+# order that test ran before the target existed and was always false, so the
+# composition silently never built. Nothing in components/ depended on
+# cpu_models/ before this, so moving it earlier changes no existing build.
 if(CDC_BUILD_CPU_EVAL OR CDC_BUILD_CUSTOM_SOC OR CDC_BUILD_TPU_V3_SOC
    OR CDC_BUILD_RISCV_VPP_COMPILER_VP)
     add_subdirectory(cpu_models)
 endif()
+add_subdirectory(components)
 add_subdirectory(platforms)

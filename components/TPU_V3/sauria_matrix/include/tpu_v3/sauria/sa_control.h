@@ -73,6 +73,10 @@ private:
     std::uint64_t abort_count_ = 0;
     std::uint64_t overrun_count_ = 0;
     std::uint64_t c_bytes_done_ = 0;
+
+    /// Wakes the sole writer of `irq`. Both the register paths and the clocked
+    /// completion observer notify it; neither writes the signal itself.
+    sc_core::sc_event irq_event_;
     std::uint64_t local_requests_ = 0;
     std::uint64_t local_bytes_ = 0;
     sauria_matrix_if::timing timing_;

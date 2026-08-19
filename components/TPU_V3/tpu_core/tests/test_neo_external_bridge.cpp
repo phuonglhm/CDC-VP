@@ -384,7 +384,17 @@ int sc_main(int, char*[])
     tlm_master remote("remote");
     remote.socket.bind(bridge.inbound);
     tlm_master local("local");
-    local.socket.bind(bridge.local_outbound);
+    local.socket.bind(
+        bridge.local_outbound[static_cast<unsigned>(
+            core::outbound_initiator::cpu)]);
+    // The bridge carries one outbound socket per named initiator (D15: the
+    // hart and the DMA are the two things that leave a core). This bench
+    // drives the hart's; the DMA's still has to be bound for elaboration to
+    // complete, and `neo_dma`'s own gate is where its traffic is tested.
+    tlm_master local_dma("local_dma");
+    local_dma.socket.bind(
+        bridge.local_outbound[static_cast<unsigned>(
+            core::outbound_initiator::dma)]);
 
     contention_driver driver("driver", fabric, remote, sram_base + 4096,
                              sram_base + 4096 + 64, 40);

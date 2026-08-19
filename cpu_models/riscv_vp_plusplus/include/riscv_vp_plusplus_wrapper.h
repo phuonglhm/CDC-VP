@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <cdc/cpu/cpu_base.h>
 
@@ -130,6 +131,43 @@ public:
     /// True once `start_of_simulation()` has initialised the ISS.
     bool initialised() const noexcept { return initialised_; }
 
+    // ── architectural state, read-only ───────────────────────────────────────
+    //
+    // Introspection for tests and platform reporting. Read-only on purpose:
+    // these exist so the D19 reset contract can be *checked*, and a mutator
+    // set would let a platform put a hart into a state no instruction could
+    // produce.
+    //
+    // They read the storage firmware reads, not a second debug path. That is
+    // the D11 reasoning applied locally: comparing through a private interface
+    // would make a difference in the interface indistinguishable from a
+    // difference in the model.
+
+    /// Every CSR address that has backing storage, ascending.
+    ///
+    /// This is what makes "the reset gate cannot silently miss a CSR" true for
+    /// the registers that *have* state. Derived views — `sstatus`, `sie`,
+    /// `sip`, `fflags`, `frm` — are computed from the registers listed here
+    /// and have no storage of their own.
+    std::vector<unsigned> mapped_csr_addresses() const;
+
+    /// Raw backing storage of one mapped CSR. Not `get_csr_value()`: this is
+    /// the state reset acts on, without the read-time recomputation that
+    /// `mcycle` and `time` layer on top.
+    std::uint32_t read_csr_storage(unsigned address) const;
+
+    /// One integer register, `0..31`.
+    std::uint32_t read_gpr(unsigned index) const;
+
+    /// One byte of one vector register.
+    std::uint8_t read_vector_byte(unsigned reg, unsigned byte) const;
+
+    /// `mcycle` as firmware would read it, recomputation included.
+    std::uint64_t read_mcycle() const;
+
+    /// True while this hart holds the bus lock used by `lr`/`sc` and AMO.
+    bool holds_bus_lock() const;
+
 private:
     void start_of_simulation() override;
 
@@ -137,6 +175,12 @@ private:
     /// `init()`. Shared by `start_of_simulation()` and `reset_cpu()`; see the
     /// latter for what `init()` does and does not clear.
     void initialise_iss();
+
+    /// The four state classes of decision record D19: identity and
+    /// configuration preserved, specification-defined fields set, `sp` left to
+    /// `init()`, and the remainder zeroed for reproducibility. Also releases
+    /// the LR/SC reservation and bus lock and flushes the MMU TLB.
+    void reset_architectural_state();
 
     struct impl;  // owns the ISS, MMU, memory interface, bus lock and runner
     std::unique_ptr<impl> impl_;
