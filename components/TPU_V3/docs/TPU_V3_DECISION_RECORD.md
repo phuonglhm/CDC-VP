@@ -1,6 +1,6 @@
 # TPU_V3 Architecture and Integration Decision Record
 
-Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15**
+Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20**
 
 Initial decision date: 2026-08-08
 
@@ -9,6 +9,10 @@ Architecture rebaseline date: 2026-08-11
 D15 final ratification date: 2026-08-12
 
 D18 Im2Col-only baseline date: 2026-08-18
+
+D19 hart reset contract ratification date: 2026-08-18
+
+D20 architectural block naming date: 2026-08-18
 
 Scope: TPU_V3 Phase 2 onward
 
@@ -32,7 +36,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | D3 | RV32GCV runtime and RVV reference | Use RISC-V VP++ as the TPU core's primary RV32GCV runtime; retain Spike commit `16c0b60119f65a648643cf5d41e4e38e871f0bad` only as an independent golden/differential reference |
 | D4 | RISC-V toolchain | Pin xPack `riscv-none-elf` GCC 15.2.0-1; use a freestanding `-nostdlib` RV32GCV smoke environment in Phase 2 |
 | D5 | CPU identity/reset configuration | Put `hart_id` and `reset_pc` in `cpu_config`; do not use default no-op virtual setters |
-| D6 | Memory capacity and matrix arithmetic | Reference core SRAM capacity is 16 MiB/core; target SA arithmetic is BF16 x BF16 with FP32 accumulation. The original Sauria-experimental scope is superseded by D14 |
+| D6 | Memory capacity and matrix arithmetic | Reference core SRAM capacity is 16 MiB/core; target MXU arithmetic is BF16 x BF16 with FP32 accumulation. The original Sauria-experimental scope is superseded by D14 |
 | D7 | Vector memory access granularity | Accept VP++ element-wise traffic; no upstream fork and no inferred coalescing. Core SRAM supports 1..64-byte payloads; counters describe TLM requests, never vector instructions or hardware bus transactions |
 | D8 | VP++ cycle-baseline defect (F11) | Controlled backport of exactly upstream `b710fa7b` onto the base pin. No baseline subtraction, no SystemC 3.0.1 migration. Recorded patch, script-applied, CMake-verified, manifest-tracked. A **Phase 2 closure gate** |
 | D9 | Post-bump scalar-FP fixes | **Not** backported. All five stay in the upstream inventory; only the two observable at rv32gcv (`63524fbb`, `14e7fff5`, 7 fields) are expected diffs. The corpus fails on an unexpected diff *and* on one of those seven disappearing. The other three are ordinary regression checks — amended 2026-08-10 |
@@ -40,11 +44,13 @@ boundaries of the CDC-VP TPU_V3 model.
 | D11 | Differential method and oracle isolation | One image compiled once, run on both models, comparing a firmware-written canonical signature block located by linker symbols. Spike runs as a child process and is never linked into anything |
 | D12 | RV32 index EEW=64 (F12) | **Downstream conformance patch**, not an accepted deviation. All 32 RV32 indexed encodings with index EEW=64 — four unit forms and 28 segment forms — raise an illegal instruction at the decode site, before `stats.inc_loadstore()` and `prepInstr()` |
 | D13 | Trap cause for a failed bus access (F13) | **Downstream conformance patch.** Page faults only from MMU translation; a bus, decode or target failure is an access fault chosen by access origin — 1 fetch, 5 load, 7 store/AMO. Protocol errors are model defects, not guest faults |
-| D14 | NEO-CORE architecture rebaseline | One VP++ RV32GCV hart, one shared core SRAM, one independent TPU_V3 DMA, one Sauria matrix engine and one ImageTransform engine with source-gated operations. Integrate verified 64x64 Sauria first; promote to the NPU team's 128x128 source later. Never reuse the Sauria DMA. Its original single AXI-like-fabric wording is superseded by D15 and its temporary assumption that both transform directions arrive together is superseded by D18 |
+| D14 | NEO-CORE architecture rebaseline | One VP++ RV32GCV hart, one shared core SRAM, one independent TPU_V3 DMA, one MXU and one Transform block with source-gated operations. Implement the MXU first from verified 64x64 Sauria source; promote to the NPU team's 128x128 source later. Never reuse the Sauria DMA. Its original single AXI-like-fabric wording is superseded by D15 and its temporary assumption that both transform directions arrive together is superseded by D18 |
 | D15 | NEO-CORE internal interconnect | Split control and data: 32-bit AXI4-Lite for MMIO control; a native, pipelined, banked-SRAM request/response fabric for internal bulk data; full AXI4 only at the external chip/NoC boundary. NEO DMA owns bulk external movement; the required VP++ instruction/global path also exits through that boundary. Do not build a full AXI data crossbar inside NEO-CORE |
 | D16 | Where the local-data plane may block | `neo_local_sram_fabric` has two timing modes. `annotated` is the default and never waits, so it is safe behind any NoC-reachable target; `arbitrated` blocks on a real per-bank round-robin arbiter and is the only mode in which fairness and back-pressure are behaviours rather than estimates. Every TLM target still never waits. A timing figure must name the mode that produced it |
-| D17 | Sauria matrix adapter shape | **Buffered tile staging.** Operands are prefetched from core SRAM into private staging stores over `neo_local_sram_if`, the array runs against those stores at the source's own timing, results are written back the same way. Pass-through is not implemented: the source has feeder compute stalls but no SRAM-side response handshake, so a late read is captured as valid data. SRAM-B holds one physical 64-lane vector per K step and zero-pads partial N. Prefetch and writeback stay fully in D16's scope. Only `source_compute_time` may be called cycle-correlated. Requires hash-verified instrumentation-only patches and a binary gate proving the selected closure has no mutable function-local static state |
-| D18 | Phase 6 ImageTransform capability | **Im2Col-only Revision 1.** Extract the CHW INT8, no-padding, cross-correlation address order proven by the pinned v4.2 IFMAP/layout/golden evidence into a standalone buffered engine. All four padding fields must be zero. Output is row-major `[OH*OW][C*KH*KW]`. Col2Im is absent from the audited source: its capability bit stays zero and a requested start returns `unavailable_operation` without SRAM traffic. This does not block the forward-inference pipeline `DMA -> Im2Col -> SA -> RVV`; no guessed inverse or fake success is permitted |
+| D17 | MXU adapter shape for the Sauria backend | **Buffered tile staging.** Operands are prefetched from core SRAM into private staging stores over `neo_local_sram_if`, the array runs against those stores at the source's own timing, results are written back the same way. Pass-through is not implemented: the source has feeder compute stalls but no SRAM-side response handshake, so a late read is captured as valid data. SRAM-B holds one physical 64-lane vector per K step and zero-pads partial N. Prefetch and writeback stay fully in D16's scope. Only `source_compute_time` may be called cycle-correlated. Requires hash-verified instrumentation-only patches and a binary gate proving the selected closure has no mutable function-local static state |
+| D18 | Phase 6 Transform capability | **Im2Col-only Revision 1.** Extract the CHW INT8, no-padding, cross-correlation address order proven by the pinned v4.2 IFMAP/layout/golden evidence into a standalone buffered Transform block. All four padding fields must be zero. Output is row-major `[OH*OW][C*KH*KW]`. Col2Im is absent from the audited source: its capability bit stays zero and a requested start returns `unavailable_operation` without SRAM traffic. This does not block the forward-inference pipeline `DMA -> Transform (Im2Col) -> MXU -> RVV`; no guessed inverse or fake success is permitted |
+| D19 | Full architectural reset for a NEO-CORE hart | **Full deterministic reset implemented in the VP++ wrapper.** The register, CSR and vector state is all publicly reachable and needs no upstream patch, so `reset_cpu()` stops being a restart. Two items stay explicit rather than hidden: the cycle counter has no wrapper-only answer yet and is the one candidate for a fourth D8-mechanism patch, and reviving a terminated hart is out of Revision 1 scope and refused loudly. Four state classes, not one rule: identity/configuration preserved (`mhartid`, `misa`, `vlenb`); specification-defined fields set per the privileged spec, `vtype`/`vl` among them; `sp` written by `init()`; and the remainder zeroed for reproducibility rather than because the spec requires it — with `time`/`mtime` outside all four as live CLINT state. Reset also releases the LR/SC reservation and bus lock, flushes the MMU TLB, and wakes a hart parked in `WFI`. `RegFile_T::reset_zero()` is not a register-file clear and `csrs` must never be reset by struct assignment. Gated by enumerating `csrs.register_mapping`, which covers every CSR with backing storage; derived views and live time CSRs are asserted separately |
+| D20 | Architectural block names | The NEO-CORE architecture and reports call the matrix-multiplication block **MXU** and the tensor-layout block **Transform**. **Sauria** is used only for source/backend provenance, and **Im2Col** is the currently implemented Transform operation, not the block name. Existing code/ABI identifiers (`sauria_matrix`, `image_transform`, `SA_CONTROL`) remain unchanged by this documentation-only naming decision |
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -101,8 +107,8 @@ Revision 1 is limited to:
 8 TPU chips
 2 TPU cores per chip
 16 TPU cores / RV32GCV harts total
-2 Sauria matrix engines per chip
-16 Sauria matrix engines total
+2 MXUs per chip
+16 MXUs total
 ```
 
 The accelerator counts above are the D14 amendment to this size decision. The
@@ -290,7 +296,7 @@ honor a requested configuration.
 ## D6. Core SRAM capacity and matrix arithmetic
 
 D14 later changes the component names and Sauria role: `SVM` becomes the
-NEO-CORE shared SRAM, one Sauria SA replaces the old two-MXU composition, and
+NEO-CORE shared SRAM, one MXU replaces the old two-MXU composition, and
 Sauria moves onto the implementation path. The 16 MiB capacity and BF16/FP32
 numeric destination below remain in force unless a later numeric decision
 changes them.
@@ -375,7 +381,7 @@ References:
 - <https://docs.cloud.google.com/tpu/docs/bfloat16>
 - <https://docs.jax.dev/en/latest/pallas/tpu/hardware.html>
 
-### Sauria scope, amended by D14
+### MXU implementation-source scope (Sauria v4.2), amended by D14/D20
 
 The available v4.2 source proves Sauria configurations through 64x64 and is an
 NPU top, not the approved NEO-CORE composition. D14 makes Sauria the source of
@@ -778,8 +784,8 @@ NEO-CORE
 ├── one RISC-V VP++ RV32GCV hart (Scalar + RVV 1.0, VLEN=512)
 ├── one shared core SRAM
 ├── one independent TPU_V3 DMA
-├── one Sauria matrix engine
-├── one ImageTransform engine (source-gated operations; current subset in D18)
+├── one MXU (current implementation source: Sauria v4.2)
+├── one Transform block (current operation: Im2Col; see D18)
 └── one internal transaction fabric (its protocol split is superseded by D15)
 ```
 
@@ -824,7 +830,7 @@ past its native port to the storage behind it. A guard that banned the
 identifier would forbid correct code along with wrong code, and the usual next
 step is that someone weakens or deletes the guard.
 
-### Sauria matrix-engine staging
+### MXU staging with the Sauria implementation backend
 
 The matrix engine keeps only matrix multiplication and the minimum verified
 feed/sequence/result-collection logic required by that contract. NPU-top
@@ -883,19 +889,19 @@ detailed phase order and gates are authoritative in
 **Final ratification (2026-08-12):** the project owner approved this split as
 the implementation architecture for both the SystemC/TLM model and the future
 RTL handoff. It is no longer a proposal. Replacing the protocol split, making
-SA/ImageTransform external AXI masters, or inserting a full AXI data crossbar
+MXU/Transform external AXI masters, or inserting a full AXI data crossbar
 inside NEO-CORE requires a new recorded architecture decision.
 
 NEO-CORE uses three deliberately different interconnect contracts:
 
 1. **Control plane — 32-bit AXI4-Lite.** VP++ and the authorized external
-   inbound adapter reach core, DMA, SA and ImageTransform register files
+   inbound adapter reach core, DMA, MXU and Transform register files
    through one narrow, in-order AXI4-Lite decoder. It has no bursts or AXI IDs
    and accepts at most one transaction per control initiator at a time. In the
    SystemC model this is represented at transaction level; signal-level
    AW/W/B/AR/R timing is not claimed.
 2. **Local data plane — NEO Local SRAM Fabric.** VP++ local load/store, the
-   DMA local port, the SA feeder/result path, the ImageTransform data port and
+   DMA local port, the MXU feeder/result path, the Transform data port and
    authorized inbound chip/NoC traffic access the shared core SRAM through a
    native request/response fabric. The logical SRAM remains one 16 MiB
    addressable resource but is physically banked. This plane is not AXI and
@@ -906,7 +912,7 @@ NEO-CORE uses three deliberately different interconnect contracts:
    existing chip endpoint through an AXI4/TLM adapter or the equivalent NoC
    bridge. Inbound remote transactions are decoded back to the AXI4-Lite
    control plane or native local-SRAM plane. The CPU path is required because
-   `reset_pc` points at global boot ROM; it does not make SA or ImageTransform
+   `reset_pc` points at global boot ROM; it does not make MXU or Transform
    an external master. Full AXI semantics belong at this boundary, not between
    the internal
    accelerators and local SRAM.
@@ -942,7 +948,7 @@ they count TLM requests, physical beats, bank conflicts or transferred bytes.
 ### Routing and ownership rules
 
 - Control registers are reached only through the AXI4-Lite control plane.
-- SA and ImageTransform bulk data are staged in core SRAM and use native local
+- MXU and Transform bulk data are staged in core SRAM and use native local
   ports; neither engine becomes a full AXI4 NoC master in Revision 1.
 - NEO DMA has one native local-SRAM port and one external AXI4/NoC-facing port.
   It remains independent of, and may not call, the Sauria DMA.
@@ -980,11 +986,11 @@ Phase 3:
 
 | Item | Status | Evidence / remaining implementation |
 | --- | --- | --- |
-| Record D1-D18 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3; D17 and D18 record the Phase 5/6 adapter decisions |
-| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one SA + Transform + split control/data fabrics | Component implementations and gates complete through Phase 6; composition pending Phase 7 | D14-D18, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and the component audits |
+| Record D1-D20 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3; D17 and D18 record the Phase 5/6 adapter decisions; D19 freezes the hart reset contract; D20 freezes the MXU/Transform names |
+| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one MXU + Transform + split control/data fabrics | Component implementations and gates complete through Phase 6; composition pending Phase 7 | D14-D20, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and the component audits |
 | Rename SVM to core SRAM while retaining the 16 MiB window/capacity contract | Complete | D6 as amended by D14; `address_map.h`, `architecture_config.h`, the four shipped configurations and the packaged `--print-address-map` output all use `CORE_SRAM`, and both the CLI regression and the packaging regression fail if the legacy names reappear |
-| Set BF16 operands with FP32 accumulation as the target SA arithmetic | Complete as a contract; not proven by the v4.2 bring-up type | D6/D14 |
-| Integrate Sauria 64x64 first and promote the NPU-team 128x128 delivery later | 64x64 complete; 128x128 open | D14/D17 and Phase 5 audit |
+| Set BF16 operands with FP32 accumulation as the target MXU arithmetic | Complete as a contract; not proven by the v4.2 bring-up type | D6/D14 |
+| Integrate the MXU from Sauria 64x64 source first and promote the NPU-team 128x128 delivery later | 64x64 complete; 128x128 open | D14/D17 and Phase 5 audit |
 | Obtain verified transform source | Im2Col complete; Col2Im remains an optional future promotion and is explicitly unavailable | D18 and Phase 6 audit |
 | Keep TPU_V3 DMA independent of Sauria DMA | Complete | D14 DMA boundary; `tpu_v3_neo_dma` implemented in Phase 4 and gated by `neo_dma_independence`, which scans the sources with comments stripped, the emitted symbols and the CMake link interface. The guard covers the shared PL330-style `components/dma_tlm` and DMI as well as Sauria, and it fails when a forbidden include is added |
 | Replace default no-op CPU setters with D5 `cpu_config` properties | Complete | Phase 2 wrapper and configuration tests |
@@ -1002,7 +1008,7 @@ Phase 3:
 | F13 — page fault reported for a failed bus access | Complete | D13 downstream conformance patch; `conformance_patches` covers six access origins, with negative control |
 | Upstream maintenance-backport request | Deferred by decision, not blocking | revisit after Phase 2 closes, with the measured evidence |
 | Accept element-wise vector memory traffic and rename the access counters | Complete | D7; `INTERFACE_CONTRACT.md` §6, plan §11.3 and the Phase 3 gate all synchronized |
-| Decide full architectural reset semantics for a TPU core | **Open — due before Phase 7** | `reset_cpu()` is currently a restart at the reset PC plus cache reinitialisation; GPRs, FP/vector registers, CSRs, `vstart`, `instret`, pending interrupts and privilege level survive it. See `TPU_V3_PHASE2_AUDIT.md` F8 |
+| Decide full architectural reset semantics for a TPU core | **Closed by D19** (2026-08-18); implementation and gate are Phase 7 work | D19. The contract is a full deterministic reset in the VP++ wrapper; `reset_cpu()` as a restart plus cache reinitialisation is superseded. See `TPU_V3_PHASE2_AUDIT.md` F8 for the measurement that opened it |
 
 Phase 0 remains accepted and the Phase 1 build/package gate remains passed.
 Every Phase 2 gate has a passing test in Debug and Release, and both
@@ -1132,7 +1138,7 @@ unnecessary. It is not built now because nothing in Phase 3 needs it and
 because the payload-ownership and response-routing contract such a mode
 requires does not exist yet (D15 fixes one outstanding request per requester).
 
-## D17. The Sauria matrix adapter is a buffered tile-staging design
+## D17. The MXU adapter for the Sauria backend uses buffered tile staging
 
 ### Decision
 
@@ -1260,7 +1266,7 @@ not macro-guarded at all. So Phase 5 requires:
   stream and static debug object, carried like the VP++ downstream conformance
   patches: ordered patch files, a set hash, and the post-patch source hash
   recorded beside the base and oracle hashes in `TPU_V3_PHASE5_AUDIT.md` §1;
-* a gate that elaborates **two** SA instances and requires that no `trace_sysc/`
+* a gate that elaborates **two** MXU instances and requires that no `trace_sysc/`
   directory is created, that they share no state, and that their results are
   independent.
 
@@ -1345,7 +1351,7 @@ hash. Release and Debug binaries are scanned for Itanium `_ZZN6sauria...`
 symbols so redirecting a trace to a null stream cannot masquerade as removal of
 the shared static state.
 
-## D18. Phase 6 is an Im2Col-only ImageTransform baseline
+## D18. Phase 6 gives the Transform block an Im2Col-only baseline
 
 ### Decision
 
@@ -1401,7 +1407,7 @@ There is no external AXI master and no pointer to SRAM backing.
 This is a functional TLM staging policy. It preserves source-visible ordering
 and exposes arbitration/errors/traffic, but it is not a claim about an RTL line
 buffer, feeder schedule or cycle count. Reset/abort generation and traffic
-epoch rules match the DMA/SA rules already frozen by the project: committed
+epoch rules match the DMA/MXU rules already frozen by the project: committed
 destination bytes remain committed, an abandoned worker cannot publish stale
 status, and a replacement `START` cannot be lost.
 
@@ -1416,8 +1422,9 @@ Col2Im remains explicitly unavailable:
 * a non-empty free-form source string is not allowed to turn it on in the
   common architecture configuration.
 
-This does **not** block the current forward-inference model. After Im2Col and
-SA matrix multiplication, the result is already the output-feature matrix;
+This does **not** block the current forward-inference model. After the
+Transform block performs Im2Col and the MXU performs matrix multiplication,
+the result is already the output-feature matrix;
 RVV/software can apply bias/activation and interpret or reshape its rows as the
 output tensor. Col2Im becomes necessary for operations that scatter and
 accumulate overlapping columns, such as some backward-data, transposed
@@ -1428,8 +1435,342 @@ golden tests and an explicit decision-record promotion.
 Consequently Phase 7 uses:
 
 ```text
-DMA -> Im2Col -> Sauria matrix engine -> RVV
+DMA -> Transform (Im2Col) -> MXU -> RVV
 ```
 
 It must not insert a placeholder Col2Im step or report the pipeline as a
 round-trip transform.
+
+## D19. Full architectural reset for a NEO-CORE hart
+
+Decision date: 2026-08-18. **Ratified by the project owner on 2026-08-18.**
+Closes the item recorded as "**Open — due before Phase 7**" in the
+synchronization table above, in plan §23 and in `TPU_V3_PHASE2_AUDIT.md` F8.
+
+Changing the four state classes, the release/wake set, or the disposition of
+the two items this decision leaves open — the cycle counter and revival of a
+terminated hart — requires a new recorded architecture decision, on the same
+terms D15 set.
+
+### Decision
+
+A NEO-CORE hart reset is a **full deterministic architectural reset**,
+implemented in `cdc::cpu::riscv_vp_plusplus`. The
+restart-plus-cache-reinitialisation that `reset_cpu()` performs today is not
+the contract and may not be described as one.
+
+**The register, CSR and vector state needs no upstream patch** — that is the
+part audit F8 opened, and all of it is publicly reachable. Two adjacent items
+are not, and this decision keeps them visible rather than folding them into a
+tidy headline: the cycle counter has no wrapper-only answer yet, and reviving a
+terminated hart is out of Revision 1 scope. Both have their own sections
+below.
+
+Rejected: leaving `reset_cpu()` as a restart and writing a narrower contract
+around it. Phase 8's gate is that two harts boot and run independent workloads
+and that neither can corrupt the other; a "reset" that leaves GPRs, CSRs and
+the vector register file loaded with the previous workload's values makes that
+gate untestable. Deferring is how it becomes a Phase 8 discovery, which is
+exactly the failure mode D1 and P2-10 were written to prevent.
+
+Also rejected: adding a broad `ISS::reset()` upstream patch to the D8/D12/D13
+series. For the register, CSR and vector state such a patch would buy tidiness
+only, and D12 already records the cost: a downstream patch has to be re-checked
+against every new base, forever. That reasoning applies to the state that is
+already reachable; it is not a blanket refusal, and the cycle-counter section
+below records the one place a fourth patch may still be the right answer.
+
+### What was measured
+
+Read from the pinned tree on 2026-08-18, `third_party/riscv-vp-plusplus`,
+base `7a36fe859cae242f513ca6ad16ab8238f1e82977`:
+
+| State | Where | Reachable from the wrapper? |
+| --- | --- | --- |
+| GPRs | `iss_ctemplate.h:60`, public `RegFile regs` — a plain `T_sxlen_t regs[32]` | yes, direct |
+| FP registers | `iss_ctemplate.h`, public `FpRegs fp_regs` | yes, direct |
+| CSRs | `iss_ctemplate.h`, public `ISS_CT_T_CSR_TABLE csrs` | yes, **field by field only** |
+| Vector registers | `v.h:28`, **private** `void* v_regs`; no reset method | yes, element-wise through the public `reg_write<T>(vec_idx, elem_num, val)` |
+| Privilege level | `iss_ctemplate.h`, public `PrivilegeLevel prv` | yes, direct |
+| Execution status | `iss_ctemplate.h:160`, public `set_status(CoreExecStatus)` | yes |
+| PC | `iss_ctemplate.h:26`, **protected** `uxlen_t pc` | only through `ISS::init()`, which is what `reset_cpu()` already calls |
+| LR/SC reservation | `iss_ctemplate.h:173`, public `release_lr_sc_reservation()`; the `lr_sc_counter` behind it is protected | yes, through the public call |
+| Bus lock | `riscv_vp_plusplus_wrapper.cpp:184`, the wrapper's own `local_bus_lock` | yes, it is CDC-VP code |
+| MMU TLB | `mmu.h:85` `tlb[][][]`, public `flush_tlb()` at `:91`; `ISS::init()` never calls it | yes |
+| Cycle counter | `cycle_counter` public on the ISS, but the accumulator it is derived from (`dbbcache.h:620`) is **private** with only a getter, and `cycle_counter_raw_last` is protected | **no — see the cycle-counter section** |
+| Termination | `shall_exit` protected (`iss_ctemplate.h:32`), set at `iss_ctemplate.cpp:7084`, re-applied at `:293`; `rv32::ISS` is `final` here | **no — out of Revision 1 scope** |
+
+Three of the reachable ones carry a trap, and each has cost someone a day
+somewhere:
+
+1. **`RegFile_T::reset_zero()` is not a register-file clear.** Its whole body is
+   `regs[zero] = 0` (`regfile.h:22`) — it re-zeroes `x0`, the hardwired-zero
+   register, and nothing else. The name reads like the bulk clear this decision
+   needs. It is not, and it must not be used as one.
+2. **`csrs` must never be reset by struct assignment.** `csr_table` carries
+   `std::unordered_map<unsigned, uint32_t*> register_mapping` populated in its
+   constructor with pointers **into its own members** (`csr.h:663`, `:724`).
+   `csrs = csr_table{}` copies pointers that address the temporary, which then
+   dies — every subsequent CSR access through the mapping is undefined
+   behaviour. The reset assigns fields and leaves `register_mapping` alone.
+3. **Blind zeroing breaks frozen contracts.** `mhartid` carries D5 identity,
+   `misa` carries `V` and zeroing it disables RVV, and `vlenb` is written once
+   by the `VExtension` constructor (`v.h:83`) and never again. A reset that
+   zeroed all three would elaborate, run, and report a hart that is not the one
+   the configuration asked for.
+
+Nothing under `components/TPU_V3` calls `reset_cpu()` today; the only caller in
+the repository is the unrelated `platforms/tests/wdt_platform`. Phase 7 is
+therefore the first NEO-CORE caller, and this contract does not have to
+preserve any existing behaviour.
+
+### The contract
+
+Reset state falls into four classes, and the class decides the value. This is
+deliberately not one rule, because the RISC-V privileged specification does not
+define reset values for most of this state.
+
+**Class 1 — preserved.** Identity and configuration survive reset, because they
+are properties of the instance, not of the run: `mhartid`, `misa`,
+`mvendorid`, `marchid`, `mimpid`, `vlenb`, and the `register_mapping` table.
+
+**Class 2 — specified.** Set to what the privileged specification requires at
+reset: `pc` = the configured `reset_pc` (placed by `init()`), privilege level =
+Machine, `mstatus.MIE` = 0, `mstatus.MPRV` = 0.
+
+`mcause` = **0**. The specification requires an indication of the reset cause
+but leaves the encoding implementation-defined, and `reset_cpu()` carries no
+argument that could distinguish one cause from another. Zero is chosen and
+written down; inventing a numeric cause the API cannot supply would be a
+distinction the model does not actually make.
+
+`vtype` = **`vill` set, every other bit zero**, with `vl` = 0. RVV 1.0
+*recommends* exactly this at reset — the hard requirement it states is only
+that `vtype` and `vl` be readable and restorable by a single `vsetvl`, which a
+zeroed pair would also satisfy. The model adopts the recommendation because the
+alternative is worse in a specific way: a zeroed `vtype` is the *valid*
+configuration SEW=8/LMUL=1, so the hart would come out of reset advertising a
+vector configuration no firmware ever asked for, and a missing `vsetvli` would
+run instead of trapping. These two are therefore Class 2 and **not** part of
+the zeroed remainder.
+
+That value has to be written explicitly, because the upstream default does not
+provide it. `csr_vtype` initialises `uint32_t val = 0x8000000;` with the
+comment `// vill=1 at reset` (`csr.h:276`). In that bitfield — `vlmul:3`,
+`vsew:3`, `vta:1`, `vma:1`, `reserved:23`, `vill:1` — `vill` is bit 31, so the
+value that sets it is `0x80000000`. `0x8000000` is bit 27, which lands in
+`reserved`, and `fields.vill` consequently reads **0** on a freshly constructed
+hart. The comment describes the intent and the constant is one hex digit short
+of it. This is recorded as an upstream defect rather than worked around
+silently, and it is the reason the gate below asserts the exact bit pattern
+instead of asserting "vill is set" against a default that already claims to be.
+
+**Class 3 — written by `init()`, not zeroed.** `sp` (`x2`). `ISS::init()`
+assigns `kFallbackStackTop` to it after the wrapper has cleared the register
+file, so a contract that also called `sp` zero would contradict its own
+ordering. `sp` is therefore excluded from the zeroed-GPR assertion and checked
+against the configured stack top instead.
+
+**Class 4 — zeroed for determinism, not because the specification says so.**
+The remaining GPRs, FP registers, the vector register file, `vstart`, `vxrm`,
+`vxsat`, `vcsr`, `fcsr`, `instret`, `satp` (which returns the hart to Bare),
+`mip`, `mie`, `mepc`, `mtval`, `mtvec`, `mscratch` and the PMP registers.
+**The specification
+leaves these undefined at reset**; the model zeroes them because a virtual
+platform whose post-reset state depends on what ran before it is not
+reproducible, and reproducibility is the same property D6 protects with a fixed
+accumulation order and deterministic page backing. The distinction is recorded
+rather than blurred: a future firmware that relies on a zeroed GPR after reset
+is relying on this model, not on RISC-V.
+
+**Not a class: state the model does not own.** `time` and `mtime` are read
+live from the CLINT — `get_csr_value()` calls `clint->update_and_get_mtime()`
+and only then fills `csrs.time` (`iss_ctemplate.cpp:6807`). They are a view of
+platform time, which reset does not rewind, so they are excluded by name from
+both the zeroing and the gate. Writing zero into `csrs.time` would be erased by
+the next read anyway; excluding it says so instead of leaving a check that
+appears to pass and measures nothing.
+
+Order is fixed: clear Class 4 and set Class 2, **then** call `init()`, which
+places the PC, writes Class 3 and reinitialises the decode/load-store caches.
+
+Four things must be handled that are neither registers nor CSRs. Three of them
+are reachable without patching upstream:
+
+* **The LR/SC reservation and the bus lock.** `release_lr_sc_reservation()`
+  (`iss_ctemplate.h:173`) is public and already does both — it clears the
+  protected `lr_sc_counter` and calls `mem->atomic_unlock()`, so one call
+  covers the reservation and the wrapper's own `local_bus_lock`
+  (`riscv_vp_plusplus_wrapper.cpp:184`). `init()` calls neither. A reset
+  between `LR.W` and `SC.W` would otherwise leave a reservation and a held lock
+  behind. That is harmless while the lock is per-wrapper and becomes a hang the
+  moment multi-hart atomicity makes it chip-shared, which is exactly the D8
+  `52d376d4` work Phase 8 has to close.
+* **A hart asleep in `WFI`.** `WFI` blocks the ISS in
+  `sc_core::wait(wfi_event)` (`iss_ctemplate.cpp:6681`) on a **protected**
+  event, inside the call stack of `core.run()`. None of the register or CSR
+  writes above, and not `init()`, ends that wait, so without this the contract's
+  claim to reset a *running* hart would be false for firmware that is idling —
+  which is what firmware waiting on a DMA or MXU completion IRQ is doing. The
+  public `maybe_interrupt_pending()` (`iss_ctemplate.h:163`) notifies
+  `wfi_event` and forces the slow path **without injecting an interrupt**, so
+  reset wakes the hart rather than fabricating a completion firmware never
+  received. It is called after the state has been cleared and `init()` has
+  placed the PC, so the woken hart resumes into the reset state; that ordering
+  is a claim a test has to confirm, not an argument, which is why the gate
+  below resets a hart parked in `WFI`.
+* **The MMU TLB.** `MMU::flush_tlb()` (`mmu.h:91`) is public and `init()` does
+  not call it. Stated honestly: at `satp.MODE = Bare` the TLB is never
+  consulted (`mmu.h:96`) and TPU_V3 runs Bare, so this is insurance rather than
+  a live defect today. It becomes load-bearing the moment any configuration
+  enables translation, and the cost of flushing is one `memset` — the same
+  posture D13 took with its unreachable page-table-walk path.
+* **`cycle_counter`**, discussed next, because it is not simply reachable.
+
+### The cycle counter is the one item without a wrapper-only answer
+
+**Requirement:** reset must not make `mcycle` jump, and must not inject
+simulated time into the quantum keeper.
+
+**Measured obstacle.** `commit_cycles()` (`iss_ctemplate.h:99`) computes
+`inc = dbbcache.get_cycle_counter_raw() - cycle_counter_raw_last`, then adds
+`inc` to both `cycle_counter` and `quantum_keeper`. `ISS::init()` sets
+`cycle_counter_raw_last = 0` but does **not** reset the accumulated raw count:
+`DBBCacheBase_T::init()` (`dbbcache.h:145`) assigns only `enabled`,
+`isa_config`, `hartId`, `instr_mem`, `opMap`, `fast_abort_labelPtr` and
+`mem_word`, and the accumulator itself (`dbbcache.h:620`) is **private** with
+only a getter. So the first `commit_cycles()` after a mid-run reset computes a
+delta against zero and re-adds the entire pre-reset count — into simulated
+time, not merely into a counter.
+
+Zeroing `csrs.cycle` does not help and is not the fix: `MCYCLE_ADDR` is
+recomputed on every read from `_compute_and_get_current_cycles()`
+(`iss_ctemplate.cpp:6821`), so the CSR field is a cache of `cycle_counter`, and
+`cycle_counter` (public `sc_time` on the ISS) is the state that matters.
+
+**Disposition.** The implementation must measure the post-reset delta with a
+test rather than assume it. If a wrapper-only path exists in the disabled-
+dbbcache configuration TPU_V3 actually uses (P2-5), take it. If none does, this
+single item — and nothing else in this decision — is the candidate for a
+**fourth** patch under the D8 mechanism: classified, hash-verified,
+script-applied, CMake-verified, manifest-recorded. It would be a downstream
+patch in D12's sense, not a backport, because there is no upstream commit for
+it.
+
+This is why this decision does not claim "no patch anywhere". It claims the
+register, CSR and vector state needs none, which is the part F8 opened.
+
+### What this reset does not cover
+
+Named so they are not mistaken for cleared items:
+
+* **A hart that has already terminated is not revived, and reset says so
+  loudly.** `sys_exit` sets the protected `shall_exit` (`iss_ctemplate.cpp:7084`),
+  `exec_steps()` turns any `Runnable` status straight back to `Terminated`
+  while it is set (`:293`), `rv32::ISS` is `final` in this build because
+  `ISS_CT_ENABLE_POLYMORPHISM` is not defined, and the wrapper's
+  `core_runner::run()` is one-shot — it calls `core.run()` once and returns, so
+  its `SC_THREAD` is gone. `set_status(CoreExecStatus::Runnable)` is therefore
+  necessary and not sufficient, and a reset that appeared to succeed would hand
+  the platform a hart that silently never executes again. Revision 1 supports
+  resetting a **running or trapped** hart; `reset_cpu()` on a terminated hart
+  throws with a message naming this limitation. Lifting it needs either a
+  downstream patch exposing `shall_exit` or a `core_runner` restructured to
+  loop on a restart event — both are recorded here, neither is Revision 1, and
+  neither is required by the Phase 7 or Phase 8 gates, which reset harts that
+  are still running.
+* **In-flight fabric traffic.** A hart blocked inside `b_transport` when its
+  core is reset unwinds under the local fabric's own generation rules (D16);
+  the CPU reset does not and cannot retract a request the fabric already
+  accepted. NEO-CORE reset is hierarchical, so the fabric is reset in the same
+  sequence — this is the same rule D17 states for the matrix adapter.
+* **Simulated time.** Reset does not rewind `sc_time_stamp()`. A reset is an
+  event in the run, not a new simulation. That is separate from, and must not
+  be confused with, the requirement above that reset inject no *new* time.
+
+### Gate
+
+`reset_cpu()` is not complete until a test proves all of the following, in
+Debug and Release:
+
+* **Every CSR with backing storage is checked, and the test cannot silently
+  miss one.** Iterate `csrs.register_mapping` and assert each entry against its
+  class. The claim is deliberately narrower than "every CSR": the map
+  enumerates the CSRs that *have storage* — including `vtype`, `vl`, `vstart`,
+  `fcsr`, `satp`, the PMP block and the vector CSRs — while `sstatus`, `sie`,
+  `sip`, `fflags`, `frm` and the hardwired debug/HPM reads have no entry
+  because `get_csr_value()` derives them from `mstatus`, `mip`, `mie` and
+  `fcsr` (`iss_ctemplate.cpp:6845` onward). Those derived views follow their
+  backing register by construction, so they get one explicit assertion each
+  rather than a map iteration; `time`/`mtime` are excluded by name as live
+  CLINT state. A hand-written list of the *storage* CSRs would rot the first
+  time upstream adds a register; the map cannot, and stating what it does and
+  does not cover is what keeps the gate honest.
+* `vtype` reads exactly `vill` set with all other bits zero, and `vl` is zero.
+  Asserted as the full 32-bit pattern, because the upstream default claims
+  `vill=1` in a comment while setting bit 27.
+* Dirty-then-reset for each class: write a non-zero pattern into every GPR, FP
+  register, vector register and Class 4 CSR, take the reset, and read back.
+  "Unchanged" is asserted against a written pattern, never against a value that
+  might already have been zero — the same positive-statement rule D12's
+  `vstart` check uses.
+* `mhartid`, `misa` (including `V`) and `vlenb` survive reset with their
+  configured values, on a hart whose `hart_id` is deliberately not 0.
+* `sp` holds the configured stack top after reset, and is the one GPR the
+  zero assertion excludes.
+* **`mcycle` does not jump.** Run a workload, reset mid-run, and require that
+  the first post-reset `mcycle` sample is a plausible baseline rather than the
+  pre-reset total, and that `sc_time_stamp()` does not advance by the pre-reset
+  cycle count at the next commit. This is the check that would have caught the
+  obstacle above; it fails today.
+* A reset taken between `LR.W` and `SC.W` leaves no reservation and no held bus
+  lock.
+* A hart parked in `WFI` is reset and executes from `reset_pc`, under a
+  watchdog — this is the case that hangs if the wake step is missing, and a
+  hang is the failure mode a watchdog exists to convert into a result. A
+  negative control removes the wake and requires the test to fail.
+* Resetting a terminated hart throws, with the message naming the limitation —
+  a negative control, so the unsupported case cannot silently become a hart
+  that never runs.
+* Two harts in one simulation: resetting one leaves the other's registers,
+  CSRs and vector state untouched. This is the Phase 8 property, gated here
+  rather than discovered there.
+* A negative control: reverting the register-file clear fails the gate.
+
+
+### Relationship to Phase 7
+
+Phase 7 wires platform → chip → core → component reset and is the first caller.
+Its gate already requires that reset cases "fail predictably under watchdogs";
+with this contract that gate asserts a defined state instead of asserting that
+nothing crashed. Plan §16 Phase 8 previously listed "full architectural reset"
+among the gates it would close; that line is superseded by this decision, which
+closes it before Phase 7 as the plan's own decision log always required.
+
+## D20. Architectural block naming
+
+Decision date: 2026-08-18.
+
+### Decision
+
+NEO-CORE architecture diagrams, plans, reports and new documentation use these
+block names:
+
+| Architectural block | Meaning | Implementation/provenance terms |
+| --- | --- | --- |
+| **MXU** | The matrix-multiplication unit | The current 64x64 implementation is extracted from pinned Sauria v4.2 source |
+| **Transform** | The tensor-layout transformation block | Revision 1 currently implements the Im2Col operation; Col2Im remains unavailable under D18 |
+
+`Sauria` is therefore not the architectural block name. It remains necessary
+when identifying the third-party source/backend, its DMA that must not be
+reused, source hashes, source symbols, test labels and implementation paths.
+Likewise, `Im2Col` names an operation supported by Transform, not the block
+itself.
+
+This is a documentation and reporting decision. It does not silently rename
+existing code or firmware ABI identifiers such as `sauria_matrix`,
+`TPU_V3_SA_GEOMETRY`, `SA_CONTROL`, `image_transform`, or their test names.
+Changing those identifiers requires a separate compatibility-controlled code
+migration. Until then, documentation must describe them as retained
+implementation identifiers for MXU and Transform rather than as architectural
+block names.

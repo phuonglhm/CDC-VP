@@ -1,11 +1,12 @@
-# TPU_V3 Phase 6 Audit — ImageTransform
+# TPU_V3 Phase 6 Audit — Transform (Im2Col Capability)
 
 Date: 2026-08-18
 
 Result: **complete for the approved Im2Col-only Revision 1 scope**.
 
-Authority: decision D18. Col2Im is an unavailable operation, not an unfinished
-placeholder inside the completed scope.
+Authority: decisions D18 and D20. **Transform** is the architectural block;
+Im2Col is its implemented Revision 1 operation. Col2Im is an unavailable
+operation, not an unfinished placeholder inside the completed scope.
 
 ## 1. Source audit and pin
 
@@ -55,7 +56,7 @@ Non-zero padding is refused because the pinned source/golden exposes no
 padding field. Col2Im is refused because no implementation or overlap rule was
 found. Neither case is silently emulated.
 
-This omission does not block forward inference. `Im2Col -> SA` produces the
+This omission does not block forward inference. `Transform (Im2Col) -> MXU` produces the
 output-feature matrix, and RVV/software can perform post-processing and layout
 interpretation. Backward/transposed-convolution scatter and overlap-add are not
 part of Revision 1.
@@ -86,8 +87,8 @@ The Phase 6 tests are:
 | `tpu_v3_image_transform` | actual core SRAM and native fabric; register protocol; asynchronous start; output and byte/request counters; IRQ/W1C; unavailable Col2Im with zero traffic; capacity error; abort/replacement start; active hierarchical reset and epoch ownership |
 | `tpu_v3_transform_independence` | no external master, DMA, NPU top, Sauria or SRAM implementation dependency |
 
-Review found one IRQ timing mismatch: ImageTransform used a zero-time delayed
-event, adding a second delta beyond the DMA/SA convention, while its test also
+Review found one IRQ timing mismatch: the Transform implementation used a zero-time delayed
+event, adding a second delta beyond the DMA/MXU convention, while its test also
 sampled one ABORT transition without any delta. `update_irq()` now immediately
 wakes the sole writer method, so the `sc_signal` value is visible after one
 delta. The gate enforces that bound and checks deassertion after every W1C,
@@ -112,7 +113,7 @@ component tree and enables its tests independently of the platform.
 
 Closure controls:
 
-* ImageTransform OFF plus a nonexistent `TPU_V3_TRANSFORM_ROOT` configures and
+* Transform OFF plus a nonexistent `TPU_V3_TRANSFORM_ROOT` configures and
   builds `tpu_v3_soc`; the default/off build does not inspect the source.
 * Appending one comment byte to a temporary copy of `ifmap_feeder.h` makes
   configuration fail with both expected and actual SHA-256 values.
@@ -126,7 +127,7 @@ the actual contiguous register range after proving that its sixteen explicit
 exclusions were all outside that range and therefore dead. Documentation and
 runtime reporting now consistently say **no padding; all four padding fields
 must be zero**, rather than using the ambiguous phrase "zero-padding". The
-ImageTransform gate remains 3/3 after this cleanup, and the reviewer accepted
+Transform gate remains 3/3 after this cleanup, and the reviewer accepted
 Phase 6 as closed.
 
 ## 5. Phase 7 handoff
@@ -137,7 +138,7 @@ transform is not linked/selectable. Phase 7 shall enable the exact pinned
 Im2Col capability and use:
 
 ```text
-DMA -> Im2Col -> Sauria SA64 -> RVV
+DMA -> Transform (Im2Col) -> MXU64 -> RVV
 ```
 
 It shall keep the Col2Im capability zero and shall not add a placeholder step.

@@ -106,8 +106,8 @@ bridge on the inbound path must not be the one that stalls the mesh.
 * `delay` on entry may be non-zero; a target adds to it and does not clear it.
 * `transport_dbg` never advances time and never annotates delay.
 * Long work runs in the component's own `SC_THREAD`, which may `wait()` freely.
-* `b_transport` must never wait for accelerator completion. An SA, DMA or
-  ImageTransform start write enqueues and returns in the same delta cycle.
+* `b_transport` must never wait for accelerator completion. An MXU, DMA or
+  Transform start write enqueues and returns in the same delta cycle.
 * Timing mode is chosen at construction, never changed during simulation, and
   is reported in metrics.
 
@@ -157,15 +157,15 @@ must not be collapsed into one generic internal AXI fabric:
   initiator, and follows this document's 4-byte MMIO rules. VP++ and the
   authorized external inbound adapter are its initiators. The SystemC model
   represents the transactions, not signal-level AW/W/B/AR/R channel timing.
-* **Native local data:** VP++ local accesses, the DMA local port, SA and
-  ImageTransform plus authorized inbound chip/NoC traffic issue requests to
+* **Native local data:** VP++ local accesses, the DMA local port, MXU and
+  Transform plus authorized inbound chip/NoC traffic issue requests to
   `neo_local_sram_fabric`. This is a pipelined request/response interface into
   physically banked core SRAM, not AXI and not a full data crossbar.
 * **External AXI4/NoC:** the DMA external port and VP++ instruction/global-data
   path reach chip/global/remote memory through the external adapter and chip
   NoC endpoint. The CPU path is required to fetch from global boot ROM. Inbound
   remote MMIO/SRAM traffic traverses the reverse adapters into the appropriate
-  local plane. Full AXI semantics stop at this boundary; SA and ImageTransform
+  local plane. Full AXI semantics stop at this boundary; MXU and Transform
   do not become external AXI4 masters in Revision 1.
 
 The native local request contains requester identity, absolute byte address,
@@ -208,12 +208,13 @@ pointers to core SRAM or global-memory backing. Every transferred byte crosses
 its native local initiator and external bridge as applicable and observes
 normal decode, arbitration, byte-enable, response and metrics rules.
 
-**The SA boundary is matrix multiplication.** The Sauria adapter may retain
-only the PE array and the minimum feeder/sequencer/result-collection logic
+**The MXU boundary is matrix multiplication.** From the Sauria v4.2 source,
+the implementation adapter may retain only the PE array and the minimum
+feeder/sequencer/result-collection logic
 needed to implement the accepted GEMM descriptor. OBP, RCE, NPU profile
 routing, NPU instruction decoding, Sauria DMA and other unrelated NPU-top
-behavior are outside the NEO SA contract. Operand and result traffic uses the
-native SRAM port; the SA has no external AXI4 master port.
+behavior are outside the NEO MXU contract. Operand and result traffic uses the
+native SRAM port; the MXU has no external AXI4 master port.
 
 **The Transform boundary is capability- and source-controlled.** D18 approves
 only the pinned v4.2 Im2Col subset: signed INT8 CHW input, row-major
@@ -225,7 +226,7 @@ addressing. Its capability bit is zero; selecting it and starting must report
 `unavailable_operation` without SRAM traffic. A configuration string alone may
 not enable it, and no missing operation may return fake success.
 
-SA geometry and datatype are runtime-reportable, construction-time properties.
+MXU geometry and datatype are runtime-reportable, construction-time properties.
 The accepted bring-up pair is the verified v4.2 64x64 configuration. A 128x128
 selection is legal only after the NPU-team source, adapter, golden regression
 and resource/scalability checks pass. No configuration or manifest may call a
@@ -239,7 +240,7 @@ and resource/scalability checks pass. No configuration or manifest may call a
   rather than a convention. The check that keeps it true as the tree grows is a
   conservation one — the bytes the SRAM recorded must reconcile with the bytes
   the fabric carried, which `test_neo_external_bridge` asserts.
-* **No mutable global or static state.** SA, DMA and ImageTransform instances,
+* **No mutable global or static state.** MXU, DMA and Transform instances,
   and 16 cores in one simulation, share nothing. A `static` scratch buffer in a
   compute kernel is a defect even when tests pass single-threaded, because
   SystemC processes interleave at `wait()` boundaries.
@@ -251,7 +252,7 @@ and resource/scalability checks pass. No configuration or manifest may call a
 * Completion queues preserve the ordering the upstream protocol requires. The
   frozen NoC has `MaxUniqueIds = 1`, so responses are FIFO within reads and
   FIFO within writes on one port; nothing downstream may reorder them.
-* Tests exercise simultaneous SA / DMA / ImageTransform / external-inbound
+* Tests exercise simultaneous MXU / DMA / Transform / external-inbound
   activity, simultaneous core 0 / core 1, and concurrent NoC traffic. A
   concurrency test without a watchdog is not a test —
   a deadlock must fail, not hang the suite.
@@ -375,8 +376,8 @@ bound, so a bad configuration fails during elaboration rather than on the first
 transaction.
 
 Frozen values that must be rejected rather than accepted-and-warned:
-`cores != 2`, an SA count other than one per core, a DMA count other than one
-per core, an ImageTransform count other than one per core, SA geometry other
+`cores != 2`, an MXU count other than one per core, a DMA count other than one
+per core, a Transform count other than one per core, MXU geometry other
 than the explicitly supported 64x64 bring-up or promoted 128x128 target,
 `xlen != 32`, `vlen != 512`, `elen != 64`, or an RVV version other than
 `"1.0"`. A configuration requesting 128x128 must fail unless the selected NPU

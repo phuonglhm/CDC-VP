@@ -1,10 +1,11 @@
 # TPU_V3 Phase 2 — RISC-V VP++ Pre-Integration Audit
 
-> **Historical architecture notice (D14/D15, final 2026-08-12):** the CPU/RVV evidence,
+> **Historical architecture notice (D14/D15/D18/D20):** the CPU/RVV evidence,
 > fixes and closure gates in this audit remain valid. References to future SVM,
 > MXU or optional Sauria-backend work describe the pre-D14 plan and are
-> superseded by core SRAM, independent TPU_V3 DMA, one Sauria SA and one
-> Im2Col/Col2Im Transform engine. D15 splits its interconnect into 32-bit
+> superseded by core SRAM, independent TPU_V3 DMA, one MXU and one Transform
+> block. The MXU currently uses pinned Sauria v4.2 source; Transform currently
+> implements Im2Col and reports Col2Im unavailable. D15 splits its interconnect into 32-bit
 > AXI4-Lite control, native banked-SRAM local data and a bidirectional external
 > AXI4/NoC bridge.
 
@@ -789,11 +790,15 @@ later-phase work, retained so they are not mistaken for missing measurements:
   would compare more, but through two different debug interfaces, where a
   difference in the interfaces is indistinguishable from a difference in the
   models;
-* **full architectural reset is undecided.** `reset_cpu()` today is a restart at
-  the reset PC plus cache reinitialisation (F8); GPRs, FP/vector registers,
-  CSRs, `vstart`, `instret`, pending interrupts and privilege level survive it.
-  This needs its own decision before Phase 5 reset sequencing, not a Phase 5
-  discovery.
+* **full architectural reset — decided by D19 (2026-08-18), not yet
+  implemented.** `reset_cpu()` today is still a restart at the reset PC plus
+  cache reinitialisation (F8); GPRs, FP/vector registers, CSRs, `vstart`,
+  `instret`, pending interrupts and privilege level survive it. What changed is
+  that the contract is no longer open: D19 fixes the four state classes and the
+  gate, Phase 7 implements it, and D19 additionally records two things this
+  audit did not reach — the cycle accumulator behind `mcycle` is private, so a
+  mid-run reset re-adds the pre-reset count into simulated time, and a hart
+  that has executed `sys_exit` cannot be revived in this build.
 
 ## 10. Decisions taken in this audit
 
@@ -822,3 +827,8 @@ on the SVM counter semantics.
 P2-13 leaves the repository with two firmware memory layouts. That is a
 deliberate, dated trade-off and not a permanent one: Phase 5 should move the
 remaining three images to the real address map and delete `link.ld`.
+
+> **Not closed in Phase 5 (checked 2026-08-18).** `link.ld` still exists and
+> five images still link against it, so both layouts are still live. The item
+> is now carried in plan §21 rather than left implied by this paragraph; it
+> does not block Phase 7 and must close by the Phase 10 firmware work.

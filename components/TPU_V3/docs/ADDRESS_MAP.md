@@ -3,8 +3,8 @@
 Status: **NEO-CORE rebaseline approved by D14; D15 interconnect ratified
 2026-08-12; the C++ migration landed in Phase 3**.
 Top-level/chip/core aperture bases and strides are unchanged. The core-local
-MMIO subregions are renamed and reassigned below for one SA, one independent
-DMA and one ImageTransform engine. Changing an engine geometry or SRAM capacity
+MMIO subregions are renamed and reassigned below for one MXU, one independent
+DMA and one Transform block. Changing an engine geometry or SRAM capacity
 may not change a base address.
 
 The single executable source of truth is
@@ -120,7 +120,8 @@ access. The common physical addresses do not imply that these regions use one
 internal protocol.
 
 Each accelerator window contains its descriptor, status, error, IRQ-enable and
-performance registers. `SA_CONTROL` reports the instantiated geometry; 64x64
+performance registers. `SA_CONTROL` is the retained implementation/firmware
+identifier for the MXU control window; it reports the instantiated geometry. 64x64
 is the current v4.2 bring-up value and 128x128 is accepted only after the NPU
 team's promotion gate. `DMA_CONTROL` belongs to the standalone TPU_V3 DMA and
 must not expose Sauria DMA registers. `TRANSFORM_CONTROL` exposes independently

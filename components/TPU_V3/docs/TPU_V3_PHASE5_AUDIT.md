@@ -1,4 +1,8 @@
-# TPU_V3 Phase 5 audit: the Sauria v4.2 matrix source
+# TPU_V3 Phase 5 Audit — MXU Extraction from Sauria v4.2
+
+Under D20, **MXU** is the architectural block name. This audit continues to
+use **Sauria** where it identifies the pinned third-party implementation
+source, symbols, profiles, tests or excluded Sauria DMA.
 
 Phase 5's first task is "pin and record the NPU-team v4.2 source revision and
 redistribution policy", and its gate requires a dependency review proving the
@@ -765,4 +769,4 @@ Phase 5 evidence and was not modified.
 
 With the explicit limitations above (INT8/INT32 only, one 64x64 tile, no BF16,
 no 128x128 and no full ViT), Phase 5 is complete. The next implementation phase
-is Phase 6, ImageTransform extraction.
+is Phase 6, implementation of the Transform block's Im2Col capability.

@@ -1,8 +1,9 @@
-# TPU_V3 ImageTransform Model
+# TPU_V3 Transform Model
 
-This component is the Phase 6, Revision 1 **Im2Col-only** ImageTransform
-engine. It is a standalone SystemC/TLM IP intended to be composed into each
-NEO-CORE in Phase 7.
+This component implements the Phase 6, Revision 1 **Transform** block with an
+Im2Col-only capability. It is a standalone SystemC/TLM IP intended to be
+composed into each NEO-CORE in Phase 7. `image_transform` is the retained
+implementation identifier; D20 names the architectural block Transform.
 
 ## Capability
 
@@ -89,7 +90,7 @@ The default evidence root is
 The forward pipeline is:
 
 ```text
-DMA -> Im2Col -> Sauria matrix engine -> RVV
+DMA -> Transform (Im2Col) -> MXU -> RVV
 ```
 
 The matrix-engine result already represents the output feature map in matrix
