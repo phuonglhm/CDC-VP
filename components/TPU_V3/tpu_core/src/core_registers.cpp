@@ -50,6 +50,10 @@ const char* to_string(register_block block) noexcept
         return "transform";
     case register_block::counters:
         return "counters";
+    case register_block::chip:
+        return "chip";
+    case register_block::chip_counters:
+        return "chip_counters";
     }
     return "unknown";
 }
@@ -61,7 +65,9 @@ std::uint32_t mmio_register_file::status_value() const noexcept
     // block that does not exist. Shared by `b_transport` and `transport_dbg`
     // so the two cannot drift apart.
     return (block_ == register_block::core
-            || block_ == register_block::counters)
+            || block_ == register_block::counters
+            || block_ == register_block::chip
+            || block_ == register_block::chip_counters)
         ? status_implemented
         : 0u;
 }

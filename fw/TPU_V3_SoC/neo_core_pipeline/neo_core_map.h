@@ -19,8 +19,25 @@
 
 #define GLOBAL_RAM_BASE   0x80000000u
 
-/* chip 0, core 0. */
-#define CORE_BASE         0xC0000000u
+/* Chip 1, core 1 — deliberately neither zero.
+ *
+ * `mhartid` is `chip * 2 + core`, so this hart is 3. Running on chip 0 core 0
+ * would make the expected id 0, which is also what an uninitialised CSR reads:
+ * an integration that ignored the configured identity entirely would pass the
+ * check. Picking 1/1 rather than 0/1 also separates `chip * 2 + core` from
+ * `chip + core` and from plain `core`, which would give 2 and 1.
+ *
+ * Written as arithmetic on the map's own strides rather than as literals, so a
+ * changed position cannot leave a stale hard-coded address behind. The pipeline
+ * test asserts every one of these against `address_map.h` before it runs the
+ * image.
+ */
+#define CHIP_ID           1u
+#define CORE_ID           1u
+#define EXPECTED_MHARTID  (CHIP_ID * 2u + CORE_ID)
+
+#define CHIP_BASE         (0xC0000000u + CHIP_ID * 0x08000000u)
+#define CORE_BASE         (CHIP_BASE + CORE_ID * 0x02000000u)
 #define CORE_SRAM_BASE    (CORE_BASE + 0x00000000u)
 #define SA_CONTROL_BASE   (CORE_BASE + 0x01010000u)
 #define DMA_CONTROL_BASE  (CORE_BASE + 0x01020000u)
@@ -176,6 +193,13 @@
 #define SIM_RVV_CHECKSUM  (SIM_BASE + 20u)
 #define SIM_RVV_MAXIMUM   (SIM_BASE + 24u)
 #define SIM_RVV_NEGATIVES (SIM_BASE + 28u)
+/* `mhartid` as the firmware reads it.
+ *
+ * The identity is only useful if *firmware* can see it: ARCHITECTURE.md §2
+ * says chip and core index are derived from `mhartid`, never supplied
+ * separately, so a C++ test asserting the model's own accessor proves the
+ * model agrees with itself and not that the value reached the guest. */
+#define SIM_MHARTID       (SIM_BASE + 32u)
 
 #define SIM_EXIT_KIND_NORMAL  0u
 #define SIM_EXIT_KIND_TRAPPED 1u

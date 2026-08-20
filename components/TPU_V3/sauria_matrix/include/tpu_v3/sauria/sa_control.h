@@ -41,6 +41,18 @@ public:
 
     void reset();
 
+    /// Hold the engine's admission gate open or closed.
+    ///
+    /// Called by the NEO-CORE around its reset pulse. It is a plain method and
+    /// a plain flag on purpose: `reset()` returns in zero time while the
+    /// `i_rstn` signal it asserts only updates a delta later, so a gate that
+    /// read the signal would let a `START` issued in between straight through.
+    /// The engine's clocked modules are held in reset for that whole period,
+    /// so a job admitted there would be configured by writes they cannot latch
+    /// and would then run on a configuration nobody applied.
+    void hold_in_reset(bool held) noexcept { held_in_reset_ = held; }
+    bool held_in_reset() const noexcept { return held_in_reset_; }
+
     std::uint32_t status() const noexcept { return status_; }
     error_cause last_error() const noexcept { return error_cause_; }
     std::uint64_t job_count() const noexcept { return job_count_; }
@@ -73,6 +85,7 @@ private:
     std::uint64_t abort_count_ = 0;
     std::uint64_t overrun_count_ = 0;
     std::uint64_t c_bytes_done_ = 0;
+    bool held_in_reset_ = false;
 
     /// Wakes the sole writer of `irq`. Both the register paths and the clocked
     /// completion observer notify it; neither writes the signal itself.

@@ -19,25 +19,54 @@
 
 namespace cdc::cpu {
 
-namespace {
-
-// Fallback stack top, used only when no platform value is available. The
-// bare-metal startup sets `sp` itself, so this is a bring-up convenience and
-// not an architectural value.
-constexpr std::uint32_t kFallbackStackTop = 0x8001'0000u;
-
-/// Multi-hart bus lock for `lr`/`sc` and AMO.
+/// The LR/SC and AMO bus lock, shared by every hart that shares an address
+/// space.
 ///
 /// Upstream's `BusLock` lives in `vp/src/platform/common/bus.h`, which CDC-VP
-/// does not build. The interface is four methods, so owning it is cheaper than
+/// does not build. The interface is five methods, so owning it is cheaper than
 /// depending on the platform layer — and it has to be owned anyway, because the
-/// cores that share an address space must share **one** lock instance. This
-/// per-CPU default is correct only for a single-hart system; TPU_V3 replaces it
-/// with a chip-wide lock in Phase 6.
-struct local_bus_lock : bus_lock_if {
+/// lock is what makes an AMO atomic **between** harts, and a per-hart lock
+/// cannot exclude anybody.
+///
+/// The type is opaque to callers on purpose: it derives from a VP++ interface,
+/// and this backend's public header deliberately exposes no VP++ type. A
+/// platform creates one with `make_shared_bus_lock()` and hands the same
+/// `shared_ptr` to every hart on the chip.
+///
+/// ## Why the waiting loop re-checks
+///
+/// `released` wakes **every** waiter in the same delta. The loop is what makes
+/// that safe: the first waiter SystemC resumes takes the lock and runs on
+/// without yielding, so when the next one resumes inside `wait()` the
+/// re-evaluated condition sees the lock held again and waits once more. A
+/// straight-line "wait once, then take it" would hand the same lock to two
+/// harts.
+struct shared_bus_lock : bus_lock_if {
     bool locked = false;
     unsigned owner = 0;
     sc_core::sc_event released;
+
+    /// Harts attached to this instance. One for the per-CPU default; two for a
+    /// TPU chip. A test that means to prove chip-wide atomicity can assert it
+    /// is testing one lock rather than two that never met.
+    unsigned sharers = 0;
+
+    /// Times the lock was taken, and times a hart had to wait for it.
+    ///
+    /// `contentions` is the counter that makes an atomicity result mean
+    /// something: a contention test reporting zero here proves the harts never
+    /// overlapped, whatever its final value came out to be.
+    ///
+    /// It is incremented in `wait_until_unlocked()` rather than in `lock()`,
+    /// and that is where the waiting actually happens. Upstream's `mem.h` calls
+    /// `wait_for_access_rights()` on **every** load, store and instruction
+    /// fetch, so a hart that executes no atomic instruction at all still blocks
+    /// here while another hart holds the lock. Measured, not assumed: counting
+    /// inside `lock()` reported zero contention for a two-hart AMO run that was
+    /// demonstrably serialised, because the second hart never got as far as its
+    /// own `amoadd.w` -- it was already parked on its next instruction fetch.
+    std::uint64_t acquisitions = 0;
+    std::uint64_t contentions = 0;
 
     void lock(unsigned hart) override
     {
@@ -46,6 +75,7 @@ struct local_bus_lock : bus_lock_if {
         }
         locked = true;
         owner = hart;
+        ++acquisitions;
     }
 
     void unlock(unsigned hart) override
@@ -61,11 +91,26 @@ struct local_bus_lock : bus_lock_if {
 
     void wait_until_unlocked() override
     {
+        if (locked) {
+            ++contentions;
+        }
         while (locked) {
             sc_core::wait(released);
         }
     }
 };
+
+std::shared_ptr<shared_bus_lock> make_shared_bus_lock()
+{
+    return std::make_shared<shared_bus_lock>();
+}
+
+namespace {
+
+// Fallback stack top, used only when no platform value is available. The
+// bare-metal startup sets `sp` itself, so this is a bring-up convenience and
+// not an architectural value.
+constexpr std::uint32_t kFallbackStackTop = 0x8001'0000u;
 
 /// Minimal `clint_if`: reports simulation time as `mtime`.
 ///
@@ -182,7 +227,7 @@ struct riscv_vp_plusplus_cpu::impl {
     rv32::ISS iss;
     rv32::MMU mmu;
     rv32::CombinedMemoryInterface mem_if;
-    std::shared_ptr<local_bus_lock> bus_lock = std::make_shared<local_bus_lock>();
+    std::shared_ptr<shared_bus_lock> bus_lock = make_shared_bus_lock();
     simulation_time_clint clint;
     std::unique_ptr<core_runner> runner;
 
@@ -194,6 +239,7 @@ struct riscv_vp_plusplus_cpu::impl {
     {
         iss.systemc_name = instance_name;
         mem_if.bus_lock = bus_lock;
+        bus_lock->sharers = 1;
         runner = std::make_unique<core_runner>(
             sc_core::sc_module_name((instance_name + "_runner").c_str()), iss);
     }
@@ -402,6 +448,56 @@ bool riscv_vp_plusplus_cpu::holds_bus_lock() const
 {
     return impl_->bus_lock->is_locked(
         static_cast<unsigned>(impl_->iss.get_hart_id()));
+}
+
+void riscv_vp_plusplus_cpu::attach_bus_lock(
+    std::shared_ptr<shared_bus_lock> lock)
+{
+    if (!lock) {
+        throw std::invalid_argument(
+            std::string("riscv_vp_plusplus_cpu[") + name()
+            + "]::attach_bus_lock: the lock is null. Leaving the per-CPU "
+              "default in place is the way to ask for an unshared lock; a null "
+              "one would remove the lock every atomic instruction dereferences.");
+    }
+    if (initialised_) {
+        // Refuse rather than adapt (D5). The ISS holds `mem_if` and every
+        // atomic instruction it has already executed took the old lock;
+        // swapping it mid-run would silently drop an outstanding LR/SC
+        // reservation and could leave a waiter parked on an event nobody will
+        // notify again.
+        throw std::runtime_error(
+            std::string("riscv_vp_plusplus_cpu[") + name()
+            + "]::attach_bus_lock: the ISS is already running. The lock must be "
+              "attached during elaboration, before start_of_simulation().");
+    }
+
+    // The hart may hold the lock it is losing -- not while idle, but a caller
+    // could attach twice. Release it on the old instance so a waiter there is
+    // not parked forever.
+    impl_->bus_lock->unlock(static_cast<unsigned>(impl_->iss.get_hart_id()));
+    if (impl_->bus_lock->sharers > 0) {
+        --impl_->bus_lock->sharers;
+    }
+
+    impl_->bus_lock = std::move(lock);
+    impl_->mem_if.bus_lock = impl_->bus_lock;
+    ++impl_->bus_lock->sharers;
+}
+
+unsigned riscv_vp_plusplus_cpu::bus_lock_sharers() const
+{
+    return impl_->bus_lock->sharers;
+}
+
+std::uint64_t riscv_vp_plusplus_cpu::bus_lock_acquisitions() const
+{
+    return impl_->bus_lock->acquisitions;
+}
+
+std::uint64_t riscv_vp_plusplus_cpu::bus_lock_contentions() const
+{
+    return impl_->bus_lock->contentions;
 }
 
 void riscv_vp_plusplus_cpu::reset_architectural_state()

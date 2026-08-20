@@ -157,6 +157,23 @@ public:
         if (busy_) {
             return submit_status::busy;
         }
+        // Admission is refused while the engine is being held in reset.
+        //
+        // The clocked modules this engine configures are held then, so the
+        // `ConfigRegs` writes a job begins with would be dropped and the array
+        // would run with a configuration nobody applied. Refusing at admission
+        // makes that a status the caller can see instead of a wrong result it
+        // cannot explain.
+        //
+        // Two conditions, because one of them is not enough on its own.
+        // `i_rstn` is an `sc_signal`, so it still reads high for a delta after
+        // a core asserts reset — `tpu_core::reset()` returns inside that delta,
+        // and a `submit()` issued straight afterwards would slip through. The
+        // synchronous flag closes at the instant reset is requested; the signal
+        // covers a reset driven by anything that is not the owning core.
+        if (held_in_reset_ || !i_rstn.read()) {
+            return submit_status::engine_in_reset;
+        }
         const submit_status status =
             validate_gemm(work, static_cast<std::uint32_t>(Y_DIM),
                           static_cast<std::uint32_t>(X_DIM), config_.sram_base,
@@ -194,6 +211,20 @@ public:
         submitted_.notify(sc_core::SC_ZERO_TIME);
         return submit_status::accepted;
     }
+
+    /// Hold or release the engine's admission gate, synchronously.
+    ///
+    /// The owning NEO-CORE calls this around its reset pulse. It exists in
+    /// addition to `i_rstn` rather than instead of it: the signal is what the
+    /// clocked modules watch, and this is what closes the window between a
+    /// reset being requested and that signal updating a delta later.
+    ///
+    /// Not on `sauria_matrix_if`. A defaulted virtual that silently did
+    /// nothing is exactly the shape decision record D5 rejected for CPU
+    /// identity, and for the same reason: a composition that forgot to wire it
+    /// would elaborate and look correct.
+    void hold_in_reset(bool held) noexcept { held_in_reset_ = held; }
+    bool held_in_reset() const noexcept { return held_in_reset_; }
 
     void abort() override
     {
@@ -625,6 +656,16 @@ private:
         host_wren_.write(false);
         host_wmask_.write(::sauria::host_mask_t());
         wait();
+        if (!i_rstn.read()) {
+            // The line dropped part-way through a configuration write. The
+            // modules being written cannot latch it, so the job must not carry
+            // on as though they had: `wait_for_done()` already abandons on this
+            // condition, and admission already refuses while it is low, but a
+            // reset landing *between* those two would otherwise leave the array
+            // configured by writes that went nowhere.
+            last_error_ = error_cause::aborted;
+            return false;
+        }
         return owns_active_job(job_generation);
     }
 
@@ -687,6 +728,7 @@ private:
     adapter_config config_;
 
     sc_core::sc_signal<bool> soft_reset_{"soft_reset"};
+    bool held_in_reset_ = false;
     sc_core::sc_signal<bool> start_{"start"};
     sc_core::sc_signal<bool> done_{"done"};
     sc_core::sc_signal<bool> deadlock_{"deadlock"};

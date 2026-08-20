@@ -6,23 +6,31 @@ VLEN 512), one shared core SRAM, one MXU, one independent DMA and one Transform
 block, behind the split control / local-data /
 external interconnect of decision record D15.
 
-**Status: Phase 6 of 12 complete.** Configuration, the address map, packaging,
+**Status: Phase 8 of 12 complete.** Configuration, the address map, packaging,
 the RV32GCV backend, sparsely page-backed core SRAM, the three NEO-CORE
 fabrics, independent DMA, extracted 64x64 INT8/INT32 MXU and the Transform
-component with its Im2Col capability exist and are gated. Nothing is composed
-into a NEO-CORE yet — that is Phase 7 — and the platform manifest must still
-report every unlinked component honestly.
+component with its Im2Col capability exist and are gated; Phase 7 composed them
+into a `tpu_core`, where one firmware ELF boots and drives every engine through
+MMIO (`DMA -> Transform (Im2Col) -> MXU -> RVV`); and Phase 8 composes two of
+those into a `tpu_chip` — distinct hart ids, a chip-local fabric that answers
+core-to-core traffic without touching the mesh, one aggregated NoC boundary, and
+one LR/SC and AMO bus lock shared by both harts (D22). Attaching a chip to the
+mesh is Phase 9. The platform itself still instantiates the memories only, and
+decision record D21 keeps a NEO-CORE binary internal, so the packaged manifest
+continues to report the MXU as neither linked nor selectable.
 
 ## Where to start
 
 | Document | What it answers |
 | --- | --- |
 | [docs/TPU_V3_IMPLEMENTATION_PLAN.md](docs/TPU_V3_IMPLEMENTATION_PLAN.md) | what is being built, in what order, and what each phase gate requires |
-| [docs/TPU_V3_DECISION_RECORD.md](docs/TPU_V3_DECISION_RECORD.md) | D1–D20, approved. The authority where it and any other document disagree |
+| [docs/TPU_V3_DECISION_RECORD.md](docs/TPU_V3_DECISION_RECORD.md) | D1–D22, approved. The authority where it and any other document disagree |
 | [docs/TPU_V3_PHASE0_AUDIT.md](docs/TPU_V3_PHASE0_AUDIT.md) | measured facts: revisions, toolchain, licences, and the constraints the existing NoC imposes. P0-6, P0-7 and P0-9 are superseded by the decision record |
 | [docs/TPU_V3_PHASE2_AUDIT.md](docs/TPU_V3_PHASE2_AUDIT.md) | the RV32GCV backend: findings F1–F13, the patch series, and the Spike differential result |
 | [docs/TPU_V3_PHASE5_AUDIT.md](docs/TPU_V3_PHASE5_AUDIT.md) | the 64x64 MXU and its pinned Sauria v4.2 implementation source |
 | [docs/TPU_V3_PHASE6_AUDIT.md](docs/TPU_V3_PHASE6_AUDIT.md) | the Transform block's pinned Im2Col source/layout/golden evidence and explicit Col2Im boundary |
+| [docs/TPU_V3_PHASE7_AUDIT.md](docs/TPU_V3_PHASE7_AUDIT.md) | the NEO-CORE composition: the defects composing surfaced, and the D19 reset implementation |
+| [docs/TPU_V3_PHASE8_AUDIT.md](docs/TPU_V3_PHASE8_AUDIT.md) | the dual-core chip: multi-hart atomicity evidence, chip-fabric arbitration, and what closed D8 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | what the machine is — hierarchy, data paths, ordering, fidelity levels |
 | [docs/ADDRESS_MAP.md](docs/ADDRESS_MAP.md) | every region, and the rules the map satisfies |
 | [docs/INTERFACE_CONTRACT.md](docs/INTERFACE_CONTRACT.md) | the TLM rules every component here must follow, with a reviewer checklist |
@@ -68,7 +76,8 @@ cd build-tpu-v3 && ctest -L tpu_v3 --output-on-failure
 | `cdc::components::tpu_v3_neo_dma` | 4 | the independent NEO DMA — see [neo_dma/DMA_MODEL.md](neo_dma/DMA_MODEL.md) |
 | `cdc::components::tpu_v3_sauria_matrix` | 5 | MXU implementation: `sauria_matrix_if` plus the extracted Sauria v4.2 64x64 matrix engine |
 | `cdc::components::tpu_v3_image_transform` | 6 | Transform implementation: pinned CHW INT8 Im2Col capability; Col2Im is explicitly unavailable — see [image_transform/IMAGE_TRANSFORM_MODEL.md](image_transform/IMAGE_TRANSFORM_MODEL.md) |
-| `cdc::components::tpu_v3_chip` | 8 | two cores and the chip-local fabric |
+| `cdc::components::tpu_v3_chip_fabric` | 8 | the chip-local fabric: aperture decode, core-to-core bypass, per-port rotating-priority arbitration, one external boundary |
+| `cdc::components::tpu_v3_tpu_chip` | 8 | the chip composition: two NEO-COREs, distinct hart ids, chip register windows, one shared LR/SC and AMO bus lock |
 | `cdc::components::tpu_v3_noc_endpoint` | 9 | placement, chunking, local bypass |
 
 A directory appears when its phase starts. There are no placeholder libraries.
@@ -77,13 +86,22 @@ The RV32GCV backend lives outside this tree, in
 [`cpu_models/riscv_vp_plusplus`](../../cpu_models/riscv_vp_plusplus): it is a
 CPU model like the others, not a TPU_V3 component.
 
-## Six things worth knowing before reading any code
+## Seven things worth knowing before reading any code
 
 **At most 8 chips / 16 cores — the Revision 1 backend limit.** The frozen
 FlooNoC chimney manager id is three bits, so `noc_interconnect` accepts at most
 eight upstream initiators, and each chip presents exactly one aggregated
 initiator. A 32-core system means 16 chips and needs the coordinated change
 listed in decision D2, including a redesigned address map.
+
+**Two NEO-COREs per chip share one bus lock, and it locks the whole bus.**
+`lr`/`sc` and AMO exclude harts through a lock the CPU backend holds, and the
+per-hart default excludes nobody — two harts each holding their own land exactly
+half their increments. `tpu_chip` creates one and attaches it to both (D22).
+Upstream checks access rights on *every* load, store and fetch, so while one
+hart holds it the other is blocked at its next instruction fetch. That is a
+faithful model of a locked bus and a pessimistic model of a coherent
+interconnect; do not read throughput from a run with contended atomics.
 
 **Multi-chip traffic is blocked today.** `noc_interconnect` refuses any target
 on a node that hosts any upstream port, and a TPU chip needs both. One chip

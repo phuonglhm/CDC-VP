@@ -27,6 +27,19 @@ set_tests_properties(tpu_v3_external_bridge PROPERTIES
     LABELS "tpu_v3;unit;fabric"
     TIMEOUT 300)
 
+# Phase 8. The external bridge aggregates two named initiators onto one socket,
+# and until Phase 8 nothing arbitrated them. It is a separate executable because
+# it needs a target that actually waits, which is the only condition in which
+# the arbiter does anything -- the Phase 3 bridge bench deliberately has none.
+add_executable(test_tpu_v3_outbound_arbitration test_neo_outbound_arbitration.cpp)
+target_link_libraries(test_tpu_v3_outbound_arbitration PRIVATE
+    cdc::components::tpu_v3_tpu_core)
+add_test(NAME tpu_v3_outbound_arbitration
+    COMMAND test_tpu_v3_outbound_arbitration)
+set_tests_properties(tpu_v3_outbound_arbitration PROPERTIES
+    LABELS "tpu_v3;unit;fabric"
+    TIMEOUT 300)
+
 # Phase 7. The hart port is the first component a NEO-CORE composition needs,
 # so its gate runs before anything is composed around it.
 add_executable(test_tpu_v3_hart_port test_neo_hart_port.cpp)

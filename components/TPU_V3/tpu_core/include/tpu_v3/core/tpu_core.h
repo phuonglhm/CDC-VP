@@ -169,7 +169,22 @@ public:
     /// accepted, and a queued old beat completing after a reset would be worse
     /// than either alternative (D17).
     ///
-    /// Must be called from a SystemC process: it drives interrupt signals.
+    /// Consumes **no simulated time**: it returns with every component reset,
+    /// atomically, so nothing can observe a half-reset core or repopulate one
+    /// before the call returns. It must run inside a SystemC process because it
+    /// drives signals, but a method is fine.
+    ///
+    /// `i_rstn` is asserted here and released one clock period later by
+    /// `release_reset()`, because a clocked module needs the line low across an
+    /// edge and that cannot happen in zero time. While it is low the matrix
+    /// adapter abandons any operation with `error_cause::aborted`, so work
+    /// started in that period fails cleanly rather than running against modules
+    /// held in reset.
+    ///
+    /// Core SRAM keeps its contents. That is not an omission — see the note in
+    /// `tpu_core.cpp`: every engine promises that committed bytes stay
+    /// committed and readable after a reset, and wiping the memory they were
+    /// committed to would make those registers describe data that is gone.
     void reset();
 
     std::string report() const;
@@ -177,6 +192,8 @@ public:
 private:
     void aggregate_irq();
     void drive_hart_irq();
+    void release_reset();
+    void drive_reset_line();
 
     tpu_core_config config_;
 
@@ -184,6 +201,11 @@ private:
     // references to the ones above them.
     sc_core::sc_clock clock_;
     sc_core::sc_signal<bool> reset_n_;
+    /// Deassertion of `reset_n_`, one clock period after `reset()` asserts it.
+    sc_core::sc_event reset_release_;
+    /// Wakes `drive_reset_line()`, the sole writer of `reset_n_`.
+    sc_core::sc_event reset_line_;
+    bool reset_low_ = false;
 
     sram::core_sram sram_;
     neo_local_sram_fabric fabric_;

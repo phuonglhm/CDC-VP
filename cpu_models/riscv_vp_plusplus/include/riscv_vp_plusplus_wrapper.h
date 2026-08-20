@@ -54,6 +54,26 @@ class ISS;
 
 namespace cdc::cpu {
 
+/// The LR/SC and AMO bus lock, opaque here on purpose.
+///
+/// It derives from a VP++ interface type and this header exposes no VP++ type,
+/// so it is declared and never defined outside the implementation. A platform
+/// never touches its members; it creates one and hands it out.
+struct shared_bus_lock;
+
+/// One lock for one set of harts that share an address space.
+///
+/// **Every hart that shares memory must share the same instance.** A hart's own
+/// default lock excludes nobody, so two harts each holding their own would both
+/// enter the load-modify-store of an AMO on the same word and one update would
+/// be lost. That is not a latent risk with a blocking target: an AMO yields
+/// inside its load transaction, which is exactly when the other hart runs.
+///
+/// The scope is the address space, not the chip. TPU_V3 gives one lock to the
+/// two NEO-COREs of a chip because Revision 1 has no cross-chip atomics;
+/// `tpu_chip` is what creates it (plan §11.9, decision record D8).
+std::shared_ptr<shared_bus_lock> make_shared_bus_lock();
+
 class riscv_vp_plusplus_cpu : public cpu_base {
 public:
     /// `config.hart_id` and `config.reset_pc` are honoured, not ignored
@@ -83,8 +103,20 @@ public:
     /// ELF entry point is used. With neither, construction already failed.
     void load_elf(const std::string& path) override;
 
-    /// **Restart at the reset PC and reinitialise the caches. This is not a
-    /// full architectural reset**, and no test or report may treat it as one.
+    /// **The D19 four-class architectural reset.**
+    ///
+    /// Identity and configuration preserved, specification-defined fields set,
+    /// `sp` written by `init()`, the remainder zeroed for reproducibility. It
+    /// also releases the LR/SC reservation and bus lock, flushes the MMU TLB,
+    /// and wakes a hart parked in `wfi`. Gated by `architectural_reset`.
+    ///
+    /// Two limitations D19 records: it **throws** on a hart that has executed
+    /// `sys_exit`, which cannot be revived in this build; and a hart idling in
+    /// `wfi` keeps its reset state but does not restart, because the wait
+    /// re-checks an interrupt condition the reset has just cleared.
+    ///
+    /// What follows is why the implementation has the shape it does — the
+    /// upstream constraints are unchanged even though the contract is now met.
     ///
     /// Upstream marks the ISS program counter protected — "must not modified
     /// directly (would break FastISS)" — so the only sanctioned way to place it
@@ -99,8 +131,8 @@ public:
     /// for the hierarchical platform/chip/core reset `ARCHITECTURE.md` §6
     /// requires. Two harts restarted this way would retain stale register and
     /// CSR state, and a reset test built on it would pass while proving
-    /// nothing. Closing that gap is an open decision, due before Phase 5 wires
-    /// core reset — see `TPU_V3_PHASE2_AUDIT.md` F8.
+    /// nothing. That gap was audit finding F8 (`TPU_V3_PHASE2_AUDIT.md`); D19
+    /// closed it and the four classes below are what fills it.
     void reset_cpu() override;
 
     std::uint64_t get_pc() const override;
@@ -167,6 +199,34 @@ public:
 
     /// True while this hart holds the bus lock used by `lr`/`sc` and AMO.
     bool holds_bus_lock() const;
+
+    // ── the shared bus lock ──────────────────────────────────────────────────
+
+    /// Replace this hart's private lock with one shared with its siblings.
+    ///
+    /// Must be called during elaboration, before `start_of_simulation()`;
+    /// afterwards it throws, because the ISS has already executed atomics
+    /// against the old instance. A CPU that is never given one keeps its own,
+    /// which is correct for a single-hart platform and correct for nothing
+    /// else.
+    void attach_bus_lock(std::shared_ptr<shared_bus_lock> lock);
+
+    /// Harts attached to the lock this hart is using. One means unshared.
+    ///
+    /// Exposed so a multi-hart gate can state that it is testing one lock. A
+    /// contention test run against two unshared locks passes or fails for
+    /// reasons that have nothing to do with atomicity.
+    unsigned bus_lock_sharers() const;
+
+    /// Times any hart took that lock.
+    std::uint64_t bus_lock_acquisitions() const;
+
+    /// Times a hart had to wait because another hart held it.
+    ///
+    /// The number that decides whether an atomicity result means anything: a
+    /// contention test that ends with zero here never overlapped the harts, so
+    /// its correct-looking answer proves nothing.
+    std::uint64_t bus_lock_contentions() const;
 
 private:
     void start_of_simulation() override;

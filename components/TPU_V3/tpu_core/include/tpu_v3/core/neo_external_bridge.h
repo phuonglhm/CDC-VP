@@ -100,6 +100,16 @@ public:
         tlm_utils::simple_target_socket_tagged<neo_external_bridge>>
         local_outbound;
     /// To the chip-local fabric or NoC endpoint.
+    ///
+    /// **One socket for two initiators, so the bridge arbitrates between
+    /// them.** That is not an optimisation, it is what makes the downstream
+    /// invariant true: the chip fabric treats each core as one initiator and
+    /// allows it one transaction at a time, and without arbitration here the
+    /// hart and the DMA can both be inside this call the moment anything
+    /// downstream blocks. It cannot happen while every target merely annotates
+    /// delay, which is why it stayed invisible until a chip fabric in
+    /// `arbitrated` mode existed — and it would have surfaced again at the
+    /// first real NoC hop.
     tlm_utils::simple_initiator_socket<neo_external_bridge> external;
 
     const core_aperture_spec& aperture() const noexcept { return spec_; }
@@ -133,6 +143,19 @@ public:
     }
     /// Outbound requests attributed to one initiator.
     std::uint64_t outbound_requests(outbound_initiator initiator) const;
+
+    /// Outbound requests that found the shared external port occupied by the
+    /// other initiator. The back-pressure between a core's hart and its DMA,
+    /// and the number that says whether a run exercised the arbiter at all.
+    std::uint64_t outbound_conflicts() const noexcept
+    {
+        return outbound_conflicts_;
+    }
+
+    /// Grants the external port issued to one initiator. Rotating priority,
+    /// so this is what makes fairness between the hart and the DMA measurable
+    /// rather than claimed.
+    std::uint64_t outbound_grants(outbound_initiator initiator) const;
     /// Outbound accesses refused for naming an address inside this core.
     ///
     /// This should stay at zero in a correct system. It is counted rather than
@@ -156,6 +179,22 @@ private:
                               sc_core::sc_time& delay);
     unsigned int outbound_transport_dbg(int id,
                                         tlm::tlm_generic_payload& trans);
+
+    /// Block until this initiator owns the shared external port, then hold it
+    /// across the downstream call.
+    ///
+    /// Returns false when a `reset()` abandoned the request while it waited,
+    /// in which case the port must **not** be released: reset already did, and
+    /// it may already belong to the other initiator.
+    ///
+    /// Waiting here is safe in every configuration: the callers are the hart's
+    /// own thread and the DMA's worker, both of which may `wait()`. The rule
+    /// that a component on the NoC-reachable path must never wait applies to
+    /// `inbound`, which does not pass through here.
+    bool acquire_external(unsigned initiator, sc_core::sc_time& delay,
+                          std::uint64_t request_generation);
+    void release_external();
+    unsigned select_outbound_waiter() const noexcept;
 
     bool in_sram(std::uint64_t address, std::uint64_t length) const noexcept;
     bool in_core(std::uint64_t address, std::uint64_t length) const noexcept;
@@ -185,6 +224,23 @@ private:
     std::uint64_t outbound_requests_ = 0;
     std::uint64_t outbound_by_initiator_[outbound_initiator_count] = {};
     std::uint64_t outbound_local_refused_ = 0;
+
+    // ── the shared external port ─────────────────────────────────────────────
+    bool external_busy_ = false;
+    bool external_waiting_[outbound_initiator_count] = {};
+    /// Rotating priority: the next grant starts one past this.
+    unsigned external_last_granted_ = outbound_initiator_count - 1;
+    /// Notified whenever the port frees or a waiter appears, so a blocked
+    /// initiator re-evaluates instead of polling.
+    sc_core::sc_event external_changed_;
+    std::uint64_t outbound_grants_[outbound_initiator_count] = {};
+    std::uint64_t outbound_conflicts_ = 0;
+
+    /// Bumped by `reset()`. A request carrying an older generation abandons
+    /// itself at its next resume point rather than waiting for a grant that
+    /// will never come — the defect the local SRAM fabric had once, and the
+    /// same fix.
+    std::uint64_t generation_ = 0;
 };
 
 // `to_tlm_response`, the payload rules and the byte-enable expansion now live

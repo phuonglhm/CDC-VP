@@ -125,7 +125,13 @@ inline constexpr std::uint64_t implemented_end = 0x088;
 inline constexpr std::uint32_t identity_value = 0x54503353;
 
 /// Bumped when the programming model changes in a way firmware can observe.
-inline constexpr std::uint32_t model_version = 1;
+///
+/// 2 (2026-08-20): `error_cause::engine_in_reset` was added and `START` gained
+/// a refusal path — a job issued while the core holds the engine in reset is
+/// rejected rather than admitted. Both are visible to firmware, so a driver
+/// reading `VERSION` has to be able to tell this ABI from version 1, where
+/// cause 13 did not exist and that `START` would have been accepted.
+inline constexpr std::uint32_t model_version = 2;
 
 namespace control_bit {
 /// Latch the configured job and begin. Ignored while `BUSY`, and that is
@@ -223,6 +229,13 @@ enum class error_cause : std::uint32_t {
     /// Not a failure of the job description. `committed_bytes()` is the account
     /// of how much of C was written before it stopped (D17).
     aborted = 12,
+    /// `START` while the hardware reset line is asserted.
+    ///
+    /// Distinct from `aborted`, which says a job that had begun was abandoned.
+    /// This one never began: the clocked modules the engine configures were
+    /// being held in reset, so admission was refused. Firmware's response is a
+    /// retry once reset deasserts, not an investigation of the descriptor.
+    engine_in_reset = 13,
 };
 
 } // namespace cdc::components::tpu_v3::sauria

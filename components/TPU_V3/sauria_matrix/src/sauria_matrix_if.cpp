@@ -40,6 +40,11 @@ const char* to_string(submit_status status) noexcept
     case submit_status::staging_capacity_exceeded:
         return "refused: the GEMM fits one array pass but its K dimension "
                "exceeds this engine's private operand-staging capacity";
+    case submit_status::engine_in_reset:
+        return "refused: the hardware reset line is asserted, so the clocked "
+               "modules this engine configures are held in reset. Retry once "
+               "reset deasserts -- a job admitted now would be configured by "
+               "writes those modules cannot latch";
     }
     return "unknown submit status";
 }

@@ -89,7 +89,25 @@ public:
                            const unsigned char* in,
                            const unsigned char* strobes);
 
+    /// Full component reset: releases the page-backed storage, restoring the
+    /// deterministic all-zero state (D6), **and** clears the counters.
+    ///
+    /// This is a component-level and platform-initialisation operation. A
+    /// NEO-CORE reset does *not* call it — see `reset_counters()`.
     void reset();
+
+    /// Clears the workload counters and leaves the stored data alone — and
+    /// leaves `debug_bytes_written()` alone with it, because that counter is
+    /// evidence a loader ran and the bytes it loaded are still there.
+    ///
+    /// A core reset needs exactly this. It must not erase the memory, because
+    /// every engine in the core reports bytes it already committed to that
+    /// memory as still committed after a reset (plan §11.5, D17) — wiping it
+    /// would make those registers describe data that is gone. But it must
+    /// clear the counters, because `neo_local_sram_fabric` and every requester
+    /// open a new counter epoch on reset, and storage counters left running
+    /// across that boundary would no longer reconcile with the fabric's.
+    void reset_counters();
 
     // ── counters ─────────────────────────────────────────────────────────────
     //

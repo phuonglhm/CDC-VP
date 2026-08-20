@@ -269,6 +269,8 @@ error_cause sa_control::cause_of(submit_status status) noexcept
     case submit_status::datatype_unsupported:
         return error_cause::datatype_unsupported;
     case submit_status::busy: return error_cause::overrun;
+    case submit_status::engine_in_reset:
+        return error_cause::engine_in_reset;
     case submit_status::accepted:
     case submit_status::accumulation_unsupported:
         return error_cause::none;
@@ -322,7 +324,9 @@ bool sa_control::write_register(std::uint64_t offset, std::uint32_t value)
             abandoned_accounting_open_ = false;
             c_bytes_done_ = 0;
             timing_ = {};
-            const submit_status submitted = engine_.submit(programmed_);
+            const submit_status submitted = held_in_reset_
+                ? submit_status::engine_in_reset
+                : engine_.submit(programmed_);
             if (submitted == submit_status::accepted) {
                 status_ |= status_bit::busy;
                 ++job_count_;

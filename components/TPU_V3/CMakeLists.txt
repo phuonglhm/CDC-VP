@@ -23,7 +23,8 @@
 #   Phase 5  sauria_matrix        <- the pinned v4.2 int8_64x64 engine,
 #                                    behind CDC_BUILD_TPU_V3_SAURIA_MATRIX
 #   Phase 6  image_transform
-#   Phase 8  tpu_chip
+#   Phase 8  tpu_chip           <- two NEO-COREs, the chip-local fabric,
+#                                    one aggregated NoC manager, one bus lock
 #   Phase 9  noc_endpoint
 
 add_subdirectory(common)
@@ -41,3 +42,8 @@ add_subdirectory(sauria_matrix)
 # on. Im2Col is implemented from the pinned v4.2 semantics; Col2Im remains an
 # explicit unavailable capability until the NPU team supplies it.
 add_subdirectory(image_transform)
+
+# Phase 8. The chip-local fabric always builds; the `tpu_chip` composition
+# inside it is gated on the same three things `tpu_v3_neo_core` is, because it
+# is two NEO-COREs.
+add_subdirectory(tpu_chip)

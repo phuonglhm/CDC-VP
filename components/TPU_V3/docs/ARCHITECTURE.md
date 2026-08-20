@@ -51,6 +51,8 @@ tpu_v3_soc                                     platform, not reusable IP
 ├── global RAM / HBM            (existing)     memory_tlm
 └── tpu_chip[0..N-1]            N <= 8
     ├── chip_local_fabric                      decode + arbitration
+    ├── chip_control / chip_counters           the chip's own register windows
+    ├── shared bus lock                        one per chip, for lr/sc and AMO
     ├── chip_noc_endpoint                      one aggregated NoC manager
     ├── tpu_core[0]
     └── tpu_core[1]
@@ -240,6 +242,29 @@ survivable. The VP++ external path is architecturally required because its
 reset PC is in global boot ROM; NEO DMA is the bulk mover, but it is not the
 only source that may cross the external boundary.
 
+**Chip path.** The chip-local fabric decodes four outcomes for a core's outbound
+traffic: the sibling core, a chip register window, out of the chip, or refused.
+A core naming its *own* aperture is refused and counted — the core's external
+bridge already refuses it, and the fabric refusing it again is what makes a
+broken core decoder visible as a number rather than as traffic in the mesh. An
+inbound access may name anything inside the chip and nothing outside it:
+forwarding a foreign address back out would turn one mis-route into a loop.
+
+Like the local SRAM plane, the chip fabric has an `annotated` and an
+`arbitrated` mode, for the same reason (D16). `annotated` never blocks and is
+what a chip attached to the detailed NoC must use; `arbitrated` blocks on a real
+rotating-priority arbiter per downstream port, and is the only mode in which
+round-robin fairness is a behaviour rather than an estimate.
+
+**Atomics.** `lr`/`sc` and AMO exclude harts through a bus lock the CPU backend
+holds. It is **one lock per chip**, created by `tpu_chip` and attached to both
+harts during elaboration (D22); a per-hart lock excludes nobody, and two harts
+holding their own land exactly half their increments. The lock serialises every
+access from other harts — upstream checks access rights on each load, store and
+instruction fetch — so it models a locked bus, not a coherent interconnect. The
+scope is the shared address space; Revision 1 has no cross-chip atomics, which
+is the only reason chip and address space coincide.
+
 ## 4. Memory model and ordering
 
 * One coherent backing store per core SRAM. No caches anywhere in the initial
@@ -329,9 +354,10 @@ RTL equivalence.
 | `neo_hart_port` | decoding the hart's one TLM socket to the three planes, expanding byte enables to native strobes, `neo_requester::cpu` attribution | `wait()`; split an access that straddles two planes; reassemble vector boundaries |
 | `neo_control_fabric` | 32-bit AXI4-Lite MMIO decode and response routing | carry accelerator bulk data; claim signal-level AXI accuracy |
 | `neo_local_sram_fabric` | native per-bank arbitration, back-pressure, ownership and counters | become a full AXI data crossbar; expose backing pointers |
-| `external_bridge` | adapt outbound VP++/DMA and inbound remote traffic at the chip/NoC boundary | let MXU/Transform bypass local SRAM staging or inbound traffic bypass arbitration |
+| `external_bridge` | adapt outbound VP++/DMA and inbound remote traffic at the chip/NoC boundary; arbitrate its two named outbound initiators onto the core's one external socket | let MXU/Transform bypass local SRAM staging or inbound traffic bypass arbitration; put two initiators on the external socket at once |
 | `tpu_core` | composition, IDs, IRQ aggregation, reset sequencing | implement component behaviour |
-| `tpu_chip` | two cores, chip aperture, outbound arbitration, inbound decode | expose more than one NoC manager |
+| `chip_local_fabric` | chip aperture decode, core-to-core bypass, per-port rotating-priority arbitration, chip-level counters | forward a chip-local address to the mesh; serve an inbound access to a foreign address |
+| `tpu_chip` | two cores, distinct hart ids, chip aperture, outbound arbitration, inbound decode, one shared bus lock | expose more than one NoC manager; aggregate interrupts across cores |
 | `chip_noc_endpoint` | placement, burst chunking, ownership, bypass | make TPU-specific changes inside routing primitives |
 | `tpu_v3_soc` (platform) | config parsing, instantiation, placement, firmware, metrics, packaging | contain reusable IP behaviour |
 
@@ -369,15 +395,17 @@ prerequisite**, not a problem to discover during multi-chip traffic. Background 
 **CPU identity/reset-PC prerequisite is closed.** Decision record D5 added
 `hart_id` and `reset_pc` to `cdc::cpu::cpu_config` as static construction-time
 properties, and the Phase 2 wrapper/tests prove them. Full architectural reset
-semantics are settled by decision record **D19**, ratified 2026-08-18: a full deterministic reset in
+semantics are settled by decision record **D19**, ratified 2026-08-18 and
+implemented in Phase 7: a full deterministic reset in
 the VP++ wrapper, identity and configuration preserved, specification-defined
 fields set per the privileged specification, and the remaining state zeroed for
 reproducibility rather than because the specification requires it. The
-register, CSR and vector state needs **no upstream patch**; that claim is
-deliberately not extended to the whole reset, because the cycle counter has no
-wrapper-only answer yet and D19 keeps a fourth D8-mechanism patch open for that
-one item. `reset_cpu()` is still a restart plus cache reinitialisation in the
-code; Phase 7 implements and gates the contract.
+register, CSR and vector state needed **no upstream patch**; the cycle counter
+did, and `0004-d19-cycle-baseline-survives-reset.patch` supplies it under the
+D8 mechanism. Two limitations stay recorded: a hart that has executed
+`sys_exit` cannot be revived, and a hart idling in `wfi` keeps its reset state
+but does not restart. `reset_cpu()` performs the contract and
+`architectural_reset` gates it.
 
 **RISC-V VP++ is a separate backend, not the existing Bremen wrapper.** TPU_V3 uses
 a thin wrapper around the RV32+RVV ISS portions of

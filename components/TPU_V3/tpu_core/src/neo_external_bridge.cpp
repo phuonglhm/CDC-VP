@@ -279,7 +279,79 @@ void neo_external_bridge::outbound_b_transport(int id,
 
     ++outbound_requests_;
     ++outbound_by_initiator_[static_cast<unsigned>(id)];
+
+    const std::uint64_t request_generation = generation_;
+    if (!acquire_external(static_cast<unsigned>(id), delay,
+                          request_generation)) {
+        trans.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
+        return;
+    }
+
     external->b_transport(trans, delay);
+
+    // Released only if this request still owns it. A reset during the
+    // downstream call already released the port and may have granted it to the
+    // other initiator; clearing `external_busy_` now would put both of them on
+    // it at once.
+    if (generation_ == request_generation) {
+        release_external();
+    }
+}
+
+unsigned neo_external_bridge::select_outbound_waiter() const noexcept
+{
+    // Rotating priority, starting one past the last initiator granted.
+    // Deterministic is the requirement: an arbiter whose outcome depends on
+    // host scheduling makes every contention measurement unreproducible.
+    for (unsigned step = 1; step <= outbound_initiator_count; ++step) {
+        const unsigned candidate
+            = (external_last_granted_ + step) % outbound_initiator_count;
+        if (external_waiting_[candidate]) {
+            return candidate;
+        }
+    }
+    return outbound_initiator_count;
+}
+
+bool neo_external_bridge::acquire_external(unsigned initiator,
+                                           sc_core::sc_time& delay,
+                                           std::uint64_t request_generation)
+{
+    (void)delay;
+    const auto abandoned = [&] { return generation_ != request_generation; };
+
+    external_waiting_[initiator] = true;
+    // A new waiter can change who the rotating priority selects, so whoever is
+    // already blocked has to re-evaluate.
+    external_changed_.notify(sc_core::SC_ZERO_TIME);
+
+    if (external_busy_ || select_outbound_waiter() != initiator) {
+        // Counted once per request: "this request found the port occupied",
+        // the back-pressure event, not the number of times the process happened
+        // to be rescheduled.
+        ++outbound_conflicts_;
+        while (external_busy_ || select_outbound_waiter() != initiator) {
+            sc_core::wait(external_changed_);
+            if (abandoned()) {
+                // `reset()` already cleared the waiting flags and released the
+                // port; touching them now would corrupt whoever was granted
+                // next.
+                return false;
+            }
+        }
+    }
+
+    external_waiting_[initiator] = false;
+    external_busy_ = true;
+    external_last_granted_ = initiator;
+    ++outbound_grants_[initiator];
+    return true;
+}
+
+void neo_external_bridge::release_external()
+{
+    external_busy_ = false;
+    external_changed_.notify(sc_core::SC_ZERO_TIME);
 }
 
 unsigned int
@@ -312,6 +384,12 @@ neo_external_bridge::outbound_requests(outbound_initiator initiator) const
     return outbound_by_initiator_[static_cast<unsigned>(initiator)];
 }
 
+std::uint64_t
+neo_external_bridge::outbound_grants(outbound_initiator initiator) const
+{
+    return outbound_grants_[static_cast<unsigned>(initiator)];
+}
+
 void neo_external_bridge::reset()
 {
     inbound_sram_requests_ = 0;
@@ -323,6 +401,20 @@ void neo_external_bridge::reset()
         outbound_by_initiator_[i] = 0;
     }
     outbound_local_refused_ = 0;
+
+    ++generation_;
+    external_busy_ = false;
+    for (unsigned i = 0; i < outbound_initiator_count; ++i) {
+        external_waiting_[i] = false;
+        outbound_grants_[i] = 0;
+    }
+    external_last_granted_ = outbound_initiator_count - 1;
+    outbound_conflicts_ = 0;
+    // Wake everyone before their flags are gone. An initiator blocked on the
+    // port re-checks the generation, abandons its request and returns; clearing
+    // the flags without notifying would leave it unselectable and unwoken,
+    // waiting for a grant no arbiter can issue.
+    external_changed_.notify(sc_core::SC_ZERO_TIME);
 }
 
 std::string neo_external_bridge::report() const

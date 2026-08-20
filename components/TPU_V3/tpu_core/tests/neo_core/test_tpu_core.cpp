@@ -31,6 +31,7 @@
 
 #include "tpu_v3/address_map.h"
 #include "tpu_v3/dma/dma_registers.h"
+#include "tpu_v3/sauria/sa_registers.h"
 #include "tpu_v3/transform/image_transform_registers.h"
 
 namespace tpu = cdc::components::tpu_v3;
@@ -260,6 +261,9 @@ private:
         unavailable_operation_is_refused_in_place();
         an_injected_error_is_reported_not_absorbed();
         reset_is_hierarchical();
+        reset_mid_job_keeps_committed_data();
+        reset_near_completion_keeps_its_accounting();
+        mxu_start_during_the_reset_pulse_is_refused();
 
         ran_ = true;
     }
@@ -611,6 +615,275 @@ private:
                   "completion that no longer exists");
     }
 
+    /// Reset while a job is actually in flight.
+    ///
+    /// The existing reset scenario resets an idle core, which cannot see the
+    /// question this one asks: every engine promises that bytes already
+    /// committed to the destination stay committed and stay reported after a
+    /// reset (plan §11.5, D17). That promise is only meaningful if the memory
+    /// they were committed to survives the reset too, and an idle-core test
+    /// never puts the two claims in the same room.
+    void reset_mid_job_keeps_committed_data()
+    {
+        const std::uint64_t dma_base = am::dma_control(kChip, kCore);
+        const std::uint64_t sram_base = am::core_sram_base(kChip, kCore);
+        constexpr std::uint64_t destination_offset = 0x900;
+
+        // A known pattern in SRAM first, written through the fabric so it is
+        // real backing storage rather than a register somewhere.
+        constexpr unsigned kPatternBytes = 32;
+        std::array<unsigned char, kPatternBytes> pattern{};
+        for (unsigned i = 0; i < kPatternBytes; ++i) {
+            pattern[i] = static_cast<unsigned char>(0xA0 + i);
+        }
+        sram::neo_local_request write{};
+        write.requester = neo_requester::cpu;
+        write.command = sram::neo_command::write;
+        write.address = sram_base + destination_offset;
+        write.size = kPatternBytes;
+        write.data = pattern.data();
+        CHECK_MSG(core_.fabric().dbg_access(write) == kPatternBytes,
+                  "could not stage the pattern this scenario checks");
+
+        // Start a transfer long enough that the reset lands while it runs.
+        write32(dma_base + tpu::dma::reg::src_addr_lo,
+                static_cast<std::uint32_t>(am::global_ram_base));
+        write32(dma_base + tpu::dma::reg::src_addr_hi, 0);
+        write32(dma_base + tpu::dma::reg::dst_addr_lo,
+                static_cast<std::uint32_t>(sram_base + 0xA00));
+        write32(dma_base + tpu::dma::reg::dst_addr_hi, 0);
+        write32(dma_base + tpu::dma::reg::length, 2048);
+        write32(dma_base + tpu::dma::reg::irq_enable, 0);
+        write32(dma_base + tpu::dma::reg::control, tpu::dma::control_bit::start);
+
+        // Let it commit something, then reset it mid-flight.
+        wait(core_.config().cycle * 3);
+        CHECK_MSG((read32(dma_base + tpu::dma::reg::status)
+                   & tpu::dma::status_bit::busy)
+                      != 0,
+                  "the transfer finished before the reset, so this scenario "
+                  "degenerated into the idle-core case it exists to go beyond");
+
+        core_.reset();
+
+        // The SRAM keeps what was already in it. This is the claim the reset
+        // ordering was getting wrong: `core_sram::reset()` wipes the backing
+        // store, and a core reset must not call it.
+        std::array<unsigned char, kPatternBytes> read_back{};
+        sram::neo_local_request read{};
+        read.requester = neo_requester::cpu;
+        read.command = sram::neo_command::read;
+        read.address = sram_base + destination_offset;
+        read.size = kPatternBytes;
+        read.data = read_back.data();
+        CHECK_MSG(core_.fabric().dbg_access(read) == kPatternBytes,
+                  "core SRAM did not answer after a reset");
+        CHECK_MSG(core_.sram().debug_bytes_written() >= kPatternBytes,
+                  "the debug-write counter was cleared by a core reset. The "
+                  "bytes it accounts for are still in SRAM, so clearing it "
+                  "makes the report deny the memory it describes");
+        CHECK_MSG(core_.sram().read_accesses() == 0
+                      && core_.sram().bytes_written() == 0,
+                  "core SRAM's workload counters survived the reset. The "
+                  "fabric and every requester open a new counter epoch here, "
+                  "so storage counters left running would stop reconciling "
+                  "with the fabric's -- conservation is a per-epoch property");
+        CHECK_MSG(read_back == pattern,
+                  "core SRAM lost its contents to a core reset. Every engine "
+                  "reports bytes it committed to that memory as still "
+                  "committed, so wiping it makes those registers describe data "
+                  "that no longer exists");
+
+        // The job itself is abandoned, not completed.
+        const std::uint32_t status = read32(dma_base + tpu::dma::reg::status);
+        CHECK_MSG((status & tpu::dma::status_bit::busy) == 0,
+                  "the DMA was still BUSY after a core reset");
+        CHECK_MSG((status & tpu::dma::status_bit::done) == 0,
+                  "an abandoned transfer reported DONE. Reset is not "
+                  "completion (INTERFACE_CONTRACT.md §4)");
+
+        // And the core still works afterwards.
+        run_dma_transfer(dma_base, am::global_ram_base, sram_base + 0xB00, 16,
+                         /*enable_irq=*/false);
+        CHECK_MSG((read32(dma_base + tpu::dma::reg::status)
+                   & tpu::dma::status_bit::done)
+                      != 0,
+                  "the core could not run a transfer after a mid-job reset");
+        write32(dma_base + tpu::dma::reg::status, tpu::dma::status_bit::done);
+    }
+
+    /// Reset arriving at every point across a job, including the last cycle.
+    ///
+    /// The scenario above resets three cycles into a 2048-byte transfer, which
+    /// is nowhere near the end and therefore cannot see this: if the reset path
+    /// consumes simulated time *before* the components are told to reset, a job
+    /// about to finish finishes inside that window, and the handler then takes
+    /// its **idle** branch. `neo_dma::reset()` zeroes `BYTES_DONE` when nothing
+    /// is busy, so a caller that reset an active job gets the semantics of
+    /// resetting an idle one — retained data in SRAM with a committed count of
+    /// zero.
+    ///
+    /// Swept rather than aimed. Hitting the last cycle exactly would be a test
+    /// that depends on the engine's timing staying what it is today; walking
+    /// the reset across the whole job covers the boundary wherever it sits.
+    void reset_near_completion_keeps_its_accounting()
+    {
+        const std::uint64_t dma_base = am::dma_control(kChip, kCore);
+        const std::uint64_t sram_base = am::core_sram_base(kChip, kCore);
+
+        unsigned observed_active_with_bytes = 0;
+
+        // Quarter-cycle steps, not whole cycles. Each iteration starts its
+        // job at a different phase, so a whole-cycle sweep can step straight
+        // over the window where the job is less than one cycle from done --
+        // it did, and the negative control passed until the resolution was
+        // raised. The failure appears at 21 cycles here.
+        for (unsigned quarter = 1; quarter <= 100; ++quarter) {
+            write32(dma_base + tpu::dma::reg::status,
+                    tpu::dma::status_bit::w1c_mask);
+            write32(dma_base + tpu::dma::reg::src_addr_lo,
+                    static_cast<std::uint32_t>(am::global_ram_base));
+            write32(dma_base + tpu::dma::reg::src_addr_hi, 0);
+            write32(dma_base + tpu::dma::reg::dst_addr_lo,
+                    static_cast<std::uint32_t>(sram_base + 0xC00));
+            write32(dma_base + tpu::dma::reg::dst_addr_hi, 0);
+            write32(dma_base + tpu::dma::reg::length, 256);
+            write32(dma_base + tpu::dma::reg::irq_enable, 0);
+            write32(dma_base + tpu::dma::reg::control,
+                    tpu::dma::control_bit::start);
+
+            wait((core_.config().cycle * quarter) / 4);
+
+            const bool active = (read32(dma_base + tpu::dma::reg::status)
+                                 & tpu::dma::status_bit::busy)
+                != 0;
+            const std::uint32_t committed_before
+                = read32(dma_base + tpu::dma::reg::bytes_done_lo);
+
+            core_.reset();
+
+            const std::uint32_t committed_after
+                = read32(dma_base + tpu::dma::reg::bytes_done_lo);
+
+            if (active && committed_before > 0) {
+                ++observed_active_with_bytes;
+                CHECK_MSG(committed_after >= committed_before,
+                          "resetting an active job at "
+                              + std::to_string(quarter)
+                              + " quarter-cycles dropped its "
+                              + "committed byte count from "
+                              + std::to_string(committed_before) + " to "
+                              + std::to_string(committed_after)
+                              + ". The bytes are still in SRAM, so the count "
+                                "now describes less than the memory holds -- "
+                                "the reset applied idle semantics to a job "
+                                "that was active when reset was requested");
+            }
+        }
+
+        CHECK_MSG(observed_active_with_bytes > 0,
+                  "the sweep never caught the DMA active with bytes already "
+                  "committed, so it proved nothing. Widen the range or "
+                  "lengthen the transfer");
+
+        write32(dma_base + tpu::dma::reg::status,
+                tpu::dma::status_bit::w1c_mask);
+    }
+
+    /// A job started inside the reset pulse must be refused, not silently
+    /// misconfigured.
+    ///
+    /// `reset()` returns in zero time but holds `i_rstn` low for one clock
+    /// period, so there is a window in which the MXU's registers are live while
+    /// the clocked modules behind them are held in reset. A `START` admitted
+    /// there would write its `ConfigRegs` values into modules that cannot latch
+    /// them and then run the array on a configuration that was silently
+    /// dropped — which presents as an arithmetic defect, not a reset-timing
+    /// one. Admission is refused instead, with a cause firmware can act on.
+    void mxu_start_during_the_reset_pulse_is_refused()
+    {
+        const std::uint64_t sa_base = am::sa_control(kChip, kCore);
+        const std::uint64_t sram_base = am::core_sram_base(kChip, kCore);
+
+        core_.reset();   // returns immediately; `i_rstn` stays low for a cycle
+
+        // Program and start inside the pulse.
+        write32(sa_base + tpu::sauria::reg::dim_m, 4);
+        write32(sa_base + tpu::sauria::reg::dim_n, 4);
+        write32(sa_base + tpu::sauria::reg::dim_k, 4);
+        write32(sa_base + tpu::sauria::reg::a_addr_lo,
+                static_cast<std::uint32_t>(sram_base));
+        write32(sa_base + tpu::sauria::reg::b_addr_lo,
+                static_cast<std::uint32_t>(sram_base + 0x100));
+        write32(sa_base + tpu::sauria::reg::c_addr_lo,
+                static_cast<std::uint32_t>(sram_base + 0x200));
+        write32(sa_base + tpu::sauria::reg::a_stride, 4);
+        write32(sa_base + tpu::sauria::reg::b_stride, 4);
+        write32(sa_base + tpu::sauria::reg::c_stride, 16);
+        write32(sa_base + tpu::sauria::reg::datatype,
+                tpu::sauria::datatype_value::int8_int32);
+        write32(sa_base + tpu::sauria::reg::irq_enable, 0);
+        write32(sa_base + tpu::sauria::reg::control,
+                tpu::sauria::control_bit::start);
+
+        const std::uint32_t status = read32(sa_base + tpu::sauria::reg::status);
+        const std::uint32_t cause
+            = read32(sa_base + tpu::sauria::reg::error_cause);
+
+        CHECK_MSG((status & tpu::sauria::status_bit::busy) == 0,
+                  "the MXU accepted a job while its clocked modules were held "
+                  "in reset");
+        // The native path, which is public through `matrix_engine()` and does
+        // not go through the register file at all. Closing only the MMIO gate
+        // left this one open, which is the same mistake as closing one entry
+        // to the reset window and calling it shut.
+        {
+            tpu::sauria::job native{};
+            native.m = 4;
+            native.n = 4;
+            native.k = 4;
+            native.a_address = sram_base;
+            native.b_address = sram_base + 0x100;
+            native.c_address = sram_base + 0x200;
+            native.a_stride_bytes = 4;
+            native.b_stride_bytes = 4;
+            native.c_stride_bytes = 16;
+            native.datatype = tpu::sauria::datatype_value::int8_int32;
+            CHECK_MSG(core_.matrix_engine().submit(native)
+                          == tpu::sauria::submit_status::engine_in_reset,
+                      "a native submit() during the reset pulse was accepted. "
+                      "`i_rstn` alone cannot gate this: it is an sc_signal and "
+                      "still reads high for a delta after reset() returns");
+        }
+
+        CHECK_MSG(cause
+                      == static_cast<std::uint32_t>(
+                          tpu::sauria::error_cause::engine_in_reset),
+                  "a START during the reset pulse did not report "
+                  "`engine_in_reset`; it read cause "
+                      + std::to_string(cause)
+                      + ". Without that the job would configure modules that "
+                        "cannot latch the write and then run on a "
+                        "configuration nobody applied");
+
+        // Once reset deasserts the engine takes work again.
+        wait(core_.config().cycle * 4);
+        write32(sa_base + tpu::sauria::reg::status,
+                tpu::sauria::status_bit::error);
+        write32(sa_base + tpu::sauria::reg::control,
+                tpu::sauria::control_bit::start);
+        CHECK_MSG(read32(sa_base + tpu::sauria::reg::error_cause)
+                      != static_cast<std::uint32_t>(
+                          tpu::sauria::error_cause::engine_in_reset),
+                  "the MXU still refuses work after reset deasserted");
+
+        write32(sa_base + tpu::sauria::reg::control,
+                tpu::sauria::control_bit::abort);
+        wait(core_.config().cycle * 4);
+        write32(sa_base + tpu::sauria::reg::status,
+                tpu::sauria::status_bit::w1c_mask);
+    }
+
     std::uint32_t read32(std::uint64_t address)
     {
         std::array<unsigned char, 4> bytes{};
@@ -645,6 +918,14 @@ int sc_main(int, char*[])
     remote.socket.bind(core_under_test.inbound());
 
     checks scenario("checks", core_under_test, remote, outside);
+
+    // The programming model changed observably this phase — a new
+    // `ERROR_CAUSE` value and a new `START` refusal — so a driver reading
+    // `VERSION` has to be able to tell it from what came before.
+    CHECK_MSG(tpu::sauria::model_version >= 2,
+              "the SA programming-model version was not bumped alongside "
+              "`engine_in_reset`; firmware cannot distinguish this ABI from "
+              "the one where cause 13 did not exist");
 
     // Identity is a construction-time property, so it is checkable before the
     // simulation starts. chip 1, core 1 is hart 3.

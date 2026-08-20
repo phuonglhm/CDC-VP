@@ -1,6 +1,6 @@
 # TPU_V3 Architecture and Integration Decision Record
 
-Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20**
+Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20; bus-lock scope frozen by D22**
 
 Initial decision date: 2026-08-08
 
@@ -13,6 +13,8 @@ D18 Im2Col-only baseline date: 2026-08-18
 D19 hart reset contract ratification date: 2026-08-18
 
 D21 distribution boundary date: 2026-08-19
+
+D22 bus-lock scope date: 2026-08-20
 
 D20 architectural block naming date: 2026-08-18
 
@@ -54,6 +56,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | D19 | Full architectural reset for a NEO-CORE hart | **Full deterministic reset implemented in the VP++ wrapper.** The register, CSR and vector state is all publicly reachable and needs no upstream patch, so `reset_cpu()` stops being a restart. Two items stay explicit rather than hidden: the cycle counter turned out to need the fourth D8-mechanism patch and has it (`0004-d19-cycle-baseline-survives-reset.patch`), and reviving a terminated hart is out of Revision 1 scope and refused loudly. Implementation also found that a hart parked in `wfi` is not resumed by reset — the wake is necessary, not sufficient. Four state classes, not one rule: identity/configuration preserved (`mhartid`, `misa`, `vlenb`); specification-defined fields set per the privileged spec, `vtype`/`vl` among them; `sp` written by `init()`; and the remainder zeroed for reproducibility rather than because the spec requires it — with `time`/`mtime` outside all four as live CLINT state. Reset also releases the LR/SC reservation and bus lock, flushes the MMU TLB, and wakes a hart parked in `WFI`. `RegFile_T::reset_zero()` is not a register-file clear and `csrs` must never be reset by struct assignment. Gated by enumerating `csrs.register_mapping`, which covers every CSR with backing storage; derived views and live time CSRs are asserted separately |
 | D20 | Architectural block names | The NEO-CORE architecture and reports call the matrix-multiplication block **MXU** and the tensor-layout block **Transform**. **Sauria** is used only for source/backend provenance, and **Im2Col** is the currently implemented Transform operation, not the block name. Existing code/ABI identifiers (`sauria_matrix`, `image_transform`, `SA_CONTROL`) remain unchanged by this documentation-only naming decision |
 | D21 | Distribution boundary for a NEO-CORE binary | **Internal-build artifact.** CDC-VP may go public; a binary containing a NEO-CORE does not. The platform composes cores only in the internal configuration (both accelerator options on) and instantiates none in the default/public one, whose manifest keeps `sauria.linked` and `sauria.selectable` false. A placeholder MXU to give a public build a nominal NEO-CORE is refused |
+| D22 | LR/SC and AMO bus lock scope | **One lock per chip, shared by both harts.** The CPU backend's per-hart default excludes nobody; `tpu_chip` creates the lock and attaches it to both harts during elaboration, through an opaque handle so the public CPU header still exposes no VP++ type. Upstream `52d376d4` stays unbackported, on measured evidence rather than on deferral
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -515,7 +518,7 @@ only the approved, classified and hash-verified patch series"**.
 | Commit | Why not, and when |
 | --- | --- |
 | `7a936cce` "fixed fast quantum" | a larger change to quantum accounting; needs its own audit **before Phase 9** |
-| `52d376d4` AMO atomicity / lost bus lock | needs a **multi-hart AMO contention test before Phase 8**; a single-threaded differential run against Spike cannot demonstrate atomicity between harts |
+| `52d376d4` AMO atomicity / lost bus lock | needed a **multi-hart AMO contention test before Phase 8**; a single-threaded differential run against Spike cannot demonstrate atomicity between harts. **Closed by D22 on 2026-08-20**: the test exists, and the commit stays out — see D22 for the evidence and for the one condition that reopens it |
 
 ### Closure gate
 
@@ -990,7 +993,7 @@ Phase 3:
 | Item | Status | Evidence / remaining implementation |
 | --- | --- | --- |
 | Record D1-D20 in the main decision log | Complete for documents | This document and the plan decision log agree; D14/D15 code migration landed in Phase 3; D17 and D18 record the Phase 5/6 adapter decisions; D19 freezes the hart reset contract; D20 freezes the MXU/Transform names |
-| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one MXU + Transform + split control/data fabrics | Component implementations and gates complete through Phase 6; composition pending Phase 7 | D14-D20, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and the component audits |
+| Rebaseline one NEO-CORE to VP++ + SRAM + independent DMA + one MXU + Transform + split control/data fabrics | Complete through Phase 7: the components are gated individually and composed into a `tpu_core` that boots one firmware image end to end | D14-D20, `ARCHITECTURE.md`, `ADDRESS_MAP.md`, `INTERFACE_CONTRACT.md`, the plan, and the component audits |
 | Rename SVM to core SRAM while retaining the 16 MiB window/capacity contract | Complete | D6 as amended by D14; `address_map.h`, `architecture_config.h`, the four shipped configurations and the packaged `--print-address-map` output all use `CORE_SRAM`, and both the CLI regression and the packaging regression fail if the legacy names reappear |
 | Set BF16 operands with FP32 accumulation as the target MXU arithmetic | Complete as a contract; not proven by the v4.2 bring-up type | D6/D14 |
 | Integrate the MXU from Sauria 64x64 source first and promote the NPU-team 128x128 delivery later | 64x64 complete; 128x128 open | D14/D17 and Phase 5 audit |
@@ -1881,3 +1884,85 @@ reconcile those two facts — by stripping those directories, or by obtaining th
 approval the notice calls for. It is recorded here because it is invisible
 until release day and expensive to discover then; it is not a Phase 7 item and
 nothing in Phase 7 depends on the answer.
+
+## D22. The LR/SC and AMO bus lock is chip-scoped
+
+Decision date: 2026-08-20.
+
+### Decision
+
+**One bus lock per chip, shared by both NEO-CORE harts.** `tpu_chip` creates it
+and attaches it to both harts during elaboration; a hart that is never given one
+keeps the CPU backend's private default, which is correct for a single-hart
+platform and correct for nothing else.
+
+The lock is handed out as an opaque `std::shared_ptr<cdc::cpu::shared_bus_lock>`
+from `cdc::cpu::make_shared_bus_lock()`. The type derives from a VP++ interface
+and is declared but never defined in the public header, so the rule that this
+backend's public interface exposes no VP++ type survives the change.
+
+`attach_bus_lock()` throws after `start_of_simulation()`. Swapping the lock
+under a running ISS would drop an outstanding reservation and could leave a
+waiter parked on an event nobody will notify again; refusing is the D5 posture.
+
+**Scope is the address space, not the chip.** Revision 1 has no cross-chip
+atomics, so the two happen to coincide. If a later revision gives the mesh
+atomics, the scope follows the shared address space and this decision is
+reopened rather than reinterpreted.
+
+### Upstream `52d376d4` stays out, and this is now evidence rather than deferral
+
+D8 held the commit back until a multi-hart AMO contention test existed. It
+exists — `cpu_models/riscv_vp_plusplus/tests/test_bus_lock_atomicity.cpp` — and
+what it measures is:
+
+| Run | Result |
+| --- | --- |
+| `amo shared` | 128 of 128 increments land; 62 contention waits |
+| `amo unshared` | **64** of 128 — exactly half, every second update lost |
+| `lrsc shared` | 128 of 128; 40 contention waits |
+| `lrsc unshared` | **64** of 128 |
+
+The unshared runs are the negative control and they are registered as tests: a
+change that makes them pass fails the suite instead of quietly removing the
+evidence for the shared runs.
+
+The defect `52d376d4` fixes is a bus lock lost **between an AMO's load and its
+store**, because every store releases the lock and MMU address translation for
+the store may itself perform stores when it walks page tables. TPU_V3 runs
+`satp.MODE = Bare` in machine mode, where `translate_virtual_to_physical_addr()`
+returns the address without touching memory (`common/mmu.h:96`), so the
+mechanism has no way to occur. That is the reason the commit is not required —
+not "the tests pass".
+
+**The condition that reopens it:** any configuration that enables address
+translation. The argument above is entirely about `Bare`, and the commit becomes
+required the moment a TPU_V3 hart runs with `satp.MODE != Bare`.
+
+### A related D19 prediction, corrected by measurement
+
+D19 wrote that a reservation left behind by a reset "becomes a hang the moment
+multi-hart atomicity makes it chip-shared". Measured, it does not. Upstream
+implements the RISC-V forward-progress property by arming a 17-instruction
+counter at `lr.w` and calling `release_lr_sc_reservation()` when it expires
+(`rv32/iss_ctemplate.cpp:301`), which releases the bus lock as well. A hart
+cannot strand the lock by taking a reservation and branching away.
+
+`bus_lock_forward_progress` pins that: one hart takes the lock and spins forever
+without an `sc.w`, and the sibling is required to be blocked for a while and
+then to finish on its own. If the bound ever disappears upstream, that test
+hangs into its timeout instead of the change going unnoticed.
+
+Resetting a holder still releases the lock — `reset_cpu()` calls
+`release_lr_sc_reservation()` — and that path is what `tpu_chip::reset()` relies
+on. The chip does not clear the lock from outside: an owner-aware release is
+correct at any scope, and a blind one would release a lock this chip's reset had
+nothing to do with the moment the scope grows.
+
+### What this does not claim
+
+The lock serialises **every** access from other harts, not only atomic ones:
+upstream calls `wait_for_access_rights()` on each load, store and instruction
+fetch. That is a faithful model of a locked bus and a pessimistic model of a
+modern coherent interconnect, and no throughput figure taken from a run with
+contended atomics should be presented as either.

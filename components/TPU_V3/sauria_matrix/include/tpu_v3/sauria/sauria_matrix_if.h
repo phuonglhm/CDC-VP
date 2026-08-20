@@ -104,6 +104,16 @@ enum class submit_status : std::uint32_t {
     /// The job fits one array pass, but K makes A or B larger than this
     /// engine's explicitly instantiated private staging store.
     staging_capacity_exceeded,
+    /// The hardware reset line is asserted, so the clocked modules this engine
+    /// configures are being held in reset.
+    ///
+    /// A distinct status because it is not a malformed job and the caller's
+    /// response is different: retry once reset deasserts. Refusing is what
+    /// makes the outcome *defined* — a job admitted here would write its
+    /// configuration into modules that cannot latch it, and then run with a
+    /// configuration that was silently dropped, which reads as an arithmetic
+    /// defect rather than a reset-timing one.
+    engine_in_reset,
 };
 
 const char* to_string(submit_status status) noexcept;

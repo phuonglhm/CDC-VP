@@ -256,6 +256,14 @@ tpu_core::tpu_core(sc_core::sc_module_name name, tpu_core_config config)
     sensitive << clock_.posedge_event();
     dont_initialize();
 
+    SC_METHOD(drive_reset_line);
+    sensitive << reset_line_;
+    dont_initialize();
+
+    SC_METHOD(release_reset);
+    sensitive << reset_release_;
+    dont_initialize();
+
     reset_n_.write(true);
 }
 
@@ -276,6 +284,33 @@ void tpu_core::aggregate_irq()
         = dma_irq_.read() || sa_irq_.read() || transform_irq_.read();
 }
 
+void tpu_core::drive_reset_line()
+{
+    // The **only** writer of `reset_n_`.
+    //
+    // `reset()` runs in whichever process called it and `release_reset()` is a
+    // method, so both writing the signal directly would give it two drivers and
+    // SystemC refuses that at the first reset. Routing both through one writer
+    // is the same shape `neo_dma`, `image_transform` and `sa_control` use for
+    // their interrupt lines.
+    reset_n_.write(!reset_low_);
+}
+
+void tpu_core::release_reset()
+{
+    // Deassert the hardware reset one clock period after `reset()` asserted it.
+    //
+    // Separate from `reset()` so that call can stay zero-time. The adapter's
+    // C++ `reset()` bumps a generation and does nothing to the feeders, the
+    // array, the PSM or the Control FSM — those are clocked RTL-style blocks
+    // that reset on this line, so it has to be low across an edge, and that
+    // cannot be done without letting time pass somewhere.
+    reset_low_ = false;
+    reset_line_.notify(sc_core::SC_ZERO_TIME);
+    sa_control_.hold_in_reset(false);
+    matrix_.hold_in_reset(false);
+}
+
 void tpu_core::drive_hart_irq()
 {
     // Sampled on a clock edge rather than driven straight from the aggregation
@@ -287,12 +322,65 @@ void tpu_core::drive_hart_irq()
 
 void tpu_core::reset()
 {
-    // Order is not arbitrary. The requesters are reset before the fabric they
-    // share, so a requester cannot enqueue a fresh beat into a fabric that has
-    // already been cleared; the fabric's own generation counter then abandons
-    // whatever was in flight and returns `aborted` to whoever was blocked.
+    // `reset()` consumes **no simulated time**, and that is the property the
+    // whole function is built around.
+    //
+    // Two earlier versions got this wrong in opposite directions. The first
+    // pulsed `i_rstn` and waited a cycle *before* resetting the components,
+    // which let a job about to finish complete inside the window; the handler
+    // then took its **idle** branch and `neo_dma::reset()` zeroed `BYTES_DONE`,
+    // reporting no committed bytes for data that had just landed in SRAM. The
+    // second moved the resets ahead of the wait, which fixed that and left a
+    // different window: the hart restarted by `reset_cpu()`, and any inbound
+    // initiator, were still free to issue traffic during the yield, so
+    // `reset()` could return with state already repopulated.
+    //
+    // Both are the same mistake — treating reset as a sequence of steps rather
+    // than as an instant. Nothing yields here now, so there is no window for
+    // anything to observe or act in: `reset()` returns with every component
+    // reset, atomically.
+    //
+    // The hardware reset line still has to be *held* across a clock edge for
+    // the clocked Sauria modules, which cannot happen in zero time. It is
+    // asserted here and released by `release_reset()` one clock period later,
+    // without blocking this call. What that leaves is bounded and defined
+    // rather than silent, at each of the three points a job could enter it:
+    // `sauria_matrix_adapter::submit()` refuses admission with
+    // `submit_status::engine_in_reset`, `drive_host()` abandons a
+    // configuration write that the held modules cannot latch, and
+    // `wait_for_done()` abandons a running job — all with `i_rstn` as the
+    // condition. An earlier version of this comment claimed `drive_host`
+    // already did that; it did not, and the gap let a job admitted during the
+    // pulse configure modules in reset and then run on a configuration that
+    // was silently dropped.
+    reset_low_ = true;
+    reset_line_.notify(sc_core::SC_ZERO_TIME);
+    reset_release_.notify(config_.cycle);
+
+    // Close the MXU's admission gate synchronously.
+    //
+    // `reset_n_` is an `sc_signal`, so it does not read low until a delta after
+    // the notify above, and `reset()` returns before that. A gate that read the
+    // signal would therefore let a `START` issued in the meantime straight
+    // through — which is not hypothetical, it is what the first version of this
+    // did. A plain flag closes at the instant reset is requested.
+    sa_control_.hold_in_reset(true);
+    // The native path too: `tpu_core::matrix_engine()` is public, so a caller
+    // can reach `submit()` without going through the control register file.
+    matrix_.hold_in_reset(true);
+
+    // Requesters before the fabric they share, so a requester cannot enqueue a
+    // fresh beat into a fabric that has already been cleared; the fabric's own
+    // generation counter then abandons whatever was in flight and returns
+    // `aborted` to whoever was blocked.
     dma_.reset();
-    matrix_.reset();
+    // `sa_control_.reset()` resets the engine itself — and it has to be the one
+    // that does it. It samples whether a job was in flight and, if so,
+    // snapshots the engine's committed bytes for the abandoned-accounting
+    // owner before anything is cleared. Calling `matrix_.reset()` first zeroes
+    // exactly those counters and opens a new traffic epoch, so the snapshot
+    // that follows records zero and `C_BYTES_DONE` loses the bytes the job did
+    // commit.
     sa_control_.reset();
     transform_.reset();
 
@@ -300,10 +388,27 @@ void tpu_core::reset()
     control_.reset();
     bridge_.reset();
     hart_port_.reset();
-    sram_.reset();
 
     core_regs_.reset();
     counter_regs_.reset();
+
+    // **Core SRAM keeps its contents; only its counters are cleared.**
+    //
+    // A real SRAM does not lose its cells to a logic reset — reset is a
+    // control-path signal — and every engine here promises that bytes already
+    // committed to the destination stay committed and stay reported through
+    // `BYTES_DONE` / `C_BYTES_DONE` after an abort or a reset (plan §11.5,
+    // D17). Wiping the memory would leave those registers describing data that
+    // no longer exists.
+    //
+    // The counters do have to go, because the fabric and every requester open
+    // a new counter epoch here; storage counters left running across that
+    // boundary would stop reconciling with the fabric's, and conservation is a
+    // per-epoch property. `core_sram::reset()` — which also releases the
+    // backing pages — stays what it always was: a component-level and
+    // platform-initialisation operation where a deterministic all-zero start is
+    // the point (D6).
+    sram_.reset_counters();
 
     // The D19 four-class architectural reset. It throws if this hart has
     // executed `sys_exit`, which is a case Revision 1 does not support and

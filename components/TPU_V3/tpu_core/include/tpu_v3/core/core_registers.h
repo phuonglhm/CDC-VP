@@ -29,13 +29,25 @@
 
 namespace cdc::components::tpu_v3::core {
 
-/// Which of the five core-local register files this instance is.
+/// Which register file this instance is: the five core-local ones, and the two
+/// a chip owns above them (Phase 8).
+///
+/// The value is part of the block's identity register, so a wrong-window decode
+/// is visible in a read instead of being answered plausibly by whichever file
+/// happened to be bound. That is why the chip windows get their own values
+/// rather than reusing `core` and `counters`: a driver that computed a core
+/// base where it meant a chip base would otherwise read exactly what it
+/// expected.
 enum class register_block {
     core,
     sa,
     dma,
     transform,
     counters,
+    /// `CHIP_CONTROL` — the chip aperture's own control window.
+    chip,
+    /// `CHIP_COUNTERS`.
+    chip_counters,
 };
 
 const char* to_string(register_block block) noexcept;

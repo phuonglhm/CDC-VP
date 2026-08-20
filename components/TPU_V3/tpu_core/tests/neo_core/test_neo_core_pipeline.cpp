@@ -63,8 +63,11 @@ constexpr int kSkip = 77;
         }                                                                     \
     } while (0)
 
-constexpr tpu::chip_id_t kChip = 0;
-constexpr tpu::core_id_t kCore = 0;
+// Neither zero: see the note in `neo_core_map.h`. Hart 3 distinguishes
+// `chip * 2 + core` from the formulas that would give 1 or 2, and from a
+// CSR nobody wrote.
+constexpr tpu::chip_id_t kChip = 1;
+constexpr tpu::core_id_t kCore = 1;
 constexpr std::uint64_t kCapacity = 64 * 1024;
 constexpr double kWatchdogMilliseconds = 20.0;
 
@@ -276,6 +279,8 @@ void firmware_map_agrees_with_the_c_plus_plus_map()
 {
     CHECK_MSG(GLOBAL_RAM_BASE == am::global_ram_base,
               "the firmware's global RAM base disagrees with address_map.h");
+    CHECK_MSG(EXPECTED_MHARTID == static_cast<unsigned>(kChip) * 2u + kCore,
+              "the firmware's expected mhartid disagrees with chip * 2 + core");
     CHECK_MSG(CORE_BASE == am::core_base(kChip, kCore),
               "the firmware's core base disagrees with address_map.h");
     CHECK_MSG(CORE_SRAM_BASE == am::core_sram_base(kChip, kCore),
@@ -415,6 +420,15 @@ int sc_main(int argc, char* argv[])
               "no tolerance to argue about");
 
     // ── what RVV computed ────────────────────────────────────────────────────
+
+    // Identity, as the guest saw it. `hart_id()` on the model would only show
+    // the model agreeing with itself.
+    const std::uint32_t mhartid = outside.sim[(SIM_MHARTID - SIM_BASE) / 4];
+    CHECK_MSG(mhartid == EXPECTED_MHARTID && EXPECTED_MHARTID != 0,
+              "the hart read mhartid = " + std::to_string(mhartid)
+                  + ", not chip * 2 + core. Firmware derives chip and core "
+                    "index from this value and is given no other identity "
+                    "(ARCHITECTURE.md §2)");
 
     const std::uint32_t checksum
         = outside.sim[(SIM_RVV_CHECKSUM - SIM_BASE) / 4];

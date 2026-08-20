@@ -183,13 +183,26 @@ neo_status core_sram::debug_write(std::uint64_t address, std::uint32_t size,
 void core_sram::reset()
 {
     storage_.reset();
+    reset_counters();
+    // Cleared only here, with the storage it accounts for. See
+    // `reset_counters()` for why a core reset must not touch it.
+    debug_bytes_written_ = 0;
+}
+
+void core_sram::reset_counters()
+{
     read_accesses_ = 0;
     write_accesses_ = 0;
     bytes_read_ = 0;
     bytes_written_ = 0;
     error_count_ = 0;
-    debug_bytes_written_ = 0;
-    // The peak backing high-water mark deliberately survives; see the header.
+    // `debug_bytes_written_` deliberately survives, and so does the peak
+    // backing high-water mark; see the header.
+    //
+    // It records that a loader ran. Since a core reset keeps the stored data,
+    // clearing this would leave the bytes present and the report saying nothing
+    // was ever loaded — the counter would be denying the memory it describes.
+    // `reset()`, which does release the pages, clears it there instead.
 }
 
 std::string core_sram::report() const

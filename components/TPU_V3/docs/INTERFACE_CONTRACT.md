@@ -102,6 +102,19 @@ which is what a ready/valid interface does and the only way fairness and
 back-pressure become behaviours rather than estimates. `neo_external_bridge`
 inherits whichever mode its fabric was built with and reports it, because a
 bridge on the inbound path must not be the one that stalls the mesh.
+`neo_external_bridge` also arbitrates its two outbound initiators onto the
+core's single external socket, and **waits** there when they collide. That is
+permitted: the callers are the hart's own thread and the DMA's worker, both of
+which may `wait()`, and the NoC-reachable path enters the bridge through
+`inbound`, not through `local_outbound`. Without it a core presents two
+concurrent transactions on one port the moment anything downstream blocks.
+
+`chip_local_fabric` has the same two modes for the same reason: `annotated`
+charges downstream-port occupancy onto the caller's delay and never waits, and
+is what a chip attached to the detailed NoC must be in; `arbitrated` blocks on a
+real rotating-priority arbiter per port and holds that port across the whole
+downstream transaction, which is the only version of one-at-a-time a target can
+observe.
 
 * `delay` on entry may be non-zero; a target adds to it and does not clear it.
 * `transport_dbg` never advances time and never annotates delay.

@@ -179,6 +179,41 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../oracle" oracle)
 # and the `rvv_smoke_image` target, both defined above.
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../portable" portable)
 
+# ── decision record D8: the deferred AMO commit's precondition ───────────────
+#
+# D8 held upstream `52d376d4` back until a multi-hart AMO contention test
+# existed, and Phase 8 is the phase that puts two harts in one address space.
+# Each mode runs twice: `shared` is the Phase 8 configuration, `unshared` is the
+# negative control that must lose updates. Both are registered so a change that
+# makes the control pass shows up as a failing test rather than as one fewer
+# test.
+add_executable(test_bus_lock_atomicity test_bus_lock_atomicity.cpp)
+target_link_libraries(test_bus_lock_atomicity PRIVATE
+    cdc::cpu::riscv_vp_plusplus
+    SystemC::systemc)
+
+foreach(_atomic_mode amo lrsc)
+    foreach(_atomic_locking shared unshared)
+        add_test(NAME bus_lock_${_atomic_mode}_${_atomic_locking}
+            COMMAND test_bus_lock_atomicity ${_atomic_mode} ${_atomic_locking})
+        set_tests_properties(bus_lock_${_atomic_mode}_${_atomic_locking}
+            PROPERTIES
+                LABELS "tpu_v3;cpu;concurrency"
+                TIMEOUT 300)
+    endforeach()
+endforeach()
+
+# The question D19 raised about a chip-shared lock, answered by measurement: a
+# hart that takes a reservation and walks away cannot strand its sibling,
+# because the ISS bounds the reservation to 16 further instructions. If that
+# bound ever disappears this test hangs into its timeout rather than the change
+# going unnoticed.
+add_test(NAME bus_lock_forward_progress
+    COMMAND test_bus_lock_atomicity forward-progress)
+set_tests_properties(bus_lock_forward_progress PROPERTIES
+    LABELS "tpu_v3;cpu;concurrency"
+    TIMEOUT 300)
+
 # Decision record D19: the architectural hart reset. Runs a small hand-checked
 # RV32V image to dirty the state, resets, and audits every class the contract
 # names -- including the `mcycle` measurement D19 asked for rather than assumed.

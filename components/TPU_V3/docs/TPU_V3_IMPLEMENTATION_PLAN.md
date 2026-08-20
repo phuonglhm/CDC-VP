@@ -122,6 +122,72 @@ TPU_V3 SoC
         └── TPU Core 1
 ```
 
+#### Why two cores per chip, and not one
+
+Recorded 2026-08-19, after the question was asked and the frozen value turned
+out to have no rationale written anywhere. Every other frozen number here does
+— eight chips comes from the 3-bit FlooNoC manager id, one MXU per core comes
+from D14 — and this one did not, which is why it was re-litigated instead of
+looked up.
+
+It is not derived from anything in this repository. **It comes from the
+reference architecture being modelled.** The project-owner brief states
+`02 TPU Core/Chip`, and the source figures show it directly:
+
+```text
+/home/duyptt_HW/Desktop/TPU_V3/docs/Hinh02.jpg   one chip frame containing
+                                                 Core 0 and Core 1, each with
+                                                 its own Scalar Unit, Vector
+                                                 Unit, Matrix Multiply Unit and
+                                                 Transpose/Permute Unit, both
+                                                 attached to one shared
+                                                 Interconnect Router whose four
+                                                 Links leave for other chips
+/home/duyptt_HW/Desktop/TPU_V3/docs/Hinh01.jpg   the same two symmetric compute
+                                                 halves around one router on a
+                                                 floorplan
+/home/duyptt_HW/Desktop/TPU_V3/docs/Hinh03.jpg   **one core**, not a chip
+```
+
+The figures live outside this repository, like the VP++ translated paper named
+in §8.2.
+
+`Hinh03.jpg` is where the confusion comes from and is worth naming: it is the
+block diagram of a *single* TPU core, so read on its own it looks like a whole
+chip, and from there a mesh of one-core nodes looks like the obvious topology.
+It is not; the chip boundary is the frame in `Hinh02.jpg`.
+
+The mapping the model implements is therefore:
+
+| Reference figure | Model |
+| --- | --- |
+| chip frame | `tpu_chip`, one mesh node |
+| Core 0 / Core 1 | two NEO-COREs |
+| Scalar Unit + Vector Unit | one VP++ RV32GCV hart (D14: they are one hart, not two) |
+| Matrix Multiply Unit | MXU |
+| Transpose / Permute Unit | Transform block *by position only* — see below |
+| Interconnect Router + Links | chip-local fabric plus **one** aggregated NoC endpoint |
+
+Two honest qualifications, so the mapping is not read as an equivalence claim:
+
+* **The Transform block is not a transpose/permute unit.** It occupies the same
+  place in the diagram, and that is all. Its operation is the Im2Col lowering
+  traced from the pinned NPU-team v4.2 source (D18), which is a different
+  function; `ARCHITECTURE.md` §4.2 already says RVV's own permutation
+  instructions are unrelated to it.
+* **Memory placement differs.** The figure attaches HBM per core inside the
+  chip. The model gives each NEO-CORE its own core SRAM and puts
+  `GLOBAL_RAM_OR_HBM` on a separate mesh node, which `ADDRESS_MAP.md` §5
+  already states is simulated backing memory and not a model of TPU v3 HBM
+  capacity or bandwidth.
+
+A consequence worth keeping in view, because it is what makes the value cheap
+to live with: with a fixed budget of eight NoC initiators, two cores per node
+yields sixteen cores where one core per node yields eight. That is arithmetic,
+not the original reason — the eight-initiator limit was a Phase 0 *finding*
+about the existing wrapper (§9.1), discovered after this decision was already
+frozen, so it cannot have motivated it.
+
 Each TPU core contains:
 
 ```text
@@ -2243,6 +2309,18 @@ implementation item inside this completed phase.
 - Authorized remote/debug accesses map to the intended core.
 - Ownership, IRQs and responses remain correct under cross-engine contention.
 
+> **Phase 8 result.** Met on 2026-08-20 by `chip_local_fabric`, `tpu_chip` and
+> the chip-wide bus lock of decision record D22. The AMO item is closed with
+> evidence rather than with a backport: the contention test D8 required now
+> exists, and upstream `52d376d4` stays out because the lost-lock mechanism it
+> fixes runs through MMU page-table stores, which cannot occur at
+> `satp.MODE = Bare`. D22 records the one condition that reopens it. Two things
+> worth carrying forward: the bus lock blocks *all* traffic from other harts,
+> not only atomics, so no throughput figure from a run with contended atomics
+> describes a coherent interconnect; and D19's prediction that a stranded
+> reservation would hang a sibling does not hold, because the ISS bounds a
+> reservation to 17 instructions. See `TPU_V3_PHASE8_AUDIT.md`.
+
 ### Phase 9: NoC integration and mesh scalability
 
 #### Mandatory pre-Phase-9 NoC rebaseline
@@ -2809,8 +2887,10 @@ Update this table when work progresses.
 | Phase 4.5: RISC-V VP++ Compiler Enablement VP | **Complete** (2026-08-14) | `platforms/riscv_vpp_compiler_vp` plus `fw/riscv_vpp_compiler_vp` and `docs/MEMORY_MAP.md`. **Boundary.** One architectural RV32GCV hart, one TLM address decoder, program/data RAM and a simulator-only host-I/O target. `CDC_BUILD_RISCV_VPP_COMPILER_VP` is independent of `CDC_BUILD_TPU_V3_SOC`, and the packaging gate configures with the latter `OFF` so the handoff cannot quietly acquire the SoC tree. `cdc::cpu::riscv_vp_plusplus` is reused, not forked. **Map.** RAM at the TPU_V3 global-RAM base `0x8000_0000`, size configurable; the host-I/O window retains the Phase 2 exit protocol at `0x000F_0000` with the same four words at the same offsets and adds console, identity and measurement registers at 0x400 and above. One header, `compiler_vp/host_io_map.h`, is compiled by the platform, included by `crt0.S` from assembly, and preprocessed into the linker script, so the image's load address cannot drift from the address the platform maps. **Demonstrations.** Both print their exact PASS markers and exit zero. `scalar_hello` cross-checks the toolchain's `__riscv_xlen` against the platform's XLEN, `mhartid` against the configured hart id and `misa` against every letter of the frozen ISA, so its banner is a result rather than four literals; it is built with auto-vectorization off and *verified by disassembly* to contain no vector instruction. `rvv_vector_add` adds 1024 elements three ways — scalar golden, `<riscv_vector.h>` intrinsics and a hand-written `vsetvli`/`vle32.v`/`vadd.vv`/`vse32.v` loop, both kept `noinline` so a codegen failure stays distinguishable from a model failure — and earns `RVV=1.0` from behaviour, by observing that a reserved `vsew` sets `vtype.vill` and zeroes `vl` without trapping. **Observability.** No DMI (refused and counted), no ISS decode or load-store cache, so instruction fetch comes out at exactly one TLM transaction per retired instruction and the report prints the ratio. Fetch is separated from data by address, which required the shipped linker script to emit three program headers instead of the usual single RWX segment: with one segment every load is inside an executable segment and the split is meaningless. Vector traffic is *enforced*, not asserted — the intrinsic loop declares, from its own element count, the 3072 data accesses it must cause, and the platform fails the run if the bus does not see them. **Refusals.** Not an ELF, truncated, ELF64, wrong machine, big-endian, non-`ET_EXEC`, a float ABI other than `ilp32d` read from `e_flags`, an architecture string that is not `rv32*` or one guaranteeing a minimum vector length above 512 read from `.riscv.attributes`, a segment outside RAM or overlapping the host-I/O window or another segment, and an entry point outside RAM — each with its own exit code and a diagnostic naming the field. A scalar-only ISA string and a missing attributes section are accepted and reported, since checking scalar code generation is half the job. **Watchdogs, and a defect the gate found.** The two the plan asks for are not sufficient, and the shortfall is not exotic: both are polled between slices of `sc_start()`, and an image whose entry point lands on memory it never wrote traps, vectors to an `mtvec` its startup never set, and faults on the fault — retiring nothing and never reaching a quantum boundary, so neither bound is ever read again and the run hangs indefinitely with both armed. One mistyped load address in a linker script produces it. The decoder now recognises an unbroken run of 1024 refused accesses as a fault loop and throws, which is the only way out of a SystemC process that will not yield, and a `--wall-timeout` host thread is the backstop for whatever that does not cover. **Package.** `out/riscv_vpp_compiler_vp/` carries the binary at `RPATH=$ORIGIN`, the SystemC runtime, configs, both demonstrations with their disassembly, the SDK that built them, the map document, licences and a manifest recording the ISA/ABI/VLEN/ELEN/`vlenb`/hart count, the accuracy disclaimer, the VP++ base revision with every patch and hash, and every non-goal as absent. The gate moves the bundle, runs both demonstrations from it with no source tree and `LD_LIBRARY_PATH` unset, rebuilds the vector example from the shipped SDK with the documented commands, substitutes it, and requires identical guest output. **Independence.** `riscv_vpp_compiler_vp_independence` scans the sources with comments *and string literals* stripped — the `--version` banner has to be able to name what is absent — the emitted symbols, the CMake link interface, and the VP++ compile list for any `platform/`, Qt or VNC source; the packaging gate repeats the symbol and file-listing halves on the shipped bundle. **Evidence.** 103 CLI checks, the boundary gate and the distribution gate pass in Release and Debug; nine negative controls confirm each new gate bites when its fix is reverted, including the single-RWX-segment linker script (which reproduces `1024 of 3072 accesses`) and the disabled fault-loop detector (which reproduces the hang). TPU_V3 stays 35/35 in Release and Debug. **Review round (2026-08-14).** Two High defects, both in the package rather than the model. The package target *succeeded* without a cross toolchain, producing a bundle with neither demonstration and recording it as one `false` in a manifest field — a bundle that looks shippable and is not, and a packaging test that skipped rather than failed would have kept CI green over it. The executable still builds without the toolchain, deliberately, but `check_package_contents.cmake` now runs last in the package target and refuses an incomplete bundle, and the distribution gate has no skip at all. And the package shipped only CDC-VP's own Apache-2.0 while the binary statically links the RISC-V VP++ ISS (MIT) and Berkeley SoftFloat (BSD-3-Clause) — a redistribution blocker. Both licences are now shipped, SoftFloat's extracted at package time from a source file that was actually compiled because upstream ships no standalone licence file, `THIRD_PARTY.md` lists both, and the gate checks the text and not merely the filename. Two Medium: the firmware was generated *into* `fw/`, so Release and Debug clobbered each other's images and a read-only checkout could not build — it is now copied into the build tree and built there, and with `-ffile-prefix-map` and a two-stage compile the two build types produce byte-identical examples carrying no build-machine path. And the CLI accepted values `std::` accepts but a watchdog cannot: `--timeout nan` disarmed the simulated-time watchdog while `--print-config` still reported it armed, because every comparison against a NaN is false; `hart_id: 4294967296` in a configuration file truncated to hart 0; a leading `-` wrapped to an enormous limit. All are refused, on both the command-line and the file path. Also delivered: `COMPILER_QUICKSTART.md` and `ISA_ABI_CONTRACT.md`, which §15.3 names and the first package omitted, and §15.3's `sdk/` file list rebaselined to the delivered names. Six further negative controls confirm each fix bites |
 | Phase 5: MXU 64x64 extraction from Sauria v4.2 | **Complete** (2026-08-18), review findings closed | `components/TPU_V3/sauria_matrix` and `docs/TPU_V3_PHASE5_AUDIT.md`. The legacy implementation target locally pins `v4.2_model` at base hash `418a8d88...`; its full source, adapter and regression evidence is recorded in the Phase 5 audit. D17 buffered staging connects the MXU to `neo_local_sram_if`. Current capability is `int8_64x64`, INT8/INT32; 128x128/BF16 remain promotion targets. Final result: 14/14 source-labelled `sauria` tests and 35/35 `tpu_v3` tests pass in both Release and Debug |
 | Phase 6: Transform | **Complete** (2026-08-18) for D18 Im2Col-only Revision 1 | `components/TPU_V3/image_transform`, `IMAGE_TRANSFORM_MODEL.md` and `docs/TPU_V3_PHASE6_AUDIT.md`. The Transform block's pinned CHW INT8 Im2Col capability passes the NPU convolution golden and MMIO/native/reset gates; Col2Im is explicitly unavailable and causes no SRAM traffic. Standalone component gate 3/3 and full `tpu_v3` regression 38/38, zero skips |
-| Phase 7: single NEO-CORE | **Component work complete** (2026-08-19); platform integration open | `neo_hart_port` (§11.7) and `tpu_core` compose VP++, core SRAM, the three D15 planes, the DMA, the MXU and the Transform block; `tpu_v3_neo_core` builds only when both accelerator options and the CPU backend are present. Gated by `tpu_v3_hart_port`, `tpu_v3_neo_core` and `tpu_v3_neo_core_pipeline`, the last of which boots one firmware ELF that drives every engine through MMIO and matches a host-computed golden for the Im2Col matrix, the INT32 GEMM and the RVV reduction. D19 implemented and gated by `architectural_reset`. Three integration defects surfaced and were fixed: `reset_cpu()` threw on its second call, `neo_external_bridge` had one outbound socket for two initiators, and `sa_control` drove its IRQ from two processes. Composing cores into a chip is Phase 8 and into the platform Phase 9; D21 keeps a NEO-CORE binary internal either way. Still open inside this phase's own gate: the `unavailable` and `injected-error` cases, which are proved by the engines' standalone gates but not yet inside the composition |
-| Phase 8: dual-core chip | Not started | — |
+| Phase 7: single NEO-CORE | **Complete** (2026-08-20), review findings closed | `neo_hart_port` (§11.7) and `tpu_core` compose VP++, core SRAM, the three D15 planes, the DMA, the MXU and the Transform block; `tpu_v3_neo_core` builds only when both accelerator options and the CPU backend are present. Gated by `tpu_v3_hart_port`, `tpu_v3_neo_core` and `tpu_v3_neo_core_pipeline`, the last of which boots one firmware ELF that drives every engine through MMIO and matches a host-computed golden for the Im2Col matrix, the INT32 GEMM and the RVV reduction. D19 implemented and gated by `architectural_reset`. Three integration defects surfaced and were fixed: `reset_cpu()` threw on its second call, `neo_external_bridge` had one outbound socket for two initiators, and `sa_control` drove its IRQ from two processes. Composing cores into a chip is Phase 8 and into the platform Phase 9; D21 keeps a NEO-CORE binary internal either way. `unavailable` (Col2Im) and `injected-error` are gated inside the composition too. Review on 2026-08-20 found and closed a reset-semantics contradiction — a core reset wiped core SRAM while every engine reported the bytes it had committed to that SRAM as still committed — plus a double engine reset that destroyed the accounting `sa_control` snapshots, an `i_rstn` that was never pulsed, and firmware building into the source tree. See `TPU_V3_PHASE7_AUDIT.md` |
+| Phase 7: audit | Complete (2026-08-20) | `docs/TPU_V3_PHASE7_AUDIT.md` — what composing surfaced that the component gates could not, and the review findings it closed |
+| Phase 8: dual-core chip | **Complete** (2026-08-20) | `chip_local_fabric` and `tpu_chip` compose two NEO-COREs with hart ids `chip * 2 + core`, the chip register windows and exactly one mesh boundary; core-to-core traffic is answered inside the chip and never offered to `noc_interconnect`. Gated by `tpu_v3_chip_fabric` and `tpu_v3_tpu_chip`, the latter booting one image on both harts that branches only on `mhartid`. The multi-hart AMO gate D8 deferred is closed by D22: `test_bus_lock_atomicity` shows 128 of 128 increments with one shared lock and exactly 64 with the per-hart default, and upstream `52d376d4` stays out on the reachability argument recorded there. Four integration defects surfaced and were fixed: the per-hart bus lock; a core's hart and its DMA both able to enter the core's one external socket, which `neo_external_bridge` now arbitrates; a chip-fabric arbiter that released its port before the downstream transaction; and a fairness observable that would have passed with its labels swapped. The composition gate runs in both chip-fabric timing modes, because only the blocking one can reach the second of those. Release and Debug `tpu_v3` 51/51, zero skips. See `TPU_V3_PHASE8_AUDIT.md` |
+| Phase 8: audit | Complete (2026-08-20) | `docs/TPU_V3_PHASE8_AUDIT.md` — the multi-hart atomicity evidence, its negative controls, and the D19 prediction measurement corrected |
 | Phase 9: NoC/mesh | Not started; mandatory NoC rebaseline before implementation | D1 prerequisite; freeze control/data classification, shared/VC versus narrow/wide physical transport, widths, arbitration, ordering, back-pressure and RTL verification scope; also assert the external bridge does not block on arbitration (D16) |
 | Phase 9B: MXU 128x128 promotion | Waiting for NPU-team delivery | The current Sauria-derived 64x64 implementation must remain explicitly labelled until then |
 | Phase 10: firmware/workloads | Not started | — |
@@ -2821,7 +2901,7 @@ Update this table when work progresses.
 
 | Decision | Value | Status |
 | --- | --- | --- |
-| TPU cores per chip | 2 | Frozen |
+| TPU cores per chip | 2 | Frozen. Rationale recorded in §4.1 (2026-08-19): it comes from the reference architecture — the project-owner brief says `02 TPU Core/Chip` and `Hinh02.jpg` shows Core 0 and Core 1 sharing one Interconnect Router inside one chip frame. Not derived from the NoC initiator budget, which was found later |
 | MXUs per NEO-CORE | 1 | Frozen by D14/D20; supersedes the historical two-MXU composition |
 | MXU geometry | 64x64 verified bring-up; 128x128 target from NPU team | Staged and gated by D14 |
 | DMA per NEO-CORE | 1 independent TPU_V3 DMA | Frozen by D14; implemented in Phase 4 as `tpu_v3_neo_dma`. Sauria DMA and the shared PL330-style component both forbidden, gated by `neo_dma_independence` |

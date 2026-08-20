@@ -181,6 +181,13 @@ static uint32_t matrix_multiply(uint32_t a, uint32_t b, uint32_t c)
  * MXU's result is already the output-feature matrix, so software reads and
  * interprets its rows.
  *
+ * The clobber list names `v8`, `v12`, `v16` and `v17` explicitly. At `-O1` the
+ * code is correct without them, and that is the problem rather than a reason to
+ * omit them: the compiler is entitled to keep a live value in one of those
+ * registers across the block, and nothing in the source would say otherwise
+ * until an optimisation level or a compiler version changed and the failure
+ * turned up as wrong data.
+ *
  * ReLU plus two reductions, written with intrinsic-free inline assembly so the
  * image depends on no vector header: clamp negatives to zero, accumulate a
  * checksum and track the maximum. `vsetvli` is re-issued per chunk because
@@ -228,7 +235,7 @@ static void rvv_postprocess(uint32_t c_address, uint32_t count,
             "vmv.x.s   %1, v17\n"
             : "=r"(chunk_sum), "=r"(chunk_max)
             : "r"((uintptr_t)offset)
-            : "memory");
+            : "memory", "v8", "v12", "v16", "v17");
 
         checksum += chunk_sum;
         if (chunk_max > maximum) {
@@ -249,6 +256,12 @@ static void rvv_postprocess(uint32_t c_address, uint32_t count,
 int main(void)
 {
     mark(STAGE_START);
+
+    /* Report the architectural hart id the way firmware actually obtains it:
+     * from the CSR. The host checks it against `chip * 2 + core`. */
+    uint32_t mhartid;
+    __asm__ volatile("csrr %0, mhartid" : "=r"(mhartid));
+    mmio_write(SIM_MHARTID, mhartid);
 
     /* The engines answer before anything is programmed. A zero identity means
      * nothing is bound at that window, which is a wiring failure and not a
