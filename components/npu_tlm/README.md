@@ -143,9 +143,80 @@ Profile values are:
 | `0` | `PROFILE_V1_SAURIA` |
 | `1` | `PROFILE_V4_LINEAR` |
 
+The profiles also select the activation-feeder addressing behavior:
+
+- `PROFILE_V1_SAURIA` uses SAURIA's implicit im2col, dilation-aware address
+  generation, and tiling. Software provides the original convolution tensor
+  and programs the convolution/feeder configuration; the activation feeder
+  dynamically generates the im2col-style stream without materializing a full
+  im2col matrix in memory.
+- `PROFILE_V4_LINEAR` uses linear feeder addressing
+  (`address += incntstep`) and does not generate an im2col stream. Software or
+  the compiler must provide data in the linear/GEMM layout required by this
+  profile.
+
 Write the profile before writing profile-dependent registers.
 
 ## PROFILE_V1_SAURIA Register Map
+
+### Implicit im2col Programming
+
+`PROFILE_V1_SAURIA` does not require software to materialize an expanded
+im2col matrix in memory. Software writes the convolution activation tensor to
+SRAM A and programs the activation-feeder limits and steps. The V4.4 IFMAP
+feeder then generates the logical im2col stream on demand.
+
+The feeder selects this SAURIA address-generation mode when all six inner-loop
+values are nonzero: `ACT_XLIM`, `ACT_XSTEP`, `ACT_YLIM`, `ACT_YSTEP`,
+`ACT_CHLIM`, and `ACT_CHSTEP`. Its nested counter order is:
+
+```text
+kernel X -> kernel Y -> input channel -> output/tile X -> output/tile Y
+```
+
+The following V1 MMIO registers form the implicit im2col programming
+interface. The detailed field names and access classes are listed again in the
+V1 register map below.
+
+| Offset | Firmware symbol | im2col/address-generation role |
+| ---: | --- | --- |
+| `0x0404` | `CDC_NPU_NATIVE_ACT_INCNTLIM` | Activation input-count limit; contributes to effective K |
+| `0x0408` | `CDC_NPU_NATIVE_ACT_INCNTSTEP` | Activation input-count step |
+| `0x0414` | `CDC_NPU_NATIVE_ACT_XLIM` | Kernel-X address limit |
+| `0x0418` | `CDC_NPU_NATIVE_ACT_XSTEP` | Kernel-X address step |
+| `0x041C` | `CDC_NPU_NATIVE_ACT_YLIM` | Kernel-Y address limit |
+| `0x0420` | `CDC_NPU_NATIVE_ACT_YSTEP` | Kernel-Y address step; native dilation is encoded in this step |
+| `0x0424` | `CDC_NPU_NATIVE_ACT_CHLIM` | Input-channel address limit |
+| `0x0428` | `CDC_NPU_NATIVE_ACT_DIL_PAT` | Dilation bitmap; the current feeder applies bitmap gating in linear mode |
+| `0x042C` | `CDC_NPU_NATIVE_ACT_CHSTEP` | Input-channel address step |
+| `0x0430` | `CDC_NPU_NATIVE_ACT_TIL_XLIM` | Output/tile-X limit |
+| `0x0434` | `CDC_NPU_NATIVE_ACT_TIL_XSTEP` | Output/tile-X step; carries horizontal stride |
+| `0x0438` | `CDC_NPU_NATIVE_ACT_TIL_YLIM` | Output/tile-Y limit |
+| `0x043C` | `CDC_NPU_NATIVE_ACT_TIL_YSTEP` | Output/tile-Y step; carries vertical stride |
+| `0x0480` | `CDC_NPU_NATIVE_CFG_ACT_BASE_ADDR` | Activation SRAM base address |
+
+The model's `driver/libsauria_cfg.h` computes these fields from a layer and
+tile description. Using its names, the implemented relationships include:
+
+```text
+effective_kernel_width  = 1 + (B_w - 1) * dilation
+effective_kernel_height = 1 + (B_h - 1) * dilation
+effective_tile_width    = 1 + (w_tile - 1) * stride
+effective_tile_height   = 1 + (h_tile - 1) * stride
+A_w_tile = effective_tile_width  + effective_kernel_width  - 1
+A_h_tile = effective_tile_height + effective_kernel_height - 1
+
+CON_INCNTLIM = B_w * B_h * c_tile - 1
+ACT_YSTEP    = A_w_tile * dilation
+ACT_CHSTEP   = A_w_tile * A_h_tile
+ACT_CHLIM    = ACT_CHSTEP * c_tile
+ACT_TIL_XSTEP = Y_used * stride
+ACT_TIL_YSTEP = A_w_tile * stride
+```
+
+The layer-description registers `KERNEL_H`, `KERNEL_W`, `STRIDE`, `PADDING`,
+and `DILATION` do not automatically derive or program these feeder limits and
+steps in the current V4.4 datapath. 
 
 ### Controller
 
