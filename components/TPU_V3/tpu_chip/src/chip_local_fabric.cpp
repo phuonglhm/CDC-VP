@@ -332,19 +332,36 @@ bool chip_local_fabric::acquire_port(chip_initiator initiator,
 {
     const auto abandoned = [&] { return generation_ != request_generation; };
 
+    const unsigned me = index_of(initiator);
+    port_state& port = *ports_[index_of(destination)];
+
     // An arbitrated initiator has to be where it says it is before it can
     // contend with anyone: arbitration is about who holds a port *now*, and an
     // initiator still carrying an unconsumed quantum is not here yet.
+    //
+    // **Interruptible**, for the reason `neo_external_bridge` records at the
+    // same place: a request catching up on its quantum has not registered as a
+    // waiter, so it is invisible to the arbiter, and a bare `wait(delay)`
+    // cannot be woken by `reset()` either — it would sleep out the whole
+    // remaining quantum before noticing it had been abandoned. Waiting on the
+    // timeout *or* the port's event preserves the arrival instant exactly and
+    // lets a reset land.
     if (delay != sc_core::SC_ZERO_TIME) {
-        sc_core::wait(delay);
-        delay = sc_core::SC_ZERO_TIME;
-        if (abandoned()) {
-            return false;
+        const sc_core::sc_time arrival = sc_core::sc_time_stamp() + delay;
+        while (sc_core::sc_time_stamp() < arrival) {
+            sc_core::wait(arrival - sc_core::sc_time_stamp(), port.changed);
+            if (abandoned()) {
+                // Hand back the unelapsed remainder, for the reason
+                // `neo_external_bridge` records at the same place: a caller's
+                // logical time is `sc_time_stamp() + delay`, and a decoupled
+                // initiator that sets its keeper from the returned value would
+                // move backwards if this returned zero.
+                delay = arrival - sc_core::sc_time_stamp();
+                return false;
+            }
         }
+        delay = sc_core::SC_ZERO_TIME;
     }
-
-    const unsigned me = index_of(initiator);
-    port_state& port = *ports_[index_of(destination)];
 
     port.waiting[me] = true;
     // A new waiter can change who the rotating priority selects, so whoever is
@@ -375,8 +392,11 @@ bool chip_local_fabric::acquire_port(chip_initiator initiator,
     sc_core::wait(cycle_);
 
     if (abandoned()) {
-        // Do not release the port: reset already did, and a stale writer would
-        // clear a `busy` that belongs to the next owner.
+        // Granted, and now not going to be used. **This request must release
+        // the port**, because it owns it and `reset()` deliberately no longer
+        // clears `busy` — see `reset()` for why. Leaving it held would wedge
+        // the port for the rest of the simulation.
+        release_port(destination);
         return false;
     }
 
@@ -451,11 +471,16 @@ void chip_local_fabric::b_transport(int id, tlm::tlm_generic_payload& trans,
 
     port_of(destination)->b_transport(trans, delay);
 
-    // Released only if this request still owns it. A reset during the
-    // downstream call already released every port and may have granted this one
-    // to somebody else; clearing `busy` now would let a third initiator in
-    // alongside them.
-    if (holds_port && generation_ == request_generation) {
+    // **Always released by whoever took it, reset or no reset.**
+    //
+    // Ownership of a port is a fact about a C++ call stack, not model state a
+    // reset can revoke: `reset()` cannot cancel a `b_transport()` already
+    // blocked inside the target. An earlier version made this conditional on
+    // the generation and had `reset()` clear `busy` instead, which handed the
+    // port to another core while the first one was still inside the downstream
+    // call — two concurrent transactions in one target, which is the invariant
+    // this arbiter exists to hold.
+    if (holds_port) {
         release_port(destination);
     }
 
@@ -494,6 +519,15 @@ unsigned int chip_local_fabric::transport_dbg(int id,
     // like any other (`INTERFACE_CONTRACT.md` §8).
     const auto initiator = static_cast<chip_initiator>(id);
     if (core::common_payload_error(trans) != core::payload_rule_error::none) {
+        return 0;
+    }
+    // `common_payload_error()` checks the command, the streaming width and the
+    // byte-enable shape; it says nothing about the data pointer. A non-empty
+    // transaction with a null pointer is a malformed payload and forwarding it
+    // hands a downstream debug target a null to dereference. `b_transport`
+    // already refuses it, and `INTERFACE_CONTRACT.md` §8 gives the debug path
+    // no relaxation of the rules — only of timing.
+    if (trans.get_data_length() != 0 && trans.get_data_ptr() == nullptr) {
         return 0;
     }
 
@@ -564,17 +598,28 @@ void chip_local_fabric::reset()
 
     for (auto& port : ports_) {
         port->busy_until = sc_core::SC_ZERO_TIME;
-        port->busy = false;
         for (unsigned i = 0; i < chip_initiator_count; ++i) {
             port->waiting[i] = false;
             port->grants[i] = 0;
         }
         port->last_granted = chip_initiator_count - 1;
         port->conflicts = 0;
-        // Wake everyone before their flags are gone. An initiator blocked on
-        // this port re-checks the generation, abandons its request and returns;
-        // clearing `waiting[]` without notifying would leave it unselectable
-        // and unwoken, waiting for a grant no arbiter can issue.
+
+        // **`busy` is deliberately not cleared.**
+        //
+        // If a request is inside this port's `b_transport()` right now, it
+        // still owns the port and this call cannot take it back: reset does not
+        // unwind a blocked C++ call. Clearing the flag would let another core
+        // into the same target alongside it. The owner releases the port when
+        // its downstream call returns — or, if it was abandoned between the
+        // grant and the forward, from `acquire_port()` — and a request arriving
+        // after this reset waits for that, correctly, because the port really
+        // is busy.
+
+        // Wake the queued waiters before their flags are gone. Each re-checks
+        // the generation, abandons its request and returns; clearing
+        // `waiting[]` without notifying would leave one unselectable and
+        // unwoken, waiting for a grant no arbiter can issue.
         port->changed.notify(sc_core::SC_ZERO_TIME);
     }
 

@@ -24,13 +24,14 @@ continues to report the MXU as neither linked nor selectable.
 | Document | What it answers |
 | --- | --- |
 | [docs/TPU_V3_IMPLEMENTATION_PLAN.md](docs/TPU_V3_IMPLEMENTATION_PLAN.md) | what is being built, in what order, and what each phase gate requires |
-| [docs/TPU_V3_DECISION_RECORD.md](docs/TPU_V3_DECISION_RECORD.md) | D1–D22, approved. The authority where it and any other document disagree |
+| [docs/TPU_V3_DECISION_RECORD.md](docs/TPU_V3_DECISION_RECORD.md) | D1–D23, approved. The authority where it and any other document disagree |
 | [docs/TPU_V3_PHASE0_AUDIT.md](docs/TPU_V3_PHASE0_AUDIT.md) | measured facts: revisions, toolchain, licences, and the constraints the existing NoC imposes. P0-6, P0-7 and P0-9 are superseded by the decision record |
 | [docs/TPU_V3_PHASE2_AUDIT.md](docs/TPU_V3_PHASE2_AUDIT.md) | the RV32GCV backend: findings F1–F13, the patch series, and the Spike differential result |
 | [docs/TPU_V3_PHASE5_AUDIT.md](docs/TPU_V3_PHASE5_AUDIT.md) | the 64x64 MXU and its pinned Sauria v4.2 implementation source |
 | [docs/TPU_V3_PHASE6_AUDIT.md](docs/TPU_V3_PHASE6_AUDIT.md) | the Transform block's pinned Im2Col source/layout/golden evidence and explicit Col2Im boundary |
 | [docs/TPU_V3_PHASE7_AUDIT.md](docs/TPU_V3_PHASE7_AUDIT.md) | the NEO-CORE composition: the defects composing surfaced, and the D19 reset implementation |
 | [docs/TPU_V3_PHASE8_AUDIT.md](docs/TPU_V3_PHASE8_AUDIT.md) | the dual-core chip: multi-hart atomicity evidence, chip-fabric arbitration, and what closed D8 |
+| [docs/TPU_V3_PHASE9_NOC_REBASELINE.md](docs/TPU_V3_PHASE9_NOC_REBASELINE.md) | the mandatory pre-Phase-9 freeze: traffic classification, transport structure, widths, protocol behaviour and what each one costs |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | what the machine is — hierarchy, data paths, ordering, fidelity levels |
 | [docs/ADDRESS_MAP.md](docs/ADDRESS_MAP.md) | every region, and the rules the map satisfies |
 | [docs/INTERFACE_CONTRACT.md](docs/INTERFACE_CONTRACT.md) | the TLM rules every component here must follow, with a reviewer checklist |
@@ -107,8 +108,11 @@ interconnect; do not read throughput from a run with contended atomics.
 on a node that hosts any upstream port, and a TPU chip needs both. One chip
 plus global memory works; chip-to-chip does not. Decision D1 keeps
 `NoLoopback = 1` and adds an owner-aware local bypass; it is a **Phase 9
-prerequisite**. Background in
-[docs/TPU_V3_PHASE0_AUDIT.md](docs/TPU_V3_PHASE0_AUDIT.md) §5.1.
+prerequisite and is not implemented** — `add_target()` still has no owner
+parameter. Background in
+[docs/TPU_V3_PHASE0_AUDIT.md](docs/TPU_V3_PHASE0_AUDIT.md) §5.1, current status
+in [docs/TPU_V3_PHASE9_NOC_REBASELINE.md](docs/TPU_V3_PHASE9_NOC_REBASELINE.md)
+§7.
 
 **A window is not a capacity, and neither is host memory.** Core SRAM (16 MiB)
 and global RAM (1 GiB) always decode their whole window; the instantiated

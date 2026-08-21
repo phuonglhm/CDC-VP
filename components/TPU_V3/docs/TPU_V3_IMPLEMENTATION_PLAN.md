@@ -2360,6 +2360,20 @@ No implementation choice may be inferred from the architecture diagram alone.
 Record the selected alternative and its RTL/FlooGen evidence in the decision
 record before proceeding with the tasks below.
 
+> **Rebaseline result.** Complete on 2026-08-20 and ratified as decision record
+> D23; the evidence is `TPU_V3_PHASE9_NOC_REBASELINE.md`. All five items are
+> frozen and the transport stays the **shared single-AXI network unchanged**, so
+> no new signed FlooNoC configuration is created and the v1.4 sign-off carries.
+> The VC alternative turned out not to exist at the pinned revision — the VC
+> router and chimney are under `hw/deprecated/` and build only under a separate
+> Bender target — and narrow-wide, which is live and offers a 512-bit wide path,
+> answers a throughput requirement that nothing in this plan states. Two
+> consequences are recorded rather than left to be found: head-of-line blocking
+> between a bulk burst and a control access is accepted, and instruction fetch
+> is data-class because classification is a function of the address. The
+> reset-of-in-flight-traffic rule is frozen as a contract and is a Phase 9 task,
+> as is D1, which is **not** implemented.
+
 #### Tasks
 
 - Close D1 owner-aware local bypass before co-locating manager/target endpoints.
@@ -2861,11 +2875,13 @@ Also outstanding:
   `noc_interconnect` (D1). It needs a cross-checked change to an RTL-signed
   component and its own negative controls — a missing or wrong owner mapping
   must fail during elaboration, and a local access must inject zero flits.
-* **Phase 9 NoC architecture rebaseline:** retain FlooNoC v0 unchanged through
-  Phase 8, then freeze the control/data classification, shared-VC versus
-  narrow/wide-physical-network choice, both widths, arbitration, ordering,
-  back-pressure and the corresponding RTL verification scope. This is a hard
-  entry gate for Phase 9, not an implementation detail to decide while coding.
+* ~~**Phase 9 NoC architecture rebaseline**~~ — **closed on 2026-08-20 as
+  decision record D23**, evidence in `TPU_V3_PHASE9_NOC_REBASELINE.md`. All five
+  items are frozen and the transport stays the shared single-AXI network
+  unchanged, so no new signed FlooNoC configuration is created. The VC
+  alternative is deprecated at the pinned revision and the narrow-wide
+  alternative answers a throughput requirement nothing in this plan states.
+  The hard entry gate for Phase 9 is therefore met.
 
 Do not begin full mesh composition or claim 128x128 before the corresponding
 D14 phase and promotion gates pass.
@@ -2889,9 +2905,10 @@ Update this table when work progresses.
 | Phase 6: Transform | **Complete** (2026-08-18) for D18 Im2Col-only Revision 1 | `components/TPU_V3/image_transform`, `IMAGE_TRANSFORM_MODEL.md` and `docs/TPU_V3_PHASE6_AUDIT.md`. The Transform block's pinned CHW INT8 Im2Col capability passes the NPU convolution golden and MMIO/native/reset gates; Col2Im is explicitly unavailable and causes no SRAM traffic. Standalone component gate 3/3 and full `tpu_v3` regression 38/38, zero skips |
 | Phase 7: single NEO-CORE | **Complete** (2026-08-20), review findings closed | `neo_hart_port` (§11.7) and `tpu_core` compose VP++, core SRAM, the three D15 planes, the DMA, the MXU and the Transform block; `tpu_v3_neo_core` builds only when both accelerator options and the CPU backend are present. Gated by `tpu_v3_hart_port`, `tpu_v3_neo_core` and `tpu_v3_neo_core_pipeline`, the last of which boots one firmware ELF that drives every engine through MMIO and matches a host-computed golden for the Im2Col matrix, the INT32 GEMM and the RVV reduction. D19 implemented and gated by `architectural_reset`. Three integration defects surfaced and were fixed: `reset_cpu()` threw on its second call, `neo_external_bridge` had one outbound socket for two initiators, and `sa_control` drove its IRQ from two processes. Composing cores into a chip is Phase 8 and into the platform Phase 9; D21 keeps a NEO-CORE binary internal either way. `unavailable` (Col2Im) and `injected-error` are gated inside the composition too. Review on 2026-08-20 found and closed a reset-semantics contradiction — a core reset wiped core SRAM while every engine reported the bytes it had committed to that SRAM as still committed — plus a double engine reset that destroyed the accounting `sa_control` snapshots, an `i_rstn` that was never pulsed, and firmware building into the source tree. See `TPU_V3_PHASE7_AUDIT.md` |
 | Phase 7: audit | Complete (2026-08-20) | `docs/TPU_V3_PHASE7_AUDIT.md` — what composing surfaced that the component gates could not, and the review findings it closed |
-| Phase 8: dual-core chip | **Complete** (2026-08-20) | `chip_local_fabric` and `tpu_chip` compose two NEO-COREs with hart ids `chip * 2 + core`, the chip register windows and exactly one mesh boundary; core-to-core traffic is answered inside the chip and never offered to `noc_interconnect`. Gated by `tpu_v3_chip_fabric` and `tpu_v3_tpu_chip`, the latter booting one image on both harts that branches only on `mhartid`. The multi-hart AMO gate D8 deferred is closed by D22: `test_bus_lock_atomicity` shows 128 of 128 increments with one shared lock and exactly 64 with the per-hart default, and upstream `52d376d4` stays out on the reachability argument recorded there. Four integration defects surfaced and were fixed: the per-hart bus lock; a core's hart and its DMA both able to enter the core's one external socket, which `neo_external_bridge` now arbitrates; a chip-fabric arbiter that released its port before the downstream transaction; and a fairness observable that would have passed with its labels swapped. The composition gate runs in both chip-fabric timing modes, because only the blocking one can reach the second of those. Release and Debug `tpu_v3` 51/51, zero skips. See `TPU_V3_PHASE8_AUDIT.md` |
+| Phase 8: dual-core chip | **Complete** (2026-08-20) | `chip_local_fabric` and `tpu_chip` compose two NEO-COREs with hart ids `chip * 2 + core`, the chip register windows and exactly one mesh boundary; core-to-core traffic is answered inside the chip and never offered to `noc_interconnect`. Gated by `tpu_v3_chip_fabric` and `tpu_v3_tpu_chip`, the latter booting one image on both harts that branches only on `mhartid`. The multi-hart AMO gate D8 deferred is closed by D22: `test_bus_lock_atomicity` shows 128 of 128 increments with one shared lock and exactly 64 with the per-hart default, and upstream `52d376d4` stays out on the reachability argument recorded there. Four integration defects surfaced and were fixed: the per-hart bus lock; a core's hart and its DMA both able to enter the core's one external socket, which `neo_external_bridge` now arbitrates; a chip-fabric arbiter that released its port before the downstream transaction; and a fairness observable that would have passed with its labels swapped. The composition gate runs in both chip-fabric timing modes, because only the blocking one can reach the second of those. A review on 2026-08-20 found and closed five more: both new arbiters cleared their port's `busy` flag in `reset()`, which cannot release a port whose owner is blocked inside a downstream `b_transport()` and put two initiators in one target; the bridge ignored the caller's TLM delay when queueing, so a temporally decoupled hart took its place in the queue at an instant it had not reached; the chip fabric's debug path forwarded a non-empty payload with a null data pointer; and the bridge's post-reset recovery check was `outbound_requests() >= 0` on an unsigned type. Release and Debug `tpu_v3` 51/51, zero skips. See `TPU_V3_PHASE8_AUDIT.md` |
 | Phase 8: audit | Complete (2026-08-20) | `docs/TPU_V3_PHASE8_AUDIT.md` — the multi-hart atomicity evidence, its negative controls, and the D19 prediction measurement corrected |
-| Phase 9: NoC/mesh | Not started; mandatory NoC rebaseline before implementation | D1 prerequisite; freeze control/data classification, shared/VC versus narrow/wide physical transport, widths, arbitration, ordering, back-pressure and RTL verification scope; also assert the external bridge does not block on arbitration (D16) |
+| Phase 9: NoC/mesh | Not started; **entry gate met** — the rebaseline is closed as D23 and implementation may begin | The five freezes are done (see the row below); what remains is implementation. First task: **D1's owner-aware local bypass, which is not implemented** — `add_target()` has no owner parameter and `reject_self_node_targets()` still refuses unconditionally, so chip-to-chip traffic is blocked. Then the chip NoC endpoint with its chunking contract, the D23 reset-of-in-flight rule, and the six evidence items in `TPU_V3_PHASE9_NOC_REBASELINE.md` §6. The external bridge now blocks on its own outbound arbiter by design (Phase 8); what D16 forbids is a *NoC-reachable* path that waits, which is the inbound side |
+| Phase 9: NoC rebaseline | **Complete** (2026-08-20), ratified as D23 | `docs/TPU_V3_PHASE9_NOC_REBASELINE.md`. Traffic classification, transport structure, widths/adaptation, protocol behaviour and verification impact frozen against pinned FlooNoC `9a6972a`. Transport unchanged, so no new signed configuration and the v1.4 sign-off carries. Records that the VC alternative is deprecated upstream and that D1 is not implemented |
 | Phase 9B: MXU 128x128 promotion | Waiting for NPU-team delivery | The current Sauria-derived 64x64 implementation must remain explicitly labelled until then |
 | Phase 10: firmware/workloads | Not started | — |
 | Phase 11: metrics/stress | Not started | — |
@@ -2921,8 +2938,8 @@ Update this table when work progresses.
 | XLEN | 32 | Frozen |
 | VLEN | 512 bits | Frozen |
 | ELEN | 64 bits | Frozen |
-| Current NoC transport baseline | FlooNoC v0 `single-AXI`: separate physical `req`/`rsp` meshes, one physical/virtual channel per mesh, 64-bit AXI data path; control and bulk data are not separated | Retained unchanged through Phase 8; it does not imply a TPU_V3 final transport choice |
-| Phase 9 control/data transport | Open: shared network, control/data VCs, or separate narrow-control/wide-data physical networks; control/data widths also open | **Mandatory pre-Phase-9 rebaseline.** Freeze from pinned RTL/FlooGen evidence together with classification, arbitration, ordering, back-pressure and a fresh RTL verification scope; VCs alone do not widen the data path |
+| Current NoC transport baseline | FlooNoC v0 `single-AXI`: separate physical `req`/`rsp` meshes, one physical/virtual channel per mesh, 64-bit AXI data path; control and bulk data are not separated | **Frozen as the Phase 9 transport by D23** (2026-08-20), unchanged |
+| Phase 9 control/data transport | **Shared single-AXI network, unchanged.** 64-bit, one width for control and data alike; traffic class is a total function of the address (unmapped, straddling and uninstantiated-chip accesses classify as control) and is endpoint-local metadata the transport never carries, held per AXI response channel | **Frozen (D23)**, evidence in `TPU_V3_PHASE9_NOC_REBASELINE.md`. Control/data VCs are *deprecated* at pinned FlooNoC `9a6972a` and unavailable; narrow-wide is live with a 512-bit wide path but answers a throughput requirement nothing here states. Reopening means narrow-wide, a new signed configuration and its own cross-check campaign — not a parameter change. Accepted cost: head-of-line blocking between a bulk burst and a control access |
 | NoC topology | Parameterized 2D mesh | Frozen concept, dimensions open |
 | NoC attachment | One aggregated endpoint per chip | Frozen |
 | RV32GCV runtime | RISC-V VP++ (`ics-jku/riscv-vp-plusplus`), MIT | Phase 2 complete at the recorded pin and approved patch series |

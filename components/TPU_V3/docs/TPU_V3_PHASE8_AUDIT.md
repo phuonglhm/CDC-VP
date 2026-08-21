@@ -79,6 +79,61 @@ produced a perfectly alternating sequence with the two labels swapped, so it
 would have passed either way. The contenders now write their own index into the
 payload and the target reads it out of the transaction it is actually serving.
 
+## 2a. Defects found by review
+
+A Codex review of the finished phase found five more, and four of them are one
+mistake made twice plus its consequences.
+
+**`reset()` cannot release a port it does not own.** Both new arbiters cleared
+their `busy` flag in `reset()` and made the owner's release conditional on the
+generation. That reads as "reset takes the port back", and it is not what
+happens: an initiator inside `external->b_transport()` is blocked in a C++ call
+stack that `reset()` cannot unwind, and it is still using the port. Clearing the
+flag handed the port to somebody else *alongside* it — in the bridge, two
+concurrent calls on the socket the arbiter exists to serialise; in the chip
+fabric, two cores inside one target.
+
+The comment I had written on the abandon path — "reset already released it" —
+is where the error is visible in hindsight. Reset cleared a flag; it released
+nothing.
+
+Fixed the same way in both: **whoever takes a port releases it, reset or no
+reset**, because ownership is a fact about a call stack rather than model state.
+`reset()` now abandons only the *queued* waiters. The chip fabric needed one
+extra case, since it waits a cycle between the grant and the forward: a request
+abandoned in that window owns the port and will never forward, so it releases
+before returning — otherwise the port wedges for the rest of the run.
+
+Both are covered by regressions that fail against the old code: an initiator
+holding a port through a one-microsecond downstream call, a reset partway
+through, and a second request issued straight into that window. The observable
+is `peak_in_flight` at the target, which reads 2 with the old behaviour.
+
+**The bridge ignored the caller's TLM delay.** VP++ passes its quantum-keeper
+local time in `delay` (`common/mem.h:105`), so a decoupled hart's request has
+not logically arrived yet. A contending request now consumes its delay before
+queueing, so the arbiter orders contenders by arrival rather than by which
+process SystemC happened to run first. Measured: a hart carrying a 1 µs quantum
+is served at 1 µs instead of at 200 ns.
+
+An **uncontended** request still keeps its quantum and takes a free port
+immediately — see §5, where the residual is recorded, along with why the
+alternative is worse.
+
+**The chip fabric's debug path forwarded a malformed payload.**
+`common_payload_error()` checks the command, the streaming width and the
+byte-enable shape, and says nothing about the data pointer; a non-empty debug
+transaction with a null pointer went straight to a downstream target.
+`b_transport` had always refused it. Removing the new check to confirm the
+finding does not produce a wrong answer — it produces a **segmentation fault**,
+which is what the downstream `memcpy` does with a null source.
+
+**A recovery check that could not fail.** `CHECK(bridge.outbound_requests() >= 0)`
+on an unsigned type is a tautology, and it carried the comment "And the bridge
+still works". It sent no transaction. Replaced with a request issued after the
+reset that has to complete — an arbiter left wedged now fails the test instead
+of passing it.
+
 ## 3. Evidence
 
 ### 3.1 Multi-hart atomicity (decision record D8, closed by D22)
@@ -176,6 +231,16 @@ only the mutual-exclusion check notices: two transactions inside the target at
 once, zero recorded conflicts, and the grant counters at zero. A fairness check
 alone would have passed a bridge with no arbiter at all.
 
+**Reset ownership, both components.** Restoring the reviewed-away behaviour —
+`reset()` clearing `busy`, the release made conditional on the generation —
+makes `peak_in_flight` read 2 at the target in each, and both tests fail.
+
+**Delay consumption.** Skipping the `wait(delay)` on the contended path serves
+the hart at 200 ns instead of 1 µs, and the arrival check fails.
+
+**The debug null check.** Removing it does not produce a wrong result; it
+produces a segmentation fault in the downstream target's `memcpy`.
+
 ### 3.6 Suite
 
 | | |
@@ -223,6 +288,16 @@ holding the port has been reset too and will not release it. Same root cause as
 the D19 `wfi` limitation — a reset cannot unwind a suspended process's C++
 stack. Visible in the `arbitrated` run as one `[ISS] Warn: Taking trap handler
 in machine mode to 0x0`.
+
+**An uncontended outbound request does not consume its TLM delay.** A hart
+running ahead of simulated time can therefore claim a free external port before
+a DMA that is, in simulated time, earlier. Consuming the delay on every outbound
+access would fix it and would also synchronise the hart to global time on every
+instruction fetch, removing temporal decoupling entirely — the cost D16 refuses
+for the local plane, for the same reason. Contending requests do consume it, so
+the ordering *among initiators that actually collide* is right. Arbitration
+order between a decoupled hart and a DMA is approximate and no fairness figure
+taken from it is a hardware claim.
 
 **`annotated` chip-fabric mode does not serialise a blocking target.** Port
 occupancy is a charge on the caller's delay, so two initiators can be inside one

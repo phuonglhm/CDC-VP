@@ -192,6 +192,24 @@ public:
         return access(tlm::TLM_READ_COMMAND, address, data, delay);
     }
 
+    /// A debug transaction with a non-empty length and no data pointer. It is
+    /// malformed, and `common_payload_error()` cannot see that — it checks the
+    /// command, the streaming width and the byte-enable shape and says nothing
+    /// about the pointer. Forwarding it hands a downstream debug target a null
+    /// to dereference.
+    unsigned int debug_read_null(std::uint64_t address, unsigned length)
+    {
+        tlm::tlm_generic_payload trans;
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        trans.set_address(address);
+        trans.set_data_ptr(nullptr);
+        trans.set_data_length(length);
+        trans.set_streaming_width(length);
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        return socket->transport_dbg(trans);
+    }
+
     unsigned int debug_read(std::uint64_t address, unsigned length)
     {
         std::vector<unsigned char> data(length, 0);
@@ -402,6 +420,15 @@ void check_debug_transport()
     CHECK_MSG(b.fabric.requests(chip_initiator::core0) == 0,
               "the debug path moved a counter; it must be free of side "
               "effects (INTERFACE_CONTRACT.md §8)");
+
+    // A malformed payload is refused on the debug path too. §8 relaxes the
+    // *timing*, not the rules, and `b_transport` already refuses this one.
+    CHECK_MSG(b.core0.debug_read_null(am::core_sram_base(kChip, 1), 4) == 0,
+              "a debug transaction with a non-zero length and a null data "
+              "pointer was forwarded; the target it reaches has nothing to "
+              "read from but a null pointer");
+    CHECK_MSG(b.core1_port.requests == 0,
+              "the malformed debug transaction reached a target");
 }
 
 // ── contention ───────────────────────────────────────────────────────────────
@@ -412,19 +439,36 @@ class contender : public sc_core::sc_module {
 public:
     SC_HAS_PROCESS(contender);
 
+    /// `carry` is the TLM delay each request arrives with. Non-zero models a
+    /// temporally decoupled initiator that has not reached the current instant.
     contender(sc_core::sc_module_name name, driver& drv,
-              std::uint64_t address, sc_core::sc_time start, unsigned repeats)
+              std::uint64_t address, sc_core::sc_time start, unsigned repeats,
+              sc_core::sc_time carry = sc_core::SC_ZERO_TIME)
         : sc_core::sc_module(name)
         , drv_(drv)
         , address_(address)
         , start_(start)
         , repeats_(repeats)
+        , carry_(carry)
     {
         SC_THREAD(run);
     }
 
     sc_core::sc_time finished_at = sc_core::SC_ZERO_TIME;
+    /// `sc_time_stamp()` when `b_transport` returned, before this process
+    /// consumes the delay it came back with. A correctly returned remainder
+    /// makes the two differ, and it is the *return* that says whether a reset
+    /// was prompt.
+    sc_core::sc_time returned_at = sc_core::SC_ZERO_TIME;
     unsigned completed = 0;
+    unsigned errors = 0;
+
+    /// Set if this initiator's logical time — `sc_time_stamp() + delay` — ever
+    /// decreased across a call. A decoupled initiator sets its quantum keeper
+    /// from the returned delay, so a component that hands back less than it
+    /// consumed moves the initiator into its own past.
+    bool went_backwards = false;
+    sc_core::sc_time worst_rollback = sc_core::SC_ZERO_TIME;
 
 private:
     void run()
@@ -433,13 +477,30 @@ private:
             sc_core::wait(start_);
         }
         for (unsigned i = 0; i < repeats_; ++i) {
-            sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+            sc_core::sc_time delay = carry_;
+            const sc_core::sc_time logical_before
+                = sc_core::sc_time_stamp() + delay;
+
             const auto status = drv_.write(address_, 4, delay);
+
+            returned_at = sc_core::sc_time_stamp();
+            const sc_core::sc_time logical_after
+                = sc_core::sc_time_stamp() + delay;
+            if (logical_after < logical_before) {
+                went_backwards = true;
+                const auto rollback = logical_before - logical_after;
+                if (rollback > worst_rollback) {
+                    worst_rollback = rollback;
+                }
+            }
+
             if (delay != sc_core::SC_ZERO_TIME) {
                 sc_core::wait(delay);
             }
             if (status == tlm::TLM_OK_RESPONSE) {
                 ++completed;
+            } else {
+                ++errors;
             }
         }
         finished_at = sc_core::sc_time_stamp();
@@ -449,6 +510,35 @@ private:
     std::uint64_t address_;
     sc_core::sc_time start_;
     unsigned repeats_;
+    sc_core::sc_time carry_;
+};
+
+/// Calls `reset()` on a fabric at a chosen instant.
+class fabric_resetter : public sc_core::sc_module {
+public:
+    SC_HAS_PROCESS(fabric_resetter);
+
+    fabric_resetter(sc_core::sc_module_name name, chip_local_fabric& fabric,
+                    sc_core::sc_time at)
+        : sc_core::sc_module(name)
+        , fabric_(fabric)
+        , at_(at)
+    {
+        SC_THREAD(run);
+    }
+
+    bool fired = false;
+
+private:
+    void run()
+    {
+        sc_core::wait(at_);
+        fabric_.reset();
+        fired = true;
+    }
+
+    chip_local_fabric& fabric_;
+    sc_core::sc_time at_;
 };
 
 void check_annotated_contention()
@@ -474,6 +564,11 @@ void check_annotated_contention()
               "two transactions were inside the target at once");
 }
 
+void check_arbitrated_reset_keeps_the_port_with_its_owner(bench& b,
+                                                          contender& holder,
+                                                          contender& queued,
+                                                          fabric_resetter& reset);
+
 void check_arbitrated_fairness()
 {
     // A slow port and two initiators hammering it. In this mode the fabric
@@ -486,6 +581,35 @@ void check_arbitrated_fairness()
                        sc_core::SC_ZERO_TIME, 6);
     static contender c("contend_core1", b.core1, am::global_ram_base,
                        sc_core::SC_ZERO_TIME, 6);
+
+    // The reset-ownership bench, built here because this file has one
+    // `sc_start` and SystemC refuses a module created after it.
+    static bench r("rstarb", chip_fabric_timing::arbitrated,
+                   sc_core::sc_time(10, sc_core::SC_NS));
+    r.outside.service = sc_core::sc_time(1, sc_core::SC_US);
+    static contender holder("rst_holder", r.core0, am::global_ram_base,
+                            sc_core::SC_ZERO_TIME, 1);
+    static contender queued("rst_queued", r.core1, am::global_ram_base,
+                            sc_core::sc_time(100, sc_core::SC_NS), 2);
+    static fabric_resetter reset_at("rst_at", r.fabric,
+                                    sc_core::sc_time(300, sc_core::SC_NS));
+
+    // The third reset population, one level up from the bridge: an initiator
+    // waiting out its own quantum before it may contend is registered nowhere
+    // — not queued on the arbiter, not downstream — and a bare timed wait
+    // could not be woken by `reset()`. `q_core0` holds this port for 5 us;
+    // `q_core1` arrives carrying 3 us and must be abandoned by the 500 ns
+    // reset rather than at 3 us.
+    static bench q("rstq", chip_fabric_timing::arbitrated,
+                   sc_core::sc_time(10, sc_core::SC_NS));
+    q.outside.service = sc_core::sc_time(5, sc_core::SC_US);
+    static contender q_holder("rstq_holder", q.core0, am::global_ram_base,
+                              sc_core::SC_ZERO_TIME, 1);
+    static contender q_late("rstq_late", q.core1, am::global_ram_base,
+                            sc_core::SC_ZERO_TIME, 1,
+                            sc_core::sc_time(3, sc_core::SC_US));
+    static fabric_resetter q_reset("rstq_at", q.fabric,
+                                   sc_core::sc_time(500, sc_core::SC_NS));
 
     sc_core::sc_start(sc_core::sc_time(20, sc_core::SC_US));
 
@@ -519,6 +643,65 @@ void check_arbitrated_fairness()
               + std::to_string(alternations) + " changes in "
               + std::to_string(b.outside.order.size()) + " grants, which is "
               "first-come-first-served rather than rotating priority");
+
+    check_arbitrated_reset_keeps_the_port_with_its_owner(r, holder, queued,
+                                                         reset_at);
+
+    CHECK_MSG(q_reset.fired, "the quantum-catch-up reset never ran");
+    CHECK_MSG(q_late.errors == 1,
+              "the initiator waiting out its quantum was not abandoned");
+    std::cout << "chip port quantum catch-up abandoned at "
+              << q_late.returned_at << " (reset at 500 ns, quantum would have "
+                                       "expired at 3 us)\n";
+    CHECK_MSG(q_late.returned_at < sc_core::sc_time(1, sc_core::SC_US),
+              "the reset did not reach an initiator waiting out its quantum: "
+              "it returned at "
+                  + q_late.finished_at.to_string()
+                  + " instead of promptly after the 500 ns reset, so it slept "
+                    "out the whole 3 us");
+
+    // Waking early must not cost the initiator its clock: the unelapsed part of
+    // the quantum has to come back in `delay`.
+    for (const auto* who : {&q_late, &q_holder, &holder, &queued, &a, &c}) {
+        CHECK_MSG(!who->went_backwards,
+                  std::string("an initiator's logical time moved backwards by ")
+                      + who->worst_rollback.to_string()
+                      + ". `sc_time_stamp() + delay` must never decrease across "
+                        "a b_transport");
+    }
+}
+
+/// A reset must not hand a port away underneath the initiator holding it.
+///
+/// Core 0 is inside a one-microsecond downstream call; core 1 queues behind it
+/// and is abandoned by a reset at 300 ns, then issues again immediately — into
+/// the window where core 0 still owns the port. `reset()` cannot unwind core
+/// 0's blocked call, so it must not release its port either: doing so puts two
+/// cores inside one target at the same time, which is the one thing this
+/// arbiter exists to prevent.
+///
+/// Constructed here rather than in its own function because the whole file
+/// shares one `sc_start`, and a SystemC module cannot be created after it.
+void check_arbitrated_reset_keeps_the_port_with_its_owner(bench& b,
+                                                          contender& holder,
+                                                          contender& queued,
+                                                          fabric_resetter& reset)
+{
+    CHECK_MSG(reset.fired, "the reset never ran");
+
+    CHECK_MSG(holder.completed == 1,
+              "the transaction that was already inside the target when the "
+              "reset arrived did not complete. Reset abandons what is queued; "
+              "it cannot un-issue what a target has already been handed");
+
+    CHECK_MSG(queued.completed == 1,
+              "the request issued after the reset never completed, so the "
+              "arbiter did not recover from it");
+
+    CHECK_MSG(b.outside.peak_in_flight == 1,
+              "two transactions were inside one downstream target at once "
+              "after a reset: the port was released on behalf of an initiator "
+              "that was still inside its downstream call");
 }
 
 void check_reset()

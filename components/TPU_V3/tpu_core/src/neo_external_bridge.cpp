@@ -289,13 +289,17 @@ void neo_external_bridge::outbound_b_transport(int id,
 
     external->b_transport(trans, delay);
 
-    // Released only if this request still owns it. A reset during the
-    // downstream call already released the port and may have granted it to the
-    // other initiator; clearing `external_busy_` now would put both of them on
-    // it at once.
-    if (generation_ == request_generation) {
-        release_external();
-    }
+    // **Always released by whoever took it, reset or no reset.**
+    //
+    // Ownership of this port is a fact about a C++ call stack, not a piece of
+    // model state a reset can revoke: `reset()` cannot cancel a
+    // `b_transport()` that is already blocked inside the target. An earlier
+    // version made this release conditional on the generation and had `reset()`
+    // clear `external_busy_` instead, which handed the port to the other
+    // initiator while the first one was still inside the downstream call — two
+    // concurrent calls on the socket the whole arbiter exists to serialise.
+    // Reset now abandons *queued* waiters and leaves the active owner alone.
+    release_external();
 }
 
 unsigned neo_external_bridge::select_outbound_waiter() const noexcept
@@ -317,8 +321,67 @@ bool neo_external_bridge::acquire_external(unsigned initiator,
                                            sc_core::sc_time& delay,
                                            std::uint64_t request_generation)
 {
-    (void)delay;
     const auto abandoned = [&] { return generation_ != request_generation; };
+
+    const unsigned other = initiator ^ 1u;
+    if (!external_busy_ && !external_waiting_[other]) {
+        // Uncontended. Taken without yielding, and **without consuming the
+        // caller's delay** — which is what keeps a temporally decoupled hart
+        // decoupled. See the note in the header on what that costs.
+        external_busy_ = true;
+        external_last_granted_ = initiator;
+        ++outbound_grants_[initiator];
+        return true;
+    }
+
+    // Contended, so this request is about to wait — and a requester still
+    // carrying an unconsumed quantum is not here yet. VP++ passes its
+    // quantum-keeper local time in `delay` (`common/mem.h:105`), so without
+    // this a hart running ahead of simulated time would take its place in the
+    // queue at an instant it has not reached, ahead of a DMA that really is
+    // here. Consuming it costs nothing in decoupling terms: arbitration only
+    // blocks when something downstream blocks, and that has already
+    // synchronised this initiator.
+    if (delay != sc_core::SC_ZERO_TIME) {
+        // **Interruptible**, and that is not a refinement — a plain
+        // `wait(delay)` here creates a third reset population.
+        //
+        // A request catching up on its quantum has not registered as a waiter
+        // yet, so it is invisible to the arbiter, and a bare timed wait cannot
+        // be woken by `reset()`'s notification either: it would sleep out the
+        // whole remaining quantum — up to the full TLM global quantum — before
+        // noticing it had been abandoned, holding its caller all that time.
+        // Waiting on the timeout *or* the event fixes that while preserving the
+        // arrival instant exactly: an early wake re-checks the generation and
+        // then waits out whatever time is left.
+        const sc_core::sc_time arrival = sc_core::sc_time_stamp() + delay;
+        while (sc_core::sc_time_stamp() < arrival) {
+            sc_core::wait(arrival - sc_core::sc_time_stamp(),
+                          external_changed_);
+            if (abandoned()) {
+                // **Hand back what has not elapsed.** A caller's logical time
+                // is `sc_time_stamp() + delay`, and VP++ *sets* its quantum
+                // keeper from the returned value rather than adding to it
+                // (`common/mem.h:105`). Returning zero from an interrupted
+                // catch-up would therefore move the hart's logical time
+                // *backwards* — a 3 us quantum cut short at 500 ns would lose
+                // 2.5 us — which is worse than the slow abandonment this loop
+                // was written to fix.
+                delay = arrival - sc_core::sc_time_stamp();
+                return false;
+            }
+        }
+        // Reached only once the whole quantum has actually elapsed, which is
+        // the one moment at which zeroing it is true.
+        delay = sc_core::SC_ZERO_TIME;
+        if (!external_busy_ && !external_waiting_[other]) {
+            // It freed while we were catching up.
+            external_busy_ = true;
+            external_last_granted_ = initiator;
+            ++outbound_grants_[initiator];
+            return true;
+        }
+    }
 
     external_waiting_[initiator] = true;
     // A new waiter can change who the rotating priority selects, so whoever is
@@ -403,17 +466,26 @@ void neo_external_bridge::reset()
     outbound_local_refused_ = 0;
 
     ++generation_;
-    external_busy_ = false;
     for (unsigned i = 0; i < outbound_initiator_count; ++i) {
         external_waiting_[i] = false;
         outbound_grants_[i] = 0;
     }
     external_last_granted_ = outbound_initiator_count - 1;
     outbound_conflicts_ = 0;
-    // Wake everyone before their flags are gone. An initiator blocked on the
-    // port re-checks the generation, abandons its request and returns; clearing
-    // the flags without notifying would leave it unselectable and unwoken,
-    // waiting for a grant no arbiter can issue.
+
+    // **`external_busy_` is deliberately not cleared.**
+    //
+    // If an initiator is inside `external->b_transport()` right now, it still
+    // owns this port and this call cannot take it back: reset does not unwind
+    // a blocked C++ call. Clearing the flag would let the other initiator in
+    // alongside it. The owner releases the port when its downstream call
+    // returns, whatever generation it belonged to, and a request arriving after
+    // this reset waits for that — correctly, because the port really is busy.
+
+    // Wake the queued waiters before their flags are gone. Each re-checks the
+    // generation, abandons its request and returns; clearing the flags without
+    // notifying would leave one unselectable and unwoken, waiting for a grant
+    // no arbiter can issue.
     external_changed_.notify(sc_core::SC_ZERO_TIME);
 }
 

@@ -167,6 +167,18 @@ public:
         return outbound_local_refused_;
     }
 
+    /// Clear the counters and abandon every **queued** outbound request; leave
+    /// the external port alone if an initiator is still inside its downstream
+    /// call.
+    ///
+    /// Undocumented until Phase 8 gave this component an arbiter, and the two
+    /// populations are worth naming because they are treated differently. A
+    /// request queued for the shared external port is woken, sees the new
+    /// generation, and completes with `TLM_GENERIC_ERROR_RESPONSE` instead of
+    /// being forwarded. A request already inside `external->b_transport()`
+    /// **keeps the port**: reset cannot unwind a blocked C++ call, so releasing
+    /// on its behalf would put both initiators on the socket at once. It
+    /// releases the port itself when it unwinds.
     void reset();
 
     std::string report() const;
@@ -183,14 +195,32 @@ private:
     /// Block until this initiator owns the shared external port, then hold it
     /// across the downstream call.
     ///
-    /// Returns false when a `reset()` abandoned the request while it waited,
-    /// in which case the port must **not** be released: reset already did, and
-    /// it may already belong to the other initiator.
+    /// Returns false when a `reset()` abandoned the request **while it was
+    /// still queued**; a request that has been granted the port always reaches
+    /// its release, because ownership is a fact about a C++ call stack that a
+    /// reset cannot revoke.
     ///
     /// Waiting here is safe in every configuration: the callers are the hart's
     /// own thread and the DMA's worker, both of which may `wait()`. The rule
     /// that a component on the NoC-reachable path must never wait applies to
     /// `inbound`, which does not pass through here.
+    ///
+    /// ## What it does with `delay`, and the one thing it does not model
+    ///
+    /// A contending request consumes its `delay` before queueing, so the
+    /// arbiter orders contenders by when they actually arrive rather than by
+    /// which process SystemC happened to run first. An **uncontended** request
+    /// keeps its quantum and takes the free port immediately.
+    ///
+    /// That leaves one thing unmodelled, and it is the standard loosely-timed
+    /// trade: a hart running ahead of simulated time can claim a free port
+    /// before a DMA that is, in simulated time, earlier. Fixing it would mean
+    /// consuming the delay on every outbound access, which synchronises the
+    /// hart to global time on every instruction fetch and removes temporal
+    /// decoupling entirely — the cost D16 refuses for the local plane, for the
+    /// same reason. Arbitration order between a decoupled hart and a DMA is
+    /// therefore approximate, and no fairness figure taken from it is a
+    /// hardware claim.
     bool acquire_external(unsigned initiator, sc_core::sc_time& delay,
                           std::uint64_t request_generation);
     void release_external();

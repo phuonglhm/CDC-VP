@@ -1,6 +1,6 @@
 # TPU_V3 Architecture and Integration Decision Record
 
-Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20; bus-lock scope frozen by D22**
+Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20; bus-lock scope frozen by D22; Phase 9 NoC transport frozen by D23**
 
 Initial decision date: 2026-08-08
 
@@ -15,6 +15,8 @@ D19 hart reset contract ratification date: 2026-08-18
 D21 distribution boundary date: 2026-08-19
 
 D22 bus-lock scope date: 2026-08-20
+
+D23 NoC rebaseline date: 2026-08-20
 
 D20 architectural block naming date: 2026-08-18
 
@@ -57,6 +59,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | D20 | Architectural block names | The NEO-CORE architecture and reports call the matrix-multiplication block **MXU** and the tensor-layout block **Transform**. **Sauria** is used only for source/backend provenance, and **Im2Col** is the currently implemented Transform operation, not the block name. Existing code/ABI identifiers (`sauria_matrix`, `image_transform`, `SA_CONTROL`) remain unchanged by this documentation-only naming decision |
 | D21 | Distribution boundary for a NEO-CORE binary | **Internal-build artifact.** CDC-VP may go public; a binary containing a NEO-CORE does not. The platform composes cores only in the internal configuration (both accelerator options on) and instantiates none in the default/public one, whose manifest keeps `sauria.linked` and `sauria.selectable` false. A placeholder MXU to give a public build a nominal NEO-CORE is refused |
 | D22 | LR/SC and AMO bus lock scope | **One lock per chip, shared by both harts.** The CPU backend's per-hart default excludes nobody; `tpu_chip` creates the lock and attaches it to both harts during elaboration, through an opaque handle so the public CPU header still exposes no VP++ type. Upstream `52d376d4` stays unbackported, on measured evidence rather than on deferral
+| D23 | Phase 9 NoC transport | **Keep the shared single-AXI FlooNoC network unchanged.** Control/data virtual channels are *deprecated* at the pinned revision and cannot be added without leaving it; the narrow-wide network is live but answers a throughput requirement nobody has stated. Traffic class is a function of the address, taken from `region_kind`. Widths, protocol behaviour and the reset-of-in-flight rule are frozen in `TPU_V3_PHASE9_NOC_REBASELINE.md`; no new signed FlooNoC configuration is created
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -1966,3 +1969,118 @@ upstream calls `wait_for_access_rights()` on each load, store and instruction
 fetch. That is a faithful model of a locked bus and a pessimistic model of a
 modern coherent interconnect, and no throughput figure taken from a run with
 contended atomics should be presented as either.
+
+## D23. The Phase 9 NoC transport stays the shared single-AXI network
+
+Decision date: 2026-08-20.
+
+Plan §16 requires this decision to be recorded here, with its RTL and FlooGen
+evidence, before any Phase 9 implementation begins: "No implementation choice
+may be inferred from the architecture diagram alone." The full evidence is
+`TPU_V3_PHASE9_NOC_REBASELINE.md`; this is the decision and the reasons that
+carry it.
+
+### Decision
+
+**Keep the shared single-AXI FlooNoC network exactly as frozen.** No new signed
+FlooNoC configuration is created, so the v1.4 block-level sign-off of
+`components/floo_noc_model` carries into Phase 9 unchanged.
+
+The other four freezes the plan requires:
+
+* **traffic class is a total function of the address**, taken from
+  `address_map::region_kind` — `mmio` is control, `memory` is data — in three
+  ordered cases so that it is defined for **error traffic** too, as the plan
+  requires: a region containing the whole transfer decides; otherwise the region
+  containing the first byte decides, which settles a straddle; otherwise, for an
+  unmapped address or an uninstantiated chip, the class is **control**, because
+  such an access returns a status and no payload and so cannot be bulk data.
+  Those last two cases are refused before injection on every path TPU_V3 has —
+  `noc_interconnect` decodes before it injects and answers them locally with
+  `TLM_ADDRESS_ERROR_RESPONSE` — so there the class is for attribution rather
+  than routing. The one error that *does* traverse the network is a target that
+  reached and refused, which comes back as **`SLVERR`**; `DECERR` does not round
+  trip in this model, and a Phase 9 error test that waited for one would wait
+  forever.
+
+  It is **endpoint-local metadata**: the frozen `flit_header` has no class field,
+  so a response takes its request's class from the endpoint's own record. The
+  record keeping is **per channel** — a write queue matched to B and a read queue
+  matched to R — because `MaxUniqueIds = 1` gives FIFO order *within* each
+  channel and B and R complete independently; one shared head-of-request record
+  would misattribute a read's class to a write whenever both are in flight. The
+  network therefore cannot prioritise by class, which is the same fact as the
+  accepted head-of-line blocking below. Source-based and opcode-based
+  classification are both rejected, because the DMA is not the only bulk mover
+  and read-versus-write says nothing about the class;
+* **widths**: 64-bit, at most 256 beats, a 2048-byte beat frame, no width
+  conversion, and an oversized payload refused rather than split. Chunking is
+  the chip endpoint's responsibility and owes the five points of plan §9.3;
+* **protocol**: XY routing, wormhole arbitration with rotating priority,
+  in-order responses **within each response channel** under `MaxUniqueIds = 1` —
+  reads FIFO among reads and writes FIFO among writes, with no total order
+  between them — `MaxTxns = 32` per port, ready/valid back-pressure, separate
+  `req` and `rsp` physical meshes;
+* **reset of in-flight traffic** is frozen as a rule and is a Phase 9 task: a
+  chip reset abandons that chip's queued and in-flight work **at its endpoint**
+  and reports it as an error, does not reset the shared mesh, and leaves a
+  transaction already inside a downstream `b_transport()` holding its port until
+  it unwinds.
+
+### Why not virtual channels
+
+They are **deprecated at the pinned revision**. `floo_vc_router.sv` and
+`floo_nw_vc_chimney.sv` sit under `hw/deprecated/` and are compiled only by the
+separate `floo_deprecated_hw` Bender target. This is not a cost judgement: a VC
+cannot be added at `9a6972a` without leaving the frozen revision.
+
+Precisely, because the term does appear in live RTL: at this revision the only
+non-deprecated virtual-channel use is `NumWideVirtChannels` in
+`floo_nw_router.sv:91`, a read/write decoupling on the **wide** channel, with
+the narrow channel instantiated at `NumVirtChannels: 1`. There is therefore no
+VC option independent of the transport choice — VCs are available only to a
+design that has already taken the narrow-wide network.
+
+### Why not narrow-wide
+
+It is live and real: `floo_nw_router.sv`, `floo_nw_chimney.sv`,
+`floo_nw_join.sv`, and `floogen/examples/nw_mesh_xy.yml` configures a 64-bit
+narrow plus a **512-bit** wide protocol. It is the correct answer to a
+bandwidth problem.
+
+There is no stated bandwidth problem. Neither this document nor the plan states
+a throughput, bandwidth or NoC-latency target anywhere; Phase 11 specifies
+metrics to measure and no threshold to meet. Taking narrow-wide would also mean
+modelling three further RTL modules that `noc_interconnect` names as explicitly
+not modelled, and re-running block-level sign-off — the plan is explicit that
+"a new VC or narrow/wide network is a new signed configuration; the v0 evidence
+cannot simply be inherited".
+
+### What this costs, stated rather than discovered
+
+One channel per mesh plus wormhole arbitration means **head-of-line blocking is
+accepted**: a long data burst can hold an output while a control access waits
+behind it. Instruction fetch is data-class by the address rule and shares that
+channel. Both are direct consequences of this decision and are recorded so that
+a Phase 11 contention measurement reads as a known property.
+
+### The condition that reopens it
+
+A **stated** bandwidth requirement, or a measured workload in which 64-bit NoC
+time dominates. The answer then is **narrow-wide, not a virtual channel**, on
+the evidence above — and it is a new signed configuration with its own
+cross-check campaign, not a parameter change.
+
+### Unblocked, and still blocked
+
+D1's owner-aware local bypass is **not implemented**:
+`noc_interconnect::add_target()` has no owner parameter and
+`reject_self_node_targets()` still refuses any target on a node hosting any
+upstream port. Chip-to-chip traffic remains blocked and closing D1 is the first
+Phase 9 implementation task, as plan §16 lists it.
+
+`TPU_V3_PHASE0_AUDIT.md` §5.1 scheduled D1 as a Phase 7 prerequisite. Phase 7
+was one chip plus global memory and Phase 8 was two cores inside one chip;
+neither needs it. The Phase 9 scheduling in the README and plan §16 is the
+correct one, and the audit's earlier note is superseded on the same terms as
+P0-6, P0-7 and P0-9.

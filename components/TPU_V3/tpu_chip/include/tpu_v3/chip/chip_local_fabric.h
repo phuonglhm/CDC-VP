@@ -233,7 +233,13 @@ public:
     /// is enforced rather than merely never exercised.
     unsigned peak_in_flight(chip_initiator initiator) const;
 
-    /// Abandon in-flight work, release every port, clear the counters.
+    /// Abandon every **queued** request, clear the counters, and leave a port
+    /// that an active owner is still inside alone.
+    ///
+    /// Those are two different populations and the distinction is the whole
+    /// contract, so the summary states it rather than saying "release every
+    /// port" — which an earlier version of this comment did, and which stopped
+    /// being true the moment the ownership rule below was fixed.
     ///
     /// An initiator blocked on an arbiter when this is called does **not** keep
     /// waiting: reset bumps a generation counter and wakes every port, and a
@@ -242,6 +248,13 @@ public:
     /// waiting flags without waking anyone would leave a blocked initiator
     /// waiting for a grant no arbiter would ever issue — the same defect the
     /// local SRAM fabric had once, and the same fix.
+    ///
+    /// A request that is **already inside a downstream `b_transport()`** is the
+    /// other population, and it **keeps its port**. Reset cannot unwind a
+    /// blocked C++ call, so releasing the port on its behalf would put a second
+    /// initiator in the same target alongside it. It releases the port itself
+    /// when it unwinds, and a request arriving after this reset waits for that
+    /// — correctly, because the port really is still busy.
     void reset();
 
     std::string report() const;
@@ -288,9 +301,10 @@ private:
     /// time — an arbiter that only serialises its own bookkeeping. The bench's
     /// `peak_in_flight` on the probe is what caught it.
     ///
-    /// Returns false when a reset abandoned the request while it waited, in
-    /// which case the port must **not** be released: reset already did, and it
-    /// may already belong to somebody else.
+    /// Returns false when a reset abandoned the request. A request abandoned
+    /// **while queued** never owned the port; one abandoned after the grant
+    /// releases it here before returning, because `reset()` no longer clears
+    /// `busy` and nothing else would.
     bool acquire_port(chip_initiator initiator, chip_destination destination,
                       sc_core::sc_time& delay,
                       std::uint64_t request_generation);
