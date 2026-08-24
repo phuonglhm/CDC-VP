@@ -291,16 +291,21 @@ add_control \
 # Commit the new position before the conflict loop, so a refused placement still
 # moves the port. The previous version of this test re-placed the port at its
 # original node and asserted the call succeeded, which this mutation passes.
+#
+# Anchor updated on 2026-08-20: the placement loop's first condition became
+# `if (!entry.mapped)` when decision record D1 added the owner-aware cases
+# below it. The injected defect -- committing the move before validating it --
+# is unchanged.
 add_control \
     "place-initiator-not-atomic" \
     "src/noc_interconnect.cpp" \
     '    const unsigned node_index = impl_->index_of(where);
     for (const auto& entry : impl_->targets) {
-        if (!entry.mapped || entry.node != node_index) {' \
+        if (!entry.mapped) {' \
     '    const unsigned node_index = impl_->index_of(where);
     impl_->initiator_nodes[index] = where;
     for (const auto& entry : impl_->targets) {
-        if (!entry.mapped || entry.node != node_index) {' \
+        if (!entry.mapped) {' \
     "test_noc_interconnect_bad_config" \
     "must still occupy its old node" \
     "a rejected placement moved the port anyway, so the throw reported a failure that had already been committed"
@@ -557,23 +562,177 @@ add_control \
 
 # Both backends conservatively ceil each peripheral annotation to the network
 # clock. Truncation would recreate the old sub-cycle target-delay bug.
+# ---- decision record D1: the owner-aware local bypass ----------------------
+#
+# `test_noc_interconnect_local_bypass` asserts a *negative* property -- that no
+# flit was created -- and a negative assertion is the easiest kind to make
+# vacuous by accident. These controls are what stop it becoming decorative:
+# each breaks the bypass in a different direction and requires that test to
+# notice.
+#
+# Deliberately **not** included: disabling the dispatch entirely. That is the
+# most convincing demonstration there is -- the co-located access becomes a
+# self-addressed flit and the run *hangs*, which is exactly what D1 exists to
+# prevent -- but a control that hangs is a control that has to be killed by a
+# timeout rather than observed, and this harness runs each mutation to
+# completion. It is recorded in TPU_V3_PHASE9_NOC_REBASELINE.md instead, where
+# it was measured by hand.
+
+# The bypass stops being owner-aware and short-circuits every port. The
+# co-located target is then unreachable through the mesh for anybody, which is
+# a silent change of topology rather than an error.
+add_control \
+    "local-bypass-not-owner-aware" \
+    "src/noc_interconnect.cpp" \
+    '    if (impl_->targets[static_cast<std::size_t>(first_slot)].local_owner
+        == static_cast<int>(port)) {' \
+    '    if (impl_->targets[static_cast<std::size_t>(first_slot)].local_owner
+        >= 0) {' \
+    "test_noc_interconnect_local_bypass" \
+    "it is a shortcut for everyone" \
+    "the local bypass short-circuited every manager instead of the owner, so a co-located target stopped being reachable through the mesh at all"
+
+# A bypassed access is folded into the network counters. Nothing fails, no data
+# is wrong -- every latency average derived from those counters is simply
+# diluted by accesses that never entered the network.
+add_control \
+    "local-bypass-counted-as-network-traffic" \
+    "src/noc_interconnect.cpp" \
+    '            ++bypassed;
+            ++bypassed_by_port[port];' \
+    '            ++bypassed;
+            ++bypassed_by_port[port];
+            ++completed;' \
+    "test_noc_interconnect_local_bypass" \
+    "counted as a network transaction" \
+    "a zero-hop local access was counted as network traffic, which deflates every latency average taken from those counters"
+
+# The owner mapping is accepted without checking that the owner is actually on
+# the target's node. The bypass then skips a mesh traversal that really happens.
+#
+# The expectation names the *empty-node* case on purpose. When the target's node
+# already hosts some other port, the co-location refusal below the check catches
+# this mutation anyway -- so aiming the control there would report a detection
+# that a second, unrelated guard produced. On an empty node nothing else looks
+# at the mapping, which makes it the case this check uniquely owns.
+add_control \
+    "local-owner-node-check-removed" \
+    "src/noc_interconnect.cpp" \
+    '        if (impl_->index_of(impl_->initiator_nodes[*local_owner])
+            != node_index) {' \
+    '        if (false) {' \
+    "test_noc_interconnect_bad_config" \
+    "hosts no port" \
+    "a target accepted a local owner sitting on another node, so an access that really does traverse the mesh would be short-circuited past it"
+
+# An owner may wander off the node of the target it owns, leaving a co-located
+# mapping that no longer describes the topology.
+add_control \
+    "local-owner-may-abandon-its-target" \
+    "src/noc_interconnect.cpp" \
+    '        if (entry.local_owner == static_cast<int>(index)
+            && entry.node != node_index) {' \
+    '        if (false) {' \
+    "test_noc_interconnect_bad_config" \
+    "must not move off the node of the target it owns" \
+    "the owner of a co-located target was allowed to move away from it, leaving a bypass mapping that describes a topology the system no longer has"
+
+# ---- decision record D26: admission-slot ownership across an ordering hold --
+#
+# D1 gave a routed call somewhere to park after its response arrives, and the
+# admission slot was being released before it got there. These two controls
+# hold the halves of the fix apart, because each is invisible to the other's
+# test: one is about the bound, one is about the clock gate.
+
+# The slot is released before the ordering wait rather than after it -- which
+# is where it used to be released, one level down in
+# `complete_manager_transaction()`. A second routed call is then admitted and
+# injected while the first is still inside `b_transport`, so a bound of one
+# runs two.
+#
+# Written as a single move rather than as the original two-site defect on
+# purpose: putting the release back into `complete_manager_transaction()` while
+# leaving `slot.release()` in place releases twice, and the guard throws before
+# any check runs. A control that fails on an exception proves the guard works,
+# not that anything covers the bound.
+add_control \
+    "admission-slot-released-before-ordering-wait" \
+    "src/noc_interconnect.cpp" \
+    '    impl_->await_earlier_bypass(port, is_write, ticket);
+    impl_->mark_completed(port, is_write);' \
+    '    slot.release();
+    impl_->await_earlier_bypass(port, is_write, ticket);
+    impl_->mark_completed(port, is_write);' \
+    "test_noc_interconnect_local_bypass" \
+    "did not hold its admission slot" \
+    "a routed call gave up its admission slot before serving its ordering wait, so a second call was admitted and injected while the first had not returned"
+
+# `network_idle()` consults admission slots again. Nothing is mis-routed and no
+# data is wrong; the clock gate simply keeps stepping an empty mesh for as long
+# as a routed caller is parked, and every counted-cycle metric inflates by that
+# much.
+add_control \
+    "network-idle-consults-admission-slots" \
+    "src/noc_interconnect.cpp" \
+    '            if (!write_hold_off[port].empty()
+                || !read_hold_off[port].empty()) {' \
+    '            if (outstanding_by_port[port] != 0 || !write_hold_off[port].empty()
+                || !read_hold_off[port].empty()) {' \
+    "test_noc_interconnect_local_bypass" \
+    "the mesh advanced cycles during a window" \
+    "the clock gate kept stepping an empty mesh while a routed caller served an ordering wait, inflating clock-gate and router-utilisation metrics"
+
+# ---- R-P9-3: the ordering fallback for calls a bypass held ------------------
+#
+# This control asserts a **path**, not an outcome, and that is deliberate. One
+# `notify()` releases every waiter in `await_earlier_bypass()` in a single
+# delta; on Accellera 2.3.4 they resume in the order they began waiting, which
+# is issue order, so the completion order is identical whether or not the
+# ticket-order fallback runs. No control on this kernel can make the *outcome*
+# differ. What this one does is keep the fallback from becoming dead code:
+# remove it and the directed test notices that held calls never reach it.
+add_control \
+    "bypass-ordering-fallback-removed" \
+    "src/noc_interconnect.cpp" \
+    '        if (held) {
+            ++ordering_holds;
+            await_bypass_turn(port, is_write, ticket);
+        }' \
+    '        (void)held;' \
+    "test_noc_interconnect_local_bypass" \
+    "did not reach the ticket-order fallback" \
+    "routed calls held by an earlier bypass stopped being re-ordered into ticket order on the way out, leaving the MaxUniqueIds=1 FIFO promise resting on the kernel unspecified waiter-resumption order"
+
+# Injection point moved on 2026-08-20: the served-request build, the downstream
+# replay and the target-cycle rounding are now in the shared
+# `replay_downstream()` that both `fast_transport` and the D1 local bypass call,
+# instead of being written out inside `fast_transport`. The defect injected here
+# is unchanged; only the indentation and the site are.
 add_control \
     "fast-target-delay-truncated" \
     "src/noc_interconnect.cpp" \
-    '            const auto target_cycles = rounded_cycles(delay - before_target);' \
-    '            const auto target_cycles = static_cast<std::uint64_t>(
-                (delay - before_target) / period);' \
+    '        const auto target_cycles = rounded_cycles(delay - before_target);' \
+    '        const auto target_cycles = static_cast<std::uint64_t>(
+            (delay - before_target) / period);' \
     "test_noc_interconnect_fast" \
     "fast delay must include calibrated network and rounded target" \
     "the fast backend truncated a fractional target cycle instead of rounding up"
 
 # Fast is timing-abstract, not function-abstract. Removing the shared
 # downstream replay must be observed as wrong read data/target effects.
+# Injection point moved on 2026-08-20, same reason as the control above. It now
+# takes a two-line anchor: after the move there are two calls to
+# `perform_downstream_access` at the same indentation -- the detailed wrapper's
+# and the shared replay's -- and patching by first occurrence would land on the
+# detailed one, which `test_noc_interconnect_fast` would not notice. The
+# preceding `before_target` line is unique to the shared replay.
 add_control \
     "fast-functional-replay-bypassed" \
     "src/noc_interconnect.cpp" \
-    '            perform_downstream_access(entry, delay);' \
-    '            if (false) perform_downstream_access(entry, delay);' \
+    '        const auto before_target = delay;
+        perform_downstream_access(entry, delay);' \
+    '        const auto before_target = delay;
+        if (false) perform_downstream_access(entry, delay);' \
     "test_noc_interconnect_fast" \
     "fast and detailed reads must return identical bytes" \
     "the fast timing path bypassed the mapped target instead of abstracting only time"

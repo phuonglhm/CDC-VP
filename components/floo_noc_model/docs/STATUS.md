@@ -1,13 +1,16 @@
 # Implementation status
 
-## Architecture document technical sign-off v1.4
+## FlooNoC model technical sign-off v1.5
 
-**PASS, closed 2026-08-07.** The mandatory closure gate was executed on a
-manifest-bound working-tree snapshot: 41/41 SystemC component tests, 51/51
-mutation controls detected with zero missed, and 12/12 isolated RTL
-cross-check runners against clean FlooNoC `9a6972a`. Raw transcripts, complete
-hashes, scope qualifications and the 132-file tested-source manifest are under
-`docs/signoff/v1.4/`; `SIGNOFF.md` is the audit entry point.
+**PASS, signed 2026-08-24.** D1 owner-aware local bypass and D26 admission-slot
+ownership are approved as baseline v1.5. The mandatory closure gate was
+executed on one manifest-bound working-tree snapshot: 42/42 SystemC component
+tests, 57/57 mutation controls detected with zero missed, and 12/12 isolated
+RTL cross-check runners against clean FlooNoC `9a6972a`. Raw transcripts,
+complete hashes, scope qualifications and the 133-file tested-source manifest
+are under `docs/signoff/v1.5/`; `SIGNOFF.md` is the audit entry point. This
+supersedes v1.4 for the current component snapshot without rewriting its
+historical evidence.
 
 This is block-level RTL sign-off plus model-level verification of the TLM
 integration layer. It is not a claim of monolithic manager-to-subordinate RTL
@@ -40,6 +43,15 @@ equivalence, silicon timing/PPA, or support for deferred v0 features.
 - Step A-3 integrated the complete timed `axi_noc` into `noc_interconnect`.
   The wrapper now drives manager AW/W/AR and subordinate B/R cycle by cycle;
   `axi_endpoint.hpp` is no longer in the production datapath.
+- D1 added owner-aware local bypass for the `NoLoopback` configuration. Only a
+  manager accessing its declared same-node target may bypass the mesh; the
+  access creates no flit, network accounting or routed admission-slot use, and
+  per-port completion ordering remains enforced against routed traffic.
+- D26 holds a routed admission slot until the ordered `b_transport()` call is
+  ready to return. `network_idle()` now answers only whether physical
+  mesh/adapter work remains, while `wrapper_idle()` also accounts for held
+  admission slots and active bypass calls. The directed gate and the two
+  registered mutations independently prove both halves of this contract.
 - Step 10.3 added bounded deterministic-random TLM-adapter stress with three
   concurrent managers and closed the clock-gating proof: production gating now
   requires both wrapper idle and complete mesh/chimney quiescence.
@@ -67,7 +79,8 @@ equivalence, silicon timing/PPA, or support for deferred v0 features.
 - Gate V0-CLOSE added direct standalone tests for the last two uncovered leaf
   interfaces, `rr_arb_tree.hpp` and `meta_buffer.hpp`, plus executable
   mutations. The original close was 40/40 component tests and 42/42 controls;
-  the metrics work later raised the current gate to 41/41 and 51/51.
+  metrics later raised it to 41/41 and 51/51, and signed v1.5 now carries
+  42/42 and 57/57 after D1/D26.
 - Step 12.0 froze the FreeRTOS/`noc_soc` contract and added
   `fw/freertos_noc_soc`: a mandatory `NPU=0` profile whose linker ends at
   `0x80fff000` and whose checker validates the entry, stack and every ELF
@@ -172,7 +185,7 @@ equivalence, silicon timing/PPA, or support for deferred v0 features.
   `noc_dashboard.py` renders JSON without third-party dependencies, while
   `noc_sweep.py` writes per-run evidence, aggregate JSON/CSV and refuses failed,
   undrained or constraint-rejected winners. The 15 required metrics mutations
-  are all covered: the full component registry passes 51/51 and the separate
+  are all covered: the full component registry passes 57/57 and the separate
   D3-D6 platform registry passes 10/10, including one behavioural mutation per
   synthetic workload. D7 area/power remains explicitly unavailable pending
   calibrated RTL evidence. See

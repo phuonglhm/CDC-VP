@@ -1,0 +1,150 @@
+### ĐÃ CHỐT 2026-08-24 — xem decision record D26 ###
+
+	Kết quả: chọn phương án A (giữ slot cho tới khi b_transport trả về).
+	Phương án B bị loại vì chỉ sửa con số báo ra, không thực thi bound.
+
+	Reviewer bổ sung ba thứ em không nghĩ tới, và cả ba đều đúng:
+
+	1. Dời decrement KHÔNG đủ. network_idle() đọc outstanding_by_port và
+	   clock gate đọc network_idle(), nên giữ slot lúc park sẽ khiến mesh
+	   rỗng vẫn step_once() suốt cửa sổ đó. Phải tách network_idle()
+	   (không đọc slot) khỏi wrapper_idle() (có đọc). Đo được: 100 mesh
+	   cycle trong cửa sổ 100 ns.
+
+	2. Bench của em không dùng để assert bound được. admission_watch::
+	   inside tăng TRƯỚC khi gọi b_transport nên đếm cả caller đang chờ
+	   admission; sau khi sửa nó vẫn bằng 2. Đã bỏ metric đó.
+
+	3. Gate đúng phải là outstanding/peak/remote_accesses/mesh_quiescent/
+	   wrapper_idle/mesh cycle, không phải số caller.
+
+	Đã implement và gate. Hai negative control đều cắn. Giữ file này làm
+	lịch sử, không sửa nội dung gốc bên dưới.
+
+================================================================
+
+XIN CHỐT R-P9-2: bypass ordering wait nhả outstanding slot trước khi caller trả về
+
+Ngày: 2026-08-22
+Người gửi: Duy
+Component bị ảnh hưởng: components/floo_noc_model (ĐÃ KÝ v1.4)
+Phát hiện bởi: Codex review, working tree diff
+Liên quan: D1 (owner-aware local bypass), TPU_V3_PHASE9_AUDIT.md §4e
+
+
+1. CẦN CHỐT GÌ
+
+	Có sửa hay không, và theo hướng nào. Đây là accounting defect trong
+	phần D1 CHƯA COMMIT của noc_interconnect, không phải trong TPU_V3.
+
+	Em không tự sửa vì ba lý do ở mục 5. Cần người chốt.
+
+
+2. SỰ VIỆC (đã đo, không phải suy đoán)
+
+	Đường routed hoàn tất như sau:
+
+	  complete_manager_transaction()        noc_interconnect.cpp:1003
+	      --outstanding_by_port[port];
+	      slot_available[port]->notify();   :1019   <-- slot nhả ở đây
+	      parked.done.notify();                     <-- caller mới tỉnh sau
+
+	  b_transport()                          :2213
+	      await_earlier_bypass(...)                 <-- caller park ở đây
+	      mark_completed(...)
+
+	Nghĩa là slot được nhả TRƯỚC khi caller ra khỏi b_transport. Nếu lúc
+	đó còn một bypass phát trước đang outstanding, caller đỗ lại trong
+	await_earlier_bypass với slot đã trả rồi.
+
+	Header ghi bound là "bounds concurrent b_transport calls admitted on
+	one tagged upstream socket" (noc_interconnect.h:236).
+
+
+3. ĐO ĐƯỢC GÌ
+
+	Bench: max_outstanding_per_port = 1, một bypass chậm (local target
+	400 ns, co-located, local_owner=0) giữ mở, hai routed call vào ở
+	100 ns và 150 ns. Bypass được đếm riêng vì theo thiết kế nó không
+	tiêu slot nào.
+
+	                                   peak concurrent   outstanding_
+	                                   ROUTED b_transport transactions(0)
+	                                                      lúc đang park
+	  có await_earlier_bypass (D1)            2                 0
+	  tắt nó đi (control)                     1                 0
+
+	Hai hệ quả:
+
+	- bound = 1 nhưng có 2 routed call cùng nằm trong b_transport;
+	- wrapper tự báo outstanding = 0 trong lúc vẫn còn caller đang đỗ.
+
+	Control chứng minh chính ordering wait của D1 là nguyên nhân, không
+	phải thứ có sẵn từ trước: không có nó thì routed call trả về ngay sau
+	khi hoàn tất nên không bao giờ đỗ.
+
+	Codex còn nêu wrapper_idle() (:1959) có thể báo idle trong cửa sổ
+	giữa lúc bypass xong và lúc các waiter được đánh thức. Em CHƯA đo
+	phần này. Nó hợp lý về cơ chế vì bypass_in_flight đã giảm còn các
+	waiter thì được notify SC_ZERO_TIME, nhưng em không muốn ghi một điều
+	chưa đo lẫn vào những điều đã đo.
+
+
+4. HAI HƯỚNG SỬA
+
+	(A) DỜI CHỖ NHẢ SLOT
+	    Chuyển --outstanding_by_port và slot_available notify từ
+	    complete_manager_transaction() ra sau await_earlier_bypass().
+	    - Đúng bản chất: slot giữ tới khi caller thật sự trả về.
+	    - Chi phí: complete_manager_transaction được gọi từ
+	      accept_manager_b và accept_manager_r phía mesh (:1043, :1071),
+	      nên đây là tách trách nhiệm chứ không phải dời một dòng.
+
+	(B) THÊM BỘ ĐẾM "HELD"
+	    outstanding_transactions() cộng thêm số caller đang đỗ.
+	    - Ít xâm lấn hơn, báo cáo thành đúng.
+	    - Nhưng bound vẫn KHÔNG thật sự chặn: vẫn có 2 call cùng lúc,
+	      chỉ là con số báo ra không còn nói dối.
+
+	Em nghiêng về (A) nếu bound được hiểu là một ràng buộc thật, và (B)
+	nếu nó chỉ được hiểu là một chỉ số quan sát. Câu đó em không tự trả
+	lời được vì nó là ý định thiết kế của noc_interconnect.
+
+
+5. VÌ SAO EM KHÔNG TỰ SỬA
+
+	- Component đã ký v1.4, có 12 RTL cross-check và 55 mutation control.
+	  Bản sửa chạm đúng đường slot accounting mà các control đó phủ, nên
+	  sửa xong phải chạy lại toàn bộ 55 control (mỗi control là một lần
+	  configure + build riêng).
+	- Phần D1 này không phải em viết, và nó chưa commit.
+	- Tiền lệ trong chính session này: một finding ordering trước đó em
+	  đã sửa dựa trên lập luận, đo lại thì không tái hiện, phải revert.
+	  Lần này có phép đo và có control, nhưng em vẫn muốn có người chốt
+	  trước khi động vào component đã ký.
+
+
+6. MỘT CHỖ EM TỰ ĐÍNH CHÍNH
+
+	TPU_V3_PHASE9_AUDIT.md §4e em viết: "No mutation of noc_interconnect
+	.cpp makes it fail, because the ordering it observes is not performed
+	there."
+
+	Sai. Control ở mục 3 — tắt hẳn await_earlier_bypass — làm release
+	order thành "1 2 0", tức hai routed vượt mặt bypass phát trước, và
+	check release_order[0] == 0 sẽ fail. Vậy scenario đó CÓ control thật
+	cho vế bypass-vs-routed.
+
+	Cái không có control là vế routed-vs-routed (release_order[1] == 1 &&
+	[2] == 2). Phát biểu đúng phải tách hai vế. Em sẽ sửa §4e bất kể
+	R-P9-2 chốt thế nào.
+
+
+7. TRẠNG THÁI HIỆN TẠI
+
+	Bench đo đã nằm trong test_noc_interconnect_local_bypass.cpp nhưng
+	hiện chỉ IN SỐ, chưa assert — assert bây giờ sẽ đóng băng hành vi
+	sai thành kỳ vọng.
+
+	Suite vẫn xanh: floo_noc_model 42/42, tpu_v3 53/53 Release và Debug.
+	noc_interconnect.cpp chưa bị em sửa gì.

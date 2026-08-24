@@ -1,0 +1,136 @@
+### ĐÃ CHỐT 2026-08-22 — xem decision record D25 ###
+
+	Kết quả: KHÔNG chọn phương án (1) như em đề xuất, cũng không chọn (2).
+	Reviewer chốt phương án 1B: giữ mmio, endpoint tự shape remote SRAM
+	read thành các AXI read hợp lệ.
+
+	Reviewer chỉ ra một chỗ em phân tích thiếu, và nó là chỗ quyết định:
+	điều kiện từ chối test cả LENGTH chứ không chỉ address, nên read 65
+	byte tại địa chỉ aligned cũng fail. Phương án (1) vì thế sẽ thu hẹp
+	contract Phase 4 của neo_dma đã frozen (lengths 1,2,3,7,15,63,65 và
+	odd addresses) mà không qua decision nào. Mục 3 dưới đây chỉ suy ra
+	trường hợp address — đó là thiếu sót của bản này.
+
+	Đo sau khi sửa: 120 case (offset 0..7 x 15 length) qua noc_interconnect
+	thật, 0 refused. Revert lại cách chunk cũ thì 102/120 bị từ chối.
+
+	Đã implement và gate. Giữ file này làm lịch sử, không sửa nội dung gốc
+	bên dưới.
+
+================================================================
+
+XIN CHỐT R-P9-1: chip aperture chỉ mang được MỘT target_kind trên NoC
+
+Ngày: 2026-08-22
+Người gửi: Duy
+Liên quan: Phase 9 composition, ADDRESS_MAP.md §7, INTERFACE_CONTRACT.md §7
+Chi tiết đầy đủ: components/TPU_V3/docs/TPU_V3_PHASE9_AUDIT.md §4b
+
+
+1. CẦN CHỐT GÌ
+
+	Trước khi wiring chip lên FlooNoC, cần chốt: giữ nguyên cách map cả
+	chip aperture là mmio (như ADDRESS_MAP.md §7 đang quy định), hay lấy
+	escape hatch mà chính §7 đã dự trù.
+
+	Đây không phải bug report. Cách hiện tại đã được ghi và đã có chủ ý;
+	cái cần là một quyết định có ý thức, vì Phase 9 sắp chạm vào đúng
+	chỗ nó có giá.
+
+
+2. SỰ VIỆC (đo được, không phải suy đoán)
+
+	- Endpoint có đúng một inbound socket. simple_target_socket là
+	  tlm_target_socket<BUSWIDTH, TYPES, 1, POL>, tức N=1
+	  (tlm_utils/simple_target_socket.h:50). Nên cả 128 MiB aperture
+	  của một chip là MỘT lần add_target(), mang MỘT target_kind.
+
+	- ADDRESS_MAP.md §7 chốt giá trị đó là mmio cho cả aperture, dù phần
+	  lớn bên trong là core SRAM. §7 gọi đó là "the conservative answer"
+	  và ghi luôn cái giá: remote vector-width read vào SRAM của chip
+	  phải bus-aligned.
+
+	- Cơ chế enforce nằm ở noc_interconnect.cpp:2084 — một read có beat
+	  frame full width mà address hoặc length không chia hết 8 bị từ chối
+	  TLM_BURST_ERROR_RESPONSE TRƯỚC injection, target không hề được gọi.
+
+	Hai điều làm luật này hẹp hơn nó thoạt nghe, và cả hai đều quan trọng
+	khi đọc:
+
+	- Write không bị ảnh hưởng. Điều kiện có command == TLM_READ_COMMAND.
+	- Narrow aligned read 1/2/4/8 byte luôn được cho qua: shape_of()
+	  giữ nó ở narrow beat và narrow thì không bao giờ bị widen
+	  (axi_lanes.hpp:88).
+
+
+3. HỆ QUẢ CỤ THỂ LÊN PHASE 9
+
+	chunk_span() của endpoint cho chunk đầu là limit - lane, để một
+	transfer chỉ trả giá cho lane offset một lần. Với một outbound READ
+	vào SRAM của chip khác bắt đầu ở lane +k, chunk đầu là (limit - k)
+	byte tại +k — không bus-aligned, cũng không phải narrow power-of-two.
+
+	Suy ra: một inter-chip DMA read vào remote SRAM ở địa chỉ không chia
+	hết 8 sẽ bị từ chối ngay chunk đầu, và theo first-failing-chunk rule
+	thì cả transfer dừng với 0 byte committed.
+
+	LƯU Ý VỀ MỨC ĐỘ CHẮC CHẮN: đoạn này là suy ra từ ba điều đã đọc ở
+	mục 2, KHÔNG phải đã chạy end-to-end. Chưa chạy được, vì chưa có
+	composition — endpoint hiện mới gate bằng TLM stub, chưa gắn
+	noc_interconnect thật. Nếu cần, em có thể dựng composition tối thiểu
+	để đo trước khi anh chốt.
+
+	Plan §16 Phase 9 có sẵn task "test inter-chip DMA and CPU traffic",
+	nên chỗ này nằm trên đường đi chứ không phải góc khuất.
+
+
+4. HAI PHƯƠNG ÁN
+
+	(1) GIỮ mmio
+	    - Không đổi code. Không đổi map.
+	    - Đổi lại: phải ghi thành thuộc tính công bố của inter-chip path
+	      rằng remote SRAM read phải bus-aligned, và firmware/DMA driver
+	      phải tuân. Không được để nó thành thứ mà test tình cờ né được.
+	    - Chi phí thật: một ràng buộc alignment mà tầng trên phải biết.
+
+	(2) LẤY escape hatch của §7
+	    - Map core SRAM thành các memory sub-region riêng.
+	    - Kéo theo: endpoint phải có per-region ingress. Bind socket thứ
+	      hai vào from_noc hiện tại bị TỪ CHỐI ở elaboration (N=1), nên
+	      đây là đổi cấu trúc component chứ không phải đổi tham số.
+	    - Bẫy đã kiểm: simple_target_socket_tagged KHÔNG giải quyết được,
+	      biến thể tagged cũng N=1 (simple_target_socket.h:580). Dạng
+	      multi-bind là multi_passthrough_target_socket, hoặc mỗi region
+	      một socket riêng.
+	    - Và rebase trong noc_b_transport() thôi không còn là một phép
+	      trừ theo aperture base, vì interconnect trừ base của REGION
+	      khớp (noc_interconnect.cpp:1189).
+	    - Chi phí thật: đổi cấu trúc socket + đổi address map + viết lại
+	      inbound decode, kèm gate mới.
+
+
+5. ĐỀ XUẤT CỦA EM
+
+	Chọn (1), giữ mmio — nhưng chốt có ý thức, không phải mặc định.
+
+	Lý do: hiện chưa có bằng chứng nào cho thấy cái giá đó là "real
+	limitation" theo đúng chữ §7 dùng. Chưa có workload nào yêu cầu
+	remote read SRAM ở offset lẻ. §7 cũng nói rõ đổi thì phải "made
+	deliberately". Đo ở composition rồi quyết đúng thứ tự hơn là đổi
+	cấu trúc trước khi có số.
+
+	Nếu anh chọn (1), em đề nghị kèm hai thứ:
+	- ghi ràng buộc alignment vào tài liệu inter-chip path;
+	- test inter-chip read phải CỐ TÌNH thử một địa chỉ lệch và assert
+	  nó bị từ chối, chứ không né.
+
+
+6. VÌ SAO CẦN CHỐT TRƯỚC, KHÔNG PHẢI SAU
+
+	Phương án (2) đổi cấu trúc socket của endpoint. Đổi sau khi đã wiring
+	xong composition thì đắt hơn nhiều so với đổi trước.
+
+	Và rủi ro của việc KHÔNG chốt không phải là hỏng, mà là im lặng:
+	cách nó biểu hiện là một test inter-chip read lặng lẽ dùng toàn địa
+	chỉ aligned, pass, và không ai biết ràng buộc đó tồn tại cho tới lúc
+	firmware thật chạm vào.

@@ -322,6 +322,117 @@ int sc_main(int, char**)
               "a refused add_target must not consume a target slot");
     }
 
+    // ---- decision record D1: the owner-aware local bypass ------------------
+    //
+    // `local_owner` is the one thing that makes a manager and a target on the
+    // same node legal, so every way of getting that mapping wrong has to be
+    // refused *before* traffic. Otherwise the failure surfaces as a hang: an
+    // access the wrapper believes is routed becomes a self-addressed flit, and
+    // `NoLoopback = 1` never delivers it.
+    {
+        cdc::components::noc_interconnect noc{"d1_owner", 2, 2, 3, 2};
+        noc.place_initiator(0, {0, 0});
+        noc.place_initiator(1, {1, 1});
+
+        // A port index that does not exist. Refused rather than clamped: a
+        // silently clamped owner would authorise co-location for the wrong
+        // port.
+        bool out_of_range_threw = false;
+        try {
+            noc.add_target(0x8000'0000, 0x1000, {0, 0},
+                           cdc::components::noc_interconnect::target_kind::memory,
+                           /*local_owner=*/2);
+        } catch (const std::invalid_argument&) {
+            out_of_range_threw = true;
+        }
+        check(out_of_range_threw,
+              "a local_owner naming a port that does not exist must be "
+              "refused");
+
+        // An owner that is somewhere else, on a node that hosts a *different*
+        // port. Caught either by the owner-node check or by the co-location
+        // refusal below it, so the type is not the contract -- refusal is.
+        bool wrong_node_threw = false;
+        try {
+            noc.add_target(0x8000'0000, 0x1000, {0, 0},
+                           cdc::components::noc_interconnect::target_kind::memory,
+                           /*local_owner=*/1);
+        } catch (const std::exception&) {
+            wrong_node_threw = true;
+        }
+        check(wrong_node_threw,
+              "a local_owner that is not on the target's node must be refused");
+
+        // The same mistake on an **empty** node, and this is the one the
+        // owner-node check uniquely owns: there is no port at (1,0) for the
+        // co-location loop to collide with, so nothing else in `add_target`
+        // looks at it. Accepting it would authorise a bypass that skips a mesh
+        // traversal which really happens -- silently, and only at the owner's
+        // own accesses.
+        bool remote_owner_on_empty_node_threw = false;
+        try {
+            noc.add_target(0xA000'0000, 0x1000, {1, 0},
+                           cdc::components::noc_interconnect::target_kind::memory,
+                           /*local_owner=*/0);
+        } catch (const std::exception&) {
+            remote_owner_on_empty_node_threw = true;
+        }
+        check(remote_owner_on_empty_node_threw,
+              "a local_owner named for a target on a node that hosts no port "
+              "must be refused");
+
+        // Co-located with no mapping at all: the pre-D1 refusal, unchanged.
+        bool unowned_threw = false;
+        try {
+            noc.add_target(0x8000'0000, 0x1000, {0, 0});
+        } catch (const std::exception&) {
+            unowned_threw = true;
+        }
+        check(unowned_threw,
+              "a target co-located with a manager and no local_owner must "
+              "still be refused");
+
+        // The legal form, and it must actually be legal — a refusal test whose
+        // positive case never runs would pass with `add_target` refusing
+        // everything.
+        bool owned_ok = true;
+        try {
+            noc.add_target(0x8000'0000, 0x1000, {0, 0},
+                           cdc::components::noc_interconnect::target_kind::memory,
+                           /*local_owner=*/0);
+        } catch (const std::exception&) {
+            owned_ok = false;
+        }
+        check(owned_ok, "a co-located target owned by the port on its node "
+                        "must be accepted");
+
+        // And the owner may not then walk away from what it owns. Checked at
+        // `place_initiator` rather than at elaboration, so the message names
+        // the move that broke it.
+        bool owner_move_threw = false;
+        try {
+            noc.place_initiator(0, {1, 0});
+        } catch (const std::exception&) {
+            owner_move_threw = true;
+        }
+        check(owner_move_threw,
+              "an owner must not move off the node of the target it owns");
+
+        // The refused move must not have been committed, for the same reason
+        // `place-initiator-not-atomic` exists: a throw reporting a failure that
+        // already happened is worse than no check.
+        bool still_home = true;
+        try {
+            noc.add_target(0x9000'0000, 0x1000, {0, 0},
+                           cdc::components::noc_interconnect::target_kind::memory,
+                           /*local_owner=*/0);
+        } catch (const std::exception&) {
+            still_home = false;
+        }
+        check(still_home,
+              "a refused owner move must leave the port on its original node");
+    }
+
     if (failures != 0) {
         std::cerr << failures << " configuration checks failed\n";
         return 1;

@@ -1,6 +1,7 @@
 # TPU_V3 Architecture and Integration Decision Record
 
-Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20; bus-lock scope frozen by D22; Phase 9 NoC transport frozen by D23**
+Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20; bus-lock scope frozen by D22; Phase 9 NoC transport frozen by D23; endpoint
+counter ownership frozen by D24; remote-read shaping frozen by D25; admission-slot ownership frozen by D26**
 
 Initial decision date: 2026-08-08
 
@@ -17,6 +18,12 @@ D21 distribution boundary date: 2026-08-19
 D22 bus-lock scope date: 2026-08-20
 
 D23 NoC rebaseline date: 2026-08-20
+
+D24 endpoint counter-ownership date: 2026-08-22
+
+D25 remote-read shaping date: 2026-08-22
+
+D26 admission-slot ownership date: 2026-08-24
 
 D20 architectural block naming date: 2026-08-18
 
@@ -59,6 +66,9 @@ boundaries of the CDC-VP TPU_V3 model.
 | D20 | Architectural block names | The NEO-CORE architecture and reports call the matrix-multiplication block **MXU** and the tensor-layout block **Transform**. **Sauria** is used only for source/backend provenance, and **Im2Col** is the currently implemented Transform operation, not the block name. Existing code/ABI identifiers (`sauria_matrix`, `image_transform`, `SA_CONTROL`) remain unchanged by this documentation-only naming decision |
 | D21 | Distribution boundary for a NEO-CORE binary | **Internal-build artifact.** CDC-VP may go public; a binary containing a NEO-CORE does not. The platform composes cores only in the internal configuration (both accelerator options on) and instantiates none in the default/public one, whose manifest keeps `sauria.linked` and `sauria.selectable` false. A placeholder MXU to give a public build a nominal NEO-CORE is refused |
 | D22 | LR/SC and AMO bus lock scope | **One lock per chip, shared by both harts.** The CPU backend's per-hart default excludes nobody; `tpu_chip` creates the lock and attaches it to both harts during elaboration, through an opaque handle so the public CPU header still exposes no VP++ type. Upstream `52d376d4` stays unbackported, on measured evidence rather than on deferral
+| D26 | Admission-slot ownership across a bypass ordering hold | **A routed transaction owns its admission slot from the admission gate until it returns from `b_transport()`**, not until the mesh answers it. Releasing it in `complete_manager_transaction()` admitted a second caller while the first was parked in `await_earlier_bypass()`, so a bound of one ran two concurrent calls and `outstanding_transactions()` read zero for both. Requires splitting the two idle predicates: `network_idle()` stops consulting admission slots so the clock gate can still gate an empty mesh, `wrapper_idle()` starts consulting them so it cannot report idle while a caller has not returned |
+| D25 | Remote reads into a chip aperture | **Keep the whole chip aperture `target_kind::mmio`, and shape outbound reads at the endpoint** so every chunk is one the interconnect will not widen: naturally-aligned narrow prefix, bus-aligned full-width bulk, naturally-aligned narrow suffix. Publishing a bus-alignment restriction instead was rejected because it would silently narrow `neo_dma`'s already-frozen Phase 4 contract, which is gated at lengths 1, 2, 3, 7, 15, 63, 65 and odd addresses. No FlooNoC, address-map or socket-structure change |
+| D24 | Endpoint outstanding and latency counters | **Split by quantity, not by component.** The chip endpoint measures **transfer** latency, which only it can see, because a chunked transfer is one transfer to it and several transactions to the interconnect. **Outstanding is not measured at the endpoint at all** and defers to `noc_interconnect`'s per-port bound: in the Revision 1 composition an endpoint-level outbound outstanding count is `<= 1` by construction and would be a constant printed as a measurement. Neither figure may be quoted as the other |
 | D23 | Phase 9 NoC transport | **Keep the shared single-AXI FlooNoC network unchanged.** Control/data virtual channels are *deprecated* at the pinned revision and cannot be added without leaving it; the narrow-wide network is live but answers a throughput requirement nobody has stated. Traffic class is a function of the address, taken from `region_kind`. Widths, protocol behaviour and the reset-of-in-flight rule are frozen in `TPU_V3_PHASE9_NOC_REBASELINE.md`; no new signed FlooNoC configuration is created
 
 ## D1. FlooNoC `NoLoopback` and local bypass
@@ -1970,6 +1980,348 @@ fetch. That is a faithful model of a locked bus and a pessimistic model of a
 modern coherent interconnect, and no throughput figure taken from a run with
 contended atomics should be presented as either.
 
+## D26. A routed call owns its admission slot until it returns
+
+Decision date: 2026-08-24. Closes **R-P9-2**
+(`docs/R-P9-2_DECISION_REQUEST.txt`), raised by an external review against the
+uncommitted D1 work in `components/floo_noc_model`.
+
+### Decision
+
+A routed transaction owns its admission slot from the moment it passes the
+admission gate (`noc_interconnect.cpp:2135`) until it has:
+
+1. received the AXI response,
+2. copied response and status into the TLM payload,
+3. finished `await_earlier_bypass()`,
+4. called `mark_completed()`,
+5. released the admission slot,
+6. returned from `b_transport()`.
+
+```cpp
+await_earlier_bypass(port, is_write, ticket);
+mark_completed(port, is_write);
+slot.release();          // no wait after this point
+```
+
+`slot_available` is notified with `SC_ZERO_TIME`, so the next caller is
+admitted in the following delta — after this one has left `b_transport`.
+
+**Option B — leaving the release where it was and adding a `held` counter to
+`outstanding_transactions()` — was rejected.** It makes the published number
+honest and leaves the bound unenforced: the next caller is still admitted,
+parked routed responses can accumulate without limit behind one slow bypass,
+and `wrapper_idle()` can still report idle. An implementation that also gated
+admission on `network_outstanding + held < max_outstanding_per_port` would be
+this decision with two counters rather than one, not option B.
+
+### The refactor this requires, which is not optional
+
+Moving the decrement alone is wrong. `network_idle()` consults
+`outstanding_by_port`, and it is what the clock gate reads
+(`network_thread()`); holding the slot through an ordering wait would keep
+`step_once()` clocking an **empty** mesh for the whole hold, inflating
+`clock_gate_transitions()`, `mesh_quiescent_wrapper_busy_cycles()` and any
+router utilisation derived from counted cycles. Measured by control RP92-b:
+**100 mesh cycles in a 100 ns window** whose only remaining work was one
+caller's ordering wait.
+
+The two predicates are therefore separated by what they answer:
+
+| | Question | Consults admission slots |
+| --- | --- | --- |
+| `network_idle()` | does the mesh or its adapters still hold physical work? | **no** |
+| `wrapper_idle()` | does the wrapper still owe a caller its return? | **yes**, with `bypass_in_flight` |
+
+```text
+network transaction completed
+    -> in_flight and the network queues drain
+    -> the mesh may clock-gate
+
+logical routed call completed
+    -> ordering wait served
+    -> admission slot released
+    -> the wrapper may report idle
+```
+
+Network counters, latency and the completion observer stay where they were, at
+the instant the final AXI response lands. Network latency is not dragged past
+an ordering wait it did not cause.
+
+`fast_transport()` needed no change: it already held its slot for the whole
+call, which is this decision's semantics.
+
+### Gate
+
+`test_noc_interconnect_local_bypass`, in the window where a routed call has its
+response and is parked behind a slow bypass:
+
+```text
+outstanding=1  peak=1  remote_accesses=1  mesh_quiescent=1  wrapper_idle=0  cycles 24->24
+```
+
+`remote_accesses == 1` is the load-bearing one: it says the second routed call
+was never injected, rather than merely that a counter reads differently.
+
+| Control | Registered name | Mutation | Result |
+| --- | --- | --- | --- |
+| RP92-a | `admission-slot-released-before-ordering-wait` | release the slot before the ordering wait rather than after | `outstanding=0`, `remote_accesses=2` — the second call was admitted and injected |
+| RP92-b | `network-idle-consults-admission-slots` | let `network_idle()` consult admission slots again | mesh advanced 100 cycles inside the ordering-wait window |
+
+Both live in `run_negative_controls.sh` rather than in prose. A control that an
+audit announces and the registry does not carry is evidence nobody can re-run,
+and this component — unlike TPU_V3 — has a harness that can carry it.
+
+Two controls because the change has two halves, and each catches the half the
+other cannot.
+
+### What the bench could not be asked
+
+An earlier version of this scenario counted "callers inside `b_transport`" and
+read 2 both before and after the fix, because a caller blocked in the admission
+gate is inside `b_transport` too. That number cannot distinguish an enforced
+bound from an unenforced one and is not used.
+
+### Regression evidence
+
+The mutation suite was re-run after the change: **57 detected, 0 missed**
+(2026-08-24) — the 55 the registry already carried, plus the two controls this
+decision added to it. For a change to idle and clock-gating semantics that is the
+question that matters — not that the suite passes, but that it can still fail.
+
+The **12 RTL cross-checks were also re-run and pass** against FlooNoC at the
+pinned `v0.8.4-10-g9a6972a` — route-select, both stream-fifo depths, three
+wormhole-arbiter route counts, both router out-fifo depths, norob-ordering,
+four chimney checks, mesh (1872 node-cycles) and axi-sizing. `12/12 passed`.
+
+Worth separating, because an earlier draft of this record did not: the RTL
+**cross-checks** compare model traces against the frozen RTL and are
+mechanical; the RTL-level **mutation controls** are the manual ones, because
+several legitimately pass where the frozen RTL is redundant. Only the latter
+needs a person to judge.
+
+### Sign-off status
+
+This changes idle and clock-gating semantics in a component whose previous v1.4
+baseline carried 12 RTL cross-checks and 55 mutation controls. The current D1 +
+D26 tree passes all three regression layers: 42 component tests, 57 mutation
+controls and 12 RTL cross-checks.
+
+Technical review on 2026-08-24 reproduced that evidence and concluded that
+**D1+D26 meet the conditions for approval**, recommending a new v1.5 baseline.
+That closes the engineering review gate and does not block continued Phase 9
+work. The component owner selected and approved baseline v1.5 in the same
+review session. The reviewed dirty tree is bound by the 133-file source
+manifest and the raw 42/42, 57/57 and 12/12 transcripts under
+`components/floo_noc_model/docs/signoff/v1.5/`. D1+D26 are therefore
+**signed v1.5** for that exact snapshot; later source changes require the
+affected evidence to be rerun.
+
+**That has since happened.** R-P9-3 (`TPU_V3_PHASE9_AUDIT.md` §4h) changed four
+files after the signature — `src/noc_interconnect.cpp`,
+`include/floo_noc_model/noc_interconnect.h`,
+`tests/test_noc_interconnect_local_bypass.cpp` and
+`rtl_crosscheck/run_negative_controls.sh` — so `sha256sum -c` against the
+v1.5 manifest now reports four mismatches. **v1.5 remains valid for the
+snapshot it names and no longer describes the working tree.** The re-sign is
+deliberately deferred so it can be taken once for a batch of component changes
+rather than once per change; until it is taken, quote v1.5 for the manifest,
+not for the tree.
+
+## D25. A remote read into a chip aperture is shaped, not restricted
+
+Decision date: 2026-08-22. Closes **R-P9-1**, raised in
+`TPU_V3_PHASE9_AUDIT.md` §4b as a named risk the Phase 9 composition task owed
+an explicit answer.
+
+### Decision
+
+**Keep the whole chip aperture registered `target_kind::mmio`**, as
+`ADDRESS_MAP.md` §7 already specifies. **Shape outbound reads at the chip NoC
+endpoint** so that every chunk is a shape `noc_interconnect` will not widen:
+
+```text
+naturally-aligned narrow prefix     (≤ 3 chunks: 1 + 2 + 4 covers any lane gap)
+→ bus-aligned full-width bulk        (address and length both multiples of 8)
+→ naturally-aligned narrow suffix    (≤ 3 chunks)
+```
+
+Applied to a transfer only when all three hold: it is a **read**, its region is
+**memory-like**, and its destination is **inside a chip aperture**. Writes,
+remote MMIO and reads into `GLOBAL_RAM` or `GLOBAL_BOOT_ROM` are untouched.
+
+No FlooNoC configuration change, no address-map change, no change to the
+endpoint's socket structure. The v1.4 sign-off carries.
+
+### Why not simply publish the restriction
+
+That was this record's first proposal and it is wrong, for a reason that only
+appears when the refusal condition is read completely:
+
+```cpp
+if (command == tlm::TLM_READ_COMMAND && shape.size_log2 == 3
+    && (address % bus_bytes != 0 || length % bus_bytes != 0)
+    && ...kind != target_kind::memory)          // noc_interconnect.cpp:2084
+```
+
+`length % bus_bytes != 0` is a **separate clause**. A 65-byte read at a
+perfectly aligned address is refused too. So the restriction is not "align your
+addresses", it is "align your addresses **and** your lengths" — and plan §16
+Phase 4 froze the DMA contract at exactly the shapes that violates:
+
+> Local→external and external→local copies at lengths **1, 2, 3, 7, 8, 15, 16,
+> 63, 64, 65** ... **Odd addresses**, ... external lane offsets
+
+Publishing the restriction would therefore have narrowed a contract that is
+already gated and already signed off, without a decision saying so. That is the
+argument that settles this; the cost of the shaping is secondary to it.
+
+### Why not §7's escape hatch
+
+`ADDRESS_MAP.md` §7 offers one — map core SRAM as separate `memory`
+sub-regions — and it remains available. It is not taken now because it is
+strictly more expensive for the same outcome:
+
+* the endpoint's inbound socket is `simple_target_socket`, which is `N = 1`
+  (`tlm_utils/simple_target_socket.h:50`), so a second region cannot bind to it
+  and the component's socket structure has to change. `simple_target_socket_
+  tagged` does **not** help — the tagged variant is also `N = 1` (`:580`), which
+  is a trap worth recording because "tagged" is what one reaches for;
+* `noc_b_transport()`'s rebase stops being one subtraction against the aperture
+  base, because the interconnect subtracts the **matched region's** base
+  (`noc_interconnect.cpp:1189`);
+* and the address map itself changes, which is a wider blast radius than a
+  chunking rule inside one component.
+
+It stays the escape hatch. The condition to take it is a Phase 11 measurement
+showing the narrow prefix/suffix transactions cost something that matters.
+
+### What it costs, stated rather than discovered
+
+At most **six extra transactions** per misaligned remote SRAM read — three at
+each end — and a correspondingly higher `outbound_chunks()`. Nothing else:
+bytes moved, first-failing-chunk semantics, committed-byte accounting, byte
+enables and the reset generation rule are all unchanged, and the chunk counter
+was already documented as this component's own split rather than anything the
+caller asked for.
+
+`chip_endpoint_config::chip_apertures_are_mmio` carries the assumption this
+rests on, so the one thing the endpoint believes about how the platform
+registered its targets is stated where it can be changed rather than implied.
+
+### Gate
+
+`tpu_v3_endpoint_on_real_noc`, and it is deliberately against a **real**
+`noc_interconnect` rather than the stub the component's own gate uses: whether
+the shaping is *sufficient* is a question only the thing that enforces the rule
+can answer. The bench registers the remote chip's aperture `mmio`, exactly as
+§7 does — declaring it `memory` would make every check pass for the wrong
+reason.
+
+Measured: **120 cases** — offsets 0..7 across lengths 1, 2, 3, 7, 8, 15, 16, 63,
+64, 65, 127, 128, 2047, 2048, 2049 — **0 refused, 0 with wrong data**, with the
+bytes compared against a pattern so that reassembly is checked and not just
+acceptance.
+
+Two controls, both verified:
+
+| Control | Mutation | Result |
+| --- | --- | --- |
+| D25-a | revert to the old `limit - lane` chunking for reads | **102 of 120** reads refused by the interconnect |
+| D25-b | shape remote MMIO as well, instead of forwarding it whole | the remote target is entered for a read the interconnect should have refused before injection |
+
+D25-a is the number that matters: 85% of the offset/length matrix was refused
+before this decision, which is why "publish the restriction" was never a small
+ask.
+
+### Recorded limitation
+
+The gate does not yet drive an inter-chip **DMA** — remote SRAM to local SRAM
+at an odd source address and length. That needs `tpu_chip` composed with the
+mesh, which is the next Phase 9 task, and it is listed there rather than
+claimed here.
+
+## D24. Endpoint outstanding and latency counters are split by quantity
+
+Decision date: 2026-08-22. Closes the item
+`TPU_V3_PHASE9_NOC_REBASELINE.md` §9.3 left explicitly undecided, which plan
+§11.10 requires and which that section refused to let anyone implement before
+it was recorded.
+
+### Decision
+
+**Latency is measured at the endpoint. Outstanding is not.**
+
+* the chip NoC endpoint publishes **transfer** latency — total, maximum and the
+  number of transfers sampled, per direction;
+* the endpoint publishes **no outstanding counter**. That quantity belongs to
+  `noc_interconnect`, which already bounds and tracks it per upstream port
+  (`MaxTxns = 32`, D23 freeze 4);
+* the two latency figures are **different quantities with different units of
+  work**, and neither may be presented as the other, compared with the other,
+  or summed with it.
+
+### Why latency belongs here and outstanding does not
+
+They looked like one question and are two, which is why §9.3 asked for a
+decision instead of an implementation.
+
+**Latency: only the endpoint can measure it.** A transfer larger than the
+frame limit is one thing the chip asked for and several transactions to the
+interconnect. `noc_interconnect::last_latency_cycles(port)` therefore answers
+"how long did one transaction take", and nothing downstream can answer "how
+long did the chip wait for the transfer it issued". Deferring would not avoid a
+duplicate; it would lose a quantity nobody else holds.
+
+**Outstanding: the endpoint cannot measure anything.** Count what would be in
+flight at an endpoint in the Revision 1 composition: `neo_external_bridge`
+arbitrates a core's two named outbound initiators onto one external socket
+(Phase 8), and `chip_local_fabric` allows one transaction per initiator. So an
+outbound outstanding count at the endpoint is **`<= 1` by construction**. A
+counter whose value is fixed by the structure above it is a constant printed in
+the position of a measurement, and plan §21 already records what that costs —
+a check that exists, passes, and could not have failed. The number that
+actually varies is the interconnect's, and it is already published.
+
+### What this forbids
+
+* comparing an endpoint latency total with an interconnect latency figure, or
+  deriving one from the other. One counts transfers, the other transactions,
+  and the ratio between them is the chunking this endpoint performs;
+* adding an endpoint outstanding counter later without reopening this decision.
+  If the composition changes so that more than one transfer can be in flight at
+  an endpoint — a non-blocking transport, or a bridge that stops serialising —
+  the constant stops being a constant and this is worth revisiting. That is a
+  new recorded decision, not a quiet addition;
+* quoting either figure without naming the local-fabric and chip-fabric timing
+  modes that produced it. D16's rule is unchanged and applies to any number
+  taken from this component.
+
+### What is measured, precisely
+
+Logical time, not wall-clock and not `sc_time_stamp()` alone:
+
+```text
+latency = (sc_time_stamp() + delay) at return
+        - (sc_time_stamp() + delay) at entry
+```
+
+`sc_time_stamp()` alone would read **zero** for every transfer on a loosely
+timed path, because an annotating target adds to `delay` and consumes no
+simulated time — so the counter would be silently empty in exactly the
+configuration a full-system run uses. The sum is the same quantity D16 and the
+Phase 8 arbiters already treat as a caller's logical time, and it is
+mode-independent: absorbing an incoming delay moves time from `delay` into
+`sc_time_stamp()` and leaves the sum unchanged.
+
+Only transfers the endpoint **forwarded** are sampled. A transfer refused at
+the endpoint — local containment, a multi-region span, a payload-rule
+violation — returns almost immediately and describes nothing about the mesh;
+including it would drag the mean toward zero in proportion to how many
+integration defects were present. A transfer abandoned by a reset is not
+sampled either, under the generation rule that already governs every other
+counter here.
+
 ## D23. The Phase 9 NoC transport stays the shared single-AXI network
 
 Decision date: 2026-08-20.
@@ -2073,11 +2425,17 @@ cross-check campaign, not a parameter change.
 
 ### Unblocked, and still blocked
 
-D1's owner-aware local bypass is **not implemented**:
-`noc_interconnect::add_target()` has no owner parameter and
-`reject_self_node_targets()` still refuses any target on a node hosting any
-upstream port. Chip-to-chip traffic remains blocked and closing D1 is the first
-Phase 9 implementation task, as plan §16 lists it.
+D1's owner-aware local bypass was closed on 2026-08-20.
+`noc_interconnect::add_target()` takes an optional `local_owner`; an access from
+that port reaches a co-located target without a flit being created, and every
+wrong mapping is refused before traffic. The frozen FlooNoC configuration is
+unchanged — the 12 RTL cross-checks still pass — and the mutation-control suite
+went from 51 to 55 controls, still with zero misses. Evidence in
+`TPU_V3_PHASE9_NOC_REBASELINE.md` §7.
+
+What remains blocked is nothing in D1; the next Phase 9 tasks are attaching a
+chip to the mesh and implementing the reset-of-in-flight rule this decision
+froze.
 
 `TPU_V3_PHASE0_AUDIT.md` §5.1 scheduled D1 as a Phase 7 prerequisite. Phase 7
 was one chip plus global memory and Phase 8 was two cores inside one chip;

@@ -6,8 +6,8 @@
 | Dependency | `common_cells 1.39.0 @ 9ca8a76`, `axi 0.39.9 @ a256a3b` |
 | Môi trường | SystemC 2.3.4, C++17, GCC 11.5.0 |
 | Platform | `platforms/noc_soc`, mesh 4x4, network clock 1 ns/cycle |
-| Ngày | 2026-08-07 |
-| Trạng thái | **Technical sign-off v1.4: PASS** cho kiến trúc v0 và evidence gate 41/41 + 51/51 + 12/12 |
+| Ngày | 2026-08-24 |
+| Trạng thái | **Technical sign-off v1.5: PASS** cho kiến trúc v0 + D1/D26 và evidence gate 42/42 + 57/57 + 12/12 |
 | Phạm vi accuracy | Detailed backend; các block RTL-derived được cross-check riêng lẻ, TLM adapter không có RTL counterpart |
 
 File này là bản canonical. Bản web đã publish
@@ -23,23 +23,28 @@ render lại của chính nó; khi model đổi thì sửa file này trước.
 | v1.2 | 2026-08-07 | Bổ sung address map, destination decode, đường tín hiệu out-of-band, bản đồ file model↔RTL, payload width từng kênh, license/provenance và cách tái tạo; sửa phát biểu "12 cross-check đều theo cycle" thành 9 cycle + 3 nội dung |
 | v1.3 | 2026-08-07 | Vẽ lại floorplan và cấu trúc một node; làm rõ payload width không gồm header; sửa inventory 19 header, caption quadrant, version Word và flow tái tạo đủ 12 RTL cross-check |
 | v1.4 | 2026-08-07 | Đóng technical sign-off trên working-tree snapshot có manifest SHA-256: 41/41 SystemC test, 51/51 mutation control và 12/12 RTL cross-check đều PASS; bổ sung scope, exclusion và evidence record |
+| v1.5 | 2026-08-24 | Ký D1 owner-aware local bypass và D26 admission-slot lifetime/idle split trên manifest 133 file: 42/42 SystemC test, 57/57 mutation control và 12/12 RTL cross-check đều PASS |
 
-### Hồ sơ sign-off v1.4
+### Hồ sơ sign-off v1.5
 
 | Hạng mục | Giá trị chốt |
 |---|---|
-| Quyết định kỹ thuật | **PASS — sign-off closed 2026-08-07** |
-| Phạm vi | Kiến trúc v0, parameter set đã frozen, SystemC component và 12 block-level SystemC↔RTL cross-check |
-| Evidence gate vừa chạy | 41/41 component test; 51/51 mutation detected, 0 missed; 12/12 RTL cross-check |
-| CDC-VP snapshot | Base HEAD `4a5c00f9cb35b161cf43fdffa0e881748672837d`, tree dirty; 132 file được khóa bằng manifest SHA-256 `2f5a17aa...314fa4` |
+| Quyết định kỹ thuật | **PASS — signed v1.5 ngày 2026-08-24** |
+| Phạm vi | Kiến trúc v0 đã frozen, D1 owner-aware local bypass, D26 admission-slot/idle semantics, SystemC component và 12 block-level SystemC↔RTL cross-check |
+| Evidence gate vừa chạy | 42/42 component test; 57/57 mutation detected, 0 missed; 12/12 RTL cross-check |
+| CDC-VP snapshot | Base HEAD `963466e1f09b9bb17061a45228df232eaf921a37`, tree dirty; 133 file được khóa bằng manifest SHA-256 `ccfc12dc...e94c43` |
 | RTL reference | FlooNoC `9a6972a5f9b8117506d1df8a6505ce1da2bc9084`, tree clean; `Bender.lock` SHA-256 `73eb4c72...7d86bc` |
-| Evidence record | `docs/signoff/v1.4/SIGNOFF.md`; kèm raw log và `tested_source_manifest.sha256` |
-| Người duyệt | Document owner / SoC Design Engineer xác nhận đóng trong phiên review ngày 2026-08-07; ghi theo role vì chưa cung cấp tên signatory |
+| Evidence record | `docs/signoff/v1.5/SIGNOFF.md`; kèm raw log, source manifest và artifact manifest |
+| Người duyệt | **Duy, SoC Design Engineer**, phê duyệt D1/D26 và chọn baseline v1.5 trong phiên review ngày 2026-08-24 |
 
 Sign-off này ràng buộc vào **snapshot**, không chỉ vào base commit vì CDC-VP
-working tree đang có thay đổi chưa commit. Bất kỳ thay đổi nào trong 132 file
+working tree đang có thay đổi chưa commit. Bất kỳ thay đổi nào trong 133 file
 được liệt kê bởi manifest, RTL revision hoặc dependency lock đều làm evidence
 hết hiệu lực và phải chạy lại gate bị ảnh hưởng.
+
+Bản `NOC_MODEL_ARCHITECTURE.vi.docx` hiện vẫn là render lịch sử v1.4; nó không
+được tự động đổi nhãn thành v1.5. Muốn phát hành DOCX/PDF v1.5 phải regenerate
+và validation artifact riêng.
 
 Boundary vẫn được giữ chặt: PASS không có nghĩa là toàn đường manager AXI ->
 mesh -> subordinate AXI đã monolithic RTL-equivalent. TLM-to-AXI wrapper không
@@ -155,7 +160,7 @@ port; topology bất quy tắc; explicit link pipeline.
 | TLM upstream | Tối đa 8 tagged initiator port; mỗi port có bounded outstanding queue 1..32 |
 | TLM downstream | Address region `[base, base + size)`, không zero-size, wrap hoặc overlap |
 | AXI manager identity | ID rộng 3 bit; production adapter giữ one-ID-per-manager policy phù hợp `MaxUniqueIds = 1` |
-| Placement | Manager và target không được cùng node khi `NoLoopback = 1`; constructor từ chối cấu hình sai |
+| Placement | Manager và target chỉ được cùng node khi target khai báo đúng manager đó là `local_owner`; owner đi qua D1 bypass, còn co-location không owner/sai owner bị từ chối lúc elaboration |
 | Clock/reset | NoC period mặc định 1 ns; reset xoá FIFO/state; detailed clock chỉ gate khi wrapper, chimney và cả hai mesh quiescent |
 | Target delay | Được target trả về qua TLM delay; không được tính vào `latency_cycles` của riêng NoC |
 | Error mapping | Unmapped/range-crossing và target failure được ánh xạ thành AXI/TLM response tương ứng, không biến thành timeout im lặng |
@@ -188,8 +193,8 @@ này, không phải vì tốc độ.
 
 ### 1.6 Mức độ tin cậy — cái gì đã signed, cái gì không
 
-**12/12 RTL cross-check đã được chạy lại và signed** giữa SystemC snapshot v1.4
-và RTL gốc không sửa đổi; aggregate kết thúc lúc 2026-08-07 11:07:14 +07:00
+**12/12 RTL cross-check đã được chạy lại và signed** giữa SystemC snapshot v1.5
+và RTL gốc không sửa đổi; aggregate kết thúc lúc 2026-08-24 10:12:55 +07:00
 với exit code 0. Chín
 cái so sánh **từng cycle**; ba cái so sánh **nội dung** vì compile của chúng
 không có clock edge để sample — sizing là hàm thuần, còn hai cross-check chimney
@@ -293,9 +298,12 @@ kế RISC-V dùng PLIC/CLINT.
 
 ### 2.2 Floorplan `noc_soc` 4x4
 
-Ô `*` là AXI manager port. **Không target nào được đặt chung node với manager**:
-`NoLoopback = 1` khiến flit tự gửi cho chính node mình không bao giờ tới nơi và
-làm kẹt port đó vĩnh viễn. Wrapper từ chối cấu hình này ngay lúc construct.
+Ô `*` là AXI manager port. Floorplan `noc_soc` hiện tại không đặt target nào
+chung node với manager, nhưng đó không còn là cấm đoán tổng quát. Với
+`NoLoopback = 1`, self-addressed flit không thể được giao; D1 cho phép một
+target co-located khi nó khai báo đúng manager đó là `local_owner`, rồi wrapper
+bypass mesh cho riêng owner. Co-location không có owner hoặc khai báo owner sai
+vẫn bị từ chối ngay lúc elaboration.
 
 ```mermaid
 block-beta
@@ -427,7 +435,7 @@ block-beta
   space space NREQ["REQ neighbour links<br/>N / E / S / W"] space space
   TRSP["Local target AXI<br/>B/R (optional)"] SP["Subordinate response<br/>restore ID/src_id + pack"] RS["RSP floo_router<br/>N/E/S/W/Eject"] MR["Manager response<br/>unpack B/R + pop NoRoB"] MRSP["Local manager AXI<br/>B/R (optional)"]
   space space NRSP["RSP neighbour links<br/>N / E / S / W"] space space
-  NL["NoLoopback = 1: Eject→Eject bị tie-off; local manager và local target không giao dịch trực tiếp"]:5
+  NL["NoLoopback = 1: RTL Eject→Eject bị tie-off; D1 owner bypass nằm ngoài datapath RTL"]:5
 
   MREQ --> MP
   MP --> RQ
@@ -457,10 +465,11 @@ block-beta
 
 Đây là cấu trúc **một node**, không phải đường composed giữa hai node. Cùng một
 `axi_chimney_node` luôn chứa hai router và bốn quadrant chimney; local manager
-và local target là hai interface độc lập, có thể không được bind. Trong
-`noc_soc`, `noc_interconnect` không cho bind manager và target vào cùng node vì
-`NoLoopback = 1` tie-off đường Eject→Eject. Một transaction hợp lệ do manager
-phát phải rời node qua REQ mesh; response quay lại qua RSP mesh.
+và local target là hai interface độc lập, có thể không được bind. Datapath RTL
+vẫn tie-off đường Eject→Eject khi `NoLoopback = 1`, nên routed transaction phải
+rời node qua REQ mesh và response quay lại qua RSP mesh. D1 không sửa RTL:
+`noc_interconnect` short-circuit access của đúng `local_owner` sang target TLM
+trước khi tạo flit; mọi manager khác vẫn đi qua mesh.
 
 ### 2.5 Vòng đời một transaction
 
@@ -1089,7 +1098,7 @@ Tham số `MaxRoTxnsPerId = 32` cho phép **31** transaction outstanding.
 Con số này không mâu thuẫn với `MaxTxns = 32`: `MaxTxns` là depth của metadata
 FIFO, còn 31 là ngưỡng nhận của `axi_demux_id_counters` trong NoRoB gate.
 
-**A5. `NoLoopback` làm treo node thay vì báo lỗi.**
+**A5. Self-addressed flit với `NoLoopback` làm treo node thay vì báo lỗi.**
 
 Một flit gửi tới chính node phát ra nó là không thể giao, và nó làm kẹt input
 FIFO của node đó **vĩnh viễn**. Không có error, không có timeout, không có
@@ -1100,8 +1109,10 @@ random stimulus sinh flit tự địa chỉ.
 
 *Mức độ:* cao về mặt debug cost. Triệu chứng (treo im lặng) cách rất xa nguyên
 nhân (một dòng cấu hình placement).
-*Đã xử lý:* `noc_interconnect` từ chối placement này ngay lúc construct. Đừng bỏ
-guard đó.
+*Đã xử lý:* D1 bypass access của đúng `local_owner` trước khi tạo flit.
+`noc_interconnect` vẫn từ chối co-location không owner, owner không tồn tại,
+owner nằm sai node hoặc một mapping khiến owner không còn đường hợp lệ tới
+target. Đừng bỏ các elaboration guard đó.
 *Phân loại/trạng thái:* configuration hazard; guarded trong production wrapper.
 
 **A6. Malformed hoặc truncated wormhole packet có thể giữ route vĩnh viễn.**
@@ -1303,7 +1314,7 @@ utilisation, stall, occupancy, contention và DSE.
 
 | Ưu tiên | Hành động | Điều kiện hoàn thành |
 |---|---|---|
-| P0 | Giữ one-ID-per-manager contract, local-loopback guard và whole-network quiescence gate | Các bad-config, concurrency, stress và clock-gating mutation vẫn bị bắt |
+| P0 | Giữ one-ID-per-manager contract, D1 owner-aware bypass + invalid-placement guard và whole-network quiescence gate | Các bad-config, local-bypass, concurrency, stress và clock-gating mutation vẫn bị bắt |
 | P0 | Không mở `MaxUniqueIds > 1` bằng thay đổi tham số đơn thuần | Phải model/cross-check nhánh `id_queue`, allocation, matching và back-pressure trước |
 | P1 | Dựng một composed RTL harness manager-AXI -> chimney -> mesh -> chimney -> subordinate-AXI | So sánh boundary/state theo cycle; không dùng behavioral RTL replacement |
 | P1 | Chạy workload/DSE đã drain cho topology 2x2, 3x3 và 4x4 | Mọi candidate complete, conserved, cùng workload/seed và qua constraints |
@@ -1326,13 +1337,13 @@ utilisation, stall, occupancy, contention và DSE.
 | Metrics/dashboard | Passive production signals + schema v1 | Router/mesh tests, conservation/drain controls, dashboard/sweep mutations | Measured/derived values đúng source contract; area/power vẫn unavailable |
 | `noc_soc` + FreeRTOS | Platform/firmware contract | Levels 121/122/123/124/128, packaging và 11/11 platform controls | SoC software bring-up complete; không phải full RTL SoC sign-off |
 
-Gate bắt buộc cho technical sign-off v1.4 đã được chạy lại trên cùng snapshot:
-41/41 component tests, 12/12 RTL cross-check và 51/51 component mutation
+Gate bắt buộc cho technical sign-off v1.5 đã được chạy lại trên cùng snapshot:
+42/42 component tests, 12/12 RTL cross-check và 57/57 component mutation
 controls, tất cả exit code 0. Raw transcript, hash và tested-source manifest nằm
-tại `docs/signoff/v1.4/`; xem `SIGNOFF.md` trong thư mục đó để audit. Các baseline
+tại `docs/signoff/v1.5/`; xem `SIGNOFF.md` trong thư mục đó để audit. Các baseline
 10/10 D3-D6 metrics controls và 11/11 FreeRTOS/platform controls đã được report
 từ milestone trước nhưng **không chạy lại** trong lần đóng tài liệu này, nên
-không được nhập nhằng với evidence gate v1.4. Con số mutation pass chỉ có ý
+không được nhập nhằng với evidence gate v1.5. Con số mutation pass chỉ có ý
 nghĩa khi runner xác nhận mutation build được và test thất bại vì đúng
 diagnostic dự kiến.
 
@@ -1460,7 +1471,7 @@ python3 components/floo_noc_model/docs/make_docx.py
 | Scope và tham số frozen | `docs/P0_SCOPE.md` |
 | Ánh xạ RTL ↔ SystemC | `docs/RTL_MAPPING.md` |
 | Bằng chứng verification và negative control | `docs/STATUS.md` |
-| Technical sign-off v1.4, raw log và source manifest | `docs/signoff/v1.4/SIGNOFF.md` |
+| Technical sign-off v1.5, raw log và source manifest | `docs/signoff/v1.5/SIGNOFF.md` |
 | Context handoff đầy đủ | `docs/AI_HANDOFF_CONTEXT.md` |
 | Metrics và dashboard | `docs/NOC_METRICS_DASHBOARD_IMPLEMENTATION.md` |
 | Đọc hiểu dashboard | `docs/NOC_DASHBOARD_REPORT.vi.txt` |

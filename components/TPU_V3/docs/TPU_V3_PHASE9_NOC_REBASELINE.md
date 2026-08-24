@@ -66,7 +66,7 @@ straddle and an out-of-aperture address at their own boundary, and
 `noc_interconnect` itself decodes before it injects: `b_transport` returns
 `TLM_ADDRESS_ERROR_RESPONSE` locally when nothing is mapped or when the transfer
 runs off the end of its region into another
-(`floo_noc_model/src/noc_interconnect.cpp:1721`). So for those the class exists
+(`floo_noc_model/src/noc_interconnect.cpp:2054`). So for those the class exists
 for **attribution**, not for routing: there is no transport event to route.
 
 **What a Phase 9 error test should expect, because it is not what the AXI names
@@ -79,11 +79,11 @@ severity:
 | a target that reached and refused | **after injection**, by the subordinate | `TLM_GENERIC_ERROR_RESPONSE` | `SLVERR` |
 
 `DECERR` therefore does **not** round-trip in this model. It exists in
-`perform_downstream_access()` (`noc_interconnect.cpp:1032`) as defence in depth
+`perform_downstream_access()` (`noc_interconnect.cpp:1144`) as defence in depth
 for a subordinate-side decode miss, but the pre-injection check above means an
 ordinary `b_transport` cannot reach it; and every non-OK target response after
 injection is mapped to `SLVERR`, never `DECERR`
-(`noc_interconnect.cpp:1112`). An earlier draft of this section described a
+(`noc_interconnect.cpp:1228`). An earlier draft of this section described a
 `DECERR` round trip, which would have sent Phase 9's error tests looking for a
 response the interconnect cannot produce.
 
@@ -312,26 +312,66 @@ Anything that *does* change the FlooNoC configuration — narrow-wide, a VC, a
 ninth manager, `MaxUniqueIds > 1`, `NoLoopback = 0` — is a new signed
 configuration and re-enters this document at §3.
 
-## 7. D1 is not implemented, and the schedule in the documents disagreed
+## 7. D1 is implemented — closed 2026-08-20
 
-Measured, not assumed:
+`add_target()` now takes an optional `local_owner`. A target may sit on a node
+that hosts an upstream port **iff** it names that port, and an access from that
+port is short-circuited to the target socket without a flit ever being created.
+The frozen router configuration is untouched: `NoLoopback = 1` stays, and the
+tie-off is never exercised rather than reconfigured.
 
-* `noc_interconnect::add_target(base, size, where, kind)` has **no owner
-  parameter**;
-* `reject_self_node_targets()` (`src/noc_interconnect.cpp:430`) still refuses
-  **any** mapped target on a node hosting **any** upstream port, unconditionally.
+`reject_self_node_targets()` still refuses a co-located target with no owner
+mapping, and `add_target()` / `place_initiator()` refuse an owner that does not
+exist, an owner on another node, and an owner that tries to move off the node of
+what it owns — all before any traffic.
 
-So chip-to-chip traffic is blocked exactly as `TPU_V3_PHASE0_AUDIT.md` §5.1
-described, and D1 is the first Phase 9 implementation task.
+### Evidence
 
-On the schedule: the Phase 0 audit scheduled D1 as "a **Phase 7 prerequisite**,
-not a Phase 8 discovery", while the README and plan §16 both call it a Phase 9
-prerequisite. Phase 7 was one chip plus global memory, which does not need it —
-the audit itself says so in the same section — and Phase 8 composed two cores
-inside one chip, which also does not. The Phase 0 audit is historical evidence
-and is not rewritten; **the Phase 9 scheduling in the README and plan is
-correct** and this note records the supersession, on the same terms as P0-6,
-P0-7 and P0-9.
+The load-bearing claim is negative — that **no flit existed** — because "the
+access returned the right data" is equally true of a routed access. The witness
+is `accepted_flits` summed over both physical meshes, every router and every
+port, read from the passive RTL-signed counters rather than from anything the
+bypass maintains.
+
+| | Baseline (before D1) | After D1 |
+| --- | --- | --- |
+| `floo_noc_model` component suite | 41/41 | **42/42** |
+| RTL cross-checks (12 runners, FlooNoC `9a6972a`) | 12/12 | **12/12** |
+| Mutation / negative controls | 51 detected, 0 missed | **55 detected, 0 missed** |
+| `noc_soc` platform | 10/10 | **10/10** |
+
+Four D1 mutation controls are registered: `local-bypass-not-owner-aware`,
+`local-bypass-counted-as-network-traffic`, `local-owner-node-check-removed` and
+`local-owner-may-abandon-its-target`.
+
+**One control is deliberately not in the registry**, and it is the most
+convincing one. Disabling the bypass dispatch entirely makes the co-located
+access a self-addressed flit and the run **hangs** — `FAIL: the scenario did not
+finish` against the bench's watchdog. That is the Phase 0 audit's "this would
+hang rather than fail" reproduced as a measurement rather than a prediction. It
+is recorded here instead of registered because a control that hangs has to be
+killed by a timeout rather than observed, and that harness runs every mutation to
+completion.
+
+Two things this cost, worth carrying forward. The first version of
+`local_bypass_transport` **copied** the downstream replay out of
+`fast_transport` instead of sharing it; because the mutation controls patch by
+first textual occurrence, two of them silently began landing in the copy and
+stopped detecting anything — 51/0 became 48/3, and nothing else went red,
+because losing detection makes no test fail. Both now call one
+`replay_downstream()`. And a `noc_soc` control suite failed with eight "does not
+build" errors that were really a link against a `libnoc_interconnect.a` nobody
+had rebuilt — a failure that looks exactly like a regression and is not.
+
+### The schedule in the documents disagreed
+
+The Phase 0 audit scheduled D1 as "a **Phase 7 prerequisite**, not a Phase 8
+discovery", while the README and plan §16 both call it a Phase 9 prerequisite.
+Phase 7 was one chip plus global memory, which does not need it — the audit
+itself says so in the same section — and Phase 8 composed two cores inside one
+chip, which also does not. The Phase 0 audit is historical evidence and is not
+rewritten; **the Phase 9 scheduling in the README and plan was correct**, and
+this note records the supersession on the same terms as P0-6, P0-7 and P0-9.
 
 ## 8. Summary
 
@@ -343,6 +383,211 @@ P0-7 and P0-9.
 | 4. Protocol behaviour | XY, wormhole rotating priority, in-order **per response channel** (not a total order per port), `MaxTxns = 32`, separate req/rsp meshes; HOL blocking accepted; reset rule frozen and to be implemented |
 | 5. Verification impact | no new signed configuration; six model-level evidence items listed in §6 |
 
-Open, and deliberately so: the reset-of-in-flight rule is frozen as a
-contract and not yet implemented, and D1 is not implemented. Both are Phase 9
-tasks and both are listed above with the evidence they owe.
+Open, and deliberately so: the reset-of-in-flight rule is frozen as a contract
+and **not yet implemented** — a Phase 9 task, with the evidence it owes listed
+in §5. D1 is now closed; see §7.
+
+The chip NoC endpoint's four metric-accounting findings are **closed** as of
+2026-08-22, each with a control that fails when its fix is reverted; the
+evidence is `TPU_V3_PHASE9_AUDIT.md` §3 and the history is kept in §9 below.
+The §11.10 outstanding and latency requirement is answered by decision record
+**D24** and implemented: transfer latency is measured at the endpoint,
+outstanding defers to the interconnect, and neither may be quoted as the other
+(§9.3).
+
+## 9. The chip NoC endpoint — implemented; the four metric findings are closed
+
+Date of this section: 2026-08-22. **Updated the same day**: the four findings
+below were fixed and each was given a control that fails when its fix is
+reverted. The findings are kept in place rather than deleted, because the fix
+is only meaningful next to what it fixed, and because §9.2's list of what each
+one owed is what the controls were written against. `TPU_V3_PHASE9_AUDIT.md`
+records the measurement.
+
+`components/TPU_V3/noc_endpoint` exists and is gated by ctest
+`tpu_v3_noc_endpoint` (labels `tpu_v3;unit;noc`). It implements the §11.10
+bidirectional endpoint: outbound chunking at the §4 frame limit, aperture
+containment, single-region span checking before any split, inbound address
+rebase, and the **endpoint-local half** of §5's reset rule — a generation guard
+that abandons at the next chunk boundary, an interruptible wait for a transfer
+still spending its quantum, and the unelapsed remainder returned in `delay`.
+The rule end to end at the NoC boundary remains open, as §8 records.
+
+**Its own gate uses plain TLM stubs on both sides**, deliberately — the
+split-and-route contract is visible without a mesh, and keeping the component
+free of any dependency on `noc_interconnect` is what stops it reaching into the
+interconnect for something it should have been told.
+
+Attaching it to a real interconnect happened on 2026-08-22 and 2026-08-24, in
+two places and for two different questions:
+`test_endpoint_on_real_noc` asks whether the endpoint's read shaping is
+sufficient against the thing that enforces the rule (D25), and
+`test_chip_on_mesh` composes `tpu_chip`, this endpoint, a real
+`noc_interconnect`, boot ROM and global RAM (`TPU_V3_PHASE9_AUDIT.md` §4i).
+What remains of the original task is the **platform** composition — the plan
+gives system composition to `platforms/TPU_V3_SoC` (§11.11) — and mesh scaling
+to 2x2 and beyond.
+
+The findings below were metric-accounting defects, not transport defects: no
+transfer was routed to the wrong place and no data was corrupted by any of them.
+They mattered because §11.10 requires the endpoint to "publish outstanding,
+latency, bytes, and error counters", and because Phase 11 contention measurement
+would have read these numbers as if they were true.
+
+**All four are now fixed.** Each subsection keeps its diagnosis and marks what
+landed.
+
+### 9.1 The four findings, as diagnosed
+
+| # | Symptom (before the fix) | Where | Class |
+| --- | --- | --- | --- |
+| E-1 | bytes are published only when the whole transfer returns, while chunks are published per chunk | `chip_noc_endpoint.cpp`, `chip_b_transport` / `noc_b_transport` (`outbound_bytes_ +=`, `inbound_bytes_ +=`) | conservation |
+| E-2 | a downstream target error that moved zero bytes increments **no** counter in either direction | same two functions, the `status != TLM_OK_RESPONSE && moved > 0` guard | error accounting |
+| E-3 | `inbound_partial_failures_` does not exist; inbound partial failures are countable nowhere | `chip_noc_endpoint.h` counter block | error accounting |
+| E-4 | `report()` prints no inbound partial/error information at all | `chip_noc_endpoint::report()` | observability |
+
+### E-1 — publish bytes as each chunk commits
+
+`forward_chunked()` increments `outbound_chunks_` / `inbound_chunks_` inside the
+loop, immediately after each `b_transport()` returns and after the generation
+re-check. The byte total is not published there: `moved` is accumulated in a
+local and added to the member counter only after the whole transfer unwinds.
+
+Two consequences, both real:
+
+* a five-chunk transfer blocked in chunk three reports "2 chunks, 0 bytes" to
+  anything that reads the counters while it is suspended — `report()` from a
+  platform monitor, or the accessors from a test harness driving traffic from
+  another process;
+* a simulation that ends with a transfer in flight loses those bytes entirely,
+  which breaks endpoint-boundary conservation — the §6 evidence item that must
+  reconcile the way `test_neo_external_bridge` does at the core boundary.
+
+**It also makes a comment false.** `forward_chunked()`'s reset path says *"what
+has already been transferred stays transferred and is reported (D23)"*. The
+first half is true — there is no rollback. The second half is not: the caller's
+generation guard deliberately skips the byte accounting for an old-epoch
+transfer, so those bytes are never reported anywhere. Accounting per chunk makes
+the comment true, because the bytes then land in the epoch that moved them and
+`reset()` clears that epoch's counters itself.
+
+**Fix, landed 2026-08-22:** the member byte counter is incremented where the
+chunk counter is, `moved` stays as the local the caller still needs for
+`last_partial_bytes_`, and both callers stopped accumulating. The existing
+generation guard did not have to move — it already sits above that point — so
+the invariant the gate asserts ("an old-epoch chunk repopulated counters the
+reset had cleared", tested against `outbound_transfers()`, `outbound_chunks()`
+and `outbound_bytes()` all being zero after an in-flight reset) is preserved
+unchanged and still passes.
+
+### E-2 — record target failures even when no bytes moved
+
+An earlier round correctly stopped classifying a zero-progress failure as a
+*partial* completion: an unsplit over-frame MMIO transfer is refused by the
+target having moved nothing, and calling that "partial" overwrote
+`last_partial_bytes_` with zero. That fix removed the wrong counter and did not
+add the right one, and this is the hole it left.
+
+Walk the path: the transfer passes every endpoint check, `forward_chunked()`
+issues the first chunk, the target answers with an error, the loop returns that
+status, `moved == 0`, and the `moved > 0` guard skips the only accounting site.
+`protocol_errors_` counts payload-rule violations only; `outbound_local_refused_`,
+`outbound_span_refused_` and `inbound_foreign_refused_` count refusals the
+*endpoint* made. Nothing counts a refusal the *target* made.
+
+**It cannot be inferred either.** The residue is `chunks > 0 && bytes == 0` —
+which is exactly what a legitimate, fully byte-disabled write also produces.
+The two are indistinguishable in the published metrics, so a real error is not
+merely uncounted, it is unrecoverable from the report.
+
+**Fix, landed 2026-08-22:** `outbound_target_errors_` and
+`inbound_target_errors_`, incremented inside `forward_chunked()` at the failing
+chunk and therefore independent of whether anything moved. They are kept
+distinct from the `*_refused_` counters: "the endpoint refused this, having
+touched nothing" and "the target refused this, possibly after touching
+something" are different events with different owners, and merging them
+destroys the distinction that makes the refusal counters worth reading.
+
+### E-3 — inbound has no partial-failure count
+
+Outbound has both `outbound_partial_failures_` (a count) and
+`last_partial_bytes_` (the most recent value). Inbound has only
+`last_inbound_partial_bytes_`. An inbound transfer that fails after committing
+bytes therefore increments nothing at all — the value is overwritten, and how
+often it happened is not recorded.
+
+**Fix, landed 2026-08-22:** `inbound_partial_failures_`, incremented under the
+same `moved > 0` condition the outbound side uses.
+
+### E-4 — `report()` is asymmetric
+
+The outbound line prints splits, partial failures and both refusal causes. The
+inbound line prints transfers, chunks, bytes and foreign refusals — nothing
+about partial or failed inbound work. `last_inbound_partial_bytes_` is set but
+appears in no report; it is reachable only through its accessor from a test.
+
+**Fix, landed 2026-08-22:** both direction lines print partial failures and
+target errors. The `last_*` values stay accessor-only — they are "most recent",
+not totals — and the report gained one line saying what separates a target
+error from a refusal, since the two counters now sit side by side.
+
+### 9.2 Evidence these fixes owe
+
+Under the standing rule that a fix without a control that bites is not evidence,
+each of the four owes a control that **fails before the fix and passes after**:
+
+| Finding | Control |
+| --- | --- |
+| E-1 | park a multi-chunk transfer inside a blocking downstream target, read the counters from another process while it is suspended, and require `bytes` to be consistent with `chunks` — not merely non-zero at the end |
+| E-2 | a target that refuses the first (or only) chunk; require the failure to appear in a counter, and require it to be distinguishable from a fully byte-disabled write that legitimately moves zero bytes |
+| E-3 | an inbound transfer failing after a committed chunk; require the count, not just the byte value |
+| E-4 | assert on `report()` text, since the defect is that the number never reaches the report |
+
+**Controls in TPU_V3 are run by hand and recorded in the phase audit document.**
+There is no registered mutation harness under `components/TPU_V3` — the
+`run_negative_controls.sh` suite belongs to `components/floo_noc_model` and
+covers the RTL-signed model only. A new agent should not go looking for a script
+to add these to; it should run them by hand, record the before/after counts, and
+say plainly which ones it ran.
+
+**Done 2026-08-22.** All four controls exist in
+`noc_endpoint/tests/test_chip_noc_endpoint.cpp`, all four were run by hand
+against a mutated tree, and all four failed with the intended message and pass
+after the fix. `TPU_V3_PHASE9_AUDIT.md` now exists and §3 quotes each failure.
+Two of them needed shapes worth carrying forward: E-1 is unobservable without a
+**second process** sampling the counters mid-flight, because after the transfer
+returns the two numbers agree either way; and E-2's evidence is the **pairing**
+of a zero-progress refusal with a fully byte-disabled write, not the refusal
+alone, since a bare refusal check would not notice the two being merged back
+together.
+
+### 9.3 A larger §11.10 gap — answered by D24 on 2026-08-22
+
+§11.10 requires "outstanding, latency, bytes, and error counters". Bytes exist.
+Error counters became complete with E-2 and E-3. Outstanding and latency did not
+exist at the endpoint at all — not incomplete, absent — and this section refused
+to let them be built before the ownership question was recorded, because
+`noc_interconnect` already publishes per-port completion queues and
+`last_latency_cycles(port)` (§5) and an endpoint-level duplicate could easily
+become a second, disagreeing source for the same quantity.
+
+**Answered as decision record D24: split by quantity, not by component.**
+
+* **Latency is measured at the endpoint**, per transfer. Only it can: a chunked
+  transfer is one transfer to the endpoint and several transactions to the
+  interconnect, so `last_latency_cycles(port)` answers a different question.
+  Deferring would not have avoided a duplicate, it would have lost a quantity
+  nobody else holds.
+* **Outstanding is not measured at the endpoint.** In the Revision 1
+  composition `neo_external_bridge` arbitrates a core's two outbound initiators
+  onto one external socket and `chip_local_fabric` allows one transaction per
+  initiator, so an endpoint-level outbound outstanding count is `<= 1` **by
+  construction** — a constant printed where a measurement belongs. The figure
+  that varies is the interconnect's `MaxTxns` accounting, already published.
+* Neither figure may be quoted as, compared with, or summed with the other.
+
+The measured quantity is **logical** time, `sc_time_stamp() + delay`, not an
+`sc_time_stamp()` difference: an annotating target consumes no simulated time,
+so a stamp difference reads zero on every loosely timed path — the path a
+full-system run uses. Implemented and gated; the two controls are D24-a and
+D24-b in `TPU_V3_PHASE9_AUDIT.md` §3.

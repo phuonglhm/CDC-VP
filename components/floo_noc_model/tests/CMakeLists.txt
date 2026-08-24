@@ -71,6 +71,17 @@ floo_model_test_options(test_noc_interconnect_observer)
 add_test(NAME test_noc_interconnect_observer
          COMMAND test_noc_interconnect_observer)
 
+# Decision record D1: the owner-aware local bypass. Its load-bearing assertion
+# is negative -- that no flit was injected -- so it reads the passive mesh
+# counters rather than the response code.
+add_executable(test_noc_interconnect_local_bypass
+    test_noc_interconnect_local_bypass.cpp)
+target_link_libraries(test_noc_interconnect_local_bypass PRIVATE
+    cdc::components::noc_interconnect)
+floo_model_test_options(test_noc_interconnect_local_bypass)
+add_test(NAME test_noc_interconnect_local_bypass
+         COMMAND test_noc_interconnect_local_bypass)
+
 add_executable(test_noc_interconnect_fast
     test_noc_interconnect_fast.cpp)
 target_link_libraries(test_noc_interconnect_fast PRIVATE

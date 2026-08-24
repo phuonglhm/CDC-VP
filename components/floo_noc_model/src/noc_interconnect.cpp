@@ -6,6 +6,7 @@
 #include "floo_noc_model/axi_noc.hpp"
 
 #include <algorithm>
+#include <set>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -129,6 +130,10 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         std::uint64_t size = 0;
         unsigned node = 0;
         bool mapped = false;
+        /// Upstream port that owns this target through the D1 local bypass, or
+        /// `-1` for the ordinary routed case. When set, the port sits on
+        /// `node`, and an access from it never becomes a flit.
+        int local_owner = -1;
         std::unique_ptr<initiator_socket> socket;
     };
 
@@ -265,6 +270,146 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     // `sc_event` is neither copyable nor movable, so it cannot live in a
     // plain vector that is assigned into.
     std::vector<std::unique_ptr<sc_core::sc_event>> slot_available;
+
+    /// Per-port, per-channel completion order. Index
+    /// `port * 2 + (write ? 0 : 1)`.
+    ///
+    /// The frozen configuration sets `MaxUniqueIds = 1`, so responses on one
+    /// upstream port are FIFO within each channel. The routed path gets that
+    /// from the response deques, which is the **real** mechanism and the one
+    /// `same-port-request-order-reversed` exists to test. The D1 local bypass
+    /// touches none of it and completed the instant its target answered, so an
+    /// owner access could overtake a routed access issued before it.
+    ///
+    /// ## Why the routed path is not made to wait
+    ///
+    /// The obvious fix — give both paths a ticket and have each wait its turn —
+    /// works and is wrong. It forces routed completions back into ticket order
+    /// no matter what the mesh did, so a mesh that injected requests
+    /// newest-first would still look correct: measured, the
+    /// `same-port-request-order-reversed` control stopped detecting anything
+    /// the moment that version existed. Defence in depth that hides the thing
+    /// it defends is not depth, it is a blindfold.
+    ///
+    /// So the routed path is left exactly as it was, ordered by its deques and
+    /// still observable. Only the bypass is inserted into that order:
+    ///
+    ///  * every access takes a ticket at its issue point;
+    ///  * every access bumps `done_seq` when it completes — the routed path
+    ///    never waits on it;
+    ///  * a **bypass** waits until `done_seq` reaches its ticket, so it cannot
+    ///    overtake anything issued earlier;
+    ///  * a **routed** access waits only while an *earlier bypass* is still
+    ///    outstanding, so a bypass cannot be overtaken either. Routed traffic is
+    ///    never ordered against other routed traffic here.
+    std::vector<std::uint64_t> issue_seq;
+    std::vector<std::uint64_t> done_seq;
+    std::vector<std::set<std::uint64_t>> outstanding_bypass;
+    std::vector<std::unique_ptr<sc_core::sc_event>> order_ready;
+
+    static unsigned order_slot(unsigned port, bool is_write)
+    {
+        return port * 2 + (is_write ? 0u : 1u);
+    }
+
+    std::uint64_t take_completion_ticket(unsigned port, bool is_write)
+    {
+        return issue_seq[order_slot(port, is_write)]++;
+    }
+
+    /// A bypass may not complete before anything issued earlier on its channel.
+    void await_bypass_turn(unsigned port, bool is_write, std::uint64_t ticket)
+    {
+        const unsigned slot = order_slot(port, is_write);
+        while (done_seq[slot] < ticket) {
+            sc_core::wait(*order_ready[slot]);
+        }
+    }
+
+    /// A routed access may not complete before a bypass issued earlier.
+    ///
+    /// It is deliberately **not** ordered against other routed accesses in the
+    /// general case: that is the deques' job, and keeping it theirs is what
+    /// keeps `same-port-request-order-reversed` able to see a mesh that
+    /// injected out of order. Forcing every routed completion into ticket
+    /// order was measured to blind that control.
+    ///
+    /// **The exception is a call this function actually held** (R-P9-3). One
+    /// `notify()` releases every waiter parked here in a single delta, and the
+    /// loop lets them all past without any of them consulting its own ticket.
+    /// Their relative order is then whatever the kernel's resumption order for
+    /// dynamic waiters happens to be, and the SystemC LRM does not specify it.
+    /// Accellera 2.3.4 resumes them in the order they began waiting, which is
+    /// issue order here, so nothing is observably wrong today — but
+    /// `MaxUniqueIds = 1` promises FIFO completion per channel, and that
+    /// promise must not rest on an unspecified property of one kernel.
+    ///
+    /// So a call that was held falls back into ticket order on the way out,
+    /// and a call that was not is left exactly as it was. `held` is what keeps
+    /// the two apart: a scenario with no bypass never enters the loop, never
+    /// sets it, and so is untouched.
+    ///
+    /// The ordering step is `await_bypass_turn()` itself rather than a second
+    /// copy of its body — one rule with two expressions is one rule with one
+    /// test, and this file has already paid for that once, when
+    /// `local_bypass_transport` duplicated `fast_transport`'s replay and two
+    /// mutation controls silently stopped detecting anything.
+    void await_earlier_bypass(unsigned port, bool is_write,
+                              std::uint64_t ticket)
+    {
+        const unsigned slot = order_slot(port, is_write);
+        bool held = false;
+        while (!outstanding_bypass[slot].empty()
+               && *outstanding_bypass[slot].begin() < ticket) {
+            held = true;
+            sc_core::wait(*order_ready[slot]);
+        }
+        if (held) {
+            ++ordering_holds;
+            await_bypass_turn(port, is_write, ticket);
+        }
+    }
+
+    /// Routed calls this ordering hold has caught, ever. Published so a test
+    /// can assert the path is *live* rather than assert an outcome the current
+    /// kernel produces either way — see `ordering_holds()`.
+    std::uint64_t ordering_holds = 0;
+
+    /// Releases the admission slot a routed call has held since it passed the
+    /// gate.
+    ///
+    /// Called from `b_transport` after the ordering wait and never from the
+    /// completion path: the slot describes *a caller inside `b_transport`*,
+    /// and the network finishing is not the same event as the caller
+    /// returning. `fast_transport()` already held its slot this way, which is
+    /// why only the detailed path had to change.
+    void release_admission_slot(unsigned port)
+    {
+        if (outstanding_by_port[port] == 0) {
+            throw std::logic_error(
+                "noc_interconnect: admission slot released twice");
+        }
+        --outstanding_by_port[port];
+        slot_available[port]->notify(sc_core::SC_ZERO_TIME);
+    }
+
+    /// True when no caller holds an admission slot on any port.
+    bool admission_slots_free() const
+    {
+        for (unsigned port = 0; port < initiator_count; ++port) {
+            if (outstanding_by_port[port] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void mark_completed(unsigned port, bool is_write)
+    {
+        const unsigned slot = order_slot(port, is_write);
+        ++done_seq[slot];
+        order_ready[slot]->notify(sc_core::SC_ZERO_TIME);
+    }
     std::vector<std::deque<std::uint64_t>> write_hold_off;
     std::vector<std::deque<std::uint64_t>> read_hold_off;
 
@@ -285,6 +430,11 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     std::uint64_t cycle = 0;
     std::uint64_t completed = 0;
     std::uint64_t latency_sum = 0;
+
+    /// D1 local-bypass accounting, kept apart from the network counters above
+    /// so a zero-hop access cannot deflate a network latency average.
+    std::uint64_t bypassed = 0;
+    std::vector<std::uint64_t> bypassed_by_port;
     std::uint64_t last_latency = 0;
     std::vector<std::uint64_t> last_latency_by_port;
     noc_interconnect::completion_observer completion_hook;
@@ -356,12 +506,19 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         manager_request_driven.assign(noc->node_count(), false);
         last_latency_by_port.assign(num_initiators, 0);
         initiator_nodes.assign(num_initiators, node{0, 0});
+        bypassed_by_port.assign(num_initiators, 0);
         outstanding_by_port.assign(num_initiators, 0);
         peak_outstanding_by_port.assign(num_initiators, 0);
         write_hold_off.resize(num_initiators);
         read_hold_off.resize(num_initiators);
         for (unsigned port = 0; port < num_initiators; ++port) {
             slot_available.push_back(std::make_unique<sc_core::sc_event>());
+            for (unsigned channel = 0; channel < 2; ++channel) {
+                issue_seq.push_back(0);
+                done_seq.push_back(0);
+                outstanding_bypass.emplace_back();
+                order_ready.push_back(std::make_unique<sc_core::sc_event>());
+            }
         }
 
         SC_THREAD(network_thread);
@@ -433,24 +590,48 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             if (!entry.mapped) {
                 continue;
             }
-            bool hosts_initiator = false;
+            int hosting_port = -1;
             for (unsigned port = 0; port < initiator_count; ++port) {
                 if (index_of(initiator_nodes[port]) == entry.node) {
-                    hosts_initiator = true;
+                    hosting_port = static_cast<int>(port);
                     break;
                 }
             }
-            if (!hosts_initiator) {
+            if (hosting_port < 0) {
+                // Not co-located. An owner mapping here would be a claim about
+                // a port that is somewhere else, and an access from that port
+                // would be short-circuited past a mesh traversal it really
+                // does perform — so it is refused rather than ignored.
+                if (entry.local_owner >= 0) {
+                    std::ostringstream message;
+                    message << "noc_interconnect: target at 0x" << std::hex
+                            << entry.base << std::dec << " names upstream port "
+                            << entry.local_owner
+                            << " as its local owner, but that port is not on"
+                               " node " << (entry.node % mesh_x) << ','
+                            << (entry.node / mesh_x)
+                            << ". A local bypass may only short-circuit an"
+                               " access that would otherwise be self-addressed.";
+                    throw std::runtime_error(message.str());
+                }
                 continue;
             }
+
+            // Co-located, and legal exactly when this port owns it (D1).
+            if (entry.local_owner == hosting_port) {
+                continue;
+            }
+
             std::ostringstream message;
             message << "noc_interconnect: target at 0x" << std::hex
                     << entry.base << std::dec << " sits on node "
                     << (entry.node % mesh_x) << ',' << (entry.node / mesh_x)
-                    << ", which already hosts an upstream port. The router's"
-                       " NoLoopback tie-off makes a self-addressed flit"
-                       " undeliverable, so this would hang rather than fail."
-                       " Place the target on another node.";
+                    << ", which already hosts upstream port " << hosting_port
+                    << ". The router's NoLoopback tie-off makes a"
+                       " self-addressed flit undeliverable, so this would hang"
+                       " rather than fail. Place the target on another node, or"
+                       " give it that port as its `local_owner` so the access"
+                       " is short-circuited instead (decision record D1).";
             throw std::runtime_error(message.str());
         }
     }
@@ -895,12 +1076,17 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         if (in_flight > 0) {
             --in_flight;
         }
-        if (outstanding_by_port[parked.port] == 0) {
-            throw std::logic_error(
-                "noc_interconnect: completion underflowed the port slots");
-        }
-        --outstanding_by_port[parked.port];
-        slot_available[parked.port]->notify(sc_core::SC_ZERO_TIME);
+        // **The admission slot is not released here** (decision record
+        // R-P9-2). This runs on the mesh side, when the final AXI response
+        // arrives; the caller is still inside `b_transport` and may still have
+        // to serve its ordering wait. Releasing the slot at this point let the
+        // next caller in while the previous one was parked in
+        // `await_earlier_bypass()`, so a bound of one admitted two concurrent
+        // calls and `outstanding_transactions()` read zero while both were
+        // inside. The network accounting above *does* belong here: network
+        // counters, latency and the completion observer describe the moment
+        // the response landed, and dragging them past an ordering wait would
+        // charge that wait to the mesh.
         notify_completion(
             parked.port, parked.address, parked.length, parked.is_write,
             last_latency);
@@ -1193,6 +1379,172 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             + (!is_write && beats > 0 ? beats - 1u : 0u);
     }
 
+    /// Build the served request, replay it against the mapped target, unpack
+    /// the response, and report the target's own cost in whole network cycles.
+    /// `delay` is left exactly as it was found.
+    ///
+    /// **Shared by `fast_transport` and `local_bypass_transport` rather than
+    /// copied into both**, and the first version of the bypass did copy it.
+    /// Two things went wrong at once. The claim that a target cannot tell which
+    /// path reached it stopped being structural and became something maintained
+    /// by hand; and the mutation controls that patch this code by *first
+    /// textual occurrence* started landing in the copy instead of in
+    /// `fast_transport`, so `fast-functional-replay-bypassed` and
+    /// `fast-target-delay-truncated` silently stopped detecting anything. The
+    /// suite went from 51 detected / 0 missed to 48 / 3, which is the only
+    /// reason it was noticed.
+    std::uint64_t replay_downstream(
+        unsigned port, tlm::tlm_generic_payload& trans,
+        sc_core::sc_time& delay, const axi_shape& shape,
+        const unsigned char* enables, unsigned enable_length,
+        const char* who)
+    {
+        const bool is_write = trans.is_write();
+        const coordinate requester{
+            initiator_nodes[port].x, initiator_nodes[port].y};
+        served_request entry{};
+        if (is_write) {
+            axi_aw_chan aw{};
+            aw.id = port;
+            aw.addr = trans.get_address();
+            aw.len = static_cast<std::uint8_t>(shape.beats - 1);
+            aw.size = static_cast<std::uint8_t>(shape.size_log2);
+            aw.burst = 1;
+            const auto view = pack_write(
+                trans.get_data_ptr(), trans.get_data_length(), shape,
+                enables, enable_length);
+            entry = make_write_served_request(
+                aw, requester, view.data, view.strb);
+        } else {
+            axi_ar_chan ar{};
+            ar.id = port;
+            ar.addr = trans.get_address();
+            ar.len = static_cast<std::uint8_t>(shape.beats - 1);
+            ar.size = static_cast<std::uint8_t>(shape.size_log2);
+            ar.burst = 1;
+            entry = make_read_served_request(ar, requester);
+        }
+
+        const auto before_target = delay;
+        perform_downstream_access(entry, delay);
+        if (delay < before_target) {
+            throw std::runtime_error(
+                std::string("noc_interconnect: a ") + who
+                + " target decreased the annotated delay");
+        }
+        const auto target_cycles = rounded_cycles(delay - before_target);
+        delay = before_target;
+
+        if (!is_write) {
+            unpack_read(
+                entry.read_data, trans.get_data_ptr(),
+                trans.get_data_length(), shape, enables, enable_length);
+        }
+        trans.set_response_status(tlm_status_for(entry.resp));
+        return target_cycles;
+    }
+
+    /// The D1 owner-aware local bypass.
+    ///
+    /// It calls the same `replay_downstream()` the routed fast path calls, so
+    /// a target cannot tell which side of the mesh reached it — that is a
+    /// structural property here, not a promise.
+    ///
+    /// What it deliberately does *not* do:
+    ///
+    ///  * **no flit.** Nothing here touches `nodes[]`, so no router input is
+    ///    ever driven and no mesh counter can move. That is the property the
+    ///    gate asserts, and it is the whole reason the bypass exists: with
+    ///    `NoLoopback = 1` the self-addressed flit this replaces could never
+    ///    be delivered;
+    ///  * **no outstanding slot.** The port's `max_outstanding_per_port`
+    ///    budget belongs to network transactions; a local access neither
+    ///    consumes nor waits for one. It *is* ordered against them, which is a
+    ///    different thing: see below;
+    ///  * **no network accounting.** Counted in `bypassed`, not in
+    ///    `completed`/`latency_sum`, and it does not fire the completion
+    ///    observer. Those describe network behaviour, and a zero-hop access
+    ///    folded into them would deflate every average taken from them.
+    ///
+    /// `bypass_in_flight` *is* raised, because `wrapper_idle()` asks whether
+    /// the wrapper is busy rather than whether the mesh is, and during a bypass
+    /// it is. It is a separate counter from `in_flight` on purpose: see the
+    /// note on that member for what counting it there cost.
+    ///
+    /// ## It still completes in the port's issue order
+    ///
+    /// Skipping the mesh must not mean skipping the **ordering contract**. The
+    /// frozen configuration sets `MaxUniqueIds = 1`, so responses on one
+    /// upstream port are FIFO within each channel, and an owner access that
+    /// returned the instant its target answered would overtake a routed access
+    /// issued before it — a protocol-visible reordering that every functional
+    /// check here would still pass, because each access on its own is correct.
+    ///
+    /// So the bypass takes a ticket at its issue point and waits for its turn
+    /// before returning. It is never delayed by the *slot budget*; it is
+    /// ordered behind traffic issued earlier on the same channel, which is what
+    /// the contract says. In `fast` mode there is no mesh and calls already
+    /// complete in call order, so no ticket is taken.
+    void local_bypass_transport(
+        unsigned port, tlm::tlm_generic_payload& trans,
+        sc_core::sc_time& delay, const axi_shape& shape,
+        const unsigned char* enables, unsigned enable_length)
+    {
+        ++bypass_in_flight;
+        const bool ordered = timing_backend == timing_mode::detailed;
+        const bool channel_is_write = trans.is_write();
+        const unsigned slot = order_slot(port, channel_is_write);
+        const std::uint64_t ticket =
+            ordered ? take_completion_ticket(port, channel_is_write) : 0;
+        if (ordered) {
+            // Registered before any work, so a routed access issued after this
+            // one can see it and hold back.
+            outstanding_bypass[slot].insert(ticket);
+        }
+        try {
+            // The target's own latency, rounded up to a whole network cycle
+            // exactly as the routed path rounds it. A local path costs no hops;
+            // it does not make the target faster than it said it was.
+            const auto target_cycles = replay_downstream(
+                port, trans, delay, shape, enables, enable_length,
+                "local-bypass");
+
+            if (timing_backend == timing_mode::detailed) {
+                // Detailed mode spends time rather than annotating it, and the
+                // caller's incoming delay was already consumed before the
+                // decode. Spend the target's cost and return zero, which is the
+                // wrapper's documented detailed contract.
+                delay = sc_core::SC_ZERO_TIME;
+                if (target_cycles > 0) {
+                    sc_core::wait(
+                        period * static_cast<double>(target_cycles));
+                }
+            } else {
+                delay += period * static_cast<double>(target_cycles);
+            }
+
+            ++bypassed;
+            ++bypassed_by_port[port];
+
+            if (ordered) {
+                await_bypass_turn(port, channel_is_write, ticket);
+                outstanding_bypass[slot].erase(ticket);
+                mark_completed(port, channel_is_write);
+            }
+        } catch (...) {
+            if (ordered) {
+                // Retire even on the way out, or every access ordered behind
+                // this one waits for a completion that will never arrive.
+                await_bypass_turn(port, channel_is_write, ticket);
+                outstanding_bypass[slot].erase(ticket);
+                mark_completed(port, channel_is_write);
+            }
+            --bypass_in_flight;
+            throw;
+        }
+        --bypass_in_flight;
+    }
+
     void fast_transport(
         unsigned port, int target_slot, tlm::tlm_generic_payload& trans,
         sc_core::sc_time& delay, const axi_shape& shape,
@@ -1214,30 +1566,6 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             const bool is_write = trans.is_write();
             const auto& target =
                 targets[static_cast<std::size_t>(target_slot)];
-            const coordinate requester{
-                initiator_nodes[port].x, initiator_nodes[port].y};
-            served_request entry{};
-            if (is_write) {
-                axi_aw_chan aw{};
-                aw.id = port;
-                aw.addr = trans.get_address();
-                aw.len = static_cast<std::uint8_t>(shape.beats - 1);
-                aw.size = static_cast<std::uint8_t>(shape.size_log2);
-                aw.burst = 1;
-                const auto view = pack_write(
-                    trans.get_data_ptr(), trans.get_data_length(), shape,
-                    enables, enable_length);
-                entry = make_write_served_request(
-                    aw, requester, view.data, view.strb);
-            } else {
-                axi_ar_chan ar{};
-                ar.id = port;
-                ar.addr = trans.get_address();
-                ar.len = static_cast<std::uint8_t>(shape.beats - 1);
-                ar.size = static_cast<std::uint8_t>(shape.size_log2);
-                ar.burst = 1;
-                entry = make_read_served_request(ar, requester);
-            }
 
             const auto request_cycles =
                 fast_request_cycles(port, target.node, is_write, shape.beats);
@@ -1246,24 +1574,10 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             const auto network_cycles = request_cycles + response_cycles;
 
             delay += period * static_cast<double>(request_cycles);
-            const auto before_target = delay;
-            perform_downstream_access(entry, delay);
-            if (delay < before_target) {
-                throw std::runtime_error(
-                    "noc_interconnect: a fast-mode target decreased the "
-                    "annotated delay");
-            }
-            const auto target_cycles = rounded_cycles(delay - before_target);
-            delay = before_target
-                + period * static_cast<double>(
-                    target_cycles + response_cycles);
-
-            if (!is_write) {
-                unpack_read(
-                    entry.read_data, trans.get_data_ptr(),
-                    trans.get_data_length(), shape, enables, enable_length);
-            }
-            trans.set_response_status(tlm_status_for(entry.resp));
+            const auto target_cycles = replay_downstream(
+                port, trans, delay, shape, enables, enable_length, "fast-mode");
+            delay += period
+                * static_cast<double>(target_cycles + response_cycles);
 
             ++completed;
             last_latency = network_cycles;
@@ -1284,6 +1598,20 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         slot_available[port]->notify(sc_core::SC_ZERO_TIME);
     }
 
+    /// Local-bypass calls currently executing.
+    ///
+    /// **Deliberately not `in_flight`.** `network_idle()` is what the clock
+    /// gate consults, so a bypass counted there keeps `step_once()` running on
+    /// an otherwise quiescent mesh for as long as its target takes to answer —
+    /// adding `counted_cycles` to every router and diluting exactly the
+    /// utilisation and occupancy figures the bypass is supposed to leave
+    /// alone. The bypass was kept out of `completed` and `latency_sum` with
+    /// some care and then leaked into the metrics through the clock instead.
+    ///
+    /// `wrapper_idle()` still reports busy while one runs, which is the
+    /// question that accessor actually asks.
+    std::uint64_t bypass_in_flight = 0;
+
     bool network_idle() const
     {
         if (in_flight != 0) {
@@ -1298,13 +1626,23 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             }
         }
         for (unsigned port = 0; port < initiator_count; ++port) {
-            if (outstanding_by_port[port] != 0 || !write_hold_off[port].empty()
+            if (!write_hold_off[port].empty()
                 || !read_hold_off[port].empty()) {
                 return false;
             }
         }
         return true;
     }
+
+    // **Admission slots are deliberately not consulted above** (R-P9-2). This
+    // predicate answers "does the mesh and its adapters still have physical
+    // work", and it is what the clock gate reads. A routed caller that has
+    // received its response and is waiting out an ordering hold owns a slot
+    // and owns no network work; counting it here would keep `step_once()`
+    // clocking an empty mesh for the whole hold, inflating
+    // `clock_gate_transitions()` and the router utilisation derived from
+    // counted cycles. `wrapper_idle()` is the predicate that does consult
+    // them, because that one asks whether the *wrapper* is busy.
 
     /// Ticks the mesh while there is anything to do.
     ///
@@ -1423,7 +1761,8 @@ noc_interconnect::noc_interconnect(
 noc_interconnect::~noc_interconnect() = default;
 
 noc_interconnect::initiator_socket& noc_interconnect::add_target(
-    std::uint64_t base, std::uint64_t size, node where, target_kind kind)
+    std::uint64_t base, std::uint64_t size, node where, target_kind kind,
+    std::optional<unsigned> local_owner)
 {
     // Every socket already exists: SystemC requires ports to be created during
     // module construction, and `add_target` runs afterwards. This fills the
@@ -1463,8 +1802,42 @@ noc_interconnect::initiator_socket& noc_interconnect::add_target(
     // Placement is checked before the slot is consumed, so a rejected call
     // leaves the target table exactly as it was.
     const unsigned node_index = impl_->index_of(where);
+
+    if (local_owner.has_value()) {
+        // The owner has to exist, and it has to be *here*. A mapping that
+        // names a port on another node would short-circuit an access that
+        // really does traverse the mesh — the bypass exists to avoid creating
+        // an undeliverable flit, not to skip a legitimate hop (D1).
+        if (*local_owner >= impl_->initiator_count) {
+            std::ostringstream message;
+            message << "noc_interconnect: target at 0x" << std::hex << base
+                    << std::dec << " names upstream port " << *local_owner
+                    << " as its local owner, but only " << impl_->initiator_count
+                    << " port(s) exist";
+            throw std::invalid_argument(message.str());
+        }
+        if (impl_->index_of(impl_->initiator_nodes[*local_owner])
+            != node_index) {
+            std::ostringstream message;
+            message << "noc_interconnect: target at 0x" << std::hex << base
+                    << std::dec << " names upstream port " << *local_owner
+                    << " as its local owner, but that port is on node "
+                    << impl_->initiator_nodes[*local_owner].x << ','
+                    << impl_->initiator_nodes[*local_owner].y
+                    << " and the target is on " << where.x << ',' << where.y
+                    << ". Place the port first; (0,0) is the documented default"
+                       " for an unplaced one.";
+            throw std::invalid_argument(message.str());
+        }
+    }
+
     for (unsigned port = 0; port < impl_->initiator_count; ++port) {
         if (impl_->index_of(impl_->initiator_nodes[port]) != node_index) {
+            continue;
+        }
+        // Co-location is what `local_owner` exists to authorise. Without it
+        // the refusal stands unchanged.
+        if (local_owner.has_value() && *local_owner == port) {
             continue;
         }
         std::ostringstream message;
@@ -1473,7 +1846,9 @@ noc_interconnect::initiator_socket& noc_interconnect::add_target(
                 << ", which already hosts upstream port " << port
                 << ". The router's NoLoopback tie-off makes a self-addressed"
                    " flit undeliverable, so this would hang rather than fail."
-                   " Note (0,0) is the documented default for an unplaced port.";
+                   " Pass that port as `local_owner` to short-circuit its own"
+                   " accesses instead (decision record D1). Note (0,0) is the"
+                   " documented default for an unplaced port.";
         throw std::runtime_error(message.str());
     }
 
@@ -1482,6 +1857,8 @@ noc_interconnect::initiator_socket& noc_interconnect::add_target(
     entry.size = size;
     entry.node = node_index;
     entry.kind = kind;
+    entry.local_owner =
+        local_owner.has_value() ? static_cast<int>(*local_owner) : -1;
     entry.mapped = true;
     return *entry.socket;
 }
@@ -1510,7 +1887,26 @@ void noc_interconnect::place_initiator(unsigned index, node where)
     // rejected placement leaves the port exactly where it was.
     const unsigned node_index = impl_->index_of(where);
     for (const auto& entry : impl_->targets) {
-        if (!entry.mapped || entry.node != node_index) {
+        if (!entry.mapped) {
+            continue;
+        }
+        // Moving *away* from a target that names this port breaks the
+        // co-location the mapping asserts. Refused here rather than at
+        // `end_of_elaboration`, so the message names the move that did it.
+        if (entry.local_owner == static_cast<int>(index)
+            && entry.node != node_index) {
+            std::ostringstream message;
+            message << "noc_interconnect: upstream port " << index
+                    << " owns the local-bypass target at 0x" << std::hex
+                    << entry.base << std::dec << " and would move off its node"
+                    << ". A local owner has to stay co-located with what it"
+                       " owns (decision record D1).";
+            throw std::runtime_error(message.str());
+        }
+        if (entry.node != node_index) {
+            continue;
+        }
+        if (entry.local_owner == static_cast<int>(index)) {
             continue;
         }
         std::ostringstream message;
@@ -1557,6 +1953,19 @@ std::uint64_t noc_interconnect::completed_transactions() const
 std::uint64_t noc_interconnect::total_latency_cycles() const
 {
     return impl_->latency_sum;
+}
+
+std::uint64_t noc_interconnect::local_bypass_transactions() const
+{
+    return impl_->bypassed;
+}
+
+std::uint64_t noc_interconnect::local_bypass_transactions(unsigned port) const
+{
+    if (port >= impl_->bypassed_by_port.size()) {
+        throw std::out_of_range("noc_interconnect: upstream port out of range");
+    }
+    return impl_->bypassed_by_port[port];
 }
 
 std::uint64_t noc_interconnect::last_latency_cycles() const
@@ -1619,6 +2028,11 @@ void noc_interconnect::reset_detailed_counters()
     impl_->noc->reset_counters();
 }
 
+std::uint64_t noc_interconnect::ordering_holds() const
+{
+    return impl_->ordering_holds;
+}
+
 bool noc_interconnect::mesh_quiescent() const
 {
     if (impl_->timing_backend == timing_mode::fast) {
@@ -1629,7 +2043,13 @@ bool noc_interconnect::mesh_quiescent() const
 
 bool noc_interconnect::wrapper_idle() const
 {
-    return impl_->network_idle();
+    // A running bypass makes the wrapper busy without making the mesh busy,
+    // and so does a routed caller holding an admission slot while it serves an
+    // ordering wait (R-P9-2). The clock gate consults `network_idle()` alone,
+    // which is why the two are not the same predicate: the mesh may gate while
+    // the wrapper still owes a caller its return.
+    return impl_->network_idle() && impl_->bypass_in_flight == 0
+        && impl_->admission_slots_free();
 }
 
 std::uint64_t noc_interconnect::clock_gate_transitions() const
@@ -1780,6 +2200,20 @@ void noc_interconnect::b_transport(
         }
     }
 
+    // ---- the D1 owner-aware local bypass -----------------------------------
+    //
+    // Placed after every payload and decode rule above, so a bypassed access
+    // is held to exactly the same contract as a routed one, and before the
+    // timing split, because the mapping is a fact about the topology rather
+    // than about the timing backend. In fast mode the estimate would otherwise
+    // charge hops for a path that does not exist.
+    if (impl_->targets[static_cast<std::size_t>(first_slot)].local_owner
+        == static_cast<int>(port)) {
+        impl_->local_bypass_transport(
+            port, trans, delay, shape, enables, enable_length);
+        return;
+    }
+
     if (impl_->timing_backend == timing_mode::fast) {
         impl_->fast_transport(
             port, first_slot, trans, delay, shape, enables, enable_length);
@@ -1795,7 +2229,32 @@ void noc_interconnect::b_transport(
         std::max(impl_->peak_outstanding_by_port[port],
                  impl_->outstanding_by_port[port]);
 
+    // The slot is now this call's until it returns. Everything after admission
+    // is inside the cleanup boundary, the same shape `fast_transport()` uses:
+    // an exception between here and the release must not permanently consume a
+    // port slot.
+    struct slot_guard {
+        impl* owner;
+        unsigned port;
+        bool held = true;
+        void release()
+        {
+            if (held) {
+                held = false;
+                owner->release_admission_slot(port);
+            }
+        }
+        ~slot_guard() { release(); }
+    } slot{impl_.get(), port};
+
     const bool is_write = command == tlm::TLM_WRITE_COMMAND;
+
+    // Taken after admission and before the request is queued, so tickets are
+    // issued in the same order `state.requests` is filled. This path is never
+    // made to wait for another *routed* access: its ordering is the deques'
+    // and stays observable.
+    const std::uint64_t ticket = impl_->take_completion_ticket(port, is_write);
+
     impl::waiter parked{};
     parked.port = port;
     parked.issued_cycle = impl_->cycle;
@@ -1853,6 +2312,17 @@ void noc_interconnect::b_transport(
                     enable_length);
     }
     trans.set_response_status(tlm_status_for(parked.resp));
+
+    // Only against an *earlier bypass*. Routed-versus-routed order stays the
+    // deques' job, which is what keeps `same-port-request-order-reversed` able
+    // to see a mesh that injected requests out of order.
+    impl_->await_earlier_bypass(port, is_write, ticket);
+    impl_->mark_completed(port, is_write);
+    // Last, and with no wait after it: `slot_available` is notified with
+    // `SC_ZERO_TIME`, so the next caller is admitted in the following delta —
+    // after this one has left `b_transport`, which is what the documented
+    // bound on *concurrent admitted calls* actually means (R-P9-2).
+    slot.release();
 
     // Time was spent, not annotated: the transaction really walked the mesh.
     delay = sc_core::SC_ZERO_TIME;

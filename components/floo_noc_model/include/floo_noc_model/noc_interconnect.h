@@ -41,7 +41,10 @@
 //  * **Placement matters.** A flat bus has no geometry. Here every initiator
 //    and every target sits on a mesh node, and distance costs cycles. Ports
 //    default to node (0,0); call `place_initiator` / pass a node to
-//    `add_target` to lay the system out.
+//    `add_target` to lay the system out. A node may host both a manager and a
+//    target only through `add_target`'s `local_owner` mapping, which
+//    short-circuits the owner's own accesses instead of creating a flit the
+//    `NoLoopback` tie-off could never deliver (decision record D1).
 //  * **One AXI ID per initiator, with bounded concurrent transactions per
 //    port** — these are separate policy choices.
 //
@@ -141,6 +144,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <systemc>
@@ -255,9 +259,49 @@ public:
     /// `where` places it on the mesh; distance from the requesting initiator is
     /// what the model turns into cycles.
     /// `kind` declares whether widened reads are safe here; see `target_kind`.
+    ///
+    /// ## `local_owner`: putting a target on a node that hosts a manager
+    ///
+    /// By default this is **refused**, and for a hard reason: `floo_router`
+    /// runs with `NoLoopback = 1`, so the Eject-input to Eject-output crossbar
+    /// leg is tied off and a flit addressed to the node that injected it can
+    /// never be delivered. Such a configuration would not fail, it would hang.
+    ///
+    /// A system where one node is both a manager and a subordinate — a TPU chip
+    /// that issues remote accesses *and* answers them — needs that placement
+    /// anyway. `local_owner` is how it gets it without changing the frozen
+    /// router configuration: it names **which upstream port owns** this target,
+    /// and an access from that port is short-circuited to the target socket
+    /// **without a flit ever being created**. The tie-off is therefore never
+    /// exercised, rather than being reconfigured (decision record D1).
+    ///
+    /// Exactly what the owner's access does *not* do:
+    ///
+    ///  * it injects no flit, so every mesh counter is untouched — that is the
+    ///    property `noc_interconnect_local_bypass` asserts, because "the
+    ///    response came back" would also be true of a routed access;
+    ///  * it consumes **no** outstanding slot, so it cannot be blocked by, and
+    ///    cannot block, the port's `max_outstanding_per_port` budget;
+    ///  * it is counted in `local_bypass_transactions()` and **not** in
+    ///    `completed_transactions()` or the network latency totals, and it does
+    ///    not fire the completion observer. Those measure network traffic, and
+    ///    folding a zero-hop access into them would quietly deflate every
+    ///    latency average derived from them.
+    ///
+    /// Everything else is identical to the routed path: the same payload rules,
+    /// the same lane shaping and strobes, the same response mapping. A target
+    /// must not behave differently depending on who addressed it.
+    ///
+    /// An access from **any other port** routes and ejects normally, which is
+    /// legal because it is not self-addressed.
+    ///
+    /// Refused at elaboration, not at first traffic: `local_owner` must name a
+    /// real port, and that port must sit on `where`. A target co-located with a
+    /// manager and **no** owner mapping stays refused exactly as before.
     initiator_socket& add_target(
         std::uint64_t base, std::uint64_t size, node where = node{0, 0},
-        target_kind kind = target_kind::mmio);
+        target_kind kind = target_kind::mmio,
+        std::optional<unsigned> local_owner = std::nullopt);
 
     /// Upstream port by index: 0 is `target_socket`, 1.. are the extra ports.
     cpu_socket_t& cpu_port(unsigned index);
@@ -272,8 +316,25 @@ public:
     /// Transactions completed, and the total cycles they spent in the network.
     /// Both are measured, not derived: `noc_counters.hpp` keeps that
     /// distinction and this follows it.
+    ///
+    /// **Network transactions only.** A local-bypass access never entered the
+    /// network and is counted separately; see `local_bypass_transactions()`.
+    /// The two counts are disjoint, and adding them gives every access this
+    /// wrapper served.
     std::uint64_t completed_transactions() const;
     std::uint64_t total_latency_cycles() const;
+
+    /// Accesses served by the owner-aware local bypass (decision record D1),
+    /// in total and per upstream port.
+    ///
+    /// Disjoint from `completed_transactions()` on purpose. A platform that
+    /// wants "everything served" adds them; one that wants network behaviour
+    /// reads the network counter alone and is not silently handed a pile of
+    /// zero-hop accesses. It is also the cheap way for a test to show the
+    /// bypass was *used* — a routed access and a bypassed one return the same
+    /// data, so the response proves nothing on its own.
+    std::uint64_t local_bypass_transactions() const;
+    std::uint64_t local_bypass_transactions(unsigned port) const;
 
     /// The AXI-to-TLM response mapping, exactly as `b_transport` uses it.
     ///
@@ -384,6 +445,17 @@ public:
     /// a request waits in the TLM adapter or for target latency; production
     /// gating requires both, not equality between them on every cycle.
     bool mesh_quiescent() const;
+
+    /// Routed calls that an earlier bypass held in `await_earlier_bypass()`.
+    ///
+    /// Exists so a test can assert that the R-P9-3 ordering path is **live**.
+    /// It deliberately does not assert an *outcome*: on a kernel that resumes
+    /// dynamic waiters in wait order — Accellera 2.3.4 does — the completion
+    /// order is the same whether or not the fallback into ticket order runs,
+    /// so no test on this kernel can distinguish them. What a test can show is
+    /// that held calls exist and reach the ordering step, which is the part
+    /// that would otherwise be dead code nobody notices rotting.
+    std::uint64_t ordering_holds() const;
     bool wrapper_idle() const;
     std::uint64_t clock_gate_transitions() const;
     std::uint64_t mesh_quiescent_wrapper_busy_cycles() const;

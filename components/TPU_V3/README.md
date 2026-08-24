@@ -31,7 +31,7 @@ continues to report the MXU as neither linked nor selectable.
 | [docs/TPU_V3_PHASE6_AUDIT.md](docs/TPU_V3_PHASE6_AUDIT.md) | the Transform block's pinned Im2Col source/layout/golden evidence and explicit Col2Im boundary |
 | [docs/TPU_V3_PHASE7_AUDIT.md](docs/TPU_V3_PHASE7_AUDIT.md) | the NEO-CORE composition: the defects composing surfaced, and the D19 reset implementation |
 | [docs/TPU_V3_PHASE8_AUDIT.md](docs/TPU_V3_PHASE8_AUDIT.md) | the dual-core chip: multi-hart atomicity evidence, chip-fabric arbitration, and what closed D8 |
-| [docs/TPU_V3_PHASE9_NOC_REBASELINE.md](docs/TPU_V3_PHASE9_NOC_REBASELINE.md) | the mandatory pre-Phase-9 freeze: traffic classification, transport structure, widths, protocol behaviour and what each one costs |
+| [docs/TPU_V3_PHASE9_NOC_REBASELINE.md](docs/TPU_V3_PHASE9_NOC_REBASELINE.md) | the mandatory pre-Phase-9 freeze: traffic classification, transport structure, widths, protocol behaviour and what each one costs. §7 closes D1; **§9 is the live Phase 9 work list** — what the chip NoC endpoint does, the four metric findings open against it, and the control each fix owes |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | what the machine is — hierarchy, data paths, ordering, fidelity levels |
 | [docs/ADDRESS_MAP.md](docs/ADDRESS_MAP.md) | every region, and the rules the map satisfies |
 | [docs/INTERFACE_CONTRACT.md](docs/INTERFACE_CONTRACT.md) | the TLM rules every component here must follow, with a reviewer checklist |
@@ -79,7 +79,7 @@ cd build-tpu-v3 && ctest -L tpu_v3 --output-on-failure
 | `cdc::components::tpu_v3_image_transform` | 6 | Transform implementation: pinned CHW INT8 Im2Col capability; Col2Im is explicitly unavailable — see [image_transform/IMAGE_TRANSFORM_MODEL.md](image_transform/IMAGE_TRANSFORM_MODEL.md) |
 | `cdc::components::tpu_v3_chip_fabric` | 8 | the chip-local fabric: aperture decode, core-to-core bypass, per-port rotating-priority arbitration, one external boundary |
 | `cdc::components::tpu_v3_tpu_chip` | 8 | the chip composition: two NEO-COREs, distinct hart ids, chip register windows, one shared LR/SC and AMO bus lock |
-| `cdc::components::tpu_v3_noc_endpoint` | 9 | placement, chunking, local bypass |
+| `cdc::components::tpu_v3_noc_endpoint` | 9 | the chip's mesh boundary: placement, outbound chunking, aperture containment, single-region span checking, inbound rebase, generation-guarded reset. Gated against TLM stubs, and against a **real `noc_interconnect`** in `test_endpoint_on_real_noc` (D25) and in the single-chip composition `test_chip_on_mesh` ([docs/TPU_V3_PHASE9_AUDIT.md](docs/TPU_V3_PHASE9_AUDIT.md) §4i). Its four metric findings are closed (§2) |
 
 A directory appears when its phase starts. There are no placeholder libraries.
 
@@ -107,9 +107,10 @@ interconnect; do not read throughput from a run with contended atomics.
 **Multi-chip traffic is blocked today.** `noc_interconnect` refuses any target
 on a node that hosts any upstream port, and a TPU chip needs both. One chip
 plus global memory works; chip-to-chip does not. Decision D1 keeps
-`NoLoopback = 1` and adds an owner-aware local bypass; it is a **Phase 9
-prerequisite and is not implemented** — `add_target()` still has no owner
-parameter. Background in
+`NoLoopback = 1` and adds an owner-aware local bypass; **implemented on
+2026-08-20** — `add_target()` takes an optional `local_owner`, and an access
+from that port reaches a co-located target without creating a flit. Background
+in
 [docs/TPU_V3_PHASE0_AUDIT.md](docs/TPU_V3_PHASE0_AUDIT.md) §5.1, current status
 in [docs/TPU_V3_PHASE9_NOC_REBASELINE.md](docs/TPU_V3_PHASE9_NOC_REBASELINE.md)
 §7.

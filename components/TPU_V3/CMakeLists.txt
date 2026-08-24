@@ -25,7 +25,7 @@
 #   Phase 6  image_transform
 #   Phase 8  tpu_chip           <- two NEO-COREs, the chip-local fabric,
 #                                    one aggregated NoC manager, one bus lock
-#   Phase 9  noc_endpoint
+#   Phase 9  noc_endpoint      <- chunking, containment, inbound route
 
 add_subdirectory(common)
 add_subdirectory(native_port)
@@ -47,3 +47,7 @@ add_subdirectory(image_transform)
 # inside it is gated on the same three things `tpu_v3_neo_core` is, because it
 # is two NEO-COREs.
 add_subdirectory(tpu_chip)
+
+# Phase 9. The chip's NoC endpoint: chunking, containment and the inbound
+# route. It depends on no interconnect, so it always builds.
+add_subdirectory(noc_endpoint)
