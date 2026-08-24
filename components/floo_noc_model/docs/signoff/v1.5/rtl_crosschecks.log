@@ -1,0 +1,1297 @@
+Script started on 2026-08-24 10:12:10+07:00 [<not executed on terminal>]
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+Copyright (C) 2021 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+
+==> [01/12] run_route_select_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_route_crosscheck/systemc
+[100%] Built target route_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+route_trace_sc PASS
+make: Entering directory '/tmp/floo_noc_route_crosscheck/verilator'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/tmp/floo_noc_route_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/route_select/tb_route_select_trace.sv:165: Verilog $finish
+route-select cross-check PASS: 12 cycles match
+
+==> [02/12] run_stream_fifo_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+common_cells 1.39.0 @ 9ca8a76 verified
+COMMON_CELLS_ROOT=/home/duyptt_HW/Documents/work/Study_FlooNoC/floo_rtl_deps/common_cells
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_stream_fifo_crosscheck/systemc
+[100%] Built target fifo_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+fifo_trace_sc PASS (depth 2)
+make: Entering directory '/tmp/floo_noc_stream_fifo_crosscheck/verilator_d2'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/tmp/floo_noc_stream_fifo_crosscheck/verilator_d2'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/stream_fifo/tb_stream_fifo_trace.sv:123: Verilog $finish
+stream-fifo depth 2 cross-check PASS: 133 cycles match
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+fifo_trace_sc PASS (depth 4)
+make: Entering directory '/tmp/floo_noc_stream_fifo_crosscheck/verilator_d4'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/tmp/floo_noc_stream_fifo_crosscheck/verilator_d4'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/stream_fifo/tb_stream_fifo_trace.sv:123: Verilog $finish
+stream-fifo depth 4 cross-check PASS: 133 cycles match
+
+==> [03/12] run_wormhole_arbiter_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+common_cells 1.39.0 @ 9ca8a76 verified
+COMMON_CELLS_ROOT=/home/duyptt_HW/Documents/work/Study_FlooNoC/floo_rtl_deps/common_cells
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_wormhole_arbiter_crosscheck/systemc
+[100%] Built target arbiter_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+arbiter_trace_sc PASS (routes 5)
+make: Entering directory '/tmp/floo_noc_wormhole_arbiter_crosscheck/verilator_n5'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/tmp/floo_noc_wormhole_arbiter_crosscheck/verilator_n5'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/wormhole_arbiter/tb_wormhole_arbiter_trace.sv:149: Verilog $finish
+wormhole-arbiter routes 5 cross-check PASS: 152 cycles match
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+arbiter_trace_sc PASS (routes 4)
+make: Entering directory '/tmp/floo_noc_wormhole_arbiter_crosscheck/verilator_n4'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/tmp/floo_noc_wormhole_arbiter_crosscheck/verilator_n4'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/wormhole_arbiter/tb_wormhole_arbiter_trace.sv:149: Verilog $finish
+wormhole-arbiter routes 4 cross-check PASS: 152 cycles match
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+arbiter_trace_sc PASS (routes 2)
+make: Entering directory '/tmp/floo_noc_wormhole_arbiter_crosscheck/verilator_n2'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/tmp/floo_noc_wormhole_arbiter_crosscheck/verilator_n2'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/wormhole_arbiter/tb_wormhole_arbiter_trace.sv:149: Verilog $finish
+wormhole-arbiter routes 2 cross-check PASS: 152 cycles match
+
+==> [04/12] run_router_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 5ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_router_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_router_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_router_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_router_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_router_crosscheck/systemc
+[100%] Built target router_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+counted_cycles 208
+# measured
+in0 accepted_flits 13 accepted_packets 13 stall_cycles 70 busy_cycles 83 occupancy_high_water 2
+in1 accepted_flits 48 accepted_packets 42 stall_cycles 22 busy_cycles 70 occupancy_high_water 2
+in2 accepted_flits 7 accepted_packets 7 stall_cycles 72 busy_cycles 79 occupancy_high_water 2
+in3 accepted_flits 64 accepted_packets 60 stall_cycles 24 busy_cycles 88 occupancy_high_water 2
+in4 accepted_flits 53 accepted_packets 53 stall_cycles 36 busy_cycles 89 occupancy_high_water 2
+out0 accepted_flits 11 accepted_packets 11 stall_cycles 2 busy_cycles 13 occupancy_high_water 2
+out1 accepted_flits 65 accepted_packets 65 stall_cycles 4 busy_cycles 69 occupancy_high_water 2
+out2 accepted_flits 3 accepted_packets 3 stall_cycles 0 busy_cycles 3 occupancy_high_water 1
+out3 accepted_flits 47 accepted_packets 47 stall_cycles 6 busy_cycles 53 occupancy_high_water 2
+out4 accepted_flits 45 accepted_packets 37 stall_cycles 4 busy_cycles 49 occupancy_high_water 2
+# derived from the measured counters above
+out0 utilisation 0.0528846
+out1 utilisation 0.3125
+out2 utilisation 0.0144231
+out3 utilisation 0.225962
+out4 utilisation 0.216346
+router_trace_sc PASS (out-fifo depth 2)
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+make: Entering directory '/tmp/floo_noc_router_crosscheck/verilator_d2'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_router_trace.cpp Vtb_floo_router_trace___024root__DepSet_h3da0c650__0.cpp Vtb_floo_router_trace___024root__DepSet_h4766ec50__0.cpp Vtb_floo_router_trace_floo_output_arbiter__pi4__DepSet_h3ea1c9dc__0.cpp Vtb_floo_router_trace__main.cpp Vtb_floo_router_trace__ConstPool_0.cpp Vtb_floo_router_trace___024root__Slow.cpp Vtb_floo_router_trace___024root__DepSet_h3da0c650__0__Slow.cpp Vtb_floo_router_trace___024root__DepSet_h4766ec50__0__Slow.cpp Vtb_floo_router_trace___024unit__Slow.cpp Vtb_floo_router_trace___024unit__DepSet_h46f97ded__0__Slow.cpp Vtb_floo_router_trace_floo_output_arbiter__pi4__Slow.cpp Vtb_floo_router_trace_floo_output_arbiter__pi4__DepSet_h4a67e8d4__0__Slow.cpp Vtb_floo_router_trace__Syms.cpp > Vtb_floo_router_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_router_trace__ALL.o Vtb_floo_router_trace__ALL.cpp
+echo "" > Vtb_floo_router_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_router_trace__ALL.a Vtb_floo_router_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_router_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_router_trace
+rm Vtb_floo_router_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_router_crosscheck/verilator_d2'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/floo_router/tb_floo_router_trace.sv:228: Verilog $finish
+floo-router out-fifo 2 cross-check PASS: 214 cycles match
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+counted_cycles 208
+# measured
+in0 accepted_flits 13 accepted_packets 13 stall_cycles 70 busy_cycles 83 occupancy_high_water 2
+in1 accepted_flits 46 accepted_packets 40 stall_cycles 24 busy_cycles 70 occupancy_high_water 2
+in2 accepted_flits 7 accepted_packets 7 stall_cycles 72 busy_cycles 79 occupancy_high_water 2
+in3 accepted_flits 62 accepted_packets 58 stall_cycles 26 busy_cycles 88 occupancy_high_water 2
+in4 accepted_flits 51 accepted_packets 51 stall_cycles 38 busy_cycles 89 occupancy_high_water 2
+out0 accepted_flits 10 accepted_packets 10 stall_cycles 3 busy_cycles 13 occupancy_high_water 0
+out1 accepted_flits 63 accepted_packets 63 stall_cycles 7 busy_cycles 70 occupancy_high_water 0
+out2 accepted_flits 3 accepted_packets 3 stall_cycles 0 busy_cycles 3 occupancy_high_water 0
+out3 accepted_flits 44 accepted_packets 44 stall_cycles 9 busy_cycles 53 occupancy_high_water 0
+out4 accepted_flits 45 accepted_packets 37 stall_cycles 4 busy_cycles 49 occupancy_high_water 0
+# derived from the measured counters above
+out0 utilisation 0.0480769
+out1 utilisation 0.302885
+out2 utilisation 0.0144231
+out3 utilisation 0.211538
+out4 utilisation 0.216346
+router_trace_sc PASS (out-fifo depth 0)
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+make: Entering directory '/tmp/floo_noc_router_crosscheck/verilator_d0'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_router_trace.cpp Vtb_floo_router_trace___024root__DepSet_h3da0c650__0.cpp Vtb_floo_router_trace___024root__DepSet_h4766ec50__0.cpp Vtb_floo_router_trace_floo_output_arbiter__pi4__DepSet_h3ea1c9dc__0.cpp Vtb_floo_router_trace__main.cpp Vtb_floo_router_trace__ConstPool_0.cpp Vtb_floo_router_trace___024root__Slow.cpp Vtb_floo_router_trace___024root__DepSet_h3da0c650__0__Slow.cpp Vtb_floo_router_trace___024root__DepSet_h4766ec50__0__Slow.cpp Vtb_floo_router_trace___024unit__Slow.cpp Vtb_floo_router_trace___024unit__DepSet_h46f97ded__0__Slow.cpp Vtb_floo_router_trace_floo_output_arbiter__pi4__Slow.cpp Vtb_floo_router_trace_floo_output_arbiter__pi4__DepSet_h4a67e8d4__0__Slow.cpp Vtb_floo_router_trace__Syms.cpp > Vtb_floo_router_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_router_trace__ALL.o Vtb_floo_router_trace__ALL.cpp
+echo "" > Vtb_floo_router_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_router_trace__ALL.a Vtb_floo_router_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_router_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_router_trace
+rm Vtb_floo_router_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_router_crosscheck/verilator_d0'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/floo_router/tb_floo_router_trace.sv:228: Verilog $finish
+floo-router out-fifo 0 cross-check PASS: 214 cycles match
+
+==> [05/12] run_rob_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 6ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_rob_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_rob_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_rob_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_rob_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_rob_crosscheck/systemc
+[100%] Built target rob_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+rob_trace_sc PASS
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+make: Entering directory '/tmp/floo_noc_rob_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_rob_wrapper_trace.cpp Vtb_floo_rob_wrapper_trace___024root__DepSet_h43f3348f__0.cpp Vtb_floo_rob_wrapper_trace___024root__DepSet_hd4216324__0.cpp Vtb_floo_rob_wrapper_trace__main.cpp Vtb_floo_rob_wrapper_trace__ConstPool_0.cpp Vtb_floo_rob_wrapper_trace___024root__Slow.cpp Vtb_floo_rob_wrapper_trace___024root__DepSet_h43f3348f__0__Slow.cpp Vtb_floo_rob_wrapper_trace___024root__DepSet_hd4216324__0__Slow.cpp Vtb_floo_rob_wrapper_trace___024unit__Slow.cpp Vtb_floo_rob_wrapper_trace___024unit__DepSet_h45349ce2__0__Slow.cpp Vtb_floo_rob_wrapper_trace__Syms.cpp > Vtb_floo_rob_wrapper_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_rob_wrapper_trace__ALL.o Vtb_floo_rob_wrapper_trace__ALL.cpp
+echo "" > Vtb_floo_rob_wrapper_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_rob_wrapper_trace__ALL.a Vtb_floo_rob_wrapper_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_rob_wrapper_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_rob_wrapper_trace
+rm Vtb_floo_rob_wrapper_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_rob_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/rob/tb_floo_rob_wrapper_trace.sv:245: Verilog $finish
+norob-ordering cross-check PASS: 127 cycles match
+
+==> [06/12] run_chimney_req_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 5ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_chimney_req_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_chimney_req_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_chimney_req_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_chimney_req_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_chimney_req_crosscheck/systemc
+[100%] Built target chimney_req_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+chimney_req_trace_sc PASS (16 flits)
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-IMPLICIT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/id_queue.sv:193:12: Signal definition not found, creating implicitly: 'empty'
+                                                                                                                                                  : ... Suggested alternative: 'empty_o'
+  193 |     assign empty = &linked_data_free;
+      |            ^~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:139:19: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_req_trace.dut'
+  139 |   floo_req_chan_t [AxiW:AxiAr] floo_req_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:140:19: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_req_trace.dut'
+  140 |   floo_rsp_chan_t [AxiB:AxiR] floo_rsp_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:141:10: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_req_trace.dut'
+  141 |   logic  [AxiW:AxiAr] floo_req_arb_req_in, floo_req_arb_gnt_out;
+      |          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:142:10: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_req_trace.dut'
+  142 |   logic  [AxiB:AxiR] floo_rsp_arb_req_in, floo_rsp_arb_gnt_out;
+      |          ^
+%Warning-UNOPTFLAT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31: Signal unoptimizable: Circular combinational logic: 'tb_floo_axi_chimney_req_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids'
+  269 |     logic [MaxAtomicTxns-1:0] available_atop_ids;
+      |                               ^~~~~~~~~~~~~~~~~~
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_req_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:338:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:169:13:      Example path: tb_floo_axi_chimney_req_trace.dut.meta_buf_rsp_out
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:325:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:268:31:      Example path: tb_floo_axi_chimney_req_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.ar_atop_reg_pop
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:34:20:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:25:21:      Example path: tb_floo_axi_chimney_req_trace.dut.gen_mgr_port.i_floo_meta_buffer.__Vcellout__gen_atop_support.i_ar_atop_regs[3]__ready_o
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:273:31:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_req_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+make: Entering directory '/tmp/floo_noc_chimney_req_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_axi_chimney_req_trace.cpp Vtb_floo_axi_chimney_req_trace___024root__DepSet_hc8fcde6b__0.cpp Vtb_floo_axi_chimney_req_trace___024root__DepSet_h9fcdfcbb__0.cpp Vtb_floo_axi_chimney_req_trace__main.cpp Vtb_floo_axi_chimney_req_trace__ConstPool_0.cpp Vtb_floo_axi_chimney_req_trace___024root__Slow.cpp Vtb_floo_axi_chimney_req_trace___024root__DepSet_hc8fcde6b__0__Slow.cpp Vtb_floo_axi_chimney_req_trace___024root__DepSet_h9fcdfcbb__0__Slow.cpp Vtb_floo_axi_chimney_req_trace___024unit__Slow.cpp Vtb_floo_axi_chimney_req_trace___024unit__DepSet_he107b4c5__0__Slow.cpp Vtb_floo_axi_chimney_req_trace__Syms.cpp > Vtb_floo_axi_chimney_req_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_axi_chimney_req_trace__ALL.o Vtb_floo_axi_chimney_req_trace__ALL.cpp
+echo "" > Vtb_floo_axi_chimney_req_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_axi_chimney_req_trace__ALL.a Vtb_floo_axi_chimney_req_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_axi_chimney_req_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_axi_chimney_req_trace
+rm Vtb_floo_axi_chimney_req_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_chimney_req_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_req_trace.sv:294: Verilog $finish
+chimney-request cross-check PASS: 16 flits match
+
+==> [07/12] run_chimney_timing_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 5ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_chimney_timing_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_chimney_timing_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_chimney_timing_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_chimney_timing_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_chimney_timing_crosscheck/systemc
+[100%] Built target chimney_timing_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+chimney_timing_trace_sc PASS
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-IMPLICIT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/id_queue.sv:193:12: Signal definition not found, creating implicitly: 'empty'
+                                                                                                                                                  : ... Suggested alternative: 'empty_o'
+  193 |     assign empty = &linked_data_free;
+      |            ^~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:139:19: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_timing_trace.dut'
+  139 |   floo_req_chan_t [AxiW:AxiAr] floo_req_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:140:19: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_timing_trace.dut'
+  140 |   floo_rsp_chan_t [AxiB:AxiR] floo_rsp_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:141:10: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_timing_trace.dut'
+  141 |   logic  [AxiW:AxiAr] floo_req_arb_req_in, floo_req_arb_gnt_out;
+      |          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:142:10: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_timing_trace.dut'
+  142 |   logic  [AxiB:AxiR] floo_rsp_arb_req_in, floo_rsp_arb_gnt_out;
+      |          ^
+%Warning-UNOPTFLAT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31: Signal unoptimizable: Circular combinational logic: 'tb_floo_axi_chimney_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids'
+  269 |     logic [MaxAtomicTxns-1:0] available_atop_ids;
+      |                               ^~~~~~~~~~~~~~~~~~
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:338:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:169:13:      Example path: tb_floo_axi_chimney_timing_trace.dut.meta_buf_rsp_out
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:325:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:268:31:      Example path: tb_floo_axi_chimney_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.ar_atop_reg_pop
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:34:20:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:25:21:      Example path: tb_floo_axi_chimney_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.__Vcellout__gen_atop_support.i_ar_atop_regs[3]__ready_o
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:273:31:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+make: Entering directory '/tmp/floo_noc_chimney_timing_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_axi_chimney_timing_trace.cpp Vtb_floo_axi_chimney_timing_trace___024root__DepSet_hb735374b__0.cpp Vtb_floo_axi_chimney_timing_trace___024root__DepSet_h053128d0__0.cpp Vtb_floo_axi_chimney_timing_trace__main.cpp Vtb_floo_axi_chimney_timing_trace__ConstPool_0.cpp Vtb_floo_axi_chimney_timing_trace___024root__Slow.cpp Vtb_floo_axi_chimney_timing_trace___024root__DepSet_hb735374b__0__Slow.cpp Vtb_floo_axi_chimney_timing_trace___024root__DepSet_h053128d0__0__Slow.cpp Vtb_floo_axi_chimney_timing_trace___024unit__Slow.cpp Vtb_floo_axi_chimney_timing_trace___024unit__DepSet_h93da9166__0__Slow.cpp Vtb_floo_axi_chimney_timing_trace__Syms.cpp > Vtb_floo_axi_chimney_timing_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_axi_chimney_timing_trace__ALL.o Vtb_floo_axi_chimney_timing_trace__ALL.cpp
+echo "" > Vtb_floo_axi_chimney_timing_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_axi_chimney_timing_trace__ALL.a Vtb_floo_axi_chimney_timing_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_axi_chimney_timing_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_axi_chimney_timing_trace
+rm Vtb_floo_axi_chimney_timing_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_chimney_timing_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_timing_trace.sv:264: Verilog $finish
+chimney-timing cross-check PASS: 141 cycles match
+
+==> [08/12] run_chimney_rsp_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 5ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_chimney_rsp_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_chimney_rsp_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_chimney_rsp_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_chimney_rsp_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_chimney_rsp_crosscheck/systemc
+[100%] Built target chimney_rsp_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+chimney_rsp_trace_sc PASS (8 flits)
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-IMPLICIT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/id_queue.sv:193:12: Signal definition not found, creating implicitly: 'empty'
+                                                                                                                                                  : ... Suggested alternative: 'empty_o'
+  193 |     assign empty = &linked_data_free;
+      |            ^~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:139:19: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_trace.dut'
+  139 |   floo_req_chan_t [AxiW:AxiAr] floo_req_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:140:19: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_trace.dut'
+  140 |   floo_rsp_chan_t [AxiB:AxiR] floo_rsp_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:141:10: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_trace.dut'
+  141 |   logic  [AxiW:AxiAr] floo_req_arb_req_in, floo_req_arb_gnt_out;
+      |          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:142:10: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_trace.dut'
+  142 |   logic  [AxiB:AxiR] floo_rsp_arb_req_in, floo_rsp_arb_gnt_out;
+      |          ^
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:174:23: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  174 |     floo_req_in.valid <= 1'b1;
+      |                       ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:178:27: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  178 |         floo_req_in.valid <= 1'b0;
+      |                           ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:232:27: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  232 |       axi_out_rsp.b       <= '0;
+      |                           ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:233:27: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  233 |       axi_out_rsp.b.id    <= out_id;
+      |                           ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:237:27: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  237 |       axi_out_rsp.r       <= '0;
+      |                           ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:238:27: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  238 |       axi_out_rsp.r.id    <= out_id;
+      |                           ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:241:27: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  241 |       axi_out_rsp.r.last  <= 1'b1;
+      |                           ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:242:27: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  242 |       axi_out_rsp.r_valid <= 1'b1;
+      |                           ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:248:29: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  248 |         axi_out_rsp.b_valid <= 1'b0;
+      |                             ^~
+%Warning-INITIALDLY: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:249:29: Non-blocking assignment '<=' in initial/final block
+                                                                                                                                                               : ... This will be executed as a blocking assignment '='!
+  249 |         axi_out_rsp.r_valid <= 1'b0;
+      |                             ^~
+%Warning-UNOPTFLAT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31: Signal unoptimizable: Circular combinational logic: 'tb_floo_axi_chimney_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids'
+  269 |     logic [MaxAtomicTxns-1:0] available_atop_ids;
+      |                               ^~~~~~~~~~~~~~~~~~
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:338:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:169:13:      Example path: tb_floo_axi_chimney_rsp_trace.dut.meta_buf_rsp_out
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:325:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:268:31:      Example path: tb_floo_axi_chimney_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.ar_atop_reg_pop
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:34:20:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:25:21:      Example path: tb_floo_axi_chimney_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.__Vcellout__gen_atop_support.i_ar_atop_regs[3]__ready_o
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:273:31:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+make: Entering directory '/tmp/floo_noc_chimney_rsp_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_axi_chimney_rsp_trace.cpp Vtb_floo_axi_chimney_rsp_trace___024root__DepSet_h0b452ae6__0.cpp Vtb_floo_axi_chimney_rsp_trace___024root__DepSet_hb356bff7__0.cpp Vtb_floo_axi_chimney_rsp_trace__main.cpp Vtb_floo_axi_chimney_rsp_trace__ConstPool_0.cpp Vtb_floo_axi_chimney_rsp_trace___024root__Slow.cpp Vtb_floo_axi_chimney_rsp_trace___024root__DepSet_h0b452ae6__0__Slow.cpp Vtb_floo_axi_chimney_rsp_trace___024root__DepSet_hb356bff7__0__Slow.cpp Vtb_floo_axi_chimney_rsp_trace___024unit__Slow.cpp Vtb_floo_axi_chimney_rsp_trace___024unit__DepSet_h2885f5fb__0__Slow.cpp Vtb_floo_axi_chimney_rsp_trace__Syms.cpp > Vtb_floo_axi_chimney_rsp_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_axi_chimney_rsp_trace__ALL.o Vtb_floo_axi_chimney_rsp_trace__ALL.cpp
+echo "" > Vtb_floo_axi_chimney_rsp_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_axi_chimney_rsp_trace__ALL.a Vtb_floo_axi_chimney_rsp_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_axi_chimney_rsp_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_axi_chimney_rsp_trace
+rm Vtb_floo_axi_chimney_rsp_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_chimney_rsp_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_trace.sv:418: Verilog $finish
+chimney-response cross-check PASS: 8 flits match
+
+==> [09/12] run_chimney_rsp_timing_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 5ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_chimney_rsp_timing_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_chimney_rsp_timing_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_chimney_rsp_timing_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_chimney_rsp_timing_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_chimney_rsp_timing_crosscheck/systemc
+[100%] Built target chimney_rsp_timing_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+chimney_rsp_timing_trace_sc PASS
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-IMPLICIT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/id_queue.sv:193:12: Signal definition not found, creating implicitly: 'empty'
+                                                                                                                                                  : ... Suggested alternative: 'empty_o'
+  193 |     assign empty = &linked_data_free;
+      |            ^~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:139:19: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_timing_trace.dut'
+  139 |   floo_req_chan_t [AxiW:AxiAr] floo_req_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:140:19: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_timing_trace.dut'
+  140 |   floo_rsp_chan_t [AxiB:AxiR] floo_rsp_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:141:10: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_timing_trace.dut'
+  141 |   logic  [AxiW:AxiAr] floo_req_arb_req_in, floo_req_arb_gnt_out;
+      |          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:142:10: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_rsp_timing_trace.dut'
+  142 |   logic  [AxiB:AxiR] floo_rsp_arb_req_in, floo_rsp_arb_gnt_out;
+      |          ^
+%Warning-UNOPTFLAT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31: Signal unoptimizable: Circular combinational logic: 'tb_floo_axi_chimney_rsp_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids'
+  269 |     logic [MaxAtomicTxns-1:0] available_atop_ids;
+      |                               ^~~~~~~~~~~~~~~~~~
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_rsp_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:338:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:169:13:      Example path: tb_floo_axi_chimney_rsp_timing_trace.dut.meta_buf_rsp_out
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:325:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:268:31:      Example path: tb_floo_axi_chimney_rsp_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.ar_atop_reg_pop
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:34:20:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:25:21:      Example path: tb_floo_axi_chimney_rsp_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.__Vcellout__gen_atop_support.i_ar_atop_regs[3]__ready_o
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:273:31:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_rsp_timing_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+make: Entering directory '/tmp/floo_noc_chimney_rsp_timing_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_axi_chimney_rsp_timing_trace.cpp Vtb_floo_axi_chimney_rsp_timing_trace___024root__DepSet_hfda2814b__0.cpp Vtb_floo_axi_chimney_rsp_timing_trace___024root__DepSet_h0bdab3f5__0.cpp Vtb_floo_axi_chimney_rsp_timing_trace__main.cpp Vtb_floo_axi_chimney_rsp_timing_trace__ConstPool_0.cpp Vtb_floo_axi_chimney_rsp_timing_trace___024root__Slow.cpp Vtb_floo_axi_chimney_rsp_timing_trace___024root__DepSet_hfda2814b__0__Slow.cpp Vtb_floo_axi_chimney_rsp_timing_trace___024root__DepSet_h0bdab3f5__0__Slow.cpp Vtb_floo_axi_chimney_rsp_timing_trace___024unit__Slow.cpp Vtb_floo_axi_chimney_rsp_timing_trace___024unit__DepSet_h2e89dd0c__0__Slow.cpp Vtb_floo_axi_chimney_rsp_timing_trace__Syms.cpp > Vtb_floo_axi_chimney_rsp_timing_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_axi_chimney_rsp_timing_trace__ALL.o Vtb_floo_axi_chimney_rsp_timing_trace__ALL.cpp
+echo "" > Vtb_floo_axi_chimney_rsp_timing_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_axi_chimney_rsp_timing_trace__ALL.a Vtb_floo_axi_chimney_rsp_timing_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_axi_chimney_rsp_timing_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_axi_chimney_rsp_timing_trace
+rm Vtb_floo_axi_chimney_rsp_timing_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_chimney_rsp_timing_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_rsp_timing_trace.sv:277: Verilog $finish
+chimney-rsp-timing cross-check PASS: 221 cycles match
+
+==> [10/12] run_chimney_mgr_rsp_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 5ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_chimney_mgr_rsp_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_chimney_mgr_rsp_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_chimney_mgr_rsp_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_chimney_mgr_rsp_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_chimney_mgr_rsp_crosscheck/systemc
+[100%] Built target chimney_mgr_rsp_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+chimney_mgr_rsp_trace_sc PASS
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-IMPLICIT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/id_queue.sv:193:12: Signal definition not found, creating implicitly: 'empty'
+                                                                                                                                                  : ... Suggested alternative: 'empty_o'
+  193 |     assign empty = &linked_data_free;
+      |            ^~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:139:19: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_mgr_rsp_trace.dut'
+  139 |   floo_req_chan_t [AxiW:AxiAr] floo_req_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:140:19: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_mgr_rsp_trace.dut'
+  140 |   floo_rsp_chan_t [AxiB:AxiR] floo_rsp_arb_in;
+      |                   ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:141:10: Ascending bit range vector: left < right of bit range: [1:2]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_mgr_rsp_trace.dut'
+  141 |   logic  [AxiW:AxiAr] floo_req_arb_req_in, floo_req_arb_gnt_out;
+      |          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:142:10: Ascending bit range vector: left < right of bit range: [3:4]
+                                                                                                     : ... note: In instance 'tb_floo_axi_chimney_mgr_rsp_trace.dut'
+  142 |   logic  [AxiB:AxiR] floo_rsp_arb_req_in, floo_rsp_arb_gnt_out;
+      |          ^
+%Warning-UNOPTFLAT: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31: Signal unoptimizable: Circular combinational logic: 'tb_floo_axi_chimney_mgr_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids'
+  269 |     logic [MaxAtomicTxns-1:0] available_atop_ids;
+      |                               ^~~~~~~~~~~~~~~~~~
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_mgr_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:338:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_axi_chimney.sv:169:13:      Example path: tb_floo_axi_chimney_mgr_rsp_trace.dut.meta_buf_rsp_out
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:325:5:      Example path: ALWAYS
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:268:31:      Example path: tb_floo_axi_chimney_mgr_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.ar_atop_reg_pop
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:34:20:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/common_cells-ef73fb619e9c374f/src/stream_register.sv:25:21:      Example path: tb_floo_axi_chimney_mgr_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.__Vcellout__gen_atop_support.i_ar_atop_regs[3]__ready_o
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:273:31:      Example path: ASSIGNW
+                    /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:269:31:      Example path: tb_floo_axi_chimney_mgr_rsp_trace.dut.gen_mgr_port.i_floo_meta_buffer.gen_atop_support.available_atop_ids
+make: Entering directory '/tmp/floo_noc_chimney_mgr_rsp_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_floo_axi_chimney_mgr_rsp_trace.cpp Vtb_floo_axi_chimney_mgr_rsp_trace___024root__DepSet_hc0d93e3f__0.cpp Vtb_floo_axi_chimney_mgr_rsp_trace___024root__DepSet_h18027d9b__0.cpp Vtb_floo_axi_chimney_mgr_rsp_trace__main.cpp Vtb_floo_axi_chimney_mgr_rsp_trace__ConstPool_0.cpp Vtb_floo_axi_chimney_mgr_rsp_trace___024root__Slow.cpp Vtb_floo_axi_chimney_mgr_rsp_trace___024root__DepSet_hc0d93e3f__0__Slow.cpp Vtb_floo_axi_chimney_mgr_rsp_trace___024root__DepSet_h18027d9b__0__Slow.cpp Vtb_floo_axi_chimney_mgr_rsp_trace___024unit__Slow.cpp Vtb_floo_axi_chimney_mgr_rsp_trace___024unit__DepSet_hfa004407__0__Slow.cpp Vtb_floo_axi_chimney_mgr_rsp_trace__Syms.cpp > Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.o Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.cpp
+echo "" > Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.a Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_axi_chimney_mgr_rsp_trace
+rm Vtb_floo_axi_chimney_mgr_rsp_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_chimney_mgr_rsp_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_chimney/tb_floo_axi_chimney_mgr_rsp_trace.sv:312: Verilog $finish
+chimney-mgr-rsp cross-check PASS: 78 cycles match
+
+==> [11/12] run_mesh_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 4ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_mesh_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_mesh_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_mesh_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_mesh_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_mesh_crosscheck/systemc
+[100%] Built target mesh_trace_sc
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+mesh_trace_sc PASS
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+make: Entering directory '/tmp/floo_noc_mesh_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_timing.o /usr/share/verilator/include/verilated_timing.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -x c++-header Vtb_floo_mesh_trace__pch.h -o Vtb_floo_mesh_trace__pch.h.fast.gch
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace.o Vtb_floo_mesh_trace.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__0.o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__0.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__1.o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__1.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace___024root__DepSet_hb4f6e86d__0.o Vtb_floo_mesh_trace___024root__DepSet_hb4f6e86d__0.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb8b482c8__0.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb8b482c8__0.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__0.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__0.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__1.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__1.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h51bf6e6c__0.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h51bf6e6c__0.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_hff33d4ed__0.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_hff33d4ed__0.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_hff33d4ed__1.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_hff33d4ed__1.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_hf86d825c__0.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_hf86d825c__0.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_hf86d825c__1.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_hf86d825c__1.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.fast -c -o Vtb_floo_mesh_trace__main.o Vtb_floo_mesh_trace__main.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -x c++-header Vtb_floo_mesh_trace__pch.h -o Vtb_floo_mesh_trace__pch.h.slow.gch
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace__ConstPool_0.o Vtb_floo_mesh_trace__ConstPool_0.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace___024root__Slow.o Vtb_floo_mesh_trace___024root__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__0__Slow.o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__0__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace___024root__DepSet_hb4f6e86d__0__Slow.o Vtb_floo_mesh_trace___024root__DepSet_hb4f6e86d__0__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace___024unit__Slow.o Vtb_floo_mesh_trace___024unit__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace___024unit__DepSet_h2ae878e6__0__Slow.o Vtb_floo_mesh_trace___024unit__DepSet_h2ae878e6__0__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__0__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__0__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb204655c__0__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb204655c__0__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb204655c__1__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb204655c__1__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_h74831777__0__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_h74831777__0__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_h71dd65e8__0__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_h71dd65e8__0__Slow.cpp
+g++   -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -fcoroutines -include Vtb_floo_mesh_trace__pch.h.slow -c -o Vtb_floo_mesh_trace__Syms.o Vtb_floo_mesh_trace__Syms.cpp
+echo "" > Vtb_floo_mesh_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_floo_mesh_trace__ALL.a Vtb_floo_mesh_trace.o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__0.o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__1.o Vtb_floo_mesh_trace___024root__DepSet_hb4f6e86d__0.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb8b482c8__0.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__0.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__1.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h51bf6e6c__0.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_hff33d4ed__0.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_hff33d4ed__1.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_hf86d825c__0.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_hf86d825c__1.o Vtb_floo_mesh_trace__main.o Vtb_floo_mesh_trace__ConstPool_0.o Vtb_floo_mesh_trace___024root__Slow.o Vtb_floo_mesh_trace___024root__DepSet_hbf8707db__0__Slow.o Vtb_floo_mesh_trace___024root__DepSet_hb4f6e86d__0__Slow.o Vtb_floo_mesh_trace___024unit__Slow.o Vtb_floo_mesh_trace___024unit__DepSet_h2ae878e6__0__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_h8c4620d9__0__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb204655c__0__Slow.o Vtb_floo_mesh_trace_floo_axi_router__pi1__DepSet_hb204655c__1__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi6__DepSet_h74831777__0__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__Slow.o Vtb_floo_mesh_trace_floo_output_arbiter__pi10__DepSet_h71dd65e8__0__Slow.o Vtb_floo_mesh_trace__Syms.o
+g++    verilated.o verilated_timing.o verilated_threads.o Vtb_floo_mesh_trace__ALL.a    -pthread -lpthread   -o Vtb_floo_mesh_trace
+rm Vtb_floo_mesh_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_mesh_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/mesh/tb_floo_mesh_trace.sv:325: Verilog $finish
+mesh cross-check PASS: 1872 node-cycles match
+
+==> [12/12] run_axi_sizing_crosscheck.sh
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+          Info Checked out 13 dependencies in 5ms
+bender 0.32.1
+FlooNoC @ 9a6972a clean, Bender.lock unchanged
+common_cells @ 9ca8a76 agrees with fetch_rtl_deps.sh
+verilator file list: /tmp/floo_noc_axi_sizing_crosscheck/filelist/floo_verilator.f
+vcs script:          /tmp/floo_noc_axi_sizing_crosscheck/filelist/floo_vcs.sh
+flist-plus:          /tmp/floo_noc_axi_sizing_crosscheck/filelist/floo_flist_plus.f
+resolved deps:       /tmp/floo_noc_axi_sizing_crosscheck/filelist/resolved_deps.txt
+floo_router elaborates from the generated list (0 errors)
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/floo_noc_axi_sizing_crosscheck/systemc
+[100%] Built target axi_sizing_trace
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+axi_sizing_trace PASS (8 configurations)
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'full_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.022
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_splitter_gran.sv:682:5: Cell has missing pin: 'empty_o'
+  682 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'full_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_burst_unwrap.sv:600:5: Cell has missing pin: 'empty_o'
+  600 |   ) i_idq (
+      |     ^~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'full_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/axi-a612f580cfee89bc/src/axi_dw_downsizer.sv:316:5: Cell has missing pin: 'empty_o'
+  316 |   ) i_read_id_queue (
+      |     ^~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'full_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:151:7: Cell has missing pin: 'empty_o'
+  151 |     ) i_aw_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'full_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/hw/floo_meta_buffer.sv:176:7: Cell has missing pin: 'empty_o'
+  176 |     ) i_ar_no_atop_id_queue (
+      |       ^~~~~~~~~~~~~~~~~~~~~
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:52:28: Ascending bit range vector: left < right of bit range: [0:5]
+   52 |   localparam fp_encoding_t [0:NUM_FP_FORMATS-1] FP_ENCODINGS  = '{
+      |                            ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:62:17: Ascending bit range vector: left < right of bit range: [0:5]
+   62 |   typedef logic [0:NUM_FP_FORMATS-1]       fmt_logic_t;     
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:111:17: Ascending bit range vector: left < right of bit range: [0:3]
+  111 |   typedef logic [0:NUM_INT_FORMATS-1] ifmt_logic_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:63:17: Ascending bit range vector: left < right of bit range: [0:5]
+   63 |   typedef logic [0:NUM_FP_FORMATS-1][31:0] fmt_unsigned_t;  
+      |                 ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:222:26: Ascending bit range vector: left < right of bit range: [0:4]
+  222 |   typedef fmt_unsigned_t [0:NUM_OPGROUPS-1] opgrp_fmt_unsigned_t;
+      |                          ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:217:23: Ascending bit range vector: left < right of bit range: [0:5]
+  217 |   typedef unit_type_t [0:NUM_FP_FORMATS-1] fmt_unit_types_t;
+      |                       ^
+%Warning-ASCRANGE: /home/duyptt_HW/Documents/work/Study_FlooNoC/FlooNoC/.bender/git/checkouts/fpnew-5fb99191328b33aa/src/fpnew_pkg.sv:220:28: Ascending bit range vector: left < right of bit range: [0:4]
+  220 |   typedef fmt_unit_types_t [0:NUM_OPGROUPS-1] opgrp_fmt_unit_types_t;
+      |                            ^
+make: Entering directory '/tmp/floo_noc_axi_sizing_crosscheck/verilator'
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -c -o verilated.o /usr/share/verilator/include/verilated.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -c -o verilated_threads.o /usr/share/verilator/include/verilated_threads.cpp
+/usr/bin/python3 /usr/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vtb_axi_sizing_trace.cpp Vtb_axi_sizing_trace___024root__DepSet_h681cfe51__0.cpp Vtb_axi_sizing_trace___024root__DepSet_h325a7896__0.cpp Vtb_axi_sizing_trace__main.cpp Vtb_axi_sizing_trace___024root__Slow.cpp Vtb_axi_sizing_trace___024root__DepSet_h681cfe51__0__Slow.cpp Vtb_axi_sizing_trace___024root__DepSet_h325a7896__0__Slow.cpp Vtb_axi_sizing_trace___024unit__Slow.cpp Vtb_axi_sizing_trace___024unit__DepSet_h962e5e8e__0__Slow.cpp Vtb_axi_sizing_trace__Syms.cpp > Vtb_axi_sizing_trace__ALL.cpp
+g++ -Os  -I. -Wall -Wextra -Wfloat-conversion -Wlogical-op -Werror -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-shadow -Wno-sign-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -DVL_TIME_CONTEXT   -c -o Vtb_axi_sizing_trace__ALL.o Vtb_axi_sizing_trace__ALL.cpp
+echo "" > Vtb_axi_sizing_trace__ALL.verilator_deplist.tmp
+Archive ar -rcs Vtb_axi_sizing_trace__ALL.a Vtb_axi_sizing_trace__ALL.o
+g++    verilated.o verilated_threads.o Vtb_axi_sizing_trace__ALL.a    -pthread -lpthread   -o Vtb_axi_sizing_trace
+rm Vtb_axi_sizing_trace__ALL.verilator_deplist.tmp
+make: Leaving directory '/tmp/floo_noc_axi_sizing_crosscheck/verilator'
+- /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/rtl_crosscheck/axi_sizing/tb_axi_sizing_trace.sv:96: Verilog $finish
+axi-sizing cross-check PASS: 8 configurations match
+
+RTL cross-check summary: 12/12 passed
+
+Script done on 2026-08-24 10:12:55+07:00 [COMMAND_EXIT_CODE="0"]

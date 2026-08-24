@@ -120,13 +120,22 @@ tpu_chip_config chip_config()
     return config;
 }
 
-chip_endpoint_config endpoint_config()
+chip_endpoint_config endpoint_config(noc_interconnect::timing_mode mode)
 {
     chip_endpoint_config config;
     config.chip = kChip;
     config.max_frame_bytes = 2048;
     config.bus_bytes = 8;
     config.max_inbound_sram_bytes = 64;
+    // **Taken from the NoC backend, not left at its default.** `detailed`
+    // spends the caller's delay before injecting, so the endpoint must consume
+    // it itself where a reset can reach the wait; `fast` preserves the
+    // annotation, and consuming it there would destroy exactly the temporal
+    // decoupling the loosely timed backend exists to provide. Leaving this
+    // `true` for both made the "fast" case sit out every annotation, so it was
+    // not exercising fast timing semantics at all.
+    config.downstream_spends_delay =
+        mode == noc_interconnect::timing_mode::detailed;
     return config;
 }
 
@@ -496,7 +505,7 @@ int sc_main(int argc, char* argv[])
                          sc_core::sc_time(1, sc_core::SC_NS),
                          /*max_outstanding_per_port=*/32, mode);
     tpu_chip chip_under_test("chip", chip_config());
-    chip_noc_endpoint endpoint("endpoint", endpoint_config());
+    chip_noc_endpoint endpoint("endpoint", endpoint_config(mode));
     rom_target rom("rom");
     ram_target ram("ram");
     remote_master remote("remote");
@@ -604,6 +613,52 @@ int sc_main(int argc, char* argv[])
     // its own it is a check that cannot fail. Both harts write their own SRAM
     // and their sibling's, so the fabric must have answered core-to-core
     // traffic itself — and none of it appears in the endpoint's totals.
+    // ── the outstanding quantity D24 first deferred ─────────────────────────
+    //
+    // Two cores are two initiators on the chip fabric, and `annotated` mode
+    // charges port occupancy to the caller's delay rather than blocking — so
+    // while one core is suspended inside the NoC the other enters the
+    // endpoint. This is what makes the count a measurement rather than the
+    // constant D24 assumed.
+    std::cout << "  endpoint in-flight peak: outbound "
+              << endpoint.peak_outbound_in_flight() << ", inbound "
+              << endpoint.peak_inbound_in_flight() << '\n';
+    // **The two backends must differ here, and the difference is the point.**
+    //
+    //   detailed  something downstream blocks, so while one core is suspended
+    //             in the mesh the other enters the endpoint -> peak 2
+    //   fast      nothing blocks: the interconnect annotates, and the endpoint
+    //             passes the caller's delay through untouched, so every call
+    //             returns before the next arrives -> peak 1
+    //
+    // Asserting `>= 2` in both would have hidden a real defect rather than
+    // caught one: before `downstream_spends_delay` was taken from the NoC
+    // mode, the fast case *also* reached 2 — because the endpoint sat out
+    // every annotation, which is exactly the loss of temporal decoupling that
+    // configuration exists to prevent.
+    if (detailed) {
+        CHECK_MSG(endpoint.peak_outbound_in_flight() >= 2,
+                  "outbound in-flight peaked at "
+                      + std::to_string(endpoint.peak_outbound_in_flight())
+                      + " in detailed mode. Two cores must be able to be "
+                        "inside the endpoint at once while one is suspended in "
+                        "the mesh; if they cannot, the quantity really is the "
+                        "constant D24 first assumed");
+    } else {
+        CHECK_MSG(endpoint.peak_outbound_in_flight() == 1,
+                  "outbound in-flight peaked at "
+                      + std::to_string(endpoint.peak_outbound_in_flight())
+                      + " in fast mode, where nothing downstream blocks and "
+                        "the endpoint must pass the caller's annotation "
+                        "through. Anything above 1 means something suspended "
+                        "when it should have annotated, and temporal "
+                        "decoupling is gone");
+    }
+    CHECK_MSG(endpoint.outbound_in_flight() == 0
+                  && endpoint.inbound_in_flight() == 0,
+              "a transfer was still counted as in flight after the run ended, "
+              "so a guard did not unwind on some return path");
+
     CHECK_MSG(chip_under_test.fabric().local_bypass() > 0,
               "the chip fabric answered no core-to-core access, so the "
               "containment check above had nothing to contain and proves "

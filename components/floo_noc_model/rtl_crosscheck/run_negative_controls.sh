@@ -659,10 +659,10 @@ add_control \
     "admission-slot-released-before-ordering-wait" \
     "src/noc_interconnect.cpp" \
     '    impl_->await_earlier_bypass(port, is_write, ticket);
-    impl_->mark_completed(port, is_write);' \
+    impl_->retire_ticket(port, is_write, ticket);' \
     '    slot.release();
     impl_->await_earlier_bypass(port, is_write, ticket);
-    impl_->mark_completed(port, is_write);' \
+    impl_->retire_ticket(port, is_write, ticket);' \
     "test_noc_interconnect_local_bypass" \
     "did not hold its admission slot" \
     "a routed call gave up its admission slot before serving its ordering wait, so a second call was admitted and injected while the first had not returned"
@@ -702,6 +702,54 @@ add_control \
     "test_noc_interconnect_local_bypass" \
     "did not reach the ticket-order fallback" \
     "routed calls held by an earlier bypass stopped being re-ordered into ticket order on the way out, leaving the MaxUniqueIds=1 FIFO promise resting on the kernel unspecified waiter-resumption order"
+
+# ---- an unwinding call must retire its ticket in order ----------------------
+#
+# Completion order per port and channel was a plain counter, and
+# `await_bypass_turn()` read "the count reached my ticket" as "everything below
+# me is done". Those agree only while retirement happens in ticket order, and
+# the unwinding paths break exactly that: a call that throws after taking its
+# ticket cannot serve an ordering wait, so it retires wherever it is.
+#
+# This control restores that counter for the out-of-order case only. The
+# directed scenario then sees a bypass released while the routed access issued
+# before it is still in the mesh -- a FIFO violation on a channel whose
+# MaxUniqueIds = 1 promises FIFO -- and `prefix_overflows()` also leaves zero,
+# because the still-pending ticket then retires below the count.
+add_control \
+    "unwinding-retire-ignores-ticket-order" \
+    "src/noc_interconnect.cpp" \
+    '                retired_ahead[slot][word] |=
+                    std::uint64_t{1} << (gap % bits_per_word);' \
+    '                advance_prefix(slot);' \
+    "test_noc_interconnect_local_bypass" \
+    "a bypass completed before a routed access issued earlier" \
+    "a call that threw after taking its completion ticket advanced the per-channel completion count past a ticket that was still pending, releasing a bypass ordered behind it"
+
+# The completion-order window stops being sized to what is live, and the
+# overflow resolves itself by advancing the prefix -- which is what the window
+# did when it was one fixed `std::uint64_t`, justified by a claim that
+# `max_outstanding_per_port` bounds the tickets live on a channel. It does not:
+# a local bypass takes no admission slot, so bypass concurrency is uncapped.
+#
+# The directed scenario parks 64 bypasses behind a routed access and then
+# unwinds a ticket 65 above the prefix. Mutated, all 64 return before the
+# routed access they were issued after.
+add_control \
+    "completion-window-overflow-advances-prefix" \
+    "src/noc_interconnect.cpp" \
+    '            if (word < retired_ahead[slot].size()) {
+                retired_ahead[slot][word] |=
+                    std::uint64_t{1} << (gap % bits_per_word);
+            } else {' \
+    '            if (gap < bits_per_word) {
+                retired_ahead[slot][word] |=
+                    std::uint64_t{1} << (gap % bits_per_word);
+            } else {
+                advance_prefix(slot);' \
+    "test_noc_interconnect_local_bypass" \
+    "a bypass completed before the routed access issued before it" \
+    "a ticket that unwound past the width of the completion-order window advanced the retired prefix over tickets that were still live, releasing every bypass parked behind them"
 
 # Injection point moved on 2026-08-20: the served-request build, the downstream
 # replay and the target-cycle rounding are now in the shared

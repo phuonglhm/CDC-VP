@@ -21,6 +21,14 @@ build.ninja
 *.log
 *.out
 .vscode/
+
+# Sign-off evidence is the exception to `*.log`.
+#
+# A signed baseline ships a manifest that hashes its transcripts, so ignoring
+# the transcripts commits a manifest referencing files a fresh checkout does
+# not have — the artifact manifest becomes unverifiable and the "durable log"
+# column of the sign-off record points at nothing.
+!components/*/docs/signoff/**/*.log
 .idea/
 .cache/
 *.swp

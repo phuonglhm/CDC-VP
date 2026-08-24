@@ -1,0 +1,17 @@
+Script started on 2026-08-24 10:14:36+07:00 [<not executed on terminal>]
+11.5.0
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+Copyright (C) 2021 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+
+        SystemC 2.3.4-Accellera --- Jan 27 2026 11:02:05
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+R-P9-2 while routed A is parked: outstanding=1 peak=1 remote_accesses=1 mesh_quiescent=1 wrapper_idle=0 cycles 24->24
+same-port completion order: 0 then 1
+slow-bypass release order: 0 1 2
+test_noc_interconnect_local_bypass: all checks passed
+
+Script done on 2026-08-24 10:14:36+07:00 [COMMAND_EXIT_CODE="0"]

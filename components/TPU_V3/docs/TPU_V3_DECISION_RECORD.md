@@ -68,7 +68,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | D22 | LR/SC and AMO bus lock scope | **One lock per chip, shared by both harts.** The CPU backend's per-hart default excludes nobody; `tpu_chip` creates the lock and attaches it to both harts during elaboration, through an opaque handle so the public CPU header still exposes no VP++ type. Upstream `52d376d4` stays unbackported, on measured evidence rather than on deferral
 | D26 | Admission-slot ownership across a bypass ordering hold | **A routed transaction owns its admission slot from the admission gate until it returns from `b_transport()`**, not until the mesh answers it. Releasing it in `complete_manager_transaction()` admitted a second caller while the first was parked in `await_earlier_bypass()`, so a bound of one ran two concurrent calls and `outstanding_transactions()` read zero for both. Requires splitting the two idle predicates: `network_idle()` stops consulting admission slots so the clock gate can still gate an empty mesh, `wrapper_idle()` starts consulting them so it cannot report idle while a caller has not returned |
 | D25 | Remote reads into a chip aperture | **Keep the whole chip aperture `target_kind::mmio`, and shape outbound reads at the endpoint** so every chunk is one the interconnect will not widen: naturally-aligned narrow prefix, bus-aligned full-width bulk, naturally-aligned narrow suffix. Publishing a bus-alignment restriction instead was rejected because it would silently narrow `neo_dma`'s already-frozen Phase 4 contract, which is gated at lengths 1, 2, 3, 7, 15, 63, 65 and odd addresses. No FlooNoC, address-map or socket-structure change |
-| D24 | Endpoint outstanding and latency counters | **Split by quantity, not by component.** The chip endpoint measures **transfer** latency, which only it can see, because a chunked transfer is one transfer to it and several transactions to the interconnect. **Outstanding is not measured at the endpoint at all** and defers to `noc_interconnect`'s per-port bound: in the Revision 1 composition an endpoint-level outbound outstanding count is `<= 1` by construction and would be a constant printed as a measurement. Neither figure may be quoted as the other |
+| D24 | Endpoint outstanding and latency counters | **Split by quantity, not by component.** The chip endpoint measures **transfer** latency, which only it can see, because a chunked transfer is one transfer to it and several transactions to the interconnect. Outstanding **is** measured here too, per direction — the original deferral reasoned from one core and was retracted on 2026-08-24 after the composition measured a peak of 2. Neither figure may be quoted as the other: a chunked transfer is one endpoint transfer and several interconnect transactions |
 | D23 | Phase 9 NoC transport | **Keep the shared single-AXI FlooNoC network unchanged.** Control/data virtual channels are *deprecated* at the pinned revision and cannot be added without leaving it; the narrow-wide network is live but answers a throughput requirement nobody has stated. Traffic class is a function of the address, taken from `region_kind`. Widths, protocol behaviour and the reset-of-in-flight rule are frozen in `TPU_V3_PHASE9_NOC_REBASELINE.md`; no new signed FlooNoC configuration is created
 
 ## D1. FlooNoC `NoLoopback` and local bypass
@@ -1994,15 +1994,22 @@ admission gate (`noc_interconnect.cpp:2135`) until it has:
 1. received the AXI response,
 2. copied response and status into the TLM payload,
 3. finished `await_earlier_bypass()`,
-4. called `mark_completed()`,
+4. retired its completion ticket,
 5. released the admission slot,
 6. returned from `b_transport()`.
 
 ```cpp
 await_earlier_bypass(port, is_write, ticket);
-mark_completed(port, is_write);
+retire_ticket(port, is_write, ticket);
 slot.release();          // no wait after this point
 ```
+
+Step 4 was `mark_completed(port, is_write)` when this decision was written, and
+the rename is not cosmetic. That entry point did not know *which* ticket had
+finished, so it could not tell in-order retirement from the out-of-order
+retirement the unwinding paths perform — see `TPU_V3_PHASE9_AUDIT.md` §4k
+finding 1. The ownership rule D26 states is unchanged; only the call that
+discharges step 4 is now identified.
 
 `slot_available` is notified with `SC_ZERO_TIME`, so the next caller is
 admitted in the following delta — after this one has left `b_transport`.
@@ -2261,7 +2268,7 @@ it was recorded.
   work**, and neither may be presented as the other, compared with the other,
   or summed with it.
 
-### Why latency belongs here and outstanding does not
+### Why latency belongs here — and why the outstanding half was wrong
 
 They looked like one question and are two, which is why §9.3 asked for a
 decision instead of an implementation.
@@ -2271,28 +2278,60 @@ frame limit is one thing the chip asked for and several transactions to the
 interconnect. `noc_interconnect::last_latency_cycles(port)` therefore answers
 "how long did one transaction take", and nothing downstream can answer "how
 long did the chip wait for the transfer it issued". Deferring would not avoid a
-duplicate; it would lose a quantity nobody else holds.
+duplicate; it would lose a quantity nobody else holds. That half stands.
 
-**Outstanding: the endpoint cannot measure anything.** Count what would be in
-flight at an endpoint in the Revision 1 composition: `neo_external_bridge`
-arbitrates a core's two named outbound initiators onto one external socket
-(Phase 8), and `chip_local_fabric` allows one transaction per initiator. So an
-outbound outstanding count at the endpoint is **`<= 1` by construction**. A
-counter whose value is fixed by the structure above it is a constant printed in
-the position of a measurement, and plan §21 already records what that costs —
-a check that exists, passes, and could not have failed. The number that
-actually varies is the interconnect's, and it is already published.
+**Outstanding: the reasoning below was wrong, and is retracted.**
+
+> Count what would be in flight at an endpoint in the Revision 1 composition:
+> `neo_external_bridge` arbitrates a core's two named outbound initiators onto
+> one external socket (Phase 8), and `chip_local_fabric` allows one transaction
+> per initiator. So an outbound outstanding count at the endpoint is `<= 1` by
+> construction.
+
+That covers **one core**. Two cores are two initiators on the chip fabric, and
+in `annotated` mode the fabric charges port occupancy to the caller's delay
+rather than blocking — so while one core is suspended inside the NoC the other
+enters the endpoint. `TPU_V3_PHASE8_AUDIT.md` §5 had already recorded exactly
+that ("two initiators can be inside one downstream target at once if that
+target waits"), and this record contradicted it.
+
+Measured on the single-chip composition, 2026-08-24:
+
+| NoC backend | peak outbound transfers inside the endpoint |
+| --- | --- |
+| `detailed` | **2** |
+| `fast` | 1 |
+
+So it is a real 0..2 transfer-level quantity, not a constant. The endpoint now
+publishes `outbound_in_flight()` / `peak_outbound_in_flight()` and the inbound
+pair, and `test_chip_on_mesh` asserts the backend-dependent value in each mode
+— `>= 2` detailed, `== 1` fast. The fast figure is not a weaker check: a peak
+above 1 there means something suspended where it should have annotated, which
+is the loss of temporal decoupling `downstream_spends_delay` exists to prevent.
+
+**Still true, and the reason the two counts are not interchangeable:** a
+chunked transfer is one of these and several of `noc_interconnect`'s per-port
+transactions. Neither may be quoted as the other.
 
 ### What this forbids
 
 * comparing an endpoint latency total with an interconnect latency figure, or
   deriving one from the other. One counts transfers, the other transactions,
   and the ratio between them is the chunking this endpoint performs;
-* adding an endpoint outstanding counter later without reopening this decision.
-  If the composition changes so that more than one transfer can be in flight at
-  an endpoint — a non-blocking transport, or a bridge that stops serialising —
-  the constant stops being a constant and this is worth revisiting. That is a
-  new recorded decision, not a quiet addition;
+* ~~adding an endpoint outstanding counter later without reopening this
+  decision~~ — **this prohibition was discharged, not deleted.** It said the
+  constant stops being a constant if the composition changes, and required a
+  recorded decision rather than a quiet addition. The composition measured 2,
+  the decision is recorded above, and `outbound_in_flight()` /
+  `peak_outbound_in_flight()` and the inbound pair exist. The clause did its
+  job: it is why the counter arrived with a measurement and a retraction
+  attached instead of appearing unannounced.
+
+  What replaces it is narrower and still binding: **the in-flight figure is
+  per transfer.** It may not be compared with, derived from or summed with
+  `noc_interconnect`'s per-port outstanding count, which is per transaction,
+  for the same reason the two latency figures may not be — one chunked
+  transfer is one of these and several of those;
 * quoting either figure without naming the local-fabric and chip-fabric timing
   modes that produced it. D16's rule is unchanged and applies to any number
   taken from this component.

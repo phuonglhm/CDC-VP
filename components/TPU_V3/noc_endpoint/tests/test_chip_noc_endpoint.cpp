@@ -109,6 +109,15 @@ public:
     /// there.
     bool zero_fills_failed_reads = false;
 
+    /// Bytes `transport_dbg` serves, as a fraction of what was asked.
+    ///
+    /// `-1` serves everything, which is what a mapped target does. `0` is a
+    /// downstream fabric with **no mapped target**: TLM lets it return zero
+    /// and set no status at all, which is the case the endpoint has to
+    /// interpret. Anything between is a target that decoded the access and
+    /// stopped partway.
+    int debug_bytes = -1;
+
     explicit recorder(sc_core::sc_module_name name)
         : sc_core::sc_module(name)
         , socket("socket")
@@ -180,7 +189,13 @@ private:
     unsigned int transport_dbg(tlm::tlm_generic_payload& trans)
     {
         ++debug_calls;
-        return trans.get_data_length();
+        // Deliberately leaves the response status alone in every case. Nothing
+        // in TLM requires a debug target to set one, and the endpoint's job is
+        // to say what a silent target's byte count meant.
+        if (debug_bytes < 0) {
+            return trans.get_data_length();
+        }
+        return static_cast<unsigned int>(debug_bytes);
     }
 
     std::vector<unsigned char> storage_;
@@ -553,6 +568,199 @@ void check_debug_path()
     CHECK_MSG(b.endpoint.outbound_transfers() == 0,
               "the debug path moved a counter; it must be free of side "
               "effects");
+
+    // **A refused debug access still answers.** `INTERFACE_CONTRACT.md` §1
+    // binds `transport_dbg` as well as `b_transport`: a status on every return
+    // path, and DMI off. Returning a bare zero left the caller reading the
+    // `TLM_INCOMPLETE_RESPONSE` it had set itself, which §1 calls a defect in
+    // the target rather than something the caller should have to handle.
+    const auto probe_on = [](auto& side, std::uint64_t address, unsigned length,
+                             tlm::tlm_command command = tlm::TLM_READ_COMMAND) {
+        std::vector<unsigned char> data(length ? length : 1, 0);
+        tlm::tlm_generic_payload trans;
+        trans.set_command(command);
+        trans.set_address(address);
+        trans.set_data_ptr(data.data());
+        trans.set_data_length(length);
+        trans.set_streaming_width(length);
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_byte_enable_length(0);
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        trans.set_dmi_allowed(true);
+        side.socket->transport_dbg(trans);
+        return std::make_pair(trans.get_response_status(),
+                              trans.is_dmi_allowed());
+    };
+    const auto probe = [&b, &probe_on](std::uint64_t address, unsigned length) {
+        return probe_on(b.chip_side, address, length);
+    };
+
+    const auto local = probe(am::core_sram_base(kChip, 0), 8);
+    CHECK_MSG(local.first != tlm::TLM_INCOMPLETE_RESPONSE,
+              "a refused debug access to this chip's own aperture returned "
+              "without setting a status");
+    CHECK_MSG(!local.second, "a refused debug access left DMI allowed");
+
+    const auto empty = probe(am::global_ram_base, 0);
+    CHECK_MSG(empty.first != tlm::TLM_INCOMPLETE_RESPONSE,
+              "a zero-length debug access returned without setting a status");
+    CHECK_MSG(!empty.second,
+              "a zero-length debug access left DMI allowed");
+
+    const auto served = probe(am::global_ram_base, 8);
+    CHECK_MSG(served.first == tlm::TLM_OK_RESPONSE,
+              "a served debug access did not report success; the downstream "
+              "stub leaves the status alone, so the endpoint has to state the "
+              "outcome itself");
+    CHECK_MSG(!served.second, "a served debug access left DMI allowed");
+
+    // **The refusal has to name the right kind of error, not merely be an
+    // error.** `INTERFACE_CONTRACT.md` §1 separates an invalid command from an
+    // invalid burst shape, and `check_common_payload_rules()` reports that
+    // separation on the normal transport path. The debug path folded both into
+    // `TLM_BURST_ERROR_RESPONSE`, so a caller that moved a payload from
+    // `b_transport` to `transport_dbg` saw the same defect described as two
+    // different things. §8 relaxes timing for debug; it does not relax this.
+    //
+    // Both directions are probed. They are separate functions with separate
+    // refusal branches, and the first version of this fix touched one of them.
+    const auto bad_command_chip =
+        probe_on(b.chip_side, am::global_ram_base, 8, tlm::TLM_IGNORE_COMMAND);
+    CHECK_MSG(bad_command_chip.first == tlm::TLM_COMMAND_ERROR_RESPONSE,
+              "an outbound debug access carrying TLM_IGNORE_COMMAND was not "
+              "refused with TLM_COMMAND_ERROR_RESPONSE. The command is what is "
+              "wrong with it, and the normal transport path says so");
+    CHECK_MSG(!bad_command_chip.second,
+              "a command-refused debug access left DMI allowed");
+
+    const auto bad_command_noc =
+        probe_on(b.noc_side, 0, 8, tlm::TLM_IGNORE_COMMAND);
+    CHECK_MSG(bad_command_noc.first == tlm::TLM_COMMAND_ERROR_RESPONSE,
+              "an inbound debug access carrying TLM_IGNORE_COMMAND was not "
+              "refused with TLM_COMMAND_ERROR_RESPONSE");
+    CHECK_MSG(!bad_command_noc.second,
+              "a command-refused inbound debug access left DMI allowed");
+
+    // A genuine burst-shape violation must still be a burst error, or the
+    // checks above pass for the wrong reason -- a debug path that answered
+    // everything with `TLM_COMMAND_ERROR_RESPONSE` would satisfy them just as
+    // well. A wrapped streaming width is what `common_payload_error()` calls a
+    // burst, on both transports.
+    const auto bad_burst = [&b] {
+        std::vector<unsigned char> data(16, 0);
+        tlm::tlm_generic_payload trans;
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        trans.set_address(am::global_ram_base);
+        trans.set_data_ptr(data.data());
+        trans.set_data_length(16);
+        trans.set_streaming_width(8);   // < data_length: a wrapped transfer
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_byte_enable_length(0);
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        b.chip_side.socket->transport_dbg(trans);
+        return trans.get_response_status();
+    }();
+    CHECK_MSG(bad_burst == tlm::TLM_BURST_ERROR_RESPONSE,
+              "a wrapped streaming width was not refused with "
+              "TLM_BURST_ERROR_RESPONSE on the debug path");
+
+    // **Parity is the claim, so parity is what is measured.** The two
+    // conditions the transports check separately from the payload rules --
+    // zero length, and a null data pointer -- must come back with the same
+    // status whichever transport saw them. Reasoning independently about what
+    // each condition "ought to" mean is how the first version of this fix
+    // swapped one taxonomy break for another: it called them burst errors on
+    // the debug path while `b_transport` called them generic.
+    const auto status_of_b_transport = [&b](std::uint64_t address,
+                                            unsigned length,
+                                            unsigned char* data) {
+        tlm::tlm_generic_payload trans;
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        trans.set_address(address);
+        trans.set_data_ptr(data);
+        trans.set_data_length(length);
+        trans.set_streaming_width(length);
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_byte_enable_length(0);
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+        b.chip_side.socket->b_transport(trans, delay);
+        return trans.get_response_status();
+    };
+    const auto status_of_debug = [&b](std::uint64_t address, unsigned length,
+                                      unsigned char* data) {
+        tlm::tlm_generic_payload trans;
+        trans.set_command(tlm::TLM_READ_COMMAND);
+        trans.set_address(address);
+        trans.set_data_ptr(data);
+        trans.set_data_length(length);
+        trans.set_streaming_width(length);
+        trans.set_byte_enable_ptr(nullptr);
+        trans.set_byte_enable_length(0);
+        trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        trans.set_dmi_allowed(true);
+        b.chip_side.socket->transport_dbg(trans);
+        return std::make_pair(trans.get_response_status(),
+                              trans.is_dmi_allowed());
+    };
+
+    std::vector<unsigned char> scratch(8, 0);
+    const auto empty_normal =
+        status_of_b_transport(am::global_ram_base, 0, scratch.data());
+    const auto empty_debug =
+        status_of_debug(am::global_ram_base, 0, scratch.data());
+    CHECK_MSG(empty_debug.first == empty_normal,
+              "a zero-length payload came back as a different status through "
+              "transport_dbg than through b_transport. The payload is the "
+              "same and so is what is wrong with it; only the API differs");
+    CHECK_MSG(!empty_debug.second,
+              "a zero-length debug access left DMI allowed");
+
+    // The null-pointer case is checked on its own rather than assumed to
+    // follow the zero-length one: the transports test them in one `if`, but
+    // nothing forces a future split of that branch to keep them together.
+    const auto null_normal =
+        status_of_b_transport(am::global_ram_base, 8, nullptr);
+    const auto null_debug = status_of_debug(am::global_ram_base, 8, nullptr);
+    CHECK_MSG(null_debug.first == null_normal,
+              "a payload with a null data pointer came back as a different "
+              "status through transport_dbg than through b_transport");
+    CHECK_MSG(!null_debug.second,
+              "a null-pointer debug access left DMI allowed");
+
+    // ── what a silent downstream target's byte count means ──────────────────
+    //
+    // `transport_dbg` has no obligation to set a status, so a payload that
+    // passes every check here and then finds **no mapped target** downstream
+    // comes back with the count zero and the status untouched. The endpoint
+    // used to call that `TLM_GENERIC_ERROR_RESPONSE`, which
+    // `INTERFACE_CONTRACT.md` §1 reserves for "a target that decoded the
+    // access and refused it" — while the same address through `b_transport`
+    // comes back `TLM_ADDRESS_ERROR_RESPONSE`. Nothing decoded it; that is an
+    // address error.
+    //
+    // The two cases are separated by the only evidence there is, so both are
+    // checked: a zero count is a decode miss, a partial count is a target that
+    // decoded and stopped.
+    b.mesh.debug_bytes = 0;
+    const auto unmapped = probe(am::global_ram_base, 8);
+    CHECK_MSG(unmapped.first == tlm::TLM_ADDRESS_ERROR_RESPONSE,
+              "a debug access that reached a downstream target which served "
+              "nothing and set no status was reported as a generic error. §1 "
+              "reserves that for a target that decoded and refused; serving "
+              "nothing is a decode miss, and b_transport calls the same "
+              "address an address error");
+    CHECK_MSG(!unmapped.second, "an unmapped debug access left DMI allowed");
+
+    b.mesh.debug_bytes = 4;
+    const auto partial = probe(am::global_ram_base, 8);
+    CHECK_MSG(partial.first == tlm::TLM_GENERIC_ERROR_RESPONSE,
+              "a debug access that was partly served was reported as an "
+              "address error. Something decoded it -- it served four of eight "
+              "bytes -- so it is a refusal by a target that did decode, not a "
+              "decode miss. Without this check the one above passes for a "
+              "path that answers every short serve with an address error");
+    b.mesh.debug_bytes = -1;
 }
 
 /// A fully masked write moves nothing, and must be counted as moving nothing.
@@ -897,17 +1105,36 @@ void check_report_covers_both_directions()
     CHECK_MSG(latency.find("outbound") != std::string::npos
                   && latency.find("inbound") != std::string::npos,
               "the latency line does not cover both directions");
-    CHECK_MSG(text.find("per transaction") != std::string::npos
-                  && text.find("outstanding is deliberately not measured")
-                      != std::string::npos,
-              "report() does not say what its latency figure is not. D24 "
-              "forbids quoting it as noc_interconnect's per-transaction "
-              "figure, and a reader with both numbers in front of them will "
-              "compare them unless the report says otherwise");
+    CHECK_MSG(text.find("per transaction") != std::string::npos,
+              "report() does not say what its latency and in-flight figures "
+              "are not. D24 forbids quoting them as noc_interconnect's "
+              "per-transaction figures, and a reader with both numbers in "
+              "front of them will compare them unless the report says "
+              "otherwise");
+
+    // **The retracted sentence must not come back.** `report()` used to print
+    // "outstanding is deliberately not measured here" three lines below the
+    // in-flight peaks it also printed -- the report contradicting itself --
+    // and the check that used to stand here *required* that sentence, so the
+    // test held the contradiction in place rather than catching it. Asserting
+    // the absence is what keeps a revert from passing.
+    CHECK_MSG(text.find("outstanding is deliberately not measured")
+                  == std::string::npos,
+              "report() still claims outstanding is not measured, while the "
+              "same report prints the in-flight peaks and the API publishes "
+              "peak_outbound_in_flight(). D24's deferral was retracted when "
+              "the composition measured 2");
+
+    const std::string in_flight = line("  in flight: ");
+    CHECK_MSG(!in_flight.empty(),
+              "report() prints no in-flight line, but D24 was retracted "
+              "precisely because that quantity turned out to be measurable "
+              "and non-constant");
 }
 
 /// **D24.** Transfer latency is measured here and is measured as *logical*
-/// time. Outstanding is deliberately not measured at all.
+/// time. In-flight is measured here too, per direction — D24 first deferred
+/// that on a constant-by-construction argument the composition disproved.
 ///
 /// The load-bearing part is that this runs against a target that only
 /// **annotates**: `sc_time_stamp()` never moves, so an implementation that
@@ -1214,6 +1441,10 @@ public:
     bool sampled = false;
     std::uint64_t chunks = 0;
     std::uint64_t bytes = 0;
+    /// Read as a pair and in this order, because the claim under test relates
+    /// them: a high-water mark below the count it marks is impossible.
+    std::uint64_t in_flight = 0;
+    std::uint64_t peak_in_flight = 0;
 
 private:
     void run()
@@ -1221,6 +1452,8 @@ private:
         sc_core::wait(at_);
         chunks = endpoint_.outbound_chunks();
         bytes = endpoint_.outbound_bytes();
+        in_flight = endpoint_.outbound_in_flight();
+        peak_in_flight = endpoint_.peak_outbound_in_flight();
         sampled = true;
     }
 
@@ -1302,6 +1535,15 @@ int sc_main(int, char*[])
                                   static_cast<unsigned>(kFrame * 3)};
     resetter inflight_reset{"inflight_reset", inflight.endpoint,
                             sc_core::sc_time(500, sc_core::SC_NS)};
+    // Sampled 50 ns after that reset, while chunk three is still inside the
+    // target's 200 ns wait. `reset()` deliberately leaves `*_in_flight_` alone
+    // -- those calls are in C++ stacks it cannot unwind -- but it used to
+    // clear the peaks to zero underneath them, publishing a high-water mark
+    // below the live count it is supposed to bound, and leaving the new epoch
+    // reporting a peak of zero for transfers it had begun with.
+    counter_probe inflight_after_reset{"inflight_after_reset",
+                                       inflight.endpoint,
+                                       sc_core::sc_time(550, sc_core::SC_NS)};
 
     // (b) reset lands while the transfer is catching up on its own quantum,
     // before it has reached the interconnect at all. A delay handed downstream
@@ -1382,6 +1624,23 @@ int sc_main(int, char*[])
                   && conserve.endpoint.outbound_chunks() == 4,
               "the finished transfer's totals are wrong; per-chunk publication "
               "must not double-count or lose the last chunk");
+
+    CHECK_MSG(inflight_after_reset.sampled,
+              "the post-reset in-flight probe never ran");
+    CHECK_MSG(inflight_after_reset.in_flight == 1,
+              "the post-reset probe was meant to catch one transfer still "
+              "inside a downstream call; it saw "
+                  + std::to_string(inflight_after_reset.in_flight)
+                  + " in flight, so the check below would prove nothing");
+    CHECK_MSG(inflight_after_reset.peak_in_flight
+                  >= inflight_after_reset.in_flight,
+              "after a reset the endpoint reported peak outbound in-flight "
+                  + std::to_string(inflight_after_reset.peak_in_flight)
+                  + " while "
+                  + std::to_string(inflight_after_reset.in_flight)
+                  + " transfers were still in flight. A high-water mark below "
+                    "the count it marks is not a measurement; the new epoch "
+                    "starts with those calls already inside it");
 
     CHECK_MSG(inflight_reset.fired && quantum_reset.fired,
               "a reset never ran");

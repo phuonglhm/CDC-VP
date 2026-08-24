@@ -295,15 +295,60 @@ struct noc_interconnect::impl : public sc_core::sc_module {
     /// still observable. Only the bypass is inserted into that order:
     ///
     ///  * every access takes a ticket at its issue point;
-    ///  * every access bumps `done_seq` when it completes — the routed path
-    ///    never waits on it;
+    ///  * every access **retires its own ticket** when it completes — the
+    ///    routed path never waits on the result;
     ///  * a **bypass** waits until `done_seq` reaches its ticket, so it cannot
     ///    overtake anything issued earlier;
     ///  * a **routed** access waits only while an *earlier bypass* is still
     ///    outstanding, so a bypass cannot be overtaken either. Routed traffic is
     ///    never ordered against other routed traffic here.
+    ///
+    /// ## Why retirement carries a ticket rather than bumping a counter
+    ///
+    /// `done_seq` was a plain count, and `await_bypass_turn()` reads it as
+    /// "every ticket below mine is done". Those agree only while retirement
+    /// happens in ticket order, and the **unwinding paths break that**: a call
+    /// that throws after taking its ticket cannot serve an ordering wait, so it
+    /// retires wherever it happens to be. One such retire moved the count past
+    /// a ticket that had not completed, and a bypass parked behind a still
+    /// pending routed access was released early — a FIFO violation on a channel
+    /// whose `MaxUniqueIds = 1` promises FIFO.
+    ///
+    /// So retirement is now identified. `done_seq` is the **contiguous retired
+    /// prefix**, and a ticket that retires above it is remembered in
+    /// `retired_ahead` until the prefix reaches it. `await_bypass_turn()` is
+    /// unchanged and now means exactly what it always read as.
     std::vector<std::uint64_t> issue_seq;
     std::vector<std::uint64_t> done_seq;
+    /// Tickets retired ahead of the prefix, one bit each: bit `i` of slot `s`
+    /// means ticket `done_seq[s] + i` is already retired. Bit 0 is always clear
+    /// — that ticket *is* the prefix, and retiring it advances instead.
+    ///
+    /// A bitset rather than a `std::set` on purpose. The out-of-order retire
+    /// happens **while an exception is unwinding**, including inside
+    /// `slot_guard::~slot_guard()`; a container that allocates there would
+    /// throw out of a destructor and terminate, and the exception that gets it
+    /// there is most often `bad_alloc` in the first place. Setting a bit in
+    /// storage that already exists cannot throw.
+    ///
+    /// **Sized in `take_completion_ticket()`, which is the whole trick.** The
+    /// window has to span every ticket that can be live at once on one port and
+    /// channel, and that number has no fixed bound: a local bypass takes no
+    /// admission slot — not creating routed work is what D1 is *for* — so
+    /// `max_outstanding_per_port` does not cap it. An earlier version of this
+    /// comment claimed it did and fixed the window at one word; 64 concurrent
+    /// same-channel callers plus one that throws was enough to walk off the
+    /// end.
+    ///
+    /// So the growing happens where growing is allowed. Taking a ticket is on
+    /// the normal path, can allocate, and can throw into a caller that has not
+    /// taken the ticket yet; retiring one runs during unwinding and only ever
+    /// writes into what taking reserved. `done_seq` never moves backwards, so a
+    /// window sized when ticket `T` was issued still covers `T` whenever `T`
+    /// retires — which makes `prefix_overflows` unreachable rather than merely
+    /// unlikely.
+    std::vector<std::vector<std::uint64_t>> retired_ahead;
+    static constexpr std::uint64_t bits_per_word = 64;
     std::vector<std::set<std::uint64_t>> outstanding_bypass;
     std::vector<std::unique_ptr<sc_core::sc_event>> order_ready;
 
@@ -314,7 +359,21 @@ struct noc_interconnect::impl : public sc_core::sc_module {
 
     std::uint64_t take_completion_ticket(unsigned port, bool is_write)
     {
-        return issue_seq[order_slot(port, is_write)]++;
+        const unsigned slot = order_slot(port, is_write);
+        // Grow the completion-order window here, and nowhere else. This runs on
+        // the normal path: allocating is allowed, and a throw leaves with no
+        // ticket taken, which is the state the caller's guards already handle.
+        //
+        // The span needed is every ticket that can be live on this channel at
+        // once — what is outstanding now, plus the one about to be issued, plus
+        // one so bit 0 stays the prefix itself.
+        const std::uint64_t span = issue_seq[slot] - done_seq[slot] + 2;
+        const std::size_t words =
+            static_cast<std::size_t>(span / bits_per_word) + 1;
+        if (retired_ahead[slot].size() < words) {
+            retired_ahead[slot].resize(words, 0);
+        }
+        return issue_seq[slot]++;
     }
 
     /// A bypass may not complete before anything issued earlier on its channel.
@@ -404,12 +463,78 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         return true;
     }
 
-    void mark_completed(unsigned port, bool is_write)
+    /// Retires `ticket` on its channel and publishes whatever contiguous
+    /// progress that makes.
+    ///
+    /// Deliberately **not** `mark_completed(port, is_write)` any more: an entry
+    /// point that does not know which ticket finished cannot tell in-order
+    /// retirement from out-of-order retirement, and every caller that reached
+    /// it during unwinding was silently the second kind. Taking the ticket as
+    /// an argument makes that impossible to get wrong again.
+    ///
+    /// `noexcept` is load-bearing, not decoration: `slot_guard::~slot_guard()`
+    /// calls this while an exception is in flight.
+    void retire_ticket(unsigned port, bool is_write,
+                       std::uint64_t ticket) noexcept
     {
         const unsigned slot = order_slot(port, is_write);
-        ++done_seq[slot];
+        const std::uint64_t gap = ticket - done_seq[slot];
+        if (gap == 0) {
+            advance_prefix(slot);
+        } else {
+            const std::size_t word =
+                static_cast<std::size_t>(gap / bits_per_word);
+            if (word < retired_ahead[slot].size()) {
+                retired_ahead[slot][word] |=
+                    std::uint64_t{1} << (gap % bits_per_word);
+            } else {
+                // Unreachable by construction: `take_completion_ticket()` sized
+                // this window to span every ticket that could be live when this
+                // one was issued, and `done_seq` only moves up, so the gap can
+                // only have shrunk since. Counted rather than reported, because
+                // this runs inside a destructor while an exception unwinds and
+                // `SC_REPORT_ERROR` would terminate.
+                //
+                // And counted rather than **absorbed by advancing the prefix**,
+                // which is what an earlier version did. Advancing here publishes
+                // a prefix past a ticket that is still live and releases every
+                // bypass waiting behind it — a silent FIFO violation, diagnosed
+                // only after the callers it affected had already returned. The
+                // failure mode chosen instead is a visible stall on the channel:
+                // wrong, but wrong in a way that stops rather than one that
+                // hands back plausible answers in the wrong order.
+                ++prefix_overflows;
+            }
+        }
         order_ready[slot]->notify(sc_core::SC_ZERO_TIME);
     }
+
+    /// Moves the retired prefix over the ticket at `done_seq` and every already
+    /// retired ticket contiguously above it.
+    void advance_prefix(unsigned slot) noexcept
+    {
+        auto& window = retired_ahead[slot];
+        for (;;) {
+            ++done_seq[slot];
+            // Shift the window down one ticket, so bit `i` keeps meaning
+            // "ticket `done_seq + i` has retired" after the prefix moved.
+            for (std::size_t i = 0; i + 1 < window.size(); ++i) {
+                window[i] = (window[i] >> 1)
+                    | (window[i + 1] << (bits_per_word - 1));
+            }
+            if (!window.empty()) {
+                window.back() >>= 1;
+            }
+            if (window.empty() || (window[0] & std::uint64_t{1}) == 0) {
+                return;
+            }
+        }
+    }
+
+    /// Retirements the window could not represent. Published so a test can
+    /// assert the unreachable branch was never taken rather than assume it;
+    /// see `prefix_overflows()`.
+    std::uint64_t prefix_overflows = 0;
     std::vector<std::deque<std::uint64_t>> write_hold_off;
     std::vector<std::deque<std::uint64_t>> read_hold_off;
 
@@ -516,6 +641,7 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             for (unsigned channel = 0; channel < 2; ++channel) {
                 issue_seq.push_back(0);
                 done_seq.push_back(0);
+                retired_ahead.emplace_back();
                 outstanding_bypass.emplace_back();
                 order_ready.push_back(std::make_unique<sc_core::sc_event>());
             }
@@ -1490,18 +1616,28 @@ struct noc_interconnect::impl : public sc_core::sc_module {
         sc_core::sc_time& delay, const axi_shape& shape,
         const unsigned char* enables, unsigned enable_length)
     {
-        ++bypass_in_flight;
         const bool ordered = timing_backend == timing_mode::detailed;
         const bool channel_is_write = trans.is_write();
         const unsigned slot = order_slot(port, channel_is_write);
-        const std::uint64_t ticket =
-            ordered ? take_completion_ticket(port, channel_is_write) : 0;
-        if (ordered) {
-            // Registered before any work, so a routed access issued after this
-            // one can see it and hold back.
-            outstanding_bypass[slot].insert(ticket);
-        }
+        std::uint64_t ticket = 0;
+        // Two flags, not one, because the two steps fail differently. A ticket
+        // that was **taken** advances `issue_seq`, so anything ordered behind
+        // it waits for a `done_seq` that only `retire_ticket()` can supply. A
+        // ticket that was also **registered** additionally has to come out of
+        // `outstanding_bypass`. `std::set::insert` allocates, so the second
+        // step can throw while the first has already happened.
+        bool took_ticket = false;
+        bool registered = false;
+        ++bypass_in_flight;
         try {
+            if (ordered) {
+                ticket = take_completion_ticket(port, channel_is_write);
+                took_ticket = true;
+                // Registered before any work, so a routed access issued after
+                // this one can see it and hold back.
+                outstanding_bypass[slot].insert(ticket);
+                registered = true;
+            }
             // The target's own latency, rounded up to a whole network cycle
             // exactly as the routed path rounds it. A local path costs no hops;
             // it does not make the target faster than it said it was.
@@ -1529,15 +1665,31 @@ struct noc_interconnect::impl : public sc_core::sc_module {
             if (ordered) {
                 await_bypass_turn(port, channel_is_write, ticket);
                 outstanding_bypass[slot].erase(ticket);
-                mark_completed(port, channel_is_write);
+                retire_ticket(port, channel_is_write, ticket);
             }
         } catch (...) {
-            if (ordered) {
-                // Retire even on the way out, or every access ordered behind
-                // this one waits for a completion that will never arrive.
-                await_bypass_turn(port, channel_is_write, ticket);
-                outstanding_bypass[slot].erase(ticket);
-                mark_completed(port, channel_is_write);
+            // Retire even on the way out, or every access ordered behind this
+            // one waits for a completion that will never arrive. Guarded on
+            // what actually happened rather than on `ordered`: before this,
+            // an allocation failure inside the `insert` above escaped without
+            // reaching any of it, leaving `bypass_in_flight` raised and the
+            // ticket unretired — after which the wrapper never reported idle
+            // and later same-channel bypasses blocked for good.
+            //
+            // This call is **not** made to serve its ordering wait first. It
+            // used to, and that was wrong twice over: a call that is throwing
+            // owes no response, so parking it behind traffic it will never
+            // answer only delays the exception — and the wait itself ran
+            // inside the unwinding, suspending a half-destroyed frame for an
+            // arbitrary length of simulated time. Retiring out of order is now
+            // representable (`retired_ahead`), so the ticket goes back
+            // immediately and the ordering it owed is enforced by the prefix
+            // rather than by this frame.
+            if (took_ticket) {
+                if (registered) {
+                    outstanding_bypass[slot].erase(ticket);
+                }
+                retire_ticket(port, channel_is_write, ticket);
             }
             --bypass_in_flight;
             throw;
@@ -2033,6 +2185,11 @@ std::uint64_t noc_interconnect::ordering_holds() const
     return impl_->ordering_holds;
 }
 
+std::uint64_t noc_interconnect::prefix_overflows() const
+{
+    return impl_->prefix_overflows;
+}
+
 bool noc_interconnect::mesh_quiescent() const
 {
     if (impl_->timing_backend == timing_mode::fast) {
@@ -2237,6 +2394,29 @@ void noc_interconnect::b_transport(
         impl* owner;
         unsigned port;
         bool held = true;
+        // A ticket is consumed a few lines below, before the request is
+        // packed and queued — and both of those allocate. If one throws, the
+        // ticket has advanced `issue_seq` and nothing will ever advance
+        // `done_seq` past it, so any bypass ordered behind it waits for a
+        // completion that cannot arrive.
+        //
+        // Retiring here is therefore mandatory, and it is retiring *out of
+        // ticket order* — this frame is unwinding and cannot serve an ordering
+        // wait. `retire_ticket()` is what makes that safe: it is `noexcept`,
+        // allocates nothing, and records the ticket rather than advancing a
+        // count past whatever is still pending below it.
+        std::uint64_t ticket = 0;
+        bool ticket_taken = false;
+        bool completed = false;
+        bool is_write = false;
+
+        void complete()
+        {
+            if (ticket_taken && !completed) {
+                completed = true;
+                owner->retire_ticket(port, is_write, ticket);
+            }
+        }
         void release()
         {
             if (held) {
@@ -2244,16 +2424,23 @@ void noc_interconnect::b_transport(
                 owner->release_admission_slot(port);
             }
         }
-        ~slot_guard() { release(); }
+        ~slot_guard()
+        {
+            complete();
+            release();
+        }
     } slot{impl_.get(), port};
 
     const bool is_write = command == tlm::TLM_WRITE_COMMAND;
+    slot.is_write = is_write;
 
     // Taken after admission and before the request is queued, so tickets are
     // issued in the same order `state.requests` is filled. This path is never
     // made to wait for another *routed* access: its ordering is the deques'
     // and stays observable.
     const std::uint64_t ticket = impl_->take_completion_ticket(port, is_write);
+    slot.ticket = ticket;
+    slot.ticket_taken = true;
 
     impl::waiter parked{};
     parked.port = port;
@@ -2317,7 +2504,8 @@ void noc_interconnect::b_transport(
     // deques' job, which is what keeps `same-port-request-order-reversed` able
     // to see a mesh that injected requests out of order.
     impl_->await_earlier_bypass(port, is_write, ticket);
-    impl_->mark_completed(port, is_write);
+    impl_->retire_ticket(port, is_write, ticket);
+    slot.completed = true;   // the guard must not repeat it
     // Last, and with no wait after it: `slot_available` is notified with
     // `SC_ZERO_TIME`, so the next caller is admitted in the following delta —
     // after this one has left `b_transport`, which is what the documented

@@ -980,6 +980,596 @@ moved four files off the signed manifest (§4h). Nothing here is blocked by
 that, but a final technical sign-off needs a v1.6 baseline or a batch re-sign
 covering the delta.
 
+## 4j. Six findings from the composition review
+
+Raised 2026-08-24 against the single-chip composition and the tree around it.
+All six are fixed; the first is the one that matters, because it retracts part
+of a decision record.
+
+### 1 — D24's outstanding reasoning was wrong, and contradicted this project's own audit
+
+D24 said an endpoint-level outbound outstanding count is `<= 1` **by
+construction**, and deferred the metric on that basis. Measured on this
+composition: **peak 2** in detailed mode.
+
+The reasoning covered **one core**. `neo_external_bridge` does arbitrate a
+core's two outbound initiators onto one socket — but two cores are two
+initiators on the chip fabric, and `annotated` mode charges port occupancy to
+the caller's delay rather than blocking, so while one core is suspended in the
+mesh the other enters the endpoint.
+
+`TPU_V3_PHASE8_AUDIT.md` §5 had already written that down:
+
+> **`annotated` chip-fabric mode does not serialise a blocking target.** Port
+> occupancy is a charge on the caller's delay, so two initiators can be inside
+> one downstream target at once if that target waits.
+
+Two documents in this repository, both mine, disagreeing. The endpoint now
+publishes the counters and D24 carries the retraction.
+
+**How the first measurement lied.** The instrumentation put its scope guard
+inside a nested block, so the live count returned to zero immediately and the
+peak read 1 — which is exactly what I expected to see, and would have closed
+the finding as unreproducible. Fixing the scope gave 2. A measurement that
+confirms the thing you already believe deserves a second look at the
+measurement.
+
+### 2 — a ticket could leak past the exception cleanup
+
+`local_bypass_transport()` took its completion ticket and registered it in
+`outstanding_bypass` **before** the `try`. An allocation failure in
+`std::set::insert` therefore escaped without reaching any cleanup, leaving
+`bypass_in_flight` raised and the ticket unretired — after which the wrapper
+never reports idle and later same-channel bypasses block for good.
+
+Fixed with **two** flags rather than one, because the two steps fail
+differently: a ticket that was *taken* has advanced `issue_seq` and has to be
+retired; a ticket that was also *registered* additionally needs erasing from
+the set. The routed path had the same shape — a ticket consumed before the
+packing and queue allocations — and its `slot_guard` now retires it. The guard
+only notifies; `await_bypass_turn()` would `wait()`, and waiting inside a
+destructor during unwinding is a different problem.
+
+**This fix was incomplete, and §4k finding 1 completes it.** Retiring during
+unwinding is retiring *out of ticket order*, which the scalar `done_seq` of the
+time could not represent: it moved the count past tickets that had not
+completed. Both call sites named here now go through `retire_ticket()`.
+
+### 3 — the debug transports answered nothing
+
+Both `transport_dbg` callbacks returned a bare `0` on three refusal paths
+without setting a response status or clearing DMI, and passed a successful call
+straight back however the downstream target left it. `INTERFACE_CONTRACT.md` §1
+binds `transport_dbg` as well as `b_transport`: status **always set**, DMI
+false. A caller was left reading the `TLM_INCOMPLETE_RESPONSE` it had set
+itself, which §1 calls a defect in the target rather than a condition for the
+caller to handle.
+
+Now every return path states an outcome, including the successful one — the
+stub in this component's own gate is an example of a target that leaves the
+status untouched, so the endpoint cannot rely on delegation.
+
+### 4 — the fast-mode test was running detailed-mode timing
+
+`endpoint_config()` left `downstream_spends_delay = true` for both backends, so
+in `fast` the endpoint sat out the caller's annotation before entering an
+interconnect that annotates rather than blocking. The "full-system fast" case
+was therefore not exercising fast timing semantics at all.
+
+The flag is now taken from the selected NoC mode, and the fix is **visible in
+finding 1's numbers**: the peak in fast mode is 1 with it and was 2 without,
+because an endpoint that waits makes callers overlap. That is why the gate
+asserts a different value per backend instead of the same one twice.
+
+### 5 — `STATUS.md` misstated the sign-off scope
+
+It read "supersedes v1.4 for the current component snapshot". v1.5 supersedes
+v1.4 **for the snapshot its manifest binds**, and the tree has moved off that
+snapshot. Corrected there, where a reader of the component would look, rather
+than only in this audit.
+
+### 6 — `.gitignore` swallowed the sign-off evidence, and v1.4 is already in that state
+
+The four v1.5 transcripts match the root `*.log` rule, so adding the sign-off
+directory would commit an `artifact_manifest.sha256` that hashes four files a
+fresh checkout does not have. Fixed with a scoped negation:
+
+```gitignore
+!components/*/docs/signoff/**/*.log
+```
+
+The negation immediately exposed something the finding did not reach: **v1.4 is
+already committed in exactly that broken state.** Its artifact manifest hashes
+`systemc_tests.log` and `mutation_controls.log`, and `git ls-files` on that
+directory returns three files, none of them a log. The signed baseline in the
+repository today has an artifact manifest nobody can verify. Fixing that is the
+v1.4 owner's call, not this audit's — it is recorded here because it is
+invisible until someone tries to check a signature.
+
+### Measured after all six
+
+```text
+floo_noc_model            42/42
+mutation registry         58 detected, 0 missed
+TPU_V3 Release            55/55, 0 Skipped
+TPU_V3 Debug              55/55, 0 Skipped
+```
+
+## 4k. Five findings from the unwinding review
+
+Two of these are in the frozen, signed component. R-P9-3's batch decision
+applies: fix now, re-sign once.
+
+### 1 — a call that unwinds retired its completion ticket out of order
+
+**The defect.** Completion order per port and channel was a scalar count.
+`mark_completed()` did `++done_seq[slot]`, and `await_bypass_turn(ticket)`
+waited for `done_seq >= ticket` — reading "the count reached my ticket" as
+"everything below me is done". Those two agree only while retirement happens in
+ticket order.
+
+The unwinding paths break exactly that. A call that throws after taking its
+ticket cannot serve an ordering wait, so it retires wherever it happens to be:
+
+* `slot_guard::complete()` on the routed path, for a throw between the ticket
+  and the queued request — `pack_write`, `reserve`, two `push_back`s, all
+  allocating;
+* `local_bypass_transport`'s `catch`, for the `!registered` window where
+  `outstanding_bypass[slot].insert()` itself threw.
+
+With ticket 0 routed and still in the mesh, ticket 1 a bypass parked in
+`await_bypass_turn`, and ticket 2 unwinding, ticket 2's retire moved the count
+0 → 1 and released ticket 1. A bypass completed ahead of a routed access issued
+before it, on a channel whose `MaxUniqueIds = 1` promises FIFO.
+
+**The fix.** Retirement carries its ticket. `retire_ticket(port, is_write,
+ticket)` replaces `mark_completed(port, is_write)` at all four call sites;
+`done_seq` becomes the **contiguous retired prefix**, and a ticket retiring
+above it is recorded in `retired_ahead` until the prefix reaches it.
+`await_bypass_turn()` is unchanged and now means what it always read as.
+
+Two details are load-bearing rather than incidental:
+
+* **`retired_ahead` is a 64-bit word, not a `std::set`.** The out-of-order
+  retire runs *while an exception unwinds*, including inside
+  `slot_guard::~slot_guard()`. A container that allocates there would throw
+  out of a destructor and terminate — and the exception that gets it there is
+  most often `bad_alloc` in the first place. The word allocates nothing and
+  cannot throw, which is why `retire_ticket()` is `noexcept`. A gap wider than
+  the window is counted in `prefix_overflows()` rather than absorbed silently;
+  a test asserts it stays zero.
+* **The old entry point is gone, not kept as a wrapper.** An entry point that
+  does not know which ticket finished cannot tell in-order retirement from
+  out-of-order retirement, and every caller that reached it during unwinding
+  was silently the second kind. Taking the ticket as an argument makes that
+  impossible to write again.
+
+The bypass `catch` also stops calling `await_bypass_turn()` before retiring.
+That wait was wrong twice over: a call that is throwing owes no response, so
+parking it behind traffic it will never answer only delays the exception, and
+the wait ran inside the unwinding, suspending a half-destroyed frame for an
+arbitrary span of simulated time. Out-of-order retirement is now representable,
+so the ordering it owed is enforced by the prefix instead of by that frame.
+
+**The control, and what made one possible.** The routed path's own exception
+sources are all allocation failures, which no test can inject here. The bypass
+path calls its target directly from inside `b_transport`, so a target that
+throws *is* injectable — and removing the wait from the `catch` is what puts
+that path on the same `retire_ticket()` the routed path uses. One rule, one
+implementation, exercised through the half that can be driven.
+
+`throwing_target` and `failing_probe` in
+`tests/test_noc_interconnect_local_bypass.cpp`; scenario `unwound`:
+
+```text
+ticket 0  routed to a 400 ns remote target, still in the mesh
+ticket 1  bypass, answers at once, parks in await_bypass_turn()
+ticket 2  bypass whose target throws, unwinds at ~150 ns
+
+fixed        unwinding retire order: 2 0 1
+mutated      unwinding retire order: 2 1 0   <- bypass overtook routed
+```
+
+Registry entry `unwinding-retire-ignores-ticket-order` restores the counter for
+the out-of-order case only (`retired_ahead[slot] |= ...` → `++done_seq[slot]`).
+It trips two checks, not one: the ordering check above, and
+`prefix_overflows() == 0` — because the still-pending ticket then retires
+*below* the count, which the window reports as a wrapped gap. The second
+witness was not designed in; it is what the counter looks like from the other
+side.
+
+The registry needle for `admission-slot-released-before-ordering-wait` had to
+be updated in the same edit, since it quotes the renamed call. The runner fails
+loudly on a needle it cannot find, which is the only reason that did not become
+a control that silently stopped biting — this file has recorded that failure
+mode twice already.
+
+### 2 — a debug refusal named the wrong kind of error
+
+`INTERFACE_CONTRACT.md` §1 separates an invalid **command** from an invalid
+**burst shape**, and `check_common_payload_rules()` reports that separation on
+the normal transport path. Both debug transports folded the two into
+`TLM_BURST_ERROR_RESPONSE`, so a `TLM_IGNORE_COMMAND` debug access came back
+describing a burst it never had. §8 relaxes timing for debug; it does not
+relax the error taxonomy — a caller that moves a payload between the two
+transports must not have to know which one it used to read the status.
+
+`debug_refusal_status()` now maps `payload_rule_error::command` to
+`TLM_COMMAND_ERROR_RESPONSE`. Zero length and a null data pointer stay burst
+errors deliberately: both describe a payload whose *shape* names no bytes.
+
+Both directions are checked, because they are separate functions with separate
+refusal branches. The burst case is checked too — without it, a debug path that
+answered everything with `TLM_COMMAND_ERROR_RESPONSE` would satisfy the new
+checks just as well.
+
+### 3 — reset published a peak below the count it bounds
+
+`reset()` deliberately leaves `*_in_flight_` alone: those calls are inside C++
+stacks a reset cannot unwind, and zeroing the live counter under them makes
+their destructors underflow — the Phase 8 lesson about reset releasing a port
+it does not own, one level down. It then cleared the **peaks** to zero anyway.
+
+The result is `peak < live`, which the definition of a high-water mark makes
+impossible, and it stayed wrong after the old calls drained: the new epoch
+reported a peak of zero for transfers it had begun with. The peak of an epoch
+that starts with `n` calls in flight is at least `n`, so each peak is now
+restarted from its surviving live count.
+
+Sampled 50 ns after the existing in-flight reset, while chunk three is still
+inside the target's 200 ns wait: `in_flight == 1` is asserted first, because
+without it the check below would pass on a scenario where nothing was in
+flight at all.
+
+### 4 — the artifact manifests are scoped wrong, in both baselines
+
+v1.4's and v1.5's `artifact_manifest.sha256` each cover two **living**
+documents — `STATUS.md` and `NOC_MODEL_ARCHITECTURE.vi.md` — alongside the
+frozen package. A living document changes by design, so each manifest goes red
+the moment the component moves on:
+
+```text
+v1.4   docs/NOC_MODEL_ARCHITECTURE.vi.md: FAILED   (changed for v1.5)
+v1.5   docs/STATUS.md:                    FAILED   (changed by §4j finding 5)
+```
+
+The review asked for `STATUS.md` to be restored. That was not done, and the
+reason is that it does not fix anything: v1.6 has to change `STATUS.md` again,
+and v1.5 would go red again — permanently. It would buy a green line that lasts
+until the next baseline and then breaks for good, while hiding a defect that is
+now visible in two baselines rather than one.
+
+Neither manifest is edited either. A signature rewritten when it becomes
+inconvenient signs nothing.
+
+What is done instead is recorded in `STATUS.md` itself: the erratum, the
+verification recipe that still works for the living documents
+(`git show 8d94ca3:...`, **not** the `963466e` that `SIGNOFF.md` names — that
+is the base of the dirty tree, and the signed bytes reached git one commit
+later), and the scope rule that binds v1.6: an artifact manifest covers the
+sign-off package only, and a living document the sign-off relies on has its
+hash quoted inside `SIGNOFF.md`, which is itself hashed.
+
+The four v1.5 logs remain **untracked**. The `.gitignore` rule that hid them is
+fixed (§4j finding 6); committing them is not mine to do.
+
+### 5 — the header claimed a measurement it had not made
+
+`chip_noc_endpoint.h` said the outbound in-flight peak is 2 "in both NoC timing
+modes". The composition asserts 2 in detailed and exactly **1** in fast, and the
+difference is the quantity rather than noise in it: nothing downstream blocks in
+fast mode, so a peak above 1 there means something suspended where it should
+have annotated. Corrected in the header, which is where a user of the endpoint
+API reads it.
+
+### Measured after all five
+
+```text
+floo_noc_model            42/42
+mutation registry         59 detected, 0 missed
+TPU_V3 Release            55/55, 0 Skipped     (ctest -L tpu_v3)
+TPU_V3 Debug              55/55, 0 Skipped
+full tree Release        107/108, 0 Skipped
+```
+
+**The filter is quoted with the number because it changes the number.**
+`ctest -L tpu_v3` selects by label and runs 55; `ctest -R tpu_v3` matches test
+*names* and runs 38 — a subset that silently drops seventeen gates. This entry
+was first written with the 38 and the wrong flag, which is the failure the
+`Skipped`-counting rule exists to prevent arriving through a different door: a
+green summary line over a set that was never the gate.
+
+Three entries in that table are stated rather than rounded off, because each is
+the kind of thing a summary line hides.
+
+**`isp_register_bank_test` does not run, in either tree.**
+`libsystemc.so: undefined reference to sc_main` — a component this work does
+not touch, failing before it starts. It is named here rather than netted out of
+the count, because "107/108" with no explanation is indistinguishable from a
+regression.
+
+**The four `noc_soc_*` gates are load-bearing for this change, and the Debug
+tree was not running them.** `platforms/noc_soc` links
+`cdc::components::noc_interconnect`, so those gates are the only place the
+ticket-retirement change is exercised inside a whole SoC rather than a directed
+bench. They pass in Release — `noc_soc_measurement_baseline` alone runs 498 s.
+In Debug they reported `FAIL: noc_soc binary not found; set NOC_SOC_BIN`: the
+platform target had never been built in that tree, so the gate was failing for
+the absence of the thing it tests. Built and rerun rather than written off as
+environmental; a gate that cannot find its binary is not evidence either way.
+
+Rerun, two of them fail for a real reason — **and it is not this change**:
+
+```text
+rv32::CombinedMemoryInterface::_do_transaction, mem.h:65
+Assertion `local_delay >= quantum_keeper.get_local_time()' failed
+firmware mode, detailed NoC (DMA transfer), exited 134
+```
+
+Reverting `src/noc_interconnect.cpp` and its header to `HEAD` and rebuilding
+reproduces it unchanged, so it is pre-existing rather than introduced here. It
+is also older than Phase 9: the detailed contract that causes it — "**`delay`
+is `SC_ZERO_TIME` on return**, always; everything the transaction cost has
+already elapsed" — is present at `963466e`, before any of this work, and is
+part of the signed v1.4/v1.5 architecture.
+
+The conflict is structural. The wrapper spends time and returns zero; riscv-vp's
+quantum keeper asserts the returned delay never falls below the local time it
+has already accumulated. Release passes only because `NDEBUG` removes the
+assertion, which means **the Release green on these gates is weaker evidence
+than it looks** — the same disagreement is there, unchecked.
+
+Not fixed here, and deliberately so: reconciling them is a decision about the
+delay contract at the CPU boundary — either the detailed path stops returning
+zero to a quantum-keeping initiator, or the platform drains the keeper before
+the call — and neither is in the scope of these five findings. Recorded as an
+open item rather than absorbed.
+
+## 4l. Two findings from the window review
+
+Both are defects **in the §4k fixes themselves**, which is the useful thing
+about them: one is a false claim I wrote in a comment, the other is a parity
+break I introduced while repairing a parity break.
+
+### 1 — the completion-order window was sized by a bound that does not exist
+
+§4k justified a fixed one-word window like this:
+
+> The window bounds the *gap*, not the number of failures: it has to span the
+> tickets concurrently outstanding on one port and channel, which the admission
+> gate holds to `max_outstanding_per_port` plus the bypasses in flight. 64 is
+> far above that.
+
+**The admission gate does not hold it.** A local bypass takes no admission slot
+— not creating routed work is the entire point of D1 — so bypass concurrency on
+one port and channel is capped by nothing. Sixty-four parked bypasses put the
+next ticket 65 above the prefix, off the end of the word, and the overflow
+branch resolved that by advancing the prefix anyway: the exact FIFO violation
+§4k existed to remove, reintroduced at the boundary, with `prefix_overflows`
+recording it only after the affected callers had already returned. A counter
+that fires after the damage is a weaker guarantee than an impossibility.
+
+**The fix is where the growing happens, not how big the window is.** Any fixed
+size is the same bug with a different constant, and growing it inside
+`retire_ticket()` is impossible — that runs while an exception unwinds, where
+allocating can terminate the process. So the window is grown in
+`take_completion_ticket()`:
+
+* taking a ticket is on the normal path. It may allocate, and if it throws it
+  throws before the ticket is issued, which is a state the callers' guards
+  already handle;
+* retiring one only ever writes into storage that taking reserved, so it stays
+  `noexcept` and allocation-free;
+* `done_seq` never moves backwards, so a window sized when ticket `T` was
+  issued still spans `T` whenever `T` retires.
+
+That makes the overflow branch **unreachable by construction** rather than
+unlikely. It is still counted rather than removed, because it runs during
+unwinding where `SC_REPORT_ERROR` would terminate — and it now refuses to
+advance the prefix. The failure mode chosen for the impossible branch is a
+visible stall on the channel, not a silent reordering: wrong in a way that
+stops, rather than wrong in a way that hands back plausible answers out of
+order.
+
+**The control needs sixty-six callers**, because the defect only exists past
+the width of one word:
+
+```text
+ticket 0       routed to a 2 us remote target, still in the mesh
+tickets 1..64  bypasses to an instant local target, all parked in
+               await_bypass_turn()
+ticket 65      bypass whose target throws, unwinding with gap 65
+
+fixed     routed at index 1, first parked bypass at index 2
+mutated   routed at index 65, first parked bypass at index 1
+```
+
+Registry entry `completion-window-overflow-advances-prefix` restores the fixed
+64-bit test and the advancing overflow together — both halves, because either
+alone is not the defect: shrinking the window without advancing merely trips
+the counter, and advancing without shrinking is unreachable and would register
+as a control that detects nothing.
+
+### 2 — the debug taxonomy fix broke a different parity
+
+§4k made `transport_dbg` distinguish a command error from a burst error, to
+match `check_common_payload_rules()`. It then folded zero length and a null
+data pointer into the burst case, with a comment calling that deliberate:
+"both describe a payload whose *shape* names no bytes".
+
+Both transports check those two conditions **separately from the payload
+rules**, and both answer `TLM_GENERIC_ERROR_RESPONSE`
+(`chip_b_transport`, `noc_b_transport`). So the same malformed payload came
+back as a burst error through `transport_dbg` and a generic error through
+`b_transport` — "the status depends on which API you used", which is precisely
+what the fix was for. Reasoning independently about what each condition *ought*
+to mean is how that happened; the mapping now mirrors the normal path in full
+instead.
+
+The parity checks call **both transports with the same payload and compare**,
+rather than asserting a status literal on the debug side. A literal is a second
+copy of the taxonomy that can drift from the first, and it is what let the
+original break through. The null-pointer case is checked separately from the
+zero-length one even though the transports test them in one `if`: nothing
+forces a future split of that branch to keep them together.
+
+### Measured after both
+
+```text
+floo_noc_model            42/42
+mutation registry         60 detected, 0 missed
+TPU_V3 Release            55/55, 0 Skipped     (ctest -L tpu_v3)
+TPU_V3 Debug              55/55, 0 Skipped
+```
+
+## 4m. Three documentation findings
+
+Nothing in this entry changes behaviour. That is what makes it worth recording:
+every one of the three is a **statement about the code that the code stopped
+making true**, written by me in the same edits that changed the code.
+
+### 1 — the public header still described the window I had just replaced
+
+`prefix_overflows()`'s contract in `noc_interconnect.h` said the window is
+"a fixed 64-ticket window" and that a wider gap "falls back to advancing the
+prefix regardless". §4l made both false: the window grows when a ticket is
+taken, and the branch refuses to advance.
+
+The consequence was worse than staleness. The old text told a reader that a
+non-zero counter means "the ordering guarantee is degraded" — reordering. The
+actual failure is now the opposite: the ticket is dropped and the channel
+**stalls**. Someone debugging a hang would have read the one published
+diagnostic pointing at it and been sent to look for a reordering that never
+happened.
+
+I updated the implementation comment in the `.cpp` and not the header in the
+same edit. §4l closed with the observation that a wrong comment is more
+dangerous than wrong code, because it is what the next reader believes instead
+of checking. This is that, one file over, in the same change.
+
+### 2 — the erratum about manifests was itself wrong about a manifest
+
+§4l's predecessor stated that v1.4's and v1.5's artifact manifests "each cover
+two living documents — this file and `NOC_MODEL_ARCHITECTURE.vi.md`". Reading
+the manifests:
+
+```text
+v1.4   NOC_MODEL_ARCHITECTURE.vi.md, NOC_MODEL_ARCHITECTURE.vi.docx
+       -- no STATUS.md at all
+v1.5   NOC_MODEL_ARCHITECTURE.vi.md, STATUS.md
+```
+
+So the claim was wrong for v1.4 twice over: it names a file that is not there
+and misses a `.docx` that is. The recovery recipe was incomplete to match — it
+gave the command for `STATUS.md` only, which does nothing for the one member
+v1.4 actually fails on.
+
+And the two baselines need **different commits**, which the corrected text now
+says explicitly: v1.5's `STATUS.md` is at `8d94ca3`, one commit past the
+`963466e` its own `SIGNOFF.md` names, while v1.4's architecture document is the
+copy `963466e` still carries — because v1.5 is what changed it. Reaching for
+one commit for both is the mistake the recipe now warns about.
+
+Writing an erratum about unverified claims without verifying the erratum is a
+particular way to be wrong, and it is recorded rather than quietly corrected.
+
+### 3 — the restored handoff presented a v1.4 snapshot as current guidance
+
+`AI_HANDOFF_CONTEXT.md` was restored earlier in Phase 9 after a review found
+its deletion had removed an architecture source artifact still referenced as
+required evidence. Restoring it was right; leaving it saying "an AI or engineer
+taking over this work should read this document before making changes" was not.
+It stops at 2026-08-07: 41 tests, 51 controls, no D1, no D24–D26, no completion
+ordering, no admission-slot ownership.
+
+The risk is concrete rather than tidiness. Several invariants added since are
+not derivable from anything in it, so someone following its own instruction and
+then editing `src/noc_interconnect.cpp` could undo them without noticing.
+
+Labelled rather than rewritten. Rewriting 180 KB to match a tree the document
+was never verified against replaces a dated record with an unverified one,
+which is worse than a dated record that says so. A new section 0 states the
+snapshot date, tabulates what has changed, and names the reading order for the
+current state.
+
+## 4n. Two findings the parity claim brought into view
+
+Both are in code that predates this phase's edits. They surface now because
+§4l–§4m claimed the debug path mirrors the normal path's taxonomy and that D24
+had been retracted — and a claim is what makes the places it does not hold
+findable.
+
+### 1 — a silent downstream target's byte count was read as a refusal
+
+`transport_dbg` has no obligation to set a response status; many targets just
+return a byte count. So a payload that passes every check in this endpoint and
+then finds **no mapped target** downstream comes back with the count zero and
+the status untouched, and the endpoint has to say what happened.
+
+It said `TLM_GENERIC_ERROR_RESPONSE` for anything short of a full serve.
+`INTERFACE_CONTRACT.md` §1 reserves that for "a target that decoded the access
+and refused it", and gives `TLM_ADDRESS_ERROR_RESPONSE` to "an address that
+does not decode". Nothing decoded this one — and the same address through
+`b_transport` comes back an address error. So the debug and normal paths
+disagreed again, one layer below where §4m fixed them.
+
+The byte count is the only evidence available, and it carries exactly the
+distinction §1 draws:
+
+```text
+served == requested   OK
+served == 0           nothing claimed the address     -> ADDRESS_ERROR
+0 < served < needed   something decoded it and stopped -> GENERIC
+```
+
+The one case this cannot separate is a target that decodes an access and
+refuses all of it, and that is the case §1 tells the *target* to set its own
+status for. Guessing wrong for a target that stayed silent when the contract
+told it to speak is the right way round, and it is stated in the helper rather
+than left implicit.
+
+Both branches are checked, not just the interesting one: without the partial
+case a path that answered every short serve with an address error would pass.
+`recorder::debug_bytes` models the three downstream behaviours and deliberately
+never sets a status.
+
+### 2 — the report contradicted itself, and a test held the contradiction open
+
+D24 was retracted in §4j when the composition measured a peak of 2, and
+`outbound_in_flight()` / `peak_outbound_in_flight()` were added. Three things
+were left behind:
+
+* `report()` printed the in-flight peaks and then, three lines later, "outstanding
+  is deliberately not measured here (decision record D24)" — the same function
+  printing a number and denying it exists;
+* **the gate asserted that sentence was present**, so the test was not merely
+  failing to catch the contradiction, it was requiring it. A correct `report()`
+  would have failed the suite;
+* D24's "What this forbids" still banned adding an endpoint outstanding counter
+  without reopening the decision, while the counter was already there.
+
+The test now asserts the retracted sentence is **absent**. That direction is
+the point: asserting the presence of correct text lets a revert pass, and this
+is the second time in Phase 9 that a check written to lock in a claim locked in
+the wrong one instead.
+
+D24's prohibition is marked discharged rather than deleted. It required a
+recorded decision instead of a quiet addition, and it got one — the clause is
+why the counter arrived with a measurement and a retraction attached. What
+replaces it is narrower and still binding: the in-flight figure is per
+**transfer** and may not be compared with `noc_interconnect`'s per-port
+outstanding count, which is per transaction.
+
+### Measured after both
+
+```text
+TPU_V3 Release            55/55, 0 Skipped     (ctest -L tpu_v3)
+TPU_V3 Debug              55/55, 0 Skipped
+```
+
+`floo_noc_model` and its 60 controls are unchanged by this entry — it touches
+`components/TPU_V3` only — so the v1.5-delta figures in §4l stand.
+
 ## 4. What these controls do not cover
 
 Stated so they are not read as broader than they are.

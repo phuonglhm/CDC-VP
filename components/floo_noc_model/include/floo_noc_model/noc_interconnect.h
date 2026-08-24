@@ -456,6 +456,37 @@ public:
     /// that held calls exist and reach the ordering step, which is the part
     /// that would otherwise be dead code nobody notices rotting.
     std::uint64_t ordering_holds() const;
+
+    /// Ticket retirements the completion-order window could not represent.
+    /// **Expected to be zero always**, and what a non-zero value means is the
+    /// reason it is published.
+    ///
+    /// Completion order per port and channel is a contiguous retired prefix
+    /// plus a window recording tickets that retire *above* it — which happens
+    /// only when a call throws after taking its ticket and so cannot serve its
+    /// ordering wait. The window is **grown when a ticket is taken**, not fixed
+    /// at construction: a local bypass consumes no admission slot, so
+    /// `max_outstanding_per_port` does not bound how many tickets a channel can
+    /// have live, and any fixed size is a bound that traffic may exceed.
+    /// Growing it there rather than at retirement is deliberate — retirement
+    /// runs while an exception unwinds, where allocating could terminate the
+    /// process.
+    ///
+    /// So this counter reports something that should be **impossible**: the
+    /// window always spans what is live, because `done_seq` never moves
+    /// backwards. It is a counter rather than an assertion only because the
+    /// path runs inside `slot_guard::~slot_guard()` during unwinding, where
+    /// `SC_REPORT_ERROR` would terminate.
+    ///
+    /// **A non-zero value means that channel is stalled, not reordered.** The
+    /// unrepresentable ticket is dropped rather than absorbed by advancing the
+    /// prefix, so its retirement never arrives and everything ordered behind it
+    /// waits. That is the deliberate choice: advancing would release those
+    /// waiters over a ticket still in flight — a silent `MaxUniqueIds = 1` FIFO
+    /// violation reported only after the affected callers had returned. Read a
+    /// non-zero value as "the sizing rule is broken", not as "some transaction
+    /// completed out of order".
+    std::uint64_t prefix_overflows() const;
     bool wrapper_idle() const;
     std::uint64_t clock_gate_transitions() const;
     std::uint64_t mesh_quiescent_wrapper_busy_cycles() const;

@@ -1,0 +1,384 @@
+Script started on 2026-08-07 11:02:58+07:00 [<not executed on terminal>]
+/usr/bin/gcc -dumpfullversion
+11.5.0
+/usr/bin/g++ --version | head
+g++ (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14)
+Copyright (C) 2021 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+cmake -S . -B build \
+	-DSYSTEMC_HOME=/opt/systemc-2.3.4 \
+	-DFLOO_NOC_MODEL_BUILD_TESTS=ON
+-- The CXX compiler identification is GNU 11.5.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/g++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build
+cmake --build build --parallel
+gmake[1]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[2]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[  1%] [32mBuilding CXX object CMakeFiles/noc_interconnect.dir/src/noc_interconnect.cpp.o[0m
+[  3%] [32mBuilding CXX object tests/CMakeFiles/test_wormhole_arbiter.dir/test_wormhole_arbiter.cpp.o[0m
+[  3%] [32mBuilding CXX object tests/CMakeFiles/test_xy_route_select.dir/test_xy_route_select.cpp.o[0m
+[  5%] [32mBuilding CXX object tests/CMakeFiles/test_noc_counters.dir/test_noc_counters.cpp.o[0m
+[  6%] [32mBuilding CXX object tests/CMakeFiles/test_axi_endpoint.dir/test_axi_endpoint.cpp.o[0m
+[  7%] [32mBuilding CXX object tests/CMakeFiles/test_reference_model.dir/test_reference_model.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 10%] [32mBuilding CXX object tests/CMakeFiles/test_stream_fifo.dir/test_stream_fifo.cpp.o[0m
+[ 10%] [32mBuilding CXX object tests/CMakeFiles/test_floo_router.dir/test_floo_router.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 11%] [32mBuilding CXX object tests/CMakeFiles/test_rr_arb_tree.dir/test_rr_arb_tree.cpp.o[0m
+[ 12%] [32mBuilding CXX object tests/CMakeFiles/test_noc_metrics.dir/test_noc_metrics.cpp.o[0m
+[ 15%] [32mBuilding CXX object tests/CMakeFiles/test_axi_types.dir/test_axi_types.cpp.o[0m
+[ 15%] [32mBuilding CXX object tests/CMakeFiles/test_floo_mesh.dir/test_floo_mesh.cpp.o[0m
+[ 16%] [32mBuilding CXX object tests/CMakeFiles/test_meta_buffer.dir/test_meta_buffer.cpp.o[0m
+[ 18%] [32mBuilding CXX object tests/CMakeFiles/test_axi_chimney_pack.dir/test_axi_chimney_pack.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 19%] [32mBuilding CXX object tests/CMakeFiles/test_axi_noc.dir/test_axi_noc.cpp.o[0m
+[ 20%] [32mBuilding CXX object tests/CMakeFiles/test_rob_order_gate.dir/test_rob_order_gate.cpp.o[0m
+[ 22%] [32mBuilding CXX object tests/CMakeFiles/test_axi_noc_chimney.dir/test_axi_noc_chimney.cpp.o[0m
+[ 23%] [32mBuilding CXX object tests/CMakeFiles/route_trace_sc.dir/route_trace_sc.cpp.o[0m
+[ 24%] [32mBuilding CXX object tests/CMakeFiles/fifo_trace_sc.dir/fifo_trace_sc.cpp.o[0m
+[ 25%] [32mBuilding CXX object tests/CMakeFiles/test_axi_chimney_manager_response.dir/test_axi_chimney_manager_response.cpp.o[0m
+[ 27%] [32mBuilding CXX object tests/CMakeFiles/test_axi_lanes_odr.dir/test_axi_lanes_odr.cpp.o[0m
+[ 28%] [32mBuilding CXX object tests/CMakeFiles/test_axi_lanes_odr.dir/test_axi_lanes_odr_second.cpp.o[0m
+[ 29%] [32mBuilding CXX object tests/CMakeFiles/test_axi_lanes.dir/test_axi_lanes.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 31%] [32mBuilding CXX object tests/CMakeFiles/axi_sizing_trace.dir/axi_sizing_trace.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 32%] [32mBuilding CXX object tests/CMakeFiles/arbiter_trace_sc.dir/arbiter_trace_sc.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 33%] [32mBuilding CXX object tests/CMakeFiles/chimney_req_trace_sc.dir/chimney_req_trace_sc.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 35%] [32mBuilding CXX object tests/CMakeFiles/chimney_rsp_trace_sc.dir/chimney_rsp_trace_sc.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 36%] [32mBuilding CXX object tests/CMakeFiles/mesh_trace_sc.dir/mesh_trace_sc.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 37%] [32mBuilding CXX object tests/CMakeFiles/chimney_rsp_timing_trace_sc.dir/chimney_rsp_timing_trace_sc.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 38%] [32mBuilding CXX object tests/CMakeFiles/chimney_mgr_rsp_trace_sc.dir/chimney_mgr_rsp_trace_sc.cpp.o[0m
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 40%] [32mBuilding CXX object tests/CMakeFiles/rob_trace_sc.dir/rob_trace_sc.cpp.o[0m
+[ 41%] [32mBuilding CXX object tests/CMakeFiles/chimney_timing_trace_sc.dir/chimney_timing_trace_sc.cpp.o[0m
+[ 42%] [32mBuilding CXX object tests/CMakeFiles/router_trace_sc.dir/router_trace_sc.cpp.o[0m
+[ 44%] [32m[1mLinking CXX executable test_rr_arb_tree[0m
+[ 45%] [32m[1mLinking CXX executable test_rob_order_gate[0m
+[ 46%] [32m[1mLinking CXX executable test_axi_types[0m
+[ 48%] [32m[1mLinking CXX executable test_reference_model[0m
+[ 49%] [32m[1mLinking CXX executable test_axi_lanes_odr[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 49%] Built target test_rob_order_gate
+[ 50%] [32m[1mLinking CXX executable test_meta_buffer[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 50%] Built target test_rr_arb_tree
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 50%] Built target test_axi_types
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 50%] Built target test_axi_lanes_odr
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 50%] Built target test_reference_model
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 50%] Built target test_meta_buffer
+[ 51%] [32m[1mLinking CXX executable test_stream_fifo[0m
+[ 53%] [32m[1mLinking CXX executable test_noc_metrics[0m
+[ 54%] [32m[1mLinking CXX executable test_wormhole_arbiter[0m
+[ 55%] [32m[1mLinking CXX executable test_xy_route_select[0m
+[ 57%] [32m[1mLinking CXX executable test_axi_chimney_pack[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 57%] Built target test_noc_metrics
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 57%] Built target test_stream_fifo
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 58%] [32m[1mLinking CXX executable test_axi_lanes[0m
+[ 58%] Built target test_xy_route_select
+[ 58%] Built target test_wormhole_arbiter
+[ 58%] Built target test_axi_chimney_pack
+[ 59%] [32m[1mLinking CXX executable axi_sizing_trace[0m
+[ 61%] [32m[1mLinking CXX executable route_trace_sc[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 61%] Built target test_axi_lanes
+[ 62%] [32m[1mLinking CXX executable fifo_trace_sc[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 62%] Built target axi_sizing_trace
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 63%] [32m[1mLinking CXX executable chimney_req_trace_sc[0m
+[ 63%] Built target route_trace_sc
+[ 64%] [32m[1mLinking CXX executable arbiter_trace_sc[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 64%] Built target fifo_trace_sc
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 64%] Built target chimney_req_trace_sc
+[ 66%] [32m[1mLinking CXX executable chimney_rsp_trace_sc[0m
+[ 67%] [32m[1mLinking CXX executable test_axi_endpoint[0m
+[ 68%] [32m[1mLinking CXX executable test_noc_counters[0m
+[ 70%] [32m[1mLinking CXX executable rob_trace_sc[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 70%] Built target arbiter_trace_sc
+[ 71%] [32m[1mLinking CXX executable test_floo_mesh[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 71%] Built target chimney_rsp_trace_sc
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 71%] Built target test_axi_endpoint
+[ 72%] [32m[1mLinking CXX executable test_floo_router[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 72%] Built target test_noc_counters
+[ 72%] Built target rob_trace_sc
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 72%] Built target test_floo_mesh
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 72%] Built target test_floo_router
+[ 74%] [32m[1mLinking CXX executable test_axi_chimney_manager_response[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 75%] [32m[1mLinking CXX executable chimney_rsp_timing_trace_sc[0m
+[ 75%] Built target test_axi_chimney_manager_response
+[ 76%] [32m[1mLinking CXX executable router_trace_sc[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 76%] Built target chimney_rsp_timing_trace_sc
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 76%] Built target router_trace_sc
+[ 77%] [32m[1mLinking CXX executable mesh_trace_sc[0m
+[ 79%] [32m[1mLinking CXX executable chimney_timing_trace_sc[0m
+[ 80%] [32m[1mLinking CXX executable chimney_mgr_rsp_trace_sc[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 80%] Built target mesh_trace_sc
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 80%] Built target chimney_timing_trace_sc
+[ 80%] Built target chimney_mgr_rsp_trace_sc
+[ 81%] [32m[1mLinking CXX executable test_axi_noc[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 81%] Built target test_axi_noc
+[ 83%] [32m[1mLinking CXX executable test_axi_noc_chimney[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 83%] Built target test_axi_noc_chimney
+[ 84%] [32m[1mLinking CXX static library libnoc_interconnect.a[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 84%] Built target noc_interconnect
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[3]: Entering directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 89%] [32mBuilding CXX object tests/CMakeFiles/test_noc_interconnect_stress.dir/test_noc_interconnect_stress.cpp.o[0m
+[ 89%] [32mBuilding CXX object tests/CMakeFiles/test_noc_interconnect_concurrency.dir/test_noc_interconnect_concurrency.cpp.o[0m
+[ 89%] [32mBuilding CXX object tests/CMakeFiles/test_noc_interconnect.dir/test_noc_interconnect.cpp.o[0m
+[ 89%] [32mBuilding CXX object tests/CMakeFiles/test_noc_interconnect_fast.dir/test_noc_interconnect_fast.cpp.o[0m
+[ 90%] [32mBuilding CXX object tests/CMakeFiles/test_noc_interconnect_observer.dir/test_noc_interconnect_observer.cpp.o[0m
+[ 92%] [32mBuilding CXX object tests/CMakeFiles/test_noc_interconnect_bad_config.dir/test_noc_interconnect_bad_config.cpp.o[0m
+[ 93%] [32m[1mLinking CXX executable test_noc_interconnect_bad_config[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[ 93%] Built target test_noc_interconnect_bad_config
+[ 94%] [32m[1mLinking CXX executable test_noc_interconnect_fast[0m
+[ 96%] [32m[1mLinking CXX executable test_noc_interconnect_concurrency[0m
+[ 97%] [32m[1mLinking CXX executable test_noc_interconnect_observer[0m
+[ 98%] [32m[1mLinking CXX executable test_noc_interconnect_stress[0m
+[100%] [32m[1mLinking CXX executable test_noc_interconnect[0m
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[100%] Built target test_noc_interconnect_fast
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[100%] Built target test_noc_interconnect_concurrency
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[100%] Built target test_noc_interconnect_observer
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[100%] Built target test_noc_interconnect_stress
+gmake[3]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+[100%] Built target test_noc_interconnect
+gmake[2]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+gmake[1]: Leaving directory '/home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build'
+ctest --test-dir build --output-on-failure
+Internal ctest changing into directory: /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build
+Test project /home/duyptt_HW/Desktop/VP_INTER/upgit/CDC-VP/components/floo_noc_model/build
+      Start  1: test_reference_model
+ 1/41 Test  #1: test_reference_model ................   Passed    0.00 sec
+      Start  2: test_stream_fifo
+ 2/41 Test  #2: test_stream_fifo ....................   Passed    0.00 sec
+      Start  3: test_xy_route_select
+ 3/41 Test  #3: test_xy_route_select ................   Passed    0.00 sec
+      Start  4: test_wormhole_arbiter
+ 4/41 Test  #4: test_wormhole_arbiter ...............   Passed    0.00 sec
+      Start  5: test_floo_router
+ 5/41 Test  #5: test_floo_router ....................   Passed    0.00 sec
+      Start  6: test_floo_mesh
+ 6/41 Test  #6: test_floo_mesh ......................   Passed    0.01 sec
+      Start  7: test_noc_counters
+ 7/41 Test  #7: test_noc_counters ...................   Passed    0.00 sec
+      Start  8: test_noc_metrics
+ 8/41 Test  #8: test_noc_metrics ....................   Passed    0.00 sec
+      Start  9: test_axi_types
+ 9/41 Test  #9: test_axi_types ......................   Passed    0.00 sec
+      Start 10: test_axi_chimney_pack
+10/41 Test #10: test_axi_chimney_pack ...............   Passed    0.00 sec
+      Start 11: test_rr_arb_tree
+11/41 Test #11: test_rr_arb_tree ....................   Passed    0.00 sec
+      Start 12: test_meta_buffer
+12/41 Test #12: test_meta_buffer ....................   Passed    0.00 sec
+      Start 13: test_rob_order_gate
+13/41 Test #13: test_rob_order_gate .................   Passed    0.00 sec
+      Start 14: test_axi_endpoint
+14/41 Test #14: test_axi_endpoint ...................   Passed    0.00 sec
+      Start 15: test_axi_noc
+15/41 Test #15: test_axi_noc ........................   Passed    0.06 sec
+      Start 16: test_axi_noc_chimney
+16/41 Test #16: test_axi_noc_chimney ................   Passed    0.02 sec
+      Start 17: test_axi_chimney_manager_response
+17/41 Test #17: test_axi_chimney_manager_response ...   Passed    0.00 sec
+      Start 18: test_noc_interconnect
+18/41 Test #18: test_noc_interconnect ...............   Passed    0.32 sec
+      Start 19: test_noc_interconnect_stress
+19/41 Test #19: test_noc_interconnect_stress ........   Passed    0.16 sec
+      Start 20: test_noc_interconnect_concurrency
+20/41 Test #20: test_noc_interconnect_concurrency ...   Passed    0.02 sec
+      Start 21: test_noc_interconnect_observer
+21/41 Test #21: test_noc_interconnect_observer ......   Passed    0.26 sec
+      Start 22: test_noc_interconnect_fast
+22/41 Test #22: test_noc_interconnect_fast ..........   Passed    0.31 sec
+      Start 23: test_axi_lanes
+23/41 Test #23: test_axi_lanes ......................   Passed    0.01 sec
+      Start 24: test_axi_lanes_odr
+24/41 Test #24: test_axi_lanes_odr ..................   Passed    0.00 sec
+      Start 25: test_noc_interconnect_bad_config
+25/41 Test #25: test_noc_interconnect_bad_config ....   Passed    0.07 sec
+      Start 26: test_route_trace_sc
+26/41 Test #26: test_route_trace_sc .................   Passed    0.00 sec
+      Start 27: test_fifo_trace_sc_d2
+27/41 Test #27: test_fifo_trace_sc_d2 ...............   Passed    0.00 sec
+      Start 28: test_fifo_trace_sc_d4
+28/41 Test #28: test_fifo_trace_sc_d4 ...............   Passed    0.00 sec
+      Start 29: test_axi_sizing_trace
+29/41 Test #29: test_axi_sizing_trace ...............   Passed    0.00 sec
+      Start 30: test_chimney_req_trace_sc
+30/41 Test #30: test_chimney_req_trace_sc ...........   Passed    0.00 sec
+      Start 31: test_chimney_rsp_trace_sc
+31/41 Test #31: test_chimney_rsp_trace_sc ...........   Passed    0.00 sec
+      Start 32: test_mesh_trace_sc
+32/41 Test #32: test_mesh_trace_sc ..................   Passed    0.06 sec
+      Start 33: test_chimney_rsp_timing_trace_sc
+33/41 Test #33: test_chimney_rsp_timing_trace_sc ....   Passed    0.00 sec
+      Start 34: test_chimney_mgr_rsp_trace_sc
+34/41 Test #34: test_chimney_mgr_rsp_trace_sc .......   Passed    0.00 sec
+      Start 35: test_chimney_timing_trace_sc
+35/41 Test #35: test_chimney_timing_trace_sc ........   Passed    0.00 sec
+      Start 36: test_rob_trace_sc
+36/41 Test #36: test_rob_trace_sc ...................   Passed    0.00 sec
+      Start 37: test_router_trace_sc_d2
+37/41 Test #37: test_router_trace_sc_d2 .............   Passed    0.01 sec
+      Start 38: test_router_trace_sc_d0
+38/41 Test #38: test_router_trace_sc_d0 .............   Passed    0.01 sec
+      Start 39: test_arbiter_trace_sc_n2
+39/41 Test #39: test_arbiter_trace_sc_n2 ............   Passed    0.00 sec
+      Start 40: test_arbiter_trace_sc_n4
+40/41 Test #40: test_arbiter_trace_sc_n4 ............   Passed    0.00 sec
+      Start 41: test_arbiter_trace_sc_n5
+41/41 Test #41: test_arbiter_trace_sc_n5 ............   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 41
+
+Total Test time (real) =   1.38 sec
+
+Script done on 2026-08-07 11:03:04+07:00 [COMMAND_EXIT_CODE="0"]

@@ -9,8 +9,69 @@ tests, 57/57 mutation controls detected with zero missed, and 12/12 isolated
 RTL cross-check runners against clean FlooNoC `9a6972a`. Raw transcripts,
 complete hashes, scope qualifications and the 133-file tested-source manifest
 are under `docs/signoff/v1.5/`; `SIGNOFF.md` is the audit entry point. This
-supersedes v1.4 for the current component snapshot without rewriting its
-historical evidence.
+supersedes v1.4 **for the exact snapshot bound by that manifest**, without
+rewriting its historical evidence.
+
+**The working tree is no longer that snapshot.** R-P9-3 subsequently changed
+`src/noc_interconnect.cpp`, `include/floo_noc_model/noc_interconnect.h`,
+`tests/test_noc_interconnect_local_bypass.cpp` and
+`rtl_crosscheck/run_negative_controls.sh`, and later review findings changed
+the first three again, so `sha256sum -c docs/signoff/v1.5/tested_source_manifest.sha256`
+reports mismatches. Quote v1.5 for the manifest, not for the tree: the current
+component snapshot is **unsigned** until a v1.6 baseline or a batch re-sign
+covers the delta.
+
+### Erratum: the artifact manifests are scoped wrong, in both baselines
+
+`docs/signoff/v1.4/artifact_manifest.sha256` and
+`docs/signoff/v1.5/artifact_manifest.sha256` each cover **living** documents
+alongside the frozen sign-off package. A living document changes by design, so
+each manifest goes red the moment the component moves on, and stays red.
+
+**The two manifests do not cover the same living documents**, and an earlier
+version of this section said they did:
+
+| Manifest | Living documents it hashes | Failing today |
+|---|---|---|
+| v1.4 | `NOC_MODEL_ARCHITECTURE.vi.md`, `NOC_MODEL_ARCHITECTURE.vi.docx` — **not** `STATUS.md` | the `.md`, changed for v1.5. The `.docx` still verifies |
+| v1.5 | `NOC_MODEL_ARCHITECTURE.vi.md`, `STATUS.md` | `STATUS.md`, changed by this section. The architecture `.md` still verifies |
+
+This is a **scope error, not tampering**, and it is not repaired by reverting
+the documents: v1.6 would have to change this file again and v1.5 would go red
+again, permanently. Neither manifest is edited to fix it — a signature that is
+rewritten when it becomes inconvenient signs nothing.
+
+**Verifying a signed baseline despite it.** The sign-off package proper —
+`SIGNOFF.md`, the four `script(1)` logs and `tested_source_manifest.sha256` —
+is frozen and verifies as listed. For the two living documents, check the
+signed bytes at the commit that carries them rather than in the working tree:
+
+```bash
+# v1.5's copy of this file
+git show 8d94ca3:components/floo_noc_model/docs/STATUS.md | sha256sum
+# -> e1d597e8a888b3bc580588b76606b87d0bdba7e7a8f9a725ec34ab654e92dbb0
+
+# v1.4's copy of the architecture document
+git show 963466e:components/floo_noc_model/docs/NOC_MODEL_ARCHITECTURE.vi.md \
+    | sha256sum
+# -> c76901185ff0f669b4802a7e1d7b1e51fc3bf916de65c78a5d9256c4968332e4
+```
+
+**The two baselines need different commits, and neither is the one its own
+`SIGNOFF.md` names.** v1.5's records `963466e` as the base of the dirty tree
+its gates ran on, but the signed bytes of *this* file reached git one commit
+later, at `8d94ca3` — while v1.4's architecture document is the copy `963466e`
+still carries, because v1.5 is what changed it. Reaching for a single commit
+for both is the mistake to avoid.
+
+The four v1.5 log files are **untracked** at the time of writing, so a fresh
+checkout cannot verify them at all until they are committed; the `.gitignore`
+rule that hid them is fixed, the commit is not mine to make.
+
+**Binding on the next baseline.** A v1.6 artifact manifest covers the sign-off
+package only. A living document that the sign-off relies on has its hash quoted
+inside `SIGNOFF.md`, which is itself hashed — bound, without making a
+permanently red line the normal state of a signed package.
 
 This is block-level RTL sign-off plus model-level verification of the TLM
 integration layer. It is not a claim of monolithic manager-to-subordinate RTL

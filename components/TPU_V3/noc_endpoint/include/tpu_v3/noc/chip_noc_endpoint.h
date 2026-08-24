@@ -265,14 +265,24 @@ public:
     //    question and cannot be made to answer this one. The two figures count
     //    different units of work and neither may be quoted as, compared with
     //    or summed with the other;
-    //  * **outstanding is deliberately not measured here.** In the Revision 1
-    //    composition `neo_external_bridge` arbitrates a core's two outbound
-    //    initiators onto one external socket and `chip_local_fabric` allows
-    //    one transaction per initiator, so an endpoint-level outbound
-    //    outstanding count is `<= 1` by construction — a constant printed in
-    //    the position of a measurement. The number that varies is the
-    //    interconnect's `MaxTxns` accounting, and it is already published.
-    //    Adding one here later means reopening D24, not a quiet addition.
+    //  * **outstanding is measured here too, per direction.** D24 first
+    //    deferred it on the reasoning that an endpoint-level outbound count
+    //    is `<= 1` by construction, because `neo_external_bridge` arbitrates
+    //    a core's two outbound initiators onto one external socket and
+    //    `chip_local_fabric` allows one transaction per initiator. That
+    //    reasoning covers **one core**. Two cores are two initiators on the
+    //    chip fabric, and in `annotated` mode the fabric charges port
+    //    occupancy to the caller's delay rather than blocking — so while one
+    //    core is suspended inside the NoC the other enters this endpoint.
+    //    Measured on the single-chip composition: **peak 2 in `detailed` NoC
+    //    mode, peak 1 in `fast`** — and the difference is the quantity, not
+    //    noise in it. Nothing downstream blocks in fast mode: the interconnect
+    //    annotates, `downstream_spends_delay` is off, and every call returns
+    //    before the next arrives. A fast-mode peak above 1 means something
+    //    suspended where it should have annotated, which is temporal
+    //    decoupling gone. D24 is corrected accordingly;
+    //    `TPU_V3_PHASE8_AUDIT.md` §5 had already recorded the fabric behaviour
+    //    that makes the detailed figure 2.
 
     /// Transfers presented by the chip, whatever their outcome.
     std::uint64_t outbound_transfers() const noexcept
@@ -395,6 +405,31 @@ public:
     // about the mesh; including it would drag the mean toward zero in
     // proportion to how many integration defects were present. A transfer
     // abandoned by a reset is not sampled either.
+
+    /// Transfers inside `chip_b_transport()` right now, and the most there
+    /// have ever been.
+    ///
+    /// A **transfer-level** quantity, and not the same thing as
+    /// `noc_interconnect::outstanding_transactions(port)`: a chunked transfer
+    /// is one of these and several of those. Neither may be quoted as the
+    /// other, which is the rule D24 states for latency and which applies here
+    /// for the same reason.
+    std::uint64_t outbound_in_flight() const noexcept
+    {
+        return outbound_in_flight_;
+    }
+    std::uint64_t peak_outbound_in_flight() const noexcept
+    {
+        return peak_outbound_in_flight_;
+    }
+    std::uint64_t inbound_in_flight() const noexcept
+    {
+        return inbound_in_flight_;
+    }
+    std::uint64_t peak_inbound_in_flight() const noexcept
+    {
+        return peak_inbound_in_flight_;
+    }
 
     sc_core::sc_time outbound_latency_total() const noexcept
     {
@@ -567,6 +602,11 @@ private:
     std::uint64_t protocol_errors_ = 0;
     std::uint64_t last_partial_bytes_ = 0;
     std::uint64_t last_inbound_partial_bytes_ = 0;
+
+    std::uint64_t outbound_in_flight_ = 0;
+    std::uint64_t peak_outbound_in_flight_ = 0;
+    std::uint64_t inbound_in_flight_ = 0;
+    std::uint64_t peak_inbound_in_flight_ = 0;
 
     sc_core::sc_time outbound_latency_total_ = sc_core::SC_ZERO_TIME;
     sc_core::sc_time outbound_latency_max_ = sc_core::SC_ZERO_TIME;

@@ -33,6 +33,8 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -62,6 +64,8 @@ constexpr std::uint64_t remote_base = 0x0001'0000;
 /// A second co-located region, owned by the same port, with a slow target. Used
 /// to hold a bypass open across the moment routed traffic drains.
 constexpr std::uint64_t slow_local_base = 0x0002'0000;
+/// A third co-located region, owned by the same port, whose target throws.
+constexpr std::uint64_t failing_local_base = 0x0003'0000;
 
 /// Byte-addressed storage with a small access latency, so the bypass's
 /// target-latency rounding is exercised rather than assumed away.
@@ -116,6 +120,38 @@ private:
 
     std::vector<unsigned char> storage_;
     sc_core::sc_time latency_;
+};
+
+/// A co-located target that throws instead of answering.
+///
+/// The wrapper's unwinding paths were unreachable from this bench before it
+/// existed, and unreachable code is untested code: both of them retire a
+/// completion ticket, and one of them used to retire it out of order. The
+/// bypass path calls its target directly from inside `b_transport`, so a
+/// target that throws is the one exception source a test can actually inject
+/// here — the routed path's own sources are all allocation failures.
+class throwing_target : public sc_core::sc_module {
+public:
+    tlm_utils::simple_target_socket<throwing_target> socket;
+
+    explicit throwing_target(sc_core::sc_module_name name)
+        : sc_core::sc_module(name)
+        , socket("socket")
+    {
+        socket.register_b_transport(this, &throwing_target::b_transport);
+    }
+
+    std::uint64_t entered = 0;
+
+private:
+    void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
+    {
+        (void)trans;
+        (void)delay;
+        ++entered;
+        throw std::runtime_error(
+            "throwing_target: injected downstream failure");
+    }
 };
 
 /// One upstream port.
@@ -288,6 +324,57 @@ private:
         }
         std::vector<unsigned char> data(4, static_cast<unsigned char>(tag_));
         drv_.access(tlm::TLM_WRITE_COMMAND, address_, data.data(), 4);
+        order_.push_back(tag_);
+        finished = true;
+    }
+
+    driver& drv_;
+    std::uint64_t address_;
+    int tag_;
+    sc_core::sc_time start_;
+    std::vector<int>& order_;
+};
+
+/// `order_probe` for a call that is expected to throw.
+///
+/// It records its tag on the way out like the others, so the completion order
+/// this bench compares includes the failing call rather than pretending it
+/// never happened, and it re-raises nothing: the point of the scenario is what
+/// the *other* two callers observe after this one unwinds.
+class failing_probe : public sc_core::sc_module {
+public:
+    SC_HAS_PROCESS(failing_probe);
+
+    failing_probe(sc_core::sc_module_name name, driver& drv,
+                  std::uint64_t address, int tag, sc_core::sc_time start,
+                  std::vector<int>& order)
+        : sc_core::sc_module(name)
+        , drv_(drv)
+        , address_(address)
+        , tag_(tag)
+        , start_(start)
+        , order_(order)
+    {
+        SC_THREAD(run);
+    }
+
+    bool threw = false;
+    bool finished = false;
+    sc_core::sc_time returned_at{sc_core::SC_ZERO_TIME};
+
+private:
+    void run()
+    {
+        if (start_ != sc_core::SC_ZERO_TIME) {
+            sc_core::wait(start_);
+        }
+        std::vector<unsigned char> data(4, static_cast<unsigned char>(tag_));
+        try {
+            drv_.access(tlm::TLM_WRITE_COMMAND, address_, data.data(), 4);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        returned_at = sc_core::sc_time_stamp();
         order_.push_back(tag_);
         finished = true;
     }
@@ -960,6 +1047,131 @@ int sc_main(int, char**)
                               sc_core::sc_time(250, sc_core::SC_NS),
                               sc_core::sc_time(350, sc_core::SC_NS), watch};
 
+    // ── a call that unwinds must not retire its ticket out of order ─────────
+    //
+    // Completion order per port and channel used to be a plain counter: every
+    // caller bumped `done_seq`, and `await_bypass_turn()` read "the count has
+    // reached my ticket" as "everything below me is done". Those agree only
+    // while retirement happens in ticket order — and the unwinding paths break
+    // exactly that. A call that throws after taking its ticket cannot serve an
+    // ordering wait, so it retires wherever it is.
+    //
+    // Three callers, one port, one channel:
+    //
+    //   ticket 0  routed to a 400 ns remote target — still in the mesh
+    //   ticket 1  bypass, target answers at once, parks in await_bypass_turn()
+    //   ticket 2  bypass whose target throws, unwinds at ~150 ns
+    //
+    // With a counter, ticket 2's retire moved `done_seq` 0 -> 1 and released
+    // ticket 1 while ticket 0 had not completed: a bypass overtaking a routed
+    // access issued before it, on a channel whose `MaxUniqueIds = 1` promises
+    // FIFO. `retire_ticket()` records the ticket instead, so the prefix does
+    // not move until ticket 0 really retires.
+    //
+    // **The failing call still comes back first, and must.** It is not a
+    // completion — it throws — and the order this checks is the order the two
+    // *responding* callers observe. Asserting a position for tag 2 would be
+    // asserting that a raised exception queues, which nothing promises.
+    std::vector<int> unwind_order;
+    noc_interconnect unwound{"unwound", 2, 2, 3, 1,
+                             sc_core::sc_time(1, sc_core::SC_NS), 4,
+                             noc_interconnect::timing_mode::detailed};
+    memory_target unwound_local{"unwound_local"};
+    memory_target unwound_remote{"unwound_remote",
+                                 sc_core::sc_time(400, sc_core::SC_NS)};
+    throwing_target unwound_failing{"unwound_failing"};
+    driver unwound_port{"unwound_port"};
+    unwound.place_initiator(0, {0, 0});
+    unwound_port.socket.bind(unwound.target_socket);
+    unwound.add_target(local_base, region_size, {0, 0},
+                       noc_interconnect::target_kind::memory,
+                       /*local_owner=*/0)
+        .bind(unwound_local.socket);
+    unwound.add_target(remote_base, region_size, {1, 1},
+                       noc_interconnect::target_kind::memory)
+        .bind(unwound_remote.socket);
+    unwound.add_target(failing_local_base, region_size, {0, 0},
+                       noc_interconnect::target_kind::memory,
+                       /*local_owner=*/0)
+        .bind(unwound_failing.socket);
+
+    // The same 0/100/150 ns separation the two scenarios above needed, and for
+    // the same reason: issue order is ticket order only when the calls are
+    // genuinely separated in time.
+    order_probe unwound_routed{"unwound_routed", unwound_port, remote_base, 0,
+                               sc_core::SC_ZERO_TIME, unwind_order};
+    order_probe unwound_bypass{"unwound_bypass", unwound_port, local_base, 1,
+                               sc_core::sc_time(100, sc_core::SC_NS),
+                               unwind_order};
+    failing_probe unwound_failed{"unwound_failed", unwound_port,
+                                 failing_local_base, 2,
+                                 sc_core::sc_time(150, sc_core::SC_NS),
+                                 unwind_order};
+
+    // ── the same rule, past the width of one machine word ───────────────────
+    //
+    // The scenario above needs three callers. This one needs sixty-six, and the
+    // difference is the point: the completion-order window used to be a single
+    // `std::uint64_t`, justified by a claim that `max_outstanding_per_port`
+    // bounds how many tickets can be live on one channel.
+    //
+    // **It does not.** A local bypass takes no admission slot — not creating
+    // routed work is what D1 is *for* — so bypass concurrency is not capped by
+    // anything. Sixty-four parked bypasses put the next ticket 65 above the
+    // prefix, past the end of one word, and the overflow branch resolved that
+    // by advancing the prefix anyway. That releases the bypass at ticket 1
+    // while the routed access at ticket 0 is still in the mesh, and the
+    // overflow counter records it only after those callers have returned.
+    //
+    //   ticket 0       routed to a 2 us remote target, still in the mesh
+    //   tickets 1..64  bypasses to an instant local target: each finishes its
+    //                  target access at once and parks in await_bypass_turn()
+    //   ticket 65      bypass whose target throws, unwinding with gap 65
+    //
+    // The window is now sized when a ticket is *taken*, where allocating is
+    // allowed, so it always spans what is live and the overflow branch is
+    // unreachable rather than merely unlikely.
+    constexpr int wide_parked = 64;
+    std::vector<int> wide_order;
+    noc_interconnect wide{"wide", 2, 2, 3, 1,
+                          sc_core::sc_time(1, sc_core::SC_NS), 4,
+                          noc_interconnect::timing_mode::detailed};
+    memory_target wide_local{"wide_local"};
+    memory_target wide_remote{"wide_remote",
+                              sc_core::sc_time(2, sc_core::SC_US)};
+    throwing_target wide_failing{"wide_failing"};
+    driver wide_port{"wide_port"};
+    wide.place_initiator(0, {0, 0});
+    wide_port.socket.bind(wide.target_socket);
+    wide.add_target(local_base, region_size, {0, 0},
+                    noc_interconnect::target_kind::memory, /*local_owner=*/0)
+        .bind(wide_local.socket);
+    wide.add_target(remote_base, region_size, {1, 1},
+                    noc_interconnect::target_kind::memory)
+        .bind(wide_remote.socket);
+    wide.add_target(failing_local_base, region_size, {0, 0},
+                    noc_interconnect::target_kind::memory, /*local_owner=*/0)
+        .bind(wide_failing.socket);
+
+    order_probe wide_routed{"wide_routed", wide_port, remote_base, 0,
+                            sc_core::SC_ZERO_TIME, wide_order};
+    // Separated by a nanosecond each, for the reason the two scenarios above
+    // record: issue order is ticket order only when the calls do not land in
+    // the same instant, and a tag assertion on same-instant tickets asserts the
+    // kernel's choice rather than the wrapper's rule.
+    std::vector<std::unique_ptr<order_probe>> wide_bypasses;
+    wide_bypasses.reserve(wide_parked);
+    for (int tag = 1; tag <= wide_parked; ++tag) {
+        wide_bypasses.push_back(std::make_unique<order_probe>(
+            ("wide_bypass_" + std::to_string(tag)).c_str(), wide_port,
+            local_base, tag,
+            sc_core::sc_time(100 + tag, sc_core::SC_NS), wide_order));
+    }
+    failing_probe wide_failed{"wide_failed", wide_port, failing_local_base,
+                              wide_parked + 1,
+                              sc_core::sc_time(300, sc_core::SC_NS),
+                              wide_order};
+
     // Bounded: a bypass that wedged an input FIFO would hang, and a hang has
     // to fail rather than stall the suite.
     sc_core::sc_start(sc_core::sc_time(500, sc_core::SC_US));
@@ -1063,6 +1275,89 @@ int sc_main(int, char**)
               "-- every waiter is released in one delta -- so what just "
               "changed is the kernel's resumption order for dynamic waiters, "
               "and the wrapper now needs to order them itself");
+    }
+
+    // ── the unwinding retire, observed ──────────────────────────────────────
+    //
+    // Every check below is a precondition of the one that matters, and they
+    // are asserted rather than assumed because each of them silently makes the
+    // scenario vacuous: a target that was never entered, a call that never
+    // threw, or a caller that never returned all leave the interesting order
+    // untested while the test still passes.
+    check(unwound_failing.entered == 1,
+          "the throwing co-located target was not entered exactly once, so the "
+          "unwinding path this scenario exists to exercise never ran");
+    check(unwound_failed.threw,
+          "the failing bypass returned normally. Its target throws, so the "
+          "exception must reach the caller -- if it does not, something in the "
+          "wrapper swallowed it and the unwinding retire never happened");
+    check(unwound_routed.finished && unwound_bypass.finished
+              && unwound_failed.finished,
+          "an unwind-order probe never finished. A ticket that is retired but "
+          "not recorded, or recorded but not retired, wedges the callers "
+          "ordered behind it");
+    check(unwound.prefix_overflows() == 0,
+          "a ticket retired outside the completion-order window, so the "
+          "ordering guarantee fell back to the imprecise counter this "
+          "scenario exists to replace");
+    check(unwind_order.size() == 3,
+          "all three unwind-order probes must have recorded");
+    if (unwind_order.size() == 3) {
+        std::cout << "unwinding retire order: " << unwind_order[0] << " "
+                  << unwind_order[1] << " " << unwind_order[2] << '\n';
+        std::size_t routed_at = 0;
+        std::size_t bypass_at = 0;
+        for (std::size_t i = 0; i < unwind_order.size(); ++i) {
+            if (unwind_order[i] == 0) {
+                routed_at = i;
+            }
+            if (unwind_order[i] == 1) {
+                bypass_at = i;
+            }
+        }
+        check(routed_at < bypass_at,
+              "a bypass completed before a routed access issued earlier on the "
+              "same port and channel, because a third call retired its ticket "
+              "while unwinding and moved the completion count past a ticket "
+              "that was still pending. Retirement has to carry its ticket");
+    }
+
+    // ── the wide scenario, observed ─────────────────────────────────────────
+    check(wide_failing.entered == 1,
+          "the wide scenario's throwing target was not entered exactly once");
+    check(wide_failed.threw,
+          "the wide scenario's failing bypass returned normally");
+    check(wide.prefix_overflows() == 0,
+          "a ticket retired outside the completion-order window with 64 "
+          "bypasses parked. The window is sized when a ticket is taken, so it "
+          "must always span what is live; reaching this means the sizing rule "
+          "is wrong, not that the window is too small");
+    check(wide_order.size()
+              == static_cast<std::size_t>(wide_parked) + 2,
+          "not every wide-scenario caller recorded; "
+              + std::to_string(wide_order.size()) + " of "
+              + std::to_string(wide_parked + 2));
+    if (wide_order.size() == static_cast<std::size_t>(wide_parked) + 2) {
+        std::size_t routed_at = 0;
+        std::size_t first_bypass_at = wide_order.size();
+        for (std::size_t i = 0; i < wide_order.size(); ++i) {
+            if (wide_order[i] == 0) {
+                routed_at = i;
+            }
+            if (wide_order[i] >= 1 && wide_order[i] <= wide_parked
+                && i < first_bypass_at) {
+                first_bypass_at = i;
+            }
+        }
+        std::cout << "wide unwinding retire: routed at index " << routed_at
+                  << ", first parked bypass at index " << first_bypass_at
+                  << " of " << wide_order.size() << '\n';
+        check(routed_at < first_bypass_at,
+              "with 64 bypasses parked, a ticket that unwound 65 above the "
+              "prefix released them anyway: a bypass completed before the "
+              "routed access issued before it. The window has to span every "
+              "live ticket, and a local bypass consumes no admission slot, so "
+              "max_outstanding_per_port does not bound how many there are");
     }
 
     if (failures != 0) {

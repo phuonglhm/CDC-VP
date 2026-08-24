@@ -15,6 +15,30 @@ namespace cdc::components::tpu_v3::noc {
 
 namespace {
 
+/// Counts a call in and out of a transport, and remembers the high-water mark.
+///
+/// Decrementing is the guard's job rather than a line at the end of the
+/// function, because both transports have early returns for refusals and one
+/// of them can throw. It is deliberately **not** cleared by `reset()`: the
+/// calls it counts are inside C++ stacks a reset cannot unwind, and zeroing it
+/// under them would make their destructors underflow — the Phase 8 lesson
+/// about reset releasing a port it does not own, one level down.
+struct in_flight_guard {
+    std::uint64_t& live;
+    std::uint64_t& peak;
+
+    in_flight_guard(std::uint64_t& live_ref, std::uint64_t& peak_ref)
+        : live(live_ref)
+        , peak(peak_ref)
+    {
+        ++live;
+        if (live > peak) {
+            peak = live;
+        }
+    }
+    ~in_flight_guard() { --live; }
+};
+
 using core::check_common_payload_rules;
 using core::common_payload_error;
 using core::expand_byte_enables;
@@ -583,6 +607,7 @@ void chip_noc_endpoint::chip_b_transport(tlm::tlm_generic_payload& trans,
 {
     trans.set_dmi_allowed(false);
     ++outbound_transfers_;
+    const in_flight_guard live(outbound_in_flight_, peak_outbound_in_flight_);
 
     // Captured before every early return, published only where the other
     // counters are (decision record D24). Taking it here rather than after the
@@ -708,6 +733,7 @@ void chip_noc_endpoint::noc_b_transport(tlm::tlm_generic_payload& trans,
 {
     trans.set_dmi_allowed(false);
     ++inbound_transfers_;
+    const in_flight_guard live(inbound_in_flight_, peak_inbound_in_flight_);
 
     const sc_core::sc_time entry = logical_time(delay);
 
@@ -788,6 +814,94 @@ void chip_noc_endpoint::noc_b_transport(tlm::tlm_generic_payload& trans,
     trans.set_response_status(status);
 }
 
+namespace {
+
+/// A debug refusal, answered the way `INTERFACE_CONTRACT.md` §1 requires of
+/// **any** TPU_V3 transport, `transport_dbg` included: a status on every
+/// return path and DMI off. Returning a bare zero left the caller reading the
+/// `TLM_INCOMPLETE_RESPONSE` it had set itself — which §1 says is a defect in
+/// the target, not a condition for the caller to handle.
+unsigned int refuse_debug(tlm::tlm_generic_payload& trans,
+                          tlm::tlm_response_status status)
+{
+    trans.set_dmi_allowed(false);
+    trans.set_response_status(status);
+    return 0;
+}
+
+/// The payload-rule outcome, named the way `INTERFACE_CONTRACT.md` §1 names it.
+///
+/// §1 distinguishes an invalid **command** from an invalid **burst shape**, and
+/// `check_common_payload_rules()` reports that distinction on the normal
+/// transport path. The debug path folded both into `TLM_BURST_ERROR_RESPONSE`,
+/// so a `TLM_IGNORE_COMMAND` debug access came back describing a burst it never
+/// had. §8 relaxes timing for debug, not the error taxonomy — a caller that
+/// switches between the two transports must not have to know which one it used
+/// to read the status.
+///
+/// **Three outcomes, not two**, and the third is the one an earlier version of
+/// this function got wrong. Zero length and a null data pointer are checked
+/// separately from the payload rules, and both transports answer them with
+/// `TLM_GENERIC_ERROR_RESPONSE`
+/// (`chip_b_transport`, `noc_b_transport`). Folding them into the burst case
+/// here — on the reasoning that a payload naming no bytes is a shape problem —
+/// swapped one parity break for another: the *same* malformed payload came back
+/// as a burst error through `transport_dbg` and a generic error through
+/// `b_transport`, which is exactly the "status depends on which API you used"
+/// the fix above exists to remove.
+///
+/// So this mirrors the normal path's taxonomy in full rather than reasoning
+/// independently about what each condition ought to mean.
+/// What a downstream debug target's silence means.
+///
+/// `transport_dbg` has no obligation to set a status — many targets just return
+/// a byte count — so when one comes back `TLM_INCOMPLETE_RESPONSE` the endpoint
+/// has to say what happened. It used to answer anything short of a full serve
+/// with `TLM_GENERIC_ERROR_RESPONSE`, and `INTERFACE_CONTRACT.md` §1 reserves
+/// that for "a target that decoded the access and refused it". A downstream
+/// fabric with **no mapped target** decoded nothing, and the same address
+/// through `b_transport` comes back `TLM_ADDRESS_ERROR_RESPONSE`.
+///
+/// The byte count is the only evidence available, and it is enough for the
+/// distinction §1 actually draws:
+///
+///  * **nothing served** — no target claimed the address. That is a decode
+///    miss, and decode misses are address errors;
+///  * **part served** — something decoded it and stopped partway, which is a
+///    refusal by a target that did decode.
+///
+/// A target that decodes an access and refuses all of it is the one case this
+/// cannot separate from a decode miss, and it is the case §1 tells that target
+/// to set its own status for. Guessing wrong for a target that stayed silent
+/// when the contract told it to speak is the right way round.
+tlm::tlm_response_status debug_outcome_status(unsigned int served,
+                                              std::uint64_t requested)
+{
+    if (served == requested) {
+        return tlm::TLM_OK_RESPONSE;
+    }
+    return served == 0 ? tlm::TLM_ADDRESS_ERROR_RESPONSE
+                       : tlm::TLM_GENERIC_ERROR_RESPONSE;
+}
+
+tlm::tlm_response_status debug_refusal_status(
+    const tlm::tlm_generic_payload& trans)
+{
+    switch (common_payload_error(trans)) {
+    case payload_rule_error::command:
+        return tlm::TLM_COMMAND_ERROR_RESPONSE;
+    case payload_rule_error::burst:
+        return tlm::TLM_BURST_ERROR_RESPONSE;
+    case payload_rule_error::none:
+        break;
+    }
+    // Reached only for the length and pointer checks the callers fold into the
+    // same branch, which is what the normal path calls generic.
+    return tlm::TLM_GENERIC_ERROR_RESPONSE;
+}
+
+} // namespace
+
 unsigned int chip_noc_endpoint::chip_transport_dbg(
     tlm::tlm_generic_payload& trans)
 {
@@ -798,26 +912,38 @@ unsigned int chip_noc_endpoint::chip_transport_dbg(
     // command, the streaming width and the byte-enable shape and says nothing
     // about the length, so it is refused here rather than forwarded into a
     // downstream debug target that may act on it.
+    trans.set_dmi_allowed(false);
     if (common_payload_error(trans) != payload_rule_error::none
         || trans.get_data_length() == 0 || trans.get_data_ptr() == nullptr) {
-        return 0;
+        return refuse_debug(trans, debug_refusal_status(trans));
     }
     if (overlaps_aperture(trans.get_address(), trans.get_data_length())) {
-        return 0;
+        return refuse_debug(trans, tlm::TLM_ADDRESS_ERROR_RESPONSE);
     }
     if (!span_fits(decode_region(trans.get_address()), trans.get_address(),
                    trans.get_data_length())) {
-        return 0;
+        return refuse_debug(trans, tlm::TLM_ADDRESS_ERROR_RESPONSE);
     }
-    return to_noc->transport_dbg(trans);
+    // A downstream debug target may leave the status alone — the stub in this
+    // component's own gate does — so the endpoint states the outcome rather
+    // than passing an untouched payload back to its caller.
+    trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+    const unsigned int served = to_noc->transport_dbg(trans);
+    if (trans.get_response_status() == tlm::TLM_INCOMPLETE_RESPONSE) {
+        trans.set_response_status(
+            debug_outcome_status(served, trans.get_data_length()));
+    }
+    trans.set_dmi_allowed(false);
+    return served;
 }
 
 unsigned int chip_noc_endpoint::noc_transport_dbg(
     tlm::tlm_generic_payload& trans)
 {
+    trans.set_dmi_allowed(false);
     if (common_payload_error(trans) != payload_rule_error::none
         || trans.get_data_length() == 0 || trans.get_data_ptr() == nullptr) {
-        return 0;
+        return refuse_debug(trans, debug_refusal_status(trans));
     }
     // Relative on the way in, absolute inside the chip, restored on the way
     // out -- the same convention `b_transport` uses and the same one
@@ -825,11 +951,16 @@ unsigned int chip_noc_endpoint::noc_transport_dbg(
     const std::uint64_t relative = trans.get_address();
     const std::uint64_t length = trans.get_data_length();
     if (relative >= aperture_size() || length > aperture_size() - relative) {
-        return 0;
+        return refuse_debug(trans, tlm::TLM_ADDRESS_ERROR_RESPONSE);
     }
     trans.set_address(aperture_base() + relative);
+    trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
     const unsigned int served = to_chip->transport_dbg(trans);
     trans.set_address(relative);
+    if (trans.get_response_status() == tlm::TLM_INCOMPLETE_RESPONSE) {
+        trans.set_response_status(debug_outcome_status(served, length));
+    }
+    trans.set_dmi_allowed(false);
     return served;
 }
 
@@ -860,6 +991,20 @@ void chip_noc_endpoint::reset()
     protocol_errors_ = 0;
     last_partial_bytes_ = 0;
     last_inbound_partial_bytes_ = 0;
+
+    // The peaks belong to the epoch and are restarted; `*_in_flight_` is not,
+    // for the reason `in_flight_guard` records.
+    //
+    // **Restarted from the live count, not from zero.** A reset can land while
+    // a transport is blocked downstream, and those calls are still in flight —
+    // that is precisely why the live counters survive. Zeroing the peaks under
+    // them published `peak < live`, a state the definition of a high-water mark
+    // makes impossible, and it stayed wrong after the old calls drained: the
+    // new epoch reported a peak of zero even though it had begun with transfers
+    // already inside. The peak of an epoch that starts with `n` calls in flight
+    // is at least `n`.
+    peak_outbound_in_flight_ = outbound_in_flight_;
+    peak_inbound_in_flight_ = inbound_in_flight_;
 
     outbound_latency_total_ = sc_core::SC_ZERO_TIME;
     outbound_latency_max_ = sc_core::SC_ZERO_TIME;
@@ -896,16 +1041,20 @@ std::string chip_noc_endpoint::report() const
         << inbound_partial_failures_ << " partial failures, "
         << inbound_target_errors_ << " target errors, "
         << inbound_foreign_refused_ << " foreign refused)\n"
+        << "  in flight: outbound peak " << peak_outbound_in_flight_
+        << ", inbound peak " << peak_inbound_in_flight_
+        << " (transfers, not the interconnect's per-port transactions)\n"
         << "  latency : outbound " << outbound_latency_total_.to_string()
         << " over " << outbound_latency_samples_ << " transfers, max "
         << outbound_latency_max_.to_string() << "; inbound "
         << inbound_latency_total_.to_string() << " over "
         << inbound_latency_samples_ << " transfers, max "
         << inbound_latency_max_.to_string() << '\n'
-        << "  latency is per **transfer** and is not comparable with"
-           " noc_interconnect::last_latency_cycles(port), which is per"
-           " transaction; outstanding is deliberately not measured here"
-           " (decision record D24)\n"
+        << "  latency and in-flight are per **transfer** and are not"
+           " comparable with noc_interconnect::last_latency_cycles(port) or"
+           " its per-port outstanding count, which are per transaction. One"
+           " transfer is one thing the chip asked for and may be several"
+           " transactions (decision record D24, corrected)\n"
         << "  protocol errors " << protocol_errors_
         << "; a target error is a refusal by the target, a refusal is one this"
            " endpoint made -- different events, different owners\n"
