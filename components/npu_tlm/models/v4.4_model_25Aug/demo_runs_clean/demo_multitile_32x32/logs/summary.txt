@@ -1,0 +1,24 @@
+case: demo_multitile_32x32
+A_shape: 8 32 144
+B_shape: 8 144 32
+C_shape: 8 32 32
+
+# TEST : Multi-output-tile conv (Cout=64)
+# WHAT : Cout=64 exceeds array columns -> multiple output tiles; exercises external-tile loop.
+[RUNTIME CONFIG]
+  ncontexts = 8
+  cxlim     = 40
+  cklim     = 1024
+  act_reps  = 2
+  wei_reps  = 4
+Execution cycles (start -> done) : 5031
+Contraction depth K (MAC/elem)   : 144
+Total MACs                       : 294912
+Throughput (MAC / cycle)         : 58.619
+Array utilization                : 5.72451 %   (MAC-per-cycle / peak)
+Output throughput (elem / cycle) : 0.407076
+Expected elements : 2048
+Mismatches        : 0
+[RESULT] TEST PASSED: NPU Exact Final matches SAURIA gold_dram with ZERO errors!
+
+status: PASS

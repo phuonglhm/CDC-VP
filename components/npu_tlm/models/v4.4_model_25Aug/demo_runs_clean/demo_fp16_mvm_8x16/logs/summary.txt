@@ -1,0 +1,18 @@
+case: demo_fp16_mvm_8x16
+A_shape: 1 8 64
+B_shape: 1 64 16
+C_shape: 1 8 16
+
+# TEST : FP16 MVM 8x16 (1x1 conv as GeMM)
+# WHAT : Single output tile; Cin=64, Cout=16 on the 16x8 PE array; FP16 half-precision activations/weights, float32 accumulate, round-to-fp16 once at output.
+[RUNTIME CONFIG]
+  ncontexts = 1
+  cxlim     = 16
+  cklim     = 128
+  act_reps  = 1
+  wei_reps  = 1
+Expected elements : 128
+Mismatches        : 0
+[RESULT] TEST PASSED: NPU FP16 matches SAURIA gold_dram within 16 ULP (exact=128, tol=0, max=0 ULP)!
+
+status: PASS

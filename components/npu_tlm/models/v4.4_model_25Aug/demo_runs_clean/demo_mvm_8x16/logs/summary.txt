@@ -1,0 +1,24 @@
+case: demo_mvm_8x16
+A_shape: 1 8 64
+B_shape: 1 64 16
+C_shape: 1 8 16
+
+# TEST : MVM 8x16 (1x1 conv as GeMM, preload)
+# WHAT : Single output tile; Cin=64, Cout=16 on the 16x8 PE array; preload accumulation ON.
+[RUNTIME CONFIG]
+  ncontexts = 1
+  cxlim     = 16
+  cklim     = 128
+  act_reps  = 1
+  wei_reps  = 1
+Execution cycles (start -> done) : 342
+Contraction depth K (MAC/elem)   : 64
+Total MACs                       : 8192
+Throughput (MAC / cycle)         : 23.9532
+Array utilization                : 18.7135 %   (MAC-per-cycle / peak)
+Output throughput (elem / cycle) : 0.374269
+Expected elements : 128
+Mismatches        : 0
+[RESULT] TEST PASSED: NPU Exact Final matches SAURIA gold_dram with ZERO errors!
+
+status: PASS

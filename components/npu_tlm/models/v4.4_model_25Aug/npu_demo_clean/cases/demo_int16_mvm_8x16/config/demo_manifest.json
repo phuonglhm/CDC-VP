@@ -1,0 +1,23 @@
+{
+  "case_name": "demo_int16_mvm_8x16",
+  "kind": "sauria_captured_case",
+  "description": "Captured from current SAURIA generated data and SystemC stimuli.",
+  "compile_time": {
+    "EVAL_X": 16,
+    "EVAL_Y": 8,
+    "A_REGION_BYTES": 8192,
+    "B_REGION_BYTES": 4096,
+    "C_REGION_BYTES": 4096
+  },
+  "runtime_files": {
+    "initial_dram": "stimuli/initial_dram.txt",
+    "gold_dram": "stimuli/gold_dram.txt",
+    "golden_stimuli": "stimuli/GoldenStimuli.txt",
+    "sauria_tmp_dir": "sauria_tmp"
+  },
+  "sauria_shapes_flat": {
+    "A_Mat_mvm": "1 8 64",
+    "B_Mat_mvm": "1 64 16",
+    "C_compute_mvm": "1 8 16"
+  }
+}
