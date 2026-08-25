@@ -1,5 +1,25 @@
 # TPU_V3 Architecture
 
+> **Active architecture boundary — 2026-08-25.** The machine under study is
+> one standalone Phase 7 NEO-CORE. Its external socket binds directly to Boot
+> ROM/global RAM/host I/O and no NoC is instantiated. See
+> [NEO_CORE_MICROBENCH_DSE_PLAN.md](NEO_CORE_MICROBENCH_DSE_PLAN.md). The
+> platform/chip/mesh hierarchy retained later in this file records completed
+> historical work; it is not the current composition target.
+
+```text
+standalone_neo_core
+├── riscv_vp_plusplus          one RV32GCV hart, scalar + RVV
+├── neo_hart_port              unified fetch/data decode onto three planes
+├── neo_control_fabric         32-bit AXI4-Lite register plane
+├── neo_local_sram_fabric      native banked local-data plane
+├── core_sram                  one shared local SRAM
+├── dma                        one independent NEO DMA
+├── mxu                        verified 64x64 INT8/INT32 engine
+├── transform                  Im2Col available; Col2Im unavailable
+└── external_bridge            direct standalone memory/host-I/O boundary
+```
+
 Companion to `TPU_V3_IMPLEMENTATION_PLAN.md`. The plan says *what must be
 built and in what order*; this file says *what the thing is*, at the level of
 detail a person needs to write or review one of its components.

@@ -1,5 +1,10 @@
 # TPU_V3 Phase 7 Audit — the NEO-CORE composition
 
+> **Active implementation baseline under D27, not a phase to extend toward a
+> chip.** Reuse this one-core `tpu_core` directly for the standalone DSE. Do not
+> proceed from this audit into Phase 8. The next task is G2/MB1 in
+> [NEO_CORE_MICROBENCH_DSE_PLAN.md](NEO_CORE_MICROBENCH_DSE_PLAN.md).
+
 Date: 2026-08-20
 
 Result: **complete**, review findings closed.

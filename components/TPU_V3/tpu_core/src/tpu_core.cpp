@@ -128,13 +128,14 @@ void tpu_core_config::validate(const std::string& context) const
         throw std::invalid_argument(
             context + ": chip " + std::to_string(chip)
             + " is outside 0.." + std::to_string(max_chips - 1)
-            + ". The limit is the 3-bit FlooNoC manager id, not a layout "
-              "preference (decision record D2)");
+            + ". This is the retained Revision 1 address-map/schema range, "
+              "not a FlooNoC node-count limit (decision D27)");
     }
     if (!address_map::valid_core(core)) {
         throw std::invalid_argument(
             context + ": core " + std::to_string(core)
-            + " is not 0 or 1; plan §4.1 freezes two cores per chip");
+            + " is not address-map slot 0 or 1; the D27 standalone harness "
+              "uses slot 0 only");
     }
     if (sram_capacity_bytes < address_map::core_sram_min_capacity
         || sram_capacity_bytes > address_map::core_sram_max_capacity) {

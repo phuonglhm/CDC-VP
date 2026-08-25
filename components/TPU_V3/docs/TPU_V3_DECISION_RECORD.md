@@ -1,7 +1,9 @@
 # TPU_V3 Architecture and Integration Decision Record
 
-Status: **Final approved for implementation; NEO-CORE interconnect frozen by D15; hart reset contract frozen by D19; architectural block names frozen by D20; bus-lock scope frozen by D22; Phase 9 NoC transport frozen by D23; endpoint
-counter ownership frozen by D24; remote-read shaping frozen by D25; admission-slot ownership frozen by D26**
+Status: **Standalone NEO-CORE experimental scope active under D27; NEO-CORE
+interconnect frozen by D15; hart reset contract frozen by D19; architectural
+block names frozen by D20. Chip/NoC decisions are retained historical evidence
+and are outside the active scope.**
 
 Initial decision date: 2026-08-08
 
@@ -25,6 +27,8 @@ D25 remote-read shaping date: 2026-08-22
 
 D26 admission-slot ownership date: 2026-08-24
 
+D27 standalone NEO-CORE/DSE rebaseline date: 2026-08-25
+
 D20 architectural block naming date: 2026-08-18
 
 Scope: TPU_V3 Phase 2 onward
@@ -45,7 +49,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | ID | Topic | Approved decision |
 | --- | --- | --- |
 | D1 | FlooNoC `NoLoopback` | Keep `NoLoopback=1`; add an explicit owner-aware local bypass and permit co-located manager/subordinate endpoints only through that contract |
-| D2 | Current system size | Revision 1 supports at most 8 chips / 16 TPU cores; a 32-core system requires a separate 16-chip NoC/address-map extension |
+| D2 | Historical system-size assumption | **Superseded for current work by D27.** The former 8-chip/16-core cap came from a SystemC adapter policy that assigned 3-bit AXI IDs by upstream port; it is not a FlooNoC RTL node-count limit and does not constrain the standalone study |
 | D3 | RV32GCV runtime and RVV reference | Use RISC-V VP++ as the TPU core's primary RV32GCV runtime; retain Spike commit `16c0b60119f65a648643cf5d41e4e38e871f0bad` only as an independent golden/differential reference |
 | D4 | RISC-V toolchain | Pin xPack `riscv-none-elf` GCC 15.2.0-1; use a freestanding `-nostdlib` RV32GCV smoke environment in Phase 2 |
 | D5 | CPU identity/reset configuration | Put `hart_id` and `reset_pc` in `cpu_config`; do not use default no-op virtual setters |
@@ -65,11 +69,81 @@ boundaries of the CDC-VP TPU_V3 model.
 | D19 | Full architectural reset for a NEO-CORE hart | **Full deterministic reset implemented in the VP++ wrapper.** The register, CSR and vector state is all publicly reachable and needs no upstream patch, so `reset_cpu()` stops being a restart. Two items stay explicit rather than hidden: the cycle counter turned out to need the fourth D8-mechanism patch and has it (`0004-d19-cycle-baseline-survives-reset.patch`), and reviving a terminated hart is out of Revision 1 scope and refused loudly. Implementation also found that a hart parked in `wfi` is not resumed by reset — the wake is necessary, not sufficient. Four state classes, not one rule: identity/configuration preserved (`mhartid`, `misa`, `vlenb`); specification-defined fields set per the privileged spec, `vtype`/`vl` among them; `sp` written by `init()`; and the remainder zeroed for reproducibility rather than because the spec requires it — with `time`/`mtime` outside all four as live CLINT state. Reset also releases the LR/SC reservation and bus lock, flushes the MMU TLB, and wakes a hart parked in `WFI`. `RegFile_T::reset_zero()` is not a register-file clear and `csrs` must never be reset by struct assignment. Gated by enumerating `csrs.register_mapping`, which covers every CSR with backing storage; derived views and live time CSRs are asserted separately |
 | D20 | Architectural block names | The NEO-CORE architecture and reports call the matrix-multiplication block **MXU** and the tensor-layout block **Transform**. **Sauria** is used only for source/backend provenance, and **Im2Col** is the currently implemented Transform operation, not the block name. Existing code/ABI identifiers (`sauria_matrix`, `image_transform`, `SA_CONTROL`) remain unchanged by this documentation-only naming decision |
 | D21 | Distribution boundary for a NEO-CORE binary | **Internal-build artifact.** CDC-VP may go public; a binary containing a NEO-CORE does not. The platform composes cores only in the internal configuration (both accelerator options on) and instantiates none in the default/public one, whose manifest keeps `sauria.linked` and `sauria.selectable` false. A placeholder MXU to give a public build a nominal NEO-CORE is refused |
-| D22 | LR/SC and AMO bus lock scope | **One lock per chip, shared by both harts.** The CPU backend's per-hart default excludes nobody; `tpu_chip` creates the lock and attaches it to both harts during elaboration, through an opaque handle so the public CPU header still exposes no VP++ type. Upstream `52d376d4` stays unbackported, on measured evidence rather than on deferral
+| D22 | LR/SC and AMO bus lock scope | **One lock per chip, shared by both harts.** The CPU backend's per-hart default excludes nobody; `tpu_chip` creates the lock and attaches it to both harts during elaboration, through an opaque handle so the public CPU header still exposes no VP++ type. Upstream `52d376d4` stays unbackported, on measured evidence rather than on deferral |
 | D26 | Admission-slot ownership across a bypass ordering hold | **A routed transaction owns its admission slot from the admission gate until it returns from `b_transport()`**, not until the mesh answers it. Releasing it in `complete_manager_transaction()` admitted a second caller while the first was parked in `await_earlier_bypass()`, so a bound of one ran two concurrent calls and `outstanding_transactions()` read zero for both. Requires splitting the two idle predicates: `network_idle()` stops consulting admission slots so the clock gate can still gate an empty mesh, `wrapper_idle()` starts consulting them so it cannot report idle while a caller has not returned |
 | D25 | Remote reads into a chip aperture | **Keep the whole chip aperture `target_kind::mmio`, and shape outbound reads at the endpoint** so every chunk is one the interconnect will not widen: naturally-aligned narrow prefix, bus-aligned full-width bulk, naturally-aligned narrow suffix. Publishing a bus-alignment restriction instead was rejected because it would silently narrow `neo_dma`'s already-frozen Phase 4 contract, which is gated at lengths 1, 2, 3, 7, 15, 63, 65 and odd addresses. No FlooNoC, address-map or socket-structure change |
 | D24 | Endpoint outstanding and latency counters | **Split by quantity, not by component.** The chip endpoint measures **transfer** latency, which only it can see, because a chunked transfer is one transfer to it and several transactions to the interconnect. Outstanding **is** measured here too, per direction — the original deferral reasoned from one core and was retracted on 2026-08-24 after the composition measured a peak of 2. Neither figure may be quoted as the other: a chunked transfer is one endpoint transfer and several interconnect transactions |
-| D23 | Phase 9 NoC transport | **Keep the shared single-AXI FlooNoC network unchanged.** Control/data virtual channels are *deprecated* at the pinned revision and cannot be added without leaving it; the narrow-wide network is live but answers a throughput requirement nobody has stated. Traffic class is a function of the address, taken from `region_kind`. Widths, protocol behaviour and the reset-of-in-flight rule are frozen in `TPU_V3_PHASE9_NOC_REBASELINE.md`; no new signed FlooNoC configuration is created
+| D23 | Phase 9 NoC transport | **Keep the shared single-AXI FlooNoC network unchanged.** Control/data virtual channels are *deprecated* at the pinned revision and cannot be added without leaving it; the narrow-wide network is live but answers a throughput requirement nobody has stated. Traffic class is a function of the address, taken from `region_kind`. Widths, protocol behaviour and the reset-of-in-flight rule are frozen in `TPU_V3_PHASE9_NOC_REBASELINE.md`; no new signed FlooNoC configuration is created |
+| D27 | Active standalone NEO-CORE study | **Use exactly one Phase 7 NEO-CORE, `mhartid=0`, direct Boot ROM/global RAM/host I/O and no NoC.** Characterize ReLU, vector dot, GEMV and GEMM across ten shapes in kernel-only and end-to-end modes, then select a Pareto set from measured bottlenecks. Phase 8/9 source and decisions remain historical and must not be linked into this harness. The old D2 manager-ID argument is not an RTL node-count rule and imposes no constraint on this study |
+
+## D27. Standalone NEO-CORE microbenchmark and DSE scope
+
+### Decision
+
+The active machine is exactly one existing Phase 7 `tpu_core` instance:
+
+```text
+chip index      0       address-map compatibility only
+core index      0       address-map compatibility only
+mhartid         0       firmware-visible identity
+external path   direct Boot ROM/global RAM/host-I/O target
+NoC             absent and forbidden from the benchmark dependency closure
+```
+
+The phrases `chip index` and `core index` do not reintroduce a chip
+composition. They are constructor/address-map inputs retained so the verified
+component need not be rewritten before characterization.
+
+The execution contract, workload shapes, measurement modes, knob readiness,
+accuracy boundaries and G0–G6 gates are authoritative in
+`NEO_CORE_MICROBENCH_DSE_PLAN.md`.
+
+### What D27 preserves
+
+* D14's one-hart/one-SRAM/one-DMA/one-MXU/one-Transform component structure;
+* D15's AXI4-Lite control, native local-data and external-memory split;
+* D16's distinction between annotated and arbitrated local-fabric timing;
+* the verified 64x64 INT8/INT32 MXU implementation source;
+* D18's Im2Col-only Transform boundary;
+* D19's deterministic hart reset;
+* D20's MXU and Transform architectural names;
+* the Phase 7 firmware-driven pipeline and independent golden comparison.
+
+### What D27 suspends
+
+Until a new explicit project-owner decision, do not schedule or use as a
+prerequisite:
+
+* a fixed number of NEO-COREs per chip;
+* `tpu_chip`, chip-local fabric or a shared chip endpoint;
+* FlooNoC attachment, mesh placement or multi-chip contention;
+* D1/D2/D22–D26 behavior in a benchmark result.
+
+The source and audits remain in the repository so previous evidence is not
+destroyed. `SUPERSEDED/OUT OF CURRENT SCOPE` is a scheduling and architecture
+boundary, not permission to delete user work.
+
+### Correction to the old D2 rationale
+
+The three-bit field discussed by D2 is an AXI transaction ID. FlooNoC routes a
+flit by `src_id`/`dst_id` coordinates, and different source nodes may carry the
+same AXI ID concurrently. The existing SystemC wrapper instead assigned one
+AXI ID value to each upstream port and capped the port count at eight; that is
+an adapter policy, not an RTL topology limit. No topology replacement is
+chosen here because D27 has no NoC. D2 remains historical and must not be used
+to constrain VLEN, DMA, SRAM or any other standalone-core experiment.
+
+### Gate
+
+D27 is implemented as a scope boundary only when:
+
+1. the standalone executable instantiates one `tpu_core` and reports
+   `mhartid=0`;
+2. its external socket binds directly to the standalone memory/host target;
+3. its link/manifest guard proves absence of `tpu_chip`, `chip_noc_endpoint`
+   and `floo_noc_model`;
+4. the existing Phase 7 pipeline produces the same golden result;
+5. every published result names its benchmark mode and timing fidelity.
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 
@@ -116,11 +190,11 @@ and mechanically validated.
 Implement and verify this before NoC/mesh Phase 9. It is a Phase 9 prerequisite,
 not a problem to discover during multi-chip traffic.
 
-## D2. Chip/core limit for Revision 1
+## D2. Historical chip/core limit assumption — superseded by D27
 
 ### Decision
 
-Revision 1 is limited to:
+The former Phase 0/1 composition was configured as:
 
 ```text
 8 TPU chips
@@ -130,13 +204,13 @@ Revision 1 is limited to:
 16 MXUs total
 ```
 
-The accelerator counts above are the D14 amendment to this size decision. The
-earlier four-MXU-per-chip count is superseded; the two-core-per-chip and NoC
-manager-limit reasoning are unchanged.
-
-This is an implementation limit caused by the current 3-bit FlooNoC manager
-ID and the one-aggregated-manager-per-chip architecture. It is not a general
-statement about TPU v3 scalability.
+Those figures describe the retained SystemC configuration/address-map schema,
+not an RTL FlooNoC capacity. The old rationale was wrong: the three-bit field is
+an AXI transaction ID, whereas NoC node routing uses source/destination
+coordinates. Different source nodes may use the same AXI ID. The existing
+SystemC wrapper assigned one ID value per upstream port and therefore imposed
+an eight-port adapter policy, but that policy cannot be promoted into a
+FlooNoC RTL node-count rule.
 
 The shipped configurations mean:
 
@@ -144,21 +218,18 @@ The shipped configurations mean:
 - `mesh_2x2.yaml`: 3 chips while one dedicated node hosts the global targets;
 - `single_chip.yaml`: 1 chip containing exactly 2 TPU cores.
 
-### 32-core consequence
+### Consequence under D27
 
-A requirement for 32 TPU cores means 16 chips and is outside Revision 1. It
-requires all of the following as one coordinated architecture change:
+The active study contains one NEO-CORE and no NoC. `max_chips = 8` and
+`cores_per_chip = 2` remain only to preserve the verified Revision 1 arrays,
+absolute address-map slots and hart-id formula while D27 uses slot 0/0. They
+must not be quoted as the standalone machine size or as an RTL limitation.
 
-1. widen the NoC manager ID from 3 bits to at least 4 bits;
-2. rerun the FlooNoC protocol and RTL cross-checks;
-3. resolve co-located target/manager behavior through D1;
-4. redesign the current address map, which reserves only eight 128 MiB chip
-   apertures in the remaining RV32 address space;
-5. update firmware headers, placement validation and scalability tests.
-
-Therefore `max_chips = 8` must be described as the **Revision 1 backend
-limit**. A future 32-core milestone must not silently increase the constant
-without completing the changes above.
+If multi-core/NoC work is reopened, the owner must separately choose endpoint
+placement, memory attachment and target core count, then validate the wrapper,
+coordinates, address map, outstanding-ID semantics and RTL. Increasing an AXI
+ID width is not an assumed prerequisite and changing `max_chips` alone is not
+a complete topology change.
 
 ## D3. RISC-V VP++ runtime and Spike golden reference
 

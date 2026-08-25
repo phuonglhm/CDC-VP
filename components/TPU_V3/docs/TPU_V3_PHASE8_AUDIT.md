@@ -1,5 +1,10 @@
 # TPU_V3 Phase 8 Audit — the dual-core TPU chip
 
+> **HISTORICAL / INACTIVE UNDER D27 — DO NOT CONTINUE THIS SCHEDULE.** The
+> dual-core chip source and evidence are retained, but the active machine is one
+> standalone NEO-CORE with no chip composition or NoC. This file is not a work
+> queue or prerequisite. Start with [README.md](README.md).
+
 Date: 2026-08-20
 
 Result: **complete**. Gate items met, decision record D8's deferred item closed

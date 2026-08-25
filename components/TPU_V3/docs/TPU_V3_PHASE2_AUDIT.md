@@ -1,5 +1,9 @@
 # TPU_V3 Phase 2 — RISC-V VP++ Pre-Integration Audit
 
+> **D27 current-scope notice:** the VP++ fixes and RV32GCV evidence remain
+> active inputs, but this audit is not the current work queue. The active work
+> is one standalone NEO-CORE; start with [README.md](README.md).
+
 > **Historical architecture notice (D14/D15/D18/D20):** the CPU/RVV evidence,
 > fixes and closure gates in this audit remain valid. References to future SVM,
 > MXU or optional Sauria-backend work describe the pre-D14 plan and are

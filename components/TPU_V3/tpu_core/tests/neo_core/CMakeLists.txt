@@ -78,3 +78,98 @@ set_tests_properties(tpu_v3_neo_core_pipeline PROPERTIES
     LABELS "tpu_v3;integration;core;golden"
     SKIP_RETURN_CODE 77
     TIMEOUT 600)
+
+# ── D27 standalone one-core baseline ───────────────────────────────────────
+#
+# Reuse the verified Phase 7 firmware and harness, but compile both views for
+# chip-index 0/core-index 0. The indices only retain the existing absolute map;
+# this target instantiates no `tpu_chip`, endpoint or NoC.
+set(NEO_STANDALONE_FW_BUILD
+    "${CMAKE_CURRENT_BINARY_DIR}/standalone_firmware")
+set(NEO_STANDALONE_ELF
+    "${NEO_STANDALONE_FW_BUILD}/neo_core_standalone_pipeline.elf")
+set(NEO_STANDALONE_MANIFEST
+    "${CMAKE_CURRENT_BINARY_DIR}/neo_core_microbench_manifest.json")
+
+add_executable(neo_core_microbench test_neo_core_pipeline.cpp)
+target_link_libraries(neo_core_microbench PRIVATE
+    cdc::components::tpu_v3_neo_core)
+target_include_directories(neo_core_microbench PRIVATE
+    "${NEO_PIPELINE_FW_SRC}")
+target_compile_definitions(neo_core_microbench PRIVATE
+    NEO_PIPELINE_CHIP_ID=0u
+    NEO_PIPELINE_CORE_ID=0u)
+
+# A configure-time dependency-graph guard catches someone directly adding a
+# retained chip/NoC target. The post-build symbol guard below catches a hidden
+# or renamed link edge that reaches actual chip/NoC implementation code.
+get_target_property(_d27_harness_links neo_core_microbench LINK_LIBRARIES)
+get_target_property(_d27_core_links tpu_v3_neo_core LINK_LIBRARIES)
+string(JOIN ";" _d27_dependency_evidence
+    "${_d27_harness_links}" "${_d27_core_links}")
+if(_d27_dependency_evidence MATCHES
+   "(tpu_v3_tpu_chip|tpu_v3_chip_fabric|tpu_v3_noc_endpoint|floo_noc|noc_interconnect)")
+    message(FATAL_ERROR
+        "D27 standalone dependency closure contains chip/NoC code: "
+        "${_d27_dependency_evidence}")
+endif()
+
+add_custom_command(TARGET neo_core_microbench POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+            "-DBINARY=$<TARGET_FILE:neo_core_microbench>"
+            "-DNM=${CMAKE_NM}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_standalone_dependencies.cmake"
+    COMMENT "Checking the D27 standalone binary for chip/NoC dependencies"
+    VERBATIM)
+
+if(EXISTS "${NEO_PIPELINE_TOOLDIR}/riscv-none-elf-gcc")
+    set(_neo_standalone_copied "")
+    foreach(_f IN LISTS NEO_PIPELINE_FW_SOURCES)
+        add_custom_command(
+            OUTPUT "${NEO_STANDALONE_FW_BUILD}/${_f}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "${NEO_STANDALONE_FW_BUILD}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${NEO_PIPELINE_FW_SRC}/${_f}"
+                    "${NEO_STANDALONE_FW_BUILD}/${_f}"
+            DEPENDS "${NEO_PIPELINE_FW_SRC}/${_f}"
+            VERBATIM)
+        list(APPEND _neo_standalone_copied
+             "${NEO_STANDALONE_FW_BUILD}/${_f}")
+    endforeach()
+
+    add_custom_command(
+        OUTPUT "${NEO_STANDALONE_ELF}"
+        COMMAND ${CMAKE_COMMAND} -E env "TOOLDIR=${NEO_PIPELINE_TOOLDIR}"
+                make -C "${NEO_STANDALONE_FW_BUILD}"
+                PIPELINE_CHIP_ID=0 PIPELINE_CORE_ID=0
+                ELF=neo_core_standalone_pipeline.elf
+        DEPENDS ${_neo_standalone_copied}
+        COMMENT "Building the D27 standalone NEO-CORE pipeline image"
+        VERBATIM)
+    add_custom_target(neo_core_standalone_pipeline_image
+        DEPENDS "${NEO_STANDALONE_ELF}")
+    add_dependencies(neo_core_microbench
+        neo_core_standalone_pipeline_image)
+else()
+    message(STATUS
+        "RV32GCV cross toolchain not found at ${NEO_PIPELINE_TOOLDIR}; "
+        "tpu_v3_neo_core_d27_baseline will skip")
+endif()
+
+add_test(NAME tpu_v3_neo_core_d27_baseline
+    COMMAND neo_core_microbench "${NEO_STANDALONE_ELF}"
+            --manifest "${NEO_STANDALONE_MANIFEST}")
+set_tests_properties(tpu_v3_neo_core_d27_baseline PROPERTIES
+    LABELS "tpu_v3;integration;core;golden;d27;standalone"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 600)
+
+add_test(NAME tpu_v3_neo_core_d27_dependency_guard_control
+    COMMAND ${CMAKE_COMMAND}
+            "-DFORCED_SYMBOLS=cdc::components::tpu_v3::chip::tpu_chip::tpu_chip"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_standalone_dependencies.cmake")
+set_tests_properties(tpu_v3_neo_core_d27_dependency_guard_control PROPERTIES
+    LABELS "tpu_v3;integration;core;d27;standalone;negative_control"
+    WILL_FAIL TRUE
+    TIMEOUT 30)

@@ -1,9 +1,16 @@
 # TPU_V3 Phase 9 Audit — the chip NoC endpoint
 
+> **HISTORICAL / INACTIVE UNDER D27 — DO NOT RESUME PHASE 9.** The statements
+> below describe preserved Phase 9 engineering evidence as it existed before
+> the 2026-08-25 scope reset. They are not the current status or next-task list.
+> The active machine is one standalone NEO-CORE with no chip/NoC dependency.
+> Start with [README.md](README.md).
+
 Date of this entry: 2026-08-22
 
-Status: **Phase 9 is in progress.** This file is opened now rather than at the
-end of the phase, because `TPU_V3_PHASE9_NOC_REBASELINE.md` §9.2 names it as
+Historical status at the time of writing: **Phase 9 was in progress.** This
+file was opened rather than at the end of the phase, because
+`TPU_V3_PHASE9_NOC_REBASELINE.md` §9.2 names it as
 where the endpoint's negative controls have to be recorded, and there is no
 registered mutation harness under `components/TPU_V3` to record them anywhere
 else.
@@ -1250,8 +1257,11 @@ later), and the scope rule that binds v1.6: an artifact manifest covers the
 sign-off package only, and a living document the sign-off relies on has its
 hash quoted inside `SIGNOFF.md`, which is itself hashed.
 
-The four v1.5 logs remain **untracked**. The `.gitignore` rule that hid them is
-fixed (§4j finding 6); committing them is not mine to do.
+The four v1.5 logs were **untracked** when this was written; the `.gitignore`
+rule that hid them was fixed in §4j finding 6, and commit `8652fb0` on
+2026-08-24 tracked them along with v1.4's three. A fresh checkout can now
+verify both log sets — what it still cannot verify is the living documents,
+which is the scope error above and is not closed by any commit.
 
 ### 5 — the header claimed a measurement it had not made
 
@@ -1569,6 +1579,120 @@ TPU_V3 Debug              55/55, 0 Skipped
 
 `floo_noc_model` and its 60 controls are unchanged by this entry — it touches
 `components/TPU_V3` only — so the v1.5-delta figures in §4l stand.
+
+## 4o. Multi-chip contention: seven ways the gate was green for the wrong reason
+
+`test_chip_multi_on_mesh` closes the §6 evidence item "2x2 concurrent
+inter-chip traffic completing without deadlock or response misattribution". The
+scenario, the measurements and the boundaries are in
+`TPU_V3_PHASE9_NOC_REBASELINE.md` §7a. This entry records how it got there,
+because the gate passed **seven** times before it was worth anything, and the
+last three were only found by review.
+
+### Found while building it
+
+**1. `error_cause = 3` — both DMA endpoints external.** Revision 1 implements
+exactly `local -> external` and `external -> local`. The first draft moved chip
+B's SRAM into chip A's **core 1** SRAM, and core 1 is on the same chip but
+reached through the chip fabric — external too. "Same chip" and "local to this
+DMA" are different properties.
+
+**2. `wait()` outside a process (E519), in detailed mode only.** The read-back
+checks were in `sc_main` after `sc_start`; the detailed backend spends time
+inside `b_transport`, so those reads call `wait()` with no process to suspend.
+**`fast` hides it completely.** The single-chip gate carries a comment saying
+exactly this, and this file was written against that file and still learned it
+from the kernel.
+
+**3. The sampler stepped over the window it existed to measure.** Global RAM
+answered in 2 ns while `contention_watch` sampled every microsecond. This one
+did not fail — it reported zero overlap, which in `fast` is the correct answer.
+Found by asking how wide the window was compared with the sampling period.
+
+**4. `> 0` is not a measurement.** With the sampler fixed the run reported
+**three** samples and passed. The floor is now 20.
+
+### Found by review
+
+**5. The overlap predicate accepted the case it existed to exclude.** It read
+`oa > 0 || a_.outbound_in_flight() > 0`. A caller blocked in the *admission
+gate* has already incremented the endpoint's in-flight count, so a serialisation
+regression parking port B before admission would still have shown both managers
+busy while `ob == 0`. The predicate is now `oa > 0 && ob > 0` — D26 makes a
+routed call own its admission slot from admission until `b_transport` returns,
+so that is non-zero exactly while the manager is in the network. "In the
+endpoint but not admitted" is kept as a separate published figure rather than
+folded in.
+
+**6. The evidence answered a different question from the one it closed.** Round
+1 puts both chips on the mesh at once — but both are reading *global RAM*. That
+is multi-chip traffic to a shared target, not **inter-chip** traffic, which is
+what §6's wording names. The one chip-to-chip transfer ran alone, after
+everything else had drained. Every check passed and the measurement was real;
+it was a measurement of something else. Round 2 now runs both chips reading
+each other's SRAM simultaneously, in opposite directions.
+
+This is the most dangerous kind of green in this file. The other six are code
+that is wrong. This one is code that is right, measuring honestly, filed under
+a claim it does not support — and a sign-off inheriting §6 would have inherited
+it silently.
+
+**7. The runtime diagnosis was wrong, including the reviewer's.** The gate took
+113 s per case against 7.5 s for the single-chip composition next door. The
+review attributed it to the payload readback: 8 KiB verified as 2048 serialised
+four-byte mesh transactions. Batching those into 1 KiB blocks cut the flit
+count from 27110 to 11940 — and left the runtime **unchanged at 113 s**.
+
+The cost was `sc_start(60 ms)`: four harts stepping 60 ms of simulated time
+after the verifier had finished at about 1 ms. `sc_stop()` when the work is
+done takes it to **0.97 s fast, 1.20 s detailed** — a hundredfold, and now
+faster than the gate it was compared against.
+
+The batching was kept anyway, for a reason the review did not give: 2048
+verification transactions were burying the `accepted flits` figure the run
+reports about *itself*. Fixing a symptom on a wrong diagnosis is worth doing
+when the symptom is independently real — and worth recording as such, so the
+next person looking for the runtime does not follow the same wrong lead.
+
+### One more, in the fix for 6
+
+Round 2's verification read 56 bytes at a 4-aligned address and was refused. A
+chip aperture is `mmio`, and the interconnect will not widen a read whose
+address or length is not a multiple of 8 — the D25 rule. The endpoint reshapes
+for the *chip*; the host is a plain master with nothing to reshape for it, so
+it has to ask only for spans the mesh will carry. `read_bytes()` now reads the
+enclosing 8-aligned span and trims.
+
+### The controls
+
+| Control | Bites | Establishes |
+|---|---|---|
+| MC-1 D25 read shaping disabled | yes — 5 checks; both inter-chip legs error and deliver wrong bytes | the inter-chip path really traverses D25 |
+| MC-2 both chips given the same RAM window | yes — both directions of the misattribution check | the check discriminates rather than passing on any data |
+| MC-3 synchronised `START` removed | yes, **round 2 only** — 18 samples against 25 | the two-phase start is load-bearing where transfers are short relative to the register writes preceding them |
+
+**MC-3's answer changed when round 2 was added.** Against round 1 alone it did
+not fire (49 against 53), because the shared 2 us RAM latency dominates there;
+an earlier draft generalised that into a source comment claiming the
+synchronised start was "a tightening, not the mechanism". Round 2 disproved the
+generalisation. The comment is now stated per round, and the earlier negative
+result is kept rather than deleted — it is what makes the distinction visible.
+
+MC-1 is still the only one of the three that tests the **system** rather than
+the test. What it leaves open is in §7a: it disables the shaping branch
+outright, so it says nothing about a subtle lane error inside a reshaped read,
+which the byte-exact comparison would catch and no control has yet injected.
+
+### Measured
+
+```text
+TPU_V3 Release   57/57, 0 ***Skipped   (ctest -L tpu_v3)
+TPU_V3 Debug     57/57, 0 ***Skipped
+```
+
+Counted with `grep -c '***Skipped'`, not `grep -c Skipped`: ctest names a
+skipped test twice, so the plain form returns double and reads correctly only
+when the answer is zero — which is exactly when nobody checks it.
 
 ## 4. What these controls do not cover
 

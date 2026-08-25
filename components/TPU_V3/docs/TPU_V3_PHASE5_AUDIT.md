@@ -1,5 +1,9 @@
 # TPU_V3 Phase 5 Audit — MXU Extraction from Sauria v4.2
 
+> **Active evidence under D27, not the current work queue.** This audit proves
+> the verified 64x64 INT8/INT32 MXU reused by the one-core DSE. The next task is
+> G2/MB1 in [NEO_CORE_MICROBENCH_DSE_PLAN.md](NEO_CORE_MICROBENCH_DSE_PLAN.md).
+
 Under D20, **MXU** is the architectural block name. This audit continues to
 use **Sauria** where it identifies the pinned third-party implementation
 source, symbols, profiles, tests or excluded Sauria DMA.

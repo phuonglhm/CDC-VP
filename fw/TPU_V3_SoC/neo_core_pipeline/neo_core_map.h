@@ -19,7 +19,10 @@
 
 #define GLOBAL_RAM_BASE   0x80000000u
 
-/* Chip 1, core 1 — deliberately neither zero.
+/* The historical Phase 7 gate defaults to chip 1, core 1 — deliberately
+ * neither zero. D27 builds the same source a second time with both override
+ * macros set to zero, producing the standalone one-core baseline without
+ * maintaining another firmware map.
  *
  * `mhartid` is `chip * 2 + core`, so this hart is 3. Running on chip 0 core 0
  * would make the expected id 0, which is also what an uninitialised CSR reads:
@@ -32,8 +35,15 @@
  * test asserts every one of these against `address_map.h` before it runs the
  * image.
  */
-#define CHIP_ID           1u
-#define CORE_ID           1u
+#ifndef NEO_PIPELINE_CHIP_ID
+#define NEO_PIPELINE_CHIP_ID 1u
+#endif
+#ifndef NEO_PIPELINE_CORE_ID
+#define NEO_PIPELINE_CORE_ID 1u
+#endif
+
+#define CHIP_ID           NEO_PIPELINE_CHIP_ID
+#define CORE_ID           NEO_PIPELINE_CORE_ID
 #define EXPECTED_MHARTID  (CHIP_ID * 2u + CORE_ID)
 
 #define CHIP_BASE         (0xC0000000u + CHIP_ID * 0x08000000u)

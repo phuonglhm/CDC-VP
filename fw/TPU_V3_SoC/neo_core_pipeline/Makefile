@@ -17,6 +17,11 @@ READELF := $(CROSS)readelf
 ARCH := rv32gcv_zvl512b
 ABI  := ilp32d
 
+# The historical Phase 7 gate uses 1/1. D27 reuses the same image source with
+# 0/0 so the standalone baseline has mhartid=0 and the chip-0/core-0 aperture.
+PIPELINE_CHIP_ID ?= 1
+PIPELINE_CORE_ID ?= 1
+
 # -O1 for the same reason the smoke image uses it: the driver reads back what
 # the engines wrote, and -O2 is free to prove those reads redundant. Every MMIO
 # access goes through a volatile pointer, so the optimiser cannot elide the
@@ -26,6 +31,8 @@ CFLAGS := -march=$(ARCH) -mabi=$(ABI) \
           -ffreestanding -nostdlib -nostartfiles \
           -fno-builtin -fno-common \
           -Wall -Wextra -Werror \
+          -DNEO_PIPELINE_CHIP_ID=$(PIPELINE_CHIP_ID) \
+          -DNEO_PIPELINE_CORE_ID=$(PIPELINE_CORE_ID) \
           -I.
 
 LDFLAGS := -march=$(ARCH) -mabi=$(ABI) \
@@ -33,7 +40,7 @@ LDFLAGS := -march=$(ARCH) -mabi=$(ABI) \
            -T link.ld -Wl,--build-id=none -Wl,--gc-sections \
            -Wl,--no-warn-rwx-segments
 
-ELF := neo_core_pipeline.elf
+ELF ?= neo_core_pipeline.elf
 
 .PHONY: all clean verify
 all: $(ELF) verify

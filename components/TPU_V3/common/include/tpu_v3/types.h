@@ -21,15 +21,16 @@ namespace cdc::components::tpu_v3 {
 /// Linear chip index within the SoC, `0 .. max_chips - 1`.
 using chip_id_t = std::uint32_t;
 
-/// Core index within a chip. Exactly two NEO-COREs per chip are frozen, so
-/// this is always 0 or 1.
+/// Core-position index in the retained Revision 1 address-map schema. The
+/// schema has slots 0 and 1; D27 instantiates only slot 0 and no chip.
 using core_id_t = std::uint32_t;
 
 /// Architectural RISC-V hart id, visible to firmware through `mhartid`.
 using hart_id_t = std::uint32_t;
 
-/// Frozen counts (plan §4.1, decision record D14). A component that finds a
-/// different value in its configuration must refuse to construct, not adapt.
+/// Retained Revision 1 composition/schema counts. D27's standalone harness
+/// uses one core but preserves these constants so its verified addresses and
+/// hart-id calculation do not need a second map.
 inline constexpr unsigned cores_per_chip = 2;
 inline constexpr unsigned sa_per_core = 1;
 inline constexpr unsigned dma_per_core = 1;
@@ -43,13 +44,12 @@ inline constexpr unsigned sa_bringup_columns = 64;
 inline constexpr unsigned sa_target_rows = 128;
 inline constexpr unsigned sa_target_columns = 128;
 
-/// Upper bound on chips in this revision.
+/// Upper bound encoded by the retained Revision 1 address-map/config schema.
 ///
-/// This is not an address-map choice. The frozen FlooNoC chimney manager id is
-/// three bits, so `cdc::components::noc_interconnect` accepts at most eight
-/// upstream initiators, and plan §4.4 gives each chip exactly one aggregated
-/// initiator. Raising it is a NoC protocol change with its own cross-checks —
-/// see `docs/TPU_V3_PHASE0_AUDIT.md` §5.2.
+/// D27 corrects the old rationale: a three-bit AXI ManagerID is not a FlooNoC
+/// node-count limit. Keep eight here for compatibility with existing arrays,
+/// windows and historical configurations; changing it is a schema/address-map
+/// migration, not evidence that the RTL NoC cannot contain more nodes.
 inline constexpr unsigned max_chips = 8;
 
 /// `mhartid = chip_linear_id * 2 + core_id` (plan §11.8).

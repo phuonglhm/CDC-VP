@@ -523,7 +523,8 @@ void capacities_are_range_and_alignment_checked()
 
 void noc_limits_are_enforced_at_configuration_time()
 {
-    // Nine chips: the frozen chimney manager id is 3 bits.
+    // Nine entries exceed the retained Revision 1 config/address-map schema.
+    // D27 explicitly rejects the old claim that this is an RTL NoC-node limit.
     CHECK(rejected_naming(
         [] {
             tpu::tpu_soc_config c = good_config();

@@ -1,5 +1,11 @@
 # TPU_V3 TLM Interface Contract
 
+> **D27 application note — 2026-08-25.** Generic TLM rules and the D15
+> AXI4-Lite/local-SRAM/external-memory split remain binding for the standalone
+> NEO-CORE. Its external socket binds directly to memory/host I/O. NoC-facing,
+> chip-to-chip and multi-core clauses are retained historical constraints and
+> are not active DSE requirements. See [README.md](README.md).
+
 Binding on every component under `components/TPU_V3` and on the TPU_V3
 platform. It expands plan §13 into rules a reviewer can check mechanically.
 
