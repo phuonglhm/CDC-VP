@@ -2,7 +2,7 @@
 
 set(_sauria_model_root "${SAURIA_NPU_ROOT}")
 if(NOT _sauria_model_root)
-    set(_sauria_model_root "${CMAKE_CURRENT_SOURCE_DIR}/models/v4.4_model")
+    set(_sauria_model_root "${CMAKE_CURRENT_SOURCE_DIR}/models/v4.4_model_25Aug")
 endif()
 
 set(_sauria_v44_required_files
@@ -22,7 +22,7 @@ foreach(_sauria_file IN LISTS _sauria_v44_required_files)
             "CDC_ENABLE_SAURIA_NPU_V4=ON requires the SAURIA V4.4 model, but "
             "'${_sauria_file}' was not found at "
             "SAURIA_NPU_ROOT='${_sauria_model_root}'. "
-            "Set -DSAURIA_NPU_ROOT=<path-to-v4.4_model> to override the "
+            "Set -DSAURIA_NPU_ROOT=<path-to-v4.4-model> to override the "
             "bundled model.")
     endif()
 endforeach()

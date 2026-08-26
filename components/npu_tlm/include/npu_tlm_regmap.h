@@ -245,6 +245,8 @@ inline constexpr std::uint32_t RICH_HEADS_DIM_MODE = RICH_ALIAS_BASE + 0x454;
 inline constexpr std::uint32_t RICH_HEAD_DIM_EPS = RICH_ALIAS_BASE + 0x458;
 inline constexpr std::uint32_t RICH_ATTN_SCALE = RICH_ALIAS_BASE + 0x45C;
 inline constexpr std::uint32_t RICH_SCALE_OUT  = RICH_ALIAS_BASE + 0x460;
+inline constexpr std::uint32_t RICH_A_LEN      = RICH_ALIAS_BASE + 0x464;
+inline constexpr std::uint32_t RICH_B_LEN      = RICH_ALIAS_BASE + 0x468;
 
 inline constexpr std::uint32_t OBP_A_LUT_BASE   = 0x0002'0000;
 inline constexpr std::uint32_t OBP_A_LUT_SIZE   = 0x0000'4000;
