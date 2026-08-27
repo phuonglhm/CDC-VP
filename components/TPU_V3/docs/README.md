@@ -36,33 +36,58 @@ SoC, mesh or scalability experiment.
 ```text
 G0  documentation/scope contract                 COMPLETE
 G1  one-core baseline + dependency evidence      COMPLETE
-G2  benchmark correctness                        NEXT
-    immediate subtask: MB1 ReLU, ten sizes,
-    scalar and RVV, full host-golden comparison
-G3  measurement conservation                     PENDING
-G4  supported-knob screening                     PENDING
-G5  justified model extensions                   PENDING
+G2  benchmark correctness                        COMPLETE
+    MB1 ReLU, MB2 vector dot                    scalar + RVV
+    MB3 GEMV                                    RVV + MXU
+    MB4 GEMM                                    MXU
+    ten frozen cases, both modes, independent golden and controls
+    MB3/MB4 code                                AWAITS INDEPENDENT REVIEW
+G3  measurement conservation                    COMPLETE
+    seven identities every run, eight end-to-end
+    unbalanced                                  = run_valid false
+    G3 code                                     AWAITS INDEPENDENT REVIEW
+G4  supported-knob screening                     NEXT
+G5  C1/C2 promotion + justified extra extensions PENDING
 G6  targeted exhaustive sweep/Pareto report      PENDING
 ```
 
-Do not start with VLEN or multi-channel-DMA sweeps. VP++ is currently compiled
-for VLEN=512 and the current NEO DMA is one engine/worker. Those are model
-extensions under G5, to be implemented only after G4 measurements justify the
-question they will answer.
+No MB1–MB4 number is a validated measurement yet. G3 is what makes a
+counter quotable; until it closes these rows are correctness evidence with
+counters attached.
+
+MB1 has been through five review rounds which found twenty-six defects between
+them — the worst being a negative control that passed while the mutation under
+test had never executed, a reserved D28 profile identity that could label a
+machine that is not that profile, and a result row that wrote `passed: true`
+for a run the identity gate had rejected. MB2 has been through one; the new
+MB3/MB4 implementation awaits independent review. All known findings are fixed
+and gated. See
+`TPU_V3_STANDALONE_DSE_AUDIT.md` §6 to §10.
+
+Do not label a current result `Neo Lite C1` or `Neo Lite C2`. D28 approves those
+two exact executable targets, but VP++ is currently compiled for VLEN=512 and
+the current NEO DMA has one descriptor/worker. G5 must promote the live MXU,
+RVV, exact SRAM capacity, DMA-channel and external-AXI behaviour before either
+configuration ID is valid. Arbitrary values outside C1/C2 still need G4
+evidence before becoming model extensions.
 
 ## Required reading order
 
 1. **This file** — current authority and document classification.
 2. `NEO_CORE_MICROBENCH_DSE_PLAN.md` — benchmark contract, cases, metrics,
    fidelity limits and gates G0–G6.
-3. `TPU_V3_DECISION_RECORD.md` D27 — formal scope rebaseline and correction of
-   the old ManagerID/node-count reasoning.
-4. `TPU_V3_STANDALONE_DSE_AUDIT.md` — implemented G1 evidence and reproduction.
-5. `ARCHITECTURE.md` active section — the standalone component boundary.
-6. `TPU_V3_PHASE5_AUDIT.md`, `TPU_V3_PHASE6_AUDIT.md` and
+3. `TPU_V3_DECISION_RECORD.md` D27 and D28 — formal one-core/no-NoC scope,
+   correction of the old ManagerID/node-count reasoning, and the exact
+   executable Neo Lite C1/C2 target profiles.
+4. `NEO_LITE_C1_C2_IMPLEMENTATION_PLAN.md` — ordered common, C2-closure and
+   C1-enablement work packages, tests, negative controls and promotion gates.
+5. `TPU_V3_STANDALONE_DSE_AUDIT.md` — implemented G1/G2 evidence,
+   the reproduction commands, and what each row cannot say.
+6. `ARCHITECTURE.md` active section — the standalone component boundary.
+7. `TPU_V3_PHASE5_AUDIT.md`, `TPU_V3_PHASE6_AUDIT.md` and
    `TPU_V3_PHASE7_AUDIT.md` — retained evidence for MXU, Transform and the
    reusable one-core composition.
-7. `INTERFACE_CONTRACT.md` — generic TLM and D15 internal-plane rules. Its
+8. `INTERFACE_CONTRACT.md` — generic TLM and D15 internal-plane rules. Its
    NoC-facing section is inactive under D27.
 
 Where documents disagree, use this precedence:
@@ -70,7 +95,8 @@ Where documents disagree, use this precedence:
 ```text
 this README
   > NEO_CORE_MICROBENCH_DSE_PLAN.md
-  > decision D27
+  > decisions D27/D28
+  > NEO_LITE_C1_C2_IMPLEMENTATION_PLAN.md
   > active header/section of ARCHITECTURE.md
   > historical implementation plan and phase audits
 ```
@@ -110,6 +136,29 @@ guard rejects chip or NoC implementation dependencies.
 
 G2 adds benchmark code under the locations specified by
 `NEO_CORE_MICROBENCH_DSE_PLAN.md`; it must not create a second `tpu_core` model.
+Its complete MB1–MB4 correctness set is implemented:
+
+```text
+components/TPU_V3/microbench/            definitions, golden, result schema
+components/TPU_V3/microbench/runner/     neo_core_bench_runner, one case per run
+fw/TPU_V3_NEO_CORE_MICROBENCH/           five workload images, shared startup
+```
+
+`neo_core_bench_runner` is a separate executable from G1's
+`neo_core_microbench`; the two have different command lines and reusing the name
+would have broken the D27 baseline gate. Both carry the same dependency guard.
+MB1 ReLU, MB2 vector dot, MB3 RVV GEMV, MB3 MXU GEMV and MB4 MXU GEMM each use
+their own firmware image. Every image refuses a different benchmark identifier.
+All ten frozen cases run in kernel and end-to-end modes; matrix operands are
+INT8 and results are exact INT32 comparisons against the independent host
+golden. The G2 regression is 212/212 microbench tests. After explicitly
+building both `neo_core_bench_runner` and the unrelated `rvv_smoke_image`
+prerequisite, the full `tpu_v3` regression is 271/271 PASS, 0 SKIP.
+
+Every row carries `run_valid` beside `correctness.passed`: the first says the
+run may be used at all, the second says its numbers match the golden. A row
+whose live VLEN or MXU identity disagreed with its build has a correct
+arithmetic result from a machine that is not the one the row describes.
 
 ## Mandatory build/run preflight
 
@@ -136,6 +185,14 @@ compiler; guest firmware still uses the pinned xPack RISC-V cross-toolchain.
   use and explicitly report the appropriate timing mode.
 * The verified current MXU is 64x64 INT8/INT32. BF16/FP32 and 128x128 are
   targets, not implemented benchmark configurations.
+* A benchmark row's vector figures — active elements, tail elements, lane
+  utilization — are **derived** from `vsetvli` results the guest reported, and
+  each row carries the formula. The model exposes no scalar/vector instruction
+  split at all: the pinned VP++ build compiles `ISSStatsDummy`, so those two
+  fields of §8.2 are `unavailable` with that reason recorded in every row.
+* The hart's external request count includes instruction fetch, because the
+  reset PC is in global boot ROM outside the core. It is not a data-traffic
+  figure.
 * The model has no calibrated area, power or post-PD frequency model. Select a
   Pareto set with named cost proxies rather than claiming an absolute best
   hardware design.

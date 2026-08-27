@@ -26,6 +26,9 @@
 #   Phase 8  tpu_chip           <- two NEO-COREs, the chip-local fabric,
 #                                    one aggregated NoC manager, one bus lock
 #   Phase 9  noc_endpoint      <- chunking, containment, inbound route
+#   G2       microbench          <- standalone benchmark definitions, golden
+#                                    and result schema, plus the one-core
+#                                    runner (docs/NEO_CORE_MICROBENCH_DSE_PLAN.md)
 
 add_subdirectory(common)
 add_subdirectory(native_port)
@@ -51,3 +54,9 @@ add_subdirectory(tpu_chip)
 # Phase 9. The chip's NoC endpoint: chunking, containment and the inbound
 # route. It depends on no interconnect, so it always builds.
 add_subdirectory(noc_endpoint)
+
+# DSE gate G2. Benchmark case tables, the independent host golden and the
+# result-row schema, plus the standalone runner that drives one case on one
+# Phase 7 `tpu_core`. Added last because the runner reuses `tpu_v3_neo_core`,
+# which `tpu_core/CMakeLists.txt` defines above.
+add_subdirectory(microbench)

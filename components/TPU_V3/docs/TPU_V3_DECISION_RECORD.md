@@ -1,9 +1,10 @@
 # TPU_V3 Architecture and Integration Decision Record
 
-Status: **Standalone NEO-CORE experimental scope active under D27; NEO-CORE
-interconnect frozen by D15; hart reset contract frozen by D19; architectural
-block names frozen by D20. Chip/NoC decisions are retained historical evidence
-and are outside the active scope.**
+Status: **Standalone NEO-CORE experimental scope active under D27; executable
+Neo Lite C1/C2 targets frozen by D28; NEO-CORE interconnect frozen by D15;
+hart reset contract frozen by D19; architectural block names frozen by D20.
+Chip/NoC decisions are retained historical evidence and are outside the active
+scope.**
 
 Initial decision date: 2026-08-08
 
@@ -28,6 +29,8 @@ D25 remote-read shaping date: 2026-08-22
 D26 admission-slot ownership date: 2026-08-24
 
 D27 standalone NEO-CORE/DSE rebaseline date: 2026-08-25
+
+D28 Neo Lite C1/C2 executable-profile date: 2026-08-26
 
 D20 architectural block naming date: 2026-08-18
 
@@ -75,6 +78,7 @@ boundaries of the CDC-VP TPU_V3 model.
 | D24 | Endpoint outstanding and latency counters | **Split by quantity, not by component.** The chip endpoint measures **transfer** latency, which only it can see, because a chunked transfer is one transfer to it and several transactions to the interconnect. Outstanding **is** measured here too, per direction — the original deferral reasoned from one core and was retracted on 2026-08-24 after the composition measured a peak of 2. Neither figure may be quoted as the other: a chunked transfer is one endpoint transfer and several interconnect transactions |
 | D23 | Phase 9 NoC transport | **Keep the shared single-AXI FlooNoC network unchanged.** Control/data virtual channels are *deprecated* at the pinned revision and cannot be added without leaving it; the narrow-wide network is live but answers a throughput requirement nobody has stated. Traffic class is a function of the address, taken from `region_kind`. Widths, protocol behaviour and the reset-of-in-flight rule are frozen in `TPU_V3_PHASE9_NOC_REBASELINE.md`; no new signed FlooNoC configuration is created |
 | D27 | Active standalone NEO-CORE study | **Use exactly one Phase 7 NEO-CORE, `mhartid=0`, direct Boot ROM/global RAM/host I/O and no NoC.** Characterize ReLU, vector dot, GEMV and GEMM across ten shapes in kernel-only and end-to-end modes, then select a Pareto set from measured bottlenecks. Phase 8/9 source and decisions remain historical and must not be linked into this harness. The old D2 manager-ID argument is not an RTL node-count rule and imposes no constraint on this study |
+| D28 | Executable Neo Lite C1/C2 VP profiles | **The standalone VP must execute two exact profiles, not merely print their names:** C1 is MXU 32x32/VLEN 256/768 KiB SRAM/4x128-bit banks/2 DMA channels/128-bit external AXI; C2 is MXU 64x64/VLEN 512/1536 KiB SRAM/8x256-bit banks/4 DMA channels/256-bit external AXI. Both are RV32, ELEN 64, INT8 x INT8 -> INT32, 800 MHz and one Im2Col Transform. Geometry and VLEN may select separate build artifacts; no runner may accept a profile whose instantiated model still uses another profile's defaults. PE count, frequency and burst bytes are derived and must not become independent sources of truth |
 
 ## D27. Standalone NEO-CORE microbenchmark and DSE scope
 
@@ -144,6 +148,180 @@ D27 is implemented as a scope boundary only when:
    and `floo_noc_model`;
 4. the existing Phase 7 pipeline produces the same golden result;
 5. every published result names its benchmark mode and timing fidelity.
+
+## D28. Neo Lite C1/C2 are executable VP profiles
+
+Decision date: 2026-08-26.
+
+### Decision and scope
+
+The active D27 machine remains exactly **one standalone NEO-CORE** containing
+one Scalar/RVV hart, one Core SRAM, one DMA controller, one MXU and one
+Transform block. It remains bound directly to Boot ROM/global RAM/host I/O and
+contains no `tpu_chip`, chip-local composition or NoC.
+
+That machine must be able to execute both profiles below. "Execute" means the
+instantiated components and their behaviour use the selected values. Changing
+a manifest, a result-row default or a configuration ID while the component
+still uses another value is a configuration defect and must be refused.
+
+| Field | Neo Lite C1 | Neo Lite C2 |
+| --- | ---: | ---: |
+| MXU geometry | 32x32 | 64x64 |
+| PE count, derived | 1024 | 4096 |
+| arithmetic | INT8 multiply + INT32 accumulate | INT8 multiply + INT32 accumulate |
+| RVV VLEN | 256 bits | 512 bits |
+| RVV `vlenb`, derived/read back | 32 bytes | 64 bytes |
+| ELEN | 64 bits | 64 bits |
+| XLEN | 32 bits | 32 bits |
+| core clock | 800 MHz | 800 MHz |
+| core period, canonical | 1.25 ns | 1.25 ns |
+| backed Core SRAM | 768 KiB (786432 bytes) | 1.5 MiB (1536 KiB, 1572864 bytes) |
+| SRAM bank width | 128 bits | 256 bits |
+| SRAM banks | 4 | 8 |
+| DMA controllers per core | 1 | 1 |
+| DMA channels inside the controller | 2 | 4 |
+| external AXI data width | 128 bits | 256 bits |
+| DMA burst length, canonical | 8 beats | 8 beats |
+| DMA maximum burst bytes, derived | 128 bytes | 256 bytes |
+| Transform | one Im2Col INT8 block | one Im2Col INT8 block |
+
+The arithmetic and Transform operation are fixed profile capabilities. They
+remain visible in the identity and report but are not free DSE knobs.
+
+### One source of truth
+
+The profile stores the values that select behaviour. The following report
+fields are derived and are never configured independently:
+
+```text
+pe_count        = mxu_rows * mxu_columns
+core_frequency  = 1 / core_period
+dma_burst_bytes = (external_axi_data_width_bits / 8) * dma_burst_beats
+```
+
+Validation must reject a width that is not byte-addressable and arithmetic
+overflow in either derivation. A report must obtain the instantiated MXU
+identity, CPU `vlenb`, DMA channel count and AXI width from live components; it
+must not reproduce literals from the profile factory and call that readback.
+
+### Build-profile boundary
+
+MXU geometry and VP++ VLEN are compile-time properties in the current source.
+D28 therefore permits and prefers two separately gated build profiles, for
+example `neo_lite_c1` and `neo_lite_c2`, rather than a runtime flag that changes
+only labels. The automation may present one common command-line interface, but
+the produced binary and firmware must identify their build profile and refuse
+a requested profile that they do not contain.
+
+The firmware contracts are:
+
+```text
+C1  rv32gcv_zvl256b, ilp32d, vlenb readback 32
+C2  rv32gcv_zvl512b, ilp32d, vlenb readback 64
+```
+
+The C1 MXU must be extracted as an explicit, named and hash-verified Sauria
+`int8_32x32` source profile with its own golden evidence. Falling through to a
+C++ template's 32x32 default is specifically forbidden: it proves neither the
+selected source target nor its index widths and can produce plausible wrong
+results. C2 retains the verified `int8_64x64` profile.
+
+### SRAM capacity
+
+The 768 KiB and 1536 KiB capacities are exact profile values; rounding them to
+1 MiB and 2 MiB produces different profiles and is not allowed. The decoded
+window may remain the existing naturally aligned power-of-two aperture. Only
+the backed capacity needs to accept a non-power-of-two value.
+
+The capacity gate is therefore based on containment and physical stripes, not
+on a power-of-two capacity:
+
+```text
+0 < backed_capacity <= decoded_window
+backed_capacity % ((bank_width_bits / 8) * bank_count) == 0
+```
+
+Tests must serve the last byte of the backed capacity and return a capacity
+error for the next byte without wrapping or aliasing it into valid storage.
+
+### DMA and external AXI behaviour
+
+`DMA channels` does not mean two or four independent DMA blocks. The NEO-CORE
+still owns one DMA controller and one external AXI master boundary; the
+controller owns two or four independent channel register/status contexts and
+workers. Result schemas must report `dma_controllers=1` separately from
+`dma_channels=2|4`.
+
+Channels share the selected AXI interface. Multiple read channels arbitrate
+for the AXI read path and multiple write channels arbitrate for the AXI write
+path; instantiating one unlimited-bandwidth target per worker would incorrectly
+multiply peak external bandwidth by the number of channels. The C2 HAS permits
+independent read and write paths, so one read burst and one write burst may
+overlap; two reads or two writes still contend and require a deterministic
+policy and counters.
+
+The external datapath uses 16 bytes/beat in C1 and 32 bytes/beat in C2. DMA
+framing, lane alignment and burst validation use that configured width rather
+than the current fixed 8-byte constant. A normal maximum burst is exactly eight
+beats. The external target must serialize work by beats and expose
+back-pressure/occupancy before any DMA-channel or AXI-width performance claim
+is accepted.
+
+The C2 HAS channel roles are retained: CH0 weight read, CH1 IFmap read, CH2
+output write and CH3 configuration/LUT/bias read. D28 does not invent a C1 HAS:
+until a C1 register/role specification is approved, the proposed mapping is
+CH0 input/weight/config read reused sequentially and CH1 output write, and it
+must be labelled **provisional** rather than presented as sourced hardware.
+
+### Timing boundary
+
+The canonical core period is 1.25 ns. It must reach every core-domain timing
+consumer used in a reported interval, including the hart timing policy, local
+fabric, DMA, MXU control/staging and Transform. A field that reaches only the
+MXU sequencer does not establish an 800 MHz NEO-CORE.
+
+External-memory latency, AXI clock relationship, SRAM pipeline depth and
+outstanding limits are not specified by the two profile lists. They must be
+recorded explicitly as common provisional VP inputs until hardware evidence
+freezes them. Functional results may proceed with those labelled inputs;
+throughput, bottleneck and C1-versus-C2 timing conclusions may not hide or omit
+them.
+
+### Promotion gate
+
+A profile becomes executable evidence only when all of these pass:
+
+1. configuration validation accepts its exact values and refuses a deliberate
+   C1/C2 mismatch before simulation;
+2. the live MXU identity is 32x32 for C1 and 64x64 for C2, and each profile
+   passes an independent arithmetic golden;
+3. firmware reads `vlenb=32` for C1 and `vlenb=64` for C2, and a lane-boundary
+   case proves the corresponding vector iteration/tail behaviour;
+4. SRAM boundary tests prove exactly 786432 and 1572864 backed bytes, including
+   last-byte success and next-byte refusal;
+5. every DMA channel has independent descriptor/status/IRQ state, while a
+   concurrent-channel test proves shared read/write AXI arbitration rather
+   than multiplied bandwidth;
+6. observed external frames obey the configured 16/32-byte beat and eight-beat
+   maximum, including misaligned prefix/suffix cases;
+7. the 1.25 ns period reaches every claimed timing consumer and a mutation
+   control proves changing it changes the expected observation;
+8. the result row is populated from live model identity and a negative control
+   fails if any field is replaced by a hard-coded C1 or C2 literal;
+9. every ReLU, vector-vector, vector-matrix and matrix-matrix case still agrees
+   element by element with its independent golden for all ten inputs.
+
+D28 pre-approves only these two exact model-extension targets. It does not
+authorize arbitrary MXU/VLEN/DMA/AXI sweeps, and it does not turn current
+single-profile rows into C1/C2 evidence. The D27 G2 correctness gate closed on
+2026-08-27 with MB1–MB4; G3 measurement conservation is now the active gate.
+The DSE plan schedules implementation and promotion of these profiles under
+G5, after the preceding measurement gates close.
+
+`NEO_LITE_C1_C2_IMPLEMENTATION_PLAN.md` is the ordered execution and review
+plan for this decision. It is subordinate to D28: changing a work-package
+sequence does not change a profile value or waive a promotion criterion.
 
 ## D1. FlooNoC `NoLoopback` and local bypass
 

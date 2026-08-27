@@ -1,6 +1,7 @@
 # Standalone NEO-CORE Microbenchmark and Design-Space Exploration Plan
 
-Status: **active; G0 and G1 complete, G2 next, 2026-08-25**
+Status: **active; G0–G3 complete. MB1–MB4 are implemented and gated and
+every run is conservation-checked; G4 is next. 2026-08-27**
 
 This document is the current execution plan for TPU_V3. It intentionally
 narrows the work to **one standalone NEO-CORE**. Dual-core chip composition,
@@ -35,6 +36,10 @@ Characterize one NEO-CORE across representative vector and matrix workloads,
 identify where time and traffic are spent, and produce an evidence-based set of
 candidate configurations rather than selecting VLEN, SRAM banking or DMA
 resources by intuition.
+
+D28 fixes Neo Lite C1 and C2 as the first two executable target profiles. The
+measurements compare and diagnose those two profiles; they do not permit a
+current reference binary to be relabelled as either one.
 
 The result is a **Pareto set**, not automatically one largest configuration:
 
@@ -229,7 +234,7 @@ DMA benchmark is prohibited.
 
 ## 7. Reference configuration and experimental knobs
 
-### 7.1 Reference configuration
+### 7.1 Current implementation reference
 
 ```text
 XLEN                         32
@@ -253,21 +258,56 @@ core model period            10 ns
 The period and physical SRAM values are provisional model inputs, not
 post-layout frequency or SRAM-macro claims.
 
+This is the baseline implemented before D28. It is neither Neo Lite C1 nor Neo
+Lite C2; `--config-id reference` continues to name only these exact values.
+
 ### 7.2 Knob readiness
 
 | Knob | Candidate values | Current status |
 | --- | --- | --- |
-| VLEN | 128, 256, 512 | **512 only today.** The schema rejects other values; a sweep requires a separately gated experimental VP++ configuration and toolchain/ELF contract. |
-| Local bank width | 64, 128, 256 bits | Configurable now, but reports must keep the values labelled provisional. |
-| Local bank count | 1, 2, 4, 8 | Configurable now. Use `arbitrated` mode for observable contention. |
+| VLEN | C1: 256; C2: 512 | **512 only today.** C1 requires a separately gated VP++ build and `zvl256b` firmware contract. |
+| Local bank width | C1: 128; C2: 256 bits | Configurable now, but reports must keep the values labelled provisional until profile promotion. |
+| Local bank count | C1: 4; C2: 8 | Configurable now. Use `arbitrated` mode for observable contention. |
 | Fabric pipeline | 1, 2, 3 stages | Configurable now. |
-| DMA max burst | 64, 256, 512, 2048 bytes | Configurable now; alignment still limits an individual frame. |
-| DMA channels | 1, 2, 4 | **One only today.** More channels require real workers, register state, requester identity, arbitration and tests; changing a report field does not count. |
-| SRAM capacity | 1, 4, 16 MiB | Useful for footprint/tiling, not by itself a throughput knob. |
-| MXU geometry | 64x64 | 128x128 remains source-gated on an NPU-team implementation and golden evidence. |
-| External memory | latency, bandwidth, outstanding | **Not calibrated today.** A parameterized back-pressured memory model is required before DMA-channel conclusions. |
+| DMA max burst | C1: 8 x 16-byte beats = 128 bytes; C2: 8 x 32-byte beats = 256 bytes | Byte limits are configurable now, but beat size is still fixed at 8 bytes and must become profile-driven. |
+| DMA channels | C1: 2; C2: 4 | **One descriptor/worker only today.** More channels require real register state, workers, shared-path arbitration and tests; changing a report field does not count. |
+| SRAM capacity | C1: 768 KiB; C2: 1536 KiB | Exact targets. The current power-of-two validator refuses both; rounding to 1/2 MiB is forbidden by D28. |
+| MXU geometry | C1: 32x32; C2: 64x64 | **64x64 only today.** C1 needs a named, hash-verified `int8_32x32` extraction and golden rather than a template default. |
+| External AXI width | C1: 128; C2: 256 bits | **64 bits only today.** Width, framing and serialized read/write contention must become live model behaviour. |
+| Core period | C1/C2: 1.25 ns | Configurable only on part of the current core timing path; promotion must prove every timing consumer used in a claim receives it. |
+| External memory timing | latency, bandwidth, outstanding | **Not calibrated today.** A parameterized back-pressured memory model is required before DMA-channel or AXI-width conclusions. |
 
-### 7.3 Timing modes
+### 7.3 Approved executable target profiles
+
+D28 in `TPU_V3_DECISION_RECORD.md` freezes two target profiles for this
+standalone study. They are not labels for the current reference binary: each
+must pass D28's identity and behavioural promotion gate before a row may use
+the corresponding configuration ID.
+
+| Field | Neo Lite C1 | Neo Lite C2 |
+| --- | ---: | ---: |
+| MXU | 32x32, 1024 PE | 64x64, 4096 PE |
+| arithmetic | INT8 x INT8 -> INT32 | INT8 x INT8 -> INT32 |
+| RVV | XLEN 32, VLEN 256, ELEN 64 | XLEN 32, VLEN 512, ELEN 64 |
+| core period | 1.25 ns (800 MHz) | 1.25 ns (800 MHz) |
+| backed Core SRAM | 768 KiB | 1536 KiB |
+| local SRAM | 4 banks x 128 bits | 8 banks x 256 bits |
+| DMA | one controller, 2 channels | one controller, 4 channels |
+| external AXI | 128 bits | 256 bits |
+| normal maximum burst | 8 beats = 128 bytes | 8 beats = 256 bytes |
+| Transform | one Im2Col INT8 | one Im2Col INT8 |
+
+PE count, frequency and burst bytes are derived fields, not independent knobs.
+The exact SRAM sizes must not be rounded to power-of-two substitutes. MXU/VLEN
+may be separate build artifacts, because both are compile-time properties
+today, but a build must refuse a profile name that differs from its live model.
+
+The target list does not specify external-memory latency, AXI clock relation,
+SRAM pipeline depth or outstanding limits. Rows must state those common VP
+inputs explicitly and label them provisional; no C1-versus-C2 performance
+claim is accepted until their timing effects are modelled and gated.
+
+### 7.4 Timing modes
 
 Use both, and never mix their claims:
 
@@ -351,8 +391,10 @@ block by inspection:
 | --- | --- | --- |
 | G0 | **Complete** | D27, this plan, README and architecture documents define one standalone core and mark Phase 8/9 outside current scope |
 | G1 | **Complete** | `neo_core_microbench`, `tpu_v3_neo_core_d27_baseline`, the dependency-guard negative control and `TPU_V3_STANDALONE_DSE_AUDIT.md` |
-| G2 | **Next** | implement the result schema and MB1 ReLU ten-case correctness baseline before adding MB2–MB4 |
-| G3–G6 | Pending | start only after the preceding gate closes |
+| G2 | **Complete; MB3/MB4 implementation awaits independent review** | `components/TPU_V3/microbench`, `neo_core_bench_runner`, five distinct firmware ELFs under `fw/TPU_V3_NEO_CORE_MICROBENCH`, all frozen MB1–MB4 cases in both modes and every supported implementation, edge patterns and classified negative controls. Regression after building `neo_core_bench_runner` and `rvv_smoke_image`: microbench 212/212 PASS; full `tpu_v3` 271/271 PASS, 0 SKIP |
+| G3 | **Complete; awaits independent review** | eight conservation identities carried in every row, seven of them on every run; per-stage timing and an exact stage sequence derived from the guest's own marks; three model-side mutations plus a comparator mutation per identity. An unbalanced identity fails the run |
+| G4 | **Next** | one-factor-at-a-time screening around the current implementation reference |
+| G5–G6 | Pending | start only after the preceding gate closes |
 
 ### Gate G0 — documentation and harness contract
 
@@ -376,6 +418,42 @@ block by inspection:
 * Negative controls corrupt at least one arithmetic operation, one DMA leg and
   one measurement-boundary marker and are detected.
 
+**MB1 status: implemented and gated, not signed off.** Five review rounds on
+2026-08-26 and 2026-08-27 found twenty-six defects between them — a blocker
+that let a negative control pass while the mutation never executed, rows
+mislabelled `reference`, a command line that accepted values it could not
+represent, TLM contract violations in the testbench target, inverted controls
+that turned a skip into a pass, measurements §8 requires that the row omitted,
+a reserved D28 profile identity that could label a machine that is not that
+profile, shared firmware buffers too small for frozen MB3 and MB4 cases, a
+rejected row whose verdict was invisible to an aggregator, validity coupled to
+arithmetic correctness, and provenance/rejected-row controls that did not test
+the runner contract they claimed. All are fixed and each fix carries a control;
+`TPU_V3_STANDALONE_DSE_AUDIT.md` §6 to §10 record them. The round-5 fixes have not
+themselves been independently reviewed. Ten sizes, scalar and RVV, both modes, element-wise
+comparison against a host golden that links neither SystemC nor the core model;
+the four §5.1 edge patterns at the lane-boundary case; and seven controls, each
+naming through `--expect-detect` the detection that must fire, so a control
+cannot pass by failing for an unrelated reason. Evidence and the three
+documented departures from §11 are in `TPU_V3_STANDALONE_DSE_AUDIT.md` §5.
+
+**MB2 status: implemented and gated, one review round.** Ten sizes, scalar and RVV,
+both modes, its own ELF, the four edge patterns at the lane-boundary case and
+five mutations plus two cross-image controls. Its operand bound is
+`dot_product_magnitude_bound(N)` and its golden throws rather than wraps.
+
+**MB3–MB4 status: implemented and gated; independent review pending.** MB3
+runs each of its ten frozen GEMV shapes through RVV and MXU, in kernel and
+end-to-end modes. MB4 runs its ten frozen GEMM shapes through MXU in both
+modes. Inputs are row-major INT8 tensors staged as `A` followed by `B`; the
+independent host golden accumulates through INT64 and refuses a result outside
+INT32 rather than wrapping. The RVV image uses signed widening multiply and
+reduction with strided B-column loads. The two MXU images program the live
+SA control plane and their rows populate §8.5 from live job, timing and native
+traffic counters. Each path also passes the four edge patterns, arithmetic,
+DMA-in, DMA-out and boundary controls; three wrong-image controls prove the
+new ELFs refuse another benchmark identifier.
+
 ### Gate G3 — measurement conservation
 
 * Stage byte totals reconcile with tensor footprints.
@@ -384,6 +462,75 @@ block by inspection:
   for reads versus writes and explicitly named setup traffic.
 * Stage times reconcile with the total interval, including overlap.
 * Every counter used in a conclusion has a mutation/negative control.
+
+**Status: met, pending independent review.** Eight identities are evaluated
+with their reason carried into every row — seven on every run, plus
+`dma_leg_bytes` in end-to-end mode where a leg exists to reconcile:
+
+| Identity | Reconciles | Clause |
+| --- | --- | --- |
+| `tensor_footprint` | core SRAM debug-written bytes against the input plus output tensor | 1 |
+| `kernel_local_bytes` | the kernel requester's local bytes against what its algorithm declares it moves | 1 |
+| `dma_local_bytes` | the DMA requester's local bytes against the legs it must run | 1, 2 |
+| `dma_external_bytes` | the DMA's external-path bytes against the same legs | 2 |
+| `dma_leg_bytes` | the DMA's local-path total against the tensor it was asked to move | 1, 2 |
+| `external_boundary_bytes` | the core's external bytes against what the memory and host-I/O window served | 2 |
+| `local_plane_bytes` | fabric requester bytes against core SRAM's own read plus written bytes | 3 |
+| `interval_accounted_ns` | the sum of stage spans against the measured interval | 4 |
+
+Wherever the model allows, an identity pairs an observer inside the core with
+one outside it: two counters incremented by the same line of code agree by
+construction and prove nothing. `external_boundary_bytes` is the clearest case
+— the memory is outside the model, so neither end can satisfy it alone.
+
+Two identities exist because an agreeing total is not a correct total.
+`local_plane_bytes` cannot notice a kernel that reads its input twice, since
+both of its observers would report the larger figure; `kernel_local_bytes`
+compares the measurement against the traffic the algorithm declares.
+Similarly `external_boundary_bytes` stays balanced when an extra DMA
+transaction increments both of its sides, so `dma_external_bytes` gates that
+volume on its own.
+
+Clause 4 needs the stage **sequence** as well as the sum: a missing
+intermediate marker only widens a neighbouring span, leaving
+`interval_accounted_ns` balanced. The expected sequence is therefore checked
+exactly for the mode being run.
+
+An unbalanced identity is a `conservation` failure and makes `run_valid` false.
+A row whose bytes do not reconcile is not a slower correct measurement; it is a
+measurement of something nobody can name.
+
+Overlap (clause 4) is currently zero by construction: MB1–MB4 run their DMA
+legs and their kernel in sequence. `interval_accounted_ns` therefore partitions
+the interval rather than allowing for overlap, and the identity would fail if a
+future benchmark overlapped two stages — which is the correct signal to extend
+it rather than to relax it.
+
+Clause 5 is met in three classes, kept apart because they prove different
+things, and the plan records what each does **not** prove.
+
+Three controls are **model-side**: a skipped DMA leg, a kernel that re-reads
+its input, and a dropped stage marker. The last two are each caught by exactly
+one check and by nothing else, which is what makes those checks load-bearing.
+
+The remaining identities compare two honest observers of the same bytes, which
+nothing outside the model can make disagree. Two **comparator-side** classes
+cover them: `--inject-accounting` perturbs an identity's total and proves the
+equality check works, and `--inject-counter` perturbs one term where it enters
+an identity — seventeen sources, one control each, with a test that keeps the
+matrix complete in both directions — and proves every term of a
+sum is actually wired in. A mutation on a total cannot do the second: several
+identities sum more than one counter, and a term that was dropped, doubled or
+transposed would leave the aggregate mutation still detected. The runner
+refuses a source no identity reads and fails when a perturbed source goes
+unnoticed.
+
+**Accepted limitation.** For counters whose two observers cannot be made to
+disagree from outside the model, no control proves the counter observes the
+hardware; it proves the accounting around it is sound. Closing that would need
+per-counter test hooks inside the components, which is a change to signed
+components and outside G3's scope. Any conclusion resting on such a counter
+must name it.
 
 ### Gate G4 — supported-knob screening
 
@@ -399,12 +546,23 @@ Do not first run the complete Cartesian product. The nominal six-knob grid
 including experimental VLEN and DMA-channel values is 1,296 configurations,
 or 51,840 benchmark/case runs before modes and repeats.
 
-### Gate G5 — model extensions justified by screening
+### Gate G5 — promote the approved profiles and any justified extensions
 
-Implement an experimental VLEN sweep, calibrated external-memory model or
-multiple DMA channels only when G4 evidence states what question the extension
-will answer. Each extension needs its own configuration validation, functional
-gate and negative control before its performance result is accepted.
+Implement and promote D28's exact C1/C2 profiles here, including VLEN256,
+explicit 32x32 MXU source extraction, exact non-power-of-two SRAM capacities,
+multi-channel DMA and 128/256-bit serialized external AXI behaviour. D28 is the
+project-owner authorization for those two targets; G4 does not need to
+re-justify their existence. It still supplies the baseline measurements and
+questions their comparison must answer.
+
+The ordered implementation, review handoff and promotion details are in
+`NEO_LITE_C1_C2_IMPLEMENTATION_PLAN.md`. That plan implements D28; it does not
+change the profile values or move C1/C2 ahead of the G2–G4 prerequisites here.
+
+Any value outside C1/C2 — an arbitrary VLEN sweep, another channel count or a
+third geometry — still requires G4 evidence. Every extension needs its own
+configuration validation, functional gate, behavioural mutation control and
+live-identity report before its performance result is accepted.
 
 ### Gate G6 — targeted exhaustive sweep and Pareto report
 
@@ -478,18 +636,18 @@ human-readable simulator logs as the source of numeric truth.
 
 ## 13. Immediate implementation task
 
-G1 is complete. Implement the **G2 MB1 foundation** next:
+G2 correctness implementation is complete for MB1–MB4. The next task is
+**G3 measurement conservation**, not a DSE sweep. First reconcile each tensor
+footprint with DMA, local-fabric and MXU stage bytes; then reconcile stage
+times with the marked interval and explicitly account for sequential versus
+overlapped work. A counter may enter a conclusion only after its own mutation
+control proves that the reported value changes for the intended reason.
 
-1. create `components/TPU_V3/microbench/` for benchmark definitions, case
-   validation and the machine-readable result writer; do not copy `tpu_core`;
-2. create the freestanding MB1 ReLU firmware under
-   `fw/TPU_V3_NEO_CORE_MICROBENCH/relu/`;
-3. run the ten frozen MB1 sizes in scalar and RVV variants and compare every
-   output element with an independent host golden;
-4. record kernel-only and end-to-end boundaries explicitly, but do not draw a
-   performance conclusion until G3 validates the counters;
-5. add corrupt-arithmetic and corrupt-boundary negative controls;
-6. keep the G1 dependency guard on every new standalone executable.
+Two things must not happen before G3 closes:
 
-Do not begin a VLEN sweep in G2. The current VP++ build is hard-locked to
-VLEN=512; alternate VLEN values require the model-extension gate G5.
+* **no performance conclusion from MB1–MB4.** The rows are correctness evidence
+  with counters attached; their counters are not yet validated measurements;
+* **do not label a current run C1 or C2.** The current VP++/MXU/DMA/external
+  path is still the §7.1 reference capability. D28 approves the exact target
+  profiles, but VLEN256 and the other physical differences become evidence
+  only after their G5 promotion gates pass.
