@@ -1,9 +1,9 @@
 # TPU_V3 Standalone NEO-CORE DSE Audit
 
-Status: **G0–G3 complete. MB1–MB4 are implemented and gated, and every run is
-conservation-checked. Five earlier review rounds (§6–§10) found twenty-six
-defects, all fixed and gated. The MB3/MB4 implementation and the G3
-conservation work await independent review.**
+Status: **G0–G4 complete. MB1–MB4 are implemented and gated, every run is
+conservation-checked, and the supported knobs are screened. Five earlier review
+rounds (§6–§10) found twenty-six defects, all fixed and gated. G2's MB3/MB4 and
+all of G4 await independent review; G3 has been reviewed.**
 
 Evidence date: 2026-08-27 (review rounds 3–5 and MB3/MB4); 2026-08-26 (rounds 1–2);
 2026-08-25 (G1)
@@ -1198,40 +1198,292 @@ rejected before its interval closed carries fewer still.
 No number above is a performance result. G3 makes the counters reconcilable;
 what may be concluded from them is G4's question.
 
-## 12. Closure and next gate
+## 12. G4 supported-knob screening
 
-G1 is closed. G2 is closed: MB1–MB4 pass their ten frozen cases in every
-supported implementation and both measurement modes against a golden that links
-neither SystemC nor the core model. G3 is closed: every run reconciles seven
-accounting identities — eight in end-to-end mode — and a run whose bytes do not
-balance is rejected rather than reported.
+G4 asks which knobs a workload is sensitive to, so that G6 combines only those.
+One factor at a time around the plan's §7.1 baseline, 170 points, every one of
+them passing its golden and its G3 conservation identities — a rejected row
+fails the screening rather than being averaged in.
 
-Neither G2's MB3/MB4 work nor G3 has had an independent review round. Five
-earlier rounds found twenty-six defects in code that had already passed its own
-tests, and three of those rounds found defects in the fixes from the round
-before. Treat the current state accordingly.
+### 12.1 Result
 
-**G4 is next**: one-factor-at-a-time screening around the current
-implementation reference — local bank width, bank count, pipeline depth, DMA
-burst size and SRAM capacity where footprint is relevant. Not the Cartesian
-product; the plan is explicit that the nominal six-knob grid is 1,296
-configurations before modes and repeats.
+Relative spread of the measured interval across each knob's values, for **all
+ten** workload/mode combinations the screening runs:
 
-Two things G4 must carry forward:
+| knob | relu/ker | relu/e2e | vdot/ker | vdot/e2e | gv_rvv/ker | gv_rvv/e2e | gv_mxu/ker | gv_mxu/e2e | gemm/ker | gemm/e2e |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fabric_pipeline_stages` | 58.3% | 54.0% | 55.5% | 53.2% | 61.9% | 61.4% | 20.7% | 23.8% | 24.0% | 27.3% |
+| `local_bank_width_bits` | 0.0% | 8.6% | 0.0% | 9.8% | 0.0% | 1.4% | 55.0% | 67.6% | 74.0% | 83.6% |
+| `dma_max_burst_bytes` | 0.0% | 0.0% | 0.0% | 2.6% | 0.0% | 0.3% | 0.0% | 6.5% | 0.0% | 7.3% |
+| `local_bank_count` | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| `sram_capacity_bytes` | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
 
-* **the knobs it may move are the ones §7.2 lists as configurable today.** VLEN,
-  MXU geometry, DMA channel count and external AXI width are not among them,
-  and D28 puts them behind G5 and the Neo Lite work packages;
-* **`arbitrated` timing mode is required for any contention claim.** Every run
-  so far is `annotated`, which never blocks and therefore cannot prove bank
-  contention or fairness. A screening result that varied bank count under
-  `annotated` would be measuring the configuration field, not the fabric.
+Sensitive: `fabric_pipeline_stages`, `local_bank_width_bits`,
+`dma_max_burst_bytes`. Inert: `local_bank_count`, `sram_capacity_bytes`.
 
-One observation the G3 data already supports, recorded so G4 knows where to
-look rather than as a conclusion: a GEMM 64x64x64 end-to-end run spends 7960 ns
-in DMA-in, 34075 ns in the kernel and 15994 ns in DMA-out, and inside that
-kernel the MXU reports 768 prefetch, 1012 source-compute and 1536 writeback
-cycles. Both splits point the same way — at data movement rather than at the
-array — which is the second and sixth rows of the plan's §9 classification
-table. It is not yet a bottleneck claim: §9 requires the reason to be derived
-from counters under a stated timing mode, and `annotated` is not that mode.
+**Pipeline depth moves everything, and moves the hart most.** Every requester
+pays the response latency once per request, and the hart issues the most
+because VP++ decomposes its vector accesses element-wise (D7). MB1 at N=1024
+issues 2048 local requests for 1024 elements; the MXU moves the same tensor in
+far fewer, wider ones, which is why its spread is a third of the hart's.
+
+**Bank width moves the wide requesters, wherever they appear.** Zero for every
+hart-driven *kernel-only* workload and non-zero for every one of the same
+workloads end-to-end, because the DMA is the wide requester the kernel does not
+have: relu 0% → 8.6%, vector dot 0% → 9.8%, GEMV-RVV 0% → 1.4%. The MXU
+workloads are high in both modes. The mechanism is D7 granularity seen from the
+other side — a 4-byte element-wise access is one beat at 64, 128 or 256 bits,
+while tile staging and 64-byte DMA chunks halve their beat count each time the
+width doubles: 6144 beats at 64-bit, 3072 at 128, 1536 at 256 on GEMM
+end-to-end.
+
+**DMA burst is an end-to-end knob, not a GEMM knob.** It is sensitive in four
+of the five end-to-end workloads — GEMM 7.3%, GEMV-MXU 6.5%, vector dot 2.6%,
+GEMV-RVV 0.3% — and inert in every kernel-only run for the structural reason
+that kernel-only mode has no DMA at all. Only ReLU end-to-end is flat, and that
+is a magnitude effect rather than a category one: its interval is dominated by
+the hart's element-wise kernel, so chunking changes little enough to vanish
+against it.
+
+An earlier draft of this section reported this knob as moving "only GEMM
+end-to-end". That was wrong, and the way it was wrong is worth recording: the
+tool measured all ten workload/mode combinations, and the table rendered seven
+of them — dropping exactly the three end-to-end cases where the knob is live —
+after which the surrounding sentence generalised from the truncated view. The
+data was complete; the presentation was not.
+
+**Bank count changes nothing, and the reason is nearly structural.** MB1–MB4
+run their stages in sequence, so the requesters are almost never active
+together. Almost, not never: 32 of the 170 `annotated` rows record exactly one
+bank conflict, always on the DMA, always in vector-dot or GEMV-RVV end-to-end.
+One conflict against 129 requests cannot move a 58 µs interval, and it does
+not come from two requesters sharing the plane by design — it comes from
+temporal decoupling at a stage boundary, where VP++ running ahead inside its
+quantum lets the hart's last accesses carry timestamps that overlap the DMA's
+first. Until a benchmark genuinely overlaps DMA with compute, this knob has
+nothing to act on, and G6 must not spend configurations on it.
+
+`sram_capacity_bytes` is flat for the reason D6 predicts: storage is sparse
+page-backed and every frozen case fits at 1 MiB. It is a footprint knob, not a
+throughput one, exactly as §7.2 says.
+
+### 12.2 What this result may not be used for
+
+**No contention claim.** The screening was run twice, `annotated` and
+`arbitrated`, 170 points each. Elapsed time and stage timing are identical at
+every one of the 170 points — compared point by point rather than through their
+aggregates, because a minimum and a maximum survive a permutation of everything
+between them — but the two runs are **not**
+byte-identical, and the earlier draft said they were. Under `arbitrated` the
+bank-conflict count drops from 32 rows to **zero** and per-requester
+`total_latency_ns` differs (measured on vector-dot end-to-end: DMA latency 7882
+ns annotated against 7710 arbitrated). That is consistent with the conflicts
+being a decoupling artefact rather than real contention: a mode that actually
+blocks its requesters serialises the stage boundary and the overlap disappears.
+
+Either way, a fairness or back-pressure figure needs `arbitrated` **and** a
+workload with genuinely overlapping requesters. This screening has the first
+and not the second.
+
+**No interaction is visible.** One factor varies at a time by construction, so
+a knob pair that only matters together is outside what this can see. That is
+the trade G4 makes deliberately: the Cartesian product is 1,296 configurations
+before modes and repeats.
+
+**No hardware conclusion.** The model has no calibrated area, power or
+post-place-and-route frequency model, and the physical local-plane values stay
+labelled provisional (D15).
+
+### 12.3 Evidence
+
+```text
+components/TPU_V3/microbench/screening/neo_core_screen.py        the tool
+components/TPU_V3/microbench/screening/tests/                    aggregation unit tests
+build tree .../screening/out/full/results/raw/*.json             one row per point
+build tree .../screening/out/full/results/summary/screening.csv  the table above
+build tree .../screening/out/full/results/summary/screening.json findings + limits
+build tree .../screening/out/full_arbitrated/                    the same, arbitrated
+```
+
+Reproduced by name rather than by a command someone once ran:
+
+```bash
+ctest --test-dir build-neo-d27 -L g4_full --output-on-failure
+```
+
+The tool reads result rows and never a log, as §11 requires. Its summary
+carries the build type, source revision, per-benchmark firmware ELF hashes,
+workload list and its own limits, so a table lifted out of it travels with what
+produced it. The hashes are mapped to the benchmark each image ran rather than
+listed flat, and one benchmark running against two images inside a single
+screening is refused rather than noted. The seed and build type in the summary
+are checked against every row rather than reproduced from the command line.
+
+**Each knob's provenance is checked against what it should be, not merely that
+it has one.** Bank width, bank count, pipeline depth and SRAM capacity must
+report `live_readback`; DMA burst must report `configured`, because the DMA
+exposes no accessor for it and D28 derives it from AXI width and burst beats
+(WP3 is what makes it a readback). Accepting either label everywhere would let
+a live knob regress into a value copied from this tool's own command line
+without the screening noticing.
+
+**Each point is checked against the machine that ran it.** After reading a row
+the tool confirms the configuration id, benchmark, case, implementation, mode
+and timing mode are what it asked for, that the swept knob reads back at the
+requested value, that every other knob still holds its baseline, and that each
+knob's provenance is `live_readback` or `configured` rather than a structural
+literal. Without that the screening trusts its own command line: a runner that
+ignored a knob would return a valid row for the baseline machine, the tool
+would record the requested value beside it, and the knob would be reported
+inert — a false negative indistinguishable from the two genuine ones above.
+
+Controls on the screening itself:
+
+| Control | Proves |
+| --- | --- |
+| `invalid_point_aborts` | a failing point stops the screening rather than being summarised |
+| `unknown_knob_refused` | a typo *alongside a valid knob* is refused, not filtered away — silently dropping it reads exactly like a knob screened and found inert |
+| `unknown_benchmark_refused` | the same for a benchmark name |
+| `screening_mxu` | the MXU path is screened separately; a screening that only ran the hart would call bank width inert on five workloads out of ten |
+| `screening_summary_unit` | the aggregation's maths, including a missing baseline, an absent metric and a zero baseline — none of which a simulation-driven run reaches |
+| `screening_verify_unit` | that `verify_row()` rejects a row disagreeing in any requested field, a knob the runner ignored, and a provenance that is present but of the wrong kind. A real run never produces such a row, which is why the check needs a test rather than why it does not |
+| `report_matches_the_audit` | the table above is regenerated from the summary and must appear in this file verbatim; every numeric claim in the surrounding prose is re-asserted against the measurement; and the two timing modes are compared **point by point** — the same 170 point identities, each point's `elapsed_ns`, each point's whole stage timing, and the two summary manifests |
+| `screening_report_unit` | the comparator's own failure modes, including the two the first version could not see: aggregated min and max survive a permutation of the interior points and any change to how an interval was spent |
+
+## 13. Closure and next gate
+
+G1, G2, G3 and G4 are closed. MB1–MB4 pass their frozen cases against an
+independent golden; every run reconciles seven accounting identities, eight in
+end-to-end mode; and the supported knobs have been screened one at a time with
+the sensitive ones separated from the flat ones by mechanism, not by curve.
+
+Independent review has covered G2's MB1/MB2 and G3. **MB3, MB4 and the whole of
+G4 have not been reviewed.** Five rounds so far found twenty-six defects in code
+that had already passed its own tests, and three of those rounds found defects
+in the fixes from the round before.
+
+**G5 is next.** D28 pre-authorises exactly two model-extension targets, Neo Lite
+C1 and C2, and `NEO_LITE_C1_C2_IMPLEMENTATION_PLAN.md` is their ordered work
+breakdown starting at WP0. G4 has now supplied what that plan's entry expects
+of it — a screened baseline and the questions a C1/C2 comparison has to answer.
+
+Three things G4 hands forward, and one it refuses to:
+
+* **pipeline depth, bank width and DMA burst are the sensitive supported
+  knobs.** The first two are C1/C2 profile values (§7.3), so the profiles
+  differ on exactly two of the axes this screening found live — a reason to
+  expect a measurable C1/C2 difference, not evidence of one. The third,
+  `dma_max_burst_bytes`, is derived in D28 from external AXI width and burst
+  beats, so it moves with the profile rather than beside it;
+* **bank count is inert until a workload overlaps requesters.** WP4's
+  multi-channel DMA is the first thing in the Neo Lite plan that would create
+  such a workload. Screening it before then measures nothing, and G6 must not
+  spend configurations on it;
+* **`arbitrated` is exercised but not tested in substance.** Both full
+  screenings ran, and the two modes agree on every elapsed and stage figure.
+  They disagree on bank conflicts — 32 rows against zero — and on per-requester
+  latency, which is consistent with those conflicts being a temporal-decoupling
+  artefact at a stage boundary rather than contention. The first real test of
+  the mode arrives with WP4, and D28's promotion gate item 5 already requires a
+  concurrent-channel test;
+* **G4 refuses to hand forward a bottleneck claim.** The §9 classification
+  table wants a reason derived from counters under a stated timing mode. The
+  stage split of a GEMM end-to-end run — DMA-in 7960 ns, kernel 34075 ns,
+  DMA-out 15994 ns, and inside that kernel prefetch 768 and writeback 1536
+  cycles against 1012 of source compute — points at data movement twice over.
+  It is a hypothesis for G6 with an external-memory model behind it, not a
+  finding: §7.2 records that model as uncalibrated, and G4 changed nothing
+  about that.
+
+One process note, recorded because it is the second time this class of error
+has reached a document. §12.1 first reported `dma_max_burst_bytes` as moving
+only one workload, from a table that rendered seven of the ten the tool had
+measured. The measurement layer has grown checks for this kind of mistake —
+conservation identities, provenance, per-counter controls — and the reporting
+layer had none. The full table is now generated from the summary the tool
+writes, and the reproduction command regenerates it.
+
+## 14. G5 WP1 — a build may not answer to a profile it is not
+
+WP1's evidence is complete and pending closure on review. It adds no capability
+to the model: the machine after WP1 is the same D27 reference machine, one DMA
+channel, 64-bit external path, 64x64 MXU and VLEN 512. What it adds is a
+refusal.
+
+`components/TPU_V3/common/include/tpu_v3/neo_lite_profile.h` holds D28's two
+profiles as data, and `profile_disagreements()` compares one against a
+`live_core_identity` filled entirely from instantiated components and the
+linked VP++ build — no field is read back from the request that produced it.
+The runner takes `--profile none|neo_lite_c1|neo_lite_c2`, runs the comparison
+after construction and before `sc_start`, and refuses without writing a row:
+
+```text
+--profile neo_lite_c1   8 of 11 fields disagree
+--profile neo_lite_c2   6 of 11 fields disagree
+```
+
+Each message names the work package that owns the value it wants — WP2 for
+capacity, WP3 for the external path, WP4 for DMA channels, WP5 for the clock,
+WP8 for the MXU source profile, WP9 for VLEN — so the list shortens as those
+land, and reaching zero is a gate rather than an edit.
+
+`TPU_V3_NEO_LITE_PROFILE=C1|C2` is refused at configure time, naming the same
+work packages; an unrecognised value is refused as not being a Neo Lite profile
+at all. Neither is accepted-and-half-honoured, because a build that answers to
+a profile name while instantiating another machine is precisely the defect D28
+exists to prevent.
+
+### 14.1 What the controls had to be built to catch
+
+Six of the eleven compared fields disagree on this machine. Five agree —
+`vlenb`, `mxu_rows`, `mxu_columns`, `mxu_source_profile`, `dma_controllers` —
+and a comparison that never read those five would produce byte-identical
+output on every run anyone would think to make. It would go on doing so until
+WP8 and WP9 changed the hardware it was supposed to have been guarding, which
+is the point at which the check was needed.
+
+The controls therefore mutate the requested profile, one field at a time, and
+require the reported set to grow by exactly that name. A second control mutates
+in the other direction, making a disagreeing field agree, and requires the set
+to shrink. `--expect-profile-disagreements` compares **sets**, so a comparison
+that transposed two fields or quietly stopped reading one fails rather than
+printing a shorter message into a stream nobody diffs. The runner also asserts
+`sc_time_stamp()` is still zero on the refusal path: a decision and a truncated
+simulation are otherwise indistinguishable from the outside.
+
+`ctest -L wp1` is 12 tests: the unit test, the two profile refusals, five
+single-field mutations, one reverse mutation, one test that the expectation
+itself can fail, one that a control flag with no profile to compare is refused,
+and one that `--profile none` runs unchanged.
+
+### 14.2 One defect, found by the controls, in this section's own claims
+
+The first version of these controls asserted that C1 disagrees on ten fields,
+composed as "C2's six plus the four C1 changes". That is wrong. C1's local
+plane is 4 banks of 128 bits, which is what the reference machine already has,
+so `local_bank_width_bits` and `local_bank_count` are in C2's list and not in
+C1's; C1 disagrees on eight. The composed expression was a guess about the
+profiles dressed as arithmetic, and the test failed on it immediately. The
+lists are now written out per profile, each being the answer for one profile
+against one machine rather than an expression over the other.
+
+This is the fourth time in this audit that a claim survived until something
+regenerated it and compared. It is also the first time the check that caught it
+was written before the claim reached a document.
+
+### 14.3 Reproduction
+
+```text
+export CC=/usr/bin/gcc; export CXX=/usr/bin/g++; export PATH=/usr/bin:/bin:$PATH
+cmake --build build-neo-d27 -j8
+ctest --test-dir build-neo-d27 -L wp1
+ctest --test-dir build-neo-d27 -L tpu_v3
+```
+
+Release: 325/325. Debug, from a clean configure and build: 325/325. The two
+trees run the same test list; the twelve WP1 tests are new since G4.
+
+`components/isp_tlm` has a pre-existing link failure in `isp_register_bank_test`
+(`libsystemc.so: undefined reference to sc_main`) unrelated to TPU_V3 and
+untouched by this work, so a whole-tree `cmake --build` needs `-- -k` to reach
+every TPU_V3 target.

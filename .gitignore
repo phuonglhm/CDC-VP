@@ -39,3 +39,9 @@ components/otp_tlm/*.o
 components/otp_tlm/build/
 *.yuv
 output/
+
+# Python bytecode caches. Tools under components/ and tools/ are run in place,
+# so an import leaves one next to the source unless the interpreter is told not
+# to; the screening tools set `dont_write_bytecode`, and this covers the rest.
+__pycache__/
+*.pyc

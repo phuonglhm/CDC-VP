@@ -1,7 +1,8 @@
 # Standalone NEO-CORE Microbenchmark and Design-Space Exploration Plan
 
-Status: **active; G0–G3 complete. MB1–MB4 are implemented and gated and
-every run is conservation-checked; G4 is next. 2026-08-27**
+Status: **active; G0–G4 complete. MB1–MB4 are implemented and gated, every
+run is conservation-checked and the supported knobs are screened; G5 is next.
+2026-08-27**
 
 This document is the current execution plan for TPU_V3. It intentionally
 narrows the work to **one standalone NEO-CORE**. Dual-core chip composition,
@@ -393,8 +394,9 @@ block by inspection:
 | G1 | **Complete** | `neo_core_microbench`, `tpu_v3_neo_core_d27_baseline`, the dependency-guard negative control and `TPU_V3_STANDALONE_DSE_AUDIT.md` |
 | G2 | **Complete; MB3/MB4 implementation awaits independent review** | `components/TPU_V3/microbench`, `neo_core_bench_runner`, five distinct firmware ELFs under `fw/TPU_V3_NEO_CORE_MICROBENCH`, all frozen MB1–MB4 cases in both modes and every supported implementation, edge patterns and classified negative controls. Regression after building `neo_core_bench_runner` and `rvv_smoke_image`: microbench 212/212 PASS; full `tpu_v3` 271/271 PASS, 0 SKIP |
 | G3 | **Complete; awaits independent review** | eight conservation identities carried in every row, seven of them on every run; per-stage timing and an exact stage sequence derived from the guest's own marks; three model-side mutations plus a comparator mutation per identity. An unbalanced identity fails the run |
-| G4 | **Next** | one-factor-at-a-time screening around the current implementation reference |
-| G5–G6 | Pending | start only after the preceding gate closes |
+| G4 | **Complete; awaits independent review** | `components/TPU_V3/microbench/screening`, 170 one-factor points over five knobs and ten workload/mode combinations (five benchmarks in both modes), each passing its golden and its G3 identities. Sensitive: pipeline depth (21–62%), bank width (55–84% MXU, 1.4–9.8% hart end-to-end) and DMA burst (0.3–7.3%, end-to-end only). Inert: bank count and SRAM capacity, both with a mechanism. Reproducible by `ctest -L g4_full`; five controls plus aggregation unit tests |
+| G5 | **Next** | D28's C1/C2 profiles, by the work breakdown in `NEO_LITE_C1_C2_IMPLEMENTATION_PLAN.md` starting at WP0 |
+| G6 | Pending | start only after G5 closes |
 
 ### Gate G0 — documentation and harness contract
 
@@ -546,6 +548,33 @@ Do not first run the complete Cartesian product. The nominal six-knob grid
 including experimental VLEN and DMA-channel values is 1,296 configurations,
 or 51,840 benchmark/case runs before modes and repeats.
 
+**Status: met, pending independent review.** 170 one-factor points over five
+knobs and ten workload/mode combinations — five benchmarks in both modes — run by
+`components/TPU_V3/microbench/screening/neo_core_screen.py`, which reads result
+rows rather than logs and refuses to summarise a run whose bytes did not
+reconcile.
+
+| knob | verdict | mechanism |
+| --- | --- | --- |
+| `fabric_pipeline_stages` | sensitive everywhere, 21–62% | every requester pays the response latency once per request, and the hart issues the most because VP++ decomposes vector accesses element-wise (D7) |
+| `local_bank_width_bits` | sensitive wherever a wide requester runs: 55–84% on the MXU, 1.4–9.8% for hart kernels **end-to-end**, 0% for the same kernels alone | a 4-byte element-wise access is one beat at any width; tile staging and DMA chunks halve their beats each doubling |
+| `dma_max_burst_bytes` | sensitive in four of five end-to-end workloads, 0.3–7.3%; inert in kernel-only mode, which has no DMA | 384 chunks at 64 bytes against 12 at 2048 |
+| `local_bank_count` | inert | MB1–MB4 run their stages in sequence; 32 of 170 rows record a single DMA bank conflict from temporal decoupling at a stage boundary, which cannot move a 58 µs interval |
+| `sram_capacity_bytes` | inert | sparse page-backed storage (D6); every frozen case fits at 1 MiB. A footprint knob, not a throughput one |
+
+Bank count being inert is a structural result, not a flat curve, and it is what
+stops G6 spending configurations on it. It becomes screenable when a workload
+overlaps requesters — WP4's multi-channel DMA is the first such thing in the
+Neo Lite plan.
+
+The screening was run twice, `annotated` and `arbitrated`. Elapsed and stage
+timing agree on every observation; bank conflicts and per-requester latency do
+not — 32 rows against zero — which is consistent with those conflicts being a
+decoupling artefact rather than contention. Neither run may be quoted as
+contention or fairness (D16): that needs `arbitrated` **and** a workload with
+genuinely overlapping requesters, and MB1–MB4 have no such workload.
+Interactions are outside what one-factor screening can see, by construction.
+
 ### Gate G5 — promote the approved profiles and any justified extensions
 
 Implement and promote D28's exact C1/C2 profiles here, including VLEN256,
@@ -636,18 +665,33 @@ human-readable simulator logs as the source of numeric truth.
 
 ## 13. Immediate implementation task
 
-G2 correctness implementation is complete for MB1–MB4. The next task is
-**G3 measurement conservation**, not a DSE sweep. First reconcile each tensor
-footprint with DMA, local-fabric and MXU stage bytes; then reconcile stage
-times with the marked interval and explicitly account for sequential versus
-overlapped work. A counter may enter a conclusion only after its own mutation
-control proves that the reported value changes for the intended reason.
+G0–G4 are complete. MB1–MB4 pass their frozen cases against an independent
+golden, every run reconciles its accounting identities, and the supported knobs
+have been screened one at a time.
 
-Two things must not happen before G3 closes:
+**The next task is G5**: implement and promote D28's Neo Lite C1 and C2
+profiles, following the ordered work breakdown in
+`NEO_LITE_C1_C2_IMPLEMENTATION_PLAN.md` from WP0. That plan is subordinate to
+D28 — changing a work-package sequence does not change a profile value or waive
+a promotion criterion.
 
-* **no performance conclusion from MB1–MB4.** The rows are correctness evidence
-  with counters attached; their counters are not yet validated measurements;
-* **do not label a current run C1 or C2.** The current VP++/MXU/DMA/external
-  path is still the §7.1 reference capability. D28 approves the exact target
-  profiles, but VLEN256 and the other physical differences become evidence
-  only after their G5 promotion gates pass.
+What G4 hands it:
+
+* the sensitive supported knobs are pipeline depth, bank width and DMA burst.
+  The first two are C1/C2 profile values and the third is derived from AXI
+  width and burst beats, so the profiles differ on axes already known to be
+  live. That is a reason to expect a measurable C1/C2 difference, not evidence
+  of one;
+* bank count is inert until a workload overlaps requesters. WP4's
+  multi-channel DMA is the first thing that creates one, and D28's promotion
+  gate item 5 already requires a concurrent-channel test;
+* `arbitrated` runs and agrees with `annotated` on every elapsed figure, so it
+  is exercised but not yet tested in substance. WP4 is where that changes.
+
+Two things that must not happen while G5 is open:
+
+* **no performance conclusion from a knob outside C1/C2 without G4 evidence.**
+  D28 pre-authorises exactly two model-extension targets and no others;
+* **no C1/C2 identity from a label.** A build must refuse a profile name whose
+  live components report something else, and D28's promotion gate item 8
+  requires a negative control proving it.

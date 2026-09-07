@@ -43,6 +43,7 @@ add_executable(neo_core_bench_runner neo_core_bench_runner.cpp)
 add_dependencies(neo_core_bench_runner neo_bench_source_revision)
 target_link_libraries(neo_core_bench_runner PRIVATE
     cdc::components::tpu_v3_neo_core
+    cdc::components::tpu_v3_common
     cdc::components::tpu_v3_microbench)
 # The firmware's own map header, so the runner can assert it against
 # `address_map.h` rather than trusting that two copies of the same constants
@@ -783,6 +784,131 @@ set_tests_properties(tpu_v3_mb1_control_mxu_readback_is_checked PROPERTIES
         "the instantiated MXU reports 64x64 but this build is configured for 32x32"
     TIMEOUT 120)
 
+# ── Gate G5 / WP1: a build may not answer to a profile it is not ─────────────
+#
+# The comparison behind these runs is the only thing WP1 adds to the runner,
+# and it is worth exactly as much as the evidence that it looks at every field.
+# Two properties are asserted, and they need different tests:
+#
+#   * the machine is refused as C1 and as C2, naming precisely the fields that
+#     disagree today. `--expect-profile-disagreements` compares sets, so a
+#     field that quietly stopped being checked fails the test rather than
+#     shortening a message nobody reads;
+#   * every field is genuinely compared. Six of the eleven disagree on this
+#     machine and are covered by the two runs above; the other five agree, so
+#     a comparison that dropped them would look identical. Those need a
+#     mutation: `--profile-mutate` swaps one field of the requested profile and
+#     the expected set grows by exactly that name.
+#
+# The runner returns success here on a *refusal*, which reads backwards until
+# you notice what is being tested: the subject is the comparison, not the run.
+# It also proves it refused before `sc_start` — a truncated simulation would
+# otherwise be indistinguishable from a decision.
+set(WP1_C2_DISAGREEMENTS
+    "dma_channels,external_axi_width_bits,backed_sram_bytes,local_bank_width_bits,local_bank_count,core_period_ns")
+# Not C2's set plus the four: C1's local plane is 4 banks of 128 bits, which
+# is what the reference machine already has, so those two fields agree and a
+# composed set would be wrong. The lists are written out for that reason —
+# each is the answer for one profile against one machine, not an expression.
+set(WP1_C1_DISAGREEMENTS
+    "vlenb,mxu_rows,mxu_columns,mxu_source_profile,dma_channels,external_axi_width_bits,backed_sram_bytes,core_period_ns")
+
+foreach(_profile_case "neo_lite_c1;${WP1_C1_DISAGREEMENTS}"
+                      "neo_lite_c2;${WP1_C2_DISAGREEMENTS}")
+    list(GET _profile_case 0 _profile)
+    list(GET _profile_case 1 _fields)
+    add_test(NAME tpu_v3_wp1_control_${_profile}_is_refused
+        COMMAND neo_core_bench_runner ${BENCH_COMMON_ARGS}
+                --case 0 --impl scalar --mode kernel
+                --profile ${_profile}
+                --expect-profile-disagreements "${_fields}"
+                --result "${BENCH_RESULTS}/control_${_profile}_refused.json")
+    set_tests_properties(tpu_v3_wp1_control_${_profile}_is_refused PROPERTIES
+        LABELS "tpu_v3;integration;microbench;d28;g5;wp1;negative_control"
+        PASS_REGULAR_EXPRESSION
+            "before any simulation time elapsed; no row was written"
+        TIMEOUT 120)
+endforeach()
+
+# The five fields the reference machine already satisfies. Without these, a
+# comparison that never looked at VLEN or the MXU would pass every other WP1
+# test on this machine, and would go on passing until WP8 and WP9 changed the
+# hardware it was supposed to have been guarding all along.
+foreach(_mutation "vlenb=32" "mxu_rows=63" "mxu_columns=63"
+                  "mxu_source_profile=int8_32x32" "dma_controllers=2")
+    string(REGEX REPLACE "=.*$" "" _field "${_mutation}")
+    add_test(NAME tpu_v3_wp1_control_mutate_${_field}
+        COMMAND neo_core_bench_runner ${BENCH_COMMON_ARGS}
+                --case 0 --impl scalar --mode kernel
+                --profile neo_lite_c2
+                --profile-mutate "${_mutation}"
+                --expect-profile-disagreements
+                    "${WP1_C2_DISAGREEMENTS},${_field}"
+                --result "${BENCH_RESULTS}/control_mutate_${_field}.json")
+    set_tests_properties(tpu_v3_wp1_control_mutate_${_field} PROPERTIES
+        LABELS "tpu_v3;integration;microbench;d28;g5;wp1;negative_control"
+        PASS_REGULAR_EXPRESSION
+            "before any simulation time elapsed; no row was written"
+        TIMEOUT 120)
+endforeach()
+
+# And the mutation control's own control, in the other direction: a swap that
+# removes a disagreement must shrink the set. Together with the runs above this
+# pins the comparison from both sides — it cannot pass by reporting everything,
+# and it cannot pass by reporting nothing.
+add_test(NAME tpu_v3_wp1_control_mutation_removes_a_disagreement
+    COMMAND neo_core_bench_runner ${BENCH_COMMON_ARGS}
+            --case 0 --impl scalar --mode kernel
+            --profile neo_lite_c2
+            --profile-mutate "backed_sram_bytes=16777216"
+            --expect-profile-disagreements
+                "dma_channels,external_axi_width_bits,local_bank_width_bits,local_bank_count,core_period_ns")
+set_tests_properties(tpu_v3_wp1_control_mutation_removes_a_disagreement
+    PROPERTIES
+    LABELS "tpu_v3;integration;microbench;d28;g5;wp1;negative_control"
+    PASS_REGULAR_EXPRESSION
+        "before any simulation time elapsed; no row was written"
+    TIMEOUT 120)
+
+# An expectation that does not bite proves nothing, so it is tested too: the
+# same run with one field missing from the expected set must fail. `WILL_FAIL`
+# with `SKIP_RETURN_CODE` because an inverted control otherwise turns a skip
+# into a pass.
+add_test(NAME tpu_v3_wp1_control_expectation_bites
+    COMMAND neo_core_bench_runner ${BENCH_COMMON_ARGS}
+            --case 0 --impl scalar --mode kernel
+            --profile neo_lite_c2
+            --expect-profile-disagreements "dma_channels")
+set_tests_properties(tpu_v3_wp1_control_expectation_bites PROPERTIES
+    LABELS "tpu_v3;integration;microbench;d28;g5;wp1;negative_control"
+    WILL_FAIL TRUE
+    SKIP_RETURN_CODE 77
+    TIMEOUT 120)
+
+# A control flag with no profile to compare against would run the benchmark and
+# assert nothing at all.
+add_test(NAME tpu_v3_wp1_control_needs_a_profile
+    COMMAND neo_core_bench_runner ${BENCH_COMMON_ARGS}
+            --case 0 --impl scalar --mode kernel
+            --profile none
+            --expect-profile-disagreements "dma_channels")
+set_tests_properties(tpu_v3_wp1_control_needs_a_profile PROPERTIES
+    LABELS "tpu_v3;integration;microbench;d28;g5;wp1;negative_control"
+    PASS_REGULAR_EXPRESSION "there is no D28 claim to check"
+    TIMEOUT 120)
+
+# `--profile none` is the D27 reference machine and must be unaffected: the
+# gate may only refuse a claim that was made.
+add_test(NAME tpu_v3_wp1_control_no_profile_still_runs
+    COMMAND neo_core_bench_runner ${BENCH_COMMON_ARGS}
+            --case 0 --impl scalar --mode kernel --profile none
+            --result "${BENCH_RESULTS}/control_profile_none.json")
+set_tests_properties(tpu_v3_wp1_control_no_profile_still_runs PROPERTIES
+    LABELS "tpu_v3;integration;microbench;d28;g5;wp1"
+    FAIL_REGULAR_EXPRESSION "this build cannot run as"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
+
 # ── the testbench target's own contract ──────────────────────────────────────
 #
 # `bench_world` is only a testbench, which is exactly why it needs a gate: the
@@ -799,3 +925,18 @@ add_test(NAME tpu_v3_bench_world COMMAND test_tpu_v3_bench_world)
 set_tests_properties(tpu_v3_bench_world PROPERTIES
     LABELS "tpu_v3;unit;microbench;d27"
     TIMEOUT 120)
+
+# ── Gate G4: knob screening ──────────────────────────────────────────────────
+#
+# Added from here rather than from the microbench root because it needs the
+# runner target, the firmware build directory and the revision file, all of
+# which this file owns.
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../screening"
+                 "${CMAKE_CURRENT_BINARY_DIR}/screening")
+
+# ── Gate G5 / WP0: Neo Lite feasibility ──────────────────────────────────────
+#
+# Added from here because it needs `TPU_V3_SAURIA_ROOT` and `BENCH_TOOLDIR`,
+# which this file already has in scope.
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../neo_lite"
+                 "${CMAKE_CURRENT_BINARY_DIR}/neo_lite")

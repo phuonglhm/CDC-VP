@@ -45,9 +45,24 @@ G2  benchmark correctness                        COMPLETE
 G3  measurement conservation                    COMPLETE
     seven identities every run, eight end-to-end
     unbalanced                                  = run_valid false
-    G3 code                                     AWAITS INDEPENDENT REVIEW
-G4  supported-knob screening                     NEXT
-G5  C1/C2 promotion + justified extra extensions PENDING
+G4  supported-knob screening                    COMPLETE
+    sensitive: pipeline depth, bank width, DMA burst
+    inert: bank count, SRAM capacity
+    G4 code                                     AWAITS INDEPENDENT REVIEW
+G5  C1/C2 promotion + justified extra extensions IN PROGRESS
+    WP0 baseline lock + C1 feasibility          EVIDENCE COMPLETE,
+                                                PENDING CLOSURE
+      C1 MXU32 and VLEN256 source-proven
+      Release 313/313, Debug 313/313, 0 skip
+    WP1 canonical profile + refusal gate        EVIDENCE COMPLETE,
+                                                PENDING CLOSURE
+      C1 refused on 8 fields, C2 on 6, each
+      naming the work package that owns it
+      Release 325/325, Debug 325/325
+    WP2..WP10                                   NOT STARTED
+
+    no model code has changed: the machine is still one DMA
+    channel, 64-bit AXI, 64x64 MXU and VLEN 512
 G6  targeted exhaustive sweep/Pareto report      PENDING
 ```
 

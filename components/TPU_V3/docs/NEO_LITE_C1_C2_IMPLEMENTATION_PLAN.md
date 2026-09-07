@@ -1,6 +1,8 @@
 # Neo Lite C1/C2 Executable VP Implementation Plan
 
-Status: **active plan; implementation has not started**
+Status: **active plan. G5 is in progress: WP0's and WP1's evidence is
+complete, with every review finding raised against WP0 closed; both are
+pending final closure on review. WP2–WP10 are not started.**
 
 Plan date: 2026-08-26
 
@@ -138,7 +140,60 @@ Exit criteria:
 * C1 is either source-proven or explicitly blocked. A C++ 32x32 template
   default does not satisfy this gate.
 
+**Status: evidence complete, pending closure on independent review.** Neither
+this work package nor any other has changed model code, so every C1/C2 target
+value remains unimplemented. Evidence and every source
+path and hash are in `NEO_LITE_WP0_FEASIBILITY.md`. In summary:
+
+* the baseline is reproducible in **both** build types — Release 313/313 and
+  Debug 313/313, zero skipped. The Debug figure closes a gap carried since G2,
+  where every gate had been verified in Release only;
+* **C2 is unblocked**: its MXU and VP++ already exist at the required values;
+* **C1 is source-proven, not blocked.** The pinned manifest carries a named
+  `int8_32x32` target with index widths 17/17/16 — distinct from the template
+  default D28 forbids falling through to — and a `demo_gemm_32x32` golden case
+  recording those exact flags. VLEN256 is reachable through the existing
+  recorded-patch mechanism, which never edits the pinned checkout at configure
+  time, and the pinned cross toolchain already builds `rv32gcv_zvl256b`.
+
+WP0 changes no model code. Its claims rest on sources outside this repository,
+so they are re-checked by `ctest -L wp0` rather than only written down: the
+named target and its exact fields, the golden case and its index flags, the
+VP++ constant WP9's patch targets, and both firmware ISAs.
+
 ### WP1 — canonical profile and configuration propagation
+
+Status: **evidence complete, pending closure on review.** Delivered
+2026-08-29. What landed differs from the plan text below in three places, and
+the differences are recorded here rather than by editing the plan:
+
+* the profile lives in a **new** `tpu_v3/neo_lite_profile.h`, not in
+  `architecture_config.h`. The existing file describes the D27 machine that
+  exists; merging the two would have made a single type that is partly a
+  description of hardware and partly a description of hardware that does not
+  exist yet, which is the confusion WP1 was opened to remove;
+* `tpu_core.h`/`.cpp` were **not** touched. WP1's deliverable is a comparison,
+  and the core has nothing to say until WP2–WP5 give it something to
+  propagate. Changing it now would have been a no-op edit that made the
+  profile look wired in;
+* the refusal is checked in the runner after component construction and
+  before `sc_start`, which is where every field is readable from an
+  instantiated object. The plan calls this "elaboration-time"; the code calls
+  it "before simulation", and the control asserts `sc_time_stamp()` is still
+  zero so that the difference is measured rather than asserted in prose.
+
+WP1's only visible effect today is a refusal. On the D27 reference machine:
+
+```text
+--profile neo_lite_c1   8 fields disagree
+--profile neo_lite_c2   6 fields disagree
+```
+
+C1 disagrees on more fields but **not** on the local plane: C1's 4 banks of
+128 bits are what the reference machine already has, so `local_bank_width_bits`
+and `local_bank_count` appear in C2's list and not in C1's. Each message names
+the work package that owns the value, so the list shortens as WP2–WP9 land and
+reaching zero is WP7's and WP10's gate rather than an edit to this file.
 
 Purpose: eliminate the two disconnected configuration views and prevent
 profile labels from disagreeing with instantiated types.
@@ -190,6 +245,53 @@ Required gates:
   VP++ VLEN or MXU identity;
 * a mutation control that swaps one C1/C2 field and proves the mismatch gate
   fails before simulation.
+
+Evidence, all under `ctest -L wp1` (12 tests, all passing):
+
+```text
+tpu_v3_neo_lite_profile                         exact D28 values, 13 single-
+                                                field mutations, derivations
+tpu_v3_wp1_control_neo_lite_c1_is_refused       the 8-field set, exactly
+tpu_v3_wp1_control_neo_lite_c2_is_refused       the 6-field set, exactly
+tpu_v3_wp1_control_mutate_vlenb                 the five fields that already
+tpu_v3_wp1_control_mutate_mxu_rows              agree on this machine, one
+tpu_v3_wp1_control_mutate_mxu_columns           mutation each: a comparison
+tpu_v3_wp1_control_mutate_mxu_source_profile    that never read them would
+tpu_v3_wp1_control_mutate_dma_controllers       pass every other test here
+tpu_v3_wp1_control_mutation_removes_a_disagreement
+                                                a swap that makes a field
+                                                agree must shrink the set
+tpu_v3_wp1_control_expectation_bites            the expectation itself fails
+                                                when it should
+tpu_v3_wp1_control_needs_a_profile              a control flag with nothing
+                                                to compare is refused
+tpu_v3_wp1_control_no_profile_still_runs        D27 runs are unaffected
+```
+
+`--expect-profile-disagreements` compares **sets**, not counts, so a
+comparison that swapped two fields or quietly stopped reading one fails rather
+than producing a shorter message. The five mutation controls exist because six
+of the eleven fields disagree on this machine and five agree: without a
+mutation, a comparison that never looked at VLEN or the MXU would pass
+everything else and keep passing until WP8 and WP9 changed the hardware it was
+supposed to be guarding.
+
+Configure-time refusal, verified for all three cases:
+
+```text
+-DTPU_V3_NEO_LITE_PROFILE=C1   FATAL_ERROR, naming WP2-WP5, WP8, WP9
+-DTPU_V3_NEO_LITE_PROFILE=C2   FATAL_ERROR, naming WP2-WP5
+-DTPU_V3_NEO_LITE_PROFILE=C3   FATAL_ERROR, "is not a Neo Lite profile"
+-DTPU_V3_NEO_LITE_PROFILE=none accepted
+```
+
+C1 and C2 are refused rather than accepted-and-half-honoured: a build that
+answered to a profile name while instantiating another machine is the defect
+D28 exists to prevent, and configure time is the cheapest place to say so.
+
+Not delivered by WP1, and deliberately: nothing in the runner or the core
+*consumes* the profile. It compares and refuses. The propagation half of this
+work package's title depends on WP2 through WP5 owning the values first.
 
 Do not make the full-system `tpu_soc_config` a prerequisite for the D27
 standalone runner. Extract/reuse a core-profile object rather than routing this

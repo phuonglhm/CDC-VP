@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -51,6 +52,7 @@
 #include "tpu_v3/bench/golden.h"
 #include "tpu_v3/bench/result_row.h"
 #include "tpu_v3/bench/sha256.h"
+#include "tpu_v3/neo_lite_profile.h"
 
 #include "bench_world.h"
 
@@ -250,6 +252,30 @@ struct options {
     std::uint64_t dma_max_burst_bytes = 2048;
     double core_period_ns = 10.0;
 
+    /// A D28 Neo Lite profile this run claims to be, or `none`.
+    ///
+    /// Checked against the instantiated components before simulation starts.
+    /// Today the answer is always a refusal — the machine is the D27
+    /// reference — and that refusal is WP1's deliverable, not a placeholder.
+    tpu::neo_lite_profile_id profile = tpu::neo_lite_profile_id::none;
+
+    /// Control-only: the exact set of profile fields the comparison must
+    /// report as disagreeing, by the field name each message starts with.
+    ///
+    /// Empty means "not asserted". When it is set the run is a control: it
+    /// succeeds when the set matches exactly and fails otherwise, so a
+    /// comparison that silently stopped looking at a field is a red test
+    /// rather than a quieter refusal message.
+    std::vector<std::string> profile_disagreements_expected;
+    bool profile_disagreements_asserted = false;
+
+    /// Control-only: one `field=value` swap applied to the requested profile
+    /// before it is compared.
+    ///
+    /// This exists to show the comparison is field by field. A run carrying a
+    /// mutation may never produce a row, whatever the comparison then says --
+    /// the profile it would be labelled with is not the one D28 defines.
+    std::string profile_mutation;
     std::string config_id = "reference";
     /// The VLEN this build is expected to contain, in bits. Not a knob: VP++
     /// compiles it in, so this is what the guest readback is checked against
@@ -290,9 +316,146 @@ void usage(const char* program)
         << "  [--sram-capacity-bytes N] [--dma-max-burst N] "
            "[--core-period-ns X]\n"
         << "  [--config-id NAME] [--build-type NAME]\n"
+        << "  [--profile none|neo_lite_c1|neo_lite_c2]\n"
+        << "  [--expect-profile-disagreements FIELD,FIELD,...] "
+           "[--profile-mutate FIELD=VALUE]\n"
         << "  [--expect-vlen-bits N] [--expect-mxu-geometry RxC]\n"
         << "  [--source-revision REV | --source-revision-file PATH]\n"
         << "  [--watchdog-ms X] [--quiet]\n";
+}
+
+bool parse_unsigned(const std::string& text, std::uint64_t limit,
+                    std::uint64_t& out);
+
+/// Split a comma-separated list, keeping empty entries out.
+std::vector<std::string> split_list(const std::string& value)
+{
+    std::vector<std::string> items;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t comma = value.find(',', start);
+        const std::string item = value.substr(
+            start,
+            comma == std::string::npos ? std::string::npos : comma - start);
+        if (!item.empty()) {
+            items.push_back(item);
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return items;
+}
+
+/// The fields `tpu::profile_disagreements` can report on, in its own order.
+///
+/// Written out here rather than derived from a message, so that a field the
+/// comparison stops checking makes the controls that name it fail instead of
+/// quietly having nothing to match.
+const std::array<const char*, 11> kProfileComparisonFields = {
+    "vlenb",           "mxu_rows",       "mxu_columns",
+    "mxu_source_profile", "dma_controllers", "dma_channels",
+    "external_axi_width_bits", "backed_sram_bytes",
+    "local_bank_width_bits", "local_bank_count", "core_period_ns"};
+
+bool is_profile_comparison_field(const std::string& name) noexcept
+{
+    for (const char* field : kProfileComparisonFields) {
+        if (name == field) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string profile_comparison_field_list()
+{
+    std::string list;
+    for (const char* field : kProfileComparisonFields) {
+        if (!list.empty()) {
+            list += ", ";
+        }
+        list += field;
+    }
+    return list;
+}
+
+/// The field name a disagreement message starts with.
+std::string disagreement_field(const std::string& message)
+{
+    const std::size_t colon = message.find(':');
+    return colon == std::string::npos ? message : message.substr(0, colon);
+}
+
+/// Apply one control-only `field=value` swap to a requested profile.
+///
+/// The swap is deliberately not re-validated: the point is to produce a
+/// profile D28 does not define and watch the comparison notice one field
+/// fewer. The caller refuses to emit a row for a mutated run.
+bool apply_profile_mutation(const std::string& spec, tpu::neo_lite_profile& p)
+{
+    const std::size_t eq = spec.find('=');
+    if (eq == std::string::npos || eq == 0 || eq + 1 == spec.size()) {
+        std::cerr << "--profile-mutate takes FIELD=VALUE, for example "
+                     "backed_sram_bytes=16777216\n";
+        return false;
+    }
+    const std::string field = spec.substr(0, eq);
+    const std::string value = spec.substr(eq + 1);
+    if (!is_profile_comparison_field(field)) {
+        std::cerr << "--profile-mutate names '" << field
+                  << "', which the profile comparison does not report on; "
+                     "known fields are "
+                  << profile_comparison_field_list() << '\n';
+        return false;
+    }
+    if (field == "mxu_source_profile") {
+        p.mxu_source_profile = value;
+        return true;
+    }
+    if (field == "core_period_ns") {
+        char* end = nullptr;
+        const double period = std::strtod(value.c_str(), &end);
+        if (end == value.c_str() || *end != '\0' || !std::isfinite(period)) {
+            std::cerr << "--profile-mutate core_period_ns needs a finite "
+                         "number, not '"
+                      << value << "'\n";
+            return false;
+        }
+        p.core_period_ns = period;
+        return true;
+    }
+    std::uint64_t number = 0;
+    if (!parse_unsigned(value, UINT64_MAX, number)) {
+        std::cerr << "--profile-mutate " << field
+                  << " needs an unsigned number, not '" << value << "'\n";
+        return false;
+    }
+    // The two derived fields are mutated through what derives them, so a
+    // mutation cannot put a profile into a state its own accessors deny.
+    if (field == "vlenb") {
+        p.vlen_bits = static_cast<unsigned>(number * 8u);
+    } else if (field == "dma_channels") {
+        p.dma_channel_roles.assign(
+            static_cast<std::size_t>(number),
+            tpu::dma_channel_role::shared_input_read);
+    } else if (field == "mxu_rows") {
+        p.mxu_rows = static_cast<unsigned>(number);
+    } else if (field == "mxu_columns") {
+        p.mxu_columns = static_cast<unsigned>(number);
+    } else if (field == "dma_controllers") {
+        p.dma_controllers = static_cast<unsigned>(number);
+    } else if (field == "external_axi_width_bits") {
+        p.external_axi_width_bits = static_cast<unsigned>(number);
+    } else if (field == "backed_sram_bytes") {
+        p.backed_sram_bytes = number;
+    } else if (field == "local_bank_width_bits") {
+        p.local_bank_width_bits = static_cast<unsigned>(number);
+    } else if (field == "local_bank_count") {
+        p.local_bank_count = static_cast<unsigned>(number);
+    }
+    return true;
 }
 
 /// Parse an unsigned integer, refusing everything that is not one.
@@ -539,6 +702,38 @@ bool parse_options(int argc, char* argv[], options& out)
                 return false;
             }
             out.mxu_geometry_expected = value;
+        } else if (flag == "--profile") {
+            if (!need_value(value)) return false;
+            if (!tpu::parse_neo_lite_profile_id(value, out.profile)) {
+                std::cerr << "unknown Neo Lite profile '" << value
+                          << "'; known profiles are none, neo_lite_c1 "
+                             "(C1) and neo_lite_c2 (C2)\n";
+                return false;
+            }
+        } else if (flag == "--expect-profile-disagreements") {
+            if (!need_value(value)) return false;
+            out.profile_disagreements_asserted = true;
+            out.profile_disagreements_expected = split_list(value);
+            for (const auto& field : out.profile_disagreements_expected) {
+                if (!is_profile_comparison_field(field)) {
+                    std::cerr << "--expect-profile-disagreements names '"
+                              << field << "', which the profile comparison "
+                                          "does not report on; known fields "
+                                          "are "
+                              << profile_comparison_field_list() << '\n';
+                    return false;
+                }
+            }
+            if (out.profile_disagreements_expected.empty()) {
+                std::cerr << "--expect-profile-disagreements takes at least "
+                             "one field name: an empty set would assert that "
+                             "the machine already is the profile, which is "
+                             "what a plain --profile run checks\n";
+                return false;
+            }
+        } else if (flag == "--profile-mutate") {
+            if (!need_value(value)) return false;
+            out.profile_mutation = value;
         } else if (flag == "--config-id") {
             if (!need_value(value)) return false;
             out.config_id = value;
@@ -1190,6 +1385,130 @@ int sc_main(int argc, char* argv[])
     // ── the machine ─────────────────────────────────────────────────────────
 
     tpu_core neo("neo_core", make_core_config(opt));
+
+    // ── D28/WP1: a profile label may not outrun the machine ─────────────────
+    //
+    // Checked here, after construction and before `sc_start`, because the
+    // point is to refuse rather than to measure. Every field comes from an
+    // instantiated component or from the linked VP++ build; none is read back
+    // from the request that produced it.
+    //
+    // Today this always refuses: the machine is the D27 reference and neither
+    // Neo Lite profile is implemented. That refusal, and the list of exactly
+    // which fields disagree, is what WP1 delivers — WP2 through WP9 shorten
+    // the list, and WP7 and WP10 are the gates that let it reach zero.
+    if (opt.profile == tpu::neo_lite_profile_id::none
+        && (opt.profile_disagreements_asserted
+            || !opt.profile_mutation.empty())) {
+        // A control that names fields or mutates one but asks for no profile
+        // would run the benchmark and assert nothing. Refusing keeps a
+        // control from silently becoming an ordinary run.
+        std::cerr << "--expect-profile-disagreements and --profile-mutate "
+                     "need a --profile to compare; with --profile none there "
+                     "is no D28 claim to check\n";
+        return kUsage;
+    }
+    if (opt.profile != tpu::neo_lite_profile_id::none) {
+        auto wanted = tpu::neo_lite_profile_for(opt.profile);
+        const bool mutated = !opt.profile_mutation.empty();
+        if (mutated && !apply_profile_mutation(opt.profile_mutation, wanted)) {
+            return kUsage;
+        }
+        const auto engine = neo.matrix_engine().identity();
+
+        tpu::live_core_identity live;
+        // VP++ compiles VLEN in, so the linked build answers before the guest
+        // has executed anything.
+        live.vlenb = cdc::cpu::riscv_vp_plusplus_cpu::vlen_bits() / 8u;
+        live.mxu_rows = engine.rows;
+        live.mxu_columns = engine.columns;
+        // `profile@hash`; the profile name is the part D28 requires to be a
+        // named source target.
+        live.mxu_source_profile = engine.source_revision.substr(
+            0, engine.source_revision.find('@'));
+        live.dma_controllers = 1;
+        live.dma_channels = 1;
+        live.external_axi_width_bits = 64;
+        live.backed_sram_bytes = neo.sram().capacity_bytes();
+        live.local_bank_width_bits = neo.fabric().config().data_width_bits;
+        live.local_bank_count = neo.fabric().config().bank_count;
+        live.core_period_ns = opt.core_period_ns;
+
+        const auto disagreements
+            = tpu::profile_disagreements(wanted, live);
+        if (!disagreements.empty()) {
+            std::cerr << "this build cannot run as "
+                      << tpu::to_string(opt.profile)
+                      << (mutated ? " (mutated by --profile-mutate "
+                                    + opt.profile_mutation + ")"
+                                  : std::string())
+                      << ": " << disagreements.size()
+                      << " of its values are not what the instantiated "
+                         "components report.\n";
+            for (const auto& problem : disagreements) {
+                std::cerr << "  " << problem << '\n';
+            }
+            std::cerr << "D28 refuses a configuration ID whose components use "
+                         "other values, so no row is written.\n";
+        }
+
+        // ── The control half ────────────────────────────────────────────────
+        //
+        // A control asserts the exact set, in both directions: a field that
+        // disagreed and stopped being reported fails here, and so does one
+        // that started disagreeing. Comparing sets rather than counting means
+        // a comparison that swapped two fields cannot pass either.
+        if (opt.profile_disagreements_asserted) {
+            std::vector<std::string> seen;
+            seen.reserve(disagreements.size());
+            for (const auto& problem : disagreements) {
+                seen.push_back(disagreement_field(problem));
+            }
+            auto wanted_fields = opt.profile_disagreements_expected;
+            std::sort(seen.begin(), seen.end());
+            std::sort(wanted_fields.begin(), wanted_fields.end());
+            wanted_fields.erase(
+                std::unique(wanted_fields.begin(), wanted_fields.end()),
+                wanted_fields.end());
+            if (seen != wanted_fields) {
+                std::cerr << "--expect-profile-disagreements was not met.\n"
+                             "  expected:";
+                for (const auto& field : wanted_fields) {
+                    std::cerr << ' ' << field;
+                }
+                std::cerr << "\n  reported:";
+                for (const auto& field : seen) {
+                    std::cerr << ' ' << field;
+                }
+                std::cerr << '\n';
+                return kFail;
+            }
+            // `sc_start` has not been called on this path, so the refusal is
+            // provably a decision and not a truncated run.
+            if (sc_core::sc_time_stamp() != sc_core::SC_ZERO_TIME) {
+                std::cerr << "harness: the profile comparison ran after "
+                             "simulation time advanced\n";
+                return kFail;
+            }
+            std::cerr << "profile comparison reported exactly the "
+                      << wanted_fields.size()
+                      << " expected disagreements, before any simulation time "
+                         "elapsed; no row was written\n";
+            return kPass;
+        }
+        if (mutated) {
+            // Unreachable while every mutation still leaves a disagreement,
+            // and it stays here for the case where one does not: a mutated
+            // profile is not a D28 profile, so no run may carry its label.
+            std::cerr << "harness: a --profile-mutate run may not produce a "
+                         "row; the mutation left nothing for the comparison "
+                         "to refuse\n";
+            return kFail;
+        }
+        if (!disagreements.empty()) {
+            return kUsage;
+        }
+    }
     bench_world outside("outside");
     neo.external().bind(outside.socket);
 
