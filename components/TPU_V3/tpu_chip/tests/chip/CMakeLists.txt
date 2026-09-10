@@ -40,3 +40,22 @@ foreach(_noc_timing fast detailed)
         LABELS "tpu_v3;integration;noc"
         TIMEOUT 900)
 endforeach()
+
+# ── Phase 9 multi-chip contention ────────────────────────────────────────────
+#
+# Two chips, two endpoints, one mesh. `TPU_V3_PHASE9_NOC_REBASELINE.md` §6 asks
+# for concurrent inter-chip traffic completing without deadlock or response
+# misattribution, and neither half is answerable with one chip: nothing to
+# contend with, and nothing to confuse a response with.
+add_executable(test_tpu_v3_chip_multi_on_mesh test_chip_multi_on_mesh.cpp)
+target_link_libraries(test_tpu_v3_chip_multi_on_mesh PRIVATE
+    cdc::components::tpu_v3_tpu_chip
+    cdc::components::tpu_v3_noc_endpoint
+    cdc::components::noc_interconnect)
+foreach(_noc_timing fast detailed)
+    add_test(NAME tpu_v3_chip_multi_on_mesh_${_noc_timing}
+        COMMAND test_tpu_v3_chip_multi_on_mesh ${_noc_timing})
+    set_tests_properties(tpu_v3_chip_multi_on_mesh_${_noc_timing} PROPERTIES
+        LABELS "tpu_v3;integration;noc"
+        TIMEOUT 1800)
+endforeach()

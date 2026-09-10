@@ -64,9 +64,12 @@ later, at `8d94ca3` — while v1.4's architecture document is the copy `963466e`
 still carries, because v1.5 is what changed it. Reaching for a single commit
 for both is the mistake to avoid.
 
-The four v1.5 log files are **untracked** at the time of writing, so a fresh
-checkout cannot verify them at all until they are committed; the `.gitignore`
-rule that hid them is fixed, the commit is not mine to make.
+**Closed 2026-08-24 by commit `8652fb0`:** the four v1.5 logs, and v1.4's
+three, are now tracked. Until then they matched the root `*.log` rule and a
+fresh checkout could not verify them at all; the `.gitignore` negation that
+exposed them is `!components/*/docs/signoff/**/*.log`. Both packages now
+verify from a clean checkout apart from the living documents above, which is
+the scope error this section exists to record.
 
 **Binding on the next baseline.** A v1.6 artifact manifest covers the sign-off
 package only. A living document that the sign-off relies on has its hash quoted

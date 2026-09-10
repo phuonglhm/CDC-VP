@@ -16,6 +16,7 @@
 // integer arithmetic with no tolerance to argue about.
 //
 // Usage: test_neo_core_pipeline <neo_core_pipeline.elf>
+//                              [--manifest <result.json>]
 // Exit codes: 0 pass, 1 fail, 77 skip (image not built — no cross toolchain).
 
 #include "tpu_v3/core/tpu_core.h"
@@ -63,11 +64,11 @@ constexpr int kSkip = 77;
         }                                                                     \
     } while (0)
 
-// Neither zero: see the note in `neo_core_map.h`. Hart 3 distinguishes
-// `chip * 2 + core` from the formulas that would give 1 or 2, and from a
-// CSR nobody wrote.
-constexpr tpu::chip_id_t kChip = 1;
-constexpr tpu::core_id_t kCore = 1;
+// The historical target receives the header defaults (1/1). The D27 target
+// compiles this same harness with 0/0, so firmware, host decode and the model
+// are all derived from one pair of definitions.
+constexpr tpu::chip_id_t kChip = CHIP_ID;
+constexpr tpu::core_id_t kCore = CORE_ID;
 constexpr std::uint64_t kCapacity = 64 * 1024;
 constexpr double kWatchdogMilliseconds = 20.0;
 
@@ -313,6 +314,17 @@ const char* stage_name(std::uint32_t stage)
 int sc_main(int argc, char* argv[])
 {
     const std::string elf_path = argc > 1 ? argv[1] : std::string();
+    std::string manifest_path;
+    for (int i = 2; i < argc; ++i) {
+        const std::string argument = argv[i];
+        if (argument == "--manifest" && i + 1 < argc) {
+            manifest_path = argv[++i];
+        } else {
+            std::cerr << "usage: " << argv[0]
+                      << " <neo_core_pipeline.elf> [--manifest <result.json>]\n";
+            return 1;
+        }
+    }
     if (elf_path.empty() || !std::ifstream(elf_path).good()) {
         std::cout << "SKIP: " << (elf_path.empty() ? "<no image argument>"
                                                    : elf_path)
@@ -424,11 +436,10 @@ int sc_main(int argc, char* argv[])
     // Identity, as the guest saw it. `hart_id()` on the model would only show
     // the model agreeing with itself.
     const std::uint32_t mhartid = outside.sim[(SIM_MHARTID - SIM_BASE) / 4];
-    CHECK_MSG(mhartid == EXPECTED_MHARTID && EXPECTED_MHARTID != 0,
+    CHECK_MSG(mhartid == EXPECTED_MHARTID,
               "the hart read mhartid = " + std::to_string(mhartid)
-                  + ", not chip * 2 + core. Firmware derives chip and core "
-                    "index from this value and is given no other identity "
-                    "(ARCHITECTURE.md §2)");
+                  + ", expected " + std::to_string(EXPECTED_MHARTID)
+                  + " from the configured chip/core compatibility indices");
 
     const std::uint32_t checksum
         = outside.sim[(SIM_RVV_CHECKSUM - SIM_BASE) / 4];
@@ -479,6 +490,40 @@ int sc_main(int argc, char* argv[])
         std::cerr << failures << " check(s) failed\n";
         return 1;
     }
+
+    if (!manifest_path.empty()) {
+        std::ofstream manifest(manifest_path, std::ios::trunc);
+        CHECK_MSG(manifest.good(),
+                  "could not open the D27 standalone manifest for writing");
+        if (manifest.good()) {
+            manifest
+                << "{\n"
+                << "  \"schema\": \"tpu-v3-standalone-baseline-v1\",\n"
+                << "  \"scope\": \"standalone_neo_core\",\n"
+                << "  \"core_count\": 1,\n"
+                << "  \"hart_count\": 1,\n"
+                << "  \"hart_ids\": [" << mhartid << "],\n"
+                << "  \"chip_index\": " << static_cast<unsigned>(kChip)
+                << ",\n"
+                << "  \"core_index\": " << static_cast<unsigned>(kCore)
+                << ",\n"
+                << "  \"external_binding\": \"direct_memory_host_io\",\n"
+                << "  \"chip_composition\": false,\n"
+                << "  \"noc_instantiated\": false,\n"
+                << "  \"pipeline\": "
+                   "\"DMA->Transform(Im2Col)->MXU->RVV\",\n"
+                << "  \"result\": \"PASS\"\n"
+                << "}\n";
+            manifest.close();
+            CHECK_MSG(manifest.good(),
+                      "failed while writing the D27 standalone manifest");
+        }
+        if (failures != 0) {
+            std::cerr << failures << " manifest check(s) failed\n";
+            return 1;
+        }
+    }
+
     std::cout << "test_neo_core_pipeline: DMA -> Transform (Im2Col) -> MXU -> "
                  "RVV, all checks passed\n";
     return 0;

@@ -1,5 +1,9 @@
 # TPU_V3 Phase 0 — Source, Toolchain and License Audit
 
+> **D27 current-scope notice:** retain this file for source/toolchain/licence
+> evidence only. Its NoC/platform schedule is inactive. The active work is one
+> standalone NEO-CORE; start with [README.md](README.md).
+
 > **Historical architecture notice (D14/D15/D18/D20):** this audit remains the
 > evidence for Phase 0 dependency, NoC, toolchain, packaging and provenance
 > findings. Its old two-MXU/SVM composition and optional-Sauria role are

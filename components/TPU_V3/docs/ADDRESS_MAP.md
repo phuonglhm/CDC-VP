@@ -1,7 +1,12 @@
 # TPU_V3 Address Map
 
-Status: **NEO-CORE rebaseline approved by D14; D15 interconnect ratified
-2026-08-12; the C++ migration landed in Phase 3**.
+> **D27 active-scope note — 2026-08-25.** The standalone DSE instantiates only
+> the retained chip-index 0/core-index 0 address-map slot and no `tpu_chip` or
+> NoC. Chip/core apertures below remain compatibility/history for the verified
+> component; they do not define the current machine size. Start with
+> [README.md](README.md).
+
+Status: **NEO-CORE map migration complete; standalone D27 uses slot 0/0**.
 Top-level/chip/core aperture bases and strides are unchanged. The core-local
 MMIO subregions are renamed and reassigned below for one MXU, one independent
 DMA and one Transform block. Changing an engine geometry or SRAM capacity
@@ -72,11 +77,11 @@ chip_base(chip_id)   = 0xC000_0000 + chip_id * 0x0800_0000
 Eight chips fill the region exactly: `0xC000_0000 + 8 * 0x0800_0000` =
 `0x1_0000_0000`, the top of the RV32 space.
 
-`MAX_CHIPS = 8` is not a layout choice, it is forced by the NoC: the frozen
-FlooNoC chimney manager ID is 3 bits, so `noc_interconnect` accepts at most 8
-upstream initiators, and plan §4.4 gives each chip exactly one aggregated
-initiator. Raising it is a NoC protocol change (see `TPU_V3_PHASE0_AUDIT.md`
-§5).
+`MAX_CHIPS = 8` is the bound encoded by the retained Revision 1 configuration
+and address-map schema. D27 corrects the old rationale: the three-bit AXI
+ManagerID is not a FlooNoC node-count limit. Changing this constant would still
+require an address-map/schema migration, but it must not be presented as proof
+that RTL FlooNoC supports only eight nodes. It is inactive in the one-core DSE.
 
 Inside one chip aperture, offsets from `chip_base`:
 
@@ -95,7 +100,8 @@ CORE_APERTURE_STRIDE = 0x0200_0000   (32 MiB)
 core_base(chip_id, core_id) = chip_base(chip_id) + core_id * 0x0200_0000
 ```
 
-`core_id` is 0 or 1 — plan §4.1 freezes two cores per chip.
+The retained schema accepts `core_id` 0 or 1. D27 instantiates only slot 0; the
+second slot does not imply that the active machine contains two cores.
 
 Offsets from `core_base`:
 

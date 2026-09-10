@@ -1,5 +1,10 @@
 # TPU_V3 Phase 6 Audit — Transform (Im2Col Capability)
 
+> **Active evidence under D27, not the current work queue.** This audit proves
+> the Im2Col-only Transform reused by the one-core DSE. Col2Im remains absent.
+> The next task is G2/MB1 in
+> [NEO_CORE_MICROBENCH_DSE_PLAN.md](NEO_CORE_MICROBENCH_DSE_PLAN.md).
+
 Date: 2026-08-18
 
 Result: **complete for the approved Im2Col-only Revision 1 scope**.

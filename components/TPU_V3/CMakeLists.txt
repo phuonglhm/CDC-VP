@@ -26,6 +26,9 @@
 #   Phase 8  tpu_chip           <- two NEO-COREs, the chip-local fabric,
 #                                    one aggregated NoC manager, one bus lock
 #   Phase 9  noc_endpoint      <- chunking, containment, inbound route
+#   G2       microbench          <- standalone benchmark definitions, golden
+#                                    and result schema, plus the one-core
+#                                    runner (docs/NEO_CORE_MICROBENCH_DSE_PLAN.md)
 
 add_subdirectory(common)
 add_subdirectory(native_port)
@@ -51,3 +54,41 @@ add_subdirectory(tpu_chip)
 # Phase 9. The chip's NoC endpoint: chunking, containment and the inbound
 # route. It depends on no interconnect, so it always builds.
 add_subdirectory(noc_endpoint)
+
+# DSE gate G2. Benchmark case tables, the independent host golden and the
+# result-row schema, plus the standalone runner that drives one case on one
+# Phase 7 `tpu_core`. Added last because the runner reuses `tpu_v3_neo_core`,
+# which `tpu_core/CMakeLists.txt` defines above.
+add_subdirectory(microbench)
+
+# ── D28 / G5 WP1: the Neo Lite build identity ────────────────────────────────
+#
+# The option exists so that a build can *name* the profile it produces. It
+# cannot yet produce either one: MXU geometry and VP++ VLEN are compile-time
+# properties that WP8 and WP9 deliver, and WP2 to WP5 own the SRAM capacity,
+# external path, DMA channels and clock. Selecting C1 or C2 is therefore
+# refused here rather than accepted and half-honoured — a build that answered
+# to a profile name while instantiating another machine is the defect D28
+# names, and configure time is the cheapest place to say so.
+set(TPU_V3_NEO_LITE_PROFILE "none" CACHE STRING
+    "Neo Lite build profile: none, C1 or C2 (D28). C1 and C2 are not \
+buildable until their work packages land.")
+set_property(CACHE TPU_V3_NEO_LITE_PROFILE PROPERTY STRINGS none C1 C2)
+
+if(NOT TPU_V3_NEO_LITE_PROFILE STREQUAL "none")
+    if(TPU_V3_NEO_LITE_PROFILE STREQUAL "C1"
+       OR TPU_V3_NEO_LITE_PROFILE STREQUAL "C2")
+        message(FATAL_ERROR
+            "TPU_V3_NEO_LITE_PROFILE=${TPU_V3_NEO_LITE_PROFILE} cannot be "
+            "built yet. D28's profiles need WP2 (exact SRAM capacity), WP3 "
+            "(parameterised external AXI), WP4 (multi-channel DMA) and WP5 "
+            "(clock ownership); C1 additionally needs WP8 (the int8_32x32 "
+            "source extraction) and WP9 (a VLEN256 VP++ build). Build with "
+            "`none` and use the runner's --profile flag to see exactly which "
+            "values a machine would have to change.")
+    endif()
+    message(FATAL_ERROR
+        "TPU_V3_NEO_LITE_PROFILE='${TPU_V3_NEO_LITE_PROFILE}' is not a Neo "
+        "Lite profile. D28 authorises exactly two targets, C1 and C2, and "
+        "`none` for the D27 reference machine.")
+endif()

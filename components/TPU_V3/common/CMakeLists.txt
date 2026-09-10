@@ -9,6 +9,7 @@
 
 add_library(tpu_v3_common STATIC
     src/address_map.cpp
+    src/neo_lite_profile.cpp
     src/architecture_config.cpp
     src/sparse_memory.cpp)
 add_library(cdc::components::tpu_v3_common ALIAS tpu_v3_common)

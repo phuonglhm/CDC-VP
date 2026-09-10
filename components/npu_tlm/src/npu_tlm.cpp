@@ -279,6 +279,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         std::uint32_t k_b_addr = 0;
         std::uint32_t v_beta_addr = 0;
         std::uint32_t seq_len = 0;
+        std::uint32_t a_len = 0;
+        std::uint32_t b_len = 0;
         std::uint32_t heads_dim_mode = 0;
         std::uint32_t head_dim_eps_scale_a = 0;
     };
@@ -1040,6 +1042,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         case 0x4000'0450u: rich_params.seq_len = value; break;
         case 0x4000'0454u: rich_params.heads_dim_mode = value; break;
         case 0x4000'0458u: rich_params.head_dim_eps_scale_a = value; break;
+        case 0x4000'0464u: rich_params.a_len = value; break;
+        case 0x4000'0468u: rich_params.b_len = value; break;
         default: break;
         }
     }
@@ -1178,12 +1182,28 @@ struct npu_tlm::impl : public sc_core::sc_module {
             }
         } else if (opcode == RICH_OPCODE_ELEM_WISE) {
             const std::uint32_t mode = rich_elementwise_mode();
-            if (!checked_bytes(rich_params.seq_len, kRichElementBytes,
-                               input_size)) {
+            const std::uint32_t a_len =
+                rich_params.a_len != 0u ? rich_params.a_len
+                                        : rich_params.seq_len;
+            const std::uint32_t dimension = rich_dimension();
+            const std::uint32_t b_len =
+                rich_params.b_len != 0u
+                    ? rich_params.b_len
+                    : (dimension != 0u && dimension < rich_params.seq_len
+                           ? dimension
+                           : rich_params.seq_len);
+            std::uint32_t operand_b_size = 0;
+            if (!checked_bytes(a_len, kRichElementBytes, input_size) ||
+                (mode != 1u &&
+                 !checked_bytes(b_len, kRichElementBytes, operand_b_size))) {
                 error = error_code::invalid_dimensions;
                 return false;
             }
-            output_size = input_size;
+            if (!checked_bytes(rich_params.seq_len, kRichElementBytes,
+                               output_size)) {
+                error = error_code::invalid_dimensions;
+                return false;
+            }
             if (mode == 1u) {
                 const std::uint32_t stride =
                     rich_params.stride == 0u ? 2u : rich_params.stride;
@@ -1195,7 +1215,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
             }
             if (!stage_rich_range(rich_params.q_gamma_a_addr, input_size, error) ||
                 (mode != 1u &&
-                 !stage_rich_range(rich_params.k_b_addr, input_size, error))) {
+                 !stage_rich_range(rich_params.k_b_addr, operand_b_size, error))) {
                 return false;
             }
         } else {

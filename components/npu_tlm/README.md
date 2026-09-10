@@ -6,7 +6,7 @@ CDC-VP RISC-V full SoC.
 The default SAURIA model is bundled under:
 
 ```text
-CDC-VP/components/npu_tlm/models/v4.4_model
+CDC-VP/components/npu_tlm/models/v4.4_model_25Aug
 ```
 
 Set `SAURIA_NPU_ROOT` at CMake configure time only when an external model tree
@@ -379,7 +379,7 @@ translates compact VP offsets to those sparse model addresses.
 
 | VP offset/range | Physical range | Access | V4.4 model range | Region |
 | ---: | ---: | --- | ---: | --- |
-| selected `0x10300..0x10460` | `0x10210300..0x10210460` | WO | `0x40000300..0x40000460` | Rich instruction decoder |
+| selected `0x10300..0x10468` | `0x10210300..0x10210468` | WO | `0x40000300..0x40000468` | Rich instruction decoder |
 | `0x20000..0x23FFF` | `0x10220000..0x10223FFF` | RW | `0x00140000..0x00143FFF` | OBP A LUT, all 64 x 256 byte entries |
 | `0x24000..0x240FF` | `0x10224000..0x102240FF` | RW | `0x00150000..0x001500FF` | OBP A bias, 64 x 32-bit entries |
 | `0x25000..0x250FF` | `0x10225000..0x102250FF` | WO | `0x00180000..0x001800FF` | OBP A scale, 64 x 32-bit entries |
@@ -436,8 +436,16 @@ these instruction-decoder registers.
 | `0x10458` | `0x10210458` | `CDC_NPU_VP_RICH_HEAD_DIM_EPS` | `head_dim`, `eps_shift`, `scale_a` |
 | `0x1045C` | `0x1021045C` | `CDC_NPU_VP_RICH_ATTN_SCALE` | `attn_scale`, `scale_b` |
 | `0x10460` | `0x10210460` | `CDC_NPU_VP_RICH_SCALE_OUT` | `scale_out` |
+| `0x10464` | `0x10210464` | `CDC_NPU_VP_RICH_A_LEN` | `a_len` |
+| `0x10468` | `0x10210468` | `CDC_NPU_VP_RICH_B_LEN` | `b_len` |
 
 The scale fields use IEEE-754 binary32 MMIO bit patterns.
+
+For `ELEM_WISE`, write the total output element count to
+`CDC_NPU_VP_RICH_SEQ_LEN`, and write the valid source element counts to
+`CDC_NPU_VP_RICH_A_LEN` and `CDC_NPU_VP_RICH_B_LEN` before pushing the
+instruction. V4.4 uses these lengths for operand broadcasting. A zero source
+length selects the fallback behavior implemented by the model.
 
 Rich instruction values decoded by V4.4 are:
 

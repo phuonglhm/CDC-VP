@@ -1,3 +1,7 @@
+### HISTORICAL / INACTIVE UNDER D27 — NOT A CURRENT DECISION REQUEST ###
+### Active work: one standalone NEO-CORE, no chip composition, no NoC. ###
+### Read components/TPU_V3/docs/README.md first. ###
+
 ### ĐÃ CHỐT 2026-08-22 — xem decision record D25 ###
 
 	Kết quả: KHÔNG chọn phương án (1) như em đề xuất, cũng không chọn (2).

@@ -1,9 +1,14 @@
 # TPU_V3 Phase 9 NoC rebaseline
 
+> **HISTORICAL / INACTIVE UNDER D27 — DO NOT IMPLEMENT FROM THIS DOCUMENT.**
+> The NoC decisions and evidence are retained for traceability only. The active
+> DSE instantiates one standalone NEO-CORE and no NoC. Start with
+> [README.md](README.md).
+
 Date: 2026-08-20
 
-Status: **the five freezes below are complete.** Ratified as decision record
-D23. Phase 9 implementation may begin.
+Historical status: **the five freezes below were complete.** They were ratified
+as decision record D23. D27 now suspends Phase 9 implementation.
 
 Plan §16 Phase 9 opens with a mandatory rebaseline: before any implementation,
 five things must be frozen against the pinned FlooNoC RTL and FlooGen
@@ -304,13 +309,80 @@ endpoint — and needs model-level evidence:
 | D1 owner-aware local bypass | a negative control proving the bypass path is taken **and that no flit is injected**; a missing or wrong owner mapping must fail at elaboration, not at first traffic |
 | Local containment | local SRAM/MMIO traffic injects **zero** flits — asserted on the mesh counters, not inferred from a latency |
 | Burst chunking | over-frame transfers chunked with defined partial-failure semantics, in both directions |
-| Multi-chip contention | 2x2 concurrent inter-chip traffic completing without deadlock or response misattribution |
+| Multi-chip contention | 2x2 concurrent inter-chip traffic completing without deadlock or response misattribution — **closed 2026-08-25**, `test_chip_multi_on_mesh`; see §7a for what it does and does not cover |
 | Conservation | bytes and transactions reconcile across the endpoint boundary, as `test_neo_external_bridge` does at the core boundary |
 | Reset | the §5 rule, with its own negative control |
 
 Anything that *does* change the FlooNoC configuration — narrow-wide, a VC, a
 ninth manager, `MaxUniqueIds > 1`, `NoLoopback = 0` — is a new signed
 configuration and re-enters this document at §3.
+
+## 7a. Multi-chip contention — closed 2026-08-25
+
+`components/TPU_V3/tpu_chip/tests/chip/test_chip_multi_on_mesh.cpp`, both NoC
+timing backends. Two real `tpu_chip`s, two endpoints, one 2x2 mesh:
+
+```text
+(0,0)  chip A endpoint  + chip A aperture (owner 0)
+(1,0)  chip B endpoint  + chip B aperture (owner 1)
+(0,1)  host             + boot ROM        (owner 2)
+(1,1)  global RAM
+```
+
+Measured, and every figure below is deterministic — six consecutive runs gave
+identical sample counts:
+
+```text
+                                   fast        detailed
+round 1  chip <-> global RAM       0 samples   53 samples of 100 ns
+round 2  chip <-> chip             0 samples   25 samples of 100 ns
+accepted flits                     n/a         17478
+runtime per case                   0.97 s      1.20 s
+```
+
+`fast` overlapping for zero samples is the correct answer, not a gap: nothing
+there blocks, so no two managers are ever inside the interconnect at one
+instant and there is no queue to contend for. The gate asserts `== 0` there and
+`>= 20` in detailed, the same way the single-chip gate asserts in-flight peak
+1 fast / 2 detailed.
+
+**Two rounds, because they answer different questions.** Round 1 is two chips
+against a shared target — contention on global RAM. Round 2 is traffic
+*between the chip apertures*, both directions at once, which is what the §6
+wording names and what round 1 does not provide. The first version of this gate
+had only round 1 plus a single chip-to-chip transfer run alone after everything
+else had drained, and marking §6 closed on that would have been closing it on a
+measurement of a different question.
+
+Also checked in both rounds:
+
+```text
+4 harts booted through the mesh, mhartid 0..3 in the right chips
+2 x 4 KiB concurrent DMA from global RAM, each chip's own window, byte-exact
+inter-chip DMA both ways at unaligned sources and odd lengths (3001, 2003),
+  past the 2048-byte frame so the path is chunked as well as reshaped
+```
+
+### Controls
+
+| Control | Bites | What it establishes |
+|---|---|---|
+| MC-1 D25 read shaping disabled in `chip_noc_endpoint` | yes — 5 checks, both inter-chip legs error and both deliver wrong bytes | the inter-chip path really traverses D25; the interconnect refuses the widened read into an `mmio` aperture |
+| MC-2 both chips given the same RAM window | yes — both directions of the misattribution check fire | the check discriminates rather than passing on any data |
+| MC-3 synchronised `START` removed | yes, **in round 2 only** — 18 samples against 25, below the floor | the two-phase start is load-bearing where transfers are short relative to the six register writes that precede them |
+
+**MC-3's answer changed when round 2 was added, and that is the useful part.**
+Against round 1 alone it did *not* fire — 49 samples against 53 — because the
+shared 2 us RAM latency dominates everything there. Round 2 has no slow shared
+resource, so the programming stagger is a large fraction of each transfer and
+removing the synchronised release drops it below the floor. A source comment
+that had generalised the round-1 result into "a tightening, not the mechanism"
+is now stated per round.
+
+The floor separates 18 from 25, which is a real but narrow band. It is safe to
+rely on only because the measurement is deterministic; a reader changing the
+transfer sizes should re-measure both numbers rather than assume the margin
+survives.
 
 ## 7. D1 is implemented — closed 2026-08-20
 

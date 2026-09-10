@@ -25,6 +25,10 @@ constexpr std::uint64_t kRamBase = 0x8000'0000ULL;
 constexpr std::uint32_t kSrcOffset = 0x0001'0000;
 constexpr std::uint32_t kWeightsOffset = 0x0002'0000;
 constexpr std::uint32_t kDstOffset = 0x0003'0000;
+constexpr std::uint32_t kElemAOffset = 0x0004'0000;
+constexpr std::uint32_t kElemDstOffset = 0x0005'0000;
+constexpr std::uint32_t kRamSize = 2u * 1024u * 1024u;
+constexpr std::uint32_t kElemBOffset = kRamSize - 2u;
 // Exercise a non-power-of-two reduction dimension here; the full-SoC
 // firmware regression independently covers K=64.
 constexpr std::uint32_t kK = 17;
@@ -42,7 +46,7 @@ void settle()
 int sc_main(int, char*[])
 {
     cdc::components::bus_router bus("bus", 2, 2);
-    cdc::components::memory_tlm ram("ram", 2u * 1024u * 1024u);
+    cdc::components::memory_tlm ram("ram", kRamSize);
     cdc::components::npu_tlm npu(
         "npu", sc_core::sc_time(1.25, sc_core::SC_NS));
     cdc::test::tlm_probe probe("probe");
@@ -244,6 +248,73 @@ int sc_main(int, char*[])
         CDC_CHECK(irq.read() == false);
         clear = STATUS_DONE;
         CDC_CHECK(write_reg(STATUS, clear) == tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
+
+        // The 25Aug rich ABI provides explicit source lengths for
+        // element-wise broadcasting. Put B at the final two RAM bytes so a
+        // bridge that incorrectly stages seq_len bytes will reject the job.
+        std::array<std::int8_t, 8> elem_a{
+            1, 2, 3, 4, 5, 6, 7, 8};
+        std::array<std::int8_t, 2> elem_b{10, -2};
+        constexpr std::array<std::int8_t, 8> elem_expected{
+            11, 0, 13, 2, 15, 4, 17, 6};
+        CDC_CHECK(probe.debug(tlm::TLM_WRITE_COMMAND,
+                              kRamBase + kElemAOffset,
+                              elem_a.data(),
+                              elem_a.size()) == elem_a.size());
+        CDC_CHECK(probe.debug(tlm::TLM_WRITE_COMMAND,
+                              kRamBase + kElemBOffset,
+                              elem_b.data(),
+                              elem_b.size()) == elem_b.size());
+
+        CDC_CHECK(write_native(RICH_Q_GAMMA_A_ADDR,
+                               static_cast<std::uint32_t>(kRamBase +
+                                                          kElemAOffset)) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_native(RICH_K_B_ADDR,
+                               static_cast<std::uint32_t>(kRamBase +
+                                                          kElemBOffset)) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_native(RICH_OUT_ADDR,
+                               static_cast<std::uint32_t>(kRamBase +
+                                                          kElemDstOffset)) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_native(RICH_SEQ_LEN, elem_expected.size()) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_native(RICH_HEADS_DIM_MODE, 0u) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_native(RICH_A_LEN, elem_a.size()) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_native(RICH_B_LEN, elem_b.size()) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_native(RICH_PUSH_A, RICH_OPCODE_ELEM_WISE) ==
+                  tlm::TLM_OK_RESPONSE);
+
+        completed = false;
+        for (unsigned poll = 0; poll < 2000; ++poll) {
+            wait(100, sc_core::SC_NS);
+            const std::uint32_t rich_status = read_reg(STATUS);
+            if ((rich_status & (STATUS_DONE | STATUS_ERROR)) != 0u) {
+                completed = true;
+                break;
+            }
+        }
+        CDC_CHECK(completed);
+        CDC_CHECK((read_reg(STATUS) & STATUS_DONE) != 0u);
+        CDC_CHECK((read_reg(STATUS) & STATUS_ERROR) == 0u);
+
+        std::array<std::int8_t, elem_expected.size()> elem_actual{};
+        CDC_CHECK(probe.debug(tlm::TLM_READ_COMMAND,
+                              kRamBase + kElemDstOffset,
+                              elem_actual.data(), elem_actual.size()) ==
+                  elem_actual.size());
+        CDC_CHECK(elem_actual == elem_expected);
+
+        clear = IRQ_DONE;
+        CDC_CHECK(write_reg(IRQ_STATUS, clear) == tlm::TLM_OK_RESPONSE);
+        clear = STATUS_DONE;
+        CDC_CHECK(write_reg(STATUS, clear) == tlm::TLM_OK_RESPONSE);
+        settle();
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
 
         // Invalid MMIO width/address and invalid job bounds are visible.

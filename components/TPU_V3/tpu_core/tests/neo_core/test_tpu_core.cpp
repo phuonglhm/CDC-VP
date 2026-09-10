@@ -967,9 +967,9 @@ int sc_main(int, char*[])
         threw = true;
     }
     CHECK_MSG(threw,
-              "a core id outside 0..1 must be refused during elaboration; plan "
-              "§4.1 freezes two cores per chip and a frozen value has to be "
-              "rejected rather than accepted-and-warned");
+              "the retained address-map schema has only core slots 0 and 1; "
+              "D27 uses slot 0, and an invalid slot must be rejected rather "
+              "than accepted-and-warned");
 
     sc_core::sc_start(
         sc_core::sc_time(kWatchdogMicroseconds, sc_core::SC_US));

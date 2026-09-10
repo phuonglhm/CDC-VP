@@ -1,18 +1,32 @@
 # TPU_V3 SystemC/TLM Implementation Plan
 
+> **Active-scope override — 2026-08-25.** The current project milestone is
+> [Standalone NEO-CORE Microbenchmark and Design-Space Exploration](NEO_CORE_MICROBENCH_DSE_PLAN.md):
+> exactly one Phase 7 `tpu_core`, `mhartid=0`, direct Boot ROM/global RAM/host
+> I/O, and no chip composition or NoC. That document is the execution authority
+> wherever it differs from the historical complete-SoC schedule below.
+>
+> The old two-core/chip and mesh work is intentionally retained for audit
+> history; it is not deleted and is not an active prerequisite. In particular,
+> §§4.1, 4.4, 7's chip/mesh layers, 9.1–9.5, 11.9–11.11 and Phases 8 onward
+> describe retained work rather than the next task. The active sequence is DSE
+> gates G0–G6. Do not resume Phase 8/9 implementation without a new explicit
+> project-owner decision.
+
 ## 1. Document Purpose
 
-This document is the authoritative implementation plan for the TPU_V3 virtual
-platform in CDC-VP. It is written so that an AI coding agent or a human engineer
-can continue the work without reconstructing architectural intent from chat
-history.
+This document is the retained implementation plan for the former complete-SoC
+direction. Under D27 it is an architecture/history reference, not the active
+work queue. The execution authority for an AI coding agent or human contributor
+is [README.md](README.md) followed by
+[NEO_CORE_MICROBENCH_DSE_PLAN.md](NEO_CORE_MICROBENCH_DSE_PLAN.md).
 
-The plan covers the complete path from repository scaffolding to a portable,
-packaged SoC executable under `CDC-VP/out/`.
+The historical body covers the path from repository scaffolding to a portable,
+packaged SoC executable under `CDC-VP/out/`. Do not execute its Phase 8/9/SoC
+schedule while D27 is active.
 
-This is an engineering plan, not a claim that the current implementation is
-complete. Every phase has explicit deliverables and acceptance gates. A later
-phase must not be declared complete until its gate passes.
+For current status and gates use G0–G6 in the standalone DSE plan. A phase gate
+in this historical body cannot override or reopen D27.
 
 ### 1.1 Intended repository locations
 
