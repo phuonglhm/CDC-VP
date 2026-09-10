@@ -1,0 +1,19 @@
+# Force LF on everything that runs on the Linux build/EDA server. Shell scripts with
+# CRLF fail on Linux with obscure "$'\r': command not found" errors — this is the #1
+# way a Windows->server push silently breaks the data flow. Keep sources/text LF too.
+* text=auto eol=lf
+*.sh    text eol=lf
+*.py    text eol=lf
+*.h     text eol=lf
+*.cpp   text eol=lf
+*.csv   text eol=lf
+*.txt   text eol=lf
+*.md    text eol=lf
+*.env   text eol=lf
+Makefile text eol=lf
+
+# Binaries / large artifacts: never normalize.
+*.zip   binary
+*.tar.gz binary
+*.vcd   binary
+*.png   binary
