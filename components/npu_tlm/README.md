@@ -1,12 +1,12 @@
-# SAURIA V4.4 CDC-VP Integration
+# SAURIA V4.5 CDC-VP Integration
 
-`npu_tlm` connects the SAURIA MP1 V1.1 V4.4 SystemC model to the
+`npu_tlm` connects the SAURIA MP1 V1.1 V4.5 SystemC model to the
 CDC-VP RISC-V full SoC.
 
 The default SAURIA model is bundled under:
 
 ```text
-CDC-VP/components/npu_tlm/models/v4.4_model_25Aug
+CDC-VP/components/npu_tlm/models/v4.5_model
 ```
 
 Set `SAURIA_NPU_ROOT` at CMake configure time only when an external model tree
@@ -32,7 +32,7 @@ physical_address = CDC_NPU0_BASE + offset
 ```
 
 For example, native profile offset `0x0004` is physical address
-`0x10200004`, while the CDC 64x64 GEMM control register at offset
+`0x10200004`, while the CDC 32x32 GEMM control register at offset
 `0x30000` is physical address `0x10230000`.
 
 The NPU aperture is present only when `CDC_ENABLE_SAURIA_NPU_V4=ON`.
@@ -45,16 +45,16 @@ RISC-V software
   -> 32-bit MMIO at 0x10200000 + offset
     -> CDC-VP bus_router
       -> npu_tlm::b_transport
-        -> native V4.4 host interface, or
-        -> CDC 64x64 GEMM controller
+        -> native V4.5 host interface, or
+        -> CDC 32x32 GEMM controller
           -> RAM master socket
             -> system RAM at 0x80000000..0x8FFFFFFF
 ```
 
 Native MMIO requests are executed by the NPU worker thread so that one
-SystemC process owns the V4.4 host-interface signals.
+SystemC process owns the V4.5 host-interface signals.
 
-The V4.4 rich executor uses its own byte-addressed DRAM vector. The bridge
+The V4.5 rich executor uses its own byte-addressed DRAM vector. The bridge
 translates system physical buffer addresses to RAM-relative model addresses,
 copies rich-operation inputs from system RAM before a queue push, keeps the
 gated NPU clock running while either lane is active, and copies completed
@@ -66,22 +66,24 @@ addresses in all rich address registers.
 The wrapper instantiates:
 
 ```cpp
-sauria::NpuTop<64, 64, int8_t, int8_t, int32_t,
-               16, 128, 1>
+sauria::NpuTop<32, 32, int8_t, int8_t, int32_t,
+               16, 64, 1, 5056, 5184, 1536>
 ```
 
 | Item | Value |
 | --- | ---: |
-| Array X | `64` |
-| Array Y | `64` |
+| Array X | `32` |
+| Array Y | `32` |
 | Activation type | `int8_t` |
 | Weight type | `int8_t` |
 | Partial-sum type | `int32_t` |
 | FIFO depth | `16` |
-| PE latency parameter | `128` |
-| SRAM A depth | `1024` |
-| SRAM B depth | `1024` |
-| SRAM C depth | `2048` |
+| PE latency parameter | `64` |
+| SRAM A capacity | `158 KiB` (`2 x 79 KiB`) |
+| SRAM B capacity | `162 KiB` (`2 x 81 KiB`) |
+| SRAM C capacity | `192 KiB` (`2 x 96 KiB`) |
+| Scratch SRAM | `48 KiB` (`2 x 24 KiB`) |
+| Total internal SRAM | `560 KiB` |
 | Dilation-pattern width | `64` |
 | NPU clock | `800 MHz` (`1.25 ns` period) |
 
@@ -95,25 +97,25 @@ physical addresses; firmware must not subtract `CDC_RAM0_BASE`.
 
 | Class | Meaning |
 | --- | --- |
-| Native config RW | V4.4 `config_regs.h` decodes host writes and reads |
-| SRAM RW | V4.4 `sram_top.h` decodes host writes and reads |
-| Rich WO | V4.4 `instruction_decoder.h` decodes writes; it defines no register readback |
-| OBP RW | V4.4 decodes writes and `NpuTop` routes host reads |
-| OBP WO | V4.4 decodes writes but `NpuTop` does not route that region on host reads |
-| RCE RW | V4.4 decodes writes and `NpuTop` routes host reads |
-| Counter RO | CDC-VP returns a raw field updated by V4.4 instrumentation |
-| Software GEMM RW/RO/W1C | CDC-VP implements the software-facing 64x64 GEMM controller |
+| Native config RW | V4.5 `config_regs.h` decodes host writes and reads |
+| SRAM RW | V4.5 `sram_top.h` decodes host writes and reads |
+| Rich WO | V4.5 `instruction_decoder.h` decodes writes; it defines no register readback |
+| OBP RW | V4.5 decodes writes and `NpuTop` routes host reads |
+| OBP WO | V4.5 decodes writes but `NpuTop` does not route that region on host reads |
+| RCE RW | V4.5 decodes writes and `NpuTop` routes host reads |
+| Counter RO | CDC-VP returns a raw field updated by V4.5 instrumentation |
+| Software GEMM RW/RO/W1C | CDC-VP implements the software-facing 32x32 GEMM controller |
 
 ## Aperture Summary
 
 | VP offset/range | Physical address/range | Interface |
 | ---: | ---: | --- |
-| `0x00000..0x00AFF` | `0x10200000..0x10200AFF` | Native V4.4 control and configuration |
-| selected `0x01200..0x01328` | `0x10201200..0x10201328` | Raw V4.4 performance counters |
+| `0x00000..0x00AFF` | `0x10200000..0x10200AFF` | Native V4.5 control and configuration |
+| selected `0x01200..0x01328` | `0x10201200..0x10201328` | Raw V4.5 performance counters |
 | `0x10000..0x10FFF` | `0x10210000..0x10210FFF` | Compact rich-instruction alias |
 | `0x20000..0x2EFFF` | `0x10220000..0x1022EFFF` | Compact OBP aliases |
 | `0x32000..0x37FFF` | `0x10232000..0x10237FFF` | Compact RCE aliases |
-| `0x30000..0x31FFF` | `0x10230000..0x10231FFF` | CDC 64x64 GEMM bank |
+| `0x30000..0x31FFF` | `0x10230000..0x10231FFF` | CDC 32x32 GEMM bank |
 | `0x40000` window | starts at `0x10240000` | Native SRAM A |
 | `0x80000` window | starts at `0x10280000` | Native SRAM B |
 | `0xC0000` window | starts at `0x102C0000` | Native SRAM C |
@@ -125,7 +127,7 @@ physical addresses; firmware must not subtract `CDC_RAM0_BASE`.
 | `0x0000` | `0x10200000` | RW/pulse | `CDC_NPU_NATIVE_CONTROL` | Native start, done and soft reset |
 | `0x0004` | `0x10200004` | RW | `CDC_NPU_NATIVE_CFG_PROFILE` | Select configuration profile |
 
-At native control offset `0x0000`, V4.4 implements:
+At native control offset `0x0000`, V4.5 implements:
 
 | Value or bit | Access | Meaning |
 | ---: | --- | --- |
@@ -138,7 +140,7 @@ At native control offset `0x0000`, V4.4 implements:
 
 Profile values are:
 
-| Value | V4.4 profile |
+| Value | V4.5 profile |
 | ---: | --- |
 | `0` | `PROFILE_V1_SAURIA` |
 | `1` | `PROFILE_V4_LINEAR` |
@@ -163,7 +165,7 @@ Write the profile before writing profile-dependent registers.
 
 `PROFILE_V1_SAURIA` does not require software to materialize an expanded
 im2col matrix in memory. Software writes the convolution activation tensor to
-SRAM A and programs the activation-feeder limits and steps. The V4.4 IFMAP
+SRAM A and programs the activation-feeder limits and steps. The V4.5 IFMAP
 feeder then generates the logical im2col stream on demand.
 
 The feeder selects this SAURIA address-generation mode when all six inner-loop
@@ -216,11 +218,11 @@ ACT_TIL_YSTEP = A_w_tile * stride
 
 The layer-description registers `KERNEL_H`, `KERNEL_W`, `STRIDE`, `PADDING`,
 and `DILATION` do not automatically derive or program these feeder limits and
-steps in the current V4.4 datapath. 
+steps in the current V4.5 datapath.
 
 ### Controller
 
-| Offset | Access | Firmware symbol | V4.4 field |
+| Offset | Access | Firmware symbol | V4.5 field |
 | ---: | --- | --- | --- |
 | `0x0200` | RW | `CDC_NPU_NATIVE_CON_INCNTLIM` | `F_INCNTLIM` |
 | `0x0204` | RW | `CDC_NPU_NATIVE_CON_ACT_REPS` | `F_ACT_REPS` |
@@ -229,7 +231,7 @@ steps in the current V4.4 datapath.
 
 ### Activation Feeder
 
-| Offset | Access | Firmware symbol | V4.4 field |
+| Offset | Access | Firmware symbol | V4.5 field |
 | ---: | --- | --- | --- |
 | `0x0400` | RW | `CDC_NPU_NATIVE_ACT_ROWS_ACTIVE` | `F_ROWS_ACTIVE` |
 | `0x0404` | RW | `CDC_NPU_NATIVE_ACT_INCNTLIM` | `F_ACT_INCNTLIM` |
@@ -251,7 +253,7 @@ steps in the current V4.4 datapath.
 
 ### Weight Feeder
 
-| Offset | Access | Firmware symbol | V4.4 field |
+| Offset | Access | Firmware symbol | V4.5 field |
 | ---: | --- | --- | --- |
 | `0x0604` | RW | `CDC_NPU_NATIVE_WEI_INCNTLIM` | `F_WEI_INCNTLIM` |
 | `0x0608` | RW | `CDC_NPU_NATIVE_WEI_INCNTSTEP` | `F_WEI_INCNTSTEP` |
@@ -267,7 +269,7 @@ steps in the current V4.4 datapath.
 
 ### Output, PSM And OBP
 
-| Offset | Access | Firmware symbol | V4.4 field |
+| Offset | Access | Firmware symbol | V4.5 field |
 | ---: | --- | --- | --- |
 | `0x0800` | RW | `CDC_NPU_NATIVE_NCONTEXTS` | `F_NCONTEXTS` |
 | `0x0804` | RW | `CDC_NPU_NATIVE_OUT_CXLIM` | `F_CXLIM` |
@@ -285,13 +287,17 @@ steps in the current V4.4 datapath.
 | `0x0838` | RW | `CDC_NPU_NATIVE_OUT_REQUANT_SHIFT_B` | `F_REQUANT_SHIFT_B` |
 | `0x0880` | RW | `CDC_NPU_NATIVE_CFG_OUT_BASE_ADDR` | `F_OUT_BASE_ADDR` |
 
-V4.4 also declares `F_TIL_CKSTEP`, `F_INACTIVE_COLS`, and `F_PRELOAD_EN` at
+For either `F_OBP_CFG_A` or `F_OBP_CFG_B`,
+`CDC_NPU_OBP_CFG_VEC_CHANNEL_MODE` (bit 8, `0x100`) enables V4.5's
+per-vector channel auto-indexing mode.
+
+V4.5 also declares `F_TIL_CKSTEP`, `F_INACTIVE_COLS`, and `F_PRELOAD_EN` at
 `0x0820`, `0x0824`, and `0x0828`. The earlier OBP-A decode branches at those
 same addresses take precedence in the current model.
 
 ### Layer Fields
 
-| Offset | Access | Firmware symbol | V4.4 field |
+| Offset | Access | Firmware symbol | V4.5 field |
 | ---: | --- | --- | --- |
 | `0x0A00` | RW | `CDC_NPU_NATIVE_IN_H` | `F_IN_H` |
 | `0x0A04` | RW | `CDC_NPU_NATIVE_IN_W` | `F_IN_W` |
@@ -308,7 +314,7 @@ same addresses take precedence in the current model.
 | `0x0A40` | RW | `CDC_NPU_NATIVE_X_USED` | `F_X_USED` |
 | `0x0A44` | RW | `CDC_NPU_NATIVE_Y_USED` | `F_Y_USED` |
 
-The V4.4 constants `OUT_H`, `OUT_W`, `OUT_C`, and layer `DIL_PAT` exist at
+The V4.5 constants `OUT_H`, `OUT_W`, `OUT_C`, and layer `DIL_PAT` exist at
 `0x0A0C`, `0x0A10`, `0x0A14`, and `0x0A2C`, but the current V1/V4 maps do not
 decode them. They must not be treated as working runtime registers.
 
@@ -318,7 +324,7 @@ The V4 profile reuses some addresses with different meanings.
 
 ### Controller
 
-| Offset | Access | Firmware symbol | V4.4 field |
+| Offset | Access | Firmware symbol | V4.5 field |
 | ---: | --- | --- | --- |
 | `0x0200` | RW | `CDC_NPU_NATIVE_CON_INCNTLIM` | `F_INCNTLIM` |
 | `0x0204` | RW | `CDC_NPU_NATIVE_CON_ACT_REPS` | `F_ACT_REPS` |
@@ -329,7 +335,7 @@ The V4 profile reuses some addresses with different meanings.
 
 ### Feeder And Output
 
-| Offset | Access | Firmware symbol | V4.4 field |
+| Offset | Access | Firmware symbol | V4.5 field |
 | ---: | --- | --- | --- |
 | `0x0400` | RW | `CDC_NPU_NATIVE_ACT_ROWS_ACTIVE` | `F_ROWS_ACTIVE` |
 | `0x0404` | RW | `CDC_NPU_NATIVE_ACT_INCNTLIM` | `F_ACT_INCNTLIM` |
@@ -363,31 +369,31 @@ The V4 profile reuses some addresses with different meanings.
 | `0xC0000` | `0x102C0000` | RW | `CDC_NPU_NATIVE_SRAMC_OFFSET` |
 
 These expose the model's private host SRAM interface. The address after each
-base uses V4.4 physical-row and subword encoding; it is not a normal linear
-CPU byte array. For this 64x64 instance, each host word carries four lanes,
-so each SRAM row has 16 subwords. The encoding used by the bridge is:
+base uses V4.5 physical-row and subword encoding; it is not a normal linear
+CPU byte array. For this 32x32 instance, each host word carries four lanes,
+so each SRAM row has 8 subwords. The encoding used by the bridge is:
 
 ```text
-host_offset = (physical_row << 4) | subword
-subword     = 0..15
+host_offset = (physical_row << 3) | subword
+subword     = 0..7
 ```
 
 ## Compact Aliases
 
-Some V4.4 model host addresses are outside the 1 MiB SoC aperture. CDC-VP
+Some V4.5 model host addresses are outside the 1 MiB SoC aperture. CDC-VP
 translates compact VP offsets to those sparse model addresses.
 
-| VP offset/range | Physical range | Access | V4.4 model range | Region |
+| VP offset/range | Physical range | Access | V4.5 model range | Region |
 | ---: | ---: | --- | ---: | --- |
 | selected `0x10300..0x10468` | `0x10210300..0x10210468` | WO | `0x40000300..0x40000468` | Rich instruction decoder |
-| `0x20000..0x23FFF` | `0x10220000..0x10223FFF` | RW | `0x00140000..0x00143FFF` | OBP A LUT, all 64 x 256 byte entries |
-| `0x24000..0x240FF` | `0x10224000..0x102240FF` | RW | `0x00150000..0x001500FF` | OBP A bias, 64 x 32-bit entries |
-| `0x25000..0x250FF` | `0x10225000..0x102250FF` | WO | `0x00180000..0x001800FF` | OBP A scale, 64 x 32-bit entries |
-| `0x26000..0x260FF` | `0x10226000..0x102260FF` | WO | `0x00190000..0x001900FF` | OBP A shift, 64 x 32-bit entries |
-| `0x28000..0x2BFFF` | `0x10228000..0x1022BFFF` | RW | `0x00160000..0x00163FFF` | OBP B LUT, all 64 x 256 byte entries |
-| `0x2C000..0x2C0FF` | `0x1022C000..0x1022C0FF` | RW | `0x00170000..0x001700FF` | OBP B bias, 64 x 32-bit entries |
-| `0x2D000..0x2D0FF` | `0x1022D000..0x1022D0FF` | WO | `0x001A0000..0x001A00FF` | OBP B scale, 64 x 32-bit entries |
-| `0x2E000..0x2E0FF` | `0x1022E000..0x1022E0FF` | WO | `0x001B0000..0x001B00FF` | OBP B shift, 64 x 32-bit entries |
+| `0x20000..0x21FFF` | `0x10220000..0x10221FFF` | RW | `0x00140000..0x00141FFF` | OBP A LUT, all 32 x 256 byte entries |
+| `0x24000..0x2407F` | `0x10224000..0x1022407F` | RW | `0x00150000..0x0015007F` | OBP A bias, 32 x 32-bit entries |
+| `0x25000..0x2507F` | `0x10225000..0x1022507F` | WO | `0x00180000..0x0018007F` | OBP A scale, 32 x 32-bit entries |
+| `0x26000..0x2607F` | `0x10226000..0x1022607F` | WO | `0x00190000..0x0019007F` | OBP A shift, 32 x 32-bit entries |
+| `0x28000..0x29FFF` | `0x10228000..0x10229FFF` | RW | `0x00160000..0x00161FFF` | OBP B LUT, all 32 x 256 byte entries |
+| `0x2C000..0x2C07F` | `0x1022C000..0x1022C07F` | RW | `0x00170000..0x0017007F` | OBP B bias, 32 x 32-bit entries |
+| `0x2D000..0x2D07F` | `0x1022D000..0x1022D07F` | WO | `0x001A0000..0x001A007F` | OBP B scale, 32 x 32-bit entries |
+| `0x2E000..0x2E07F` | `0x1022E000..0x1022E07F` | WO | `0x001B0000..0x001B007F` | OBP B shift, 32 x 32-bit entries |
 | `0x32000..0x320FF` | `0x10232000..0x102320FF` | RW | `0x00200000..0x002000FF` | RCE A exponential |
 | `0x33000..0x331FF` | `0x10233000..0x102331FF` | RW | `0x00210000..0x002101FF` | RCE A reciprocal |
 | `0x34000..0x347FF` | `0x10234000..0x102347FF` | RW | `0x00220000..0x002207FF` | RCE A reciprocal square root |
@@ -396,14 +402,14 @@ translates compact VP offsets to those sparse model addresses.
 | `0x37000..0x377FF` | `0x10237000..0x102377FF` | RW | `0x00250000..0x002507FF` | RCE B reciprocal square root |
 
 The compact offsets are CDC-VP integration definitions. The sparse target
-addresses and their behavior belong to the V4.4 model.
+addresses and their behavior belong to the V4.5 model.
 
 ## Rich Instruction Write Registers
 
-The rich page is write-only because V4.4 does not define host readback for
+The rich page is write-only because V4.5 does not define host readback for
 these instruction-decoder registers.
 
-| VP offset | Physical address | Firmware symbol | V4.4 field or action |
+| VP offset | Physical address | Firmware symbol | V4.5 field or action |
 | ---: | ---: | --- | --- |
 | `0x10300` | `0x10210300` | `CDC_NPU_VP_RICH_INST_LO_A` | Instruction low A |
 | `0x10304` | `0x10210304` | `CDC_NPU_VP_RICH_INST_HI_A` | Instruction high A |
@@ -444,12 +450,12 @@ The scale fields use IEEE-754 binary32 MMIO bit patterns.
 For `ELEM_WISE`, write the total output element count to
 `CDC_NPU_VP_RICH_SEQ_LEN`, and write the valid source element counts to
 `CDC_NPU_VP_RICH_A_LEN` and `CDC_NPU_VP_RICH_B_LEN` before pushing the
-instruction. V4.4 uses these lengths for operand broadcasting. A zero source
+instruction. V4.5 uses these lengths for operand broadcasting. A zero source
 length selects the fallback behavior implemented by the model.
 
-Rich instruction values decoded by V4.4 are:
+Rich instruction values decoded by V4.5 are:
 
-| Type | Value | V4.4 name |
+| Type | Value | V4.5 name |
 | --- | ---: | --- |
 | Opcode | `0x05` | `SET_NSPLIT` |
 | Opcode | `0x12` | `GEMM_FUSED` |
@@ -466,14 +472,14 @@ Rich instruction values decoded by V4.4 are:
 | Element-wise mode | `3` | Subtract |
 | Element-wise mode | `4` | Divide |
 
-For packed V4.4 writes to `CDC_NPU_VP_RICH_HEADS_DIM_MODE`, bits `15..0`
+For packed V4.5 writes to `CDC_NPU_VP_RICH_HEADS_DIM_MODE`, bits `15..0`
 hold `num_heads`, bits `23..16` hold `dim`, and bits `31..24` hold `mode`.
-If bits `31..16` are zero, V4.4 applies the complete value to all three
+If bits `31..16` are zero, V4.5 applies the complete value to all three
 legacy interpretations.
 
-## Raw V4.4 Performance Counters
+## Raw V4.5 Performance Counters
 
-The wrapper exposes the raw `fx1::PerfCounters` fields that V4.4 modules
+The wrapper exposes the raw `fx1::PerfCounters` fields that V4.5 modules
 directly update. Each 64-bit counter is a read-only low/high pair. Derived
 getter results and override/placeholder fields are not assigned MMIO offsets.
 
@@ -511,11 +517,11 @@ uint64_t value =
 ```
 
 PE utilization and stall fraction are software calculations. The wrapper does
-not create counter values that are absent from V4.4 instrumentation hooks.
+not create counter values that are absent from V4.5 instrumentation hooks.
 
-## CDC 64x64 GEMM Bank
+## CDC 32x32 GEMM Bank
 
-The software-facing 64x64 GEMM bank starts at:
+The software-facing 32x32 GEMM bank starts at:
 
 ```text
 VP offset:        0x30000
@@ -604,13 +610,13 @@ irq_out = CTRL.IRQ_EN && ((IRQ_ENABLE & IRQ_STATUS) != 0)
 | `7` | `CDC_NPU_ERROR_INVALID_SIZE` | Buffer is too small |
 | `8` | `CDC_NPU_ERROR_DMA_READ` | RAM read failed |
 | `9` | `CDC_NPU_ERROR_DMA_WRITE` | RAM write failed |
-| `10` | `CDC_NPU_ERROR_CORE_DEADLOCK` | V4.4 feeder deadlock |
-| `11` | `CDC_NPU_ERROR_CORE_TIMEOUT` | V4.4 core timed out |
+| `10` | `CDC_NPU_ERROR_CORE_DEADLOCK` | V4.5 feeder deadlock |
+| `11` | `CDC_NPU_ERROR_CORE_TIMEOUT` | V4.5 core timed out |
 | `12` | `CDC_NPU_ERROR_RESET_ABORTED` | External reset aborted work |
 
 ## Model Files That Are Not MMIO Specifications
 
-The following V4.4 files define driver packing, testbench, target, or stimulus
+The following V4.5 files define driver packing, testbench, target, or stimulus
 formats. They do not create additional CDC-VP MMIO offsets:
 
 ```text
@@ -633,19 +639,19 @@ driver/sauria_golden.h
 | `components/npu_tlm/src/npu_tlm.cpp` | Address decode, aliases and access behavior |
 | `fw/common/include/soc/soc_memory_map.h` | Firmware NPU physical base |
 | `fw/common/include/soc/regs/soc_regs_npu_v4.h` | Firmware-visible offsets and fields |
-| V4.4 `config_regs.h` and `config_map.h` | Native profile-dependent decode |
-| V4.4 `sram/sram_top.h` | Native SRAM host decode |
-| V4.4 `control/instruction_decoder.h` | Rich write-register decode |
-| V4.4 `instrumentation/perf_counters.h` | Raw counter storage and derived metric helpers |
+| V4.5 `config_regs.h` and `config_map.h` | Native profile-dependent decode |
+| V4.5 `sram/sram_top.h` | Native SRAM host decode |
+| V4.5 `control/instruction_decoder.h` | Rich write-register decode |
+| V4.5 `instrumentation/perf_counters.h` | Raw counter storage and derived metric helpers |
 
 ## MMIO Contract Limits
 
-- Rich instruction registers are write-only because V4.4 defines no host
+- Rich instruction registers are write-only because V4.5 defines no host
   readback path for them.
 - Native and rich completion update the software-bank `STATUS` and `IRQ_STATUS`;
   enable its IRQ controls to receive completion on PLIC source 17.
-- Native SRAM windows use V4.4 row/subword host encoding, not linear byte
+- Native SRAM windows use V4.5 row/subword host encoding, not linear byte
   addressing.
-- Only raw fields directly updated by V4.4 modules have counter offsets.
-- The 64x64 GEMM bank is a CDC-VP extension. It is not part of the native
-  V4.4 register map; native and rich interfaces remain available separately.
+- Only raw fields directly updated by V4.5 modules have counter offsets.
+- The 32x32 GEMM bank is a CDC-VP extension. It is not part of the native
+  V4.5 register map; native and rich interfaces remain available separately.

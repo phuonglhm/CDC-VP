@@ -32,8 +32,8 @@ constexpr std::uint32_t kElemBOffset = kRamSize - 2u;
 // Exercise a non-power-of-two reduction dimension here; the full-SoC
 // firmware regression independently covers K=64.
 constexpr std::uint32_t kK = 17;
-constexpr std::uint32_t kRows = 64;
-constexpr std::uint32_t kCols = 64;
+constexpr std::uint32_t kRows = 32;
+constexpr std::uint32_t kCols = 32;
 
 void settle()
 {
@@ -92,10 +92,15 @@ int sc_main(int, char*[])
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
         CDC_CHECK(irq.read() == false);
 
-        // V4.4 native control/profile and SRAM windows are the primary ABI.
+        // V4.5 native control/profile and SRAM windows are the primary ABI.
         CDC_CHECK(write_native(NATIVE_CFG_PROFILE, PROFILE_V1_SAURIA) ==
                   tlm::TLM_OK_RESPONSE);
         CDC_CHECK(read_native(NATIVE_CFG_PROFILE) == PROFILE_V1_SAURIA);
+        CDC_CHECK(write_native(NATIVE_OUT_OBP_CFG_A,
+                               OBP_CFG_VEC_CHANNEL_MODE) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(NATIVE_OUT_OBP_CFG_A) ==
+                  OBP_CFG_VEC_CHANNEL_MODE);
         constexpr std::uint32_t native_word = 0x0403'0201u;
         CDC_CHECK(write_native(NATIVE_SRAMA_OFFSET, native_word) ==
                   tlm::TLM_OK_RESPONSE);
@@ -104,15 +109,15 @@ int sc_main(int, char*[])
         // Sparse rich/OBP/RCE regions use compact aliases within the aperture.
         constexpr std::uint32_t rich_m = 32u;
         CDC_CHECK(write_native(RICH_M, rich_m) == tlm::TLM_OK_RESPONSE);
-        constexpr std::uint32_t lane_63_lut_word = 0xA5A4'A3A2u;
+        constexpr std::uint32_t lane_31_lut_word = 0xA5A4'A3A2u;
         CDC_CHECK(write_native(OBP_A_LUT_BASE + OBP_A_LUT_SIZE - 4u,
-                               lane_63_lut_word) == tlm::TLM_OK_RESPONSE);
+                               lane_31_lut_word) == tlm::TLM_OK_RESPONSE);
         CDC_CHECK(read_native(OBP_A_LUT_BASE + OBP_A_LUT_SIZE - 4u) ==
-                  lane_63_lut_word);
+                  lane_31_lut_word);
         CDC_CHECK(write_native(OBP_B_LUT_BASE + OBP_B_LUT_SIZE - 4u,
-                               lane_63_lut_word) == tlm::TLM_OK_RESPONSE);
+                               lane_31_lut_word) == tlm::TLM_OK_RESPONSE);
         CDC_CHECK(read_native(OBP_B_LUT_BASE + OBP_B_LUT_SIZE - 4u) ==
-                  lane_63_lut_word);
+                  lane_31_lut_word);
         CDC_CHECK(read_native(PERF_EXEC_CYCLES) == 0u);
         CDC_CHECK(read_native(PERF_EXEC_CYCLES_HI) == 0u);
         CDC_CHECK(read_native(PERF_PROCESSING_CYCLES) == 0u);

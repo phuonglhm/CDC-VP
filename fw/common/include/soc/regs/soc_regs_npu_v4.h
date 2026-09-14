@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * SAURIA NPU V4.4 register ABI. Offsets are relative to CDC_NPU0_BASE.
+ * SAURIA NPU V4.5 register ABI. Offsets are relative to CDC_NPU0_BASE.
  * All accesses are aligned 32-bit little-endian words.
  */
 #ifndef CDC_SOC_REGS_NPU_V4_H
@@ -36,7 +36,7 @@
 #define CDC_NPU_LAST_ERROR          (CDC_NPU_WRAPPER_BASE + 0x101Cu)
 #define CDC_NPU_CORE_ID             (CDC_NPU_WRAPPER_BASE + 0x1020u)
 
-/* Optional parameters used by the CDC software-facing 64x64 GEMM path. */
+/* Optional parameters used by the CDC software-facing 32x32 GEMM path. */
 #define CDC_NPU_INPUT_OFFSET        (CDC_NPU_WRAPPER_BASE + 0x1100u)
 #define CDC_NPU_WEIGHT_OFFSET       (CDC_NPU_WRAPPER_BASE + 0x1104u)
 #define CDC_NPU_OUTPUT_OFFSET       (CDC_NPU_WRAPPER_BASE + 0x1108u)
@@ -74,7 +74,7 @@
 #define CDC_NPU_PERF_DMA_WRITE_CYCLES 0x12A8u
 
 /*
- * Raw/native SAURIA MP1 V1.1 V4.4 offsets. Write CFG_PROFILE before any
+ * Raw/native SAURIA MP1 V1.1 V4.5 offsets. Write CFG_PROFILE before any
  * profile-dependent configuration register.
  */
 #define CDC_NPU_PROFILE_V1_SAURIA              0u
@@ -160,6 +160,7 @@
 #define CDC_NPU_NATIVE_OUT_OBP_CFG_B        (CDC_NPU_NATIVE_CFG_OUT_OFFSET + 0x30u)
 #define CDC_NPU_NATIVE_OUT_REQUANT_SCALE_B  (CDC_NPU_NATIVE_CFG_OUT_OFFSET + 0x34u)
 #define CDC_NPU_NATIVE_OUT_REQUANT_SHIFT_B  (CDC_NPU_NATIVE_CFG_OUT_OFFSET + 0x38u)
+#define CDC_NPU_OBP_CFG_VEC_CHANNEL_MODE    (1u << 8)
 
 #define CDC_NPU_NATIVE_IN_H                 (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x00u)
 #define CDC_NPU_NATIVE_IN_W                 (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x04u)
@@ -180,7 +181,7 @@
 #define CDC_NPU_NATIVE_X_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x40u)
 #define CDC_NPU_NATIVE_Y_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x44u)
 
-/* Compact VP aliases for sparse V4.4 rich-instruction, OBP and RCE regions. */
+/* Compact VP aliases for sparse V4.5 rich-instruction, OBP and RCE regions. */
 #define CDC_NPU_VP_RICH_ALIAS_BASE          0x00010000u
 #define CDC_NPU_VP_RICH_INST_LO_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x300u)
 #define CDC_NPU_VP_RICH_INST_HI_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x304u)
@@ -217,21 +218,21 @@
 #define CDC_NPU_VP_RICH_B_LEN               (CDC_NPU_VP_RICH_ALIAS_BASE + 0x468u)
 
 #define CDC_NPU_VP_OBP_A_LUT_BASE           0x00020000u
-#define CDC_NPU_VP_OBP_A_LUT_SIZE           0x00004000u
+#define CDC_NPU_VP_OBP_A_LUT_SIZE           0x00002000u
 #define CDC_NPU_VP_OBP_A_BIAS_BASE          0x00024000u
-#define CDC_NPU_VP_OBP_A_BIAS_SIZE          0x00000100u
+#define CDC_NPU_VP_OBP_A_BIAS_SIZE          0x00000080u
 #define CDC_NPU_VP_OBP_A_SCALE_BASE         0x00025000u
-#define CDC_NPU_VP_OBP_A_SCALE_SIZE         0x00000100u
+#define CDC_NPU_VP_OBP_A_SCALE_SIZE         0x00000080u
 #define CDC_NPU_VP_OBP_A_SHIFT_BASE         0x00026000u
-#define CDC_NPU_VP_OBP_A_SHIFT_SIZE         0x00000100u
+#define CDC_NPU_VP_OBP_A_SHIFT_SIZE         0x00000080u
 #define CDC_NPU_VP_OBP_B_LUT_BASE           0x00028000u
-#define CDC_NPU_VP_OBP_B_LUT_SIZE           0x00004000u
+#define CDC_NPU_VP_OBP_B_LUT_SIZE           0x00002000u
 #define CDC_NPU_VP_OBP_B_BIAS_BASE          0x0002C000u
-#define CDC_NPU_VP_OBP_B_BIAS_SIZE          0x00000100u
+#define CDC_NPU_VP_OBP_B_BIAS_SIZE          0x00000080u
 #define CDC_NPU_VP_OBP_B_SCALE_BASE         0x0002D000u
-#define CDC_NPU_VP_OBP_B_SCALE_SIZE         0x00000100u
+#define CDC_NPU_VP_OBP_B_SCALE_SIZE         0x00000080u
 #define CDC_NPU_VP_OBP_B_SHIFT_BASE         0x0002E000u
-#define CDC_NPU_VP_OBP_B_SHIFT_SIZE         0x00000100u
+#define CDC_NPU_VP_OBP_B_SHIFT_SIZE         0x00000080u
 #define CDC_NPU_VP_RCE_A_EXP_BASE           0x00032000u
 #define CDC_NPU_VP_RCE_A_EXP_SIZE           0x00000100u
 #define CDC_NPU_VP_RCE_A_RECIP_BASE         0x00033000u

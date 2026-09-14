@@ -28,13 +28,15 @@ using namespace npu_tlm_reg;
 
 constexpr std::uint64_t kRamBase = 0x8000'0000ULL;
 constexpr std::uint64_t kRamSize = 0x1000'0000ULL;
-constexpr std::uint32_t kArrayRows = sauria::Y;
-constexpr std::uint32_t kArrayCols = sauria::X;
+// V4.5 Neo Core Lite 32 geometry. Do not use sauria::X/Y here: that legacy
+// manifest still describes the 64x64 baseline rather than the V4.5 top.
+constexpr std::uint32_t kArrayRows = 32;
+constexpr std::uint32_t kArrayCols = 32;
 constexpr std::uint32_t kSoftwareRows = kArrayRows;
 constexpr std::uint32_t kSoftwareCols = kArrayCols;
 constexpr std::uint32_t kSoftwareRowSubwords = kSoftwareRows / 4;
 constexpr std::uint32_t kSoftwareMaxK = 1024 - kSoftwareCols;
-static_assert(kSoftwareRows == 64 && kSoftwareCols == 64);
+static_assert(kSoftwareRows == 32 && kSoftwareCols == 32);
 static_assert((kSoftwareRows % 4) == 0);
 constexpr std::uint32_t kSramASubwords = kArrayRows / 4;
 constexpr std::uint32_t kSramBSubwords = kArrayCols / 4;
@@ -90,7 +92,8 @@ constexpr std::array<vp_alias_range, 14> kTableAliases{{
 using core_type =
     sauria::NpuTop<kArrayCols, kArrayRows,
                    sauria::act_t, sauria::wei_t, sauria::psum_t,
-                   16, kArrayCols + kArrayRows, 1>;
+                   16, kArrayCols + kArrayRows, 1,
+                   5056, 5184, 1536>;
 
 sauria::PeConfig exact_int8_config()
 {
@@ -1331,7 +1334,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 mask[first_lane + 1u] = true;
             }
         } else if (is_rich_float_address(model_address)) {
-            data[0] = static_cast<double>(bits_to_float(forwarded_value));
+            // V4.5 decodes these register values from raw IEEE-754 bits.
+            data[0] = static_cast<double>(forwarded_value);
             mask[0] = true;
         } else if (!is_alias && region == sauria::CFG_REGS_OFFSET &&
                    local == 0u) {
@@ -1812,7 +1816,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
         buffer_select.write(sc_dt::sc_bv<3>("000"));
 
         const sauria::SauriaTarget* target =
-            sauria::sauria_find_target("int8_64x64");
+            sauria::sauria_find_target("int8_32x32");
         if (target == nullptr) {
             return error_code::invalid_format;
         }
@@ -1825,7 +1829,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
          * Present the firmware's row-major GEMM operands as a 1x1 convolution:
          *   A [Cin][1][W]       = activation[row][k]
          *   B [Cout][Cin][1][1] = weight[k][col]
-         * The V4.4 driver then provides the exact native SRAM byte layout.
+         * The V4.5 driver then provides the exact native SRAM byte layout.
          */
         std::vector<double> native_a(
             static_cast<std::size_t>(regs.k_dimension) * kSoftwareRows);
@@ -1858,7 +1862,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 native_b.data(), kSoftwareCols, regs.k_dimension, 1, 1,
                 native_c.data(), kSoftwareCols, 1, kSoftwareRows);
 
-        // One software-facing job is one complete 64x64 output tile.
+        // One software-facing job is one complete 32x32 output tile.
         mvm_k.write(regs.k_dimension);
         total_contexts.write(1u);
 
@@ -1875,7 +1879,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
                                         std::uint32_t size) {
                 std::uint32_t loaded = 0;
                 for (std::uint32_t phys = 0; loaded < size; ++phys) {
-                    for (std::uint32_t sw = 0; sw < 8 && loaded < size;
+                    for (std::uint32_t sw = 0;
+                         sw < kSoftwareRowSubwords && loaded < size;
                          ++sw) {
                         sauria::host_data_t data;
                         data.data.fill(0.0f);
@@ -1981,7 +1986,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
          * Preserve the software-facing exact-output contract. The cycle model
          * still runs above and supplies completion timing and performance
          * counters, while software receives the bit-exact INT32 accumulators
-         * expected by the CDC 64x64 GEMM ABI.
+         * expected by the CDC 32x32 GEMM ABI.
          */
         for (std::uint32_t row = 0; row < kSoftwareRows; ++row) {
             for (std::uint32_t col = 0; col < kSoftwareCols; ++col) {

@@ -6,8 +6,8 @@
 
 namespace cdc::components::npu_tlm_reg {
 
-// CDC software-facing 64x64 GEMM bank. These are local offsets interpreted
-// after subtracting WRAPPER_BASE. Native V4.4 owns offset zero.
+// CDC software-facing 32x32 GEMM bank. These are local offsets interpreted
+// after subtracting WRAPPER_BASE. Native V4.5 owns offset zero.
 inline constexpr std::uint32_t WRAPPER_BASE        = 0x0003'0000;
 inline constexpr std::uint32_t WRAPPER_WINDOW_SIZE = 0x0000'2000;
 
@@ -53,7 +53,7 @@ inline constexpr std::uint32_t MULTIPLIER_SIZE_BYTES = 0x1120;
 inline constexpr std::uint32_t SHIFT_ADDR          = 0x1124;
 inline constexpr std::uint32_t SHIFT_SIZE_BYTES    = 0x1128;
 
-// Low 32-bit performance/evaluation counters sourced directly from V4.4.
+// Low 32-bit performance/evaluation counters sourced directly from V4.5.
 inline constexpr std::uint32_t PERF_EXEC_CYCLES    = 0x1200;
 inline constexpr std::uint32_t PERF_STALL_CYCLES   = 0x1204;
 inline constexpr std::uint32_t PERF_MAC_OPS        = 0x1208;
@@ -78,7 +78,7 @@ inline constexpr std::uint32_t PERF_DMA_READ_CYCLES = 0x12A4;
 inline constexpr std::uint32_t PERF_DMA_WRITE_CYCLES = 0x12A8;
 
 // Raw/native SAURIA MP1 V1.1 register/SRAM window. These offsets mirror
-// SAURIA V4.4 so firmware can drive the model through the low-level path.
+// SAURIA V4.5 so firmware can drive the model through the low-level path.
 // low-level bridge path when needed. They are relative to the NPU base.
 inline constexpr std::uint32_t NATIVE_SAURIA_MEM_ADDR_MASK = 0x003C'0000;
 inline constexpr std::uint32_t NATIVE_CFG_REGS_OFFSET      = 0x0000'0000;
@@ -191,6 +191,7 @@ inline constexpr std::uint32_t NATIVE_OUT_REQUANT_SCALE_B =
     NATIVE_CFG_OUT_OFFSET + 0x34;
 inline constexpr std::uint32_t NATIVE_OUT_REQUANT_SHIFT_B =
     NATIVE_CFG_OUT_OFFSET + 0x38;
+inline constexpr std::uint32_t OBP_CFG_VEC_CHANNEL_MODE = 1u << 8;
 
 inline constexpr std::uint32_t NATIVE_IN_H           = NATIVE_CFG_LAYER_OFFSET + 0x00;
 inline constexpr std::uint32_t NATIVE_IN_W           = NATIVE_CFG_LAYER_OFFSET + 0x04;
@@ -211,7 +212,7 @@ inline constexpr std::uint32_t NATIVE_TILE_C         = NATIVE_CFG_LAYER_OFFSET +
 inline constexpr std::uint32_t NATIVE_X_USED         = NATIVE_CFG_LAYER_OFFSET + 0x40;
 inline constexpr std::uint32_t NATIVE_Y_USED         = NATIVE_CFG_LAYER_OFFSET + 0x44;
 
-// Compact VP aliases for sparse V4.4 host regions.
+// Compact VP aliases for sparse V4.5 host regions.
 inline constexpr std::uint32_t RICH_ALIAS_BASE = 0x0001'0000;
 inline constexpr std::uint32_t RICH_ALIAS_SIZE = 0x0000'1000;
 inline constexpr std::uint32_t RICH_INST_LO_A  = RICH_ALIAS_BASE + 0x300;
@@ -249,21 +250,21 @@ inline constexpr std::uint32_t RICH_A_LEN      = RICH_ALIAS_BASE + 0x464;
 inline constexpr std::uint32_t RICH_B_LEN      = RICH_ALIAS_BASE + 0x468;
 
 inline constexpr std::uint32_t OBP_A_LUT_BASE   = 0x0002'0000;
-inline constexpr std::uint32_t OBP_A_LUT_SIZE   = 0x0000'4000;
+inline constexpr std::uint32_t OBP_A_LUT_SIZE   = 0x0000'2000;
 inline constexpr std::uint32_t OBP_A_BIAS_BASE  = 0x0002'4000;
-inline constexpr std::uint32_t OBP_A_BIAS_SIZE  = 0x0000'0100;
+inline constexpr std::uint32_t OBP_A_BIAS_SIZE  = 0x0000'0080;
 inline constexpr std::uint32_t OBP_A_SCALE_BASE = 0x0002'5000;
-inline constexpr std::uint32_t OBP_A_SCALE_SIZE = 0x0000'0100;
+inline constexpr std::uint32_t OBP_A_SCALE_SIZE = 0x0000'0080;
 inline constexpr std::uint32_t OBP_A_SHIFT_BASE = 0x0002'6000;
-inline constexpr std::uint32_t OBP_A_SHIFT_SIZE = 0x0000'0100;
+inline constexpr std::uint32_t OBP_A_SHIFT_SIZE = 0x0000'0080;
 inline constexpr std::uint32_t OBP_B_LUT_BASE   = 0x0002'8000;
-inline constexpr std::uint32_t OBP_B_LUT_SIZE   = 0x0000'4000;
+inline constexpr std::uint32_t OBP_B_LUT_SIZE   = 0x0000'2000;
 inline constexpr std::uint32_t OBP_B_BIAS_BASE  = 0x0002'C000;
-inline constexpr std::uint32_t OBP_B_BIAS_SIZE  = 0x0000'0100;
+inline constexpr std::uint32_t OBP_B_BIAS_SIZE  = 0x0000'0080;
 inline constexpr std::uint32_t OBP_B_SCALE_BASE = 0x0002'D000;
-inline constexpr std::uint32_t OBP_B_SCALE_SIZE = 0x0000'0100;
+inline constexpr std::uint32_t OBP_B_SCALE_SIZE = 0x0000'0080;
 inline constexpr std::uint32_t OBP_B_SHIFT_BASE = 0x0002'E000;
-inline constexpr std::uint32_t OBP_B_SHIFT_SIZE = 0x0000'0100;
+inline constexpr std::uint32_t OBP_B_SHIFT_SIZE = 0x0000'0080;
 inline constexpr std::uint32_t RCE_A_EXP_BASE   = 0x0003'2000;
 inline constexpr std::uint32_t RCE_A_EXP_SIZE   = 0x0000'0100;
 inline constexpr std::uint32_t RCE_A_RECIP_BASE = 0x0003'3000;
@@ -277,7 +278,7 @@ inline constexpr std::uint32_t RCE_B_RECIP_SIZE = 0x0000'0200;
 inline constexpr std::uint32_t RCE_B_RSQRT_BASE = 0x0003'7000;
 inline constexpr std::uint32_t RCE_B_RSQRT_SIZE = 0x0000'0800;
 
-// Read-only high words for the real 64-bit V4.4 PerfCounters fields.
+// Read-only high words for the real 64-bit V4.5 PerfCounters fields.
 inline constexpr std::uint32_t PERF_EXEC_CYCLES_HI      = 0x1240;
 inline constexpr std::uint32_t PERF_STALL_CYCLES_HI     = 0x1244;
 inline constexpr std::uint32_t PERF_MAC_OPS_HI          = 0x1248;
@@ -301,7 +302,7 @@ inline constexpr std::uint32_t PERF_DDR_WRITE_BYTES_HI = 0x1320;
 inline constexpr std::uint32_t PERF_DMA_READ_CYCLES_HI = 0x1324;
 inline constexpr std::uint32_t PERF_DMA_WRITE_CYCLES_HI = 0x1328;
 
-// The full native V4.4 map, compact aliases, software control bank and SRAMs
+// The full native V4.5 map, compact aliases, software control bank and SRAMs
 // all fit in the system team's 1 MiB NPU aperture.
 inline constexpr std::uint32_t MMIO_SIZE = 0x0010'0000;
 
