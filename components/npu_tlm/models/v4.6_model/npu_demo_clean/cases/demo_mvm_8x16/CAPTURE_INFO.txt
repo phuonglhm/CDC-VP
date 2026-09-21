@@ -1,0 +1,32 @@
+CASE: demo_mvm_8x16
+
+A shape:
+1
+8
+64
+B shape:
+1
+64
+16
+C shape:
+1
+8
+16
+
+stimuli hashes:
+5e4058685019bf482980c5ee390f3693ffcfea42723dad76bec969a12309e88a  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/stimuli/initial_dram.txt
+abc7569a1e3610ea42653ac969fc6bac6102fc9a0ca9003324c104fae2a38a44  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/stimuli/gold_dram.txt
+6e6488323c4727b802bcb4b69fe5d84d279a33d105111e2c66507d613e7af426  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/stimuli/GoldenStimuli.txt
+
+sauria hashes:
+6310a8928582f2fd6038158691fbf715c06d22b09e4425989abe998b01b267a2  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_A_Mat_mvm_flat.txt
+7e34c5f93a1216affda2d92af973c0a46d85eda61c183a309f7ea53eb061b1b1  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_A_Mat_mvm_shape.txt
+71d016c82b471935a6fce611a497d165edcc3d9893ac792033a8f211a6136b0c  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_B_Mat_mvm_flat.txt
+fed28daa06cbf6acd0d9ab11194e557758ff49661df5a99c6e18ec1426e7d16a  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_B_Mat_mvm_shape.txt
+94709e29126ba43fac5c6fd73707a38451979af404c411e225edff11379ce8ff  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_C_compute_mvm_flat.txt
+79c74d1a2a95ee0d923c2b1ec80d43bb10bec058ceed425bce4c68acca5d6d65  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_C_compute_mvm_shape.txt
+e818be4db1282e9c42ca4d3f24bc4a3fe6d728a7465c2e0df8439c0e870cc9d3  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_C_Mat_mvm_flat.txt
+79c74d1a2a95ee0d923c2b1ec80d43bb10bec058ceed425bce4c68acca5d6d65  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_C_Mat_mvm_shape.txt
+bc9a79872f81b406bc981c0573c25fda137d17722fdf2b9b592084d23bfb5c9a  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_offsets.txt
+f37ca96deffa5454ada4c1f62910c6744413582dea988959a266a0079a3ec48b  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_preloads_mvm_flat.txt
+79c74d1a2a95ee0d923c2b1ec80d43bb10bec058ceed425bce4c68acca5d6d65  /home/huy/unified_final/npu_demo_clean/cases/demo_mvm_8x16/sauria_tmp/sauria_preloads_mvm_shape.txt

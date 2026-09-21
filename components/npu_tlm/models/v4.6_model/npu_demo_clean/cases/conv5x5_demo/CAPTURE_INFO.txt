@@ -1,0 +1,32 @@
+CASE: conv5x5_demo
+
+A shape:
+4
+32
+400
+B shape:
+4
+400
+32
+C shape:
+4
+32
+32
+
+stimuli hashes:
+d02c103c71d567e89d8f5f686ec46d714802f11f768a11ddeb812729068a2e3e  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/stimuli/initial_dram.txt
+c5ab5388b53444be731dc3562940d7cb5b04c637722878fab197c8f261657780  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/stimuli/gold_dram.txt
+591fb9365b2da078bd2c4075546bfb8419786fe9415c2df5206c5dc7cafd7781  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/stimuli/GoldenStimuli.txt
+
+sauria hashes:
+a5e28c98b87062c4b040323845a5693b105b1a6541300aaa5083c472be5376aa  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_A_Mat_mvm_flat.txt
+ba8306b94a22df91730bc6f8d3023ef2deb36512d6837558044d7fdb6d8e3ab6  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_A_Mat_mvm_shape.txt
+a2929b591393810d5daf941737bb482614795493541919083451a5d0f433fa8b  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_B_Mat_mvm_flat.txt
+21ee5dc5cb82ee0489dd5aa04a3c18ccc17e398d2fc3e47f94dc8ae43e69a53f  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_B_Mat_mvm_shape.txt
+4766fa3d3f4e5f99395047e101a6e10024720d16757429df896fa0d67136abee  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_C_compute_mvm_flat.txt
+e7af66c855d2ffa5ced6b644e7a9850e041d535fe8fe3538b831ec7b37792b3c  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_C_compute_mvm_shape.txt
+2013c15ba0144061e1278948bc40cbd15a980afa1295fcc34889c609fab24896  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_C_Mat_mvm_flat.txt
+e7af66c855d2ffa5ced6b644e7a9850e041d535fe8fe3538b831ec7b37792b3c  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_C_Mat_mvm_shape.txt
+3b5cc23f001727b528ac3d40e263fb9d41e16e0af7dc2fbaf1a4b68fa79b1003  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_offsets.txt
+a9029f1d5fdd39cff8d7996875678f76513329a2759a128eaee82d349f18e70f  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_preloads_mvm_flat.txt
+e7af66c855d2ffa5ced6b644e7a9850e041d535fe8fe3538b831ec7b37792b3c  /home/huy/unified_final/npu_demo_clean/cases/conv5x5_demo/sauria_tmp/sauria_preloads_mvm_shape.txt
