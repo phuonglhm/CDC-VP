@@ -149,7 +149,7 @@ SC_MODULE(TbObp)
         }
         else
         {
-            return static_cast<uint32_t>(r[0]);
+            return static_cast<uint32_t>(static_cast<int64_t>(r[0]));
         }
     }
 
@@ -302,6 +302,35 @@ SC_MODULE(TbObp)
             std::cout << "  [PASS] Bias addition performed correctly." << std::endl;
         }
 
+        // Test Case 2b: Negative Bias Programming & Readback (e.g. -65002, -51331)
+        std::cout << "\n--- CASE 2b: Negative Bias Programming & Readback ---" << std::endl;
+        int32_t neg_bias_0 = -65002;
+        int32_t neg_bias_1 = -51331;
+        host_write(0x00150000 + 0 * 4, static_cast<uint32_t>(neg_bias_0));
+        host_write(0x00150000 + 1 * 4, static_cast<uint32_t>(neg_bias_1));
+
+        uint32_t rd_neg0 = host_read(0x00150000 + 0 * 4);
+        uint32_t rd_neg1 = host_read(0x00150000 + 1 * 4);
+        bool neg_bias_ok = (rd_neg0 == static_cast<uint32_t>(neg_bias_0)) &&
+                           (rd_neg1 == static_cast<uint32_t>(neg_bias_1));
+        if (rd_neg0 == 0x80000000 || rd_neg1 == 0x80000000)
+        {
+            std::cout << "  [FAIL] Bias readback returned 0x80000000 (saturation bug present)!" << std::endl;
+            neg_bias_ok = false;
+        }
+        if (!neg_bias_ok)
+        {
+            std::cout << "  [FAIL] Negative bias readback mismatch: lane 0 got " << rd_neg0
+                      << " (exp " << static_cast<uint32_t>(neg_bias_0) << "), lane 1 got " << rd_neg1
+                      << " (exp " << static_cast<uint32_t>(neg_bias_1) << ")" << std::endl;
+        }
+        else
+        {
+            std::cout << "  [PASS] Negative bias values successfully written and read back without 0x80000000 saturation." << std::endl;
+        }
+        total_tests++;
+        if (neg_bias_ok) tests_passed++;
+
         // ----------------------------------------------------
         // Test Case 3: Stage 2 Requantization (Per-channel scale & shift)
         // ----------------------------------------------------
@@ -315,6 +344,25 @@ SC_MODULE(TbObp)
         {
             host_write(0x00180000 + i * 4, 100 + i * 10); // scale multiplier
             host_write(0x00190000 + i * 4, 8);            // right shift of 8 bits
+        }
+
+        // Verify scale & shift readback
+        bool scale_shift_rd_ok = true;
+        for (int i = 0; i < TEST_Y_DIM; i++)
+        {
+            uint32_t sc = host_read(0x00180000 + i * 4);
+            uint32_t sh = host_read(0x00190000 + i * 4);
+            if (sc != static_cast<uint32_t>(100 + i * 10) || sh != 8)
+            {
+                scale_shift_rd_ok = false;
+                std::cout << "  [FAIL] Scale/Shift readback at lane " << i << ": got scale=" << sc << ", shift=" << sh << std::endl;
+            }
+        }
+        total_tests++;
+        if (scale_shift_rd_ok)
+        {
+            tests_passed++;
+            std::cout << "  [PASS] Scale and shift memories successfully programmed and read back." << std::endl;
         }
 
         // Enable requantization

@@ -62,8 +62,8 @@ SC_MODULE(TbSmoke)
     void wr(uint32_t addr, uint32_t val)
     {
         host_data_t d;
-        d.data.fill(0.0f);
-        d[0] = (float)val;
+        d.data.fill(0.0);
+        d[0] = static_cast<double>(val);
         host_mask_t m;
         m.data.fill(true);
         host_addr.write(addr);
@@ -87,7 +87,7 @@ SC_MODULE(TbSmoke)
         host_data_t r = host_rdata.read();
         host_rden.write(false);
         wait();
-        return (uint32_t)r[0];
+        return static_cast<uint32_t>(static_cast<int64_t>(r[0]));
     }
 
     void check(const char *tag, uint32_t got, uint32_t exp)
@@ -142,6 +142,30 @@ SC_MODULE(TbSmoke)
 
         std::cout << "\nCollision check at OUT+0x10: V4 read=222 (til_cylim), "
                      "V1 read=444 (ckstep) -> same address, different field per profile.\n";
+
+        // ---------------- OBP A & B Register Smoke Tests ----------------
+        std::cout << "\n[OBP A & B Register Decode & Negative Bias Tests]\n";
+        // OBP-A Bias (0x00150000)
+        wr(0x00150000, static_cast<uint32_t>(-65002));
+        check("OBP-A Bias[0] (-65002)", rd(0x00150000), static_cast<uint32_t>(-65002));
+        wr(0x00150004, static_cast<uint32_t>(-51331));
+        check("OBP-A Bias[1] (-51331)", rd(0x00150004), static_cast<uint32_t>(-51331));
+
+        // OBP-A Scale (0x00180000) & Shift (0x00190000)
+        wr(0x00180000, 12345);
+        check("OBP-A Scale[0] (12345)", rd(0x00180000), 12345);
+        wr(0x00190000, 7);
+        check("OBP-A Shift[0] (7)", rd(0x00190000), 7);
+
+        // OBP-B Bias (0x00170000)
+        wr(0x00170000, static_cast<uint32_t>(-65002));
+        check("OBP-B Bias[0] (-65002)", rd(0x00170000), static_cast<uint32_t>(-65002));
+
+        // OBP-B Scale (0x001A0000) & Shift (0x001B0000)
+        wr(0x001A0000, 54321);
+        check("OBP-B Scale[0] (54321)", rd(0x001A0000), 54321);
+        wr(0x001B0000, 9);
+        check("OBP-B Shift[0] (9)", rd(0x001B0000), 9);
 
         std::cout << "\nRESULT: " << (errors == 0 ? "ALL PASS" : "FAILURES")
                   << " (errors=" << errors << ")\n";

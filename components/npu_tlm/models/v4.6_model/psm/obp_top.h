@@ -217,7 +217,8 @@ namespace sauria
                     uint32_t lane_idx = (offset >> 2) % Y_DIM;
                     if (wmask[0])
                     {
-                        bias_ram[lane_idx] = static_cast<int32_t>(wdata[0]);
+                        int64_t val64 = static_cast<int64_t>(wdata[0]);
+                        bias_ram[lane_idx] = static_cast<int32_t>(static_cast<uint32_t>(val64));
                     }
                 }
                 else if (region == (LUT_OFFSET + 0x00040000))
@@ -226,7 +227,8 @@ namespace sauria
                     uint32_t lane_idx = (offset >> 2) % Y_DIM;
                     if (wmask[0])
                     {
-                        scale_ram[lane_idx] = static_cast<uint32_t>(wdata[0]);
+                        int64_t val64 = static_cast<int64_t>(wdata[0]);
+                        scale_ram[lane_idx] = static_cast<uint32_t>(val64);
                         scale_ram_valid[lane_idx] = true;
                     }
                 }
@@ -236,7 +238,8 @@ namespace sauria
                     uint32_t lane_idx = (offset >> 2) % Y_DIM;
                     if (wmask[0])
                     {
-                        shift_ram[lane_idx] = static_cast<uint32_t>(wdata[0]);
+                        int64_t val64 = static_cast<int64_t>(wdata[0]);
+                        shift_ram[lane_idx] = static_cast<uint32_t>(val64);
                         shift_ram_valid[lane_idx] = true;
                     }
                 }

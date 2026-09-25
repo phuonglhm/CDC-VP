@@ -1,6 +1,6 @@
 # Sauria NPU v4.2 SystemC Emulator Makefile
 
-SYSTEMC_HOME ?= /usr/local/systemc
+SYSTEMC_HOME ?= /data/XPU00000/users/vuong.nguyen/project/sauria/systemc_install
 CXX           ?= g++
 CXXFLAGS      := -std=c++17 -O3 -Wall -I. -I$(SYSTEMC_HOME)/include
 LINK          := -L$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib -lsystemc -lm -pthread

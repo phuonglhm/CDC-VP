@@ -9,7 +9,7 @@ The v4.2 model features a **dual-lane systolic architecture** (Lane A & Lane B w
 > - **`yolov8m-int8.onnx`**: **261 / 261 PASS (100.0%)** (100% bit-exact across all 1,084 ONNX nodes & 23 layers, 0.0000 MAE, 1.000000 Cosine Sim)
 > - **`vit_b-int8.onnx`**: **497 / 497 PASS (100.0%)** (100% bit-exact across all 2,297 ONNX nodes & 12 Transformer blocks, 0.0000 MAE, 1.000000 Cosine Sim)
 > - **Native Thread Full Model Regression (`test_yolo` / `test_onnx_model`)**: **PASS (100.0%)** (Native hardware thread execution with active RE/RCE streaming)
-> - **v4.6 Update Note & Specs**: See [`V4.6_update_note.md`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/V4.6_update_note.md) and [`OBP_RE_RCE_SPECIFICATION.md`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/OBP_RE_RCE_SPECIFICATION.md).
+> - **v4.6 Update Note & Specs**: See [`V4.6_update_note.md`](sauria/RTL/src/v4.2_model/V4.6_update_note.md) and [`OBP_RE_RCE_SPECIFICATION.md`](sauria/RTL/src/v4.2_model/OBP_RE_RCE_SPECIFICATION.md).
 
 ---
 
@@ -87,7 +87,7 @@ The SAURIA NPU v4.2 is a high-performance, modular Neural Processing Unit optimi
 
 ### Setting Up SystemC Environment
 ```bash
-export SYSTEMC_HOME=/data/XPU00000/users/vuong.nguyen/project/sauria/systemc_install
+export SYSTEMC_HOME=sauria/systemc_install
 export LD_LIBRARY_PATH=$SYSTEMC_HOME/lib:$LD_LIBRARY_PATH
 ```
 
@@ -137,7 +137,7 @@ The NPU core houses two symmetric execution lanes:
 - **Dual Instruction Queues**: Queue A (`0x310`) and Queue B (`0x314`) allow host software to stream independent hardware instruction streams to each lane concurrently.
 
 ### 4.2. Output Post-Processing Block (OBP Epilogue Engine)
-The OBP block ([`psm/obp_top.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/psm/obp_top.h)) implements 1 pipeline per lane with 64 parallel channels:
+The OBP block ([`psm/obp_top.h`](sauria/RTL/src/v4.2_model/psm/obp_top.h)) implements 1 pipeline per lane with 64 parallel channels:
 1. **Stage 1 (Bias Addition)**: Fuses 32-bit channel/matrix bias into array output using `bias_ram[64]`.
 2. **Stage 2 (Requantization & Scaling)**: Performs fixed-point multiplier scaling and bit-shifting using `scale_ram[64]` and `shift_ram[64]`.
 3. **Stage 3 (Non-linear Activation LUT)**:
@@ -147,7 +147,7 @@ The OBP block ([`psm/obp_top.h`](file:///data/XPU00000/users/vuong.nguyen/projec
 4. **Stage 4 (Residual Accumulation)**: Adds identity residual skip connections directly before writing back to SRAM.
 
 ### 4.3. Reconfigurable & Reduction Engines (RCE / RE)
-The RE/RCE subsystem ([`psm/re_rce.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/psm/re_rce.h)) provides non-linear vector acceleration:
+The RE/RCE subsystem ([`psm/re_rce.h`](sauria/RTL/src/v4.2_model/psm/re_rce.h)) provides non-linear vector acceleration:
 - **`ReconfigurableEngine` (RCE)**: Houses non-linear lookup tables (`LUT_exp` 256 B, `LUT_recip` 512 B, `LUT_rsqrt` 2048 B).
 - **`ReductionEngine` (RE)**: Houses 24 KB intermediate Scratch SRAM, 64-wide combinational adder and max-comparator trees.
 - **Two-Pass Softmax**: Pass 1 computes row max ($\max(x)$) to prevent overflow; Pass 2 computes $\exp(x - \max)$, accumulates sum, and multiplies by reciprocal.
@@ -156,8 +156,7 @@ The RE/RCE subsystem ([`psm/re_rce.h`](file:///data/XPU00000/users/vuong.nguyen/
 
 ### 4.4. Register Map & Control CSRs
 
-All control and configuration registers are mapped under MMIO ([`config_regs.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/config_regs.h), [`config_map.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/config_map.h)):
-
+All control and configuration registers are mapped under MMIO ([`config_regs.h`](sauria/RTL/src/v4.2_model/config_regs.h), [`config_map.h`](sauria/RTL/src/v4.2_model/config_map.h)):
 | CSR Name | MMIO Offset | Absolute Address | Access | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `FX1_INST_LO` | `0x00300` | `0x40000300` | WO | Low 32 bits of 64-bit Rich Instruction |
@@ -182,7 +181,7 @@ All control and configuration registers are mapped under MMIO ([`config_regs.h`]
 
 ## 5. 64-bit Rich Instruction Set Architecture (ISA)
 
-Instructions are submitted as 64-bit words formatted via `INST_LO` and `INST_HI` ([`control/instruction_decoder.h`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/control/instruction_decoder.h)):
+Instructions are submitted as 64-bit words formatted via `INST_LO` and `INST_HI` ([`control/instruction_decoder.h`](sauria/RTL/src/v4.2_model/control/instruction_decoder.h)):
 
 ```
 Bit Fields:
@@ -304,6 +303,3 @@ v4.2_model/
 
 ---
 
-## 10. License & Maintenance
-
-Developed by the **SAURIA NPU Architecture Team**. For technical reports and architecture specifications, please reference [`report_1908.md`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/report_1908.md), [`1908.md`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/1908.md), and [`dual_lane_architecture_report.md`](file:///data/XPU00000/users/vuong.nguyen/project/sauria/RTL/src/v4.2_model/dual_lane_architecture_report.md).

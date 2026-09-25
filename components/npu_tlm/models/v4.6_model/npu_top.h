@@ -1356,11 +1356,11 @@ namespace sauria
             {
                 o_host_rdata.write(s_host_rdata_cfg.read());
             }
-            else if (region == 0x00140000 || region == 0x00150000)
+            else if (region == 0x00140000 || region == 0x00150000 || region == 0x00180000 || region == 0x00190000)
             {
                 o_host_rdata.write(s_host_rdata_obp_a.read());
             }
-            else if (region == 0x00160000 || region == 0x00170000)
+            else if (region == 0x00160000 || region == 0x00170000 || region == 0x001A0000 || region == 0x001B0000)
             {
                 o_host_rdata.write(s_host_rdata_obp_b.read());
             }
