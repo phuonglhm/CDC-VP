@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * SAURIA NPU V4.5 register ABI. Offsets are relative to CDC_NPU0_BASE.
+ * SAURIA NPU V4.6 register ABI. Offsets are relative to CDC_NPU0_BASE.
  * All accesses are aligned 32-bit little-endian words.
  */
 #ifndef CDC_SOC_REGS_NPU_V4_H
@@ -74,7 +74,7 @@
 #define CDC_NPU_PERF_DMA_WRITE_CYCLES 0x12A8u
 
 /*
- * Raw/native SAURIA MP1 V1.1 V4.5 offsets. Write CFG_PROFILE before any
+ * Raw/native SAURIA MP1 V1.1 V4.6 offsets. Write CFG_PROFILE before any
  * profile-dependent configuration register.
  */
 #define CDC_NPU_PROFILE_V1_SAURIA              0u
@@ -181,7 +181,7 @@
 #define CDC_NPU_NATIVE_X_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x40u)
 #define CDC_NPU_NATIVE_Y_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x44u)
 
-/* Compact VP aliases for sparse V4.5 rich-instruction, OBP and RCE regions. */
+/* Compact VP aliases for sparse V4.6 rich-instruction, OBP and RCE regions. */
 #define CDC_NPU_VP_RICH_ALIAS_BASE          0x00010000u
 #define CDC_NPU_VP_RICH_INST_LO_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x300u)
 #define CDC_NPU_VP_RICH_INST_HI_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x304u)

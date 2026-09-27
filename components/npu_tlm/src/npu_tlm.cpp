@@ -28,8 +28,8 @@ using namespace npu_tlm_reg;
 
 constexpr std::uint64_t kRamBase = 0x8000'0000ULL;
 constexpr std::uint64_t kRamSize = 0x1000'0000ULL;
-// V4.5 Neo Core Lite 32 geometry. Do not use sauria::X/Y here: that legacy
-// manifest still describes the 64x64 baseline rather than the V4.5 top.
+// V4.6 Neo Core Lite 32 geometry. Do not use sauria::X/Y here: that legacy
+// manifest still describes the 64x64 baseline rather than the V4.6 top.
 constexpr std::uint32_t kArrayRows = 32;
 constexpr std::uint32_t kArrayCols = 32;
 constexpr std::uint32_t kSoftwareRows = kArrayRows;
@@ -1334,7 +1334,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 mask[first_lane + 1u] = true;
             }
         } else if (is_rich_float_address(model_address)) {
-            // V4.5 decodes these register values from raw IEEE-754 bits.
+            // V4.6 decodes these register values from raw IEEE-754 bits.
             data[0] = static_cast<double>(forwarded_value);
             mask[0] = true;
         } else if (!is_alias && region == sauria::CFG_REGS_OFFSET &&
@@ -1829,7 +1829,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
          * Present the firmware's row-major GEMM operands as a 1x1 convolution:
          *   A [Cin][1][W]       = activation[row][k]
          *   B [Cout][Cin][1][1] = weight[k][col]
-         * The V4.5 driver then provides the exact native SRAM byte layout.
+         * The V4.6 driver then provides the exact native SRAM byte layout.
          */
         std::vector<double> native_a(
             static_cast<std::size_t>(regs.k_dimension) * kSoftwareRows);
