@@ -1,0 +1,30 @@
+# Extracted data package and generated work data (tools/unpack_data.sh, $FE_WORK)
+/sauria_npu_data/
+/fe_work/
+
+# Editor and local tool folders
+/.vscode/
+/.dist/
+
+# Python
+__pycache__/
+*.pyc
+
+# Built testbenches of the native model (Makefile targets and manual builds in the root)
+/tb_unified_smoke
+/tb_obp
+/tb_re
+/tb_evaluate
+/tb_utilization_optimization
+/test_*
+*.o
+
+# Built testbenches and regression outputs under tools/
+/tools/has/tb_*
+!/tools/has/tb_*.cpp
+/tools/has/regress/
+/tools/test_*
+!/tools/test_*.cpp
+
+# Keep the planner cost table when this tree is committed inside a repository whose own rules ignore out/
+!/tools/eval_sw/out/

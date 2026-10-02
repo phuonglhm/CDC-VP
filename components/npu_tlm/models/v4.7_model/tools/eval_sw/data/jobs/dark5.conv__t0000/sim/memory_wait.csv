@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,ddr_wait_cycles,l2_wait_cycles,l1_wait_cycles,sram_conflict_cycles,memory_arbitration_cycles
+1,core,GeMM,5192,148,5044,0,0
+network,NETWORK,scope=network,5192,148,5044,0,0

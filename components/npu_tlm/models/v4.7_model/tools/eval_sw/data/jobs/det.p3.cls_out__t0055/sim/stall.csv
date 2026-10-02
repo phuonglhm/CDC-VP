@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,wait_input_cycles,wait_output_cycles,pipeline_bubble_cycles,synchronization_cycles,dependency_stall_cycles,instruction_stall_cycles
+1,core,GeMM,485,94,128,0,0,256
+network,NETWORK,scope=network,485,94,128,0,0,256

@@ -1,0 +1,82 @@
+--- a/include/npu_tlm_regmap.h
++++ b/include/npu_tlm_regmap.h
+@@ -52,6 +52,9 @@
+ inline constexpr std::uint32_t MULTIPLIER_SIZE_BYTES = 0x1120;
+ inline constexpr std::uint32_t SHIFT_ADDR          = 0x1124;
+ inline constexpr std::uint32_t SHIFT_SIZE_BYTES    = 0x1128;
++// DRAM window of extended instructions (physical base, size in bytes).
++inline constexpr std::uint32_t RICH_WINDOW_BASE    = 0x1130;
++inline constexpr std::uint32_t RICH_WINDOW_SIZE    = 0x1134;
+ 
+ // Low 32-bit performance/evaluation counters sourced directly from V4.6.
+ inline constexpr std::uint32_t PERF_EXEC_CYCLES    = 0x1200;
+--- a/src/npu_tlm.cpp
++++ b/src/npu_tlm.cpp
+@@ -260,6 +260,8 @@
+         std::uint32_t multiplier_size = 0;
+         std::uint32_t shift_addr = 0;
+         std::uint32_t shift_size = 0;
++        std::uint32_t rich_window_base = 0;
++        std::uint32_t rich_window_size = 0;
+         std::uint32_t cycle_count = 0;
+         std::uint32_t bytes_read = 0;
+         std::uint32_t bytes_written = 0;
+@@ -286,6 +288,7 @@
+         std::uint32_t b_len = 0;
+         std::uint32_t heads_dim_mode = 0;
+         std::uint32_t head_dim_eps_scale_a = 0;
++        bool extended = false;   // extension registers written since the previous push
+     };
+ 
+     struct rich_job {
+@@ -530,6 +533,8 @@
+         case MULTIPLIER_SIZE_BYTES: value = regs.multiplier_size; break;
+         case SHIFT_ADDR:         value = regs.shift_addr; break;
+         case SHIFT_SIZE_BYTES:   value = regs.shift_size; break;
++        case RICH_WINDOW_BASE:   value = regs.rich_window_base; break;
++        case RICH_WINDOW_SIZE:   value = regs.rich_window_size; break;
+         case PERF_EXEC_CYCLES:   value = low32(perf.exec_cycles); break;
+         case PERF_STALL_CYCLES:  value = low32(perf.stall_cycles); break;
+         case PERF_MAC_OPS:       value = low32(perf.mac_ops); break;
+@@ -659,6 +664,8 @@
+         case MULTIPLIER_SIZE_BYTES: regs.multiplier_size = value; break;
+         case SHIFT_ADDR:         regs.shift_addr = value; break;
+         case SHIFT_SIZE_BYTES:   regs.shift_size = value; break;
++        case RICH_WINDOW_BASE:   regs.rich_window_base = value; break;
++        case RICH_WINDOW_SIZE:   regs.rich_window_size = value; break;
+         case CYCLE_COUNT:
+         case BYTES_READ:
+         case BYTES_WRITTEN:
+@@ -1036,6 +1043,9 @@
+     void update_rich_parameter(std::uint32_t model_address,
+                                std::uint32_t value)
+     {
++        if (model_address >= 0x4000'046Cu && model_address < 0x4000'04E8u) {
++            rich_params.extended = true;
++        }
+         switch (model_address) {
+         case 0x4000'0410u: rich_params.m = value; break;
+         case 0x4000'0414u: rich_params.k = value; break;
+@@ -1119,6 +1129,22 @@
+             return true;
+         }
+ 
++        if (rich_params.extended) {
++            rich_params.extended = false;
++            if (regs.rich_window_size == 0u ||
++                !physical_ram_range(regs.rich_window_base, regs.rich_window_size)) {
++                error = error_code::invalid_size;
++                return false;
++            }
++            if (!stage_rich_range(regs.rich_window_base, regs.rich_window_size, error)) {
++                return false;
++            }
++            job.output_phys = regs.rich_window_base;
++            job.output_offset = regs.rich_window_base - static_cast<std::uint32_t>(kRamBase);
++            job.output_size = regs.rich_window_size;
++            return true;
++        }
++
+         std::uint32_t input_size = 0;
+         std::uint32_t weight_size = 0;
+         std::uint32_t output_size = 0;

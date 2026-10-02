@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,mac_engine_cycles,dma_engine_cycles,activation_engine_cycles,pooling_engine_cycles,reshape_engine_cycles,reduction_engine_cycles,engine_utilization
+1,core,GeMM,2573,2825,0,0,0,0,47.6658
+network,NETWORK,scope=network,2573,2825,0,0,0,0,47.6658

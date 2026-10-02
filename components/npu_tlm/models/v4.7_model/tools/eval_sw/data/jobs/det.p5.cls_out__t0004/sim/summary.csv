@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,ips,ips_bw_limited,algorithmic_tops
+1,core,GeMM,,,0.133
+network,NETWORK,scope=network,67762.15,151699.03,0.133

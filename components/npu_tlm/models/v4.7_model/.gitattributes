@@ -1,0 +1,5 @@
+# Store every file byte for byte: package_manifest.txt and data/SHA256SUMS hold sha256 checksums of the files as
+# shipped, and a line-ending conversion would change them (one header uses CRLF line endings, the others LF).
+* -text
+data/*.part* binary
+*.onnx binary

@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,ddr_read_bytes,ddr_write_bytes,weight_bytes,bias_bytes,l2_to_l1_bytes,l1_to_l2_bytes,l1_read_bytes,l1_write_bytes,l2_read_bytes,l2_write_bytes,internal_bw_gbps,external_bw_gbps,peak_internal_bw_gbps,peak_external_bw_gbps
+1,core,GeMM,139264,53248,6144,0,491136,53248,491136,53248,139264,53248,25.242,8.927,51.2,16
+network,NETWORK,scope=network,139264,53248,6144,0,491136,53248,491136,53248,139264,53248,25.242,8.927,51.2,16

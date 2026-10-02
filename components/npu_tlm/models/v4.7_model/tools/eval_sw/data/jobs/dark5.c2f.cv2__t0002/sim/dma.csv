@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,dma_read_cycles,dma_write_cycles,dma_busy_cycles,dma_idle_cycles,dma_stall_cycles,dma_wait_cycles
+1,core,GeMM,2836,156,2992,18689,2992,2992
+network,NETWORK,scope=network,2836,156,2992,18689,2992,2992
