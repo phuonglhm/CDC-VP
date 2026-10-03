@@ -92,7 +92,7 @@ int sc_main(int, char*[])
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
         CDC_CHECK(irq.read() == false);
 
-        // V4.6 native control/profile and SRAM windows are the primary ABI.
+        // V4.7 retains the native control/profile and SRAM ABI.
         CDC_CHECK(write_native(NATIVE_CFG_PROFILE, PROFILE_V1_SAURIA) ==
                   tlm::TLM_OK_RESPONSE);
         CDC_CHECK(read_native(NATIVE_CFG_PROFILE) == PROFILE_V1_SAURIA);
@@ -153,6 +153,17 @@ int sc_main(int, char*[])
         CDC_CHECK(read_native(PERF_K) == 0u);
         CDC_CHECK(read_native(PERF_N) == 0u);
         CDC_CHECK(read_native(PERF_M_HI) == 0u);
+        CDC_CHECK(read_native(RICH_STATUS) == 0u);
+        CDC_CHECK(read_native(RICH_RETIRED) == 0u);
+
+        CDC_CHECK(write_reg(RICH_WINDOW_BASE,
+                            static_cast<std::uint32_t>(kRamBase)) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_reg(RICH_WINDOW_SIZE, kRamSize) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_reg(RICH_WINDOW_BASE) ==
+                  static_cast<std::uint32_t>(kRamBase));
+        CDC_CHECK(read_reg(RICH_WINDOW_SIZE) == kRamSize);
 
         std::vector<std::uint8_t> activations(kRows * kK);
         std::vector<std::uint8_t> weights(kK * kCols);
@@ -375,6 +386,8 @@ int sc_main(int, char*[])
         settle();
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
         CDC_CHECK(read_reg(CTRL) == 0u);
+        CDC_CHECK(read_reg(RICH_WINDOW_BASE) == 0u);
+        CDC_CHECK(read_reg(RICH_WINDOW_SIZE) == 0u);
         CDC_CHECK(irq.read() == false);
 
         sc_core::sc_stop();

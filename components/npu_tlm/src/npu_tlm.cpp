@@ -28,8 +28,7 @@ using namespace npu_tlm_reg;
 
 constexpr std::uint64_t kRamBase = 0x8000'0000ULL;
 constexpr std::uint64_t kRamSize = 0x1000'0000ULL;
-// V4.6 Neo Core Lite 32 geometry. Do not use sauria::X/Y here: that legacy
-// manifest still describes the 64x64 baseline rather than the V4.6 top.
+// The V4.7 delivery and its retained native path both use 32x32 geometry.
 constexpr std::uint32_t kArrayRows = 32;
 constexpr std::uint32_t kArrayCols = 32;
 constexpr std::uint32_t kSoftwareRows = kArrayRows;
@@ -260,6 +259,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         std::uint32_t multiplier_size = 0;
         std::uint32_t shift_addr = 0;
         std::uint32_t shift_size = 0;
+        std::uint32_t rich_window_base = 0;
+        std::uint32_t rich_window_size = 0;
         std::uint32_t cycle_count = 0;
         std::uint32_t bytes_read = 0;
         std::uint32_t bytes_written = 0;
@@ -286,6 +287,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
         std::uint32_t b_len = 0;
         std::uint32_t heads_dim_mode = 0;
         std::uint32_t head_dim_eps_scale_a = 0;
+        bool extended = false;
     };
 
     struct rich_job {
@@ -379,6 +381,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
         core.i_select(buffer_select);
         core.i_total_contexts(total_contexts);
         core.attach_perf(&perf);
+        core.set_dram_base(static_cast<std::uint32_t>(kRamBase));
         core.set_dram(&rich_dram);
         perf.X = kArrayCols;
         perf.Y = kArrayRows;
@@ -530,6 +533,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         case MULTIPLIER_SIZE_BYTES: value = regs.multiplier_size; break;
         case SHIFT_ADDR:         value = regs.shift_addr; break;
         case SHIFT_SIZE_BYTES:   value = regs.shift_size; break;
+        case RICH_WINDOW_BASE:   value = regs.rich_window_base; break;
+        case RICH_WINDOW_SIZE:   value = regs.rich_window_size; break;
         case PERF_EXEC_CYCLES:   value = low32(perf.exec_cycles); break;
         case PERF_STALL_CYCLES:  value = low32(perf.stall_cycles); break;
         case PERF_MAC_OPS:       value = low32(perf.mac_ops); break;
@@ -659,6 +664,8 @@ struct npu_tlm::impl : public sc_core::sc_module {
         case MULTIPLIER_SIZE_BYTES: regs.multiplier_size = value; break;
         case SHIFT_ADDR:         regs.shift_addr = value; break;
         case SHIFT_SIZE_BYTES:   regs.shift_size = value; break;
+        case RICH_WINDOW_BASE:   regs.rich_window_base = value; break;
+        case RICH_WINDOW_SIZE:   regs.rich_window_size = value; break;
         case CYCLE_COUNT:
         case BYTES_READ:
         case BYTES_WRITTEN:
@@ -1036,6 +1043,10 @@ struct npu_tlm::impl : public sc_core::sc_module {
     void update_rich_parameter(std::uint32_t model_address,
                                std::uint32_t value)
     {
+        if (model_address >= 0x4000'046Cu &&
+            model_address < 0x4000'04E8u) {
+            rich_params.extended = true;
+        }
         switch (model_address) {
         case 0x4000'0410u: rich_params.m = value; break;
         case 0x4000'0414u: rich_params.k = value; break;
@@ -1116,6 +1127,26 @@ struct npu_tlm::impl : public sc_core::sc_module {
         error = error_code::none;
         job.opcode = opcode;
         if (opcode == RICH_OPCODE_SET_NSPLIT) {
+            rich_params.extended = false;
+            return true;
+        }
+
+        if (rich_params.extended) {
+            if (regs.rich_window_size == 0u ||
+                !physical_ram_range(regs.rich_window_base,
+                                    regs.rich_window_size)) {
+                error = error_code::invalid_size;
+                return false;
+            }
+            if (!stage_rich_range(regs.rich_window_base,
+                                  regs.rich_window_size, error)) {
+                return false;
+            }
+            rich_params.extended = false;
+            job.output_phys = regs.rich_window_base;
+            job.output_offset =
+                regs.rich_window_base - static_cast<std::uint32_t>(kRamBase);
+            job.output_size = regs.rich_window_size;
             return true;
         }
 
@@ -1334,7 +1365,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
                 mask[first_lane + 1u] = true;
             }
         } else if (is_rich_float_address(model_address)) {
-            // V4.6 decodes these register values from raw IEEE-754 bits.
+            // The retained native decoder accepts raw IEEE-754 bit patterns.
             data[0] = static_cast<double>(forwarded_value);
             mask[0] = true;
         } else if (!is_alias && region == sauria::CFG_REGS_OFFSET &&
@@ -1829,7 +1860,7 @@ struct npu_tlm::impl : public sc_core::sc_module {
          * Present the firmware's row-major GEMM operands as a 1x1 convolution:
          *   A [Cin][1][W]       = activation[row][k]
          *   B [Cout][Cin][1][1] = weight[k][col]
-         * The V4.6 driver then provides the exact native SRAM byte layout.
+         * The retained native driver provides the exact SRAM byte layout.
          */
         std::vector<double> native_a(
             static_cast<std::size_t>(regs.k_dimension) * kSoftwareRows);

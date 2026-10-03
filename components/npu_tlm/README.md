@@ -1,20 +1,26 @@
-# SAURIA V4.6 CDC-VP Integration
+# SAURIA V4.7 CDC-VP Integration
 
-`npu_tlm` connects the SAURIA MP1 V1.1 V4.6 SystemC model to the
+`npu_tlm` connects the SAURIA MP1 V1.1 V4.7 SystemC model to the
 CDC-VP RISC-V full SoC.
 
-The default SAURIA model is bundled under:
+The default model root is the V4.7 drop-in RTL path:
 
 ```text
-CDC-VP/components/npu_tlm/models/v4.6_model
+CDC-VP/components/npu_tlm/models/v4.7_model/core_rtl
 ```
 
-Relative to the previously integrated V4.5 tree, the delivered V4.6 source
-fixes signed OBP bias programming and adds host readback for the per-channel
-OBP scale and shift memories. The native register offsets are unchanged.
+This root preserves the V4.6 native configuration, SRAM and functional-rich
+paths. A rich instruction pushed after writing any V4.7 extension register
+uses `HasNpuTop`: the RTL-reference SAURIA core, HAS data-flow controller,
+AXI-128 DMA, epilogue and vector-unit blocks. V4.7 `core_rtl` is INT8 and
+Lane A only.
 
 Set `SAURIA_NPU_ROOT` at CMake configure time only when an external model tree
-should override the bundled version.
+should override the bundled `core_rtl` version.
+
+For the repeatable process used to compare a new model release, update this
+integration, build and package CDC-VP, copy the handoff into FX1, and run the
+regressions, see [MODEL_UPDATE_WORKFLOW.md](MODEL_UPDATE_WORKFLOW.md).
 
 ## CDC-VP Mapping
 
@@ -49,25 +55,27 @@ RISC-V software
   -> 32-bit MMIO at 0x10200000 + offset
     -> CDC-VP bus_router
       -> npu_tlm::b_transport
-        -> native V4.6 host interface, or
+        -> V4.7 core_rtl host interface
+          -> native V4.6-compatible path, or
+          -> HasNpuTop extended-instruction path
         -> CDC 32x32 GEMM controller
           -> RAM master socket
             -> system RAM at 0x80000000..0x8FFFFFFF
 ```
 
 Native MMIO requests are executed by the NPU worker thread so that one
-SystemC process owns the V4.6 host-interface signals.
+SystemC process owns the V4.7 host-interface signals.
 
-The V4.6 rich executor uses its own byte-addressed DRAM vector. The bridge
-translates system physical buffer addresses to RAM-relative model addresses,
-copies rich-operation inputs from system RAM before a queue push, keeps the
-gated NPU clock running while either lane is active, and copies completed
-outputs back to system RAM. Firmware must therefore program full physical RAM
-addresses in all rich address registers.
+The rich executor uses a private byte-addressed DRAM vector. Legacy rich jobs
+stage the ranges derived from their dimensions. V4.7 extended jobs stage the
+complete region selected by `RICH_WINDOW_BASE` and `RICH_WINDOW_SIZE`, then
+copy it back after completion. Firmware programs full system physical
+addresses and must not modify that window while an extended instruction runs.
 
 ## Built Instance
 
-The wrapper instantiates:
+The wrapper instantiates the V4.7 `core_rtl` drop-in adapter with the existing
+native template signature:
 
 ```cpp
 sauria::NpuTop<32, 32, int8_t, int8_t, int32_t,
@@ -90,6 +98,8 @@ sauria::NpuTop<32, 32, int8_t, int8_t, int32_t,
 | Total internal SRAM | `560 KiB` |
 | Dilation-pattern width | `64` |
 | NPU clock | `800 MHz` (`1.25 ns` period) |
+| HasNpuTop instruction queue | `16` entries |
+| HasNpuTop DMA | AXI-128 timing, 16 bytes/beat, 8 beats/burst |
 
 These build-time values do not have runtime MMIO registers.
 
@@ -101,21 +111,22 @@ physical addresses; firmware must not subtract `CDC_RAM0_BASE`.
 
 | Class | Meaning |
 | --- | --- |
-| Native config RW | V4.6 `config_regs.h` decodes host writes and reads |
-| SRAM RW | V4.6 `sram_top.h` decodes host writes and reads |
-| Rich WO | V4.6 `instruction_decoder.h` decodes writes; it defines no register readback |
-| OBP RW | V4.6 decodes LUT, bias, scale and shift writes and routes their host reads |
-| RCE RW | V4.6 decodes writes and `NpuTop` routes host reads |
-| Counter RO | CDC-VP returns a raw field updated by V4.6 instrumentation |
+| Native config RW | The V4.6-compatible native `config_regs.h` decodes writes and reads |
+| SRAM RW | The native `sram_top.h` decodes writes and reads |
+| Rich WO | Legacy and V4.7 extension parameters and queue pushes |
+| Rich status R/W-clear | V4.7 `STATUS` read/clear and `RETIRED` readback |
+| OBP RW | Native LUT, bias, scale and shift memories |
+| RCE RW | Native nonlinear-function LUT memories |
+| Counter RO | Raw fields updated by native modules or the V4.7 core adapter |
 | Software GEMM RW/RO/W1C | CDC-VP implements the software-facing 32x32 GEMM controller |
 
 ## Aperture Summary
 
 | VP offset/range | Physical address/range | Interface |
 | ---: | ---: | --- |
-| `0x00000..0x00AFF` | `0x10200000..0x10200AFF` | Native V4.6 control and configuration |
-| selected `0x01200..0x01328` | `0x10201200..0x10201328` | Raw V4.6 performance counters |
-| `0x10000..0x10FFF` | `0x10210000..0x10210FFF` | Compact rich-instruction alias |
+| `0x00000..0x00AFF` | `0x10200000..0x10200AFF` | V4.6-compatible native control and configuration |
+| selected `0x01200..0x01328` | `0x10201200..0x10201328` | Raw performance counters |
+| `0x10000..0x10FFF` | `0x10210000..0x10210FFF` | Compact V4.7 rich-instruction alias |
 | `0x20000..0x2EFFF` | `0x10220000..0x1022EFFF` | Compact OBP aliases |
 | `0x32000..0x37FFF` | `0x10232000..0x10237FFF` | Compact RCE aliases |
 | `0x30000..0x31FFF` | `0x10230000..0x10231FFF` | CDC 32x32 GEMM bank |
@@ -383,12 +394,12 @@ subword     = 0..7
 
 ## Compact Aliases
 
-Some V4.6 model host addresses are outside the 1 MiB SoC aperture. CDC-VP
+Some model host addresses are outside the 1 MiB SoC aperture. CDC-VP
 translates compact VP offsets to those sparse model addresses.
 
-| VP offset/range | Physical range | Access | V4.6 model range | Region |
+| VP offset/range | Physical range | Access | V4.7 model range | Region |
 | ---: | ---: | --- | ---: | --- |
-| selected `0x10300..0x10468` | `0x10210300..0x10210468` | WO | `0x40000300..0x40000468` | Rich instruction decoder |
+| selected `0x10300..0x104E4` | `0x10210300..0x102104E4` | WO/RO | `0x40000300..0x400004E4` | Rich instruction, status and extension registers |
 | `0x20000..0x21FFF` | `0x10220000..0x10221FFF` | RW | `0x00140000..0x00141FFF` | OBP A LUT, all 32 x 256 byte entries |
 | `0x24000..0x2407F` | `0x10224000..0x1022407F` | RW | `0x00150000..0x0015007F` | OBP A bias, 32 x 32-bit entries |
 | `0x25000..0x2507F` | `0x10225000..0x1022507F` | RW | `0x00180000..0x0018007F` | OBP A scale, 32 x 32-bit entries |
@@ -405,21 +416,23 @@ translates compact VP offsets to those sparse model addresses.
 | `0x37000..0x377FF` | `0x10237000..0x102377FF` | RW | `0x00250000..0x002507FF` | RCE B reciprocal square root |
 
 The compact offsets are CDC-VP integration definitions. The sparse target
-addresses and their behavior belong to the V4.6 model.
+addresses and their behavior belong to the V4.7 model.
 
-## Rich Instruction Write Registers
+## Rich Instruction Registers
 
-The rich page is write-only because V4.6 does not define host readback for
-these instruction-decoder registers.
+Legacy parameter and push registers are write-only. V4.7 adds read-only
+`STATUS` and `RETIRED` registers and write-only one-shot extension registers.
 
-| VP offset | Physical address | Firmware symbol | V4.6 field or action |
+| VP offset | Physical address | Firmware symbol | V4.7 field or action |
 | ---: | ---: | --- | --- |
 | `0x10300` | `0x10210300` | `CDC_NPU_VP_RICH_INST_LO_A` | Instruction low A |
 | `0x10304` | `0x10210304` | `CDC_NPU_VP_RICH_INST_HI_A` | Instruction high A |
 | `0x10308` | `0x10210308` | `CDC_NPU_VP_RICH_INST_LO_B` | Instruction low B |
 | `0x1030C` | `0x1021030C` | `CDC_NPU_VP_RICH_INST_HI_B` | Instruction high B |
 | `0x10310` | `0x10210310` | `CDC_NPU_VP_RICH_PUSH_A` | Push queue A |
-| `0x10314` | `0x10210314` | `CDC_NPU_VP_RICH_PUSH_B` | Push queue B |
+| `0x10314` | `0x10210314` | `CDC_NPU_VP_RICH_PUSH_B` | Native Lane B push; not routed to HasNpuTop |
+| `0x10318` | `0x10210318` | `CDC_NPU_VP_RICH_STATUS` | HasNpuTop busy, full, error, queue count and error code |
+| `0x1031C` | `0x1021031C` | `CDC_NPU_VP_RICH_RETIRED` | HasNpuTop completed-instruction count |
 | `0x10400` | `0x10210400` | `CDC_NPU_VP_RICH_IN_ADDR` | `in_addr` |
 | `0x10404` | `0x10210404` | `CDC_NPU_VP_RICH_WEIGHT_ADDR` | `w_addr` |
 | `0x10408` | `0x10210408` | `CDC_NPU_VP_RICH_OUT_ADDR` | `out_addr` |
@@ -448,17 +461,72 @@ these instruction-decoder registers.
 | `0x10464` | `0x10210464` | `CDC_NPU_VP_RICH_A_LEN` | `a_len` |
 | `0x10468` | `0x10210468` | `CDC_NPU_VP_RICH_B_LEN` | `b_len` |
 
+Writing any extension register routes the next Lane A push to `HasNpuTop`.
+The extension bank is one-shot and is cleared by each push.
+
+| VP offset | Firmware symbol | V4.7 extension field |
+| ---: | --- | --- |
+| `0x1046C` | `CDC_NPU_VP_RICH_IN_C` | Input channels |
+| `0x10470` | `CDC_NPU_VP_RICH_IN_H` | Input height |
+| `0x10474` | `CDC_NPU_VP_RICH_IN_W` | Input width |
+| `0x10478` | `CDC_NPU_VP_RICH_OUT_C` | Output channels |
+| `0x1047C` | `CDC_NPU_VP_RICH_OUT_H` | Output height |
+| `0x10480` | `CDC_NPU_VP_RICH_OUT_W` | Output width |
+| `0x10484` | `CDC_NPU_VP_RICH_TILE_COUT` | Output channels per tile |
+| `0x10488` | `CDC_NPU_VP_RICH_TILE_H` | Output tile height |
+| `0x1048C` | `CDC_NPU_VP_RICH_TILE_W` | Output tile width |
+| `0x10490` | `CDC_NPU_VP_RICH_SCALE_ADDR` | Per-channel multiplier address |
+| `0x10494` | `CDC_NPU_VP_RICH_SHIFT_ADDR` | Per-channel shift address |
+| `0x10498` | `CDC_NPU_VP_RICH_LUT_ADDR` | Activation LUT address |
+| `0x1049C` | `CDC_NPU_VP_RICH_ZP_OUT` | GEMM output zero point |
+| `0x104A0` | `CDC_NPU_VP_RICH_FLAGS` | `PAD_TAIL[0]`, `CHANNEL_MAJOR[1]` |
+| `0x104A4` | `CDC_NPU_VP_RICH_ZP_A` | Element-wise A zero point |
+| `0x104A8` | `CDC_NPU_VP_RICH_ZP_B` | Element-wise B zero point |
+| `0x104AC` | `CDC_NPU_VP_RICH_ZP_O` | Element-wise output zero point |
+| `0x104B0` | `CDC_NPU_VP_RICH_SA` | Element-wise A multiplier |
+| `0x104B4` | `CDC_NPU_VP_RICH_SHA` | Element-wise A shift |
+| `0x104B8` | `CDC_NPU_VP_RICH_SB` | Element-wise B multiplier |
+| `0x104BC` | `CDC_NPU_VP_RICH_SHB` | Element-wise B shift |
+| `0x104C0` | `CDC_NPU_VP_RICH_SO` | Output or average-pool multiplier |
+| `0x104C4` | `CDC_NPU_VP_RICH_SHO` | Output or average-pool shift |
+| `0x104C8` | `CDC_NPU_VP_RICH_POOL_K` | Pooling kernel size |
+| `0x104CC` | `CDC_NPU_VP_RICH_POOL_P` | Pooling padding |
+| `0x104D0` | `CDC_NPU_VP_RICH_POOL_MODE` | Max-pool implementation mode |
+| `0x104D4` | `CDC_NPU_VP_RICH_TILE_CIN` | Input channels per core pass |
+| `0x104D8` | `CDC_NPU_VP_RICH_Y_USED` | Active array rows, `1..32` |
+| `0x104DC` | `CDC_NPU_VP_RICH_ROWS` | Attention or LayerNorm rows |
+| `0x104E0` | `CDC_NPU_VP_RICH_PARAM_ADDR` | Transformer parameter-block address |
+| `0x104E4` | `CDC_NPU_VP_RICH_MASK_ADDR` | Attention mask address |
+
+`CDC_NPU_VP_RICH_STATUS` reports `BUSY[0]`, `QUEUE_FULL[1]`,
+`ERROR[2]`, queued instructions in bits `15..8`, and the last HasNpuTop
+error code in bits `31..16`. Any write clears the sticky HasNpuTop error.
+`CDC_NPU_VP_RICH_RETIRED` counts completed HasNpuTop instructions.
+
+| Error | V4.7 name | Cause |
+| ---: | --- | --- |
+| `1` | `Q_OVF` | Push while the 16-entry queue is full |
+| `2` | `LANE_B` | Push to Lane B |
+| `3` | `LEGACY64` | Legacy 64-bit instruction interface used |
+| `4` | `UNSUPPORTED_OP` | Unsupported opcode |
+| `5` | `UNSUPPORTED_MODE` | Unsupported element-wise or activation mode |
+| `6` | `BROADCAST` | HasNpuTop ADD operand lengths differ |
+| `7` | `NEED_LUT` | SiLU or GELU requested without a LUT address |
+| `8` | `BAD_GEOM` | Missing or inconsistent geometry |
+| `9` | `SCALE_RANGE` | Floating-point scale cannot be converted |
+| `10` | `NO_TILING` | Missing, zero or unsupported tile geometry |
+
 The scale fields use IEEE-754 binary32 MMIO bit patterns.
 
 For `ELEM_WISE`, write the total output element count to
 `CDC_NPU_VP_RICH_SEQ_LEN`, and write the valid source element counts to
 `CDC_NPU_VP_RICH_A_LEN` and `CDC_NPU_VP_RICH_B_LEN` before pushing the
-instruction. V4.6 uses these lengths for operand broadcasting. A zero source
-length selects the fallback behavior implemented by the model.
+instruction. The native functional path supports its existing broadcasting
+rules. The HasNpuTop extended path requires both lengths to equal `LEN`.
 
-Rich instruction values decoded by V4.6 are:
+Rich opcodes accepted by V4.7 are:
 
-| Type | Value | V4.6 name |
+| Type | Value | V4.7 name |
 | --- | ---: | --- |
 | Opcode | `0x05` | `SET_NSPLIT` |
 | Opcode | `0x12` | `GEMM_FUSED` |
@@ -471,20 +539,34 @@ Rich instruction values decoded by V4.6 are:
 | Activation | `3` | GELU |
 | Element-wise mode | `0` | Add |
 | Element-wise mode | `1` | Max pool |
-| Element-wise mode | `2` | Multiply |
-| Element-wise mode | `3` | Subtract |
-| Element-wise mode | `4` | Divide |
+| Element-wise mode | `5` | Average pool |
 
-For packed V4.6 writes to `CDC_NPU_VP_RICH_HEADS_DIM_MODE`, bits `15..0`
-hold `num_heads`, bits `23..16` hold `dim`, and bits `31..24` hold `mode`.
-If bits `31..16` are zero, V4.6 applies the complete value to all three
-legacy interpretations.
+The native functional path still recognizes its previous multiply, subtract
+and divide modes. HasNpuTop supports only Lane A and does not support those
+modes or the legacy 64-bit instruction interface. The `core_rtl` adapter keeps
+Lane B and legacy 64-bit writes on the native path; software must use Lane A
+and the opcode push interface for extended instructions.
 
-## Raw V4.6 Performance Counters
+## V4.7 Rich DRAM Window
 
-The wrapper exposes the raw `fx1::PerfCounters` fields that V4.6 modules
-directly update. Each 64-bit counter is a read-only low/high pair. Derived
-getter results and override/placeholder fields are not assigned MMIO offsets.
+Extended instructions stage one complete system-RAM window because their
+tensor sizes are described by the extension bank rather than legacy `M/K/N`.
+
+| VP offset | Physical address | Firmware symbol | Access |
+| ---: | ---: | --- | --- |
+| `0x31130` | `0x10231130` | `CDC_NPU_RICH_WINDOW_BASE` | RW |
+| `0x31134` | `0x10231134` | `CDC_NPU_RICH_WINDOW_SIZE` | RW |
+
+Program both registers before the first extended instruction. The base is a
+system physical address, the size is in bytes, and the complete range must fit
+inside `0x80000000..0x8FFFFFFF`.
+
+## Raw V4.7 Performance Counters
+
+The wrapper exposes raw `fx1::PerfCounters` fields. Native modules retain
+their previous updates. Each retired HasNpuTop instruction adds its execution,
+DMA, OBP, reduction, pooling and DDR-byte measurements through the V4.7
+adapter. Each 64-bit counter is a read-only low/high pair.
 
 | Low offset | High offset | Low physical | High physical | Counter |
 | ---: | ---: | ---: | ---: | --- |
@@ -520,7 +602,7 @@ uint64_t value =
 ```
 
 PE utilization and stall fraction are software calculations. The wrapper does
-not create counter values that are absent from V4.6 instrumentation hooks.
+not create counter values that are absent from V4.7 instrumentation hooks.
 
 ## CDC 32x32 GEMM Bank
 
@@ -619,7 +701,7 @@ irq_out = CTRL.IRQ_EN && ((IRQ_ENABLE & IRQ_STATUS) != 0)
 
 ## Model Files That Are Not MMIO Specifications
 
-The following V4.6 files define driver packing, testbench, target, or stimulus
+The following V4.7 files define driver packing, testbench, target, or stimulus
 formats. They do not create additional CDC-VP MMIO offsets:
 
 ```text
@@ -642,19 +724,24 @@ driver/sauria_golden.h
 | `components/npu_tlm/src/npu_tlm.cpp` | Address decode, aliases and access behavior |
 | `fw/common/include/soc/soc_memory_map.h` | Firmware NPU physical base |
 | `fw/common/include/soc/regs/soc_regs_npu_v4.h` | Firmware-visible offsets and fields |
-| V4.6 `config_regs.h` and `config_map.h` | Native profile-dependent decode |
-| V4.6 `sram/sram_top.h` | Native SRAM host decode |
-| V4.6 `control/instruction_decoder.h` | Rich write-register decode |
-| V4.6 `instrumentation/perf_counters.h` | Raw counter storage and derived metric helpers |
+| V4.7 `core_rtl/npu_top.h` | Native/HasNpuTop routing and counter adaptation |
+| V4.7 `has/has_mmio_compat.h` | HasNpuTop status, extension and opcode decode |
+| V4.7 `config_regs.h` and `config_map.h` | Native profile-dependent decode |
+| V4.7 `sram/sram_top.h` | Native SRAM host decode |
+| V4.7 `control/instruction_decoder.h` | Native functional-rich decode |
+| V4.7 `instrumentation/perf_counters.h` | Raw counter storage and derived metric helpers |
 
 ## MMIO Contract Limits
 
-- Rich instruction registers are write-only because V4.6 defines no host
-  readback path for them.
+- Rich parameters, extension registers and push registers are write-only.
+  HasNpuTop provides readback only for `STATUS` and `RETIRED`.
 - Native and rich completion update the software-bank `STATUS` and `IRQ_STATUS`;
   enable its IRQ controls to receive completion on PLIC source 17.
-- Native SRAM windows use V4.6 row/subword host encoding, not linear byte
+- Native SRAM windows use the retained V4.6 row/subword host encoding, not linear byte
   addressing.
-- Only raw fields directly updated by V4.6 modules have counter offsets.
+- Only raw fields directly updated by native modules or HasNpuTop have counter offsets.
+- Extended instructions require `RICH_WINDOW_BASE` and `RICH_WINDOW_SIZE`.
+- HasNpuTop supports Lane A and INT8 only. Extended software must not use
+  Lane B, the legacy 64-bit interface or element-wise modes 2 through 4.
 - The 32x32 GEMM bank is a CDC-VP extension. It is not part of the native
-  V4.6 register map; native and rich interfaces remain available separately.
+  SAURIA register map; native and rich interfaces remain available separately.

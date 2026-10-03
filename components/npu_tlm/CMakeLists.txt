@@ -2,27 +2,29 @@
 
 set(_sauria_model_root "${SAURIA_NPU_ROOT}")
 if(NOT _sauria_model_root)
-    set(_sauria_model_root "${CMAKE_CURRENT_SOURCE_DIR}/models/v4.6_model")
+    set(_sauria_model_root "${CMAKE_CURRENT_SOURCE_DIR}/models/v4.7_model/core_rtl")
 endif()
 
-set(_sauria_v46_required_files
+set(_sauria_v47_required_files
     npu_top.h
+    rtl_ref_npu_top.h
     npu_profile.h
     sauria_targets.h
     config_regs.h
+    has/has_mmio_compat.h
     control/instruction_decoder.h
     control/sauria_dma.h
     driver/libsauria_cfg.h
     driver/sauria_run.h
     instrumentation/perf_counters.h)
 
-foreach(_sauria_file IN LISTS _sauria_v46_required_files)
+foreach(_sauria_file IN LISTS _sauria_v47_required_files)
     if(NOT EXISTS "${_sauria_model_root}/${_sauria_file}")
         message(FATAL_ERROR
-            "CDC_ENABLE_SAURIA_NPU_V4=ON requires the SAURIA V4.6 model, but "
+            "CDC_ENABLE_SAURIA_NPU_V4=ON requires the SAURIA V4.7 core_rtl model, but "
             "'${_sauria_file}' was not found at "
             "SAURIA_NPU_ROOT='${_sauria_model_root}'. "
-            "Set -DSAURIA_NPU_ROOT=<path-to-v4.6-model> to override the "
+            "Set -DSAURIA_NPU_ROOT=<path-to-v4.7-model/core_rtl> to override the "
             "bundled model.")
     endif()
 endforeach()
