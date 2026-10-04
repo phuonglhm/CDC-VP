@@ -11,12 +11,12 @@
 
 namespace cdc::components {
 
-// TLM-2.0 integration wrapper for the signal-level SAURIA V4.5 NPU model.
+// TLM-2.0 integration wrapper for the SAURIA V4.7 core_rtl model.
 //
-// The 1 MiB aperture exposes native V4.5 configuration/SRAM windows, compact
-// aliases for sparse rich/OBP/RCE regions, and a CDC 32x32 GEMM bank.
-// The software worker stages matrices through the master socket, runs
-// the cycle-level core, writes INT32 output, and raises a level-sensitive IRQ.
+// The 1 MiB aperture exposes the retained native configuration/SRAM windows,
+// compact rich/OBP/RCE aliases, V4.7 extended instructions, and the CDC 32x32
+// GEMM bank. The worker stages system RAM for the model and raises a
+// level-sensitive completion/error IRQ.
 class npu_tlm : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<npu_tlm> target_socket;

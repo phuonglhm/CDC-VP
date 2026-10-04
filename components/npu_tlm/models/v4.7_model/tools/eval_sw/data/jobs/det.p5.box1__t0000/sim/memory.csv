@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,l2_footprint_bytes,max_l2_taken_size_bytes,ddr_footprint_data_bytes,ddr_footprint_weight_bytes,ddr_footprint_control_bytes
+1,core,GeMM,187136,187136,76032,82944,1024
+network,NETWORK,scope=network,187136,187136,76032,82944,1024

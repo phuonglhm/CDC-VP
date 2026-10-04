@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,total_cycles,processing_cycles,transfer_cycles,transfer_overhead_cycles,transfer_overhead_percent,theory_min_cycles,active_cycles,idle_cycles
+1,core,GeMM,10248,3236,7012,7012,68.4231,2496,2763,7485
+network,NETWORK,scope=network,10248,3236,7012,7012,68.4231,2496,2763,7485

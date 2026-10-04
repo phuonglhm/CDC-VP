@@ -1,0 +1,22 @@
+shape,tiles_seen,tiles_via_core
+"cin=192 kh=1 kw=1 sy=1 nch=16 ht=2 wt=16 yu=16",5,2
+"cin=192 kh=1 kw=1 sy=1 nch=16 ht=20 wt=16 yu=16",1,1
+"cin=192 kh=1 kw=1 sy=1 nch=16 ht=20 wt=4 yu=4",1,1
+"cin=192 kh=1 kw=1 sy=1 nch=16 ht=26 wt=16 yu=16",15,2
+"cin=192 kh=1 kw=1 sy=1 nch=32 ht=2 wt=16 yu=16",10,2
+"cin=192 kh=1 kw=1 sy=1 nch=32 ht=20 wt=16 yu=16",2,2
+"cin=192 kh=1 kw=1 sy=1 nch=32 ht=20 wt=4 yu=4",2,2
+"cin=192 kh=1 kw=1 sy=1 nch=32 ht=26 wt=16 yu=16",30,2
+"cin=192 kh=3 kw=3 sy=1 nch=32 ht=17 wt=16 yu=16",10,2
+"cin=192 kh=3 kw=3 sy=1 nch=32 ht=21 wt=16 yu=16",30,2
+"cin=288 kh=3 kw=3 sy=1 nch=32 ht=20 wt=4 yu=4",9,2
+"cin=288 kh=3 kw=3 sy=1 nch=32 ht=20 wt=8 yu=8",18,2
+"cin=3 kh=3 kw=3 sy=2 nch=8 ht=16 wt=160 yu=32",12,2
+"cin=3 kh=3 kw=3 sy=2 nch=8 ht=19 wt=160 yu=32",192,2
+"cin=384 kh=3 kw=3 sy=2 nch=16 ht=11 wt=4 yu=4",180,2
+"cin=384 kh=3 kw=3 sy=2 nch=16 ht=9 wt=4 yu=4",180,2
+"cin=576 kh=1 kw=1 sy=1 nch=32 ht=20 wt=4 yu=4",45,2
+"cin=96 kh=1 kw=1 sy=1 nch=32 ht=16 wt=32 yu=32",15,2
+"cin=96 kh=1 kw=1 sy=1 nch=32 ht=24 wt=32 yu=32",90,2
+"cin=96 kh=3 kw=3 sy=2 nch=32 ht=12 wt=16 yu=16",180,2
+"cin=96 kh=3 kw=3 sy=2 nch=32 ht=8 wt=16 yu=16",30,2

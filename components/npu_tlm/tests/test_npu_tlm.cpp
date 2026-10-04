@@ -92,7 +92,7 @@ int sc_main(int, char*[])
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
         CDC_CHECK(irq.read() == false);
 
-        // V4.5 native control/profile and SRAM windows are the primary ABI.
+        // V4.7 retains the native control/profile and SRAM ABI.
         CDC_CHECK(write_native(NATIVE_CFG_PROFILE, PROFILE_V1_SAURIA) ==
                   tlm::TLM_OK_RESPONSE);
         CDC_CHECK(read_native(NATIVE_CFG_PROFILE) == PROFILE_V1_SAURIA);
@@ -118,6 +118,33 @@ int sc_main(int, char*[])
                                lane_31_lut_word) == tlm::TLM_OK_RESPONSE);
         CDC_CHECK(read_native(OBP_B_LUT_BASE + OBP_B_LUT_SIZE - 4u) ==
                   lane_31_lut_word);
+        constexpr std::uint32_t obp_a_negative_bias =
+            static_cast<std::uint32_t>(-65'002);
+        constexpr std::uint32_t obp_b_negative_bias =
+            static_cast<std::uint32_t>(-51'331);
+        CDC_CHECK(write_native(OBP_A_BIAS_BASE, obp_a_negative_bias) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_A_BIAS_BASE) == obp_a_negative_bias);
+        CDC_CHECK(write_native(OBP_B_BIAS_BASE, obp_b_negative_bias) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_B_BIAS_BASE) == obp_b_negative_bias);
+
+        constexpr std::uint32_t obp_a_scale = 0xFEDC'BA98u;
+        constexpr std::uint32_t obp_a_shift = 7u;
+        constexpr std::uint32_t obp_b_scale = 54'321u;
+        constexpr std::uint32_t obp_b_shift = 9u;
+        CDC_CHECK(write_native(OBP_A_SCALE_BASE, obp_a_scale) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_A_SCALE_BASE) == obp_a_scale);
+        CDC_CHECK(write_native(OBP_A_SHIFT_BASE, obp_a_shift) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_A_SHIFT_BASE) == obp_a_shift);
+        CDC_CHECK(write_native(OBP_B_SCALE_BASE, obp_b_scale) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_B_SCALE_BASE) == obp_b_scale);
+        CDC_CHECK(write_native(OBP_B_SHIFT_BASE, obp_b_shift) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_native(OBP_B_SHIFT_BASE) == obp_b_shift);
         CDC_CHECK(read_native(PERF_EXEC_CYCLES) == 0u);
         CDC_CHECK(read_native(PERF_EXEC_CYCLES_HI) == 0u);
         CDC_CHECK(read_native(PERF_PROCESSING_CYCLES) == 0u);
@@ -126,6 +153,17 @@ int sc_main(int, char*[])
         CDC_CHECK(read_native(PERF_K) == 0u);
         CDC_CHECK(read_native(PERF_N) == 0u);
         CDC_CHECK(read_native(PERF_M_HI) == 0u);
+        CDC_CHECK(read_native(RICH_STATUS) == 0u);
+        CDC_CHECK(read_native(RICH_RETIRED) == 0u);
+
+        CDC_CHECK(write_reg(RICH_WINDOW_BASE,
+                            static_cast<std::uint32_t>(kRamBase)) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(write_reg(RICH_WINDOW_SIZE, kRamSize) ==
+                  tlm::TLM_OK_RESPONSE);
+        CDC_CHECK(read_reg(RICH_WINDOW_BASE) ==
+                  static_cast<std::uint32_t>(kRamBase));
+        CDC_CHECK(read_reg(RICH_WINDOW_SIZE) == kRamSize);
 
         std::vector<std::uint8_t> activations(kRows * kK);
         std::vector<std::uint8_t> weights(kK * kCols);
@@ -348,6 +386,8 @@ int sc_main(int, char*[])
         settle();
         CDC_CHECK(read_reg(STATUS) == STATUS_IDLE);
         CDC_CHECK(read_reg(CTRL) == 0u);
+        CDC_CHECK(read_reg(RICH_WINDOW_BASE) == 0u);
+        CDC_CHECK(read_reg(RICH_WINDOW_SIZE) == 0u);
         CDC_CHECK(irq.read() == false);
 
         sc_core::sc_stop();

@@ -7,7 +7,7 @@
 namespace cdc::components::npu_tlm_reg {
 
 // CDC software-facing 32x32 GEMM bank. These are local offsets interpreted
-// after subtracting WRAPPER_BASE. Native V4.5 owns offset zero.
+// after subtracting WRAPPER_BASE. Native SAURIA owns offset zero.
 inline constexpr std::uint32_t WRAPPER_BASE        = 0x0003'0000;
 inline constexpr std::uint32_t WRAPPER_WINDOW_SIZE = 0x0000'2000;
 
@@ -52,8 +52,10 @@ inline constexpr std::uint32_t MULTIPLIER_ADDR     = 0x111C;
 inline constexpr std::uint32_t MULTIPLIER_SIZE_BYTES = 0x1120;
 inline constexpr std::uint32_t SHIFT_ADDR          = 0x1124;
 inline constexpr std::uint32_t SHIFT_SIZE_BYTES    = 0x1128;
+inline constexpr std::uint32_t RICH_WINDOW_BASE    = 0x1130;
+inline constexpr std::uint32_t RICH_WINDOW_SIZE    = 0x1134;
 
-// Low 32-bit performance/evaluation counters sourced directly from V4.5.
+// Low 32-bit performance/evaluation counters sourced directly from V4.7.
 inline constexpr std::uint32_t PERF_EXEC_CYCLES    = 0x1200;
 inline constexpr std::uint32_t PERF_STALL_CYCLES   = 0x1204;
 inline constexpr std::uint32_t PERF_MAC_OPS        = 0x1208;
@@ -77,9 +79,8 @@ inline constexpr std::uint32_t PERF_DDR_WRITE_BYTES = 0x12A0;
 inline constexpr std::uint32_t PERF_DMA_READ_CYCLES = 0x12A4;
 inline constexpr std::uint32_t PERF_DMA_WRITE_CYCLES = 0x12A8;
 
-// Raw/native SAURIA MP1 V1.1 register/SRAM window. These offsets mirror
-// SAURIA V4.5 so firmware can drive the model through the low-level path.
-// low-level bridge path when needed. They are relative to the NPU base.
+// Raw/native SAURIA MP1 V1.1 register/SRAM window. V4.7 retains the V4.6
+// native ABI for low-level access. These offsets are relative to the NPU base.
 inline constexpr std::uint32_t NATIVE_SAURIA_MEM_ADDR_MASK = 0x003C'0000;
 inline constexpr std::uint32_t NATIVE_CFG_REGS_OFFSET      = 0x0000'0000;
 inline constexpr std::uint32_t NATIVE_SRAMA_OFFSET         = 0x0004'0000;
@@ -212,7 +213,7 @@ inline constexpr std::uint32_t NATIVE_TILE_C         = NATIVE_CFG_LAYER_OFFSET +
 inline constexpr std::uint32_t NATIVE_X_USED         = NATIVE_CFG_LAYER_OFFSET + 0x40;
 inline constexpr std::uint32_t NATIVE_Y_USED         = NATIVE_CFG_LAYER_OFFSET + 0x44;
 
-// Compact VP aliases for sparse V4.5 host regions.
+// Compact VP aliases for sparse V4.7 host regions.
 inline constexpr std::uint32_t RICH_ALIAS_BASE = 0x0001'0000;
 inline constexpr std::uint32_t RICH_ALIAS_SIZE = 0x0000'1000;
 inline constexpr std::uint32_t RICH_INST_LO_A  = RICH_ALIAS_BASE + 0x300;
@@ -221,6 +222,8 @@ inline constexpr std::uint32_t RICH_INST_LO_B  = RICH_ALIAS_BASE + 0x308;
 inline constexpr std::uint32_t RICH_INST_HI_B  = RICH_ALIAS_BASE + 0x30C;
 inline constexpr std::uint32_t RICH_PUSH_A     = RICH_ALIAS_BASE + 0x310;
 inline constexpr std::uint32_t RICH_PUSH_B     = RICH_ALIAS_BASE + 0x314;
+inline constexpr std::uint32_t RICH_STATUS     = RICH_ALIAS_BASE + 0x318;
+inline constexpr std::uint32_t RICH_RETIRED    = RICH_ALIAS_BASE + 0x31C;
 inline constexpr std::uint32_t RICH_IN_ADDR    = RICH_ALIAS_BASE + 0x400;
 inline constexpr std::uint32_t RICH_WEIGHT_ADDR = RICH_ALIAS_BASE + 0x404;
 inline constexpr std::uint32_t RICH_OUT_ADDR   = RICH_ALIAS_BASE + 0x408;
@@ -248,6 +251,37 @@ inline constexpr std::uint32_t RICH_ATTN_SCALE = RICH_ALIAS_BASE + 0x45C;
 inline constexpr std::uint32_t RICH_SCALE_OUT  = RICH_ALIAS_BASE + 0x460;
 inline constexpr std::uint32_t RICH_A_LEN      = RICH_ALIAS_BASE + 0x464;
 inline constexpr std::uint32_t RICH_B_LEN      = RICH_ALIAS_BASE + 0x468;
+inline constexpr std::uint32_t RICH_IN_C       = RICH_ALIAS_BASE + 0x46C;
+inline constexpr std::uint32_t RICH_IN_H       = RICH_ALIAS_BASE + 0x470;
+inline constexpr std::uint32_t RICH_IN_W       = RICH_ALIAS_BASE + 0x474;
+inline constexpr std::uint32_t RICH_OUT_C      = RICH_ALIAS_BASE + 0x478;
+inline constexpr std::uint32_t RICH_OUT_H      = RICH_ALIAS_BASE + 0x47C;
+inline constexpr std::uint32_t RICH_OUT_W      = RICH_ALIAS_BASE + 0x480;
+inline constexpr std::uint32_t RICH_TILE_COUT  = RICH_ALIAS_BASE + 0x484;
+inline constexpr std::uint32_t RICH_TILE_H     = RICH_ALIAS_BASE + 0x488;
+inline constexpr std::uint32_t RICH_TILE_W     = RICH_ALIAS_BASE + 0x48C;
+inline constexpr std::uint32_t RICH_SCALE_ADDR = RICH_ALIAS_BASE + 0x490;
+inline constexpr std::uint32_t RICH_SHIFT_ADDR = RICH_ALIAS_BASE + 0x494;
+inline constexpr std::uint32_t RICH_LUT_ADDR   = RICH_ALIAS_BASE + 0x498;
+inline constexpr std::uint32_t RICH_ZP_OUT     = RICH_ALIAS_BASE + 0x49C;
+inline constexpr std::uint32_t RICH_FLAGS      = RICH_ALIAS_BASE + 0x4A0;
+inline constexpr std::uint32_t RICH_ZP_A       = RICH_ALIAS_BASE + 0x4A4;
+inline constexpr std::uint32_t RICH_ZP_B       = RICH_ALIAS_BASE + 0x4A8;
+inline constexpr std::uint32_t RICH_ZP_O       = RICH_ALIAS_BASE + 0x4AC;
+inline constexpr std::uint32_t RICH_SA         = RICH_ALIAS_BASE + 0x4B0;
+inline constexpr std::uint32_t RICH_SHA        = RICH_ALIAS_BASE + 0x4B4;
+inline constexpr std::uint32_t RICH_SB         = RICH_ALIAS_BASE + 0x4B8;
+inline constexpr std::uint32_t RICH_SHB        = RICH_ALIAS_BASE + 0x4BC;
+inline constexpr std::uint32_t RICH_SO         = RICH_ALIAS_BASE + 0x4C0;
+inline constexpr std::uint32_t RICH_SHO        = RICH_ALIAS_BASE + 0x4C4;
+inline constexpr std::uint32_t RICH_POOL_K     = RICH_ALIAS_BASE + 0x4C8;
+inline constexpr std::uint32_t RICH_POOL_P     = RICH_ALIAS_BASE + 0x4CC;
+inline constexpr std::uint32_t RICH_POOL_MODE  = RICH_ALIAS_BASE + 0x4D0;
+inline constexpr std::uint32_t RICH_TILE_CIN   = RICH_ALIAS_BASE + 0x4D4;
+inline constexpr std::uint32_t RICH_Y_USED     = RICH_ALIAS_BASE + 0x4D8;
+inline constexpr std::uint32_t RICH_ROWS       = RICH_ALIAS_BASE + 0x4DC;
+inline constexpr std::uint32_t RICH_PARAM_ADDR = RICH_ALIAS_BASE + 0x4E0;
+inline constexpr std::uint32_t RICH_MASK_ADDR  = RICH_ALIAS_BASE + 0x4E4;
 
 inline constexpr std::uint32_t OBP_A_LUT_BASE   = 0x0002'0000;
 inline constexpr std::uint32_t OBP_A_LUT_SIZE   = 0x0000'2000;
@@ -278,7 +312,7 @@ inline constexpr std::uint32_t RCE_B_RECIP_SIZE = 0x0000'0200;
 inline constexpr std::uint32_t RCE_B_RSQRT_BASE = 0x0003'7000;
 inline constexpr std::uint32_t RCE_B_RSQRT_SIZE = 0x0000'0800;
 
-// Read-only high words for the real 64-bit V4.5 PerfCounters fields.
+// Read-only high words for the real 64-bit V4.7 PerfCounters fields.
 inline constexpr std::uint32_t PERF_EXEC_CYCLES_HI      = 0x1240;
 inline constexpr std::uint32_t PERF_STALL_CYCLES_HI     = 0x1244;
 inline constexpr std::uint32_t PERF_MAC_OPS_HI          = 0x1248;
@@ -302,7 +336,7 @@ inline constexpr std::uint32_t PERF_DDR_WRITE_BYTES_HI = 0x1320;
 inline constexpr std::uint32_t PERF_DMA_READ_CYCLES_HI = 0x1324;
 inline constexpr std::uint32_t PERF_DMA_WRITE_CYCLES_HI = 0x1328;
 
-// The full native V4.5 map, compact aliases, software control bank and SRAMs
+// The full native map, compact aliases, software control bank and SRAMs
 // all fit in the system team's 1 MiB NPU aperture.
 inline constexpr std::uint32_t MMIO_SIZE = 0x0010'0000;
 
@@ -324,6 +358,40 @@ inline constexpr std::uint32_t RICH_OPCODE_GEMM_FUSED = 0x12u;
 inline constexpr std::uint32_t RICH_OPCODE_FUSED_ATTN = 0x13u;
 inline constexpr std::uint32_t RICH_OPCODE_LAYERNORM  = 0x14u;
 inline constexpr std::uint32_t RICH_OPCODE_ELEM_WISE  = 0x15u;
+
+inline constexpr std::uint32_t RICH_STATUS_BUSY       = 1u << 0;
+inline constexpr std::uint32_t RICH_STATUS_QUEUE_FULL = 1u << 1;
+inline constexpr std::uint32_t RICH_STATUS_ERROR      = 1u << 2;
+inline constexpr std::uint32_t RICH_STATUS_QUEUED_SHIFT = 8u;
+inline constexpr std::uint32_t RICH_STATUS_QUEUED_MASK  = 0xFFu << RICH_STATUS_QUEUED_SHIFT;
+inline constexpr std::uint32_t RICH_STATUS_ERROR_SHIFT  = 16u;
+inline constexpr std::uint32_t RICH_STATUS_ERROR_MASK   = 0xFFFFu << RICH_STATUS_ERROR_SHIFT;
+
+inline constexpr std::uint32_t RICH_FLAG_PAD_TAIL      = 1u << 0;
+inline constexpr std::uint32_t RICH_FLAG_CHANNEL_MAJOR = 1u << 1;
+
+inline constexpr std::uint32_t RICH_ELEM_ADD      = 0u;
+inline constexpr std::uint32_t RICH_ELEM_MAX_POOL = 1u;
+inline constexpr std::uint32_t RICH_ELEM_AVG_POOL = 5u;
+
+inline constexpr std::uint32_t RICH_ACT_NONE = 0u;
+inline constexpr std::uint32_t RICH_ACT_RELU = 1u;
+inline constexpr std::uint32_t RICH_ACT_SILU = 2u;
+inline constexpr std::uint32_t RICH_ACT_GELU = 3u;
+
+enum class rich_error_code : std::uint32_t {
+    none = 0,
+    queue_overflow,
+    lane_b,
+    legacy_64bit,
+    unsupported_opcode,
+    unsupported_mode,
+    broadcast,
+    need_lut,
+    bad_geometry,
+    scale_range,
+    no_tiling,
+};
 
 inline constexpr std::uint32_t FORMAT_INT8_INT8_INT32 = 1u;
 inline constexpr std::uint32_t FORMAT_INT8_INT8_INT8  = 2u;

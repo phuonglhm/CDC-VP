@@ -1,0 +1,5383 @@
+{
+ "graph_input": "images",
+ "input_shape": [
+  1,
+  3,
+  640,
+  640
+ ],
+ "cut_outputs": [
+  "head_box0",
+  "head_box1",
+  "head_box2",
+  "head_cls0",
+  "head_cls1",
+  "head_cls2"
+ ],
+ "ops": [
+  {
+   "op": "conv",
+   "inputs": [
+    "images"
+   ],
+   "weight": "det.model.0.conv.weight",
+   "bias": "det.model.0.conv.bias",
+   "cin": 3,
+   "cout": 48,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    2,
+    2
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.0",
+   "onnx_node": "/model.0/conv/Conv",
+   "output": "layer00",
+   "in_shapes": [
+    [
+     1,
+     3,
+     640,
+     640
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    320,
+    320
+   ],
+   "id": 0,
+   "job": "stem"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer00"
+   ],
+   "weight": "det.model.1.conv.weight",
+   "bias": "det.model.1.conv.bias",
+   "cin": 48,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    2,
+    2
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.1",
+   "onnx_node": "/model.1/conv/Conv",
+   "output": "layer01",
+   "in_shapes": [
+    [
+     1,
+     48,
+     320,
+     320
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    160,
+    160
+   ],
+   "id": 1,
+   "job": "dark2.conv"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer01"
+   ],
+   "weight": "det.model.2.cv1.conv.weight",
+   "bias": "det.model.2.cv1.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.2.cv1",
+   "onnx_node": "/model.2/cv1/conv/Conv",
+   "output": "/model.2/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    160,
+    160
+   ],
+   "id": 2,
+   "job": "dark2.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.2/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 48,
+   "onnx_node": "/model.2/Slice",
+   "output": "/model.2/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 3
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.2/cv1/act/Mul_output_0"
+   ],
+   "start": 48,
+   "end": 96,
+   "onnx_node": "/model.2/Slice_1",
+   "output": "/model.2/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 4
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.2/Slice_1_output_0"
+   ],
+   "weight": "det.model.2.m.0.cv1.conv.weight",
+   "bias": "det.model.2.m.0.cv1.conv.bias",
+   "cin": 48,
+   "cout": 48,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.2.m.0.cv1",
+   "onnx_node": "/model.2/m.0/cv1/conv/Conv",
+   "output": "/model.2/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     48,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 5,
+   "job": "dark2.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.2/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.2.m.0.cv2.conv.weight",
+   "bias": "det.model.2.m.0.cv2.conv.bias",
+   "cin": 48,
+   "cout": 48,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.2.m.0.cv2",
+   "onnx_node": "/model.2/m.0/cv2/conv/Conv",
+   "output": "/model.2/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     48,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 6,
+   "job": "dark2.c2f.b0.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.2/Slice_1_output_0",
+    "/model.2/m.0/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.2/m.0/Add",
+   "output": "/model.2/m.0/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     48,
+     160,
+     160
+    ],
+    [
+     1,
+     48,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 7
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.2/m.0/Add_output_0"
+   ],
+   "weight": "det.model.2.m.1.cv1.conv.weight",
+   "bias": "det.model.2.m.1.cv1.conv.bias",
+   "cin": 48,
+   "cout": 48,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.2.m.1.cv1",
+   "onnx_node": "/model.2/m.1/cv1/conv/Conv",
+   "output": "/model.2/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     48,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 8,
+   "job": "dark2.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.2/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.2.m.1.cv2.conv.weight",
+   "bias": "det.model.2.m.1.cv2.conv.bias",
+   "cin": 48,
+   "cout": 48,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.2.m.1.cv2",
+   "onnx_node": "/model.2/m.1/cv2/conv/Conv",
+   "output": "/model.2/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     48,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 9,
+   "job": "dark2.c2f.b1.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.2/m.0/Add_output_0",
+    "/model.2/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.2/m.1/Add",
+   "output": "/model.2/m.1/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     48,
+     160,
+     160
+    ],
+    [
+     1,
+     48,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    48,
+    160,
+    160
+   ],
+   "id": 10
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.2/Slice_output_0",
+    "/model.2/Slice_1_output_0",
+    "/model.2/m.0/Add_output_0",
+    "/model.2/m.1/Add_output_0"
+   ],
+   "onnx_node": "/model.2/Concat",
+   "output": "/model.2/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     48,
+     160,
+     160
+    ],
+    [
+     1,
+     48,
+     160,
+     160
+    ],
+    [
+     1,
+     48,
+     160,
+     160
+    ],
+    [
+     1,
+     48,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    160,
+    160
+   ],
+   "id": 11
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.2/Concat_output_0"
+   ],
+   "weight": "det.model.2.cv2.conv.weight",
+   "bias": "det.model.2.cv2.conv.bias",
+   "cin": 192,
+   "cout": 96,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.2.cv2",
+   "onnx_node": "/model.2/cv2/conv/Conv",
+   "output": "layer02",
+   "in_shapes": [
+    [
+     1,
+     192,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    160,
+    160
+   ],
+   "id": 12,
+   "job": "dark2.c2f.cv2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer02"
+   ],
+   "weight": "det.model.3.conv.weight",
+   "bias": "det.model.3.conv.bias",
+   "cin": 96,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    2,
+    2
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.3",
+   "onnx_node": "/model.3/conv/Conv",
+   "output": "layer03",
+   "in_shapes": [
+    [
+     1,
+     96,
+     160,
+     160
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    80,
+    80
+   ],
+   "id": 13,
+   "job": "dark3.conv"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer03"
+   ],
+   "weight": "det.model.4.cv1.conv.weight",
+   "bias": "det.model.4.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.cv1",
+   "onnx_node": "/model.4/cv1/conv/Conv",
+   "output": "/model.4/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    80,
+    80
+   ],
+   "id": 14,
+   "job": "dark3.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.4/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 96,
+   "onnx_node": "/model.4/Slice",
+   "output": "/model.4/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 15
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.4/cv1/act/Mul_output_0"
+   ],
+   "start": 96,
+   "end": 192,
+   "onnx_node": "/model.4/Slice_1",
+   "output": "/model.4/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 16
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/Slice_1_output_0"
+   ],
+   "weight": "det.model.4.m.0.cv1.conv.weight",
+   "bias": "det.model.4.m.0.cv1.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.0.cv1",
+   "onnx_node": "/model.4/m.0/cv1/conv/Conv",
+   "output": "/model.4/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 17,
+   "job": "dark3.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.4.m.0.cv2.conv.weight",
+   "bias": "det.model.4.m.0.cv2.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.0.cv2",
+   "onnx_node": "/model.4/m.0/cv2/conv/Conv",
+   "output": "/model.4/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 18,
+   "job": "dark3.c2f.b0.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.4/Slice_1_output_0",
+    "/model.4/m.0/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.4/m.0/Add",
+   "output": "/model.4/m.0/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 19
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/m.0/Add_output_0"
+   ],
+   "weight": "det.model.4.m.1.cv1.conv.weight",
+   "bias": "det.model.4.m.1.cv1.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.1.cv1",
+   "onnx_node": "/model.4/m.1/cv1/conv/Conv",
+   "output": "/model.4/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 20,
+   "job": "dark3.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.4.m.1.cv2.conv.weight",
+   "bias": "det.model.4.m.1.cv2.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.1.cv2",
+   "onnx_node": "/model.4/m.1/cv2/conv/Conv",
+   "output": "/model.4/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 21,
+   "job": "dark3.c2f.b1.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.4/m.0/Add_output_0",
+    "/model.4/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.4/m.1/Add",
+   "output": "/model.4/m.1/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 22
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/m.1/Add_output_0"
+   ],
+   "weight": "det.model.4.m.2.cv1.conv.weight",
+   "bias": "det.model.4.m.2.cv1.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.2.cv1",
+   "onnx_node": "/model.4/m.2/cv1/conv/Conv",
+   "output": "/model.4/m.2/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 23,
+   "job": "dark3.c2f.b2.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/m.2/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.4.m.2.cv2.conv.weight",
+   "bias": "det.model.4.m.2.cv2.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.2.cv2",
+   "onnx_node": "/model.4/m.2/cv2/conv/Conv",
+   "output": "/model.4/m.2/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 24,
+   "job": "dark3.c2f.b2.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.4/m.1/Add_output_0",
+    "/model.4/m.2/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.4/m.2/Add",
+   "output": "/model.4/m.2/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 25
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/m.2/Add_output_0"
+   ],
+   "weight": "det.model.4.m.3.cv1.conv.weight",
+   "bias": "det.model.4.m.3.cv1.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.3.cv1",
+   "onnx_node": "/model.4/m.3/cv1/conv/Conv",
+   "output": "/model.4/m.3/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 26,
+   "job": "dark3.c2f.b3.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/m.3/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.4.m.3.cv2.conv.weight",
+   "bias": "det.model.4.m.3.cv2.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.m.3.cv2",
+   "onnx_node": "/model.4/m.3/cv2/conv/Conv",
+   "output": "/model.4/m.3/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 27,
+   "job": "dark3.c2f.b3.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.4/m.2/Add_output_0",
+    "/model.4/m.3/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.4/m.3/Add",
+   "output": "/model.4/m.3/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 28
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.4/Slice_output_0",
+    "/model.4/Slice_1_output_0",
+    "/model.4/m.0/Add_output_0",
+    "/model.4/m.1/Add_output_0",
+    "/model.4/m.2/Add_output_0",
+    "/model.4/m.3/Add_output_0"
+   ],
+   "onnx_node": "/model.4/Concat",
+   "output": "/model.4/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    80,
+    80
+   ],
+   "id": 29
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.4/Concat_output_0"
+   ],
+   "weight": "det.model.4.cv2.conv.weight",
+   "bias": "det.model.4.cv2.conv.bias",
+   "cin": 576,
+   "cout": 192,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.4.cv2",
+   "onnx_node": "/model.4/cv2/conv/Conv",
+   "output": "layer04",
+   "in_shapes": [
+    [
+     1,
+     576,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    80,
+    80
+   ],
+   "id": 30,
+   "job": "dark3.c2f.cv2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer04"
+   ],
+   "weight": "det.model.5.conv.weight",
+   "bias": "det.model.5.conv.bias",
+   "cin": 192,
+   "cout": 384,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    2,
+    2
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.5",
+   "onnx_node": "/model.5/conv/Conv",
+   "output": "layer05",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    40,
+    40
+   ],
+   "id": 31,
+   "job": "dark4.conv"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer05"
+   ],
+   "weight": "det.model.6.cv1.conv.weight",
+   "bias": "det.model.6.cv1.conv.bias",
+   "cin": 384,
+   "cout": 384,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.cv1",
+   "onnx_node": "/model.6/cv1/conv/Conv",
+   "output": "/model.6/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    40,
+    40
+   ],
+   "id": 32,
+   "job": "dark4.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.6/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 192,
+   "onnx_node": "/model.6/Slice",
+   "output": "/model.6/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 33
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.6/cv1/act/Mul_output_0"
+   ],
+   "start": 192,
+   "end": 384,
+   "onnx_node": "/model.6/Slice_1",
+   "output": "/model.6/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 34
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/Slice_1_output_0"
+   ],
+   "weight": "det.model.6.m.0.cv1.conv.weight",
+   "bias": "det.model.6.m.0.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.0.cv1",
+   "onnx_node": "/model.6/m.0/cv1/conv/Conv",
+   "output": "/model.6/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 35,
+   "job": "dark4.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.6.m.0.cv2.conv.weight",
+   "bias": "det.model.6.m.0.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.0.cv2",
+   "onnx_node": "/model.6/m.0/cv2/conv/Conv",
+   "output": "/model.6/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 36,
+   "job": "dark4.c2f.b0.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.6/Slice_1_output_0",
+    "/model.6/m.0/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.6/m.0/Add",
+   "output": "/model.6/m.0/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 37
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/m.0/Add_output_0"
+   ],
+   "weight": "det.model.6.m.1.cv1.conv.weight",
+   "bias": "det.model.6.m.1.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.1.cv1",
+   "onnx_node": "/model.6/m.1/cv1/conv/Conv",
+   "output": "/model.6/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 38,
+   "job": "dark4.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.6.m.1.cv2.conv.weight",
+   "bias": "det.model.6.m.1.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.1.cv2",
+   "onnx_node": "/model.6/m.1/cv2/conv/Conv",
+   "output": "/model.6/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 39,
+   "job": "dark4.c2f.b1.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.6/m.0/Add_output_0",
+    "/model.6/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.6/m.1/Add",
+   "output": "/model.6/m.1/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 40
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/m.1/Add_output_0"
+   ],
+   "weight": "det.model.6.m.2.cv1.conv.weight",
+   "bias": "det.model.6.m.2.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.2.cv1",
+   "onnx_node": "/model.6/m.2/cv1/conv/Conv",
+   "output": "/model.6/m.2/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 41,
+   "job": "dark4.c2f.b2.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/m.2/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.6.m.2.cv2.conv.weight",
+   "bias": "det.model.6.m.2.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.2.cv2",
+   "onnx_node": "/model.6/m.2/cv2/conv/Conv",
+   "output": "/model.6/m.2/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 42,
+   "job": "dark4.c2f.b2.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.6/m.1/Add_output_0",
+    "/model.6/m.2/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.6/m.2/Add",
+   "output": "/model.6/m.2/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 43
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/m.2/Add_output_0"
+   ],
+   "weight": "det.model.6.m.3.cv1.conv.weight",
+   "bias": "det.model.6.m.3.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.3.cv1",
+   "onnx_node": "/model.6/m.3/cv1/conv/Conv",
+   "output": "/model.6/m.3/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 44,
+   "job": "dark4.c2f.b3.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/m.3/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.6.m.3.cv2.conv.weight",
+   "bias": "det.model.6.m.3.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.m.3.cv2",
+   "onnx_node": "/model.6/m.3/cv2/conv/Conv",
+   "output": "/model.6/m.3/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 45,
+   "job": "dark4.c2f.b3.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.6/m.2/Add_output_0",
+    "/model.6/m.3/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.6/m.3/Add",
+   "output": "/model.6/m.3/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 46
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.6/Slice_output_0",
+    "/model.6/Slice_1_output_0",
+    "/model.6/m.0/Add_output_0",
+    "/model.6/m.1/Add_output_0",
+    "/model.6/m.2/Add_output_0",
+    "/model.6/m.3/Add_output_0"
+   ],
+   "onnx_node": "/model.6/Concat",
+   "output": "/model.6/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    1152,
+    40,
+    40
+   ],
+   "id": 47
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.6/Concat_output_0"
+   ],
+   "weight": "det.model.6.cv2.conv.weight",
+   "bias": "det.model.6.cv2.conv.bias",
+   "cin": 1152,
+   "cout": 384,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.6.cv2",
+   "onnx_node": "/model.6/cv2/conv/Conv",
+   "output": "layer06",
+   "in_shapes": [
+    [
+     1,
+     1152,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    40,
+    40
+   ],
+   "id": 48,
+   "job": "dark4.c2f.cv2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer06"
+   ],
+   "weight": "det.model.7.conv.weight",
+   "bias": "det.model.7.conv.bias",
+   "cin": 384,
+   "cout": 576,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    2,
+    2
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.7",
+   "onnx_node": "/model.7/conv/Conv",
+   "output": "layer07",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    20,
+    20
+   ],
+   "id": 49,
+   "job": "dark5.conv"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer07"
+   ],
+   "weight": "det.model.8.cv1.conv.weight",
+   "bias": "det.model.8.cv1.conv.bias",
+   "cin": 576,
+   "cout": 576,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.8.cv1",
+   "onnx_node": "/model.8/cv1/conv/Conv",
+   "output": "/model.8/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    20,
+    20
+   ],
+   "id": 50,
+   "job": "dark5.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.8/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 288,
+   "onnx_node": "/model.8/Slice",
+   "output": "/model.8/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 51
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.8/cv1/act/Mul_output_0"
+   ],
+   "start": 288,
+   "end": 576,
+   "onnx_node": "/model.8/Slice_1",
+   "output": "/model.8/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 52
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.8/Slice_1_output_0"
+   ],
+   "weight": "det.model.8.m.0.cv1.conv.weight",
+   "bias": "det.model.8.m.0.cv1.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.8.m.0.cv1",
+   "onnx_node": "/model.8/m.0/cv1/conv/Conv",
+   "output": "/model.8/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 53,
+   "job": "dark5.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.8/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.8.m.0.cv2.conv.weight",
+   "bias": "det.model.8.m.0.cv2.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.8.m.0.cv2",
+   "onnx_node": "/model.8/m.0/cv2/conv/Conv",
+   "output": "/model.8/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 54,
+   "job": "dark5.c2f.b0.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.8/Slice_1_output_0",
+    "/model.8/m.0/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.8/m.0/Add",
+   "output": "/model.8/m.0/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 55
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.8/m.0/Add_output_0"
+   ],
+   "weight": "det.model.8.m.1.cv1.conv.weight",
+   "bias": "det.model.8.m.1.cv1.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.8.m.1.cv1",
+   "onnx_node": "/model.8/m.1/cv1/conv/Conv",
+   "output": "/model.8/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 56,
+   "job": "dark5.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.8/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.8.m.1.cv2.conv.weight",
+   "bias": "det.model.8.m.1.cv2.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.8.m.1.cv2",
+   "onnx_node": "/model.8/m.1/cv2/conv/Conv",
+   "output": "/model.8/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 57,
+   "job": "dark5.c2f.b1.2"
+  },
+  {
+   "op": "add",
+   "inputs": [
+    "/model.8/m.0/Add_output_0",
+    "/model.8/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.8/m.1/Add",
+   "output": "/model.8/m.1/Add_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 58
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.8/Slice_output_0",
+    "/model.8/Slice_1_output_0",
+    "/model.8/m.0/Add_output_0",
+    "/model.8/m.1/Add_output_0"
+   ],
+   "onnx_node": "/model.8/Concat",
+   "output": "/model.8/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    1152,
+    20,
+    20
+   ],
+   "id": 59
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.8/Concat_output_0"
+   ],
+   "weight": "det.model.8.cv2.conv.weight",
+   "bias": "det.model.8.cv2.conv.bias",
+   "cin": 1152,
+   "cout": 576,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.8.cv2",
+   "onnx_node": "/model.8/cv2/conv/Conv",
+   "output": "layer08",
+   "in_shapes": [
+    [
+     1,
+     1152,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    20,
+    20
+   ],
+   "id": 60,
+   "job": "dark5.c2f.cv2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer08"
+   ],
+   "weight": "det.model.9.cv1.conv.weight",
+   "bias": "det.model.9.cv1.conv.bias",
+   "cin": 576,
+   "cout": 288,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.9.cv1",
+   "onnx_node": "/model.9/cv1/conv/Conv",
+   "output": "/model.9/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 61,
+   "job": "sppf.cv1"
+  },
+  {
+   "op": "maxpool",
+   "inputs": [
+    "/model.9/cv1/act/Mul_output_0"
+   ],
+   "kernel": [
+    5,
+    5
+   ],
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "onnx_node": "/model.9/m/MaxPool",
+   "output": "/model.9/m/MaxPool_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 62
+  },
+  {
+   "op": "maxpool",
+   "inputs": [
+    "/model.9/m/MaxPool_output_0"
+   ],
+   "kernel": [
+    5,
+    5
+   ],
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "onnx_node": "/model.9/m_1/MaxPool",
+   "output": "/model.9/m_1/MaxPool_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 63
+  },
+  {
+   "op": "maxpool",
+   "inputs": [
+    "/model.9/m_1/MaxPool_output_0"
+   ],
+   "kernel": [
+    5,
+    5
+   ],
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "onnx_node": "/model.9/m_2/MaxPool",
+   "output": "/model.9/m_2/MaxPool_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 64
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.9/cv1/act/Mul_output_0",
+    "/model.9/m/MaxPool_output_0",
+    "/model.9/m_1/MaxPool_output_0",
+    "/model.9/m_2/MaxPool_output_0"
+   ],
+   "onnx_node": "/model.9/Concat",
+   "output": "/model.9/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    1152,
+    20,
+    20
+   ],
+   "id": 65
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.9/Concat_output_0"
+   ],
+   "weight": "det.model.9.cv2.conv.weight",
+   "bias": "det.model.9.cv2.conv.bias",
+   "cin": 1152,
+   "cout": 576,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.9.cv2",
+   "onnx_node": "/model.9/cv2/conv/Conv",
+   "output": "layer09",
+   "in_shapes": [
+    [
+     1,
+     1152,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    20,
+    20
+   ],
+   "id": 66,
+   "job": "sppf.cv2"
+  },
+  {
+   "op": "upsample_nearest",
+   "inputs": [
+    "layer09"
+   ],
+   "factor": 2,
+   "onnx_node": "/model.10/Resize",
+   "output": "layer10",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    40,
+    40
+   ],
+   "id": 67
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "layer10",
+    "layer06"
+   ],
+   "onnx_node": "/model.11/Concat",
+   "output": "layer11",
+   "in_shapes": [
+    [
+     1,
+     576,
+     40,
+     40
+    ],
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    960,
+    40,
+    40
+   ],
+   "id": 68
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer11"
+   ],
+   "weight": "det.model.12.cv1.conv.weight",
+   "bias": "det.model.12.cv1.conv.bias",
+   "cin": 960,
+   "cout": 384,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.12.cv1",
+   "onnx_node": "/model.12/cv1/conv/Conv",
+   "output": "/model.12/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     960,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    40,
+    40
+   ],
+   "id": 69,
+   "job": "neck.p4.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.12/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 192,
+   "onnx_node": "/model.12/Slice",
+   "output": "/model.12/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 70
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.12/cv1/act/Mul_output_0"
+   ],
+   "start": 192,
+   "end": 384,
+   "onnx_node": "/model.12/Slice_1",
+   "output": "/model.12/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 71
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.12/Slice_1_output_0"
+   ],
+   "weight": "det.model.12.m.0.cv1.conv.weight",
+   "bias": "det.model.12.m.0.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.12.m.0.cv1",
+   "onnx_node": "/model.12/m.0/cv1/conv/Conv",
+   "output": "/model.12/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 72,
+   "job": "neck.p4.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.12/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.12.m.0.cv2.conv.weight",
+   "bias": "det.model.12.m.0.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.12.m.0.cv2",
+   "onnx_node": "/model.12/m.0/cv2/conv/Conv",
+   "output": "/model.12/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 73,
+   "job": "neck.p4.c2f.b0.2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.12/m.0/cv2/act/Mul_output_0"
+   ],
+   "weight": "det.model.12.m.1.cv1.conv.weight",
+   "bias": "det.model.12.m.1.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.12.m.1.cv1",
+   "onnx_node": "/model.12/m.1/cv1/conv/Conv",
+   "output": "/model.12/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 74,
+   "job": "neck.p4.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.12/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.12.m.1.cv2.conv.weight",
+   "bias": "det.model.12.m.1.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.12.m.1.cv2",
+   "onnx_node": "/model.12/m.1/cv2/conv/Conv",
+   "output": "/model.12/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 75,
+   "job": "neck.p4.c2f.b1.2"
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.12/Slice_output_0",
+    "/model.12/Slice_1_output_0",
+    "/model.12/m.0/cv2/act/Mul_output_0",
+    "/model.12/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.12/Concat",
+   "output": "/model.12/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    768,
+    40,
+    40
+   ],
+   "id": 76
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.12/Concat_output_0"
+   ],
+   "weight": "det.model.12.cv2.conv.weight",
+   "bias": "det.model.12.cv2.conv.bias",
+   "cin": 768,
+   "cout": 384,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.12.cv2",
+   "onnx_node": "/model.12/cv2/conv/Conv",
+   "output": "layer12",
+   "in_shapes": [
+    [
+     1,
+     768,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    40,
+    40
+   ],
+   "id": 77,
+   "job": "neck.p4.c2f.cv2"
+  },
+  {
+   "op": "upsample_nearest",
+   "inputs": [
+    "layer12"
+   ],
+   "factor": 2,
+   "onnx_node": "/model.13/Resize",
+   "output": "layer13",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    80,
+    80
+   ],
+   "id": 78
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "layer13",
+    "layer04"
+   ],
+   "onnx_node": "/model.14/Concat",
+   "output": "layer14",
+   "in_shapes": [
+    [
+     1,
+     384,
+     80,
+     80
+    ],
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    80,
+    80
+   ],
+   "id": 79
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer14"
+   ],
+   "weight": "det.model.15.cv1.conv.weight",
+   "bias": "det.model.15.cv1.conv.bias",
+   "cin": 576,
+   "cout": 192,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.15.cv1",
+   "onnx_node": "/model.15/cv1/conv/Conv",
+   "output": "/model.15/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    80,
+    80
+   ],
+   "id": 80,
+   "job": "neck.p3.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.15/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 96,
+   "onnx_node": "/model.15/Slice",
+   "output": "/model.15/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 81
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.15/cv1/act/Mul_output_0"
+   ],
+   "start": 96,
+   "end": 192,
+   "onnx_node": "/model.15/Slice_1",
+   "output": "/model.15/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 82
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.15/Slice_1_output_0"
+   ],
+   "weight": "det.model.15.m.0.cv1.conv.weight",
+   "bias": "det.model.15.m.0.cv1.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.15.m.0.cv1",
+   "onnx_node": "/model.15/m.0/cv1/conv/Conv",
+   "output": "/model.15/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 83,
+   "job": "neck.p3.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.15/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.15.m.0.cv2.conv.weight",
+   "bias": "det.model.15.m.0.cv2.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.15.m.0.cv2",
+   "onnx_node": "/model.15/m.0/cv2/conv/Conv",
+   "output": "/model.15/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 84,
+   "job": "neck.p3.c2f.b0.2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.15/m.0/cv2/act/Mul_output_0"
+   ],
+   "weight": "det.model.15.m.1.cv1.conv.weight",
+   "bias": "det.model.15.m.1.cv1.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.15.m.1.cv1",
+   "onnx_node": "/model.15/m.1/cv1/conv/Conv",
+   "output": "/model.15/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 85,
+   "job": "neck.p3.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.15/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.15.m.1.cv2.conv.weight",
+   "bias": "det.model.15.m.1.cv2.conv.bias",
+   "cin": 96,
+   "cout": 96,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.15.m.1.cv2",
+   "onnx_node": "/model.15/m.1/cv2/conv/Conv",
+   "output": "/model.15/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    96,
+    80,
+    80
+   ],
+   "id": 86,
+   "job": "neck.p3.c2f.b1.2"
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.15/Slice_output_0",
+    "/model.15/Slice_1_output_0",
+    "/model.15/m.0/cv2/act/Mul_output_0",
+    "/model.15/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.15/Concat",
+   "output": "/model.15/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ],
+    [
+     1,
+     96,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    80,
+    80
+   ],
+   "id": 87
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.15/Concat_output_0"
+   ],
+   "weight": "det.model.15.cv2.conv.weight",
+   "bias": "det.model.15.cv2.conv.bias",
+   "cin": 384,
+   "cout": 192,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.15.cv2",
+   "onnx_node": "/model.15/cv2/conv/Conv",
+   "output": "layer15",
+   "in_shapes": [
+    [
+     1,
+     384,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    80,
+    80
+   ],
+   "id": 88,
+   "job": "neck.p3.c2f.cv2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer15"
+   ],
+   "weight": "det.model.16.conv.weight",
+   "bias": "det.model.16.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    2,
+    2
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.16",
+   "onnx_node": "/model.16/conv/Conv",
+   "output": "layer16",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 89,
+   "job": "neck.d4.conv"
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "layer16",
+    "layer12"
+   ],
+   "onnx_node": "/model.17/Concat",
+   "output": "layer17",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    40,
+    40
+   ],
+   "id": 90
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer17"
+   ],
+   "weight": "det.model.18.cv1.conv.weight",
+   "bias": "det.model.18.cv1.conv.bias",
+   "cin": 576,
+   "cout": 384,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.18.cv1",
+   "onnx_node": "/model.18/cv1/conv/Conv",
+   "output": "/model.18/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    40,
+    40
+   ],
+   "id": 91,
+   "job": "neck.d4.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.18/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 192,
+   "onnx_node": "/model.18/Slice",
+   "output": "/model.18/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 92
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.18/cv1/act/Mul_output_0"
+   ],
+   "start": 192,
+   "end": 384,
+   "onnx_node": "/model.18/Slice_1",
+   "output": "/model.18/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 93
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.18/Slice_1_output_0"
+   ],
+   "weight": "det.model.18.m.0.cv1.conv.weight",
+   "bias": "det.model.18.m.0.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.18.m.0.cv1",
+   "onnx_node": "/model.18/m.0/cv1/conv/Conv",
+   "output": "/model.18/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 94,
+   "job": "neck.d4.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.18/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.18.m.0.cv2.conv.weight",
+   "bias": "det.model.18.m.0.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.18.m.0.cv2",
+   "onnx_node": "/model.18/m.0/cv2/conv/Conv",
+   "output": "/model.18/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 95,
+   "job": "neck.d4.c2f.b0.2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.18/m.0/cv2/act/Mul_output_0"
+   ],
+   "weight": "det.model.18.m.1.cv1.conv.weight",
+   "bias": "det.model.18.m.1.cv1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.18.m.1.cv1",
+   "onnx_node": "/model.18/m.1/cv1/conv/Conv",
+   "output": "/model.18/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 96,
+   "job": "neck.d4.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.18/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.18.m.1.cv2.conv.weight",
+   "bias": "det.model.18.m.1.cv2.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.18.m.1.cv2",
+   "onnx_node": "/model.18/m.1/cv2/conv/Conv",
+   "output": "/model.18/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 97,
+   "job": "neck.d4.c2f.b1.2"
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.18/Slice_output_0",
+    "/model.18/Slice_1_output_0",
+    "/model.18/m.0/cv2/act/Mul_output_0",
+    "/model.18/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.18/Concat",
+   "output": "/model.18/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ],
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    768,
+    40,
+    40
+   ],
+   "id": 98
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.18/Concat_output_0"
+   ],
+   "weight": "det.model.18.cv2.conv.weight",
+   "bias": "det.model.18.cv2.conv.bias",
+   "cin": 768,
+   "cout": 384,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.18.cv2",
+   "onnx_node": "/model.18/cv2/conv/Conv",
+   "output": "layer18",
+   "in_shapes": [
+    [
+     1,
+     768,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    40,
+    40
+   ],
+   "id": 99,
+   "job": "neck.d4.c2f.cv2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer18"
+   ],
+   "weight": "det.model.19.conv.weight",
+   "bias": "det.model.19.conv.bias",
+   "cin": 384,
+   "cout": 384,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    2,
+    2
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.19",
+   "onnx_node": "/model.19/conv/Conv",
+   "output": "layer19",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    384,
+    20,
+    20
+   ],
+   "id": 100,
+   "job": "neck.d5.conv"
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "layer19",
+    "layer09"
+   ],
+   "onnx_node": "/model.20/Concat",
+   "output": "layer20",
+   "in_shapes": [
+    [
+     1,
+     384,
+     20,
+     20
+    ],
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    960,
+    20,
+    20
+   ],
+   "id": 101
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer20"
+   ],
+   "weight": "det.model.21.cv1.conv.weight",
+   "bias": "det.model.21.cv1.conv.bias",
+   "cin": 960,
+   "cout": 576,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.21.cv1",
+   "onnx_node": "/model.21/cv1/conv/Conv",
+   "output": "/model.21/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     960,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    20,
+    20
+   ],
+   "id": 102,
+   "job": "neck.d5.c2f.cv1"
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.21/cv1/act/Mul_output_0"
+   ],
+   "start": 0,
+   "end": 288,
+   "onnx_node": "/model.21/Slice",
+   "output": "/model.21/Slice_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 103
+  },
+  {
+   "op": "slice_ch",
+   "inputs": [
+    "/model.21/cv1/act/Mul_output_0"
+   ],
+   "start": 288,
+   "end": 576,
+   "onnx_node": "/model.21/Slice_1",
+   "output": "/model.21/Slice_1_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 104
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.21/Slice_1_output_0"
+   ],
+   "weight": "det.model.21.m.0.cv1.conv.weight",
+   "bias": "det.model.21.m.0.cv1.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.21.m.0.cv1",
+   "onnx_node": "/model.21/m.0/cv1/conv/Conv",
+   "output": "/model.21/m.0/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 105,
+   "job": "neck.d5.c2f.b0.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.21/m.0/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.21.m.0.cv2.conv.weight",
+   "bias": "det.model.21.m.0.cv2.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.21.m.0.cv2",
+   "onnx_node": "/model.21/m.0/cv2/conv/Conv",
+   "output": "/model.21/m.0/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 106,
+   "job": "neck.d5.c2f.b0.2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.21/m.0/cv2/act/Mul_output_0"
+   ],
+   "weight": "det.model.21.m.1.cv1.conv.weight",
+   "bias": "det.model.21.m.1.cv1.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.21.m.1.cv1",
+   "onnx_node": "/model.21/m.1/cv1/conv/Conv",
+   "output": "/model.21/m.1/cv1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 107,
+   "job": "neck.d5.c2f.b1.1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.21/m.1/cv1/act/Mul_output_0"
+   ],
+   "weight": "det.model.21.m.1.cv2.conv.weight",
+   "bias": "det.model.21.m.1.cv2.conv.bias",
+   "cin": 288,
+   "cout": 288,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.21.m.1.cv2",
+   "onnx_node": "/model.21/m.1/cv2/conv/Conv",
+   "output": "/model.21/m.1/cv2/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    288,
+    20,
+    20
+   ],
+   "id": 108,
+   "job": "neck.d5.c2f.b1.2"
+  },
+  {
+   "op": "concat",
+   "inputs": [
+    "/model.21/Slice_output_0",
+    "/model.21/Slice_1_output_0",
+    "/model.21/m.0/cv2/act/Mul_output_0",
+    "/model.21/m.1/cv2/act/Mul_output_0"
+   ],
+   "onnx_node": "/model.21/Concat",
+   "output": "/model.21/Concat_output_0",
+   "in_shapes": [
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ],
+    [
+     1,
+     288,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    1152,
+    20,
+    20
+   ],
+   "id": 109
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/model.21/Concat_output_0"
+   ],
+   "weight": "det.model.21.cv2.conv.weight",
+   "bias": "det.model.21.cv2.conv.bias",
+   "cin": 1152,
+   "cout": 576,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.21.cv2",
+   "onnx_node": "/model.21/cv2/conv/Conv",
+   "output": "layer21",
+   "in_shapes": [
+    [
+     1,
+     1152,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    576,
+    20,
+    20
+   ],
+   "id": 110,
+   "job": "neck.d5.c2f.cv2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer15"
+   ],
+   "weight": "det.model.22.cv2.0.0.conv.weight",
+   "bias": "det.model.22.cv2.0.0.conv.bias",
+   "cin": 192,
+   "cout": 64,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv2.0.0",
+   "onnx_node": "/cv2.0/cv2.0.0/conv/Conv",
+   "output": "/cv2.0/cv2.0.0/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    80,
+    80
+   ],
+   "id": 111,
+   "job": "det.p3.box1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv2.0/cv2.0.0/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv2.0.1.conv.weight",
+   "bias": "det.model.22.cv2.0.1.conv.bias",
+   "cin": 64,
+   "cout": 64,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv2.0.1",
+   "onnx_node": "/cv2.0/cv2.0.1/conv/Conv",
+   "output": "/cv2.0/cv2.0.1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     64,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    80,
+    80
+   ],
+   "id": 112,
+   "job": "det.p3.box2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv2.0/cv2.0.1/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv2.0.2.weight",
+   "bias": "det.model.22.cv2.0.2.bias",
+   "cin": 64,
+   "cout": 64,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "none",
+   "module": "model.22.cv2.0.2",
+   "onnx_node": "/cv2.0/cv2.0.2/Conv",
+   "output": "head_box0",
+   "in_shapes": [
+    [
+     1,
+     64,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    80,
+    80
+   ],
+   "id": 113,
+   "job": "det.p3.box_out"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer18"
+   ],
+   "weight": "det.model.22.cv2.1.0.conv.weight",
+   "bias": "det.model.22.cv2.1.0.conv.bias",
+   "cin": 384,
+   "cout": 64,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv2.1.0",
+   "onnx_node": "/cv2.1/cv2.1.0/conv/Conv",
+   "output": "/cv2.1/cv2.1.0/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    40,
+    40
+   ],
+   "id": 114,
+   "job": "det.p4.box1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv2.1/cv2.1.0/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv2.1.1.conv.weight",
+   "bias": "det.model.22.cv2.1.1.conv.bias",
+   "cin": 64,
+   "cout": 64,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv2.1.1",
+   "onnx_node": "/cv2.1/cv2.1.1/conv/Conv",
+   "output": "/cv2.1/cv2.1.1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     64,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    40,
+    40
+   ],
+   "id": 115,
+   "job": "det.p4.box2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv2.1/cv2.1.1/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv2.1.2.weight",
+   "bias": "det.model.22.cv2.1.2.bias",
+   "cin": 64,
+   "cout": 64,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "none",
+   "module": "model.22.cv2.1.2",
+   "onnx_node": "/cv2.1/cv2.1.2/Conv",
+   "output": "head_box1",
+   "in_shapes": [
+    [
+     1,
+     64,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    40,
+    40
+   ],
+   "id": 116,
+   "job": "det.p4.box_out"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer21"
+   ],
+   "weight": "det.model.22.cv2.2.0.conv.weight",
+   "bias": "det.model.22.cv2.2.0.conv.bias",
+   "cin": 576,
+   "cout": 64,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv2.2.0",
+   "onnx_node": "/cv2.2/cv2.2.0/conv/Conv",
+   "output": "/cv2.2/cv2.2.0/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    20,
+    20
+   ],
+   "id": 117,
+   "job": "det.p5.box1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv2.2/cv2.2.0/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv2.2.1.conv.weight",
+   "bias": "det.model.22.cv2.2.1.conv.bias",
+   "cin": 64,
+   "cout": 64,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv2.2.1",
+   "onnx_node": "/cv2.2/cv2.2.1/conv/Conv",
+   "output": "/cv2.2/cv2.2.1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     64,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    20,
+    20
+   ],
+   "id": 118,
+   "job": "det.p5.box2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv2.2/cv2.2.1/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv2.2.2.weight",
+   "bias": "det.model.22.cv2.2.2.bias",
+   "cin": 64,
+   "cout": 64,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "none",
+   "module": "model.22.cv2.2.2",
+   "onnx_node": "/cv2.2/cv2.2.2/Conv",
+   "output": "head_box2",
+   "in_shapes": [
+    [
+     1,
+     64,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    64,
+    20,
+    20
+   ],
+   "id": 119,
+   "job": "det.p5.box_out"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer15"
+   ],
+   "weight": "det.model.22.cv3.0.0.conv.weight",
+   "bias": "det.model.22.cv3.0.0.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv3.0.0",
+   "onnx_node": "/cv3.0/cv3.0.0/conv/Conv",
+   "output": "/cv3.0/cv3.0.0/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    80,
+    80
+   ],
+   "id": 120,
+   "job": "det.p3.cls1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv3.0/cv3.0.0/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv3.0.1.conv.weight",
+   "bias": "det.model.22.cv3.0.1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv3.0.1",
+   "onnx_node": "/cv3.0/cv3.0.1/conv/Conv",
+   "output": "/cv3.0/cv3.0.1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    80,
+    80
+   ],
+   "id": 121,
+   "job": "det.p3.cls2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv3.0/cv3.0.1/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv3.0.2.weight",
+   "bias": "det.model.22.cv3.0.2.bias",
+   "cin": 192,
+   "cout": 80,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "none",
+   "module": "model.22.cv3.0.2",
+   "onnx_node": "/cv3.0/cv3.0.2/Conv",
+   "output": "head_cls0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     80,
+     80
+    ]
+   ],
+   "out_shape": [
+    1,
+    80,
+    80,
+    80
+   ],
+   "id": 122,
+   "job": "det.p3.cls_out"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer18"
+   ],
+   "weight": "det.model.22.cv3.1.0.conv.weight",
+   "bias": "det.model.22.cv3.1.0.conv.bias",
+   "cin": 384,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv3.1.0",
+   "onnx_node": "/cv3.1/cv3.1.0/conv/Conv",
+   "output": "/cv3.1/cv3.1.0/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     384,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 123,
+   "job": "det.p4.cls1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv3.1/cv3.1.0/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv3.1.1.conv.weight",
+   "bias": "det.model.22.cv3.1.1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv3.1.1",
+   "onnx_node": "/cv3.1/cv3.1.1/conv/Conv",
+   "output": "/cv3.1/cv3.1.1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    40,
+    40
+   ],
+   "id": 124,
+   "job": "det.p4.cls2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv3.1/cv3.1.1/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv3.1.2.weight",
+   "bias": "det.model.22.cv3.1.2.bias",
+   "cin": 192,
+   "cout": 80,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "none",
+   "module": "model.22.cv3.1.2",
+   "onnx_node": "/cv3.1/cv3.1.2/Conv",
+   "output": "head_cls1",
+   "in_shapes": [
+    [
+     1,
+     192,
+     40,
+     40
+    ]
+   ],
+   "out_shape": [
+    1,
+    80,
+    40,
+    40
+   ],
+   "id": 125,
+   "job": "det.p4.cls_out"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "layer21"
+   ],
+   "weight": "det.model.22.cv3.2.0.conv.weight",
+   "bias": "det.model.22.cv3.2.0.conv.bias",
+   "cin": 576,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv3.2.0",
+   "onnx_node": "/cv3.2/cv3.2.0/conv/Conv",
+   "output": "/cv3.2/cv3.2.0/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     576,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    20,
+    20
+   ],
+   "id": 126,
+   "job": "det.p5.cls1"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv3.2/cv3.2.0/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv3.2.1.conv.weight",
+   "bias": "det.model.22.cv3.2.1.conv.bias",
+   "cin": 192,
+   "cout": 192,
+   "kh": 3,
+   "kw": 3,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "silu",
+   "module": "model.22.cv3.2.1",
+   "onnx_node": "/cv3.2/cv3.2.1/conv/Conv",
+   "output": "/cv3.2/cv3.2.1/act/Mul_output_0",
+   "in_shapes": [
+    [
+     1,
+     192,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    192,
+    20,
+    20
+   ],
+   "id": 127,
+   "job": "det.p5.cls2"
+  },
+  {
+   "op": "conv",
+   "inputs": [
+    "/cv3.2/cv3.2.1/act/Mul_output_0"
+   ],
+   "weight": "det.model.22.cv3.2.2.weight",
+   "bias": "det.model.22.cv3.2.2.bias",
+   "cin": 192,
+   "cout": 80,
+   "kh": 1,
+   "kw": 1,
+   "stride": [
+    1,
+    1
+   ],
+   "pad": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "dilation": [
+    1,
+    1
+   ],
+   "group": 1,
+   "act": "none",
+   "module": "model.22.cv3.2.2",
+   "onnx_node": "/cv3.2/cv3.2.2/Conv",
+   "output": "head_cls2",
+   "in_shapes": [
+    [
+     1,
+     192,
+     20,
+     20
+    ]
+   ],
+   "out_shape": [
+    1,
+    80,
+    20,
+    20
+   ],
+   "id": 128,
+   "job": "det.p5.cls_out"
+  }
+ ]
+}

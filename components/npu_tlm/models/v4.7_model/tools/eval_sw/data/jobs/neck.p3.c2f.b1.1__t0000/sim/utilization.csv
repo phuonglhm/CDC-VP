@@ -1,0 +1,3 @@
+layer_id,layer_name,op_type,mac_active_cycles,mac_idle_cycles,pe_active_cycles,pe_idle_cycles,engine_active_cycles,engine_idle_cycles
+1,core,GeMM,38285,10529,38285,10529,38296,10518
+network,NETWORK,scope=network,38285,10529,38285,10529,38296,10518

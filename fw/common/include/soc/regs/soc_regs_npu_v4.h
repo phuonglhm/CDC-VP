@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * SAURIA NPU V4.5 register ABI. Offsets are relative to CDC_NPU0_BASE.
+ * SAURIA NPU V4.7 register ABI. Offsets are relative to CDC_NPU0_BASE.
  * All accesses are aligned 32-bit little-endian words.
  */
 #ifndef CDC_SOC_REGS_NPU_V4_H
@@ -48,6 +48,8 @@
 #define CDC_NPU_MULTIPLIER_SIZE_BYTES (CDC_NPU_WRAPPER_BASE + 0x1120u)
 #define CDC_NPU_SHIFT_ADDR          (CDC_NPU_WRAPPER_BASE + 0x1124u)
 #define CDC_NPU_SHIFT_SIZE_BYTES    (CDC_NPU_WRAPPER_BASE + 0x1128u)
+#define CDC_NPU_RICH_WINDOW_BASE    (CDC_NPU_WRAPPER_BASE + 0x1130u)
+#define CDC_NPU_RICH_WINDOW_SIZE    (CDC_NPU_WRAPPER_BASE + 0x1134u)
 
 /* Low 32-bit performance/evaluation counters. */
 #define CDC_NPU_PERF_EXEC_CYCLES    0x1200u
@@ -74,8 +76,8 @@
 #define CDC_NPU_PERF_DMA_WRITE_CYCLES 0x12A8u
 
 /*
- * Raw/native SAURIA MP1 V1.1 V4.5 offsets. Write CFG_PROFILE before any
- * profile-dependent configuration register.
+ * Raw/native SAURIA MP1 V1.1 offsets. V4.7 retains the V4.6 native ABI.
+ * Write CFG_PROFILE before any profile-dependent configuration register.
  */
 #define CDC_NPU_PROFILE_V1_SAURIA              0u
 #define CDC_NPU_PROFILE_V4_LINEAR              1u
@@ -181,7 +183,7 @@
 #define CDC_NPU_NATIVE_X_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x40u)
 #define CDC_NPU_NATIVE_Y_USED               (CDC_NPU_NATIVE_CFG_LAYER_OFFSET + 0x44u)
 
-/* Compact VP aliases for sparse V4.5 rich-instruction, OBP and RCE regions. */
+/* Compact VP aliases for sparse V4.7 rich-instruction, OBP and RCE regions. */
 #define CDC_NPU_VP_RICH_ALIAS_BASE          0x00010000u
 #define CDC_NPU_VP_RICH_INST_LO_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x300u)
 #define CDC_NPU_VP_RICH_INST_HI_A           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x304u)
@@ -189,6 +191,8 @@
 #define CDC_NPU_VP_RICH_INST_HI_B           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x30Cu)
 #define CDC_NPU_VP_RICH_PUSH_A              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x310u)
 #define CDC_NPU_VP_RICH_PUSH_B              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x314u)
+#define CDC_NPU_VP_RICH_STATUS              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x318u)
+#define CDC_NPU_VP_RICH_RETIRED             (CDC_NPU_VP_RICH_ALIAS_BASE + 0x31Cu)
 #define CDC_NPU_VP_RICH_IN_ADDR             (CDC_NPU_VP_RICH_ALIAS_BASE + 0x400u)
 #define CDC_NPU_VP_RICH_WEIGHT_ADDR         (CDC_NPU_VP_RICH_ALIAS_BASE + 0x404u)
 #define CDC_NPU_VP_RICH_OUT_ADDR            (CDC_NPU_VP_RICH_ALIAS_BASE + 0x408u)
@@ -216,6 +220,37 @@
 #define CDC_NPU_VP_RICH_SCALE_OUT           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x460u)
 #define CDC_NPU_VP_RICH_A_LEN               (CDC_NPU_VP_RICH_ALIAS_BASE + 0x464u)
 #define CDC_NPU_VP_RICH_B_LEN               (CDC_NPU_VP_RICH_ALIAS_BASE + 0x468u)
+#define CDC_NPU_VP_RICH_IN_C                (CDC_NPU_VP_RICH_ALIAS_BASE + 0x46Cu)
+#define CDC_NPU_VP_RICH_IN_H                (CDC_NPU_VP_RICH_ALIAS_BASE + 0x470u)
+#define CDC_NPU_VP_RICH_IN_W                (CDC_NPU_VP_RICH_ALIAS_BASE + 0x474u)
+#define CDC_NPU_VP_RICH_OUT_C               (CDC_NPU_VP_RICH_ALIAS_BASE + 0x478u)
+#define CDC_NPU_VP_RICH_OUT_H               (CDC_NPU_VP_RICH_ALIAS_BASE + 0x47Cu)
+#define CDC_NPU_VP_RICH_OUT_W               (CDC_NPU_VP_RICH_ALIAS_BASE + 0x480u)
+#define CDC_NPU_VP_RICH_TILE_COUT           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x484u)
+#define CDC_NPU_VP_RICH_TILE_H              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x488u)
+#define CDC_NPU_VP_RICH_TILE_W              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x48Cu)
+#define CDC_NPU_VP_RICH_SCALE_ADDR          (CDC_NPU_VP_RICH_ALIAS_BASE + 0x490u)
+#define CDC_NPU_VP_RICH_SHIFT_ADDR          (CDC_NPU_VP_RICH_ALIAS_BASE + 0x494u)
+#define CDC_NPU_VP_RICH_LUT_ADDR            (CDC_NPU_VP_RICH_ALIAS_BASE + 0x498u)
+#define CDC_NPU_VP_RICH_ZP_OUT              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x49Cu)
+#define CDC_NPU_VP_RICH_FLAGS               (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4A0u)
+#define CDC_NPU_VP_RICH_ZP_A                (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4A4u)
+#define CDC_NPU_VP_RICH_ZP_B                (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4A8u)
+#define CDC_NPU_VP_RICH_ZP_O                (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4ACu)
+#define CDC_NPU_VP_RICH_SA                  (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4B0u)
+#define CDC_NPU_VP_RICH_SHA                 (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4B4u)
+#define CDC_NPU_VP_RICH_SB                  (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4B8u)
+#define CDC_NPU_VP_RICH_SHB                 (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4BCu)
+#define CDC_NPU_VP_RICH_SO                  (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4C0u)
+#define CDC_NPU_VP_RICH_SHO                 (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4C4u)
+#define CDC_NPU_VP_RICH_POOL_K              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4C8u)
+#define CDC_NPU_VP_RICH_POOL_P              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4CCu)
+#define CDC_NPU_VP_RICH_POOL_MODE           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4D0u)
+#define CDC_NPU_VP_RICH_TILE_CIN            (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4D4u)
+#define CDC_NPU_VP_RICH_Y_USED              (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4D8u)
+#define CDC_NPU_VP_RICH_ROWS                (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4DCu)
+#define CDC_NPU_VP_RICH_PARAM_ADDR          (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4E0u)
+#define CDC_NPU_VP_RICH_MASK_ADDR           (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4E4u)
 
 #define CDC_NPU_VP_OBP_A_LUT_BASE           0x00020000u
 #define CDC_NPU_VP_OBP_A_LUT_SIZE           0x00002000u
@@ -282,6 +317,44 @@
 
 #define CDC_NPU_IRQ_DONE            (1u << 0)
 #define CDC_NPU_IRQ_ERROR           (1u << 1)
+
+#define CDC_NPU_RICH_STATUS_BUSY          (1u << 0)
+#define CDC_NPU_RICH_STATUS_QUEUE_FULL    (1u << 1)
+#define CDC_NPU_RICH_STATUS_ERROR         (1u << 2)
+#define CDC_NPU_RICH_STATUS_QUEUED_SHIFT  8u
+#define CDC_NPU_RICH_STATUS_QUEUED_MASK   (0xFFu << CDC_NPU_RICH_STATUS_QUEUED_SHIFT)
+#define CDC_NPU_RICH_STATUS_ERROR_SHIFT   16u
+#define CDC_NPU_RICH_STATUS_ERROR_MASK    (0xFFFFu << CDC_NPU_RICH_STATUS_ERROR_SHIFT)
+
+#define CDC_NPU_RICH_FLAG_PAD_TAIL        (1u << 0)
+#define CDC_NPU_RICH_FLAG_CHANNEL_MAJOR   (1u << 1)
+
+#define CDC_NPU_RICH_OPCODE_SET_NSPLIT    0x05u
+#define CDC_NPU_RICH_OPCODE_GEMM_FUSED    0x12u
+#define CDC_NPU_RICH_OPCODE_FUSED_ATTN    0x13u
+#define CDC_NPU_RICH_OPCODE_LAYERNORM     0x14u
+#define CDC_NPU_RICH_OPCODE_ELEM_WISE     0x15u
+
+#define CDC_NPU_RICH_ELEM_ADD             0u
+#define CDC_NPU_RICH_ELEM_MAX_POOL        1u
+#define CDC_NPU_RICH_ELEM_AVG_POOL        5u
+
+#define CDC_NPU_RICH_ACT_NONE             0u
+#define CDC_NPU_RICH_ACT_RELU             1u
+#define CDC_NPU_RICH_ACT_SILU             2u
+#define CDC_NPU_RICH_ACT_GELU             3u
+
+#define CDC_NPU_RICH_ERROR_NONE             0u
+#define CDC_NPU_RICH_ERROR_Q_OVF            1u
+#define CDC_NPU_RICH_ERROR_LANE_B           2u
+#define CDC_NPU_RICH_ERROR_LEGACY64         3u
+#define CDC_NPU_RICH_ERROR_UNSUPPORTED_OP   4u
+#define CDC_NPU_RICH_ERROR_UNSUPPORTED_MODE 5u
+#define CDC_NPU_RICH_ERROR_BROADCAST        6u
+#define CDC_NPU_RICH_ERROR_NEED_LUT         7u
+#define CDC_NPU_RICH_ERROR_BAD_GEOM         8u
+#define CDC_NPU_RICH_ERROR_SCALE_RANGE      9u
+#define CDC_NPU_RICH_ERROR_NO_TILING        10u
 
 #define CDC_NPU_FORMAT_INT8_INT8_INT32 1u
 #define CDC_NPU_FORMAT_INT8_INT8_INT8  2u

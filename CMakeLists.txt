@@ -91,7 +91,7 @@ set_property(CACHE CDC_CPU_BACKEND PROPERTY STRINGS riscv_vp)
 
 set(SYSTEMC_HOME "/opt/systemc-2.3.4" CACHE PATH "SystemC installation prefix")
 set(SAURIA_NPU_ROOT "$ENV{SAURIA_NPU_ROOT}" CACHE PATH
-    "Private path containing the optional SAURIA v4 npu_top.h")
+    "Optional SAURIA V4.7 core_rtl model root containing npu_top.h")
 
 find_path(SYSTEMC_INCLUDE_DIR
     NAMES systemc systemc.h
