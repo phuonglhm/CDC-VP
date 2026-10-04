@@ -90,9 +90,11 @@ namespace sauria
         F_OBP_CFG_A,
         F_REQUANT_SCALE_A,
         F_REQUANT_SHIFT_A,
+        F_RE_MODE_A,
         F_OBP_CFG_B,
         F_REQUANT_SCALE_B,
         F_REQUANT_SHIFT_B,
+        F_RE_MODE_B,
 
         F_COUNT
     };
@@ -134,9 +136,11 @@ namespace sauria
         {CFG_OUT_OFFSET + 0x20, F_OBP_CFG_A},
         {CFG_OUT_OFFSET + 0x24, F_REQUANT_SCALE_A},
         {CFG_OUT_OFFSET + 0x28, F_REQUANT_SHIFT_A},
+        {CFG_OUT_OFFSET + 0x2C, F_RE_MODE_A},
         {CFG_OUT_OFFSET + 0x30, F_OBP_CFG_B},
         {CFG_OUT_OFFSET + 0x34, F_REQUANT_SCALE_B},
         {CFG_OUT_OFFSET + 0x38, F_REQUANT_SHIFT_B},
+        {CFG_OUT_OFFSET + 0x3C, F_RE_MODE_B},
     };
 
     // -------------------- v1 profile (SAURIA superset) --------------------
@@ -190,9 +194,11 @@ namespace sauria
         {CFG_OUT_OFFSET + 0x20, F_OBP_CFG_A},
         {CFG_OUT_OFFSET + 0x24, F_REQUANT_SCALE_A},
         {CFG_OUT_OFFSET + 0x28, F_REQUANT_SHIFT_A},
+        {CFG_OUT_OFFSET + 0x2C, F_RE_MODE_A},
         {CFG_OUT_OFFSET + 0x30, F_OBP_CFG_B},
         {CFG_OUT_OFFSET + 0x34, F_REQUANT_SCALE_B},
         {CFG_OUT_OFFSET + 0x38, F_REQUANT_SHIFT_B},
+        {CFG_OUT_OFFSET + 0x3C, F_RE_MODE_B},
         // base addresses + layer descriptor (v1 only)
         {CFG_ACT_BASE_ADDR, F_ACT_BASE_ADDR},
         {CFG_WEI_BASE_ADDR, F_WEI_BASE_ADDR},

@@ -17,7 +17,7 @@ using namespace sauria;
 
 // Configuration for OBP Testbench: 16 channels, using int32_t accumulation and int8_t activation
 constexpr int TEST_Y_DIM = 16;
-typedef Obp<TEST_Y_DIM, 0x00140000, 0x00150000, int32_t, int8_t> ObpDut;
+typedef Obp<TEST_Y_DIM, 0x00140000, 0x00150000, 0x001C0000, int32_t, int8_t> ObpDut;
 
 SC_MODULE(TbObp)
 {
@@ -29,6 +29,7 @@ SC_MODULE(TbObp)
     sc_signal<uint32_t> i_addr{"i_addr"};
     sc_signal<sramc_mask_t<TEST_Y_DIM>> i_wmask{"i_wmask"};
     sc_signal<bool> i_valid{"i_valid"};
+    sc_signal<uint32_t> i_channel_idx{"i_channel_idx"};
     sc_signal<act_vector_t<TEST_Y_DIM, int8_t>> i_residual{"i_residual"};
 
     sc_signal<psum_vector_t<TEST_Y_DIM, int32_t>> o_sramc_wdata{"o_sramc_wdata"};
@@ -44,6 +45,7 @@ SC_MODULE(TbObp)
     sc_signal<bool> vec_channel_mode{"vec_channel_mode"};
     sc_signal<uint32_t> requant_scale{"requant_scale"};
     sc_signal<uint32_t> requant_shift{"requant_shift"};
+    sc_signal<int32_t> output_zp{"output_zp"};
 
     sc_signal<uint32_t> host_addr{"host_addr"};
     sc_signal<bool> host_wren{"host_wren"};
@@ -65,6 +67,7 @@ SC_MODULE(TbObp)
         dut->i_addr(i_addr);
         dut->i_wmask(i_wmask);
         dut->i_valid(i_valid);
+        dut->i_channel_idx(i_channel_idx);
         dut->i_residual(i_residual);
 
         dut->o_sramc_wdata(o_sramc_wdata);
@@ -80,6 +83,7 @@ SC_MODULE(TbObp)
         dut->i_vec_channel_mode(vec_channel_mode);
         dut->i_requant_scale(requant_scale);
         dut->i_requant_shift(requant_shift);
+        dut->i_output_zp(output_zp);
 
         dut->i_host_addr(host_addr);
         dut->i_host_wren(host_wren);
@@ -163,6 +167,7 @@ SC_MODULE(TbObp)
         vec_channel_mode.write(false);
         requant_scale.write(1);
         requant_shift.write(0);
+        output_zp.write(0);
         i_valid.write(false);
         i_addr.write(0);
         psum_vector_t<TEST_Y_DIM, int32_t> zero_data(0);
@@ -170,6 +175,7 @@ SC_MODULE(TbObp)
 
         sramc_mask_t<TEST_Y_DIM> zero_mask(false);
         i_wmask.write(zero_mask);
+        i_channel_idx.write(0);
 
         act_vector_t<TEST_Y_DIM, int8_t> zero_res(0);
         i_residual.write(zero_res);
@@ -629,13 +635,16 @@ SC_MODULE(TbObp)
         // Feed Vector 0 (Channel 0), Vector 1 (Channel 1), Vector 2 (Channel 2)
         psum_vector_t<TEST_Y_DIM, int32_t> vec_in(10);
         i_data.write(vec_in);
+        i_channel_idx.write(0);
         i_valid.write(true);
         wait(); // Feed Vector 0 (Ch 0)
 
         i_data.write(vec_in);
+        i_channel_idx.write(1);
         wait(); // Feed Vector 1 (Ch 1)
 
         i_data.write(vec_in);
+        i_channel_idx.write(2);
         wait(); // Feed Vector 2 (Ch 2)
 
         i_valid.write(false);
@@ -666,6 +675,448 @@ SC_MODULE(TbObp)
         {
             std::cout << "  [FAIL] Per-Vector Per-Channel Mode mismatch: got (" << v0_got << ", " << v1_got << ", " << v2_got
                       << "), expected (" << v0_exp << ", " << v1_exp << ", " << v2_exp << ")" << std::endl;
+        }
+
+        // ----------------------------------------------------
+        // Test Case 8: PSM Discontinuous Valid Burst Regression Test
+        // Valid pattern: 1, 0, 0, 1, 1, 1... (x0, 2 bubbles, x1, x2, x3, x4)
+        // Verifies no off-by-one or spurious resets across pipeline gaps
+        // ----------------------------------------------------
+        std::cout << "\n--- CASE 8: PSM Discontinuous Valid Burst (1, 0, 0, 1, 1...) ---" << std::endl;
+        run_reset();
+
+        vec_channel_mode.write(true);
+        bias_en.write(true);
+
+        // Program distinct biases for channels 0 to 4
+        host_write(0x00150000 + 0 * 4, 100);
+        host_write(0x00150000 + 1 * 4, 200);
+        host_write(0x00150000 + 2 * 4, 300);
+        host_write(0x00150000 + 3 * 4, 400);
+        host_write(0x00150000 + 4 * 4, 500);
+
+        // Helper to advance 1 cycle while sampling outputs
+        std::vector<int32_t> captured_outputs;
+        auto step = [&]() {
+            wait();
+            if (o_valid.read() && o_sramc_wren.read())
+            {
+                captured_outputs.push_back(o_sramc_wdata.read()[0]);
+            }
+        };
+
+        // Phase 1: Write x0 (Channel 0)
+        i_data.write(vec_in);
+        i_channel_idx.write(0);
+        i_valid.write(true);
+        step();
+
+        // Phase 2 & 3: PSM drain bubble (2 cycles wren=0 / valid=0)
+        i_valid.write(false);
+        step();
+        step();
+
+        // Phase 4: Write x1, x2, x3, x4 continuously
+        i_data.write(vec_in);
+        i_channel_idx.write(1);
+        i_valid.write(true);
+        step();
+
+        i_data.write(vec_in);
+        i_channel_idx.write(2);
+        step();
+
+        i_data.write(vec_in);
+        i_channel_idx.write(3);
+        step();
+
+        i_data.write(vec_in);
+        i_channel_idx.write(4);
+        step();
+
+        i_valid.write(false);
+
+        // Wait out remaining pipeline drain
+        for (int cycle = 0; cycle < 6; cycle++)
+        {
+            step();
+        }
+
+        std::vector<int32_t> expected_outputs = {
+            10 + 100, // Ch 0: 110
+            10 + 200, // Ch 1: 210
+            10 + 300, // Ch 2: 310
+            10 + 400, // Ch 3: 410
+            10 + 500  // Ch 4: 510
+        };
+
+        bool psm_burst_ok = (captured_outputs.size() == expected_outputs.size());
+        if (psm_burst_ok)
+        {
+            for (size_t i = 0; i < expected_outputs.size(); i++)
+            {
+                if (captured_outputs[i] != expected_outputs[i])
+                {
+                    psm_burst_ok = false;
+                    break;
+                }
+            }
+        }
+
+        total_tests++;
+        if (psm_burst_ok)
+        {
+            tests_passed++;
+            std::cout << "  [PASS] PSM Discontinuous Valid Burst verified successfully!" << std::endl;
+            for (size_t i = 0; i < captured_outputs.size(); i++)
+            {
+                std::cout << "    Burst Element " << i << " (Ch " << i << "): got " 
+                          << captured_outputs[i] << " (exp " << expected_outputs[i] << ")" << std::endl;
+            }
+        }
+        else
+        {
+            std::cout << "  [FAIL] PSM Discontinuous Valid Burst mismatch!" << std::endl;
+            std::cout << "    Expected " << expected_outputs.size() << " outputs, got " << captured_outputs.size() << std::endl;
+            for (size_t i = 0; i < captured_outputs.size(); i++)
+            {
+                std::cout << "    Output[" << i << "] = " << captured_outputs[i] 
+                          << " (expected " << (i < expected_outputs.size() ? expected_outputs[i] : -1) << ")" << std::endl;
+            }
+        }
+
+        // ----------------------------------------------------
+        // Case 9: Channels >= 32 with Full Pipeline (Vec-Mode, Requant Rounding, and LUT)
+        // Verifies no out-of-bounds in lut_ram[MAX_CHANNELS][256] when channel_idx >= Y_DIM (Y_DIM=16, Ch=32, 45, 63)
+        // Verifies multiple lanes (not just lane 0) across all stages
+        // ----------------------------------------------------
+        std::cout << "\n--- CASE 9: Channels >= 32 with Requant Rounding & LUT (Vec-Mode) ---" << std::endl;
+        run_reset();
+
+        vec_channel_mode.write(true);
+        bias_en.write(true);
+        requant_en.write(true);
+        lut_en.write(true);
+
+        // 1. Program Channel 32: Bias=+10, Scale=50, Shift=6, LUT: y = -x (negation)
+        host_write(0x00150000 + 32 * 4, 10);
+        host_write(0x00140000 + 0x40000 + 32 * 4, 50);
+        host_write(0x00140000 + 0x50000 + 32 * 4, 6);
+        for (int idx = 0; idx < 256; idx += 4)
+        {
+            uint32_t val = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                int8_t x = static_cast<int8_t>((idx + i) - 128);
+                int8_t y = static_cast<int8_t>(-x);
+                val |= (static_cast<uint32_t>(static_cast<uint8_t>(y)) << (i * 8));
+            }
+            host_write(0x00140000 + (32 * 256) + idx, val);
+        }
+
+        // 2. Program Channel 45: Bias=-20, Scale=128, Shift=7 (1.0x), LUT: y = abs(x)
+        host_write(0x00150000 + 45 * 4, static_cast<uint32_t>(-20));
+        host_write(0x00140000 + 0x40000 + 45 * 4, 128);
+        host_write(0x00140000 + 0x50000 + 45 * 4, 7);
+        for (int idx = 0; idx < 256; idx += 4)
+        {
+            uint32_t val = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                int8_t x = static_cast<int8_t>((idx + i) - 128);
+                uint8_t y = static_cast<uint8_t>(std::abs(x));
+                val |= (static_cast<uint32_t>(y) << (i * 8));
+            }
+            host_write(0x00140000 + (45 * 256) + idx, val);
+        }
+
+        // 3. Program Channel 63: Bias=0, Scale=1, Shift=0, LUT: identity
+        host_write(0x00150000 + 63 * 4, 0);
+        host_write(0x00140000 + 0x40000 + 63 * 4, 1);
+        host_write(0x00140000 + 0x50000 + 63 * 4, 0);
+        for (int idx = 0; idx < 256; idx += 4)
+        {
+            uint32_t val = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                int8_t x = static_cast<int8_t>((idx + i) - 128);
+                val |= (static_cast<uint32_t>(static_cast<uint8_t>(x)) << (i * 8));
+            }
+            host_write(0x00140000 + (63 * 256) + idx, val);
+        }
+
+        // Stream 3 vectors corresponding to channels 32, 45, 63
+        std::vector<psum_vector_t<TEST_Y_DIM, int32_t>> captured_c9_vectors;
+        auto step_c9 = [&]() {
+            wait();
+            if (o_valid.read() && o_sramc_wren.read())
+            {
+                captured_c9_vectors.push_back(o_sramc_wdata.read());
+            }
+        };
+
+        psum_vector_t<TEST_Y_DIM, int32_t> in_v32, in_v45, in_v63;
+        for (int l = 0; l < TEST_Y_DIM; l++)
+        {
+            in_v32[l] = (l * 4);         // [0, 4, 8, ..., 60]
+            in_v45[l] = (l * 6) - 10;    // [-10, -4, 2, ..., 80]
+            in_v63[l] = (l * 3) - 25;    // [-25, -22, ..., 20]
+        }
+
+        // Feed Ch 32
+        i_data.write(in_v32);
+        i_channel_idx.write(32);
+        i_valid.write(true);
+        step_c9();
+
+        // Feed Ch 45
+        i_data.write(in_v45);
+        i_channel_idx.write(45);
+        step_c9();
+
+        // Feed Ch 63
+        i_data.write(in_v63);
+        i_channel_idx.write(63);
+        step_c9();
+
+        i_valid.write(false);
+        for (int drain = 0; drain < 6; drain++) step_c9();
+
+        bool c9_ok = (captured_c9_vectors.size() == 3);
+        if (c9_ok)
+        {
+            // Verify Ch 32: biased = in + 10, requant: (biased * 50 + 32) >> 6, LUT: -requant
+            for (int l = 0; l < TEST_Y_DIM; l++)
+            {
+                int32_t biased = in_v32[l] + 10;
+                int64_t prod = static_cast<int64_t>(biased) * 50 + 32;
+                int32_t req = static_cast<int32_t>(prod >> 6);
+                int8_t clamped = (req > 127) ? 127 : ((req < -128) ? -128 : static_cast<int8_t>(req));
+                int8_t expected_lut = static_cast<int8_t>(-clamped);
+                int32_t got = captured_c9_vectors[0][l];
+                if (got != expected_lut)
+                {
+                    c9_ok = false;
+                    std::cout << "  [FAIL] Ch 32 Lane " << l << ": exp " << static_cast<int>(expected_lut)
+                              << " got " << got << std::endl;
+                }
+            }
+
+            // Verify Ch 45: biased = in - 20, requant: (biased * 128 + 64) >> 7, LUT: abs(requant)
+            for (int l = 0; l < TEST_Y_DIM; l++)
+            {
+                int32_t biased = in_v45[l] - 20;
+                int64_t prod = static_cast<int64_t>(biased) * 128 + 64;
+                int32_t req = static_cast<int32_t>(prod >> 7);
+                int8_t clamped = (req > 127) ? 127 : ((req < -128) ? -128 : static_cast<int8_t>(req));
+                int8_t expected_lut = static_cast<int8_t>(std::abs(clamped));
+                int32_t got = captured_c9_vectors[1][l];
+                if (got != expected_lut)
+                {
+                    c9_ok = false;
+                    std::cout << "  [FAIL] Ch 45 Lane " << l << ": exp " << static_cast<int>(expected_lut)
+                              << " got " << got << std::endl;
+                }
+            }
+        }
+
+        total_tests++;
+        if (c9_ok)
+        {
+            tests_passed++;
+            std::cout << "  [PASS] Channels >= 32 with per-channel Requant Rounding & LUT verified across all "
+                      << TEST_Y_DIM << " lanes without out-of-bounds error." << std::endl;
+        }
+        else
+        {
+            std::cout << "  [FAIL] Channels >= 32 verification failed." << std::endl;
+        }
+
+        // ----------------------------------------------------
+        // Case 10: Symmetric Round-Half-Away-From-Zero (TFLite Alignment & Shift Guard)
+        // ----------------------------------------------------
+        std::cout << "\n--- CASE 10: Symmetric Negative Tie Rounding (TFLite Alignment) ---" << std::endl;
+        run_reset();
+
+        bias_en.write(false);
+        requant_en.write(true);
+        lut_en.write(false);
+        residual_en.write(false);
+        vec_channel_mode.write(false);
+        requant_scale.write(1);
+        requant_shift.write(1); // shift = 1: divide by 2
+
+        psum_vector_t<TEST_Y_DIM, int32_t> in_v_ties;
+        // Lane 0: -5 -> -2.5 -> -3 (TFLite symmetric round-half-away-from-zero)
+        in_v_ties[0] = -5;
+        // Lane 1: +5 -> +2.5 -> +3
+        in_v_ties[1] = 5;
+        // Lane 2: -4 -> -2.0 -> -2
+        in_v_ties[2] = -4;
+        // Lane 3: +4 -> +2.0 -> +2
+        in_v_ties[3] = 4;
+        // Lane 4: -3 -> -1.5 -> -2
+        in_v_ties[4] = -3;
+        // Lane 5: +3 -> +1.5 -> +2
+        in_v_ties[5] = 3;
+        // Lane 6: -1 -> -0.5 -> -1
+        in_v_ties[6] = -1;
+        // Lane 7: +1 -> +0.5 -> +1
+        in_v_ties[7] = 1;
+
+        std::vector<psum_vector_t<TEST_Y_DIM, int32_t>> captured_c10_vectors;
+        auto step_c10 = [&]() {
+            wait();
+            if (o_valid.read())
+            {
+                captured_c10_vectors.push_back(o_sramc_wdata.read());
+            }
+        };
+
+        i_data.write(in_v_ties);
+        i_valid.write(true);
+        step_c10();
+        i_valid.write(false);
+        for (int drain = 0; drain < 6; drain++) step_c10();
+
+        bool c10_ok = (captured_c10_vectors.size() == 1);
+        if (c10_ok)
+        {
+            int32_t exp_ties[8] = {-3, +3, -2, +2, -2, +2, -1, +1};
+            for (int l = 0; l < 8; l++)
+            {
+                int32_t got = captured_c10_vectors[0][l];
+                if (got != exp_ties[l])
+                {
+                    c10_ok = false;
+                    std::cout << "  [FAIL] Tie Rounding Lane " << l << ": expected " << exp_ties[l]
+                              << ", got " << got << std::endl;
+                }
+            }
+        }
+
+        total_tests++;
+        if (c10_ok)
+        {
+            tests_passed++;
+            std::cout << "  [PASS] Symmetric Round-Half-Away-From-Zero verified: -5>>1 -> -3, +5>>1 -> +3, -3>>1 -> -2, +3>>1 -> +2." << std::endl;
+        }
+        else
+        {
+            std::cout << "  [FAIL] Symmetric Round-Half-Away-From-Zero mismatch." << std::endl;
+        }
+
+        // Test shift >= 64 safety guard (no undefined behavior)
+        requant_shift.write(64);
+        captured_c10_vectors.clear();
+        i_data.write(in_v_ties);
+        i_valid.write(true);
+        step_c10();
+        i_valid.write(false);
+        for (int drain = 0; drain < 6; drain++) step_c10();
+
+        bool c10_shift_ok = (captured_c10_vectors.size() == 1);
+        if (c10_shift_ok)
+        {
+            for (int l = 0; l < TEST_Y_DIM; l++)
+            {
+                if (captured_c10_vectors[0][l] != 0) c10_shift_ok = false;
+            }
+        }
+        total_tests++;
+        if (c10_shift_ok)
+        {
+            tests_passed++;
+            std::cout << "  [PASS] Shift >= 64 unbounded register safety guard: outputs zero without undefined behavior." << std::endl;
+        }
+        else
+        {
+            std::cout << "  [FAIL] Shift >= 64 guard failed." << std::endl;
+        }
+
+        // ---------------------------------------------------------------------
+        // CASE 11: Asymmetric Output Zero-Point (Z_out != 0) Verification
+        // ---------------------------------------------------------------------
+        std::cout << "\n--- CASE 11: Asymmetric Output Zero-Point (Z_out != 0) ---" << std::endl;
+        run_reset();
+        requant_en.write(true);
+        requant_scale.write(1);
+        requant_shift.write(0);
+        output_zp.write(15); // Default scalar output zero point +15
+
+        psum_vector_t<TEST_Y_DIM, int32_t> in_v_zp;
+        int32_t raw_zp_in[8] = {10, -20, 30, -40, 50, -60, 120, -128};
+        int32_t exp_zp_out[8] = {25, -5, 45, -25, 65, -45, 127, -113}; // clamped at 127
+        for (int l = 0; l < TEST_Y_DIM; l++) in_v_zp[l] = raw_zp_in[l % 8];
+
+        std::vector<psum_vector_t<TEST_Y_DIM, int32_t>> captured_zp_vectors;
+        auto step_zp = [&]() {
+            wait();
+            if (o_valid.read()) captured_zp_vectors.push_back(o_sramc_wdata.read());
+        };
+
+        i_data.write(in_v_zp);
+        i_valid.write(true);
+        step_zp();
+        i_valid.write(false);
+        for (int drain = 0; drain < 6; drain++) step_zp();
+
+        bool zp_scalar_ok = (captured_zp_vectors.size() == 1);
+        if (zp_scalar_ok)
+        {
+            for (int l = 0; l < 8; l++)
+            {
+                if (captured_zp_vectors[0][l] != exp_zp_out[l])
+                {
+                    zp_scalar_ok = false;
+                    std::cout << "  [FAIL] Scalar Zero-Point Lane " << l << ": expected " << exp_zp_out[l]
+                              << ", got " << captured_zp_vectors[0][l] << std::endl;
+                }
+            }
+        }
+        total_tests++;
+        if (zp_scalar_ok)
+        {
+            tests_passed++;
+            std::cout << "  [PASS] Scalar Output Zero-Point (+15) with saturation clamp verified." << std::endl;
+        }
+        else
+        {
+            std::cout << "  [FAIL] Scalar Output Zero-Point mismatch." << std::endl;
+        }
+
+        // Test Host MMIO Per-Channel Zero-Point RAM (0x001C0000)
+        host_write(0x001C0000, static_cast<uint32_t>(-30)); // Channel 0 zp = -30
+        uint32_t rd_zp = host_read(0x001C0000);
+        bool zp_mmio_ok = (static_cast<int32_t>(rd_zp) == -30);
+
+        vec_channel_mode.write(true);
+        i_channel_idx.write(0);
+        captured_zp_vectors.clear();
+        i_data.write(in_v_zp);
+        i_valid.write(true);
+        step_zp();
+        i_valid.write(false);
+        for (int drain = 0; drain < 6; drain++) step_zp();
+
+        if (captured_zp_vectors.size() == 1)
+        {
+            // Input 10 - 30 = -20
+            if (captured_zp_vectors[0][0] != -20) zp_mmio_ok = false;
+        }
+        else
+        {
+            zp_mmio_ok = false;
+        }
+        total_tests++;
+        if (zp_mmio_ok)
+        {
+            tests_passed++;
+            std::cout << "  [PASS] Per-Channel Zero-Point MMIO Programming (-30) and execution verified: got -20." << std::endl;
+        }
+        else
+        {
+            std::cout << "  [FAIL] Per-Channel Zero-Point MMIO Programming failed." << std::endl;
         }
 
         // Print final status summary

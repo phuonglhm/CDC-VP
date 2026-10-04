@@ -111,9 +111,11 @@ namespace sauria
         sc_out<uint32_t> o_obp_cfg_a{"o_obp_cfg_a"};
         sc_out<uint32_t> o_requant_scale_a{"o_requant_scale_a"};
         sc_out<uint32_t> o_requant_shift_a{"o_requant_shift_a"};
+        sc_out<uint32_t> o_re_mode_a{"o_re_mode_a"};
         sc_out<uint32_t> o_obp_cfg_b{"o_obp_cfg_b"};
         sc_out<uint32_t> o_requant_scale_b{"o_requant_scale_b"};
         sc_out<uint32_t> o_requant_shift_b{"o_requant_shift_b"};
+        sc_out<uint32_t> o_re_mode_b{"o_re_mode_b"};
 
         // output run-time
         sc_out<uint32_t> o_in_h{"o_in_h"};
@@ -155,9 +157,11 @@ namespace sauria
         uint32_t r_obp_cfg_a{0};
         uint32_t r_requant_scale_a{1};
         uint32_t r_requant_shift_a{0};
+        uint32_t r_re_mode_a{0};
         uint32_t r_obp_cfg_b{0};
         uint32_t r_requant_scale_b{1};
         uint32_t r_requant_shift_b{0};
+        uint32_t r_re_mode_b{0};
 
         // Additional registers for activation feeder configuration
         uint32_t r_act_incntlim{96};
@@ -300,9 +304,11 @@ namespace sauria
             case F_OBP_CFG_A:        r_obp_cfg_a = v; break;
             case F_REQUANT_SCALE_A:  r_requant_scale_a = v; break;
             case F_REQUANT_SHIFT_A:  r_requant_shift_a = v; break;
+            case F_RE_MODE_A:        r_re_mode_a = v; break;
             case F_OBP_CFG_B:        r_obp_cfg_b = v; break;
             case F_REQUANT_SCALE_B:  r_requant_scale_b = v; break;
             case F_REQUANT_SHIFT_B:  r_requant_shift_b = v; break;
+            case F_RE_MODE_B:        r_re_mode_b = v; break;
             default: break; // F_NONE / unmapped -> ignore
             }
         }
@@ -372,9 +378,11 @@ namespace sauria
             case F_OBP_CFG_A:        return r_obp_cfg_a;
             case F_REQUANT_SCALE_A:  return r_requant_scale_a;
             case F_REQUANT_SHIFT_A:  return r_requant_shift_a;
+            case F_RE_MODE_A:        return r_re_mode_a;
             case F_OBP_CFG_B:        return r_obp_cfg_b;
             case F_REQUANT_SCALE_B:  return r_requant_scale_b;
             case F_REQUANT_SHIFT_B:  return r_requant_shift_b;
+            case F_RE_MODE_B:        return r_re_mode_b;
             default:               return 0u;
             }
         }
@@ -453,9 +461,11 @@ namespace sauria
                 o_obp_cfg_a.write(r_obp_cfg_a);
                 o_requant_scale_a.write(r_requant_scale_a);
                 o_requant_shift_a.write(r_requant_shift_a);
+                o_re_mode_a.write(r_re_mode_a);
                 o_obp_cfg_b.write(r_obp_cfg_b);
                 o_requant_scale_b.write(r_requant_scale_b);
                 o_requant_shift_b.write(r_requant_shift_b);
+                o_re_mode_b.write(r_re_mode_b);
                 o_wei_incntlim.write(r_wei_incntlim);
                 o_wei_incntstep.write(r_wei_incntstep);
 
@@ -571,6 +581,10 @@ namespace sauria
                     {
                         if (wmask[0]) r_requant_shift_a = (uint32_t)wdata[0];
                     }
+                    else if (local_addr == CFG_OUT_OFFSET + 0x2C)
+                    {
+                        if (wmask[0]) r_re_mode_a = (uint32_t)wdata[0];
+                    }
                     else if (local_addr == CFG_OUT_OFFSET + 0x30)
                     {
                         if (wmask[0]) r_obp_cfg_b = (uint32_t)wdata[0];
@@ -582,6 +596,10 @@ namespace sauria
                     else if (local_addr == CFG_OUT_OFFSET + 0x38)
                     {
                         if (wmask[0]) r_requant_shift_b = (uint32_t)wdata[0];
+                    }
+                    else if (local_addr == CFG_OUT_OFFSET + 0x3C)
+                    {
+                        if (wmask[0]) r_re_mode_b = (uint32_t)wdata[0];
                     }
                     else if (local_addr == CFG_ACT_OFFSET + 0x00)
                     {
@@ -918,6 +936,10 @@ namespace sauria
                     {
                         rdata[0] = (float)r_requant_shift_a;
                     }
+                    else if (local_addr == CFG_OUT_OFFSET + 0x2C)
+                    {
+                        rdata[0] = (float)r_re_mode_a;
+                    }
                     else if (local_addr == CFG_OUT_OFFSET + 0x30)
                     {
                         rdata[0] = (float)r_obp_cfg_b;
@@ -929,6 +951,10 @@ namespace sauria
                     else if (local_addr == CFG_OUT_OFFSET + 0x38)
                     {
                         rdata[0] = (float)r_requant_shift_b;
+                    }
+                    else if (local_addr == CFG_OUT_OFFSET + 0x3C)
+                    {
+                        rdata[0] = (float)r_re_mode_b;
                     }
                     else if (local_addr == CFG_ACT_OFFSET + 0x00)
                     {
@@ -1161,9 +1187,11 @@ namespace sauria
             o_obp_cfg_a.write(r_obp_cfg_a);
             o_requant_scale_a.write(r_requant_scale_a);
             o_requant_shift_a.write(r_requant_shift_a);
+            o_re_mode_a.write(r_re_mode_a);
             o_obp_cfg_b.write(r_obp_cfg_b);
             o_requant_scale_b.write(r_requant_scale_b);
             o_requant_shift_b.write(r_requant_shift_b);
+            o_re_mode_b.write(r_re_mode_b);
 
             o_act_incntlim.write(r_act_incntlim);
             o_act_incntstep.write(r_act_incntstep);

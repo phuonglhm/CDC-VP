@@ -723,6 +723,7 @@ namespace sauria
                 break;
 
             case LAST_WAIT:
+                o_outbuf_start.write(false);
                 shift_cycles++;
                 o_pipeline_en.write(true);
 

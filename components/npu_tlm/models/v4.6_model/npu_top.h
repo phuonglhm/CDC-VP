@@ -127,8 +127,8 @@ namespace sauria
             array_inst = new SystolicArray<X_DIM, Y_DIM, T_ACT, T_WEI, T_PSUM>("array_inst", pe_cfg);
             psm_inst_a = new Psm<X_DIM, Y_DIM, T_PSUM, SRAMC_CAP>("psm_inst_a");
             psm_inst_b = new Psm<X_DIM, Y_DIM, T_PSUM, SRAMC_CAP>("psm_inst_b");
-            obp_inst_a = new Obp<Y_DIM, 0x00140000, 0x00150000, T_PSUM, T_ACT>("obp_inst_a");
-            obp_inst_b = new Obp<Y_DIM, 0x00160000, 0x00170000, T_PSUM, T_ACT>("obp_inst_b");
+            obp_inst_a = new Obp<Y_DIM, 0x00140000, 0x00150000, 0x001C0000, T_PSUM, T_ACT>("obp_inst_a");
+            obp_inst_b = new Obp<Y_DIM, 0x00160000, 0x00170000, 0x001D0000, T_PSUM, T_ACT>("obp_inst_b");
             rce_inst_a = new ReconfigurableEngine<0x00200000, 0x00210000, 0x00220000>("rce_inst_a");
             rce_inst_b = new ReconfigurableEngine<0x00230000, 0x00240000, 0x00250000>("rce_inst_b");
             re_inst_a = new ReductionEngine<Y_DIM, T_PSUM, T_ACT>("re_inst_a");
@@ -195,12 +195,14 @@ namespace sauria
             dont_initialize();
 
             SC_METHOD(re_ctrl_mux_logic);
-            sensitive << s_obp_sramc_wdata_a << s_obp_sramc_wren_a << s_psm_start_a
-                      << s_obp_sramc_wdata_b << s_obp_sramc_wren_b << s_psm_start_b;
+            sensitive << s_obp_sramc_wdata_a << s_obp_sramc_wren_a << s_psm_start_a << s_context_id_a
+                      << s_obp_sramc_wdata_b << s_obp_sramc_wren_b << s_psm_start_b << s_context_id_b;
 
             SC_METHOD(sramc_wdata_mux_logic);
-            sensitive << s_re_valid_out_a << s_re_vector_out_a << s_re_mode_a << s_obp_sramc_wdata_a << s_obp_sramc_wren_a
-                      << s_re_valid_out_b << s_re_vector_out_b << s_re_mode_b << s_obp_sramc_wdata_b << s_obp_sramc_wren_b;
+            sensitive << s_re_valid_out_a << s_re_vector_out_a << s_re_mode_a << s_re_addr_out_a << s_re_wmask_out_a
+                      << s_obp_sramc_wdata_a << s_obp_sramc_wren_a << s_obp_sramc_addr_a << s_obp_sramc_wmask_a
+                      << s_re_valid_out_b << s_re_vector_out_b << s_re_mode_b << s_re_addr_out_b << s_re_wmask_out_b
+                      << s_obp_sramc_wdata_b << s_obp_sramc_wren_b << s_obp_sramc_addr_b << s_obp_sramc_wmask_b;
 
             // ----------------------------------------------------
             // Signal Interconnections
@@ -317,9 +319,11 @@ namespace sauria
             config_regs_inst->o_obp_cfg_a(s_obp_cfg_a);
             config_regs_inst->o_requant_scale_a(s_requant_scale_a);
             config_regs_inst->o_requant_shift_a(s_requant_shift_a);
+            config_regs_inst->o_re_mode_a(s_re_mode_a);
             config_regs_inst->o_obp_cfg_b(s_obp_cfg_b);
             config_regs_inst->o_requant_scale_b(s_requant_scale_b);
             config_regs_inst->o_requant_shift_b(s_requant_shift_b);
+            config_regs_inst->o_re_mode_b(s_re_mode_b);
 
             // 2. Host Interface Routing to SRAM
             sram_inst->i_host_addr(i_host_addr);
@@ -635,17 +639,17 @@ namespace sauria
 
             // Connect SRAM C to multiplexed RE / OBP outputs
             sram_inst->i_sramc_wdata_a(s_final_sramc_wdata_a);
-            sram_inst->i_sramc_addr_a(s_obp_sramc_addr_a);
+            sram_inst->i_sramc_addr_a(s_final_sramc_addr_a);
             sram_inst->i_sramc_wren_a(s_final_sramc_wren_a);
             sram_inst->i_sramc_rden_a(s_sramc_rden_a);
-            sram_inst->i_sramc_wmask_a(s_obp_sramc_wmask_a);
+            sram_inst->i_sramc_wmask_a(s_final_sramc_wmask_a);
             sram_inst->o_sramc_rdata_a(s_sramc_rdata_a);
 
             sram_inst->i_sramc_wdata_b(s_final_sramc_wdata_b);
-            sram_inst->i_sramc_addr_b(s_obp_sramc_addr_b);
+            sram_inst->i_sramc_addr_b(s_final_sramc_addr_b);
             sram_inst->i_sramc_wren_b(s_final_sramc_wren_b);
             sram_inst->i_sramc_rden_b(s_sramc_rden_b);
-            sram_inst->i_sramc_wmask_b(s_obp_sramc_wmask_b);
+            sram_inst->i_sramc_wmask_b(s_final_sramc_wmask_b);
             sram_inst->o_sramc_rdata_b(s_sramc_rdata_b);
 
             // 6. Systolic Array bindings
@@ -698,6 +702,7 @@ namespace sauria
             psm_inst_a->i_ncontexts(s_out_ncontexts);
             psm_inst_a->i_preload_en(s_out_preload_en);
             psm_inst_a->i_rows_active(s_rows_active);
+            psm_inst_a->o_channel_idx(s_channel_idx_a);
             psm_inst_a->i_context_id(s_global_context_id_a);
             psm_inst_a->i_total_contexts(i_total_contexts);
 
@@ -729,6 +734,7 @@ namespace sauria
             psm_inst_b->i_ncontexts(s_out_ncontexts);
             psm_inst_b->i_preload_en(s_out_preload_en);
             psm_inst_b->i_rows_active(s_rows_active);
+            psm_inst_b->o_channel_idx(s_channel_idx_b);
             psm_inst_b->i_context_id(s_global_context_id_b);
             psm_inst_b->i_total_contexts(i_total_contexts);
 
@@ -739,7 +745,8 @@ namespace sauria
             obp_inst_a->i_addr(s_sramc_addr_a);
             obp_inst_a->i_wmask(s_sramc_wmask_a);
             obp_inst_a->i_valid(s_sramc_wren_a);
-            obp_inst_a->i_residual(s_residual_zero_a);
+            obp_inst_a->i_channel_idx(s_channel_idx_a);
+            obp_inst_a->i_residual(s_residual_skip_a);
             obp_inst_a->o_sramc_wdata(s_obp_sramc_wdata_a);
             obp_inst_a->o_sramc_addr(s_obp_sramc_addr_a);
             obp_inst_a->o_sramc_wren(s_obp_sramc_wren_a);
@@ -752,6 +759,7 @@ namespace sauria
             obp_inst_a->i_vec_channel_mode(s_obp_vec_channel_mode_a);
             obp_inst_a->i_requant_scale(s_requant_scale_a);
             obp_inst_a->i_requant_shift(s_requant_shift_a);
+            obp_inst_a->i_output_zp(s_obp_output_zp_a);
             obp_inst_a->i_host_addr(i_host_addr);
             obp_inst_a->i_host_wren(i_host_wren);
             obp_inst_a->i_host_rden(i_host_rden);
@@ -766,7 +774,8 @@ namespace sauria
             obp_inst_b->i_addr(s_sramc_addr_b);
             obp_inst_b->i_wmask(s_sramc_wmask_b);
             obp_inst_b->i_valid(s_sramc_wren_b);
-            obp_inst_b->i_residual(s_residual_zero_b);
+            obp_inst_b->i_channel_idx(s_channel_idx_b);
+            obp_inst_b->i_residual(s_residual_skip_b);
             obp_inst_b->o_sramc_wdata(s_obp_sramc_wdata_b);
             obp_inst_b->o_sramc_addr(s_obp_sramc_addr_b);
             obp_inst_b->o_sramc_wren(s_obp_sramc_wren_b);
@@ -779,6 +788,7 @@ namespace sauria
             obp_inst_b->i_vec_channel_mode(s_obp_vec_channel_mode_b);
             obp_inst_b->i_requant_scale(s_requant_scale_b);
             obp_inst_b->i_requant_shift(s_requant_shift_b);
+            obp_inst_b->i_output_zp(s_obp_output_zp_b);
             obp_inst_b->i_host_addr(i_host_addr);
             obp_inst_b->i_host_wren(i_host_wren);
             obp_inst_b->i_host_rden(i_host_rden);
@@ -823,7 +833,10 @@ namespace sauria
             re_inst_a->i_start(s_re_start_a);
             re_inst_a->i_valid(s_re_valid_a);
             re_inst_a->i_vector_data(s_re_vector_data_a);
-            re_inst_a->i_skip_data(s_re_skip_data_a);
+            re_inst_a->i_skip_data(s_residual_skip_a);
+            re_inst_a->i_addr(s_obp_sramc_addr_a);
+            re_inst_a->i_wmask(s_obp_sramc_wmask_a);
+            re_inst_a->i_rows_active(s_rows_active);
             re_inst_a->i_requant_scale(s_requant_scale_a);
             re_inst_a->i_requant_shift(s_requant_shift_a);
             re_inst_a->o_lut_op(s_re_lut_op_a);
@@ -832,6 +845,8 @@ namespace sauria
             re_inst_a->i_lut_out(s_re_lut_out_a);
             re_inst_a->i_lut_valid(s_re_lut_valid_out_a);
             re_inst_a->o_vector_out(s_re_vector_out_a);
+            re_inst_a->o_addr(s_re_addr_out_a);
+            re_inst_a->o_wmask(s_re_wmask_out_a);
             re_inst_a->o_valid(s_re_valid_out_a);
             re_inst_a->o_done(s_re_done_a);
 
@@ -842,7 +857,10 @@ namespace sauria
             re_inst_b->i_start(s_re_start_b);
             re_inst_b->i_valid(s_re_valid_b);
             re_inst_b->i_vector_data(s_re_vector_data_b);
-            re_inst_b->i_skip_data(s_re_skip_data_b);
+            re_inst_b->i_skip_data(s_residual_skip_b);
+            re_inst_b->i_addr(s_obp_sramc_addr_b);
+            re_inst_b->i_wmask(s_obp_sramc_wmask_b);
+            re_inst_b->i_rows_active(s_rows_active);
             re_inst_b->i_requant_scale(s_requant_scale_b);
             re_inst_b->i_requant_shift(s_requant_shift_b);
             re_inst_b->o_lut_op(s_re_lut_op_b);
@@ -851,8 +869,14 @@ namespace sauria
             re_inst_b->i_lut_out(s_re_lut_out_b);
             re_inst_b->i_lut_valid(s_re_lut_valid_out_b);
             re_inst_b->o_vector_out(s_re_vector_out_b);
+            re_inst_b->o_addr(s_re_addr_out_b);
+            re_inst_b->o_wmask(s_re_wmask_out_b);
             re_inst_b->o_valid(s_re_valid_out_b);
             re_inst_b->o_done(s_re_done_b);
+
+            // Connect companion RCE lookup hooks into Reduction Engine
+            re_inst_a->set_rce(rce_inst_a);
+            re_inst_b->set_rce(rce_inst_b);
         }
 
         ~NpuTop()
@@ -934,8 +958,8 @@ namespace sauria
         SystolicArray<X_DIM, Y_DIM, T_ACT, T_WEI, T_PSUM> *array_inst{nullptr};
         Psm<X_DIM, Y_DIM, T_PSUM, SRAMC_CAP> *psm_inst_a{nullptr};
         Psm<X_DIM, Y_DIM, T_PSUM, SRAMC_CAP> *psm_inst_b{nullptr};
-        Obp<Y_DIM, 0x00140000, 0x00150000, T_PSUM, T_ACT> *obp_inst_a{nullptr};
-        Obp<Y_DIM, 0x00160000, 0x00170000, T_PSUM, T_ACT> *obp_inst_b{nullptr};
+        Obp<Y_DIM, 0x00140000, 0x00150000, 0x001C0000, T_PSUM, T_ACT> *obp_inst_a{nullptr};
+        Obp<Y_DIM, 0x00160000, 0x00170000, 0x001D0000, T_PSUM, T_ACT> *obp_inst_b{nullptr};
         ConfigRegs<32, 32, X_DIM, Y_DIM, 2, 15, 15, 15, DILP_W, 8> *config_regs_inst{nullptr};
         ReconfigurableEngine<0x00200000, 0x00210000, 0x00220000> *rce_inst_a{nullptr};
         ReconfigurableEngine<0x00230000, 0x00240000, 0x00250000> *rce_inst_b{nullptr};
@@ -944,6 +968,22 @@ namespace sauria
         InstructionDecoder<X_DIM, Y_DIM, T_ACT, T_WEI, T_PSUM, SRAMA_CAP, SRAMB_CAP, SRAMC_CAP> *decoder_inst{nullptr};
         SauriaDma<X_DIM, Y_DIM, T_ACT, T_WEI, T_PSUM, SRAMA_CAP, SRAMB_CAP, SRAMC_CAP> *dma_inst{nullptr};
         std::vector<uint8_t> *m_dram{nullptr};
+
+        uint32_t get_re_mode_a() const { return s_re_mode_a.read(); }
+        uint32_t get_re_mode_b() const { return s_re_mode_b.read(); }
+        bool get_re_start_a() const { return s_re_start_a.read(); }
+        bool get_re_valid_out_a() const { return s_re_valid_out_a.read(); }
+        bool get_final_sramc_wren_a() const { return s_final_sramc_wren_a.read(); }
+        uint32_t get_final_sramc_addr_a() const { return s_final_sramc_addr_a.read(); }
+
+        void set_residual_skip_a(const act_vector_t<Y_DIM, T_ACT> &v) { s_residual_skip_a.write(v); }
+        void set_residual_skip_b(const act_vector_t<Y_DIM, T_ACT> &v) { s_residual_skip_b.write(v); }
+        act_vector_t<Y_DIM, T_ACT> get_residual_skip_a() const { return s_residual_skip_a.read(); }
+        act_vector_t<Y_DIM, T_ACT> get_residual_skip_b() const { return s_residual_skip_b.read(); }
+        act_vector_t<Y_DIM, T_ACT> get_re_skip_data_in_a() const { return re_inst_a ? re_inst_a->i_skip_data.read() : act_vector_t<Y_DIM, T_ACT>{}; }
+        act_vector_t<Y_DIM, T_ACT> get_re_skip_data_in_b() const { return re_inst_b ? re_inst_b->i_skip_data.read() : act_vector_t<Y_DIM, T_ACT>{}; }
+        int32_t get_obp_output_zp_a() const { return s_obp_output_zp_a.read(); }
+        int32_t get_obp_output_zp_b() const { return s_obp_output_zp_b.read(); }
 
     private:
 
@@ -1119,8 +1159,13 @@ namespace sauria
         sc_signal<psum_vector_t<Y_DIM, T_PSUM>> s_re_vector_data_a{"s_re_vector_data_a"};
         sc_signal<act_vector_t<Y_DIM, T_ACT>> s_re_skip_data_a{"s_re_skip_data_a"};
         sc_signal<psum_vector_t<Y_DIM, T_PSUM>> s_re_vector_out_a{"s_re_vector_out_a"};
+        sc_signal<uint32_t> s_re_addr_out_a{"s_re_addr_out_a"};
+        sc_signal<sramc_mask_t<Y_DIM>> s_re_wmask_out_a{"s_re_wmask_out_a"};
         sc_signal<bool> s_re_valid_out_a{"s_re_valid_out_a"};
         sc_signal<bool> s_re_done_a{"s_re_done_a"};
+        sc_signal<uint32_t> s_channel_idx_a{"s_channel_idx_a"};
+        sc_signal<uint32_t> s_final_sramc_addr_a{"s_final_sramc_addr_a"};
+        sc_signal<sramc_mask_t<Y_DIM>> s_final_sramc_wmask_a{"s_final_sramc_wmask_a"};
 
         // Unpacked OBP Config signals
         sc_signal<bool> s_obp_bias_en_a{"s_obp_bias_en_a"};
@@ -1128,7 +1173,8 @@ namespace sauria
         sc_signal<bool> s_obp_lut_en_a{"s_obp_lut_en_a"};
         sc_signal<bool> s_obp_residual_en_a{"s_obp_residual_en_a"};
         sc_signal<bool> s_obp_vec_channel_mode_a{"s_obp_vec_channel_mode_a"};
-        sc_signal<act_vector_t<Y_DIM, T_ACT>> s_residual_zero_a{"s_residual_zero_a"};
+        sc_signal<act_vector_t<Y_DIM, T_ACT>> s_residual_skip_a{"s_residual_skip_a"};
+        sc_signal<int32_t> s_obp_output_zp_a{"s_obp_output_zp_a"};
 
         // Lane B signals
         sc_signal<bool> s_act_feeder_en_b{"s_act_feeder_en_b"};
@@ -1226,8 +1272,13 @@ namespace sauria
         sc_signal<psum_vector_t<Y_DIM, T_PSUM>> s_re_vector_data_b{"s_re_vector_data_b"};
         sc_signal<act_vector_t<Y_DIM, T_ACT>> s_re_skip_data_b{"s_re_skip_data_b"};
         sc_signal<psum_vector_t<Y_DIM, T_PSUM>> s_re_vector_out_b{"s_re_vector_out_b"};
+        sc_signal<uint32_t> s_re_addr_out_b{"s_re_addr_out_b"};
+        sc_signal<sramc_mask_t<Y_DIM>> s_re_wmask_out_b{"s_re_wmask_out_b"};
         sc_signal<bool> s_re_valid_out_b{"s_re_valid_out_b"};
         sc_signal<bool> s_re_done_b{"s_re_done_b"};
+        sc_signal<uint32_t> s_channel_idx_b{"s_channel_idx_b"};
+        sc_signal<uint32_t> s_final_sramc_addr_b{"s_final_sramc_addr_b"};
+        sc_signal<sramc_mask_t<Y_DIM>> s_final_sramc_wmask_b{"s_final_sramc_wmask_b"};
         sc_signal<psum_vector_t<Y_DIM, T_PSUM>> s_final_sramc_wdata_b{"s_final_sramc_wdata_b"};
         sc_signal<bool> s_final_sramc_wren_b{"s_final_sramc_wren_b"};
 
@@ -1237,7 +1288,8 @@ namespace sauria
         sc_signal<bool> s_obp_lut_en_b{"s_obp_lut_en_b"};
         sc_signal<bool> s_obp_residual_en_b{"s_obp_residual_en_b"};
         sc_signal<bool> s_obp_vec_channel_mode_b{"s_obp_vec_channel_mode_b"};
-        sc_signal<act_vector_t<Y_DIM, T_ACT>> s_residual_zero_b{"s_residual_zero_b"};
+        sc_signal<act_vector_t<Y_DIM, T_ACT>> s_residual_skip_b{"s_residual_skip_b"};
+        sc_signal<int32_t> s_obp_output_zp_b{"s_obp_output_zp_b"};
 
         // ConfigRegs OBP signals
         sc_signal<uint32_t> s_obp_cfg_a{"s_obp_cfg_a"};
@@ -1356,11 +1408,11 @@ namespace sauria
             {
                 o_host_rdata.write(s_host_rdata_cfg.read());
             }
-            else if (region == 0x00140000 || region == 0x00150000 || region == 0x00180000 || region == 0x00190000)
+            else if (region == 0x00140000 || region == 0x00150000 || region == 0x00180000 || region == 0x00190000 || region == 0x001C0000)
             {
                 o_host_rdata.write(s_host_rdata_obp_a.read());
             }
-            else if (region == 0x00160000 || region == 0x00170000 || region == 0x001A0000 || region == 0x001B0000)
+            else if (region == 0x00160000 || region == 0x00170000 || region == 0x001A0000 || region == 0x001B0000 || region == 0x001D0000)
             {
                 o_host_rdata.write(s_host_rdata_obp_b.read());
             }
@@ -1710,41 +1762,49 @@ namespace sauria
 
         void re_ctrl_mux_logic()
         {
-            // Drive RE inputs for Lane A
+            // Drive RE inputs for Lane A (arm on context 0 start)
             s_re_vector_data_a.write(s_obp_sramc_wdata_a.read());
             s_re_valid_a.write(s_obp_sramc_wren_a.read());
-            s_re_start_a.write(s_psm_start_a.read());
+            s_re_start_a.write(s_psm_start_a.read() && (s_context_id_a.read() == 0));
 
-            // Drive RE inputs for Lane B
+            // Drive RE inputs for Lane B (arm on context 0 start)
             s_re_vector_data_b.write(s_obp_sramc_wdata_b.read());
             s_re_valid_b.write(s_obp_sramc_wren_b.read());
-            s_re_start_b.write(s_psm_start_b.read());
+            s_re_start_b.write(s_psm_start_b.read() && (s_context_id_b.read() == 0));
         }
 
         void sramc_wdata_mux_logic()
         {
-            // Lane A: Route RE output if RE valid or RE mode active, else route OBP output
-            if (s_re_valid_out_a.read() || (s_re_mode_a.read() != 0 && s_re_valid_out_a.read()))
+            // Lane A: Route RE output if RE mode is active, else route OBP output directly
+            if (s_re_mode_a.read() != 0) // RE_MODE_IDLE is 0
             {
                 s_final_sramc_wdata_a.write(s_re_vector_out_a.read());
                 s_final_sramc_wren_a.write(s_re_valid_out_a.read());
+                s_final_sramc_addr_a.write(s_re_addr_out_a.read());
+                s_final_sramc_wmask_a.write(s_re_wmask_out_a.read());
             }
             else
             {
                 s_final_sramc_wdata_a.write(s_obp_sramc_wdata_a.read());
                 s_final_sramc_wren_a.write(s_obp_sramc_wren_a.read());
+                s_final_sramc_addr_a.write(s_obp_sramc_addr_a.read());
+                s_final_sramc_wmask_a.write(s_obp_sramc_wmask_a.read());
             }
 
-            // Lane B: Route RE output if RE valid or RE mode active, else route OBP output
-            if (s_re_valid_out_b.read() || (s_re_mode_b.read() != 0 && s_re_valid_out_b.read()))
+            // Lane B: Route RE output if RE mode is active, else route OBP output directly
+            if (s_re_mode_b.read() != 0)
             {
                 s_final_sramc_wdata_b.write(s_re_vector_out_b.read());
                 s_final_sramc_wren_b.write(s_re_valid_out_b.read());
+                s_final_sramc_addr_b.write(s_re_addr_out_b.read());
+                s_final_sramc_wmask_b.write(s_re_wmask_out_b.read());
             }
             else
             {
                 s_final_sramc_wdata_b.write(s_obp_sramc_wdata_b.read());
                 s_final_sramc_wren_b.write(s_obp_sramc_wren_b.read());
+                s_final_sramc_addr_b.write(s_obp_sramc_addr_b.read());
+                s_final_sramc_wmask_b.write(s_obp_sramc_wmask_b.read());
             }
         }
 
@@ -1880,14 +1940,24 @@ namespace sauria
             s_obp_requant_en_a.write((cfg_a & 0x2) != 0);
             s_obp_lut_en_a.write(((cfg_a & 0x4) != 0) || (((cfg_a >> 4) & 0x7) != 0));
             s_obp_residual_en_a.write(((cfg_a & 0x8) != 0) || ((cfg_a & 0x80) != 0));
-            s_obp_vec_channel_mode_a.write((cfg_a & 0x100) != 0);
+            int8_t zp_a = static_cast<int8_t>((cfg_a >> 16) & 0xFF);
+            s_obp_output_zp_a.write(static_cast<int32_t>(zp_a));
+            // In SAURIA Output-Stationary dataflow, vectors entering OBP from PSM/Systolic Array
+            // always represent an entire Output Channel (OC) across Y spatial positions.
+            // Enable per-vector channel mode when explicitly set via bit 8 (0x100) or whenever
+            // OBP epilogue processing (bias, requant, LUT, residual) is configured.
+            bool vec_mode_a = ((cfg_a & 0x100) != 0) || (cfg_a != 0);
+            s_obp_vec_channel_mode_a.write(vec_mode_a);
 
             uint32_t cfg_b = s_obp_cfg_b.read();
             s_obp_bias_en_b.write((cfg_b & 0x1) != 0);
             s_obp_requant_en_b.write((cfg_b & 0x2) != 0);
             s_obp_lut_en_b.write(((cfg_b & 0x4) != 0) || (((cfg_b >> 4) & 0x7) != 0));
             s_obp_residual_en_b.write(((cfg_b & 0x8) != 0) || ((cfg_b & 0x80) != 0));
-            s_obp_vec_channel_mode_b.write((cfg_b & 0x100) != 0);
+            int8_t zp_b = static_cast<int8_t>((cfg_b >> 16) & 0xFF);
+            s_obp_output_zp_b.write(static_cast<int32_t>(zp_b));
+            bool vec_mode_b = ((cfg_b & 0x100) != 0) || (cfg_b != 0);
+            s_obp_vec_channel_mode_b.write(vec_mode_b);
         }
 
         void deadlock_merge_logic()

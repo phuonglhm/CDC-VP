@@ -21,6 +21,7 @@ namespace sauria
         int Y_DIM = 32, // Width of the boundary processing array
         uint32_t LUT_OFFSET = 0x00140000,
         uint32_t BIAS_OFFSET = 0x00150000,
+        uint32_t ZP_OFFSET = 0x001C0000,
         typename T_PSUM = int32_t,
         typename T_ACT = int8_t>
     class Obp : public sc_module
@@ -35,6 +36,7 @@ namespace sauria
         sc_in<uint32_t> i_addr{"i_addr"};                            // SRAM C target address
         sc_in<sramc_mask_t<Y_DIM>> i_wmask{"i_wmask"};              // Write mask
         sc_in<bool> i_valid{"i_valid"};
+        sc_in<uint32_t> i_channel_idx{"i_channel_idx"};              // Column / Channel index sideband from PSM
 
         // Residual skip input
         sc_in<act_vector_t<Y_DIM, T_ACT>> i_residual{"i_residual"};  // Residual skip input
@@ -54,6 +56,7 @@ namespace sauria
         sc_in<bool> i_vec_channel_mode{"i_vec_channel_mode"}; // Per-vector channel mode (1 vector = 1 channel)
         sc_in<uint32_t> i_requant_scale{"i_requant_scale"}; // Requantization scale/multiplier
         sc_in<uint32_t> i_requant_shift{"i_requant_shift"}; // Requantization right shift bits
+        sc_in<int32_t> i_output_zp{"i_output_zp"};           // Asymmetric output zero-point
 
         // Host Programming Interface (for LUT RAM and Bias RAM)
         sc_in<uint32_t> i_host_addr{"i_host_addr"};
@@ -73,32 +76,40 @@ namespace sauria
             sensitive << i_clk.pos();
 
             // Initialize memories
-            for (int l = 0; l < Y_DIM; l++)
+            for (int l = 0; l < NUM_LUT_LANES; l++)
             {
                 std::memset(lut_ram[l], 0, 256);
-                bias_ram[l] = 0;
-                scale_ram[l] = 0;
-                scale_ram_valid[l] = false;
-                shift_ram[l] = 0;
-                shift_ram_valid[l] = false;
+            }
+            for (int c = 0; c < MAX_CHANNELS; c++)
+            {
+                bias_ram[c] = 0;
+                scale_ram[c] = 0;
+                scale_ram_valid[c] = false;
+                shift_ram[c] = 0;
+                shift_ram_valid[c] = false;
+                zp_ram[c] = 0;
+                zp_ram_valid[c] = false;
             }
         }
 
     private:
+        static constexpr int MAX_CHANNELS = 64;
+        static constexpr int NUM_LUT_LANES = (MAX_CHANNELS > Y_DIM) ? MAX_CHANNELS : Y_DIM;
+
         // Internal Storage: 
         // 64-lane pipelined LUT RAM (each lane has 256 entries of 8-bit data)
-        uint8_t lut_ram[Y_DIM][256];
-        // Bias RAM (one 32-bit entry per lane)
-        int32_t bias_ram[Y_DIM];
-        // 64-lane scale RAM (one 32-bit scale multiplier per lane)
-        uint32_t scale_ram[Y_DIM];
-        bool scale_ram_valid[Y_DIM];
-        // 64-lane shift RAM (one 32-bit shift value per lane)
-        uint32_t shift_ram[Y_DIM];
-        bool shift_ram_valid[Y_DIM];
-
-        // Channel vector counter for per-vector per-channel mode
-        uint32_t vec_channel_cnt{0};
+        uint8_t lut_ram[NUM_LUT_LANES][256];
+        // Bias RAM (one 32-bit entry per channel)
+        int32_t bias_ram[MAX_CHANNELS];
+        // Scale RAM (one 32-bit scale multiplier per channel)
+        uint32_t scale_ram[MAX_CHANNELS];
+        bool scale_ram_valid[MAX_CHANNELS];
+        // Shift RAM (one 32-bit shift value per channel)
+        uint32_t shift_ram[MAX_CHANNELS];
+        bool shift_ram_valid[MAX_CHANNELS];
+        // Zero-Point RAM (one 32-bit zero-point per channel)
+        int32_t zp_ram[MAX_CHANNELS];
+        bool zp_ram_valid[MAX_CHANNELS];
 
         // Pipeline stage registers (storing controls together with data for timing alignment)
         struct Stage1Reg
@@ -163,11 +174,16 @@ namespace sauria
                 for (int l = 0; l < Y_DIM; l++)
                 {
                     std::memset(lut_ram[l], 0, 256);
-                    bias_ram[l] = 0;
-                    scale_ram[l] = 0;
-                    scale_ram_valid[l] = false;
-                    shift_ram[l] = 0;
-                    shift_ram_valid[l] = false;
+                }
+                for (int c = 0; c < MAX_CHANNELS; c++)
+                {
+                    bias_ram[c] = 0;
+                    scale_ram[c] = 0;
+                    scale_ram_valid[c] = false;
+                    shift_ram[c] = 0;
+                    shift_ram_valid[c] = false;
+                    zp_ram[c] = 0;
+                    zp_ram_valid[c] = false;
                 }
 
                 // Reset pipeline registers
@@ -199,7 +215,7 @@ namespace sauria
                 if (region == LUT_OFFSET)
                 {
                     // offset = lane_idx * 256 + entry_idx
-                    uint32_t lane_idx = (offset >> 8) % Y_DIM;
+                    uint32_t lane_idx = (offset >> 8) % NUM_LUT_LANES;
                     uint32_t entry_idx = offset & 0xFF;
                     uint32_t base_entry = entry_idx & ~3; // 4-byte aligned write grouping
                     
@@ -213,8 +229,8 @@ namespace sauria
                 }
                 else if (region == BIAS_OFFSET)
                 {
-                    // offset = lane_idx * 4
-                    uint32_t lane_idx = (offset >> 2) % Y_DIM;
+                    // offset = channel_idx * 4
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
                     if (wmask[0])
                     {
                         int64_t val64 = static_cast<int64_t>(wdata[0]);
@@ -223,8 +239,8 @@ namespace sauria
                 }
                 else if (region == (LUT_OFFSET + 0x00040000))
                 {
-                    // SCALE_OFFSET: offset = lane_idx * 4
-                    uint32_t lane_idx = (offset >> 2) % Y_DIM;
+                    // SCALE_OFFSET: offset = channel_idx * 4
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
                     if (wmask[0])
                     {
                         int64_t val64 = static_cast<int64_t>(wdata[0]);
@@ -234,13 +250,24 @@ namespace sauria
                 }
                 else if (region == (LUT_OFFSET + 0x00050000))
                 {
-                    // SHIFT_OFFSET: offset = lane_idx * 4
-                    uint32_t lane_idx = (offset >> 2) % Y_DIM;
+                    // SHIFT_OFFSET: offset = channel_idx * 4
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
                     if (wmask[0])
                     {
                         int64_t val64 = static_cast<int64_t>(wdata[0]);
                         shift_ram[lane_idx] = static_cast<uint32_t>(val64);
                         shift_ram_valid[lane_idx] = true;
+                    }
+                }
+                else if (region == ZP_OFFSET)
+                {
+                    // ZERO_POINT_OFFSET: offset = channel_idx * 4
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
+                    if (wmask[0])
+                    {
+                        int64_t val64 = static_cast<int64_t>(wdata[0]);
+                        zp_ram[lane_idx] = static_cast<int32_t>(val64);
+                        zp_ram_valid[lane_idx] = true;
                     }
                 }
             }
@@ -250,7 +277,7 @@ namespace sauria
                 host_data_t rdata;
                 if (region == LUT_OFFSET)
                 {
-                    uint32_t lane_idx = (offset >> 8) % Y_DIM;
+                    uint32_t lane_idx = (offset >> 8) % NUM_LUT_LANES;
                     uint32_t entry_idx = offset & 0xFF;
                     uint32_t base_entry = entry_idx & ~3;
                     for (int i = 0; i < 4; i++)
@@ -263,18 +290,23 @@ namespace sauria
                 }
                 else if (region == BIAS_OFFSET)
                 {
-                    uint32_t lane_idx = (offset >> 2) % Y_DIM;
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
                     rdata[0] = static_cast<double>(bias_ram[lane_idx]);
                 }
                 else if (region == (LUT_OFFSET + 0x00040000))
                 {
-                    uint32_t lane_idx = (offset >> 2) % Y_DIM;
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
                     rdata[0] = static_cast<double>(scale_ram[lane_idx]);
                 }
                 else if (region == (LUT_OFFSET + 0x00050000))
                 {
-                    uint32_t lane_idx = (offset >> 2) % Y_DIM;
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
                     rdata[0] = static_cast<double>(shift_ram[lane_idx]);
+                }
+                else if (region == ZP_OFFSET)
+                {
+                    uint32_t lane_idx = (offset >> 2) % MAX_CHANNELS;
+                    rdata[0] = static_cast<double>(zp_ram[lane_idx]);
                 }
                 o_host_rdata.write(rdata);
             }
@@ -292,20 +324,15 @@ namespace sauria
                 next_stage1.wmask = i_wmask.read();
 
                 bool vec_mode = i_vec_channel_mode.read();
-                uint32_t current_channel = vec_channel_cnt % Y_DIM;
+                uint32_t current_channel = i_channel_idx.read() % MAX_CHANNELS;
                 next_stage1.channel_idx = current_channel;
 
                 for (int l = 0; l < Y_DIM; l++)
                 {
-                    uint32_t ram_idx = vec_mode ? current_channel : static_cast<uint32_t>(l);
+                    uint32_t ram_idx = vec_mode ? current_channel : static_cast<uint32_t>(l % MAX_CHANNELS);
                     int32_t bias_val = i_bias_en.read() ? bias_ram[ram_idx] : 0;
                     next_stage1.biased_data[l] = in_val[l] + bias_val;
                 }
-                vec_channel_cnt++;
-            }
-            else if (!stage1_reg.valid && !stage2_reg.valid && !stage3_reg.valid)
-            {
-                vec_channel_cnt = 0; // Reset channel vector counter when pipeline is idle
             }
 
             // --------------------------------------------------------
@@ -330,19 +357,39 @@ namespace sauria
                     double val = static_cast<double>(stage1_reg.biased_data[l]);
                     if (requant_en)
                     {
-                        uint32_t ram_idx = vec_mode ? stage1_reg.channel_idx : static_cast<uint32_t>(l);
+                        uint32_t ram_idx = vec_mode ? (stage1_reg.channel_idx % MAX_CHANNELS) : static_cast<uint32_t>(l % MAX_CHANNELS);
                         uint64_t scale = scale_ram_valid[ram_idx] ? scale_ram[ram_idx] : scale_default;
                         uint32_t shift = shift_ram_valid[ram_idx] ? shift_ram[ram_idx] : shift_default;
+                        int32_t zp_val = zp_ram_valid[ram_idx] ? zp_ram[ram_idx] : i_output_zp.read();
 
                         if (std::is_integral<T_PSUM>::value)
                         {
-                            int64_t product = static_cast<int64_t>(stage1_reg.biased_data[l]) * scale;
-                            val = static_cast<double>(product >> shift);
+                            if (shift >= 64)
+                            {
+                                val = 0.0;
+                            }
+                            else
+                            {
+                                int64_t product = static_cast<int64_t>(stage1_reg.biased_data[l]) * scale;
+                                if (shift > 0)
+                                {
+                                    product += (1LL << (shift - 1)) - (product < 0 ? 1 : 0);
+                                }
+                                val = static_cast<double>(product >> shift) + static_cast<double>(zp_val);
+                            }
                         }
                         else
                         {
                             // Float path uses multiplier scaling directly
-                            val = val * static_cast<double>(scale) / static_cast<double>(1ULL << shift);
+                            if (shift >= 64)
+                            {
+                                val = 0.0;
+                            }
+                            else
+                            {
+                                double divisor = (shift > 0) ? static_cast<double>(1ULL << shift) : 1.0;
+                                val = (val * static_cast<double>(scale) / divisor) + static_cast<double>(zp_val);
+                            }
                         }
                         next_stage2.requant_data[l] = static_cast<T_PSUM>(clamp_val<T_ACT>(val));
                     }
@@ -373,7 +420,7 @@ namespace sauria
                     T_PSUM val = stage2_reg.requant_data[l];
                     if (lut_en)
                     {
-                        uint32_t ram_idx = vec_mode ? stage2_reg.channel_idx : static_cast<uint32_t>(l);
+                        uint32_t ram_idx = vec_mode ? (stage2_reg.channel_idx % NUM_LUT_LANES) : static_cast<uint32_t>(l % NUM_LUT_LANES);
                         // Map signed INT8 (-128 to 127) to LUT index (0 to 255)
                         int32_t val_int = static_cast<int32_t>(clamp_val<T_ACT>(val));
                         uint8_t index = static_cast<uint8_t>(val_int + 128);

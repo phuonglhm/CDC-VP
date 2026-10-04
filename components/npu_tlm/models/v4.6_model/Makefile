@@ -23,6 +23,15 @@ all: tb_unified_smoke
 tb_unified_smoke: tb_unified_smoke.cpp
 	$(CXX) $(CXXFLAGS) $< $(LINK) -o $@
 
+tb_obp: tb_obp.cpp
+	$(CXX) $(CXXFLAGS) $< $(LINK) -o $@
+
+tb_re: tb_re.cpp
+	$(CXX) $(CXXFLAGS) $< $(LINK) -o $@
+
+tb_pipeline_re: tb_pipeline_re.cpp
+	$(CXX) $(CXXFLAGS) $< $(LINK) -o $@
+
 tb_evaluate: tb_evaluate.cpp
 	$(CXX) $(CXXFLAGS) $< $(LINK) -o $@
 
@@ -156,4 +165,4 @@ check:
 	if [ $$FAILED -ne 0 ]; then exit 1; fi
 
 clean:
-	rm -f $(OBJS) tb_unified_smoke tb_evaluate tb_demo tb_utilization_optimization test_rich_isa test_lane_b_isolation test_dual_lane_fsm test_dual_instruction_queues test_nsplit_barrier test_nsplit_64_idle_b test_cycle_by_cycle test_vit_encoder_int8
+	rm -f $(OBJS) tb_unified_smoke tb_obp tb_re tb_evaluate tb_demo tb_utilization_optimization test_rich_isa test_lane_b_isolation test_dual_lane_fsm test_dual_instruction_queues test_nsplit_barrier test_nsplit_64_idle_b test_cycle_by_cycle test_vit_encoder_int8

@@ -70,6 +70,7 @@ namespace sauria
         sc_out<bool> o_finalwrite{"o_finalwrite"};
         sc_out<bool> o_shift_done{"o_shift_done"};
         sc_out<bool> o_cscan_en{"o_cscan_en"}; // Directs array to shift out C chain
+        sc_out<uint32_t> o_channel_idx{"o_channel_idx"}; // Column / Output-Channel index
 
         // Data Outputs to Array (Preload values sent right-to-left)
         sc_out<psum_vector_t<Y_DIM, T_PSUM>> o_c_arr{"o_c_arr"};
@@ -207,6 +208,7 @@ namespace sauria
                 o_finalwrite.write(false);
                 o_shift_done.write(false);
                 o_cscan_en.write(false);
+                o_channel_idx.write(0);
                 o_c_arr.write(psum_vector_t<Y_DIM, T_PSUM>());
 
                 addr_reg = 0;
@@ -234,6 +236,7 @@ namespace sauria
             o_shift_done.write(false);
             o_finalwrite.write(false);
             o_cscan_en.write(false);
+            o_channel_idx.write(0);
 
             bool start_pulse = i_fsm_start.read() && !start_q;
             start_q = i_fsm_start.read();
@@ -329,6 +332,7 @@ namespace sauria
                 o_sramc_addr.write(wr_addr);
                 o_sramc_wmask.write(i_rows_active.read());
                 o_sramc_wdata.write(array_out);
+                o_channel_idx.write(shift_cnt);
                 dump_psm_trace(active_context_id, wr_addr, shift_cnt, array_out);
                 shift_cnt++;
 
@@ -369,18 +373,6 @@ namespace sauria
             {
                 psum_vector_t<Y_DIM, T_PSUM> array_out = i_c_arr.read();
 
-                // uint32_t wr_addr = calc_c_addr(active_context_id, shift_cnt);
-
-                // o_cscan_en.write(true);
-
-                // o_sramc_wren.write(true);
-                // o_sramc_addr.write(i_out_base_addr.read() + wr_addr);
-                // o_sramc_wmask.write(i_rows_active.read());
-                // // write_data[y] = i_sramc_r_data.read()[y] + array_out[y];
-                // o_sramc_wdata.write(array_out);
-
-                // dump_psm_trace(active_context_id, i_out_base_addr.read() + wr_addr, shift_cnt, array_out);
-
                 uint32_t wr_addr = calc_c_addr(active_context_id, shift_cnt);
 
                 o_cscan_en.write(true);
@@ -389,8 +381,9 @@ namespace sauria
                 o_sramc_addr.write(wr_addr);
                 o_sramc_wmask.write(i_rows_active.read());
                 o_sramc_wdata.write(array_out);
+                o_channel_idx.write(shift_cnt);
 
-                dump_psm_trace(active_context_id, i_out_base_addr.read() + wr_addr, shift_cnt, array_out);
+                dump_psm_trace(active_context_id, wr_addr, shift_cnt, array_out);
 
                 shift_cnt++;
                 return;

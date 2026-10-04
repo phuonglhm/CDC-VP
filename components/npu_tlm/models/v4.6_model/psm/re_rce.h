@@ -36,7 +36,9 @@ namespace sauria
         RE_MODE_LAYERNORM_PASS1 = 3, // Compute mean
         RE_MODE_LAYERNORM_PASS2 = 4, // Compute variance and scale with rsqrt
         RE_MODE_MAXPOOL = 5,         // MaxPool using shared max comparator tree
-        RE_MODE_RESIDUAL_ADD = 6     // Elemwise Add (dequant, skip add, requant)
+        RE_MODE_RESIDUAL_ADD = 6,    // Elemwise Add (dequant, skip add, requant)
+        RE_MODE_SOFTMAX_TILE_PASS1 = 7, // Multi-Vector / Tile Softmax Pass 1 (Online Softmax)
+        RE_MODE_SOFTMAX_TILE_PASS2 = 8  // Multi-Vector / Tile Softmax Pass 2 (Global Tile Normalization)
     };
 
     // =========================================================================
@@ -83,8 +85,8 @@ namespace sauria
         float lookup_exp(float x) const
         {
             bool is_empty = true;
-            for (int i = 0; i < 16; i++) {
-                if (lut_exp[i * 16] != 0) { is_empty = false; break; }
+            for (int i = 0; i < 256; i++) {
+                if (lut_exp[i] != 0) { is_empty = false; break; }
             }
             if (is_empty) {
                 return std::exp(x);
@@ -102,8 +104,8 @@ namespace sauria
         float lookup_recip(float x) const
         {
             bool is_empty = true;
-            for (int i = 0; i < 16; i++) {
-                if (lut_recip[i * 32] != 0) { is_empty = false; break; }
+            for (int i = 0; i < 512; i++) {
+                if (lut_recip[i] != 0) { is_empty = false; break; }
             }
             if (is_empty) {
                 return (x != 0.0f) ? (1.0f / x) : 0.0f;
@@ -121,8 +123,8 @@ namespace sauria
         float lookup_rsqrt(float x) const
         {
             bool is_empty = true;
-            for (int i = 0; i < 16; i++) {
-                if (lut_rsqrt[i * 64] != 0) { is_empty = false; break; }
+            for (int i = 0; i < 1024; i++) {
+                if (lut_rsqrt[i] != 0) { is_empty = false; break; }
             }
             if (is_empty) {
                 return (x > 0.0f) ? (1.0f / std::sqrt(x)) : 0.0f;
@@ -290,8 +292,11 @@ namespace sauria
         sc_in<bool> i_valid{"i_valid"};
         sc_in<psum_vector_t<Y_DIM, T_PSUM>> i_vector_data{"i_vector_data"};
         sc_in<act_vector_t<Y_DIM, T_ACT>> i_skip_data{"i_skip_data"}; // Residual skip input
+        sc_in<uint32_t> i_addr{"i_addr"};                              // Address passthrough
+        sc_in<sramc_mask_t<Y_DIM>> i_wmask{"i_wmask"};                // Write mask passthrough
+        sc_in<sramc_mask_t<Y_DIM>> i_rows_active{"i_rows_active"};    // Active rows mask
 
-        // Scale & Requant params for Residual Skip
+        // Scale & Requant params for Residual Skip & RE Output
         sc_in<uint32_t> i_requant_scale{"i_requant_scale"};
         sc_in<uint32_t> i_requant_shift{"i_requant_shift"};
 
@@ -304,8 +309,27 @@ namespace sauria
 
         // Output Interface
         sc_out<psum_vector_t<Y_DIM, T_PSUM>> o_vector_out{"o_vector_out"};
+        sc_out<uint32_t> o_addr{"o_addr"};
+        sc_out<sramc_mask_t<Y_DIM>> o_wmask{"o_wmask"};
         sc_out<bool> o_valid{"o_valid"};
         sc_out<bool> o_done{"o_done"};
+
+        float get_running_max() const { return running_max; }
+        float get_running_mean() const { return static_cast<float>(running_mean); }
+        float get_running_var() const { return static_cast<float>(running_var); }
+        float get_running_sum() const { return static_cast<float>(running_sum); }
+        double get_running_tile_sum() const { return running_tile_sum; }
+        bool has_scratch_overflow() const { return scratch_overflow; }
+        float get_vector_max(uint32_t idx) const { return (idx < SCRATCH_VECTORS) ? vector_max[idx] : -INFINITY; }
+
+        // Attach companion Reconfigurable Compute Engine (RCE)
+        template <typename TRce>
+        void set_rce(TRce *rce_ptr)
+        {
+            m_rce_exp = [rce_ptr](float x) { return rce_ptr ? rce_ptr->lookup_exp(x) : std::exp(x); };
+            m_rce_recip = [rce_ptr](float x) { return rce_ptr ? rce_ptr->lookup_recip(x) : ((x != 0.0f) ? (1.0f / x) : 0.0f); };
+            m_rce_rsqrt = [rce_ptr](float x) { return rce_ptr ? rce_ptr->lookup_rsqrt(x) : ((x > 0.0f) ? (1.0f / std::sqrt(x)) : 0.0f); };
+        }
 
         SC_CTOR(ReductionEngine)
         {
@@ -314,16 +338,29 @@ namespace sauria
         }
 
     private:
+        // Companion RCE non-linear lookup delegates
+        std::function<float(float)> m_rce_exp{[](float x) { return std::exp(x); }};
+        std::function<float(float)> m_rce_recip{[](float x) { return (x != 0.0f) ? (1.0f / x) : 0.0f; }};
+        std::function<float(float)> m_rce_rsqrt{[](float x) { return (x > 0.0f) ? (1.0f / std::sqrt(x)) : 0.0f; }};
+
         // 24 KB Scratch SRAM (stores intermediate vectors during multi-pass calculations)
         // 24 KB / (Y_DIM * sizeof(float)) vectors. For Y_DIM=32, 24576 / 128 = 192 vectors.
         static constexpr int SCRATCH_VECTORS = (24 * 1024) / (Y_DIM * sizeof(T_PSUM) > 0 ? Y_DIM * sizeof(T_PSUM) : 4);
         psum_vector_t<Y_DIM, T_PSUM> scratch_mem[SCRATCH_VECTORS];
+        float vector_max[SCRATCH_VECTORS];
+        uint32_t scratch_wr_idx{0};
+        uint32_t scratch_rd_idx{0};
+        bool scratch_overflow{false};
 
         // Running accumulation registers
         float running_max;
-        float running_sum;
-        float running_mean;
-        float running_var;
+        double running_sum{0.0};
+        double running_tile_sum{0.0};
+        double running_sq_sum{0.0};
+        double running_mean{0.0};
+        double running_var{0.0};
+        uint32_t total_active_elements{0};
+        bool prev_start{false};
 
         // Saturate / Clamp helpers
         template <typename T>
@@ -356,13 +393,23 @@ namespace sauria
                 for (int i = 0; i < SCRATCH_VECTORS; i++)
                 {
                     scratch_mem[i] = psum_vector_t<Y_DIM, T_PSUM>();
+                    vector_max[i] = -INFINITY;
                 }
                 running_max = -INFINITY;
-                running_sum = 0.0f;
-                running_mean = 0.0f;
-                running_var = 0.0f;
+                running_sum = 0.0;
+                running_tile_sum = 0.0;
+                running_sq_sum = 0.0;
+                running_mean = 0.0;
+                running_var = 0.0;
+                total_active_elements = 0;
+                scratch_wr_idx = 0;
+                scratch_rd_idx = 0;
+                scratch_overflow = false;
+                prev_start = false;
 
                 o_vector_out.write(psum_vector_t<Y_DIM, T_PSUM>());
+                o_addr.write(0);
+                o_wmask.write(sramc_mask_t<Y_DIM>());
                 o_valid.write(false);
                 o_done.write(false);
                 o_lut_op.write(0);
@@ -371,22 +418,60 @@ namespace sauria
                 return;
             }
 
-            if (i_start.read() && i_valid.read())
+            // Arm/reset RE accumulation states on rising edge of start pulse
+            bool start_edge = i_start.read() && !prev_start;
+            prev_start = i_start.read();
+
+            if (start_edge)
             {
                 uint32_t mode = i_mode.read();
+                uint32_t base_mode = mode & 0xFF;
+                if (base_mode == RE_MODE_SOFTMAX_PASS2 || base_mode == RE_MODE_LAYERNORM_PASS2 ||
+                    base_mode == RE_MODE_SOFTMAX_TILE_PASS2)
+                {
+                    scratch_rd_idx = 0;
+                }
+                else
+                {
+                    running_max = -INFINITY;
+                    running_sum = 0.0;
+                    running_tile_sum = 0.0;
+                    running_sq_sum = 0.0;
+                    running_mean = 0.0;
+                    running_var = 0.0;
+                    total_active_elements = 0;
+                    scratch_wr_idx = 0;
+                    scratch_rd_idx = 0;
+                    scratch_overflow = false;
+                    for (int i = 0; i < SCRATCH_VECTORS; i++)
+                    {
+                        vector_max[i] = -INFINITY;
+                    }
+                }
+            }
+
+            if (i_valid.read())
+            {
+                uint32_t mode = i_mode.read();
+                uint32_t base_mode = mode & 0xFF;
+                o_addr.write(i_addr.read());
+                o_wmask.write(i_wmask.read());
+                o_lut_valid.write(false);
+
 #ifndef FX1_NO_PERF
                 if (perf)
                 {
-                    if (mode == RE_MODE_SOFTMAX_PASS1 || mode == RE_MODE_SOFTMAX_PASS2 ||
-                        mode == RE_MODE_LAYERNORM_PASS1 || mode == RE_MODE_LAYERNORM_PASS2)
+                    if (base_mode == RE_MODE_SOFTMAX_PASS1 || base_mode == RE_MODE_SOFTMAX_PASS2 ||
+                        base_mode == RE_MODE_SOFTMAX_TILE_PASS1 || base_mode == RE_MODE_SOFTMAX_TILE_PASS2 ||
+                        base_mode == RE_MODE_LAYERNORM_PASS1 || base_mode == RE_MODE_LAYERNORM_PASS2)
                     {
                         perf->reduction_engine_cycles++;
                     }
-                    else if (mode == RE_MODE_MAXPOOL)
+                    else if (base_mode == RE_MODE_MAXPOOL)
                     {
                         perf->pooling_engine_cycles++;
                     }
-                    else if (mode == RE_MODE_RESIDUAL_ADD)
+                    else if (base_mode == RE_MODE_RESIDUAL_ADD)
                     {
                         perf->activation_engine_cycles++;
                     }
@@ -394,73 +479,203 @@ namespace sauria
 #endif
                 psum_vector_t<Y_DIM, T_PSUM> in_vec = i_vector_data.read();
                 psum_vector_t<Y_DIM, T_PSUM> out_vec;
+                sramc_mask_t<Y_DIM> active_mask = i_rows_active.read();
 
                 // -------------------------------------------------------------
-                // 1. Max Comparator Tree (Shared between Softmax & MaxPool)
+                // 1. Max Comparator Tree (Masked with active rows)
                 // -------------------------------------------------------------
-                auto compute_max_tree = [](const psum_vector_t<Y_DIM, T_PSUM> &v) -> float {
+                auto compute_max_tree = [&](const psum_vector_t<Y_DIM, T_PSUM> &v) -> float {
                     float local_max = -INFINITY;
                     for (int l = 0; l < Y_DIM; l++)
                     {
-                        float val = static_cast<float>(v[l]);
-                        if (val > local_max) local_max = val;
+                        if (active_mask[l])
+                        {
+                            float val = static_cast<float>(v[l]);
+                            if (val > local_max) local_max = val;
+                        }
                     }
                     return local_max;
                 };
 
                 // -------------------------------------------------------------
-                // 2. Adder/Accumulator Tree
+                // 2. Adder/Accumulator Tree (Masked with active rows)
                 // -------------------------------------------------------------
-                auto compute_sum_tree = [](const psum_vector_t<Y_DIM, T_PSUM> &v) -> float {
+                auto compute_sum_tree = [&](const psum_vector_t<Y_DIM, T_PSUM> &v) -> float {
                     float local_sum = 0.0f;
                     for (int l = 0; l < Y_DIM; l++)
                     {
-                        local_sum += static_cast<float>(v[l]);
+                        if (active_mask[l])
+                        {
+                            local_sum += static_cast<float>(v[l]);
+                        }
                     }
                     return local_sum;
                 };
+                (void)compute_sum_tree;
 
-                switch (mode)
+                switch (base_mode)
                 {
                     case RE_MODE_SOFTMAX_PASS1:
+                    case RE_MODE_SOFTMAX_TILE_PASS1:
                     {
-                        // Pass 1: Find row max
-                        running_max = compute_max_tree(in_vec);
+                        // Pass 1: Find vector max over active lanes
+                        float local_max = compute_max_tree(in_vec);
                         
-                        // Store vector in Scratch SRAM for Pass 2
-                        scratch_mem[0] = in_vec; 
+                        // Store vector in Scratch SRAM for Pass 2 with bounds check
+                        if (scratch_wr_idx < SCRATCH_VECTORS)
+                        {
+                            vector_max[scratch_wr_idx] = local_max;
+                            scratch_mem[scratch_wr_idx] = in_vec;
+                        }
+                        else
+                        {
+                            scratch_overflow = true;
+                        }
 
-                        out_vec[0] = running_max; // return max in first lane for verification
-                        o_vector_out.write(out_vec);
-                        o_valid.write(true);
-                        o_done.write(true);
+                        // If tile-wide softmax (mode 7 or bit 8 set), accumulate online exponent sum
+                        if (base_mode == RE_MODE_SOFTMAX_TILE_PASS1 || (mode & 0x100))
+                        {
+                            if (scratch_wr_idx == 0)
+                            {
+                                running_max = local_max;
+                                running_tile_sum = 0.0;
+                                for (int l = 0; l < Y_DIM; l++)
+                                {
+                                    if (active_mask[l])
+                                    {
+                                        float diff = static_cast<float>(in_vec[l]) - running_max;
+                                        o_lut_op.write(LUT_OP_EXP);
+                                        o_lut_in.write(diff);
+                                        o_lut_valid.write(true);
+                                        running_tile_sum += static_cast<double>(m_rce_exp(diff));
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                float new_max = std::max(running_max, local_max);
+                                float max_diff = running_max - new_max;
+                                o_lut_op.write(LUT_OP_EXP);
+                                o_lut_in.write(max_diff);
+                                o_lut_valid.write(true);
+                                double scale_prev = static_cast<double>(m_rce_exp(max_diff));
+                                running_tile_sum *= scale_prev;
+                                for (int l = 0; l < Y_DIM; l++)
+                                {
+                                    if (active_mask[l])
+                                    {
+                                        float diff = static_cast<float>(in_vec[l]) - new_max;
+                                        o_lut_op.write(LUT_OP_EXP);
+                                        o_lut_in.write(diff);
+                                        o_lut_valid.write(true);
+                                        running_tile_sum += static_cast<double>(m_rce_exp(diff));
+                                    }
+                                }
+                                running_max = new_max;
+                            }
+                        }
+                        else
+                        {
+                            if (local_max > running_max) running_max = local_max;
+                        }
+
+                        scratch_wr_idx++;
+
+                        // Pass 1 does NOT write back to SRAM C
+                        o_valid.write(false);
+                        o_done.write(false);
                         break;
                     }
 
                     case RE_MODE_SOFTMAX_PASS2:
+                    case RE_MODE_SOFTMAX_TILE_PASS2:
                     {
-                        // Retrieve input from Scratch SRAM
-                        psum_vector_t<Y_DIM, T_PSUM> orig_vec = scratch_mem[0];
-                        psum_vector_t<Y_DIM, T_PSUM> exp_sub_vec;
-
-                        // Compute exp(x_i - max) using functional lookup (emulates RCE lookup)
-                        running_sum = 0.0f;
-                        for (int l = 0; l < Y_DIM; l++)
+                        // Retrieve input from Scratch SRAM (safe bounds check against written vectors)
+                        uint32_t max_valid_vectors = std::min(scratch_wr_idx, static_cast<uint32_t>(SCRATCH_VECTORS));
+                        bool valid_rd = (scratch_rd_idx < max_valid_vectors);
+                        if (scratch_rd_idx >= SCRATCH_VECTORS || (scratch_wr_idx > 0 && scratch_rd_idx >= scratch_wr_idx))
                         {
-                            float diff = static_cast<float>(orig_vec[l]) - running_max;
-                            // Safe range subtraction prevents overflow
-                            float exp_val = std::exp(diff);
-                            exp_sub_vec[l] = exp_val;
-                            running_sum += exp_val;
+                            scratch_overflow = true;
+                        }
+                        psum_vector_t<Y_DIM, T_PSUM> orig_vec = valid_rd ? scratch_mem[scratch_rd_idx] : in_vec;
+                        float vec_max = valid_rd ? vector_max[scratch_rd_idx] : compute_max_tree(orig_vec);
+                        scratch_rd_idx++;
+
+                        bool is_tile = (base_mode == RE_MODE_SOFTMAX_TILE_PASS2) || (mode & 0x100);
+                        float norm_max = is_tile ? running_max : vec_max;
+                        float recip_sum = 0.0f;
+
+                        if (is_tile)
+                        {
+                            o_lut_op.write(LUT_OP_RECIP);
+                            o_lut_in.write(static_cast<float>(running_tile_sum));
+                            o_lut_valid.write(true);
+                            recip_sum = (running_tile_sum > 0.0) ? m_rce_recip(static_cast<float>(running_tile_sum)) : 0.0f;
+                        }
+                        else
+                        {
+                            running_sum = 0.0;
+                            for (int l = 0; l < Y_DIM; l++)
+                            {
+                                if (active_mask[l])
+                                {
+                                    float diff = static_cast<float>(orig_vec[l]) - norm_max;
+                                    o_lut_op.write(LUT_OP_EXP);
+                                    o_lut_in.write(diff);
+                                    o_lut_valid.write(true);
+                                    float exp_val = m_rce_exp(diff);
+                                    running_sum += static_cast<double>(exp_val);
+                                }
+                            }
+                            o_lut_op.write(LUT_OP_RECIP);
+                            o_lut_in.write(static_cast<float>(running_sum));
+                            o_lut_valid.write(true);
+                            recip_sum = (running_sum > 0.0) ? m_rce_recip(static_cast<float>(running_sum)) : 0.0f;
                         }
 
-                        // Compute reciprocal of running sum
-                        float recip_sum = (running_sum > 0.0f) ? (1.0f / running_sum) : 0.0f;
+                        uint64_t scale = i_requant_scale.read();
+                        uint32_t shift = i_requant_shift.read();
 
-                        // Output final Softmax: exp(x_i - max) * recip_sum
+                        // Output final Softmax: exp(x_i - norm_max) * recip_sum
                         for (int l = 0; l < Y_DIM; l++)
                         {
-                            out_vec[l] = exp_sub_vec[l] * recip_sum;
+                            if (active_mask[l])
+                            {
+                                float diff = static_cast<float>(orig_vec[l]) - norm_max;
+                                o_lut_op.write(LUT_OP_EXP);
+                                o_lut_in.write(diff);
+                                o_lut_valid.write(true);
+                                float prob = m_rce_exp(diff) * recip_sum;
+                                if (std::is_integral<T_PSUM>::value)
+                                {
+                                    if (scale > 0)
+                                    {
+                                        if (shift >= 64)
+                                        {
+                                            out_vec[l] = 0;
+                                        }
+                                        else
+                                        {
+                                            double scaled = static_cast<double>(prob) * static_cast<double>(scale);
+                                            double divisor = (shift > 0) ? static_cast<double>(1ULL << shift) : 1.0;
+                                            double rounded = std::round(scaled / divisor);
+                                            out_vec[l] = static_cast<T_PSUM>(clamp_val<T_ACT>(rounded));
+                                        }
+                                    }
+                                    else
+                                    {
+                                        out_vec[l] = static_cast<T_PSUM>(clamp_val<T_ACT>(std::round(static_cast<double>(prob) * 127.0)));
+                                    }
+                                }
+                                else
+                                {
+                                    out_vec[l] = static_cast<T_PSUM>(prob);
+                                }
+                            }
+                            else
+                            {
+                                out_vec[l] = 0;
+                            }
                         }
 
                         o_vector_out.write(out_vec);
@@ -471,41 +686,99 @@ namespace sauria
 
                     case RE_MODE_LAYERNORM_PASS1:
                     {
-                        // Pass 1: Compute mean
-                        running_sum = compute_sum_tree(in_vec);
-                        running_mean = running_sum / Y_DIM;
+                        // Pass 1: Accumulate sum and sum-of-squares over active lanes (double precision)
+                        for (int l = 0; l < Y_DIM; l++)
+                        {
+                            if (active_mask[l])
+                            {
+                                double val = static_cast<double>(in_vec[l]);
+                                running_sum += val;
+                                running_sq_sum += (val * val);
+                                total_active_elements++;
+                            }
+                        }
 
-                        // Save in scratch SRAM for Pass 2
-                        scratch_mem[0] = in_vec;
+                        // Save in scratch SRAM for Pass 2 with bounds check
+                        if (scratch_wr_idx < SCRATCH_VECTORS)
+                        {
+                            scratch_mem[scratch_wr_idx] = in_vec;
+                        }
+                        else
+                        {
+                            scratch_overflow = true;
+                        }
+                        scratch_wr_idx++;
 
-                        out_vec[0] = running_mean; // return mean in first lane
-                        o_vector_out.write(out_vec);
-                        o_valid.write(true);
-                        o_done.write(true);
+                        if (total_active_elements > 0)
+                        {
+                            running_mean = running_sum / static_cast<double>(total_active_elements);
+                            double mean_sq = running_mean * running_mean;
+                            double var_calc = (running_sq_sum / static_cast<double>(total_active_elements)) - mean_sq;
+                            running_var = (var_calc > 0.0) ? var_calc : 0.0;
+                        }
+
+                        // Pass 1 does NOT write back to SRAM C
+                        o_valid.write(false);
+                        o_done.write(false);
                         break;
                     }
 
                     case RE_MODE_LAYERNORM_PASS2:
                     {
-                        // Retrieve vector
-                        psum_vector_t<Y_DIM, T_PSUM> orig_vec = scratch_mem[0];
-
-                        // Compute variance: sum((x_i - mean)^2)
-                        float sq_sum = 0.0f;
-                        for (int l = 0; l < Y_DIM; l++)
+                        // Retrieve vector (safe bounds check against written vectors)
+                        uint32_t max_valid_vectors = std::min(scratch_wr_idx, static_cast<uint32_t>(SCRATCH_VECTORS));
+                        bool valid_rd = (scratch_rd_idx < max_valid_vectors);
+                        if (scratch_rd_idx >= SCRATCH_VECTORS || (scratch_wr_idx > 0 && scratch_rd_idx >= scratch_wr_idx))
                         {
-                            float diff = static_cast<float>(orig_vec[l]) - running_mean;
-                            sq_sum += diff * diff;
+                            scratch_overflow = true;
                         }
-                        running_var = sq_sum / Y_DIM;
+                        psum_vector_t<Y_DIM, T_PSUM> orig_vec = valid_rd ? scratch_mem[scratch_rd_idx] : in_vec;
+                        scratch_rd_idx++;
 
-                        // Reciprocal square root of variance (+ epsilon)
-                        float rsqrt_var = 1.0f / std::sqrt(running_var + 1e-5f);
+                        // Reciprocal square root of global variance (+ epsilon) computed via companion RCE / LUT
+                        o_lut_op.write(LUT_OP_RSQRT);
+                        o_lut_in.write(static_cast<float>(running_var + 1e-5));
+                        o_lut_valid.write(true);
+                        double rsqrt_var = static_cast<double>(m_rce_rsqrt(static_cast<float>(running_var + 1e-5)));
+                        uint64_t scale = i_requant_scale.read();
+                        uint32_t shift = i_requant_shift.read();
 
-                        // Normalize: (x_i - mean) * rsqrt
+                        // Normalize in double: (x_i - mean) * rsqrt over active lanes
                         for (int l = 0; l < Y_DIM; l++)
                         {
-                            out_vec[l] = (static_cast<float>(orig_vec[l]) - running_mean) * rsqrt_var;
+                            if (active_mask[l])
+                            {
+                                double norm = (static_cast<double>(orig_vec[l]) - running_mean) * rsqrt_var;
+                                if (std::is_integral<T_PSUM>::value)
+                                {
+                                    if (scale > 0)
+                                    {
+                                        if (shift >= 64)
+                                        {
+                                            out_vec[l] = 0;
+                                        }
+                                        else
+                                        {
+                                            double scaled = norm * static_cast<double>(scale);
+                                            double divisor = (shift > 0) ? static_cast<double>(1ULL << shift) : 1.0;
+                                            double rounded = std::round(scaled / divisor);
+                                            out_vec[l] = static_cast<T_PSUM>(clamp_val<T_ACT>(rounded));
+                                        }
+                                    }
+                                    else
+                                    {
+                                        out_vec[l] = static_cast<T_PSUM>(clamp_val<T_ACT>(std::round(norm)));
+                                    }
+                                }
+                                else
+                                {
+                                    out_vec[l] = static_cast<T_PSUM>(norm);
+                                }
+                            }
+                            else
+                            {
+                                out_vec[l] = 0;
+                            }
                         }
 
                         o_vector_out.write(out_vec);
@@ -516,9 +789,12 @@ namespace sauria
 
                     case RE_MODE_MAXPOOL:
                     {
-                        // MaxPool mode simply uses the shared max tree
+                        // MaxPool mode simply uses the active-masked max tree
                         float max_val = compute_max_tree(in_vec);
-                        out_vec.data.fill(static_cast<T_PSUM>(max_val));
+                        for (int l = 0; l < Y_DIM; l++)
+                        {
+                            out_vec[l] = active_mask[l] ? static_cast<T_PSUM>(max_val) : 0;
+                        }
 
                         o_vector_out.write(out_vec);
                         o_valid.write(true);
@@ -539,7 +815,16 @@ namespace sauria
                             double sum_val = static_cast<double>(in_vec[l]) + static_cast<double>(skip[l]);
                             if (scale > 0)
                             {
-                                sum_val = (sum_val * scale) / (1ULL << shift);
+                                if (shift >= 64)
+                                {
+                                    sum_val = 0.0;
+                                }
+                                else
+                                {
+                                    double scaled = sum_val * static_cast<double>(scale);
+                                    double divisor = (shift > 0) ? static_cast<double>(1ULL << shift) : 1.0;
+                                    sum_val = std::round(scaled / divisor);
+                                }
                             }
                             out_vec[l] = static_cast<T_PSUM>(clamp_val<T_ACT>(sum_val));
                         }
@@ -555,6 +840,9 @@ namespace sauria
                         o_vector_out.write(psum_vector_t<Y_DIM, T_PSUM>());
                         o_valid.write(false);
                         o_done.write(false);
+                        o_lut_op.write(0);
+                        o_lut_in.write(0.0f);
+                        o_lut_valid.write(false);
                         break;
                     }
                 }
@@ -563,6 +851,9 @@ namespace sauria
             {
                 o_valid.write(false);
                 o_done.write(false);
+                o_lut_op.write(0);
+                o_lut_in.write(0.0f);
+                o_lut_valid.write(false);
             }
         }
     };
