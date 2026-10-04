@@ -1,3 +1,0 @@
-# Config fields for optimization test
-K_base 64
-K_large 1024
