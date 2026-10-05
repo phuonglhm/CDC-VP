@@ -11,7 +11,8 @@ target_link_libraries(riscv_cpu_eval PRIVATE
     cdc::components::memory_tlm
     cdc::components::uart2_tlm
     cdc::components::timer_tlm
-    cdc::cpu::${CDC_CPU_BACKEND})   # swap CPU backend via CMake flag
+    # cdc::cpu::${CDC_CPU_BACKEND} # swap CPU backend via CMake flag
+    cdc_cpu_cva6)  
 
 add_custom_command(TARGET riscv_cpu_eval POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

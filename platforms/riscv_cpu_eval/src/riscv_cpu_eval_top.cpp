@@ -25,6 +25,9 @@ constexpr std::uint64_t kRegionSize = 0x1000;
 // RISC-V machine timer interrupt cause (mcause MTIP / mie MTIE bit).
 constexpr std::uint32_t kCauseMachineTimer = 7;
 
+// RISC-V machine external interrupt cause (mcause MEIP / mie MEIE bit).
+constexpr std::uint32_t kCauseMachineExternal = 11;
+
 } // namespace
 
 struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
@@ -92,6 +95,14 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
     void on_timer_irq()
     {
         cpu.raise_irq(kCauseMachineTimer);
+    }
+
+    void on_uart_irq() {
+        cpu.set_irq(kCauseMachineExternal, uart_irq.read());
+    }
+
+    void on_uart_tx() {
+        std::cout << static_cast<char>(uart_tx.read()) << std::flush;
     }
 };
 
