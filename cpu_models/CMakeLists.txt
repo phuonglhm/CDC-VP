@@ -46,3 +46,5 @@ if(CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_RISCV_VPP_COMPILER_VP)
             "components/TPU_V3/docs/TPU_V3_PHASE2_AUDIT.md §1.")
     endif()
 endif()
+
+add_subdirectory(cva6_vp)
