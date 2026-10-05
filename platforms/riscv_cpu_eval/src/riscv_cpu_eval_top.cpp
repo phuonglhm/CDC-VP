@@ -17,8 +17,8 @@ namespace {
 
 using cpu_backend_t = cdc::cpu::cva6_wrapper; // CPU cũ: riscv_vp_cpu;
 
-constexpr std::uint64_t kRamBase = 0x8000'0000;   // firmware text/data/stack
-constexpr std::uint64_t kRamSize = 0x1'0000;      // 64 KiB
+constexpr std::uint64_t kRamBase = 0x8000'0000;    // firmware text/data/stack
+constexpr std::uint64_t kRamSize = 0x1'0000;      // 64 KiB
 constexpr std::uint64_t kUartBase = 0x1000'0000;
 constexpr std::uint64_t kTimerBase = 0x1001'0000;
 constexpr std::uint64_t kRegionSize = 0x1000;
@@ -78,22 +78,22 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
          uart.irq(uart_irq);
          bus.add_target(kTimerBase, kRegionSize).bind(timer.socket);
 
-        // Timer also has reset_n (active-low) and external-clock inputs that must
-        // be bound: hold reset de-asserted, leave the external clock low.
+        // Timer also has reset_n (active-low) and external-clock inputs that must
+        // be bound: hold reset de-asserted, leave the external clock low.
         timer.reset_n(timer_rst_n);
          timer.extin(timer_extin);
         timer_rst_n.write(true);
          timer_extin.write(false);
 
-        // IRQ bridge: convert the timer's signal edge into a machine-timer
-        // interrupt injected into the real CPU.
+        // IRQ bridge: convert the timer's signal edge into a machine-timer
+        // interrupt injected into the real CPU.
          timer.irq_out(timer_irq);
          SC_HAS_PROCESS(impl);
         SC_METHOD(on_timer_irq);
          sensitive << timer_irq.posedge_event();
          dont_initialize();
 
-        // UART bridge: convert the UART's signal edge into a machine-external
+        // UART bridge: convert the UART's signal edge into a machine-external
          SC_METHOD(on_uart_tx);
          sensitive << uart_tx;
         dont_initialize();
@@ -106,12 +106,12 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
 
     void on_timer_irq()
     {
-        // cpu.raise_irq(kCauseMachineTimer);
+        // cpu.raise_irq(kCauseMachineTimer);
         cpu.set_irq(kCauseMachineTimer, true);
     }
 
     void on_uart_irq() {
-        // cpu.raise_irq(kCauseMachineExternal);
+        // cpu.raise_irq(kCauseMachineExternal);
         cpu.set_irq(kCauseMachineExternal, uart_irq.read());
     }
 
