@@ -1,0 +1,14 @@
+[
+    {
+        "source":  "D:\\Intern_doc\\Intern\\VP\\DMA_Config.xlsx",
+        "sha256":  "f39941684268abde1869d4bd31afd701aab20a1ea8172555f9b7a6646e426be6",
+        "file":  "DMA_Config.xlsx",
+        "date":  "2026-10-05"
+    },
+    {
+        "source":  "D:\\Intern_doc\\Intern\\VP\\DMA_HDS_Page_by_Page.xlsx",
+        "sha256":  "4b76d7c259e03a7bb0a975c4c92cd6042a2c53b5c1aba1a9cecef7055c96906f",
+        "file":  "DMA_HDS_Page_by_Page.xlsx",
+        "date":  "2026-10-05"
+    }
+]

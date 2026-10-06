@@ -1,0 +1,5 @@
+include(CMakeFindDependencyMacro)
+if(NOT TARGET SystemC::systemc)
+  find_dependency(SystemCLanguage CONFIG)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/fx1-dma-targets.cmake")
