@@ -1,0 +1,6837 @@
+{
+  "generator": "tools/gen_csr.py",
+  "generator_version": "1.0",
+  "source": {
+    "file": "FTEL_IP_ISP_CSR_v1.0.xlsx",
+    "sha256": "0980b61ded06a386f0cc64e0445f93fd85b0b1f967d37f0cd41869c0753cd6bf",
+    "sheet": "Registers",
+    "generated_at": "2026-09-23T02:11:27.964Z",
+    "module": "ftel_isp_csr"
+  },
+  "counts": {
+    "RW": 192,
+    "RO": 75,
+    "W1C": 20,
+    "W1S": 9,
+    "W1SC": 2,
+    "registers": 226,
+    "fields": 298
+  },
+  "overrides": [
+    {
+      "id": "DEC-11",
+      "register": "COMMON_BAYER",
+      "field": "pattern",
+      "kind": "enum",
+      "reason": "Field description defines [V,H] encoding 0=RGGB 1=GRBG 2=GBRG 3=BGGR and states the trailing enum list is the obsolete order. User decision DEC-11 adopts the description.",
+      "enum": {
+        "0": "RGGB",
+        "1": "GRBG",
+        "2": "GBRG",
+        "3": "BGGR"
+      }
+    },
+    {
+      "id": "SPEC-05",
+      "register": "DMA_IRQ_EN",
+      "field": "irq_en",
+      "kind": "tied_zero",
+      "reason": "Bit 0 is reserved and tied to zero (no IRQ_CFG_ERROR, SPEC-05).",
+      "bits": [
+        0
+      ]
+    },
+    {
+      "id": "SPEC-05",
+      "register": "DMA_IRQ_STAT",
+      "field": "irq",
+      "kind": "tied_zero",
+      "reason": "Bit 0 is reserved and tied to zero (no IRQ_CFG_ERROR, SPEC-05).",
+      "bits": [
+        0
+      ]
+    },
+    {
+      "id": "CSR-DMA-ERR-5",
+      "register": "DMA_ERR",
+      "field": "err",
+      "kind": "tied_zero",
+      "reason": "Cause list marks bit 5 as reserved, tied to zero.",
+      "bits": [
+        5
+      ]
+    }
+  ],
+  "access_semantics": "HAS Table 8-1 / Table 7-10; see docs/ISP_CSR_CONTRACT.md",
+  "registers": [
+    {
+      "offset": "0x0000",
+      "name": "COMMON_VER_DATE",
+      "row": 2,
+      "reset": "0x18072026",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "year",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x2026",
+          "row": 3,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "month",
+          "bits": "[23:16]",
+          "access": "RO",
+          "reset": "0x7",
+          "row": 4,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "day",
+          "bits": "[31:24]",
+          "access": "RO",
+          "reset": "0x18",
+          "row": 5,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0004",
+      "name": "COMMON_VER_ID",
+      "row": 6,
+      "reset": "0x00010002",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "version",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x10002",
+          "row": 7,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0008",
+      "name": "COMMON_CTRL",
+      "row": 8,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000004",
+        "W1SC": "0x00000002"
+      },
+      "fields": [
+        {
+          "name": "isp_en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 9,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "soft_rst",
+          "bits": "[1:1]",
+          "access": "W1SC",
+          "reset": "0x0",
+          "row": 10,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "frame_start",
+          "bits": "[2:2]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 11,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x000C",
+      "name": "COMMON_STATUS",
+      "row": 12,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000007",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 13,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "frame_done",
+          "bits": "[1:1]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 14,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "error",
+          "bits": "[2:2]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 15,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0010",
+      "name": "COMMON_IRQ_STATUS",
+      "row": 16,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x00000007",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "frame_done_irq",
+          "bits": "[0:0]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 17,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "error_irq",
+          "bits": "[1:1]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 18,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "stats_ready_irq",
+          "bits": "[2:2]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 19,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0014",
+      "name": "COMMON_IRQ_EN",
+      "row": 20,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000007",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "frame_done_en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 21,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "error_en",
+          "bits": "[1:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 22,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "stats_ready_en",
+          "bits": "[2:2]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 23,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0018",
+      "name": "COMMON_FRAME_WIDTH",
+      "row": 24,
+      "reset": "0x00000780",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "h_active",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x780",
+          "row": 25,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x001C",
+      "name": "COMMON_FRAME_HEIGHT",
+      "row": 26,
+      "reset": "0x00000438",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "v_active",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x438",
+          "row": 27,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0020",
+      "name": "COMMON_BAYER",
+      "row": 28,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000003",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "pattern",
+          "bits": "[1:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 29,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {
+            "0": "RGGB",
+            "1": "GRBG",
+            "2": "GBRG",
+            "3": "BGGR"
+          },
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0028",
+      "name": "COMMON_SCRATCH",
+      "row": 30,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scratch",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 31,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0200",
+      "name": "BLC_CTRL",
+      "row": 32,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 33,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0204",
+      "name": "BLC_GAIN_SEL",
+      "row": 34,
+      "reset": "0x00000100",
+      "masks": {
+        "RW": "0x00000103",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "gain_level",
+          "bits": "[1:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 35,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {
+            "0": "G0",
+            "1": "G1",
+            "2": "G2",
+            "3": "G3"
+          },
+          "bit_names": {}
+        },
+        {
+          "name": "range_scale_en",
+          "bits": "[8:8]",
+          "access": "RW",
+          "reset": "0x1",
+          "row": 36,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0208",
+      "name": "BLC_OFS_G0_DFT",
+      "row": 37,
+      "reset": "0x000000C8",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g0_dft",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xC8",
+          "row": 38,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x020C",
+      "name": "BLC_OFS_G0_R",
+      "row": 39,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g0_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 40,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0210",
+      "name": "BLC_OFS_G0_GR",
+      "row": 41,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g0_gr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 42,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0214",
+      "name": "BLC_OFS_G0_GB",
+      "row": 43,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g0_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 44,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0218",
+      "name": "BLC_OFS_G0_B",
+      "row": 45,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g0_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 46,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x021C",
+      "name": "BLC_OFS_G1_DFT",
+      "row": 47,
+      "reset": "0x000000C8",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g1_dft",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xC8",
+          "row": 48,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0220",
+      "name": "BLC_OFS_G1_R",
+      "row": 49,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g1_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 50,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0224",
+      "name": "BLC_OFS_G1_GR",
+      "row": 51,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g1_gr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 52,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0228",
+      "name": "BLC_OFS_G1_GB",
+      "row": 53,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g1_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 54,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x022C",
+      "name": "BLC_OFS_G1_B",
+      "row": 55,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g1_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 56,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0230",
+      "name": "BLC_OFS_G2_DFT",
+      "row": 57,
+      "reset": "0x000000C8",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g2_dft",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xC8",
+          "row": 58,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0234",
+      "name": "BLC_OFS_G2_R",
+      "row": 59,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g2_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 60,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0238",
+      "name": "BLC_OFS_G2_GR",
+      "row": 61,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g2_gr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 62,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x023C",
+      "name": "BLC_OFS_G2_GB",
+      "row": 63,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g2_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 64,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0240",
+      "name": "BLC_OFS_G2_B",
+      "row": 65,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g2_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 66,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0244",
+      "name": "BLC_OFS_G3_DFT",
+      "row": 67,
+      "reset": "0x000000C8",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g3_dft",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xC8",
+          "row": 68,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0248",
+      "name": "BLC_OFS_G3_R",
+      "row": 69,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g3_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 70,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x024C",
+      "name": "BLC_OFS_G3_GR",
+      "row": 71,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g3_gr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 72,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0250",
+      "name": "BLC_OFS_G3_GB",
+      "row": 73,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g3_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 74,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0254",
+      "name": "BLC_OFS_G3_B",
+      "row": 75,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g3_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 76,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0258",
+      "name": "BLC_SCALE_G0",
+      "row": 77,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g0",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 78,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x025C",
+      "name": "BLC_SCALE_G1",
+      "row": 79,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g1",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 80,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0260",
+      "name": "BLC_SCALE_G2",
+      "row": 81,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g2",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 82,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0264",
+      "name": "BLC_SCALE_G3",
+      "row": 83,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g3",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 84,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0400",
+      "name": "LSC_CTRL",
+      "row": 85,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 86,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0404",
+      "name": "LSC_MESH_NODES",
+      "row": 87,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "mesh_nx",
+          "bits": "[7:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 88,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "mesh_ny",
+          "bits": "[15:8]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 89,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0408",
+      "name": "LSC_STRENGTH",
+      "row": 90,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0001FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "strength",
+          "bits": "[16:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 91,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x040C",
+      "name": "LSC_PROFILE_SEL",
+      "row": 92,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000003",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "profile_sel",
+          "bits": "[1:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 93,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0410",
+      "name": "LSC_LOAD_CTRL",
+      "row": 94,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000003",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000700",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "load_profile",
+          "bits": "[1:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 95,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "load_begin",
+          "bits": "[8:8]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 96,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "load_validate",
+          "bits": "[9:9]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 97,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "load_abort",
+          "bits": "[10:10]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 98,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0414",
+      "name": "LSC_COEF_DATA",
+      "row": 99,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x001FFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coef_data",
+          "bits": "[20:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 100,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0418",
+      "name": "LSC_LOAD_STATUS",
+      "row": 101,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x000FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "load_addr",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 102,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "load_full",
+          "bits": "[16:16]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 103,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "load_busy",
+          "bits": "[17:17]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 104,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "load_profile",
+          "bits": "[19:18]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 105,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x041C",
+      "name": "LSC_PROFILE_STATUS",
+      "row": 106,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x000000F7",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "profile_valid",
+          "bits": "[2:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 107,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {
+            "0": "PROFILE_0",
+            "1": "PROFILE_1",
+            "2": "PROFILE_2"
+          }
+        },
+        {
+          "name": "active_profile",
+          "bits": "[5:4]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 108,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "active_valid",
+          "bits": "[6:6]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 109,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "geometry_valid",
+          "bits": "[7:7]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 110,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0420",
+      "name": "LSC_ERROR",
+      "row": 111,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x0000003F",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "active_load_reject",
+          "bits": "[0:0]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 112,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "profile_sel_reject",
+          "bits": "[1:1]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 113,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "coef_range",
+          "bits": "[2:2]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 114,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "coef_count",
+          "bits": "[3:3]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 115,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "geometry_invalid",
+          "bits": "[4:4]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 116,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "load_protocol",
+          "bits": "[5:5]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 117,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0424",
+      "name": "LSC_STAT_OVF_CNT_R",
+      "row": 118,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x001FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ovf_cnt_r",
+          "bits": "[20:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 119,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0428",
+      "name": "LSC_STAT_OVF_CNT_GR",
+      "row": 120,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x001FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ovf_cnt_gr",
+          "bits": "[20:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 121,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x042C",
+      "name": "LSC_STAT_OVF_CNT_GB",
+      "row": 122,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x001FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ovf_cnt_gb",
+          "bits": "[20:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 123,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0430",
+      "name": "LSC_STAT_OVF_CNT_B",
+      "row": 124,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x001FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ovf_cnt_b",
+          "bits": "[20:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 125,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0600",
+      "name": "BPC_CTRL",
+      "row": 126,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 127,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0604",
+      "name": "BPC_MODE",
+      "row": 128,
+      "reset": "0x00000001",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "dynamic_det_en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x1",
+          "row": 129,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0608",
+      "name": "BPC_TEMPORAL_VAR",
+      "row": 130,
+      "reset": "0x00000100",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "temporal_var",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x100",
+          "row": 131,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x060C",
+      "name": "BPC_THRESH",
+      "row": 132,
+      "reset": "0x004D0192",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "thresh_k",
+          "bits": "[31:16]",
+          "access": "RW",
+          "reset": "0x4D",
+          "row": 133,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "thresh_floor",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x192",
+          "row": 134,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0610",
+      "name": "BPC_PIXEL_AGE",
+      "row": 135,
+      "reset": "0x000004B0",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "pixel_age",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x4B0",
+          "row": 136,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0614",
+      "name": "BPC_NUM_CANDIDATES",
+      "row": 137,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00003FFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "candidates",
+          "bits": "[13:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 138,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0618",
+      "name": "BPC_NUM_DEFECTIVE",
+      "row": 139,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00003FFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "defective",
+          "bits": "[13:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 140,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x061C",
+      "name": "BPC_STATUS",
+      "row": 141,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x00000001",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "cand_reject_ovf",
+          "bits": "[0:0]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 142,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0800",
+      "name": "WB_CTRL",
+      "row": 143,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 144,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0804",
+      "name": "WB_GAIN_R",
+      "row": 145,
+      "reset": "0x00000100",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "gain_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x100",
+          "row": 146,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0808",
+      "name": "WB_GAIN_G",
+      "row": 147,
+      "reset": "0x00000100",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "gain_g",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x100",
+          "row": 148,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x080C",
+      "name": "WB_GAIN_B",
+      "row": 149,
+      "reset": "0x00000100",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "gain_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x100",
+          "row": 150,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0A00",
+      "name": "DG_CTRL",
+      "row": 151,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 152,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0A04",
+      "name": "DG_GAIN",
+      "row": 153,
+      "reset": "0x00000100",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "gain",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x100",
+          "row": 154,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0C00",
+      "name": "D_WDR_CTRL",
+      "row": 155,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 156,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0C04",
+      "name": "D_WDR_STRENGTH",
+      "row": 157,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000000FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "strength",
+          "bits": "[7:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 158,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x0E00",
+      "name": "DEMOSAIC_STATUS",
+      "row": 159,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 160,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1000",
+      "name": "CCM_CTRL",
+      "row": 161,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000005",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 162,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "updated",
+          "bits": "[2:2]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 163,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1004",
+      "name": "CCM_CRR",
+      "row": 164,
+      "reset": "0x00000200",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefrr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x200",
+          "row": 165,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1008",
+      "name": "CCM_CRG",
+      "row": 166,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefrg",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 167,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x100C",
+      "name": "CCM_CRB",
+      "row": 168,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefrb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 169,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1010",
+      "name": "CCM_CGR",
+      "row": 170,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefgr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 171,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1014",
+      "name": "CCM_CGG",
+      "row": 172,
+      "reset": "0x00000200",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefgg",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x200",
+          "row": 173,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1018",
+      "name": "CCM_CGB",
+      "row": 174,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefgb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 175,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x101C",
+      "name": "CCM_CBR",
+      "row": 176,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefbr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 177,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1020",
+      "name": "CCM_CBG",
+      "row": 178,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefbg",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 179,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1024",
+      "name": "CCM_CBB",
+      "row": 180,
+      "reset": "0x00000200",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "coefbb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x200",
+          "row": 181,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1028",
+      "name": "CCM_OFS_R",
+      "row": 182,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "offset_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 183,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x102C",
+      "name": "CCM_OFS_G",
+      "row": 184,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "offset_g",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 185,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1030",
+      "name": "CCM_OFS_B",
+      "row": 186,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "offset_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 187,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1034",
+      "name": "CCM_STATUS",
+      "row": 188,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 189,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1200",
+      "name": "GAMMA_CTRL",
+      "row": 190,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000071",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 191,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "gamma_value",
+          "bits": "[6:4]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 192,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1204",
+      "name": "GAMMA_LUT_ADDR",
+      "row": 193,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000000FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "addr",
+          "bits": "[7:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 194,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1208",
+      "name": "GAMMA_LUT_DATA",
+      "row": 195,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "data",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 196,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x120C",
+      "name": "GAMMA_LUT_RDATA",
+      "row": 197,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000FFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "rdata",
+          "bits": "[11:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 198,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1210",
+      "name": "GAMMA_STATUS",
+      "row": 199,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 200,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1400",
+      "name": "CSC_CTRL",
+      "row": 201,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "std",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 202,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {
+            "0": "BT601",
+            "1": "BT709"
+          },
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1600",
+      "name": "GTM_CTRL",
+      "row": 203,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000003",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 204,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "manual",
+          "bits": "[1:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 205,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1604",
+      "name": "GTM_LUT_ADDR",
+      "row": 206,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000007F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "addr",
+          "bits": "[6:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 207,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1608",
+      "name": "GTM_LUT_DATA",
+      "row": 208,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "data",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 209,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x160C",
+      "name": "GTM_KEY",
+      "row": 210,
+      "reset": "0x0000002E",
+      "masks": {
+        "RW": "0x000000FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "key",
+          "bits": "[7:0]",
+          "access": "RW",
+          "reset": "0x2E",
+          "row": 211,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1610",
+      "name": "GTM_LWHITE",
+      "row": 212,
+      "reset": "0x00000400",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "lwhite",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x400",
+          "row": 213,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1614",
+      "name": "GTM_ROI_LOG2",
+      "row": 214,
+      "reset": "0x0000000B",
+      "masks": {
+        "RW": "0x0000001F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "roi_log2",
+          "bits": "[4:0]",
+          "access": "RW",
+          "reset": "0xB",
+          "row": 215,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1618",
+      "name": "GTM_LUT_RDATA",
+      "row": 216,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x0000FFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "rdata",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 217,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x161C",
+      "name": "GTM_STATUS",
+      "row": 218,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 219,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1800",
+      "name": "NR_2D_CTRL",
+      "row": 220,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 221,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1804",
+      "name": "NR_2D_EST_VAR",
+      "row": 222,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x0000FFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "est_var",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 223,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1808",
+      "name": "NR_2D_STATUS",
+      "row": 224,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 225,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1A00",
+      "name": "TNR_3D_CTRL",
+      "row": 226,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 227,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1A04",
+      "name": "TNR_3D_MTF_SEL",
+      "row": 228,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000007",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "mtf",
+          "bits": "[2:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 229,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1A08",
+      "name": "TNR_3D_HIST_BASE",
+      "row": 230,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "hist_base_addr",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 231,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C00",
+      "name": "EE_CTRL",
+      "row": 232,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000000F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 233,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "reg_update",
+          "bits": "[1:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 234,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "profile_sel",
+          "bits": "[3:2]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 235,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C04",
+      "name": "EE_ALPHA",
+      "row": 236,
+      "reset": "0x00004000",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "alpha",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x4000",
+          "row": 237,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C08",
+      "name": "EE_BETA",
+      "row": 238,
+      "reset": "0x00002000",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "beta",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x2000",
+          "row": 239,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C0C",
+      "name": "EE_CLAMP",
+      "row": 240,
+      "reset": "0x00001810",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "clamp_pos",
+          "bits": "[7:0]",
+          "access": "RW",
+          "reset": "0x10",
+          "row": 241,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "clamp_neg",
+          "bits": "[15:8]",
+          "access": "RW",
+          "reset": "0x18",
+          "row": 242,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C10",
+      "name": "EE_FEATURE_EN",
+      "row": 243,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000007",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "activity_en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 244,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "contrast_en",
+          "bits": "[1:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 245,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "radial_en",
+          "bits": "[2:2]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 246,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C14",
+      "name": "EE_RADIAL_CENTER",
+      "row": 247,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x1FFF1FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "center_x2",
+          "bits": "[12:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 248,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "center_y2",
+          "bits": "[28:16]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 249,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C18",
+      "name": "EE_RADIAL_R2_TH0",
+      "row": 250,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x07FFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "r2_th0",
+          "bits": "[26:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 251,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C1C",
+      "name": "EE_RADIAL_R2_TH1",
+      "row": 252,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x07FFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "r2_th1",
+          "bits": "[26:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 253,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C20",
+      "name": "EE_RADIAL_R2_TH2",
+      "row": 254,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x07FFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "r2_th2",
+          "bits": "[26:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 255,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C24",
+      "name": "EE_RADIAL_GAIN_01",
+      "row": 256,
+      "reset": "0x80008000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "gain0",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x8000",
+          "row": 257,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "gain1",
+          "bits": "[31:16]",
+          "access": "RW",
+          "reset": "0x8000",
+          "row": 258,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C28",
+      "name": "EE_RADIAL_GAIN_23",
+      "row": 259,
+      "reset": "0x80008000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "gain2",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x8000",
+          "row": 260,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "gain3",
+          "bits": "[31:16]",
+          "access": "RW",
+          "reset": "0x8000",
+          "row": 261,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C2C",
+      "name": "EE_LUT_CTRL",
+      "row": 262,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000006",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "lut_sel",
+          "bits": "[2:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 263,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {
+            "0": "LUMA",
+            "1": "ACTIVITY",
+            "2": "CONTRAST_POS",
+            "3": "CONTRAST_NEG"
+          },
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C30",
+      "name": "EE_LUT_ADDR",
+      "row": 264,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000003F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "lut_addr",
+          "bits": "[5:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 265,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C34",
+      "name": "EE_LUT_WDATA",
+      "row": 266,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "lut_wdata",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 267,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C38",
+      "name": "EE_STATUS",
+      "row": 268,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000002",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 269,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "error",
+          "bits": "[1:1]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 270,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1C3C",
+      "name": "EE_LUT_RDATA",
+      "row": 271,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x0000FFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "rdata",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 272,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1E00",
+      "name": "CNF_CTRL",
+      "row": 273,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000005",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 274,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "updated",
+          "bits": "[2:2]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 275,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1E04",
+      "name": "CNF_CHROMA_TH",
+      "row": 276,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000001FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "chroma_th",
+          "bits": "[8:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 277,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1E08",
+      "name": "CNF_LUMA_TH",
+      "row": 278,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000000FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "luma_th",
+          "bits": "[7:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 279,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1E0C",
+      "name": "CNF_STRENGTH",
+      "row": 280,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000003",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "mode_strength",
+          "bits": "[1:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 281,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x1E10",
+      "name": "CNF_STATUS",
+      "row": 282,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 283,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2000",
+      "name": "RESIZER_CTRL",
+      "row": 284,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000007D",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 285,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "updated",
+          "bits": "[2:2]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 286,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "scale",
+          "bits": "[6:3]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 287,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {
+            "0": "FULLRES",
+            "1": "RES_3840X2160",
+            "2": "RES_2560X1440",
+            "3": "RES_2880X1620",
+            "4": "RES_2304X1296",
+            "5": "RES_1920X1080",
+            "6": "RES_1280X720",
+            "7": "RES_960X540",
+            "8": "RES_640X360",
+            "9": "RES_2592X1944",
+            "10": "RES_2048X1536",
+            "11": "RES_1600X1200",
+            "12": "RES_1280X960",
+            "13": "RES_800X600",
+            "14": "RES_640X480"
+          },
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2014",
+      "name": "RESIZER_OUT_W",
+      "row": 288,
+      "reset": "0x00000780",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00001FFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "out_width",
+          "bits": "[12:0]",
+          "access": "RO",
+          "reset": "0x780",
+          "row": 289,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2018",
+      "name": "RESIZER_OUT_H",
+      "row": 290,
+      "reset": "0x00000438",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00001FFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "out_height",
+          "bits": "[12:0]",
+          "access": "RO",
+          "reset": "0x438",
+          "row": 291,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x201C",
+      "name": "RESIZER_STATUS",
+      "row": 292,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 293,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2200",
+      "name": "AEC_CTRL",
+      "row": 294,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000002",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 295,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "commit",
+          "bits": "[1:1]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 296,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2204",
+      "name": "AEC_CONTEXT_ID",
+      "row": 297,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "context_id",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 298,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2208",
+      "name": "AEC_ZONE_CFG",
+      "row": 299,
+      "reset": "0x00001820",
+      "masks": {
+        "RW": "0x00001F3F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "num_zone_x",
+          "bits": "[5:0]",
+          "access": "RW",
+          "reset": "0x20",
+          "row": 300,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "num_zone_y",
+          "bits": "[12:8]",
+          "access": "RW",
+          "reset": "0x18",
+          "row": 301,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x220C",
+      "name": "AEC_ZONE_SIZE",
+      "row": 302,
+      "reset": "0x005A0078",
+      "masks": {
+        "RW": "0x0FFF0FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_width",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x78",
+          "row": 303,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "zone_height",
+          "bits": "[27:16]",
+          "access": "RW",
+          "reset": "0x5A",
+          "row": 304,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2210",
+      "name": "AEC_SAMPLE_CLIP",
+      "row": 305,
+      "reset": "0x0FFF0000",
+      "masks": {
+        "RW": "0x0FFF0FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "sample_min_clip",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 306,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "sample_max_clip",
+          "bits": "[27:16]",
+          "access": "RW",
+          "reset": "0xFFF",
+          "row": 307,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2214",
+      "name": "AEC_THRESH",
+      "row": 308,
+      "reset": "0x0F000100",
+      "masks": {
+        "RW": "0x0FFF0FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "th_ue",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x100",
+          "row": 309,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "th_oe",
+          "bits": "[27:16]",
+          "access": "RW",
+          "reset": "0xF00",
+          "row": 310,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2218",
+      "name": "AEC_STATUS",
+      "row": 311,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000006",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 312,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "stat_done",
+          "bits": "[1:1]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 313,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "error",
+          "bits": "[2:2]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 314,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x221C",
+      "name": "AEC_FRAME_ID",
+      "row": 315,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "frame_id",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 316,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2220",
+      "name": "AEC_RESULT_CONTEXT_ID",
+      "row": 317,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "context_id",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 318,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2224",
+      "name": "AEC_CHANNEL_SEL",
+      "row": 319,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000003",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "channel_sel",
+          "bits": "[1:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 320,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {
+            "0": "R",
+            "1": "GR",
+            "2": "GB",
+            "3": "B"
+          },
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2228",
+      "name": "AEC_GLOBAL_SUM_LO",
+      "row": 321,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_lo",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 322,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x222C",
+      "name": "AEC_GLOBAL_SUM_HI",
+      "row": 323,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000001",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_hi",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 324,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2230",
+      "name": "AEC_GLOBAL_COUNT",
+      "row": 325,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x001FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_count",
+          "bits": "[20:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 326,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2234",
+      "name": "AEC_ZONE_ADDR",
+      "row": 327,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000003FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_addr",
+          "bits": "[9:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 328,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2238",
+      "name": "AEC_ZONE_SUM",
+      "row": 329,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x0FFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_sum",
+          "bits": "[27:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 330,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x223C",
+      "name": "AEC_ZONE_COUNT",
+      "row": 331,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x0000FFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_count",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 332,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2240",
+      "name": "AEC_ZONE_GREEN_OE_UE",
+      "row": 333,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "green_ue_count",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 334,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "green_oe_count",
+          "bits": "[31:16]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 335,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2244",
+      "name": "AEC_ZONE_GREEN_MIN_MAX",
+      "row": 336,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00FFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "green_min",
+          "bits": "[11:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 337,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "green_max",
+          "bits": "[23:12]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 338,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2248",
+      "name": "AEC_HIST_ADDR",
+      "row": 339,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000003F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "hist_addr",
+          "bits": "[5:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 340,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x224C",
+      "name": "AEC_HIST_DATA",
+      "row": 341,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x003FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "hist_count",
+          "bits": "[21:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 342,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2400",
+      "name": "AWB_CTRL",
+      "row": 343,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00003FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 344,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "num_zone_x",
+          "bits": "[7:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 345,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "num_zone_y",
+          "bits": "[13:8]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 346,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2404",
+      "name": "AWB_X_BOUND_ADDR",
+      "row": 347,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000003F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "x_bound_addr",
+          "bits": "[5:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 348,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2408",
+      "name": "AWB_Y_BOUND_ADDR",
+      "row": 349,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000001F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "y_bound_addr",
+          "bits": "[4:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 350,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x240C",
+      "name": "AWB_X_BOUND_DATA",
+      "row": 351,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00001FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "x_bound_data",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 352,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "x_bound_we",
+          "bits": "[12:12]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 353,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2410",
+      "name": "AWB_Y_BOUND_DATA",
+      "row": 354,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00001FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "y_bound_data",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 355,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "y_bound_we",
+          "bits": "[12:12]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 356,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2414",
+      "name": "AWB_GLOBAL_SUM_R_H",
+      "row": 357,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000007",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_r_h",
+          "bits": "[2:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 358,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2418",
+      "name": "AWB_GLOBAL_SUM_R_L",
+      "row": 359,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_r_l",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 360,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x241C",
+      "name": "AWB_GLOBAL_SUM_G_H",
+      "row": 361,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000007",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_g_h",
+          "bits": "[2:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 362,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2420",
+      "name": "AWB_GLOBAL_SUM_G_L",
+      "row": 363,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_g_l",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 364,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2424",
+      "name": "AWB_GLOBAL_SUM_B_H",
+      "row": 365,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000007",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_b_h",
+          "bits": "[2:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 366,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2428",
+      "name": "AWB_GLOBAL_SUM_B_L",
+      "row": 367,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_sum_b_l",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 368,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x242C",
+      "name": "AWB_GLOBAL_COUNT",
+      "row": 369,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x007FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "global_count",
+          "bits": "[22:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 370,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2430",
+      "name": "AWB_ZONE_ADDR",
+      "row": 371,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000007FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_addr",
+          "bits": "[10:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 372,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2434",
+      "name": "AWB_ZONE_SUM_R_H",
+      "row": 373,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000007",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_sum_r_h",
+          "bits": "[2:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 374,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2438",
+      "name": "AWB_ZONE_SUM_R_L",
+      "row": 375,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_sum_r_l",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 376,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x243C",
+      "name": "AWB_ZONE_SUM_G_H",
+      "row": 377,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000007",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_sum_g_h",
+          "bits": "[2:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 378,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2440",
+      "name": "AWB_ZONE_SUM_G_L",
+      "row": 379,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_sum_g_l",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 380,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2444",
+      "name": "AWB_ZONE_SUM_B_H",
+      "row": 381,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000007",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_sum_b_h",
+          "bits": "[2:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 382,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2448",
+      "name": "AWB_ZONE_SUM_B_L",
+      "row": 383,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_sum_b_l",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 384,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x244C",
+      "name": "AWB_ZONE_COUNT",
+      "row": 385,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x007FFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_count",
+          "bits": "[22:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 386,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2450",
+      "name": "AWB_STATUS",
+      "row": 387,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x00000001",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "stat_done",
+          "bits": "[0:0]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 388,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2454",
+      "name": "AWB_UNDEREXPOSED_LIMIT",
+      "row": 389,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "underexposed_limit",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 390,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2458",
+      "name": "AWB_SATURATION_LIMIT",
+      "row": 391,
+      "reset": "0x00000FFF",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "saturation_limit",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xFFF",
+          "row": 392,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x245C",
+      "name": "AWB_CONTEXT_ID",
+      "row": 393,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "context_id",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 394,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2460",
+      "name": "AWB_RESULT_CONTEXT_ID",
+      "row": 395,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "context_id",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 396,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2464",
+      "name": "AWB_FRAME_ID",
+      "row": 397,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "frame_id",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 398,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2600",
+      "name": "AF_CTRL",
+      "row": 399,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000001E7",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000018",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 400,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "bypass",
+          "bits": "[1:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 401,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "reg_update",
+          "bits": "[2:2]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 402,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "search_start",
+          "bits": "[3:3]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 403,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "search_abort",
+          "bits": "[4:4]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 404,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "lut_en",
+          "bits": "[5:5]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 405,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "metric_sel",
+          "bits": "[7:6]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 406,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "vcm_ack",
+          "bits": "[8:8]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 407,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2604",
+      "name": "AF_ZONE_EN",
+      "row": 408,
+      "reset": "0x0000FFFF",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_en",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0xFFFF",
+          "row": 409,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {
+            "0": "ZONE_0",
+            "1": "ZONE_1",
+            "2": "ZONE_2",
+            "3": "ZONE_3",
+            "4": "ZONE_4",
+            "5": "ZONE_5",
+            "6": "ZONE_6",
+            "7": "ZONE_7",
+            "8": "ZONE_8",
+            "9": "ZONE_9",
+            "10": "ZONE_10",
+            "11": "ZONE_11",
+            "12": "ZONE_12",
+            "13": "ZONE_13",
+            "14": "ZONE_14",
+            "15": "ZONE_15"
+          }
+        }
+      ]
+    },
+    {
+      "offset": "0x2608",
+      "name": "AF_METRIC_CFG",
+      "row": 410,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00FFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "min_score",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 411,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "settle_frames",
+          "bits": "[23:16]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 412,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x260C",
+      "name": "AF_STAT_ADDR",
+      "row": 413,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000000F",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "zone_addr",
+          "bits": "[3:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 414,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2610",
+      "name": "AF_STAT_DATA",
+      "row": 415,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "focus_score",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 416,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2614",
+      "name": "AF_LUT_ADDR",
+      "row": 417,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x000000FF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "lut_addr",
+          "bits": "[7:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 418,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2618",
+      "name": "AF_LUT_DATA",
+      "row": 419,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "vcm_position",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 420,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x261C",
+      "name": "AF_VCM_CUR_POS",
+      "row": 421,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "vcm_cur_pos",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 422,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2620",
+      "name": "AF_VCM_BEST_POS",
+      "row": 423,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x0000FFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "vcm_best_pos",
+          "bits": "[15:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 424,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2624",
+      "name": "AF_PEAK_SCORE",
+      "row": 425,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "peak_score",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 426,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2628",
+      "name": "AF_FOCUS_RANGE",
+      "row": 427,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00FFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "accept_delta",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 428,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "hof_range",
+          "bits": "[23:16]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 429,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x262C",
+      "name": "AF_STATUS",
+      "row": 430,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000021",
+        "W1C": "0x0000000E",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 431,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "frame_done",
+          "bits": "[1:1]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 432,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "search_done",
+          "bits": "[2:2]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 433,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "vcm_pos_valid",
+          "bits": "[3:3]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 434,
+          "implemented": false,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "score_valid",
+          "bits": "[5:5]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 435,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2630",
+      "name": "AF_CONTEXT_ID",
+      "row": 436,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "context_id",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 437,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2634",
+      "name": "AF_RESULT_CONTEXT_ID",
+      "row": 438,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "context_id",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 439,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2638",
+      "name": "AF_FRAME_ID",
+      "row": 440,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "frame_id",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 441,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2800",
+      "name": "OFMT_CTRL",
+      "row": 442,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000001",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "stride_en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 443,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2804",
+      "name": "OFMT_Y_STRIDE",
+      "row": 444,
+      "reset": "0x00000F00",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "y_stride",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0xF00",
+          "row": 445,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x2808",
+      "name": "OFMT_UV_STRIDE",
+      "row": 446,
+      "reset": "0x00000F00",
+      "masks": {
+        "RW": "0x0000FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "uv_stride",
+          "bits": "[15:0]",
+          "access": "RW",
+          "reset": "0xF00",
+          "row": 447,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3000",
+      "name": "DMA_CTRL",
+      "row": 448,
+      "reset": "0x00003F00",
+      "masks": {
+        "RW": "0x0000FF03",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000004"
+      },
+      "fields": [
+        {
+          "name": "idma_en",
+          "bits": "[0:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 449,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "odma_en",
+          "bits": "[1:1]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 450,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "soft_reset",
+          "bits": "[2:2]",
+          "access": "W1SC",
+          "reset": "0x0",
+          "row": 451,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "max_burst_m1",
+          "bits": "[15:8]",
+          "access": "RW",
+          "reset": "0x3F",
+          "row": 452,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3004",
+      "name": "DMA_STAT",
+      "row": 453,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000003",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_busy",
+          "bits": "[0:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 454,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        },
+        {
+          "name": "odma_busy",
+          "bits": "[1:1]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 455,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3008",
+      "name": "DMA_ERR",
+      "row": 456,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x0000001F",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "err",
+          "bits": "[5:0]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 457,
+          "implemented": true,
+          "tied_zero_bits": [
+            5
+          ],
+          "enums": {},
+          "bit_names": {
+            "0": "ALIGN_OR_GEOMETRY",
+            "1": "IDMA_UNDERRUN",
+            "2": "ODMA_OVERFLOW",
+            "3": "IDMA_AXI",
+            "4": "ODMA_AXI"
+          }
+        }
+      ]
+    },
+    {
+      "offset": "0x300C",
+      "name": "DMA_IRQ_EN",
+      "row": 458,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x0000007E",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "irq_en",
+          "bits": "[6:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 459,
+          "implemented": true,
+          "tied_zero_bits": [
+            0
+          ],
+          "enums": {},
+          "bit_names": {
+            "1": "IDMA_START",
+            "2": "IDMA_DONE",
+            "3": "IDMA_UNDERRUN",
+            "4": "ODMA_DONE",
+            "5": "ODMA_OVERFLOW",
+            "6": "AXI_ERROR"
+          }
+        }
+      ]
+    },
+    {
+      "offset": "0x3010",
+      "name": "DMA_IRQ_STAT",
+      "row": 460,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x0000007E",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "irq",
+          "bits": "[6:0]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 461,
+          "implemented": true,
+          "tied_zero_bits": [
+            0
+          ],
+          "enums": {},
+          "bit_names": {
+            "1": "IDMA_START",
+            "2": "IDMA_DONE",
+            "3": "IDMA_UNDERRUN",
+            "4": "ODMA_DONE",
+            "5": "ODMA_OVERFLOW",
+            "6": "AXI_ERROR"
+          }
+        }
+      ]
+    },
+    {
+      "offset": "0x3020",
+      "name": "IDMA_STRIDE",
+      "row": 462,
+      "reset": "0x00001E00",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_stride",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x1E00",
+          "row": 463,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3024",
+      "name": "IDMA_BUF_VALID",
+      "row": 464,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x000000FF",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_valid",
+          "bits": "[7:0]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 465,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {
+            "0": "BUFFER_0",
+            "1": "BUFFER_1",
+            "2": "BUFFER_2",
+            "3": "BUFFER_3"
+          }
+        }
+      ]
+    },
+    {
+      "offset": "0x3028",
+      "name": "IDMA_FRAME_COUNT",
+      "row": 466,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_frame_count",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 467,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3040",
+      "name": "IDMA_BUF_ADDR_L0",
+      "row": 468,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr0_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 469,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3044",
+      "name": "IDMA_BUF_ADDR_H0",
+      "row": 470,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr0_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 471,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3048",
+      "name": "IDMA_BUF_ADDR_L1",
+      "row": 472,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr1_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 473,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x304C",
+      "name": "IDMA_BUF_ADDR_H1",
+      "row": 474,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr1_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 475,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3050",
+      "name": "IDMA_BUF_ADDR_L2",
+      "row": 476,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr2_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 477,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3054",
+      "name": "IDMA_BUF_ADDR_H2",
+      "row": 478,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr2_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 479,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3058",
+      "name": "IDMA_BUF_ADDR_L3",
+      "row": 480,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr3_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 481,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x305C",
+      "name": "IDMA_BUF_ADDR_H3",
+      "row": 482,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "idma_buf_addr3_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 483,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3080",
+      "name": "ODMA_Y_STRIDE",
+      "row": 484,
+      "reset": "0x00000F00",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "y_stride",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0xF00",
+          "row": 485,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3084",
+      "name": "ODMA_UV_STRIDE",
+      "row": 486,
+      "reset": "0x00000F00",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "uv_stride",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0xF00",
+          "row": 487,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x3088",
+      "name": "ODMA_BUF_FREE",
+      "row": 488,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x000000FF",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_buf_free",
+          "bits": "[7:0]",
+          "access": "W1S",
+          "reset": "0x0",
+          "row": 489,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {
+            "0": "BUFFER_0",
+            "1": "BUFFER_1",
+            "2": "BUFFER_2",
+            "3": "BUFFER_3"
+          }
+        }
+      ]
+    },
+    {
+      "offset": "0x308C",
+      "name": "ODMA_BUF_DONE",
+      "row": 490,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0x00000000",
+        "W1C": "0x000000FF",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_buf_done",
+          "bits": "[7:0]",
+          "access": "W1C",
+          "reset": "0x0",
+          "row": 491,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {
+            "0": "BUFFER_0",
+            "1": "BUFFER_1",
+            "2": "BUFFER_2",
+            "3": "BUFFER_3"
+          }
+        }
+      ]
+    },
+    {
+      "offset": "0x3090",
+      "name": "ODMA_FRAME_COUNT",
+      "row": 492,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000000",
+        "RO": "0xFFFFFFFF",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_frame_count",
+          "bits": "[31:0]",
+          "access": "RO",
+          "reset": "0x0",
+          "row": 493,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30A0",
+      "name": "ODMA_Y_ADDR_L0",
+      "row": 494,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr0_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 495,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30A4",
+      "name": "ODMA_Y_ADDR_H0",
+      "row": 496,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr0_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 497,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30A8",
+      "name": "ODMA_UV_ADDR_L0",
+      "row": 498,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr0_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 499,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30AC",
+      "name": "ODMA_UV_ADDR_H0",
+      "row": 500,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr0_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 501,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30B0",
+      "name": "ODMA_Y_ADDR_L1",
+      "row": 502,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr1_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 503,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30B4",
+      "name": "ODMA_Y_ADDR_H1",
+      "row": 504,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr1_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 505,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30B8",
+      "name": "ODMA_UV_ADDR_L1",
+      "row": 506,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr1_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 507,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30BC",
+      "name": "ODMA_UV_ADDR_H1",
+      "row": 508,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr1_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 509,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30C0",
+      "name": "ODMA_Y_ADDR_L2",
+      "row": 510,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr2_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 511,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30C4",
+      "name": "ODMA_Y_ADDR_H2",
+      "row": 512,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr2_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 513,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30C8",
+      "name": "ODMA_UV_ADDR_L2",
+      "row": 514,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr2_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 515,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30CC",
+      "name": "ODMA_UV_ADDR_H2",
+      "row": 516,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr2_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 517,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30D0",
+      "name": "ODMA_Y_ADDR_L3",
+      "row": 518,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr3_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 519,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30D4",
+      "name": "ODMA_Y_ADDR_H3",
+      "row": 520,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_y_addr3_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 521,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30D8",
+      "name": "ODMA_UV_ADDR_L3",
+      "row": 522,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr3_lo",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 523,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    },
+    {
+      "offset": "0x30DC",
+      "name": "ODMA_UV_ADDR_H3",
+      "row": 524,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0xFFFFFFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "odma_uv_addr3_hi",
+          "bits": "[31:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 525,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {}
+        }
+      ]
+    }
+  ]
+}

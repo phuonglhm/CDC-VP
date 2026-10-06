@@ -1,0 +1,12 @@
+# Consumer of the installed fx1_isp package (CTest fx1_isp.package.consumer).
+cmake_minimum_required(VERSION 3.21)
+project(fx1_isp_consumer LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(fx1_isp 0.1 REQUIRED)
+add_executable(consumer main.cpp)
+target_link_libraries(consumer PRIVATE fx1_isp::fx1_isp_tlm fx1_isp::fx1_isp_drv)
+get_target_property(_sc_lib SystemC::systemc IMPORTED_LOCATION)
+if(_sc_lib)
+    get_filename_component(_sc_dir "${_sc_lib}" DIRECTORY)
+    set_target_properties(consumer PROPERTIES BUILD_RPATH "${_sc_dir}")
+endif()

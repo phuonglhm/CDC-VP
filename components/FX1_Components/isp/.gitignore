@@ -1,0 +1,21 @@
+# FX1 ISP component.
+#
+# The repository root ignores *.bin (firmware images). The ISP test vectors
+# (tests/data/vectors/*/{input,expected_y,expected_uv}.bin, and the G-CONT
+# sequence tests/data/sequences/*/{in,exp}_*.bin) are .bin data files that
+# CTest needs, so they are committed.
+!tests/data/**/*.bin
+
+# Local outputs, never committed (some are also ignored at the root):
+# build trees, the clangd index, Python caches.
+build/
+build-*/
+.cache/
+__pycache__/
+*.pyc
+
+# Sensor dumps and files produced by the RAW converter / ISP runner.
+# Keep the test vectors under tests/data/ (the .bin exception above).
+*.raw
+*.isp16
+*.nv12

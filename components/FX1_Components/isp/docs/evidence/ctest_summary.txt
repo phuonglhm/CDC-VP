@@ -1,0 +1,58 @@
+# Acceptance CTest record (2026-10-02)
+# Configured with -DFX1_ISP_CSR_XLSX=<CSR v1.0 XLSX> -DFX1_ISP_RAW_INVENTORY=<ISP_RAW_INVENTORY.json>; RelWithDebInfo, GCC 11.5.0, SystemC 2.3.4
+
+## Run 2 (current tree): after the review fixes to the reference driver
+# Build 0 warnings. The 21 tests other than fx1_isp.regression.raw, one ctest invocation, one build job.
+# fx1_isp.regression.raw was not re-run: since run 1 only driver/, tests/ and docs changed;
+# src/ and tools/run_raw.cpp (what the RAW regression exercises) are unchanged.
+1/21 Test  #1: fx1_isp.unit.control .................................   Passed    0.01 sec
+2/21 Test  #2: fx1_isp.unit.dma_rules ...............................   Passed    0.00 sec
+3/21 Test  #3: fx1_isp.unit.row_stage ...............................   Passed    0.00 sec
+4/21 Test  #4: fx1_isp.unit.stats ...................................   Passed    0.01 sec
+5/21 Test  #5: fx1_isp.unit.pipeline_vectors ........................   Passed    0.19 sec
+6/21 Test  #6: fx1_isp.unit.block_vectors ...........................   Passed    0.01 sec
+7/21 Test  #7: fx1_isp.integration.dma_tlm ..........................   Passed    0.07 sec
+8/21 Test  #8: fx1_isp.integration.e2e_tlm ..........................   Passed    0.20 sec
+9/21 Test  #9: fx1_isp.integration.csr_tlm ..........................   Passed    0.00 sec
+10/21 Test #10: fx1_isp.integration.driver_tlm .......................   Passed    0.27 sec
+11/21 Test #11: fx1_isp.integration.cont_tlm .........................   Passed    0.43 sec
+12/21 Test #12: fx1_isp.package.consumer .............................   Passed   14.04 sec
+13/21 Test #13: fx1_isp.integration.e2e_4k.full_gbrg_3840x2160_fhd ...   Passed    6.42 sec
+14/21 Test #14: fx1_isp.integration.e2e_4k.full_rggb_3840x2160 .......   Passed    6.47 sec
+15/21 Test #15: fx1_isp.csr.generated_up_to_date .....................   Passed    0.15 sec
+16/21 Test #16: fx1_isp.csr.header_crosscheck ........................   Passed    0.14 sec
+17/21 Test #17: fx1_isp.reference.traceability_up_to_date ............   Passed    2.15 sec
+18/21 Test #18: fx1_isp.reference.vectors_up_to_date .................   Passed    0.69 sec
+19/21 Test #19: fx1_isp.reference.block_vectors_up_to_date ...........   Passed    0.08 sec
+20/21 Test #20: fx1_isp.reference.sequence_up_to_date ................   Passed    0.81 sec
+21/21 Test #21: fx1_isp.reference.4k_vectors_up_to_date ..............   Passed   37.56 sec
+100% tests passed, 0 tests failed out of 21
+Total Test time (real) =  69.71 sec
+
+## Run 1: after the audit follow-up items 1-3, before the review fixes
+# Build: RelWithDebInfo, GCC 11.5.0, SystemC 2.3.4, 0 warnings; one ctest invocation, all 22 tests
+# fx1_isp.regression.raw: raw_regression_baseline.json: 116 run(s) compared, all identical
+1/22 Test  #1: fx1_isp.unit.control .................................   Passed    0.01 sec
+2/22 Test  #2: fx1_isp.unit.dma_rules ...............................   Passed    0.00 sec
+3/22 Test  #3: fx1_isp.unit.row_stage ...............................   Passed    0.00 sec
+4/22 Test  #4: fx1_isp.unit.stats ...................................   Passed    0.01 sec
+5/22 Test  #5: fx1_isp.unit.pipeline_vectors ........................   Passed    0.19 sec
+6/22 Test  #6: fx1_isp.unit.block_vectors ...........................   Passed    0.00 sec
+7/22 Test  #7: fx1_isp.integration.dma_tlm ..........................   Passed    0.07 sec
+8/22 Test  #8: fx1_isp.integration.e2e_tlm ..........................   Passed    0.20 sec
+9/22 Test  #9: fx1_isp.integration.csr_tlm ..........................   Passed    0.00 sec
+10/22 Test #10: fx1_isp.integration.driver_tlm .......................   Passed    0.27 sec
+11/22 Test #11: fx1_isp.integration.cont_tlm .........................   Passed    0.43 sec
+12/22 Test #12: fx1_isp.package.consumer .............................   Passed   14.03 sec
+13/22 Test #13: fx1_isp.integration.e2e_4k.full_gbrg_3840x2160_fhd ...   Passed    6.44 sec
+14/22 Test #14: fx1_isp.integration.e2e_4k.full_rggb_3840x2160 .......   Passed    6.50 sec
+15/22 Test #15: fx1_isp.csr.generated_up_to_date .....................   Passed    0.15 sec
+16/22 Test #16: fx1_isp.csr.header_crosscheck ........................   Passed    0.14 sec
+17/22 Test #17: fx1_isp.reference.traceability_up_to_date ............   Passed    2.17 sec
+18/22 Test #18: fx1_isp.reference.vectors_up_to_date .................   Passed    0.72 sec
+19/22 Test #19: fx1_isp.reference.block_vectors_up_to_date ...........   Passed    0.09 sec
+20/22 Test #20: fx1_isp.reference.sequence_up_to_date ................   Passed    0.82 sec
+21/22 Test #21: fx1_isp.reference.4k_vectors_up_to_date ..............   Passed   40.08 sec
+22/22 Test #22: fx1_isp.regression.raw ...............................   Passed  446.61 sec
+100% tests passed, 0 tests failed out of 22
+Total Test time (real) = 518.94 sec

@@ -1,0 +1,13 @@
+# Build and test environment of the acceptance evidence (2026-10-01)
+
+host: Intel(R) Core(TM) Ultra 9 285K, 24 cores, 61 GB RAM
+os: AlmaLinux release 9.8 (Olive Jaguar) (kernel 5.14.0-687.29.1.el9_8.x86_64)
+gcc: 11.5.0
+g++: 11.5.0
+cmake: 3.31.8
+ninja: 1.10.2
+systemc: 2.3.4 (/opt/systemc-2.3.4, C++17)
+python: 3.9.25, numpy 1.23.5, openpyxl 3.1.5, PIL 11.3.0
+build type: RelWithDebInfo (-O2 -g)
+git: e611ed228e12fa1c6e68b22374f84da499652db1 + uncommitted working tree (the user commits)
+CSR XLSX SHA-256: 0980b61ded06a386f0cc64e0445f93fd85b0b1f967d37f0cd41869c0753cd6bf (not in the repository)

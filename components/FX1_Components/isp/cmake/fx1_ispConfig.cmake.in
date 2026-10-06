@@ -1,0 +1,30 @@
+# fx1_isp package configuration: find_package(fx1_isp) provides
+#   fx1_isp::fx1_isp_tlm   SystemC/TLM model of the FTEL ISP (needs SystemC::systemc)
+#   fx1_isp::fx1_isp_drv   C99 reference driver (no SystemC)
+#   fx1_isp::fx1_isp_core  internal model library (linked by fx1_isp_tlm)
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# SystemC: reuse the consumer's target, else SystemCLanguageConfig.cmake,
+# else an Accellera install under SYSTEMC_HOME (as the IP's own build does).
+if(NOT TARGET SystemC::systemc)
+    set(SYSTEMC_HOME "@FX1_ISP_SYSTEMC_HOME_DEFAULT@" CACHE PATH "SystemC installation prefix")
+    find_package(SystemCLanguage CONFIG QUIET HINTS "${SYSTEMC_HOME}")
+    if(NOT TARGET SystemC::systemc)
+        find_path(FX1_ISP_SYSTEMC_INCLUDE_DIR NAMES systemc HINTS "${SYSTEMC_HOME}/include")
+        find_library(FX1_ISP_SYSTEMC_LIBRARY NAMES systemc HINTS "${SYSTEMC_HOME}/lib64" "${SYSTEMC_HOME}/lib")
+        if(NOT FX1_ISP_SYSTEMC_INCLUDE_DIR OR NOT FX1_ISP_SYSTEMC_LIBRARY)
+            set(fx1_isp_FOUND FALSE)
+            set(fx1_isp_NOT_FOUND_MESSAGE "fx1_isp needs SystemC: set SYSTEMC_HOME or provide SystemC::systemc")
+            return()
+        endif()
+        add_library(SystemC::systemc UNKNOWN IMPORTED)
+        set_target_properties(SystemC::systemc PROPERTIES
+            IMPORTED_LOCATION "${FX1_ISP_SYSTEMC_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${FX1_ISP_SYSTEMC_INCLUDE_DIR}")
+    endif()
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/fx1_ispTargets.cmake")
+check_required_components(fx1_isp)
