@@ -1,40 +1,109 @@
 #include "bus/bus_system.h"
+#include <stdexcept>
 
 namespace bus {
 namespace {
-const BusConfig& checked_config(const BusConfig& cfg) {
+BusConfig checked_config(const BusConfig& cfg) {
     cfg.validate();
     return cfg;
 }
+
+using Targets = std::vector<const TargetConfig*>;
+Targets select(const BusConfig& cfg, TargetPath path) {
+    Targets result;
+    for (const auto& target : cfg.targets)
+        if (target.enabled && target.path == path) result.push_back(&target);
+    return result;
 }
+
+std::vector<Region> leaves(const Targets& targets) {
+    std::vector<Region> result;
+    for (unsigned i = 0; i < targets.size(); ++i) {
+        const auto& t = *targets[i];
+        result.push_back({t.name, t.base, t.base + t.size, i, true});
+    }
+    return result;
+}
+
+void append_link(std::vector<Region>& parent, const std::vector<Region>& child,
+                 unsigned port) {
+    // Exact leaf windows preserve holes; no large window hides an unrelated IP.
+    for (const auto& r : child)
+        parent.push_back({r.name, r.begin, r.end, port, false});
+}
+} // namespace
+
 BusSystem::BusSystem(sc_core::sc_module_name name, bool trace)
-    : BusSystem(name, BusConfig{}, trace) {}
+    : BusSystem(name, BusConfig::fx1(), trace) {}
 
 BusSystem::BusSystem(sc_core::sc_module_name name, const BusConfig& cfg, bool trace)
-    : sc_module(name),
-      sysbus1("SYSBUS_1", checked_config(cfg).sysbus1, 5, trace),
-      sysbus0("SYSBUS_0", cfg.sysbus0, 3, trace),
-      peribus1("PERIBUS_1", cfg.peribus1, cfg.pp1_ports, trace),
-      peribus0("PERIBUS_0", cfg.peribus0, cfg.pp0_ports, trace),
-      a2p_pp1("A2P_PP1"), a2p_pp0("A2P_PP0"), target(sysbus1.target),
-      rom("rom"), isram("isram"), dsram("dsram"), aes("aes"), qspi("qspi"),
-      pp1("pp1", cfg.pp1_ports), pp0("pp0", cfg.pp0_ports) {
-    // Binding order is the route port index in config.h.
-    sysbus1.out.bind(rom.input);
-    sysbus1.out.bind(isram.input);
-    sysbus1.out.bind(dsram.input);
-    sysbus1.out.bind(a2p_pp1.target);
-    sysbus1.out.bind(sysbus0.target);
-    sysbus0.out.bind(aes.input);
-    sysbus0.out.bind(qspi.input);
-    sysbus0.out.bind(a2p_pp0.target);
-    a2p_pp1.out.bind(peribus1.target);
-    a2p_pp0.out.bind(peribus0.target);
-    for (unsigned i = 0; i < cfg.pp1_ports; ++i) {
-        peribus1.out.bind(pp1[i].input);
+    : sc_module(name), config_(checked_config(cfg)),
+      initiator_ports_("initiators", config_.initiators.size()), target_ports_("targets") {
+    const auto direct1 = select(config_, TargetPath::SysBus1Axi);
+    const auto direct0 = select(config_, TargetPath::SysBus0Axi);
+    const auto apb1 = select(config_, TargetPath::Peribus1Apb);
+    const auto apb0 = select(config_, TargetPath::Peribus0Apb);
+    target_ports_.init(direct1.size() + direct0.size() + apb1.size() + apb0.size());
+
+    auto s1 = leaves(direct1);
+    auto s0 = leaves(direct0);
+    const auto p1 = leaves(apb1);
+    const auto p0 = leaves(apb0);
+    unsigned outputs0 = static_cast<unsigned>(direct0.size());
+    if (!p0.empty()) append_link(s0, p0, outputs0++);
+    unsigned outputs1 = static_cast<unsigned>(direct1.size());
+    if (!p1.empty()) append_link(s1, p1, outputs1++);
+    if (!s0.empty()) append_link(s1, s0, outputs1++);
+
+    const auto latency = config_.router_latency_ns;
+    sysbus1_ = std::make_unique<Router>("SYSBUS_1", s1, outputs1, latency, trace);
+    if (!s0.empty())
+        sysbus0_ = std::make_unique<Router>("SYSBUS_0", s0, outputs0, latency, trace);
+    if (!p1.empty()) {
+        peribus1_ = std::make_unique<Router>("PERIBUS_1", p1, p1.size(), latency, trace);
+        a2p1_ = std::make_unique<ApbBridge>("A2P_PP1", config_.apb_cycle_ns);
     }
-    for (unsigned i = 0; i < cfg.pp0_ports; ++i) {
-        peribus0.out.bind(pp0[i].input);
+    if (!p0.empty()) {
+        peribus0_ = std::make_unique<Router>("PERIBUS_0", p0, p0.size(), latency, trace);
+        a2p0_ = std::make_unique<ApbBridge>("A2P_PP0", config_.apb_cycle_ns);
     }
+
+    for (std::size_t i = 0; i < config_.initiators.size(); ++i) {
+        initiator_index_.emplace(config_.initiators[i].name, i);
+        initiator_ports_[i].out.bind(sysbus1_->target);
+    }
+    std::size_t external = 0;
+    auto bind_leaves = [&](Router& router, const Targets& targets) {
+        for (const auto* t : targets) {
+            target_index_.emplace(t->name, external);
+            router.out.bind(target_ports_[external++].input);
+        }
+    };
+    bind_leaves(*sysbus1_, direct1);
+    if (sysbus0_) bind_leaves(*sysbus0_, direct0);
+    if (peribus1_) {
+        sysbus1_->out.bind(a2p1_->target);
+        a2p1_->out.bind(peribus1_->target);
+        bind_leaves(*peribus1_, apb1);
+    }
+    if (sysbus0_) sysbus1_->out.bind(sysbus0_->target);
+    if (peribus0_) {
+        sysbus0_->out.bind(a2p0_->target);
+        a2p0_->out.bind(peribus0_->target);
+        bind_leaves(*peribus0_, apb0);
+    }
+}
+
+tlm_utils::simple_target_socket_optional<InitiatorPort>&
+BusSystem::initiator(const std::string& name) {
+    const auto it = initiator_index_.find(name);
+    if (it == initiator_index_.end()) throw std::out_of_range("Unknown initiator: " + name);
+    return initiator_ports_[it->second].socket;
+}
+
+tlm_utils::simple_initiator_socket<TargetPort>& BusSystem::target(const std::string& name) {
+    const auto it = target_index_.find(name);
+    if (it == target_index_.end()) throw std::out_of_range("Unknown or disabled target: " + name);
+    return target_ports_[it->second].socket;
 }
 } // namespace bus

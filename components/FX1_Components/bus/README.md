@@ -1,214 +1,124 @@
-# Bus System — SystemC 2.3.4 + TLM-2.0
+# FX1 Bus System — SystemC 2.3.4 / TLM-2.0
 
-Component bus hành vi độc lập cho CDC-VP, triển khai topology trong [Bus Config.xlsx](docs/Bus%20Config.xlsx). Component chỉ chứa router, bridge AXI–APB hành vi và các cổng TLM để top-level gắn IP thật. ROM, ISRAM, DSRAM, AES, QSPI và peripheral giả lập chỉ tồn tại trong `tests/`.
+Thư viện bus hành vi độc lập cho VP. IP thật thuộc top platform; `BusSystem` chỉ tạo router, bridge và socket. `tests/support/` chứa fixture và model giả, không được link vào thư viện production.
 
-Đây là mô hình functional/timing mức TLM để phát triển VP. Nó không phải RTL và không dùng để kết luận tuân thủ AXI/APB theo từng chu kỳ.
+## Kiến trúc và phạm vi
 
-## Topology hiện tại
+Topology SYSBUS/PERIBUS và sơ đồ FX1 trong [Bus Config.xlsx](Bus%20Config.xlsx) được kết hợp thành cấu trúc dưới đây. Số initiator, tên target và số output của từng router được sinh từ cấu hình trước elaboration, không cố định 5+3.
 
 ```mermaid
 flowchart LR
-  DBG --> S1[SYSBUS_1]
-  CPU --> S1
-  DMA --> S1
-  S1 --> ROM
-  S1 --> ISRAM
-  S1 --> DSRAM
+  Masters[Named initiators] --> S1[SYSBUS_1]
+  S1 --> T1[AXI targets]
+  S1 --> S0[SYSBUS_0]
+  S0 --> T0[AXI targets: AES / QSPI / IP mới]
   S1 --> B1[A2P_PP1]
   B1 --> P1[PERIBUS_1]
-  P1 --> PP1[PP1 / CFG targets]
-  S1 -->|AP_SB0| S0[SYSBUS_0]
-  S0 --> AES
-  S0 --> QSPI
+  P1 --> A1[Multimedia CSR]
   S0 --> B0[A2P_PP0]
   B0 --> P0[PERIBUS_0]
-  P0 --> PP0[PP0 / CFG targets]
+  P0 --> A0[System peripheral]
 ```
 
-SYSBUS_1 nhận nhiều initiator qua `BusSystem::target`. SYSBUS_0 được truy cập từ SYSBUS_1 qua vùng AP_SB0. Mọi IP đích do top-level của VP sở hữu và bind vào các cổng public của `BusSystem`.
+Chỉ tạo nhánh có target enabled. Ví dụ cấu hình FX1 mặc định chưa bật multimedia CSR nên chưa tạo PERIBUS_1. Cấu trúc liên kết trên là cố định; thêm IP vào bốn đường có sẵn không cần sửa core, nhưng thêm tầng router hoặc vòng kết nối mới cần thiết kế thêm.
 
-## Phạm vi triển khai
+Data width AXI/APB và socket được chốt **32 bit**. `axi_data_width` phải bằng 32, giá trị khác bị từ chối. `axi_address_width` mặc định 32, có thể đặt 1..64 để giới hạn map (địa chỉ payload là `uint64_t`). Address width không đổi data width. AXI payload có thể chứa nhiều byte liên tiếp; payload dài không đồng nghĩa với socket 64/128 bit hay AXI burst theo từng beat.
 
-Đã triển khai:
+## Cấu hình FX1
 
-- Decode theo vùng địa chỉ `[begin, end)` và kiểm tra giao dịch vượt biên.
-- Chuyển tiếp read/write bằng `tlm_generic_payload` và `b_transport`.
-- Chuyển địa chỉ toàn cục thành offset cục bộ tại leaf target rồi khôi phục địa chỉ gốc.
-- Contention đơn giản bằng một `sc_mutex` cho mỗi output port; các output khác nhau hoạt động độc lập.
-- Bridge APB hành vi cho truy cập 1, 2 hoặc 4 byte, căn chỉnh tự nhiên và byte enable hợp lệ.
-- `transport_dbg` không tính thời gian để nạp firmware và debug.
-- Kiểm tra cấu hình: vùng chồng lấn, port không tồn tại và đường đi liên-bus không hợp lệ.
-- Cấu hình address map và số cổng peripheral bằng `BusConfig` khi tạo module.
+Tạo bằng `BusConfig::fx1()`. `BusConfig{}` là cấu hình rỗng để platform tự điền, không phải mặc định FX1.
 
-Chưa triển khai:
+Initiator: `CPU1`, `CPU2`, `SYS_DMA`, `ISP_IDMA`, `ISP_ODMA`, `NPU_DMA`, `H264_H265_DMA`, `ETH_DMA`. ISP có hai master; MIPI chỉ có CSR target.
 
-- `nb_transport`, DMI, temporal decoupling, reset và clock domain.
-- AXI burst splitting, outstanding transaction, ordering/reordering theo ID, QoS và arbitration policy.
-- Mô phỏng riêng các kênh AW/W/B/AR/R hay tín hiệu handshake từng chu kỳ.
-- APB signal phases, waveform protocol và chuyển một AXI burst thành nhiều APB transfer.
-- Firewall/config controller cho các nhãn AP/CFG trong diagram.
+Ảnh FX1 cập nhật ngày 2026-10-06 dùng nhãn H264/H265 và lấy nhánh dữ liệu tới NPU từ ISP. Các kết nối dữ liệu MIPI/ISP/NPU/video/ETH do platform ghép giữa IP; bus này cung cấp đường truy cập memory-mapped. Xem [đối chiếu workbook](docs/WORKBOOK_MAPPING.md) để phân biệt phần đã xác nhận và phần sơ đồ chưa mô tả chi tiết.
 
-Response ở mức TLM:
+| Target | Base | Size | Đường |
+|---|---|---|---|
+| BootROM | `0x00000000` | 2 MiB | `SysBus1Axi` |
+| CLINT | `0x02000000` | 64 KiB | `Peribus0Apb` |
+| PLIC | `0x0C000000` | 16 MiB | `Peribus0Apb` |
+| UART | `0x10000000` | 64 KiB | `Peribus0Apb` |
+| MEMCTL_DDR | `0x80000000` | 512 MiB | `SysBus1Axi` |
+
+`SRAM`, `CPU1_IRAM`, `CPU2_IRAM`, `ISP_CSR`, `NPU_CSR`, `H264_H265_CSR`, `ETH_CSR`, `MIPI_CSR`, `SYS_DMA_CSR` còn TBD và mặc định disabled. Disabled target không có socket hoặc route. Multimedia CSR được dự kiến ở PERIBUS_1; SYS_DMA_CSR ở PERIBUS_0. AES/QSPI có thể khai báo thêm trên `SysBus0Axi`, không tự gán map production cho hai IP này.
+
+```cpp
+#include <bus/bus_system.h>
+
+auto cfg = bus::BusConfig::fx1();
+cfg.initiators.push_back({"NEW_MASTER"});
+// base/size phải do platform chốt; không dùng địa chỉ giả trong production.
+cfg.targets.push_back({"NEW_IP", ip_base, ip_size,
+                       bus::TargetPath::SysBus0Axi, true});
+bus::BusSystem fabric{"fabric", cfg};
+cpu1.socket.bind(fabric.initiator("CPU1"));
+new_master.socket.bind(fabric.initiator("NEW_MASTER"));
+fabric.target("NEW_IP").bind(new_ip.target);
+// Bind thêm TẤT CẢ target enabled trong cfg, gồm năm target FX1 mặc định.
+```
+
+Tên là khóa tra cứu chính xác, không phụ thuộc thứ tự descriptor. Target enabled bắt buộc bind trước `sc_start`; initiator chưa dùng có thể để trống. Cấu hình được copy khi tạo module; sửa bản cfg bên ngoài sau đó không reconfigure bus.
+
+Validation kiểm tra tên trùng/rỗng, range rỗng/overflow/overlap, giới hạn address width, path/policy không hỗ trợ và APB base căn chỉnh 4 byte. Vùng dùng `[base, base+size)`. IP cuối nhận offset cục bộ; các tầng trung gian giữ địa chỉ global, kể cả khi có nhiều vùng rời rạc đi cùng một output.
+
+## Giao dịch, arbitration và lỗi
+
+- `b_transport` gọi từ `SC_THREAD`, có thể `wait`. Delay đầu vào và downstream được tiêu thụ một lần; trả delay bằng 0. Target dùng `wait()` hoặc annotated delay cho mỗi latency.
+- Mỗi output có FIFO theo thứ tự request tới arbiter sau khi tiêu thụ delay đầu vào. Request cùng thời điểm theo thứ tự scheduler; không cam kết round-robin theo master.
+- Quyền phục vụ được tự giải phóng khi hoàn tất hoặc có exception. Địa chỉ cũng được khôi phục trước khi exception truyền về caller. Bus không tự retry hoặc rollback tác động của IP.
+- FIFO không cho request mới vượt request đã đợi. Bảo đảm tiến triển yêu cầu target hiện tại hoàn tất hoặc ném exception. Target treo không bị bus tự timeout.
+- Output độc lập có thể tiến triển song song. Hai target dùng chung đường SYSBUS_0/APB vẫn chia sẻ output phía trên và bị tuần tự hóa tại đó.
+- APB functional hỗ trợ 1/2/4 byte căn chỉnh tự nhiên và byte enable; chưa chia payload dài thành nhiều APB transfer.
+- `transport_dbg` không chờ/FIFO/timing và bỏ giới hạn beat APB; vẫn kiểm tra route/vượt biên. Backdoor ROM và quyền read-only do IP quyết định.
+- Byte enable được chuyển xuống IP; IP phải thực hiện đúng strobes. Bus không sửa IP vốn không hỗ trợ byte enable.
+- DMI bị tắt. Chưa có `nb_transport`, temporal decoupling, AXI ID/QoS/atomic, reset, clock domain hoặc handshake theo chu kỳ.
 
 | Trường hợp | Response |
 |---|---|
-| Truy cập hợp lệ | `TLM_OK_RESPONSE` |
-| Không map, vượt biên hoặc APB không căn chỉnh | `TLM_ADDRESS_ERROR_RESPONSE` |
+| Không map, vượt biên, APB misalignment | `TLM_ADDRESS_ERROR_RESPONSE` |
 | Command không hỗ trợ | `TLM_COMMAND_ERROR_RESPONSE` |
-| Streaming/wrap hoặc APB burst | `TLM_BURST_ERROR_RESPONSE` |
+| Streaming width nhỏ hơn length; APB length không hỗ trợ | `TLM_BURST_ERROR_RESPONSE` |
 | Byte enable không hợp lệ | `TLM_BYTE_ENABLE_ERROR_RESPONSE` |
-| Payload hoặc data pointer không hợp lệ | `TLM_GENERIC_ERROR_RESPONSE` |
+| Data null hoặc length bằng 0 | `TLM_GENERIC_ERROR_RESPONSE` |
 
-Quyền read-only của ROM thuộc model ROM, không thuộc bus. Bus không tự tạo IP dự phòng và không áp chính sách thiết bị.
+Response từ IP được giữ nguyên. Giao dịch vượt biên bị từ chối trước khi forward, không ghi một phần sang target tiếp theo. Timing mặc định router 2 ns, APB setup+access 2×10 ns; đây là giả định hành vi, không phải timing RTL.
 
-## Cấu trúc thư mục
+## Build và kiểm thử
 
-| File/thư mục | Vai trò |
-|---|---|
-| `include/bus/config.h` | `Region`, address map/timing mẫu và `BusConfig` do platform truyền vào |
-| `include/bus/router.h`, `src/router.cpp` | Decode, routing, local-address translation, contention và lỗi truy cập |
-| `include/bus/apb_bridge.h`, `src/apb_bridge.cpp` | Bridge AXI–APB hành vi và giới hạn APB |
-| `include/bus/target_port.h` | Adapter socket public để bind IP ngoài |
-| `include/bus/transaction.h` | Hàm dùng chung để kiểm tra payload, delay và địa chỉ |
-| `include/bus/bus_system.h`, `src/bus_system.cpp` | Ghép topology và công bố các cổng tích hợp |
-| `src/config.cpp` | Kiểm tra tính hợp lệ của `BusConfig` |
-| `tests/support/` | Memory và mock targets chỉ phục vụ test, không thuộc thư viện production |
-| `tests/bus_behavior_tests.cpp` | Regression routing, data, error, timing và contention |
-| `tests/bus_config_tests.cpp` | Regression validation của cấu hình |
-| `tests/cdc_integration/` | Test riêng với `memory_tlm` và ELF loader của CDC-VP |
-| `tests/installed_consumer/` | Kiểm tra target sau khi install/export |
-| `cmake/bus-system-config.cmake` | Package config khi build/install component độc lập |
-| `docs/Bus Config.xlsx` | Đặc tả interface và sơ đồ bus đầu vào |
-
-Mã production chỉ gồm `include/` và `src/`. Không được đưa model từ `tests/support/` vào implementation của bus.
-
-## Build và chạy regression
-
-Yêu cầu C++17, CMake và SystemC 2.3.4 có CMake package `SystemCLanguage`. Compiler dùng cho component phải tương thích với compiler đã build SystemC.
-
-Linux/WSL:
+C++17, SystemC 2.3.4 với package `SystemCLanguage`, CMake >=3.16 (harness integration/consumer >=3.21). Dùng cùng compiler/C++ ABI với SystemC.
 
 ```bash
-cmake -S . -B build \
-  -DCMAKE_PREFIX_PATH="$SYSTEMC_HOME" \
-  -DBUS_SYSTEM_BUILD_TESTS=ON
-cmake --build build --parallel 2
+cmake -S . -B build -DCMAKE_PREFIX_PATH="$SYSTEMC_HOME" -DBUS_SYSTEM_BUILD_TESTS=ON
+cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
-```
-
-Windows native với SystemC được build bằng cùng toolchain:
-
-```powershell
-cmake -S . -B build-native `
-  -DCMAKE_PREFIX_PATH=C:/path/to/systemc-install `
-  -DBUS_SYSTEM_BUILD_TESTS=ON
-cmake --build build-native --config Debug
-ctest --test-dir build-native -C Debug --output-on-failure
-```
-
-Chạy trace routing sau khi build:
-
-```bash
 ./build/bus_behavior_tests --trace
 ```
 
-Build riêng thư viện production:
+WSL có thể dùng `scripts/build.sh` hoặc PowerShell `scripts/build.ps1 -SystemCHome '/path/to/linux-systemc'`. Windows native dùng CMake với SystemC native, build directory khác WSL và `--config Debug`/`ctest -C Debug` nếu dùng multi-config generator.
 
-```bash
-cmake -S . -B build-library \
-  -DCMAKE_PREFIX_PATH="$SYSTEMC_HOME" \
-  -DBUS_SYSTEM_BUILD_TESTS=OFF
-cmake --build build-library --target bus_system --parallel 2
-```
+| Suite | Phạm vi |
+|---|---|
+| `bus_config` | Width 32, names, overflow/overlap, TBD, invalid path/policy, số port mở rộng |
+| `bus_behavior` | FX1, topology cũ, thêm/reorder IP/master, bốn đường riêng, byte enable, biên, APB lỗi, debug, timing và DMI |
+| `bus_arbitration` | 8 master phát liên tục, thứ tự FIFO, output độc lập, exception rồi tiếp tục qua cả bốn đường |
+| `cdc_bus_integration` | ELF loader và memory_tlm thật, bốn đường, annotated delay, ROM, debug và downstream error |
+| `installed_bus_consumer` | Dùng header/library đã install để tạo bus và chạy giao dịch SYSBUS_0 |
 
-## Tích hợp vào CDC-VP
+Ba suite đầu thuộc build mặc định; hai harness cuối được build riêng. Mọi executable dùng `sc_main`. Test target sparse kiểm tra cuối aperture DDR mà không cấp phát 512 MiB. Test không chứng minh CPU boot, DMA engine hay thuật toán IP thật.
 
-File CMake ở cấp cha của CDC-VP cần thêm component. Việc sửa file cấp cha thuộc người tích hợp platform:
+## File và mở rộng
 
-```cmake
-add_subdirectory(FX1_Components/bus)
-target_link_libraries(your_vp PRIVATE cdc::components::bus_system)
-```
+| File | Trách nhiệm |
+|---|---|
+| `config.h`, `src/config.cpp` | Descriptor, default FX1, validation |
+| `bus_system.h`, `src/bus_system.cpp` | Sinh route/socket và named binding |
+| `router.h`, `src/router.cpp` | Decode, local offset, FIFO per-output |
+| `apb_bridge.h`, `src/apb_bridge.cpp` | Giới hạn APB và timing |
+| `target_port.h`, `transaction.h` | Adapter TLM, kiểm tra payload, delay và RAII địa chỉ |
+| `tests/support/` | Model/fixture chỉ dùng cho test |
 
-Khi được nhúng trong CDC-VP, component dùng target `SystemC::systemc` đã có. `BUS_SYSTEM_BUILD_TESTS` mặc định theo `CDC_BUILD_TESTS`. Có thể đặt `BUS_SYSTEM_BUILD_TESTS=OFF` nếu platform không chạy regression riêng của bus.
+Header public nằm trong `include/bus/`. Khi thêm path hoặc thay hợp đồng giao dịch, cập nhật validation, builder, behavior/arbitration tests và tài liệu cùng lúc.
 
-Top-level tạo bus và IP, sau đó bind trước `sc_start()`:
+Xem [tích hợp CDC-VP](docs/CDC_VP_INTEGRATION.md), [đối chiếu workbook](docs/WORKBOOK_MAPPING.md) và [bàn giao](docs/REPOSITORY_HANDOFF.md).
 
-```cpp
-bus::BusConfig cfg;
-// Platform thay address map và số port tại đây nếu cần.
-bus::BusSystem fabric{"fabric", cfg};
-
-dbg.socket.bind(fabric.target);
-cpu.socket.bind(fabric.target);
-dma.socket.bind(fabric.target);
-
-fabric.rom.socket.bind(rom_ip.target);
-fabric.isram.socket.bind(isram_ip.target);
-fabric.dsram.socket.bind(dsram_ip.target);
-fabric.aes.socket.bind(aes_ip.target);
-fabric.qspi.socket.bind(qspi_ip.target);
-
-for (std::size_t i = 0; i < fabric.pp1.size(); ++i)
-    fabric.pp1[i].socket.bind(pp1_ip[i].target);
-for (std::size_t i = 0; i < fabric.pp0.size(); ++i)
-    fabric.pp0[i].socket.bind(pp0_ip[i].target);
-```
-
-`pp1_ports` và `pp0_ports` độc lập; số model trong mỗi mảng IP phải khớp `fabric.pp1.size()` và `fabric.pp0.size()`. Mọi output phải được bind. Nếu IP chưa có, top-level phải cung cấp một target stub trả response lỗi rõ ràng.
-
-IP nhận địa chỉ cục bộ tính từ đầu `Region` khi `translate=true`. IP phải đặt `response_status` và chỉ dùng một cách tính latency: gọi `wait()` hoặc cộng annotated delay. Bus hiện tiêu thụ delay trước khi trả về và trả annotated delay bằng 0.
-
-Thứ tự bind DBG, CPU, DMA chỉ ảnh hưởng source index trong trace, không tạo chính sách ưu tiên.
-
-## Address map và timing mẫu
-
-Workbook không cung cấp địa chỉ số, số APB peripheral hoặc latency. Các giá trị dưới đây là mặc định phục vụ regression, không phải map cố định của chip:
-
-| Đích | Khoảng địa chỉ mẫu | Đường đi |
-|---|---|---|
-| ROM | `0x00000000–0x0000FFFF` | SYSBUS_1 |
-| ISRAM | `0x10000000–0x1001FFFF` | SYSBUS_1 |
-| DSRAM | `0x20000000–0x2001FFFF` | SYSBUS_1 |
-| PP1 window | `0x40000000–0x4000FFFF` | SYSBUS_1 → A2P_PP1 → PERIBUS_1 |
-| SYSBUS_0 window | `0x50000000–0x5FFFFFFF` | SYSBUS_1 → SYSBUS_0 |
-| AES | `0x50000000–0x5000FFFF` | SYSBUS_0 |
-| QSPI | `0x51000000–0x51FFFFFF` | SYSBUS_0 |
-| PP0 window | `0x52000000–0x5200FFFF` | SYSBUS_0 → A2P_PP0 → PERIBUS_0 |
-
-Mặc định mỗi PERIBUS có 4 target, mỗi target 4 KiB. Platform thay các vector `sysbus1`, `sysbus0`, `peribus1`, `peribus0`, `pp1_ports` và `pp0_ports` trong `BusConfig`; không cần sửa header thư viện. `BusConfig::validate()` sẽ từ chối map chồng lấn, port ngoài phạm vi và đường đi không thể đạt tới.
-
-Latency mẫu gồm router 2 ns, APB cycle 10 ns và latency target do test model cung cấp. Các số này chỉ kiểm tra tính nhất quán của mô hình, không dự đoán timing RTL.
-
-## Regression hiện có
-
-`bus_behavior_tests` kiểm tra:
-
-- Read/write trên ROM, ISRAM, DSRAM, AES, QSPI, PP0 và PP1.
-- Byte enable, payload nhiều byte và địa chỉ cuối vùng.
-- Unmapped address, vượt biên, invalid command, streaming và payload lỗi.
-- APB alignment, kích thước transfer và burst bị từ chối.
-- Local-address translation và khôi phục địa chỉ gốc.
-- Timing, ba initiator cùng tranh chấp một output và các output độc lập.
-- `transport_dbg` qua các tầng bus.
-
-`bus_config_tests` kiểm tra cấu hình hợp lệ và các trường hợp map sai. Khi thay topology, address map hoặc hợp đồng giao dịch, cần cập nhật cả hai bộ test tương ứng.
-
-## Đối chiếu workbook
-
-Sheet Bus Diagram xác định topology SYSBUS_1, SYSBUS_0, hai bridge và hai PERIBUS. Sheet AXI CROSSBAR Diagram mô tả crossbar tổng quát; `Router` dùng multi-passthrough sockets thay vì cố định số cổng 4×4.
-
-Sheet Bus Parameter mô tả đủ AW/W/B/AR/R, gồm B channel phía slave, direction của `AWSIZE`, width `AWID` và `ARPROT`. Mô hình hiện tại ánh xạ giao dịch ở mức TLM, nên write response dùng `response_status`; các tín hiệu BID/BRESP/BUSER/BVALID/BREADY và handshake riêng chưa được mô phỏng.
-
-## Hướng phát triển tiếp theo
-
-Ưu tiên khi mở rộng component:
-
-1. Chốt address map, số peripheral và latency thật từ platform rồi tạo `BusConfig` ở top-level.
-2. Bind model ROM/ISRAM/DSRAM/AES/QSPI/peripheral thật và giữ mock IP trong `tests/`.
-3. Bổ sung extension cho AXI ID, privilege/security hoặc QoS nếu software model cần các thuộc tính đó.
-4. Chọn `nb_transport`/temporal decoupling nếu VP cần hiệu năng mô phỏng cao hơn.
-5. Chỉ bổ sung mô hình cycle-accurate AXI/APB khi mục tiêu xác minh yêu cầu handshake hoặc protocol timing.
-6. Thêm regression cho mọi route, response và policy mới trước khi thay đổi hợp đồng public.
-
-Nếu thêm một output vào router hiện có, cập nhật `BusConfig`, binding trong `BusSystem` và regression. Nếu thay đổi topology SYSBUS, cần sửa cấu trúc `BusSystem` và sơ đồ trong tài liệu này. Giữ public header trong `include/bus/`, implementation trong `src/`, còn mọi fixture/model giả lập trong `tests/`.
+Kết quả kiểm thử và các giới hạn trước khi thay component cũ: [đánh giá mức sẵn sàng](docs/READINESS_REVIEW.md).

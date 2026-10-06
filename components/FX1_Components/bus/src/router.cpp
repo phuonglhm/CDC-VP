@@ -2,11 +2,41 @@
 #include "bus/transaction.h"
 #include <iostream>
 #include <stdexcept>
+#include <algorithm>
+#include <deque>
 
 namespace bus {
+struct Router::FifoArbiter {
+    sc_core::sc_event changed;
+    // SystemC processes are cooperative: queue operations contain no wait.
+    struct Lease;
+    std::deque<const Lease*> queue;
+    struct Lease {
+        FifoArbiter& arbiter;
+        explicit Lease(FifoArbiter& a) : arbiter(a) {
+            a.queue.push_back(this);
+            try {
+                while (a.queue.front() != this) sc_core::wait(a.changed);
+            } catch (...) {
+                release(); // Also remove a waiter interrupted by process reset/kill.
+                throw;
+            }
+        }
+        ~Lease() { release(); }
+        Lease(const Lease&) = delete;
+        Lease& operator=(const Lease&) = delete;
+        void release() {
+            auto& q = arbiter.queue;
+            const auto it = std::find(q.begin(), q.end(), this);
+            if (it != q.end()) q.erase(it);
+            arbiter.changed.notify(sc_core::SC_ZERO_TIME);
+        }
+    };
+};
+Router::~Router() = default;
 Router::Router(sc_core::sc_module_name name, std::vector<Region> regions,
-               unsigned outputs, bool trace)
-    : sc_module(name), regions_(std::move(regions)), forwarded_(outputs, 0), trace_(trace) {
+               unsigned outputs, unsigned latency_ns, bool trace)
+    : sc_module(name), regions_(std::move(regions)), forwarded_(outputs, 0), trace_(trace), latency_ns_(latency_ns) {
     if (!outputs) throw std::invalid_argument("Router requires outputs");
     for (std::size_t i = 0; i < regions_.size(); ++i) {
         const auto& r = regions_[i];
@@ -17,12 +47,12 @@ Router::Router(sc_core::sc_module_name name, std::vector<Region> regions,
                 throw std::invalid_argument("Overlapping address regions");
     }
     for (unsigned i = 0; i < outputs; ++i)
-        locks_.push_back(std::make_unique<sc_core::sc_mutex>(sc_core::sc_gen_unique_name("port_lock")));
+        arbiters_.push_back(std::make_unique<FifoArbiter>());
     target.register_b_transport(this, &Router::b_transport);
     target.register_transport_dbg(this, &Router::transport_dbg);
 }
 void Router::end_of_elaboration() {
-    if (out.size() != locks_.size())
+    if (out.size() != arbiters_.size())
         SC_REPORT_FATAL(name(), "Output socket bindings do not match map configuration");
 }
 void Router::b_transport(int source, tlm::tlm_generic_payload& tx, sc_core::sc_time& delay) {
@@ -34,13 +64,13 @@ void Router::b_transport(int source, tlm::tlm_generic_payload& tx, sc_core::sc_t
         if (address >= r.begin && address < r.end) { selected = &r; break; }
     // Reject the whole transfer before writing any byte if it crosses a region.
     if (!selected || tx.get_data_length() > selected->end - address) {
-        sc_core::wait(config::ROUTER_NS, sc_core::SC_NS);
+        sc_core::wait(latency_ns_, sc_core::SC_NS);
         tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
         ++errors_;
         return;
     }
-    Lock lock(*locks_[selected->port]);
-    sc_core::wait(config::ROUTER_NS, sc_core::SC_NS);
+    FifoArbiter::Lease lease(*arbiters_[selected->port]);
+    sc_core::wait(latency_ns_, sc_core::SC_NS);
     RestoreAddress restore(tx);
     if (selected->translate) tx.set_address(address - selected->begin);
     if (trace_)

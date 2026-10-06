@@ -3,7 +3,7 @@
 #include "bus/transaction.h"
 
 namespace bus {
-ApbBridge::ApbBridge(sc_core::sc_module_name name) : sc_module(name) {
+ApbBridge::ApbBridge(sc_core::sc_module_name name,unsigned cycle_ns) : sc_module(name),cycle_ns_(cycle_ns) {
     target.register_b_transport(this, &ApbBridge::b_transport);
     target.register_transport_dbg(this, &ApbBridge::transport_dbg);
 }
@@ -22,7 +22,7 @@ void ApbBridge::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& dela
         return;
     }
     Lock lock(lock_);
-    sc_core::wait(2 * config::APB_CYCLE_NS, sc_core::SC_NS); // setup + access
+    sc_core::wait(2.0 * cycle_ns_, sc_core::SC_NS); // setup + access; no unsigned overflow
     out->b_transport(tx, delay);
     consume_delay(delay);
 }

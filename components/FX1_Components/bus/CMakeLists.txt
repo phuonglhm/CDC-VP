@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.16)
-
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(bus_system_tlm LANGUAGES CXX)
 endif()
@@ -20,13 +19,11 @@ target_include_directories(bus_system PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(bus_system PUBLIC SystemC::systemc)
-
 if(MSVC)
   target_compile_options(bus_system PRIVATE /W4)
 else()
   target_compile_options(bus_system PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include(CTest)
   set(_bus_tests_default ${BUILD_TESTING})
@@ -36,32 +33,31 @@ else()
   set(_bus_tests_default OFF)
 endif()
 option(BUS_SYSTEM_BUILD_TESTS "Build standalone bus regression" ${_bus_tests_default})
-
 if(BUS_SYSTEM_BUILD_TESTS)
   enable_testing()
-  add_executable(bus_behavior_tests tests/bus_behavior_tests.cpp tests/support/memory.cpp)
+  add_executable(bus_behavior_tests tests/bus_behavior_tests.cpp)
   target_link_libraries(bus_behavior_tests PRIVATE bus_system)
   add_test(NAME bus_behavior COMMAND bus_behavior_tests)
   set_tests_properties(bus_behavior PROPERTIES TIMEOUT 30)
-
   add_executable(bus_config_tests tests/bus_config_tests.cpp)
   target_link_libraries(bus_config_tests PRIVATE bus_system)
   add_test(NAME bus_config COMMAND bus_config_tests)
   set_tests_properties(bus_config PROPERTIES TIMEOUT 10)
+
+  add_executable(bus_arbitration_tests tests/bus_arbitration_tests.cpp)
+  target_link_libraries(bus_arbitration_tests PRIVATE bus_system)
+  add_test(NAME bus_arbitration COMMAND bus_arbitration_tests)
+  set_tests_properties(bus_arbitration PROPERTIES TIMEOUT 30)
 endif()
 
-# The CDC-VP parent owns this export set and its package configuration.
-set(_bus_in_cdc_vp OFF)
+# CDC-VP owns this export set and its package config at components/ level.
+option(BUS_SYSTEM_USE_CDC_EXPORT "Join the parent-owned CDC components export set" OFF)
 if(CMAKE_PROJECT_NAME STREQUAL "cdc-vp" OR BUS_SYSTEM_USE_CDC_EXPORT)
-  set(_bus_in_cdc_vp ON)
-endif()
-
-if(_bus_in_cdc_vp)
-  install(TARGETS bus_system EXPORT cdc-components-targets
-    ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+  install(TARGETS bus_system EXPORT cdc-components-targets ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 else()
-  install(TARGETS bus_system EXPORT bus-system-targets
-    ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+  install(TARGETS bus_system EXPORT bus-system-targets ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
   install(EXPORT bus-system-targets NAMESPACE cdc::components::
     DESTINATION lib/cmake/bus-system)
   install(FILES cmake/bus-system-config.cmake DESTINATION lib/cmake/bus-system)
