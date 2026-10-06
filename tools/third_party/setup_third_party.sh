@@ -14,6 +14,9 @@ FREERTOS_COMMIT="0adc196d4bd52a2d91102b525b0aafc1e14a2386"   # V11.2.0
 TFLM_URL="https://github.com/tensorflow/tflite-micro.git"
 TFLM_COMMIT="096563546742ba81adb6f012ab718d196a48e02d"
 
+SOFTFLOAT_URL="https://github.com/ucb-bar/berkeley-softfloat-3.git"
+SOFTFLOAT_COMMIT="a0c6494cdc11865811dec815d5c0049fba9d82a8"
+
 die() {
     echo "ERROR: $*" >&2
     exit 1
@@ -74,6 +77,21 @@ setup_repo "FreeRTOS-Kernel" "${FREERTOS_URL}" "${FREERTOS_COMMIT}" \
 
 setup_repo "TensorFlow Lite Micro" "${TFLM_URL}" "${TFLM_COMMIT}" \
     "${THIRD_PARTY_DIR}/tflite-micro"
+
+setup_repo "Berkeley SoftFloat" "${SOFTFLOAT_URL}" "${SOFTFLOAT_COMMIT}" \
+    "${THIRD_PARTY_DIR}/softfloat"
+
+echo "Configuring Berkeley SoftFloat..."
+SF_DIR="${THIRD_PARTY_DIR}/softfloat"
+
+cat << 'EOF' > "${SF_DIR}/softfloat.hpp"
+#ifndef SOFTFLOAT_HPP
+#define SOFTFLOAT_HPP
+extern "C" {
+#include "softfloat.h"
+}
+#endif
+EOF
 
 echo
 echo "Third-party dependencies are ready."
