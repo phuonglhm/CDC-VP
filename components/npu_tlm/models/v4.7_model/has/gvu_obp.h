@@ -138,9 +138,9 @@ namespace has
             else if (a >= SCALE_BASE && a < SCALE_BASE + 4u * MAX_CH)
                 scale_bits[(a - SCALE_BASE) / 4] = static_cast<uint32_t>(static_cast<uint64_t>(d[0]));
             else if (a >= SHIFT_BASE && a < SHIFT_BASE + 4u * MAX_CH)
-                shift[(a - SHIFT_BASE) / 4] = static_cast<int>(d[0]);
+                shift[(a - SHIFT_BASE) / 4] = static_cast<int>(static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(d[0]))));
             else if (a == CFG_BASE + REG_ZP_OUT)
-                zp_out = static_cast<int>(d[0]);
+                zp_out = static_cast<int>(static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(d[0]))));
             else if (a == CFG_BASE + REG_NCH)
                 nch = d[0] >= 1 ? static_cast<uint32_t>(d[0]) : 1u;
             else if (a == CFG_BASE + REG_PERCH)
