@@ -119,11 +119,42 @@ constexpr std::uint32_t kFallbackStackTop = 0x8001'0000u;
 /// bring-up firmware needs, and it is honest: no timer interrupt is generated
 /// from here.
 struct simulation_time_clint : clint_if {
+    /// Platform counter (`riscv_vp_plusplus_options::mtime_source`), if any.
+    std::function<std::uint64_t()> source;
+
     std::uint64_t update_and_get_mtime() override
     {
+        if (source) {
+            return source();
+        }
         return static_cast<std::uint64_t>(sc_core::sc_time_stamp().value());
     }
 };
+
+/// The default `RV_ISA_Config` minus the letters a platform asked to remove.
+RV_ISA_Config make_isa_config(const std::string& disable)
+{
+    RV_ISA_Config config;
+    std::string seen;
+    for (const char letter : disable) {
+        if (letter < 'A' || letter > 'Z' || letter == 'I'
+            || seen.find(letter) != std::string::npos) {
+            throw std::invalid_argument(
+                std::string("riscv_vp_plusplus_options.disable_extensions: '")
+                + letter + "' is not a removable misa extension letter "
+                  "(A-Z except I, each at most once)");
+        }
+        const std::uint64_t bit = std::uint64_t{1} << (letter - 'A');
+        if (!(config.cfg & bit)) {
+            throw std::invalid_argument(
+                std::string("riscv_vp_plusplus_options.disable_extensions: '")
+                + letter + "' is not in the default extension set");
+        }
+        config.cfg &= ~bit;
+        seen += letter;
+    }
+    return config;
+}
 
 /// Runs `iss.run()` in its own SC_THREAD.
 ///
@@ -215,6 +246,193 @@ struct quantum_guard {
     }
 };
 
+namespace {
+
+/// Upstream's data-memory interface plus the optional platform exclusive
+/// monitor (`riscv_vp_plusplus_options::exclusive_monitor`).
+///
+/// With no monitor, every override below is exactly the base call, so a hart
+/// built without one (TPU_V3) executes upstream's code paths unchanged. With
+/// one, LR/SC become real reservations kept in the monitor and every write is
+/// reported to it; see the option's documentation for the semantics.
+///
+/// ## Why a store waits for the bus lock *before* registering
+///
+/// An SC holds the bus lock while it waits for overlapping in-flight writes
+/// to finish. A store registered as in flight and then parked on that same
+/// lock inside the base `_raw_store_data()` would never finish: the SC waits
+/// for the store, the store waits for the SC. So a store first passes
+/// `wait_for_access_rights()`, then registers with no yield in between, and
+/// the base call that follows finds the lock free and goes straight to the
+/// bus.
+struct monitored_memory_interface : rv32::CombinedMemoryInterface {
+    using base = rv32::CombinedMemoryInterface;
+
+    exclusive_monitor_if* monitor = nullptr;
+    std::uint64_t amo_paddr = 0;
+
+    monitored_memory_interface(sc_core::sc_module_name name, rv32::ISS& owner,
+                               rv32::MMU* mmu)
+        : base(name, owner, mmu)
+    {
+    }
+
+    unsigned hart() { return static_cast<unsigned>(iss.get_hart_id()); }
+
+    template <typename Store>
+    void monitored_store(std::uint64_t vaddr, unsigned size, Store&& store)
+    {
+        const std::uint64_t paddr = v2p(vaddr, STORE);
+        std::uint64_t ticket = 0;
+        for (;;) {
+            bus_lock->wait_for_access_rights(hart());
+            if (monitor->try_begin_write(hart(), paddr, size, ticket)) {
+                break;
+            }
+            sc_core::wait(monitor->changed());
+        }
+        try {
+            store();
+        } catch (...) {
+            monitor->end_write(ticket);
+            throw;
+        }
+        monitor->end_write(ticket);
+    }
+
+    /// The store of a successful SC or of an AMO, inside this hart's own
+    /// bracket. The monitor never refuses it: the bracket admits its owner, and
+    /// no other hart can hold one while this hart holds the bus lock.
+    template <typename Store>
+    void bracketed_store(std::uint64_t paddr, unsigned size, Store&& store)
+    {
+        std::uint64_t ticket = 0;
+        if (!monitor->try_begin_write(hart(), paddr, size, ticket)) {
+            SC_REPORT_FATAL("riscv_vp_plusplus_cpu",
+                            "exclusive monitor refused the store of the hart's own "
+                            "atomic bracket");
+        }
+        try {
+            store();
+        } catch (...) {
+            monitor->end_write(ticket);
+            throw;
+        }
+        monitor->end_write(ticket);
+    }
+
+    void finish_atomic()
+    {
+        monitor->atomic_end(hart());
+        bus_lock->unlock(hart());
+    }
+
+    void store_double(std::uint64_t addr, std::uint64_t value) override
+    {
+        if (!monitor) {
+            return base::store_double(addr, value);
+        }
+        monitored_store(addr, 8, [&] { base::store_double(addr, value); });
+    }
+    void store_word(std::uint64_t addr, std::uint32_t value) override
+    {
+        if (!monitor) {
+            return base::store_word(addr, value);
+        }
+        monitored_store(addr, 4, [&] { base::store_word(addr, value); });
+    }
+    void store_half(std::uint64_t addr, std::uint16_t value) override
+    {
+        if (!monitor) {
+            return base::store_half(addr, value);
+        }
+        monitored_store(addr, 2, [&] { base::store_half(addr, value); });
+    }
+    void store_byte(std::uint64_t addr, std::uint8_t value) override
+    {
+        if (!monitor) {
+            return base::store_byte(addr, value);
+        }
+        monitored_store(addr, 1, [&] { base::store_byte(addr, value); });
+    }
+
+    /// LR: reservation first, then a plain load. No bus lock is taken. The
+    /// reservation is opened before the load so a write landing while the load
+    /// is in flight cancels it; a load that faults (access fault, trap thrown)
+    /// voids it again, because an LR that did not complete reserves nothing.
+    std::int32_t atomic_load_reserved_word(std::uint64_t addr) override
+    {
+        if (!monitor) {
+            return base::atomic_load_reserved_word(addr);
+        }
+        monitor->load_reserved(hart(), v2p(addr, LOAD), 4);
+        try {
+            return base::load_word(addr);
+        } catch (...) {
+            monitor->drop_reservation(hart());
+            throw;
+        }
+    }
+
+    /// SC: exclude the sibling harts (bus lock), drain overlapping writes of
+    /// other masters (bracket), then store only if the reservation survived.
+    bool atomic_store_conditional_word(std::uint64_t addr, std::uint32_t value) override
+    {
+        if (!monitor) {
+            return base::atomic_store_conditional_word(addr, value);
+        }
+        const std::uint64_t paddr = v2p(addr, STORE);
+        bus_lock->lock(hart());
+        monitor->atomic_begin(hart(), paddr, 4);
+        const bool reserved = monitor->take_reservation(hart(), paddr, 4);
+        try {
+            if (reserved) {
+                bracketed_store(paddr, 4, [&] { base::store_word(addr, value); });
+            }
+        } catch (...) {
+            finish_atomic();
+            throw;
+        }
+        finish_atomic();
+        return reserved;
+    }
+
+    /// AMO load half: bus lock (upstream) plus the bracket, held until the
+    /// store half. A faulting load ends both, so a trapped AMO strands
+    /// neither the sibling harts nor the DMA engines.
+    std::int32_t atomic_load_word(std::uint64_t addr) override
+    {
+        if (!monitor) {
+            return base::atomic_load_word(addr);
+        }
+        amo_paddr = v2p(addr, LOAD);
+        bus_lock->lock(hart());
+        monitor->atomic_begin(hart(), amo_paddr, 4);
+        try {
+            return base::atomic_load_word(addr);
+        } catch (...) {
+            finish_atomic();
+            throw;
+        }
+    }
+
+    void atomic_store_word(std::uint64_t addr, std::uint32_t value) override
+    {
+        if (!monitor) {
+            return base::atomic_store_word(addr, value);
+        }
+        try {
+            bracketed_store(amo_paddr, 4, [&] { base::atomic_store_word(addr, value); });
+        } catch (...) {
+            finish_atomic();
+            throw;
+        }
+        finish_atomic();
+    }
+};
+
+}  // namespace
+
 struct riscv_vp_plusplus_cpu::impl {
     // Declared first so it runs before `iss`: member initialisation order is
     // what makes the guard effective.
@@ -226,19 +444,22 @@ struct riscv_vp_plusplus_cpu::impl {
     RV_ISA_Config isa_config;
     rv32::ISS iss;
     rv32::MMU mmu;
-    rv32::CombinedMemoryInterface mem_if;
+    monitored_memory_interface mem_if;
     std::shared_ptr<shared_bus_lock> bus_lock = make_shared_bus_lock();
     simulation_time_clint clint;
     std::unique_ptr<core_runner> runner;
 
-    impl(std::uint32_t hart_id, const std::string& instance_name)
-        : isa_config()
+    impl(std::uint32_t hart_id, const std::string& instance_name,
+         const riscv_vp_plusplus_options& options)
+        : isa_config(make_isa_config(options.disable_extensions))
         , iss(&isa_config, hart_id)
         , mmu(iss)
         , mem_if((instance_name + "_mem").c_str(), iss, &mmu)
     {
+        clint.source = options.mtime_source;
         iss.systemc_name = instance_name;
         mem_if.bus_lock = bus_lock;
+        mem_if.monitor = options.exclusive_monitor;
         bus_lock->sharers = 1;
         runner = std::make_unique<core_runner>(
             sc_core::sc_module_name((instance_name + "_runner").c_str()), iss);
@@ -247,6 +468,13 @@ struct riscv_vp_plusplus_cpu::impl {
 
 riscv_vp_plusplus_cpu::riscv_vp_plusplus_cpu(sc_core::sc_module_name name,
                                              const cpu_config& config)
+    : riscv_vp_plusplus_cpu(name, config, riscv_vp_plusplus_options{})
+{
+}
+
+riscv_vp_plusplus_cpu::riscv_vp_plusplus_cpu(sc_core::sc_module_name name,
+                                             const cpu_config& config,
+                                             const riscv_vp_plusplus_options& options)
     : cpu_base(name, config)
 {
     // Refuse rather than adapt (decision record D5, plan §19). The ISS is an
@@ -274,7 +502,7 @@ riscv_vp_plusplus_cpu::riscv_vp_plusplus_cpu(sc_core::sc_module_name name,
         throw std::runtime_error(message.str());
     }
 
-    impl_ = std::make_unique<impl>(config.hart_id, std::string(name));
+    impl_ = std::make_unique<impl>(config.hart_id, std::string(name), options);
 }
 
 riscv_vp_plusplus_cpu::~riscv_vp_plusplus_cpu() = default;
@@ -607,6 +835,10 @@ void riscv_vp_plusplus_cpu::reset_architectural_state()
     // `SC.W` would otherwise leave both behind — harmless while the lock is
     // per-wrapper, and a hang the moment multi-hart atomicity makes it shared.
     iss.release_lr_sc_reservation();
+    // With a platform exclusive monitor the reservation lives there instead.
+    if (impl_->mem_if.monitor) {
+        impl_->mem_if.monitor->reset_hart(static_cast<unsigned>(iss.get_hart_id()));
+    }
 
     // `ISS::init()` reinitialises the decode and load/store caches and never
     // touches the TLB. Unreachable at `satp.MODE = Bare`, which is where

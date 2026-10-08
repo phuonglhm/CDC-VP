@@ -39,8 +39,12 @@ Initiator: `CPU1`, `CPU2`, `SYS_DMA`, `ISP_IDMA`, `ISP_ODMA`, `NPU_DMA`, `H264_H
 | PLIC | `0x0C000000` | 16 MiB | `Peribus0Apb` |
 | UART | `0x10000000` | 64 KiB | `Peribus0Apb` |
 | MEMCTL_DDR | `0x80000000` | 512 MiB | `SysBus1Axi` |
+| ISP_CSR (disabled) | `0x11000000` | 64 KiB | `Peribus1Apb` |
+| SYS_DMA_CSR (disabled) | `0x10010000` | 64 KiB | `Peribus0Apb` |
 
-`SRAM`, `CPU1_IRAM`, `CPU2_IRAM`, `ISP_CSR`, `NPU_CSR`, `H264_H265_CSR`, `ETH_CSR`, `MIPI_CSR`, `SYS_DMA_CSR` còn TBD và mặc định disabled. Disabled target không có socket hoặc route. Multimedia CSR được dự kiến ở PERIBUS_1; SYS_DMA_CSR ở PERIBUS_0. AES/QSPI có thể khai báo thêm trên `SysBus0Axi`, không tự gán map production cho hai IP này.
+Địa chỉ lấy từ `components/FX1_Components/fx1_map/include/fx1/fx1_memory_map.h`. Đây là **VP placeholder, chờ HAS**, và chỉ được sửa ở file đó. `ISP_CSR` và `SYS_DMA_CSR` đã có base placeholder nhưng mặc định vẫn disabled; platform chỉ bật target khi đã instantiate và bind IP tương ứng.
+
+`SRAM`, `CPU1_IRAM`, `CPU2_IRAM`, `NPU_CSR`, `H264_H265_CSR`, `ETH_CSR`, `MIPI_CSR` còn TBD và mặc định disabled. Disabled target không có socket hoặc route. Multimedia CSR được dự kiến ở PERIBUS_1; SYS_DMA_CSR ở PERIBUS_0. AES/QSPI có thể khai báo thêm trên `SysBus0Axi`, không tự gán map production cho hai IP này.
 
 ```cpp
 #include <bus/bus_system.h>

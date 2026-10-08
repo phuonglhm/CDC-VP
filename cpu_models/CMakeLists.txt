@@ -36,7 +36,11 @@ endif()
 # exact target rather than forking it: the hart a compiler team validates
 # against must be the hart Phase 7 instantiates per NEO-CORE, or the validation
 # stops meaning anything the day the SoC is assembled.
-if(CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_RISCV_VPP_COMPILER_VP)
+#
+# Also built for the FX1 SoC (CDC_BUILD_FX1_SOC), which instantiates two harts
+# of this backend with the CVA6 extension set selected through
+# `riscv_vp_plusplus_options`; the TPU_V3 defaults are unchanged.
+if(CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_RISCV_VPP_COMPILER_VP OR CDC_BUILD_FX1_SOC)
     if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/riscv-vp-plusplus/vp/src/core/rv32/iss.cpp")
         add_subdirectory(riscv_vp_plusplus)
     else()
@@ -47,4 +51,9 @@ if(CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_RISCV_VPP_COMPILER_VP)
     endif()
 endif()
 
-add_subdirectory(cva6_vp)
+# The CVA6 wrapper is built on the Bremen `riscv_vp` target and is only used by
+# riscv_cpu_eval, so it follows the same guard; a VP++-only build (TPU_V3, FX1)
+# must not need the Bremen checkout.
+if(TARGET riscv_vp)
+    add_subdirectory(cva6_vp)
+endif()

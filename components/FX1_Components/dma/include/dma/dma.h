@@ -31,6 +31,12 @@ public:
     SC_HAS_PROCESS(Dma);
     explicit Dma(sc_core::sc_module_name name, const Config& config = Config{});
 
+    // Times the scheduler thread resumed. While nothing can progress it sleeps
+    // until a register write, a request-input change, a finished bus
+    // transaction or the next time deadline, so this stays small when a
+    // channel waits for a peripheral (instrumentation for tests).
+    std::uint64_t scheduler_wakeups() const noexcept { return wakeups_; }
+
 private:
     struct Channel {
         std::uint32_t source = 0, destination = 0, size = 0, control = 0;
@@ -72,6 +78,8 @@ private:
     std::uint32_t clear_rx_ = 0, clear_tx_ = 0;
     std::array<sc_core::sc_time, 32> rx_clear_until_, tx_clear_until_;
     sc_core::sc_event kick_, outputs_;
+    std::uint64_t activity_ = 0;  // bumped by every state change the scheduler causes
+    std::uint64_t wakeups_ = 0;
 
     void b_transport(tlm::tlm_generic_payload&, sc_core::sc_time&);
     unsigned transport_dbg(tlm::tlm_generic_payload&);
@@ -99,5 +107,7 @@ private:
     std::uint32_t core_status() const;
     std::uint32_t capabilities() const;
     bool idle() const;
+    // Earliest future time at which a time-based condition can change; false if none.
+    bool next_deadline(sc_core::sc_time now, sc_core::sc_time& at) const;
 };
 } // namespace fx1::dma

@@ -19,6 +19,10 @@ target_include_directories(bus_system PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(bus_system PUBLIC SystemC::systemc)
+# BusConfig::fx1() takes its addresses from the shared FX1 memory map. Only the
+# implementation includes it, so the installed bus headers stay self-contained.
+target_include_directories(bus_system PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../fx1_map/include)
 if(MSVC)
   target_compile_options(bus_system PRIVATE /W4)
 else()

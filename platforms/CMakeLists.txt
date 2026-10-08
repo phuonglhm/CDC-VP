@@ -104,3 +104,15 @@ if(CDC_BUILD_TPU_V3_SOC)
           "Skipping TPU_V3_SoC: cdc::components::tpu_v3_common is not available")
    endif()
 endif()
+
+# FX1 SoC for FW/SW bring-up. Off by default; see platforms/fx1_soc/README.md.
+if(CDC_BUILD_FX1_SOC)
+   if(TARGET cdc::cpu::riscv_vp_plusplus)
+      add_subdirectory(fx1_soc)
+   else()
+      message(FATAL_ERROR
+          "CDC_BUILD_FX1_SOC=ON but cdc::cpu::riscv_vp_plusplus is not available. "
+          "Fetch the pinned checkout with "
+          "cpu_models/riscv_vp_plusplus/fetch_riscv_vp_plusplus.sh.")
+   endif()
+endif()

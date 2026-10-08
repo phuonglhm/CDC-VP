@@ -40,11 +40,13 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include <cdc/cpu/cpu_base.h>
+#include <cdc/cpu/exclusive_monitor_if.h>
 
 // Forward declarations keep the VP++ headers (and Boost) out of the public
 // interface: a platform needs `cpu_base` plus this header and nothing else.
@@ -74,6 +76,43 @@ struct shared_bus_lock;
 /// `tpu_chip` is what creates it (plan §11.9, decision record D8).
 std::shared_ptr<shared_bus_lock> make_shared_bus_lock();
 
+/// Optional per-platform overrides. **Every default reproduces the hart TPU_V3
+/// was qualified with**; a field changes behaviour only when a platform sets
+/// it, so existing platforms need no change and see none.
+struct riscv_vp_plusplus_options {
+    /// `misa` extension letters to remove from the default IMACFDV + NUS set,
+    /// for example "DV" for the FX1 CVA6 configuration (RV32IMAFC). Removing a
+    /// letter also makes its instructions decode as illegal. `I` cannot be
+    /// removed; an unknown or duplicate letter is refused at construction.
+    std::string disable_extensions;
+
+    /// Value returned for `mtime` by the `time`/`timeh` CSRs (`rdtime`). Empty
+    /// means simulation time in resolution units (the TPU_V3 behaviour). A
+    /// platform with a CLINT passes its counter so CSR and MMIO reads agree.
+    std::function<std::uint64_t()> mtime_source;
+
+    /// Platform exclusive monitor (`cdc/cpu/exclusive_monitor_if.h`). Null
+    /// keeps upstream's model, where `lr.w` takes the shared bus lock and holds
+    /// it until the hart's next store or `sc.w` (or 17 instructions), and no
+    /// non-CPU master takes part. With a monitor:
+    ///
+    ///  * `lr.w` opens a reservation in the monitor and does **not** take the
+    ///    bus lock, so the sibling hart keeps running;
+    ///  * `sc.w` takes the bus lock, enters the monitor's atomic bracket and
+    ///    stores only if the reservation survived; a write by any other master
+    ///    (the sibling's stores, a DMA through a guard) that overlapped the
+    ///    reservation granule has cancelled it;
+    ///  * an AMO keeps the bus lock for its load-modify-store and also holds
+    ///    the bracket, so a guarded DMA write to the same granule waits;
+    ///  * every store is bracketed with `try_begin_write` / `end_write`;
+    ///  * `reset_cpu()` calls `reset_hart()`.
+    ///
+    /// Addresses passed to the monitor are physical. The RV64-only doubleword
+    /// LR/SC/AMO paths are unreachable on this RV32 ISS and keep upstream's.
+    /// The monitor must outlive the CPU.
+    exclusive_monitor_if* exclusive_monitor = nullptr;
+};
+
 class riscv_vp_plusplus_cpu : public cpu_base {
 public:
     /// `config.hart_id` and `config.reset_pc` are honoured, not ignored
@@ -84,6 +123,9 @@ public:
     /// point is used; see `load_elf`.
     explicit riscv_vp_plusplus_cpu(sc_core::sc_module_name name,
                                    const cpu_config& config = cpu_config{});
+    /// As above, with platform overrides; see `riscv_vp_plusplus_options`.
+    riscv_vp_plusplus_cpu(sc_core::sc_module_name name, const cpu_config& config,
+                          const riscv_vp_plusplus_options& options);
     ~riscv_vp_plusplus_cpu() override;
 
     /// VP++'s `CombinedMemoryInterface` carries one socket for fetch and data,

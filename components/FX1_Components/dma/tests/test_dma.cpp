@@ -63,6 +63,7 @@ public:
     sc_signal<std::uint32_t> rx_request{"rx_request"}, tx_request{"tx_request"};
     sc_signal<std::uint32_t> rx_clear{"rx_clear"}, tx_clear{"tx_clear"};
     unsigned errors = 0;
+    const Dma* dma = nullptr;  // for scheduler instrumentation
     SC_HAS_PROCESS(Bench);
     Bench(sc_module_name name, Memory& memory, std::string mode)
         : sc_module(name), memory_(memory), mode_(std::move(mode)) { SC_THREAD(run); }
@@ -390,13 +391,41 @@ private:
         configure(2,0x1000,0x6000,4); start(2); done(2);
         check(cr(2,CH_INTERRUPT_STATUS)==WRITE_RESPONSE_TIMEOUT,"blocking write response timeout");
     }
+    void idle_test() {
+        // A2: an M2P channel waiting for a peripheral request must not make the
+        // scheduler poll every cycle. 10 ms of waiting is 10^7 cycles at 1 ns.
+        pattern(0x1000, 32);
+        configure(0, 0x1000, 0x18000, 8, 0xc4010008, 0x44010001, 1u << 16);
+        start(0);
+        wait(1, SC_US);  // let the memory side prefetch, then nothing can move
+        check(memory_.tx_data.empty() && cr(0, CH_ACTIVE_STATUS), "channel waits for the TX request");
+        const auto before = dma->scheduler_wakeups();
+        const auto waited_from = sc_time_stamp();
+        wait(10, SC_MS);
+        const auto wakeups = dma->scheduler_wakeups() - before;
+        std::cout << "[FX1 DMA] idle: " << wakeups << " scheduler wakeups in "
+                  << (sc_time_stamp() - waited_from) << " of waiting\n";
+        check(wakeups <= 4, "no per-cycle polling while waiting (event/deadline driven)");
+        check(memory_.tx_data.empty(), "still nothing sent without a request");
+        for (unsigned i = 0; i < 8; ++i) {
+            wr(PERIPHERAL_TX_REQUEST, 2);
+            for (unsigned k = 0; k < 40 && !(tx_clear.read() & 2); ++k) wait(1, SC_NS);
+            check((tx_clear.read() & 2) != 0, "request served after the long wait");
+            wait(2, SC_NS);
+        }
+        done(0);
+        check(memory_.tx_data.size() == 8 &&
+              std::equal(memory_.tx_data.begin(), memory_.tx_data.end(), memory_.data.begin() + 0x1000),
+              "M2P data correct after the long wait");
+    }
     void run() {
         reset();
         if(mode_=="registers") registers_test(); else if(mode_=="memory") memory_test();
         else if(mode_=="peripheral") peripheral_test(); else if(mode_=="chain") chain_test();
         else if(mode_=="pending") pending_test(); else if(mode_=="arbitration") arbitration_test();
         else if(mode_=="errors") errors_test(); else if(mode_=="reset") reset_test();
-        else if(mode_=="timing") timing_test(); else check(false,"unknown test case");
+        else if(mode_=="timing") timing_test(); else if(mode_=="idle") idle_test();
+        else check(false,"unknown test case");
         std::cout << "[FX1 DMA] " << mode_ << ": " << (errors?"FAIL":"PASS") << " (" << errors << " errors)\n";
         sc_stop();
     }
@@ -408,11 +437,12 @@ int sc_main(int argc, char** argv) {
     Config config;
     if(mode=="timing") { config.transaction_timeout=sc_time(20,SC_NS); config.watchdog_timeout=sc_time(35,SC_NS); }
     Memory memory{"memory"}; Bench bench{"bench",memory,mode}; Dma dma{"dma",config};
+    bench.dma = &dma;
     bench.registers.bind(dma.target_socket); dma.master_socket.bind(memory.target);
     dma.reset_n(bench.reset_n); dma.irq(bench.irq);
     dma.rx_request(bench.rx_request); dma.tx_request(bench.tx_request);
     dma.rx_clear(bench.rx_clear); dma.tx_clear(bench.tx_clear);
-    sc_start(1,SC_MS);
+    sc_start(mode=="idle" ? sc_time(20,SC_MS) : sc_time(1,SC_MS));
     if(!sc_end_of_simulation_invoked()) { std::cerr<<"FAIL: simulation deadline\n"; return 1; }
     return bench.errors?1:0;
 }

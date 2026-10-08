@@ -60,6 +60,12 @@ endif()
 
  add_subdirectory(isp_tlm)  # TEMP: WIP, missing headers — re-enable when it builds
 
+# FX1 components (bus, memory map, CLINT, sparse RAM, sim-control, ...). Only
+# configured for the FX1 SoC so the default build is unchanged.
+if(CDC_BUILD_FX1_SOC)
+   add_subdirectory(FX1_Components)
+endif()
+
 # ── Install/export so a standalone platform can find_package(cdc-components) ──
 install(EXPORT cdc-components-targets
     NAMESPACE cdc::components::

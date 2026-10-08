@@ -52,6 +52,12 @@ option(CDC_BUILD_TPU_V3_IMAGE_TRANSFORM
 option(CDC_BUILD_RISCV_VPP_COMPILER_VP
     "Build the RISC-V VP++ Compiler Enablement VP handoff platform" OFF)
 
+# FX1 SoC platform for FW/SW bring-up: two VP++ RV32 harts (CVA6
+# configuration), the FX1 bus, CLINT/PLIC, UART, SYS_DMA and ISP from
+# components/FX1_Components. Off by default so existing builds are untouched;
+# see platforms/fx1_soc/README.md.
+option(CDC_BUILD_FX1_SOC "Build the FX1 SoC platform (VP++ harts + FX1 bus)" OFF)
+
 # The matrix-engine geometry this binary is built for. It replaces the retired
 # TPU_V3_MXU_BACKEND: after D14 the selectable property is not which of two
 # MXU implementations to compile, it is which Sauria delivery the build
@@ -136,7 +142,7 @@ endif()
 # composition silently never built. Nothing in components/ depended on
 # cpu_models/ before this, so moving it earlier changes no existing build.
 if(CDC_BUILD_CPU_EVAL OR CDC_BUILD_CUSTOM_SOC OR CDC_BUILD_TPU_V3_SOC
-   OR CDC_BUILD_RISCV_VPP_COMPILER_VP)
+   OR CDC_BUILD_RISCV_VPP_COMPILER_VP OR CDC_BUILD_FX1_SOC)
     add_subdirectory(cpu_models)
 endif()
 add_subdirectory(components)

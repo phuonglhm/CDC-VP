@@ -300,3 +300,18 @@ target_link_libraries(riscv_vp_plusplus
 if(CDC_BUILD_TPU_V3_TESTS AND CDC_BUILD_TPU_V3_SOC)
     add_subdirectory(tests)
 endif()
+
+# The opt-in exclusive-monitor hooks (FX1 plan C7): hook sequence of store,
+# LR, SC and AMO, the SC result follows the monitor, and reset_cpu() drops the
+# reservation. Registered here rather than in tests/ because it needs none of
+# the TPU_V3 Phase 2 prerequisites; inert for TPU_V3, which passes no monitor.
+if(CDC_BUILD_TESTS AND (CDC_BUILD_FX1_SOC OR (CDC_BUILD_TPU_V3_TESTS AND CDC_BUILD_TPU_V3_SOC)))
+    add_executable(test_exclusive_monitor_hooks tests/test_exclusive_monitor_hooks.cpp)
+    target_link_libraries(test_exclusive_monitor_hooks PRIVATE
+        cdc::cpu::riscv_vp_plusplus
+        SystemC::systemc)
+    add_test(NAME riscv_vp_plusplus_exclusive_monitor_hooks COMMAND test_exclusive_monitor_hooks)
+    set_tests_properties(riscv_vp_plusplus_exclusive_monitor_hooks PROPERTIES
+        LABELS "cpu;unit;fx1;fx1_unit"
+        TIMEOUT 60)
+endif()

@@ -37,7 +37,7 @@ Yêu cầu C++17, CMake, SystemC 2.3.4 được build bằng toolchain tương t
 Build và chạy regression C++ không cần Python hay file Excel.
 
 ```bash
-cd /mnt/d/Intern_doc/Project/CDC-VP/components/FX1_Components
+cd <CDC-VP>/components/FX1_Components
 make -C dma BUILD_DIR=/tmp/cdc-fx1-dma-build test
 ```
 
@@ -57,22 +57,25 @@ cmake --build /tmp/cdc-fx1-dma-build --parallel 2
 ctest --test-dir /tmp/cdc-fx1-dma-build --output-on-failure
 ```
 
-Thư mục `/tmp` tránh lỗi CMake `Operation not permitted` khi copy file và giữ
-permission trên một số mount `/mnt/d`. Nếu mount của bạn hoạt động bình thường,
-có thể dùng `dma/build`. Build riêng production library bằng
-`-DFX1_DMA_BUILD_TESTS=OFF`, sau đó `cmake --build ... --target fx1_dma`.
+Dùng build directory ngoài cây source (ví dụ trong `/tmp`) nếu mount hiện tại
+không cho CMake copy file hoặc giữ permission. Build riêng production library
+bằng `-DFX1_DMA_BUILD_TESTS=OFF`, sau đó `cmake --build ... --target fx1_dma`.
 
-Từ repository root, `components/CMakeLists.txt` đã thêm component; target
-`test_fx1_dma` dùng chung `SystemC::systemc` của parent.
+Từ repository root, component được build khi bật `-DCDC_BUILD_FX1_SOC=ON`
+(`components/FX1_Components/CMakeLists.txt`). Khi đó test qua bus
+(`fx1_dma_bus`) tự bật vì target `bus_system` đã có. Các test có label
+`fx1;fx1_unit`; platform FX1 gắn DMA thật và có smoke `fx1_smoke_dma_m2m`.
 
 ## Kết nối vào VP
 
 ```cpp
 #include "dma/dma.h"
 
+// BusConfig: target "SYS_DMA_CSR" enabled (base FX1_SYS_DMA_CSR_BASE,
+// 64 KiB APB slot, Peribus0Apb); initiator "SYS_DMA".
 fx1::dma::Dma dma{"dma"};
-dma.master_socket.bind(fabric.target);       // DMA initiator -> SYSBUS_1
-fabric.pp1[dma_port].socket.bind(dma.target_socket); // CPU -> APB registers
+dma.master_socket.bind(fabric.initiator("SYS_DMA"));     // DMA master -> SYSBUS_1
+fabric.target("SYS_DMA_CSR").bind(dma.target_socket);   // CPU -> APB registers
 dma.reset_n(reset_n_signal);
 dma.irq(dma_irq_signal);                     // Một interrupt tổng hợp
 dma.rx_request(rx_request_bitmap);
@@ -88,9 +91,17 @@ Request ngoài được giữ đến clear, sau đó phải hạ xuống trướ
 Clear phát xung trong một `Config::cycle`. Software request được ghi qua
 `PERIPHERAL_RX_REQUEST`/`PERIPHERAL_TX_REQUEST` và tự clear khi service kết thúc.
 
-Address map do platform quyết định. **Vùng DMA phải dài ít nhất `0x1100` byte**;
-slot APB `0x1000` byte mặc định của bus không chứa được global registers.
-[`tests/test_bus.cpp`](tests/test_bus.cpp) minh họa cấu hình và bind đầy đủ.
+Address map do platform quyết định. **Vùng DMA phải dài ít nhất `0x1100` byte**.
+FX1 dùng slot APB 64 KiB tại `FX1_SYS_DMA_CSR_BASE`; phần ngoài `0x1100` trả
+decode error. [`tests/test_bus.cpp`](tests/test_bus.cpp) minh họa cấu hình
+và bind đầy đủ qua API bus có tên. Firmware C dùng
+[`include/dma/fx1_dma_regs.h`](include/dma/fx1_dma_regs.h) (kiểm khớp
+`registers.h` lúc compile) và [hướng dẫn lập trình](docs/PROGRAMMING_GUIDE.md).
+
+Scheduler chỉ chạy theo nhịp cycle khi có tiến triển. Khi không kênh nào đi
+được (chờ request peripheral, kênh bị disable, FIFO đầy), nó ngủ tới khi có
+ghi thanh ghi, input request đổi, giao dịch bus hoàn tất, hoặc deadline gần nhất
+(ready delay, xung clear, timeout, watchdog). Test `fx1_dma_idle` kiểm điều này.
 
 AXI burst dùng `b_transport`. INCR chuyển một buffer liên tiếp; FIXED gửi từng
 beat tại cùng địa chỉ để tương thích bus hiện tại. Extension
@@ -141,8 +152,12 @@ software verification.
 Các test kiểm tra register/reset/mask, reserved error, payload byte-for-byte,
 burst boundary, narrow/FIXED transfer, endian swap, command chain/completion
 queue, pending/FIFO reservation, arbitration 8 kênh, peripheral handshake,
-disable/error/restart, reset khi đang có giao dịch và timeout tùy chọn.
-Test bus dùng router/AXI–APB bridge của `FX1_Components/bus`.
+disable/error/restart, reset khi đang có giao dịch, timeout tùy chọn, và
+scheduler không polling khi kênh chờ request (`idle`: 10 ms chờ, kiểm số lần
+thức của scheduler). `fx1_dma_regs_header` kiểm header C khớp `registers.h`
+bằng `static_assert`. Test bus dùng router/AXI–APB bridge của
+`FX1_Components/bus` qua API có tên.
 
-`ctest` chạy 9 test C++ của DMA; bật `FX1_DMA_BUILD_BUS_TESTS=ON` sẽ có thêm
-test bus, tổng cộng 10 test.
+`ctest` chạy 10 chế độ của `test_fx1_dma` cùng `fx1_dma_regs_header`; bật
+`FX1_DMA_BUILD_BUS_TESTS=ON` (mặc định ON trong cây CDC-VP) sẽ có thêm
+`fx1_dma_bus`, tổng cộng 12 test.

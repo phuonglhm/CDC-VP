@@ -1,4 +1,5 @@
 #include "bus/config.h"
+#include "fx1/fx1_memory_map.h"
 #include <limits>
 #include <stdexcept>
 #include <unordered_set>
@@ -8,21 +9,24 @@ BusConfig BusConfig::fx1() {
     BusConfig c;
     c.initiators = {{"CPU1"},{"CPU2"},{"SYS_DMA"},{"ISP_IDMA"},{"ISP_ODMA"},
                     {"NPU_DMA"},{"H264_H265_DMA"},{"ETH_DMA"}};
+    // Addresses come from fx1_memory_map.h (VP placeholders pending the HAS).
+    // ISP_CSR and SYS_DMA_CSR have a placeholder base but stay disabled: a
+    // platform enables a target only once it instantiates and binds the IP.
     c.targets = {
-        {"BootROM",0x00000000ULL,2ULL<<20,TargetPath::SysBus1Axi,true},
-        {"CLINT",0x02000000ULL,64ULL<<10,TargetPath::Peribus0Apb,true},
-        {"PLIC",0x0C000000ULL,16ULL<<20,TargetPath::Peribus0Apb,true},
-        {"UART",0x10000000ULL,64ULL<<10,TargetPath::Peribus0Apb,true},
-        {"MEMCTL_DDR",0x80000000ULL,512ULL<<20,TargetPath::SysBus1Axi,true},
+        {"BootROM",FX1_BOOTROM_BASE,FX1_BOOTROM_SIZE,TargetPath::SysBus1Axi,true},
+        {"CLINT",FX1_CLINT_BASE,FX1_CLINT_SIZE,TargetPath::Peribus0Apb,true},
+        {"PLIC",FX1_PLIC_BASE,FX1_PLIC_SIZE,TargetPath::Peribus0Apb,true},
+        {"UART",FX1_UART_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus0Apb,true},
+        {"MEMCTL_DDR",FX1_DDR_BASE,FX1_DDR_SIZE,TargetPath::SysBus1Axi,true},
         {"SRAM",0,0,TargetPath::SysBus1Axi,false},
         {"CPU1_IRAM",0,0,TargetPath::SysBus1Axi,false},
         {"CPU2_IRAM",0,0,TargetPath::SysBus1Axi,false},
-        {"ISP_CSR",0,0,TargetPath::Peribus1Apb,false},
+        {"ISP_CSR",FX1_ISP_CSR_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus1Apb,false},
         {"NPU_CSR",0,0,TargetPath::Peribus1Apb,false},
         {"H264_H265_CSR",0,0,TargetPath::Peribus1Apb,false},
         {"ETH_CSR",0,0,TargetPath::Peribus1Apb,false},
         {"MIPI_CSR",0,0,TargetPath::Peribus1Apb,false},
-        {"SYS_DMA_CSR",0,0,TargetPath::Peribus0Apb,false}
+        {"SYS_DMA_CSR",FX1_SYS_DMA_CSR_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus0Apb,false}
     };
     return c;
 }

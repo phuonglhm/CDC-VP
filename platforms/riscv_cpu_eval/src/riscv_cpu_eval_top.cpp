@@ -85,15 +85,21 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
         timer_rst_n.write(true);
          timer_extin.write(false);
 
-        // IRQ bridge: convert the timer's signal edge into a machine-timer
-        // interrupt injected into the real CPU.
+        // IRQ bridge: the timer output is a level. Follow both edges so MTIP
+        // drops when firmware clears the timer (plan C1); forwarding only the
+        // rising edge left MTIP stuck high and the handler re-entered forever.
          timer.irq_out(timer_irq);
          SC_HAS_PROCESS(impl);
         SC_METHOD(on_timer_irq);
-         sensitive << timer_irq.posedge_event();
+         sensitive << timer_irq;
          dont_initialize();
 
-        // UART bridge: convert the UART's signal edge into a machine-external
+        // UART interrupt -> machine external interrupt, as a level. (The CVA6
+        // wrapper does not yet implement cause 11; see the FX1 plan, C2.)
+        SC_METHOD(on_uart_irq);
+        sensitive << uart_irq;
+        dont_initialize();
+
          SC_METHOD(on_uart_tx);
          sensitive << uart_tx;
         dont_initialize();
@@ -106,8 +112,7 @@ struct riscv_cpu_eval_top::impl : public sc_core::sc_module {
 
     void on_timer_irq()
     {
-        // cpu.raise_irq(kCauseMachineTimer);
-        cpu.set_irq(kCauseMachineTimer, true);
+        cpu.set_irq(kCauseMachineTimer, timer_irq.read());
     }
 
     void on_uart_irq() {

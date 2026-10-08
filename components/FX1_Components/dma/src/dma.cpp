@@ -258,6 +258,7 @@ void Dma::begin_command(unsigned n) {
     if (ch.size && !(ch.write_config & 127)) { fail(n, reg::WRITE_DECERR); return; }
 }
 void Dma::finish_command(unsigned n) {
+    ++activity_;
     auto& ch = channels_[n];
     ch.completed = (ch.completed + 1) & 0xfff;
     if (ch.control & reg::CMD_SET_INT) {
@@ -270,6 +271,7 @@ void Dma::finish_command(unsigned n) {
     ch.progress = sc_core::sc_time_stamp();
 }
 void Dma::fail(unsigned n, std::uint32_t bits) {
+    ++activity_;
     auto& ch = channels_[n];
     ch.raw |= bits;
     ch.fault = true;
@@ -388,6 +390,7 @@ bool Dma::issue(bool read) {
     }
     (read ? read_order_ : write_order_).push_back(slot);
     (read ? read_jobs_ : write_jobs_)[slot].notify(sc_core::SC_ZERO_TIME);
+    ++activity_;
     return true;
 }
 
@@ -457,6 +460,7 @@ void Dma::retire(bool read) {
     // All transactions carry ID 4: retain results in issue order even if a
     // reentrant TLM target returns different calls in a different order.
     while (!order.empty() && slots[order.front()].done) {
+        ++activity_;
         auto& task = slots[order.front()];
         auto& ch = channels_[task.channel];
         if (read) {
@@ -500,6 +504,7 @@ void Dma::retire(bool read) {
 void Dma::scheduler() {
     while (true) {
         const auto now = sc_core::sc_time_stamp();
+        const auto activity = activity_;
         retire(true); retire(false);
         for (unsigned p = 1; p < 32; ++p) {
             if (now >= rx_clear_until_[p]) clear_rx_ &= ~(1u << p);
@@ -528,8 +533,42 @@ void Dma::scheduler() {
             issue(true); issue(false);
         }
         outputs_.notify(sc_core::SC_ZERO_TIME);
-        if (idle() && !clear_rx_ && !clear_tx_) sc_core::wait(kick_);
-        else sc_core::wait(config_.cycle, kick_);
+        // Pace issue at one step per cycle while work is moving. Otherwise sleep
+        // until an event (register write, request input, finished transaction)
+        // or the next time-based condition, instead of polling every cycle.
+        sc_core::sc_time deadline;
+        if (activity_ != activity) sc_core::wait(config_.cycle, kick_);
+        else if (next_deadline(now, deadline)) sc_core::wait(deadline - now, kick_);
+        else sc_core::wait(kick_);
+        ++wakeups_;
     }
+}
+
+bool Dma::next_deadline(sc_core::sc_time now, sc_core::sc_time& at) const {
+    bool found = false;
+    const auto consider = [&](sc_core::sc_time t) {
+        if (t > now && (!found || t < at)) { at = t; found = true; }
+    };
+    for (unsigned p = 1; p < 32; ++p) {
+        if (clear_rx_ & (1u << p)) consider(rx_clear_until_[p]);
+        if (clear_tx_ & (1u << p)) consider(tx_clear_until_[p]);
+    }
+    if (!reset_n.read()) return found;
+    for (const auto& ch : channels_) {
+        if (!ch.active || ch.fault) continue;
+        consider(ch.read_ready);
+        consider(ch.write_ready);
+        if (config_.watchdog_timeout != sc_core::SC_ZERO_TIME && ch.enabled)
+            consider(ch.progress + config_.watchdog_timeout);
+    }
+    if (config_.transaction_timeout != sc_core::SC_ZERO_TIME) {
+        for (const bool read : {true, false}) {
+            for (const auto& task : read ? reads_ : writes_) {
+                if (task.busy && task.epoch == epoch_ && !task.done && !task.timed_out)
+                    consider(task.issued + config_.transaction_timeout);
+            }
+        }
+    }
+    return found;
 }
 } // namespace fx1::dma
