@@ -1,0 +1,2 @@
+add_executable(encoder_demo sc_main.cpp)
+target_link_libraries(encoder_demo PRIVATE h264_pipeline_stub h264_platform)

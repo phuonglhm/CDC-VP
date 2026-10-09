@@ -1,0 +1,4 @@
+add_library(h264_shared INTERFACE)
+target_compile_features(h264_shared INTERFACE cxx_std_17)
+target_include_directories(h264_shared INTERFACE include)
+target_link_libraries(h264_shared INTERFACE SystemC::systemc)

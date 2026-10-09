@@ -1,0 +1,28 @@
+cmake_minimum_required(VERSION 3.21)
+project(h264_embedding_probe LANGUAGES CXX)
+# A foreign parent deliberately owns SystemC and PROJECT_SOURCE_DIR. No copy
+# of the codec tree or dependency source is generated in this fixture.
+set(CMAKE_CXX_STANDARD 17)
+if(NOT H264_SOURCE_DIR OR NOT SYSTEMC_INCLUDE_DIR OR NOT SYSTEMC_LIBRARY)
+  message(FATAL_ERROR "Set H264_SOURCE_DIR, SYSTEMC_INCLUDE_DIR and SYSTEMC_LIBRARY")
+endif()
+add_library(SystemC::systemc UNKNOWN IMPORTED GLOBAL)
+set_target_properties(SystemC::systemc PROPERTIES
+  IMPORTED_LOCATION "${SYSTEMC_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${SYSTEMC_INCLUDE_DIR}")
+option(CDC_BUILD_TESTS "Build component tests" ON)
+enable_testing()
+if(H264_INSTALLED_PREFIX)
+  find_package(h264-vp CONFIG REQUIRED PATHS "${H264_INSTALLED_PREFIX}/lib/cmake/h264-vp" NO_DEFAULT_PATH)
+  add_executable(h264_installed_smoke installed_smoke.cpp)
+  target_link_libraries(h264_installed_smoke PRIVATE cdc::components::h264_tlm cdc::components::h264_pipeline_stub)
+  add_test(NAME h264_installed_smoke COMMAND h264_installed_smoke)
+else()
+  add_subdirectory("${H264_SOURCE_DIR}" h264-component)
+endif()
+if(NOT TARGET cdc::components::h264_tlm)
+  message(FATAL_ERROR "Missing public H264 target")
+endif()
+if(NOT CDC_BUILD_TESTS AND (TARGET vp_tests OR TARGET full_pipeline_tb OR TARGET encoder_demo))
+  message(FATAL_ERROR "Component-only embedding unexpectedly creates test/demo targets")
+endif()

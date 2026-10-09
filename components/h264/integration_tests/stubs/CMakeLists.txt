@@ -1,0 +1,3 @@
+add_library(h264_pipeline_stub frame_pipeline_stub.cpp)
+target_include_directories(h264_pipeline_stub PUBLIC include)
+target_link_libraries(h264_pipeline_stub PUBLIC h264_top)

@@ -1,0 +1,3 @@
+add_library(h264_sync INTERFACE)
+target_include_directories(h264_sync INTERFACE include)
+target_link_libraries(h264_sync INTERFACE h264_shared)

@@ -1,0 +1,5 @@
+include(CMakeFindDependencyMacro)
+if(NOT TARGET SystemC::systemc)
+  find_dependency(SystemCLanguage 2.3.4 EXACT CONFIG)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/h264-targets.cmake")
