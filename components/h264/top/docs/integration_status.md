@@ -16,6 +16,6 @@
 hoàn chỉnh; `DmaArbiter::clients` cho DMA initiator mới. Mô hình functional cần golden mới
 và test I/P/B, entropy variable length, reference completion riêng.
 
-Chi tiết bàn giao: `integration_docs/cdc_vp_integration.md` từ root. Pipeline đã được inject qua factory;
+Chi tiết ghép pipeline: [full_pipeline_testbench.md](full_pipeline_testbench.md). Pipeline đã được inject qua factory;
 controller nhận length từ adapter và không tự thêm EOS. Full-pipeline harness đã có;
 real backend chỉ được bật khi có target adapter của nhóm và golden độc lập.

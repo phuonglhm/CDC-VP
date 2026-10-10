@@ -1,8 +1,7 @@
 # Interface contracts v0.1
 
 Owner điều phối: Huy Nguyen Huynh Quoc. Vinh Nguyen Thanh và Nguyên
-cùng review các interface có producer/consumer thuộc mình. Phân công, ranh giới NAL/DF DMA
-và quy trình ghép module: `integration_docs/cdc_vp_integration.md` (tính từ root project).
+cùng review các interface có producer/consumer thuộc mình. Quy trình ghép pipeline: [full_pipeline_testbench.md](../../top/docs/full_pipeline_testbench.md).
 Các API dưới đây mô tả VP đang chạy; API prediction/TQ/entropy thật chưa được chốt.
 
 ## Thời gian và concurrency

@@ -15,6 +15,6 @@ Hướng dẫn thêm module release và full-pipeline testbench:
 Regression hiện nằm trong integration_tests vì cần host + DDR + top. Chạy từ thư mục components/h264:
 `ctest --test-dir build/vp --output-on-failure`. Nhóm test liên quan: toàn bộ regression CTest.
 
-Xem `interfaces/docs/interface_contracts.md` và `integration_docs/model_limitations.md` trước khi
+Xem `interfaces/docs/interface_contracts.md` trước khi
 thay interface. Tất cả header dùng .h. Không sao chép source giữa các task.
 
