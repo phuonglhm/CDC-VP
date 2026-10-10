@@ -3,4 +3,4 @@
 CMakeUserPresets.json
 
 # Versioned text fixtures required by pipeline tests.
-!/integration_tests/vectors/full_pipeline/*.hex
+!/tests/vectors/full_pipeline/*.hex

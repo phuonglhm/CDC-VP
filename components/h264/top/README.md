@@ -12,9 +12,9 @@ Header stub được export bởi h264_pipeline_stub, không nằm trong API c�
 Hướng dẫn thêm module release và full-pipeline testbench:
 [full_pipeline_testbench.md](docs/full_pipeline_testbench.md).
 
-Regression hiện nằm trong integration_tests vì cần host + DDR + top. Chạy từ thư mục components/h264:
+Regression hiện nằm trong tests vì cần host + DDR + top. Chạy từ thư mục components/h264:
 `ctest --test-dir build/vp --output-on-failure`. Nhóm test liên quan: toàn bộ regression CTest.
 
-Xem `interfaces/docs/interface_contracts.md` và `integration_docs/model_limitations.md` trước khi
+Xem `interfaces/docs/interface_contracts.md` trước khi
 thay interface. Tất cả header dùng .h. Không sao chép source giữa các task.
 

@@ -11,7 +11,7 @@ endif()
 set_target_properties(h264_top PROPERTIES EXPORT_NAME h264_tlm)
 foreach(pair "h264_shared|interfaces" "h264_sync|synchronization"
              "h264_control|control" "h264_dma|axi_dma" "h264_top|top"
-             "h264_pipeline_stub|integration_tests/stubs")
+             "h264_pipeline_stub|tests/support/stubs")
   string(REPLACE "|" ";" parts "${pair}")
   list(GET parts 0 lib)
   list(GET parts 1 dir)
