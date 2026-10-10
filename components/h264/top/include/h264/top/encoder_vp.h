@@ -1,6 +1,5 @@
 #pragma once
-#include <h264/dma/dma_arbiter.h>
-#include <h264/dma/dma_bridge.h>
+#include <h264/top/dma_transport.h>
 #include <h264/control/encoder_controller.h>
 #include <h264/top/pipeline_factory.h>
 namespace h264 {
@@ -10,8 +9,7 @@ public:
     sc_core::sc_out<bool> irq{"irq"};
     ResetDomain reset_domain;
     ControlRegs registers;
-    DmaArbiter arbiter;
-    DmaBridge bridge;
+    DmaTransport dma;
     std::unique_ptr<FrameExecutorIf> pipeline;
     EncoderController controller;
     SC_HAS_PROCESS(EncoderVp);

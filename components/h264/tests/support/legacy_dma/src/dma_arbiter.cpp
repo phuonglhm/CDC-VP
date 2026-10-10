@@ -1,5 +1,5 @@
-#include <h264/dma/dma_arbiter.h>
-namespace h264 {
+#include <h264/legacy_dma/dma_arbiter.h>
+namespace h264::legacy {
 DmaArbiter::DmaArbiter(sc_core::sc_module_name name) : sc_module(name) {
     clients.register_b_transport(this, &DmaArbiter::transport);
     SC_THREAD(dispatch);

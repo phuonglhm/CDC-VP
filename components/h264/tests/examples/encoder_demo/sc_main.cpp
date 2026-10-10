@@ -15,7 +15,7 @@ public:
     explicit Demo(sc_module_name name):sc_module(name) {
         encoder.rstn(rstn); encoder.irq(irq);
         host.registers.bind(encoder.registers.socket); host.memory.bind(ddr.socket);
-        encoder.bridge.memory.bind(ddr.socket);
+        encoder.dma.memory.bind(ddr.socket);
         SC_THREAD(run); SC_THREAD(watchdog);
     }
     void watchdog() { wait(1,SC_MS); SC_REPORT_FATAL("demo","simulation timeout"); }

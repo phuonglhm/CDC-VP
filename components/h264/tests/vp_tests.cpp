@@ -23,7 +23,7 @@ public:
     }
 };
 PipelineFactory schedule_factory(bool duplicate) {
-    return [duplicate](sc_module_name name,ResetDomain& reset,DmaArbiter& arbiter)->std::unique_ptr<FrameExecutorIf> {
+    return [duplicate](sc_module_name name,ResetDomain& reset,DmaTransport& arbiter)->std::unique_ptr<FrameExecutorIf> {
         auto p=std::make_unique<ScheduleFixture>(name,reset,duplicate);
         p->cmb.bind(arbiter.clients); p->reference.bind(arbiter.clients); p->nal.bind(arbiter.clients);
         return p;
@@ -46,8 +46,8 @@ public:
           test=="release_schedule" || test=="duplicate_schedule" ? schedule_factory(test=="duplicate_schedule") : PipelineFactory(make_stub_pipeline)),scenario(test) {
         encoder.rstn(rstn); encoder.irq(irq);
         host.registers.bind(encoder.registers.socket); host.memory.bind(ddr.socket);
-        encoder.bridge.memory.bind(ddr.socket);
-        dma_a.bind(encoder.arbiter.clients); dma_b.bind(encoder.arbiter.clients);
+        encoder.dma.memory.bind(ddr.socket);
+        dma_a.bind(encoder.dma.clients); dma_b.bind(encoder.dma.clients);
         if(test=="invalid_params") host.programming.qp=52;
         SC_THREAD(run); SC_THREAD(worker); SC_THREAD(watchdog);
     }
@@ -77,7 +77,7 @@ public:
     void worker() {
         wait(launch_worker);
         std::vector<unsigned char> bytes(256,0x5a);
-        for(unsigned i=0;i<(scenario=="priority_fairness"?12u:1u);++i)
+        for(unsigned i=0;i<1u;++i)
             require(access(dma_b,true,0x7000,bytes)==tlm::TLM_OK_RESPONSE,"second client response");
         worker_done=true;
     }
@@ -149,7 +149,7 @@ public:
         require(done.take(7) && !done.take(7),"sticky completion consumed exactly once");
     }
     void dma_test() {
-        for(unsigned lane=0;lane<encoder.bridge.bus_bytes;++lane) for(unsigned size: {1u,2u,4u}) {
+        for(unsigned lane=0;lane<encoder.dma.bus_bytes;++lane) for(unsigned size: {1u,2u,4u}) {
             std::vector<unsigned char> initial(64,0xa5); host.transfer(true,0x8000,initial);
             std::vector<unsigned char> value(size,static_cast<unsigned char>(0x30+lane));
             require(access(dma_a,true,0x8010+lane,value)==tlm::TLM_OK_RESPONSE,"lane write");
@@ -163,9 +163,9 @@ public:
         require(access(dma_a,true,0x2ffdu,bytes)==tlm::TLM_OK_RESPONSE,"boundary write");
         std::vector<unsigned char> read(bytes.size());
         require(access(dma_a,false,0x2ffd,read)==tlm::TLM_OK_RESPONSE && read==bytes,"boundary read");
-        for(const auto& s:encoder.bridge.trace) {
+        for(const auto& s:encoder.dma.segments) {
             require(s.address/4096==(s.address+s.bytes-1)/4096,"4 KiB crossing");
-            require(s.beats<=encoder.bridge.max_beats,"burst limit");
+            require(s.beats<=encoder.dma.max_beats,"burst limit");
         }
         std::vector<unsigned char> fill(100,0x11),masked(100,0xee),result(100);
         host.transfer(true,0x4ffd,fill);
@@ -174,13 +174,13 @@ public:
         for(unsigned i=0;i<100;++i) require(result[i]==(i%3==0?0xee:0x11),"enable phase lost across segments");
         require(access(dma_a,true,0xffffffffULL,bytes)==tlm::TLM_ADDRESS_ERROR_RESPONSE,"address overflow");
         require(access(dma_a,true,0x100000,bytes)==tlm::TLM_ADDRESS_ERROR_RESPONSE,"DDR bounds");
-        encoder.arbiter.trace.clear(); ddr.latency=sc_time(100,SC_NS);
+        encoder.dma.trace.clear(); ddr.latency=sc_time(100,SC_NS);
         launch_worker.notify(SC_ZERO_TIME);
         std::vector<unsigned char> large(300,0x66);
         require(access(dma_a,true,0x9000,large)==tlm::TLM_OK_RESPONSE,"first concurrent client");
         while(!worker_done) wait(1,SC_NS);
-        require(encoder.arbiter.trace.size()==2,"arbitration lost/duplicated request");
-        require(encoder.arbiter.trace[0].end<=encoder.arbiter.trace[1].begin,"preempted transaction");
+        require(encoder.dma.trace.size()==2,"arbitration lost/duplicated request");
+        require(encoder.dma.trace[0].end<=encoder.dma.trace[1].begin,"preempted transaction");
         std::vector<unsigned char> a(300),b(256);
         host.transfer(false,0x9000,a); host.transfer(false,0x7000,b);
         require(a==large && std::all_of(b.begin(),b.end(),[](auto v){return v==0x5a;}),"client ownership corruption");
@@ -278,20 +278,17 @@ public:
         require(std::filesystem::exists(std::filesystem::path(path)/"activation_status.txt"),"diagnostic file missing");
     }
     void priority_test() {
-        encoder.arbiter.set_priority(3,5); // dma_a: pipeline occupies ports 0..2.
-        encoder.arbiter.set_priority(4,0); // dma_b
+        encoder.dma.set_client(3,ClientId::CMB); // dma_a: pipeline occupies ports 0..2.
+        encoder.dma.set_client(4,ClientId::SW); // dma_b
+        const ClientId order[4]={ClientId::SW,ClientId::CMB,ClientId::NAL,ClientId::DF};
+        encoder.dma.set_priority(order);
         launch_worker.notify(SC_ZERO_TIME);
         std::vector<unsigned char> bytes(4,0x33);
         require(access(dma_a,true,0x9000,bytes)==tlm::TLM_OK_RESPONSE,"priority response");
         while(!worker_done) wait(1,SC_NS);
-        require(encoder.arbiter.trace[0].owner==4,"configured arbitration priority");
-        if(scenario=="priority_fairness") {
-            require(encoder.arbiter.trace.size()==13,"arbitration lost requests");
-            unsigned position=0;
-            while(position<encoder.arbiter.trace.size() && encoder.arbiter.trace[position].owner!=3) ++position;
-            require(position<=8,"low-priority requester starved");
-        } else require(encoder.arbiter.trace.size()==2,"arbitration lost request");
-        require(encoder.arbiter.trace[0].end<=encoder.arbiter.trace[1].begin,"priority preempted active transaction");
+        require(encoder.dma.trace[0].owner==4,"configured arbitration priority");
+        require(encoder.dma.trace.size()==2,"arbitration lost request");
+        require(encoder.dma.trace[0].end<=encoder.dma.trace[1].begin,"priority preempted active transaction");
     }
     void schedule_test() {
         host.programming.gop_m=4; host.programming.gop_n=1;
@@ -338,7 +335,6 @@ public:
             else if(scenario=="host_timeout") timeout_test(false);
             else if(scenario=="host_timeout_stalled") timeout_test(true);
             else if(scenario=="priority") priority_test();
-            else if(scenario=="priority_fairness") priority_test();
             else if(scenario=="schedule") schedule_test();
             else if(scenario=="release_schedule") release_schedule_test(false);
             else if(scenario=="duplicate_schedule") release_schedule_test(true);

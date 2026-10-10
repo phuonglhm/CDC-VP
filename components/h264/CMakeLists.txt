@@ -41,7 +41,7 @@ set(H264_CDC_VP_ROOT "" CACHE PATH "Read-only CDC-VP source tree for integration
 add_subdirectory(interfaces)
 add_subdirectory(synchronization)
 add_subdirectory(control)
-add_subdirectory(axi_dma)
+add_subdirectory(dma_subsystems)
 add_subdirectory(top)
 add_library(cdc::components::h264_tlm ALIAS h264_top)
 if(H264_BUILD_STUBS OR H264_BUILD_TESTS OR H264_BUILD_EXAMPLES OR H264_BUILD_CDC_TESTS)

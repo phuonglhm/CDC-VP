@@ -21,7 +21,7 @@ phụ thuộc công thức length của stub. Adapter thử nghiệm không đư
 1. Các task của hai người export CMake library và public header .h; unit test pass.
 2. Huy tạo assembly adapter implement FrameExecutorIf và factory make_released_pipeline.
    Assembly giữ ownership các module prediction/DMA/coding/memory; nối từng DMA initiator
-   vào DmaArbiter::clients được factory cung cấp. Không dùng lại FramePipelineStub cho real.
+   vào DmaTransport::clients được factory cung cấp. Không dùng lại FramePipelineStub cho real.
 3. Adapter CMake export target `h264_released_pipeline`, link target của nhóm + h264_top.
    Adapter mẫu đã được bỏ khỏi gói này. Khi có IP thật, cung cấp thư mục adapter riêng qua H264_RELEASED_PIPELINE_DIR; hợp đồng được mô tả bên dưới.
 4. Cung cấp input planar YUV và golden độc lập khớp đúng cấu hình; tạo case.cfg.

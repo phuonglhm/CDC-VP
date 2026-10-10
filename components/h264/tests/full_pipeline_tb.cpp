@@ -11,7 +11,7 @@ using namespace h264;
 using namespace sc_core;
 namespace fs=std::filesystem;
 #ifdef H264_CONTRACT_FIXTURE
-namespace h264 { std::unique_ptr<FrameExecutorIf> make_contract_pipeline(sc_module_name,ResetDomain&,DmaArbiter&); }
+namespace h264 { std::unique_ptr<FrameExecutorIf> make_contract_pipeline(sc_module_name,ResetDomain&,DmaTransport&); }
 #endif
 struct TestCase {
     std::map<std::string,std::string> values;
@@ -73,7 +73,7 @@ public:
           sc_time(8,SC_NS),factory),case_(c),output_(std::move(output)) {
         encoder.rstn(rstn); encoder.irq(irq);
         host.registers.bind(encoder.registers.socket); host.memory.bind(memory.socket);
-        encoder.bridge.memory.bind(memory.socket);
+        encoder.dma.memory.bind(memory.socket);
         memory.latency=sc_time(c.number("latency_ns",40),SC_NS);
         host.programming=SequenceParameters{c.number("frames",1),c.number("qp",26),c.number("nal_capacity",65536)};
         SC_THREAD(run);

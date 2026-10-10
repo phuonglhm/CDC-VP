@@ -20,13 +20,14 @@ void FramePipelineStub::transfer(tlm_utils::simple_initiator_socket<FramePipelin
     bool write,uint64_t address,unsigned char* data,unsigned bytes,uint64_t generation) {
     if(!reset_.valid(generation)) throw std::runtime_error("stale frame");
     if (&port==&nal && write) nal_words_accepted(generation,bytes/4);
+    DmaClientExtension client; client.client=(&port==&nal)?ClientId::NAL:(&port==&reference)?ClientId::DF:ClientId::CMB;
     EpochExtension epoch(reset_); epoch.generation=generation;
     tlm::tlm_generic_payload tx;
-    tx.set_extension(&epoch); tx.set_command(write?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND);
+    tx.set_extension(&epoch); tx.set_extension(&client); tx.set_command(write?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND);
     tx.set_address(address); tx.set_data_ptr(data); tx.set_data_length(bytes); tx.set_streaming_width(bytes);
     sc_core::sc_time delay=sc_core::SC_ZERO_TIME;
     port->b_transport(tx,delay); consume_delay(delay);
-    tx.clear_extension<EpochExtension>();
+    tx.clear_extension<EpochExtension>(); tx.clear_extension<DmaClientExtension>();
     if(tx.is_response_error() || !reset_.valid(generation)) throw std::runtime_error("DMA/reset failure");
 }
 void FramePipelineStub::tile(const FrameConfig& c,Macroblock& mb,bool write,uint64_t base,uint64_t generation) {
@@ -61,7 +62,7 @@ uint32_t FramePipelineStub::end_activation(const FrameConfig& c,uint64_t generat
     transfer(nal,true,uint64_t(c.nal)+uint64_t(words)*4,eos,4,generation);
     return words+1;
 }
-std::unique_ptr<FrameExecutorIf> make_stub_pipeline(sc_core::sc_module_name name,ResetDomain& reset,DmaArbiter& arbiter) {
+std::unique_ptr<FrameExecutorIf> make_stub_pipeline(sc_core::sc_module_name name,ResetDomain& reset,DmaTransport& arbiter) {
     auto pipeline=std::make_unique<FramePipelineStub>(name,reset,std::make_unique<ProcessingStub>());
     pipeline->cmb.bind(arbiter.clients); pipeline->reference.bind(arbiter.clients); pipeline->nal.bind(arbiter.clients);
     return pipeline;

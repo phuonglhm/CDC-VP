@@ -27,19 +27,19 @@ thực thi trong các process khác nhau.
 
 ## DMA / memory
 
-`DmaArbiter::clients`: nhiều initiator bind vào multi-target socket. Owner ID là binding
-index, giữ đến hết toàn request kể cả mọi segment và response. Queue chọn priority nhỏ
-trước, FIFO khi cùng priority; request bị vượt 8 lần được ưu tiên để chống starvation.
-Adapter gọi set_priority(owner, rank) theo release. Mặc định cùng priority; không tự gán
-thứ tự CMB/SW/NAL/DF vì PDF không liệt kê priority encoder cụ thể.
-
-`DmaBridge::input`: vùng byte liên tiếp, địa chỉ 32-bit. Chia theo max_beats (mặc định 16),
-bus width, 4 KiB. Mỗi segment là các beat căn chỉnh với byte enable để bảo toàn lane.
-Đây là abstraction byte-range; chưa mô hình chính xác progression của từng legacy beat.
-
-`DmaBridge::memory`: nối DDR qua TLM. Lỗi target được truyền về caller, không biến thành normal.
-`EpochExtension` gắn token reset vào request của pipeline. DDR kiểm tra token sau latency,
-trước commit. Arbiter không giải phóng owner giữa chừng khi reset.
+Production uses DmaTransport::clients and DmaTransport::memory. H264Arb and
+AxiMasterBridge are Vinh's cores. DmaClientExtension selects CMB/SW/NAL/DF;
+untagged fixtures default to CMB. Priority is a configurable four-client
+permutation, FIFO within a client; no legacy aging guarantee is added.
+The grant covers the entire TLM request, including byte-enable runs.
+The adapter enforces 32-bit addresses, non-wrapping streaming width and
+00/FF repeating byte enables, then forwards enabled byte intervals to memory.
+Vinh's bridge owns 32/64/128-bit lane/burst/4-KiB planning.
+Incoming and downstream delays are consumed. Epoch is checked before and
+after memory access; wait_idle is the fence after producers stop. Reset
+cannot roll back writes already accepted by an external memory.
+ControlRegs owns architectural LEN; the pipeline reports accepted NAL words
+before waiting for DMA response. NalDma committed words serve drain validation.
 
 ## Functional adapter
 

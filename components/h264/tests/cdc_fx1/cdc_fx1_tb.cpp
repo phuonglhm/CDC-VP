@@ -43,7 +43,7 @@ public:
         host.registers.bind(fabric.initiator("CPU1"));
         host.memory.bind(fabric.initiator("CPU2"));
         cpu.bind(fabric.initiator("SYS_DMA")); // test MMIO initiator, no CPU emulation
-        encoder.bridge.memory.bind(guard.target);
+        encoder.dma.memory.bind(guard.target);
         guard.out.bind(fabric.initiator("H264_H265_DMA"));
         encoder.rstn(rstn); encoder.irq(lines[FX1_IRQ_H264_H265-1]);
         for(unsigned i=0;i<lines.size();++i) plic.irq_in[i](lines[i]);
@@ -80,9 +80,9 @@ public:
             require(host.write(reg::SCON,reg::ENABLE|reg::GIE)==tlm::TLM_OK_RESPONSE,"reset scenario start");
             while(!guard.writes_held()) wait(10,SC_NS);
             rstn=false; wait(20,SC_NS);
-            require(!encoder.arbiter.wait_idle(sc_time(50,SC_NS)),"drain must time out on live write");
+            require(!encoder.dma.wait_idle(sc_time(50,SC_NS)),"drain must time out on live write");
             monitor.atomic_end(0);
-            require(encoder.arbiter.wait_idle(sc_time(10,SC_US)),"reset DMA drain");
+            require(encoder.dma.wait_idle(sc_time(10,SC_US)),"reset DMA drain");
             wait(1,SC_NS);
             require(!lines[FX1_IRQ_H264_H265-1].read(),"stale IRQ after reset");
             rstn=true; wait(20,SC_NS);

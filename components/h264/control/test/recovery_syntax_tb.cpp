@@ -52,7 +52,7 @@ public:
     }
 };
 static ParallelPipeline* implementation;
-static std::unique_ptr<FrameExecutorIf> factory(sc_module_name name,ResetDomain& r,DmaArbiter& arbiter) {
+static std::unique_ptr<FrameExecutorIf> factory(sc_module_name name,ResetDomain& r,DmaTransport& arbiter) {
     auto p=std::make_unique<ParallelPipeline>(name,r); p->dma.bind(arbiter.clients);
     implementation=p.get(); return p;
 }
@@ -67,7 +67,7 @@ public:
     Bench(sc_module_name name):sc_module(name) {
         encoder.rstn(rstn); encoder.irq(irq);
         host.registers.bind(encoder.registers.socket); host.memory.bind(memory.socket);
-        encoder.bridge.memory.bind(memory.socket);
+        encoder.dma.memory.bind(memory.socket);
         memory.latency=sc_time(200,SC_NS);
         SC_THREAD(run); SC_THREAD(watchdog);
     }

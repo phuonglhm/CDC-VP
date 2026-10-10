@@ -7,11 +7,10 @@ FrameExecutorIf& checked_pipeline(const std::unique_ptr<FrameExecutorIf>& pipeli
 }
 }
 EncoderVp::EncoderVp(sc_core::sc_module_name name,unsigned width,SequenceParameters params,sc_core::sc_time period,PipelineFactory factory)
-    : sc_module(name),registers("registers",reset_domain,params),arbiter("arbiter"),bridge("bridge",width),
-      pipeline(factory("pipeline",reset_domain,arbiter)),controller("controller",registers,reset_domain,checked_pipeline(pipeline)),period_(period) {
+    : sc_module(name),registers("registers",reset_domain,params),dma("dma",width),
+      pipeline(factory("pipeline",reset_domain,dma)),controller("controller",registers,reset_domain,checked_pipeline(pipeline)),period_(period) {
     if(period_<=sc_core::SC_ZERO_TIME) throw std::invalid_argument("clock period must be positive");
     registers.irq(irq);
-    arbiter.memory.bind(bridge.input);
     SC_METHOD(assert_reset); sensitive << rstn.neg();
     SC_THREAD(release_reset);
 }

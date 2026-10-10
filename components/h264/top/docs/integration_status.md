@@ -3,7 +3,7 @@
 | Thành phần | Đang nối | Trạng thái |
 |---|---|---|
 | ControlRegs / EncoderController | TLM register target + blocking frame executor | VP implemented/tested |
-| DmaArbiter / DmaBridge | Multi-client target -> one memory initiator | VP implemented/tested |
+| H264Arb / AxiMasterBridge via DmaTransport | Multi-client target -> one memory initiator | VP implemented/tested |
 | Reset | Epoch + delay release | VP implemented/tested |
 | DDR / Host | Platform models | Implemented/tested |
 | CMB / Reference / NAL clients | FramePipelineStub | Fixture của Huy; chờ Vinh task 05 |
@@ -13,7 +13,7 @@
 | Memory architecture / local RAM | Chưa nối | Chờ Nguyên task 11; DDR platform chỉ là môi trường test |
 
 Điểm bàn giao: `ProcessingIf` cho block fixture; `FrameExecutorIf` cho pipeline functional
-hoàn chỉnh; `DmaArbiter::clients` cho DMA initiator mới. Mô hình functional cần golden mới
+hoàn chỉnh; `DmaTransport::clients` cho DMA initiator mới. Mô hình functional cần golden mới
 và test I/P/B, entropy variable length, reference completion riêng.
 
 Chi tiết ghép pipeline: [full_pipeline_testbench.md](full_pipeline_testbench.md). Pipeline đã được inject qua factory;

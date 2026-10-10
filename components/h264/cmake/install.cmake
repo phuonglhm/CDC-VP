@@ -10,7 +10,7 @@ if(H264_USE_CDC_EXPORT)
 endif()
 set_target_properties(h264_top PROPERTIES EXPORT_NAME h264_tlm)
 foreach(pair "h264_shared|interfaces" "h264_sync|synchronization"
-             "h264_control|control" "h264_dma|axi_dma" "h264_top|top"
+             "h264_control|control" "h264_dma_transport|top" "h264_top|top"
              "h264_pipeline_stub|tests/support/stubs")
   string(REPLACE "|" ";" parts "${pair}")
   list(GET parts 0 lib)
@@ -18,12 +18,9 @@ foreach(pair "h264_shared|interfaces" "h264_sync|synchronization"
   if(TARGET ${lib})
     set(_h264_headers "${CMAKE_CURRENT_SOURCE_DIR}/${dir}/include")
     # Preserve flattened module headers while keeping the public include API.
-    if((lib STREQUAL "h264_control" OR lib STREQUAL "h264_dma")
+    if((lib STREQUAL "h264_control")
        AND NOT EXISTS "${_h264_headers}/h264")
       set(_h264_namespace control)
-      if(lib STREQUAL "h264_dma")
-        set(_h264_namespace dma)
-      endif()
       set(_h264_public "${CMAKE_CURRENT_BINARY_DIR}/public_headers/${lib}")
       file(GLOB _h264_flat CONFIGURE_DEPENDS "${_h264_headers}/*.h")
       foreach(header IN LISTS _h264_flat)
@@ -42,6 +39,9 @@ foreach(pair "h264_shared|interfaces" "h264_sync|synchronization"
       ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
   endif()
 endforeach()
+install(TARGETS h264_dma h264_dma_tlm EXPORT ${_h264_export} ARCHIVE DESTINATION lib)
+install(FILES dma_subsystems/tlm/include/h264_dma_tlm.h DESTINATION include/h264/dma)
+install(DIRECTORY dma_subsystems/common dma_subsystems/dma dma_subsystems/mem DESTINATION include/h264/dma FILES_MATCHING PATTERN "*.h")
 if(NOT H264_USE_CDC_EXPORT)
   install(EXPORT h264-targets NAMESPACE cdc::components::
     DESTINATION lib/cmake/h264-vp)

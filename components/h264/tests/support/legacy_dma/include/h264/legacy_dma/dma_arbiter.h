@@ -3,7 +3,7 @@
 #include <tlm_utils/multi_passthrough_target_socket.h>
 #include <tlm_utils/simple_initiator_socket.h>
 #include <map>
-namespace h264 {
+namespace h264::legacy {
 struct GrantRecord { int owner; uint64_t address; unsigned length; sc_core::sc_time begin, end; };
 class DmaArbiter : public sc_core::sc_module {
 public:

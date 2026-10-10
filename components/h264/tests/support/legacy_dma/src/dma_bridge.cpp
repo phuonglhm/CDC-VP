@@ -1,6 +1,6 @@
-#include <h264/dma/dma_bridge.h>
+#include <h264/legacy_dma/dma_bridge.h>
 #include <algorithm>
-namespace h264 {
+namespace h264::legacy {
 DmaBridge::DmaBridge(sc_core::sc_module_name name, unsigned width, unsigned burst)
     : sc_module(name), bus_bytes(width/8), max_beats(burst) {
     if ((width!=32 && width!=64 && width!=128) || !burst || burst>256)

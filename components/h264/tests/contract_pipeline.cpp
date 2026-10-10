@@ -31,7 +31,7 @@ public:
         return count;
     }
 };
-std::unique_ptr<FrameExecutorIf> make_contract_pipeline(sc_core::sc_module_name name,ResetDomain& reset,DmaArbiter& arbiter) {
+std::unique_ptr<FrameExecutorIf> make_contract_pipeline(sc_core::sc_module_name name,ResetDomain& reset,DmaTransport& arbiter) {
     auto p=std::make_unique<ContractPipeline>(name,reset); p->dma.bind(arbiter.clients); return p;
 }
 }
