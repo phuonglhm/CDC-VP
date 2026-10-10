@@ -1,14 +1,14 @@
 # Test infrastructure
 
 All non-production simulation support is collected here:
-- tests/: regression and full-pipeline testbench sources.
+- *.cpp: shared regression and full-pipeline testbench sources.
 - vectors/: input, expected outputs and test cases.
-- stubs/: checksum/copy pipeline used until real team modules arrive.
-- platform/: SystemC host driver and test DDR model.
+- support/stubs/: checksum/copy pipeline used until real team modules arrive.
+- support/platform/: SystemC host driver and test DDR model.
 - cdc_fx1/: integration tests using external CDC-VP components.
 - embedded/: CMake parent/installed-consumer probes.
 - examples/: executable standalone demo.
-- module_notes/: per-module testing notes.
+- ../control/test/: controller recovery and syntax tests; DMA/reset test notes live in ../axi_dma/test/ and ../synchronization/test/.
 
 The testbench remains useful after real IP arrives: its released-pipeline mode
 uses the real adapter and independent golden data. Stub/host/test-memory modules

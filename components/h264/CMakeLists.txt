@@ -48,6 +48,6 @@ if(H264_BUILD_STUBS OR H264_BUILD_TESTS OR H264_BUILD_EXAMPLES OR H264_BUILD_CDC
   if(H264_BUILD_TESTS OR H264_BUILD_CDC_TESTS)
     enable_testing()
   endif()
-  add_subdirectory(integration_tests)
+  add_subdirectory(tests)
 endif()
 include(cmake/install.cmake)

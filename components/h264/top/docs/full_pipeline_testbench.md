@@ -7,7 +7,7 @@ Các lệnh dưới chạy từ thư mục components/h264.
 ```powershell
 cmake --build build/vp -j 8
 ctest --test-dir build/vp --output-on-failure
-./build/vp/bin/full_pipeline_tb.exe stub integration_tests/vectors/full_pipeline/stub.cfg build/full_pipeline_stub
+./build/vp/bin/full_pipeline_tb.exe stub tests/vectors/full_pipeline/stub.cfg build/full_pipeline_stub
 ```
 
 Test này chạy host → registers/controller → pipeline → DMA → DDR → IRQ → output,
