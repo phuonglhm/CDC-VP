@@ -38,7 +38,7 @@ struct EcTb : sc_core::sc_module {
         socket->b_transport(tx, delay);
         
         if (tx.get_response_status() != tlm::TLM_OK_RESPONSE) {
-            std::cout << "\nKhông thể " << (cmd == tlm::TLM_WRITE_COMMAND ? "GHI" : "ĐỌC") 
+            std::cout << "\nGiao dịch bị từ chối - Không thể " << (cmd == tlm::TLM_WRITE_COMMAND ? "GHI" : "ĐỌC") 
                       << " vào địa chỉ: 0x" << std::hex << addr 
                       << " với độ dài " << std::dec << len << " bytes!\n";
         }
@@ -47,14 +47,14 @@ struct EcTb : sc_core::sc_module {
         wait(delay);
     }
 
-    void verify_and_print(const char* mode) {
+    void verify_and_print(const char* mode, int test_id) {
         unsigned char start_cmd = 0x80;
         send(tlm::TLM_WRITE_COMMAND, 0x28, &start_cmd, 1);
         
         unsigned char valid[4]{};
         send(tlm::TLM_READ_COMMAND, 0x40, valid, 4);
         if (temp_load_u32_le(valid) != 1) {
-            std::cout << "EC chưa trả về cờ Valid = 1\n";
+            std::cout << "  => TRẠNG THÁI     : \033[1;31m[FAIL - EC CHƯA TRẢ VỀ VALID]\033[0m\n\n";
             return;
         }
 
@@ -68,51 +68,57 @@ struct EcTb : sc_core::sc_module {
         // NAL Formatter Header (00 00 00 01)
         assert(stream[0] == 0x00 && stream[1] == 0x00 && stream[2] == 0x00 && stream[3] == 0x01);
 
-        std::cout << " -> [" << mode << "] Mã hóa thành công. Length: " << stream_len << " bytes.\n";
+        std::cout << "[TEST " << test_id << "] Mã hóa chế độ: " << mode << "\n";
+
+        std::cout << " -> Mã hóa thành công. \n";
+        std::cout << "Length NAL: " << stream_len << " bytes.\n";
         std::cout << "    Bitstream (hex): ";
         for(std::uint32_t i = 0; i < stream_len; ++i) {
-            std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)stream[i] << " ";
+            std::cout << "0x" << std::hex << std::setw(2) << std::setfill('0') << (int)stream[i] << " ";
         }
-        std::cout << std::dec << "\n\n";
+        std::cout << std::dec << "\n";
+        std::cout << "  => TRẠNG THÁI      : \033[1;32m[PASS - ĐÓNG GÓI NAL CHUẨN]\033[0m\n\n";
     }
 
     void run() {
-        std::cout << "\n==============================\n";
-        std::cout << "H.264 ENTROPY CODING UNIT TEST\n";
-        std::cout << "==============================\n";
+        std::cout << "\n=========================================================\n";
+        std::cout << "           H.264 ENTROPY CODING UNIT TEST REPORT          \n";
+        std::cout << "=========================================================\n\n";
        
         std::int16_t levels[16] = {4, -2, 1, 0, 0, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0};
         send(tlm::TLM_WRITE_COMMAND, 0x00, reinterpret_cast<unsigned char*>(levels), 32);
         unsigned char qp = 26;
         send(tlm::TLM_WRITE_COMMAND, 0x20, &qp, 1);
 
+        // CAVLC
         unsigned char mode_cavlc = 0;
         send(tlm::TLM_WRITE_COMMAND, 0x24, &mode_cavlc, 1);
-        verify_and_print("CAVLC / Exp-Golomb");
+        verify_and_print("CAVLC / Exp-Golomb", 1);
 
+        // CABAC
         unsigned char mode_cabac = 1;
         send(tlm::TLM_WRITE_COMMAND, 0x24, &mode_cabac, 1);
-        verify_and_print("CABAC Engine");
+        verify_and_print("CABAC Engine", 2);
 
         std::cout << "----------------------------------------\n";
-        std::cout << "Kiểm tra trường hợp biên...\n";
+        std::cout << "Kiểm tra trường hợp biên (Stress & Zero-run Test)...\n";
         
         // Chuyển lại về chế độ CAVLC để dễ quan sát chuỗi bit đầu ra
         send(tlm::TLM_WRITE_COMMAND, 0x24, &mode_cavlc, 1);
 
-        //  Chuỗi dữ liệu phức tạp (Stress Test Buffer, ép size NAL stream tăng cao)
+        // Chuỗi dữ liệu phức tạp (Stress Test Buffer, ép size NAL stream tăng cao)
         std::int16_t complex_levels[16] = { 15, -12, 10, -8, 7, -6, 5, -4, 3, -2, 1, -1, 2, -3, 4, -5 };
         send(tlm::TLM_WRITE_COMMAND, 0x00, reinterpret_cast<unsigned char*>(complex_levels), 32);
-        verify_and_print("CAVLC / Complex Data Stress Test");
+        verify_and_print("CAVLC / Complex Data Stress Test", 3);
 
         // Chuỗi toàn số 0 (Kiểm tra thuật toán Zero Run / TotalZeros)
         std::int16_t zero_run_levels[16] = { 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1 };
         send(tlm::TLM_WRITE_COMMAND, 0x00, reinterpret_cast<unsigned char*>(zero_run_levels), 32);
-        verify_and_print("CAVLC / Zero Run Length Test");
+        verify_and_print("CAVLC / Zero Run Length Test", 4);
         
-        std::cout << "----------------------------------------\n";
-
-        std::cout << ">>> EC VP ALL UNIT TESTS PASSED <<<\n\n";
+        std::cout << "=========================================================\n";
+        std::cout << " \033[1;32m>>> EC VP ALL UNIT TESTS PASSED <<<\033[0m\n";
+        std::cout << "=========================================================\n\n";
         sc_core::sc_stop();
     }
 };

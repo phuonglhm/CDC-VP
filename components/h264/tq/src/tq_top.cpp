@@ -1,6 +1,4 @@
-#include "tq_top.h"
-// Mở comment dòng này khi có common
-// #include "h264_tlm_utils.hpp" 
+#include "tq_top.h" 
 #include <cstring>
 
 namespace h264::tq {
@@ -79,7 +77,6 @@ void TqTop::b_transport(tlm::tlm_generic_payload& tx,
         } else if (addr == 0x30 && tx.get_data_length() == 16) {
             store_array_le(data, result_.reconstructed.data(), 16);
         } else if (addr == 0x40 && tx.get_data_length() == 4) {
-            //Khi ráp code (có common) thì đổi thành h264::tlmutil::store_u32_le(data, result_.valid ? 1u : 0u)
             temp_store_u32_le(data, result_.valid ? 1u : 0u);
         } else {
             tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);

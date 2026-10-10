@@ -18,7 +18,8 @@ public:
     std::array<std::int16_t, 16>
     quantize(const std::array<std::int32_t, 16>& coeffs,
              std::uint8_t qp,
-             BlockClass block_class) const;
+             BlockClass block_class,
+             bool is_intra = true) const;
 
 private:
     TransposeRam& transpose_;

@@ -36,12 +36,18 @@ struct EcRequest {
     std::array<std::int16_t, 16> levels; // Data từ TQ
     std::uint8_t qp; // Quantization Parameter
     std::uint8_t entropy_coding_mode; // 0: CAVLC, 1: CABAC
+
+    std::uint8_t nal_ref_idc{3};
+    std::uint8_t nal_unit_type{5};
 };
 
 struct EcResult {
-    std::array<std::uint8_t, 128> nal_stream;
+    std::array<std::uint8_t, 128> nal_stream; // Mảng tĩnh mô phỏng buffer phần cứng
     std::uint32_t stream_length;
+
     bool valid;
 };
+
+
 
 } // namespace h264::ec

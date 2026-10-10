@@ -1,11 +1,10 @@
 #pragma once
 
-#include "internal_memory.h"
-#include "external_memory.h"
-
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_target_socket.h>
+#include <vector>
+#include <cstdint>
 
 namespace h264::mem {
 struct MemoryMap : sc_core::sc_module {
@@ -17,8 +16,9 @@ struct MemoryMap : sc_core::sc_module {
 private:
     void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
 
-    InternalMemory internal_mem_;
-    ExternalMemory external_mem_;
+    // Mảng bộ nhớ thực tế mô phỏng Hardware
+    std::vector<std::uint8_t> internal_mem_;
+    std::vector<std::uint8_t> external_mem_;
 
     // Memory Map
     static constexpr std::uint32_t INT_MEM_BASE = 0x00000000;

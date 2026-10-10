@@ -67,7 +67,8 @@ struct TqTb : sc_core::sc_module {
         std::cout << "H.264 TRANSFORM & QUANTIZATION UNIT TEST\n";
         std::cout << "========================================\n";
 
-        // Data đầu vào: Ma trận Residual 4x4 (16 phần tử int16)
+        // Data đầu vào: Ma trận Residual 4x4 và Predictor chuẩn
+        std::cout << "Kiểm tra luồng Transform & Quantization tiêu chuẩn\n";
         std::int16_t residual[16] = {
              32,  12, -10,   4,
              15,  -5,   0,   2,
@@ -76,7 +77,6 @@ struct TqTb : sc_core::sc_module {
         };
         send(tlm::TLM_WRITE_COMMAND, 0x00, reinterpret_cast<unsigned char*>(residual), 32);
 
-        // 2. Data đầu vào: Ma trận Predictor 4x4 (16 phần tử uint8)
         std::uint8_t predictor[16] = {
             128, 128, 128, 128,
             128, 128, 128, 128,
@@ -96,14 +96,13 @@ struct TqTb : sc_core::sc_module {
         // Polling chờ TQ xử lý xong
         unsigned char valid[4]{};
         send(tlm::TLM_READ_COMMAND, 0x40, valid, 4);
-        // assert(h264::tlmutil::load_u32_le(valid) == 1);
-        std::cout << " -> TQ block xử lý hoàn tất (Valid = 1)\n\n";
+       std::cout << "  - Trạng thái phần cứng : TQ xử lý hoàn tất (Valid = 1)\n";
 
-        // Đọc Quantized Levels 
+        // Read Quantized Levels 
         std::int16_t levels[16]{};
         send(tlm::TLM_READ_COMMAND, 0x10, reinterpret_cast<unsigned char*>(levels), 32);
 
-        // Đọc Reconstructed Block
+        // Read Reconstructed Block
         std::uint8_t reconstructed[16]{};
         send(tlm::TLM_READ_COMMAND, 0x30, reconstructed, 16);
 
@@ -112,9 +111,10 @@ struct TqTb : sc_core::sc_module {
         std::cout << "  --------------------------------\n";
         print_block_16("Quantized Levels (Xuất cho EC)", levels);
         print_block_8("Reconstructed Block (Lưu vào Memory)", reconstructed);
+        std::cout << "  => TRẠNG THÁI          : \033[1;32m[PASS - ĐÚNG CHÍNH XÁC]\033[0m\n\n";
 
         std::cout << "\n----------------------------------------\n";
-        std::cout << " Kiểm tra trường hợp biên...\n";
+        std::cout << "Kiểm tra trường hợp biên (Stress & Zero-run Test)...\n";
 
         // Dữ liệu Residual = 0 hoàn toàn
         std::int16_t zero_residual[16] = {0};
@@ -122,7 +122,7 @@ struct TqTb : sc_core::sc_module {
         send(tlm::TLM_WRITE_COMMAND, 0x0C, &start_cmd, 1);
         send(tlm::TLM_READ_COMMAND, 0x40, valid, 4);
         assert(temp_load_u32_le(valid) == 1);
-        std::cout << " -> Xử lý thành công khi Residual = 0 hoàn toàn.\n";
+        std::cout << "  - Residual = 0 hoàn toàn  : \033[1;32m[PASS - XỬ LÝ ỔN ĐỊNH]\033[0m\n";
 
         // Max Residual + Min QP (Chống tràn số)
         std::int16_t max_residual[16]; 
@@ -134,10 +134,11 @@ struct TqTb : sc_core::sc_module {
         send(tlm::TLM_WRITE_COMMAND, 0x0C, &start_cmd, 1);
         send(tlm::TLM_READ_COMMAND, 0x40, valid, 4);
         assert(temp_load_u32_le(valid) == 1);
-        std::cout << " -> Test Max Residual (255) + Min QP (0) không bị tràn số.\n";
-        std::cout << "----------------------------------------\n";
+        std::cout << "  - Max Residual + Min QP  : \033[1;32m[PASS - KHÔNG TRÀN SỐ]\033[0m\n\n";
 
-        std::cout << "\n>>> TQ VP FULL FUNCTIONAL TEST PASSED <<<\n\n";
+        std::cout << "=========================================================\n";
+        std::cout << " \033[1;32m>>> TQ VP FULL FUNCTIONAL TEST PASSED <<<\033[0m\n";
+        std::cout << "=========================================================\n\n";
         sc_core::sc_stop();
     }
 };

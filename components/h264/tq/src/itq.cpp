@@ -1,60 +1,77 @@
 #include "itq.h"
+
+#include <cmath>
 #include <algorithm>
 
 namespace h264::tq {
 
-std::array<std::int16_t, 16> Itq::inverse_transform(const std::array<std::int16_t,16>& levels,
-                                                   std::uint8_t) const {
-    std::array<std::int32_t, 16> tmp{};
-    for (unsigned y = 0; y < 4; ++y) {
-        const int a0 = levels[y*4+0];
-        const int a1 = levels[y*4+1];
-        const int a2 = levels[y*4+2];
-        const int a3 = levels[y*4+3];
+// Bảng hệ số Inverse Scaling V[QP % 6][pos_type]
+static const int V_TABLE[6][3] = {
+    {10, 16, 13},
+    {11, 18, 14},
+    {13, 20, 16},
+    {14, 23, 18},
+    {16, 25, 20},
+    {18, 29, 23}
+};
 
-        const int e0 = a0 + a2;
-        const int e1 = a0 - a2;
-        const int e2 = (a1 >> 1) - a3;
-        const int e3 = a1 + (a3 >> 1);
+std::array<std::int16_t, 16>
+Itq::inverse_transform(const std::array<std::int16_t, 16>& levels, std::uint8_t qp) const {
+    std::array<std::int16_t, 16> residual;
+    int q_rem = qp % 6;
+    int q_per = qp / 6;
 
-        tmp[y*4 + 0] = e0 + e3;
-        tmp[y*4 + 1] = e1 + e2;
-        tmp[y*4 + 2] = e1 - e2;
-        tmp[y*4 + 3] = e0 - e3;
+    std::int32_t d[16];
+    // Inverse Quantization / Scaling
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            int idx = r * 4 + c;
+            int pos_type = ((r % 2 == 0) && (c % 2 == 0)) ? 0 : 
+                           (((r % 2 == 1) && (c % 2 == 1)) ? 1 : 2);
+            d[idx] = (levels[idx] * V_TABLE[q_rem][pos_type]) << q_per;
+        }
     }
 
-    std::array<std::int16_t, 16> out{};
-    for (unsigned x = 0; x < 4; ++x) {
-        const int a0 = tmp[0*4 + x];
-        const int a1 = tmp[1*4 + x];
-        const int a2 = tmp[2*4 + x];
-        const int a3 = tmp[3*4 + x];
-
-        const int e0 = a0 + a2;
-        const int e1 = a0 - a2;
-        const int e2 = (a1 >> 1) - a3;
-        const int e3 = a1 + (a3 >> 1);
-
-        out[0*4 + x] = static_cast<std::int16_t>((e0 + e3 + 32) >> 6);
-        out[1*4 + x] = static_cast<std::int16_t>((e1 + e2 + 32) >> 6);
-        out[2*4 + x] = static_cast<std::int16_t>((e1 - e2 + 32) >> 6);
-        out[3*4 + x] = static_cast<std::int16_t>((e0 - e3 + 32) >> 6);
+    std::int32_t m[16];
+    // Horizontal pass
+    for (int i = 0; i < 4; ++i) {
+        int e0 = d[i * 4 + 0] + d[i * 4 + 2];
+        int e1 = d[i * 4 + 0] - d[i * 4 + 2];
+        int e2 = (d[i * 4 + 1] >> 1) - d[i * 4 + 3];
+        int e3 = d[i * 4 + 1] + (d[i * 4 + 3] >> 1);
+        m[i * 4 + 0] = e0 + e3;
+        m[i * 4 + 1] = e1 + e2;
+        m[i * 4 + 2] = e1 - e2;
+        m[i * 4 + 3] = e0 - e3;
     }
-    return out;
+
+    // Vertical pas + Predictor Addition + Clip1
+    for (int j = 0; j < 4; ++j) {
+        int e0 = m[0 * 4 + j] + m[2 * 4 + j];
+        int e1 = m[0 * 4 + j] - m[2 * 4 + j];
+        int e2 = (m[1 * 4 + j] >> 1) - m[3 * 4 + j];
+        int e3 = m[1 * 4 + j] + (m[3 * 4 + j] >> 1);
+
+        residual[0 * 4 + j] = static_cast<std::int16_t>((e0 + e3 + 32) >> 6);
+        residual[1 * 4 + j] = static_cast<std::int16_t>((e1 + e2 + 32) >> 6);
+        residual[2 * 4 + j] = static_cast<std::int16_t>((e1 - e2 + 32) >> 6);
+        residual[3 * 4 + j] = static_cast<std::int16_t>((e0 - e3 + 32) >> 6);
+    }
+    return residual;
+}
+
+std::array<std::uint8_t, 16>
+Itq::reconstruct(const std::array<std::int16_t, 16>& residual, 
+                 const std::array<std::uint8_t, 16>& predictor) const {
+    std::array<std::uint8_t, 16> recon;
+    for (int i = 0; i < 16; ++i) {
+        recon[i] = clip1(residual[i] + predictor[i]);
+    }
+    return recon;
 }
 
 std::uint8_t Itq::clip1(std::int32_t value) {
-    value = std::max<std::int32_t>(0, std::min<std::int32_t>(255, value));
-    return static_cast<std::uint8_t>(value);
-}
-
-std::array<std::uint8_t, 16> Itq::reconstruct(const std::array<std::int16_t,16>& residual,
-                                             const std::array<std::uint8_t,16>& predictor) const {
-    std::array<std::uint8_t, 16> out{};
-    for (unsigned i = 0; i < 16; ++i) {
-        out[i] = clip1(static_cast<std::int32_t>(predictor[i]) + residual[i]);
-    }
-    return out;
+    return static_cast<std::uint8_t>(std::clamp(value, 0, 255));
 }
 
 } // namespace h264::tq

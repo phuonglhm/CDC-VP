@@ -42,7 +42,7 @@ void EcTop::start() {
         cabac_.encode(request_, bw);
     
     bw.align_byte();
-    NalFormatter::wrap_nal_unit(result_);
+    NalFormatter::wrap_nal_unit(result_, request_.nal_ref_idc, request_.nal_unit_type);
     
     result_.valid = true;
 }
