@@ -1,0 +1,677 @@
+﻿Inter-Prediction VP validation evidence
+Recorded: 2026-10-10 12:49:00 +07:00
+Linux full Debug: 13/13 PASS; Linux UBSan: 13/13 PASS; isolated Windows core: 2/2 PASS
+Linux compiler GNU 15.2.0; Windows compiler MSYS2 UCRT64 GNU 16.1.0; C++17; SystemC 2.3.4
+UBSan flags: CMAKE_CXX_FLAGS=-fsanitize=undefined CMAKE_EXE_LINKER_FLAGS=-fsanitize=undefined
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+SHA256 of module implementation, tests and CMake:
+0dfa0f8bc4011aafb6b946e65c58eaed621d11259dec37f2b2b41645a37698d4  CMakeLists.txt
+abede4c34270768bff788e32ac7e98eb71003c838a8a7000c185d16b222a7bab  include/h264/inter/inter_core.h
+4745d714e376a6d300f5e4c3fec985070c70d3b35ca299ceb1591265aae28f86  include/h264/inter/inter_tlm.h
+494f20079fdf11a351b4891919a38fc32bb012407c665b15d3be006f84dd693b  src/cache/reference_cache.cpp
+8f0d8af762e3599465a55ccf37996b0f3ad4feddb7719fd71000db75429d949d  src/eei/motion_syntax.cpp
+c79b98bbd52be7902beec2995feab08a02143695c6fe5d268c8a2032731ca52e  src/fme/interpolation.cpp
+fc00bc43a5578e818ce0cff388e2395529d1c119595b1d128ba3ab9a1a447e33  src/fme/search.cpp
+fa5de610b92afca7b650d3ee297f21ceae49b5956504af075ddcc128b3107792  src/ime/sad_tree.cpp
+5ad6d8dc69ca1d188e97723c17be8ace72c2b953cd8b207030bcad2546449288  src/ipc/inter_tlm.cpp
+d4aca88bf3bfd6a963d6caa56ccd2e034fc69cc98d1fd997bdb2845e38ae7769  src/mc/motion_compensation.cpp
+c961f9d318048a2c1542daf32eac2764e933ab91dc1840d28fb0d350fb1f92ac  tests/contract/tlm_tests.cpp
+8cf4f14d0eb81b8ea6a81960aab4e7040d3b0a0ce752432a2a1791bdfacd9c94  tests/core/core_tests.cpp
+281f88cf7d845a54ca149c21a048289c27816442aaec8bb05d3ec7a087178d80  tests/core/interpolation_oracle.h
+eedd409bc8e450707e775bbe4b5d31916f5d1de30121a2148ddbd34cd1161be9  tests/core/interpolation_tests.cpp
+8b7e30c3926cb463d7f5d6d430909f0315764070d1455bbd8243dc1910e54fd5  tests/core/test_support.h
+5310e6cb666bc5cafaae993af43ca42ce440d4a03d8a3a94bc60ccfb82ccfe3e  tests/integration/sw_dma_tests.cpp
+SHA256 of external specification/contracts/DMA headers (read-only dependencies):
+62036249dfc323c59eb35f8d31510291fcc5a6357463376ef0bd0910840aa8e8  ../SISLAB_H264_AVC_HAS_Spec_Detailed_v2.1.11.md
+5b488c54fc2448771e0020d71857a6607a77d264b600079c886e7d59353f22ec  ../dma_subsystems/DMA_SUBSYSTEM_SPEC.md
+cfba936fe4d660075b25c6648294a88f013207f9ecaba730ba0b59bfd3ec5536  ../interfaces/include/h264/types.h
+badfe696bd77d4598a4a37d41ed9bd64436485213148381781d4205d79d9f0b8  ../synchronization/include/h264/sync/reset_domain.h
+5dd908cf80556335036064e9ea183ed45ad01752a2b57baaeb574d772ada7642  ../dma_subsystems/common/h264_spec.h
+4dbceb6434ebfc7376b6b00b3a32d37b04deb637429a5475b4a691fde4798a70  ../dma_subsystems/dma/sw_dma.h
+79db08e35855d9f8cb9642ad6d14c49052a9116e5e92af2857011c5184ce332c  ../dma_subsystems/dma/dma_if.h
+96b46a266ac054a418aecfabd823bad27cdd0eb71e6cf32c3c9def0f2ba0e42a  ../dma_subsystems/dma/h264_arb.h
+36a2c0b5969ec7559ac962a4f2c56260feef70d64d58b0ff42349241426ad89a  ../dma_subsystems/dma/axi_master_bridge.h
+e12fb8d5bddeb05f501f67420471eb723fed3ae9b4989f7544a96ad30d212f6a  ../dma_subsystems/mem/ddr_model.h
+
+===== normal: 13 tests passed =====
+CTest registration:
+# CMake generated Testfile for 
+# Source directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction
+# Build directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+# 
+# This file includes the relevant testing commands required for 
+# testing this directory and lists subdirectories to be tested as well.
+add_test([=[h264_inter_sad_cache_search]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_core_tests")
+set_tests_properties([=[h264_inter_sad_cache_search]=] PROPERTIES  _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;58;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_interpolation_oracle]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_interpolation_tests")
+set_tests_properties([=[h264_inter_interpolation_oracle]=] PROPERTIES  _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;61;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_sw_dma_32]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_sw_dma_tests" "32")
+set_tests_properties([=[h264_inter_sw_dma_32]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;71;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_sw_dma_64]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_sw_dma_tests" "64")
+set_tests_properties([=[h264_inter_sw_dma_64]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;71;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_sw_dma_128]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_sw_dma_tests" "128")
+set_tests_properties([=[h264_inter_sw_dma_128]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;71;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_normal]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "normal")
+set_tests_properties([=[h264_inter_contract_normal]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_zero]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "zero")
+set_tests_properties([=[h264_inter_contract_zero]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_shared]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "shared")
+set_tests_properties([=[h264_inter_contract_shared]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_local]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "local")
+set_tests_properties([=[h264_inter_contract_local]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_disable]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "disable")
+set_tests_properties([=[h264_inter_contract_disable]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_retag]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "retag")
+set_tests_properties([=[h264_inter_contract_retag]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_incoming]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "incoming")
+set_tests_properties([=[h264_inter_contract_incoming]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_stale]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "stale")
+set_tests_properties([=[h264_inter_contract_stale]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+subdirs("interfaces")
+subdirs("synchronization")
+Raw LastTest.log:
+Start testing: Oct 10 12:47 +07
+----------------------------------------------------------
+6/13 Testing: h264_inter_contract_normal
+6/13 Test: h264_inter_contract_normal
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "normal"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_normal" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM normal: 11334 checks PASS at 2397 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_normal" end time: Oct 10 12:47 +07
+"h264_inter_contract_normal" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/13 Testing: h264_inter_contract_shared
+8/13 Test: h264_inter_contract_shared
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "shared"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_shared" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM shared: 594 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_shared" end time: Oct 10 12:47 +07
+"h264_inter_contract_shared" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/13 Testing: h264_inter_sw_dma_64
+4/13 Test: h264_inter_sw_dma_64
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_sw_dma_tests" "64"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_sw_dma_64" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+SW DMA integration bus 64: 29078 checks; 3 P/B/P pictures, 18 MBs, errors/retag/overlap PASS
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sw_dma_64" end time: Oct 10 12:47 +07
+"h264_inter_sw_dma_64" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/13 Testing: h264_inter_sw_dma_32
+3/13 Test: h264_inter_sw_dma_32
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_sw_dma_tests" "32"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_sw_dma_32" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+SW DMA integration bus 32: 33686 checks; 3 P/B/P pictures, 18 MBs, errors/retag/overlap PASS
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sw_dma_32" end time: Oct 10 12:47 +07
+"h264_inter_sw_dma_32" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/13 Testing: h264_inter_contract_local
+9/13 Test: h264_inter_contract_local
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "local"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_local" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM local: 594 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_local" end time: Oct 10 12:47 +07
+"h264_inter_contract_local" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/13 Testing: h264_inter_sw_dma_128
+5/13 Test: h264_inter_sw_dma_128
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_sw_dma_tests" "128"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_sw_dma_128" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+SW DMA integration bus 128: 27254 checks; 3 P/B/P pictures, 18 MBs, errors/retag/overlap PASS
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sw_dma_128" end time: Oct 10 12:47 +07
+"h264_inter_sw_dma_128" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/13 Testing: h264_inter_contract_retag
+11/13 Test: h264_inter_contract_retag
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "retag"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_retag" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM retag: 587 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_retag" end time: Oct 10 12:47 +07
+"h264_inter_contract_retag" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/13 Testing: h264_inter_contract_incoming
+12/13 Test: h264_inter_contract_incoming
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "incoming"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_incoming" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM incoming: 597 checks PASS at 627 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_incoming" end time: Oct 10 12:47 +07
+"h264_inter_contract_incoming" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/13 Testing: h264_inter_contract_disable
+10/13 Test: h264_inter_contract_disable
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "disable"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_disable" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM disable: 594 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_disable" end time: Oct 10 12:47 +07
+"h264_inter_contract_disable" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/13 Testing: h264_inter_contract_zero
+7/13 Test: h264_inter_contract_zero
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "zero"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_zero" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM zero: 11334 checks PASS at 53 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_zero" end time: Oct 10 12:47 +07
+"h264_inter_contract_zero" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/13 Testing: h264_inter_contract_stale
+13/13 Test: h264_inter_contract_stale
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_contract_tests" "stale"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_contract_stale" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM stale: 36 checks PASS at 18 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_stale" end time: Oct 10 12:47 +07
+"h264_inter_contract_stale" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/13 Testing: h264_inter_interpolation_oracle
+2/13 Test: h264_inter_interpolation_oracle
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_interpolation_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_interpolation_oracle" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+Interpolation: 144002 checks; 3 seeds; all 16 luma/64 chroma phases PASS
+<end of output>
+Test time =   0.22 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_interpolation_oracle" end time: Oct 10 12:47 +07
+"h264_inter_interpolation_oracle" time elapsed: 00:00:00
+----------------------------------------------------------
+
+1/13 Testing: h264_inter_sad_cache_search
+1/13 Test: h264_inter_sad_cache_search
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal/h264_inter_core_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/normal
+"h264_inter_sad_cache_search" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+Core: 103190 checks; SAD 41 positions, search, MC/EEI, residency PASS
+<end of output>
+Test time =   0.92 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sad_cache_search" end time: Oct 10 12:47 +07
+"h264_inter_sad_cache_search" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 10 12:47 +07
+
+===== ubsan: 13 tests passed =====
+CTest registration:
+# CMake generated Testfile for 
+# Source directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction
+# Build directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+# 
+# This file includes the relevant testing commands required for 
+# testing this directory and lists subdirectories to be tested as well.
+add_test([=[h264_inter_sad_cache_search]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_core_tests")
+set_tests_properties([=[h264_inter_sad_cache_search]=] PROPERTIES  _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;58;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_interpolation_oracle]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_interpolation_tests")
+set_tests_properties([=[h264_inter_interpolation_oracle]=] PROPERTIES  _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;61;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_sw_dma_32]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_sw_dma_tests" "32")
+set_tests_properties([=[h264_inter_sw_dma_32]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;71;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_sw_dma_64]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_sw_dma_tests" "64")
+set_tests_properties([=[h264_inter_sw_dma_64]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;71;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_sw_dma_128]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_sw_dma_tests" "128")
+set_tests_properties([=[h264_inter_sw_dma_128]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;71;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_normal]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "normal")
+set_tests_properties([=[h264_inter_contract_normal]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_zero]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "zero")
+set_tests_properties([=[h264_inter_contract_zero]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_shared]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "shared")
+set_tests_properties([=[h264_inter_contract_shared]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_local]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "local")
+set_tests_properties([=[h264_inter_contract_local]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_disable]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "disable")
+set_tests_properties([=[h264_inter_contract_disable]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_retag]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "retag")
+set_tests_properties([=[h264_inter_contract_retag]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_incoming]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "incoming")
+set_tests_properties([=[h264_inter_contract_incoming]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_contract_stale]=] "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "stale")
+set_tests_properties([=[h264_inter_contract_stale]=] PROPERTIES  TIMEOUT "30" _BACKTRACE_TRIPLES "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;79;add_test;/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+subdirs("interfaces")
+subdirs("synchronization")
+Raw LastTest.log:
+Start testing: Oct 10 12:47 +07
+----------------------------------------------------------
+9/13 Testing: h264_inter_contract_local
+9/13 Test: h264_inter_contract_local
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "local"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_local" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM local: 594 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_local" end time: Oct 10 12:47 +07
+"h264_inter_contract_local" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/13 Testing: h264_inter_sw_dma_32
+3/13 Test: h264_inter_sw_dma_32
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_sw_dma_tests" "32"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_sw_dma_32" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+SW DMA integration bus 32: 33686 checks; 3 P/B/P pictures, 18 MBs, errors/retag/overlap PASS
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sw_dma_32" end time: Oct 10 12:47 +07
+"h264_inter_sw_dma_32" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/13 Testing: h264_inter_contract_retag
+11/13 Test: h264_inter_contract_retag
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "retag"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_retag" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM retag: 587 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_retag" end time: Oct 10 12:47 +07
+"h264_inter_contract_retag" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/13 Testing: h264_inter_sw_dma_128
+5/13 Test: h264_inter_sw_dma_128
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_sw_dma_tests" "128"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_sw_dma_128" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+SW DMA integration bus 128: 27254 checks; 3 P/B/P pictures, 18 MBs, errors/retag/overlap PASS
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sw_dma_128" end time: Oct 10 12:47 +07
+"h264_inter_sw_dma_128" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/13 Testing: h264_inter_contract_normal
+6/13 Test: h264_inter_contract_normal
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "normal"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_normal" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM normal: 11334 checks PASS at 2397 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_normal" end time: Oct 10 12:47 +07
+"h264_inter_contract_normal" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/13 Testing: h264_inter_sw_dma_64
+4/13 Test: h264_inter_sw_dma_64
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_sw_dma_tests" "64"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_sw_dma_64" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+SW DMA integration bus 64: 29078 checks; 3 P/B/P pictures, 18 MBs, errors/retag/overlap PASS
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sw_dma_64" end time: Oct 10 12:47 +07
+"h264_inter_sw_dma_64" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/13 Testing: h264_inter_contract_zero
+7/13 Test: h264_inter_contract_zero
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "zero"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_zero" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM zero: 11334 checks PASS at 53 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_zero" end time: Oct 10 12:47 +07
+"h264_inter_contract_zero" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/13 Testing: h264_inter_contract_shared
+8/13 Test: h264_inter_contract_shared
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "shared"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_shared" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM shared: 594 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_shared" end time: Oct 10 12:47 +07
+"h264_inter_contract_shared" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/13 Testing: h264_inter_contract_disable
+10/13 Test: h264_inter_contract_disable
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "disable"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_disable" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM disable: 594 checks PASS at 610 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_disable" end time: Oct 10 12:47 +07
+"h264_inter_contract_disable" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/13 Testing: h264_inter_contract_incoming
+12/13 Test: h264_inter_contract_incoming
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "incoming"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_incoming" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM incoming: 597 checks PASS at 627 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_incoming" end time: Oct 10 12:47 +07
+"h264_inter_contract_incoming" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/13 Testing: h264_inter_contract_stale
+13/13 Test: h264_inter_contract_stale
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_contract_tests" "stale"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_contract_stale" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+TLM stale: 36 checks PASS at 18 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_contract_stale" end time: Oct 10 12:47 +07
+"h264_inter_contract_stale" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/13 Testing: h264_inter_interpolation_oracle
+2/13 Test: h264_inter_interpolation_oracle
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_interpolation_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_interpolation_oracle" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+Interpolation: 144002 checks; 3 seeds; all 16 luma/64 chroma phases PASS
+<end of output>
+Test time =   0.48 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_interpolation_oracle" end time: Oct 10 12:47 +07
+"h264_inter_interpolation_oracle" time elapsed: 00:00:00
+----------------------------------------------------------
+
+1/13 Testing: h264_inter_sad_cache_search
+1/13 Test: h264_inter_sad_cache_search
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan/h264_inter_core_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/ubsan
+"h264_inter_sad_cache_search" start time: Oct 10 12:47 +07
+Output:
+----------------------------------------------------------
+Core: 103190 checks; SAD 41 positions, search, MC/EEI, residency PASS
+<end of output>
+Test time =   2.49 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sad_cache_search" end time: Oct 10 12:47 +07
+"h264_inter_sad_cache_search" time elapsed: 00:00:02
+----------------------------------------------------------
+
+End testing: Oct 10 12:47 +07
+
+===== core-native: 2 tests passed =====
+CTest registration:
+# CMake generated Testfile for 
+# Source directory: D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction
+# Build directory: D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/core-native
+# 
+# This file includes the relevant testing commands required for 
+# testing this directory and lists subdirectories to be tested as well.
+add_test([=[h264_inter_sad_cache_search]=] "D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/core-native/h264_inter_core_tests.exe")
+set_tests_properties([=[h264_inter_sad_cache_search]=] PROPERTIES  _BACKTRACE_TRIPLES "D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;58;add_test;D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+add_test([=[h264_inter_interpolation_oracle]=] "D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/core-native/h264_inter_interpolation_tests.exe")
+set_tests_properties([=[h264_inter_interpolation_oracle]=] PROPERTIES  _BACKTRACE_TRIPLES "D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;61;add_test;D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/CMakeLists.txt;0;")
+Raw LastTest.log:
+Start testing: Oct 10 12:42 SE Asia Standard Time
+----------------------------------------------------------
+1/2 Testing: h264_inter_sad_cache_search
+1/2 Test: h264_inter_sad_cache_search
+Command: "D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/core-native/h264_inter_core_tests.exe"
+Directory: D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/core-native
+"h264_inter_sad_cache_search" start time: Oct 10 12:42 SE Asia Standard Time
+Output:
+----------------------------------------------------------
+Core: 103190 checks; SAD 41 positions, search, MC/EEI, residency PASS
+<end of output>
+Test time =   1.47 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_sad_cache_search" end time: Oct 10 12:42 SE Asia Standard Time
+"h264_inter_sad_cache_search" time elapsed: 00:00:01
+----------------------------------------------------------
+
+2/2 Testing: h264_inter_interpolation_oracle
+2/2 Test: h264_inter_interpolation_oracle
+Command: "D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/core-native/h264_inter_interpolation_tests.exe"
+Directory: D:/Intern_doc/Project/CDC-VP/components/h264/Inter-Prediction/build/core-native
+"h264_inter_interpolation_oracle" start time: Oct 10 12:42 SE Asia Standard Time
+Output:
+----------------------------------------------------------
+Interpolation: 144002 checks; 3 seeds; all 16 luma/64 chroma phases PASS
+<end of output>
+Test time =   0.81 sec
+----------------------------------------------------------
+Test Passed.
+"h264_inter_interpolation_oracle" end time: Oct 10 12:42 SE Asia Standard Time
+"h264_inter_interpolation_oracle" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 10 12:42 SE Asia Standard Time

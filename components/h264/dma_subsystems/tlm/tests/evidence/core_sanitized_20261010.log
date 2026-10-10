@@ -1,0 +1,320 @@
+UpdateCTestConfiguration  from :/mnt/d/Intern_doc/Project/CDC-VP/components/h264/dma_subsystems/build-review-sanitized/DartConfiguration.tcl
+Parse Config file:/mnt/d/Intern_doc/Project/CDC-VP/components/h264/dma_subsystems/build-review-sanitized/DartConfiguration.tcl
+Test project /mnt/d/Intern_doc/Project/CDC-VP/components/h264/dma_subsystems/build-review-sanitized
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+    Start 1: h264_dma_contracts
+
+1: Test command: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/dma_subsystems/build-review-sanitized/h264_dma_tests
+1: Working Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/dma_subsystems/build-review-sanitized
+1: Test timeout computed to be: 1500
+1: H.264 DMA subsystem VP — spec self-check suite
+1: Spec: SISLAB_H264_AVC_HAS_Detailed v2.1.11, Ch.5-6, Ch.12, Ch.15
+1: 
+1: == HAS-V-CMB-01  CMB frame-start arm guard (§6.1) ==
+1:     [ok]   first rising enable accepts a frame start
+1:     [ok]   the same arm cannot accept a second start
+1:     [ok]   stale high enable does not re-read the old frame
+1:     [ok]   rearms only after enable goes low then high
+1: 
+1: == §6.1 / §12.3  CMB planar address expansion ==
+1:     [ok]   Y plane offset = 0
+1:     [ok]   U plane offset = Wc*Hc
+1:     [ok]   V plane offset = 5*Wc*Hc/4
+1:     [ok]   QCIF F = 38,016 bytes (§12.4)
+1:     [ok]   Y(x,y) = base + y*Wc + x
+1:     [ok]   U(x,y) = base + Wc*Hc + y*(Wc/2) + x
+1:     [ok]   chroma stride = Wc/2
+1:     [ok]   cropped 1080p uses Hc=1088 -> F = 3,133,440 (§12.4)
+1:     [ok]   Hc=1080 would give the wrong DDR size
+1: 
+1: == §12.3  REFM slot addressing ==
+1:     [ok]   slot 0 = REG_REFM
+1:     [ok]   slot 1 = REG_REFM + F
+1:     [ok]   slot 2 = REG_REFM + 2F
+1:     [ok]   minimum 3 REFM slots (§12.2)
+1: 
+1: == HAS-V-SW-01  SW List-1 residency gate (§6.2, §8.5) ==
+1:     [ok]   List 0 not resident while reads are queued
+1:     [ok]   List 0 resident after fill
+1:     [ok]   List 1 still not resident
+1:     [ok]   B-picture FME/MC blocked while List 1 not resident
+1:     [ok]   P-picture may start with List 0 only
+1:     [ok]   selected-list check is per-list, not inherited from List 0
+1:     [ok]   phase does not advance while selected list not ready
+1:     [ok]   phase counter held, not dropped-and-incremented
+1:     [ok]   hold state asserted
+1:     [ok]   SW address retained while held
+1:     [ok]   B-picture blocked before List 1 completion
+1:     [ok]   B-picture may start once List 1 resident
+1:     [ok]   phase advances when ready
+1:     [ok]   phase counter incremented once
+1: 
+1: == §6.2  SW row-start (MB column 0) ==
+1:     [ok]   row-start waits for all required columns/rows
+1:     [ok]   row-start window valid after extra column
+1:     [ok]   invalidate clears residency (retag on change)
+1: 
+1: == HAS-V-DF-01  DF delayed done + SOF handshake (§6.3) ==
+1:     [ok]   delayed dma_fmdone is latched
+1:     [ok]   new SOF does not clear a delayed done (sticky behavior)
+1:     [ok]   retained done is consumable after the SOF
+1:     [ok]   consuming clears the retained flag
+1:     [ok]   a consumed done is not delivered twice
+1: 
+1: == §6.3  DF filter order and bypass schedule ==
+1:     [ok]   dis_idc=1 selects filter mode
+1:     [ok]   one completed MB issues 16 Y + 8 U + 8 V row writes
+1:     [ok]   vertical pass is scheduled FIRST (§6.3)
+1:     [ok]   horizontal pass is scheduled second
+1:     [ok]   filtered pixels are REFM writes
+1:     [ok]   late DFCON change does not change active frame selection
+1:     [ok]   dis_idc=0 selects bypass
+1:     [ok]   bypass decision reads the latched value
+1: 
+1: == HAS-V-NAL-01/02  NAL word count + EOS (§6.4) ==
+1:     [ok]   EOS word is counted in the chunk
+1:     [ok]   done reported only after final B response
+1:     [ok]   STM_LEN counts 32-bit words relative to activation
+1:     [ok]   host drains byte_count = STM_LEN * 4
+1:     [ok]   STM_LEN is activation-relative
+1:     [ok]   write pointer reloads from REG_NAL
+1:     [ok]   disable cannot repoint an in-flight NAL buffer
+1:     [ok]   disable reloads the write pointer
+1:     [ok]   disable preserves STM_LEN for host read/drain
+1: 
+1: == HAS-V-AXI-02/04  4 KiB bursts + B-response boundary (§5.2-§5.3) ==
+1:     [ok]   width 32: no issued burst crosses a 4 KiB page
+1:     [ok]   width 32: segments cover every requested byte exactly once
+1:     [ok]   width 64: no issued burst crosses a 4 KiB page
+1:     [ok]   width 64: segments cover every requested byte exactly once
+1:     [ok]   width 128: no issued burst crosses a 4 KiB page
+1:     [ok]   width 128: segments cover every requested byte exactly once
+1:     [ok]   failed BRESP returns no completion (§4.5)
+1: 
+1: == §5.4  Arbiter grant integrity ==
+1:     [ok]   grant acquired for the whole transaction
+1:     [ok]   a second client cannot preempt mid-transaction
+1:     [ok]   grant is held until completion
+1:     [ok]   read data returns to the correct owner
+1:     [ok]   response tag matches the owner's transaction
+1:     [ok]   the remaining client is serviced after completion
+1:     [ok]   second owner receives its own response
+1:     [ok]   arbiter idle after both transactions
+1: 
+1: == §6.5  End-to-end activation through DmaSubsystem ==
+1:     [ok]   frame start accepted at activation begin
+1:     [ok]   CMB requests were serviced through the arbiter
+1:     [ok]   one MB = 16 Y rows + 8 U + 8 V = 32 reads
+1:     [ok]   every issued CMB burst is 4 KiB-safe
+1:     [ok]   NAL completion after final B response
+1:     [ok]   NAL chunk drainable as STM_LEN*4 = 8 bytes
+1:     [ok]   NAL payload written from REG_NAL + 0
+1: 
+1: ----------------------------------------
+1: passed: 78   failed: 0
+1: [PASS] AXI32: four internal words return 16 bytes
+1: [PASS] actual read populates accepted-address log
+1: [PASS] word payload write succeeds
+1: [PASS] AXI32: word write preserves byte after payload
+1: [PASS] AXI32: 1-byte write preserves unselected bytes
+1: [PASS] AXI32: 2-byte write preserves unselected bytes
+1: [PASS] AXI64: four internal words return 16 bytes
+1: [PASS] actual read populates accepted-address log
+1: [PASS] word payload write succeeds
+1: [PASS] AXI64: word write preserves byte after payload
+1: [PASS] AXI64: 1-byte write preserves unselected bytes
+1: [PASS] AXI64: 2-byte write preserves unselected bytes
+1: [PASS] AXI128: four internal words return 16 bytes
+1: [PASS] actual read populates accepted-address log
+1: [PASS] word payload write succeeds
+1: [PASS] AXI128: word write preserves byte after payload
+1: [PASS] AXI128: 1-byte write preserves unselected bytes
+1: [PASS] AXI128: 2-byte write preserves unselected bytes
+1: [PASS] AXI128: addressed word at 0xFF8 has page-safe external burst
+1: [PASS] NAL is incomplete before service
+1: [PASS] delay_bvalid leaves completion pending for a later B response
+1: [PASS] CMB tile is incomplete after only one of its 32 row reads
+1: [PASS] CMB tile completes after all row reads
+1: [PASS] next CMB tile starts incomplete
+1: [PASS] failed CMB read never produces successful done
+1: [PASS] SW List1 stays nonresident until reads complete
+1: [PASS] B-picture FME/MC stays blocked while both lists are queued
+1: [PASS] moving SW to next MB requests the newly exposed region
+1: [PASS] moving SW to next row requests the new row region
+1: [PASS] DF first response is not the final write response
+1: [PASS] DF frame is incomplete with another write pending
+1: [PASS] DF frame completes after all writes and consumed done
+1: [PASS] new DF frame does not inherit old completion
+1: [PASS] failed final DF write invalidates reference completion
+1: [PASS] two NAL flushes count two words in one activation
+1: [PASS] NAL flushes append within the activation without overwriting word one
+1: [PASS] accept_eos emits the documented bytes 00 00 01 0B
+1: [PASS] queued one-word NAL request does not commit bytes belonging to the next request
+1: [PASS] first one-word NAL completion counts exactly one committed word
+1: [PASS] multiple queued NAL writes preserve both accepted words
+1: [PASS] service_one reports the owner of a pre-acquired grant
+1: [PASS] run(1) succeeds when the sole transaction finishes within its bound
+1: [PASS] default NAL base follows the three full-HD REFM slots without overlap
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] CMB Y/U/V pixels equal source at every width and read delay 0/20/50
+1: [PASS] DF bypass writes real Y/U/V to selected slot after all delayed responses
+1: [PASS] read FIFO stays within 16 internal words
+1: [PASS] accepted read/write bursts are aligned, correctly sized and page-safe
+1: [PASS] SW fills all Y/U/V rows rather than two contiguous fragments
+1: [PASS] horizontal SW movement fetches only new 16-pixel strip with chroma
+1: [PASS] overlapping SW pixels remain exact
+1: [PASS] new-row SW pixels use picture stride
+1: [PASS] SW bottom/right clipping stays within the coded frame
+1: [PASS] old-generation response cannot make retagged SW ready
+1: [PASS] retagged SW returns the new slot's pixels
+1: [PASS] CMB working-set mode applies selected frame offset
+1: [PASS] DF invokes vertical then horizontal producer before exporting filtered samples
+1: [PASS] new SOF keeps pending writes and sticky done associated with their original frame
+1: [PASS] consuming old DF done cannot complete the new frame
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] all bus lanes/sizes survive multi-burst 4KiB read/write with one B per segment
+1: [PASS] RRESP failure is delivered to CMB and subsystem error state
+1: [PASS] RRESP failure never validates SW cache
+1: [PASS] failed B response produces error without successful NAL length/completion
+1: [PASS] failed DF writes never validate reference frame
+1: [PASS] CMB cannot grow beyond its host-allocated source region
+1: [PASS] reactivation cannot erase queued NAL payload
+1: [PASS] completed activation still requires disable before reactivation
+1: [PASS] STM_LEN survives disable until host drains output
+1: [PASS] reactivation resets offset/count and keeps EOS byte order
+1: [PASS] explicit big-endian model convention also emits documented EOS bytes
+1: [PASS] NAL ingestion enforces activation capacity before enqueue
+1: [PASS] overlapping full-HD CMB/REFM/NAL allocation is rejected
+1: [PASS] presentation height 1080 cannot be used as coded storage height
+1: [PASS] continuous wide R data with delayed consumer fills but never overflows 16-word FIFO
+1: [PASS] malformed RLAST becomes failed read rather than successful data
+1: [PASS] subsystem uses borrowed physical memory interface
+1: [PASS] external-memory subsystem does not expose private DDR
+1: [PASS] NAL commits into physical shared-memory window
+1: [PASS] destroying DMA does not own or destroy shared memory
+1: [PASS] physical base below shared-memory window is rejected
+1: Review contracts: 194 passed, 0 failed
+1/1 Test #1: h264_dma_contracts ...............   Passed    0.39 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.42 sec

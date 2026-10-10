@@ -1,0 +1,31 @@
+﻿# Generated CMake build trees, binaries and simulation output.
+build*/
+cmake-build*/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+*.exe
+*.obj
+*.o
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.pdb
+*.gcda
+*.gcno
+*.gcov
+*.gcov.json.gz
+*.vcd
+*.fst
+
+# Local caches and scratch files; validation logs stay versioned.
+__pycache__/
+*.pyc
+*.pyo
+*.tmp
+*.bak
+*~
+*.log
+!**/evidence/*.log

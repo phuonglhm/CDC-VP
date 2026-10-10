@@ -1,0 +1,377 @@
+Intra fix evidence snapshot — 2026-10-10
+Environment: WSL, GNU C++15.2.0, C++17, SystemC2.3.4 /opt/systemc-2.3.4
+Release: standalone8/8, H26450/50, core-only2/2, review3/3, reinstalled consumer1/1 PASS
+Core ASan+UBSan: PASS review core: 79382 checks, seed=20261010
+
+SHA256 source/test files:
+214fbd295a9d983a00e65ff128c064615d571a310bd4604ade282fa7ea48e726  src/intra_core.cpp
+d9b723f0d9f45825b017a10e08ee13d0cb3a85ffe6c3957263942a24cbf784c4  src/intra_tlm.cpp
+0f8016f9d15f6b72c251fb27ae4ca482fc37963daddf16378447858d5443f7c6  tests/review/core_review.cpp
+c1626657d9ad7f33042c26d9ad692ff53c69146fe9d62a48c774a22ccaca5fce  tests/prediction_oracle.h
+97632da7429f286fc6279b8836f12f90c7357d2fa210b997cd7454040e872072  tests/reset_tests.cpp
+8815ebc16dbe482e44878c3ca6c81c937e98c0210df36a93b30c8f8276bbfabd  tests/tlm_regression.cpp
+
+Standalone Release raw CTest transcript:
+Start testing: Oct 10 10:32 +07
+----------------------------------------------------------
+1/8 Testing: h264_intra_algorithms
+1/8 Test: h264_intra_algorithms
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_algorithms" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+PASS intra algorithms/context: 2316 checks
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_algorithms" end time: Oct 10 10:32 +07
+"h264_intra_algorithms" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/8 Testing: h264_intra_core_regression
+2/8 Test: h264_intra_core_regression
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_review_core"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_core_regression" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+PASS review core: 79382 checks, seed=20261010
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_core_regression" end time: Oct 10 10:32 +07
+"h264_intra_core_regression" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/8 Testing: h264_intra_tlm_contract
+3/8 Test: h264_intra_tlm_contract
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_tlm_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_tlm_contract" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS intra TLM: 62 checks at 473 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_tlm_contract" end time: Oct 10 10:32 +07
+"h264_intra_tlm_contract" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/8 Testing: h264_intra_epoch_incoming
+4/8 Test: h264_intra_epoch_incoming
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_epoch_tests" "incoming"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_epoch_incoming" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+case=incoming response=-1 elapsed=12 ns busy=0 ready=0 stale_replay_accepted=0 obsolete_feedback_committed=0
+PASS shared epoch reset contract
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_epoch_incoming" end time: Oct 10 10:32 +07
+"h264_intra_epoch_incoming" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/8 Testing: h264_intra_epoch_wakeup
+5/8 Test: h264_intra_epoch_wakeup
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_epoch_tests" "wakeup"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_epoch_wakeup" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+case=wakeup response=-1 elapsed=12 ns busy=0 ready=0 stale_replay_accepted=0 obsolete_feedback_committed=0
+PASS shared epoch reset contract
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_epoch_wakeup" end time: Oct 10 10:32 +07
+"h264_intra_epoch_wakeup" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/8 Testing: h264_intra_reset_matrix
+6/8 Test: h264_intra_reset_matrix
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_reset_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_reset_matrix" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS reset matrix: 590 checks at 8321 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_reset_matrix" end time: Oct 10 10:32 +07
+"h264_intra_reset_matrix" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/8 Testing: h264_intra_tlm_regression
+7/8 Test: h264_intra_tlm_regression
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_tlm_regression"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_tlm_regression" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS extended TLM (zero=0): 1667 checks at 781 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_tlm_regression" end time: Oct 10 10:32 +07
+"h264_intra_tlm_regression" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/8 Testing: h264_intra_tlm_zero_latency
+8/8 Test: h264_intra_tlm_zero_latency
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux/h264_intra_tlm_regression" "zero"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-tlm-linux
+"h264_intra_tlm_zero_latency" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS extended TLM (zero=1): 1660 checks at 128 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_tlm_zero_latency" end time: Oct 10 10:32 +07
+"h264_intra_tlm_zero_latency" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 10 10:32 +07
+
+H264 integration PASS output extracted from final50/50 transcript:
+PASS real intra/DMA integration: 18 checks at 988 ns
+PASS real intra/DMA integration: 18 checks at 988 ns
+PASS real intra/DMA integration: 18 checks at 988 ns
+PASS CMB/intra (TQ wiring=0): 22626 checks, 24 MB, 252 blocks, 0 TQ blocks at 26470 ns
+PASS CMB/intra (TQ wiring=1): 13881 checks, 12 MB, 216 blocks, 192 TQ blocks at 22320 ns
+PASS CMB/intra (TQ wiring=0): 22626 checks, 24 MB, 252 blocks, 0 TQ blocks at 25318 ns
+PASS CMB/intra (TQ wiring=1): 13881 checks, 12 MB, 216 blocks, 192 TQ blocks at 21744 ns
+PASS CMB/intra (TQ wiring=0): 22626 checks, 24 MB, 252 blocks, 0 TQ blocks at 24934 ns
+PASS CMB/intra (TQ wiring=1): 13881 checks, 12 MB, 216 blocks, 192 TQ blocks at 21552 ns
+
+Standalone Debug UBSan raw CTest transcript:
+Start testing: Oct 10 10:32 +07
+----------------------------------------------------------
+1/8 Testing: h264_intra_algorithms
+1/8 Test: h264_intra_algorithms
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_algorithms" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+PASS intra algorithms/context: 2316 checks
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_algorithms" end time: Oct 10 10:32 +07
+"h264_intra_algorithms" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/8 Testing: h264_intra_core_regression
+2/8 Test: h264_intra_core_regression
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_review_core"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_core_regression" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+PASS review core: 79382 checks, seed=20261010
+<end of output>
+Test time =   0.57 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_core_regression" end time: Oct 10 10:32 +07
+"h264_intra_core_regression" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/8 Testing: h264_intra_tlm_contract
+3/8 Test: h264_intra_tlm_contract
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_tlm_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_tlm_contract" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS intra TLM: 62 checks at 473 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_tlm_contract" end time: Oct 10 10:32 +07
+"h264_intra_tlm_contract" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/8 Testing: h264_intra_epoch_incoming
+4/8 Test: h264_intra_epoch_incoming
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_epoch_tests" "incoming"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_epoch_incoming" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+case=incoming response=-1 elapsed=12 ns busy=0 ready=0 stale_replay_accepted=0 obsolete_feedback_committed=0
+PASS shared epoch reset contract
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_epoch_incoming" end time: Oct 10 10:32 +07
+"h264_intra_epoch_incoming" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/8 Testing: h264_intra_epoch_wakeup
+5/8 Test: h264_intra_epoch_wakeup
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_epoch_tests" "wakeup"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_epoch_wakeup" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+case=wakeup response=-1 elapsed=12 ns busy=0 ready=0 stale_replay_accepted=0 obsolete_feedback_committed=0
+PASS shared epoch reset contract
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_epoch_wakeup" end time: Oct 10 10:32 +07
+"h264_intra_epoch_wakeup" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/8 Testing: h264_intra_reset_matrix
+6/8 Test: h264_intra_reset_matrix
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_reset_tests"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_reset_matrix" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS reset matrix: 590 checks at 8321 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_reset_matrix" end time: Oct 10 10:32 +07
+"h264_intra_reset_matrix" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/8 Testing: h264_intra_tlm_regression
+7/8 Test: h264_intra_tlm_regression
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_tlm_regression"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_tlm_regression" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS extended TLM (zero=0): 1667 checks at 781 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_tlm_regression" end time: Oct 10 10:32 +07
+"h264_intra_tlm_regression" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/8 Testing: h264_intra_tlm_zero_latency
+8/8 Test: h264_intra_tlm_zero_latency
+Command: "/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux/h264_intra_tlm_regression" "zero"
+Directory: /mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/build-ubsan-linux
+"h264_intra_tlm_zero_latency" start time: Oct 10 10:32 +07
+Output:
+----------------------------------------------------------
+
+        SystemC 2.3.4-Accellera --- Oct  5 2026 16:59:19
+        Copyright (c) 1996-2022 by all Contributors,
+        ALL RIGHTS RESERVED
+PASS extended TLM (zero=1): 1660 checks at 128 ns
+
+Info: /OSCI/SystemC: Simulation stopped by user.
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"h264_intra_tlm_zero_latency" end time: Oct 10 10:32 +07
+"h264_intra_tlm_zero_latency" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 10 10:32 +07
+
+Fresh gcov production summaries:
+File '/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/src/intra_core.cpp'
+Lines executed:100.00% of 244
+Branches executed:100.00% of 426
+Taken at least once:86.15% of 426
+Calls executed:92.31% of 260
+File '/mnt/d/Intern_doc/Project/CDC-VP/components/h264/Intra-Prediction/src/intra_tlm.cpp'
+Lines executed:100.00% of 114
+Branches executed:98.17% of 219
+Taken at least once:71.69% of 219
+Calls executed:85.48% of 186
