@@ -43,7 +43,7 @@ ctest --test-dir build/vp --output-on-failure
 ```
 
 Cũng có thể dùng SYSTEMC_SOURCE_DIR hoặc cả SYSTEMC_INCLUDE_DIR/SYSTEMC_LIBRARY.
-SW DMA tests mặc định ON, cần ../dma_subsystems. Tắt H264_INTER_BUILD_DMA_TESTS
+SW DMA tests mặc định ON, cần [DMA subsystems](../dma_subsystems/). Tắt H264_INTER_BUILD_DMA_TESTS
 nếu chỉ lấy module và shared contracts: có 15 tests khi TLM ON; full suite 18;
 core-only 3. Build output được ignore, evidence trong tests/evidence.
 
