@@ -60,7 +60,7 @@ void EncoderController::run() {
                 if (total < words || total > config.sequence.nal_capacity_bytes/4 || total!=regs_.stream_words())
                     throw std::runtime_error("invalid final NAL length");
                 words = total;
-            } catch (const std::runtime_error&) { success = false; }
+            } catch (const std::exception&) { success = false; }
         }
         if (!success && started && reset_.valid(generation)) {
             try { recovered=executor_.abort_and_drain(generation); }

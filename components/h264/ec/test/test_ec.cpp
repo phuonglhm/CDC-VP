@@ -18,31 +18,31 @@ struct EcTb : sc_core::sc_module {
     tlm_utils::simple_initiator_socket<EcTb> socket{"socket"};
     SC_HAS_PROCESS(EcTb);
 
-    explicit EcTb(sc_core::sc_module_name name) : sc_core::sc_module(name) { 
-        SC_THREAD(run); 
+    explicit EcTb(sc_core::sc_module_name name) : sc_core::sc_module(name) {
+        SC_THREAD(run);
     }
 
     void send(tlm::tlm_command cmd, std::uint64_t addr, unsigned char* data, unsigned len) {
         tlm::tlm_generic_payload tx;
-        tx.set_command(cmd); 
-        tx.set_address(addr); 
+        tx.set_command(cmd);
+        tx.set_address(addr);
         tx.set_data_ptr(data);
-        tx.set_data_length(len); 
+        tx.set_data_length(len);
         tx.set_streaming_width(len);
         tx.set_byte_enable_ptr(nullptr);
         tx.set_byte_enable_length(0);
         tx.set_dmi_allowed(false);
         tx.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-        
+
         sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
         socket->b_transport(tx, delay);
-        
+
         if (tx.get_response_status() != tlm::TLM_OK_RESPONSE) {
-            std::cout << "\nGiao dịch bị từ chối - Không thể " << (cmd == tlm::TLM_WRITE_COMMAND ? "GHI" : "ĐỌC") 
-                      << " vào địa chỉ: 0x" << std::hex << addr 
+            std::cout << "\nGiao dịch bị từ chối - Không thể " << (cmd == tlm::TLM_WRITE_COMMAND ? "GHI" : "ĐỌC")
+                      << " vào địa chỉ: 0x" << std::hex << addr
                       << " với độ dài " << std::dec << len << " bytes!\n";
         }
-        
+
         assert(tx.get_response_status() == tlm::TLM_OK_RESPONSE);
         wait(delay);
     }
@@ -50,7 +50,7 @@ struct EcTb : sc_core::sc_module {
     void verify_and_print(const char* mode, int test_id) {
         unsigned char start_cmd = 0x80;
         send(tlm::TLM_WRITE_COMMAND, 0x28, &start_cmd, 1);
-        
+
         unsigned char valid[4]{};
         send(tlm::TLM_READ_COMMAND, 0x40, valid, 4);
         if (temp_load_u32_le(valid) != 1) {
@@ -61,7 +61,7 @@ struct EcTb : sc_core::sc_module {
         unsigned char len_buf[4]{};
         send(tlm::TLM_READ_COMMAND, 0xD0, len_buf, 4);
         std::uint32_t stream_len = temp_load_u32_le(len_buf);
-        
+
         unsigned char stream[128]{};
         send(tlm::TLM_READ_COMMAND, 0x50, stream, 128);
 
@@ -84,7 +84,7 @@ struct EcTb : sc_core::sc_module {
         std::cout << "\n=========================================================\n";
         std::cout << "           H.264 ENTROPY CODING UNIT TEST REPORT          \n";
         std::cout << "=========================================================\n\n";
-       
+
         std::int16_t levels[16] = {4, -2, 1, 0, 0, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0};
         send(tlm::TLM_WRITE_COMMAND, 0x00, reinterpret_cast<unsigned char*>(levels), 32);
         unsigned char qp = 26;
@@ -96,13 +96,14 @@ struct EcTb : sc_core::sc_module {
         verify_and_print("CAVLC / Exp-Golomb", 1);
 
         // CABAC
+        send(tlm::TLM_WRITE_COMMAND, 0x00, reinterpret_cast<unsigned char*>(levels), 32);
         unsigned char mode_cabac = 1;
         send(tlm::TLM_WRITE_COMMAND, 0x24, &mode_cabac, 1);
         verify_and_print("CABAC Engine", 2);
 
         std::cout << "----------------------------------------\n";
         std::cout << "Kiểm tra trường hợp biên (Stress & Zero-run Test)...\n";
-        
+
         // Chuyển lại về chế độ CAVLC để dễ quan sát chuỗi bit đầu ra
         send(tlm::TLM_WRITE_COMMAND, 0x24, &mode_cavlc, 1);
 
@@ -115,7 +116,7 @@ struct EcTb : sc_core::sc_module {
         std::int16_t zero_run_levels[16] = { 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1 };
         send(tlm::TLM_WRITE_COMMAND, 0x00, reinterpret_cast<unsigned char*>(zero_run_levels), 32);
         verify_and_print("CAVLC / Zero Run Length Test", 4);
-        
+
         std::cout << "=========================================================\n";
         std::cout << " \033[1;32m>>> EC VP ALL UNIT TESTS PASSED <<<\033[0m\n";
         std::cout << "=========================================================\n\n";

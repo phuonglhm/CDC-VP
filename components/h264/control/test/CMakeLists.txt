@@ -1,6 +1,6 @@
 add_executable(recovery_syntax_tb recovery_syntax_tb.cpp)
 target_link_libraries(recovery_syntax_tb PRIVATE h264_top h264_platform)
-foreach(scenario drain drain_reset drain_failed drain_throw width_exact width_fn_short width_poc_short)
+foreach(scenario drain drain_logic drain_reset drain_failed drain_throw width_exact width_fn_short width_poc_short)
   add_test(NAME h264_${scenario} COMMAND recovery_syntax_tb ${scenario})
   set_tests_properties(h264_${scenario} PROPERTIES TIMEOUT 20)
 endforeach()

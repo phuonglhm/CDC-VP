@@ -30,7 +30,7 @@ class Pipeline: public sc_module,public h264::FrameExecutorIf {
 public:
     sc_in<bool> reset_n{"reset_n"};
     sc_signal<bool> enable{"enable"};
-    h264::intra::IntraTlm intra{"intra"};
+    h264::intra::IntraTlm intra;
     h264::inter::InterTlm inter{"inter"};
     tlm_utils::simple_initiator_socket<Pipeline> cmb_port{"cmb"},sw_port{"sw"},nal_port{"nal"},df_port{"df"},
         intra_port{"intra_port"},inter_port{"inter_port"};
@@ -38,13 +38,13 @@ public:
     h264::H264Arb queue; // Required client queue, NOT a second AXI bridge.
     NoDirectMemory memory;
     h264::CmbDma cmb{memory,queue};
-    h264::SwDma sw{queue,{16,16},{16,16}};
+    h264::SwDma sw;
     h264::DfDma df{memory,queue};
     h264::NalDma nal{memory,queue};
     unsigned stage,blocks=0,samples=0,words=0;
     std::array<unsigned,4> transfers{};
-    Pipeline(sc_module_name name,h264::ResetDomain& r,h264::DmaTransport& arb,unsigned s)
-        :sc_module(name),domain(r),stage(s) {
+    Pipeline(sc_module_name name,h264::ResetDomain& r,h264::DmaTransport& arb,unsigned s,unsigned width=16,unsigned height=16)
+        :sc_module(name),intra("intra",h264::intra::Options{width,height}),domain(r),sw(queue,{width,height},{width,height}),stage(s) {
         cmb_port.bind(arb.clients); sw_port.bind(arb.clients);
         nal_port.bind(arb.clients); df_port.bind(arb.clients);
         intra_port.bind(intra.target_socket); inter_port.bind(inter.target_socket);

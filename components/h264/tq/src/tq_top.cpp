@@ -1,4 +1,5 @@
-#include "tq_top.h" 
+#include "tq_top.h"
+#include <h264/block_transport.h>
 #include <cstring>
 
 namespace h264::tq {
@@ -31,9 +32,12 @@ TqTop::TqTop(sc_core::sc_module_name name)
     socket.register_b_transport(this, &TqTop::b_transport);
 }
 
+void TqTop::reset() { request_={}; result_={}; loaded_=0; is_intra_=true; }
+
 void TqTop::start() {
+    result_.valid=false;
     const auto coeff = ftq_.transform(request_.residual, request_.block_class);
-    result_.levels = ftq_.quantize(coeff, request_.qp, request_.block_class);
+    result_.levels = ftq_.quantize(coeff, request_.qp, request_.block_class, is_intra_);
 
     result_.reconstructed_residual =
         itq_.inverse_transform(result_.levels, request_.qp);
@@ -46,9 +50,10 @@ void TqTop::start() {
 
 void TqTop::b_transport(tlm::tlm_generic_payload& tx,
                         sc_core::sc_time& delay) {
+    if (!h264::block_payload(tx)) return;
     delay += sc_core::sc_time(1, sc_core::SC_NS);
     auto* data = tx.get_data_ptr();
-    
+
     if (data == nullptr) {
         tx.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
         return;
@@ -59,14 +64,23 @@ void TqTop::b_transport(tlm::tlm_generic_payload& tx,
     if (tx.get_command() == tlm::TLM_WRITE_COMMAND) {
         if (addr == 0x00 && tx.get_data_length() == 32) {
             load_array_le(data, request_.residual.data(), 16);
+            loaded_|=1; result_.valid=false;
         } else if (addr == 0x04 && tx.get_data_length() == 16) {
-            load_array_le(data, request_.predictor.data(), 16);
-        } else if (addr == 0x08 && tx.get_data_length() >= 1) {
-            request_.qp = data[0];
-        } else if (addr == 0x0C && tx.get_data_length() >= 1) {
+            load_array_le(data, request_.predictor.data(), 16); loaded_|=2;
+        } else if (addr == 0x08 && tx.get_data_length() == 1) {
+            if(data[0]>51) { tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE); return; }
+            request_.qp = data[0]; loaded_|=4;
+        } else if (addr == 0x09 && tx.get_data_length() == 1) {
+            if(data[0]>1) { tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE); return; }
+            is_intra_=data[0]!=0;
+        } else if (addr == 0x0C && tx.get_data_length() == 1) {
             request_.block_class =
                 static_cast<BlockClass>(data[0] & 0x3u);
-            if (data[0] & 0x80u) start();
+            if (data[0] & 0x80u) {
+                if(loaded_!=7) { tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE); return; }
+                try { start(); loaded_ &= ~1u; }
+                catch(const std::exception&) { result_={}; tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE); return; }
+            }
         } else {
             tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
             return;

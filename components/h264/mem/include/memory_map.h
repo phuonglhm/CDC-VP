@@ -2,19 +2,19 @@
 
 #include <systemc>
 #include <tlm>
-#include <tlm_utils/simple_target_socket.h>
+#include <tlm_utils/multi_passthrough_target_socket.h>
 #include <vector>
 #include <cstdint>
 
 namespace h264::mem {
 struct MemoryMap : sc_core::sc_module {
-    tlm_utils::simple_target_socket<MemoryMap> socket{"socket"};
+    tlm_utils::multi_passthrough_target_socket<MemoryMap> socket{"socket"};
 
     SC_HAS_PROCESS(MemoryMap);
     MemoryMap(sc_core::sc_module_name name);
 
 private:
-    void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
+    void b_transport(int, tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
 
     // Mảng bộ nhớ thực tế mô phỏng Hardware
     std::vector<std::uint8_t> internal_mem_;

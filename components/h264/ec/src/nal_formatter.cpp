@@ -1,58 +1,25 @@
 #include "nal_formatter.h"
-
-#include <vector>
 #include <algorithm>
-#include <iostream>
 namespace h264::ec {
-
-void NalFormatter::wrap_nal_unit(EcResult& res, 
-                                 std::uint8_t nal_ref_idc, 
-                                 std::uint8_t nal_unit_type) {
-    std::vector<std::uint8_t> out;
-    out.reserve(res.stream_length + 10);
-
-    // Chèn NAL Start Code Prefix (00 00 00 01)
-    out.push_back(0x00);
-    out.push_back(0x00);
-    out.push_back(0x00);
-    out.push_back(0x01);
-
-    // Chèn NAL Header lấy TRỰC TIẾP từ đầu vào 
-    std::uint8_t nal_header = ((nal_ref_idc & 0x03) << 5) | (nal_unit_type & 0x1F);
-    out.push_back(nal_header);
-    
-    // Quét RBSP và chèn Emulation Prevention Byte (0x03)
-    int zero_count = 0;
-    for (std::uint32_t i = 0; i < res.stream_length; ++i) {
-        std::uint8_t b = res.nal_stream[i];
-        if (zero_count == 2 && b <= 0x03) {
-            out.push_back(0x03); 
-            zero_count = 0;
-        }
-        out.push_back(b);
-        if (b == 0x00) {
-            zero_count++;
-        } else {
-            zero_count = 0;
-        }
+std::vector<std::uint8_t> NalFormatter::format_rbsp(const std::uint8_t* rbsp,std::size_t bytes,
+        unsigned ref,unsigned type,std::size_t capacity) {
+    if(ref>3 || type==0 || type>31 || (!rbsp && bytes)) throw std::invalid_argument("NAL fields/buffer");
+    if(capacity<5 || bytes>capacity-5) throw std::overflow_error("NAL capacity");
+    std::vector<std::uint8_t> out{0,0,0,1,static_cast<std::uint8_t>((ref<<5)|type)};
+    unsigned zeros=0;
+    for(std::size_t i=0;i<bytes;++i) {
+        unsigned v=rbsp[i];
+        if(zeros==2 && v<=3) {if(out.size()==capacity) throw std::overflow_error("NAL escape capacity");out.push_back(3);zeros=0;}
+        if(out.size()==capacity) throw std::overflow_error("NAL capacity");
+        out.push_back(v);zeros=v==0?zeros+1:0;
     }
-
-    // Bổ sung RBSP Trailing bit căn lề 32-bit (Tương thích bus AXI 32-bit)
-    while (out.size() % 4 != 0) {
-        out.push_back(0x00);
-    }
-    
-    if (out.size() > res.nal_stream.size()) {
-        std::cout << "NAL Stream (" << out.size() 
-                  << " bytes) vượt quá dung lượng buffer!\n";
-    }
-    
-    res.stream_length = std::min(static_cast<std::uint32_t>(out.size()), 
-                                 static_cast<std::uint32_t>(res.nal_stream.size()));
-                                 
-    for (std::uint32_t i = 0; i < res.stream_length; ++i) {
-        res.nal_stream[i] = out[i];
-    }
+    return out;
 }
-
+void NalFormatter::wrap_nal_unit(EcResult& res,std::uint8_t ref,std::uint8_t type) {
+    if(res.stream_length>res.nal_stream.size()) throw std::overflow_error("NAL input length");
+    auto out=format_rbsp(res.nal_stream.data(),res.stream_length,ref,type,res.nal_stream.size());
+    while(out.size()%4) out.push_back(0); // DMA padding, not RBSP termination.
+    if(out.size()>res.nal_stream.size()) throw std::overflow_error("NAL word capacity");
+    std::copy(out.begin(),out.end(),res.nal_stream.begin());res.stream_length=out.size();
+}
 } // namespace h264::ec

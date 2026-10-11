@@ -21,6 +21,10 @@ public:
              BlockClass block_class,
              bool is_intra = true) const;
 
+    // Gathered 4:2:0 DC coefficients from four forward 4x4 transforms.
+    std::array<std::int16_t,4> quantize_chroma_dc(
+        const std::array<std::int32_t,4>& dc,std::uint8_t qp,bool intra) const;
+
 private:
     TransposeRam& transpose_;
 };

@@ -26,6 +26,7 @@ public:
         pending=true; launch.notify(SC_ZERO_TIME);
         wait(10,SC_NS);
         if(mode=="width_exact") { while(pending) wait(done); return 1; }
+        if(mode=="drain_logic") throw std::logic_error("coding module contract failure");
         throw std::runtime_error("peer processing engine failed while DMA writes");
     }
     uint32_t end_activation(const FrameConfig&,uint64_t,uint32_t) override { return 1; }

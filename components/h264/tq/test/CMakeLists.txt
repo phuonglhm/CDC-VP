@@ -13,7 +13,8 @@ add_library(h264_vp_tq STATIC
     ../src/transpose_ram.cpp
 )
 
-target_include_directories(h264_vp_tq PUBLIC ../include)
+target_compile_features(h264_vp_tq PUBLIC cxx_std_17)
+target_include_directories(h264_vp_tq PUBLIC ../include ../../interfaces/include)
 
 target_link_libraries(h264_vp_tq PUBLIC SystemC::systemc)
 

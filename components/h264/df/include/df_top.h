@@ -15,13 +15,16 @@ struct DfTop : sc_core::sc_module {
     SC_HAS_PROCESS(DfTop);
     DfTop(sc_core::sc_module_name name);
 
+    void reset(); // Nonblocking protocol reset; configuration must be loaded again.
 private:
+    unsigned loaded_ = 0;
+
     void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
     void start();
 
     DfLineMemory line_mem_;
     DfFilter filter_;
-    
+
     DfRequest request_{};
     DfResult result_{};
 };
