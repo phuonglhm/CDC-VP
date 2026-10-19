@@ -1,0 +1,25 @@
+{
+  "source": {
+    "file": "FTEL_CDC_ADC_Controller_Hardware_Design_Specification.docx.pdf",
+    "sha256": "e8772c7f86a4106b1f556ac5e1368d31ce450b6d748dcfb7e94d8230ad876c58",
+    "pages": 22,
+    "revision_note": "Cover V1.0 March 20 2026; history includes V2.0 April 03 2026; repeated FU2 V5.7 header"
+  },
+  "requirements": [
+    {"id":"ADC-01","pages":"13-18","requirement":"23 aligned CSRs, VERSION, reset values, masks and access types","basis":"explicit","tests":["fu3_adc_registers","fu3_adc_bus_registers"]},
+    {"id":"ADC-02","pages":"7-9,14","requirement":"16 channels, 12-bit D input, SAMP_SEL output","basis":"explicit","tests":["fu3_adc_channels","fu3_adc_bus_channels"]},
+    {"id":"ADC-03","pages":"15","requirement":"Sample count effective clamp 1..16","basis":"explicit; raw readback is policy","tests":["fu3_adc_counts","fu3_adc_bus_counts"]},
+    {"id":"ADC-04","pages":"11-12,15","requirement":"Setup/high/low minima 32/4/12 ADC cycles","basis":"explicit; FSM transition latency is policy","tests":["fu3_adc_timing_min","fu3_adc_timing_programmed","fu3_adc_timing_max"]},
+    {"id":"ADC-05","pages":"10,15-18","requirement":"Capture raw samples and calculate average without overflow","basis":"explicit; nonintegral rounding is policy","tests":["fu3_adc_averaging","fu3_adc_randomized"]},
+    {"id":"ADC-06","pages":"10,18-19","requirement":"DONE held until disable; no automatic restart; disable clears flags","basis":"explicit; result retention is policy","tests":["fu3_adc_lifecycle","fu3_adc_bus_lifecycle"]},
+    {"id":"ADC-07","pages":"18","requirement":"Configuration captured when conversion sequence starts","basis":"explicit","tests":["fu3_adc_snapshot","fu3_adc_bus_snapshot"]},
+    {"id":"ADC-08","pages":"12","requirement":"Active-low reset clears state and data","basis":"explicit; in-flight transaction cancellation is policy","tests":["fu3_adc_reset","fu3_adc_reset_phases","fu3_adc_reset_transport","fu3_adc_clock_pause"]},
+    {"id":"ADC-09","pages":"9-11","requirement":"Wait for EOC then capture D","basis":"partial: rising-edge prose versus level FSM; early/held EOC unresolved","tests":["fu3_adc_eoc_wait","fu3_adc_eoc_policy"]},
+    {"id":"ADC-10","pages":"13,18","requirement":"DONE bit 0; BUSY/READY bit assignment missing","basis":"partial: BUSY=bit2 READY=bit1 are VP policy","tests":["fu3_adc_lifecycle"]},
+    {"id":"ADC-11","pages":"10","requirement":"Disable mid-conversion","basis":"unspecified: VP aborts at next ADC edge","tests":["fu3_adc_disable_phases"]},
+    {"id":"ADC-12","pages":"13","requirement":"PSTRB/PSLVERR unsupported; TLM payload contract","basis":"VP policy; not signal-level APB verification","tests":["fu3_adc_protocol","fu3_adc_debug"]},
+    {"id":"ADC-13","pages":"18","requirement":"0x500A0000..0x500AFFFF via SYSBUS_1/PERIBUS_1","basis":"explicit; TLM bus timing is policy","tests":["fu3_adc_bus_bus","fu3_adc_example"]},
+    {"id":"ADC-14","pages":"12","requirement":"80 MHz APB, generated 10 MHz ADC clock and synchronized reset release","basis":"partial: external ADC clock; divider/CDC/metastability not modeled","tests":["fu3_adc_clock_pause"]},
+    {"id":"ADC-15","pages":"8-12","requirement":"Analog hardmacro voltages, quantization, ISAMPCLK timing and test mode","basis":"out of digital VP scope; external hardmacro spec not supplied","tests":[]}
+  ]
+}
