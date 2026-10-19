@@ -41,7 +41,7 @@ All RW registers reset to 0.
 ## Interrupt behavior
 
 - Source k of `irq_sources` is Source ID k+1 (HDS 7.2). ID 0 means no interrupt.
-- Level gateway: the source is pending while its input is high and it is not in service. A level pulse that drops before the claim is not kept.
+- Level gateway: a high input sets a latched pending bit while the source is not in service. The bit stays set until claimed, even if the input falls first (RISC-V PLIC behavior). On complete, a still-high input pends again at once. FU3 timers raise their IRQ for one tick only, so latching is required.
 - Edge gateway: each rising edge increments a per-source counter, saturating at MAX_PENDING_COUNT = 8. The source is pending while the counter is nonzero and it is not in service and each claim consumes one edge. Edges arriving while in service are kept.
 - Claim (functional read of ID_0): selects the pending, enabled source with the highest priority strictly above THRESHOLD_0 and ties go to the lowest ID. The source becomes in service and stops pending until completed.
 - Complete (write of ID_0): releases the written ID if it is in service and other values are ignored.
@@ -56,7 +56,7 @@ All RW registers reset to 0.
 | PRIORITY field width and packing | 4 bits per ID, [2:0] used (HDS: 8 IDs per register, 8 levels) |
 | CONFIG_0/1 field layout | As in the Registers table |
 | EL bit polarity | 1 = edge (HDS Table 7-2 lists le_i = 0 for level sources) |
-| Level pulse dropped before claim | Not kept |
+| Level pulse dropped before claim | Latched until claim (RISC-V PLIC) |
 | Completing an unclaimed ID | Ignored |
 | Source synchronization | Not modeled and HDS requires synchronous sources |
 | Sources 22-23 (SPI2, SPI3) | Present in HAS Table 11-1, absent from HDS Table 7-2 and the model supports all 32 inputs |

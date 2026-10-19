@@ -36,6 +36,7 @@ private:
     std::uint32_t el_ = 0, ie_ = 0, threshold_ = 0;
     std::uint32_t priority_[4] = {};
     std::uint32_t in_service_ = 0;          // Đã claim, chưa complete
+    std::uint32_t level_ip_ = 0;            // Pending đã chốt của nguồn level (giữ tới khi claim)
     unsigned edge_count_[kSources] = {};    // Số sườn lên đang chờ (tối đa kMaxPending)
     bool last_level_[kSources] = {};
     sc_core::sc_event changed_;

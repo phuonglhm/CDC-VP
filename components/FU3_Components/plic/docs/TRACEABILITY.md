@@ -9,7 +9,8 @@ Source: private PLIC HDS V1.0 and FU3 HAS v2.0, reviewed 2026-10-19. Checks live
 | HDS 7.1 | Zero wait state, no slave error | Unmapped offset reads 0, write ignored, OK response |
 | HDS 7.1 (PSTRB) | Byte write enables | Byte write to PRIORITY_1 lane 2; sparse PSTRB lanes 0 and 3 |
 | HDS 7.2 | ID n <- irq_sources_i[n-1], ID 0 = none | Claims return the expected IDs; claim with nothing pending returns 0 |
-| HDS 7.2 (le_i) | Level and edge triggering | Level claim/complete/re-pend; edge pulses queued after the input falls |
+| HDS 7.2 (le_i) | Level and edge triggering | Level claim/complete/re-pend; short level pulse latched until claim; edge pulses queued after the input falls |
+| HAS Table 11-1/11-2 | TIMER1 -> ID 6 -> CVA6 irq_i[0] | Out-of-repository CVA6 firmware test: one claim of ID 6, no re-entry |
 | HDS Table 5-1 | MAX_PENDING_COUNT edge queue | Ten pulses give eight claims |
 | HDS 2 (features 4-9) | Priority arbitration, enable, threshold, claim/complete | Highest priority first, ties to lowest ID; IE masking; priority must exceed threshold; priority 0 never interrupts |
 | HDS 7.3 | One target, level output o_plic_irq[0] | `irq` follows claimable state, drops on claim and on reset |

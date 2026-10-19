@@ -29,7 +29,7 @@ Plic::Plic(sc_core::sc_module_name name) : sc_core::sc_module(name) {
 }
 
 void Plic::reset_state() {
-    el_ = ie_ = threshold_ = in_service_ = 0;
+    el_ = ie_ = threshold_ = in_service_ = level_ip_ = 0;
     for (auto& p : priority_) p = 0;
     for (unsigned k = 0; k < kSources; ++k) edge_count_[k] = 0;
 }
@@ -45,8 +45,14 @@ std::uint32_t Plic::pending() const {
         // Level: theo mức nguồn.
         // Edge: còn sườn lên chưa claim. 
         // Đang in-service thì không pending.
-        const bool raised = edge ? edge_count_[k] > 0 : irq_sources[k].read();
-        if (raised && !((in_service_ >> k) & 1)) p |= 1u << k;
+        // const bool raised = edge ? edge_count_[k] > 0 : irq_sources[k].read();
+      
+        // Đọc mức nguồn trực tiếp làm mất xung IRQ 1 tick của TIMER FU3 trước khi CPU kịp claim
+        const bool raised = edge ? edge_count_[k] > 0 : ((level_ip_ >> k) & 1);
+
+        if (raised && !((in_service_ >> k) & 1)) 
+            p |= 1u << k; 
+        
     }
     return p;
 }
@@ -70,6 +76,7 @@ unsigned Plic::claim() {
     if (id) {
         const unsigned k = id - 1;
         in_service_ |= 1u << k;
+        level_ip_ &= ~(1u << k);   // Claim xoá pending đã chốt
         if (((el_ >> k) & 1) && edge_count_[k] > 0) --edge_count_[k];
         changed_.notify(sc_core::SC_ZERO_TIME);
     }
@@ -80,6 +87,9 @@ void Plic::complete(std::uint32_t id) {
     // Complete ID không hợp lệ hoặc chưa claim thì bỏ qua
     if (id >= 1 && id <= kSources && ((in_service_ >> (id - 1)) & 1)) {
         in_service_ &= ~(1u << (id - 1));
+        // Nguồn level vẫn đang lên thì pending lại ngay
+        if (!((el_ >> (id - 1)) & 1) && irq_sources[id - 1].read()) 
+            level_ip_ |= 1u << (id - 1);
         changed_.notify(sc_core::SC_ZERO_TIME);
     }
 }
@@ -90,9 +100,14 @@ void Plic::sample() {
     }
     for (unsigned k = 0; k < kSources; ++k) {
         const bool level = irq_sources[k].read();
+        
         // Gateway edge: Đếm sườn lên và Bão hoà ở MAX_PENDING_COUNT
         if (reset_n.read() && ((el_ >> k) & 1) && level && !last_level_[k] && edge_count_[k] < kMaxPending)
             ++edge_count_[k];
+
+        // Gateway level: nguồn lên khi chưa in-service => chốt pending
+        if (reset_n.read() && !((el_ >> k) & 1) && level && !((in_service_ >> k) & 1))
+            level_ip_ |= 1u << k;
         last_level_[k] = level;
     }
     changed_.notify(sc_core::SC_ZERO_TIME);

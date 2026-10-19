@@ -115,13 +115,31 @@ struct Bench : sc_core::sc_module {
     void raise(unsigned id, bool level) { src[id - 1] = level; settle(); }
     void pulse(unsigned id) { raise(id, true); raise(id, false); }
     void clear_all() {
-        for (auto& s : src) s = false;
+        for (auto& s : src) 
+            s = false;
         settle();
-        for (unsigned id = 1; id <= kSources; ++id) complete(id);
-        for (std::uint32_t off = FU3_PLIC_EL_OFFSET; off <= FU3_PLIC_THRESHOLD_0_OFFSET; off += 4) wr(off, 0);
+
+        for (unsigned id = 1; id <= kSources; ++id)
+            complete(id);
+
+        // Xả pending level đã chốt từ test trước: bật hết, claim + complete tới khi trống
+        for (std::uint32_t off = FU3_PLIC_PRIORITY_0_OFFSET; off <= FU3_PLIC_PRIORITY_3_OFFSET; off += 4)
+            wr(off, 0x1111'1111);
+        wr(FU3_PLIC_IE_0_OFFSET, ~0u);
+        wr(FU3_PLIC_THRESHOLD_0_OFFSET, 0);
         settle();
+
+        for (unsigned id = claim(); id != 0; id = claim())
+            complete(id);
+
+        for (std::uint32_t off = FU3_PLIC_EL_OFFSET; off <= FU3_PLIC_THRESHOLD_0_OFFSET; off += 4) 
+            wr(off, 0);
+        settle();
+
         while (claim() != 0) {}
-        for (unsigned id = 1; id <= kSources; ++id) complete(id);
+
+        for (unsigned id = 1; id <= kSources; ++id) 
+            complete(id);
     }
 
     void run() {
@@ -170,10 +188,16 @@ struct Bench : sc_core::sc_module {
         complete(FU3_PLIC_ID_TIMER1);
         check(!irq.read() && claim() == 0, "Source low after complete: nothing pending");
 
-        // Level drop before claim
+        // Level pulse ngắn (như TIMER FU3: IRQ chỉ lên 1 tick) được chốt tới khi claim
         raise(FU3_PLIC_ID_TIMER1, true);
         raise(FU3_PLIC_ID_TIMER1, false);
-        check(!irq.read() && claim() == 0, "Level pulse dropped before claim is not kept");
+        
+        // check(!irq.read() && claim() == 0, "Level pulse dropped before claim is not kept");
+        // Không giữ xung thì CPU mất IRQ 1 tick của TIMER FU3 (test end-to-end CVA6 + PLIC + TIMER1)
+        check(irq.read(), "Level pulse is latched until claim");
+        check(claim() == FU3_PLIC_ID_TIMER1, "Latched level source is claimed after the source fell");
+        complete(FU3_PLIC_ID_TIMER1);
+        check(!irq.read() && claim() == 0, "Source low at complete: nothing pending");
 
         // Priority arbitration, ties to lowest ID
         clear_all();
