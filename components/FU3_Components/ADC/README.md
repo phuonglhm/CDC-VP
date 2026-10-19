@@ -10,7 +10,7 @@ The FSM diagram on page 10 and timing diagram on page 11 were also reviewed.
 The HDS contains revision and template inconsistencies; its guideline text,
 UART examples and secure-boot appendix are not treated as ADC requirements.
 
-## Build and run
+## Build and test
 
 Requirements: Linux/WSL, C++17, CMake and SystemC 2.3.4.
 
@@ -19,12 +19,9 @@ cmake -S components/FU3_Components/ADC -B build/fu3-adc \
   -DSYSTEMC_HOME=/opt/systemc-2.3.4 -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/fu3-adc -j4
 ctest --test-dir build/fu3-adc --output-on-failure
-./build/fu3-adc/fu3_adc_vp
 ```
 
-In PowerShell, prefix each command with `wsl`. The demo prints four samples,
-`1000 1100 1200 1300`, with an average of `1150`. This minimal VP contains a
-polling master and digital hardmacro stimulus; it does not execute RISC-V firmware.
+In PowerShell, prefix each command with `wsl`.
 
 Run Debug, Release and UBSan regressions, coverage collection and JSON/XML reporting:
 
@@ -85,5 +82,5 @@ documented in [spec-decisions.md](docs/spec-decisions.md).
 
 The model does not simulate analog voltages, noise, a SAR transfer function,
 pin-level APB, clock-divider RTL or metastability/CDC. The D/EOC sources in the
-demo and tests provide digital stimulus only. Passing tests do not establish
+tests provide digital stimulus only. Passing tests do not establish
 RTL equivalence or hardware sign-off.

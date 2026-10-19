@@ -20,7 +20,6 @@ Checks use exceptions and exit codes and remain active in Release/NDEBUG.
 | --- | --- | --- |
 | FU3_ADC_BUILD_TESTS | BUILD_TESTING or CDC_BUILD_TESTS | Build and register regression tests |
 | FU3_ADC_BUS_TESTS | ON when tests are enabled | Test through the existing FU3 bus |
-| FU3_ADC_BUILD_EXAMPLE | ON | Build the fu3_adc_vp executable |
 | FU3_ADC_COVERAGE | OFF | Instrument adc.cpp with GCC/gcov |
 | SYSTEMC_HOME | /opt/systemc-2.3.4 | SystemC installation prefix |
 
@@ -40,8 +39,8 @@ they do not modify bus or CPU files.
 
 ## Test organization
 
-The default suite contains 27 CTest cases: 19 direct scenarios, 7 scenarios
-through the bus and 1 demo. Expected raw samples and channel values come from
+The default suite contains 26 CTest cases: 19 direct scenarios and 7 scenarios
+through the bus. Expected raw samples and channel values come from
 literal data and independent calculations in the testbench. The model receives
 D/EOC and does not generate its own sample oracle. The `randomized` scenario
 uses seed `0xADC2026` for 160 sequences with n=1..16, channel=0..15,

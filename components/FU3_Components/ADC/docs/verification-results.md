@@ -6,9 +6,9 @@ SystemC 2.3.4 at `/opt/systemc-2.3.4`. The source HDS is pinned in the
 
 | Build | Result | Scope |
 | --- | --- | --- |
-| Standalone Debug + gcov + Werror | 27/27 PASS | 19 direct scenarios, 7 FU3 bus scenarios and 1 executable demo |
-| Standalone Release + Werror | 27/27 PASS | Checks remain active with NDEBUG |
-| Standalone Debug + UBSan + Werror | 27/27 PASS | No UBSan diagnostics; sanitizer errors stop execution immediately |
+| Standalone Debug + gcov + Werror | 26/26 PASS | 19 direct scenarios and 7 FU3 bus scenarios |
+| Standalone Release + Werror | 26/26 PASS | Checks remain active with NDEBUG |
+| Standalone Debug + UBSan + Werror | 26/26 PASS | No UBSan diagnostics; sanitizer errors stop execution immediately |
 
 The delivery uses a standalone build within the ADC directory. It is not
 connected to the root build and does not modify other IP files.
@@ -20,7 +20,6 @@ locations were executed, with 133/172 branch outcomes taken at least once
 branches; they are not FSM coverage or the percentage of completed HDS
 requirements. SystemC/STL headers are excluded from these implementation figures.
 
-The polling demo completed with samples `1000, 1100, 1200, 1300` and average `1150`.
 The regression covers all 16 channels, 32 sample-count encodings, timing values
 0/min-1/min/min+1/255, boundary and fractional averages, 160 pseudorandom
 sequences, reset/disable in all 7 enabled states, missing/early/late/held-high

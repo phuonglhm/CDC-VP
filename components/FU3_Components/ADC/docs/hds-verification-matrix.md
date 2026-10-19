@@ -19,7 +19,7 @@ Machine-readable metadata is in [hds-requirements.json](../tests/hds-requirement
 | ADC-10 | 13,18 | Status bits | lifecycle | DONE[0] is explicit; READY/BUSY bit assignment is policy |
 | ADC-11 | 10 | Disable during conversion | disable_phases | Check every enabled state and recovery; missing HDS transitions require policy |
 | ADC-12 | 13 | APB/TLM contract | protocol, debug | No aliasing of 64-bit addresses; length/streaming/BE/null/command errors, debug and DMI; not pin-level APB verification |
-| ADC-13 | 18 | Base address, window and bus path | bus_bus, example | Existing FU3 bus, four-word burst, subword/unmapped errors; the example uses local offsets |
+| ADC-13 | 18 | Base address, window and bus path | bus_bus | Existing FU3 bus, four-word burst, subword/unmapped errors |
 | ADC-14 | 12 | Clock and reset synchronization | clock_pause | Externally supplied clock; divider/CDC RTL remains unverified |
 | ADC-15 | 8-12 | Analog hardmacro and ISAMPCLK | None | Outside scope; the separate hardmacro specification is unavailable |
 

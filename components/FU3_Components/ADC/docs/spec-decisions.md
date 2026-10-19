@@ -94,11 +94,12 @@ of the corresponding HDS interpretation.
 | D13-D14, D16 | Approved macro specification/test-mode stimulus, package channel map and whether a hardware timeout is required | `channels`, `eoc_wait`, `eoc_policy`; digital stimulus only, no analog or package proof |
 | D15 | Approved document revision and replacement of template sections | Source review; not a simulation test |
 
-The 2026-10-19 Debug rebuild and rerun passed **27/27 tests**, with no failures
-or disabled tests. Evidence is generated under `build/hds-review/adc-results.xml`
-and `adc-regression.log` from the repository root. Earlier Release/UBSan results
-are documented in [verification-results.md](verification-results.md); they are
-not new runs from this documentation review. Full HDS sign-off remains open.
+The current regression contains **26 tests**: 19 direct scenarios and seven
+FU3 bus scenarios. The 2026-10-19 rebuild and rerun passed **26/26 tests** on
+Debug, Release and UBSan, with no failures or skipped tests. Current evidence
+is in `build/fu3-adc{,-release,-ubsan}/results.xml` and
+`build/fu3-adc/verification-report.json` from the repository root. See
+[verification-results.md](verification-results.md). Full HDS sign-off remains open.
 
 Related details: [verification matrix](hds-verification-matrix.md) and
 [owner clarification request](hds-clarification-request.md). This decision log

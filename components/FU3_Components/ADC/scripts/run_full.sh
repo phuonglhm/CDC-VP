@@ -16,7 +16,7 @@ for profile in debug release ubsan; do
   cmake -S "$source_dir" -B "$build_dir" -DSYSTEMC_HOME="$systemc_prefix" \
     -DCMAKE_BUILD_TYPE="$build_type" -DCMAKE_CXX_FLAGS="$flags" \
     -DFU3_ADC_COVERAGE="$coverage" -DFU3_ADC_BUILD_TESTS=ON \
-    -DFU3_ADC_BUS_TESTS=ON -DFU3_ADC_BUILD_EXAMPLE=ON 2>&1 | tee "$build_dir/configure.log"
+    -DFU3_ADC_BUS_TESTS=ON 2>&1 | tee "$build_dir/configure.log"
   cmake --build "$build_dir" -j "$jobs" 2>&1 | tee "$build_dir/build.log"
   ctest --test-dir "$build_dir" --output-on-failure --output-junit results.xml 2>&1 | tee "$build_dir/tests.log"
 done

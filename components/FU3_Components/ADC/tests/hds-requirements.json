@@ -18,7 +18,7 @@
     {"id":"ADC-10","pages":"13,18","requirement":"DONE bit 0; BUSY/READY bit assignment missing","basis":"partial: BUSY=bit2 READY=bit1 are VP policy","tests":["fu3_adc_lifecycle"]},
     {"id":"ADC-11","pages":"10","requirement":"Disable mid-conversion","basis":"unspecified: VP aborts at next ADC edge","tests":["fu3_adc_disable_phases"]},
     {"id":"ADC-12","pages":"13","requirement":"PSTRB/PSLVERR unsupported; TLM payload contract","basis":"VP policy; not signal-level APB verification","tests":["fu3_adc_protocol","fu3_adc_debug"]},
-    {"id":"ADC-13","pages":"18","requirement":"0x500A0000..0x500AFFFF via SYSBUS_1/PERIBUS_1","basis":"explicit; TLM bus timing is policy","tests":["fu3_adc_bus_bus","fu3_adc_example"]},
+    {"id":"ADC-13","pages":"18","requirement":"0x500A0000..0x500AFFFF via SYSBUS_1/PERIBUS_1","basis":"explicit; TLM bus timing is policy","tests":["fu3_adc_bus_bus"]},
     {"id":"ADC-14","pages":"12","requirement":"80 MHz APB, generated 10 MHz ADC clock and synchronized reset release","basis":"partial: external ADC clock; divider/CDC/metastability not modeled","tests":["fu3_adc_clock_pause"]},
     {"id":"ADC-15","pages":"8-12","requirement":"Analog hardmacro voltages, quantization, ISAMPCLK timing and test mode","basis":"out of digital VP scope; external hardmacro spec not supplied","tests":[]}
   ]
