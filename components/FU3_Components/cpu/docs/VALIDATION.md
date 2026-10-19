@@ -10,14 +10,11 @@ riscv64-unknown-elf-gcc for `-march=rv32imc_zicsr -mabi=ilp32` firmware.
 
 ## riscv_cpu_eval regression
 
-`hello`, `timer_irq` and `uart_test` firmware give the same output as before the
-single-port bus change.
+`hello`, `timer_irq` and `uart_test` firmware give the same output as before the single-port bus change.
 
 ## CVA6 + Ibex on the FU3 bus (harness outside the repository)
 
-The harness instantiates the production FU3 bus with ROM, CVA6_ISRAM, IBEX_ISRAM
-and DSRAM enabled, both CPUs with this configuration, and a boot controller that
-calls `finish_staging()` and releases CVA6 once Ibex reports staging done.
+The harness instantiates the production FU3 bus with ROM, CVA6_ISRAM, IBEX_ISRAM and DSRAM enabled, both CPUs with this configuration, and a boot controller that calls `finish_staging()` and releases CVA6 once Ibex reports staging done.
 Ibex boot ROM and CVA6 image are assembly firmware.
 
 | Check | Result |
@@ -32,7 +29,6 @@ Ibex boot ROM and CVA6 image are assembly firmware.
 | CVA6 RVC fetch: 32-bit instruction at 0x10022 crossing a word | OK |
 | Both CPUs complete | OK |
 
-12/12 checks passed; CVA6 released at 11 us, simulation ended at 14 us.
+12/12 checks passed and CVA6 released at 11 us, simulation ended at 14 us.
 
-Mutation check: with the fetch split removed (4-byte fetch at the PC), CVA6
-stops at its first 2-byte-aligned instruction and the harness fails.
+Mutation check: with the fetch split removed (4-byte fetch at the PC), CVA6 stops at its first 2-byte-aligned instruction and the harness fails.

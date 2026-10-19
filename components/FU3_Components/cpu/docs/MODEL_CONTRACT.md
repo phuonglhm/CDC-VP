@@ -2,21 +2,17 @@
 
 ## Sources and scope
 
-FU3 HAS v2.0: Table 8-1 (CVA6 configuration), Table 8-3 (Ibex configuration),
-Table 10-1 (memory map), Table 11-2 (CVA6 interrupt inputs), Section 10.2 (Ibex
-interrupts) and Section 14.2 (boot sequence). The source documents are private and are
-not included in this package.
+FU3 HAS v2.0: Table 8-1 (CVA6 configuration), Table 8-3 (Ibex configuration), Table 10-1 (memory map), Table 11-2 (CVA6 interrupt inputs), Section 10.2 (Ibex interrupts) and Section 14.2 (boot sequence).
+The source documents are private and are not included in this package.
 
-Both CPUs are the Bremen RV32 ISS behind `cdc::cpu::cva6_wrapper`. The VP
-models instruction-set behavior, traps, interrupts and bus traffic; it does not
-model pipelines, caches, branch prediction, lockstep or timing of either core.
+Both CPUs are the Bremen RV32 ISS behind `cdc::cpu::cva6_wrapper`. The VP models instruction-set behavior, traps, interrupts and bus traffic. It does not model pipelines, caches, branch prediction, lockstep or timing of either core.
 
 ## CVA6
 
 | Item | Value | Source |
 | --- | --- | --- |
 | Reset PC | 0x0001_0000 (CVA6_ISRAM) | Section 9, 14.2: Ibex sets boot_addr_i |
-| Reset | Held after construction; released by the boot controller | Section 14.2 |
+| Reset | Held after construction and released by the boot controller | Section 14.2 |
 | Hart ID | 0 (PLIC target 0) | Table 11-1/11-2 |
 | ISA | RV32IMC, M-mode only (`misa` without A, F, D, S, U) | Table 8-1 |
 | MMU | None | Table 8-1 MmuPresent = 0 |
@@ -35,12 +31,9 @@ model pipelines, caches, branch prediction, lockstep or timing of either core.
 
 ## Bus behavior (both CPUs)
 
-- One initiator socket per CPU (`has_unified_bus() = true`), matching one AXI4
-  master per CPU on the FU3 bus.
+- One initiator socket per CPU (`has_unified_bus() = true`), matching one AXI4 master per CPU on the FU3 bus.
 - Every fetch/data transaction carries `fu3_bus::Access` (instruction flag, beat size).
-- Fetches are aligned 4-byte words. A 2-byte-aligned PC fetches the word below and,
-  only for a 32-bit instruction, the next word; a 16-bit instruction never fetches
-  past its own word.
+- Fetches are aligned 4-byte words. A 2-byte-aligned PC fetches the word below and, only for a 32-bit instruction, the next word; a 16-bit instruction never fetches past its own word.
 - Bus errors become access-fault traps: mcause 1 (fetch), 5 (load), 7 (store).
 
 ## Not provided by the ISS (open)
@@ -52,7 +45,7 @@ model pipelines, caches, branch prediction, lockstep or timing of either core.
 | Ibex `irq_fast_i[14:0]` (cause 16-30) | Section 10.2 | Not deliverable: WDT0 is NMI, MAILBOX_IBEX, CRM, AES, DMA0, UART0, SPI, GPIO, TIMER2/3 use fast IRQs |
 | Ibex `irq_nm_i` (NMI from WDT0) | Section 10.2 | Not deliverable |
 | Ibex vectored-only `mtvec` | Ibex core | ISS forces direct mode |
-| PMP/ePMP, 16 regions, MMWP/RLB | Table 8-3 | CSRs exist, accesses are not checked; the bus enforces ROM, staging and DSRAM policy |
+| PMP/ePMP, 16 regions, MMWP/RLB | Table 8-3 | CSRs exist, accesses are not checked and the bus enforces ROM, staging and DSRAM policy |
 | Debug (HaltAddress, ExceptionAddress, debug_req_i) | Tables 8-1, 8-3, 11-2 | Not modeled (task 9) |
 | Clock frequency | CRM/PLL | Wrapper runs 1000 instructions per 10 us |
 

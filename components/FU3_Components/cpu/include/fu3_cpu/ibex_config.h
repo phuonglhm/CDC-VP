@@ -37,7 +37,7 @@ inline cpu_config ibex_cpu_config()
 }
 
 // Bảng 8-3: RV32I + M (RV32MFast) + C (Zca), B = None. Ibex có M và U-mode (PMP).
-// ISS mặc định IMACF + NUS => bỏ AFNS còn RV32IMC + M/U.
+// ISS Default: IMACF + NUS => bỏ AFNS còn RV32IMC + M/U.
 // Zcb chưa có trong ISS Bremen, FW Ibex phải build không dùng Zcb cho tới khi patch ISS.
 inline constexpr const char* kIbexDisableExtensions = "AFNS";
 
