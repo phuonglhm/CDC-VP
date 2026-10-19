@@ -17,6 +17,6 @@ Source: private FU3 HAS v2.0, reviewed 2026-10-19. Verification ran with an out-
 | Bus contract | Word fetch and RVC at 2-byte-aligned PC | 16-bit at aligned PC, 32-bit at PC%4==2 crossing a word, 16-bit at PC%4==2 |
 | Bus contract | Narrow stores use lane enables | sb/sh/sb to DSRAM reads back 0x22334411 |
 | Table 11-2 | CVA6 cause 7 (timer) | riscv_cpu_eval `timer_irq` firmware |
-| Table 11-2 | CVA6 causes 3 and 11 | Not exercised in this validation (no SYSCSR software IRQ or PLIC peer yet) |
+| Table 11-2 | CVA6 causes 7 and 11 on FU3 peers | Harness outside the repository: TIMER0 -> cause 7 (`fw/timer_irq_riscv`, PLATFORM=fu3), TIMER1 -> PLIC ID 6 -> cause 11 (`fw/fu3_plic_irq`) and cause 3 not exercised (SYSCSR v1 has no software IRQ) |
 
 Not covered: the open ISS features in [MODEL_CONTRACT.md](MODEL_CONTRACT.md) and real PLIC/INTMAP, CRM and debug peers.
