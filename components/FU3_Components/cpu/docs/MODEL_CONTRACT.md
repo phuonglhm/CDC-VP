@@ -44,7 +44,7 @@ Both CPUs are the Bremen RV32 ISS behind `cdc::cpu::cva6_wrapper`. The VP models
 | Zcb (Ibex) | Table 8-3 RV32ZcaZcb | Zcb instructions are illegal |
 | Ibex `irq_fast_i[14:0]` (cause 16-30) | Section 10.2 | Not deliverable: WDT0 is NMI, MAILBOX_IBEX, CRM, AES, DMA0, UART0, SPI, GPIO, TIMER2/3 use fast IRQs |
 | Ibex `irq_nm_i` (NMI from WDT0) | Section 10.2 | Not deliverable |
-| Ibex vectored-only `mtvec` | Ibex core | ISS forces direct mode |
+| Ibex vectored-only `mtvec` | Ibex core | ISS supports vectored mode (base + 4*cause) and it also accepts direct mode, which Ibex hardwires off |
 | PMP/ePMP, 16 regions, MMWP/RLB | Table 8-3 | CSRs exist, accesses are not checked and the bus enforces ROM, staging and DSRAM policy |
 | Debug (HaltAddress, ExceptionAddress, debug_req_i) | Tables 8-1, 8-3, 11-2 | Not modeled (task 9) |
 | Clock frequency | CRM/PLL | Wrapper runs 1000 instructions per 10 us |
