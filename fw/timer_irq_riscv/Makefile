@@ -13,7 +13,10 @@ NAME     := timer_irq
 ifeq ($(PLATFORM),fu3)
 ARCH     := -march=rv32imc_zicsr -mabi=ilp32
 LDSCRIPT := ../fu3_cva6_smoke/linker.ld
-DEFS     := -DUART_BASE=0x440D0000u -DTIMER_BASE=0x44060000u
+# DEFS     := -DUART_BASE=0x440D0000u -DTIMER_BASE=0x44060000u
+# Timer FU3 (Huy) có map khác timer_tlm => dùng registers.h của component
+DEFS     := -DUART_BASE=0x440D0000u -DTIMER_BASE=0x44060000u -DFU3_TIMER \
+            -I../../components/FU3_Components/timer/include
 TARGET   := $(NAME)_fu3.elf
 else ifeq ($(PLATFORM),cpu_eval)
 ARCH    := -march=rv32imac_zicsr -mabi=ilp32

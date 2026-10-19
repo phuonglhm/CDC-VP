@@ -19,11 +19,20 @@
 #endif
 
 #define UART_TX         (*(volatile unsigned char *)UART_BASE)
+#ifdef FU3_TIMER
+/* FU3 Timer HDS: COUNT +0x0, CONTROL +0x4, COMPARE +0x8, chỉ ghi full-word, không có INTSTATUS.
+   IRQ hạ ở tick kế tiếp khi COUNT != COMPARE. */
+#include <fu3_timer/registers.h>
+#define TIMER_CTRL      (*(volatile unsigned int  *)(TIMER_BASE + FU3_TIMER_CONTROL_OFFSET))
+#define TIMER_COMPARE   (*(volatile unsigned int  *)(TIMER_BASE + FU3_TIMER_COMPARE_OFFSET))
+#define TIMER_ENABLE    FU3_TIMER_ENABLE
+#else
 #define TIMER_CTRL      (*(volatile unsigned int  *)(TIMER_BASE + 0x0u))
 #define TIMER_RELOAD    (*(volatile unsigned int  *)(TIMER_BASE + 0x8u))
 #define TIMER_INTSTATUS (*(volatile unsigned int  *)(TIMER_BASE + 0xCu))
 #define TIMER_ENABLE    0x1u
 #define TIMER_INTR_EN   0x8u
+#endif
 
 #define MIE_MTIE      (1u << 7)   /* machine timer interrupt enable */
 #define MSTATUS_MIE   (1u << 3)   /* global machine interrupt enable */
@@ -40,9 +49,15 @@ static volatile int fired = 0;
 /* The "interrupt" attribute makes GCC emit the register save/restore and mret. */
 void __attribute__((interrupt("machine"), aligned(4))) trap_handler(void)
 {
+#ifdef FU3_TIMER
+    TIMER_CTRL = 0u;          /* Stop counting */
+    TIMER_COMPARE = 0u;       /* Write CMP Erase COUNT, CMP = 0 tắt so khớp => MTIP hạ ở tick kế */
+#else
     TIMER_INTSTATUS = 1u;     /* clear at the device first (timer_tlm acts on a
                                  clear only while enabled): MTIP drops */
     TIMER_CTRL = 0u;          /* then stop: one event is all this demo needs */
+#endif
+
     ++fired;
     if (fired == 1) uart_puts("TIMER IRQ\n");
 }
@@ -63,8 +78,13 @@ int main(void)
     __asm__ volatile("csrrs %0, mie, %1" : "=r"(tmp) : "r"(MIE_MTIE));
     __asm__ volatile("csrrs %0, mstatus, %1" : "=r"(tmp) : "r"(MSTATUS_MIE));
 
+#ifdef FU3_TIMER
+    TIMER_COMPARE = 2u;                         /* ngắt khi COUNT == 2 */
+    TIMER_CTRL = TIMER_ENABLE;
+#else
     TIMER_RELOAD = 2u;
     TIMER_CTRL = TIMER_ENABLE | TIMER_INTR_EN;  /* arm the platform timer */
+#endif
 
     while (!fired) {
         /* busy-wait; interrupt is taken between instructions */
