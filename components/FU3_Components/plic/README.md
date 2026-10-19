@@ -7,6 +7,7 @@ Functional model of the FU3 platform-level interrupt controller (`ftel_plic`):
 
 - `include/fu3_plic/registers.h`: C-compatible offsets, bit helpers and FU3 Source IDs.
 - `include/fu3_plic/plic.h`: the `fu3_plic::Plic` model.
+- `include/fu3_plic/intmap.h`: the `fu3_plic::Intmap` Ibex interrupt map (HAS v2.0 10.2).
 - `tests/`: direct behavior and actual FU3 bus integration (shared `bench.h`), `run_all.sh`.
 - `tests/consumer/`: validation through the installed CMake package.
 
@@ -18,7 +19,7 @@ fu3_plic::Plic plic{"plic"};
 bus.target("AP_PLIC").bind(plic.socket);          // PERIBUS_1, 0x4010_0000, local offsets
 plic.reset_n(reset_n);
 plic.irq_sources[FU3_PLIC_ID_TIMER1 - 1](timer1_irq);   // ID n <- irq_sources[n-1]
-// ... bind all 32 sources; tie unused ones to a constant-low signal
+// ... bind all 32 sources and tie unused ones to a constant-low signal
 plic.irq(plic_irq);                                // -> cva6.set_irq(fu3::kCauseExternal, level)
 ```
 
@@ -51,3 +52,5 @@ Public target: `fu3::plic`; installed package: `fu3-plic`.
 ## Verification evidence
 
 See [validation results](docs/VALIDATION.md) and [specification traceability](docs/TRACEABILITY.md).
+
+It also contains `fu3_plic::Intmap`, the stateless Ibex interrupt map from FU3 HAS v2.0 section 10.2.

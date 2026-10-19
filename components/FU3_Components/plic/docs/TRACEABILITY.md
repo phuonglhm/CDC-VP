@@ -19,5 +19,6 @@ Source: private PLIC HDS V1.0 and FU3 HAS v2.0, reviewed 2026-10-19. Checks live
 | VP choice | Reset clears registers and in-service state; writes ignored during reset | Reset sequence check |
 | HAS v2.0 memory map | AP_PLIC at 0x4010_0000 on PERIBUS_1 | Integration bench through the actual FU3 bus from the CVA6 port |
 | Packaging | Public SystemC dependency and install/export | Static/shared consumers run the behavior bench via find_package |
+| HAS v2.0 10.2 | Ibex INTMAP: 26 source nets ORed onto irq_nm_i, irq_fast_i[14:0], irq_external_i, irq_software_i, irq_timer_i | `tests/intmap.cpp`: each source alone raises only its HAS output and OR keeps an output high while any source stays high, all high and cause table |
 
 Not covered: firmware execution on CVA6, real interrupt peers, and the open questions in [MODEL_CONTRACT.md](MODEL_CONTRACT.md).

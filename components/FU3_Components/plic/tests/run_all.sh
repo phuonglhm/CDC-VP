@@ -20,6 +20,8 @@ for mode in static shared; do
     ctest --test-dir "${build_dir}" --output-on-failure
     "${build_dir}/plic_behavior_tests"
     "${build_dir}/plic_integration_tests"
+    "${build_dir}/intmap_tests"
+
 
     cmake --install "${build_dir}" --prefix "${build_dir}/install"
     cmake -S "${source_dir}/tests/consumer" -B "${build_dir}/consumer" \

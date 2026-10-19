@@ -4,6 +4,7 @@
 
 PLIC HDS V1.0 (ftel_plic) defines parameters (Table 5-1), the APB4 interface (Table 7.1), source mapping (Table 7-2), the single target (Table 7-3) and the register map (Table 8.1).
 FU3 HAS v2.0 Table 11-1 lists Source IDs, Table 11-2 routes target 0 to CVA6 `irq_i[0]`, and the memory map places AP_PLIC at 0x4010_0000 on PERIBUS_1.
+Section 10.2 defines the Ibex INTMAP (see [INTMAP (Ibex)](#intmap-ibex)).
 The source documents are private and are not included in this package.
 
 HDS sections 6.x (functions) and 8.1 (register fields) are still empty templates. Where the HDS is silent, the model follows the RISC-V PLIC and the RoaLogic PLIC, whose parameter set (SOURCES, TARGETS, PRIORITIES, MAX_PENDING_COUNT, HAS_THRESHOLD, HAS_CONFIG_REG) and CONFIG/EL/PRIORITY registers match this IP. Each such choice is listed below.
@@ -60,3 +61,38 @@ All RW registers reset to 0.
 | Completing an unclaimed ID | Ignored |
 | Source synchronization | Not modeled and HDS requires synchronous sources |
 | Sources 22-23 (SPI2, SPI3) | Present in HAS Table 11-1, absent from HDS Table 7-2 and the model supports all 32 inputs |
+
+## INTMAP (Ibex)
+
+`fu3_plic::Intmap` (`intmap.h`) is the stateless Ibex interrupt map from FU3 HAS v2.0 section 10.2. Each output is the OR of its sources; all nets are active-high levels and nothing is inverted or latched.
+
+| Ibex input (`irq[k]`) | Cause | Sources |
+| --- | --- | --- |
+| irq_nm_i (`kOutNmi`) | 31 | WDT0 |
+| irq_fast_i[14] | 30 | MAILBOX_IBEX |
+| irq_fast_i[13] | 29 | CRM |
+| irq_fast_i[12] | 28 | AES |
+| irq_fast_i[11] | 27 | EDHOC OSCORE |
+| irq_fast_i[10] | 26 | RNG |
+| irq_fast_i[9] | 25 | DMA0 |
+| irq_fast_i[8] | 24 | QSPI |
+| irq_fast_i[7] | 23 | UART0 |
+| irq_fast_i[6] | 22 | SPI0 |
+| irq_fast_i[5] | 21 | GPIO0_WAKE |
+| irq_fast_i[4] | 20 | UART1, UART2 |
+| irq_fast_i[3] | 19 | SPI1, SPI2, SPI3 |
+| irq_fast_i[2] | 18 | I2C0 |
+| irq_fast_i[1] | 17 | GPIOA, GPIOB, GPIOC |
+| irq_fast_i[0] | 16 | TIMER2, TIMER3 |
+| irq_external_i (`kOutExternal`) | 11 | ADC, AP_HBCTRL |
+| irq_software_i (`kOutSoftware`) | 3 | SYSCSR software IRQ (Ibex bit) |
+| irq_timer_i (`kOutTimer`) | 7 | TIMER1 |
+
+`kIbexCause[k]` gives the cause of output k, so the platform can forward each output with `ibex.set_irq(kIbexCause[k], level)`.
+The causes 16-31 need the pending Ibex Fast-IRQ/NMI support in the ISS. `debug_req_i` (DBG) is a direct wire, not part of this model.
+
+| INTMAP topic | VP choice |
+| --- | --- |
+| AP_HBCTRL IRQ | HAS lists it on irq_external_i, but the PLIC map and the block list give it no source and kept as in section 10.2 |
+| WDT0 on irq_nm_i | Section 10.2 maps it and section 10 intro still says WDT0 routing is TBD. Kept as in section 10.2 |
+| TIMER1 fan-out | TIMER1 drives both PLIC ID 6 (CVA6) and Ibex irq_timer_i, as both tables say |
