@@ -3,6 +3,8 @@
 Functional model of the FU3 platform-level interrupt controller (`ftel_plic`):
 32 interrupt sources, one target (CVA6 `irq_i[0]`, M-mode external, cause 11), 8 priority levels, per-source level/edge gateways and claim/complete. See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for exact behavior and the points the HDS leaves open.
 
+It also contains `fu3_plic::Intmap`, the stateless Ibex interrupt map from FU3 HAS v2.0 section 10.2.
+
 ## Layout
 
 - `include/fu3_plic/registers.h`: C-compatible offsets, bit helpers and FU3 Source IDs.
@@ -52,5 +54,3 @@ Public target: `fu3::plic`; installed package: `fu3-plic`.
 ## Verification evidence
 
 See [validation results](docs/VALIDATION.md) and [specification traceability](docs/TRACEABILITY.md).
-
-It also contains `fu3_plic::Intmap`, the stateless Ibex interrupt map from FU3 HAS v2.0 section 10.2.

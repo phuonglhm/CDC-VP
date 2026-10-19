@@ -9,4 +9,4 @@
   registers await their additional specification.
 - [cpu](cpu/README.md): FU3 configuration of CVA6 and Ibex on the cva6_vp wrapper (memory map, reset PCs, hart IDs, ISA, interrupt causes).
 - [syscsr](syscsr/README.md): SYSCSR register model per FU3_SYSCSR_v1 with FU3 bus tests.
-- [plic](plic/README.md): AP_PLIC (32 sources, 1 target, level/edge, claim/complete) per PLIC HDS V1.0 with FU3 bus tests.
+- [plic](plic/README.md): AP_PLIC (32 sources, 1 target, level/edge, claim/complete) per PLIC HDS V1.0 and the Ibex INTMAP per HAS v2.0 section 10.2wi th FU3 bus tests.
