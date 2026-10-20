@@ -1,59 +1,53 @@
-# FU3 WDT0/1 - SystemC/TLM
+﻿# FU3 WDT0/1 - SystemC/TLM
 
-Behavioral watchdogs for software-visible timeout, warning interrupt and reset
-recovery validation. One reusable `fu3_wdt::Watchdog` class serves both instances;
-`WatchdogBank` creates WDT0 and WDT1 with independent state and configurable periods.
+Behavioral watchdog models for software-visible timeout, warning interrupt, SYSCSR write protection and reset-recovery flow. One reusable `fu3_wdt::Watchdog` class serves both instances; `WatchdogBank` creates WDT0 and WDT1 with independent state and configurable functional clock periods.
 
-The model includes two-stage expiry, reload/service, raw/masked IRQ status, locked
-register writes, partial byte writes, debug pause, separate reset domains and
-programmable reset-request duration. Ambiguities in the source documents are
-resolved explicitly in the [model contract](docs/MODEL_CONTRACT.md).
+The register map and behavior follow WDT HDS V1.1. WDT writes are controlled by the external `i_wdt_other_unlock` input; the lock register belongs to SYSCSR. The model abstracts the two clock domains using a functional watchdog period and a configurable seven-cycle APB access delay. It does not model physical CDC flops or APB waveforms. See the [model contract](docs/MODEL_CONTRACT.md) and [traceability](docs/TRACEABILITY.md).
 
 ## Integration
 
 ```cpp
 #include <fu3_wdt/wdt_bank.h>
 fu3_wdt::WatchdogBank watchdogs{"watchdogs"};
-// bus is an existing FU3 BusSystem with WDT0/1 enabled.
+// Bind the existing FU3 bus targets for WDT0 and WDT1.
 bus.target("WDT0").bind(watchdogs.watchdogs[0]->socket);
 bus.target("WDT1").bind(watchdogs.watchdogs[1]->socket);
+
+sc_core::sc_signal<bool> preset_n{"preset_n"};
+sc_core::sc_signal<bool> wdog_reset_n{"wdog_reset_n"};
+sc_core::sc_signal<bool> wdt0_unlocked{"wdt0_unlocked"};
+sc_core::sc_signal<bool> wdt1_unlocked{"wdt1_unlocked"};
+watchdogs.watchdogs[0]->preset_n(preset_n);
+watchdogs.watchdogs[0]->wdogres_n(wdog_reset_n);
+watchdogs.watchdogs[0]->i_wdt_other_unlock(wdt0_unlocked);
+// Bind the corresponding reset and unlock inputs for WDT1 as well.
 ```
 
-Bind every instance's `preset_n`, `wdogres_n`, `clock_enabled`, `debug_halt`,
-`irq`, `reset_request` and `paused` ports before simulation. Route IRQ/reset outputs
-in the platform; the library does not own CPU, PLIC or CRM behavior. Both windows
-are on PERIBUS_0. Disable other absent bus targets before constructing the bus.
-See [integration.cpp](tests/integration.cpp) for complete wiring with fake peers.
+Both WDTs are on PERIBUS_0. Route WDT0 IRQ to the Ibex NMI path, WDT1 IRQ to PLIC source 18, and each `reset_request` to the platform reset controller. The supplied SYSCSR workbook does not yet describe the WDT unlock register, so the platform must provide the unlock signal until that interface is specified.
 
-Firmware-style sequence: write the unlock key, program LOAD, set CONTROL.INTEN
-and RESEN as needed, then lock. Service by unlocking, writing LOAD, and locking.
-After a warning, use CLEAR to acknowledge raw interrupt and restart the counter;
-LOAD alone does not clear raw status. Constants are in
-[registers.h](include/fu3_wdt/registers.h).
+Firmware sequence: unlock the watchdog through SYSCSR, write `WD_CNT_LD`, write `WD_CNT_CTRL` with RESEN/INTEN/DBGEN as required, then lock it. Service by unlocking and writing `WD_CNT_LD` or `WD_INT_CLR`, then locking again. Constants are in [registers.h](include/fu3_wdt/registers.h).
 
-## Build, test and install
+## Build and validate
 
-Run from this directory in Linux/WSL with CMake and a compatible SystemC 2.3.4
-installation. Both the library and consumers use the imported SystemC target and
-C++17. Executables define `sc_main`; libraries do not define an entry point.
+Run from this directory in Linux/WSL with CMake and a compatible SystemC installation:
 
 ```bash
-set -e
-export SYSTEMC_HOME=/absolute/path/to/systemc-install
-for mode in static shared; do
-    shared=OFF
-    if [ "$mode" = shared ]; then shared=ON; fi
-    cmake -S . -B "build/$mode" -DSYSTEMC_HOME="$SYSTEMC_HOME" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS="$shared"
-    cmake --build "build/$mode" --parallel 4
-    ctest --test-dir "build/$mode" --output-on-failure
-    cmake --install "build/$mode" --prefix "$PWD/build/$mode/install"
-    cmake -S tests/consumer -B "build/$mode/consumer" -DCMAKE_PREFIX_PATH="$PWD/build/$mode/install;$SYSTEMC_HOME"
-    cmake --build "build/$mode/consumer" --parallel 4
-    ctest --test-dir "build/$mode/consumer" --output-on-failure
-done
+cmake -S . -B build -DSYSTEMC_HOME=/absolute/path/to/systemc-install -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
 ```
 
-Consumers use `find_package(fu3-wdt CONFIG REQUIRED)` and link `fu3::wdt`.
-The production library does not depend on the bus library; the integration test
-links both. See [traceability](docs/TRACEABILITY.md) and
-[validation](docs/VALIDATION.md) for coverage and execution evidence.
+For shared-library validation, repeat with a separate build directory and
+`-DBUILD_SHARED_LIBS=ON`. Validate the installed package for either build:
+
+```bash
+cmake --install build --prefix "$PWD/build/install"
+cmake -S tests/consumer -B build/consumer -DCMAKE_PREFIX_PATH="$PWD/build/install;/absolute/path/to/systemc-install"
+cmake --build build/consumer --parallel 4
+ctest --test-dir build/consumer --output-on-failure
+```
+
+The installed consumer links only `fu3::wdt` and runs the behavior regression.
+See [VALIDATION.md](docs/VALIDATION.md) for execution results and remaining limits.
+
+Consumers use `find_package(fu3-wdt CONFIG REQUIRED)` and link `fu3::wdt`. The production library has no dependency on the bus library; the integration test links both. The TLM target accepts aligned full-word accesses at offsets `0x1004..0x101C`; reserved/misaligned accesses return TLM address errors.

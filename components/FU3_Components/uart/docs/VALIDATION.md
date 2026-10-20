@@ -55,22 +55,35 @@ Final transcript: ignored `build/validation-final.log`. Earlier transcripts:
 `build/validation.log` and `build/validation-repair1.log`. Counts include transport
 and repeated assertions; they are not unique requirements or a coverage percentage.
 
+## Follow-up validation (2026-10-20)
+
+After aligning the model with HDS v1.2 MCR.AFE, asynchronous MSR delta reset,
+and the combined RX DMA threshold/timeout interpretation, both static and shared
+builds passed all six component tests. Installed static and shared consumers each
+passed their behavior test (14/14 executions total). The added behavior checks
+cover MCR.AFE CTS gating, AFE+RTS backpressure, simultaneous RX timeout and FIFO
+threshold causes, and sub-cycle asynchronous MSR delta clearing.
+
 ## Remaining limits
 
-The source does not fully specify reset constants, IER/IIR encodings, timeout
-duration, debug side effects, FCR resize behavior, DMA-clear timing or simultaneous
-FIFO-event priority. The selected compatibility/VP rules are explicit in
+The source does not fully specify IER/IIR encodings, timeout duration, debug side
+effects, FCR resize behavior, DMA-clear timing or simultaneous FIFO-event priority.
+The selected compatibility/VP rules are explicit in
 MODEL_CONTRACT.md; tests validate those rules without turning them into HDS facts.
 
-RS485 firmware control remains undefined. Auto-flow and 8x selection are available
-as integration configuration, not invented CSR bits. RATIO and prefilter SIZE
-have no sufficiently defined behavior to reproduce separately. The majority
-voter is functional and does not model metastability or analog line conditioning.
+RS485 firmware control remains undefined. Auto-flow is controlled by MCR.AFE;
+8x/16x selection remains an integration parameter without a specified CSR bit.
+Exact baud accuracy, divisor scaling between 8x/16x modes, and fractional-rate
+behavior are deferred until RTL correlation; current timing provides deterministic
+serial progress for firmware data-flow tests. RATIO and prefilter SIZE have no
+sufficiently defined behavior to reproduce separately. The majority voter is
+functional and does not model metastability or analog line conditioning.
 
 Clock ticks are simulated while idle. Long full-platform boot runtime has not been
-benchmarked. Maximum divisor, randomized baud mismatch, exhaustive noise shapes,
-every reset phase and all same-tick RX/FIFO/IRQ races are not exhaustively covered.
-Native Windows DLL linking is not validated by these Linux/WSL builds.
+benchmarked. Maximum-divisor baud accuracy and randomized baud mismatch are
+outside the current VP acceptance scope; exhaustive noise shapes, every reset
+phase and all same-tick RX/FIFO/IRQ races are not exhaustively covered. Native
+Windows DLL linking is not validated by these Linux/WSL builds.
 
 Private specifications, extracts, generated images and build artifacts remain
 ignored. Only the new UART component is part of the source change.

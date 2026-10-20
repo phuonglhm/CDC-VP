@@ -21,10 +21,12 @@ bus.target("UART2").bind(uarts.controllers[2]->socket);
 ```
 
 Bind all reset, serial, modem, IRQ and DMA ports. Tie unused active-low modem
-inputs high and DMA clear inputs low. Drive RX high when disconnected. Reset is
-synchronous and must cover at least one configured clock edge. Use each instance's
-`Config` to set its clock period, maximum FIFO depth (32/64), oversampling (8/16),
-and optional platform-selected auto flow control.
+inputs high and DMA clear inputs low. Drive RX high when disconnected. UART state
+reset is synchronous and must cover at least one configured clock edge; MSR delta
+bits clear asynchronously on reset assertion. Use each instance's `Config` to set
+its clock period, maximum FIFO depth (32/64), and oversampling (8/16). Firmware
+enables automatic flow control through MCR.AFE (bit 5); MCR.RTS (bit 1) also
+enables automatic RTS behavior.
 
 | Instance | Base | Bus | PLIC source ID | Ibex route |
 |---|---|---|---|---|
@@ -40,10 +42,11 @@ register operations. Sparse byte enables are rejected because the documented
 APB3 endpoint has no PSTRB. See the contract for the explicit adapter boundary.
 
 Configure DLAB, DLL/DLM, FIFO mode while DLAB is set, then clear DLAB and configure
-LCR. Poll LSR.THRE/TEMT for TX; poll LSR.DR and read RBR for RX. Public byte offsets
-and status masks are in [registers.h](include/fu3_uart/registers.h). Auto-flow and
-8x selection currently have no specified firmware control bits. RS485 control is
-pending a register definition; MCR reserved bits remain zero.
+LCR. Set MCR.AFE for auto-CTS; set MCR.RTS with AFE to enable auto-RTS as well.
+Poll LSR.THRE/TEMT for TX; poll LSR.DR and read RBR for RX. Public byte offsets
+and status masks are in [registers.h](include/fu3_uart/registers.h). Oversampling
+8x/16x remains a model configuration because the HDS defines no firmware selector.
+RS485 control is pending a register/pin definition; MCR bits 7:6 remain reserved.
 
 See [integration.cpp](tests/integration.cpp) for real bus wiring with fake interrupt
 receivers and a DMA initiator. These tests do not execute CPU firmware or prove a

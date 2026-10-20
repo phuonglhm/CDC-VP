@@ -158,3 +158,19 @@ See [validation](VALIDATION.md) for evidence and
 ## Optional whole-burst endpoint contract
 
 `TargetConfig::preserve_burst` defaults to false. An integration may explicitly enable it for an AXI endpoint that validates the complete original transaction, such as the HyperRAM VP. In that mode ingress retains `Access`, payload length and byte enables instead of decomposing the request into beats or widening subwords. Region, access-policy, ingress admission and ordering checks still apply. The endpoint must validate its supported beat size, burst kind, alignment and 4-KiB rule. Existing FU3 defaults are unchanged; `fu3_hyperram::Controller::configure_bus` opts HYPERBUS into this contract.
+
+## Integration findings from the 2026-10-20 audit
+
+- Production AP_DMA uses a separate TransferExtension and requires an adapter to
+  the mandatory Access contract on default DMA0 ingress. Direct binding currently
+  fails; fake-DMA integration tests do not prove that production path.
+- AP_PLIC narrow reads can trigger word-wide claim side effects while extracting
+  only the requested byte lanes. Safe firmware claim/complete should use aligned
+  words pending an explicit enforced endpoint-specific subword policy.
+- Optional preserved FIXED requests have inconsistent footprint checks between
+  ingress and Router and can be rejected even when their repeated beat fits.
+  This is an open API defect, not evidence against the default decomposed FIXED
+  path or the HyperRAM endpoint's supported INCR contract.
+
+See VALIDATION.md for fresh test evidence and the distinction between verified
+fabric behavior, endpoint interoperability and full-platform reset/boot work.

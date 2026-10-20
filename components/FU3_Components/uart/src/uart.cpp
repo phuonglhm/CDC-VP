@@ -11,6 +11,9 @@ Uart::Uart(sc_core::sc_module_name name, Config config) : sc_module(name), confi
     socket.register_b_transport(this, &Uart::transport);
     socket.register_transport_dbg(this, &Uart::debug);
     SC_THREAD(run);
+    SC_METHOD(reset_delta_async);
+    sensitive << reset_n.neg();
+    dont_initialize();
     SC_METHOD(publish); sensitive << outputs_;
 }
 
@@ -43,6 +46,13 @@ void Uart::reset_state() {
     tx_index_=tx_remaining_=tx_divider_=tx_divisor_=0;
     rx_divider_=rx_divisor_=rx_age_=rx_center_=rx_votes_=0;
     cycles_=last_rx_activity_=0;
+}
+void Uart::reset_delta_async() {
+    // HDS v1.2 explicitly clears MSR delta bits asynchronously on preset_n.
+    if (!reset_n.read()) {
+        delta_=0;
+        outputs_.notify(sc_core::SC_ZERO_TIME);
+    }
 }
 void Uart::run() {
     // Reset is synchronous: pulses that miss a clock edge do not reset the IP.
@@ -108,7 +118,7 @@ void Uart::transmit() {
     }
     // Auto-CTS gates new frames only; an active character must finish intact.
     if (tx_frame_.empty() && !tx_fifo_.empty() && divisor() &&
-        (!config_.auto_flow_control || (modem_&16))) begin_transmit();
+        (!(mcr_&FU3_UART_MCR_AFE) || (modem_&16))) begin_transmit();
 }
 void Uart::receive() {
     const bool input=(mcr_&16) ? ((lcr_&64)?false:tx_level_) : rxd.read();
@@ -170,7 +180,8 @@ void Uart::publish() {
     txd.write((mcr_&16) ? true : (lcr_&64) ? false : tx_level_);
     const bool loop=mcr_&16;
     dtr_n.write(loop || !(mcr_&1)); out1_n.write(loop || !(mcr_&4)); out2_n.write(loop || !(mcr_&8));
-    rts_n.write(loop || !(mcr_&2) || (config_.auto_flow_control && !auto_rts_));
+    const bool auto_rts_enabled=(mcr_&FU3_UART_MCR_AFE) && (mcr_&2);
+    rts_n.write(loop || !(mcr_&2) || (auto_rts_enabled && !auto_rts_));
     irq.write(interrupt_id()!=1);
     dma_tx_request.write((fcr_&8) && tx_fifo_.size()<capacity() && !dma_tx_clear.read());
     dma_rx_request.write((fcr_&8) && !rx_fifo_.empty() &&
@@ -229,7 +240,7 @@ void Uart::write(unsigned offset, unsigned value) {
         break;
     }
     case 3: lcr_=std::uint8_t(value); break;
-    case 4: mcr_=value&31; break;
+    case 4: mcr_=value&0x3f; break;
     case 7: scr_=std::uint8_t(value); break;
     default: break; // LSR/MSR are read-only.
     }
