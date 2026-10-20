@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(hyperram_consumer LANGUAGES CXX)
+find_package(fu3-hyperram CONFIG REQUIRED)
+add_executable(hyperram_consumer main.cpp)
+target_link_libraries(hyperram_consumer PRIVATE fu3::hyperram)

@@ -58,7 +58,9 @@ void InitiatorPort::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& 
     if(policy==AccessPolicy::Cva6Program && descriptor_.name=="IBEX" && tx.is_write() && !*staging_) {
         reject(tlm::TLM_COMMAND_ERROR_RESPONSE); return;
     }
-    if(!access) { out->b_transport(tx,delay); consume_delay(delay); tx.set_dmi_allowed(false); return; }
+    if(!access || selected->preserve_burst) {
+        out->b_transport(tx,delay); consume_delay(delay); tx.set_dmi_allowed(false); return;
+    }
     struct Restore {
         tlm::tlm_generic_payload& t; sc_dt::uint64 a; unsigned char *d,*be;
         unsigned len,sw,bel;

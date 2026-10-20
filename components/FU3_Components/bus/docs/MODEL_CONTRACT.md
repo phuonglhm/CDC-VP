@@ -155,3 +155,6 @@ exact mapping to hardware AXI response encodings or APB PSLVERR.
 
 See [validation](VALIDATION.md) for evidence and
 [repository integration](REPOSITORY_HANDOFF.md) for reproducible usage.
+## Optional whole-burst endpoint contract
+
+`TargetConfig::preserve_burst` defaults to false. An integration may explicitly enable it for an AXI endpoint that validates the complete original transaction, such as the HyperRAM VP. In that mode ingress retains `Access`, payload length and byte enables instead of decomposing the request into beats or widening subwords. Region, access-policy, ingress admission and ordering checks still apply. The endpoint must validate its supported beat size, burst kind, alignment and 4-KiB rule. Existing FU3 defaults are unchanged; `fu3_hyperram::Controller::configure_bus` opts HYPERBUS into this contract.

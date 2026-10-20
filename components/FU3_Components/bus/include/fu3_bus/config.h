@@ -24,6 +24,7 @@ struct TargetConfig {
     AccessPolicy access = AccessPolicy::Open;
     unsigned outstanding = 1;
     bool word_interface = false; // Adapt subwords to aligned 32-bit beats with lane enables.
+    bool preserve_burst = false; // Opt-in endpoint contract: forward the original Access and payload.
 };
 struct BusConfig {
     // All sockets and both buses use 32-bit data. Reject unsupported widths.
