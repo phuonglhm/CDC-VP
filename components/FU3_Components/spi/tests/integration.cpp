@@ -9,10 +9,13 @@ struct Bench:sc_core::sc_module,Checks {
     tlm_utils::simple_initiator_socket<Bench> cpu{"cpu"},dma{"dma"};
     sc_core::sc_vector<sc_core::sc_signal<bool>> plic{"plic",24};
     sc_core::sc_signal<bool> fast6{"fast6"},fast3{"fast3"};
+    sc_core::sc_event concurrent_start,concurrent_done;
+    unsigned concurrent_completed=0;
     SC_HAS_PROCESS(Bench);
     Bench(sc_core::sc_module_name n):sc_module(n){cpu.bind(bus.initiator("IBEX"));dma.bind(bus.initiator("DMA0"));
         for(unsigned i=0;i<4;++i){bus.target("SPI"+std::to_string(i)).bind(bank.controllers[i]->socket);pins[i].bind(*bank.controllers[i]);}
-        SC_METHOD(route);for(auto& p:pins)sensitive<<p.irq;SC_THREAD(run);SC_THREAD(watchdog);}
+        SC_METHOD(route);for(auto& p:pins)sensitive<<p.irq;SC_THREAD(run);SC_THREAD(watchdog);
+        SC_THREAD(concurrent_cpu);SC_THREAD(concurrent_dma);}
     void route(){plic[9]=pins[0].irq;plic[16]=pins[1].irq;plic[22]=pins[2].irq;plic[23]=pins[3].irq;
         fast6=pins[0].irq;fast3=pins[1].irq.read()||pins[2].irq.read()||pins[3].irq.read();}
     unsigned access(unsigned i,bool wr,unsigned off,unsigned v=0){
@@ -26,6 +29,16 @@ struct Bench:sc_core::sc_module,Checks {
     void burst(bool wr,unsigned char* data){tlm::tlm_generic_payload t;t.set_command(wr?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND);
         t.set_address(FU3_SPI0_BASE+(wr?12:16));t.set_data_ptr(data);t.set_data_length(16);t.set_streaming_width(16);
         fu3_bus::ScopedAccess meta(t,4,fu3_bus::Burst::Fixed);auto d=sc_core::SC_ZERO_TIME;dma->b_transport(t,d);expect(t.is_response_ok(),"fake DMA fixed-address burst through real bus");}
+    void concurrent_cpu(){
+        wait(concurrent_start);
+        for(unsigned i=0;i<4;++i)access(0,true,FU3_SPI_TXDR,0x91+i);
+        ++concurrent_completed;concurrent_done.notify(sc_core::SC_ZERO_TIME);
+    }
+    void concurrent_dma(){
+        wait(concurrent_start);
+        unsigned char data[16]={0x41,0,0,0,0x42,0,0,0,0x43,0,0,0,0x44,0,0,0};
+        burst(true,data);++concurrent_completed;concurrent_done.notify(sc_core::SC_ZERO_TIME);
+    }
     void run(){
         for(auto& p:pins){p.reset_n=false;p.apb_reset_n=false;}wait(30,sc_core::SC_NS);
         for(auto& p:pins){p.reset_n=true;p.apb_reset_n=true;}wait(30,sc_core::SC_NS);
@@ -48,6 +61,25 @@ struct Bench:sc_core::sc_module,Checks {
         expect(pins[0].rr,"RX request held until acknowledgement despite empty FIFO");
         pins[0].ra=true;wait(50,sc_core::SC_NS);expect(!pins[0].rr,"RX acknowledge drops request");pins[0].ra=false;
         access(0,true,36,0);wait(50,sc_core::SC_NS);expect(!pins[0].tr&&!pins[0].rr,"DMA disabled");
+        // Two independent initiators contend for the same real SPI FIFO, while
+        // another real SPI transfers through the other peripheral bridge.
+        for(unsigned i:{0u,2u}){access(i,true,FU3_SPI_CTRL,0xe2);access(i,true,FU3_SPI_ISR,0x7c);access(i,true,FU3_SPI_DIV,9);}
+        access(2,true,FU3_SPI_TXDR,0xb1);access(2,true,FU3_SPI_TXDR,0xb2);
+        access(0,true,FU3_SPI_CTRL,0xe3);access(2,true,FU3_SPI_CTRL,0xe3);
+        concurrent_start.notify(sc_core::SC_ZERO_TIME);
+        while(concurrent_completed<2)wait(concurrent_done);
+        wait(100,sc_core::SC_US);
+        unsigned cpu_words=0,dma_words=0;
+        expect(((access(0,false,FU3_SPI_STAT)>>16)&127)==8,"concurrent CPU/DMA produces exactly eight RX frames");
+        for(unsigned i=0;i<8;++i){
+            const auto value=access(0,false,FU3_SPI_RXDR);
+            if(value>=0x91&&value<=0x94){expect(value==0x91+cpu_words,"CPU stream remains ordered under DMA contention");++cpu_words;}
+            else if(value>=0x41&&value<=0x44){expect(value==0x41+dma_words,"DMA stream remains ordered under CPU contention");++dma_words;}
+            else expect(false,"concurrent frame has an unexpected or duplicated payload");
+        }
+        expect(cpu_words==4&&dma_words==4,"both contending initiators make complete progress");
+        expect(!(access(0,false,FU3_SPI_ISR)&(FU3_SPI_OVR|FU3_SPI_TXOVF|FU3_SPI_RXUDF)),"concurrent producers cause no FIFO loss");
+        expect(access(2,false,FU3_SPI_RXDR)==0xb1&&access(2,false,FU3_SPI_RXDR)==0xb2,"PERIBUS_1 peer retains ordered data during PERIBUS_0 contention");
         for(auto& p:pins)p.reset_n=false;wait(20,sc_core::SC_NS);for(auto& p:pins)expect(!p.irq&&!p.tr&&!p.rr&&p.ss.read()==15,"reset all four controllers");
         finished=true;sc_core::sc_stop();
     }
