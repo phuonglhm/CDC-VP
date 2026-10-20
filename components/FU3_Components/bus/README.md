@@ -54,7 +54,7 @@ auto cfg = fu3_bus::BusConfig::fu3();
 fu3_bus::BusSystem fabric{"fabric", cfg};
 ibex.socket.bind(fabric.initiator("IBEX"));
 cva6.socket.bind(fabric.initiator("CVA6"));
-dma.socket.bind(fabric.initiator("DMA0"));
+// Native AP_DMA uses fu3_bus::DmaAdapter; see the integration contract below.
 fabric.target("IBEX_ISRAM").bind(ibex_sram.socket);
 fabric.target("SYSCSR").bind(syscsr.socket);
 // Bind all other enabled targets, or disable them in cfg before construction.
@@ -114,6 +114,11 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
   writes. The bus preserves byte enables; the Timer VP adapter accepts aligned
   full-word accesses and rejects partial requests without read-modify-write.
   See the [Timer contract](../timer/docs/MODEL_CONTRACT.md) for adapter diagnostics.
+- Default AP_PLIC claim/complete at local 0x24 requires a full aligned word
+  with all lanes enabled. `strict_word_offsets` protects side-effect words before
+  dispatch; other PLIC configuration words retain narrow access support.
+- Production AP_DMA needs `fu3_bus::DmaAdapter` to translate its native
+  metadata and lane strobes; see the [integration contract](docs/MODEL_CONTRACT.md#production-ip-integration-contract-2026-10-20).
 - Downstream error stops the request; completed beats are not rolled back.
   Exceptions restore payload fields and release admission, order and pipeline leases.
 - Custom initiators in `BusConfig{}` default to `require_access=false` for legacy
@@ -165,6 +170,10 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
 - IBEX may write CVA6_ISRAM during staging. Stop issuing IBEX requests and drain
   them before `finish_staging()` and CVA6 reset release. The call throws
   `std::logic_error` without changing policy if IBEX has any pending request.
+- Stop producers and call `quiesce()` in a platform SC_THREAD to close ingress
+  and drain admitted work. Reset attached IPs, call `reset()`, release IP reset,
+  call `resume()`, then restart producers. Debug loaders must stop separately.
+  Do not call quiesce from a target callback; no hung-target timeout is invented.
 - `reset()` requires all masters to be quiescent; otherwise it throws without
   changing policy. It reopens staging for reboot, does not reset external IPs or
   abort transactions, and retains diagnostic peak counters.
@@ -202,7 +211,11 @@ for mode in static shared; do
 done
 ```
 
-Each build runs five regression tests and four installed-consumer tests. With
+Each build runs six regression tests and five installed-consumer tests. Enable
+`-DFU3_BUS_BUILD_IP_TESTS=ON` alongside `FU3_BUS_BUILD_TESTS` to add four
+production-IP scenarios (adapter, DMA/SPI/UART, Timer/PLIC and WDT/reset). This
+requires the sibling DMA0/AP_DMA, SPI, UART, Timer, WDT and PLIC sources; the
+exported bus library does not depend on them. With
 FX1 available at its repository location, also run the coexistence check:
 
 ```bash
@@ -211,7 +224,8 @@ cmake --build build/coexist --parallel 4
 ctest --test-dir build/coexist --output-on-failure
 ```
 
-This adds one test, for 19 CTest executions in total. The optional `scripts/`
+This adds one test: 23 executions for core builds, or 31 with production-IP
+tests enabled in both static and shared builds. The optional `scripts/`
 helpers are ignored by Git and are not required after cloning.
 
 The public CMake target is `fu3::bus_system`, with `SystemC::systemc` as a PUBLIC
@@ -221,4 +235,5 @@ Windows DLL support is not validated; the verified environment is WSL/Linux.
 
 - [Model contract and integration details](docs/MODEL_CONTRACT.md)
 - [Recorded validation results](docs/VALIDATION.md)
+- [Production-IP integration coverage and remaining work](docs/INTEGRATION_VALIDATION.md)
 - [Repository integration guide](docs/REPOSITORY_HANDOFF.md)

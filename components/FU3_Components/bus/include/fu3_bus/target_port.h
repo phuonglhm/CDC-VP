@@ -18,13 +18,16 @@ public:
     tlm_utils::simple_target_socket_optional<InitiatorPort> socket{"socket"};
     tlm_utils::simple_initiator_socket<InitiatorPort> out{"out"};
     explicit InitiatorPort(sc_core::sc_module_name name);
-    void configure(const InitiatorConfig&, const BusConfig&, const bool& staging);
+    void configure(const InitiatorConfig&, const BusConfig&, const bool& staging,
+                   const bool& accepting, sc_core::sc_event& activity);
     unsigned in_flight() const { return in_flight_; }
     unsigned peak(bool write=false) const { return write && descriptor_.separate_read_write ? writes_.peak() : reads_.peak(); }
 private:
     InitiatorConfig descriptor_;
     std::vector<TargetConfig> regions_;
     const bool* staging_ = nullptr;
+    const bool* accepting_ = nullptr;
+    sc_core::sc_event* activity_ = nullptr;
     unsigned rejection_latency_ns_=2, in_flight_=0;
     Admission reads_, writes_;
     std::map<std::pair<bool,unsigned>, std::unique_ptr<Fifo>> ordering_;

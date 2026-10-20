@@ -28,6 +28,10 @@ int sc_main(int, char**) {
     bad([](auto& x){x.axi_address_width=64;}, "FU3 address width");
     bad([](auto& x){x.targets[0].path=static_cast<fu3_bus::TargetPath>(99);}, "invalid path");
     bad([](auto& x){x.targets[0].access=static_cast<fu3_bus::AccessPolicy>(99);}, "invalid policy");
+    bad([](auto& x){x.targets[8].preserve_burst=true;}, "APB cannot preserve an AXI burst");
+    bad([](auto& x){x.targets[8].strict_word_offsets={1};}, "strict word must align");
+    bad([](auto& x){x.targets[8].strict_word_offsets={0x10000};}, "strict word must fit target");
+    bad([](auto& x){x.targets[8].strict_word_offsets={0x24,0x24};}, "duplicate strict word");
     cfg.targets.push_back({"TOP",0xfffff000ULL,0x1000,fu3_bus::TargetPath::SysBus1Axi,true});
     c.expect(good(cfg), "last valid 32-bit window");
     std::cout << "Config: " << c.checks << " checks, " << c.failures << " failures\n";

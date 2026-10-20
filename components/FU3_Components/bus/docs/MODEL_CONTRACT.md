@@ -159,18 +159,54 @@ See [validation](VALIDATION.md) for evidence and
 
 `TargetConfig::preserve_burst` defaults to false. An integration may explicitly enable it for an AXI endpoint that validates the complete original transaction, such as the HyperRAM VP. In that mode ingress retains `Access`, payload length and byte enables instead of decomposing the request into beats or widening subwords. Region, access-policy, ingress admission and ordering checks still apply. The endpoint must validate its supported beat size, burst kind, alignment and 4-KiB rule. Existing FU3 defaults are unchanged; `fu3_hyperram::Controller::configure_bus` opts HYPERBUS into this contract.
 
-## Integration findings from the 2026-10-20 audit
+## Production-IP integration contract (2026-10-20)
 
-- Production AP_DMA uses a separate TransferExtension and requires an adapter to
-  the mandatory Access contract on default DMA0 ingress. Direct binding currently
-  fails; fake-DMA integration tests do not prove that production path.
-- AP_PLIC narrow reads can trigger word-wide claim side effects while extracting
-  only the requested byte lanes. Safe firmware claim/complete should use aligned
-  words pending an explicit enforced endpoint-specific subword policy.
-- Optional preserved FIXED requests have inconsistent footprint checks between
-  ingress and Router and can be rejected even when their repeated beat fits.
-  This is an open API defect, not evidence against the default decomposed FIXED
-  path or the HyperRAM endpoint's supported INCR contract.
+The earlier audit findings are addressed by the following explicit contracts.
+They supplement the HAS routing, strobe and FIFO decisions; endpoint safety
+rules and reset coordination are VP integration policies, not new HAS claims.
 
-See VALIDATION.md for fresh test evidence and the distinction between verified
-fabric behavior, endpoint interoperability and full-platform reset/boot work.
+- Production AP_DMA connects through the optional header-only
+  `fu3_bus::DmaAdapter` in the bus component (`fu3_bus/dma_adapter.h`). It translates native
+  `TransferExtension` beat size, increment/FIXED, AXI ID and per-beat lane
+  strobes into `Access` and payload byte enables. Existing enables are ANDed
+  with native strobes. Conflicting metadata is rejected. Native extension,
+  response/fault observations and callbacks stay attached; payload metadata
+  is restored even on exceptions. Direct native DMA binding still lacks Access.
+  Same native ID retains conservative per-direction serialization; this does
+  not promise four independently executing downstream bursts for ID 4.
+  Include and bind the optional adapter in platform code:
+
+  ```cpp
+  #include <fu3_bus/dma_adapter.h>
+  fu3_bus::DmaAdapter adapter{"dma_bus_adapter"};
+  dma.master_socket.bind(adapter.input);
+  adapter.output.bind(fabric.initiator("DMA0"));
+  ```
+
+  Link both `fu3::bus_system` and `cdc::components::fu3_ap_dma` to supply the
+  native DMA header. The ordinary bus library has no DMA dependency and no
+  DMA0 sources need modification.
+- `TargetConfig::strict_word_offsets` lists local aligned CSR words that require
+  full aligned four-byte beats with every effective enable set. The entire
+  request is checked before the first target side effect. Default AP_PLIC lists
+  0x24 for the current compact VP claim/complete ABI: narrow accesses return
+  BURST_ERROR and partial/all-disabled enables return BYTE_ENABLE_ERROR.
+  Other PLIC configuration words retain narrow access support. Platforms that
+  replace this ABI must update the protected offsets with their endpoint map.
+- Optional preserved FIXED routing uses one beat as its physical footprint on
+  both SYSBUS levels. Original payload length and repeating byte enables remain
+  available to the endpoint. `preserve_burst` is restricted to AXI endpoints;
+  APB traffic continues through ordinary beat decomposition and A2P checks.
+- A single platform reset coordinator stops producers, calls `quiesce()` from
+  an SC_THREAD outside transport/target callbacks, then resets attached IPs,
+  calls `reset()`, releases IP reset and calls `resume()` before restarting
+  producers. Quiesce closes functional ingress and drains work already admitted,
+  including incoming annotated delays and queued requests. New work returns
+  GENERIC_ERROR and is not added to the drain set. Exceptions release the set.
+  `reset()` still requires idle and reopens staging; it does not reset IPs or
+  reopen ingress. Debug loaders remain an ungated backdoor and must be stopped
+  separately. A target that never returns can prevent drain; no unspecified
+  cancellation/timeout or forced-reset recovery is invented.
+
+See [integration validation](INTEGRATION_VALIDATION.md) for the production-IP
+fixture, independent checks and the limits of the system-level conclusion.
