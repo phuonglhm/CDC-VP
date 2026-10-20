@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(rng_consumer LANGUAGES CXX)
+find_package(fu3-rng CONFIG REQUIRED)
+add_executable(rng_consumer main.cpp)
+target_link_libraries(rng_consumer PRIVATE fu3::rng)
