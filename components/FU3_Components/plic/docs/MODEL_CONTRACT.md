@@ -21,7 +21,7 @@ HAS_CONFIG_REG = 1 (HDS defaults).
 ## Bus interface
 
 - APB4, 32-bit data, zero wait states, no slave error (HDS 7.1). Local offsets from the bus and the window is 64 KiB.
-- Aligned 1/2/4-byte accesses; byte enables (PSTRB) select written lanes. Other lengths return `TLM_BURST_ERROR_RESPONSE`; misaligned or out-of-window addresses return `TLM_ADDRESS_ERROR_RESPONSE` (VP transport checks only).
+- Aligned 1/2/4-byte accesses and byte enables (PSTRB) select written lanes. Other lengths return `TLM_BURST_ERROR_RESPONSE` ând misaligned or out-of-window addresses return `TLM_ADDRESS_ERROR_RESPONSE` (VP transport checks only).
 - Unmapped offsets read 0 and ignore writes with an OK response (no PSLVERR).
 - `transport_dbg` reads have no side effect: reading ID_0 returns the ID a claim would return without claiming.
 
@@ -64,7 +64,7 @@ All RW registers reset to 0.
 
 ## INTMAP (Ibex)
 
-`fu3_plic::Intmap` (`intmap.h`) is the stateless Ibex interrupt map from FU3 HAS v2.0 section 10.2. Each output is the OR of its sources; all nets are active-high levels and nothing is inverted or latched.
+`fu3_plic::Intmap` (`intmap.h`) is the stateless Ibex interrupt map from FU3 HAS v2.0 section 10.2. Each output is the OR of its sources and all nets are active-high levels and nothing is inverted or latched.
 
 | Ibex input (`irq[k]`) | Cause | Sources |
 | --- | --- | --- |
