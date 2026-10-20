@@ -1,12 +1,10 @@
 # FU3 CPU configuration validation - 2026-10-19
 
-Environment: Ubuntu under WSL, GNU C++ 15.2.0, C++17, SystemC 2.3.4,
-riscv64-unknown-elf-gcc for `-march=rv32imc_zicsr -mabi=ilp32` firmware.
+Environment: Ubuntu under WSL, GNU C++ 15.2.0, C++17, SystemC 2.3.4, riscv64-unknown-elf-gcc for `-march=rv32imc_zicsr -mabi=ilp32` firmware.
 
 ## Repository build
 
-`cmake -S . -DCDC_BUILD_FU3_SOC=ON -DCDC_BUILD_CPU_EVAL=ON` configures, including
-`fu3::cpu`; `cdc_cpu_cva6` and `riscv_cpu_eval` build.
+`cmake -S . -DCDC_BUILD_FU3_SOC=ON -DCDC_BUILD_CPU_EVAL=ON` configures, including `fu3::cpu`, `cdc_cpu_cva6` and `riscv_cpu_eval` build.
 
 ## riscv_cpu_eval regression
 
