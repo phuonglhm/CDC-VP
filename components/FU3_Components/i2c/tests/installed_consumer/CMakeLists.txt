@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(i2c_consumer LANGUAGES CXX)
+find_package(fu3-i2c CONFIG REQUIRED)
+add_executable(i2c_consumer main.cpp)
+target_link_libraries(i2c_consumer PRIVATE fu3::i2c)

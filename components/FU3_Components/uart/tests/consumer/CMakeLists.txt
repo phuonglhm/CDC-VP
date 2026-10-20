@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(uart_consumer LANGUAGES CXX)
+find_package(fu3-uart CONFIG REQUIRED)
+add_executable(uart_consumer ../behavior.cpp)
+target_link_libraries(uart_consumer PRIVATE fu3::uart)
+enable_testing()
+add_test(NAME uart_installed_consumer COMMAND uart_consumer)
+set_tests_properties(uart_installed_consumer PROPERTIES TIMEOUT 30)
