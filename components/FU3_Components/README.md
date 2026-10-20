@@ -9,4 +9,7 @@
   registers await their additional specification.
 - [cpu](cpu/README.md): FU3 configuration of CVA6 and Ibex on the cva6_vp wrapper (memory map, reset PCs, hart IDs, ISA, interrupt causes).
 - [syscsr](syscsr/README.md): SYSCSR register model per FU3_SYSCSR_v1 with FU3 bus tests.
-- [plic](plic/README.md): AP_PLIC (32 sources, 1 target, level/edge, claim/complete) per PLIC HDS V1.0 and the Ibex INTMAP per HAS v2.0 section 10.2wi th FU3 bus tests.
+- [plic](plic/README.md): AP_PLIC (32 sources, 1 target, level/edge, claim/complete) per PLIC HDS V1.0 and the Ibex INTMAP per HAS v2.0 section 10.2 with FU3 bus tests.
+- [mailbox](mailbox/README.md): MAILBOX_CVA6/MAILBOX_IBEX (two 32-word FIFOs, thresholds, W1C IRQs) per HAS v2.0, registers from the RTL feature sheet until a HDS exists, with FU3 bus tests.
+- [crm](crm/README.md): CRM per FU3 CRM Specification V1.0 (registers, bus clock divider, per-IP gates and resets, CVA6/debug reset control, startup and reset-request firmware sequences), with FU3 bus tests.
+- [dbg](dbg/README.md): DBG phase 1 (JTAG DTM, RISC-V Debug 0.13.2 Debug Module for two harts, 32-bit system bus access on the DBG port) per HAS v2.0, with FU3 bus tests.
