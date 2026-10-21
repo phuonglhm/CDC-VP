@@ -13,9 +13,9 @@ Command: `tests/run_all.sh`.
 
 Total: 6/6 CTest executions passed.
 
-- Behavior: 388 checks, zero failures.
-- Integration: 388 checks, zero failures.
+- Behavior: 358 checks, zero failures.
+- Integration: 355 checks, zero failures. The three malformed-access checks run only in the direct bench, because the FU3 bus rejects them first.
 
 The integration bench uses the production FU3 bus with only the CRM window enabled and drives it from the IBEX initiator with `fu3_bus::ScopedAccess`, so requests pass SYSBUS_1, PERIBUS_1 and the A2P bridge before reaching local offsets.
 
-Mutation checks, each making both benches fail: CVA6 released without the startup delay, system request served before watchdog, MRV gate ignored, decode window 64 KiB instead of 4 KiB, divider Fin / n, CPU_DEBUG reset value 1, global request not resetting the registers.
+Mutation checks, each making both benches fail: startup also releases CVA6, system reset keeps FCLK_SW, debug reset resets DBG, watchdog reset keeps DBG, CLK_GATE_1/SW_RST_N_1 reset 0x03FF_FFFF, PLL ignores OD, CPU clock divided, Ibex reset ignores SYSTEM_CLK_SW.
