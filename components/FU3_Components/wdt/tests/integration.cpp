@@ -1,4 +1,4 @@
-﻿#include <fu3_wdt/wdt_bank.h>
+#include <fu3_wdt/wdt_bank.h>
 #include <fu3_bus/bus_system.h>
 #include <tlm_utils/simple_initiator_socket.h>
 #include <iostream>
@@ -61,7 +61,7 @@ struct Bench : sc_core::sc_module {
         fu3_bus::ScopedAccess access(tx,4);
         auto delay=sc_core::sc_time(2,sc_core::SC_NS);
         cpu->b_transport(tx,delay); settle();
-        expect(tx.is_response_ok(),"V1.1 word access succeeds through the FU3 bus");
+        expect(tx.is_response_ok(),"V1.2 word access succeeds through the FU3 bus");
         expect(tx.get_address()==address && delay==sc_core::SC_ZERO_TIME,
                "bus restores address and consumes annotated delay");
         unsigned result=0;
@@ -69,40 +69,26 @@ struct Bench : sc_core::sc_module {
         return result;
     }
     void run() {
-        preset=false; unlock0=true; unlock1=true;
-        wait(10,sc_core::SC_NS);
-        preset=true; settle();
-
-        for(unsigned i=0;i<2;++i) {
-            expect(access(i,false,FU3_WDT_CNT_CTRL)==FU3_WDT_RESEN,"each WDT has independent reset control");
-            access(i,true,FU3_WDT_CNT_LD,100);
-            access(i,true,FU3_WDT_CNT_CTRL,FU3_WDT_RESEN|FU3_WDT_INTEN);
+        preset=false;unlock0=false;unlock1=false;settle();preset=true;settle();
+        wait(20,sc_core::SC_NS);settle();
+        for(unsigned i=0;i<2;++i){
+            expect(access(i,false,FU3_WDT_LOCK)==0,"both V1.2 locks reset unlocked without SYSCSR");
+            access(i,true,FU3_WDT_CNT_LD,1000);access(i,true,FU3_WDT_CNT_CTRL,3);access(i,true,FU3_WDT_LOCK,0);
         }
-        unlock0=false; unlock1=false;
-        wait(600,sc_core::SC_NS); settle();
-        expect(ibex_nmi && plic18 && reset_count[0]==0 && reset_count[1]==0,
-               "both first-timeout interrupts route before reset");
-
-        // A locked write is discarded. Unlocking WDT0 and writing LOAD services only WDT0.
-        access(0,true,FU3_WDT_CNT_LD,20);
-        expect(ibex_nmi,"locked WDT0 service write is ignored");
-        unlock0=true; access(0,true,FU3_WDT_CNT_LD,100); unlock0=false;
-        expect(!ibex_nmi && plic18,"LOAD clears only the unlocked WDT0 warning");
-        wait(500,sc_core::SC_NS); settle();
-        expect(reset_count[0]==0 && reset_count[1]==1 && !plic18 && !reset_request[1],
-               "WDT1 second timeout reaches fake CRM independently");
-        expect(access(1,false,FU3_WDT_CNT_LD)==FU3_WDT_RESET_VALUE &&
-               access(1,false,FU3_WDT_CNT_CTRL)==FU3_WDT_RESEN &&
-               access(1,false,FU3_WDT_INT_RAW_STAT)==0,
-               "watchdog-side reset restores WDT1 configuration and status");
-        expect(access(0,false,FU3_WDT_CNT_LD)==100 && reset_count[0]==0,
-               "WDT0 remains configured and serviced while WDT1 resets");
-        finished=true; sc_core::sc_stop();
+        wait(5100,sc_core::SC_NS);settle();
+        expect(ibex_nmi&&plic18,"independent warnings reach fixture sinks; Ibex route remains provisional");
+        access(0,true,FU3_WDT_CNT_LD,1);expect(access(0,false,FU3_WDT_CNT_LD)==1000,"locked service has no effect");
+        access(0,true,FU3_WDT_LOCK,FU3_WDT_UNLOCK_KEY);access(0,true,FU3_WDT_CNT_LD,1000);access(0,true,FU3_WDT_LOCK,0);
+        expect(!ibex_nmi&&plic18,"local WD_LOCK servicing affects only WDT0");
+        wait(5000,sc_core::SC_NS);settle();
+        expect(reset_count[1]==1&&reset_count[0]==0,"WDT1 recovery is independent of serviced WDT0");
+        expect(access(1,false,FU3_WDT_CNT_LD)==1000&&access(1,false,FU3_WDT_CNT_CTRL)==3&&access(1,false,FU3_WDT_LOCK)==1,"watchdog-only reset retains configuration and restarts locked");
+        finished=true;sc_core::sc_stop();
     }
     void watchdog() { wait(100,sc_core::SC_US); expect(false,"integration watchdog"); sc_core::sc_stop(); }
 };
 int sc_main(int,char**) {
     Bench bench{"bench"}; sc_core::sc_start();
-    std::cout << "WDT V1.1 integration: " << bench.checks << " checks, " << bench.failures << " failures\n";
+    std::cout << "WDT V1.2 integration: " << bench.checks << " checks, " << bench.failures << " failures\n";
     return bench.failures || !bench.finished ? 1 : 0;
 }

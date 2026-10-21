@@ -6,7 +6,7 @@ are separated from source requirements in [MODEL_CONTRACT.md](MODEL_CONTRACT.md)
 | Requirement | Source | Verification |
 |---|---|---|
 | Register defaults, RO/WO, reserved decode | pp.31-39 | behavior: defaults, zero/ignored reserved offsets, status and FIFO vacancy |
-| Configuration strobes, TXDR exception | pp.25, 35, 43 | behavior: masked configuration writes, zero-strobe TX pushes, W1C lane qualification |
+| Configuration and TXDR strobes | Common BUS INTF overrides HDS pp.25,35 | Masked configuration writes, zero-strobe TX no-op, masked/zero-filled TX words and W1C lane qualification |
 | Frame format and all four modes | pp.19-21 | behavior: all 32 FSZ encodings x four modes x two bit orders, two master frames each; external slave-mode bit stimulus |
 | Depth 16/32/64 | p.15 | same behavior suite at each supported depth |
 | Master backpressure and CS hold | pp.22-23 | behavior: full RX, retained queued words, drain and ordered recovery |

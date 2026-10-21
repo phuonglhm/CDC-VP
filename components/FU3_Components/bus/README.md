@@ -29,14 +29,15 @@ flowchart LR
   S1 --> S0[SYSBUS_0]
   S0 --> AXI[AES / QSPI_XIP / EDHOC_OSCORE]
   S0 --> A0[A2P_PP0]
-  S0 --> A1[A2P_PP1]
+  S1 --> A1[A2P_PP1]
   A0 --> P0[PERIBUS_0 APB4]
   A1 --> P1[PERIBUS_1 APB4]
 ```
 
-Figures 4-1 and 7-1 place both A2P bridges behind SYSBUS_0. Addresses follow
-HAS v2.0 pages 46-47. The PERIBUS_1 SYS column conflicts with the figures;
-the agreed topology follows the figures while preserving the published addresses.
+The latest Common Spec v2.0 workbook is authoritative: PERIBUS_1 connects
+through A2P_PP1 directly to SYSBUS_1; PERIBUS_0 stays behind SYSBUS_0.
+This supersedes the earlier HAS-figure routing decision. Addresses remain
+unchanged. See [Common baseline decisions](docs/COMMON_REBASELINE.md).
 
 `BusConfig::fu3()` enables four initiators and 36 targets. Bind every enabled
 target before `sc_start`; unused initiators may remain unbound. Disable missing
@@ -110,13 +111,12 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
   Both PERIBUS_0 and PERIBUS_1 use APB4: the user requires matching versions,
   using the explicit APB4 version of PERIBUS_1 for both. This clarifies the PDF
   label on PERIBUS_0. Transfer-size adaptation remains a separate question.
-- Timer0/1/2/3 are an endpoint exception: their Timer HDS excludes partial
-  writes. The bus preserves byte enables; the Timer VP adapter accepts aligned
-  full-word accesses and rejects partial requests without read-modify-write.
-  See the [Timer contract](../timer/docs/MODEL_CONTRACT.md) for adapter diagnostics.
-- Default AP_PLIC claim/complete at local 0x24 requires a full aligned word
-  with all lanes enabled. `strict_word_offsets` protects side-effect words before
-  dispatch; other PLIC configuration words retain narrow access support.
+- Common Full strobes apply at Timer, WDT, I2C, UART, SPI and AP_HBCTRL
+  model boundaries. Word-register endpoints merge enabled lanes internally;
+  no bus CSR read-modify-write is performed. Zero write strobes cause no effect.
+- AP_PLIC is the explicit Common exception: every functional access requires
+  an aligned complete word with all lanes enabled. The guard applies before
+  widening or dispatch, independently of the peer's provisional CSR map.
 - Production AP_DMA needs `fu3_bus::DmaAdapter` to translate its native
   metadata and lane strobes; see the [integration contract](docs/MODEL_CONTRACT.md#production-ip-integration-contract-2026-10-20).
 - Downstream error stops the request; completed beats are not rolled back.
@@ -162,21 +162,20 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
 
 ## Access, boot and reset
 
-- ROM is readable only by IBEX and never functionally writable. DBG/DMA denial
-  is a conservative documented choice pending a full permission matrix.
-- DSRAM rejects instruction fetch. Default ports reject missing metadata; CPU
-  adapters must still identify fetches honestly. This does not replace PMP/ePMP
-  or the CPU's full W^X/cacheability implementation.
-- IBEX may write CVA6_ISRAM during staging. Stop issuing IBEX requests and drain
-  them before `finish_staging()` and CVA6 reset release. The call throws
-  `std::logic_error` without changing policy if IBEX has any pending request.
-- Stop producers and call `quiesce()` in a platform SC_THREAD to close ingress
-  and drain admitted work. Reset attached IPs, call `reset()`, release IP reset,
-  call `resume()`, then restart producers. Debug loaders must stop separately.
-  Do not call quiesce from a target callback; no hung-target timeout is invented.
-- `reset()` requires all masters to be quiescent; otherwise it throws without
-  changing policy. It reopens staging for reboot, does not reset external IPs or
-  abort transactions, and retains diagnostic peak counters.
+- CPU permissions follow Common MemoryMap: CVA6 cannot access Ibex SRAM
+  or debug control; Ibex loses access to CVA6 SRAM after handoff and cannot
+  write its own executable SRAM afterward. Trusted boot verification reads
+  remain allowed during staging. ROM remains Ibex-only and read-only.
+- MMIO, debug control, DSRAM and HyperRAM reject instruction fetches.
+  CPU PMP/ePMP, privilege and cache policy still belong to the CPU/platform.
+- Each SRAM reserves its final 4 KiB for debug code, leaving 60 KiB for a
+  normal image. Trusted CPU adapters set `Access::debug` for debug-mode accesses.
+  DBG and the explicit untimed loader backdoor are separate platform facilities.
+- Stop IBEX traffic and drain it before `finish_staging()`. The call throws if
+  Ibex work is pending. Stop producers and call `quiesce()` outside transport
+  callbacks, reset attached IPs, call `reset()`, release IP reset, `resume()`
+  and restart producers. Debug loaders must stop separately. No hung-target
+  timeout/cancellation policy is invented; bus reset itself requires idle.
 - Clock/reset pins, CGF, IRQ, HyperRAM readiness and peripheral CSR behavior are
   platform/IP responsibilities. The bus does not invent missing register maps.
 - `transport_dbg` bypasses timing and access policy intentionally for firmware
@@ -211,7 +210,7 @@ for mode in static shared; do
 done
 ```
 
-Each build runs six regression tests and five installed-consumer tests. Enable
+Each build runs seven regression tests and six installed-consumer tests. Enable
 `-DFU3_BUS_BUILD_IP_TESTS=ON` alongside `FU3_BUS_BUILD_TESTS` to add four
 production-IP scenarios (adapter, DMA/SPI/UART, Timer/PLIC and WDT/reset). This
 requires the sibling DMA0/AP_DMA, SPI, UART, Timer, WDT and PLIC sources; the
@@ -224,7 +223,7 @@ cmake --build build/coexist --parallel 4
 ctest --test-dir build/coexist --output-on-failure
 ```
 
-This adds one test: 23 executions for core builds, or 31 with production-IP
+This adds one test: 27 executions for core builds, or 35 with production-IP
 tests enabled in both static and shared builds. The optional `scripts/`
 helpers are ignored by Git and are not required after cloning.
 
@@ -237,3 +236,8 @@ Windows DLL support is not validated; the verified environment is WSL/Linux.
 - [Recorded validation results](docs/VALIDATION.md)
 - [Production-IP integration coverage and remaining work](docs/INTEGRATION_VALIDATION.md)
 - [Repository integration guide](docs/REPOSITORY_HANDOFF.md)
+
+The [scoped suite](tests/scoped_suite/CMakeLists.txt) builds the seven owned IP
+models and their integration tests together. See the
+[rebaseline commands](docs/COMMON_REBASELINE.md#reproducible-validation) and
+[validation record](docs/VALIDATION.md) for the current evidence.

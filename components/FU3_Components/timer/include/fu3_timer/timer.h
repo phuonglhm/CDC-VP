@@ -11,7 +11,7 @@ struct State {
     std::uint32_t count=0, control=0, compare=0, cycle=0;
     bool overflow() const { return count==UINT32_MAX; }
     bool match() const { return compare!=0 && count==compare; }
-    void edge(bool write=false, unsigned offset=12, std::uint32_t data=0);
+    void edge(bool write=false, unsigned offset=12, std::uint32_t data=0, std::uint32_t mask=UINT32_MAX);
     std::uint32_t read(unsigned offset) const;
 };
 
@@ -31,7 +31,7 @@ private:
     sc_core::sc_event completed_, changed_;
     bool pending_=false, write_=false;
     unsigned offset_=0;
-    std::uint32_t data_=0, result_=0;
+    std::uint32_t data_=0, result_=0, mask_=UINT32_MAX;
     tlm::tlm_response_status status_=tlm::TLM_INCOMPLETE_RESPONSE;
     void run();
     void publish();

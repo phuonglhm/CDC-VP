@@ -51,9 +51,9 @@ BusSystem::BusSystem(sc_core::sc_module_name name, const BusConfig& cfg, bool tr
     const auto p1 = leaves(apb1);
     const auto p0 = leaves(apb0);
     unsigned outputs0 = static_cast<unsigned>(direct0.size());
-    if (!p1.empty()) append_link(s0, p1, outputs0++);
     if (!p0.empty()) append_link(s0, p0, outputs0++);
     unsigned outputs1 = static_cast<unsigned>(direct1.size());
+    if (!p1.empty()) append_link(s1, p1, outputs1++);
     if (!s0.empty()) append_link(s1, s0, outputs1++);
 
     const auto latency = config_.router_latency_ns;
@@ -95,7 +95,7 @@ BusSystem::BusSystem(sc_core::sc_module_name name, const BusConfig& cfg, bool tr
     bind_leaves(*sysbus1_, direct1);
     if (sysbus0_) bind_leaves(*sysbus0_, direct0);
     if (peribus1_) {
-        sysbus0_->out.bind(ap_pp1_->input);
+        sysbus1_->out.bind(ap_pp1_->input);
         ap_pp1_->socket.bind(a2p1_->target);
         a2p1_->out.bind(peribus1_->target);
         bind_leaves(*peribus1_, apb1);

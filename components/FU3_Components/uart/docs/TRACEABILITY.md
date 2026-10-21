@@ -1,6 +1,6 @@
 # UART requirement traceability
 
-References are printed page numbers in the supplied UART HDS v1.2 unless stated otherwise.
+References are printed page numbers in the supplied UART HDS v1.3 unless stated otherwise.
 Tests exercise observable behavior; passing them does not resolve source ambiguities.
 
 | Requirement | Source | Implementation / verification |

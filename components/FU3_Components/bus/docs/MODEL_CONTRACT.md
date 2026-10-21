@@ -1,3 +1,11 @@
+# Current authority (2026-10-21)
+
+[COMMON_REBASELINE.md](COMMON_REBASELINE.md) defines the highest-authority
+Common Spec v2.0 changes, full CPU permission/debug policy, endpoint strobes,
+WDT V1.2 and the selected handling of every unresolved cross-IP issue. Those
+rules supersede the older HAS-only scope statements retained below. IRQ_ADAPT
+is a functional handshake supplied by the bus package, not a physical CDC model.
+
 # FU3 bus model contract
 
 Reconstructed on 2026-10-17 from the current implementation, tests, README and
@@ -12,7 +20,7 @@ interrupt controllers and boot sequencing are supplied by the platform.
 
 | Topic | Basis | Implemented contract |
 |---|---|---|
-| Topology | HAS v2.0 Figures 4-1 and 7-1; user resolution | Both A2P bridges are downstream of SYSBUS_0; SYSBUS_1 reaches SYSBUS_0. |
+| Topology | Common v2.0 MemoryMap and PLIC Connections | Common takes precedence: A2P_PP1 is directly on SYSBUS_1; A2P_PP0 is on SYSBUS_0. |
 | Address map | HAS pages 46-47 | Preserve published addresses despite the conflicting PERIBUS_1 SYS column. |
 | Interface limits | HAS Table 7-1, with VP interpretations below | 32-bit address/data interfaces and bounded admission. |
 | Strobe | User clarification | Full byte-write-strobe support includes partial and sparse writes. |
@@ -78,10 +86,10 @@ or other side effects must explicitly support the adapted operation. TLM read by
 enables are not APB PSTRB signals. Resolve such endpoint contracts before relying
 on narrow register reads in firmware.
 
-Timer0/1/2/3 are a documented exception to general strobe support: the Timer HDS
-excludes partial writes. Their VP adapter accepts aligned full-word accesses and
-rejects partial requests; the bus preserves strobes and does not emulate them by
-read-modify-write. See the [Timer contract](../../timer/docs/MODEL_CONTRACT.md).
+Common Full strobes supersede the older Timer/WDT/I2C no-partial profile.
+Endpoints merge storage internally and qualify command/W1C effects without
+fabric RMW. AP_PLIC alone requires complete word access across its aperture
+under its explicit Common integration rule. See COMMON_REBASELINE.md.
 
 ## Admission and ordering
 
@@ -186,13 +194,11 @@ rules and reset coordination are VP integration policies, not new HAS claims.
   Link both `fu3::bus_system` and `cdc::components::fu3_ap_dma` to supply the
   native DMA header. The ordinary bus library has no DMA dependency and no
   DMA0 sources need modification.
-- `TargetConfig::strict_word_offsets` lists local aligned CSR words that require
-  full aligned four-byte beats with every effective enable set. The entire
-  request is checked before the first target side effect. Default AP_PLIC lists
-  0x24 for the current compact VP claim/complete ABI: narrow accesses return
-  BURST_ERROR and partial/all-disabled enables return BYTE_ENABLE_ERROR.
-  Other PLIC configuration words retain narrow access support. Platforms that
-  replace this ABI must update the protected offsets with their endpoint map.
+- Default AP_PLIC uses `TargetConfig::strict_word_access` for the entire
+  endpoint: full aligned four-byte beats, all effective enables set, validated
+  before the first CSR effect. Other endpoints may opt into per-word
+  `strict_word_offsets`. Current peer PLIC context offsets 0x3000/0x3004 remain
+  provisional under Common; no stale claim protection is placed at 0x24.
 - Optional preserved FIXED routing uses one beat as its physical footprint on
   both SYSBUS levels. Original payload length and repeating byte enables remain
   available to the endpoint. `preserve_burst` is restricted to AXI endpoints;

@@ -1,4 +1,5 @@
 #include <fu3_bus/bus_system.h>
+#include <fu3_bus/irq_adapter.h>
 #include <fu3/dma/ap_dma.h>
 #include <fu3_bus/dma_adapter.h>
 #include <fu3_spi/spi.h>
@@ -43,6 +44,8 @@ struct RealIp : sc_core::sc_module, Checks {
     fu3_bus::DmaAdapter adapter{"adapter"},test_adapter{"test_adapter"};
     fu3_spi::Spi spi{"spi"};fu3_uart::Uart uart{"uart"};fu3_timer::Timer timer{"timer"};
     fu3_wdt::Watchdog wdt{"wdt"};fu3_plic::Plic plic{"plic"};
+    fu3_bus::IrqAdapter timer_adapter{"timer_adapter"};
+    sc_core::sc_signal<bool> timer_level;
     fu3_bus::test::ProbeTarget isram{"isram",65536},dsram{"dsram",65536},program{"program",65536};
     Master cpu{"cpu"},background{"background"},native{"native"},raw{"raw"};
     sc_core::sc_signal<bool> reset_n,unlock,dma_irq,plic_irq,wdt_irq,wdt_request,gate,timer_irq,timer_overflow,timer_compare;
@@ -64,9 +67,10 @@ struct RealIp : sc_core::sc_module, Checks {
         dma.reset_n(reset_n);dma.irq(dma_irq);dma.rx_request(rx_requests);dma.tx_request(tx_requests);dma.rx_clear(rx_clears);dma.tx_clear(tx_clears);
         sp.bind(spi,reset_n);up.bind(uart,reset_n);
         timer.reset_n(reset_n);timer.clock_enabled(gate);timer.irq(timer_irq);timer.overflow_irq(timer_overflow);timer.compare_irq(timer_compare);
+        timer_adapter.source(timer_irq);timer_adapter.reset_n(reset_n);timer_adapter.irq(timer_level);
         wdt.preset_n(reset_n);wdt.wdogres_n(reset_n);wdt.i_wdt_other_unlock(unlock);wdt.irq(wdt_irq);wdt.reset_request(wdt_request);
         plic.reset_n(reset_n);plic.irq(plic_irq);for(unsigned i=0;i<sources.size();++i)plic.irq_sources[i](sources[i]);
-        SC_METHOD(route);sensitive<<sp.tx_req<<sp.rx_req<<sp.irq<<up.tx_req<<up.rx_req<<up.irq<<rx_clears<<tx_clears<<timer_irq<<dma_irq;
+        SC_METHOD(route);sensitive<<sp.tx_req<<sp.rx_req<<sp.irq<<up.tx_req<<up.rx_req<<up.irq<<rx_clears<<tx_clears<<timer_level<<dma_irq;
         SC_METHOD(count_acks);sensitive<<rx_clears<<tx_clears;
         SC_THREAD(run);SC_THREAD(background_work);SC_THREAD(watchdog);
     }
@@ -78,7 +82,7 @@ struct RealIp : sc_core::sc_module, Checks {
         sp.tx_ack=(tx_clears.read().to_uint()&2)!=0;sp.rx_ack=(rx_clears.read().to_uint()&4)!=0;
         up.tx_clear=(tx_clears.read().to_uint()&8)!=0;up.rx_clear=(rx_clears.read().to_uint()&16)!=0;
         for(unsigned i=0;i<sources.size();++i){bool level=false;
-            if(i==4)level=dma_irq.read();if(i==5)level=timer_irq.read();if(i==8)level=sp.irq.read();if(i==10)level=up.irq.read();sources[i]=level;}
+            if(i==4)level=dma_irq.read();if(i==5)level=timer_level.read();if(i==8)level=sp.irq.read();if(i==10)level=up.irq.read();sources[i]=level;}
     }
     void count_acks(){
         const auto tx=tx_clears.read().to_uint(),rx=rx_clears.read().to_uint();
@@ -132,22 +136,24 @@ struct RealIp : sc_core::sc_module, Checks {
         expect(!(access(false,0x50050005,0,1)&0x1e),"real DMA UART path has no receive errors");
     }
     void plic_case(){
-        access(true,0x4010000c,1u<<20);access(true,0x4010001c,1u<<5);
+        access(true,0x40100018,1);access(true,0x40102000,1u<<6);
         access(true,0x44070008,7);access(true,0x44070000,7);wait(30,sc_core::SC_NS);settle();
         expect(!timer_irq.read()&&plic_irq.read(),"real PLIC captures a real one-tick Timer1 pulse");
         for(unsigned size:{1u,2u}){
-            access(false,0x40100024+(size==1?1:0),0,size,tlm::TLM_BURST_ERROR_RESPONSE);
-            access(true,0x40100024,6,size,tlm::TLM_BURST_ERROR_RESPONSE);
+            access(false,0x40103004+(size==1?1:0),0,size,tlm::TLM_BURST_ERROR_RESPONSE);
+            access(true,0x40103004,6,size,tlm::TLM_BURST_ERROR_RESPONSE);
             expect(plic_irq.read(),"rejected narrow claim/complete preserves pending source");
         }
         unsigned char sparse[4]={0xff,0,0,0},none[4]{};
-        access(false,0x40100024,0,4,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,sparse);
-        access(false,0x40100024,0,4,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,none);
+        access(false,0x40103004,0,4,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,sparse);
+        access(false,0x40103004,0,4,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,none);
         expect(plic_irq.read(),"disabled or partial read lanes cannot consume the claim");
-        expect(access(false,0x40100024)==6,"full word claim returns the Timer1 ID");
-        expect(access(false,0x40100024)==0,"source is claimed exactly once");access(true,0x40100024,6);
+        expect(access(false,0x40103004)==6,"full word claim returns the Timer1 ID");
+        timer_adapter.acknowledge();settle();
+        expect(access(false,0x40103004)==0,"source is claimed exactly once");access(true,0x40103004,6);
         expect(!plic_irq.read(),"complete after the timer pulse leaves no pending IRQ");
-        expect(access(false,0x40100000,0,1)==32,"unrelated PLIC narrow configuration read remains valid");
+        access(false,0x40100000,0,1,tlm::TLM_BURST_ERROR_RESPONSE);
+        expect(access(false,0x40100024)==0,"old claim offset is now priority ID 9 without claim side effects");
     }
     void adapter_case(){
         unsigned char bytes[8]={0x11,0x22,0x33,0x44};tlm::tlm_generic_payload t;
@@ -195,25 +201,25 @@ struct RealIp : sc_core::sc_module, Checks {
         t.clear_extension<fu3::dma::TransferExtension>();
     }
     void reset_case(){
-        access(true,0x00010000,0x1234);bus.finish_staging();
         access(true,0x00020000,0x93c57a21);
+        access(true,0x00010000,0x1234);bus.finish_staging();
         configure(6,0x00020000,0x01000000,32,0x81010010,0x81010010);
-        isram.latency_ns=1000;
+        isram.latency_ns=1000;program.latency_ns=1000;
         access(true,0x44051004,40);access(true,0x4405100c,3);start(6);
         background_start.notify(sc_core::SC_ZERO_TIME);
         if(!wdt_request.read())wait(wdt_request.posedge_event());
-        expect(wdt_irq.read()&&!background_finished,"real watchdog requests reset during active bus traffic");
+        expect(!wdt_irq.read()&&!background_finished,"V1.2 watchdog clears warning on second timeout during active traffic");
         bus.quiesce();expect(!bus.accepting()&&background_finished,"CRM stop/drain completes old traffic before resetting IPs");
         reset_n=false;wait(50,sc_core::SC_NS);bus.reset();settle();
         expect(!wdt_request.read()&&!wdt_irq.read()&&!dma_irq.read(),"IP reset clears watchdog and DMA outputs");
-        reset_n=true;wait(30,sc_core::SC_NS);bus.resume();isram.latency_ns=7;
+        reset_n=true;wait(30,sc_core::SC_NS);bus.resume();isram.latency_ns=7;program.latency_ns=7;
         access(true,0x00010000,0x5678);expect(access(false,0x00010000)==0x5678,"reset reopens the boot staging policy");
         configure(0,0x00020000,0x01000020,4,0x81010004,0x81010004);start(0);completed(0);
         expect(access(false,0x01000020)==0x93c57a21,"real DMA restarts cleanly after coordinated reset");
         expect(access(false,0x4405100c)==FU3_WDT_RESEN,"watchdog reset profile is restored");
     }
     void background_work(){wait(background_start);unsigned char data[4]{};tlm::tlm_generic_payload t;
-        payload(t,tlm::TLM_READ_COMMAND,0x00020000,data,4);fu3_bus::ScopedAccess a(t,4);auto delay=sc_core::SC_ZERO_TIME;
+        payload(t,tlm::TLM_READ_COMMAND,0x00010000,data,4);fu3_bus::ScopedAccess a(t,4);auto delay=sc_core::SC_ZERO_TIME;
         background.socket->b_transport(t,delay);expect(t.is_response_ok(),"admitted CPU read drains without replay");background_finished=true;background_done.notify(sc_core::SC_ZERO_TIME);}
     void run(){
         reset_n=false;unlock=true;gate=true;wait(30,sc_core::SC_NS);reset_n=true;wait(30,sc_core::SC_NS);

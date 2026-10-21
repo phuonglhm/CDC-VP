@@ -1,5 +1,14 @@
 # RNG HDS interface and VP collection policy
 
+## Common Spec baseline (2026-10-21)
+
+The supplied FU3 Common Spec v2.0 workbook is the highest authority, followed
+by FU3 HAS v2.0 and the latest IP detail where higher-level documents are silent.
+See the bus [rebaseline decisions](../../bus/docs/COMMON_REBASELINE.md) for exact
+cross-IP choices, source conflicts and platform responsibilities. Earlier test
+results below retain their historical source baselines; current joint results
+are recorded in the bus validation document.
+
 Scope follows the user's instruction to implement only the existing RNG HDS, not the additional HAS health-test/test-mode requirements. Source: RNG HDS V1.0, PDF pp.6-15. No FIFO, DMA, seed CSR, interrupt mask/clear CSR, test mode, health test or entropy conditioner is implemented. Private PDFs and extracts remain outside this component.
 
 ## Spec-defined ABI

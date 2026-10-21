@@ -1,5 +1,8 @@
 # FU3 Timer0/1/2/3 - SystemC/TLM
 
+Common Spec v2.0 takes precedence over older endpoint restrictions. See the
+[updated model contract](docs/MODEL_CONTRACT.md) for byte strobes and remaining VP decisions.
+
 Functional models of the Timer HDS counter, control, compare and raw interrupts,
 with four-instance integration for the FU3 VP. Source comments and diagnostics
 are in English. See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for exact behavior,

@@ -1,10 +1,13 @@
-﻿#include <fu3_wdt/wdt.h>
+#include <fu3_wdt/wdt.h>
 #include <tlm_utils/simple_initiator_socket.h>
 #include <iostream>
 
 struct Bench : sc_core::sc_module {
     fu3_wdt::Watchdog dut{"dut", sc_core::sc_time(5, sc_core::SC_NS)};
+    fu3_wdt::Watchdog slow{"slow",sc_core::sc_time(1,sc_core::SC_US),10,sc_core::sc_time(2,sc_core::SC_NS)};
     tlm_utils::simple_initiator_socket<Bench> cpu{"cpu"};
+    tlm_utils::simple_initiator_socket<Bench> slow_cpu{"slow_cpu"};
+    sc_core::sc_signal<bool> slow_irq,slow_reset,pause;
     sc_core::sc_signal<bool> preset{"preset"}, wdog_reset_n{"wdog_reset_n"};
     sc_core::sc_signal<bool> unlock{"unlock"}, irq{"irq"}, reset_request{"reset_request"};
     unsigned checks=0, failures=0;
@@ -17,6 +20,9 @@ struct Bench : sc_core::sc_module {
         dut.i_wdt_other_unlock(unlock);
         dut.irq(irq);
         dut.reset_request(reset_request);
+        dut.wdogpause(pause);
+        slow_cpu.bind(slow.socket);slow.preset_n(preset);slow.wdogres_n(wdog_reset_n);
+        slow.irq(slow_irq);slow.reset_request(slow_reset);
         SC_THREAD(run);
         SC_THREAD(watchdog);
     }
@@ -42,7 +48,7 @@ struct Bench : sc_core::sc_module {
         auto delay=sc_core::SC_ZERO_TIME;
         cpu->b_transport(tx,delay);
         settle();
-        expect(tx.get_response_status()==expected,"response matches WDT V1.1 access rule");
+        expect(tx.get_response_status()==expected,"response matches WDT V1.2 access rule");
         expect(delay==sc_core::SC_ZERO_TIME && !tx.is_dmi_allowed(),"annotation consumed and DMI disabled");
         unsigned result=0;
         for (unsigned i=0;i<4;++i) result |= unsigned(bytes[i])<<(8*i);
@@ -62,95 +68,50 @@ struct Bench : sc_core::sc_module {
     }
     void run() {
         cold();
-        expect(peek(FU3_WDT_CNT_LD)==FU3_WDT_RESET_VALUE &&
-               peek(FU3_WDT_CNT_VAL)==FU3_WDT_RESET_VALUE &&
-               peek(FU3_WDT_CNT_CTRL)==FU3_WDT_RESEN &&
-               peek(FU3_WDT_INT_RAW_STAT)==0 && peek(FU3_WDT_INT_MASK_STAT)==0 &&
-               peek(FU3_WDT_INT_CLR)==0 && peek(FU3_WDT_DBG_STAT)==0,
-               "watchdog-side reset defaults");
-
-        // Independent edge oracle: LOAD=3 expires after four 5 ns edges.
-        access(true,FU3_WDT_CNT_LD,3);
-        access(true,FU3_WDT_CNT_CTRL,FU3_WDT_RESEN|FU3_WDT_INTEN);
-        wait(19,sc_core::SC_NS); settle();
-        expect(!irq && !reset_request && peek(FU3_WDT_CNT_VAL)==0,
-               "no premature warning before the fourth eligible edge");
-        wait(1,sc_core::SC_NS); settle();
-        expect(irq && !reset_request && peek(FU3_WDT_CNT_VAL)==3,
-               "first timeout reloads exactly on the fourth eligible edge");
-        wait(19,sc_core::SC_NS); settle();
-        expect(!reset_request,"no premature second-stage reset");
-        wait(1,sc_core::SC_NS); settle();
-        expect(reset_request && irq,"second timeout requests reset after four more edges");
+        expect(peek(FU3_WDT_LOCK)==0,"V1.2 resets unlocked despite contradictory software example");
+        access(true,FU3_WDT_CNT_LD,3);access(true,FU3_WDT_CNT_CTRL,3);
+        wait(19,sc_core::SC_NS);settle();expect(!irq&&!reset_request&&peek(FU3_WDT_CNT_VAL)==0,"no warning before N+1 edges");
+        wait(1,sc_core::SC_NS);settle();expect(irq&&!reset_request,"first timeout warns");
+        wait(20,sc_core::SC_NS);settle();expect(reset_request&&!irq&&peek(FU3_WDT_INT_RAW_STAT)==0,"second timeout clears raw/IRQ and requests reset");
         cold();
-        access(false,FU3_WDT_RESERVED_BASE,0,4,nullptr,0,tlm::TLM_ADDRESS_ERROR_RESPONSE);
-        access(false,0x1020,0,4,nullptr,0,tlm::TLM_ADDRESS_ERROR_RESPONSE);
+        access(true,FU3_WDT_LOCK,0);expect(peek(FU3_WDT_LOCK)==1,"wrong key locks");
+        access(true,FU3_WDT_CNT_LD,123);expect(peek(FU3_WDT_CNT_LD)==FU3_WDT_RESET_VALUE,"locked configuration ignored");
+        access(true,FU3_WDT_LOCK,FU3_WDT_UNLOCK_KEY);access(true,FU3_WDT_CNT_LD,0xaabbccdd);
+        unsigned char lanes[4]={255,0,255,0},none[4]={};
+        access(true,FU3_WDT_CNT_LD,0x12345678,4,lanes,4);
+        expect(peek(FU3_WDT_CNT_LD)==0xaa34cc78,"Common Full strobes preserve disabled LOAD lanes");
+        access(true,FU3_WDT_CNT_LD,0,4,none,4);expect(peek(FU3_WDT_CNT_LD)==0xaa34cc78,"zero strobes do not service watchdog");
+        access(true,FU3_WDT_LOCK,FU3_WDT_UNLOCK_KEY,4,lanes,4);expect(peek(FU3_WDT_LOCK)==1,"partial key cannot unlock");
+        access(true,FU3_WDT_LOCK,FU3_WDT_UNLOCK_KEY);access(true,FU3_WDT_CNT_LD,100);access(true,FU3_WDT_CNT_CTRL,7);
+        const auto held=peek(FU3_WDT_CNT_VAL);wait(100,sc_core::SC_NS);settle();
+        expect(peek(FU3_WDT_CNT_VAL)==held&&peek(FU3_WDT_DBG_STAT)==1&&pause,"DBGEN pause holds count and publishes wdogpause");
+        access(true,FU3_WDT_LOCK,0);wdog_reset_n=false;settle();
+        expect(peek(FU3_WDT_CNT_LD)==100&&peek(FU3_WDT_CNT_CTRL)==7&&peek(FU3_WDT_LOCK)==1,"watchdog reset preserves programming and lock");
+        expect(peek(FU3_WDT_CNT_VAL)==FU3_WDT_RESET_VALUE&&!irq&&!reset_request,"VALUE holds its documented reset value while watchdog reset is asserted");
+        wdog_reset_n=true;settle();expect(peek(FU3_WDT_CNT_VAL)==100,"reset release starts a fresh retained LOAD interval");preset=false;settle();
+        expect(peek(FU3_WDT_CNT_LD)==FU3_WDT_RESET_VALUE&&peek(FU3_WDT_CNT_CTRL)==1&&peek(FU3_WDT_LOCK)==0,"programming reset owns configuration defaults");
+        preset=true;settle();
+        access(true,FU3_WDT_CNT_LD,1);access(true,FU3_WDT_CNT_CTRL,2);
+        wait(10,sc_core::SC_NS);settle();expect(irq&&!reset_request,"RESEN=0 still warns on first timeout");
+        wait(10,sc_core::SC_NS);settle();expect(!irq&&!reset_request,"RESEN=0 second timeout clears warning without reset");
+        cold();access(true,FU3_WDT_CNT_CTRL,3);access(true,FU3_WDT_CNT_LD,0);
+        expect(irq,"zero LOAD reports immediately");wait(5,sc_core::SC_NS);settle();expect(reset_request&&!irq,"zero LOAD reaches second stage");
+        access(true,FU3_WDT_INT_CLR,1);expect(reset_request,"software cannot retract sticky recovery request");
+        cold();access(false,0x1020,0,4,nullptr,0,tlm::TLM_ADDRESS_ERROR_RESPONSE);
         access(false,FU3_WDT_CNT_LD+1,0,4,nullptr,0,tlm::TLM_ADDRESS_ERROR_RESPONSE);
         access(false,FU3_WDT_CNT_LD,0,2,nullptr,0,tlm::TLM_BURST_ERROR_RESPONSE);
-        unsigned char sparse[4]={0xff,0,0xff,0xff};
-        access(true,FU3_WDT_CNT_LD,0x12345678,4,sparse,4,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
-
-        // SYSCSR drives write protection; reads remain available while locked.
-        unlock=false;
-        access(true,FU3_WDT_CNT_LD,7);
-        expect(peek(FU3_WDT_CNT_LD)==FU3_WDT_RESET_VALUE,"locked write is ignored without an error");
-        unlock=true; access(true,FU3_WDT_CNT_LD,40); access(true,FU3_WDT_CNT_CTRL,3); unlock=false;
-        wait(220,sc_core::SC_NS); settle();
-        expect(irq && peek(FU3_WDT_INT_RAW_STAT)==FU3_WDT_TIMEOUT_SEEN &&
-               peek(FU3_WDT_INT_MASK_STAT)==FU3_WDT_TIMEOUT_SEEN,
-               "first expiry sets raw and enabled interrupt status");
-        unlock=true; access(true,FU3_WDT_CNT_LD,40); unlock=false;
-        expect(!irq && peek(FU3_WDT_INT_RAW_STAT)==0,"LOAD services watchdog and clears interrupt");
-
-        // DBGEN halts the counter; clearing it resumes from the held value.
-        unlock=true; access(true,FU3_WDT_CNT_LD,40); access(true,FU3_WDT_CNT_CTRL,7); unlock=false;
-        const auto held=peek(FU3_WDT_CNT_VAL);
-        expect(peek(FU3_WDT_DBG_STAT)==1 && !irq,"DBGEN reports and holds debug state");
-        wait(100,sc_core::SC_NS); settle();
-        expect(peek(FU3_WDT_CNT_VAL)==held && !irq,"counter remains frozen while DBGEN is set");
-        unlock=true; access(true,FU3_WDT_CNT_CTRL,3); unlock=false;
-        wait(20,sc_core::SC_NS); settle();
-        expect(peek(FU3_WDT_CNT_VAL)<held,"counter resumes after DBGEN clears");
-
-        // APB reset clears the programming-side halt request but preserves WDT CSRs.
-        unlock=true; access(true,FU3_WDT_CNT_LD,80); access(true,FU3_WDT_CNT_CTRL,7); unlock=false;
-        const auto before_program_reset=peek(FU3_WDT_CNT_LD);
-        preset=false; settle();
-        expect(peek(FU3_WDT_CNT_LD)==before_program_reset && peek(FU3_WDT_DBG_STAT)==0,
-               "preset_n resets APB-side halt state without resetting watchdog CSRs");
-        preset=true; settle();
-
-        // Watchdog reset restores LOAD/CONTROL as well as the counter and status.
-        wdog_reset_n=false; settle();
-        expect(!irq && !reset_request && peek(FU3_WDT_CNT_LD)==FU3_WDT_RESET_VALUE &&
-               peek(FU3_WDT_CNT_VAL)==FU3_WDT_RESET_VALUE && peek(FU3_WDT_CNT_CTRL)==FU3_WDT_RESEN,
-               "wdogres_n resets watchdog-domain configuration and state");
-        wdog_reset_n=true; settle();
-
-        // RESEN=0 permits repeated second chances without asserting reset.
-        unlock=true; access(true,FU3_WDT_CNT_LD,1); access(true,FU3_WDT_CNT_CTRL,FU3_WDT_INTEN); unlock=false;
-        wait(45,sc_core::SC_NS); settle();
-        expect(irq && !reset_request && peek(FU3_WDT_INT_RAW_STAT)==FU3_WDT_TIMEOUT_SEEN,
-               "RESEN=0 keeps warning asserted and reloads after subsequent timeout");
-
-        // A zero load reports immediately; a reset request is sticky until watchdog reset.
-        wdog_reset_n=false; settle(); wdog_reset_n=true; settle();
-        unlock=true; access(true,FU3_WDT_CNT_CTRL,3); access(true,FU3_WDT_CNT_LD,0); unlock=false;
-        expect(irq && peek(FU3_WDT_INT_RAW_STAT)==FU3_WDT_TIMEOUT_SEEN,
-               "zero load raises timeout status immediately");
-        wait(5,sc_core::SC_NS); settle();
-        expect(reset_request && irq,"second-stage reset request asserts on watchdog edge");
-        unlock=true; access(true,FU3_WDT_INT_CLR,0xa5a55a5a); unlock=false;
-        expect(reset_request,"software clear cannot retract an asserted reset request");
-        wdog_reset_n=false; settle();
-        expect(!reset_request && !irq,"watchdog reset clears the sticky reset request");
-        finished=true;
-        sc_core::sc_stop();
+        unsigned char invalid=1;access(true,FU3_WDT_CNT_LD,0,4,&invalid,1,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
+        unsigned char bytes[4]={100,0,0,0};tlm::tlm_generic_payload t;
+        t.set_address(FU3_WDT_CNT_LD);t.set_command(tlm::TLM_WRITE_COMMAND);t.set_data_ptr(bytes);
+        t.set_data_length(4);t.set_streaming_width(4);auto delay=sc_core::SC_ZERO_TIME;
+        const auto before=sc_core::sc_time_stamp();slow_cpu->b_transport(t,delay);
+        expect(t.is_response_ok()&&sc_core::sc_time_stamp()-before==sc_core::sc_time(20,sc_core::SC_NS),"APB latency uses its own period with a slow watchdog clock");
+        finished=true;sc_core::sc_stop();
     }
     void watchdog() { wait(2,sc_core::SC_SEC); expect(false,"test watchdog"); sc_core::sc_stop(); }
 };
 int sc_main(int,char**) {
     Bench bench{"bench"}; sc_core::sc_start();
-    std::cout << "WDT V1.1 behavior: " << bench.checks << " checks, " << bench.failures << " failures\n";
+    std::cout << "WDT V1.2 behavior: " << bench.checks << " checks, " << bench.failures << " failures\n";
     return bench.failures || !bench.finished ? 1 : 0;
 }

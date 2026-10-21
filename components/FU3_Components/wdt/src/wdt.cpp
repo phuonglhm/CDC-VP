@@ -8,10 +8,10 @@ const sc_core::sc_time kNoDeadline = sc_core::sc_max_time();
 }
 
 Watchdog::Watchdog(sc_core::sc_module_name name, sc_core::sc_time tick,
-                   unsigned apb_wait_cycles)
+                   unsigned apb_wait_cycles, sc_core::sc_time apb_period)
     : sc_module(name), tick_(tick),
-      apb_latency_(tick * static_cast<double>(apb_wait_cycles)) {
-    if (tick == sc_core::SC_ZERO_TIME || apb_wait_cycles == 0)
+      apb_latency_(apb_period * static_cast<double>(apb_wait_cycles)) {
+    if (tick <= sc_core::SC_ZERO_TIME || apb_period <= sc_core::SC_ZERO_TIME || apb_wait_cycles == 0)
         throw std::invalid_argument("WDT clock period and APB wait cycles must be positive");
     socket.register_b_transport(this, &Watchdog::transport);
     socket.register_transport_dbg(this, &Watchdog::debug);
@@ -20,13 +20,14 @@ Watchdog::Watchdog(sc_core::sc_module_name name, sc_core::sc_time tick,
     sensitive << outputs_;
 }
 
+void Watchdog::programming_reset() {
+    load_=FU3_WDT_RESET_VALUE;control_=FU3_WDT_RESEN;locked_=false;halt_=false;
+}
 void Watchdog::watchdog_reset() {
-    load_ = FU3_WDT_RESET_VALUE;
     count_ = FU3_WDT_RESET_VALUE;
-    control_ = FU3_WDT_RESEN;
+    core_reset_ = true;
     timeout_seen_ = false;
     reset_pending_ = false;
-    halt_ = false;
 }
 
 void Watchdog::watchdog_tick() {
@@ -49,25 +50,29 @@ void Watchdog::watchdog_tick() {
         timeout_seen_ = true;
         count_ = load_;
     } else if (control_ & FU3_WDT_RESEN) {
+        timeout_seen_ = false;
         // The request remains asserted until watchdog-side reset.
         reset_pending_ = true;
     } else {
-        // With reset disabled, the interrupt stays pending and the counter retries.
-        count_ = load_;
+        // V1.2 clears the second-timeout flag even when reset generation is masked.
+        timeout_seen_ = false;count_ = load_;
     }
 }
 
 void Watchdog::synchronize() {
     const auto now = sc_core::sc_time_stamp();
     if (!preset_n.read())
-        halt_ = false; // Programming-side reset clears the synchronized halt request.
+        programming_reset();
     if (!wdogres_n.read()) {
-        watchdog_reset(); // Watchdog-side reset restores the CSR/core reset profile.
+        watchdog_reset(); // Watchdog-side reset leaves programming state intact.
         last_tick_ = now - sc_core::sc_time::from_value(now.value() % tick_.value());
         outputs_.notify(sc_core::SC_ZERO_TIME);
         return;
     }
 
+    // VALUE holds its documented reset value while reset is asserted. On
+    // release, start a fresh interval using the retained programming state.
+    if(core_reset_){count_=load_;core_reset_=false;}
     const auto elapsed_ticks = (now.value() - last_tick_.value()) / tick_.value();
     auto remaining = elapsed_ticks;
     while (remaining && !reset_pending_ && (control_ & FU3_WDT_INTEN) && !halt_) {
@@ -112,12 +117,14 @@ void Watchdog::run() {
 }
 
 void Watchdog::publish() {
+    if(wdogpause.size())wdogpause->write(halt_ && wdogres_n.read());
     irq.write(timeout_seen_ && (control_ & FU3_WDT_INTEN));
     reset_request.write(reset_pending_ && wdogres_n.read());
 }
 
 std::uint32_t Watchdog::read(unsigned offset) const {
     switch (offset) {
+    case FU3_WDT_LOCK: return locked_?1u:0u;
     case FU3_WDT_CNT_LD: return load_;
     case FU3_WDT_CNT_VAL: return count_;
     case FU3_WDT_CNT_CTRL: return control_;
@@ -130,13 +137,15 @@ std::uint32_t Watchdog::read(unsigned offset) const {
     }
 }
 
-void Watchdog::write(unsigned offset, std::uint32_t value) {
-    if (!i_wdt_other_unlock.read())
+void Watchdog::write(unsigned offset, std::uint32_t value, std::uint32_t mask) {
+    if(!mask)return;
+    if(offset==FU3_WDT_LOCK){locked_=mask!=UINT32_MAX || value!=FU3_WDT_UNLOCK_KEY;return;}
+    if (locked_)
         return; // Locked writes complete without changing any WDT state.
 
     switch (offset) {
     case FU3_WDT_CNT_LD:
-        load_ = value;
+        load_ = (load_&~mask)|(value&mask);
         if (!reset_pending_) {
             count_ = load_;
             timeout_seen_ = load_ == 0 && (control_ & FU3_WDT_INTEN);
@@ -144,7 +153,7 @@ void Watchdog::write(unsigned offset, std::uint32_t value) {
         }
         break;
     case FU3_WDT_CNT_CTRL:
-        control_ = value & 0x7fu;
+        control_ = ((control_&~mask)|(value&mask)) & 0x7fu;
         halt_ = (control_ & FU3_WDT_DBGEN) != 0;
         if (!(control_ & FU3_WDT_INTEN) && !reset_pending_) {
             count_ = load_;
@@ -178,6 +187,7 @@ bool Watchdog::validate(tlm::tlm_generic_payload& tx) {
     if ((address & 3u) != 0 || address >= FU3_WDT_WINDOW_END)
         return fail(tlm::TLM_ADDRESS_ERROR_RESPONSE);
     switch (address) {
+    case FU3_WDT_LOCK:
     case FU3_WDT_CNT_LD:
     case FU3_WDT_CNT_VAL:
     case FU3_WDT_CNT_CTRL:
@@ -194,7 +204,7 @@ bool Watchdog::validate(tlm::tlm_generic_payload& tx) {
         if (!length)
             return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
         for (unsigned i = 0; i < 4; ++i)
-            if (byte_enable[i % length] != 0xff)
+            if (byte_enable[i % length] != 0xff && byte_enable[i % length] != 0)
                 return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
     }
     return true;
@@ -229,12 +239,15 @@ void Watchdog::transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay) 
     if (tx.is_read()) {
         const auto value = read(static_cast<unsigned>(tx.get_address()));
         for (unsigned i = 0; i < 4; ++i)
-            tx.get_data_ptr()[i] = static_cast<unsigned char>(value >> (8 * i));
+            if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()])
+                tx.get_data_ptr()[i] = static_cast<unsigned char>(value >> (8 * i));
     } else {
         std::uint32_t value = 0;
         for (unsigned i = 0; i < 4; ++i)
             value |= std::uint32_t(tx.get_data_ptr()[i]) << (8 * i);
-        write(static_cast<unsigned>(tx.get_address()), value);
+        std::uint32_t mask=0;
+        for(unsigned i=0;i<4;++i)if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()])mask|=255u<<(8*i);
+        write(static_cast<unsigned>(tx.get_address()), value, mask);
     }
     synchronize();
     changed_.notify(sc_core::SC_ZERO_TIME);
@@ -251,7 +264,8 @@ unsigned Watchdog::debug(tlm::tlm_generic_payload& tx) {
     synchronize();
     const auto value = read(static_cast<unsigned>(tx.get_address()));
     for (unsigned i = 0; i < 4; ++i)
-        tx.get_data_ptr()[i] = static_cast<unsigned char>(value >> (8 * i));
+        if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()])
+                tx.get_data_ptr()[i] = static_cast<unsigned char>(value >> (8 * i));
     tx.set_response_status(tlm::TLM_OK_RESPONSE);
     return 4;
 }

@@ -92,8 +92,14 @@ struct Bench:sc_module {
         wr(4,31);expect(rd(4)==0,"reserved CTRL bits read zero");
         wr(20,0x90);expect(rd(20)==0&&rd(12)==0,"disabled commands ignored");
         unsigned char sparse[]{255,0,255,255};
-        access(16,true,0,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,4,sparse);
-        expect(rd(16)==0xab,"rejected strobes do not modify TX");
+        access(16,true,0,tlm::TLM_OK_RESPONSE,4,sparse);
+        expect(rd(16)==0,"enabled TX byte follows Common strobes");
+        for(unsigned bits=0;bits<16;++bits){
+            wr(0,0xa55a);unsigned char enables[4];unsigned mask=0;
+            for(unsigned i=0;i<4;++i){enables[i]=(bits&(1u<<i))?255:0;if(enables[i])mask|=255u<<(8*i);}
+            access(0,true,0x1234,tlm::TLM_OK_RESPONSE,4,enables);
+            expect(rd(0)==((0xa55au&~mask)|(0x1234u&mask)),"all I2C prescaler strobe masks preserve disabled bytes");
+        }
         configure();peer_mode=1;peer_go.notify();wait(100,SC_NS);
         launch(0x90,0xa4);expect(!(done()&0xa0),"master address ACK without arbitration loss");
         expect(irq.read()&&plic_source14&&ibex_fast2,"master IRQ reaches fake PLIC and Ibex routes");wr(20,1);expect(!irq.read(),"IACK clears IRQ");

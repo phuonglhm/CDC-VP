@@ -1,12 +1,24 @@
 # I2C model contract
 
+## Common Spec baseline (2026-10-21)
+
+The supplied FU3 Common Spec v2.0 workbook is the highest authority, followed
+by FU3 HAS v2.0 and the latest IP detail where higher-level documents are silent.
+See the bus [rebaseline decisions](../../bus/docs/COMMON_REBASELINE.md) for exact
+cross-IP choices, source conflicts and platform responsibilities. Earlier test
+results below retain their historical source baselines; current joint results
+are recorded in the bus validation document.
+
 The implementation targets software-visible behavior described by I2C HDS V1.1 and the FU3 architecture. The following gap resolutions were selected under the user's authorization to make implementation decisions. They are model decisions, not newly discovered specification facts.
 
 ## Register and bus contract
 
 Registers use little-endian 32-bit accesses. The published header supplies offsets and bit masks. Decode uses address bits [6:2] across the local 64-KiB window: upper bits alias and low address bits are ignored. Reserved registers return zero and ignore writes. RO writes are ignored. Reserved CTRL and CMD bits read zero; implemented values are masked to their defined widths.
 
-The endpoint has no PSTRB. The TLM adapter accepts four-byte payloads with all bytes enabled, rejects narrower or sparse transfers, and never performs read-modify-write on CSRs. Malformed TLM requests receive adapter errors; valid reserved-register accesses succeed, consistent with the IP's fixed-low PSLVERR. Address aliases are observable directly; the upstream bus may reject an unaligned transaction before it reaches the endpoint.
+The SoC-facing endpoint supports Common Full strobes. Storage merges internally;
+CMD and W1C use only enabled bits. Zero strobes have no write side effect.
+The older HDS no-PSTRB profile is superseded at the FU3 VP boundary. The
+fabric does not synthesize CSR read-modify-write transactions.
 
 Annotated delay is consumed once. MMIO is serialized at the next HCLK processing boundary. There is no DMI. Debug reads are non-destructive and untimed; debug writes are rejected. Reset aborts pending MMIO with a generic adapter error.
 

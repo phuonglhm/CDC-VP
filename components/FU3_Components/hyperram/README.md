@@ -1,5 +1,8 @@
 # FU3 HyperRAM behavioral VP
 
+Common Spec v2.0 takes precedence over older endpoint restrictions. See the
+[updated model contract](docs/MODEL_CONTRACT.md) for byte strobes and remaining VP decisions.
+
 This component models the firmware-facing HyperRAM controller, its AP_HBCTRL configuration interface, and a 32-MiB S80KS2564 memory backing store. It preserves whole TLM bursts and exercises configuration, data flow, reset, and observable errors. It is not a pin-level HyperBus PHY or a cycle-accurate AXI implementation.
 
 **The controller CSR ABI is provisional VP ABI v1, not the hardware register map.** The supplied controller specification v0.13 and CSR proposal v0.1 do not assign CSR offsets/bits/reset values; the CSR proposal references an unavailable parent v0.14. The model makes those missing choices explicit in [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md). Do not reuse the driver offsets on hardware without reconciliation.

@@ -48,7 +48,7 @@ void Uart::reset_state() {
     cycles_=last_rx_activity_=0;
 }
 void Uart::reset_delta_async() {
-    // HDS v1.2 explicitly clears MSR delta bits asynchronously on preset_n.
+    // HDS v1.3 explicitly clears MSR delta bits asynchronously on preset_n.
     if (!reset_n.read()) {
         delta_=0;
         outputs_.notify(sc_core::SC_ZERO_TIME);
@@ -255,18 +255,20 @@ bool Uart::validate(tlm::tlm_generic_payload& tx) {
     if (tx.get_address()>7) return fail(tlm::TLM_ADDRESS_ERROR_RESPONSE);
     if (auto* bytes=tx.get_byte_enable_ptr()) {
         if (!tx.get_byte_enable_length()) return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
-        // APB3 has no PSTRB: reject sparse payloads instead of silently changing them.
+        // Common Spec Full strobes override the older APB3 endpoint profile.
         for (unsigned i=0; i<n; ++i)
-            if (bytes[i%tx.get_byte_enable_length()]!=255) return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
+            if (bytes[i%tx.get_byte_enable_length()]!=255 && bytes[i%tx.get_byte_enable_length()]!=0) return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
     }
     return true;
 }
 void Uart::execute(tlm::tlm_generic_payload& tx, bool side_effects) {
-    if (tx.is_write()) write(unsigned(tx.get_address()),tx.get_data_ptr()[0]);
+    const bool enabled=!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[0];
+    if (tx.is_write()) {if(enabled)write(unsigned(tx.get_address()),tx.get_data_ptr()[0]);}
     else {
-        const auto value=read(unsigned(tx.get_address()),side_effects);
-        tx.get_data_ptr()[0]=std::uint8_t(value);
-        for (unsigned i=1; i<tx.get_data_length(); ++i) tx.get_data_ptr()[i]=0;
+        const auto value=enabled?read(unsigned(tx.get_address()),side_effects):0;
+        if(enabled)tx.get_data_ptr()[0]=std::uint8_t(value);
+        for (unsigned i=1; i<tx.get_data_length(); ++i)
+            if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()])tx.get_data_ptr()[i]=0;
     }
     tx.set_response_status(tlm::TLM_OK_RESPONSE);
 }

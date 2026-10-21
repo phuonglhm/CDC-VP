@@ -14,7 +14,7 @@ Controller::Controller(sc_core::sc_module_name n,Config c):sc_module(n),config_(
 }
 void Controller::configure_bus(fu3_bus::BusConfig& config) {
     for(auto& t:config.targets)if(t.name=="HYPERBUS") {
-        t.preserve_burst=true;t.word_interface=false;t.outstanding=8;
+        t.preserve_burst=true;t.word_interface=false;t.outstanding=8;t.non_executable=true;
     }
 }
 void Controller::reset() {
@@ -76,6 +76,7 @@ void Controller::memory_transport(tlm::tlm_generic_payload& tx,sc_core::sc_time&
     auto reject=[&](unsigned code,tlm::tlm_response_status response){fault(code,unsigned(address));tx.set_response_status(response);wait(config_.core_period);};
     if(address>=memory_size||size>memory_size-address){reject(reg::DECODE,tlm::TLM_ADDRESS_ERROR_RESPONSE);return;}
     const auto* a=tx.get_extension<fu3_bus::Access>();
+    if(a && a->instruction){reject(reg::DECODE,tlm::TLM_COMMAND_ERROR_RESPONSE);return;}
     if(!a||a->beat_bytes!=4||a->burst!=fu3_bus::Burst::Increment||a->ordering_id>=64||
        address%4||size%4||size>1024||size>4096-(address&4095)) {
         reject(reg::PROFILE,tlm::TLM_BURST_ERROR_RESPONSE);return;
@@ -173,10 +174,16 @@ void Controller::csr_transport(tlm::tlm_generic_payload& tx,sc_core::sc_time& de
     if(!shape(tx))return;
     if(tx.get_address()>=65536||tx.get_address()%4){tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);return;}
     if(tx.get_data_length()!=4){tx.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);return;}
-    if(auto* be=tx.get_byte_enable_ptr())for(unsigned i=0;i<4;++i)if(be[i%tx.get_byte_enable_length()]!=255){tx.set_response_status(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);return;}
     auto* data=tx.get_data_ptr();unsigned value=0;
-    if(tx.is_write()){for(unsigned i=0;i<4;++i)value|=unsigned(data[i])<<(8*i);write(unsigned(tx.get_address()),value);}
-    else{value=read(unsigned(tx.get_address()));for(unsigned i=0;i<4;++i)data[i]=static_cast<unsigned char>(value>>(8*i));}
+    if(tx.is_write()){
+        unsigned mask=0;for(unsigned i=0;i<4;++i)if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()]){
+            mask|=255u<<(8*i);value|=unsigned(data[i])<<(8*i);
+        }
+        const auto off=unsigned(tx.get_address());
+        const bool command=off==reg::APPLY || off==reg::DEV_CMD || off==reg::DELAY_APPLY || off==reg::ERROR_CLEAR;
+        if(mask)write(off,command?value:(read(off)&~mask)|value);
+    }
+    else{value=read(unsigned(tx.get_address()));for(unsigned i=0;i<4;++i)if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()])data[i]=static_cast<unsigned char>(value>>(8*i));}
     tx.set_response_status(tlm::TLM_OK_RESPONSE);changed_.notify(sc_core::SC_ZERO_TIME);
 }
 unsigned Controller::debug(tlm::tlm_generic_payload& tx) {

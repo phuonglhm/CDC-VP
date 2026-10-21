@@ -1,8 +1,17 @@
 # UART functional model contract
 
+## Common Spec baseline (2026-10-21)
+
+The supplied FU3 Common Spec v2.0 workbook is the highest authority, followed
+by FU3 HAS v2.0 and the latest IP detail where higher-level documents are silent.
+See the bus [rebaseline decisions](../../bus/docs/COMMON_REBASELINE.md) for exact
+cross-IP choices, source conflicts and platform responsibilities. Earlier test
+results below retain their historical source baselines; current joint results
+are recorded in the bus validation document.
+
 ## Source precedence
 
-Primary: supplied `FTEL_CDC_IP_UART_Specification_v1.2.pdf`, 35 pages. Page
+Primary IP detail: supplied `FTEL_CDC_IP_UART_Specification_v1.3.pdf`, 35 pages. Page
 references below are the printed page numbers. FU3 HAS v2.0 supplies SoC wiring.
 Explicit local register definitions take precedence over generic 16750 behavior.
 
@@ -20,14 +29,11 @@ the unspecified SoC address adapter must not be assumed to shift them by two.
 Only this subrange of each 64-KiB window decodes; other offsets return TLM address
 errors. No mirror aliases are invented.
 
-One transaction addresses one 8-bit register. Length 1 or 4 is supported; a
-four-byte direct target transfer carries the register in the low byte and reads
-zero in upper bytes. Length 2, bursts, wrapping payloads, null pointers and
-invalid commands return diagnostics. Normal bus clients should use byte MMIO.
-All-enabled TLM byte enables are accepted; sparse or disabled bytes are rejected.
-The HDS identifies this endpoint as APB3 and defines no write strobes, so sparse
-writes are rejected rather than silently applying the SoC bus's general strobe
-policy.
+One transaction addresses one 8-bit register, using length 1 or 4. A four-byte
+payload carries the register in byte zero; other bytes do not address neighboring
+registers. Common strobes override the older APB3 profile: byte-zero enable
+qualifies writes and destructive reads. Disabled lanes remain unchanged on read.
+Length 2, invalid commands and malformed enable bytes are rejected.
 
 HDS p.10 ties PSLVERR low; p.20 describes an error output without decode rules.
 TLM diagnostics above are adapter decisions, not a claim that RTL asserts PSLVERR.
@@ -121,6 +127,12 @@ it models midpoint majority voting and false-start rejection, not analog noise.
 FIFO timeout is four complete character durations since the last received frame
 or RBR read, including the programmed stop length. Once asserted, it remains
 pending until an RBR read or RX reset. Timeout applies only in FIFO mode.
+
+With a 32-entry physical FIFO and extended FIFO mode, the HDS trigger table's
+56-entry setting is deliberately not clamped: RDA and threshold-driven DMA cannot
+reach it, and auto-RTS cannot stop at that threshold. Timeout service still works.
+The HDS supplies no separate 32-entry trigger profile; use a reachable trigger
+until that combination is resolved by the IP owner.
 
 ## Modem, flow control and DMA
 

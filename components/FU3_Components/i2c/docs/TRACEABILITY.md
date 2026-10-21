@@ -19,7 +19,7 @@ Source references identify I2C HDS V1.1 PDF pages. Private source documents rema
 | Event/clear collision | Model decision | Direct-socket writes coincide with filtered RX completion; set wins for RX_VALID and IF |
 | Reset and disable | p. 11; disable decision | Active transfer abort; asynchronous reset releases outputs between ticks |
 | Timing modes and programmable filter | pp. 10, 14-15 | Programmable-mode transfers, short START rejection, legacy transfer smoke test |
-| No endpoint PSTRB | pp. 7, 18; adapter decision | Sparse write rejection without TX modification; no generic CSR RMW |
+| Common Full strobes override no-PSTRB HDS | Common BUS INTF; HDS pp.7,18 | All 16 prescaler masks, TX lane qualification and no generic CSR RMW |
 | PERIBUS_1 address and IRQ assignment | FU3 architecture memory/interrupt maps | Same transfer suite through actual FU3 bus, literal 0x50080000 address; fake IRQ sinks |
 
 ## Coverage boundaries

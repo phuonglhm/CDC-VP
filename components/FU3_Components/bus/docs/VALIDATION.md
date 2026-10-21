@@ -1,5 +1,61 @@
 # FU3 bus validation
 
+## Common Spec rebaseline verified on 2026-10-21
+
+Follow-up review found and fixed an SPI reset-during-setup defect missed by the
+original coverage. The corrected source passed a fresh 130/130 executions:
+45 scoped tests, 6 bus consumers and 14 IP consumers in each static/shared build.
+The unchanged FX1 coexistence result below is retained from the preceding run.
+Logs: `build/review-static.log` and `build/review-shared.log`. A focused probe
+changed from OK/TX level 1 to GENERIC_ERROR/TX level 0 after the correction.
+See [follow-up findings](FOLLOWUP_REVIEW.md) for remaining interpretation issues.
+
+Authority: latest supplied Common Spec v2.0 workbook, followed by HAS and the
+latest IP detail. WDT uses V1.2; UART uses the supplied V1.3; I2C uses V1.1.
+See [COMMON_REBASELINE.md](COMMON_REBASELINE.md) for exact decisions and remaining
+ambiguities. All production and maintained-test changes stay within bus, timer,
+wdt, uart, spi, i2c, hyperram and rng. Other components are read-only test peers.
+
+| Current validation matrix | Passed |
+|---|---:|
+| Static scoped suite | 45/45 |
+| Shared scoped suite | 45/45 |
+| Installed bus consumers, static/shared | 12/12 |
+| Installed IP consumers, static/shared | 28/28 |
+| FX1/FU3 shared coexistence | 1/1 |
+| Total | 131/131 |
+
+Counts repeat scenarios across configurations, not 131 distinct requirements.
+The 45-case suite comprises seven core bus checks, four production-IP scenarios,
+Timer 2, WDT 2, UART 6, SPI 18, I2C 2, HyperRAM 2 and RNG 2. It exercises both
+new A2P routes, CPU permission/NX/debug partitions, FIFO arbitration and exception
+recovery; real DMA/SPI/UART flow; Timer IRQ_ADAPT/PLIC handshakes and V1.2 WDT
+reset recovery. The installed consumers also run the new Common policy/IRQ tests.
+
+Environment: WSL/Linux, GNU C++ 15.2, SystemC 2.3.4, C++17, Release libraries.
+Ignored component-local logs: `build/common-static-final.log`,
+`build/common-shared-final.log`, `build/common-coexist-final.log`.
+Reproduce using tests/scoped_suite, tests/scoped_consumer, installed_consumer
+and coexist as documented in the README and Common decision record.
+
+VALUE reset tests distinguish its 0xFFFFFFFF held-reset value from the retained
+LOAD interval on reset release. WDT tests cover internal locks, independent reset
+domains, second-timeout warning clear, separate APB/watchdog periods and optional
+pause output. All 16 strobe combinations are checked for Timer, I2C storage and
+AP_HBCTRL shadows; UART/SPI/WDT have focused zero/partial/malformed cases.
+
+This establishes functional behavior under the stated contracts, not a full CPU
+firmware boot or complete platform security. CPU debug-mode indication/PMP,
+platform IRQ acknowledgments and reset orchestration remain integration duties.
+Unresolved Common PLIC offsets/INTMAP/WDT0/XIP and provisional HyperRAM/RNG
+details remain visible in the decision record; no out-of-scope block was changed.
+
+## Historical evidence before this rebaseline
+
+Results below retain the source/contract baselines on which they were obtained.
+Older claims about PLIC offsets, no-strobe endpoints, topology or WDT V1.1 must
+not override the current Common baseline above.
+
 ## Fabric integration upgrade (2026-10-20)
 
 Revalidated the fabric after fixing native AP_DMA metadata interoperability,

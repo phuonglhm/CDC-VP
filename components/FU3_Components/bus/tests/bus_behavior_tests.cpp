@@ -51,12 +51,13 @@ struct Test : sc_core::sc_module, Checks {
             const auto& t=cfg.targets[i];
             for(auto offset:{std::uint64_t{0},t.size-4}) {
                 payload(tx,tlm::TLM_READ_COMMAND,t.base+offset,data,4);
-                send(1,tx,tlm::TLM_OK_RESPONSE);
+                fu3_bus::ScopedAccess debug_access(tx,4,fu3_bus::Burst::Increment,false,0,true);
+                send(t.name=="IBEX_DBG"?2:1,tx,tlm::TLM_OK_RESPONSE);
                 expect(targets[i]->visits.back().address==offset,"correct target and local offset");
             }
             const auto visits=targets[i]->visits.size();
             payload(tx,tlm::TLM_WRITE_COMMAND,t.base+t.size-2,data,4);
-            send(1,tx,t.name=="ROM"?tlm::TLM_COMMAND_ERROR_RESPONSE:tlm::TLM_ADDRESS_ERROR_RESPONSE);
+            send(1,tx,(t.name=="ROM" || t.name=="IBEX_DBG")?tlm::TLM_COMMAND_ERROR_RESPONSE:tlm::TLM_ADDRESS_ERROR_RESPONSE);
             expect(targets[i]->visits.size()==visits,"cross-boundary transfer never reaches target");
         }
         for(auto a:{0x1000ULL,0x30000ULL,0x1010000ULL,0x1a111000ULL,0x30020000ULL,
@@ -69,16 +70,22 @@ struct Test : sc_core::sc_module, Checks {
             auto i=index(name); auto base=cfg.targets[i].base;
             payload(tx,tlm::TLM_READ_COMMAND,base,data,4);
             auto before=sc_core::sc_time_stamp(); send(1,tx,tlm::TLM_OK_RESPONSE,5);
-            expect(sc_core::sc_time_stamp()-before==sc_core::sc_time(54,sc_core::SC_NS),
-                   "both APB paths traverse S1, S0, bridge, PERIBUS exactly once");
+            expect(sc_core::sc_time_stamp()-before==sc_core::sc_time(name==std::string("AP_PLIC")?50:54,sc_core::SC_NS),
+                   "PERIBUS_1 bypasses SYSBUS_0; both paths consume each stage once");
             targets[i]->annotate=true;
             before=sc_core::sc_time_stamp(); send(1,tx,tlm::TLM_OK_RESPONSE,5);
-            expect(sc_core::sc_time_stamp()-before==sc_core::sc_time(54,sc_core::SC_NS),"annotated target delay once");
+            expect(sc_core::sc_time_stamp()-before==sc_core::sc_time(name==std::string("AP_PLIC")?50:54,sc_core::SC_NS),"annotated target delay once");
             for(unsigned j=0;j<64;++j) data[j]=static_cast<unsigned char>(j+1);
             unsigned char enables[3]={0xff,0,0xff};
             payload(tx,tlm::TLM_WRITE_COMMAND,base+0x100,data,64);
             tx.set_byte_enable_ptr(enables); tx.set_byte_enable_length(3);
-            auto count=targets[i]->visits.size(); send(3,tx,tlm::TLM_OK_RESPONSE);
+            auto count=targets[i]->visits.size();
+            if(name==std::string("AP_PLIC")){
+                send(3,tx,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
+                expect(targets[i]->visits.size()==count,"PLIC partial burst rejected before any CSR effect");
+                tx.set_byte_enable_ptr(nullptr);tx.set_byte_enable_length(0);continue;
+            }
+            send(3,tx,tlm::TLM_OK_RESPONSE);
             expect(targets[i]->visits.size()==count+16,"DMA 16-word payload becomes 16 APB transfers");
             tx.set_byte_enable_ptr(nullptr); tx.set_byte_enable_length(0);
             std::fill(std::begin(data),std::end(data),0);

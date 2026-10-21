@@ -27,10 +27,11 @@ struct Bench:sc_module {
     }
     void expect(bool ok,const char* what){++checks;if(!ok){++failures;std::cerr<<sc_time_stamp()<<": "<<what<<'\n';}}
     void settle(){for(unsigned i=0;i<5;++i)wait(SC_ZERO_TIME);}
-    unsigned csr(unsigned offset,bool write=false,unsigned value=0){
+    unsigned csr(unsigned offset,bool write=false,unsigned value=0,unsigned char* enables=nullptr){
         unsigned char bytes[4];for(unsigned i=0;i<4;++i)bytes[i]=static_cast<unsigned char>(value>>(8*i));
         tlm::tlm_generic_payload tx;tx.set_address((integrated?0x500b0000:0)+offset);tx.set_data_ptr(bytes);tx.set_data_length(4);tx.set_streaming_width(4);
         tx.set_command(write?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND);fu3_bus::ScopedAccess metadata(tx,4);
+        tx.set_byte_enable_ptr(enables);tx.set_byte_enable_length(enables?4:0);
         auto delay=sc_time(2,SC_NS);apb->b_transport(tx,delay);settle();expect(tx.is_response_ok()&&delay==SC_ZERO_TIME,"CSR transport");
         value=0;for(unsigned i=0;i<4;++i)value|=unsigned(bytes[i])<<(8*i);return value;
     }
@@ -44,10 +45,10 @@ struct Bench:sc_module {
     unsigned device_read(unsigned address){wr(48,address);wr(56,1);complete();return rd(60);}
     void device_write(unsigned address,unsigned value){wr(48,address);wr(52,value);wr(56,2);complete();}
     bool transfer(bool write,unsigned address,std::vector<unsigned char>& bytes,tlm::tlm_response_status expected=tlm::TLM_OK_RESPONSE,
-                  unsigned char* be=nullptr,Fault* injection=nullptr,unsigned id=0,unsigned beat=4,fu3_bus::Burst burst=fu3_bus::Burst::Increment){
+                  unsigned char* be=nullptr,Fault* injection=nullptr,unsigned id=0,unsigned beat=4,fu3_bus::Burst burst=fu3_bus::Burst::Increment,bool instruction=false){
         tlm::tlm_generic_payload tx;tx.set_address((integrated?0x60000000ULL:0)+address);tx.set_data_ptr(bytes.data());
         tx.set_data_length(unsigned(bytes.size()));tx.set_streaming_width(unsigned(bytes.size()));tx.set_command(write?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND);
-        tx.set_byte_enable_ptr(be);tx.set_byte_enable_length(be?4:0);fu3_bus::ScopedAccess metadata(tx,beat,burst,false,id);
+        tx.set_byte_enable_ptr(be);tx.set_byte_enable_length(be?4:0);fu3_bus::ScopedAccess metadata(tx,beat,burst,instruction,id);
         if(injection)tx.set_extension(injection);
         auto delay=sc_time(3,SC_NS);mem->b_transport(tx,delay);if(injection)tx.clear_extension<Fault>();
         expect(tx.get_response_status()==expected,"memory response");expect(delay==SC_ZERO_TIME&&!tx.is_dmi_allowed(),"delay consumed and DMI disabled");return tx.is_response_ok();
@@ -55,10 +56,18 @@ struct Bench:sc_module {
     void run(){
         reset_n=false;device_reset_n=false;wait(20,SC_NS);reset_n=true;device_reset_n=true;wait(20,SC_NS);
         expect(rd(0)==0x48525650&&rd(4)==1,"explicit provisional ABI identity");
+        for(unsigned bits=0;bits<16;++bits){
+            wr(16,0xa55a);unsigned char enables[4];unsigned mask=0;
+            for(unsigned i=0;i<4;++i){enables[i]=(bits&(1u<<i))?255:0;if(enables[i])mask|=255u<<(8*i);}
+            csr(16,true,0x1234,enables);
+            expect(rd(16)==((0xa55au&~mask)|(0x1234u&mask)),"all AP_HBCTRL shadow strobe masks merge locally");
+        }
         expect(device_read(0)==0xe76&&device_read(1)==9,"S80KS2564 identification");
         expect(device_read(2)==0x8f2f&&device_read(3)==0xffc2,"device POR register defaults");
         std::vector<unsigned char> data(64);for(unsigned i=0;i<data.size();++i)data[i]=static_cast<unsigned char>(i*7+3);
         transfer(true,0,data,tlm::TLM_GENERIC_ERROR_RESPONSE);expect(rd(64)&4,"not-ready error before init");wr(68,255);
+        transfer(false,0,data,tlm::TLM_COMMAND_ERROR_RESPONSE,nullptr,nullptr,0,4,fu3_bus::Burst::Increment,true);
+        wr(68,255); // Direct and fabric paths reject NX without launching a memory read.
         init();auto before=rd(100);transfer(true,0,data);expect(rd(100)==before+1&&rd(104)==16,"one burst stays one device transaction");
         std::vector<unsigned char> readback(64,0);transfer(false,0,readback);expect(readback==data,"burst data roundtrip");
         unsigned char sparse[]{255,0,255,0};std::vector<unsigned char> word{0xaa,0xbb,0xcc,0xdd};transfer(true,0,word,tlm::TLM_OK_RESPONSE,sparse);

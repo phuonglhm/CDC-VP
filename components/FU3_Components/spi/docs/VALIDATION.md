@@ -1,5 +1,24 @@
 # SPI validation
 
+## Common Spec rebaseline (2026-10-21)
+
+Follow-up: reset_phases now includes an APB reset pulse during setup, before
+system-domain launch. The old adapter incorrectly returned OK and enqueued TXDR
+after that pulse. Capturing reset epochs at arrival now cancels it without FIFO
+effects, while preserving the already-launched/commit-once contract. The expanded
+SPI suite and installed consumers pass 52/52 static/shared executions within
+the fresh 130/130 joint rerun; logs are in the bus validation record.
+
+The current model passed the joint static/shared scoped regression and installed
+package checks recorded in the bus [validation matrix](../../bus/docs/VALIDATION.md).
+The full matrix passes 131/131 executions across the owned components, bus
+consumers and FX1 coexistence. Source precedence, selected behavior at conflicts
+and remaining platform requirements are in
+[COMMON_REBASELINE.md](../../bus/docs/COMMON_REBASELINE.md).
+
+The following older results retain their original source baselines. They do not
+override the current model contract or establish full firmware boot execution.
+
 Validation environment: WSL/Linux, GNU C++ 15.2.0, C++17 and SystemC 2.3.4.
 The tests use real `sc_main` entry points. Reproduction commands are in the
 [README](../README.md#build-and-validate).

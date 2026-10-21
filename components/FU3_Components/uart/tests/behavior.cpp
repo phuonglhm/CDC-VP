@@ -73,7 +73,7 @@ struct Bench : sc_core::sc_module, Checks {
         w(4,255);expect(r(4)==0x3f,"MCR AFE is implemented and bits 7:6 are reserved");w(4,0);
         access(false,7,0,false,4);access(true,7,0,false,2,tlm::TLM_BURST_ERROR_RESPONSE);
         access(false,8,0,false,1,tlm::TLM_ADDRESS_ERROR_RESPONSE);
-        unsigned char disabled=0;access(true,7,0,false,1,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,&disabled);
+        unsigned char disabled=0;access(true,7,0,false,1,tlm::TLM_OK_RESPONSE,&disabled);
         expect(r(7)==0xa5,"rejected access has no side effect");
         access(true,7,0,true,1,tlm::TLM_COMMAND_ERROR_RESPONSE);
 

@@ -83,12 +83,19 @@ struct Bench:sc_core::sc_module {
         access(true,0x14,0x12345678);check(access(false,4)==0x12345678,"single-instance upper address aliases");
         access(true,4,0);access(true,0,123);access(true,12,999);check(access(false,12)==0&&access(false,0)==123,"reserved accesses succeed without register writes");
         unsigned char partial[4]={255,0,255,255};
-        access(true,0,999,4,partial,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
-        check(inspect(0)==123,"partial write rejected without side effects");
+        access(true,0,999,4,partial);
+        check(inspect(0)==231,"disabled second byte retains zero instead of incoming 0x03");
         access(true,0,99,2,nullptr,tlm::TLM_BURST_ERROR_RESPONSE);
         access(true,1,99,4,nullptr,tlm::TLM_ADDRESS_ERROR_RESPONSE);
         access(false,0x10000,0,4,nullptr,tlm::TLM_ADDRESS_ERROR_RESPONSE);
         unsigned char full[4]={255,255,255,255};access(true,0,42,4,full);check(inspect(0)==42,"full strobes accepted");
+        for(unsigned bits=0;bits<16;++bits){
+            access(true,0,0xa5b6c7d8);unsigned char enables[4];unsigned mask=0;
+            for(unsigned i=0;i<4;++i){enables[i]=(bits&(1u<<i))?255:0;if(enables[i])mask|=255u<<(8*i);}
+            access(true,0,0x12345678,4,enables);
+            check(inspect(0)==((0xa5b6c7d8u&~mask)|(0x12345678u&mask)),"all timer strobe masks preserve disabled lanes");
+        }
+        access(true,0,42);
         access(true,4,1);gate=false;wait(40,sc_core::SC_NS);check(inspect(0)==42,"gated clock freezes count");
         access(false,0,0,4,nullptr,tlm::TLM_GENERIC_ERROR_RESPONSE);
         gate=true;wait(10,sc_core::SC_NS);settle();check(inspect(0)==43,"ungated clock resumes count");

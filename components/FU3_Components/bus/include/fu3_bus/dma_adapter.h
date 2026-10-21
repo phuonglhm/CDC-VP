@@ -33,7 +33,7 @@ private:
         if(tx.get_address()%unit){reject(tlm::TLM_ADDRESS_ERROR_RESPONSE);return;}
         const auto burst=native->increment?fu3_bus::Burst::Increment:fu3_bus::Burst::Fixed;
         if(const auto* prior=tx.get_extension<fu3_bus::Access>())
-            if(prior->beat_bytes!=unit || prior->burst!=burst || prior->instruction ||
+            if(prior->beat_bytes!=unit || prior->burst!=burst || prior->instruction || prior->debug ||
                prior->ordering_id!=native->axi_id){reject(tlm::TLM_COMMAND_ERROR_RESPONSE);return;}
         std::vector<unsigned char> enables;
         if(tx.is_write() && !native->write_strobes.empty()) {

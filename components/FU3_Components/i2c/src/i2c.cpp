@@ -175,13 +175,20 @@ bool I2c::validate(tlm::tlm_generic_payload& tx){
     if(tx.get_data_length()!=4||tx.get_streaming_width()<4)return fail(tlm::TLM_BURST_ERROR_RESPONSE);
     if(auto* be=tx.get_byte_enable_ptr()){
         if(!tx.get_byte_enable_length())return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
-        for(unsigned i=0;i<4;++i)if(be[i%tx.get_byte_enable_length()]!=255)return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
+        for(unsigned i=0;i<4;++i)if(be[i%tx.get_byte_enable_length()]!=255 && be[i%tx.get_byte_enable_length()]!=0)return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
     }return true;
 }
 void I2c::execute(tlm::tlm_generic_payload& tx){
     auto* d=tx.get_data_ptr();unsigned value=0;
-    if(tx.is_write()){for(unsigned i=0;i<4;++i)value|=unsigned(d[i])<<(8*i);write(unsigned(tx.get_address()),value);}
-    else{value=read(unsigned(tx.get_address()));for(unsigned i=0;i<4;++i)d[i]=static_cast<unsigned char>(value>>(8*i));}
+    if(tx.is_write()){
+        unsigned mask=0;for(unsigned i=0;i<4;++i)if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()]){
+            mask|=255u<<(8*i);value|=unsigned(d[i])<<(8*i);
+        }
+        const unsigned index=(unsigned(tx.get_address())>>2)&31;
+        // Commands/W1C use only enabled bits; storage merges internally without a bus read.
+        if(mask)write(unsigned(tx.get_address()),(index==5 || index==16)?value:(read(unsigned(tx.get_address()))&~mask)|value);
+    }
+    else{value=read(unsigned(tx.get_address()));for(unsigned i=0;i<4;++i)if(!tx.get_byte_enable_ptr() || tx.get_byte_enable_ptr()[i%tx.get_byte_enable_length()])d[i]=static_cast<unsigned char>(value>>(8*i));}
     tx.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 void I2c::transport(tlm::tlm_generic_payload& tx,sc_core::sc_time& delay){

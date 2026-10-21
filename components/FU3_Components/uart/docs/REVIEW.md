@@ -15,7 +15,7 @@ with independent issues. A missing hardware definition is not a code defect to
 | S05 | p.19 supports 8x/16x, while p.28 divisor formula hardcodes 16; RATIO is listed without a clear relation | **Deferred until RTL correlation.** Config selects functional sampling cadence; VP does not claim exact baud at either oversampling setting |
 | S06 | HDS v1.2 p.18 specifies synchronous UART reset and asynchronously clears MSR[3:0]; p.19 specifies safe MSR[7:4] reset sampling | Implemented explicit asynchronous delta clear plus synchronous main reset; sub-cycle reset pulse covered |
 | S07 | p.9 excludes fractional baud; p.19 says the baud generator may be fractional or integer | **Deferred until RTL correlation.** VP uses integer DLL/DLM and does not model fractional-rate accuracy |
-| S08 | HDS v1.2 pp.8,20 specify APB3; p.20 misspells PSLVERR as PSLVRR and gives no useful error decode behavior | No sparse writes; TLM errors remain adapter diagnostics, not a claim about PSLVERR |
+| S08 | HDS v1.2 pp.8,20 specify APB3; p.20 misspells PSLVERR as PSLVRR and gives no useful error decode behavior | Common now overrides this restriction with byte qualification; TLM errors remain adapter diagnostics |
 | S09 | p.29 allows TX DMA request deassertion or persistence on clear | Document and test sampled clear suppression with condition-based reassertion |
 | S10 | p.18 allows 32-byte capacity; trigger table covers only 16/64 | Preserve published table; trigger 56 cannot assert at capacity 32; timeout still works |
 | S11 | pp.23-24 omit precise non-FIFO overwrite/error lifetime and flush/resize priorities | Explicit conservative policies; do not claim exact RTL race equivalence |

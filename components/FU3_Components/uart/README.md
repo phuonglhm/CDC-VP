@@ -1,5 +1,8 @@
 # FU3 UART0/1/2 SystemC/TLM
 
+Common Spec v2.0 takes precedence over older endpoint restrictions. See the
+[updated model contract](docs/MODEL_CONTRACT.md) for byte strobes and remaining VP decisions.
+
 Reusable UART models for functional serial data flow, register-driven software,
 interrupt handling and DMA integration. The model serializes and samples actual
 SystemC TX/RX signals; a THR write is not an instantaneous receive injection.
@@ -38,8 +41,8 @@ Offsets are **bytes 0..7**, as stated by the HDS programming sequence. Use byte
 MMIO through the existing FU3 bus, with `fu3_bus::ScopedAccess(tx,1)` for a TLM
 initiator. Do not multiply register offsets by four. A direct four-byte target
 access operates on one register using the low data byte; it is not four successive
-register operations. Sparse byte enables are rejected because the documented
-APB3 endpoint has no PSTRB. See the contract for the explicit adapter boundary.
+register operations. Common Full strobes override the older APB3 profile: only the low payload byte
+qualifies the addressed register; disabled reads have no register side effect. See the contract for the explicit adapter boundary.
 
 Configure DLAB, DLL/DLM, FIFO mode while DLAB is set, then clear DLAB and configure
 LCR. Set MCR.AFE for auto-CTS; set MCR.RTS with AFE to enable auto-RTS as well.

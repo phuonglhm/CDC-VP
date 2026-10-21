@@ -1,5 +1,17 @@
 # Timer validation - 2026-10-17
 
+## Common Spec rebaseline (2026-10-21)
+
+The current model passed the joint static/shared scoped regression and installed
+package checks recorded in the bus [validation matrix](../../bus/docs/VALIDATION.md).
+The full matrix passes 131/131 executions across the owned components, bus
+consumers and FX1 coexistence. Source precedence, selected behavior at conflicts
+and remaining platform requirements are in
+[COMMON_REBASELINE.md](../../bus/docs/COMMON_REBASELINE.md).
+
+The following older results retain their original source baselines. They do not
+override the current model contract or establish full firmware boot execution.
+
 Environment: Ubuntu under WSL, GNU C++ 15.2.0, C++17, SystemC 2.3.4 shared
 installation. The local validation command completed with exit status 0.
 

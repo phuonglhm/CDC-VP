@@ -1,5 +1,8 @@
 # FU3 RNG behavioral VP
 
+Common Spec v2.0 takes precedence over older endpoint restrictions. See the
+[updated model contract](docs/MODEL_CONTRACT.md) for byte strobes and remaining VP decisions.
+
 Models the five-register RNG HDS V1.0 interface for software data-flow tests. No additional hardware features or CSRs are introduced. This is not a physical entropy model and does not certify random quality. The existing `components/trng_tlm` has a different ABI and is not used.
 
 Connect `Rng::socket` to `bus.target("RNG")`, bind `reset_n` and `irq`, and provide a `Config` with the platform clock period and an explicit `sample_bit(index)` callback. The callback is a simulation input, must not wait or throw, and may return deterministic test bits. There is deliberately no default random-number generator or firmware seed register.

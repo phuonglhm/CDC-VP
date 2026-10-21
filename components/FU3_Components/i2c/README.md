@@ -1,5 +1,8 @@
 # FU3 I2C behavioral VP
 
+Common Spec v2.0 takes precedence over older endpoint restrictions. See the
+[updated model contract](docs/MODEL_CONTRACT.md) for byte strobes and remaining VP decisions.
+
 SystemC/TLM model of the FU3 I2C controller. It supports firmware MMIO, master byte transfers, basic 7-bit slave operation, interrupts, and resolved open-drain serial connections. It is intended for behavioral and data-flow verification, not RTL cycle or electrical qualification.
 
 The model implements the I2C V1.1 interface. See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for explicit decisions at specification gaps and [TRACEABILITY.md](docs/TRACEABILITY.md) for verification coverage. Private specification files are not part of this component.

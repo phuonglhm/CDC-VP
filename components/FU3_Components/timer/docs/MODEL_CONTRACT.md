@@ -1,5 +1,14 @@
 # FU3 Timer functional contract
 
+## Common Spec baseline (2026-10-21)
+
+The supplied FU3 Common Spec v2.0 workbook is the highest authority, followed
+by FU3 HAS v2.0 and the latest IP detail where higher-level documents are silent.
+See the bus [rebaseline decisions](../../bus/docs/COMMON_REBASELINE.md) for exact
+cross-IP choices, source conflicts and platform responsibilities. Earlier test
+results below retain their historical source baselines; current joint results
+are recorded in the bus validation document.
+
 ## Sources and scope
 
 Timer HDS V1.0, pp.7-15 defines the IP behavior. FU3 HAS v2.0 pp.46-47,
@@ -71,21 +80,13 @@ an inserted PREADY wait state. Rejected malformed requests consume one period.
 
 ## Access adapter and explicit strobe exception
 
-The Timer HDS p.8 explicitly excludes byte-write strobes and partial-register
-writes. The system bus still supports strobes for other IPs. This Timer adapter
-accepts only aligned 4-byte transfers, streaming width >=4, with either no byte
-enables or all four effective enables equal to 0xFF. Partial writes/reads are
-rejected before applying any register side effect. Full byte enables are consumed
-by the adapter as a full-word operation. No read-modify-write is performed.
+Common Full strobes apply at the model boundary. Counter/control/compare
+merge enabled bytes at the functional edge; zero strobes do not write. Raw IRQ
+behavior and write priority remain unchanged. See the shared rebaseline decisions.
 
-| Condition | VP response |
-|---|---|
-| Partial/invalid byte enables | BYTE_ENABLE_ERROR |
-| Non-word length or wrapping streaming width | BURST_ERROR |
-| Misalignment or local address >=64 KiB | ADDRESS_ERROR |
-| Unsupported command | COMMAND_ERROR |
-| Null data, reset or gated access | GENERIC_ERROR |
-| Valid register or reserved offset | OK |
+Common Full strobes apply at the model boundary. Counter/control/compare
+merge enabled bytes at the functional edge; zero strobes do not write. Raw IRQ
+behavior and write priority remain unchanged. See the shared rebaseline decisions.
 
 These adapter diagnostics are not a claim that the HDS IP asserts PSLVERR.
 The HDS reports PSLVERR=0 for native accesses, including reserved offsets.
@@ -93,7 +94,7 @@ The adapter rejects unaligned calls even though low address bits are ignored
 by the described RTL. Upper-bit aliasing IS preserved: register decode uses
 local address & 0xC throughout the routed 64-KiB aperture.
 
-transport_dbg supports full-word read-only inspection without time or side
+transport_dbg supports word read-only inspection without time or side
 effects, including during reset/gating. Debug writes are rejected. DMI is disabled.
 Blocking transport must run in SC_THREAD; each in-flight call owns its payload.
 

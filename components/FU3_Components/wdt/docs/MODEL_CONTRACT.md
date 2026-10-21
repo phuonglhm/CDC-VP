@@ -1,55 +1,54 @@
-﻿# WDT0/1 functional model contract
+# WDT0/1 V1.2 functional contract
 
-## Source and scope
+Common Spec v2.0 has precedence over FU3 HAS v2.0, then WDT HDS V1.2
+(37 pages). Private specifications are not distributed. See the shared
+[decision record](../../bus/docs/COMMON_REBASELINE.md) for all ambiguities.
 
-Primary source: `FTEL_CDC_WDT_Hardware_Design_Specification_v1.1.docx.pdf`, 38 pages. FU3 HAS v2.0 supplies the WDT0/WDT1 address windows and interrupt routes. Private source files remain under `Secret-Docs` and are not part of this component package. HDS p.8 names APB 2.0 and explicitly excludes PSTRB, while its feature table on p.9 says APB4; the model follows the explicit full-word/no-strobe behavior and treats the bus-facing APB4 bridge as an upstream adapter.
+## Register and reset contract
 
-This model supports software-visible timeout, warning, write protection, and reset-recovery flow. It does not model APB pins or physical CDC flops. The V1.1 APB-to-watchdog crossing is represented by a configurable transaction delay and one functional watchdog clock. Timing is not a cycle-accurate reproduction of the synchronizer RTL.
+Local offsets: LOCK 0x1000, LOAD 0x1004, VALUE 0x1008, CONTROL 0x100C,
+RAW 0x1010, MASK 0x1014, CLEAR 0x1018, DBG_STAT 0x101C. Other offsets
+error; no incomplete Version/capability register is fabricated.
 
-## Interfaces and resets
+- LOCK resets unlocked/read zero. Full-key 0x1ACCE551 unlocks; other nonempty
+  writes lock. LOCK always remains writable; other writes while locked are
+  ignored with OK response. Read access remains available. Zero strobes do not
+  alter the lock. A partial key locks and cannot accidentally unlock.
+- preset_n resets programming state: LOAD=0xFFFFFFFF, CONTROL=RESEN,
+  LOCK unlocked and debug halt clear. It aborts pending APB work.
+- wdogres_n clears runtime state; VALUE holds 0xFFFFFFFF during reset and reloads
+  retained LOAD on release. It preserves LOAD, CONTROL and LOCK. With INTEN retained, counting
+  restarts after reset. Cold reset asserts both domains.
+- Common Full strobes override the HDS's unsupported-partial-write statement.
+  LOAD/CONTROL merge internally. CLEAR with any enabled byte clears the warning
+  and reloads VALUE before critical reset; all-disabled writes do nothing.
+  RO writes remain ignored. Reads only update enabled payload bytes.
 
-Each instance provides the TLM target socket, `preset_n`, `wdogres_n`, `i_wdt_other_unlock`, `irq`, and `reset_request`.
+## Runtime behavior
 
-- `i_wdt_other_unlock=1` permits writes; `0` makes every valid APB write complete normally without modifying registers. Reads remain available while locked.
-- `preset_n` is the programming-side reset. It cancels an in-flight TLM access and clears the APB-side synchronized halt request. It does not reset watchdog CSRs, counter, warning status, or an asserted reset request.
-- `wdogres_n` is watchdog-side reset. Assertion restores LOAD and VALUE to `0xFFFFFFFF`, CONTROL to `RESEN=1`, clears TIMEOUT_SEEN, and deasserts the reset request and interrupt.
-- Reset assertion is asynchronous in this behavioral model. Platform reset release should be synchronized to the relevant clock, as required by the HDS.
-- The default functional clock period is 5 ns (200 MHz). Both HDS clocks have this frequency; separate clock-tree phase and 2-FF synchronizers are abstracted. APB access latency defaults to seven functional clock periods, representing the documented 6-7 wait states.
+INTEN enables counting/IRQ. A loaded N first expires after N+1 eligible watchdog
+edges, sets TIMEOUT_SEEN and reloads LOAD. A second expiry clears TIMEOUT_SEEN;
+RESEN additionally requests reset. With RESEN clear, reload and begin a new
+two-stage sequence. LOAD/CLEAR service the watchdog before reset is pending.
+Writing zero LOAD while enabled reports the first timeout immediately; the
+next watchdog edge can trigger the second stage. INTEN clear holds VALUE at
+LOAD and clears timeout state before critical reset.
 
-The WDT lock register is outside this IP. The supplied SYSCSR workbook does not yet define the corresponding software register/field, so platform wiring must provide the unlock signal explicitly until that ABI is supplied. WDT0 and WDT1 have independent input ports in the model; shared or separate SYSCSR control remains a platform decision.
+Reset requests remain sticky until watchdog reset. RESDIV is storage only,
+following the unsupported-programmable-pulse statement rather than inventing
+pulse widths from the contradictory register prose. Software cannot retract
+an asserted request. DBGEN pauses counting and publishes optional wdogpause;
+the undefined external debug-active pin is not invented.
 
-## Register ABI
+## Functional timing and integration
 
-Offsets are local to the 64-KiB WDT window. Only the seven aligned word registers below decode. `0x1000` and every other unlisted offset return an address error, corresponding to APB PSLVERR. The FU3 bus owns the global base address.
+Constructor arguments select watchdog tick, APB wait count (default ten), and
+independent APB period (default 5 ns). Default watchdog tick is 5 ns. MMIO samples
+VALUE at completion; detailed two-FF/FIFO snapshot phases are abstracted. Calls
+are serialized, consume incoming delay once and abort across reset. Debug is
+untimed, read-only and non-destructive. Both optional compatibility ports may
+remain unbound; i_wdt_other_unlock has no V1.2 effect.
 
-| Offset | Register | Access | Reset / behavior |
-|---|---|---|---|
-| 0x1004 | WD_CNT_LD | RW | `0xFFFFFFFF`; write reloads VALUE and clears TIMEOUT_SEEN. Writing zero sets TIMEOUT_SEEN immediately. |
-| 0x1008 | WD_CNT_VAL | RO | `0xFFFFFFFF`; current down-counter value. |
-| 0x100C | WD_CNT_CTRL | RW | `0x00000001`; RESEN[0], INTEN[1], DBGEN[2], RESDIV[6:3], reserved[31:7]. |
-| 0x1010 | WD_INT_RAW_STAT | RO | TIMEOUT_SEEN in bit 0; reserved bits read zero. |
-| 0x1014 | WD_INT_MASK_STAT | RO | TIMEOUT_SEEN AND INTEN in bit 0; reserved bits read zero. |
-| 0x1018 | WD_INT_CLR | WO | Any write clears TIMEOUT_SEEN and reloads VALUE; reads return zero. |
-| 0x101C | WD_DBG_STAT | RO | Bit 0 reports the active debug halt; reserved bits read zero. |
-
-There is no ID register, internal lock register, PSTRB, or programmable reset pulse width in V1.1. RESDIV is stored/read back but has no effect on `reset_request`; once asserted, that output remains high until `wdogres_n` is asserted. Writes to RO registers have no effect. Reserved CONTROL bits are ignored on write.
-
-## Watchdog state behavior
-
-- INTEN enables counting and the interrupt. While INTEN is zero, VALUE follows LOAD and TIMEOUT_SEEN is cleared.
-- A LOAD write restarts VALUE from the new LOAD and clears TIMEOUT_SEEN. If LOAD is zero while INTEN is enabled, TIMEOUT_SEEN is set immediately and IRQ asserts; a reset request can be raised on the next watchdog edge when RESEN is enabled.
-- With INTEN set and DBGEN clear, a loaded value N reaches its first timeout after N+1 eligible watchdog edges. The first timeout sets TIMEOUT_SEEN, asserts IRQ, and reloads VALUE.
-- If TIMEOUT_SEEN is still set when VALUE reaches zero a second time, RESEN=1 asserts `reset_request` and freezes the counter. TIMEOUT_SEEN/IRQ remain pending. The request cannot be cleared by software after assertion; watchdog-side reset clears it.
-- With RESEN=0, a later timeout reloads VALUE and leaves TIMEOUT_SEEN/IRQ asserted.
-- WD_INT_CLR clears TIMEOUT_SEEN and reloads VALUE before reset has been requested. Clearing INTEN also clears TIMEOUT_SEEN and stops the counter.
-- DBGEN halts the counter and suppresses timeout events. LOAD/CLEAR writes still reload while halted. `WD_DBG_STAT[0]` follows the active halt request. Programming reset clears that request without changing CONTROL.
-
-When a reset request is already pending, it remains asserted until watchdog reset. The model preserves pending timeout state and freezes VALUE even if subsequent software writes arrive, following the HDS reset-pending priority.
-
-## TLM adapter
-
-The IP accepts aligned 32-bit transfers only. Following the explicit no-PSTRB statement (HDS p.8) and unsupported partial-write list (p.16), partial TLM byte enables are rejected; absent enables or all-`0xFF` enables represent a full word. No read-modify-write is used. Annotated delay is consumed exactly once. Malformed command/length/address/enable requests receive TLM adapter errors; those are not a cycle-level PSLVERR waveform. Locked writes and writes to RO registers return OK and have no effect. Debug access supports untimed side-effect-free reads only; writes are rejected. DMI and nonblocking transport are unsupported.
-
-## FU3 integration boundary
-
-WDT0 is at `0x44050000` and routes to the Ibex NMI path; WDT1 is at `0x44080000` and routes to PLIC source 18. The reset outputs are requests to the platform CRM. This component does not decide whether either request resets one watchdog, both watchdogs, or the whole SoC. Tests use a fake CRM and interrupt sinks; they do not establish production reset scope or execute CPU firmware.
+WDT1 uses PLIC ID 18. Common leaves WDT0's exact INTMAP/NMI assignment and
+reset escalation unresolved; standalone fixtures label any assumed route.
+The platform owns reset scope, source conditioning and CPU interrupt delivery.

@@ -67,7 +67,7 @@ struct Test : sc_core::sc_module, Checks {
             unsigned char bytes[4]={};tlm::tlm_generic_payload tx;
             const bool write=phase==3 && i>=6;
             payload(tx,write?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND,
-                    secondary?(write?0x30000000:0x40000000):(write?0x01000000:0x00020000),bytes,4);
+                    secondary?(write?0x30000000:0x40000000):(write?0x01000000:(phase==0?0x00010000:0x00020000)),bytes,4);
             fu3_bus::ScopedAccess access(tx,4,fu3_bus::Burst::Increment,false,independent_ids?i:0);
             transfer(phase,tx,tlm::TLM_OK_RESPONSE);
             ++completed;done.notify(sc_core::SC_ZERO_TIME);
@@ -83,7 +83,7 @@ struct Test : sc_core::sc_module, Checks {
                    std::string("HAS map: ")+row.name);
             for(auto offset:{std::uint64_t{0},row.size-4}) {
                 payload(tx,tlm::TLM_READ_COMMAND,row.base+offset,bytes,4);
-                fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_OK_RESPONSE);
+                fu3_bus::ScopedAccess access(tx,4,fu3_bus::Burst::Increment,false,0,true);transfer(row.name==std::string("IBEX_DBG")?2:1,tx,tlm::TLM_OK_RESPONSE);
                 expect(targets[i]->visits.back().address==offset,"independent target boundary");
             }
         }
@@ -176,7 +176,7 @@ struct Test : sc_core::sc_module, Checks {
             while(completed<12)wait(done);
             const unsigned limit=phase<2?2:phase==2?1:4;
             expect(fabric.peak_outstanding(cfg.initiators[phase].name)==limit,"bounded read/shared admission");
-            expect(targets[2]->peak==limit,"actual concurrent requests at SRAM obey master limit");
+            expect(targets[phase==0?1:2]->peak==limit,"actual concurrent requests at each CPU's permitted SRAM obey master limit");
             if(phase==3) {
                 expect(fabric.peak_outstanding("DMA0",true)==4,"independent DMA write admission");
                 expect(targets[3]->peak==4 && overlap,"four DMA reads and writes overlap at IPs");

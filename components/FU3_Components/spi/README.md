@@ -1,5 +1,8 @@
 # FU3 SPI0/1/2/3 - SystemC/TLM
 
+Common Spec v2.0 takes precedence over older endpoint restrictions. See the
+[updated model contract](docs/MODEL_CONTRACT.md) for byte strobes and remaining VP decisions.
+
 Functional SPI controller for VP register, serial-data, interrupt and DMA-flow
 verification, based on SPI m_spi_top HDS V1.0. The model provides master and slave
 operation, four clock modes, 4..32-bit frames, FIFO buffering, automatic/manual
@@ -41,8 +44,8 @@ complete wiring through the real FU3 bus, fake IRQ routes and a DMA stand-in.
 
 Firmware configures DIV, CS, DLY and CTRL while disabled, then enables the block
 and writes one word to TXDR per frame. Drain RXDR to prevent master backpressure.
-Clear sticky ISR bits by writing ones with lane zero enabled. TXDR deliberately
-ignores write strobes; RXDR always pops, including debug reads. The public
+Clear sticky ISR bits by writing ones with lane zero enabled. TXDR pushes one masked, zero-filled word for nonzero write strobes and does
+not push for zero strobes. RXDR still pops, including debug reads. The public
 [register header](include/fu3_spi/registers.h) is usable from C firmware.
 
 ## Build and validate

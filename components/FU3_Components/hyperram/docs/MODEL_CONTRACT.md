@@ -1,5 +1,14 @@
 # HyperRAM model contract — provisional VP ABI v1
 
+## Common Spec baseline (2026-10-21)
+
+The supplied FU3 Common Spec v2.0 workbook is the highest authority, followed
+by FU3 HAS v2.0 and the latest IP detail where higher-level documents are silent.
+See the bus [rebaseline decisions](../../bus/docs/COMMON_REBASELINE.md) for exact
+cross-IP choices, source conflicts and platform responsibilities. Earlier test
+results below retain their historical source baselines; current joint results
+are recorded in the bus validation document.
+
 The user authorized an implementation with explicit decisions for missing requirements. Evidence: controller spec v0.13, CSR proposal v0.1 (references parent v0.14), S80KS2564 datasheet 002-31341 Rev. C, and FU3 architecture v2.0. Private sources remain excluded from the repository. The source documents' RTL approval gates are not a claim of hardware approval for this VP.
 
 ## Established requirements and model boundary
@@ -29,7 +38,11 @@ Errors are sticky, with a level IRQ equal to ERRORS AND IRQ_ENABLE. The first fa
 
 ## Provisional controller CSR map
 
-All registers are 32-bit little-endian, aligned, full-strobe APB accesses. Narrow/sparse CSR requests receive adapter errors; AXI memory strobes remain independently supported. Reserved addresses read zero and ignore writes. Debug CSR reads are untimed/non-destructive; debug writes and memory DMI are unsupported.
+CSRs are aligned little-endian 32-bit words with Common Full strobes. Shadow
+storage merges enabled bytes internally; command/W1C values contain enabled
+bits only. Zero strobes cause no command. AXI memory strobes are independent;
+memory instruction requests are rejected as required by Common NX. Reserved
+CSRs read zero and ignore writes; debug CSR reads are untimed/non-destructive.
 
 | Offset | Register | Behavior |
 |---|---|---|

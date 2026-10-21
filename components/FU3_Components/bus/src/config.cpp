@@ -36,10 +36,15 @@ BusConfig BusConfig::fu3() {
             t.name=="DSRAM" || t.name=="AES" || t.name=="QSPI_XIP" || t.name=="HYPERBUS" || t.name=="AP_PLIC";
         if (t.name == "ROM") t.access = AccessPolicy::BootRom;
         if (t.name == "CVA6_ISRAM") t.access = AccessPolicy::Cva6Program;
+        if (t.name == "IBEX_ISRAM") t.access = AccessPolicy::IbexProgram;
+        if (t.name == "IBEX_DBG") t.access = AccessPolicy::DebugControl;
         if (t.name == "DSRAM") t.access = AccessPolicy::DataOnly;
-        // The current compact PLIC ABI places claim/complete at local 0x24.
-        // This is an endpoint safety policy, not a new register definition.
-        if (t.name == "AP_PLIC") t.strict_word_offsets = {0x24};
+        if (t.name == "CVA6_ISRAM" || t.name == "IBEX_ISRAM") t.debug_offset = 0xf000;
+        t.non_executable = t.name!="ROM" && t.name!="CVA6_ISRAM" &&
+            t.name!="IBEX_ISRAM" && t.name!="QSPI_XIP";
+        if (t.name == "AP_PLIC") t.strict_word_access = true;
+        if (t.name.rfind("TIMER",0)==0 || t.name.rfind("WDT",0)==0 ||
+            t.name=="I2C" || t.name=="RNG" || t.name=="AP_HBCTRL") t.word_interface=true;
     }
     return c;
 }
@@ -81,11 +86,14 @@ void BusConfig::validate() const {
             throw std::invalid_argument("Word interface must have aligned boundaries: " + target.name);
         if (!target.enabled) continue;
         if (target.access != AccessPolicy::Open && target.access != AccessPolicy::BootRom &&
-            target.access != AccessPolicy::Cva6Program && target.access != AccessPolicy::DataOnly)
+            target.access != AccessPolicy::Cva6Program && target.access != AccessPolicy::DataOnly &&
+            target.access != AccessPolicy::IbexProgram && target.access != AccessPolicy::DebugControl)
             throw std::invalid_argument("Invalid access policy: " + target.name);
         if (!target.size || target.base > max_address - target.size)
             throw std::invalid_argument("Invalid target range: " + target.name);
         const auto end = target.base + target.size;
+        if (target.debug_offset && (target.debug_offset>=target.size || target.debug_offset%4))
+            throw std::invalid_argument("Invalid debug partition: " + target.name);
         const bool apb = target.path == TargetPath::Peribus0Apb ||
                          target.path == TargetPath::Peribus1Apb;
         if (apb && target.preserve_burst)

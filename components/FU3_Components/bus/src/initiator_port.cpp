@@ -52,15 +52,32 @@ void InitiatorPort::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& 
     // Check the entire physical footprint before any beat or CSR side effect.
     if(!selected) { reject(tlm::TLM_ADDRESS_ERROR_RESPONSE); return; }
     const auto policy=selected->access;
+    const bool ibex=descriptor_.name=="IBEX", cva6=descriptor_.name=="CVA6";
+    const bool debug=access && access->debug;
     if((policy==AccessPolicy::BootRom && (descriptor_.name!="IBEX" || tx.is_write())) ||
-       (policy==AccessPolicy::Cva6Program && descriptor_.name=="IBEX" && tx.is_write() && !*staging_) ||
-       (policy==AccessPolicy::DataOnly && access && access->instruction)) {
+       (policy==AccessPolicy::Cva6Program && ibex && !*staging_) ||
+       (policy==AccessPolicy::IbexProgram && (cva6 || (ibex && tx.is_write() && !*staging_))) ||
+       (policy==AccessPolicy::DebugControl && descriptor_.name!="DBG" && !(ibex && debug)) ||
+       ((policy==AccessPolicy::DataOnly || selected->non_executable) && access && access->instruction)) {
         reject(tlm::TLM_COMMAND_ERROR_RESPONSE); return;
     }
     if((fixed?beat:length)>selected->size-(address-selected->base)) {
         reject(tlm::TLM_ADDRESS_ERROR_RESPONSE); return;
     }
     if(access && address%beat) { reject(tlm::TLM_ADDRESS_ERROR_RESPONSE); return; }
+    const auto footprint=fixed?beat:length;
+    const bool boot_data=ibex && *staging_ && !(access && access->instruction);
+    if(selected->debug_offset && address-selected->base+footprint>selected->debug_offset &&
+       (ibex || cva6) && ((tx.is_write() && !boot_data) || (!debug && !boot_data))) {
+        reject(tlm::TLM_COMMAND_ERROR_RESPONSE);return;
+    }
+    if(selected->strict_word_access) {
+        if(beat!=4 || address%4) {reject(tlm::TLM_BURST_ERROR_RESPONSE);return;}
+        if(const auto* enables=tx.get_byte_enable_ptr())
+            for(unsigned i=0;i<length;++i)if(enables[i%tx.get_byte_enable_length()]!=0xff) {
+                reject(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);return;
+            }
+    }
     // Validate every protected beat before the first possible target side effect.
     for (const auto offset : selected->strict_word_offsets) {
         const auto word=selected->base+offset;
@@ -81,7 +98,7 @@ void InitiatorPort::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& 
     auto& queue=ordering_[{tx.is_write(),access?access->ordering_id:0}];
     if(!queue) queue=std::make_unique<Fifo>();
     Fifo::Lease ordered(*queue);
-    if(policy==AccessPolicy::Cva6Program && descriptor_.name=="IBEX" && tx.is_write() && !*staging_) {
+    if((policy==AccessPolicy::Cva6Program || (policy==AccessPolicy::IbexProgram && tx.is_write())) && ibex && !*staging_) {
         reject(tlm::TLM_COMMAND_ERROR_RESPONSE); return;
     }
     if(!access || selected->preserve_burst) {
@@ -120,7 +137,7 @@ void InitiatorPort::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& 
             tx.set_byte_enable_ptr(lanes);tx.set_byte_enable_length(4);
         }
         {
-            ScopedAccess downstream(tx,widen?4:beat,Burst::Increment,access->instruction,access->ordering_id);
+            ScopedAccess downstream(tx,widen?4:beat,Burst::Increment,access->instruction,access->ordering_id,access->debug);
             out->b_transport(tx,delay);consume_delay(delay);
         }
         if(widen && tx.is_read() && tx.is_response_ok())

@@ -150,7 +150,7 @@ unsigned Spi::read(unsigned off,bool pop){
 }
 void Spi::write(unsigned off,unsigned value,unsigned mask){
     if(off>=48)return;
-    if(off==12){if(tx_.size()==depth_)flag(FU3_SPI_TXOVF);else tx_.push_back(value);return;}
+    if(off==12){if(!mask)return;if(tx_.size()==depth_)flag(FU3_SPI_TXOVF);else tx_.push_back(value&mask);return;}
     if(off==32){for(unsigned i=2;i<7;++i)if((mask&value&(1u<<i))&&!(has_set_[i]&&last_set_[i]==sc_core::sc_time_stamp()))regs_[8]&=~(1u<<i);return;}
     static constexpr unsigned masks[12]={0x1fff,0xffff,0x3f,0,0,0,0x7f7f,0x7f,0,0x7f7f03,0,0xffffffff};
     mask&=masks[off/4];regs_[off/4]=(regs_[off/4]&~mask)|(value&mask);
@@ -162,7 +162,6 @@ bool Spi::validate(tlm::tlm_generic_payload& t){
     unsigned n=t.get_data_length();auto a=t.get_address();
     if((n!=1&&n!=2&&n!=4)||t.get_streaming_width()<n)return fail(tlm::TLM_BURST_ERROR_RESPONSE);
     if(a>=65536||(n<4&&(a%n||(a&3)+n>4)))return fail(tlm::TLM_ADDRESS_ERROR_RESPONSE);
-    if(t.is_write()&&(a&~3ull)==12&&n!=4)return fail(tlm::TLM_BURST_ERROR_RESPONSE);
     if(auto* b=t.get_byte_enable_ptr()){if(!t.get_byte_enable_length())return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
         for(unsigned i=0;i<n;++i)if(b[i%t.get_byte_enable_length()]!=0&&b[i%t.get_byte_enable_length()]!=255)return fail(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);}
     return true;
@@ -182,11 +181,15 @@ void Spi::execute(tlm::tlm_generic_payload& t){
     t.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 void Spi::transport(tlm::tlm_generic_payload& t,sc_core::sc_time& delay){
-    const auto d=delay;delay=sc_core::SC_ZERO_TIME;wait(d+apb_);
+    const auto d=delay;delay=sc_core::SC_ZERO_TIME;wait(d);
+    // Incoming annotation precedes arrival. Reset during the APB setup or
+    // admission wait cancels work that has not reached the system domain.
+    const auto epoch=apb_epoch_,system=sys_epoch_;
+    wait(apb_);
     if(!validate(t))return;
     struct Guard{sc_core::sc_mutex& m;explicit Guard(sc_core::sc_mutex& x):m(x){m.lock();}~Guard(){m.unlock();}}guard(access_);
-    if(!reset_n.read()||!apb_reset_n.read()){t.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);return;}
-    const auto epoch=apb_epoch_,system=sys_epoch_;pending_=&t;
+    if(epoch!=apb_epoch_||system!=sys_epoch_||!reset_n.read()||!apb_reset_n.read()){t.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);return;}
+    pending_=&t;
     try{wait(complete_);}catch(...){if(pending_==&t)pending_=nullptr;throw;}
     wait(3*apb_);
     if(epoch!=apb_epoch_||system!=sys_epoch_||!apb_reset_n.read()||!reset_n.read())t.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);

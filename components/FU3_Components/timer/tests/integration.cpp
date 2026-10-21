@@ -38,8 +38,8 @@ struct Bench:sc_core::sc_module {
         reset_n=false;for(auto& g:gate)g=true;wait(3,sc_core::SC_NS);reset_n=true;
         for(unsigned i=0;i<4;++i)transfer(i,true,0,100+i);
         for(unsigned i=0;i<4;++i)expect(transfer(i,false,0)==100+i,"independent register state through both PERIBUS paths");
-        transfer(0,true,0,7,1,tlm::TLM_BURST_ERROR_RESPONSE);
-        expect(transfer(0,false,0)==100,"bus narrow write fails without changing timer");
+        transfer(0,true,0,7,1);
+        expect(transfer(0,false,0)==7,"bus narrow write selects the timer low byte under Common Full strobes");
         for(unsigned i=0;i<4;++i){
             transfer(i,true,8,4); // clear counter; disabled until configured
             transfer(i,true,0,4); // produces an IRQ even while disabled

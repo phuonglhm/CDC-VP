@@ -43,7 +43,7 @@ Native Windows DLL operation is not covered by the recorded Linux validation.
 3. Supply `ScopedAccess` for every default FU3 functional request. Identify fetches,
    beat sizes and ordering IDs correctly. Issue blocking transactions in threads.
 4. Check target width/strobe and side-effect contracts. Do not introduce generic
-   CSR read-modify-write. Timer full-word restrictions are documented in the
+   CSR read-modify-write. Common Full strobes override earlier Timer no-strobe restrictions; see the
    [Timer contract](../../timer/docs/MODEL_CONTRACT.md).
 5. Load images through the explicit debug backdoor or a permitted functional
    loader. Debug access bypasses policy and cannot demonstrate CPU access rights.
@@ -73,3 +73,9 @@ commit or push files. Existing staged user work remains unchanged.
 When changing the bus contract, update the relevant tests, this documentation and
 adapter expectations together. Keep explicit user decisions separate from HAS
 requirements and configurable VP assumptions.
+
+The authoritative [Common baseline](COMMON_REBASELINE.md) specifies the updated
+PERIBUS_1 path, CPU permissions, debug partition and provisional PLIC peer ABI.
+Supply trusted `Access::debug` metadata from CPU debug adapters. Instantiate
+IrqAdapter for pulse sources and acknowledge after service/before PLIC complete;
+this does not modify the out-of-scope PLIC/INTMAP implementation.

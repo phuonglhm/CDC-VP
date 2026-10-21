@@ -1,5 +1,14 @@
 # SPI functional model contract
 
+## Common Spec baseline (2026-10-21)
+
+The supplied FU3 Common Spec v2.0 workbook is the highest authority, followed
+by FU3 HAS v2.0 and the latest IP detail where higher-level documents are silent.
+See the bus [rebaseline decisions](../../bus/docs/COMMON_REBASELINE.md) for exact
+cross-IP choices, source conflicts and platform responsibilities. Earlier test
+results below retain their historical source baselines; current joint results
+are recorded in the bus validation document.
+
 Primary source: SPI m_spi_top HDS V1.0 (48 PDF pages). FU3 HAS v2.0 supplies the
 SoC address map and interrupt routes. References below are PDF page numbers.
 The model targets functional VP behavior, not RTL cycle or electrical compliance.
@@ -28,12 +37,10 @@ throws at construction. Reserved configuration bits read zero and ignore writes;
 RO writes have no effect and TXDR reads zero. Offsets 0x30..0xFFFF return zero and
 ignore writes with OK response, matching the no-PSLVERR decode behavior.
 
-Full-word operations ignore PADDR[1:0] as specified. The TLM adapter additionally
-accepts naturally aligned byte/halfword configuration accesses, placing bytes in
-their little-endian lanes. It rejects narrow TXDR writes because a short payload
-cannot specify the full PWDATA word which the IP consumes. This diagnostic is a
-VP adapter rule, not an APB PSLVERR assertion. A four-byte TXDR write pushes its
-complete payload even if all byte enables are zero. No read-modify-write is used.
+Full-word operations ignore PADDR[1:0] as in the HDS; aligned byte/halfword
+operations select little-endian lanes. Common Full strobes supersede the old
+TXDR exception: any nonzero write mask pushes one masked, zero-filled word,
+including narrow writes; zero strobes never push or overflow. No FIFO RMW occurs.
 
 Byte enables on configuration writes preserve disabled lanes. ISR W1C only
 acts through byte lane zero; level TXT/RXT cannot be cleared by writing ISR.
@@ -42,11 +49,9 @@ byte enables only select returned bytes. Empty reads return zero and set RXUDF.
 Full TX writes drop the new word and set TXOVF. `transport_dbg` supports untimed
 reads with these same read side effects; debug writes are rejected.
 
-Malformed commands, null data, invalid lengths/streaming, invalid byte-enable
-representation and addresses outside the 64-KiB aperture produce TLM diagnostics.
-No DMI or nonblocking transport is implemented. Functional transactions must run
-in SystemC threads. The bus's general Full strobe support does not override the
-documented TXDR exception in this IP.
+Malformed transports return TLM diagnostics; DMI and nonblocking transport are
+unsupported. Calls execute in SystemC threads. Common TXDR strobe behavior is
+an explicit override of the older HDS exception, as recorded in the rebaseline.
 
 ## Serial engine
 
@@ -124,6 +129,9 @@ flush interleavings are not claimed to reproduce every RTL race.
 
 System reset clears registers, FIFOs and serial/IRQ/DMA state asynchronously.
 APB reset only resets the transport side and preserves serial activity/configuration.
+Reset during APB setup or admission wait cancels a request before launch with
+GENERIC_ERROR and no target side effect; an epoch captured at arrival catches
+reset pulses that end before setup completes.
 An already launched request still commits once; if APB reset occurs before its
 response is delivered, the caller receives GENERIC_ERROR instead of a response
 being silently lost. Do not automatically retry such a side-effecting request.

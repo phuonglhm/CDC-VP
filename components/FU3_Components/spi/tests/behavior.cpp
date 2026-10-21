@@ -46,10 +46,12 @@ struct Bench:sc_core::sc_module,Checks {
         unsigned char lanes[4]={255,0,255,0};access(true,44,0xaabbccdd,lanes);expect(r(44)==0x00bb00dd,"DLY byte strobes");
         w(28,0x7f);expect(r(16)==0,"empty RXDR reads zero");wait(20,sc_core::SC_NS);expect(p.irq&&(r(32)&64),"underflow sticky interrupt");
         unsigned char none[4]={};access(true,32,64,none);expect(r(32)&64,"W1C requires lane zero");w(32,64);expect(!(r(32)&64),"W1C clears sticky cause");
-        cold();for(unsigned i=0;i<depth;++i)access(true,12,i,none); // TXDR ignores all strobes.
-        expect(((r(20)>>8)&127)==depth&&!(r(20)&4),"FIFO fills even with PSTRB zero");w(12,99);expect(r(32)&32,"TX overflow drops word and flags");
+        cold();access(true,12,0xffffffff,none);expect(((r(20)>>8)&127)==0,"zero TXDR strobes have no FIFO effect");
+        for(unsigned i=0;i<depth;++i)w(12,i);
+        expect(((r(20)>>8)&127)==depth&&!(r(20)&4),"FIFO fills with full strobes");w(12,99);expect(r(32)&32,"TX overflow drops word and flags");
         w(0,0xe0|1024);wait((depth+8)*10,sc_core::SC_NS);expect((r(20)&6)==6&&!(r(0)&1024),"TX flush drains and self clears");
-        access(true,12,7,nullptr,1,false,tlm::TLM_BURST_ERROR_RESPONSE);
+        access(true,12,7,nullptr,1,false,tlm::TLM_OK_RESPONSE);
+        expect(((r(20)>>8)&127)==1,"narrow TXDR write pushes one zero-extended byte frame");
 
         // Every frame-size encoding, bit order and CPOL/CPHA mode, with pin loopback.
         for(unsigned fsz=0;fsz<32;++fsz)for(unsigned mode=0;mode<4;++mode)for(unsigned lsb=0;lsb<2;++lsb){

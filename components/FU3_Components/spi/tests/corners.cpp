@@ -261,6 +261,15 @@ struct Corners : sc_core::sc_module, Checks {
     }
     void reset_writer(){while(true){wait(reset_start);access(true,FU3_SPI_TXDR,0x75,false,tlm::TLM_GENERIC_ERROR_RESPONSE);reset_completed=true;reset_done.notify(sc_core::SC_ZERO_TIME);}}
     void reset_phases(){
+        // A reset before launch must cancel TXDR instead of creating a new
+        // system-domain request after reset release. Exercise a sub-cycle pulse.
+        cold();off_edge();reset_completed=false;
+        reset_start.notify(sc_core::SC_ZERO_TIME);
+        wait(apb*0.2);p.apb_reset_n=false;
+        wait(apb*0.2);p.apb_reset_n=true;
+        while(!reset_completed)wait(reset_done);
+        expect(txlevel()==0,"APB reset during setup cancels TXDR before launch");
+        w(FU3_SPI_TXDR,0x76);expect(txlevel()==1,"fresh access works after canceled setup without replay");
         for(unsigned phase=0;phase<3;++phase){
             cold();off_edge();reset_completed=false;
             const auto commit=next_tick(sc_core::sc_time_stamp()+apb);

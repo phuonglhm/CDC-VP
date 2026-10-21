@@ -7,7 +7,7 @@ namespace fu3_bus {
 struct Region { std::string name; std::uint64_t begin, end; unsigned port; bool translate; };
 enum class TargetPath { SysBus1Axi, SysBus0Axi, Peribus0Apb, Peribus1Apb };
 enum class ArbitrationPolicy { Fifo };
-enum class AccessPolicy { Open, BootRom, Cva6Program, DataOnly };
+enum class AccessPolicy { Open, BootRom, Cva6Program, DataOnly, IbexProgram, DebugControl };
 struct InitiatorConfig {
     std::string name;
     unsigned outstanding = 1;
@@ -28,6 +28,9 @@ struct TargetConfig {
     // Side-effect words that must receive a complete word, never a widened subword.
     // Entries are local aligned offsets; every effective byte enable must be set.
     std::vector<std::uint64_t> strict_word_offsets{};
+    bool strict_word_access = false; // Complete endpoint requires aligned full-word beats.
+    bool non_executable = false;
+    std::uint64_t debug_offset = 0; // Nonzero: remaining upper partition is CPU debug code.
 };
 struct BusConfig {
     // All sockets and both buses use 32-bit data. Reject unsupported widths.

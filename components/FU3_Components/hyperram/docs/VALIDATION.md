@@ -1,5 +1,17 @@
 # Validation and remaining work
 
+## Common Spec rebaseline (2026-10-21)
+
+The current model passed the joint static/shared scoped regression and installed
+package checks recorded in the bus [validation matrix](../../bus/docs/VALIDATION.md).
+The full matrix passes 131/131 executions across the owned components, bus
+consumers and FX1 coexistence. Source precedence, selected behavior at conflicts
+and remaining platform requirements are in
+[COMMON_REBASELINE.md](../../bus/docs/COMMON_REBASELINE.md).
+
+The following older results retain their original source baselines. They do not
+override the current model contract or establish full firmware boot execution.
+
 Validated on 2026-10-20 using WSL Linux, GCC 15.2, SystemC 2.3.4, C++17, Release. Static and shared configurations each passed all seven CTest cases: direct HyperRAM behavior, HyperRAM through the FU3 bus, bus configuration, bus behavior, bus arbitration, bus contract, and zero-latency fairness. Installed consumers for both static and shared packages also configured, linked, elaborated and ran successfully. Test executables use `sc_main`, simulation watchdogs, and CTest timeouts.
 
 The initial two HyperRAM watchdog failures came from the test waiting on a join whose process had already terminated during reset. Guarding the wait with the remaining process count resolved both failures; the functional expectations remain unchanged. No issue exhausted three unsuccessful repair attempts.
