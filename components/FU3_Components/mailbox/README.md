@@ -1,7 +1,7 @@
 # FU3 MAILBOX - SystemC/TLM
 
-Functional model of the FU3 inter-CPU mailbox: one block with two APB endpoints (MAILBOX_CVA6, MAILBOX_IBEX), two 32-bit FIFOs of 32 words (CVA6 -> Ibex and Ibex -> CVA6), thresholds, sticky W1C interrupts and PSLVERR on invalid accesses.
-Addresses and the Ibex interrupt follow FU3 HAS v2.0. Registers follow the RTL team's IP_Feature_Spec until a mailbox HDS exists.
+Functional model of the FU3 inter-CPU mailbox: one block with two APB endpoints, port 0 for CPU0 (CVA6, MAILBOX_CVA6) and port 1 for CPU1 (Ibex, MAILBOX_IBEX), two 32-bit FIFOs of 32 words, thresholds, sticky W1C interrupts, PSLVERR on invalid accesses and one reset per port.
+Addresses and the Ibex interrupt follow FU3 HAS v2.0 and Common Spec v2.0. Registers and behavior follow the Mailbox HDS V1.
 See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for exact behavior and the open points.
 
 ## Layout
@@ -18,12 +18,13 @@ See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for exact behavior and the open 
 fu3_mailbox::Mailbox mailbox{"mailbox"};
 bus.target("MAILBOX_CVA6").bind(mailbox.cva6_socket);   // PERIBUS_1, 0x5002_0000, local offsets
 bus.target("MAILBOX_IBEX").bind(mailbox.ibex_socket);   // PERIBUS_0, 0x4404_0000, local offsets
-mailbox.reset_n(reset_n);
+mailbox.presetn0(rst_mailbox_cva6);                      // CRM SW_RST_N_1.mailbox_cva6 & system reset
+mailbox.presetn1(rst_mailbox_ibex);                      // CRM SW_RST_N_1.mailbox_ibex & system reset
 mailbox.irq_ibex(irq_mailbox_ibex);                      // -> intmap.sources[fu3_plic::kSrcMailboxIbex]
-mailbox.irq_cva6(irq_mailbox_cva6);                      // no consumer in HAS: CVA6 polls STATUS
+mailbox.irq_cva6(irq_mailbox_cva6);                      // no consumer in HAS v2.0: CVA6 polls STATUS
 ```
 
-Firmware: the sender writes FIFO_WR while STATUS.FULL is 0; the receiver reads FIFO_RD while STATUS.EMPTY is 0.
+Firmware: the sender writes FIFO_WR while STATUS.FULL is 0 and the receiver reads FIFO_RD while STATUS.EMPTY is 0.
 For interrupts, set RD_THRESHOLDS / WR_THRESHOLDS and IRQ_ENABLE, then clear IRQ_STATUS by writing 1s in the handler.
 
 ## Build and test

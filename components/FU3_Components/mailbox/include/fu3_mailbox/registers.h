@@ -2,11 +2,10 @@
 #include <stdint.h>
 
 // FU3 MAILBOX - offset/bit cho firmware
-// Địa chỉ: HAS v2.0 memory map. 
-// Offset/bit: tham khảo IP_Feature_Spec (MAILBOX V1.0)
-// chờ HDS
-#define FU3_MAILBOX_IBEX_BASE UINT32_C(0x44040000)   // MAILBOX_IBEX, PERIBUS_0
-#define FU3_MAILBOX_CVA6_BASE UINT32_C(0x50020000)   // MAILBOX_CVA6, PERIBUS_1
+// Address: HAS v2.0 & Common Spec v2.0 memory map
+// Offset/bit: Mailbox HDS V1
+#define FU3_MAILBOX_IBEX_BASE UINT32_C(0x44040000)   // MAILBOX_IBEX, PERIBUS_0, cổng 1 (CPU1)
+#define FU3_MAILBOX_CVA6_BASE UINT32_C(0x50020000)   // MAILBOX_CVA6, PERIBUS_1, cổng 0 (CPU0)
 
 #define FU3_MAILBOX_FIFO_WR_OFFSET       0x0000u   // WO: đẩy 1 word vào FIFO gửi
 #define FU3_MAILBOX_FIFO_RD_OFFSET       0x0008u   // RO: lấy word cũ nhất của FIFO nhận
@@ -30,4 +29,4 @@
 #define FU3_MAILBOX_IRQ_FIFO_RD_ERROR (1u << 28)   // Đọc khi FIFO nhận rỗng
 #define FU3_MAILBOX_IRQ_MASK          0xF0000000u
 
-#define FU3_MAILBOX_DEPTH 32u   // Số word mỗi FIFO (mặc định)
+#define FU3_MAILBOX_DEPTH 32u   // Số word mỗi FIFO (Default)

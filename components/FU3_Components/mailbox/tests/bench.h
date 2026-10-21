@@ -18,7 +18,7 @@ struct Bench : sc_core::sc_module {
     tlm_utils::simple_initiator_socket<Bench> cva6{"cva6"};
     tlm_utils::simple_initiator_socket<Bench> ibex{"ibex"};
     Mailbox dut{"dut"};
-    sc_core::sc_signal<bool> reset_n{"reset_n", true};
+    sc_core::sc_signal<bool> presetn0{"presetn0", true}, presetn1{"presetn1", true};
     sc_core::sc_signal<bool> irq_cva6{"irq_cva6"}, irq_ibex{"irq_ibex"};
     std::uint64_t base[2] = {0, 0};
     unsigned checks = 0, errors = 0;
@@ -29,7 +29,8 @@ struct Bench : sc_core::sc_module {
 
     SC_HAS_PROCESS(Bench);
     explicit Bench(sc_core::sc_module_name n, bool via_bus) : sc_module(n) {
-        dut.reset_n(reset_n);
+        dut.presetn0(presetn0);
+        dut.presetn1(presetn1);
         dut.irq_cva6(irq_cva6);
         dut.irq_ibex(irq_ibex);
 
@@ -120,21 +121,36 @@ struct Bench : sc_core::sc_module {
     bool wr_fails(Port p, std::uint32_t offset, std::uint32_t v) {
         return xfer(p, true, offset, v) == tlm::TLM_GENERIC_ERROR_RESPONSE;
     }
-    void settle() { sc_core::wait(1, sc_core::SC_NS); }
-    void send(Port p, std::uint32_t v) { wr(p, FU3_MAILBOX_FIFO_WR_OFFSET, v); }
-    std::uint32_t recv(Port p) { return rd(p, FU3_MAILBOX_FIFO_RD_OFFSET); }
-    std::uint32_t status(Port p) { return rd(p, FU3_MAILBOX_STATUS_OFFSET); }
-    std::uint32_t irq_status(Port p) { return rd(p, FU3_MAILBOX_IRQ_STATUS_OFFSET); }
-    bool irq(Port p) { settle(); return p == kCva6 ? irq_cva6.read() : irq_ibex.read(); }
+    void settle() { 
+        sc_core::wait(1, sc_core::SC_NS); 
+    }
+    void send(Port p, std::uint32_t v) { 
+        wr(p, FU3_MAILBOX_FIFO_WR_OFFSET, v); 
+    }
+    std::uint32_t recv(Port p) { 
+        return rd(p, FU3_MAILBOX_FIFO_RD_OFFSET); 
+    }
+    std::uint32_t status(Port p) { 
+        return rd(p, FU3_MAILBOX_STATUS_OFFSET); 
+    }
+    std::uint32_t irq_status(Port p) { 
+        return rd(p, FU3_MAILBOX_IRQ_STATUS_OFFSET); 
+    }
+    bool irq(Port p) { 
+        settle(); 
+        return p == kCva6 ? irq_cva6.read() : irq_ibex.read(); 
+    }
     void clear_irqs() {
         wr(kCva6, FU3_MAILBOX_IRQ_STATUS_OFFSET, ~0u);
         wr(kIbex, FU3_MAILBOX_IRQ_STATUS_OFFSET, ~0u);
     }
 
     void do_reset() {
-        reset_n = false;
+        presetn0 = false;
+        presetn1 = false;
         settle();
-        reset_n = true;
+        presetn0 = true;
+        presetn1 = true;
         settle();
     }
 
@@ -158,12 +174,12 @@ struct Bench : sc_core::sc_module {
             send(from, 0x1111'0000u + from);
             send(from, 0x2222'0000u + from);
             send(from, 0x3333'0000u + from);
-            check(!(status(to) & FU3_MAILBOX_STATUS_EMPTY), w + ": receiver not empty");
-            check(status(from) & FU3_MAILBOX_STATUS_EMPTY, w + ": sender's own receive FIFO still empty");
-            check(recv(to) == 0x1111'0000u + from, w + ": word 1 in order");
-            check(recv(to) == 0x2222'0000u + from, w + ": word 2 in order");
-            check(recv(to) == 0x3333'0000u + from, w + ": word 3 in order");
-            check(status(to) & FU3_MAILBOX_STATUS_EMPTY, w + ": receiver empty again");
+            check(!(status(to) & FU3_MAILBOX_STATUS_EMPTY), w + ": Receiver not empty");
+            check(status(from) & FU3_MAILBOX_STATUS_EMPTY, w + ": Sender's own receive FIFO still empty");
+            check(recv(to) == 0x1111'0000u + from, w + ": Word 1 in order");
+            check(recv(to) == 0x2222'0000u + from, w + ": Word 2 in order");
+            check(recv(to) == 0x3333'0000u + from, w + ": Word 3 in order");
+            check(status(to) & FU3_MAILBOX_STATUS_EMPTY, w + ": Receiver empty again");
         }
         // Threshold 0: word đầu đến là sườn lên receive, FIFO gửi rút về 0 là sườn lên send
         check(irq_status(kCva6) == (FU3_MAILBOX_IRQ_WR_THRESHOLD | FU3_MAILBOX_IRQ_RD_THRESHOLD), "CVA6: send and receive threshold edges");
@@ -174,28 +190,28 @@ struct Bench : sc_core::sc_module {
 
     void test_full_and_errors() {
         for (unsigned i = 0; i < FU3_MAILBOX_DEPTH; ++i) {
-            check(!(status(kCva6) & FU3_MAILBOX_STATUS_FULL), "not full before word " + std::to_string(i));
+            check(!(status(kCva6) & FU3_MAILBOX_STATUS_FULL), "Not full before word " + std::to_string(i));
             send(kCva6, 0xA000'0000u + i);
         }
         check(status(kCva6) & FU3_MAILBOX_STATUS_FULL, "FULL after DEPTH words");
         clear_irqs();
-        check(wr_fails(kCva6, FU3_MAILBOX_FIFO_WR_OFFSET, 0xDEAD'BEEFu), "write when full -> PSLVERR");
-        check(irq_status(kCva6) == FU3_MAILBOX_IRQ_FIFO_WR_ERROR, "write when full sets FIFO_WR_ERROR only on the writer");
-        check(irq_status(kIbex) == 0, "receiver IRQ_STATUS untouched by the writer's error");
+        check(wr_fails(kCva6, FU3_MAILBOX_FIFO_WR_OFFSET, 0xDEAD'BEEFu), "Write when FULL -> PSLVERR");
+        check(irq_status(kCva6) == FU3_MAILBOX_IRQ_FIFO_WR_ERROR, "Write when FULL sets FIFO_WR_ERROR only on the writer");
+        check(irq_status(kIbex) == 0, "Receiver IRQ_STATUS untouched by the writer's error");
         for (unsigned i = 0; i < FU3_MAILBOX_DEPTH; ++i)
-            check(recv(kIbex) == 0xA000'0000u + i, "full FIFO drains in order, word " + std::to_string(i));
+            check(recv(kIbex) == 0xA000'0000u + i, "FULL FIFO drains in order, word " + std::to_string(i));
         clear_irqs();
 
         std::uint32_t v = 0x1234;
         check(xfer(kIbex, false, FU3_MAILBOX_FIFO_RD_OFFSET, v) == tlm::TLM_GENERIC_ERROR_RESPONSE, "read when empty -> PSLVERR");
         check(v == 0, "read when empty returns 0");
-        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_FIFO_RD_ERROR, "read when empty sets FIFO_RD_ERROR");
+        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_FIFO_RD_ERROR, "Read when empty sets FIFO_RD_ERROR");
 
         // W1C: ghi 0 không đổi, ghi 1 bit chỉ xoá bit đó
         wr(kIbex, FU3_MAILBOX_IRQ_STATUS_OFFSET, 0);
-        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_FIFO_RD_ERROR, "W1C: writing 0 keeps the bit");
+        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_FIFO_RD_ERROR, "W1C: Writing 0 keeps the bit");
         wr(kIbex, FU3_MAILBOX_IRQ_STATUS_OFFSET, FU3_MAILBOX_IRQ_FIFO_WR_ERROR);
-        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_FIFO_RD_ERROR, "W1C: other bit keeps it");
+        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_FIFO_RD_ERROR, "W1C: Other bit keeps it");
         wr(kIbex, FU3_MAILBOX_IRQ_STATUS_OFFSET, FU3_MAILBOX_IRQ_FIFO_RD_ERROR);
         check(irq_status(kIbex) == 0, "W1C clears");
     }
@@ -206,20 +222,20 @@ struct Bench : sc_core::sc_module {
         wr(kIbex, FU3_MAILBOX_IRQ_ENABLE_OFFSET, FU3_MAILBOX_IRQ_RD_THRESHOLD);
         send(kCva6, 1);
         send(kCva6, 2);
-        check(!(status(kIbex) & FU3_MAILBOX_STATUS_RECV_THRESHOLD), "2 words: receive threshold inactive");
-        check(!irq(kIbex), "2 words: irq_ibex low");
+        check(!(status(kIbex) & FU3_MAILBOX_STATUS_RECV_THRESHOLD), "2 words: Receive threshold inactive");
+        check(!irq(kIbex), "2 words: IRQ_IBEX low");
         send(kCva6, 3);
-        check(status(kIbex) & FU3_MAILBOX_STATUS_RECV_THRESHOLD, "3 words: receive threshold active");
-        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_RD_THRESHOLD, "rising edge sets RD_THRESHOLD_IRQ");
+        check(status(kIbex) & FU3_MAILBOX_STATUS_RECV_THRESHOLD, "3 words: Receive threshold active");
+        check(irq_status(kIbex) == FU3_MAILBOX_IRQ_RD_THRESHOLD, "Rising edge sets RD_THRESHOLD_IRQ");
         check(rd(kIbex, FU3_MAILBOX_IRQ_PENDING_OFFSET) == FU3_MAILBOX_IRQ_RD_THRESHOLD, "IRQ_PENDING = STATUS & ENABLE");
-        check(irq(kIbex), "irq_ibex high");
-        check(!irq(kCva6), "irq_cva6 stays low");
+        check(irq(kIbex), "IRQ_IBEX high");
+        check(!irq(kCva6), "IRQ_CVA6 stays low");
 
         // Sticky: còn active, xoá xong không set lại vì không có sườn mới
         wr(kIbex, FU3_MAILBOX_IRQ_STATUS_OFFSET, FU3_MAILBOX_IRQ_RD_THRESHOLD);
         send(kCva6, 4);
-        check(irq_status(kIbex) == 0, "still above threshold: no new edge, no IRQ");
-        check(!irq(kIbex), "irq_ibex low after W1C");
+        check(irq_status(kIbex) == 0, "Still above threshold: no new edge, no IRQ");
+        check(!irq(kIbex), "IRQ_IBEX low after W1C");
 
         // Xuống dưới rồi lên lại -> sườn mới
         recv(kIbex);
@@ -232,8 +248,9 @@ struct Bench : sc_core::sc_module {
         wr(kIbex, FU3_MAILBOX_IRQ_ENABLE_OFFSET, 0);
         check(irq_status(kIbex) == FU3_MAILBOX_IRQ_RD_THRESHOLD, "Status kept with enable 0");
         check(rd(kIbex, FU3_MAILBOX_IRQ_PENDING_OFFSET) == 0, "Pending 0 with enable 0");
-        check(!irq(kIbex), "irq_ibex low with enable 0");
-        while (!(status(kIbex) & FU3_MAILBOX_STATUS_EMPTY)) recv(kIbex);
+        check(!irq(kIbex), "IRQ_IBEX low with enable 0");
+        while (!(status(kIbex) & FU3_MAILBOX_STATUS_EMPTY)) 
+            recv(kIbex);
         wr(kIbex, FU3_MAILBOX_RD_THRESHOLDS_OFFSET, 0);
         wr(kIbex, FU3_MAILBOX_IRQ_STATUS_OFFSET, ~0u);
     }
@@ -243,13 +260,13 @@ struct Bench : sc_core::sc_module {
         wr(kCva6, FU3_MAILBOX_WR_THRESHOLDS_OFFSET, 1);
         wr(kCva6, FU3_MAILBOX_IRQ_ENABLE_OFFSET, FU3_MAILBOX_IRQ_WR_THRESHOLD);
         clear_irqs();
-        check(status(kCva6) & FU3_MAILBOX_STATUS_SEND_THRESHOLD, "Empty send FIFO: send threshold active");
+        check(status(kCva6) & FU3_MAILBOX_STATUS_SEND_THRESHOLD, "Empty send FIFO: Send threshold active");
         check(irq_status(kCva6) == 0, "Threshold write keeps an already active level: no edge");
         send(kCva6, 1);
         send(kCva6, 2);
         send(kCva6, 3);
-        check(!(status(kCva6) & FU3_MAILBOX_STATUS_SEND_THRESHOLD), "3 words: send threshold inactive");
-        check(!irq(kCva6), "IRQ_CVA6  low");
+        check(!(status(kCva6) & FU3_MAILBOX_STATUS_SEND_THRESHOLD), "3 words: Aend threshold inactive");
+        check(!irq(kCva6), "IRQ_CVA6 low");
         recv(kIbex);
         check(irq_status(kCva6) == 0, "2 words left: still inactive");
         recv(kIbex);
@@ -332,15 +349,61 @@ struct Bench : sc_core::sc_module {
         check(irq(kCva6), "IRQ_CVA6 high before reset");
         send(kCva6, 3);
 
-        reset_n = false;
+        presetn0 = false;
+        presetn1 = false;
         settle();
         check(!irq_cva6.read(), "IRQ low while in reset");
         std::uint32_t v = 9;
         check(xfer(kCva6, true, FU3_MAILBOX_FIFO_WR_OFFSET, v) == tlm::TLM_OK_RESPONSE, "Write during reset: OK, ignored");
         check(xfer(kIbex, false, FU3_MAILBOX_FIFO_RD_OFFSET, v) == tlm::TLM_OK_RESPONSE && v == 0, "Read during reset: OK, 0");
-        reset_n = true;
+        presetn0 = true;
+        presetn1 = true;
         settle();
         check_reset_state("After reset");
+    }
+
+    // HDS 8.6: reset một cổng chỉ xoá thanh ghi cổng đó, cổng kia vẫn chạy
+    void test_port_reset() {
+        do_reset();
+        wr(kCva6, FU3_MAILBOX_WR_THRESHOLDS_OFFSET, 4);
+        wr(kCva6, FU3_MAILBOX_IRQ_ENABLE_OFFSET, FU3_MAILBOX_IRQ_FIFO_RD_ERROR);
+        wr(kIbex, FU3_MAILBOX_RD_THRESHOLDS_OFFSET, 2);
+        wr(kIbex, FU3_MAILBOX_IRQ_ENABLE_OFFSET, FU3_MAILBOX_IRQ_RD_THRESHOLD);
+        check(rd_fails(kCva6, FU3_MAILBOX_FIFO_RD_OFFSET), "CVA6 empty read");
+        check(irq(kCva6), "IRQ_CVA6 high");
+        send(kCva6, 0xA2);
+        send(kIbex, 0xB2);
+
+        presetn1 = false;   // Chỉ reset cổng Ibex
+        settle();
+        check(!irq_ibex.read(), "Ibex port reset: IRQ_IBEX low");
+        check(irq(kCva6), "Ibex port reset: IRQ_CVA6 unaffected");
+        check(rd(kCva6, FU3_MAILBOX_WR_THRESHOLDS_OFFSET) == 4 &&
+              rd(kCva6, FU3_MAILBOX_IRQ_ENABLE_OFFSET) == FU3_MAILBOX_IRQ_FIFO_RD_ERROR,
+              "Ibex port reset: CVA6 registers kept");
+        check(status(kCva6) == (FU3_MAILBOX_STATUS_EMPTY | FU3_MAILBOX_STATUS_SEND_THRESHOLD),
+              "Ibex port reset: both FIFOs emptied");
+        std::uint32_t v = 9;
+        check(xfer(kIbex, false, FU3_MAILBOX_STATUS_OFFSET, v) == tlm::TLM_OK_RESPONSE && v == 0,
+              "Ibex port reads 0 in reset");
+        send(kCva6, 0xA3);   // CVA6 vẫn ghi được trong lúc Ibex reset
+        presetn1 = true;
+        settle();
+        check(rd(kIbex, FU3_MAILBOX_RD_THRESHOLDS_OFFSET) == 0 && rd(kIbex, FU3_MAILBOX_IRQ_ENABLE_OFFSET) == 0,
+              "Ibex registers back to reset values");
+        check(irq_status(kIbex) == 0, "Release creates no threshold event");
+        check(recv(kIbex) == 0xA3, "Word written during the peer reset is kept");
+        check(irq(kCva6), "CVA6 IRQ still pending after Ibex reset");
+
+        presetn0 = false;   // Chỉ reset cổng CVA6
+        settle();
+        check(!irq_cva6.read() && rd(kIbex, FU3_MAILBOX_IRQ_STATUS_OFFSET) == 0, "CVA6 port reset: IRQ_CVA6 low");
+        presetn0 = true;
+        settle();
+        check(rd(kCva6, FU3_MAILBOX_WR_THRESHOLDS_OFFSET) == 0 && irq_status(kCva6) == 0,
+              "CVA6 registers back to reset values");
+        clear_irqs();
+        do_reset();
     }
 
     void run() {
@@ -354,6 +417,7 @@ struct Bench : sc_core::sc_module {
         test_invalid_access();
         test_debug();
         test_reset();
+        test_port_reset();
         sc_core::sc_stop();
     }
 };

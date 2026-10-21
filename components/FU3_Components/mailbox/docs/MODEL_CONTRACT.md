@@ -2,13 +2,15 @@
 
 ## Sources and scope
 
-FU3 HAS v2.0 is the specification: the block list (items 45-46) defines MAILBOX_CVA6 (APB4, PERIBUS_1) and MAILBOX_IBEX (APB, PERIBUS_0) as the two endpoints of inter-CPU messaging, the memory map places them at 0x5002_0000 and 0x4404_0000, and section 10.2 routes `irq_mailbox_ibex` to Ibex `irq_fast_i[14]`.
-HAS v2.0 has no register map and no mailbox HDS exists yet. Register offsets, fields and FIFO behavior follow the RTL team's IP_Feature_Spec (sheet MAILBOX, V1.0) as a temporary reference, pending mentor approval (obtained directly from the RTL team, not an issued specification). Every point where that sheet is wrong or silent is a VP choice listed below.
+Specification priority for FU3 (leader decision, 2026-10-20): FU3 HAS v2.0 and FTEL_FU3_Common_Spec v2.0 first, the IP HDS only where both are silent.
+HAS v2.0 and Common Spec v2.0 define MAILBOX_CVA6 (APB4, PERIBUS_1, 0x5002_0000) and MAILBOX_IBEX (APB, PERIBUS_0, 0x4404_0000) as the two endpoints of inter-CPU messaging, and HAS section 10.2 routes `irq_mailbox_ibex` to Ibex `irq_fast_i[14]`. Neither gives a register map.
+Registers, FIFO behavior, interrupts, errors and the per-port reset follow the Mailbox HDS V1 (FTEL_CDC_Mailbox_Hardware_Design_Specification_V1).
+Port 0 (CPU0) is CVA6 and port 1 (CPU1) is Ibex.
 The source documents are private and are not included in this package.
 
 ## Structure
 
-One `fu3_mailbox::Mailbox` with two target sockets: `cva6_socket` (port 0, CPU0) and `ibex_socket` (port 1, CPU1).
+One `fu3_mailbox::Mailbox` with two target sockets: `cva6_socket` (port 0, CPU0 = CVA6) and `ibex_socket` (port 1, CPU1 = Ibex), and one reset per port: `presetn0` and `presetn1` (HDS 6.1, 6.2).
 Two FIFOs of 32-bit words, depth `FU3_MAILBOX_DEPTH` = 32 (constructor argument): CVA6 -> Ibex and Ibex -> CVA6.
 For each port, the send FIFO is the one it writes and the receive FIFO is the one it reads.
 
@@ -37,23 +39,22 @@ Reset: FIFOs empty, all RW registers and IRQ_STATUS 0, so STATUS reads 0xA000_00
 
 - WR_THRESHOLD / RD_THRESHOLD set on a 0 -> 1 change of the matching STATUS bit, whatever caused it (push, pop by the other port, threshold write). Reset itself is not an edge.
 - With a threshold of 0, the first word arriving sets RD_THRESHOLD on the receiver and draining the send FIFO to empty sets WR_THRESHOLD on the sender.
-- `irq_cva6` / `irq_ibex` are levels: high while that port's IRQ_PENDING is nonzero and `reset_n` is high.
+- `irq_cva6` / `irq_ibex` are levels: high while that port's IRQ_PENDING is nonzero and that port is out of reset.
 - `irq_ibex` goes to INTMAP `kSrcMailboxIbex` (Ibex `irq_fast_i[14]`). HAS has no consumer for `irq_cva6`.
 
 ## Reset
 
-`reset_n` low clears both FIFOs and both ports, deasserts both IRQs, reads return 0 and writes are ignored with an OK response. The model is untimed: no APB wait state and no clock-domain crossing latency.
+- `presetn0` low resets port 0 (CVA6) and `presetn1` low resets port 1 (Ibex) (HDS 8.6). The port's IRQ_STATUS, IRQ_ENABLE and thresholds return to reset values, its IRQ is low, its reads return 0 and its writes are ignored with an OK response. The other port keeps its registers and keeps working.
+- Asserting either reset empties both FIFOs (HDS 3: no data persistence across endpoint reset). Words written by the other port while one port is held stay in the FIFO.
+- A port in reset records no events, and releasing a reset creates no threshold event: STATUS starts with SEND_THRESHOLD_ACTIVE = 1 and RECEIVE_THRESHOLD_ACTIVE = 0 for empty FIFOs (HDS 8.6 step 3).
+- The model is untimed: no APB wait state and no clock-domain crossing latency.
 
 ## VP choices and open questions
 
 | Topic | VP choice | Status |
 | --- | --- | --- |
-| CTRL.EN at 0x000 | Not modeled: the row is the sheet template (same row in other sheets) and collides with FIFO_WR at 0x000 | Ask for the HDS register map |
-| FIFO_WR access "W0" | Write-only | Sheet typo |
-| IRQ_PENDING[29] formula uses bit 30 | IRQ_STATUS[29] & IRQ_ENABLE[29] | Sheet typo |
-| Port 0/1 to CPU | Port 0 = CVA6 (CPU0 sheet), port 1 = Ibex (CPU1 sheet) | Confirm |
-| Which accesses raise PSLVERR | Full/empty FIFO, size, alignment, PSTRB, unmapped, WO read, RO write | Sheet says "illegal or invalid accesses" only |
-| FIFO depth | 32 words | Sheet default, configurable |
-| CVA6 mailbox interrupt | `irq_cva6` provided, not routed | HAS Table 11-1 has no PLIC source: CVA6 polls |
-| Reset domains | One `reset_n` for the whole block | CRM sheet has separate mailbox_cva6 / mailbox_ibex resets and gates |
-| Timing | Untimed and one APB wait state and CDC latency not modeled | Functional model |
+| FIFOs on a one-port reset | Both FIFOs emptied when either reset asserts | HDS: "Data persistence across endpoint reset" unsupported, no exact rule |
+| Threshold width | 32-bit RW (HDS register table) | HDS test plan reads back 5-bit values |
+| Offsets 0x1000 and above | PSLVERR like other unmapped offsets | HDS ADDR_WIDTH = 12, HAS window 64 KiB |
+| CVA6 mailbox interrupt | `irq_cva6` provided, not routed | HAS and Common Spec give MAILBOX_CVA6 no PLIC source: CVA6 polls |
+| Timing | Untimed: one APB wait state and CDC latency not modeled | Functional model |

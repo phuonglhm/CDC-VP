@@ -1,5 +1,6 @@
 #pragma once
-// FU3 MAILBOX: 1 khối, 2 cổng APB (MAILBOX_CVA6, MAILBOX_IBEX), 2 FIFO 32-bit hai chiều
+// FU3 MAILBOX (Mailbox HDS V1): 1 khối, 2 cổng APB, 2 FIFO 32-bit hai chiều
+// Cổng 0 = CPU0 (CVA6, MAILBOX_CVA6), cổng 1 = CPU1 (Ibex, MAILBOX_IBEX)
 // Bus đưa vào offset cục bộ của từng cổng
 #include <cstdint>
 #include <deque>
@@ -17,10 +18,11 @@ class Mailbox : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<Mailbox> cva6_socket{"cva6_socket"};   // MAILBOX_CVA6, PERIBUS_1
     tlm_utils::simple_target_socket<Mailbox> ibex_socket{"ibex_socket"};   // MAILBOX_IBEX, PERIBUS_0
-    sc_core::sc_in<bool> reset_n{"reset_n"};
+    sc_core::sc_in<bool> presetn0{"presetn0"};   // Reset cổng 0 (CPU0, CVA6), CRM mailbox_cva6
+    sc_core::sc_in<bool> presetn1{"presetn1"};   // Reset cổng 1 (CPU1, Ibex), CRM mailbox_ibex
 
     // Mức cao khi IRQ_PENDING != 0. irq_ibex -> INTMAP irq_fast_i[14]
-    // irq_cva6: HAS chưa nối vào đâu (PLIC không có source cho mailbox)
+    // IRQ_CVA6: HAS chưa nối vào đâu (PLIC không có source cho mailbox)
     sc_core::sc_out<bool> irq_cva6{"irq_cva6"};
     sc_core::sc_out<bool> irq_ibex{"irq_ibex"};
 
@@ -43,7 +45,10 @@ private:
 
     std::uint32_t status(Port p) const;
     void refresh();                       // Bắt sườn threshold và báo update
-    void reset_state();
+    bool last_rst_n_[2] = {true, true};
+
+    bool out_of_reset(Port p) const { return (p == kCva6 ? presetn0 : presetn1).read(); }
+    void latch_thresholds();
     void on_reset();
     void update();                        // Process duy nhất lái irq
     void b_transport_cva6(tlm::tlm_generic_payload& tx, sc_core::sc_time&) { access(kCva6, tx, false); }
