@@ -1,6 +1,6 @@
 # SYSCSR specification traceability
 
-Source: private FU3_SYSCSR_v1.xlsx (sheet SYSCSR), reviewed 2026-10-19. Checks live in `tests/bench.h` and `behavior.cpp` binds directly and `integration.cpp` uses the FU3 bus. The expected-register table in the bench was generated from the spreadsheet, not from the model source.
+Source: private FU3 HAS v2.0, FTEL_FU3_Common_Spec v2.0 and FU3_SYSCSR_v1.xlsx (sheet SYSCSR), reviewed 2026-10-21. Checks live in `tests/bench.h` and `behavior.cpp` binds directly and `integration.cpp` uses the FU3 bus. The expected-register table in the bench was generated from the spreadsheet, not from the model source.
 
 | Source | Behavior | Verification |
 | --- | --- | --- |
@@ -8,7 +8,7 @@ Source: private FU3_SYSCSR_v1.xlsx (sheet SYSCSR), reviewed 2026-10-19. Checks l
 | Register table, reset column | Reset value of all 51 registers | Reset-value read of every register |
 | Register table, type column | RW/RO masks of all fields, reserved bits read zero | Write all-ones and all-zeros to every register, read back |
 | Write Strobe = 4 | Partial writes by byte lane | Byte, halfword and sparse-PSTRB writes and halfword read of lane 2 |
-| syscsr_status | Live RO strap/test bits, not latched | Drive ports, read 0x15 and write ignored |
+| HAS 11 / syscsr_status | Straps captured at reset release, test bits live, RO | Pins follow while in reset, captured at release, later pin changes ignored, test_mode live, write ignored |
 | syscsr_sys_ctrl | sw_reset_req / sw_global_rst_req levels to CRM, not self-clearing | Outputs follow bits 0/4 and jtagmux bits stored only |
 | syscsr_cpu_ctrl / cpu_systick | Reserved, read zero, write ignored | Part of the mask check |
 | pad_ctrl_8 reset | Complement of pad_ctrl_5.dr | Reset values of all four sides |

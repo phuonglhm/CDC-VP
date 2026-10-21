@@ -1,7 +1,8 @@
 # FU3 SYSCSR - SystemC/TLM
 
 Functional model of the FU3 system control/status registers (`m_fpt_syscsr`):
-IO pad configuration, live boot/mode/test strap status, software reset requests to CRM, oscillator and ROM control. See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for exact behavior, VP choices and open specification questions.
+IO pad configuration, boot/mode straps captured at reset release and live test status, software reset requests to CRM, oscillator and ROM control.
+See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for exact behavior, VP choices and open specification questions.
 
 ## Layout
 
@@ -19,7 +20,7 @@ bus.target("SYSCSR").bind(syscsr.socket);     // PERIBUS_0, 0x4401_0000, local o
 syscsr.reset_n(reset_n);
 syscsr.boot(boot); 
 syscsr.mode_0(mode_0); 
-syscsr.mode_1(mode_1);   // IO_PAD straps (live)
+syscsr.mode_1(mode_1);   // IO_PAD straps (captured at reset release)
 syscsr.test_mode(io_pad.test_mode); 
 syscsr.test_mode_sel(io_pad.test_select);
 syscsr.sw_reset_req(crm_sw_reset_req);               // level, CRM detects rising edge

@@ -1,5 +1,5 @@
 #pragma once
-// Test reset value, mask rw/ro, byte lane/PSTRB, status live, sys_ctrl -> CRM, reset_n và lỗi truy cập
+// Test reset value, mask rw/ro, byte lane/PSTRB, strap chốt lúc nhả reset, sys_ctrl -> CRM, reset_n và lỗi truy cập
 // Dùng chung cho behavior.cpp (nối thẳng) và integration.cpp (qua bus FU3, định nghĩa FU3_SYSCSR_WITH_BUS).
 #include <fu3_syscsr/syscsr.h>
 
@@ -197,17 +197,34 @@ struct Bench : sc_core::sc_module {
         check(xfer(true, 0x10, v, 4, strb) == tlm::TLM_OK_RESPONSE, "PSTRB Write");
         check(rd(0x10) == 0x11ABBE44, "PSTRB Lanes 0,3");
 
-        // syscsr_status live
+        // syscsr_status: strap chốt lúc nhả reset, test_mode live
         check(rd(0x70) == 0, "Status 0");
 
-        boot = true; 
-        mode_1 = true; 
+        boot = true;
+        mode_1 = true;
         test_mode_sel = true;
         sc_core::wait(1, sc_core::SC_NS);
-        check(rd(0x70) == 0x15, "Status live");
+        check(rd(0x70) == 0x10, "Straps held after reset release, test_mode_sel live");
+
+        reset_n = false;
+        sc_core::wait(1, sc_core::SC_NS);
+        check(rd(0x70) == 0x15, "Straps follow the pins while reset_n is low");
+        mode_0 = true;
+        sc_core::wait(1, sc_core::SC_NS);
+        reset_n = true;
+        sc_core::wait(1, sc_core::SC_NS);
+        check(rd(0x70) == 0x17, "Straps captured at reset release");
+        boot = false;
+        mode_0 = false;
+        mode_1 = false;
+        test_mode = true;
+        sc_core::wait(1, sc_core::SC_NS);
+        check(rd(0x70) == 0x1F, "Captured straps ignore later pin changes, test_mode live");
+        test_mode = false;
+        sc_core::wait(1, sc_core::SC_NS);
 
         wr(0x70, 0);
-        check(rd(0x70) == 0x15, "Status RO");
+        check(rd(0x70) == 0x17, "Status RO");
 
         // sys_ctrl -> CRM
         wr(0x74, ~0u);
