@@ -60,7 +60,7 @@ int sc_main(int argc, char** argv) {
             ++checks;
         }
         std::cout << "SPEC_PASS trace" << bits << " checks=" << checks
-                  << " source=HDS:p11-12+FIPS197:C.1/C.3 scope=all-literal-stages-and-round-keys\n";
+                  << " source=HDS:p10-11+FIPS197:C.1/C.3 scope=all-literal-stages-and-round-keys\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "TEST_ERROR " << e.what() << '\n'; return 2;

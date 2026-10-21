@@ -1,6 +1,6 @@
 # Register map
 
-The PDF pp.14-17 uses local CSR **indices**, not an agreed software byte map.
+The 2026-10-21 PDF pp.13-16 uses local CSR **indices**, not an agreed software byte map.
 The VP defines byte offset = index * 4 (AES-R03 resolution for simulation).
 Add SoC base `0x40000000` when accessing through the FU3 bus.
 
@@ -45,7 +45,9 @@ no-ops. Disabled read lanes retain the caller's bytes.
 `ResultReadback::ObservedRtlMux` changes only result readback: RESULT1/2 read
 zero, RESULT0 and RESULT3 return the least-significant word. RESULT0 is an
 inference from the PDF's assignment of 128-bit `result_reg` to a 32-bit read
-path. This option does not emulate the wrapper's address/reset defects.
+path. This option does not emulate the wrapper's address defect or the old
+reset defect still listed in Appendix B. Reset follows section 6.2: synchronous
+active-low. Reset values/retention remain model choices.
 
 Malformed commands, lengths/streaming widths, addresses and byte enables
 return the corresponding TLM error. A null data pointer, reset cancellation

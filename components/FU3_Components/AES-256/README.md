@@ -1,19 +1,36 @@
 # FU3 AES-128 / AES-256 SystemC/TLM VP
 
 Functional single-block AES peripheral based on the supplied
-`FTEL_CDC_IP_AES_Specification (1).pdf` (23 pages). Supports AES-128/256
+`FTEL_CDC_IP_AES_Specification.pdf` (22 pages, supplied 2026-10-21). Supports AES-128/256
 encryption and decryption, key expansion, INIT/NEXT, READY/VALID polling,
 write-only key/input registers and byte strobes. No external crypto library
 is needed.
 
+## Specification baseline
+
+This component uses the following supplied AES specification:
+
+| Item | Baseline |
+| --- | --- |
+| Document | `FTEL_CDC_IP_AES_Specification.pdf` (22 pages) |
+| Latest revision in document history (p.3) | **V2.0 (April 03, 2026)** |
+| Version on cover | V1.0 (March 20, 2026) |
+| Reviewed against this model | October 21, 2026 |
+| SHA-256 | `b468e39173e614d0c682c39b43eb6aebc7e269d1830375955cb2b55ad5a8b31f` |
+
+The cover and revision history disagree. V2.0 is the latest revision listed
+in the history; the filename and SHA-256 above identify the exact PDF used
+for this model. See [spec decisions](docs/spec-decisions.md) for unresolved
+specification conflicts.
+
 **This is a firmware-oriented VP profile, not an exact model of the delivered
-RTL wrapper.** The PDF explicitly records unresolved reset polarity, CSR
-address translation and result decode defects (AES-R01..R06, p.18).
+RTL wrapper.** Section 6.2 (p.10) now specifies synchronous active-low reset,
+which the model already uses. Appendix B (p.17) still describes the old reset
+defect; CSR address translation and result decode also remain unresolved.
 The choices below allow firmware to process and read a complete AES block.
 See [registers](docs/registers.md) and [spec decisions](docs/spec-decisions.md).
 
-HDS requirement mappings are stored in `tests/hds-requirements.json`.
-The test runner writes verification results to `build/fu3-aes/`.
+CTest logs and source coverage are stored under `build/`.
 Unresolved HDS items and current model conventions are documented in
 [spec-decisions.md](docs/spec-decisions.md).
 
@@ -58,7 +75,7 @@ ctest --test-dir build/fu3-aes -L '^reference$' --output-on-failure
 ```
 
 Only the seven core tests with literal FIPS 197 expectations (explicitly
-referenced by HDS p.8) issue `SPEC_PASS/FAIL`. OpenSSL results never issue
+referenced by HDS p.7) issue `SPEC_PASS/FAIL`. OpenSSL results never issue
 SPEC verdicts. Existing MMIO/bus tests depend on unresolved reset/address/result
 policies and therefore remain POLICY/REFERENCE evidence, not HDS sign-off.
 

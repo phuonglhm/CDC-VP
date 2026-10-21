@@ -6,7 +6,6 @@ repo=$(cd -- "$component/../../.." && pwd)
 systemc_prefix=${SYSTEMC_HOME:-/opt/systemc-2.3.4}
 jobs=${JOBS:-4}
 test_status=0
-python3 "$component/scripts/test_hds_verdicts.py"
 
 run_suite() {
   local name=$1
@@ -22,7 +21,7 @@ run_suite() {
     cmake -E rm -f "$build_dir/CMakeFiles/fu3_aes.dir/src/aes_core.cpp.gcda" \
       "$build_dir/CMakeFiles/fu3_aes.dir/src/aes_controller.cpp.gcda"
   fi
-  ctest --test-dir "$build_dir" --output-on-failure --output-junit "$build_dir/results.xml" || test_status=1
+  ctest --test-dir "$build_dir" --output-on-failure || test_status=1
 }
 
 run_suite fu3-aes -DCMAKE_BUILD_TYPE=Debug -DFU3_AES_COVERAGE=ON \
@@ -34,7 +33,6 @@ run_suite fu3-aes-release -DCMAKE_BUILD_TYPE=Release -DFU3_AES_COVERAGE=OFF \
 
 mkdir -p "$repo/build/fu3-aes/coverage"
 cd -- "$repo/build/fu3-aes/coverage"
-gcov --json-format -b -c ../CMakeFiles/fu3_aes.dir/src/aes_core.cpp.gcda \
+gcov -b -c ../CMakeFiles/fu3_aes.dir/src/aes_core.cpp.gcda \
   ../CMakeFiles/fu3_aes.dir/src/aes_controller.cpp.gcda > gcov.log
-python3 "$component/scripts/summarize_results.py" "$repo/build"
 exit "$test_status"

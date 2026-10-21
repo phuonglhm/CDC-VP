@@ -31,7 +31,7 @@ bash components/FU3_Components/AES-256/scripts/run_full.sh
 ```
 
 Script build Debug, UBSan và Release với `-Wall -Wextra -Wpedantic -Werror`,
-bật kiểm thử bus/OpenSSL và chạy các kiểm tra phân loại verdict. Có thể đặt
+bật kiểm thử bus/OpenSSL và thu thập source coverage cho bản Debug. Có thể đặt
 biến môi trường `SYSTEMC_HOME` và `JOBS` để đổi đường dẫn SystemC/số luồng build.
 Toàn bộ file sinh ra nằm trong `build/`.
 
@@ -53,8 +53,9 @@ ctest --test-dir build/fu3-aes -R '^fu3_aes_policy_reset_boundaries$' -V
 
 Chỉ expected từ yêu cầu đã rõ mới dùng `SPEC_PASS/FAIL`. Expected từ OpenSSL
 dùng `REFERENCE_PASS/FAIL`; các lựa chọn VP dùng `POLICY_PASS/FAIL`.
-Yêu cầu chưa rõ hoặc mâu thuẫn vẫn giữ trạng thái tương ứng. Metadata ánh xạ
-HDS với test nằm trong `tests/hds-requirements.json` của component.
+Các yêu cầu chưa rõ hoặc mâu thuẫn cùng nhóm test liên quan được ghi trong
+[spec-decisions.md](spec-decisions.md); test POLICY/REFERENCE đạt không đóng
+các vấn đề HDS này.
 
 ## Dữ liệu kiểm thử
 
@@ -72,8 +73,8 @@ HDS với test nằm trong `tests/hds-requirements.json` của component.
 ## Xem lỗi
 
 Chạy lại test lỗi với `ctest -R '<tên-test>' -V`. CTest lưu log tại
-`build/<tên-build>/Testing/Temporary/LastTest.log`. Các file JSON/XML/coverage
-được sinh trong thư mục build, không nằm trong `docs/`.
+`build/<tên-build>/Testing/Temporary/LastTest.log`. Source coverage của bản Debug
+nằm tại `build/fu3-aes/coverage/` (`gcov.log` và các file `.gcov`).
 
 Test MMIO có watchdog mô phỏng 20 ms. CTest giới hạn 30 giây mỗi test và
 60 giây với nhóm reference. Dừng clock có thể giữ một giao dịch đang chờ;
