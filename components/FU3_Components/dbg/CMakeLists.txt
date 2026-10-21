@@ -11,7 +11,7 @@ if(NOT TARGET SystemC::systemc)
   find_package(SystemCLanguage CONFIG REQUIRED)
 endif()
 
-add_library(fu3_dbg src/dm.cpp src/dtm.cpp)
+add_library(fu3_dbg src/dm.cpp src/jtag2axi.cpp)
 add_library(fu3::dbg ALIAS fu3_dbg)
 
 set_target_properties(fu3_dbg PROPERTIES EXPORT_NAME dbg POSITION_INDEPENDENT_CODE ON WINDOWS_EXPORT_ALL_SYMBOLS ON)
@@ -19,7 +19,7 @@ set_target_properties(fu3_dbg PROPERTIES EXPORT_NAME dbg POSITION_INDEPENDENT_CO
 target_compile_features(fu3_dbg PUBLIC cxx_std_17)
 target_include_directories(fu3_dbg PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_link_libraries(fu3_dbg PUBLIC SystemC::systemc)
-# fu3_bus/access.h (header-only) để gắn Access cho truy cập SBA trên cổng DBG
+# fu3_bus/access.h (header-only) để gắn Access cho truy cập AXI của cầu JTAG2AXI4 trên cổng DBG
 target_include_directories(fu3_dbg PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../bus/include>)
 
 if(NOT MSVC)

@@ -1,19 +1,24 @@
 # DBG specification traceability
 
-Source: FU3 HAS v2.0 and RISC-V External Debug Support 0.13.2, reviewed 2026-10-20. Checks live in `tests/bench.h`. Every DM access goes through the JTAG DTM. `behavior.cpp` connects SBA to a bench memory and `integration.cpp` uses the DBG master port of the FU3 bus. Harts are bench fakes implementing `DebugHart`.
+Source: FU3 HAS v2.0, FTEL_FU3_Common_Spec v2.0 and RISC-V External Debug Support 0.13.2, reviewed 2026-10-21. Checks live in `tests/bench.h`. `behavior.cpp` routes the bridge directly to the DM and a memory, `integration.cpp` uses the FU3 bus.
 
 | Source | Behavior | Verification |
 | --- | --- | --- |
-| Debug Spec 6.1.2 | IR values, IDCODE after Test-Logic-Reset, BYPASS for others | DR lengths for IDCODE, DMI, BYPASS 0x00/0x1F/0x05 and IDCODE bit 0 |
-| Debug Spec 6.1.4-6.1.5 | dtmcs fields, 41-bit dmi, result of the previous access | version, abits, dmistat and previous dmcontrol read returned by the next scan and dmihardreset |
-| Debug Spec 3.12.2 dmactive | DM inactive at reset, dmactive 0 resets it | Writes ignored before activation and reset of dmcontrol, data0, cmderr, sbcs, ndmreset, halt requests |
-| Debug Spec 3.12.1-3.12.2 | dmstatus, havereset, ackhavereset | Per-hart havereset, platform hart reset |
-| Debug Spec 3.5, 3.12.2 | haltreq, resumereq, resumeack, haltsum0 | Halt each hart, haltsum0, resumereq ignored with haltreq, resume, resumeack, resumereq on a running hart |
-| Debug Spec 3.6.1.1, 3.12.6 | Access Register, cmderr rules | GPR and CSR read/write on the selected hart, transfer 0, aarsize 64, postexec, cmdtype 1, FPR, running hart, cmderr W1C and blocking |
-| Debug Spec 3.12.2 hartsel | 20-bit hartsel, nonexistent harts | Hart 5 nonexistent and cmderr 4 and 0xFFFFF read back |
-| Debug Spec 3.12.2 ndmreset, HAS 6.5.3 | ndmreset output, havereset on all harts | Output high/low, havereset on both harts |
-| Debug Spec 3.10, HAS Table 7-1 | SBA, 32-bit only | Write, autoincrement burst, readonaddr/readondata block read, sbaccess 8-bit -> 4, blocking while sberror, W1C, misaligned -> 3, unmapped -> 2, slave error -> 7 |
-| HAS memory map, bus policy | DBG reaches DSRAM and boot ROM is Ibex-only | Integration: SBA through the DBG port and ROM read -> sberror 7 |
+| HAS 3.1 (CMD_IDCODE, IEEE 1149.1) | IDCODE after Test-Logic-Reset, bit 0 = 1 | DR length and value |
+| HAS 3.1 (CMD_BYPASS) | 1-bit bypass for CMD_BYPASS and unused IRs | Three IR values |
+| HAS 3.1 (CMD_ADDR, address register) | 32-bit address, captured and loaded | Capture after load, cleared by Test-Logic-Reset |
+| HAS 3.1 (CMD_DATA, data register) | 32-bit AXI read and write at the address, auto-increment | DSRAM write and read back, block write and block read, scan without read/write does not access |
+| HAS 3.1 (CMD_STATUS, status register) | Sticky error bits, W1C | Misaligned, unmapped (DECERR), slave error (SLVERR), W1C clear |
+| HAS Table 7-1, Common BUS INTF | AXI4 master on the DBG port, 32-bit beats | Integration bench: bridge on the DBG initiator, DSRAM through SYSBUS_1, boot ROM denied (SLVERR) |
+| Common MemoryMap 0x1A11_0000 | DM control aperture | All DM checks go through the bridge into the IBEX_DBG window, DMI register n at 4 x n, upper window reads 0 |
+| HAS v2, Table 11-2, 10.2 | debug_req_i of both CPUs from DBG | Haltreq drives the selected hart only |
+| Debug Spec 3.12.1-3.12.2 | dmcontrol / dmstatus | Activation, inactive DM ignores writes, version 2, authenticated |
+| Debug Spec 3.12.2 | havereset, ackhavereset | Power-on, platform reset, ndmreset |
+| Debug Spec 3.5 | Halt, resume, resumeack, haltsum0 | Halt one hart, both harts, resume ignored with haltreq, resume of a running hart |
+| Debug Spec 3.6.1.1 | Access Register | GPR and CSR read/write, unsupported size/postexec/cmdtype, FPR rejected, running hart |
+| Debug Spec 3.12.2 | hartsel 20 bits, nonexistent hart | hart 5 nonexistent, hartsello/hi |
+| HAS 6.5.3 | ndmreset to CRM | Output follows dmcontrol.ndmreset and sets havereset |
+| Debug Spec 3.12.2 | dmactive = 0 resets the DM | dmcontrol, ndmreset, halt requests, data0, cmderr, sbcs 0 |
 | Packaging | Public SystemC dependency and install/export | Static/shared consumers run the behavior bench via find_package |
 
-Not covered: real CVA6/Ibex harts (phase 2), triggers and single step, DEBUG_EN, and the open questions in [MODEL_CONTRACT.md](MODEL_CONTRACT.md).
+Not covered: TAP state sequencing and TCK timing, real CVA6/Ibex harts (ISS debug mode), and the open questions in [MODEL_CONTRACT.md](MODEL_CONTRACT.md).

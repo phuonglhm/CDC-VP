@@ -1,11 +1,14 @@
 #pragma once
-// Test JTAG DTM, dmcontrol/dmstatus 2 hart, halt/resume, abstract Access Register, cmderr, ndmreset, dmactive, SBA
-// Dùng chung cho behavior.cpp (SBA nối thẳng bộ nhớ) và integration.cpp (SBA qua cổng DBG của bus FU3, định nghĩa FU3_DBG_WITH_BUS)
-#include <fu3_dbg/dtm.h>
+// Test cầu JTAG2AXI4 (CMD_IDCODE/ADDR/DATA/STATUS/BYPASS), truy cập hệ thống, Debug Module tại 0x1A11_0000:
+// dmcontrol/dmstatus 2 hart, halt/resume, abstract Access Register, cmderr, ndmreset, dmactive
+// Dùng chung cho behavior.cpp (router nối thẳng) và integration.cpp (qua cổng DBG của bus FU3, định nghĩa FU3_DBG_WITH_BUS)
+#include <fu3_dbg/dm.h>
+#include <fu3_dbg/jtag2axi.h>
 
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <tlm_utils/simple_initiator_socket.h>
 #include <tlm_utils/simple_target_socket.h>
 
 #ifdef FU3_DBG_WITH_BUS
@@ -14,7 +17,7 @@
 
 using namespace fu3_dbg;
 
-// Hart giả định : halt ngay khi có yêu cầu, giữ GPR/CSR. Hart thật (CVA6/Ibex) cài DebugHart ở wrapper
+// Hart giả định: halt ngay khi có yêu cầu, giữ GPR/CSR. Hart thật (CVA6/Ibex) cài DebugHart ở wrapper
 struct FakeHart : DebugHart {
     bool request = false, is_halted = false;
     unsigned resumes = 0;
@@ -22,18 +25,18 @@ struct FakeHart : DebugHart {
 
     void set_halt_request(bool r) override {
         request = r;
-        if (r) 
+        if (r)
             is_halted = true;
     }
     void resume() override { is_halted = false; ++resumes; }
     bool halted() const override { return is_halted; }
     bool access_register(std::uint16_t regno, bool write, std::uint32_t& value) override {
         std::uint32_t* reg = nullptr;
-        if (regno < 0x1000) 
+        if (regno < 0x1000)
             reg = &csr[regno];
-        else if (regno < 0x1020) 
+        else if (regno < 0x1020)
             reg = &gpr[regno - 0x1000];
-        else 
+        else
             return false;   // FPR... không có
         if (write) {
             if (reg != &gpr[0]) *reg = value;
@@ -44,33 +47,26 @@ struct FakeHart : DebugHart {
     }
 };
 
-// Bộ nhớ 64 KiB tại DSRAM. Offset 0xFFF0 trả lỗi slave
+constexpr std::uint32_t kDsram = 0x0100'0000;
+
+// Bộ nhớ 64 KiB tại DSRAM (offset cục bộ). Offset 0xFFF0 trả lỗi slave
 struct Memory : sc_core::sc_module {
     tlm_utils::simple_target_socket<Memory> socket{"socket"};
     unsigned char mem[0x10000] = {};
-    bool absolute = true;   // Nối thẳng: địa chỉ tuyệt đối 
-                            // Qua bus: offset cục bộ
 
-    explicit Memory(sc_core::sc_module_name n) : sc_module(n) { 
-            socket.register_b_transport(this, &Memory::b_transport); 
+    explicit Memory(sc_core::sc_module_name n) : sc_module(n) {
+        socket.register_b_transport(this, &Memory::b_transport);
     }
 
     void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time&) {
-        std::uint64_t a = tx.get_address();
-        if (absolute) {
-            if (a < 0x0100'0000 || a >= 0x0101'0000) {
-                tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE); 
-                return; 
-            }
-            a -= 0x0100'0000;
+        const std::uint64_t a = tx.get_address();
+        if (a == 0xFFF0) {
+            tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
+            return;
         }
-        if (a == 0xFFF0) { 
-            tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE); 
-            return; 
-        }
-        if (tx.is_write()) 
+        if (tx.is_write())
             std::memcpy(&mem[a], tx.get_data_ptr(), tx.get_data_length());
-        else 
+        else
             std::memcpy(tx.get_data_ptr(), &mem[a], tx.get_data_length());
         tx.set_response_status(tlm::TLM_OK_RESPONSE);
     }
@@ -81,12 +77,34 @@ struct Memory : sc_core::sc_module {
     }
 };
 
-constexpr std::uint32_t kDsram = 0x0100'0000;
+// Nối thẳng không qua bus: giải mã DM 0x1A11_0000 (4 KiB) và DSRAM (64 KiB), còn lại lỗi địa chỉ
+struct Router : sc_core::sc_module {
+    tlm_utils::simple_target_socket<Router> in{"in"};
+    tlm_utils::simple_initiator_socket<Router> dm{"dm"}, ram{"ram"};
+
+    explicit Router(sc_core::sc_module_name n) : sc_module(n) {
+        in.register_b_transport(this, &Router::b_transport);
+    }
+    void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& t) {
+        const std::uint64_t a = tx.get_address();
+        if (a >= FU3_DBG_DM_BASE && a < FU3_DBG_DM_BASE + 0x1000) {
+            tx.set_address(a - FU3_DBG_DM_BASE);
+            dm->b_transport(tx, t);
+        } else if (a >= kDsram && a < kDsram + 0x10000) {
+            tx.set_address(a - kDsram);
+            ram->b_transport(tx, t);
+        } else {
+            tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
+            return;
+        }
+        tx.set_address(a);
+    }
+};
 
 struct Bench : sc_core::sc_module {
     FakeHart cva6, ibex;
     DebugModule dm;
-    Dtm dtm;
+    Jtag2Axi jtag{"jtag"};
     Memory memory{"memory"};
     sc_core::sc_signal<bool> ndmreset{"ndmreset"};
     unsigned checks = 0, errors = 0;
@@ -94,35 +112,32 @@ struct Bench : sc_core::sc_module {
 
 #ifdef FU3_DBG_WITH_BUS
     fu3_bus::BusSystem* fabric = nullptr;
+    Memory rom_sink{"rom_sink"};
+#else
+    Router router{"router"};
 #endif
 
     SC_HAS_PROCESS(Bench);
     Bench(sc_core::sc_module_name n, bool bus)
-        : sc_module(n), dm("dm", {&cva6, &ibex}), dtm(dm), via_bus(bus) {
+        : sc_module(n), dm("dm", {&cva6, &ibex}), via_bus(bus) {
         dm.ndmreset(ndmreset);
 
 #ifdef FU3_DBG_WITH_BUS
-        if (bus) {
-            auto cfg = fu3_bus::BusConfig::fu3();
-            for (auto& t : cfg.targets)
-                t.enabled = t.name == "DSRAM" || t.name == "ROM";
-            fabric = new fu3_bus::BusSystem("fabric", cfg);
-            dm.sba.bind(fabric->initiator("DBG"));
-            fabric->target("DSRAM").bind(memory.socket);
-            fabric->target("ROM").bind(rom_sink.socket);
-            memory.absolute = false;
-        } else
+        auto cfg = fu3_bus::BusConfig::fu3();
+        for (auto& t : cfg.targets)
+            t.enabled = t.name == "DSRAM" || t.name == "ROM" || t.name == "IBEX_DBG";
+        fabric = new fu3_bus::BusSystem("fabric", cfg);
+        jtag.axi.bind(fabric->initiator("DBG"));
+        fabric->target("IBEX_DBG").bind(dm.socket);
+        fabric->target("DSRAM").bind(memory.socket);
+        fabric->target("ROM").bind(rom_sink.socket);
+#else
+        jtag.axi.bind(router.in);
+        router.dm.bind(dm.socket);
+        router.ram.bind(memory.socket);
 #endif
-
-        {
-            dm.sba.bind(memory.socket);
-        }
         SC_THREAD(run);
     }
-
-#ifdef FU3_DBG_WITH_BUS
-    Memory rom_sink{"rom_sink"};
-#endif
 
     void check(bool ok, const std::string& what) {
         ++checks;
@@ -132,24 +147,48 @@ struct Bench : sc_core::sc_module {
         }
     }
 
-    // Mọi truy cập DM đi qua JTAG DTM
+    // Truy cập AXI qua cầu JTAG2AXI4
+    void set_address(std::uint32_t a) {
+        jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+        jtag.scan_dr(a);
+    }
+    void axi_write(std::uint32_t a, std::uint32_t v) {
+        set_address(a);
+        jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+        jtag.scan_dr(FU3_DBG_DATA_WRITE | v);
+    }
+    std::uint32_t axi_read(std::uint32_t a) {
+        set_address(a);
+        jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+        jtag.scan_dr(FU3_DBG_DATA_READ);
+        return static_cast<std::uint32_t>(jtag.scan_dr(0));
+    }
+    std::uint32_t status(std::uint32_t clear = 0) {
+        jtag.scan_ir(FU3_DBG_IR_CMD_STATUS);
+        return static_cast<std::uint32_t>(jtag.scan_dr(clear));
+    }
+
+    // Mọi truy cập DM đi qua JTAG2AXI4 vào cửa sổ 0x1A11_0000
     std::uint32_t dmi_rd(std::uint8_t a) {
-        dtm.scan_ir(FU3_DBG_IR_DMI);
-        dtm.scan_dr((std::uint64_t(a) << 34) | FU3_DBG_DMI_OP_READ);
-        const std::uint64_t r = dtm.scan_dr(FU3_DBG_DMI_OP_NOP);
-        check((r & 3) == 0, "DMI op status success");
-        return static_cast<std::uint32_t>(r >> 2);
+        const std::uint32_t v = axi_read(FU3_DBG_DM_BASE + FU3_DBG_DM_OFFSET(a));
+        check(status() == 0, "DM read: no bridge error");
+        return v;
     }
     void dmi_wr(std::uint8_t a, std::uint32_t v) {
-        dtm.scan_ir(FU3_DBG_IR_DMI);
-        dtm.scan_dr((std::uint64_t(a) << 34) | (std::uint64_t(v) << 2) | FU3_DBG_DMI_OP_WRITE);
+        axi_write(FU3_DBG_DM_BASE + FU3_DBG_DM_OFFSET(a), v);
     }
     void select(unsigned hart, std::uint32_t extra = 0) {
         dmi_wr(FU3_DBG_DMCONTROL, FU3_DBG_DMCONTROL_DMACTIVE | FU3_DBG_DMCONTROL_HARTSEL(hart) | extra);
     }
-    std::uint32_t cmderr() { return (dmi_rd(FU3_DBG_ABSTRACTCS) >> 8) & 7; }
-    void clear_cmderr() { dmi_wr(FU3_DBG_ABSTRACTCS, FU3_DBG_ABSTRACTCS_CMDERR_MASK); }
-    void command(std::uint32_t cmd) { dmi_wr(FU3_DBG_COMMAND, cmd); }
+    std::uint32_t cmderr() { 
+        return (dmi_rd(FU3_DBG_ABSTRACTCS) >> 8) & 7; 
+    }
+    void clear_cmderr() { 
+        dmi_wr(FU3_DBG_ABSTRACTCS, FU3_DBG_ABSTRACTCS_CMDERR_MASK); 
+    }
+    void command(std::uint32_t cmd) { 
+        dmi_wr(FU3_DBG_COMMAND, cmd); 
+    }
     std::uint32_t read_reg(std::uint16_t regno) {
         command(FU3_DBG_CMD_AARSIZE_32 | FU3_DBG_CMD_TRANSFER | regno);
         return dmi_rd(FU3_DBG_DATA0);
@@ -158,41 +197,79 @@ struct Bench : sc_core::sc_module {
         dmi_wr(FU3_DBG_DATA0, v);
         command(FU3_DBG_CMD_AARSIZE_32 | FU3_DBG_CMD_TRANSFER | FU3_DBG_CMD_WRITE | regno);
     }
-    std::uint32_t sberror() { return (dmi_rd(FU3_DBG_SBCS) >> 12) & 7; }
-    void clear_sberror() { dmi_wr(FU3_DBG_SBCS, (dmi_rd(FU3_DBG_SBCS) & ~0u) | FU3_DBG_SBCS_SBERROR_MASK); }
 
     void test_jtag() {
-        dtm.test_logic_reset();
-        check(dtm.dr_length() == 32, "Test-Logic-Reset selects IDCODE (32-bit DR)");
-        const std::uint64_t id = dtm.scan_dr(0);
+        jtag.test_logic_reset();
+        check(jtag.dr_length() == 32, "Test-Logic-Reset selects CMD_IDCODE (32-bit DR)");
+        const std::uint64_t id = jtag.scan_dr(0);
         check(id == FU3_DBG_IDCODE && (id & 1), "IDCODE value, bit 0 = 1");
-        dtm.scan_ir(FU3_DBG_IR_DTMCS);
-        const std::uint32_t cs = static_cast<std::uint32_t>(dtm.scan_dr(0));
-        check((cs & 0xF) == 1, "DTMCS.VERSION = 1 (0.13)");
-        check(((cs >> 4) & 0x3F) == 7, "DTMCS.ABITS = 7");
-        check(((cs >> 10) & 3) == 0, "DTMCS.DMISTAT = 0");
-        dtm.scan_ir(FU3_DBG_IR_DMI);
-        check(dtm.dr_length() == 41, "DMI DR is abits + 34 = 41 bits");
-        for (std::uint8_t ir : {std::uint8_t(0x00), std::uint8_t(0x1F), std::uint8_t(0x05)}) {
-            dtm.scan_ir(ir);
-            check(dtm.dr_length() == 1, "IR " + std::to_string(ir) + " is BYPASS");
+        jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+        check(jtag.dr_length() == 32, "CMD_ADDR DR 32 bits");
+        jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+        check(jtag.dr_length() == 34, "CMD_DATA DR 34 bits");
+        jtag.scan_ir(FU3_DBG_IR_CMD_STATUS);
+        check(jtag.dr_length() == 32, "CMD_STATUS DR 32 bits");
+        check(jtag.scan_dr(0) == 0, "STATUS 0 after reset");
+        for (std::uint8_t ir : {std::uint8_t(FU3_DBG_IR_CMD_BYPASS), std::uint8_t(0x00), std::uint8_t(0x10)}) {
+            jtag.scan_ir(ir);
+            check(jtag.dr_length() == 1 && jtag.scan_dr(1) == 0, "IR " + std::to_string(ir) + " is BYPASS, captures 0");
         }
+        jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+        jtag.scan_dr(0x1234'5678);
+        check(jtag.scan_dr(0) == 0x1234'5678, "CMD_ADDR captures the loaded address");
+        jtag.test_logic_reset();
+        jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+        check(jtag.scan_dr(0) == 0, "Test-Logic-Reset clears the address");
+    }
 
-        // Kết quả DMI là của lần scan trước, DMIHARDRESET bỏ nó
-        dmi_wr(FU3_DBG_DMCONTROL, FU3_DBG_DMCONTROL_DMACTIVE);
-        dtm.scan_dr((std::uint64_t(FU3_DBG_DMCONTROL) << 34) | FU3_DBG_DMI_OP_READ);
-        const std::uint64_t prev = dtm.scan_dr((std::uint64_t(FU3_DBG_DMSTATUS) << 34) | FU3_DBG_DMI_OP_READ);
-        check(prev == ((std::uint64_t(FU3_DBG_DMCONTROL) << 34) | (std::uint64_t(FU3_DBG_DMCONTROL_DMACTIVE) << 2)),
-              "A DMI scan returns the previous access: address and data of the dmcontrol read");
-        dtm.scan_ir(FU3_DBG_IR_DTMCS);
-        dtm.scan_dr(FU3_DBG_DTMCS_DMIHARDRESET);
-        dtm.scan_ir(FU3_DBG_IR_DMI);
-        check(dtm.scan_dr(FU3_DBG_DMI_OP_NOP) == 0, "DMIHARDRESET drops the pending DMI result");
-        dmi_wr(FU3_DBG_DMCONTROL, 0);
+    void test_system_access() {
+        axi_write(kDsram + 0x10, 0xDEAD'BEEFu);
+        check(memory.word(0x10) == 0xDEAD'BEEFu, "Write to DSRAM through JTAG2AXI4");
+        check(axi_read(kDsram + 0x10) == 0xDEAD'BEEFu, "Read back");
+        check(status() == 0, "No error");
+
+        // Address tăng 4 sau mỗi truy cập: ghi/đọc liên tiếp
+        set_address(kDsram + 0x20);
+        jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+        for (std::uint32_t i = 0; i < 3; ++i) 
+            jtag.scan_dr(FU3_DBG_DATA_WRITE | (0x100 + i));
+        check(memory.word(0x20) == 0x100 && memory.word(0x24) == 0x101 && memory.word(0x28) == 0x102, "Address auto-increments: block write");
+        jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+        check(jtag.scan_dr(kDsram + 0x20) == kDsram + 0x2C, "Address advanced by 4 per access");
+        jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+        jtag.scan_dr(FU3_DBG_DATA_READ);
+        check(static_cast<std::uint32_t>(jtag.scan_dr(FU3_DBG_DATA_READ)) == 0x100, "Block read word 0");
+        check(static_cast<std::uint32_t>(jtag.scan_dr(FU3_DBG_DATA_READ)) == 0x101, "Block read word 1");
+        check(static_cast<std::uint32_t>(jtag.scan_dr(0)) == 0x102, "Block read word 2, no access");
+        jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+        check(jtag.scan_dr(0) == kDsram + 0x2C, "A scan without read/write does not access");
+
+        // Lỗi: sticky trong STATUS, ghi 1 để xoá
+        axi_write(kDsram + 0x42, 0x55);
+        check(status() == FU3_DBG_STATUS_ALIGN, "Misaligned address -> ALIGN, no access");
+        check(memory.word(0x40) == 0, "Misaligned write stores nothing");
+        status(FU3_DBG_STATUS_ALIGN);
+        check(status() == 0, "STATUS W1C clears");
+        axi_read(0x0200'0000u);
+        check(status() == FU3_DBG_STATUS_DECERR, "Unmapped address -> DECERR");
+        status(FU3_DBG_STATUS_DECERR);
+        axi_write(kDsram + 0xFFF0, 1);
+        check(status() == FU3_DBG_STATUS_SLVERR, "Slave error -> SLVERR");
+        status(FU3_DBG_STATUS_SLVERR);
+#ifdef FU3_DBG_WITH_BUS
+        axi_read(0x0000'0000u);
+        check(status() == FU3_DBG_STATUS_SLVERR, "Boot ROM is Ibex-only on the bus -> SLVERR");
+        status(FU3_DBG_STATUS_SLVERR);
+#endif
+        set_address(FU3_DBG_DM_BASE + 0x800);
+        jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+        jtag.scan_dr(FU3_DBG_DATA_WRITE | 0xFFFF'FFFFu);
+        jtag.scan_dr(FU3_DBG_DATA_READ);
+        check(jtag.scan_dr(0) == 0 && status() == 0, "DM window above the DMI registers reads 0");
     }
 
     void test_activation() {
-        check(dmi_rd(FU3_DBG_DMCONTROL) == 0, "_ower-on: DMCONTROL 0, DM inactive");
+        check(dmi_rd(FU3_DBG_DMCONTROL) == 0, "Power-on: DMCONTROL 0, DM inactive");
         const std::uint32_t st = dmi_rd(FU3_DBG_DMSTATUS);
         check((st & 0xF) == 2 && (st & FU3_DBG_DMSTATUS_AUTHENTICATED), "DMSTATUS: version 2, authenticated");
         dmi_wr(FU3_DBG_DATA0, 0x1234);
@@ -261,7 +338,7 @@ struct Bench : sc_core::sc_module {
         check(cmderr() == FU3_DBG_CMDERR_NOTSUPPORTED, "Aarsize 64-bit -> cmderr 2");
         dmi_wr(FU3_DBG_DATA0, 0x77);
         command(FU3_DBG_CMD_AARSIZE_32 | FU3_DBG_CMD_TRANSFER | FU3_DBG_REGNO_GPR(5));
-        check(dmi_rd(FU3_DBG_DATA0) == 0x77, "COmmand ignored while cmderr != 0");
+        check(dmi_rd(FU3_DBG_DATA0) == 0x77, "Command ignored while cmderr != 0");
         dmi_wr(FU3_DBG_ABSTRACTCS, 1u << 8);
         check(cmderr() == FU3_DBG_CMDERR_NOTSUPPORTED, "Cmderr W1C: other bit keeps it");
         clear_cmderr();
@@ -275,7 +352,7 @@ struct Bench : sc_core::sc_module {
         command(FU3_DBG_CMD_AARSIZE_32 | FU3_DBG_CMD_TRANSFER | 0x1020);
         check(cmderr() == FU3_DBG_CMDERR_EXCEPTION, "FPR regno -> cmderr 3");
         clear_cmderr();
-        select(1);   // hart 1 đang chạy
+        select(1);   // Hart 1 đang chạy
         command(FU3_DBG_CMD_AARSIZE_32 | FU3_DBG_CMD_TRANSFER | FU3_DBG_REGNO_GPR(5));
         check(cmderr() == FU3_DBG_CMDERR_HALTRESUME, "Running hart -> cmderr 4");
         clear_cmderr();
@@ -307,55 +384,6 @@ struct Bench : sc_core::sc_module {
         select(1, FU3_DBG_DMCONTROL_ACKHAVERESET);
     }
 
-    void test_sba() {
-        select(0);
-        check(dmi_rd(FU3_DBG_SBCS) == 0x2004'0404u, "SBCS: version 1, sbaccess 2, sbasize 32, 32-bit access only");
-        dmi_wr(FU3_DBG_SBADDRESS0, kDsram + 0x10);
-        dmi_wr(FU3_DBG_SBDATA0, 0xDEAD'BEEFu);
-        check(memory.word(0x10) == 0xDEAD'BEEFu, "SBA write to DSRAM");
-        check(dmi_rd(FU3_DBG_SBADDRESS0) == kDsram + 0x10, "No autoincrement by default");
-
-        dmi_wr(FU3_DBG_SBCS, FU3_DBG_SBCS_SBACCESS(2) | FU3_DBG_SBCS_SBAUTOINCREMENT);
-        dmi_wr(FU3_DBG_SBADDRESS0, kDsram + 0x20);
-        for (std::uint32_t i = 0; i < 3; ++i) dmi_wr(FU3_DBG_SBDATA0, 0x100 + i);
-        check(memory.word(0x20) == 0x100 && memory.word(0x24) == 0x101 && memory.word(0x28) == 0x102, "Autoincrement write burst");
-        check(dmi_rd(FU3_DBG_SBADDRESS0) == kDsram + 0x2C, "Address advanced by 4 per access");
-
-        dmi_wr(FU3_DBG_SBCS, FU3_DBG_SBCS_SBACCESS(2) | FU3_DBG_SBCS_SBREADONADDR | FU3_DBG_SBCS_SBAUTOINCREMENT | FU3_DBG_SBCS_SBREADONDATA);
-        dmi_wr(FU3_DBG_SBADDRESS0, kDsram + 0x20);
-        check(dmi_rd(FU3_DBG_SBDATA0) == 0x100, "Readonaddr then sbdata0");
-        check(dmi_rd(FU3_DBG_SBDATA0) == 0x101, "Readondata fetches the next word");
-        check(dmi_rd(FU3_DBG_SBDATA0) == 0x102, "Readondata block read");
-        check(sberror() == 0, "No sberror");
-
-        dmi_wr(FU3_DBG_SBCS, FU3_DBG_SBCS_SBACCESS(0));
-        dmi_wr(FU3_DBG_SBADDRESS0, kDsram + 0x40);
-        dmi_wr(FU3_DBG_SBDATA0, 0x55);
-        check(sberror() == FU3_DBG_SBERROR_SIZE, "8-bit access -> sberror 4 (DBG port is 32-bit only)");
-        check(memory.word(0x40) == 0, "Rejected access writes nothing");
-        dmi_wr(FU3_DBG_SBCS, FU3_DBG_SBCS_SBACCESS(2));
-        dmi_wr(FU3_DBG_SBDATA0, 0x66);
-        check(memory.word(0x40) == 0, "Accesses blocked while sberror != 0");
-        clear_sberror();
-        check(sberror() == 0, "SBERROR W1C clears");
-
-        dmi_wr(FU3_DBG_SBCS, FU3_DBG_SBCS_SBACCESS(2) | FU3_DBG_SBCS_SBREADONADDR);
-        dmi_wr(FU3_DBG_SBADDRESS0, kDsram + 0x42);
-        check(sberror() == FU3_DBG_SBERROR_ALIGNMENT, "Misaligned -> sberror 3");
-        clear_sberror();
-        dmi_wr(FU3_DBG_SBADDRESS0, 0x0200'0000u);
-        check(sberror() == FU3_DBG_SBERROR_BADADDR, "Unmapped address -> sberror 2");
-        clear_sberror();
-        dmi_wr(FU3_DBG_SBADDRESS0, kDsram + 0xFFF0);
-        check(sberror() == FU3_DBG_SBERROR_OTHER, "Slave error -> sberror 7");
-        clear_sberror();
-#ifdef FU3_DBG_WITH_BUS
-        dmi_wr(FU3_DBG_SBADDRESS0, 0x0000'0000u);
-        check(sberror() == FU3_DBG_SBERROR_OTHER, "Boot ROM is Ibex-only on the bus -> sberror 7");
-        clear_sberror();
-#endif
-        dmi_wr(FU3_DBG_SBCS, FU3_DBG_SBCS_SBACCESS(2));
-    }
 
     void test_deactivate() {
         select(0, FU3_DBG_DMCONTROL_HALTREQ | FU3_DBG_DMCONTROL_NDMRESET);
@@ -368,18 +396,18 @@ struct Bench : sc_core::sc_module {
         check(!ndmreset.read(), "DMACTIVE 0 drops ndmreset");
         check(!cva6.request && !ibex.request, "DMACTIVE 0 clears halt requests");
         check(dmi_rd(FU3_DBG_DATA0) == 0 && cmderr() == 0, "DMACTIVE 0 resets data0 and cmderr");
-        check(dmi_rd(FU3_DBG_SBCS) == 0x2004'0404u, "DMACTIVE 0 resets sbcs");
+        check(dmi_rd(FU3_DBG_SBCS) == 0, "SBCS reads 0: no System Bus Access in the DM");
     }
 
     void run() {
         test_jtag();
+        test_system_access();
         test_activation();
         test_havereset();
         test_halt_resume();
         test_abstract();
         test_hartsel();
         test_ndmreset();
-        test_sba();
         test_deactivate();
         sc_core::sc_stop();
     }

@@ -1,27 +1,32 @@
 #pragma once
 #include <stdint.h>
 
-// FU3 DBG - địa chỉ DMI và field theo RISC-V External Debug Support 0.13.2
-// JTAG IR theo Debug Spec 6.1.2. IDCODE: HAS chưa có, tạm theo IP_Feature_Spec (sheet DBG)
+// FU3 DBG: cầu JTAG2AXI4 (HAS v2.0 3.1) + Debug Module RISC-V 0.13.2 (debug CPU, HAS 2 / Table 11-2)
+// Mã lệnh JTAG và độ rộng DR: HAS chưa có => giả định VP choice, chờ chốt
+// IDCODE: HAS chưa có, tạm theo IP_Feature_Spec (sheet DBG)
 
 // JTAG instruction (IR 5 bit)
-#define FU3_DBG_IR_BYPASS0  0x00u
-#define FU3_DBG_IR_IDCODE   0x01u
-#define FU3_DBG_IR_DTMCS    0x10u
-#define FU3_DBG_IR_DMI      0x11u
-#define FU3_DBG_IR_BYPASS   0x1Fu
-#define FU3_DBG_IDCODE      UINT32_C(0x00000DB3)
+#define FU3_DBG_IR_CMD_IDCODE 0x01u   // Mặc định sau Test-Logic-Reset
+#define FU3_DBG_IR_CMD_ADDR   0x02u
+#define FU3_DBG_IR_CMD_DATA   0x03u
+#define FU3_DBG_IR_CMD_STATUS 0x04u
+#define FU3_DBG_IR_CMD_BYPASS 0x1Fu   // IR khác cũng là BYPASS
+#define FU3_DBG_IDCODE        UINT32_C(0x00000DB3)
 
-// dtmcs
-#define FU3_DBG_DTMCS_VERSION      1u          // [3:0] Debug Spec 0.13
-#define FU3_DBG_DTMCS_ABITS        7u          // [9:4]
-#define FU3_DBG_DTMCS_DMIRESET     (1u << 16)
-#define FU3_DBG_DTMCS_DMIHARDRESET (1u << 17)
+// DR của CMD_DATA 34 bit: [33] read, [32] write, [31:0] data. Capture trả dữ liệu của lần đọc trước
+#define FU3_DBG_DATA_WRITE (UINT64_C(1) << 32)
+#define FU3_DBG_DATA_READ  (UINT64_C(1) << 33)
 
-// dmi DR 41 bit: [40:34] address, [33:2] data, [1:0] op
-#define FU3_DBG_DMI_OP_NOP   0u
-#define FU3_DBG_DMI_OP_READ  1u
-#define FU3_DBG_DMI_OP_WRITE 2u
+// DR của CMD_STATUS 32 bit: lỗi sticky của truy cập AXI, ghi 1 để xoá
+#define FU3_DBG_STATUS_BUSY      (1u << 0)   // Luôn 0: truy cập xong trong Update-DR
+#define FU3_DBG_STATUS_SLVERR    (1u << 1)   // AXI SLVERR (lỗi slave, chặn quyền truy cập)
+#define FU3_DBG_STATUS_DECERR    (1u << 2)   // AXI DECERR (địa chỉ không map)
+#define FU3_DBG_STATUS_ALIGN     (1u << 3)   // Địa chỉ không căn 4 byte: không truy cập
+#define FU3_DBG_STATUS_ERRORS    (FU3_DBG_STATUS_SLVERR | FU3_DBG_STATUS_DECERR | FU3_DBG_STATUS_ALIGN)
+
+// Debug Module trên bus: cửa sổ DM của Ibex (Common v2.0 MemoryMap), thanh ghi DMI n ở offset 4 * n
+#define FU3_DBG_DM_BASE      UINT32_C(0x1A110000)
+#define FU3_DBG_DM_OFFSET(n) (4u * (n))
 
 // Địa chỉ thanh ghi DM
 #define FU3_DBG_DATA0        0x04u
@@ -33,9 +38,7 @@
 #define FU3_DBG_COMMAND      0x17u
 #define FU3_DBG_ABSTRACTAUTO 0x18u
 #define FU3_DBG_NEXTDM       0x1Du
-#define FU3_DBG_SBCS         0x38u
-#define FU3_DBG_SBADDRESS0   0x39u
-#define FU3_DBG_SBDATA0      0x3Cu
+#define FU3_DBG_SBCS         0x38u   // Không có SBA: đọc 0, truy cập hệ thống qua cầu JTAG2AXI4
 #define FU3_DBG_HALTSUM0     0x40u
 
 // dmcontrol
@@ -77,20 +80,3 @@
 #define FU3_DBG_CMD_WRITE            (1u << 16)
 #define FU3_DBG_REGNO_CSR(n)         ((n) & 0x0FFFu)
 #define FU3_DBG_REGNO_GPR(n)         (0x1000u + (n))
-
-// sbcs
-#define FU3_DBG_SBCS_SBVERSION       (1u << 29)
-#define FU3_DBG_SBCS_SBBUSYERROR     (1u << 22)
-#define FU3_DBG_SBCS_SBBUSY          (1u << 21)
-#define FU3_DBG_SBCS_SBREADONADDR    (1u << 20)
-#define FU3_DBG_SBCS_SBACCESS(n)     (((n) & 7u) << 17)
-#define FU3_DBG_SBCS_SBAUTOINCREMENT (1u << 16)
-#define FU3_DBG_SBCS_SBREADONDATA    (1u << 15)
-#define FU3_DBG_SBCS_SBERROR_SHIFT   12
-#define FU3_DBG_SBCS_SBERROR_MASK    (7u << 12)
-#define FU3_DBG_SBCS_SBASIZE_32      (32u << 5)
-#define FU3_DBG_SBCS_SBACCESS32      (1u << 2)
-#define FU3_DBG_SBERROR_BADADDR      2u
-#define FU3_DBG_SBERROR_ALIGNMENT    3u
-#define FU3_DBG_SBERROR_SIZE         4u
-#define FU3_DBG_SBERROR_OTHER        7u

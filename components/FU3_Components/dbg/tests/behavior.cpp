@@ -1,4 +1,4 @@
-// DBG nối thẳng (SBA vào bộ nhớ của bench): JTAG DTM, DM 2 hart, abstract command, ndmreset, SBA.
+// DBG nối thẳng qua router của bench: cầu JTAG2AXI4, truy cập DSRAM, DM 2 hart tại 0x1A11_0000, abstract command, ndmreset.
 #include "bench.h"
 
 int sc_main(int, char**) {

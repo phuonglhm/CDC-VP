@@ -1,4 +1,4 @@
-// Cùng bộ kiểm tra nhưng SBA đi qua cổng master DBG của bus FU3 thật: DBG -> SYSBUS_1 -> DSRAM @ 0x0100_0000.
+// Cùng bộ kiểm tra qua bus FU3 thật: JTAG2AXI4 -> cổng master DBG -> SYSBUS_1 -> DSRAM, ROM và DM (IBEX_DBG @ 0x1A11_0000).
 #define FU3_DBG_WITH_BUS
 #include "bench.h"
 

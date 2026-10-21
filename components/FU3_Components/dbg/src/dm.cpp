@@ -1,18 +1,18 @@
 #include "fu3_dbg/dm.h"
 
-#include <fu3_bus/access.h>
-
 namespace fu3_dbg {
 namespace {
 
 constexpr std::uint32_t kDataCount = 2;
-constexpr std::uint32_t kSbRwMask = FU3_DBG_SBCS_SBREADONADDR | FU3_DBG_SBCS_SBACCESS(7) |
-                                    FU3_DBG_SBCS_SBAUTOINCREMENT | FU3_DBG_SBCS_SBREADONDATA;
+constexpr std::uint32_t kWindow = 0x1000;              // Cửa sổ DM 4 KiB (DmAddrMask 0xFFF)
+constexpr std::uint32_t kDmiEnd = FU3_DBG_DM_OFFSET(0x80);   // 7 bit địa chỉ DMI
 
 }  // namespace
 
 DebugModule::DebugModule(sc_core::sc_module_name name, std::vector<DebugHart*> harts)
     : sc_core::sc_module(name), harts_(std::move(harts)), state_(harts_.size()) {
+    socket.register_b_transport(this, &DebugModule::b_transport);
+    socket.register_transport_dbg(this, &DebugModule::transport_dbg);
     reset_dm();
     SC_METHOD(update);
     sensitive << changed_;
@@ -25,13 +25,11 @@ void DebugModule::reset_dm() {
     hartsel_ = 0;
     data_[0] = data_[1] = 0;
     cmderr_ = 0;
-    sbcs_ = FU3_DBG_SBCS_SBACCESS(2);
-    sbaddress_ = sbdata_ = 0;
     changed_.notify(sc_core::SC_ZERO_TIME);
 }
 
 void DebugModule::notify_hart_reset(unsigned hart) {
-    if (hart < state_.size()) 
+    if (hart < state_.size())
         state_[hart].havereset = true;
 }
 
@@ -42,16 +40,16 @@ void DebugModule::update() {
 std::uint32_t DebugModule::dmstatus() const {
     std::uint32_t s = FU3_DBG_DMSTATUS_AUTHENTICATED | FU3_DBG_DMSTATUS_VERSION;
     const DebugHart* h = selected();
-    if (!h) 
+    if (!h)
         return s | FU3_DBG_DMSTATUS_ANYNONEXISTENT | FU3_DBG_DMSTATUS_ALLNONEXISTENT;
 
     // hasel = 0: chỉ 1 hart được chọn nên any = all
     const HartState& st = state_[hartsel_];
     s |= h->halted() ? (FU3_DBG_DMSTATUS_ANYHALTED | FU3_DBG_DMSTATUS_ALLHALTED)
                      : (FU3_DBG_DMSTATUS_ANYRUNNING | FU3_DBG_DMSTATUS_ALLRUNNING);
-    if (st.resumeack) 
+    if (st.resumeack)
         s |= FU3_DBG_DMSTATUS_ANYRESUMEACK | FU3_DBG_DMSTATUS_ALLRESUMEACK;
-    if (st.havereset) 
+    if (st.havereset)
         s |= FU3_DBG_DMSTATUS_ANYHAVERESET | FU3_DBG_DMSTATUS_ALLHAVERESET;
     return s;
 }
@@ -67,13 +65,13 @@ void DebugModule::write_dmcontrol(std::uint32_t v) {
 
     const bool ndm = v & FU3_DBG_DMCONTROL_NDMRESET;
     if (ndm && !ndmreset_)
-        for (auto& s : state_) 
+        for (auto& s : state_)
             s.havereset = true;
     ndmreset_ = ndm;
     changed_.notify(sc_core::SC_ZERO_TIME);
 
     DebugHart* h = selected();
-    if (!h) 
+    if (!h)
         return;
     HartState& st = state_[hartsel_];
     const bool haltreq = v & FU3_DBG_DMCONTROL_HALTREQ;
@@ -85,7 +83,7 @@ void DebugModule::write_dmcontrol(std::uint32_t v) {
             st.resumeack = !h->halted();
         }
     }
-    if (v & FU3_DBG_DMCONTROL_ACKHAVERESET) 
+    if (v & FU3_DBG_DMCONTROL_ACKHAVERESET)
         st.havereset = false;
 }
 
@@ -111,73 +109,27 @@ void DebugModule::execute(std::uint32_t cmd) {
     }
 }
 
-void DebugModule::sb_access(bool write) {
-    if (((sbcs_ >> 17) & 7) != 2) {   // Cổng DBG chỉ có beat 32-bit
-        sbcs_ |= FU3_DBG_SBERROR_SIZE << FU3_DBG_SBCS_SBERROR_SHIFT;
-        return;
-    }
-    if (sbaddress_ % 4) {
-        sbcs_ |= FU3_DBG_SBERROR_ALIGNMENT << FU3_DBG_SBCS_SBERROR_SHIFT;
-        return;
-    }
-    unsigned char bytes[4];
-    for (unsigned i = 0; i < 4; ++i) bytes[i] = (sbdata_ >> (8 * i)) & 0xFF;
-    tlm::tlm_generic_payload tx;
-    tx.set_command(write ? tlm::TLM_WRITE_COMMAND : tlm::TLM_READ_COMMAND);
-    tx.set_address(sbaddress_);
-    tx.set_data_ptr(bytes);
-    tx.set_data_length(4);
-    tx.set_streaming_width(4);
-    tx.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-    fu3_bus::ScopedAccess access(tx, 4);
-    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
-    sba->b_transport(tx, delay);
-
-    if (!tx.is_response_ok()) {
-        const unsigned err = tx.get_response_status() == tlm::TLM_ADDRESS_ERROR_RESPONSE ? FU3_DBG_SBERROR_BADADDR
-                                                                                           : FU3_DBG_SBERROR_OTHER;
-        sbcs_ |= err << FU3_DBG_SBCS_SBERROR_SHIFT;
-        return;
-    }
-    if (!write) {
-        sbdata_ = 0;
-        for (unsigned i = 0; i < 4; ++i)
-            sbdata_ |= std::uint32_t(bytes[i]) << (8 * i);
-    }
-    if (sbcs_ & FU3_DBG_SBCS_SBAUTOINCREMENT) sbaddress_ += 4;
-}
-
 std::uint32_t DebugModule::dmi_read(std::uint8_t address) {
     switch (address) {
-        case FU3_DBG_DATA0:      
+        case FU3_DBG_DATA0:
             return data_[0];
-        case FU3_DBG_DATA1:      
+        case FU3_DBG_DATA1:
             return data_[1];
         case FU3_DBG_DMCONTROL:
             return ((hartsel_ & 0x3FF) << 16) | (((hartsel_ >> 10) & 0x3FF) << 6) |
                    (ndmreset_ ? FU3_DBG_DMCONTROL_NDMRESET : 0) | (dmactive_ ? FU3_DBG_DMCONTROL_DMACTIVE : 0);
-        case FU3_DBG_DMSTATUS:   
+        case FU3_DBG_DMSTATUS:
             return dmstatus();
-        case FU3_DBG_ABSTRACTCS: 
+        case FU3_DBG_ABSTRACTCS:
             return (cmderr_ << FU3_DBG_ABSTRACTCS_CMDERR_SHIFT) | kDataCount;
-        case FU3_DBG_SBCS:
-            return sbcs_ | FU3_DBG_SBCS_SBVERSION | FU3_DBG_SBCS_SBASIZE_32 | FU3_DBG_SBCS_SBACCESS32;
-        case FU3_DBG_SBADDRESS0: 
-            return sbaddress_;
-        case FU3_DBG_SBDATA0: {
-            const std::uint32_t v = sbdata_;
-            if (dmactive_ && !(sbcs_ & FU3_DBG_SBCS_SBERROR_MASK) && (sbcs_ & FU3_DBG_SBCS_SBREADONDATA))
-                sb_access(false);
-            return v;
-        }
         case FU3_DBG_HALTSUM0: {
             std::uint32_t s = 0;
             for (unsigned i = 0; i < harts_.size() && i < 32; ++i)
                 if (harts_[i]->halted()) s |= 1u << i;
             return s;
         }
-        default:                 
-            return 0;   // hartinfo, command, abstractauto, nextdm, không map
+        default:
+            return 0;   // hartinfo, command, abstractauto, nextdm, sbcs (không SBA), không map
     }
 }
 
@@ -187,37 +139,61 @@ void DebugModule::dmi_write(std::uint8_t address, std::uint32_t v) {
         return;
     }
     if (!dmactive_) return;
-    const bool sb_ok = !(sbcs_ & FU3_DBG_SBCS_SBERROR_MASK);
     switch (address) {
-        case FU3_DBG_DATA0:      
-            data_[0] = v; 
+        case FU3_DBG_DATA0:
+            data_[0] = v;
             break;
-        case FU3_DBG_DATA1:      
-            data_[1] = v; 
+        case FU3_DBG_DATA1:
+            data_[1] = v;
             break;
-        case FU3_DBG_ABSTRACTCS: 
-            cmderr_ &= ~((v >> FU3_DBG_ABSTRACTCS_CMDERR_SHIFT) & 7); 
+        case FU3_DBG_ABSTRACTCS:
+            cmderr_ &= ~((v >> FU3_DBG_ABSTRACTCS_CMDERR_SHIFT) & 7);
             break;
         case FU3_DBG_COMMAND:
-            if (cmderr_ == FU3_DBG_CMDERR_NONE) 
+            if (cmderr_ == FU3_DBG_CMDERR_NONE)
                 execute(v);
             break;
-        case FU3_DBG_SBCS:
-            sbcs_ = (sbcs_ & ~kSbRwMask & ~(v & FU3_DBG_SBCS_SBERROR_MASK)) | (v & kSbRwMask);
-            break;
-        case FU3_DBG_SBADDRESS0:
-            sbaddress_ = v;
-            if (sb_ok && (sbcs_ & FU3_DBG_SBCS_SBREADONADDR)) 
-                sb_access(false);
-            break;
-        case FU3_DBG_SBDATA0:
-            sbdata_ = v;
-            if (sb_ok) 
-                sb_access(true);
-            break;
-        default: 
+        default:
             break;   // RO và không map
     }
+}
+
+void DebugModule::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time&) {
+    access(tx);
+}
+
+unsigned DebugModule::transport_dbg(tlm::tlm_generic_payload& tx) {
+    access(tx);   // Đọc DMI không có side effect
+    return tx.is_response_ok() ? tx.get_data_length() : 0;
+}
+
+void DebugModule::access(tlm::tlm_generic_payload& tx) {
+    const std::uint64_t addr = tx.get_address();
+    if (tx.get_data_length() != 4) {
+        tx.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
+        return;
+    }
+    if (addr % 4 || addr >= kWindow) {
+        tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
+        return;
+    }
+    const auto offset = static_cast<std::uint32_t>(addr);
+    unsigned char* data = tx.get_data_ptr();
+    // Thanh ghi DMI n tại offset 4n, phần còn lại của 4 KiB đọc 0, ghi bỏ qua
+    const bool dmi = offset < kDmiEnd;
+    const auto reg = static_cast<std::uint8_t>(offset / 4);
+    if (tx.is_read()) {
+        const std::uint32_t v = dmi ? dmi_read(reg) : 0;
+        for (unsigned i = 0; i < 4; ++i) data[i] = (v >> (8 * i)) & 0xFF;
+    } else if (tx.is_write()) {
+        std::uint32_t v = 0;
+        for (unsigned i = 0; i < 4; ++i) v |= std::uint32_t(data[i]) << (8 * i);
+        if (dmi) dmi_write(reg, v);
+    } else {
+        tx.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
+        return;
+    }
+    tx.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 
 }  // namespace fu3_dbg

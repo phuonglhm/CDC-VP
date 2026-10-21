@@ -1,27 +1,35 @@
 # FU3 DBG - SystemC/TLM
 
-Functional model of the FU3 debug subsystem, phase 1: JTAG DTM (IDCODE, dtmcs, dmi) at scan level, a RISC-V Debug Spec 0.13.2 Debug Module for two harts (halt/resume, abstract Access Register, ndmreset, haltsum) and system bus access through the DBG master port of the FU3 bus.
-Behavior follows FU3 HAS v2.0 and the RISC-V debug specification.
+Functional model of the FU3 debug subsystem per FU3 HAS v2.0 and FTEL_FU3_Common_Spec v2.0: the JTAG2AXI4 bridge of HAS section 3.1 (CMD_IDCODE, CMD_ADDR, CMD_DATA, CMD_STATUS, CMD_BYPASS) at scan level, an AXI4 master on the DBG port of the FU3 bus, and a RISC-V Debug Spec 0.13.2 Debug Module for CPU0 (CVA6) and CPU1 (Ibex) mapped at the debug module window 0x1A11_0000 (halt/resume, abstract Access Register, ndmreset, haltsum).
+The debugger reaches both system resources and the Debug Module through the bridge. JTAG instruction codes and DR layouts are VP choices because HAS gives only the command names.
 See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for exact behavior and the open points.
 
 ## Layout
 
-- `include/fu3_dbg/registers.h`: JTAG IR, DMI addresses and fields.
+- `include/fu3_dbg/registers.h`: JTAG instructions, bridge DR fields, DM window and DMI addresses and fields.
+- `include/fu3_dbg/jtag2axi.h`: `fu3_dbg::Jtag2Axi`.
 - `include/fu3_dbg/dm.h`: `fu3_dbg::DebugModule` and the `fu3_dbg::DebugHart` interface.
-- `include/fu3_dbg/dtm.h`: `fu3_dbg::Dtm`.
 - `tests/`: direct behavior and actual FU3 bus integration (shared `bench.h`), `run_all.sh`.
 - `tests/consumer/`: validation through the installed CMake package.
 
 ## Connect to the platform
 
 ```cpp
-#include <fu3_dbg/dtm.h>
-fu3_dbg::DebugModule dm{"dm", {&cva6_debug, &ibex_debug}};   // DebugHart adapters (phase 2)
-fu3_dbg::Dtm dtm{dm};
-dm.sba.bind(bus.initiator("DBG"));                            // SYSBUS_1, 32-bit beats
-dm.ndmreset(ndmreset);                                        // -> crm.dbg_reset_req
-// A JTAG front end (test, remote bitbang server, ...) calls dtm.scan_ir() / dtm.scan_dr() from an SC_THREAD
+#include <fu3_dbg/dm.h>
+#include <fu3_dbg/jtag2axi.h>
+fu3_dbg::Jtag2Axi jtag{"jtag"};
+fu3_dbg::DebugModule dm{"dm", {&cva6_debug, &ibex_debug}};   // DebugHart adapters (hart 0 CVA6, hart 1 Ibex)
+jtag.axi.bind(bus.initiator("DBG"));                          // SYSBUS_1, 32-bit beats
+bus.target("IBEX_DBG").bind(dm.socket);                       // 0x1A11_0000, local offsets, DMI register n at 4 * n
+dm.ndmreset(ndmreset);                                        // -> crm.cpu_reset_req
+// A JTAG front end (test, remote bitbang server, ...) calls jtag.scan_ir() / jtag.scan_dr() from an SC_THREAD
 ```
+
+Read a word: CMD_ADDR with the address, CMD_DATA with bit 33 (read), then CMD_DATA with 0 to capture the data.
+
+Write a word: CMD_ADDR with the address, CMD_DATA with bit 32 (write) and the data. T
+
+The address advances by 4 after each access. CMD_STATUS reports sticky errors, write 1 to clear.
 
 ## Build and test
 
