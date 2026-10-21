@@ -1,7 +1,7 @@
-#include "fu3/gpio/io_pad.h"
+#include "fu3/io_pad/io_pad.h"
 #include <stdexcept>
 
-namespace fu3::gpio {
+namespace fu3::io_pad {
 Pin pin_info(unsigned p) {
     Pin r;
     r.digital = (p >= 1 && p <= 6) || (p >= 11 && p <= 15) || (p >= 20 && p <= 30) ||
@@ -110,4 +110,4 @@ void IoPad::decode_test() {
     test_mode.write(mode);
     test_select.write(mode && pad_in[10].read());
 }
-} // namespace fu3::gpio
+} // namespace fu3::io_pad

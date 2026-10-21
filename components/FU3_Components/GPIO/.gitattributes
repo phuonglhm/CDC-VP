@@ -2,6 +2,5 @@
 *.h text eol=lf
 *.md text eol=lf
 *.txt text eol=lf
-*.json text eol=lf
 .clang-format text eol=lf
 .gitattributes text eol=lf

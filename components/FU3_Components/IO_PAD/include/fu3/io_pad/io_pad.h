@@ -1,7 +1,7 @@
 #pragma once
 #include <systemc>
 
-namespace fu3::gpio {
+namespace fu3::io_pad {
 // Package positions use 1-based numbering. Vectors use position-1.
 struct Pin {
     bool digital = false, input_only = false, configurable = false, reserved = false;
@@ -47,4 +47,4 @@ class IoPad : public sc_core::sc_module {
     sc_core::sc_signal<bool> test_{"test"};
     void decode_test();
 };
-} // namespace fu3::gpio
+} // namespace fu3::io_pad

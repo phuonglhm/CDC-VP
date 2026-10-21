@@ -547,6 +547,54 @@ struct Bench : sc_module {
                 }
             }
     }
+    void wake_iosel() {
+        // Independent package map from IO_PAD HDS Table 7-2. Exercise the
+        // complete package -> IOSEL -> GPIO raw wake path after separation.
+        const unsigned mapping[3][8] = {{6, 12, 13, 14, 15, 20, 21, 22},
+                                        {25, 26, 27, 28, 29, 30, 44, 45},
+                                        {46, 47, 54, 55, 56, 59, 60, 61}};
+        for (unsigned bank = 0; bank < 3; ++bank)
+            for (unsigned bit = 0; bit < 8; ++bit) {
+                reset();
+                const auto position = mapping[bank][bit];
+                const bool configurable = bank == 0 || (bank == 1 && bit < 5) ||
+                                          (bank == 2 && bit < 2);
+                const unsigned gpio_select = (bank == 0 && bit < 5) || (bank == 2 && bit < 2);
+                wr(bank, reg::POWEREVENT, std::uint32_t{1} << bit);
+                pads[position - 1].write(true);
+                for (unsigned code = 0; code < 4; ++code)
+                    for (unsigned mode = 0; mode < 2; ++mode) {
+                        select[position - 1].write(code);
+                        pads[4].write(mode);
+                        settle();
+                        const bool connected = !mode && (!configurable || code == gpio_select);
+                        check(wakes[bank].read() == connected && wake.read() == connected,
+                              "IOSEL/test mode gates raw bank wake and aggregate wake");
+                        for (unsigned other = 0; other < 3; ++other)
+                            if (other != bank)
+                                check(!wakes[other].read(), "IOSEL wake bank isolation");
+                        tick(3);
+                        check(peek(bank, reg::PADIN) ==
+                                  (connected ? std::uint32_t{1} << bit : 0),
+                              "IOSEL/test mode controls synchronized GPIO input");
+                    }
+            }
+        reset();
+        wr(0, reg::POWEREVENT, 1);
+        wr(1, reg::POWEREVENT, 1);
+        pads[5].write(true);  // Package 6: GPIO A0 on alternate leg.
+        pads[24].write(true); // Package 25: GPIO B0 on primary leg.
+        settle();
+        check(wakes[0].read() && wakes[1].read() && wake.read(), "two selected banks wake");
+        select[5].write(0);
+        settle();
+        check(!wakes[0].read() && wakes[1].read() && wake.read(),
+              "disconnecting one bank preserves the other bank's wake");
+        select[24].write(2);
+        settle();
+        check(!wakes[0].read() && !wakes[1].read() && !wake.read(),
+              "reserved IOSEL code disconnects the last wake source");
+    }
     void random_checks() {
         struct Reference {
             std::array<std::uint32_t, 16> w{};
@@ -643,6 +691,8 @@ struct Bench : sc_module {
             iosel_checks();
         else if (scenario == "integration")
             integration();
+        else if (scenario == "wake_iosel")
+            wake_iosel();
         else if (scenario == "random")
             random_checks();
         else

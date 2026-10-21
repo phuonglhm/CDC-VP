@@ -1,19 +1,23 @@
 # HDS decisions and VP policies
 
-Reviewed on 2026-10-19 against both supplied documents, `src/gpio.cpp`,
-`src/io_pad.cpp`, `src/subsystem.cpp` and the current tests. GPIO here includes
-the digital IO_PAD routing in the FU3 `GPIO_IO` component. This is an open
+Reviewed on 2026-10-21 against the supplied GPIO and IO_PAD PDFs.
+Implementation paths below are relative
+to `FU3_Components`: `GPIO/src/gpio.cpp`, `IO_PAD/src/io_pad.cpp` and
+`GPIO/src/subsystem.cpp`; `GPIO/src/state.cpp` now holds the shared digital
+state machine for TLM and APB. GPIO and IO_PAD are separate libraries;
+`GPIO` supplies their three-bank integration. This is an open
 integration/decision log, not an HDS approval or a list of confirmed bugs.
 
 ## Source baseline
 
-| Source | Location below `D:/Intern_doc/Intern/VP/004_IP/` | SHA-256 |
+| Source | Source IP folder | SHA-256 |
 | --- | --- | --- |
 | `FTEL_CDC_IP_GPIO_Hardware_Design_Specification-1.pdf`, 19 pages | `009_GPIO/` | `82c3ebc68ff9031f0bcde028da42d3d86816750985286909230e4d1608916cb1` |
-| `FTEL_CDC_IP_IO_PAD_Hardware_Design_Specification.docx`, V1.0 | `011_IO_PAD/` | `2e3a2078188ca936a19b73317c03b9f6f9e4541c5ed751e103da7605d41eb22e` |
+| `FTEL_CDC_IP_IO_PAD_Hardware_Design_Specification.pdf`, V1.0, 16 pages | Latest supplied IO_PAD PDF | `a473c96b2f01bb5d760c22e3f6b5aaf44c72fe9dacd5972666fcd699f18f20a8` |
 
-GPIO references use 1-based physical PDF pages. IO_PAD references use section
-and table numbers, since DOCX pagination depends on the rendering application.
+PDF page references are 1-based physical pages. Both specifications are V1.0.
+IO_PAD sections 6-7 describe selection and electrical controls on p9, test
+decoding on p10 and the package map in Table 7-2 on p11.
 
 ## Behavior that is already explicit
 
@@ -62,27 +66,44 @@ Prioritize GPIO-D01 through GPIO-D04 for real pad integration. No change to
 interrupt priority, status read-clear or local address aliasing is justified by
 these open pad questions.
 
-## Regression evidence and closure
+## Current regression results
 
-CTest names use the prefix `fu3_gpio_`. Tests verify the digital interface and
-the stated VP choices, not PDK electrical behavior.
+The final clean rebuild on 2026-10-21 passed **30/30 in Debug and 30/30
+in UBSan**. Standalone IO_PAD passed **4/4**. The suite contains eight direct
+GPIO tests, twelve GPIO/IO_PAD integration tests, six signal-level APB tests
+and four standalone pad tests. UBSan uses GCC 15.2.0, SystemC 2.3.4,
+`-fsanitize=undefined -fno-sanitize-recover=undefined` and
+`-Wall -Wextra -Wpedantic -Werror`. The installed SystemC library itself is
+not sanitizer-instrumented.
 
-| Decisions / functionality | Existing test suffixes | Evidence boundary |
-| --- | --- | --- |
-| Registers, pad fields and exposed data/direction; D01-D02 | `registers`, `spec_register_outputs` | Register outputs only; does not prove pad-drive polarity or PADCFG electrical mapping |
-| Input sampling and interrupt lifecycle | `sampling`, `interrupts`, `spec_input_stream`, `spec_irq_boundaries` | Explicit digital GPIO requirements |
-| Wake; D05 | `wake`, `spec_wake_priority` | Highest-selected raw bank input plus chosen board OR; no sleep controller |
-| Package routing and test mode; D03-D04/D06-D08 | `iosel`, `integration`, `spec_pad_truth`, `spec_pad_random` | Independent digital pin-map expectations, no system control CSR/PDK approval |
-| Transport and reset; D09-D10/D12 | `protocol`, `reset`, `concurrency`, `reset_pulse`, `spec_clock_reset`, `spec_address_decode` | VP transport/clock/reset behavior; no pin-level APB or full SoC proof |
-| Source consistency; D11 | Source review | Editorial/specification closure is not a simulation verdict |
+`Gpio` and `ApbGpio` share their register, sampling and interrupt engine in
+`detail::State`. APB tests cover widths 6/12/128, setup/access qualification,
+combinational PRDATA, constant response pins, reset, all four interrupt modes,
+raw wake and 1,536 seeded cycles. GPIO history tests check 3,072 six-cycle
+traces; alias-write tests check 960 accesses; integration random testing checks
+5,400 seeded cycles. IO_PAD tests use an independent package map, all select
+codes, test-mode transitions, per-pin isolation and 1,800 random vectors.
 
-The 2026-10-19 Debug rebuild and rerun passed **19/19 tests**, with no failures
-or disabled tests. The `random` scenario also checks 5,400 seeded cycles; pad
-random testing uses 1,800 vectors. Evidence is in
-`build/hds-review/gpio-results.xml` and `gpio-regression.log` from the repository
-root. This review did not rerun UBSan.
+The `wake_iosel` integration scenario checks all 24 bonded GPIO positions,
+four selects and two test-mode states, including fixed-pin select ignoring.
+It checks bank/aggregate wake, PADIN, bank isolation and simultaneous sources.
+Disconnecting one active bank preserves the other bank's wake; disconnecting
+the final source clears aggregate wake.
 
-See [usage.md](usage.md), [registers.md](registers.md) and
-[testing.md](testing.md) for the existing digital contract. Close a decision
-only with an approved source revision and corresponding model/test review.
-Full hardware/pad sign-off remains open.
+The final layout has two components and two implementation libraries:
+`GPIO` (`fu3::gpio`) and `IO_PAD` (`fu3::io_pad`). GPIO adds and links IO_PAD
+automatically. Standalone and parent-consumer build checks cover either
+component inclusion order and the legacy aliases. IO_PAD has no GPIO, clock,
+reset or TLM dependency.
+
+See [verification.md](verification.md) for the completed requirement review,
+[testing.md](testing.md) to rerun the functional suite, and
+[usage.md](usage.md) / [registers.md](registers.md) for the integration contract.
+Temporary JSON maps, report/coverage/fault-check helper scripts and historical
+review artifacts were removed after verification. Final local build logs and
+JUnit results remain under `build/fu3-gpio-review-20261021/`, outside source.
+
+The tests establish the documented digital VP behavior. Close an external
+integration decision only with an approved source revision and corresponding
+model/test review. PDK electrical behavior, full-SoC boot and RTL equivalence
+remain outside this verification.

@@ -1,5 +1,4 @@
 #include "fu3/gpio/gpio.h"
-#include "fu3/gpio/io_pad.h"
 #include <array>
 #include <iostream>
 #include <random>
@@ -11,10 +10,8 @@ using namespace fu3::gpio;
 using U32 = std::uint32_t;
 
 // Core pins are tested directly, including the 24 unbonded bits of each bank.
-// IO_PAD has independent primary/alternate endpoints, without GPIO overrides.
 struct SpecBench : sc_module {
     Gpio a{"a"}, b{"b"}, c{"c"};
-    IoPad pad{"pad"};
     sc_clock oscillator{"oscillator", 10, SC_NS, 0.5, 5, SC_NS};
     sc_signal<bool> clock_enable{"clock_enable"}, clock{"clock"}, reset_n{"reset_n"};
     sc_vector<sc_signal<sc_dt::sc_uint<32>>> input{"input", 3}, output{"output", 3},
@@ -22,10 +19,6 @@ struct SpecBench : sc_module {
     sc_vector<sc_signal<sc_dt::sc_uint<6>>> cfg{"cfg", 96};
     sc_vector<sc_signal<bool>> irq{"irq", 3}, wake{"wake", 3};
     sc_vector<tlm_utils::simple_initiator_socket<SpecBench>> cpu{"cpu", 3};
-    sc_vector<sc_signal<sc_dt::sc_uint<2>>> select{"select", 80};
-    sc_vector<sc_signal<bool>> pins{"pins", 80}, po{"po", 80}, ao{"ao", 80}, pe{"pe", 80},
-        ae{"ae", 80}, data{"data", 80}, enable{"enable", 80}, pi{"pi", 80}, ai{"ai", 80};
-    sc_signal<bool> test_mode{"test_mode"}, test_select{"test_select"};
     sc_event job, done;
     tlm::tlm_response_status job_status = tlm::TLM_OK_RESPONSE;
     unsigned checks = 0, errors = 0;
@@ -47,20 +40,6 @@ struct SpecBench : sc_module {
             for (unsigned i = 0; i < 32; ++i)
                 g.gpio_padcfg[i](cfg[32 * bank + i]);
         }
-        for (unsigned i = 0; i < 80; ++i) {
-            pad.select[i](select[i]);
-            pad.pad_in[i](pins[i]);
-            pad.primary_out[i](po[i]);
-            pad.alternate_out[i](ao[i]);
-            pad.primary_oe[i](pe[i]);
-            pad.alternate_oe[i](ae[i]);
-            pad.pad_data[i](data[i]);
-            pad.requested_oe[i](enable[i]);
-            pad.primary_in[i](pi[i]);
-            pad.alternate_in[i](ai[i]);
-        }
-        pad.test_mode(test_mode);
-        pad.test_select(test_select);
         SC_METHOD(gate_clock);
         sensitive << oscillator << clock_enable;
         SC_THREAD(writer);
@@ -104,7 +83,7 @@ struct SpecBench : sc_module {
         reset_n.write(true);
         settle();
     }
-    U32 access(unsigned bank, bool write, unsigned address, U32 value = 0,
+    U32 access(unsigned bank, bool write, std::uint64_t address, U32 value = 0,
                tlm::tlm_response_status expected = tlm::TLM_OK_RESPONSE, bool debug = false) {
         unsigned char bytes[4];
         for (unsigned i = 0; i < 4; ++i)
@@ -131,13 +110,13 @@ struct SpecBench : sc_module {
             result |= U32(bytes[i]) << (8 * i);
         return result;
     }
-    void wr(unsigned bank, unsigned address, U32 value) {
+    void wr(unsigned bank, std::uint64_t address, U32 value) {
         access(bank, true, address, value);
     }
-    U32 rd(unsigned bank, unsigned address) {
+    U32 rd(unsigned bank, std::uint64_t address) {
         return access(bank, false, address);
     }
-    U32 peek(unsigned bank, unsigned address) {
+    U32 peek(unsigned bank, std::uint64_t address) {
         return access(bank, false, address, 0, tlm::TLM_OK_RESPONSE, true);
     }
     void writer() {
@@ -363,6 +342,72 @@ struct SpecBench : sc_module {
             check(!irq[bank].read(), "falling mode ignores opposite rising edges");
         }
     }
+    void irq_histories() {
+        // HDS 6.3/6.5, pp10-11: expected samples come directly from stimulus
+        // history, not a copy of the implementation's three pipeline variables.
+        // Columns are {sync1, previous_sample} = 00, 01, 10, 11.
+        constexpr bool event[4][4] = {{false, true, false, true},
+                                      {true, false, true, false},
+                                      {false, false, true, false},
+                                      {false, true, false, false}};
+        constexpr U32 masks[] = {0, 0xffffffffu, 0xa5a55a5au, 0x80000001u};
+        for (unsigned bank = 0; bank < 3; ++bank)
+            for (unsigned pattern = 0; pattern < 64; ++pattern)
+                for (unsigned mode_offset = 0; mode_offset < 4; ++mode_offset)
+                    for (unsigned reads = 0; reads < 4; ++reads) {
+                        reset();
+                        U32 type0 = 0, type1 = 0;
+                        std::array<U32, 6> history{};
+                        for (unsigned pin = 0; pin < 32; ++pin) {
+                            const unsigned mode = (pin + mode_offset) % 4;
+                            type0 |= U32(mode & 1) << pin;
+                            type1 |= U32(mode >> 1) << pin;
+                            for (unsigned cycle = 0; cycle < history.size(); ++cycle)
+                                if ((pattern >> ((cycle + pin) % 6)) & 1)
+                                    history[cycle] |= U32{1} << pin;
+                        }
+                        const U32 enabled = masks[(pattern + mode_offset + reads) % 4];
+                        wr(bank, reg::INTTYPE0, type0);
+                        wr(bank, reg::INTTYPE1, type1);
+                        wr(bank, reg::INTEN, enabled);
+                        U32 status = 0;
+                        for (unsigned cycle = 0; cycle < history.size(); ++cycle) {
+                            input[bank].write(history[cycle]);
+                            settle();
+                            const U32 previous = cycle >= 3 ? history[cycle - 3] : 0;
+                            const U32 sync = cycle >= 2 ? history[cycle - 2] : 0;
+                            U32 conditions = 0;
+                            for (unsigned pin = 0; pin < 32; ++pin) {
+                                const unsigned mode = (pin + mode_offset) % 4;
+                                const unsigned pair = (((sync >> pin) & 1) << 1) |
+                                                      ((previous >> pin) & 1);
+                                if (((enabled >> pin) & 1) && event[mode][pair])
+                                    conditions |= U32{1} << pin;
+                            }
+                            const bool clear = reads == 1 || (reads == 2 && cycle % 2 == 1) ||
+                                               (reads == 3 && cycle == history.size() - 1);
+                            const std::string at = " bank " + std::to_string(bank) + " pattern " +
+                                                   std::to_string(pattern) + " mode offset " +
+                                                   std::to_string(mode_offset) + " reads " +
+                                                   std::to_string(reads) + " cycle " +
+                                                   std::to_string(cycle);
+                            if (clear)
+                                check(rd(bank, reg::INTSTATUS) == status,
+                                      "RC returns pre-edge status" + at);
+                            else
+                                tick();
+                            // A pending interrupt freezes its vector unless read. When
+                            // empty, even a simultaneous read must retain a new event.
+                            status = status ? (clear ? 0 : status) : conditions;
+                            check(irq[bank].read() == bool(status), "IRQ lifecycle" + at);
+                            check(peek(bank, reg::INTSTATUS) == status, "latched vector" + at);
+                            check(synced[bank].read() == (cycle ? history[cycle - 1] : 0),
+                                  "second-stage sample from input history" + at);
+                            check(peek(bank, reg::PADIN) == sync,
+                                  "third-stage sample from input history" + at);
+                        }
+                    }
+    }
     void wake_priority() {
         for (unsigned bank = 0; bank < 3; ++bank) {
             for (unsigned high = 0; high < 32; ++high) {
@@ -429,11 +474,6 @@ struct SpecBench : sc_module {
             check(irq[bank].read() && !wake[bank].read(),
                   "IRQ holds while raw wake changes without clock");
         }
-        // IO_PAD continues routing while GPIO clock is stopped and reset is low.
-        pins[0].write(true);
-        pins[56].write(true);
-        po[56].write(true);
-        settle();
         job_status = tlm::TLM_GENERIC_ERROR_RESPONSE;
         job.notify(SC_ZERO_TIME);
         settle();
@@ -452,8 +492,6 @@ struct SpecBench : sc_module {
             for (unsigned pin = 0; pin < 32; ++pin)
                 check(cfg[bank * 32 + pin].read() == 2, "all 96 reset pad fields");
         }
-        check(pi[0].read() && pi[56].read() && data[56].read(),
-              "IO_PAD has no dependency on GPIO reset or clock");
         for (unsigned bank = 0; bank < 3; ++bank)
             input[bank].write(0xffffffff);
         wait(oscillator.negedge_event());
@@ -484,117 +522,6 @@ struct SpecBench : sc_module {
             check(peek(bank, reg::PADIN) == 0xffffffff && !irq[bank].read(),
                   "pipeline refills stage3; INTEN remains reset");
     }
-    // Independent expected membership from IO_PAD Table 7-2, PDF page 11.
-    // No expected result is calculated by calling the implementation's pin_info.
-    struct ExpectedPin {
-        bool digital = false, input_only = false, mux = false, reserved = false;
-    };
-    std::array<ExpectedPin, 80> expected_pins() {
-        std::array<ExpectedPin, 80> result{};
-        for (unsigned p :
-             {1u,  2u,  3u,  4u,  5u,  6u,  11u, 12u, 13u, 14u, 15u, 20u, 21u, 22u, 23u,
-              24u, 25u, 26u, 27u, 28u, 29u, 30u, 44u, 45u, 46u, 47u, 54u, 55u, 56u, 57u,
-              58u, 59u, 60u, 61u, 62u, 67u, 68u, 69u, 70u, 71u, 72u, 73u, 74u, 75u, 76u})
-            result[p - 1].digital = true;
-        for (unsigned p : {1u, 5u, 11u})
-            result[p - 1].input_only = true;
-        for (unsigned p :
-             {6u, 12u, 13u, 14u, 15u, 20u, 21u, 22u, 25u, 26u, 27u, 28u, 29u, 46u, 47u})
-            result[p - 1].mux = true;
-        for (unsigned p : {23u, 24u})
-            result[p - 1].reserved = true;
-        return result;
-    }
-    void verify_pad(unsigned i, const ExpectedPin& info) {
-        const bool mode = pins[4].read();
-        const unsigned code = info.mux ? select[i].read().to_uint() : 0;
-        const bool active = info.digital && !info.reserved && (!mode || i == 4 || i == 10);
-        const bool primary = active && code == 0, alternate = active && code == 1;
-        const bool out = primary ? po[i].read() : alternate ? ao[i].read() : false;
-        const bool req = primary ? pe[i].read() : alternate ? ae[i].read() : false;
-        const std::string at = " package " + std::to_string(i + 1);
-        check(data[i].read() == (out && !info.input_only), "independent mux data" + at);
-        check(enable[i].read() == (req && !info.input_only),
-              "requested enable separate from data" + at);
-        check(pi[i].read() == (primary && pins[i].read()), "selected primary receiver" + at);
-        check(ai[i].read() == (alternate && pins[i].read()), "selected alternate receiver" + at);
-    }
-    void pad_truth() {
-        const auto expected = expected_pins();
-        pause();
-        for (unsigned mode = 0; mode < 2; ++mode) {
-            pins[4].write(mode);
-            settle();
-            for (unsigned i = 0; i < 80; ++i) {
-                const auto info = expected[i],
-                           actual =
-                               ExpectedPin{pin_info(i + 1).digital, pin_info(i + 1).input_only,
-                                           pin_info(i + 1).configurable, pin_info(i + 1).reserved};
-                check(info.digital == actual.digital && info.input_only == actual.input_only &&
-                          info.mux == actual.mux && info.reserved == actual.reserved,
-                      "independent package membership");
-                for (unsigned code = 0; code < 4; ++code)
-                    for (unsigned bits = 0; bits < 32; ++bits) {
-                        select[i].write(code);
-                        po[i].write(bits & 1);
-                        ao[i].write(bits & 2);
-                        pe[i].write(bits & 4);
-                        ae[i].write(bits & 8);
-                        if (i != 4)
-                            pins[i].write(bits & 16);
-                        settle();
-                        verify_pad(i, info);
-                        check(test_mode.read() == bool(mode) &&
-                                  test_select.read() == bool(mode && pins[10].read()),
-                              "test decoder remains live during routing sweep");
-                    }
-                if (i != 4)
-                    pins[i].write(false);
-            }
-        }
-        // Explicit return from test mode with nonzero sources in both partitions.
-        for (unsigned i = 0; i < 80; ++i) {
-            select[i].write(0);
-            po[i].write(true);
-            pe[i].write(true);
-            if (i != 4)
-                pins[i].write(true);
-        }
-        pins[4].write(true);
-        settle();
-        for (unsigned i = 0; i < 80; ++i)
-            verify_pad(i, expected[i]);
-        pins[4].write(false);
-        settle();
-        for (unsigned i = 0; i < 80; ++i)
-            verify_pad(i, expected[i]);
-        check(pi[0].read() && pi[1].read() && pi[2].read() && pi[3].read() && pi[75].read(),
-              "POR, boot/mode straps and oscillator recover without clock");
-    }
-    void pad_random() {
-        const auto expected = expected_pins();
-        pause();
-        for (unsigned seed : {0x12345u, 0x6701u, 20261017u}) {
-            std::mt19937 rng(seed);
-            for (unsigned cycle = 0; cycle < 600; ++cycle) {
-                for (unsigned i = 0; i < 80; ++i) {
-                    const auto value = rng();
-                    select[i].write(value & 3);
-                    pins[i].write(value & 4);
-                    po[i].write(value & 8);
-                    ao[i].write(value & 16);
-                    pe[i].write(value & 32);
-                    ae[i].write(value & 64);
-                }
-                settle();
-                for (unsigned i = 0; i < 80; ++i)
-                    verify_pad(i, expected[i]);
-                check(test_mode.read() == pins[4].read(), "random mode decoder");
-                check(test_select.read() == (pins[4].read() && pins[10].read()),
-                      "random select decoder");
-            }
-        }
-    }
     void address_decode() {
         for (unsigned bank = 0; bank < 3; ++bank) {
             for (unsigned index = 0; index < 16; ++index)
@@ -622,6 +549,49 @@ struct SpecBench : sc_module {
                   "INTSTATUS alias clears on accepted read");
         }
     }
+    void address_writes() {
+        // HDS 7.1/8.2, pp12-14: aliases apply equally to reads and writes.
+        // Include 64-bit TLM addresses; these are VP aliases, not physical
+        // APB address-width or interconnect-range requirements.
+        constexpr std::uint64_t upper[] = {0, 0x40, 0xffff0000, 0x100000000ull,
+                                           0xffffffffffffffc0ull};
+        for (unsigned bank = 0; bank < 3; ++bank)
+            for (unsigned index = 0; index < 16; ++index)
+                for (auto high : upper)
+                    for (unsigned low = 0; low < 4; ++low) {
+                        reset();
+                        input[bank].write(0x9182a5c3);
+                        settle();
+                        tick(3);
+                        if (index == 6) {
+                            wr(bank, reg::INTEN, 0xffffffff);
+                            tick();
+                            check(irq[bank].read(), "pending status before aliased RO write");
+                        }
+                        std::array<U32, 16> expected;
+                        for (unsigned word = 0; word < expected.size(); ++word)
+                            expected[word] = peek(bank, word * 4);
+                        const U32 value = 0xc5a37ef0u ^ (U32{0x01010101} * index) ^ low;
+                        wr(bank, high | (index * 4) | low, value);
+                        if (index != 1 && index != 6)
+                            expected[index] = value & (index >= 8 ? 0x3f3f3f3fu : 0xffffffffu);
+                        const std::string at = " bank " + std::to_string(bank) + " index " +
+                                               std::to_string(index) + " address " +
+                                               std::to_string(high | (index * 4) | low);
+                        for (unsigned word = 0; word < expected.size(); ++word)
+                            check(peek(bank, word * 4) == expected[word],
+                                  "aliased write changes only its writable word" + at);
+                        check(output[bank].read() == expected[2] &&
+                                  direction[bank].read() == expected[0],
+                              "aliased writes publish output and direction" + at);
+                        for (unsigned pin = 0; pin < 32; ++pin)
+                            check(cfg[bank * 32 + pin].read() ==
+                                      ((expected[8 + pin / 4] >> (8 * (pin % 4))) & 63),
+                                  "aliased PADCFG write preserves six-bit outputs" + at);
+                        check(irq[bank].read() == (index == 6),
+                              "aliased status write cannot clear IRQ" + at);
+                    }
+    }
     void run() {
         clock_enable.write(true);
         reset();
@@ -631,16 +601,16 @@ struct SpecBench : sc_module {
             input_stream();
         else if (scenario == "irq_boundaries")
             irq_boundaries();
+        else if (scenario == "irq_histories")
+            irq_histories();
         else if (scenario == "wake_priority")
             wake_priority();
         else if (scenario == "clock_reset")
             clock_reset();
-        else if (scenario == "pad_truth")
-            pad_truth();
-        else if (scenario == "pad_random")
-            pad_random();
         else if (scenario == "address_decode")
             address_decode();
+        else if (scenario == "address_writes")
+            address_writes();
         else
             check(false, "unknown scenario");
         std::cout << scenario << ": " << checks << " checks, " << errors << " failures\n";

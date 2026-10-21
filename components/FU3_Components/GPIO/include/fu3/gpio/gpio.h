@@ -1,16 +1,11 @@
 #pragma once
-#include <array>
+#include "fu3/gpio/detail/state.h"
 #include <cstdint>
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_target_socket.h>
 
 namespace fu3::gpio {
-namespace reg {
-constexpr unsigned PADDIR = 0x00, PADIN = 0x04, PADOUT = 0x08, INTEN = 0x0c, INTTYPE0 = 0x10,
-                   INTTYPE1 = 0x14, INTSTATUS = 0x18, POWEREVENT = 0x1c, PADCFG0 = 0x20;
-constexpr std::uint32_t PADCFG_MASK = 0x3f3f3f3f, PADCFG_RESET = 0x02020202;
-} // namespace reg
 // Clocked APB functional target. Addresses are local; decode is PADDR[5:2].
 class Gpio : public sc_core::sc_module {
   public:
@@ -25,9 +20,7 @@ class Gpio : public sc_core::sc_module {
     explicit Gpio(sc_core::sc_module_name name);
 
   private:
-    std::array<std::uint32_t, 16> words_{};
-    std::uint32_t sync0_ = 0, sync1_ = 0, sample_ = 0;
-    bool irq_ = false;
+    detail::State state_;
     std::uint64_t reset_generation_ = 0;
     tlm::tlm_generic_payload* pending_ = nullptr;
     sc_core::sc_mutex bus_lock_;
@@ -37,6 +30,6 @@ class Gpio : public sc_core::sc_module {
     void b_transport(tlm::tlm_generic_payload&, sc_core::sc_time&);
     unsigned transport_dbg(tlm::tlm_generic_payload&);
     bool validate(tlm::tlm_generic_payload&);
-    void transfer(tlm::tlm_generic_payload&, bool side_effect);
+    void read_data(tlm::tlm_generic_payload&);
 };
 } // namespace fu3::gpio

@@ -1,12 +1,29 @@
 # Integration and timing
 
+GPIO owns its core and three-bank subsystem; IO_PAD owns pad routing.
+The two implementation libraries are:
+`fu3::gpio` ([GPIO](../README.md)) and `fu3::io_pad`
+([IO_PAD](../../IO_PAD/README.md)). Link `fu3::gpio` for the core and combined
+subsystem; its public IO_PAD dependency provides the pad headers/library.
+
 ## GPIO transport
+
+GPIO offers a TLM `Gpio` and a signal-level `ApbGpio<AddressWidth = 12>`.
+They share `detail::State` register/sampling/IRQ behavior. For APB, include
+`fu3/gpio/apb.h`, bind HCLK/HRESETn, the PADDR/PWDATA/PWRITE/PSEL/PENABLE
+inputs, PRDATA/PREADY/PSLVERR outputs and the GPIO ports described in HDS 7.1–7.2.
+PADDR uses `sc_biguint<AddressWidth>`; widths
+must be at least six. The regression exercises widths 6, 12 and 128.
+PREADY is always true and PSLVERR always false, including reset. Writes and
+INTSTATUS read-clear occur on rising HCLK with PSEL/PENABLE asserted; PRDATA
+follows the decoded register combinationally without select/enable gating.
+The APB module has its own instance of the shared state and no TLM socket.
 
 `fu3::gpio::Subsystem` contains `gpioa`, `gpiob`, `gpioc` and `io_pad`.
 Bind three initiator/interconnect targets to `gpioa.socket`, `gpiob.socket`,
 `gpioc.socket`, forwarding **local** addresses. Bind `clk`, `reset_n`, the
 three `irq` outputs, three `wake_bank` outputs and aggregate `wake`.
-`tests/test_gpio_io.cpp` contains a complete runnable integration.
+`tests/test_integration.cpp` contains a complete runnable integration.
 
 Each valid `b_transport` consumes its incoming annotated delay, serializes
 accesses to that bank and waits for the next available rising clock edge.
@@ -48,7 +65,9 @@ For a raw input changed before edge 1:
 
 ## IO_PAD routing
 
-IO_PAD is combinational and has no reset, clock, TLM socket or register bank.
+`fu3::io_pad::IoPad` is combinational and has no reset, clock, TLM socket or
+register bank. The compatibility header `fu3/gpio/io_pad.h` aliases the former
+`fu3::gpio` pad types to this implementation.
 Bind its `select[80]`, `pad_in[80]`, `pad_data[80]`, `requested_oe[80]`,
 `test_mode` and `test_select` ports. Vectors index **package position minus 1**.
 `iosel0` handles logical positions 1–40 and `iosel1` handles 41–80. This split
@@ -107,7 +126,7 @@ The following integration contracts require additional SoC or PDK information.
 | Direction polarity | GPIO Section 6.3 | PADDIR is passed through as a requested enable; its mapping to physical drive is unspecified. |
 | PADCFG electrical mapping | GPIO Section 6.4; IO_PAD Section 6.4 | Six-bit GPIO values are exposed unchanged; mapping to foundry controls is external. |
 | Grouped peripheral pin order | IO_PAD Table 7-2 | JTAG/SPI functions use generic endpoints by package position where detailed signal order is absent. Peripheral protocols are not modeled. |
-| APB signal-level phases | GPIO Section 7.1 | TLM abstracts PSEL/PENABLE, PREADY, PSLVERR and combinational PRDATA; wire-level protocol compliance is not verified. |
+| APB signal-level phases | GPIO Section 7.1 | `Gpio` abstracts the phases through TLM; `ApbGpio` implements the specified digital pins and is covered by six APB scenarios. Source RTL equivalence is not established. |
 
 The tests validate this digital VP contract. Source RTL equivalence, foundry
 pad behavior and full-SoC firmware boot have not been verified.

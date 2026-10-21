@@ -61,3 +61,8 @@ of the two IP specs:
 | GPIOC | 0x440f0000 | 64 KiB |
 
 No IOSEL or WAKE register address is defined by this component.
+
+`Gpio` (TLM) and `ApbGpio` (signal-level APB) share this register behavior.
+APB PRDATA follows the decoded word regardless of PSEL/PENABLE; changing its
+address to INTSTATUS does not clear anything. Clearing requires a selected
+read access edge while IRQ is pending. APB PREADY remains 1 and PSLVERR 0.
