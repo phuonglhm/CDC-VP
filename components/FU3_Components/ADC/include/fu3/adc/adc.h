@@ -10,6 +10,7 @@ namespace reg {
 inline constexpr std::uint32_t VERSION = 0x00, CTRL = 0x04, CFG = 0x08,
     STATUS = 0x0c, DATA = 0x10, TIMING = 0x14, SAMPLE_CFG = 0x18;
 inline constexpr std::uint32_t sample(unsigned n) { return 0x1c + 4 * n; }
+// HDS p18 defines DONE[0]; READY[1]/BUSY[2] are the documented VP ABI.
 inline constexpr std::uint32_t DONE = 1, READY = 2, BUSY = 4;
 inline constexpr std::uint64_t BASE = 0x500a0000, WINDOW = 0x10000;
 }

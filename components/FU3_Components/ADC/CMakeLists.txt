@@ -45,7 +45,7 @@ if(FU3_ADC_BUILD_TESTS)
   add_executable(test_fu3_adc tests/test_adc.cpp)
   target_link_libraries(test_fu3_adc PRIVATE fu3::adc)
   foreach(scenario registers channels counts timing_min timing_programmed timing_max
-      averaging eoc_wait eoc_policy lifecycle snapshot reset protocol debug randomized clock_pause
+      averaging eoc_wait eoc_policy macro_phase lifecycle status snapshot reset protocol debug randomized clock_pause
       reset_phases disable_phases reset_transport)
     add_test(NAME fu3_adc_${scenario} COMMAND test_fu3_adc ${scenario})
     set_tests_properties(fu3_adc_${scenario} PROPERTIES TIMEOUT 30 LABELS "fu3;adc")
@@ -59,7 +59,7 @@ if(FU3_ADC_BUILD_TESTS)
     add_executable(test_fu3_adc_bus tests/test_adc.cpp)
     target_compile_definitions(test_fu3_adc_bus PRIVATE FU3_ADC_BUS_TEST=1)
     target_link_libraries(test_fu3_adc_bus PRIVATE fu3::adc fu3::bus_system)
-    foreach(scenario registers channels counts averaging lifecycle snapshot bus)
+    foreach(scenario registers channels counts averaging lifecycle status snapshot bus)
       add_test(NAME fu3_adc_bus_${scenario} COMMAND test_fu3_adc_bus ${scenario})
       set_tests_properties(fu3_adc_bus_${scenario} PROPERTIES TIMEOUT 30 LABELS "fu3;adc;integration")
     endforeach()

@@ -1,122 +1,117 @@
-# HDS decisions and VP policies
+# Specification basis and model decisions
 
-Reviewed on 2026-10-19 against the supplied PDF, `src/adc.cpp`, the register
-definitions and the current regression tests. This is an open decision log,
-not an HDS approval or a list of confirmed model defects. All decisions below
-remain open unless the IP owner provides an approved specification revision.
+Reviewed on **2026-10-21** against the PDF identified in the [README](../README.md),
+the complete controller implementation and regression. Page numbers below are
+1-based PDF pages. No confirmed digital functional mismatch was found within
+the documented TLM scope. Specification gaps and chosen VP behavior are recorded
+below; they are not a list of proven model defects.
 
-The source document and SHA-256 are pinned in the [README](../README.md).
-Page references use 1-based PDF page numbers. The cover identifies
-V1.0 / March 20, 2026; the revision history includes V2.0 / April 3, 2026;
-the repeated header identifies FU2 V5.7. The model follows the ADC content
-on pages 7-19 of that exact file, without inferring another FU2/FU3 specification.
+The cover says V1.0 / March 20, 2026; history includes V2.0 / April 3, 2026;
+the repeated FU2 V5.7 header is inconsistent. Use the exact pinned PDF hash.
+The IP_new file is byte-identical to the previously reviewed `_v2.pdf`.
+Unrelated UART examples, guidelines and the secure-boot appendix are template
+content, not additional ADC requirements or instructions for this project.
 
-## Explicit requirements
+## Requirements checked
 
-- Pages 13-18: register map, reset values, field widths and RO/RW access.
-- Page 15: effective timing minima of 32/4/12 cycles and effective count of 1..16.
-- Page 10: POWER_DOWN -> SETUP_WAIT -> SAMPLE_HIGH -> SAMPLE_LOW -> WAIT_EOC
-  -> CAPTURE -> CHECK_CNT -> SAMPLE_HIGH or DONE. DONE persists while ADC_EN=1.
-- Page 10: CS=0 and SAMPCLK=0 in power-down; CS=1 during HIGH/LOW;
-  BUSY deasserts and READY/DONE assert in DONE.
-- Page 18: configuration is captured at sequence start; DONE is bit 0;
-  software polls with a timeout.
-- Page 12: active-low reset clears state and data; nominal ADC clock is 10 MHz.
-
-## Decisions requiring confirmation
-
-| ID | Ambiguity or missing definition | Current VP behavior | Classification |
-| --- | --- | --- | --- |
-| D01 | ADC_STATUS field table is missing; only DONE[0] is explicit on p18 | READY[1], BUSY[2]; idle=0, active=4, done=3 | VP policy |
-| D02 | Average rounding is unspecified when the sum is not divisible by count | Unsigned integer division rounds down; 32-bit accumulator; maximum sum 65520 | VP policy |
-| D03 | Effective timing/count limits do not define readback | CSRs retain raw masked values; active configuration is clamped separately | VP policy |
-| D04 | p9 identifies a valid EOC rising edge; the p10 FSM tests eoc=1 | Check EOC level in WAIT_EOC; read D on the next ADC edge in CAPTURE; do not retain pulses that end before WAIT_EOC | FSM takes precedence; confirmation required |
-| D05 | Disable transitions from active states are not shown | ADC_EN=0 aborts on the next ADC edge, clears flags, lowers CS/SAMPCLK and raises PWD | VP policy |
-| D06 | Data retention on disable/start is unspecified | Disable retains samples/result; a new start clears all samples, result and accumulator | VP policy |
-| D07 | p10 shows high/low counter comparisons, but does not fully define counter initialization, entry-edge accounting or CAPTURE/CHECK_CNT latency | WAIT_EOC/CAPTURE/CHECK_CNT each require at least one edge; setup/high/low last exactly N full cycles | VP cycle policy |
-| D08 | CS/PWD/RST are not fully defined in every state | CS is high from SAMPLE_HIGH through CHECK_CNT and low in setup/done/down; PWD stays low while enabled, including DONE; macro reset follows controller reset and releases on an ADC edge | VP policy |
-| D09 | PSTRB and PSLVERR are marked "Not support" on p13 | Accept aligned 4-byte accesses without byte enables; reject malformed payloads with TLM errors; ignore RO writes; TLM errors do not represent physical PSLVERR | VP contract |
-| D10 | Debug, DMI, endianness and ordering are unspecified | Little-endian; side-effect-free read-only debug; no DMI; b_transport requires SC_THREAD and uses a mutex for serialization | VP contract |
-| D11 | p12 specifies nominal 80 MHz to 10 MHz generation and synchronized ADC reset release, but omits divider phase, CSR crossing protocol and synchronizer depth | Platform supplies adc_clk; default CSR APB latency is 25ns; FSM observes CSRs on rising edges; divider/metastability and a multistage reset synchronizer are not modeled | Explicit hardware requirement abstracted in TLM; implementation details missing |
-| D12 | Transactions overlapping reset are unspecified | Accesses entered during reset or interrupted during service return GENERIC_ERROR without committing; a reset epoch also detects pulses that have already ended | VP contract |
-| D13 | SAMP_SEL=0 is called test mode without defining macro behavior | Forward SAMP_SEL=0; continue the controller FSM; external logic supplies D/EOC | Macro behavior outside scope |
-| D14 | A hardware EOC timeout is not specified | Wait indefinitely for EOC; driver/testbench timeouts remain active; disable/reset can abort | No additional hardware timeout |
-| D15 | Cover V1.0, history V2.0 and repeated FU2 V5.7 header disagree; pp7-8/13/20-22 contain unrelated or unfinished template material | Use the exact ADC PDF hash in the README and ADC-specific pp7-19; template text does not add UART/security features | Document baseline conflict |
-| D16 | pp7-12 reference an external HHG hardmacro; this HDS does not define a complete voltage-to-code, accuracy or test-mode contract. IO_PAD HDS Table 7-2 exposes two ADC package inputs while this controller selects 16 macro channels | Supply digital D/EOC externally; implement all 16 channel selections without inventing package wiring or an analog transfer function | External specification and SoC integration dependency |
-
-These decisions are not presented as verified HDS requirements. Tests count
-`SPEC_CHECKS` and `POLICY_CHECKS` separately; one scenario may contain both.
-The hardmacro timing values of 12/12.5/2.5 cycles are used to generate stimulus
-and do not validate the analog hardmacro.
-
-## Exact VP timing
-
-ADC_EN is accepted on the edge that leaves POWER_DOWN; PWD goes low and
-configuration is latched. SAMPCLK rises `max(setup,32)` cycles after that edge
-and falls after `max(high,4)` further cycles. The FSM enters WAIT_EOC
-`max(low,12)` cycles after the falling edge. On the next edge, EOC=1 advances
-to CAPTURE; the following edge stores D; the following CHECK_CNT edge selects
-DONE or the next sample. The averaged DATA register updates only on entry to DONE.
-
-With test stimulus that raises EOC 12.5 cycles after SAMPCLK falls, the interval
-from that falling edge to the next rising edge is
-`max(max(low,12)+1,13)+2` cycles. This is VP latency rather than an RTL timing guarantee.
-Writing ADC_EN=0 and then ADC_EN=1 between consecutive ADC edges may go
-unobserved by the FSM. The driver must follow p18: disable, wait for STATUS=0,
-configure and then enable.
-
-`b_transport` consumes incoming delay before arbitration, waits for access
-latency after acquiring the mutex and commits at completion. Reset during
-incoming delay, before arrival, does not cancel a request that has not arrived.
-Payload address, length, pointers, command, streaming width and enables are
-preserved. Malformed payloads are rejected before waiting.
-Multiphase `nb_transport` execution has not been verified.
-
-## Required clarification and regression evidence
-
-The sources explicitly define DONE[0], timing minima, sample-count clamping,
-configuration capture at sequence start and the normal disable/wait-idle
-sequence. These are not missing requirements. The remaining questions concern
-the precise behavior around those requirements.
-
-Test suffixes below are scenario names in [test_adc.cpp](../tests/test_adc.cpp).
-Passing a policy assertion establishes reproducible VP behavior, not approval
-of the corresponding HDS interpretation.
-
-| Decisions | Confirmation needed from the IP/SoC owner | Existing regression evidence |
+| PDF pages | Requirement | Implementation |
 | --- | --- | --- |
-| D01 | Complete STATUS bit table, reset values and per-state BUSY/READY values; prioritize this before driver ABI sign-off | `registers`, `lifecycle`, `reset` |
-| D02-D03 | Rounding rule, accumulator requirements and raw-versus-effective CSR readback | `averaging`, `counts`, `timing_min`, `timing_programmed`, `timing_max` |
-| D04, D07 | EOC edge versus level, early/held EOC handling, data capture edge and exact state-entry timing; prioritize this before cycle comparisons | `eoc_wait`, `eoc_policy`, `timing_min`, `timing_programmed` |
-| D05-D06 | Abort behavior in every active state and retention/clearing of DATA and all SAMPLE registers | `disable_phases`, `lifecycle`, `snapshot` |
-| D08, D11-D12 | Pin-state table, reset assertion/release contract, CSR/ADC crossings and accesses overlapping reset | `reset`, `reset_phases`, `reset_transport`, `clock_pause`; divider/CDC RTL is not verified |
-| D09-D10 | Malformed/RO access handling, PPROT semantics, bus ordering and approved software transport abstraction | `protocol`, `debug`, `reset_transport`, `bus`; no pin-level APB proof |
-| D13-D14, D16 | Approved macro specification/test-mode stimulus, package channel map and whether a hardware timeout is required | `channels`, `eoc_wait`, `eoc_policy`; digital stimulus only, no analog or package proof |
-| D15 | Approved document revision and replacement of template sections | Source review; not a simulation test |
+| 13-18 | 23 CSRs, offsets 0x00-0x58, access types, widths and reset values | `Adc::read/write/reset_registers`, register constants |
+| 8-9, 14 | 16 channels, 12-bit D and mode selection | Typed ports; configuration snapshot at sequence start |
+| 15 | Effective sample count 1-16; timing minima 32/4/12 | Clamped active configuration; masked raw CSR readback |
+| 10, 15-18 | Capture individual samples and average | 32-bit sum, maximum 65520; result published at DONE |
+| 10, 18-19 | FSM order, sticky DONE, clear status on disable | Clocked FSM and status derived from state |
+| 12 | Active-low reset clears state/data | Asynchronous assertion, including with stopped ADC clock |
+| 18 | Base 0x500A0000 and SYSBUS_1/PERIBUS_1 path | Tested through the existing FU3 bus |
 
-The current regression contains **26 tests**: 19 direct scenarios and seven
-FU3 bus scenarios. The 2026-10-19 rebuild and rerun passed **26/26 tests** on
-Debug, Release and UBSan, with no failures or skipped tests. Current evidence
-is in `build/fu3-adc{,-release,-ubsan}/results.xml` and
-`build/fu3-adc/verification-report.json` from the repository root. See
-[verification-results.md](verification-results.md). Full HDS sign-off remains open.
+The complete requirement-to-test mapping is maintained once, in
+[hds-requirements.json](../tests/hds-requirements.json).
 
-Related details: [verification matrix](hds-verification-matrix.md) and
-[owner clarification request](hds-clarification-request.md). This decision log
-also records the cross-IP source and integration findings from this review.
+## STATUS: behavior versus bit assignment
 
-Close a decision only after recording an approved source revision/section and
-reviewing the affected implementation, tests and requirement mapping. A passing
-VP policy test does not close the corresponding specification question.
+The HDS specifies the following:
 
-## Related IP decision logs
+- Page 13: ADC_STATUS is read-only at offset 0x000C.
+- Page 10: DONE deasserts BUSY and asserts READY and DONE.
+- Page 18: poll DONE at bit 0; disable and wait until all three flags clear.
+- Page 19: after disable, wait for STATUS[2:0]=000.
 
-The same 2026-10-19 review covers the following components. Each log records
-its own source baseline, open questions, current VP choices and test evidence.
+The PDF has no field table assigning the individual BUSY/READY positions.
+The VP ABI chooses BUSY[2], READY[1], DONE[0]:
 
-| IP | Decision log | Main open areas |
+| State | STATUS[2:0] | Basis |
 | --- | --- | --- |
-| AES | [AES spec-decisions.md](../../AES-256/docs/spec-decisions.md) | Reset polarity, address translation, result mux, lifecycle and source identity |
-| DMA | [DMA spec-decisions.md](../../DMA0/AP_DMA/docs/spec-decisions.md) | AXI version, priority, transfer sizing, reset, timers and capabilities |
-| GPIO/IO_PAD | [GPIO spec-decisions.md](../../GPIO_IO/docs/spec-decisions.md) | PADDIR/PADCFG electrical mapping, external control registers and package/wake integration |
-| QSPI | [QSPI spec-decisions.md](../../QSPI/docs/spec-decisions.md) | FIFO units, DMA tails, reset domains, mapped writes and polling corner cases |
+| POWER_DOWN/reset | 000 | Required idle/clear behavior |
+| SETUP_WAIT through CHECK_CNT | 100 | VP choice of active flags and BUSY bit |
+| DONE | 011 | Required flag values; READY bit position is a VP choice |
+
+DONE remains set while enabled. Disable clears status on the next ADC edge;
+software must wait for idle as the HDS instructs. No STATUS logic defect was
+found. READY/BUSY mapping needs an owner definition only to establish exact
+compatibility with an external driver/RTL that consumes those individual bits.
+
+## EOC, CS and timing
+
+EOC is level-tested in WAIT_EOC and D is read on the following CAPTURE edge,
+as shown by the page 10 FSM. Page 9 calls the rising edge valid; that wording
+does not establish that the controller must implement an edge detector.
+With the page 11 normal waveform, EOC stays high until 2.5 cycles after the
+next sampling rise. Minimum HIGH=4 cycles lets EOC return low before the next
+conversion wait. No normal-conversion defect was found from level sensing.
+Short early pulses and a stuck-high EOC remain abnormal-input policy cases.
+
+CS is high from SAMPLE_HIGH through CHECK_CNT and low in setup/done/down.
+M is latched for the entire sequence. This follows the page 10 HIGH/LOW
+description and satisfies the controller-pin conditions of high CS during
+sampling and low CS while changing M. Page 11 depicts a low-CS interval and
+channel changes that the fixed-channel sequence does not reproduce. This
+alone does not demonstrate a controller defect; which waveform to use for an
+exact RTL comparison remains an owner question. Internal ISAMPCLK is outside
+the controller model.
+
+ADC_EN is accepted on the edge leaving POWER_DOWN. PWD falls and configuration
+is latched. SAMPCLK rises after `max(setup,32)` full ADC cycles, stays high for
+`max(high,4)` cycles, then SAMPLE_LOW lasts `max(low,12)` cycles. WAIT_EOC,
+CAPTURE and CHECK_CNT follow. Consequently the entire low interval includes
+FSM/EOC latency. It meets the specified minimum; an exact total-low-duration
+interpretation is not established by the HDS state description.
+
+With the simplified test stimulus, D changes 12 cycles after SAMPCLK falls
+and EOC rises at 12.5 cycles. Between samples the VP low interval is
+`max(max(low,12)+1,13)+2` cycles: 15 cycles at defaults. Page 11 actually
+references internal ISAMPCLK. The `macro_phase` test delays the effective
+sampling edge by one cycle, giving D/EOC at 13/13.5 cycles after SAMPCLK falls;
+the default low interval then becomes 16 cycles and the samples remain correct.
+These are stimulus-dependent VP measurements, not RTL cycle equivalence.
+
+## Other VP choices and integration boundaries
+
+Stable decision IDs are retained for references from tests and downstream notes.
+
+| ID | Topic | Current behavior / remaining definition |
+| --- | --- | --- |
+| D01 | STATUS | READY[1]/BUSY[2] and active-state values are VP ABI choices; DONE[0] and clearing are explicit. |
+| D02 | Fractional average | Unsigned integer division rounds down; HDS does not specify rounding. |
+| D03 | Clamp readback | Read masked raw values; clamp the active configuration separately. |
+| D04 | EOC | Follow the level-based FSM; normal held EOC works; early/stuck-input behavior is policy. |
+| D05 | Disable during conversion | Abort on the next ADC edge, clear flags and drive power-down outputs; mid-state transitions are not fully specified. |
+| D06 | Data lifetime | Disable retains data; new start clears all sample slots/result/sum. |
+| D07 | Cycle accounting | Full-cycle setup/high/low counters; subsequent FSM stages add low-time latency. |
+| D08 | Macro outputs | CS follows FSM; PWD remains low in DONE; macro reset asserts asynchronously and releases on an ADC edge. |
+| D09 | APB/TLM accesses | Aligned four-byte transfers without byte enables; RO writes ignored; malformed payloads receive TLM errors, not physical PSLVERR. PPROT is not modeled. |
+| D10 | Transport | Little-endian, no DMI, read-only zero-time debug; b_transport requires SC_THREAD and serializes accesses. Multiphase nonblocking transport is unverified. |
+| D11 | Clock/CDC/reset | Platform supplies ADC clock; default CSR latency 25 ns. No 80-to-10 MHz divider, metastability or multistage reset synchronizer. |
+| D12 | Reset during transport | Reject accesses entered during reset or interrupted during service, including short reset pulses; no partial commit. |
+| D13 | Test mode | Forward SAMP_SEL=0; continue FSM; external macro supplies D/EOC. Analog test-mode behavior is unspecified. |
+| D14 | Missing EOC | Wait indefinitely; software/testbench timeouts and disable/reset remain available. No invented hardware timeout. |
+| D15 | Source identity | Follow pinned ADC content, not inconsistent revision headers or unrelated template text. |
+| D16 | Analog/package integration | External HHG macro supplies D/EOC. Analog transfer, accuracy and package-to-channel wiring need separate specifications. |
+
+`b_transport` consumes incoming delay before arbitration and commits after
+access latency. Reset before transaction arrival does not cancel a later valid
+arrival. Payload metadata is preserved. A disable-enable pulse between ADC
+edges can go unobserved; use disable/wait-idle/configure/enable.
+
+Analog behavior, pin-level APB, divider/CDC implementation and CPU/SoC boot
+are not proven by this component's tests. Keep `hds_signoff: false`; passing
+policy checks establishes reproducible model behavior, not an approved RTL ABI.

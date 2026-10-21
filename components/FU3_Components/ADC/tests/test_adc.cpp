@@ -35,6 +35,7 @@ struct Bench : sc_module {
     bool passed = false, clock_enabled = true, suppress_eoc = false;
     bool early_eoc = false, held_eoc = false;
     sc_time reset_hold{210, SC_NS};
+    sc_time macro_sample_delay{SC_ZERO_TIME};
     unsigned spec_checks = 0, policy_checks = 0, sample_index = 0;
     unsigned emitted_channel = 0;
     std::vector<unsigned> input;
@@ -60,6 +61,7 @@ struct Bench : sc_module {
         SC_THREAD(reset_driver);
         SC_THREAD(hardmacro);
         SC_THREAD(worker);
+        SC_THREAD(pin_contract);
         SC_THREAD(run);
         SC_METHOD(monitor);
         sensitive << samp << pwd;
@@ -86,6 +88,21 @@ struct Bench : sc_module {
             else if (rst.read() && !pwd.read()) falls.push_back(sc_time_stamp());
         }
     }
+    void pin_contract() {
+        unsigned previous_channel = channel.read().to_uint();
+        for (;;) {
+            wait(samp.value_changed_event() | cs.value_changed_event() |
+                 channel.value_changed_event());
+            wait(SC_ZERO_TIME); // Observe outputs after their signal updates.
+            const auto current_channel = channel.read().to_uint();
+            if (rst.read()) {
+                check(!samp.read() || cs.read(), "CS high while SAMPCLK high", true);
+                if (current_channel != previous_channel)
+                    check(!cs.read(), "channel changes only while CS low", true);
+            }
+            previous_channel = current_channel;
+        }
+    }
     bool cancelled() const { return !rst.read() || pwd.read(); }
     void hardmacro() {
         eoc = false; data = 0;
@@ -95,15 +112,16 @@ struct Bench : sc_module {
             emitted_channel = channel.read().to_uint();
             const auto value = input.empty() ? (emitted_channel * 257u) :
                 input.at(sample_index % input.size());
-            // Independent hardmacro stimulus: D at 12 CLK, EOC at 12.5 CLK
-            // from SAMPCLK falling (HDS p11). ADC controller never generates D.
+            // D/EOC at 12/12.5 CLK after the effective sampling edge (HDS p11).
+            // macro_phase also exercises a one-cycle ISAMPCLK sampling delay.
             if (early_eoc) {
                 eoc = true;
                 wait(sc_time(100, SC_NS), rst.negedge_event() | pwd.posedge_event());
                 eoc = false;
                 if (cancelled()) continue;
             }
-            wait(sc_time(early_eoc ? 1100 : 1200, SC_NS), rst.negedge_event() | pwd.posedge_event());
+            wait(sc_time(early_eoc ? 1100 : 1200, SC_NS) + macro_sample_delay,
+                 rst.negedge_event() | pwd.posedge_event());
             if (cancelled()) { eoc = false; continue; }
             data = value;
             wait(sc_time(50, SC_NS), rst.negedge_event() | pwd.posedge_event());
@@ -114,7 +132,8 @@ struct Bench : sc_module {
             }
             ++sample_index; eoc = true;
             wait(samp.posedge_event() | rst.negedge_event() | pwd.posedge_event());
-            if (!cancelled()) wait(sc_time(250, SC_NS), rst.negedge_event() | pwd.posedge_event());
+            if (!cancelled()) wait(sc_time(250, SC_NS) + macro_sample_delay,
+                                   rst.negedge_event() | pwd.posedge_event());
             if (!held_eoc || cancelled()) eoc = false;
         }
     }
@@ -285,6 +304,17 @@ struct Bench : sc_module {
         check(rd(0x10) == 200, "FSM accepts held EOC level on subsequent WAIT_EOC entries");
         held_eoc = false; stop();
     }
+    void test_macro_phase() {
+        // The controller updates SAMPCLK just after an ADC rising edge. A
+        // macro sampling it on rising edges observes that change one cycle later.
+        macro_sample_delay = sc_time(100, SC_NS);
+        input = {1, 2048, 4095}; start(3, 11); done(); results(3);
+        check(falls.size() == 3 && rises.size() == 3, "three conversions with delayed macro edge", true);
+        for (unsigned i = 0; i + 1 < rises.size(); ++i)
+            check(rises[i + 1] - falls[i] == sc_time(1600, SC_NS),
+                  "FSM waits for EOC delayed by ISAMPCLK sampling policy");
+        stop();
+    }
     void test_lifecycle() {
         input = {4095, 1}; start(2); done(); results(2);
         for (unsigned i = 0; i < 20; ++i) {
@@ -295,6 +325,31 @@ struct Bench : sc_module {
         stop(); check(rd(0x10) == 2048, "disable retains result policy");
         input = {33}; start(1); done(); results(1);
         check(rd(0x20) == 0, "shorter conversion clears old tail policy");
+    }
+    void test_status() {
+        check(rd(0x0c) == 0, "STATUS cleared after reset", true);
+        input = {0x123, 0x345}; start(2);
+        for (auto state : {Adc::State::SetupWait, Adc::State::SampleHigh,
+                           Adc::State::SampleLow, Adc::State::WaitEoc,
+                           Adc::State::Capture, Adc::State::CheckCount}) {
+            phase(state);
+            // Debug reads consume no time, including one-cycle states.
+            const auto status = rd(0x0c, true);
+            check((status & 1) == 0, "DONE stays low before sequence completion", true);
+            check(status == 4, "active BUSY[2], READY[1] ABI policy");
+        }
+        check(rd(0x10, true) == 0, "average published only at DONE policy");
+        done(); results(2);
+        check((rd(0x0c) & 1) == 1, "completion is visible at DONE[0]", true);
+        check(rd(0x0c) == 3, "DONE BUSY=0 READY=1 with VP bit assignment");
+        wr(0x0c, 0xffffffff);
+        check((rd(0x0c) & 1) == 1, "RO STATUS write cannot clear DONE", true);
+        cycle(20);
+        check((rd(0x0c) & 1) == 1, "DONE remains set without disable", true);
+        stop();
+        check((rd(0x0c) & 7) == 0, "disable clears STATUS[2:0]", true);
+        start(2); done(); reset_now();
+        check(rd(0x0c) == 0, "reset clears completed STATUS", true);
     }
     void test_snapshot() {
         input = {10, 20, 30}; start(3, 2);
@@ -440,7 +495,9 @@ struct Bench : sc_module {
             else if (scenario == "averaging") test_averaging();
             else if (scenario == "eoc_wait") test_eoc_wait();
             else if (scenario == "eoc_policy") test_eoc_policy();
+            else if (scenario == "macro_phase") test_macro_phase();
             else if (scenario == "lifecycle") test_lifecycle();
+            else if (scenario == "status") test_status();
             else if (scenario == "snapshot") test_snapshot();
             else if (scenario == "reset") test_reset();
             else if (scenario == "protocol") test_protocol();
