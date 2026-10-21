@@ -21,8 +21,24 @@ are separated from source requirements in [MODEL_CONTRACT.md](MODEL_CONTRACT.md)
 | Debug reads pop RX | p.35 | behavior: debug read removes a frame and raises underflow when empty |
 | SoC map and routing | FU3 HAS memory/IRQ tables | integration: independent golden bases and loopback through both PERIBUS paths |
 
+## Added corner coverage (2026-10-20)
+
+All scenarios use public MMIO and pins. `corners.cpp` builds independently of the
+bus library and is also run against installed static/shared packages.
+
+| Requirement | Source | Added verification |
+|---|---|---|
+| Slave frame widths and independent bit observation | pp.19-24,43 | `slave_formats`: all 32 FSZ encodings, four modes, both bit orders, two distinct frames under one SS; depths 16/32/64; independent MOSI source and MISO observer |
+| Flush ownership and priority | pp.25,33,43 | `fifo_flush`: concurrent TX writes, post-completion retention, same-tick hardware-clear priority, acknowledgement-return rewrite, RX frame arrival while draining, ordered tail after cancelling RXFLUSH; depths 16/32/64 |
+| Sticky hardware event wins over W1C | pp.26,43 | `event_priority`: UDR on first slave edge, EOT on deselect and OVR on final frame edge collide with W1C; later W1C succeeds and prior RX data survives |
+| Abort and system reset across master states | pp.16,23,43 | `abort_states`: EN/MSTR abort and quiescent-APB system reset during pin-observed IDLE/SETUP/SHIFT/GAP/HOLD/CS_IDLE; no new EOT, preserved completed RX on abort, full reset profile on reset |
+| DMA threshold and return-to-zero behavior | pp.27-28,39,43 | `dma_boundaries`: TX/RX thresholds 0/1/DEPTH, requests held across condition changes, ACK-held WAIT, rearm, and cancellation with DMACR/EN |
+| Reset recovery under different functional clock ratios | pp.16-17,43 | `reset_phases`: APB periods 1/10/13/80 ns against SYS=10 ns, three reset pulses after operation commit, exactly one side effect, serial progress through APB-only reset, reset/recovery of a partial slave frame |
+| Extreme divider and delay programming | pp.19-22,40,43 | `master_delays`: DIV 0/1/2/65535 and DLY fields 0/1/255 in selected profiles; independently sampled MOSI, ordered RX, no premature EOT, setup/hold/inter-frame/minimum-idle functional intervals |
+| Concurrent masters and independent real IP progress | FU3 bus contract and HAS topology | `integration`: IBEX and DMA stand-in write the same SPI0 FIFO concurrently; eight frames appear exactly once in per-origin order, while SPI2 transfers on the other peripheral bridge |
+
 The HDS verification checklist also includes physical CDC, metastability,
-electrical timing, detailed flush races, hardware/software simultaneous events,
-extreme delay fields and exhaustive reset/transfer phase sweeps. Initial functional
-tests do not establish exhaustive coverage of that checklist. See
+electrical timing and exhaustive reset/event/interleaving sweeps. Added corner
+tests cover selected functional boundaries without establishing exhaustive
+coverage or exact RTL timing. See
 [VALIDATION.md](VALIDATION.md) for actual execution evidence and limitations.

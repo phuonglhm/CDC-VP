@@ -1,54 +1,58 @@
-# WDT validation
+﻿# WDT validation
 
-Environment: WSL/Linux, GNU C++ 15.2.0, C++17, SystemC 2.3.4. Validation date:
-2026-10-17. Reproduction commands are in the [README](../README.md#build-test-and-install).
+The source and test fixtures were migrated to WDT HDS V1.1 on 2026-10-20. The previous V1.0 results are superseded because they exercised the removed internal LOCK register, old status layout and old reset-pulse behavior.
 
-## Execution results
+The newly supplied HDS V1.2 was reviewed on 2026-10-20. It reintroduces internal
+WD_LOCK, changes reset ownership/retention, and changes second-timeout status
+behavior. The implementation has not yet been migrated to that contract. Results
+below establish V1.1 behavior only and must not be reported as V1.2 conformance.
+The private comparison and unresolved definitions are recorded in ignored
+`build/wdt-review/WDT_V12_REVIEW.md` at repository root.
+
+## V1.1 execution results (2026-10-20)
+
+Environment: WSL/Linux, GNU C++ 15.2.0, C++17, SystemC 2.3.4, Release builds.
+Executables use `sc_main`. Reproduction commands are in the component README.
 
 | Configuration | Result |
 |---|---|
-| Static library: behavior and real-bus integration | 2/2 CTest passed |
-| Static installed consumer | 1/1 CTest passed |
-| Shared library: behavior and real-bus integration | 2/2 CTest passed |
-| Shared installed consumer | 1/1 CTest passed |
-| Total | 6/6 CTest executions passed |
+| Static component: behavior and real FU3 bus integration | 2/2 passed |
+| Shared component: behavior and real FU3 bus integration | 2/2 passed |
+| Installed static consumer, linking only `fu3::wdt` | 1/1 passed |
+| Installed shared consumer, linking only `fu3::wdt` | 1/1 passed |
+| Total final executions | 6/6 passed |
 
-Each behavior execution reports 221 checks and zero failures; each integration
-execution reports 54 checks and zero failures. Installed consumers repeat the
-221-check behavior suite using the exported package. These are repeated checks
-across configurations, not six independent specification requirements.
+Each final behavior execution reports 110 checks and zero failures; each
+integration execution reports 32 checks and zero failures. The shared consumer
+resolves the installed `libfu3_wdt.so` and `libsystemc.so.2.3` without missing
+dependencies. No compiler warnings were reported in these builds. This is Linux
+shared-library evidence; native Windows DLL behavior was not tested.
 
-The completed run is recorded locally in `build/validation.log`. No compiler
-warnings or errors were reported. `ldd` on the shared installed consumer resolves
-the installed `libfu3_wdt.so` and `libsystemc.so.2.3`; no dependency is missing.
-The shared consumer links only the WDT public target, without a bus dependency.
+The regressions exercise the V1.1 register map, full-word access policy, SYSCSR
+unlock input, reset-domain behavior, first/second timeout, sticky reset request,
+debug halt, and independent WDT0/WDT1 bus routing. An independent LOAD=3 scenario
+checks absence of premature IRQ/reset and exact first/second expiry after four
+5 ns edges per stage. These checks validate functional deadlines, not physical CDC.
 
-## Test scope
+## Repairs during validation
 
-- `wdt_behavior`: direct TLM register transactions, independently calculated
-  timeout boundaries, first/second timeout status, reload/clear, raw/masked IRQ,
-  write locking, partial and sparse lane writes, RO/WO policy, malformed requests,
-  reset domains, debug pause, clock gating, zero-load escalation, reset pulse
-  duration, simultaneous expiry/service and a long countdown.
-- `wdt_integration`: both WDTs connected through the real FU3 bus and A2P,
-  independent registers, byte writes, warning routing, locked acknowledgement,
-  selective service, second-timeout requests and fake CRM reset feedback.
-- `wdt_installed_consumer`: the behavior suite built against the installed package,
-  linking only `fu3::wdt` and its exported SystemC dependency.
+The initial static build succeeded but both tests failed. One implementation
+defect was repaired on the first attempt: the event-driven counter skipped to
+the expiry edge without first applying the preceding decrements. It now sets
+VALUE to zero before evaluating that expiry, preserving the N+1-edge contract.
+The new boundary regression prevents this failure from being hidden by coarse
+waits. Two fixture defects were also repaired on their first attempt: the locked
+write scenario had left unlock asserted, and the integration bench drove each
+watchdog reset from both the main thread and fake CRM. Reset signals now have a
+single CRM writer. No issue reached the three-attempt limit.
 
-CTest timeouts are 30 seconds. Simulation watchdogs are two seconds for behavior
-and 100 microseconds for integration. The long-count test advances one simulated
-second (100 million watchdog ticks) without a per-tick simulation loop; it is a
-functional scalability check, not a general boot-performance benchmark.
+Ignored evidence: `build/validation-final.log` records the static/shared build,
+installation and consumer runs. `build/validation-static-boundaries.log` records
+the final static run with the added boundary checks. The final script's `ldd`
+command had a truncated executable name; a separate successful dependency check
+is recorded in `build/validation-runtime.log`. This script typo did not affect
+the builds or CTest results.
 
-## Limits
+## Remaining integration limits
 
-Tests verify the selected VP contract, including the documented resolutions of
-contradictory HDS passages. They do not establish physical CDC behavior, RTL cycle
-accuracy, native Windows DLL support, production CRM reset scope, CPU firmware
-execution or PLIC claim/complete behavior. The interrupt receiver and CRM are
-test-only peers. WDT0's NMI route follows the detailed HAS table despite its
-conflicting TBD prose.
-
-Local generated logs and build artifacts remain under ignored `build/`. No private
-PDFs or extracted specification text are part of this component.
+The tests use fake CRM/interrupt peers. They do not verify physical 2-FF CDC behavior, APB signal timing, the actual SYSCSR unlock register/key, production reset scope, PLIC claim/complete, or CPU firmware boot. The current model approximates the documented 6-7 APB wait states with a configurable fixed seven-clock TLM delay.

@@ -48,13 +48,20 @@ Native Windows DLL operation is not covered by the recorded Linux validation.
 5. Load images through the explicit debug backdoor or a permitted functional
    loader. Debug access bypasses policy and cannot demonstrate CPU access rights.
 6. Stop and drain IBEX requests before `finish_staging()`, then release CVA6 through
-   the platform's reset controller. Drain all masters before bus `reset()`.
+   the platform's reset controller. For system reset, stop masters and call
+   `quiesce()` from a coordinator SC_THREAD outside transport callbacks. Reset
+   IPs, call bus `reset()`, release IP resets, call `resume()`, restart masters.
+   Stop debug loaders separately; a non-returning target cannot be drained.
 7. Connect clocks, IP resets and interrupt routing in the platform. Bus reset does
    not reset attached devices; bus tests do not execute a software boot sequence.
 
 ## Review and validation
 
 Run static/shared regressions and installed consumers using the README commands.
+Enable `FU3_BUS_BUILD_IP_TESTS=ON` to run the production DMA/SPI/UART,
+Timer/PLIC and WDT/reset scenarios. Native AP_DMA binds through the optional
+`fu3_bus::DmaAdapter`; direct binding does not supply required metadata.
+See [integration validation](INTEGRATION_VALIDATION.md) for fixture wiring.
 Run the coexistence check when FX1 is present. Review the
 [validation record](VALIDATION.md) for the distinction between recorded results
 and unverified platform behavior.

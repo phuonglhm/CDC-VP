@@ -2,11 +2,9 @@
 
 ## Source precedence
 
-Primary: supplied UART HDS PDF, 34 pages. The cover says V1.0, revision history
-lists V2.0, and page headers still name FU2. These labels do not establish a new
-FU3 version. Page references below are PDF page numbers. FU3 HAS v2.0 supplies
-SoC wiring. Explicit local register definitions take precedence over generic
-16750 behavior.
+Primary: supplied `FTEL_CDC_IP_UART_Specification_v1.2.pdf`, 35 pages. Page
+references below are the printed page numbers. FU3 HAS v2.0 supplies SoC wiring.
+Explicit local register definitions take precedence over generic 16750 behavior.
 
 The local document claims 16750 compatibility but leaves some software semantics
 undefined. The [TI TL16C750 datasheet](https://www.ti.com/lit/ds/symlink/tl16c750.pdf)
@@ -27,8 +25,9 @@ four-byte direct target transfer carries the register in the low byte and reads
 zero in upper bytes. Length 2, bursts, wrapping payloads, null pointers and
 invalid commands return diagnostics. Normal bus clients should use byte MMIO.
 All-enabled TLM byte enables are accepted; sparse or disabled bytes are rejected.
-The HDS APB3 interface has no strobes, despite APB4 wording elsewhere. This avoids
-silently applying the SoC bus's general strobe policy to this endpoint.
+The HDS identifies this endpoint as APB3 and defines no write strobes, so sparse
+writes are rejected rather than silently applying the SoC bus's general strobe
+policy.
 
 HDS p.10 ties PSLVERR low; p.20 describes an error output without decode rules.
 TLM diagnostics above are adapter decisions, not a claim that RTL asserts PSLVERR.
@@ -43,25 +42,26 @@ Debug writes are rejected. This debugger policy is not specified by the HDS.
 
 - RBR/THR share offset 0; DLL replaces both when DLAB=1. IER at 1 becomes DLM.
 - FCR writes and IIR reads share offset 2. LCR/MCR/LSR/MSR/SCR are at 3..7.
-- Reserved IER bits [7:4] and MCR bits [7:5] read zero. LSR/MSR writes do nothing.
-- IER and IIR are implemented: the software sequence pp.28-29 explicitly uses them,
+- Reserved IER bits [7:4] and MCR bits [7:6] read zero. MCR[5] is AFE. LSR/MSR writes do nothing.
+- IER and IIR are implemented: the software sequence pp.29-30 explicitly uses them,
   overriding the contradictory "not needed" notes in the register table.
 - IER enables RX/timeout, THRE, line errors, modem changes in bits 0,1,2,3.
 - IIR low nibble: line error 6, RX threshold 4, RX timeout 12, THRE 2,
   modem 0, no interrupt 1. This is also the priority order, except RDA and timeout
   belong to the same class and RDA wins when both apply. Bits 7:6 indicate FIFO
   enable and bit 5 extended FIFO mode. IRQ is not gated by MCR.OUT2.
-- IIR acknowledges THRE only when it is the sole active source, following p.29.
+- IIR acknowledges THRE only when it is the sole active source, following p.30.
   THR writes clear its pending latch; a transition to empty or enabling IER.TX
   while already empty rearms it. THRE is not TEMT: a shifted frame can remain active.
 
-Reset is active-low and synchronous (p.18). No separate UART reset domain or CDC
-is invented. Reset cancels serial work and pending MMIO with a diagnostic, empties
-FIFOs and drives TX/modem pins inactive. Default IER/FCR/LCR/MCR/SCR/DLL/DLM=0,
-IIR=1, LSR=0x60. MSR upper bits follow sampled modem inputs after reset. These
-numeric defaults are a deterministic VP profile because the local HDS omits a
-reset-value table. Divisor zero disables launching TX/RX frames; it does not mean
-a hidden maximum divisor. These defaults require confirmation against RTL.
+Reset is active-low and synchronous for UART state (p.18), with the explicit
+exception that `MSR[3:0]` delta bits clear asynchronously when `preset_n` is
+asserted low. `MSR[7:4]` hold zero during reset and capture modem inputs at the
+first active edge after reset deassertion (pp.18-19). Reset cancels serial work
+and pending MMIO with a diagnostic, empties FIFOs and drives TX/modem pins
+inactive. Defaults are IER/FCR/LCR/MCR/SCR/DLL/DLM=0, IIR=1, LSR=0x60, MSR=0.
+Divisor zero disables launching TX/RX frames; it does not mean a hidden maximum
+divisor.
 
 ## FIFO and receive errors
 
@@ -89,11 +89,17 @@ An RBR read clears timeout; an empty read does not fabricate an error flag.
 
 ## Serial behavior
 
-The single configurable clock period defaults to 10 ns. Baud is
-`1 / (clock_period * oversampling * divisor)`, default oversampling 16, matching
-p.27. The contradictory fractional-generator prose on p.19 does not override
-the explicit unsupported-fractional list on p.9. The RATIO parameter's relation
-to oversampling is undefined; no extra factor is applied to the published formula.
+Baud-rate accuracy is deferred until RTL correlation because this VP targets
+firmware-visible frame and data-flow behavior, not bit-rate sign-off. The HDS
+initial sequence gives `divisor = fCLK / (16 * baudrate)` (p.28), but p.19 also
+allows 8x or 16x sampling without explaining how 8x relates to that fixed factor.
+The document excludes fractional baud on p.9 while p.19 says the generator may
+be fractional or integer. Its 12.5 Mbps at 200 MHz (p.8) and 6.25 Mbps down to
+95 bps (p.19) are consistent with the formula at 200 MHz and 100 MHz, though p.19
+does not state that clock assumption. DLL/DLM remain integer software-visible
+registers and provide deterministic relative frame timing in the VP; the model
+makes no claim that its Config clock/oversampling combination reproduces the
+specified baud at 8x or 16x. The `RATIO` relationship is likewise deferred.
 
 For the HAS 20 MHz boot source, divisor 65 gives approximately 19,230.77 baud
 (+0.1603% relative to 19,200). The integration fixture uses that integer divisor
@@ -123,18 +129,20 @@ CTS/DSR/DCD transitions latch deltas, RI low-to-high latches TERI. Reading MSR
 clears deltas. Loopback connects internal TX to RX and, as a compatibility choice,
 maps RTS/DTR/OUT1/OUT2 to CTS/DSR/RI/DCD and releases external outputs.
 
-Auto flow control can be enabled by `Config::auto_flow_control`. Auto-CTS gates
-new frames, never truncates an active frame. Auto-RTS requires MCR.RTS and stops
-at the receive trigger; it resumes when the FIFO empties. This hysteresis is an
-explicit VP choice. No MCR enable bit is defined by the local HDS; reserved bits
-remain zero. RS485 has no specified mode bit or driver-enable pin and is not
-implemented as a speculative register extension.
+MCR[5] AFE selects automatic flow control (pp.24,27). With AFE set, CTS gates
+new frames without truncating an active frame. If MCR.RTS is also set, RTS is
+automatically controlled from receive FIFO occupancy; otherwise only auto-CTS
+is active. The model stops RTS at the receive trigger and resumes after the FIFO
+empties, a bounded VP interpretation because the HDS does not specify exact
+assert/deassert thresholds. MCR[7:6] are reserved. RS485 has no specified mode
+bit or driver-enable pin and is not implemented as a speculative extension.
 
-FCR[3] enables DMA. TX requests when space exists. RX requests at trigger or
-timeout. A sampled clear input suppresses the corresponding request while high;
-when low, the request reflects the current condition again. This is one bounded
-interpretation of p.29's allowed deassert/reassert behavior, not a SPI-style
-four-phase handshake. The peer must check available capacity/threshold and finish
+FCR[3] enables DMA. TX requests when space exists. RX requests when the FIFO is
+nonempty and either the configured trigger is reached or receive timeout is
+pending. Threshold and timeout are combined trigger causes; either can assert
+the request, and both may be true together. A sampled clear input suppresses the
+corresponding request while high; when low, the request reflects the current
+condition again. The peer must check available capacity/threshold and finish
 bus operations before acknowledging; UART does not perform memory transfers.
 
 ## Event ordering and integration limits

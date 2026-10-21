@@ -37,6 +37,9 @@ BusConfig BusConfig::fu3() {
         if (t.name == "ROM") t.access = AccessPolicy::BootRom;
         if (t.name == "CVA6_ISRAM") t.access = AccessPolicy::Cva6Program;
         if (t.name == "DSRAM") t.access = AccessPolicy::DataOnly;
+        // The current compact PLIC ABI places claim/complete at local 0x24.
+        // This is an endpoint safety policy, not a new register definition.
+        if (t.name == "AP_PLIC") t.strict_word_offsets = {0x24};
     }
     return c;
 }
@@ -85,6 +88,13 @@ void BusConfig::validate() const {
         const auto end = target.base + target.size;
         const bool apb = target.path == TargetPath::Peribus0Apb ||
                          target.path == TargetPath::Peribus1Apb;
+        if (apb && target.preserve_burst)
+            throw std::invalid_argument("Preserved bursts require an AXI endpoint: " + target.name);
+        std::unordered_set<std::uint64_t> strict_words;
+        for (const auto offset : target.strict_word_offsets)
+            if (target.base%4 || offset%4 || target.size<4 || offset>target.size-4 ||
+                !strict_words.insert(offset).second)
+                throw std::invalid_argument("Invalid strict-word offset: " + target.name);
         if (apb && target.base % 4)
             throw std::invalid_argument("APB target base must be word aligned: " + target.name);
         if (axi_address_width < 64 && end > limit)

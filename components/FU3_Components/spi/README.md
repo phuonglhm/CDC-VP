@@ -65,6 +65,13 @@ for mode in static shared; do
 done
 ```
 
+Each component build runs 18 tests, including named corner scenarios in
+`tests/corners.cpp`; each installed consumer build runs eight tests. Corner tests
+cover slave formats, concurrent FIFO flush, event priority, active-state abort/reset,
+DMA boundaries, functional clock-ratio profiles and extreme master delays.
+The integration test also exercises concurrent CPU/DMA-stand-in FIFO writes while
+another SPI progresses through the other peripheral bridge.
+
 Installed consumers use `find_package(fu3-spi CONFIG REQUIRED)` and link
 `fu3::spi`. SystemC is an exported PUBLIC dependency. Applications define
 `sc_main`; the library has no entry point. The production library does not depend

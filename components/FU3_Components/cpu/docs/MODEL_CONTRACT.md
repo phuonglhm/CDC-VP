@@ -33,7 +33,7 @@ Both CPUs are the Bremen RV32 ISS behind `cdc::cpu::cva6_wrapper`. The VP models
 
 - One initiator socket per CPU (`has_unified_bus() = true`), matching one AXI4 master per CPU on the FU3 bus.
 - Every fetch/data transaction carries `fu3_bus::Access` (instruction flag, beat size).
-- Fetches are aligned 4-byte words. A 2-byte-aligned PC fetches the word below and, only for a 32-bit instruction, the next word; a 16-bit instruction never fetches past its own word.
+- Fetches are aligned 4-byte words. A 2-byte-aligned PC fetches the word below and, only for a 32-bit instruction, the next word and a 16-bit instruction never fetches past its own word.
 - Bus errors become access-fault traps: mcause 1 (fetch), 5 (load), 7 (store).
 
 ## Not provided by the ISS (open)

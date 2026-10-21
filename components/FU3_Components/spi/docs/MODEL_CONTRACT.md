@@ -114,8 +114,11 @@ RX flush drains one entry per system tick and self-clears when empty. TX flush
 drains through a request/acknowledge/return sequence, preventing a new frame load
 while draining; a frame already shifting can finish. Hardware completion wins
 over a software flush write on the same tick. Flush must normally be requested
-after traffic stops, per HDS p.42. Detailed flush/rewrite races and arbitrary
-concurrent DMA traffic require additional verification beyond the initial suite.
+after traffic stops, per HDS p.42. Corner tests exercise flush completion against
+a same-tick software set, rewrite during acknowledgement return, concurrent TX
+refill, RX reception during drain and stopping RX flush. The selected same-tick
+RX drain/push result follows the explicit VP ordering above; arbitrary CPU/DMA/
+flush interleavings are not claimed to reproduce every RTL race.
 
 ## Reset and APB abstraction
 

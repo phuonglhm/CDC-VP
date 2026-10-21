@@ -18,9 +18,15 @@ public:
     void finish_staging();
     // Functional bus reset after platform quiescence; IP resets remain platform-owned.
     void reset();
+    // SC_THREAD control path: close functional ingress, then drain admitted work.
+    void quiesce();
+    void resume();
+    bool accepting() const { return accepting_; }
     unsigned peak_outstanding(const std::string& name, bool write=false) const;
 private:
     bool staging_ = true;
+    bool accepting_ = true;
+    sc_core::sc_event activity_;
     BusConfig config_;
     std::unique_ptr<Router> sysbus1_,sysbus0_,peribus0_,peribus1_;
     std::unique_ptr<ApbBridge> a2p0_,a2p1_;

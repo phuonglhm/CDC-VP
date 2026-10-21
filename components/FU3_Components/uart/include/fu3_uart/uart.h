@@ -12,8 +12,7 @@ namespace fu3_uart {
 struct Config {
     sc_core::sc_time clock_period{10, sc_core::SC_NS};
     unsigned fifo_depth = 64; // SIZE_E = 5 or 6.
-    unsigned oversampling = 16; // 8 or 16; no invented LCR/MCR bit.
-    bool auto_flow_control = false;
+    unsigned oversampling = 16; // HDS parameter; the register table defines no selector bit.
 };
 
 class Uart : public sc_core::sc_module {
@@ -48,6 +47,7 @@ private:
     sc_core::sc_mutex access_;
     sc_core::sc_event completed_, outputs_;
     void run();
+    void reset_delta_async();
     void reset_state();
     void cycle();
     void publish();

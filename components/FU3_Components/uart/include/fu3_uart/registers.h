@@ -26,6 +26,7 @@
 #define FU3_UART_THRE 0x20u
 #define FU3_UART_TEMT 0x40u
 #define FU3_UART_FIFO_ERROR 0x80u
+#define FU3_UART_MCR_AFE 0x20u
 #define FU3_UART_IER_RX 0x01u
 #define FU3_UART_IER_TX 0x02u
 #define FU3_UART_IER_LINE 0x04u

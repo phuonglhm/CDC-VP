@@ -6,13 +6,24 @@ InitiatorPort::InitiatorPort(sc_core::sc_module_name name) : sc_module(name) {
     socket.register_transport_dbg(this,&InitiatorPort::transport_dbg);
 }
 void InitiatorPort::configure(const InitiatorConfig& descriptor, const BusConfig& config,
-                              const bool& staging) {
+                              const bool& staging, const bool& accepting,
+                              sc_core::sc_event& activity) {
     descriptor_=descriptor; regions_=config.targets; staging_=&staging;
+    accepting_=&accepting; activity_=&activity;
     rejection_latency_ns_=config.router_latency_ns;
     reads_.capacity(descriptor.outstanding); writes_.capacity(descriptor.outstanding);
 }
 void InitiatorPort::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay) {
-    struct Count { unsigned& n; explicit Count(unsigned& v):n(v){++n;} ~Count(){--n;} } count(in_flight_);
+    // Rejected new work is not part of the set being drained during quiescence.
+    if (!*accepting_) {
+        consume_delay(delay); sc_core::wait(rejection_latency_ns_,sc_core::SC_NS);
+        tx.set_dmi_allowed(false); tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE); return;
+    }
+    struct Count {
+        unsigned& n; sc_core::sc_event& activity;
+        Count(unsigned& value, sc_core::sc_event& event):n(value),activity(event){++n;}
+        ~Count(){--n;activity.notify(sc_core::SC_ZERO_TIME);}
+    } count(in_flight_,*activity_);
     consume_delay(delay);
     sc_core::wait(sc_core::SC_ZERO_TIME);
     auto reject=[&](tlm::tlm_response_status status) {
@@ -50,6 +61,21 @@ void InitiatorPort::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& 
         reject(tlm::TLM_ADDRESS_ERROR_RESPONSE); return;
     }
     if(access && address%beat) { reject(tlm::TLM_ADDRESS_ERROR_RESPONSE); return; }
+    // Validate every protected beat before the first possible target side effect.
+    for (const auto offset : selected->strict_word_offsets) {
+        const auto word=selected->base+offset;
+        const auto footprint=fixed?beat:length;
+        if (address>=word+4 || word>=address+footprint) continue;
+        if (beat!=4 || address%4) { reject(tlm::TLM_BURST_ERROR_RESPONSE); return; }
+        if (const auto* enables=tx.get_byte_enable_ptr()) {
+            const unsigned first=fixed?0:static_cast<unsigned>(word-address);
+            const unsigned end=fixed?length:first+4;
+            for(unsigned i=first;i<end;++i)
+                if(enables[i%tx.get_byte_enable_length()]!=0xff) {
+                    reject(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE); return;
+                }
+        }
+    }
     Admission::Lease slot(tx.is_write() && descriptor_.separate_read_write?writes_:reads_);
     // Preserve each adapter ordering stream; independent IDs and directions overlap.
     auto& queue=ordering_[{tx.is_write(),access?access->ordering_id:0}];

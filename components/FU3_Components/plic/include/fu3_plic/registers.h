@@ -1,32 +1,24 @@
 #pragma once
 #include <stdint.h>
 
-// FU3 AP_PLIC (ftel_plic HDS V1.0) - offset/bit cho firmware
-// Cửa sổ 64 KiB trên PERIBUS_1
+// FU3 AP_PLIC (Common Spec v2.0, PLIC Connections: pulp rv_plic plic_top)
+// Cửa sổ 64 KiB trên PERIBUS_1, 23 nguồn (ID 1-23), 1 target (CVA6 irq_i[0]), priority 1-7
 #define FU3_PLIC_BASE UINT32_C(0x40100000)
 
-#define FU3_PLIC_CONFIG_0_OFFSET    0x0000u   // RO: [15:0] SOURCES, [31:16] TARGETS
-#define FU3_PLIC_CONFIG_1_OFFSET    0x0004u   // RO: [15:0] PRIORITIES, [23:16] MAX_PENDING_COUNT, [24] HAS_THRESHOLD 
-#define FU3_PLIC_EL_OFFSET          0x0008u   // RW: bit k = irq_sources_i[k] (ID k+1): 0 level, 1 rising edge 
-#define FU3_PLIC_PRIORITY_0_OFFSET  0x000Cu   // RW: ID 1-8, 4 bit mỗi ID (dùng [2:0]) 
-#define FU3_PLIC_PRIORITY_1_OFFSET  0x0010u   // ID 9-16
-#define FU3_PLIC_PRIORITY_2_OFFSET  0x0014u   // ID 17-24
-#define FU3_PLIC_PRIORITY_3_OFFSET  0x0018u   // ID 25-32
-#define FU3_PLIC_IE_0_OFFSET        0x001Cu   // RW: bit k bật ID k+1 cho target 0 
-#define FU3_PLIC_THRESHOLD_0_OFFSET 0x0020u   // RW [2:0]: chỉ báo ngắt khi priority > threshold 
-#define FU3_PLIC_ID_0_OFFSET        0x0024u   // Đọc = claim (trả ID, 0 = không có) và Ghi ID = complete 
+#define FU3_PLIC_PRIORITY_OFFSET(id) (4u * (id))   // RW [2:0]: ID 1-23, ID 0 đọc 0
+#define FU3_PLIC_PENDING_OFFSET      0x1000u       // RO: bit n = ID n, bit 0 = 0
+#define FU3_PLIC_ENABLE_OFFSET       0x2000u       // RW: bit n = ID n cho context 0
 
-#define FU3_PLIC_SOURCES            32u
-#define FU3_PLIC_TARGETS            1u
-#define FU3_PLIC_PRIORITIES         8u
-#define FU3_PLIC_MAX_PENDING_COUNT  8u
+// Spec: offset threshold/claim là "TBD (compact-map offset)" => VP tạm chọn, chờ RTL chốt
+#define FU3_PLIC_THRESHOLD_OFFSET    0x3000u       // RW [2:0]: chỉ ngắt khi priority > threshold
+#define FU3_PLIC_CLAIM_OFFSET        0x3004u       // Đọc = claim (0 = không có), ghi ID = complete
 
-// Offset thanh ghi PRIORITY và vị trí bit cho Source ID (1..32) 
-#define FU3_PLIC_PRIORITY_OFFSET(id) (FU3_PLIC_PRIORITY_0_OFFSET + 4u * (((id) - 1u) / 8u))
-#define FU3_PLIC_PRIORITY_SHIFT(id)  (4u * (((id) - 1u) % 8u))
-#define FU3_PLIC_SOURCE_BIT(id)      (1u << ((id) - 1u))
+#define FU3_PLIC_SOURCES      23u
+#define FU3_PLIC_MAX_PRIORITY 7u
+#define FU3_PLIC_ENABLE_MASK  0x00FFFFFEu
+#define FU3_PLIC_SOURCE_BIT(id) (1u << (id))
 
-// Source ID theo FU3 HAS v2.0 Table 11-1: ID n <- irq_sources_i[n-1]
+// Source ID theo Common Spec v2.0 Interrupt Mapping: ID n <- irq_sources_i[n-1]
 #define FU3_PLIC_ID_CRM          1u
 #define FU3_PLIC_ID_UART0        2u
 #define FU3_PLIC_ID_AES          3u

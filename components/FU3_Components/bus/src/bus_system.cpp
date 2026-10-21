@@ -76,7 +76,7 @@ BusSystem::BusSystem(sc_core::sc_module_name name, const BusConfig& cfg, bool tr
 
     for (std::size_t i = 0; i < config_.initiators.size(); ++i) {
         initiator_index_.emplace(config_.initiators[i].name, i);
-        initiator_ports_[i].configure(config_.initiators[i], config_, staging_);
+        initiator_ports_[i].configure(config_.initiators[i], config_, staging_, accepting_, activity_);
         master_pipelines_[i].cycle(config_.axi_cycle_ns);
         master_pipelines_[i].capacity(std::numeric_limits<unsigned>::max());
         initiator_ports_[i].out.bind(master_pipelines_[i].input);
@@ -134,6 +134,22 @@ void BusSystem::reset() {
     for(const auto& port:initiator_ports_)
         if(port.in_flight()) throw std::logic_error("Quiesce all masters before resetting the FU3 bus");
     staging_=true;
+}
+void BusSystem::quiesce() {
+    if(sc_core::sc_get_current_process_handle().proc_kind()!=sc_core::SC_THREAD_PROC_)
+        throw std::logic_error("Bus quiesce must run in SC_THREAD outside a bus transaction");
+    accepting_=false;
+    for (;;) {
+        bool active=false;
+        for(const auto& port:initiator_ports_) active=active || port.in_flight()!=0;
+        if(!active) return;
+        sc_core::wait(activity_);
+    }
+}
+void BusSystem::resume() {
+    for(const auto& port:initiator_ports_)
+        if(port.in_flight()) throw std::logic_error("Drain admitted work before reopening ingress");
+    accepting_=true;
 }
 
 tlm_utils::simple_initiator_socket<TargetPort>& BusSystem::target(const std::string& name) {

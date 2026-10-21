@@ -167,7 +167,8 @@ struct Bench : sc_core::sc_module {
         };
 
         // Reset value
-        for (auto& e : exp) check(rd(e.off) == e.reset, "Reset Value");
+        for (auto& e : exp) 
+            check(rd(e.off) == e.reset, "Reset Value");
 
         // Mask rw/ro: ghi full 1 rồi full 0
         for (auto& e : exp) {
@@ -211,7 +212,7 @@ struct Bench : sc_core::sc_module {
         // sys_ctrl -> CRM
         wr(0x74, ~0u);
         sc_core::wait(1, sc_core::SC_NS);
-        check(rd(0x74) == 0x1111, "sys_ctrl Mask");
+        check(rd(0x74) == 0x1111, "SYS_CTRL Mask");
         check(sw_reset_req.read() && sw_global_rst_req.read(), "Reset REQ High");
 
         wr(0x74, kJtagmuxSel);

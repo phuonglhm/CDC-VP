@@ -8,7 +8,7 @@ struct Bench : sc_core::sc_module, Checks {
     unsigned depth, os;
     SC_HAS_PROCESS(Bench);
     Bench(sc_core::sc_module_name name, unsigned d, unsigned sampling)
-        :sc_module(name),dut("dut",{sc_core::sc_time(10,sc_core::SC_NS),d,sampling,true}),depth(d),os(sampling) {
+        :sc_module(name),dut("dut",{sc_core::sc_time(10,sc_core::SC_NS),d,sampling}),depth(d),os(sampling) {
         pins.bind(dut); cpu.bind(dut.socket); SC_THREAD(run); SC_THREAD(watchdog);
     }
     void settle(){for(unsigned i=0;i<5;++i)wait(sc_core::SC_ZERO_TIME);}
@@ -70,7 +70,7 @@ struct Bench : sc_core::sc_module, Checks {
         w(7,0xa5);expect(r(7)==0xa5,"scratch round trip");
         w(3,128);w(0,0x34);w(1,0x12);expect(r(0)==0x34&&r(1)==0x12,"DLAB selects both divisor bytes");
         w(3,3);expect(r(1)==0,"DLM write does not alter IER");
-        w(4,255);expect(r(4)==31,"reserved MCR bits are zero");w(4,0);
+        w(4,255);expect(r(4)==0x3f,"MCR AFE is implemented and bits 7:6 are reserved");w(4,0);
         access(false,7,0,false,4);access(true,7,0,false,2,tlm::TLM_BURST_ERROR_RESPONSE);
         access(false,8,0,false,1,tlm::TLM_ADDRESS_ERROR_RESPONSE);
         unsigned char disabled=0;access(true,7,0,false,1,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,&disabled);
@@ -117,7 +117,7 @@ struct Bench : sc_core::sc_module, Checks {
         cold();configure(3,1,0);send(0x11);send(0x22);expect(r(5)&2,"single-byte holding register overflow");expect(r(0)==0x11,"non-FIFO VP overflow policy");
         // RX flush clears pending data/errors; TX flush preserves current shift frame.
         cold();configure();send(3);w(2,3);expect(!(r(5)&0x9f),"RX reset clears data and errors");
-        pins.cts=true;wait(20,sc_core::SC_NS);w(0,0x11);w(0,0x22);expect(!(r(5)&0x20),"CTS blocks launch without dropping data");
+        w(4,FU3_UART_MCR_AFE);pins.cts=true;wait(20,sc_core::SC_NS);w(0,0x11);w(0,0x22);expect(!(r(5)&0x20),"AFE enables CTS gating without dropping data");
         w(2,5);expect((r(5)&0x60)==0x60,"TX FIFO reset while CTS blocks");
         pins.cts=false;wait(20,sc_core::SC_NS);w(0,0x55);w(0,0xaa);w(2,5);
         expect(!(r(5)&0x40),"TX flush does not truncate current frame");wait(bit()*12);expect(r(5)&0x40,"active frame completes after flush");
@@ -140,9 +140,14 @@ struct Bench : sc_core::sc_module, Checks {
         w(0,0x69);wait(bit()*12);expect(r(0)==0x69,"internal serial loopback");
         w(4,0);w(3,67);expect(!pins.tx,"break forces TX low");w(3,3);expect(pins.tx,"break release returns idle high");
         // Auto RTS at threshold, resuming only after FIFO drain.
-        cold();configure(3,1,0x41);w(4,2);expect(!pins.rts,"auto RTS initially ready");
+        cold();configure(3,1,0x41);w(4,FU3_UART_MCR_AFE|2);expect(!pins.rts,"AFE plus RTS enables auto RTS initially ready");
         for(unsigned i=0;i<4;++i)send(i);expect(pins.rts,"auto RTS stops sender at trigger");
         r(0);expect(pins.rts,"auto RTS holds until FIFO empty");for(unsigned i=0;i<3;++i)r(0);wait(20,sc_core::SC_NS);expect(!pins.rts,"auto RTS resumes after drain");
+        // RX DMA combines threshold and timeout triggers; FIFO data must be available.
+        cold();configure(3,1,0x49);send(0x35);wait(bit()*45);expect(pins.rx_req,"timeout triggers RX DMA below threshold");
+        for(unsigned i=0;i<4;++i)send(0x40+i);expect(pins.rx_req,"threshold and timeout may both be active");
+        r(0);expect(pins.rx_req,"clearing timeout does not drop request while threshold remains met");
+
         // DMA clear pulses suppress requests; conditions determine reassertion.
         cold();configure(3,1,0x49);expect(pins.tx_req&&!pins.rx_req,"DMA TX space and RX threshold");
         pins.tx_clear=true;wait(20,sc_core::SC_NS);expect(!pins.tx_req,"TX clear suppresses request");
@@ -151,6 +156,15 @@ struct Bench : sc_core::sc_module, Checks {
         pins.rx_clear=true;wait(20,sc_core::SC_NS);expect(!pins.rx_req,"RX clear suppresses request");
         r(0);pins.rx_clear=false;wait(20,sc_core::SC_NS);expect(!pins.rx_req,"drained FIFO does not re-request");
         w(2,1);expect(!pins.tx_req&&!pins.rx_req,"DMA disable");
+        // MSR deltas clear asynchronously; the rest of UART state resets on a clock edge.
+        cold();configure();w(1,8);pins.dsr=false;wait(20,sc_core::SC_NS);
+        expect((peek(6)&0x02)&&pins.irq,"modem transition sets a delta interrupt");
+        const unsigned saved_lcr=peek(3);wait(1,sc_core::SC_NS);pins.reset=false;wait(1,sc_core::SC_NS);settle();
+        expect(!pins.irq,"MSR delta interrupt clears without waiting for a clock edge");
+        pins.reset=true;wait(20,sc_core::SC_NS);
+        expect(peek(3)==saved_lcr,"sub-cycle reset pulse leaves synchronous UART state intact");
+        pins.dsr=true;wait(20,sc_core::SC_NS);
+
         // Reset aborts active TX/RX and restores defaults on a clock edge.
         w(0,0x00);pins.rx=false;wait(bit()*2);pins.reset=false;wait(20,sc_core::SC_NS);settle();
         expect(pins.tx&&!pins.irq&&!pins.tx_req&&(peek(5)&0x61)==0x60,"synchronous reset aborts active work");
