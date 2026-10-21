@@ -4,14 +4,13 @@
 #include <stdexcept>
 
 namespace fu3::qspi {
-enum class ThresholdUnit { Bytes, Words };
-
 class QspiTxRxFifo {
 public:
     class Queue {
     public:
         explicit Queue(unsigned capacity) : capacity_(capacity) {
-            if (!capacity || capacity>32) throw std::invalid_argument("QSPI FIFO capacity must be 1..32 bytes");
+            if (capacity<16 || capacity>128 || (capacity&(capacity-1)))
+                throw std::invalid_argument("QSPI FIFO depth must be 4, 8, 16 or 32 words");
         }
         unsigned size() const { return static_cast<unsigned>(data_.size()); }
         unsigned free() const { return capacity_-size(); }
@@ -35,18 +34,13 @@ public:
         std::deque<unsigned char> data_;
     };
     Queue tx,rx;
-    explicit QspiTxRxFifo(unsigned tx_bytes=32,unsigned rx_bytes=32,ThresholdUnit unit=ThresholdUnit::Bytes)
-        : tx(tx_bytes),rx(rx_bytes),unit_(unit) {
-        if (unit!=ThresholdUnit::Bytes && unit!=ThresholdUnit::Words)
-            throw std::invalid_argument("Unknown QSPI threshold unit");
-    }
+    explicit QspiTxRxFifo(unsigned tx_words=32,unsigned rx_words=32)
+        : tx(tx_words*4),rx(rx_words*4) {}
     void reset() { tx.clear(); rx.clear(); }
-    bool tx_threshold(unsigned encoded) const { return tx.free()>=(encoded+1)*(unit_==ThresholdUnit::Words?4:1); }
+    bool tx_threshold(unsigned encoded) const { return tx.free()/4>=encoded+1; }
     bool rx_threshold(unsigned encoded) const {
-        return (unit_==ThresholdUnit::Words ? (rx.size()+3)/4 : rx.size())>=encoded+1;
+        return (rx.size()+3)/4>=encoded+1;
     }
-    std::uint32_t levels() const { return (tx.size()<<8)|(rx.size()<<16); }
-private:
-    ThresholdUnit unit_;
+    std::uint32_t levels() const { return (((tx.size()+3)/4)<<8)|(((rx.size()+3)/4)<<16); }
 };
 }

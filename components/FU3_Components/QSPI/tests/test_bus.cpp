@@ -29,8 +29,8 @@ struct Platform : sc_module {
         fabric.target("AP_QSPIC").bind(qspi.ap_qspic);
         fabric.target("QSPI_XIP").bind(a2h.socket); a2h.ahb.bind(qspi.xip);
         image.reset_n(rst); image.load(image_bytes);
-        qspi.flash.bind(image.socket); qspi.clk(clk); qspi.pclk(pclk); qspi.hclk(hclk);
-        qspi.reset_n(rst); qspi.preset_n(rst); qspi.hreset_n(rst);
+        qspi.flash.bind(image.socket); qspi.clk(clk); qspi.pclk(pclk); qspi.hclk(hclk); qspi.dma_clk(pclk);
+        qspi.reset_n(rst); qspi.preset_n(rst); qspi.hreset_n(rst); qspi.dma_reset_n(rst);
         qspi.dma_rx_clr(clr); qspi.dma_tx_clr(clr); qspi.irq(irq); qspi.dma_rx_req(rxreq); qspi.dma_tx_req(txreq);
         SC_THREAD(run);
     }
@@ -67,7 +67,7 @@ struct Platform : sc_module {
     }
     void command(unsigned opcode) { wr(12,63); wr(20,0x100|opcode); complete(); }
     void poll_flash() {
-        wr(12,63); wr(0,0x01400001); // APMS + EN
+        wr(12,63); wr(0,0x00400001); // APMS + EN
         wr(16,0); wr(36,1); wr(40,0); wr(44,10);
         wr(20,0x09000105); // Automatic status polling of WIP.
         for(unsigned i=0;i<10000;++i) {
@@ -79,7 +79,7 @@ struct Platform : sc_module {
     void run() {
         try {
             rst=false; wait(31,SC_NS); rst=true; wait(20,SC_NS);
-            wr(4,16u<<16); wr(0,0x01000001); wr(20,0x0d002503);
+            wr(4,16u<<16); wr(0,0x00000001); wr(20,0x0d002503);
             unsigned char data[16]{};
             check(access(false,false,0x30000000,data,16,4,false,true)==tlm::TLM_OK_RESPONSE,"CVA6 four-beat instruction fetch");
             for(unsigned i=0;i<16;++i) check(data[i]==image_bytes[i],"XIP image bytes");

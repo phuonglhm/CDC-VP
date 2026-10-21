@@ -62,9 +62,9 @@ struct Bench : sc_module {
     sc_event worker_start, worker2_start;
     SC_HAS_PROCESS(Bench);
     Bench(sc_module_name n,std::string s):sc_module(n),
-        dut("dut",Config{32,32,200,s=="threshold_words"?ThresholdUnit::Words:ThresholdUnit::Bytes}),scenario(std::move(s)) {
-        dut.clk(ck); dut.pclk(pc); dut.hclk(hc);
-        dut.reset_n(rn); dut.preset_n(prn); dut.hreset_n(hrn);
+        dut("dut",Config{32,32,200}),scenario(std::move(s)) {
+        dut.clk(ck); dut.pclk(pc); dut.hclk(hc); dut.dma_clk(pc);
+        dut.reset_n(rn); dut.preset_n(prn); dut.hreset_n(hrn); dut.dma_reset_n(rn);
         dut.dma_rx_clr(rxclr); dut.dma_tx_clr(txclr);
         dut.irq(irq); dut.dma_rx_req(rxreq); dut.dma_tx_req(txreq);
         ap.bind(dut.ap_qspic); mm.bind(bridge.socket); bridge.ahb.bind(dut.xip); dut.flash.bind(memory.socket);
@@ -87,10 +87,17 @@ struct Bench : sc_module {
         tx.set_streaming_width(stream); tx.set_byte_enable_ptr(enables); tx.set_byte_enable_length(be_len);
         sc_time delay=SC_ZERO_TIME;
         if(x) mm->b_transport(tx,delay); else ap->b_transport(tx,delay);
+        if (x && tx.is_response_ok()) { for(unsigned i=0; i<10000 && (peek(8)&reg::BUSY); ++i) ticks(); }
         value=0; for(unsigned i=0;i<4;++i) value|=std::uint32_t(data[i])<<(8*i);
         return tx.get_response_status();
     }
-    void wr(unsigned a,std::uint32_t v) { check(bus(false,true,a,v)==tlm::TLM_OK_RESPONSE,"AP write "+std::to_string(a)); }
+    void wr(unsigned a,std::uint32_t v) {
+        check(bus(false,true,a,v)==tlm::TLM_OK_RESPONSE,"AP write "+std::to_string(a));
+        if (a==0 && (v&reg::ABORT)) {
+            for(unsigned i=0; i<10000 && (peek(0)&reg::ABORT); ++i) ticks();
+            check(!(peek(0)&reg::ABORT),"abort completes");
+        }
+    }
     std::uint32_t rd(unsigned a) { std::uint32_t v=0; check(bus(false,false,a,v)==tlm::TLM_OK_RESPONSE,"AP read"); return v; }
     std::uint32_t peek(unsigned a) {
         unsigned char data[4]{}; tlm::tlm_generic_payload tx;
@@ -104,7 +111,7 @@ struct Bench : sc_module {
         rn=false; prn=false; hrn=false; rxclr=false; txclr=false;
         wait(31,SC_NS); rn=true; prn=true; hrn=true; ticks(2);
     }
-    void configure(std::uint32_t extra=0) { wr(0x04,16u<<16); wr(0,0x01000001|extra); }
+    void configure(std::uint32_t extra=0) { wr(0x04,16u<<16); wr(0,0x00000001|extra); }
     static std::uint32_t ccr(unsigned mode,unsigned opcode=3,bool address=true) {
         return (mode<<26)|(1u<<24)|(address?((2u<<12)|(1u<<10)):0)|(1u<<8)|opcode;
     }
@@ -122,7 +129,7 @@ struct Bench : sc_module {
         unsigned done=0;
         for(unsigned tries=0;done<length && tries<10000;++tries) {
             const unsigned n=std::min(4u,length-done);
-            if (((rd(8)>>16)&63)<n) continue;
+            if (((rd(8)>>16)&63)==0) continue;
             check(rd(0x20)==expected(address+done,n),"read data/tail/byte order"); done+=n;
         }
         check(done==length,"all bytes read");
@@ -135,7 +142,7 @@ struct Bench : sc_module {
         while(true) { wait(worker2_start); std::uint32_t v=0xaabbccdd; worker2_result=bus(!workers_ap,workers_ap,workers_ap?28:4,v); worker2_done=true; }
     }
     void registers() {
-        for(unsigned a=0;a<64;a+=4) check(peek(a)==0,"all 16 registers reset zero");
+        for(unsigned a=0;a<64;a+=4) check(peek(a)==(a==8?4u:0u),"HDS reset values");
         const std::vector<std::pair<unsigned,std::uint32_t>> cases={
             {4,0x001f0701},{16,0xffffffff},{20,0x9f7fffff},{28,0xffffffff},
             {36,0xffffffff},{40,0xffffffff},{44,0xffff},{48,0xffffffff},{52,15}};
@@ -148,7 +155,7 @@ struct Bench : sc_module {
     }
     void protocol() {
         std::uint32_t v=0x11223344;
-        for(auto a:{1ULL,0x40ULL,0x100000000ULL}) check(bus(false,true,a,v)==tlm::TLM_ADDRESS_ERROR_RESPONSE,"no alignment/high aliases");
+        for(auto a:{0x40ULL,0x100000000ULL}) check(bus(false,true,a,v)==tlm::TLM_ADDRESS_ERROR_RESPONSE,"unmapped/high addresses rejected");
         for(auto len:{0u,1u,2u,8u}) check(bus(false,true,4,v,len)==tlm::TLM_BURST_ERROR_RESPONSE,"word only");
         check(bus(false,true,4,v,4,nullptr,0,0)==tlm::TLM_BURST_ERROR_RESPONSE,"stream width zero");
         check(bus(false,true,4,v,4,nullptr,0,4,true)==tlm::TLM_GENERIC_ERROR_RESPONSE,"null data");
@@ -196,20 +203,20 @@ struct Bench : sc_module {
         consume(251,5); // Undefined DLR stops at FSIZE end, no huge allocation.
     }
     void fifo() {
-        configure(reg::TCIE|reg::RXFTIE); start_read(0,33);
-        wait(10,SC_US);
+        configure(reg::TCIE|reg::RXFTIE); start_read(0,129);
+        wait(30,SC_US);
         check(((rd(8)>>16)&63)==32 && (rd(8)&64),"RX stalls full");
         const auto first=peek(32); check(first==peek(32),"debug DR non-destructive");
         check(irq.read(),"RX threshold interrupt");
-        consume(0,33); ticks(2); check(irq.read(),"TC interrupt");
-        wr(0,0x01000001); wr(12,63); ticks(2); check(!irq.read(),"IRQ masks");
+        consume(0,129); ticks(2); check(irq.read(),"TC interrupt");
+        wr(0,0x00000001); wr(12,63); ticks(2); check(!irq.read(),"IRQ masks");
         wr(52,8); check(rd(32)==0,"empty RX zero"); ticks(2);
         check(rd(56)==8 && irq.read(),"underrun interrupt"); wr(60,8); ticks(2); check(rd(56)==0 && !irq.read(),"underrun W1C");
-        wr(12,63); wr(0,0xff000001); wr(16,127); wr(20,ccr(0,2)); wr(24,0);
-        for(unsigned i=0;i<9;++i) wr(32,i); // First word is in flight; eight words fill FIFO.
-        check(((rd(8)>>8)&63)==32,"TX capacity 32 bytes");
+        wr(12,63); wr(0,0xfe000001); wr(16,255); wr(20,ccr(0,2)); wr(24,0);
+        for(unsigned i=0;i<33;++i) wr(32,i); // First word is in flight; 32 words fill FIFO.
+        check(((rd(8)>>8)&63)==32,"TX capacity 32 words");
         wr(52,4); wr(32,0xdeadbeef); ticks(2); check(rd(56)==4 && irq.read(),"TX overflow discard/IRQ");
-        wr(60,4); check(rd(56)==0,"TX overflow W1C"); wr(0,0xff000003);
+        wr(60,4); check(rd(56)==0,"TX overflow W1C"); wr(0,0xfe000003);
         check((rd(8)&0x3f00)==0,"abort flushes TX");
     }
     void polling() {
@@ -220,11 +227,11 @@ struct Bench : sc_module {
         check(!rxreq.read() && !txreq.read(),"no polling DMA");
         wr(12,16); ticks(2); check(!irq.read(),"SMF W1C");
         memory.statuses={1}; memory.polls=0;
-        wr(0,0x01000001|reg::APMS|reg::PMM); wr(36,0x80000003); wr(40,3); wr(20,ccr(2,5,false));
+        wr(0,0x00000001|reg::APMS|reg::PMM); wr(36,0x80000003); wr(40,3); wr(20,ccr(2,5,false));
         wait(1,SC_US); check((rd(8)&0x50)==0x10,"OR match any considered bit; upper bytes ignored");
-        wr(12,63); wr(0,0x01000001); wr(36,0); wr(20,ccr(2,5,false)); wait(1,SC_US);
+        wr(12,63); wr(0,0x00000001); wr(36,0); wr(20,ccr(2,5,false)); wait(1,SC_US);
         check((rd(8)&0x50)==0x50,"APMS=0 keeps polling after match");
-        wr(0,0x01000003); check(!(rd(8)&64) && (rd(8)&2),"abort polling TCF");
+        wr(0,0x00000003); check(!(rd(8)&64) && (rd(8)&2),"abort polling TCF");
     }
     void timeout() {
         configure(reg::PTCEN|reg::STOIE); memory.statuses={0};
@@ -237,33 +244,22 @@ struct Bench : sc_module {
         wait(10,SC_US); check(!(rd(8)&32),"no mapped inactivity STOF");
     }
     void dma() {
-        configure((1u<<3)|(1u<<8)); wr(52,3); wr(16,11); wr(20,ccr(0,2)); wr(24,0); ticks(2);
-        check(txreq.read(),"TX prefill request for two-word burst");
-        txclr=true; ticks(); check(!txreq.read(),"TX clear drops request");
-        txclr=false; ticks(); check(txreq.read(),"TX request reevaluated next cycle");
-        wr(32,1); wr(32,2); ticks();
-        check(txreq.read(),"R 1.14 TXDMAEN: request remains while bytes remain and FIFO has space");
+        configure((1u<<3)|(1u<<8)); wr(52,3); wr(16,11); wr(20,ccr(0,2)); wr(24,0); ticks(10);
+        check(txreq.read(),"TX two-word burst eligible");
+        txclr=true; ticks(10); check(!txreq.read(),"held TX clear");
+        txclr=false; ticks(10); check(txreq.read(),"TX re-evaluated after clear acknowledgement");
+        wr(32,1); wr(32,2); ticks(10);
+        check(!txreq.read(),"one-word TX residue is below the two-word burst");
         wr(32,3); wait_complete();
-        check(!txreq.read(),"no more TX DMA after DLR");
-        start_read(0,11); wait(3,SC_US); ticks(); check(rxreq.read(),"RX two-word request");
-        rd(32); rd(32); rxclr=true; ticks(); check(!rxreq.read(),"RX clear");
-        rxclr=false; ticks(); check(!rxreq.read(),"partial tail below burst threshold");
-        check(rd(32)==3,"CPU drains final three bytes");
-        wr(0,0x01000001); start_read(0,3); wait(2,SC_US); ticks();
-        check(rxreq.read(),"partial final word counts as one readable DR word");
-        wr(52,0); ticks(); check(!rxreq.read(),"DMA disable while BUSY");
-        wr(0,0x01000003); check(!(rd(8)&64),"abort read");
-        wr(52,1); wr(16,7); wr(20,ccr(0,2)); wr(24,32); ticks();
-        check(txreq.read(),"new DMA write armed");
-        wr(0,0x01000003); ticks(3); check(!txreq.read(),"abort suppresses DMA until next setup");
-        wr(12,63);
-        wr(24,32); ticks(); check(txreq.read(),"AR rearms DMA after abort");
+        start_read(0,11); wait(3,SC_US); ticks(10); check(rxreq.read(),"RX full burst");
+        rd(32); rd(32); rxclr=true; ticks(10); rxclr=false; ticks(10);
+        check(!rxreq.read(),"RX residue below burst"); check(rd(32)==3,"CPU drains partial word");
+        wr(20,ccr(0,2)); wr(0,3); ticks(10); wr(52,1); wr(16,7); wr(24,32); ticks(10);
+        check(!txreq.read(),"AR/DLR do not re-arm DMA after abort");
+        wr(20,ccr(0,2)); ticks(10); check(txreq.read(),"accepted CCR re-arms DMA");
         wr(32,0xaabbccdd); wr(32,0x11223344); wait_complete();
-        wr(12,63); wr(24,40); ticks(); check(txreq.read(),"AR rearms DMA after completion");
-        wr(32,0x55667788); wr(32,0x99aabbcc); wait_complete();
-        wr(12,63); wr(16,0); wr(24,48); ticks();
-        check(txreq.read(),"R 1.14 TXDMAEN: DLR shorter than burst does not add a request gate");
-        wr(32,0x55); wait_complete(); check(!txreq.read(),"TX request stops after all programmed bytes accepted");
+        wr(16,0); wr(24,48); ticks(10); check(!txreq.read(),"shorter-than-burst TX residue uses CPU");
+        wr(32,0x55); wait_complete();
     }
     void xip() {
         configure(); wr(16,0xffffffff); wr(20,ccr(3));
@@ -281,11 +277,11 @@ struct Bench : sc_module {
         check(bus(true,false,256,v)==tlm::TLM_ADDRESS_ERROR_RESPONSE,"controller FSIZE smaller than A2H aperture");
         wr(4,16u<<16);
         check(!(rd(8)&1),"mapped errors do not set indirect TEF");
-        check(bus(true,false,2,v)==tlm::TLM_ADDRESS_ERROR_RESPONSE,"XIP alignment");
+        check(bus(true,false,2,v)==tlm::TLM_OK_RESPONSE && v==expected(0),"XIP ignores low address bits");
         wr(20,ccr(1)); check(bus(true,false,0,v)==tlm::TLM_GENERIC_ERROR_RESPONSE,"wrong mode XIP");
     }
     void phases() {
-        configure(); wr(0,0x03000001); wr(4,(16u<<16)|(3u<<8)|1); wr(28,0xa55a);
+        configure(); wr(0,0x02000001); wr(4,(16u<<16)|(3u<<8)|1); wr(28,0xa55a);
         const auto command=(3u<<26)|(3u<<24)|(7u<<18)|(1u<<16)|(2u<<14)|(2u<<12)|(3u<<10)|(1u<<8)|0xeb|reg::DDRM|reg::SIOO;
         wr(20,command); std::uint32_t v=0;
         check(bus(true,false,32,v)==tlm::TLM_OK_RESPONSE,"DDR quad XIP");
@@ -301,7 +297,7 @@ struct Bench : sc_module {
         // address/alternate sizes, and both SDR/DDR rates.
         for(unsigned ddr=0;ddr<2;++ddr) for(unsigned lanes=1;lanes<=3;++lanes)
             for(unsigned bytes=1;bytes<=4;++bytes) {
-                wr(0,ddr?0x03000001:0x01000001);
+                wr(0,ddr?0x02000001:0x00000001);
                 wr(20,(ddr?reg::DDRM:0)|(3u<<26)|(lanes<<24)|(lanes<<14)|
                     ((bytes-1)<<16)|((bytes-1)<<12)|(lanes<<10)|(lanes<<8)|0x03);
                 const auto start=sc_time_stamp();
@@ -316,11 +312,11 @@ struct Bench : sc_module {
             }
     }
     void errors() {
-        configure(); wr(0,1); wr(20,(1u<<8)|6); check(rd(8)&1,"illegal SDR prescaler");
-        wr(12,63); wr(0,0x01000001); wr(20,reg::DDRM|(1u<<8)|6); check(rd(8)&1,"illegal DDR prescaler");
+        configure(); wr(0,0x01000001); wr(20,(1u<<8)|6); check(rd(8)&1,"illegal SDR prescaler");
+        wr(12,63); wr(0,0x00000001); wr(20,reg::DDRM|(1u<<8)|6); check(rd(8)&1,"illegal DDR prescaler");
         wr(12,63); wr(16,4); wr(20,ccr(2,5,false)); check(rd(8)&1,"poll length >4 illegal");
         wr(12,63); wr(16,7); wr(20,ccr(1)); wr(24,0x1fffc); check(rd(8)&1,"indirect bound check");
-        wr(12,63); wr(16,0); wr(20,ccr(1)&~(3u<<12)); wr(24,256); check(rd(8)&1,"address phase overflow");
+        wr(12,63); wr(16,0); wr(20,ccr(1)&~(3u<<12)); wr(24,256); consume(0,1); check(!(rd(8)&1),"address phase transmits low selected bytes");
         wr(12,63); memory.fail=true; start_read(0,4); wait(2,SC_US);
         check((rd(8)&0x43)==1,"backend error TEF without TCF or BUSY");
         memory.fail=false; wr(12,63); start_read(0,4);
@@ -335,21 +331,19 @@ struct Bench : sc_module {
         rn=true; ticks(2); configure(); wr(20,ccr(3));
         worker_start.notify(SC_ZERO_TIME); wait(100,SC_NS); hrn=false; wait(1,SC_NS); hrn=true;
         wait(100,SC_NS); check(worker_done && worker_result==tlm::TLM_GENERIC_ERROR_RESPONSE,"hreset cancels mapped transfer");
-        check(rd(0)==0x01000001 && rd(20)==ccr(3),"interface reset preserves core config");
+        check(rd(0)==0x00000001 && rd(20)==ccr(3),"interface reset preserves core config");
         std::uint32_t v=0; check(bus(true,false,0,v)==tlm::TLM_OK_RESPONSE,"XIP recovers");
         prn=false; ticks(); check(bus(false,true,4,v)==tlm::TLM_GENERIC_ERROR_RESPONSE,"AP accesses reject held reset");
         prn=true; ticks(2); check(rd(4)==16u<<16,"AP reset preserves core config");
     }
     void clock_cases() {
-        configure(); clock_enabled=false; wait(20,SC_NS);
-        std::uint32_t v=0x12345678; const auto before=sc_time_stamp();
-        check(bus(false,true,28,v)==tlm::TLM_GENERIC_ERROR_RESPONSE,"stopped core bus timeout");
-        check(sc_time_stamp()-before>=sc_time(200*14,SC_NS),"timeout counts APB cycles");
-        check(peek(28)==0,"timed-out write not applied");
-        rn=false; wait(1,SC_NS); check(peek(0)==0,"reset works stopped core");
-        rn=true; clock_enabled=true; ticks(3); configure();
-        wr(20,ccr(3)); memory.latency=sc_time(10,SC_US);
-        check(bus(true,false,0,v)==tlm::TLM_GENERIC_ERROR_RESPONSE,"backend stall HCLK timeout");
+        configure(); clock_enabled=false; wait(20,SC_NS); workers_ap=true;
+        worker_start.notify(SC_ZERO_TIME); wait(5000,SC_NS);
+        check(!worker_done && peek(28)==0,"APB has no stopped-core timeout");
+        clock_enabled=true; ticks(10); check(worker_done && worker_result==tlm::TLM_OK_RESPONSE,"APB resumes with core");
+        check(rd(28)==0x11223344,"pending APB write applied exactly once");
+        wr(20,ccr(3)); memory.latency=sc_time(10,SC_US); std::uint32_t v=0;
+        check(bus(true,false,0,v)==tlm::TLM_GENERIC_ERROR_RESPONSE,"AHB HCLK timeout");
         memory.latency=SC_ZERO_TIME;
         check(bus(true,false,4,v)==tlm::TLM_OK_RESPONSE,"no stale timed-out completion");
     }
@@ -358,9 +352,9 @@ struct Bench : sc_module {
         worker_start.notify(SC_ZERO_TIME); worker2_start.notify(sc_time(20,SC_NS));
         wait(3,SC_US); check(worker_done && worker2_done && worker_result==tlm::TLM_OK_RESPONSE && worker2_result==tlm::TLM_OK_RESPONSE,"serialize two XIP callers");
         check(memory.records.size()==2 && memory.records[0].phase.address==0 && memory.records[1].phase.address==4,"ordered frames");
-        worker_done=worker2_done=false;
+        worker_done=worker2_done=false; wr(20,ccr(3));
         worker_start.notify(SC_ZERO_TIME); worker2_start.notify(sc_time(20,SC_NS));
-        wait(100,SC_NS); rn=false; wait(1,SC_NS); rn=true; wait(100,SC_NS);
+        wait(100,SC_NS); rn=false; hrn=false; prn=false; wait(1,SC_NS); rn=true; hrn=true; prn=true; wait(100,SC_NS);
         check(worker_done && worker2_done && worker_result==tlm::TLM_GENERIC_ERROR_RESPONSE && worker2_result==tlm::TLM_GENERIC_ERROR_RESPONSE,"reset invalidates active and queued requests");
         worker_done=worker2_done=false; workers_ap=true; clock_enabled=false; wait(20,SC_NS);
         worker_start.notify(SC_ZERO_TIME); worker2_start.notify(sc_time(20,SC_NS));
@@ -379,51 +373,36 @@ struct Bench : sc_module {
     }
     void components() {
         QspiRegisterModel registers;
-        check(registers.write(4,0xffffffff,false) && registers.read(4)==0x001f0701,"standalone register masks");
-        check(!registers.write(4,0,true) && registers.read(4)==0x001f0701,"standalone BUSY access policy");
-        check(registers.write(0,0x01000001,false),"standalone CR");
-        check(registers.write(0,0xff010001,true) && registers.read(0)==0x01010001,"live IRQ fields with frozen divider");
-        registers.reset(); check(registers.read(0)==0 && registers.read(4)==0,"standalone reset");
-        QspiTxRxFifo byte_fifo,word_fifo(32,32,ThresholdUnit::Words);
-        check(byte_fifo.tx.push_word(0x78563412,4) && byte_fifo.tx[0]==0x12 && byte_fifo.tx[3]==0x78,"FIFO word order");
-        check(byte_fifo.tx_threshold(7) && !word_fifo.tx_threshold(8),"explicit threshold units");
-        for(unsigned i=0;i<7;++i) check(byte_fifo.tx.push_word(i,4),"FIFO filling");
-        check(!byte_fifo.tx.push_word(0,1) && byte_fifo.tx.size()==32,"FIFO rejected write atomic");
-        byte_fifo.reset(); check(byte_fifo.levels()==0,"FIFO reset");
+        check(registers.write(4,0xffffffff,false) && registers.read(4)==0x001f0701,"register masks");
+        check(!registers.write(4,0,true),"BUSY lock");
+        QspiTxRxFifo fifo;
+        for (unsigned i=0;i<32;++i) check(fifo.tx.push_word(0x78563412,4),"32-word capacity");
+        check(!fifo.tx.push_word(0,4) && fifo.levels()==(32u<<8),"word level and full rejection");
+        check(!fifo.tx_threshold(0),"full TX has no free word");
+        fifo.reset(); check(fifo.tx_threshold(31),"32 free words");
         QspiInterrupt interrupt;
         for(unsigned source=0;source<6;++source) {
             check(interrupt.evaluate(1u<<(16+source),1u<<source,0,0),"each IRQ source");
             check(!interrupt.evaluate(1u<<(16+((source+1)%6)),1u<<source,0,0),"IRQ mask isolation");
         }
-        check(interrupt.evaluate(0,0,4,4) && interrupt.evaluate(0,0,8,8) && !interrupt.evaluate(0,0,3,12),"DMA errors independent from DMA enable");
-        QspiDmaInterface dma; QspiDmaInterface::Input input;
-        input.cr=1; input.dmacr=1; input.dlr=7; input.data_mode=1; input.tx_free=32;
-        dma.arm(); dma.tick(input); check(dma.tx_request(),"standalone DMA eligible");
-        input.tx_clear=true; dma.tick(input); check(!dma.tx_request(),"standalone DMA clear");
-        input.tx_clear=false; dma.tick(input); check(dma.tx_request(),"standalone DMA reassert");
-        input.dmacr=3; input.rx_bytes=32;
-        for (unsigned mode:{2u,3u}) {
-            input.mode=mode; dma.tick(input);
-            check(!dma.tx_request() && !dma.rx_request(),"R 1.14: no DMA in polling/mapped modes despite eligible FIFOs");
-        }
-        input.mode=0;
-        dma.reset(); dma.tick(input); check(!dma.tx_request(),"standalone DMA reset disarms");
-        check(QspiTimingModel::phase_cycles(3,4,true,0x03000000)==12,"DDR address duration");
-        check(QspiTimingModel::cs_high(0x01000000,0x700)==16,"CS high duration");
-        check(QspiTimingModel::poll_gap(0x01000000,0x700,40)==40,"poll interval wins");
-        check(!QspiTimingModel::legal_divider(0x01000000,true) && QspiTimingModel::legal_divider(0x03000000,true),"divider policy");
+        check(interrupt.evaluate(0,0,4,4) && interrupt.evaluate(0,0,8,8),"DMA error IRQ independent of DMA enable");
+        check(QspiTimingModel::phase_cycles(3,4,true,0x02000000)==12,"DDR address duration");
+        check(QspiTimingModel::cs_high(0,0x700)==16,"CSHT duration");
+        check(QspiTimingModel::poll_gap(0,0x700,40)==40,"poll interval");
+        check(QspiTimingModel::legal_divider(0,false) && !QspiTimingModel::legal_divider(0,true) &&
+              QspiTimingModel::legal_divider(0x02000000,true),"PRESCALER + 2 legality");
     }
     void threshold_words() {
         configure(3u<<3); start_read(0,12); wait(5,SC_US);
-        check(((rd(8)>>16)&63)==12 && !(rd(8)&8),"word RX threshold does not fire at 12 bytes for four words");
+        check(((rd(8)>>16)&63)==3 && !(rd(8)&8),"word RX threshold does not fire at 12 bytes for four words");
         consume(0,12);
-        wr(0,0x01000001|(2u<<3)); start_read(0,12); wait(5,SC_US);
+        wr(0,0x00000001|(2u<<3)); start_read(0,12); wait(5,SC_US);
         check(rd(8)&8,"word RX threshold fires at three words"); consume(0,12);
-        wr(0,0x01000001|(8u<<8)); wr(20,ccr(0,2)); wr(12,63); ticks(2);
-        check(!(rd(8)&4),"nine-word TX threshold cannot fit 32-byte FIFO");
+        wr(0,0x00000001|(8u<<8)); wr(20,ccr(0,2)); wr(12,63); ticks(2);
+        check(rd(8)&4,"nine-word TX threshold fits 32-word FIFO");
     }
     void spec_timing() {
-        // R 1.12 PIR (p.11) and R 1.2 CSHT (p.4): both minima apply.
+        // HDS 6.4.2: PIR and CSHT minima both apply.
         // Independent timestamps come from complete one-byte status frames.
         for (const auto interval:{500u,1u}) {
             configure(reg::APMS);
@@ -443,7 +422,7 @@ struct Bench : sc_module {
             const auto pir=sc_time(interval*10,SC_NS);
             const auto gap=pir>high?pir:high;
             check(memory.records[1].time-memory.records[0].time>=gap+serial,
-                "R 1.12/1.2: polling interval and CSHT minima respected");
+                "HDS polling interval and CSHT minima respected");
         }
     }
     void run() {

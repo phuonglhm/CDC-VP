@@ -1,12 +1,13 @@
 #pragma once
 #include "registers.h"
+#include "ahb_transaction.h"
 #include <systemc>
 #include <tlm_utils/simple_initiator_socket.h>
 #include <tlm_utils/simple_target_socket.h>
 
 namespace fu3::qspi {
 // Functional AXI-to-AHB boundary. The FU3 fabric decomposes bursts before here.
-// The supplied wrapper specifies single, aligned, full-lane 32-bit transfers.
+// HDS 7.3: word transfers, with low two address bits ignored.
 class QspiAhbAdapter : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<QspiAhbAdapter> socket{"socket"};
@@ -19,7 +20,9 @@ private:
     const std::uint64_t aperture_;
     void transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay) {
         tx.set_dmi_allowed(false);
-        if (tx.get_address()>=aperture_ || tx.get_data_length()>aperture_-tx.get_address()) {
+        const auto* control=tx.get_extension<AhbTransaction>();
+        const bool active=!control || (control->selected && control->transfer>=AhbTransaction::Nonseq);
+        if (active && tx.get_address()>=aperture_) {
             tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
             return;
         }

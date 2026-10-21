@@ -20,7 +20,8 @@ public:
         if (offset==reg::DMAFCR) { words_[reg::DMASR/4]&=~(value&0xc); return false; }
         if (offset==reg::CR) {
             const auto mask=busy ? (0x003f0000u|reg::EN|reg::ABORT) : reg::masks[0];
-            words_[0]=(words_[0]&~mask)|(value&mask);
+            const auto abort=words_[0]&reg::ABORT; // Writing zero cannot cancel an abort.
+            words_[0]=(words_[0]&~mask)|(value&mask)|abort;
             return true;
         }
         if (offset!=reg::DMACR && (busy || (offset==reg::AR && mode()==3))) return false;

@@ -1,0 +1,149 @@
+{
+  "specification": {
+    "file": "FTEL_CDC_IP_QSPI_Specification.pdf",
+    "title": "FU3 QSPI Controller Hardware Design Specification",
+    "version": "V1.0",
+    "date": "2026-10-20",
+    "pages": 63,
+    "sha256": "27705ded65c0317ede7da3645c7edefbceff181d5709383e0f0a63f06d625da6",
+    "precedence": "HDS closed DEC decisions supersede older register/wrapper PDFs; future CSR workbook is DEP-001."
+  },
+  "verification_scope": "Firmware-visible SystemC/TLM behavior. Named passing feature regressions are required; this is not exhaustive input coverage or RTL/pad sign-off.",
+  "functional_groups": {
+    "registers": {
+      "source": "HDS 8, pp46-51",
+      "tests": [
+        "registers",
+        "components"
+      ]
+    },
+    "bus_access": {
+      "source": "HDS 6.4.6, 7.2-7.3",
+      "tests": [
+        "protocol",
+        "errors",
+        "p0_bus_errors"
+      ]
+    },
+    "trigger_selection": {
+      "source": "HDS 6.4, Table 6-8",
+      "tests": [
+        "triggers",
+        "p0_triggers"
+      ]
+    },
+    "serial_phases_sioo": {
+      "source": "HDS 6.3, 6.5-6.8; Section 10",
+      "tests": [
+        "phases",
+        "spec_timing",
+        "hds_frame_matrix",
+        "hds_dividers"
+      ]
+    },
+    "indirect_data_fifo": {
+      "source": "HDS 6.3-6.4.1, 6.4.4; DEC-013",
+      "tests": [
+        "indirect",
+        "fifo",
+        "threshold_words",
+        "p0_fifo",
+        "p0_dlr",
+        "random"
+      ]
+    },
+    "status_polling": {
+      "source": "HDS 6.4.2; DEC-024",
+      "tests": [
+        "polling",
+        "timeout",
+        "p1_polling"
+      ]
+    },
+    "dma_handshake": {
+      "source": "HDS 6.4.4, 7.4, 9.3; DEC-029/044",
+      "tests": [
+        "dma",
+        "p1_dma",
+        "hds_dma_clock"
+      ]
+    },
+    "interrupt_w1c": {
+      "source": "HDS 6.4.5; DEC-012",
+      "tests": [
+        "p0_irq_w1c",
+        "hds_flags"
+      ]
+    },
+    "xip_cache": {
+      "source": "HDS 6.4.3, 6.9-6.10; DEC-016/027/030",
+      "tests": [
+        "xip",
+        "concurrency",
+        "hds_cache",
+        "hds_timeout",
+        "hds_cache_parameters_1",
+        "hds_cache_parameters_2",
+        "hds_cache_parameters_3",
+        "hds_cache_parameters_4",
+        "hds_cache_parameters_8",
+        "hds_cache_parameters_16"
+      ]
+    },
+    "enable_abort": {
+      "source": "HDS 6.4.1-6.4.3, 6.4.6; DEC-038/044",
+      "tests": [
+        "hds_control",
+        "hds_abort"
+      ]
+    },
+    "clock_reset": {
+      "source": "HDS 6.1-6.2, 7.1; Section 10",
+      "tests": [
+        "reset",
+        "clock",
+        "p0_active_reset",
+        "p1_domains"
+      ]
+    },
+    "parameters": {
+      "source": "HDS 5; Table 10-1",
+      "tests": [
+        "hds_parameters",
+        "p1_parameters_4",
+        "p1_parameters_8",
+        "p1_parameters_16",
+        "p1_parameters_32",
+        "p1_parameters_4x32",
+        "p1_parameters_8x32"
+      ]
+    },
+    "system_composition": {
+      "source": "HDS 9, 11.3; existing FU3 bus routing",
+      "tests": [
+        "bus"
+      ]
+    }
+  },
+  "support_groups": {
+    "generic_nor_backend": {
+      "source": "FlashTransaction API and optional device support profile, outside controller HDS requirements",
+      "tests": [
+        "flash_commands",
+        "flash_program",
+        "flash_erase",
+        "flash_protocol",
+        "flash_reset",
+        "flash_image",
+        "flash_sioo",
+        "flash_integrity"
+      ]
+    }
+  },
+  "rtl_only_checks": [
+    "Serial SCLK/CSN/IO/OE waveforms, setup/hold and bit-stream pad timing (HDS 6.3, 6.6-6.7, 7.6, Section 10).",
+    "APB/AHB pin protocol assertions and physical two-cycle ERROR signaling (HDS 7.2-7.3).",
+    "Gray-pointer async FIFO CDC/RDC, metastability, exact crossing occupancy/latency and SDC timing (HDS 6.1-6.2, 11.1-11.2).",
+    "Exhaustive/randomized four-clock RTL DV and structural/synthesis checks (HDS Section 10, Section 11)."
+  ]
+}
