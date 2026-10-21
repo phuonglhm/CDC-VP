@@ -1,12 +1,12 @@
-# FU3 CPU configuration - CVA6 and Ibex
+# FU3 CPU configuration - CPU0 (CVA6) and CPU1 (Ibex)
 
-FU3 configuration of the two RISC-V CPUs.
+FU3 configuration of the two RISC-V CPUs: CPU0 is CVA6, the application CPU, and CPU1 is Ibex, the boot and system-control CPU.
 Both CPUs reuse the existing `cdc::cpu::cva6_wrapper` (Bremen RV32 ISS) in `cpu_models/cva6_vp` and this component only supplies the FU3 memory map, reset PCs, hart IDs, enabled ISA extensions and interrupt causes. See [MODEL_CONTRACT.md](docs/MODEL_CONTRACT.md) for spec mapping and the features the ISS does not provide yet.
 
 ## Layout
 
-- `include/fu3_cpu/cva6_config.h`: `fu3::cva6_cpu_config()`, `kCva6DisableExtensions`, CVA6_ISRAM/DSRAM map, CVA6 interrupt causes.
-- `include/fu3_cpu/ibex_config.h`: `fu3::ibex_cpu_config()`, `kIbexDisableExtensions`, ROM/IBEX_ISRAM map.
+- `include/fu3_cpu/cva6_config.h`: CPU0. `fu3::cva6_cpu_config()`, `kCva6DisableExtensions`, CVA6_ISRAM/DSRAM map, HaltAddress/ExceptionAddress, CVA6 interrupt causes.
+- `include/fu3_cpu/ibex_config.h`: CPU1. `fu3::ibex_cpu_config()`, `kIbexDisableExtensions`, ROM/IBEX_ISRAM map, Debug Module addresses.
 
 Both live in namespace `cdc::cpu::fu3`.
 

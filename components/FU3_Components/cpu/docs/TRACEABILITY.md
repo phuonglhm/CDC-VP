@@ -1,13 +1,14 @@
 # FU3 CPU configuration traceability
 
-Source: private FU3 HAS v2.0, reviewed 2026-10-19. Verification ran with an out-of-repository harness (CVA6 + Ibex + FU3 bus + four memories) and the `riscv_cpu_eval` platform regression.
+Source: private FU3 HAS v2.0 and FTEL_FU3_Common_Spec v2.0, reviewed 2026-10-20. CPU0 is CVA6 and CPU1 is Ibex. Verification ran with an out-of-repository harness (CVA6 + Ibex + FU3 bus + four memories) and the `riscv_cpu_eval` platform regression.
 
 | Source | Requirement | Verification |
 | --- | --- | --- |
 | Table 8-1 | CVA6 RV32IMC, M-mode only | Harness reads `misa` = I, M, C |
 | Table 8-3 | Ibex RV32IMC with U-mode | Harness reads `misa` = I, M, C, U |
-| Table 11-1/11-2 | CVA6 is hart 0 | Harness reads `mhartid` = 0 |
-| VP choice | Ibex is hart 1 | Harness reads `mhartid` = 1 |
+| Table 11-1/11-2 | CPU0 (CVA6) is hart 0 | Harness reads `mhartid` = 0 |
+| Leader decision | CPU1 (Ibex) is hart 1 | Harness reads `mhartid` = 1 |
+| Common CVA6-Config #45-#46, Ibex-Config #33-#36 | Debug addresses | Constants compiled into the harness, values reviewed against the sheets |
 | Section 9 | Ibex resets to ROM 0x0000_0000 | Ibex executes the harness boot ROM |
 | Section 9, 14.2 | CVA6 held in reset, starts at 0x0001_0000 after staging | Released by the harness boot controller after `finish_staging()` and runs the staged image |
 | Section 9 | Ibex writes CVA6_ISRAM only while staging | Write before close succeeds and write after close traps with mcause 7 |
