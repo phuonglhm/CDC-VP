@@ -3,13 +3,17 @@
 namespace fu3_plic {
 namespace {
 
-constexpr std::uint32_t kPriorityMask  = 0x7777'7777;   // 8 mức => [2:0] mỗi nibble
-constexpr std::uint32_t kThresholdMask = 0x7;
-constexpr std::uint32_t kApertureSize  = 0x1'0000;      // Cửa sổ AP_PLIC 64 KiB
+constexpr std::uint32_t kPriorityMask = 0x7;           // MAX_PRIO 7 => 3 bit
+constexpr std::uint32_t kApertureSize = 0x1'0000;      // Cửa sổ AP_PLIC 64 KiB
 
-// CONFIG_0/1 (RO): giá trị tham số RTL hiện tại (HDS Table 5-1)
-constexpr std::uint32_t kConfig0 = FU3_PLIC_SOURCES | (FU3_PLIC_TARGETS << 16);
-constexpr std::uint32_t kConfig1 = FU3_PLIC_PRIORITIES | (FU3_PLIC_MAX_PENDING_COUNT << 16) | (1u << 24);
+bool is_priority(std::uint32_t offset) {
+    return offset <= FU3_PLIC_PRIORITY_OFFSET(kSources) && offset % 4 == 0;
+}
+
+bool is_mapped(std::uint32_t offset) {
+    return is_priority(offset) || offset == FU3_PLIC_PENDING_OFFSET || offset == FU3_PLIC_ENABLE_OFFSET ||
+           offset == FU3_PLIC_THRESHOLD_OFFSET || offset == FU3_PLIC_CLAIM_OFFSET;
+}
 
 }  // namespace
 
@@ -21,51 +25,25 @@ Plic::Plic(sc_core::sc_module_name name) : sc_core::sc_module(name) {
     sensitive << reset_n;
     for (auto& src : irq_sources) sensitive << src;
 
-    // irq chỉ được lái từ đây 
-    // bus thread chỉ notify changed_
+    // irq chỉ được lái từ đây, bus thread chỉ notify changed_
     SC_METHOD(update);
     sensitive << changed_ << reset_n;
-    for (auto& src : irq_sources) sensitive << src;
 }
 
 void Plic::reset_state() {
-    el_ = ie_ = threshold_ = in_service_ = level_ip_ = 0;
     for (auto& p : priority_) p = 0;
-    for (unsigned k = 0; k < kSources; ++k) edge_count_[k] = 0;
-}
-
-unsigned Plic::priority_of(unsigned bit) const {
-    return (priority_[bit / 8] >> (4 * (bit % 8))) & 0x7;
-}
-
-std::uint32_t Plic::pending() const {
-    std::uint32_t p = 0;
-    for (unsigned k = 0; k < kSources; ++k) {
-        const bool edge = (el_ >> k) & 1;
-        // Level: theo mức nguồn.
-        // Edge: còn sườn lên chưa claim. 
-        // Đang in-service thì không pending.
-        // const bool raised = edge ? edge_count_[k] > 0 : irq_sources[k].read();
-      
-        // Đọc mức nguồn trực tiếp làm mất xung IRQ 1 tick của TIMER FU3 trước khi CPU kịp claim
-        const bool raised = edge ? edge_count_[k] > 0 : ((level_ip_ >> k) & 1);
-
-        if (raised && !((in_service_ >> k) & 1)) 
-            p |= 1u << k; 
-        
-    }
-    return p;
+    ie_ = threshold_ = ip_ = in_service_ = 0;
 }
 
 unsigned Plic::best() const {
-    const std::uint32_t eligible = pending() & ie_;
+    const std::uint32_t eligible = ip_ & ie_;
     unsigned id = 0, prio = threshold_;
-    for (unsigned k = 0; k < kSources; ++k) {
-        // Priority 0 không bao giờ ngắt
-        // Ngang priority thì ID nhỏ thắng
-        if (((eligible >> k) & 1) && priority_of(k) > prio) {
-            prio = priority_of(k);
-            id = k + 1;
+    // So sánh tường minh priority > threshold: threshold 7 chặn hết (Common v2.0: threshold corner case)
+    // Ngang priority thì ID nhỏ thắng
+    for (unsigned n = 1; n <= kSources; ++n) {
+        if (((eligible >> n) & 1) && priority_[n] > prio) {
+            prio = priority_[n];
+            id = n;
         }
     }
     return id;
@@ -74,22 +52,19 @@ unsigned Plic::best() const {
 unsigned Plic::claim() {
     const unsigned id = best();
     if (id) {
-        const unsigned k = id - 1;
-        in_service_ |= 1u << k;
-        level_ip_ &= ~(1u << k);   // Claim xoá pending đã chốt
-        if (((el_ >> k) & 1) && edge_count_[k] > 0) --edge_count_[k];
+        ip_ &= ~(1u << id);   // Claim xoá pending, không xoá IP ngoại vi
+        in_service_ |= 1u << id;
         changed_.notify(sc_core::SC_ZERO_TIME);
     }
     return id;
 }
 
 void Plic::complete(std::uint32_t id) {
-    // Complete ID không hợp lệ hoặc chưa claim thì bỏ qua
-    if (id >= 1 && id <= kSources && ((in_service_ >> (id - 1)) & 1)) {
-        in_service_ &= ~(1u << (id - 1));
-        // Nguồn level vẫn đang lên thì pending lại ngay
-        if (!((el_ >> (id - 1)) & 1) && irq_sources[id - 1].read()) 
-            level_ip_ |= 1u << (id - 1);
+    // Chỉ nhận ID 1-23 đang được claim, còn lại không làm gì
+    if (id >= 1 && id <= kSources && ((in_service_ >> id) & 1)) {
+        in_service_ &= ~(1u << id);
+        // Nguồn level vẫn lên thì pending lại ngay
+        if (irq_sources[id - 1].read()) ip_ |= 1u << id;
         changed_.notify(sc_core::SC_ZERO_TIME);
     }
 }
@@ -97,18 +72,11 @@ void Plic::complete(std::uint32_t id) {
 void Plic::sample() {
     if (!reset_n.read()) {
         reset_state();
-    }
-    for (unsigned k = 0; k < kSources; ++k) {
-        const bool level = irq_sources[k].read();
-        
-        // Gateway edge: Đếm sườn lên và Bão hoà ở MAX_PENDING_COUNT
-        if (reset_n.read() && ((el_ >> k) & 1) && level && !last_level_[k] && edge_count_[k] < kMaxPending)
-            ++edge_count_[k];
-
-        // Gateway level: nguồn lên khi chưa in-service => chốt pending
-        if (reset_n.read() && !((el_ >> k) & 1) && level && !((in_service_ >> k) & 1))
-            level_ip_ |= 1u << k;
-        last_level_[k] = level;
+    } else {
+        // Gateway level: nguồn lên khi chưa in-service => chốt pending tới khi claim
+        // Giữ được xung 1 tick của TIMER FU3
+        for (unsigned n = 1; n <= kSources; ++n)
+            if (irq_sources[n - 1].read() && !((in_service_ >> n) & 1)) ip_ |= 1u << n;
     }
     changed_.notify(sc_core::SC_ZERO_TIME);
 }
@@ -118,18 +86,13 @@ void Plic::update() {
 }
 
 std::uint32_t Plic::read_register(std::uint32_t offset) const {
+    if (is_priority(offset)) return priority_[offset / 4];   // ID 0 luôn 0
     switch (offset) {
-        case FU3_PLIC_CONFIG_0_OFFSET:    return kConfig0;
-        case FU3_PLIC_CONFIG_1_OFFSET:    return kConfig1;
-        case FU3_PLIC_EL_OFFSET:          return el_;
-        case FU3_PLIC_PRIORITY_0_OFFSET:  return priority_[0];
-        case FU3_PLIC_PRIORITY_1_OFFSET:  return priority_[1];
-        case FU3_PLIC_PRIORITY_2_OFFSET:  return priority_[2];
-        case FU3_PLIC_PRIORITY_3_OFFSET:  return priority_[3];
-        case FU3_PLIC_IE_0_OFFSET:        return ie_;
-        case FU3_PLIC_THRESHOLD_0_OFFSET: return threshold_;
-        case FU3_PLIC_ID_0_OFFSET:        return best();   // xem trước, không claim
-        default:                          return 0;
+        case FU3_PLIC_PENDING_OFFSET:   return ip_;
+        case FU3_PLIC_ENABLE_OFFSET:    return ie_;
+        case FU3_PLIC_THRESHOLD_OFFSET: return threshold_;
+        case FU3_PLIC_CLAIM_OFFSET:     return best();   // xem trước, không claim
+        default:                        return 0;
     }
 }
 
@@ -144,53 +107,47 @@ unsigned Plic::transport_dbg(tlm::tlm_generic_payload& tx) {
 
 void Plic::access(tlm::tlm_generic_payload& tx, bool backdoor) {
     const std::uint64_t addr = tx.get_address();
-    const unsigned len = tx.get_data_length();
-    // APB4 32 bit: 1 beat 1/2/4 byte căn hàng (bus FU3 đã tách burst)
-    if (len != 1 && len != 2 && len != 4) {
+    // Common v2.0 APB access contract: chỉ word 32 bit căn hàng, PSTRB = 0xF
+    if (tx.get_data_length() != 4) {
         tx.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
         return;
     }
-    if (addr % len != 0 || addr >= kApertureSize) {
+    if (addr % 4 != 0 || addr >= kApertureSize) {
         tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
         return;
     }
-
-    const std::uint32_t word_offset = static_cast<std::uint32_t>(addr) & ~3u;
-    const unsigned lane = static_cast<unsigned>(addr & 3);
-    unsigned char* data = tx.get_data_ptr();
     const unsigned char* be = tx.get_byte_enable_ptr();
     const unsigned be_len = tx.get_byte_enable_length();
+    bool partial = false;
+    for (unsigned i = 0; be && be_len && i < 4; ++i) partial |= be[i % be_len] == TLM_BYTE_DISABLED;
 
+    const auto offset = static_cast<std::uint32_t>(addr);
+    // Offset không map hoặc ghi thiếu byte => PSLVERR
+    if (!is_mapped(offset) || (tx.is_write() && partial)) {
+        tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
+        return;
+    }
+
+    unsigned char* data = tx.get_data_ptr();
     if (tx.is_read()) {
-        // Đọc ID_0 qua bus = claim
-        // Debug read chỉ xem
-        const std::uint32_t value = (word_offset == FU3_PLIC_ID_0_OFFSET && !backdoor && reset_n.read())
-                                        ? claim() : read_register(word_offset);
-        for (unsigned i = 0; i < len; ++i) data[i] = (value >> (8 * (lane + i))) & 0xFF;
+        // Đọc CLAIM qua bus = claim, debug read chỉ xem
+        const std::uint32_t value = (offset == FU3_PLIC_CLAIM_OFFSET && !backdoor && reset_n.read())
+                                        ? claim() : read_register(offset);
+        for (unsigned i = 0; i < 4; ++i) data[i] = (value >> (8 * i)) & 0xFF;
     } else if (tx.is_write()) {
-        std::uint32_t lanes = 0, value = 0;
-        for (unsigned i = 0; i < len; ++i) {
-            if (be && be_len && be[i % be_len] == TLM_BYTE_DISABLED) continue;   // PSTRB = 0
-            lanes |= 0xFFu << (8 * (lane + i));
-            value |= std::uint32_t(data[i]) << (8 * (lane + i));
-        }
-        auto merge = [&](std::uint32_t& reg, std::uint32_t mask) {
-            reg = (reg & ~(lanes & mask)) | (value & lanes & mask);
-        };
+        std::uint32_t value = 0;
+        for (unsigned i = 0; i < 4; ++i) value |= std::uint32_t(data[i]) << (8 * i);
         // Đang giữ reset thì ghi không có tác dụng (trừ backdoor)
-        // Offset không map: bỏ qua.
         if (backdoor || reset_n.read()) {
-            switch (word_offset) {
-                case FU3_PLIC_EL_OFFSET:          merge(el_, 0xFFFF'FFFF); break;
-                case FU3_PLIC_PRIORITY_0_OFFSET:  merge(priority_[0], kPriorityMask); break;
-                case FU3_PLIC_PRIORITY_1_OFFSET:  merge(priority_[1], kPriorityMask); break;
-                case FU3_PLIC_PRIORITY_2_OFFSET:  merge(priority_[2], kPriorityMask); break;
-                case FU3_PLIC_PRIORITY_3_OFFSET:  merge(priority_[3], kPriorityMask); break;
-                case FU3_PLIC_IE_0_OFFSET:        merge(ie_, 0xFFFF'FFFF); break;
-                case FU3_PLIC_THRESHOLD_0_OFFSET: merge(threshold_, kThresholdMask); break;
-                case FU3_PLIC_ID_0_OFFSET:        complete(value & lanes); break;
-                default: break;   // CONFIG_0/1 RO, offset không map
-            }
+            if (is_priority(offset)) {
+                if (offset != 0) priority_[offset / 4] = value & kPriorityMask;
+            } else if (offset == FU3_PLIC_ENABLE_OFFSET) {
+                ie_ = value & FU3_PLIC_ENABLE_MASK;
+            } else if (offset == FU3_PLIC_THRESHOLD_OFFSET) {
+                threshold_ = value & kPriorityMask;
+            } else if (offset == FU3_PLIC_CLAIM_OFFSET) {
+                complete(value);
+            }   // PENDING là RO: ghi bị bỏ qua
             changed_.notify(sc_core::SC_ZERO_TIME);
         }
     } else {
