@@ -241,3 +241,9 @@ The [scoped suite](tests/scoped_suite/CMakeLists.txt) builds the seven owned IP
 models and their integration tests together. See the
 [rebaseline commands](docs/COMMON_REBASELINE.md#reproducible-validation) and
 [validation record](docs/VALIDATION.md) for the current evidence.
+
+The suite also uses current QSPI/GPIO/IO_PAD sources as read-only peers when
+`FU3_BUS_BUILD_PULLED_PEER_TESTS=ON` (default). This adds three scenarios and no
+installed bus dependencies. See the [post-pull review](docs/POST_PULL_REVIEW.md)
+for the remaining endpoint strobe conflicts; one scenario characterizes those
+conflicts rather than asserting Common conformance.

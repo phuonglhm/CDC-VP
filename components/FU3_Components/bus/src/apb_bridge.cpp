@@ -46,6 +46,12 @@ void ApbBridge::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& dela
             for (unsigned i = 0; i < beat; ++i)
                 enables[i] = restore.enables[(offset+i) % restore.enable_length];
             tx.set_byte_enable_ptr(enables); tx.set_byte_enable_length(beat);
+            // A complete enabled word is the canonical unmasked TLM transfer.
+            // Preserve every sparse/zero mask; never emulate a CSR RMW.
+            if(beat==4 && enables[0]==0xff && enables[1]==0xff &&
+               enables[2]==0xff && enables[3]==0xff) {
+                tx.set_byte_enable_ptr(nullptr);tx.set_byte_enable_length(0);
+            }
         }
         tx.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
         // Even zero configured latency yields to other SystemC threads.

@@ -1,5 +1,35 @@
 # FU3 bus validation
 
+## Final local review before user publication (2026-10-21)
+
+Rebuilt and reran both configurations after reviewing the pending A2P change,
+new peer tests and documentation: 48 scoped, 6 installed bus and 14 installed IP
+tests pass in each static/shared configuration. FX1/FU3 coexistence passes 1/1,
+giving 137/137 executions. Fresh ignored logs: `build/prepush-static.log`,
+`build/prepush-shared.log`, `build/prepush-coexist.log`.
+
+No additional production defect was identified in this review. The GPIO/QSPI
+strobe characterization and the existing specification/platform limitations
+remain applicable. The FU3 tracked/nonignored file inventory contains no private
+specification documents or generated binaries/build logs; owned scripts remain
+ignored. Pending changes are confined to the bus tree. This review does not
+stage, commit or push any files.
+
+## Post-pull verification on 2026-10-21
+
+Reviewed pulled HEAD `dce8e88` against Common, which remains the highest authority.
+A2P now canonicalizes fully enabled four-byte beats to unmasked transfers while
+preserving sparse/zero masks and restoring caller fields. The new actual
+GPIO/QSPI tests and complete static/shared/package/coexistence rerun pass:
+48 scoped + 6 installed bus + 14 installed IP executions per configuration,
+plus 1 coexistence execution, totaling **137/137**.
+
+One new scenario explicitly characterizes the pulled GPIO/AP_QSPIC rejection of
+partial/zero masks. That behavior conflicts with Common Full strobes; its passing
+test is not a conformance result. Those models belong to other owners and were
+not modified. See [post-pull review](POST_PULL_REVIEW.md) for evidence, logs,
+reproduction and remaining limitations. Earlier results below are historical.
+
 ## Common Spec rebaseline verified on 2026-10-21
 
 Follow-up review found and fixed an SPI reset-during-setup defect missed by the

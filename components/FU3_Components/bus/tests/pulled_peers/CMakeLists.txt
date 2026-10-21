@@ -1,0 +1,6 @@
+add_executable(fu3_bus_pulled_peers_tests pulled_peers.cpp)
+target_link_libraries(fu3_bus_pulled_peers_tests PRIVATE fu3::bus_system fu3::qspi fu3::gpio)
+foreach(scenario qspi gpio strobes)
+  add_test(NAME fu3_bus_pulled_${scenario} COMMAND fu3_bus_pulled_peers_tests ${scenario})
+  set_tests_properties(fu3_bus_pulled_${scenario} PROPERTIES TIMEOUT 30)
+endforeach()

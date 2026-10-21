@@ -6,6 +6,10 @@ WDT V1.2 and the selected handling of every unresolved cross-IP issue. Those
 rules supersede the older HAS-only scope statements retained below. IRQ_ADAPT
 is a functional handshake supplied by the bus package, not a physical CDC model.
 
+The [post-pull review](POST_PULL_REVIEW.md) records equivalent full-word mask
+normalization in A2P and remaining Common strobe conflicts in the read-only
+GPIO/QSPI peers. Passing characterization tests do not certify those endpoints.
+
 # FU3 bus model contract
 
 Reconstructed on 2026-10-17 from the current implementation, tests, README and

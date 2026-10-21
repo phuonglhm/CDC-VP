@@ -53,6 +53,12 @@ Common BUS INTF Full strobes and the user's full-support clarification override
 older endpoint restrictions. The models apply byte enables internally; the
 fabric never reads a CSR to synthesize a partial write.
 
+A2P may represent a fully enabled four-byte beat as an unmasked TLM transfer;
+it restores caller fields and preserves sparse/zero masks. The post-pull GPIO
+and AP_QSPIC peers still reject partial/zero masks despite Common Full strobes.
+These are out-of-scope owner gaps, not bus policy exceptions. See the
+[post-pull compatibility review](POST_PULL_REVIEW.md).
+
 | Endpoint | Selected behavior |
 |---|---|
 | Timer | Masked counter/control/compare writes merge pre-edge storage. A nonzero compare write clears count; zero strobes cause no write event. Existing edge priority and raw IRQ behavior remain. |
