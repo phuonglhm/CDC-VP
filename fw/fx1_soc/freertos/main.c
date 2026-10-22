@@ -46,6 +46,9 @@ int main(void)
     bsp_init();
     isp_service_init();
     dma_service_init();
+#ifdef FX1_FW_HAS_CAMERA
+    camera_service_init();
+#endif
     bsp_console_start();
     fx1_check(xTaskCreate(cli_task, "cli", 2048, NULL, 2, NULL) == pdPASS, 0x51, "CLI task created");
     fx1_log("boot: starting the FreeRTOS scheduler on hart 0");

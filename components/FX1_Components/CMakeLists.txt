@@ -16,3 +16,11 @@ add_subdirectory(sim_control)
 add_subdirectory(dma)
 add_subdirectory(isp)
 add_subdirectory(ddr3)
+
+# MIPI CSI-2 RX (detailed D-PHY model + BFM). Off by default: the D-PHY
+# netlist is ~180 large translation units. Even when ON it is EXCLUDE_FROM_ALL,
+# so neither `all` nor fx1_all builds it; build `fx1_mipi_csi2_all` explicitly.
+option(FX1_BUILD_MIPI_CSI2 "Configure the MIPI CSI-2 RX component (D-PHY model, BFM, tests)" OFF)
+if(FX1_BUILD_MIPI_CSI2)
+  add_subdirectory(mipi-csi2 EXCLUDE_FROM_ALL)
+endif()

@@ -1,0 +1,11 @@
+camera probe
+camera start
+camera status
+isp selftest
+mw 0x10030010 1
+camera stop
+isp selftest
+camera start
+camera capture 2
+camera stop
+poweroff

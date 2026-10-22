@@ -10,7 +10,9 @@
 #      run_vp.sh version, smoke, isp for every sample; a sample with a wrong
 #      golden SHA must FAIL (the check is not a rubber stamp);
 #   5. the firmware rebuilt from the shipped sources with the shipped Makefile
-#      must equal the packaged ELF byte for byte, and pass smoke again;
+#      must equal the packaged ELF byte for byte, and pass smoke again; the
+#      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
+#      camera -> ISP: camera_isp_raw12);
 #   6. a copy without build/ (what a clone of the SDK repository holds) must
 #      pass `sha256sum -c SHA256SUMS`;
 #   7. the one-terminal `run_vp.sh isp d65 interactive` flow through a
@@ -49,7 +51,7 @@ trap finish EXIT
 
 step "1. fresh Release build (FX1 only) and fx1_soc_package"
 cfg=(-S "${src}" -B "${tmp}/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
-     -DCDC_BUILD_FX1_SOC=ON -DFX1_SOC_BUILD_FIRMWARE=ON -DCDC_BUILD_TESTS=ON
+     -DCDC_BUILD_FX1_SOC=ON -DFX1_SOC_BUILD_FIRMWARE=ON -DCDC_BUILD_TESTS=ON -DFX1_BUILD_MIPI_CSI2=ON
      -DCDC_BUILD_MINI_TLM=OFF -DCDC_BUILD_CPU_EVAL=OFF -DCDC_BUILD_CUSTOM_SOC=OFF -DCDC_BUILD_NOC_SOC=OFF
      -DCDC_BUILD_TPU_V3_SOC=OFF -DCDC_BUILD_RISCV_VPP_COMPILER_VP=OFF
      -DCDC_PACKAGE_ROOT="${tmp}/out")
@@ -131,6 +133,23 @@ if run make -s -C "${pkg}/sw/bootloader/sources/${version}" TOOLDIR="${tooldir}"
 else
     cat "${tmp}/make_ddr3.log"
     bad "make ddr3 with the shipped Makefile failed"
+fi
+
+step "5c. camera examples, built from the shipped sources, three run (fx1_soc --camera)"
+if run make -s -C "${pkg}/sw/bootloader/sources/${version}" TOOLDIR="${tooldir}" camera > "${tmp}/make_camera.log" 2>&1; then
+    run "${test}/run_vp.sh" camera camera_raw10 camera_i2c_irq > "${tmp}/camera.log" 2>&1 \
+        && grep -q "CAMERA EXAMPLES PASS" "${tmp}/camera.log" \
+        && pass "run_vp.sh camera: $(grep -c '  PASS ' "${tmp}/camera.log") examples PASS" \
+        || { cat "${tmp}/camera.log"; bad "run_vp.sh camera"; }
+    # Camera -> ISP through the camera manager (CSI-2 M6b): RAW12 zero-copy.
+    run "${test}/run_vp.sh" camera-isp camera_isp_raw12 > "${tmp}/camera_isp.log" 2>&1 \
+        && grep -q "CAMERA ISP EXAMPLES PASS" "${tmp}/camera_isp.log" \
+        && pass "run_vp.sh camera-isp: camera_isp_raw12 PASS" \
+        || { cat "${tmp}/camera_isp.log"; bad "run_vp.sh camera-isp"; }
+    rm -rf "${pkg}/sw/bootloader/build/${version}/camera"
+else
+    cat "${tmp}/make_camera.log"
+    bad "make camera with the shipped Makefile failed"
 fi
 
 step "6. SHA256SUMS on a copy without build/ (an SDK repository clone)"

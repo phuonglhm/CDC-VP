@@ -20,15 +20,16 @@ one does not run on the other.
 |---|---|---|
 | CPU | 1 hart, Bremen riscv-vp, `rv32imac` / `ilp32` | **2 harts, RISC-V VP++, `rv32imafc` / `ilp32f`** (hardware FP) |
 | Interconnect | generic bus | FX1 bus model with an exclusive monitor (LR/SC and AMOs are correct against DMA) |
-| Peripherals | about 25 IPs (UART×2, I2C, SPI, timers, WDT, PWM, GPIO, …) | **UART, CLINT, PLIC, SYS_DMA, ISP, DDR3 controller** only |
+| Peripherals | about 25 IPs (UART×2, I2C, SPI, timers, WDT, PWM, GPIO, …) | **UART, CLINT, PLIC, SYS_DMA, ISP, DDR3 controller, I2C0**, and with `--camera` the **CSI-2 RX camera path** ([camera/README.md](camera/README.md)) |
 | Accelerators | NPU (functional) | **ISP** (functional, bit-exact to the stand-alone ISP model); no NPU |
 | Memory map | V2.0 map | FX1 placeholder map ([MEMORY_MAP.md](MEMORY_MAP.md)), pending the HAS |
 
 What is not modelled in V3.0:
 
-- NPU, H.264/H.265, Ethernet and MIPI: their addresses and IRQ IDs are
-  reserved only;
-- I2C, SPI/QSPI, timers, WDT, PWM, GPIO, RTC, ADC, TRNG, OTP;
+- NPU, H.264/H.265 and Ethernet: their addresses and IRQ IDs are reserved
+  only (MIPI CSI-2 RX is modelled with `--camera`, see
+  [camera/README.md](camera/README.md));
+- SPI/QSPI, timers, WDT, PWM, GPIO, RTC, ADC, TRNG, OTP (I2C0 is modelled);
 - PMU, CMU and clock/reset control;
 - caches and an MMU.
 
@@ -302,6 +303,12 @@ vp/bin/VP_FX1_V3.0/fx1_soc --version
   linked into `fx1_soc`;
 - SystemC (Apache-2.0), shipped as `libsystemc`;
 - FreeRTOS-Kernel (MIT), in the firmware sources.
+
+`fx1_soc` also links the MIPI D-PHY RX model (`mipirxphy`) of the camera path.
+It was converted to SystemC from RTL, gate-level netlists and analog
+behavioural models; its supplier, owner and original licence are not
+confirmed, and no licence is asserted for it (provenance pending,
+`licenses/THIRD_PARTY.md`).
 
 Keep `licenses/` with the tree whenever it is passed on.
 

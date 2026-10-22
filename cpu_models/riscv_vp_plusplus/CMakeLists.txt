@@ -49,6 +49,7 @@ set(RISCV_VP_PLUSPLUS_PATCH_SERIES
     "0002-d12-rv32-index-eew64-illegal.patch|downstream-conformance|audit F12|de147236d885b6a76584ad1ac83da6f4d6cab975a0464b40acdb9c619090a319|F12: RVV 1.0 18.2 forbids index EEW=64 when XLEN=32, so all 32 RV32 indexed encodings must raise an illegal instruction (D12)"
     "0003-d13-bus-error-is-an-access-fault.patch|downstream-conformance|audit F13|c3535b21b849581af340b755ad1d22c33647c88dc3b9659072b75fd7fefce84b|F13: a failed bus access reported a page fault on a core with satp.MODE=Bare, but it must be an access fault chosen by access origin (D13)"
     "0004-d19-cycle-baseline-survives-reset.patch|downstream-conformance|decision record D19|e1ce2d42f3fd30114b35240098a49e6df6ce091c5389d308d5fe1afe8a351054|D19: `init()` zeroed the cycle baseline while the dbbcache accumulator survived it, so the first commit after a hart reset re-added the whole pre-reset count into simulated time"
+    "0005-resolution-independent-instr-time.patch|downstream-conformance|CSI-2 RX decision P15|9d1dde49ccd3f176051215ea48a5370601a59a3d16a7b059f5e560faeff20e5c|P15: instruction time was `cycle_time.value() / 1000` read back as ns, which is ns only at the 1 ps default resolution: at 1 fs (fx1_soc with the D-PHY model) every instruction cost 1000x its time. Identical at 1 ps"
     CACHE STRING "Approved patch series applied on top of the base revision")
 
 # The *result*, as `path|sha256` records: exactly which files the series is
@@ -63,7 +64,7 @@ set(RISCV_VP_PLUSPLUS_PATCH_SERIES
 set(RISCV_VP_PLUSPLUS_PATCHED_FILES
     "vp/src/core/common/dbbcache.h|7674449c57ccd419e788e8bb8d5d7fe99b4b85426214b3c113c29af532f481d9"
     "vp/src/core/common/mem.h|98004612efcde708db7078f3ee522445ab871f7acf549061b741e716897bcb1a"
-    "vp/src/core/rv32/iss_ctemplate.cpp|6f55dab250b8301fa61611d870ea5381548f8040b940f84f2b7e2fc04a94bc14"
+    "vp/src/core/rv32/iss_ctemplate.cpp|8b6f8031c358cf6da218cecdb6a683685c216489724e758421cd52f82c6ca79e"
     CACHE STRING "Files the patch series changes, with their post-patch content hashes")
 
 set(RISCV_VP_PLUSPLUS_DIR "${CMAKE_SOURCE_DIR}/third_party/riscv-vp-plusplus"

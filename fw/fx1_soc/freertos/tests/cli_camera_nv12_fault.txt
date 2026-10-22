@@ -1,0 +1,15 @@
+camera source tpg
+camera probe
+camera mode 3840 2160 12 4
+camera start
+camera capture 1
+camera stop
+camera start
+mw 0x110030a0 0x8f000000
+camera capture 1
+camera stop
+camera start
+mw 0x110030a8 0x8f800000
+camera capture 1
+camera stop
+poweroff

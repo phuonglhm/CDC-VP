@@ -1,0 +1,9 @@
+hwcheck
+camera probe
+camera start
+camera stop
+camera capture 1
+camera status
+camera mode 64 15 12 4
+isp selftest
+poweroff

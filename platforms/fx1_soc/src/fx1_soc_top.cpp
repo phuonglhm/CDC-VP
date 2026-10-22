@@ -22,9 +22,16 @@
 #include <fx1/sparse_ram.h>
 #include <fx1/word_access_guard.h>
 #include <fx1_isp/fx1_isp_tlm.h>
+#include <i2c.h>
 #include <riscv_vp_plusplus_wrapper.h>
 #include <uart.h>
 #include <uart_host_bridge.h>
+#ifdef FX1_SOC_HAS_CAMERA
+#include <fx1_csi2/csi2_rx_controller.h>
+#include <fx1_csi2_bfm/dphy_tx_bfm.h>
+#include <fx1_csi2_phy/dphy_rx_wrapper.h>
+#include <fx1_csi2_sensor/ccs_sensor.h>
+#endif
 
 namespace cdc::platforms::fx1_soc {
 namespace {
@@ -34,12 +41,19 @@ constexpr unsigned kCauseMachineSoftware = 3;
 constexpr unsigned kCauseMachineTimer = 7;
 constexpr unsigned kCauseMachineExternal = 11;
 
-// SYS_DMA and ISP reset pulse at power-up (both resets are active low).
-const sc_core::sc_time kDmaResetPulse(20, sc_core::SC_NS);
+// SYS_DMA, ISP and CSI-2 RX reset pulse at power-up (active low), in ns. Not
+// a namespace-scope sc_time: main() sets the time resolution (1 fs) first.
+constexpr double kResetPulseNs = 20;
 
 // Exclusive-monitor master IDs of the non-CPU writers (harts use 0..N-1).
 constexpr unsigned kMasterSysDma = 0x100;
 constexpr unsigned kMasterIspOdma = 0x101;
+constexpr unsigned kMasterMipiDma = 0x102;
+
+// I2C0: functional host at fast-mode 400 kHz; the camera sensor answers at
+// 7-bit address 0x10 (CcsSensorConfig default).
+constexpr double kI2cSclHz = 400e3;
+constexpr unsigned kSensorI2cAddr = 0x10;
 
 // Bus target names (bus::BusConfig::fx1()) and the platform-only finisher.
 constexpr const char* kSimCtrlTarget = "SIM_CTRL";
@@ -89,17 +103,59 @@ bool in_window(std::uint64_t address, std::uint64_t length, std::uint64_t base, 
     return address >= base && length <= size && address - base <= size - length;
 }
 
-bus::BusConfig make_bus_config()
+bus::BusConfig make_bus_config(bool camera)
 {
     auto cfg = bus::BusConfig::fx1();
     for (auto& target : cfg.targets)
         if (target.name == "SYS_DMA_CSR" || target.name == "ISP_CSR" || target.name == "SRAM" ||
-            target.name == "DDR3_CSR" || target.name == "DDR_SYSCTRL")
-            target.enabled = true;  // instantiated below (G3, G4, DDR3 subtask 5)
+            target.name == "DDR3_CSR" || target.name == "DDR_SYSCTRL" || target.name == "I2C0" ||
+            (camera && target.name == "MIPI_CSR"))
+            target.enabled = true;  // instantiated below (G3, G4, DDR3 subtask 5, CSI-2 M5)
     cfg.targets.push_back({kSimCtrlTarget, FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE,
                            bus::TargetPath::Peribus0Apb, true});
     return cfg;
 }
+
+i2c_config make_i2c_config()
+{
+    i2c_config c;
+    c.functional_host = true;  // FDATA commands run on the bus with SCL timing
+    c.scl_hz = kI2cSclHz;
+    return c;
+}
+
+#ifdef FX1_SOC_HAS_CAMERA
+// --camera: CSI-2 RX controller with its detailed D-PHY RX, and the board's
+// camera, a CCS register model on I2C0 driving the D-PHY transmit BFM
+// (components/FX1_Components/mipi-csi2). The DMA writes through a write guard
+// like the other non-CPU writers (plan C7).
+struct camera : sc_core::sc_module {
+    fx1::WriteGuard dma_guard;
+    fx1::csi2::DphyRxWrapper phy;
+    fx1::csi2::Csi2RxController ctl;
+    fx1::csi2::bfm::DphyTxBfm tx;
+    fx1::csi2::CcsSensor sensor;
+
+    static fx1::csi2::CcsSensorConfig sensor_config(const std::string& raw_file)
+    {
+        fx1::csi2::CcsSensorConfig c;
+        c.i2c_addr = kSensorI2cAddr;
+        c.raw_file = raw_file;
+        c.continuous_clock = false;  // P16: clock lane in LP-11 between frames (host cost of the PHY)
+        return c;
+    }
+    camera(sc_core::sc_module_name name, fx1::ExclusiveMonitor& monitor, const std::string& raw_file)
+        : sc_module(name)
+        , dma_guard("mipi_dma_guard", monitor, kMasterMipiDma)
+        , phy("dphy_rx")
+        , ctl("csi2_rx", phy)
+        , tx("sensor_tx", phy.clkp, phy.clkn, phy.dp, phy.dn)
+        , sensor("sensor", tx, sensor_config(raw_file))
+    {
+        ctl.dma_socket.bind(dma_guard.target);
+    }
+};
+#endif
 
 } // namespace
 
@@ -126,6 +182,13 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     fx1::WriteGuard isp_odma_guard;
     fx1::dma::Dma sys_dma;
     cdc::components::fx1_isp::fx1_isp_tlm isp;
+    // I2C0 (always present; no device on the bus without --camera). The model
+    // copies up to 4 bytes: the guard faults any non-word access, as for UART.
+    fx1::WordAccessGuard i2c_guard;
+    i2c i2c0;
+#ifdef FX1_SOC_HAS_CAMERA
+    std::unique_ptr<camera> cam;  // --camera only
+#endif
 
     sc_core::sc_buffer<unsigned char> uart_tx{"uart_tx"};
     // PLIC source lines, index = source ID - 1.
@@ -139,6 +202,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     sc_core::sc_signal<std::uint32_t> dma_rx_request{"dma_rx_request"}, dma_tx_request{"dma_tx_request"};
     sc_core::sc_signal<std::uint32_t> dma_rx_clear{"dma_rx_clear"}, dma_tx_clear{"dma_tx_clear"};
     sc_core::sc_signal<bool> isp_rst_n{"isp_rst_n"};
+    sc_core::sc_signal<bool> csi_rst_n{"csi_rst_n"};
 
     std::vector<std::unique_ptr<cdc::cpu::riscv_vp_plusplus_cpu>> cpus;
     std::vector<std::unique_ptr<fx1::CpuPortAdapter>> cpu_ports;
@@ -150,7 +214,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     impl(sc_core::sc_module_name name, const fx1_soc_options& opts)
         : sc_module(name)
         , options(opts)
-        , fabric("fabric", make_bus_config(), opts.bus_trace)
+        , fabric("fabric", make_bus_config(opts.camera), opts.bus_trace)
         , bootrom("bootrom", FX1_BOOTROM_SIZE, sc_core::sc_time(10, sc_core::SC_NS), true)
         , sram("sram", FX1_SRAM_SIZE, sc_core::sc_time(10, sc_core::SC_NS))
         , ddr3("ddr3_subsystem", Ddr3Subsystem::Options{opts.ddr_boot, opts.ddr3_ecc, opts.ddr3_faults})
@@ -165,6 +229,8 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         , isp_odma_guard("isp_odma_guard", monitor, kMasterIspOdma)
         , sys_dma("sys_dma")
         , isp("isp")
+        , i2c_guard("i2c_guard")
+        , i2c0("i2c0", make_i2c_config())
     {
         if (options.firmware.empty())
             throw std::invalid_argument("fx1_soc: a firmware ELF is required");
@@ -199,6 +265,23 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         isp.odma_socket.bind(isp_odma_guard.target); // IDMA only reads
         isp_odma_guard.out.bind(fabric.initiator("ISP_ODMA"));
         isp.rst_n(isp_rst_n);
+        fabric.target("I2C0").bind(i2c_guard.target);
+        i2c_guard.out.bind(i2c0.socket);
+        if (options.camera) {
+#ifdef FX1_SOC_HAS_CAMERA
+            // CSR on PERIBUS_1 (local offsets), DMA as MIPI_DMA, csi2_irq on
+            // PLIC source 7, sensor control on I2C0. Without --camera MIPI_CSR
+            // stays disabled (DECERR) and source 7 undriven.
+            cam = std::make_unique<camera>("camera", monitor, options.camera_raw);
+            fabric.target("MIPI_CSR").bind(cam->ctl.csr_socket);
+            cam->dma_guard.out.bind(fabric.initiator("MIPI_DMA"));
+            cam->ctl.resetn(csi_rst_n);
+            i2c0.attach(kSensorI2cAddr, &cam->sensor);
+#else
+            throw std::invalid_argument("fx1_soc: --camera: this build has no camera "
+                                        "(configure with -DFX1_BUILD_MIPI_CSI2=ON)");
+#endif
+        }
         uart.tx(uart_tx);
         uart_host.rx_out(uart.rx);
         uart_host.tx_in(uart_tx);
@@ -211,7 +294,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         if (!ddr3.released()) uart_host.hold_until(ddr3.release_event());
 
         // Interrupt sources (fx1_memory_map.h): 1 UART, 2 SYS_DMA, 3 ISP;
-        // 4..7 are the VP-only test lines; 8 DDR3.
+        // 4..6 are the VP-only test lines; 7 CSI-2 RX (--camera); 8 DDR3; 9 I2C0.
         for (unsigned id = 1; id < FX1_PLIC_NUM_SOURCES; ++id) plic.irq_in[id - 1](irq_line[id - 1]);
         uart.irq(irq_line[FX1_IRQ_UART - 1]);
         sys_dma.irq(irq_line[FX1_IRQ_SYS_DMA - 1]);
@@ -219,6 +302,10 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         for (unsigned i = 0; i < FX1_SIM_CTRL_IRQ_LINES; ++i)
             sim.test_irq[i](irq_line[FX1_SIM_CTRL_IRQ_FIRST_SOURCE - 1 + i]);
         ddr3.irq()(irq_line[FX1_IRQ_DDR - 1]);
+        i2c0.irq(irq_line[FX1_IRQ_I2C0 - 1]);
+#ifdef FX1_SOC_HAS_CAMERA
+        if (cam) cam->ctl.irq(irq_line[FX1_IRQ_MIPI - 1]);
+#endif
 
         // The platform loads the firmware image itself (not the hart's own
         // loader): BootROM and SRAM segments now, DDR segments staged for the
@@ -280,15 +367,17 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         if (options.realtime) SC_THREAD(pace_to_wall_clock);
     }
 
-    // Hold SYS_DMA and the ISP in reset for a short pulse after power-up,
-    // then release them.
+    // Hold SYS_DMA, the ISP and the CSI-2 RX in reset for a short pulse after
+    // power-up, then release them.
     void power_on_reset()
     {
         dma_reset_n.write(false);
         isp_rst_n.write(false);
-        wait(kDmaResetPulse);
+        csi_rst_n.write(false);
+        wait(sc_core::sc_time(kResetPulseNs, sc_core::SC_NS));
         dma_reset_n.write(true);
         isp_rst_n.write(true);
+        csi_rst_n.write(true);
     }
 
     // Receives the PT_LOAD segments of the firmware ELF (cdc::cpu::load_elf
@@ -342,6 +431,14 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         auto forward = std::make_unique<irq_forward>(sc_core::sc_gen_unique_name("irq_fwd"), cpu, cause);
         forward->in(line);
         forwards.push_back(std::move(forward));
+    }
+
+    std::uint64_t camera_writes_held() const
+    {
+#ifdef FX1_SOC_HAS_CAMERA
+        if (cam) return cam->dma_guard.writes_held();
+#endif
+        return 0;
     }
 
     void on_uart_tx()
@@ -416,6 +513,30 @@ sc_core::sc_time fx1_soc_top::cpu_release_time() const { return impl_->ddr3.rele
 std::string fx1_soc_top::ddr3_banner() const { return impl_->ddr3.banner(); }
 std::string fx1_soc_top::ddr3_report() const { return impl_->ddr3.report(); }
 
+std::string fx1_soc_top::camera_banner() const
+{
+#ifdef FX1_SOC_HAS_CAMERA
+    if (impl_->cam) {
+        std::ostringstream out;
+        out << "CSI-2 RX at 0x" << std::hex << FX1_MIPI_CSR_BASE << std::dec << " (IRQ " << FX1_IRQ_MIPI
+            << ", DMA via MIPI_DMA), CCS sensor at I2C0 address 0x" << std::hex << kSensorI2cAddr << std::dec
+            << ", frames from "
+            << (impl_->options.camera_raw.empty() ? std::string("the built-in pattern") : impl_->options.camera_raw);
+        return out.str();
+    }
+#endif
+    return {};
+}
+
+bool fx1_soc_top::camera_built() noexcept
+{
+#ifdef FX1_SOC_HAS_CAMERA
+    return true;
+#else
+    return false;
+#endif
+}
+
 std::string fx1_soc_top::atomics_report() const
 {
     if (!impl_->options.exclusive_monitor) return "off (upstream VP++ bus-lock model)";
@@ -425,7 +546,8 @@ std::string fx1_soc_top::atomics_report() const
         << s.sc_succeeded << " fail " << s.sc_failed << ", cancelled by hart " << s.cancelled_by_cpu
         << " by device " << s.cancelled_by_device << " by DDR3 reset/remap " << s.cancelled_by_platform
         << ", device writes held "
-        << impl_->sys_dma_guard.writes_held() + impl_->isp_odma_guard.writes_held()
+        << impl_->sys_dma_guard.writes_held() + impl_->isp_odma_guard.writes_held() +
+               impl_->camera_writes_held()
         << ", atomics drained " << s.brackets_waited;
     return out.str();
 }

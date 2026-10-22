@@ -12,9 +12,10 @@
 #
 # What goes in, and where it comes from:
 #   vp/bin/VP_FX1_V3.0       fx1_soc (RPATH $ORIGIN) + the libsystemc it needs
-#   vp/doc/VP_FX1_V3.0       README, memory map, licences, BUILD_MANIFEST.json,
+#   vp/doc/VP_FX1_V3.0       README, memory map, camera guide, licences, BUILD_MANIFEST.json,
 #                            SHA256SUMS (tracked files only, see below)
-#   sw/bootloader/sources/   the FreeRTOS CLI sources, BSP, ISP driver and the
+#   sw/bootloader/sources/   the FreeRTOS CLI sources, BSP, ISP driver, the camera
+#                            drivers (CSI-2 RX, I2C0, sensor) and examples, and the
 #                            FreeRTOS-Kernel subset it compiles, with a
 #                            stand-alone Makefile; copied, never rewritten
 #   sw/bootloader/build/     outputs of that Makefile, run here by this script
@@ -76,6 +77,9 @@ build_type="$("${sim}" --version 2>/dev/null | sed -n 's/^  build type *\([^,]*\
 if [[ "${build_type}" != "Release" && ${allow_dev} -eq 0 ]]; then
     die "the simulator is a '${build_type}' build; package a Release build (or pass --allow-dev-build)"
 fi
+"${sim}" --version 2>/dev/null | grep -q '^  camera *CSI-2 RX' \
+    || die "the simulator has no camera: configure ${build_dir} with -DFX1_BUILD_MIPI_CSI2=ON"
+csi2="${src}/components/FX1_Components/mipi-csi2/driver"
 
 rm -rf "${out}"
 mkdir -p "${out}"
@@ -99,7 +103,8 @@ cp -L "${build_dir}/platforms/fx1_soc/${needed}" "${bin}/${needed}"
 # ── firmware sources: the exact files the CDC-VP build compiles ──────────────
 log "firmware sources"
 mkdir -p "${sdk}/app" "${sdk}/bsp" "${sdk}/include/fx1" "${sdk}/include/dma" "${sdk}/include/fx1_isp" "${sdk}/include/fx1_ddr3" \
-         "${sdk}/drivers/isp" "${sdk}/isp_selftest" "${sdk}/demo" "${sdk}/tests" "${sdk}/ddr3/examples"
+         "${sdk}/drivers/isp" "${sdk}/isp_selftest" "${sdk}/demo" "${sdk}/tests" "${sdk}/ddr3/examples" \
+         "${sdk}/include/fx1_csi2" "${sdk}/drivers/csi2" "${sdk}/drivers/camera" "${sdk}/camera" "${sdk}/camera_isp"
 cp "${here}/sdk/Makefile" "${here}/sdk/README.md" "${sdk}/"
 cp "${fw}"/freertos/*.c "${fw}"/freertos/*.h "${fw}"/freertos/*.S "${sdk}/app/"
 cp "${fw}/freertos/tests/isp_auto_policy_test.c" "${sdk}/tests/"
@@ -121,6 +126,17 @@ cp "${isp}/driver/src/fx1_isp_drv.c" "${sdk}/drivers/isp/"
 cp "${fw}"/tests/isp_stream/isp_common.c "${fw}"/tests/isp_stream/isp_common.h "${fw}"/tests/isp_stream/isp_fixture.h \
    "${sdk}/isp_selftest/"
 cp "${fw}/demo/isp_raw_frame/isp_demo_job.h" "${sdk}/demo/"
+# Camera (CSI-2 M5b): reference CSI-2 RX driver, BSP drivers, examples (make camera).
+cp "${csi2}/include/fx1_csi2/fx1_csi2_drv.h" "${csi2}/include/fx1_csi2/fx1_csi2_regs.h" "${sdk}/include/fx1_csi2/"
+cp "${csi2}/src/fx1_csi2_drv.c" "${sdk}/drivers/csi2/"
+cp "${fw}"/drivers/fx1_i2c.[ch] "${fw}"/drivers/fx1_ccs_sensor.[ch] "${fw}"/drivers/fx1_csi2_hal_mmio.[ch] "${sdk}/drivers/camera/"
+cp "${fw}"/tests/camera/*.[ch] "${sdk}/camera/"
+# Camera manager and camera -> ISP examples (CSI-2 M6a/M6b): the manager is
+# also part of the FreeRTOS CLI (`camera` commands); the golden header holds
+# the ISP profiles and the expected NV12 CRCs (gen_golden.py, not shipped).
+cp "${fw}"/drivers/fx1_camera.[ch] "${fw}"/drivers/fx1_isp_hal_mmio.[ch] "${sdk}/drivers/camera/"
+cp "${fw}"/tests/camera_isp/cam_isp.[ch] "${fw}"/tests/camera_isp/stream.c "${fw}"/tests/camera_isp/camera_isp_golden.h \
+   "${sdk}/camera_isp/"
 k="${sdk}/third_party/FreeRTOS-Kernel"
 mkdir -p "${k}/include" "${k}/portable/MemMang" "${k}/portable/GCC/RISC-V"
 cp "${kernel}/LICENSE.md" "${kernel}/tasks.c" "${kernel}/queue.c" "${kernel}/list.c" "${k}/"
@@ -138,11 +154,16 @@ d3check="$(mktemp -d "${TMPDIR:-/tmp}/fx1_ddr3_check.XXXXXX")"
 make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${d3check}" ddr3 > "${out}/.make.log" 2>&1 \
     || { cat "${out}/.make.log" >&2; rm -rf "${d3check}"; die "the SDK Makefile failed on the DDR3 examples"; }
 rm -rf "${d3check}" "${out}/.make.log"
+# The camera examples must build from the shipped sources too (outputs not shipped).
+camcheck="$(mktemp -d "${TMPDIR:-/tmp}/fx1_camera_check.XXXXXX")"
+make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${camcheck}" camera > "${out}/.make.log" 2>&1 \
+    || { cat "${out}/.make.log" >&2; rm -rf "${camcheck}"; die "the SDK Makefile failed on the camera examples"; }
+rm -rf "${camcheck}" "${out}/.make.log"
 
 # ── test launchers and ISP samples ───────────────────────────────────────────
 log "launchers"
 cp "${here}/test/run_vp.sh" "${here}/test/isp_run.txt" "${test}/"
-cp "${fw}/freertos/tests/cli_smoke.txt" "${test}/"
+cp "${fw}/freertos/tests/cli_smoke.txt" "${fw}/freertos/tests/cli_camera.txt" "${test}/"
 cp "${src}/platforms/fx1_soc/tools/fx1_console.sh" "${test}/"
 cp "${src}/platforms/fx1_soc/demo/isp_pack.py" "${test}/"
 cp "${here}/test/isp_auto.py" "${test}/"
@@ -247,6 +268,8 @@ echo "]" >> "${sample_json}"
 # ── documentation and licences ───────────────────────────────────────────────
 log "documentation and licences"
 cp "${here}/docs/README.md" "${here}/docs/MEMORY_MAP.md" "${doc}/"
+mkdir -p "${doc}/camera"
+cp "${here}/docs/CAMERA_FW_GUIDE.md" "${doc}/camera/README.md"
 # DDR3 documents for driver developers. Links to documents that stay in the VP
 # source tree become plain text, so the package has no dead link.
 mkdir -p "${doc}/ddr3"

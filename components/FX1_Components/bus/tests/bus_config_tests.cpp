@@ -10,7 +10,7 @@ int sc_main(int, char**) {
     };
     auto cfg=bus::BusConfig::fx1();
     c.expect(valid(cfg),"FX1 default");
-    c.expect(cfg.initiators.size()==8,"eight masters");
+    c.expect(cfg.initiators.size()==9,"nine masters (MIPI_DMA: CSI-2 RX DMA writer)");
     c.expect(cfg.axi_data_width==32 && cfg.axi_address_width==32,"default 32-bit widths");
     auto bad=[&](auto mutate,const char* label){auto x=bus::BusConfig::fx1();mutate(x);c.expect(!valid(x),label);};
     bad([](auto& x){x.axi_data_width=64;},"unsupported 64-bit data rejected");
@@ -32,6 +32,12 @@ int sc_main(int, char**) {
         for(auto& t:x.targets)
             if(t.name=="SRAM"||t.name=="DDR3_CSR"||t.name=="DDR_SYSCTRL") t.enabled=true;
         c.expect(valid(x),"SRAM, DDR3_CSR and DDR_SYSCTRL placeholders enabled");
+    }
+    {   // fx1_soc enables I2C0 always and MIPI_CSR with --camera (fx1_memory_map.h).
+        auto x=bus::BusConfig::fx1();
+        for(auto& t:x.targets)
+            if(t.name=="I2C0"||t.name=="MIPI_CSR") t.enabled=true;
+        c.expect(valid(x),"I2C0 and MIPI_CSR placeholders enabled");
     }
     bad([](auto& x){for(auto& t:x.targets)t.enabled=false;},"no active targets");
     bad([](auto& x){x.axi_address_width=64;x.targets[0].base=UINT64_MAX-1;x.targets[0].size=4;},"end overflow");

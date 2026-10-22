@@ -9,6 +9,10 @@
  * Per IP: identity / reset values, write-readback-restore on registers without
  * side effects, and the bus-error contract (bad access -> access fault). DDR:
  * pattern, address-in-address and sub-word tests on a 4 KiB window.
+ * Camera build (FX1_FW_HAS_CAMERA, CSI-2 M6b): CSI-2 RX identity, reset values
+ * and read/write registers; I2C0 status and CTRL; the sensor's model_id over
+ * I2C0. Without --camera the CSI-2 RX faults on the bus: reported as absent
+ * (skipped), not as a failure; I2C0 is checked, the sensor is not.
  */
 #ifndef HWCHECK_H
 #define HWCHECK_H
@@ -19,6 +23,7 @@
 
 typedef struct {
     const char* name;
+    const char* skipped; /* not checked, and why (camera absent); 0: checked */
     uint32_t checks, failures;
     /* first failure */
     const char* what;

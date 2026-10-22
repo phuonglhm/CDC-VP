@@ -17,6 +17,9 @@
 #
 #   make ddr3   DDR3 firmware-init examples (BootROM/SRAM images, ddr3/README.md)
 #               in $(OUT)/ddr3; run them with test/VP_FX1_V3.0/run_vp.sh ddr3
+#   make camera camera examples (CSI-2 RX, I2C0, sensor; camera -> ISP through
+#               the camera manager; doc camera/README.md) in $(OUT)/camera; run
+#               them with test/VP_FX1_V3.0/run_vp.sh camera / camera-isp
 # Same compiler flags, include order and sources as the CDC-VP build that the
 # package was tested with (fw/fx1_soc/CMakeLists.txt). Do not change -march /
 # -mabi: the VP harts are RV32IMAFC and the BSP, the kernel port and every
@@ -43,6 +46,9 @@ CFLAGS  := $(ARCH) -O2 -g -std=c11 -ffreestanding -fno-builtin --param=min-pages
            -I$(HERE)/app -I$(KERNEL)/include -I$(KERNEL)/portable/GCC/RISC-V \
            -I$(HERE)/isp_selftest -I$(HERE)/demo \
            -Wno-int-to-pointer-cast
+# The CLI with the camera (CSI-2 M6b): `camera` commands, boot check of the
+# CSI-2 RX / I2C0 / sensor; without fx1_soc --camera they report it absent.
+APPCAM  := -DFX1_FW_HAS_CAMERA -I$(HERE)/drivers/camera -I$(HERE)/camera_isp
 # Source paths in __FILE__ (configASSERT) and debug info relative to this
 # directory, so the image does not depend on where the SDK is checked out: a
 # rebuild anywhere, with the same compiler release, gives the packaged image
@@ -58,12 +64,16 @@ LDFLAGS := -nostdlib -nostartfiles -Wl,--gc-sections -Wl,--no-warn-rwx-segments
 
 SOURCES := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c \
            $(addprefix $(HERE)/app/,main.c rtos_bsp.c rtos_libc.c cli.c hwcheck.c cmd_fpu.c cmd_dma.c \
-                                    cmd_isp.c probe.S) \
+                                    cmd_isp.c cmd_camera.c probe.S) \
            $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/portable/MemMang/heap_4.c \
            $(KERNEL)/portable/GCC/RISC-V/port.c $(KERNEL)/portable/GCC/RISC-V/portASM.S \
-           $(HERE)/isp_selftest/isp_common.c $(HERE)/drivers/isp/fx1_isp_drv.c
+           $(HERE)/isp_selftest/isp_common.c $(HERE)/drivers/isp/fx1_isp_drv.c \
+           $(addprefix $(HERE)/drivers/camera/,fx1_camera.c fx1_isp_hal_mmio.c fx1_i2c.c fx1_ccs_sensor.c \
+                                               fx1_csi2_hal_mmio.c) \
+           $(HERE)/drivers/csi2/fx1_csi2_drv.c
 HEADERS := $(wildcard $(HERE)/bsp/*.h $(HERE)/app/*.h $(HERE)/include/*/*.h $(HERE)/isp_selftest/*.h \
-                      $(HERE)/demo/*.h $(KERNEL)/include/*.h $(KERNEL)/portable/GCC/RISC-V/*.h)
+                      $(HERE)/demo/*.h $(KERNEL)/include/*.h $(KERNEL)/portable/GCC/RISC-V/*.h \
+                      $(HERE)/drivers/camera/*.h $(HERE)/camera_isp/*.h)
 
 ELF  := $(OUT)/freertos_cli.elf
 LDS  := $(OUT)/fx1.ld
@@ -83,7 +93,7 @@ $(LDS): $(HERE)/bsp/fx1.ld.S $(HERE)/include/fx1/fx1_memory_map.h | toolchain
 
 $(OUT)/obj/%.o: $(HERE)/% $(HEADERS) | toolchain
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(APPCAM) -c $< -o $@
 
 $(ELF): $(OBJS) $(LDS)
 	cd $(OUT) && $(CC) $(CFLAGS) $(LDFLAGS) -T fx1.ld -Wl,-Map,freertos_cli.map \
@@ -136,8 +146,53 @@ $(D3OUT)/app_image.S: | toolchain
 $(D3OUT)/boot_freertos.elf: $(HERE)/ddr3/examples/boot_loader.c $(D3OUT)/app_image.S $(D3OUT)/freertos_app.elf $(D3COMMON) $(D3HDRS) $(ROM_LDS)
 	$(call rom_image,$@,$< app_image.S,)
 
+# ── camera examples (CSI-2 RX + D-PHY + sensor, fx1_soc --camera) ───────────
+# DDR images like the CLI (bsp/crt0.S, fx1.ld). Same sources and defines as the
+# CDC-VP camera smokes (fw/fx1_soc/CMakeLists.txt).
+CAMOUT    := $(OUT)/camera
+CAMCFLAGS := $(filter-out -Wno-int-to-pointer-cast,$(CFLAGS)) -I$(HERE)/drivers/camera -I$(HERE)/camera
+CAMCOMMON := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c $(HERE)/camera/camera.c $(HERE)/drivers/camera/fx1_i2c.c \
+             $(HERE)/drivers/camera/fx1_ccs_sensor.c $(HERE)/drivers/camera/fx1_csi2_hal_mmio.c \
+             $(HERE)/drivers/csi2/fx1_csi2_drv.c
+CAMHDRS   := $(wildcard $(HERE)/bsp/*.h $(HERE)/camera/*.h $(HERE)/drivers/camera/*.h $(HERE)/include/*/*.h)
+CAMELFS   := $(addprefix $(CAMOUT)/,camera_raw10.elf camera_raw12.elf camera_recover.elf camera_decerr.elf \
+                                    camera_slverr.elf camera_i2c_irq.elf camera_i2c_timeout.elf \
+                                    camera_isp_raw12.elf camera_isp_raw10.elf)
+# Camera -> ISP through the camera manager (CDC-VP camera_isp_raw12/raw10).
+CISPCOMMON := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c $(HERE)/camera_isp/cam_isp.c \
+              $(addprefix $(HERE)/drivers/camera/,fx1_camera.c fx1_isp_hal_mmio.c fx1_i2c.c fx1_ccs_sensor.c \
+                                                  fx1_csi2_hal_mmio.c) \
+              $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/isp/fx1_isp_drv.c
+CISPHDRS   := $(CAMHDRS) $(wildcard $(HERE)/camera_isp/*.h)
+
+.PHONY: camera
+camera: $(CAMELFS)
+
+# cam_image(<elf>, <sources>, <extra flags>)
+define cam_image
+	@mkdir -p $(CAMOUT)
+	cd $(CAMOUT) && $(CC) $(CAMCFLAGS) $(3) $(LDFLAGS) -T $(LDS) $(2) -lgcc -o $(notdir $(1))
+endef
+
+$(CAMOUT)/camera_raw10.elf: $(HERE)/camera/raw.c $(CAMCOMMON) $(CAMHDRS) $(LDS)
+	$(call cam_image,$@,$(CAMCOMMON) $<,-DCAM_BITS=10 -DCAM_LANES=4 -DCAM_RAW16=0)
+$(CAMOUT)/camera_raw12.elf: $(HERE)/camera/raw.c $(CAMCOMMON) $(CAMHDRS) $(LDS)
+	$(call cam_image,$@,$(CAMCOMMON) $<,-DCAM_BITS=12 -DCAM_LANES=2 -DCAM_RAW16=1)
+$(CAMOUT)/camera_%.elf: $(HERE)/camera/%.c $(CAMCOMMON) $(CAMHDRS) $(LDS)
+	$(call cam_image,$@,$(CAMCOMMON) $<,)
+$(CAMOUT)/camera_isp_raw12.elf: $(HERE)/camera_isp/stream.c $(CISPCOMMON) $(CISPHDRS) $(LDS)
+	$(call cam_image,$@,$< $(CISPCOMMON),-I$(HERE)/camera_isp -DCAM_BITS=12)
+$(CAMOUT)/camera_isp_raw10.elf: $(HERE)/camera_isp/stream.c $(CISPCOMMON) $(CISPHDRS) $(LDS)
+	$(call cam_image,$@,$< $(CISPCOMMON),-I$(HERE)/camera_isp -DCAM_BITS=10)
+$(CAMOUT)/camera_i2c_irq.elf: $(HERE)/camera/i2c_irq.c $(CAMHDRS) $(LDS)
+	$(call cam_image,$@,$(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c $(HERE)/drivers/camera/fx1_i2c.c \
+	                    $(HERE)/drivers/camera/fx1_ccs_sensor.c $<,)
+$(CAMOUT)/camera_i2c_timeout.elf: $(HERE)/camera/i2c_timeout.c $(CAMHDRS) $(LDS)
+	$(call cam_image,$@,$(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c $(HERE)/drivers/camera/fx1_i2c.c \
+	                    $(HERE)/drivers/camera/fx1_ccs_sensor.c $<,)
+
 clean:
-	rm -rf $(OUT)/obj $(D3OUT)
+	rm -rf $(OUT)/obj $(D3OUT) $(CAMOUT)
 	rm -f $(ELF) $(LDS) $(OUT)/freertos_cli.dis $(OUT)/freertos_cli.map $(OUT)/freertos_cli.sections.txt
 
 # Portable policy checks with the host compiler, no VP or cross compiler needed.

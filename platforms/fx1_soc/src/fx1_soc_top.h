@@ -44,12 +44,17 @@ struct fx1_soc_options {
     // Plan C7 exclusive monitor: real LR/SC reservations shared with SYS_DMA
     // and ISP ODMA. false = upstream VP++ lock model (negative control only).
     bool exclusive_monitor = true;
+    // --camera: CSI-2 RX controller + D-PHY + CCS sensor model (I2C0). Needs a
+    // build with the camera (camera_built()). camera_raw: frames of 16-bit
+    // little-endian samples for the sensor; empty for its built-in pattern.
+    bool camera = false;
+    std::string camera_raw;
 };
 
 // FX1 SoC for FW/SW bring-up: two VP++ RV32IMAFC harts, FX1 bus, BootROM,
 // boot SRAM, the DDR3 controller subsystem (ddr3_subsystem.h), CLINT, PLIC,
-// UART, SYS_DMA, ISP and the VP-only sim-control finisher. Addresses come from
-// fx1/fx1_memory_map.h.
+// UART, SYS_DMA, ISP, I2C0, the CSI-2 RX with a camera sensor (--camera) and
+// the VP-only sim-control finisher. Addresses come from fx1/fx1_memory_map.h.
 class fx1_soc_top : public sc_core::sc_module {
 public:
     enum class result { running, pass, fail };
@@ -79,6 +84,10 @@ public:
     // One line: DDR3 mode/profile/ECC/aperture (start of run), DDR3 counters (end).
     std::string ddr3_banner() const;
     std::string ddr3_report() const;
+    // One line describing the camera (empty without --camera).
+    std::string camera_banner() const;
+    // This binary contains the camera (configured with FX1_BUILD_MIPI_CSI2).
+    static bool camera_built() noexcept;
     // One line of exclusive-monitor counters ("off" without a monitor).
     std::string atomics_report() const;
 

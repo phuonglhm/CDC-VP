@@ -25,6 +25,8 @@ Plan and decisions: `VP_BK/ISP/plan/FX1_PLATFORM_FIX_PLAN.md` section 7 (outside
 | CPU port | `FX1_Components/cpu_port`: CPU payload contract check, completion, and bus-error → access-fault mapping; integration errors are kept loud | in (G2) |
 | SYS_DMA | `FX1_Components/dma` (8 channels): CSR at `SYS_DMA_CSR`, master port `SYS_DMA`, IRQ = PLIC source 2, 20 ns power-on reset; request inputs tied to 0 (M2M only on the platform) | in (G3) |
 | ISP | `FX1_Components/isp` TLM model: CSR at `ISP_CSR` (PERIBUS_1), masters `ISP_IDMA`/`ISP_ODMA`, IRQ = PLIC source 3, 20 ns power-on reset; driven by the reference C99 driver from firmware | in (G4a) |
+| I2C0 | `components/i2c_tlm` in functional host mode (FDATA commands executed on the bus at 400 kHz SCL, ACK/NACK, repeated START): registers at `I2C0` (PERIBUS_0) behind a word-access guard, IRQ = PLIC source 9; always present, no device on the bus without `--camera` | in (CSI-2 M5a) |
+| Camera (`--camera`) | `FX1_Components/mipi-csi2`: CSI-2 RX controller with the detailed D-PHY RX model, CSR at `MIPI_CSR` (PERIBUS_1), DMA master `MIPI_DMA` behind a `WriteGuard`, IRQ = PLIC source 7, 20 ns power-on reset; the board camera is a MIPI CCS register model at I2C0 address 0x10 driving the D-PHY transmit BFM (built-in pattern or `--camera-raw` frames). Needs a build with `-DFX1_BUILD_MIPI_CSI2=ON` | in (CSI-2 M5a) |
 | Exclusive monitor | `FX1_Components/exclusive_monitor`: real LR/SC reservations (64 B granule) shared by both harts, SYS_DMA and ISP ODMA; AMO/SC brackets exclude every writer. CPU side through `riscv_vp_plusplus_options::exclusive_monitor`, device side through a `WriteGuard` in front of the `SYS_DMA` and `ISP_ODMA` ports | in (G4b) |
 
 ## Memory and interrupt map
@@ -44,15 +46,18 @@ differs from `platforms/VP_FX1_Full_SoC`, where 0x1001_0000 is I2C0 and
 | UART | 0x1000_0000 | 64 KiB | PERIBUS_0 (APB) |
 | SYS_DMA_CSR | 0x1001_0000 | 64 KiB | PERIBUS_0 (APB); DMA registers occupy 0x0000–0x10FF |
 | SIM_CTRL (VP only) | 0x1002_0000 | 64 KiB | PERIBUS_0 (APB) |
+| I2C0 | 0x1003_0000 | 64 KiB | PERIBUS_0 (APB); 32-bit accesses only |
 | ISP_CSR | 0x1100_0000 | 64 KiB | PERIBUS_1 (APB) |
+| MIPI_CSR | 0x1104_0000 | 64 KiB | PERIBUS_1 (APB); with `--camera` only, DECERR otherwise |
 | DDR3_CSR | 0x1200_0000 | 64 KiB | SYSBUS_0 (AXI4-Lite) |
 | DDR_SYSCTRL (VP only) | 0x1201_0000 | 64 KiB | SYSBUS_0 |
 | DDR | 0x8000_0000 | 512 MiB | SYSBUS_1 → DDR3 controller port 0 |
 
-PLIC source IDs:
-- UART = 1, SYS_DMA = 2, ISP = 3, DDR3 = 8.
-- IDs 4–7 are reserved for NPU/H.264/ETH/MIPI. Until those IPs exist, they are
-  driven by the four **VP-only test lines** of sim-control (`FX1_SIM_CTRL_IRQ_OFF`,
+PLIC source IDs (`FX1_PLIC_NUM_SOURCES` = 10):
+- UART = 1, SYS_DMA = 2, ISP = 3, CSI-2 RX = 7 (`--camera`; low otherwise),
+  DDR3 = 8, I2C0 = 9.
+- IDs 4–6 are reserved for NPU/H.264/ETH. Until those IPs exist, they are
+  driven by the three **VP-only test lines** of sim-control (`FX1_SIM_CTRL_IRQ_OFF`,
   bit i → source 4 + i).
 
 PLIC context n is hart n in M-mode. CLINT and PLIC use the SiFive register layout.
@@ -122,7 +127,7 @@ build-fx1/platforms/fx1_soc/fx1_soc --fw build-fx1/fw/fx1_soc/hello_2hart.elf \
     [--uart0-socket PORT [--uart0-wait]] [--uart0-rx-file FILE [--uart0-rx-delay-us N]] [--realtime] \
     [--dump ADDR:LEN:FILE ...]   # e.g. --dump 0x88006000:3072:y.bin (DDR bytes after the run)
     [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...] \
-    [--uart0-rx-byte-us N]
+    [--uart0-rx-byte-us N] [--camera [--camera-raw FILE]]
 ```
 
 **DDR3 boot modes.** With `--ddr-boot preinit` (default) the platform
@@ -151,6 +156,21 @@ console use `--timeout-ms 0` (no simulated-time limit) and `--realtime`
 races about 7× ahead and a finite budget ends the session within minutes), and
 connect with `tools/fx1_console.sh PORT` (raw terminal, no doubled echo). The FreeRTOS CLI
 firmware uses both: [`../../fw/fx1_soc/freertos/README.md`](../../fw/fx1_soc/freertos/README.md).
+
+`--camera` adds the CSI-2 RX controller, its D-PHY and the camera sensor
+(table above); without it the platform is unchanged except for I2C0, which is
+always present. Firmware controls the sensor over I2C0 (CCS registers: probe
+`model_id`, set `csi_data_format`, `csi_lane_mode`, output size and line /
+frame length, then `mode_select` 1 to stream, 0 to stop at the end of the
+frame in progress) and receives frames through the CSI-2 RX DMA. Frames come
+from a built-in pattern, or from `--camera-raw FILE` (16-bit little-endian
+samples, W x H per frame at the mode firmware sets, repeated). The register
+set and pattern formula are in
+[`ccs_sensor.h`](../../components/FX1_Components/mipi-csi2/sensor/include/fx1_csi2_sensor/ccs_sensor.h).
+The camera needs a build configured with `-DFX1_BUILD_MIPI_CSI2=ON` (`run_ci.sh`
+sets it); `fx1_soc --version` says whether the binary has it, and `--camera`
+on a binary without it is a usage error. The D-PHY model is slow: a 640x480
+frame costs minutes of host time; keep firmware frames small.
 
 `--load` copies a host file into DDR before the harts run, after the DDR3
 preinitialization (the ISP RAW-frame demo,
@@ -312,7 +332,7 @@ Exit status:
 | `fx1_plic` | Priority order and lowest-ID tie-break, enable mask, claim clears pending, level re-pend after complete, latched request survives a deassert, one claim per request across two contexts, complete from a non-enabled context ignored, side-effect-free debug claim, error responses. The threshold gates notification only: a source below or equal to it is still claimable, priority 0 is neither notified nor claimable, and two contexts with different thresholds still compete for one request |
 | `fx1_cpu_port` | Streaming width completed (a set width is kept). A valid access that the target refuses with BURST/COMMAND becomes GENERIC (a guest fault); ADDRESS/GENERIC pass through. Integration errors: a silent target (payload pre-set to OK, as VP++ does), INCOMPLETE, BYTE_ENABLE on a payload without byte enables, and malformed CPU payloads (command, null data, length, byte enables, streaming width), which never reach the target |
 | `fx1_smoke_silent_target` | Negative test on a real VP++ hart: a target that never answers stops the run with an integration error, and the guest never reaches its PASS write |
-| `fx1_smoke_plic_irq` | On hart 0: delivery with one claim and no re-entry; priority 6 → 7 → 5; threshold gating MEIP, and a polled claim that succeeds at threshold 7; mask; level re-pend. On hart 1: woken from WFI. A shared source is claimed exactly once. The UART TX interrupt is claimed and cleared at the device |
+| `fx1_smoke_plic_irq` | On hart 0: delivery with one claim and no re-entry; priority 6 → 4 → 5 (test lines 4–6); threshold gating MEIP, and a polled claim that succeeds at threshold 7; mask; level re-pend. On hart 1: woken from WFI. A shared source is claimed exactly once. The UART TX interrupt is claimed and cleared at the device |
 | `fx1_dma_*` | DMA model unit tests: registers, memory, peripheral, chain, pending, arbitration, errors, reset, timing, and `idle` (an M2P channel waits 10 ms with no scheduler wakeups, then completes). `fx1_dma_bus` runs the DMA through the FX1 bus with the named-port API. `fx1_dma_regs_header` checks the C header against `registers.h` |
 | `fx1_smoke_dma_m2m` | SYS_DMA on the platform: 256-byte and 1023-byte unaligned M2M copies verified byte for byte; completion through PLIC source 2 and cleared at the DMA; an unmapped destination gives WRITE_DECERR; sub-word CSR access gives load/store access faults |
 | `fx1_smoke_isp_stream_basic`, `fx1_smoke_isp_stream_gtm_auto` | The ISP driven by the reference C99 driver (`isp/driver`) through an MMIO HAL. Eight 64x48 RGGB frames go through the 4-buffer rotation (each buffer used twice), with up to two frames in flight; the CPU fills every input. The ISP interrupt goes through PLIC source 3 and is acknowledged by the driver at the device. Every NV12 frame must match the CRC-32 of the pinned Python reference (`tests/isp_stream/isp_fixture.h`). At the end: IDMA/ODMA frame counters are 8 and no fatal DMA error is set. The GTM-auto run checks the temporal effect on frames 1–7. IDMA underrun is a lossless level and is only counted |
@@ -337,6 +357,32 @@ Exit status:
 | `fx1_smoke_example_quickstart` | The handoff example (`fw/fx1_soc/examples/quickstart`): two-hart hello, a CLINT timer interrupt, a SYS_DMA copy with its PLIC interrupt and the ownership calls |
 | `fx1_regression_isp_fixture_check` | `gen_fixture.py --check`: the committed fixture still matches the reference. Registered only when `python3` on PATH has numpy; the smoke tests never need Python |
 | `fx1_regression_isp_demo_pack` | `demo/tests/test_pack.py`: `run_isp_demo.py --pack-only` on synthetic 4×4 dumps. A valid job gives a 24-byte NV12 and a PNG. A short or long dump, a bad result block, a bad stride or geometry, an incomplete frame, a wrong or missing `job.bin`, another profile, or a failing preview must exit 2 and leave no output. `python3` only (stdlib) |
+| `fx1_smoke_camera_absent` | Without `--camera`: a MIPI_CSR load faults, I2C0 answers and a transfer to 0x10 is NACKed (source 9), source 7 never pends |
+| `fx1_smoke_camera_wiring` | With `--camera`: CSI-2 RX probed at `MIPI_CSR`, the sensor's model_id read over I2C0 (source 9), one TPG frame through `MIPI_DMA` to DDR (source 7) equal to the colour bars |
+| `fx1_smoke_camera_raw_invalid` | `--camera-raw` of an odd-length file: exit 3 with the RAW-file message before the run |
+| `fx1_smoke_camera_i2c_irq` | The BSP I2C driver (`fw/fx1_soc/drivers/fx1_i2c`) in interrupt mode: sensor probe and mode with every completion claimed at PLIC source 9, NACK reported as `FX1_I2C_ENACK` |
+| `fx1_smoke_camera_i2c_timeout` | I2C driver budgets, polling and interrupt mode: a write (20 µs budget) and a read (300 µs) that need longer return `FX1_I2C_ETIMEOUT` within budget + one byte and STOP; the abort leaves the bus idle, the next transfer and a register write/read-back work at once |
+| `fx1_smoke_camera_raw10`, `_raw12` | CSI-2 M5b, firmware on the BSP drivers and the reference CSI-2 driver: sensor programmed over I2C0 (64x16; RAW10 4 lanes / RAW12 2 lanes), three frames through the detailed D-PHY, each interrupt claimed at PLIC source 7, every pixel checked against the sensor pattern (packed RAW10 / RAW16 layouts), stream off at a frame boundary; FRAME_COUNT = sensor frame_count, no drop, no CRC/ECC error |
+| `fx1_smoke_camera_recover` | No free buffer → frame 3 dropped (FRAME_DROPPED, count 1), release → frame 4 in that side; sensor software_reset inside frame 6 → that frame delivered whole, frame numbers restart at 1; DMA stopped while streaming → no capture, restart → exact frames, FRAME_COUNT consistent |
+| `fx1_smoke_camera_decerr` | A buffer side at an unmapped address: frame 2 BUF_DONE_ERR + AXI_WRITE_ERROR, DECERR at the side's base, no valid line; DMA stopped, reprogrammed, capture resumes exact |
+| `fx1_smoke_camera_slverr` | `--ddr3-ecc off --ddr3-fault 6200:write-result:1` inside frame 2 (CPU only reading meanwhile): BUF_DONE_ERR + AXI_WRITE_ERROR, SLVERR at an address of the failing side, last valid line inside the frame; frame 1 exact; next frame exact |
+| `fx1_smoke_camera_isp_raw12`, `_raw10` | CSI-2 M6a, the camera manager (`fw/fx1_soc/drivers/fx1_camera`): sensor 64x16 → detailed D-PHY → CSI-2 DMA (RAW16) → ISP (profile basic) → NV12. RAW12 4 lanes zero-copy (the manager writes the CSI-2 side into the ISP input slot's `IDMA_BUF_ADDR`, the side returns when that slot's `IDMA_BUF_VALID` clears); RAW10 2 lanes staged as sample << 2. Eight consecutive frames, each NV12 = the stand-alone ISP model's for that frame number (`tests/camera_isp/camera_isp_golden.h`), output geometry from the ISP driver; no drop or error; both CSI-2 sides back after stop |
+| `fx1_smoke_camera_isp_csi_err` | A CSI-2 side at an unmapped address: its frames end with an error and are released without reaching the ISP; the other side's frames (1, 3, 5, 7) come out exact |
+| `fx1_smoke_camera_isp_backpressure` | The application holds all four NV12 outputs: the manager stops feeding the ISP, the CSI-2 RX drops frames (counted); after the release the two held frames come out intact and the stream resumes right after the dropped frame numbers |
+| `fx1_smoke_camera_isp_odma_err` | NV12 output slot 2 unmapped: ODMA error, the application repairs the slot from the manager's error hook, `fx1_isp_recover_ex`, one frame lost (counted), the following frames exact and in order |
+| `fx1_smoke_camera_isp_idma_hold` | The ISP's input DMA paused by the test (`DMA_CTRL.IDMA_EN` = 0): zero-copy sides handed over and unread stay with the ISP (both held, the receiver drops, nothing overwritten); IDMA resumed, the held frames come out intact, then the stream after the drops |
+| `fx1_smoke_camera_isp_idma_err` | M6a review F1: an IDMA read error on frame 2's zero-copy input, 7 ms with only the ISRs running while the sensor streams, the address repaired from the error hook, `fx1_isp_recover_ex` re-reads the input: the side stayed held, the retried output is capture 2 with the pixels of sensor frame 2, the stream resumes after the drops, nothing lost |
+| `fx1_smoke_camera_isp_sensor_stop_timeout`, `_nack` | M6a review F2: the standby does not reach the sensor (I2C host disabled / wrong address): stop returns `FX1_CAMERA_ESENSOR` within its deadline (and, with the 24 ms budget, at the sensor's own 2 ms I2C timeout, not later), state 3, CSI-2 RX and ISP stopped, configure refused, the sensor still streaming; I2C back: stop again → OK, mode_select 0, the sensor's frame count stops; configure and start again, exact consecutive frames |
+| `fx1_smoke_camera_isp_sensor_stop_budget` | M6a re-review R1: stop budgets shorter than the sensor's 2000 µs I2C timeout. I2C host disabled: stop(100 µs) from running and again in state 3 → `FX1_CAMERA_ESENSOR` each within 100 µs + `FX1_CAMERA_STOP_SLACK_US`; I2C back: stop(1000 µs) → OK within its bound; read-back cut (budget = a timed standby write + 30 µs) → ESENSOR within its bound although the sensor is in standby, stop again → OK; restarts exact |
+| `fx1_smoke_freertos_cli_camera`, `_camera_fault`, `_camera_absent`; `fx1_regression_freertos_cli_camera_tpg` | CSI-2 M6b, the FreeRTOS CLI's `camera` commands (`fw/fx1_soc/freertos/README.md`, section Camera): with `--camera` a nominal session (hwcheck of CSI-2 RX / I2C0 / sensor, probe, 64x16 RAW12 and RAW10 captures against the golden, ISP shared with `isp selftest`), a fault session (I2C host disabled → stop ESENSOR, start refused, stop OK, recover, frames from 1 again); without `--camera` everything reports the camera absent, nothing fails; TPG 640x480 against its golden and 3840x2160 (metadata, RAW and Y/UV spot checks) in the regression stage; regression negatives: RAW file instead of the pattern (`_mismatch`), a start failing after configure (`_startfault`, test image), ODMA Y / UV of a slot redirected (`_nv12_fault`) |
+| `fx1_i2c_bsp_budget` | Host test (M6a follow-up review R2): the BSP I2C driver built for the host against the real I2C0 model (functional mode, 400 kHz, 1 µs per register access). Each call starts while an earlier transaction is still aborting, swept over abort phase and budget, write and write_read: no START queued after the deadline, return within budget + `FX1_I2C_ABORT_US` (nothing sent: within the budget), OK only with the transaction done at the device |
+| `fx1_smoke_camera_isp_start_fail` | M6b review F1: the I2C host lost between configure and start: `fx1_camera_start` → EDEV, still configured (state 1); I2C back: `fx1_camera_stop` from state 1 → OK, idle, sides back, the sensor in standby and not streaming; configure and start again, exact frames |
+| `fx1_smoke_camera_isp_stop_held` | Stop while the application holds all four outputs and two captures wait: stop completes (~0.3 ms), the captures are cancelled and counted, the held NV12 stay readable and exact, releasing them afterwards is OK (twice is refused); configure and start again, exact frames |
+| `fx1_smoke_camera_isp_timeout` | Sensor stream stopped: `fx1_camera_dequeue` returns `FX1_CAMERA_ETIMEOUT` within its budget (+200 µs), counted; stop still works |
+| `fx1_regression_camera_isp_artifacts_raw12`, `_raw10` | `check_artifacts.py`: the firmware keeps the CSI-2 RAW (capture hook), the ISP input (RAW10 staging), the NV12 and a record per frame in DDR; the host checks RAW = sensor pattern, staging = RAW << 2 (0x3FF → 0xFFC), NV12 CRC = golden and SHA-256 = `fx1_isp_run_raw` on the dumped input, and the record links (capture, FRAME_ID, side, ISP sequence and slots). python3 + numpy |
+| `fx1_regression_camera_isp_tpg4k` | `check_tpg4k.py`: two 3840x2160 RAW12 frames from the CSI-2 RX TPG (no sensor, no D-PHY) through the camera manager, zero-copy, RAW spot-checked by the firmware; the dumped NV12 of both = the ISP model's (CRC 0xDD6DA3BB). About 35 s host |
+| `fx1_regression_camera_isp_golden_check` | `gen_golden.py --check`: the committed camera → ISP golden header matches `fx1_isp_run_raw` and the profile generator |
+| `fx1_csi2_*` (label `fx1_csi2_unit`) | The CSI-2 RX component tests without PHY traffic (packet, lane management, sys_clk datapath, DMA, DMA control, controller CSR, driver), built by `run_ci.sh` (target `fx1_csi2_unit_tests`); the PHY-level tests (`fx1_phy_slow`) run in the component's own regression |
 | `fx1_smoke_bus_fault` | Fetch, load and store faults with exact `mcause`/`mepc`/`mtval`; a store to BootROM faults and leaves the ROM unchanged |
 | `fx1_packaging` | The SDK distribution gate (`package/run_packaging_regression.sh`, label `fx1_packaging`, not in `run_ci.sh`). A fresh Release build is packaged and moved; the build tree is made unreadable; it runs with an empty environment (smoke, every ISP sample against its golden, a wrong golden must fail). The firmware is rebuilt from the shipped sources and must be byte-identical. Also checks `sha256sum -c` on a clone without `build/` and the one-terminal interactive flow |
 | `*_q10us` | Every smoke image is run again with a 10 µs quantum and must give the same verdict (plan C11) |
@@ -368,6 +414,11 @@ The release procedure, the gate and the export are described in
 [`package/docs/README.md`](package/docs/README.md).
 
 ## Time model (plan C11)
+
+The SystemC time resolution is 1 fs on every run (set first in `main`): the
+detailed D-PHY model of the camera needs it, and setting it always keeps runs
+with and without `--camera` timed alike. No code may build an `sc_time` before
+`sc_main` (no namespace-scope `sc_time` constants).
 
 The FX1 bus consumes annotated delay with `wait()` at every hop and returns a
 delay of 0. VP++ hands its quantum-keeper local time to `b_transport` and takes

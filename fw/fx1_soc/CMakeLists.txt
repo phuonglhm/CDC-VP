@@ -202,6 +202,98 @@ if(CDC_BUILD_TESTS)
     fx1_smoke_test(plic_irq)
     fx1_smoke_test(bus_fault)
     fx1_smoke_test(dma_m2m)
+    # CSI-2 M5a: camera integration. Without --camera: MIPI_CSR faults, I2C0
+    # present with no device, source 7 low. With --camera (a build with
+    # -DFX1_BUILD_MIPI_CSI2=ON): CSR probe, I2C0 to the sensor on source 9,
+    # TPG frame through MIPI_DMA on source 7, via the reference C99 driver.
+    fx1_smoke_test(camera_absent TIMEOUT_MS 20)
+    if(TARGET cdc::components::fx1_csi2_controller)
+        set(_csi2_drv "${CMAKE_SOURCE_DIR}/components/FX1_Components/mipi-csi2/driver")
+        fx1_firmware(camera_wiring SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_wiring/main.c
+            ${_csi2_drv}/src/fx1_csi2_drv.c
+            INCLUDES ${_csi2_drv}/include
+            DEPENDS ${_csi2_drv}/include/fx1_csi2/fx1_csi2_drv.h ${_csi2_drv}/include/fx1_csi2/fx1_csi2_regs.h)
+        fx1_expect_test(camera_wiring RC 0 REGEX "RESULT PASS" IMAGE camera_wiring
+            ARGS --camera TIMEOUT_MS 20)
+        fx1_expect_test(camera_wiring_q10us RC 0 REGEX "RESULT PASS" IMAGE camera_wiring
+            ARGS --camera --quantum-ns 10000 TIMEOUT_MS 20)
+        # CSI-2 M5b: camera smokes on the BSP drivers (fw/fx1_soc/drivers) and the
+        # reference CSI-2 driver: FW -> I2C0 -> sensor -> D-PHY -> CSI-2 RX ->
+        # MIPI_DMA -> DDR -> PLIC 7. One quantum each (the detailed PHY is slow).
+        set(_drv ${CMAKE_CURRENT_SOURCE_DIR}/drivers)
+        set(_cam ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera)
+        set(_cam_sources ${_cam}/camera.c ${_drv}/fx1_i2c.c ${_drv}/fx1_ccs_sensor.c ${_drv}/fx1_csi2_hal_mmio.c
+            ${_csi2_drv}/src/fx1_csi2_drv.c)
+        set(_cam_includes ${_drv} ${_cam} ${_csi2_drv}/include)
+        set(_cam_depends ${_cam}/camera.h ${_drv}/fx1_i2c.h ${_drv}/fx1_ccs_sensor.h ${_drv}/fx1_csi2_hal_mmio.h
+            ${_csi2_drv}/include/fx1_csi2/fx1_csi2_drv.h ${_csi2_drv}/include/fx1_csi2/fx1_csi2_regs.h)
+        function(fx1_camera_test name)
+            cmake_parse_arguments(C "" "SOURCE;TIMEOUT_MS" "DEFINES;ARGS" ${ARGN})
+            fx1_firmware(${name} SOURCES ${C_SOURCE} ${_cam_sources} DEFINES ${C_DEFINES}
+                INCLUDES ${_cam_includes} DEPENDS ${_cam_depends})
+            fx1_expect_test(${name} RC 0 REGEX "RESULT PASS" IMAGE ${name}
+                ARGS --camera ${C_ARGS} TIMEOUT_MS ${C_TIMEOUT_MS})
+            set_tests_properties(fx1_smoke_${name} PROPERTIES TIMEOUT 900)
+        endfunction()
+        fx1_camera_test(camera_raw10 SOURCE ${_cam}/raw.c DEFINES CAM_BITS=10 CAM_LANES=4 CAM_RAW16=0 TIMEOUT_MS 40)
+        fx1_camera_test(camera_raw12 SOURCE ${_cam}/raw.c DEFINES CAM_BITS=12 CAM_LANES=2 CAM_RAW16=1 TIMEOUT_MS 40)
+        fx1_camera_test(camera_recover SOURCE ${_cam}/recover.c TIMEOUT_MS 80)
+        fx1_camera_test(camera_decerr SOURCE ${_cam}/decerr.c TIMEOUT_MS 40)
+        # T (us after the CPU release) inside frame 2: see tests/camera/slverr.c.
+        set(FX1_CAMERA_SLVERR_T_US 6200 CACHE STRING "camera_slverr: --ddr3-fault time, inside frame 2")
+        fx1_camera_test(camera_slverr SOURCE ${_cam}/slverr.c TIMEOUT_MS 40
+            ARGS --ddr3-ecc off --ddr3-fault ${FX1_CAMERA_SLVERR_T_US}:write-result:1)
+        fx1_firmware(camera_i2c_irq SOURCES ${_cam}/i2c_irq.c ${_drv}/fx1_i2c.c ${_drv}/fx1_ccs_sensor.c
+            INCLUDES ${_drv} DEPENDS ${_drv}/fx1_i2c.h ${_drv}/fx1_ccs_sensor.h)
+        fx1_expect_test(camera_i2c_irq RC 0 REGEX "RESULT PASS" IMAGE camera_i2c_irq ARGS --camera TIMEOUT_MS 20)
+        # CSI-2 M6a: camera -> ISP through the camera manager (fw/fx1_soc/drivers/fx1_camera),
+        # NV12 checked against camera_isp_golden.h (gen_golden.py, stand-alone ISP model).
+        set(_isp_root "${CMAKE_SOURCE_DIR}/components/FX1_Components/isp")
+        set(_cisp ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_isp)
+        set(_cisp_sources ${_cisp}/cam_isp.c ${_drv}/fx1_camera.c ${_drv}/fx1_isp_hal_mmio.c ${_drv}/fx1_i2c.c
+            ${_drv}/fx1_ccs_sensor.c ${_drv}/fx1_csi2_hal_mmio.c ${_csi2_drv}/src/fx1_csi2_drv.c
+            ${_isp_root}/driver/src/fx1_isp_drv.c)
+        set(_cisp_includes ${_drv} ${_cisp} ${_csi2_drv}/include ${_isp_root}/driver/include ${_isp_root}/include)
+        set(_cisp_depends ${_cisp}/cam_isp.h ${_cisp}/camera_isp_golden.h ${_drv}/fx1_camera.h ${_drv}/fx1_i2c.h
+            ${_drv}/fx1_ccs_sensor.h ${_drv}/fx1_csi2_hal_mmio.h ${_drv}/fx1_isp_hal_mmio.h
+            ${_csi2_drv}/include/fx1_csi2/fx1_csi2_drv.h ${_isp_root}/driver/include/fx1_isp/fx1_isp_drv.h)
+        function(fx1_camera_isp_test name)
+            cmake_parse_arguments(C "" "SOURCE;TIMEOUT_MS;LABEL" "DEFINES;ARGS" ${ARGN})
+            fx1_firmware(${name} SOURCES ${C_SOURCE} ${_cisp_sources} DEFINES ${C_DEFINES}
+                INCLUDES ${_cisp_includes} DEPENDS ${_cisp_depends})
+            if(NOT C_LABEL)
+                set(C_LABEL fx1_smoke)
+            endif()
+            fx1_expect_test(${name} RC 0 REGEX "RESULT PASS" IMAGE ${name} LABEL ${C_LABEL}
+                ARGS --camera ${C_ARGS} TIMEOUT_MS ${C_TIMEOUT_MS})
+            set_tests_properties(${C_LABEL}_${name} PROPERTIES TIMEOUT 1800)
+        endfunction()
+        fx1_camera_isp_test(camera_isp_raw12 SOURCE ${_cisp}/stream.c DEFINES CAM_BITS=12 TIMEOUT_MS 80)
+        fx1_camera_isp_test(camera_isp_raw10 SOURCE ${_cisp}/stream.c DEFINES CAM_BITS=10 TIMEOUT_MS 80)
+        set(_i 0)
+        foreach(_f csi_err backpressure odma_err timeout idma_hold idma_err sensor_stop_timeout sensor_stop_nack
+                   stop_held sensor_stop_budget start_fail)
+            math(EXPR _i "${_i} + 1")
+            fx1_camera_isp_test(camera_isp_${_f} SOURCE ${_cisp}/faults.c DEFINES CAM_FAULT=${_i} TIMEOUT_MS 80)
+        endforeach()
+        # Artifacts for the host (RAW, ISP input, NV12, records), checked by
+        # check_artifacts.py against the sensor pattern, the golden and
+        # fx1_isp_run_raw; python3 + numpy, so fx1_regression.
+        foreach(_bits 12 10)
+            fx1_firmware(camera_isp_art_raw${_bits} SOURCES ${_cisp}/artifacts.c ${_cisp_sources}
+                DEFINES CAM_BITS=${_bits} INCLUDES ${_cisp_includes} DEPENDS ${_cisp_depends})
+        endforeach()
+        fx1_firmware(camera_isp_tpg4k SOURCES ${_cisp}/tpg4k.c ${_cisp_sources}
+            INCLUDES ${_cisp_includes} DEPENDS ${_cisp_depends})
+        # M5b review F1/F2: driver budgets and abort recovery, polling and IRQ mode.
+        fx1_firmware(camera_i2c_timeout SOURCES ${_cam}/i2c_timeout.c ${_drv}/fx1_i2c.c ${_drv}/fx1_ccs_sensor.c
+            INCLUDES ${_drv} DEPENDS ${_drv}/fx1_i2c.h ${_drv}/fx1_ccs_sensor.h)
+        fx1_expect_test(camera_i2c_timeout RC 0 REGEX "RESULT PASS" IMAGE camera_i2c_timeout ARGS --camera TIMEOUT_MS 60)
+        # A RAW fixture that cannot hold samples is refused before the run (exit 3).
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/camera_raw_odd.raw "B")
+        fx1_expect_test(camera_raw_invalid RC 3 REGEX "RAW file .*camera_raw_odd.raw has 1 bytes"
+            IMAGE camera_wiring ARGS --camera --camera-raw ${CMAKE_CURRENT_BINARY_DIR}/camera_raw_odd.raw TIMEOUT_MS 20)
+    endif()
     # ISP through the reference C99 driver over the generated fixture.
     set(_isp "${CMAKE_SOURCE_DIR}/components/FX1_Components/isp")
     set(_isp_dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/isp_stream)
@@ -315,10 +407,35 @@ if(CDC_BUILD_TESTS)
     # The upstream RV32 port casts the uint64_t mtimecmp base to a pointer
     # (port.c, vPortSetupTimerInterrupt); harmless below 4 GiB, but -Werror.
     set(_rtos_cflags -Wno-int-to-pointer-cast)
-    fx1_firmware(freertos_cli SOURCES ${_rtos_sources} CFLAGS ${_rtos_cflags}
+    # CSI-2 M6b: with the camera build, the `camera` commands (camera manager
+    # and drivers, fw/fx1_soc/drivers) and the boot check of CSI-2 RX / I2C0 /
+    # sensor; at run time without --camera they report the camera absent.
+    set(_rtos_defines "")
+    if(TARGET cdc::components::fx1_csi2_controller)
+        set(_rdrv ${CMAKE_CURRENT_SOURCE_DIR}/drivers)
+        set(_rcsi2 ${CMAKE_SOURCE_DIR}/components/FX1_Components/mipi-csi2/driver)
+        set(_rcisp ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_isp)
+        list(APPEND _rtos_sources ${_rtos_dir}/cmd_camera.c ${_rdrv}/fx1_camera.c ${_rdrv}/fx1_isp_hal_mmio.c
+            ${_rdrv}/fx1_i2c.c ${_rdrv}/fx1_ccs_sensor.c ${_rdrv}/fx1_csi2_hal_mmio.c ${_rcsi2}/src/fx1_csi2_drv.c)
+        list(APPEND _rtos_includes ${_rdrv} ${_rcsi2}/include ${_rcisp})
+        file(GLOB _rdrv_headers ${_rdrv}/*.h)
+        list(APPEND _rtos_depends ${_rdrv_headers} ${_rcisp}/camera_isp_golden.h
+            ${_rcsi2}/include/fx1_csi2/fx1_csi2_drv.h ${_rcsi2}/include/fx1_csi2/fx1_csi2_regs.h)
+        set(_rtos_defines FX1_FW_HAS_CAMERA)
+    endif()
+    fx1_firmware(freertos_cli SOURCES ${_rtos_sources} CFLAGS ${_rtos_cflags} DEFINES ${_rtos_defines}
         INCLUDES ${_rtos_includes} DEPENDS ${_rtos_depends})
-    fx1_firmware(freertos_cli_hwfail SOURCES ${_rtos_sources} DEFINES HWCHECK_INJECT_FAILURE
+    fx1_firmware(freertos_cli_hwfail SOURCES ${_rtos_sources} DEFINES HWCHECK_INJECT_FAILURE ${_rtos_defines}
         CFLAGS ${_rtos_cflags} INCLUDES ${_rtos_includes} DEPENDS ${_rtos_depends})
+    if(TARGET cdc::components::fx1_csi2_controller)
+        # Test image (M6b review F1): the I2C host lost once between configure
+        # and stream-on inside `camera start`.
+        # Also (M6b re-review F2): a TPG 4K frame's NV12 CRC taken as the golden
+        # (minutes on the simulated CPU) for the mixed CRC / spot-check session.
+        fx1_firmware(freertos_cli_camfault SOURCES ${_rtos_sources}
+            DEFINES CAMERA_TEST_STREAM_ON_FAULT CAMERA_TEST_FAST_CRC ${_rtos_defines}
+            CFLAGS ${_rtos_cflags} INCLUDES ${_rtos_includes} DEPENDS ${_rtos_depends})
+    endif()
     # Console input at the 115200 8N1 character time (87 us), starting 60 ms
     # after CPU release. Since the harts fetch from the DDR3 controller, the
     # boot (hart 1's IP check) takes about 26 ms and a CLI line printed with
@@ -340,6 +457,63 @@ if(CDC_BUILD_TESTS)
     # The boot gate: a failing IP check must stop the boot before the scheduler.
     fx1_expect_test(freertos_cli_hwcheck_fail IMAGE freertos_cli_hwfail RC 1 TIMEOUT_MS 300
         REGEX "FAIL ISP.*boot halted: hwcheck FAIL.*RESULT FAIL code=0x50")
+    # CSI-2 M6b: the `camera` commands. With --camera: nominal session (probe,
+    # 64x16 RAW12 4 lanes and RAW10 2 lanes against the golden, ISP ownership
+    # with `isp selftest`, status, stop) and fault session (I2C host disabled ->
+    # stop ESENSOR / state 3, start refused, I2C back -> stop OK, recover,
+    # frames from 1 again); without --camera: absent everywhere, nothing
+    # counted as failed. The TPG session (640x480 against its golden, 4K
+    # metadata and RAW spot check) is a regression test.
+    if(TARGET cdc::components::fx1_csi2_controller)
+        set(_cam_rx --uart0-rx-delay-us 60000 ${_rtos_rx})
+        fx1_expect_test(freertos_cli_camera IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera.txt ${_cam_rx}
+            REGEX "ok   CSI-2 RX, checks [0-9]+.*ok   I2C0 \\+ sensor, checks [0-9]+.*total: [0-9]+ checks, 0 failures -> PASS.*sensor model_id 0x0000f1c5.*camera probe: PASS.*camera start: PASS.*isp selftest: the ISP is in use by the camera.*capture 1 FRAME_ID 1 side 0 isp seq 0 zero-copy out 0 64x16 raw frame 1 raw ok crc 0x[0-9a-f]+ = golden frame 1.*capture 4 FRAME_ID 4 side 1 isp seq 3 zero-copy out 3 64x16 raw frame 4 raw ok crc 0x[0-9a-f]+ = golden frame 4.*4/4 frames, drops 0.*camera capture: PASS.*csi ok 4 err 0.*camera stop: OK.*64x16 RAW10, 2 lane.*staged out 0 64x16 raw frame [0-9]+ raw ok crc 0x[0-9a-f]+ = golden frame.*2/2 frames, drops 0.*camera capture: PASS.*camera stop: OK.*isp 8-frame fixture: PASS.*poweroff: 0 failed.*RESULT PASS")
+        fx1_expect_test(freertos_cli_camera_fault IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_fault.txt ${_cam_rx}
+            REGEX "camera capture: PASS.*0x10030010 <- 0x00000000.*camera stop: ESENSOR in [0-9]+ us, state stopped, sensor not confirmed.*camera: stopped, sensor not confirmed, last stop ESENSOR.*sensor errors 1.*camera start: camera is stopped, sensor not confirmed \\(camera stop first\\).*0x10030010 <- 0x00000001.*camera stop: OK in [0-9]+ us, state idle.*camera recover: OK, state running.*camera recover: PASS.*raw frame 1 raw ok crc 0x[0-9a-f]+ = golden frame 1.*raw frame 2 raw ok crc 0x[0-9a-f]+ = golden frame 2.*camera capture: PASS.*camera stop: OK.*poweroff: 0 failed.*RESULT PASS")
+        fx1_expect_test(freertos_cli_camera_absent IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_camera_absent.txt ${_cam_rx}
+            REGEX "--   CSI-2 RX: absent \\(fx1_soc without --camera\\), skipped.*ok   I2C0, checks [0-9]+.*total: [0-9]+ checks, 0 failures -> PASS.*camera: absent.*camera start: camera probe first.*camera stop: not running.*camera capture: not running.*camera: idle.*camera mode: W 8..3840.*isp 8-frame fixture: PASS.*poweroff: 0 failed.*RESULT PASS")
+        fx1_expect_test(freertos_cli_camera_tpg IMAGE freertos_cli RC 0 TIMEOUT_MS 5000 LABEL fx1_regression
+            ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_tpg.txt ${_cam_rx}
+            REGEX "camera probe: PASS.*640x480 RAW12, source tpg, golden yes.*640x480 raw ok crc 0x[0-9a-f]+ = golden.*640x480 raw ok crc 0x[0-9a-f]+ = golden.*2/2 frames, drops 0.*3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot ok UV spot ok \\(64 bytes\\).*1/1 frames, drops 0.*camera capture: PASS.*camera stop: OK.*poweroff: 0 failed.*RESULT PASS")
+        # Negative: frames from a RAW file (64x16 RAW12, every sample 0x123)
+        # instead of the pattern: the RAW spot check and the golden must both
+        # fail, the capture is counted failed, poweroff ends with FAIL.
+        fx1_expect_test(freertos_cli_camera_mismatch IMAGE freertos_cli RC 1 TIMEOUT_MS 3000 LABEL fx1_regression
+            ARGS --camera --camera-raw ${_rtos_dir}/tests/cli_camera_mismatch.raw
+                 --uart0-rx-file ${_rtos_dir}/tests/cli_camera_mismatch.txt ${_cam_rx}
+            REGEX "camera probe: PASS.*camera start: PASS.*64x16 raw frame [0-9]+ raw BAD crc 0x[0-9a-f]+ GOLDEN MISMATCH.*64x16 raw frame [0-9]+ raw BAD crc 0x[0-9a-f]+ GOLDEN MISMATCH.*camera capture: 2/2 frames.*camera capture: FAIL.*camera stop: OK.*poweroff: 1 failed.*RESULT FAIL")
+        set_tests_properties(fx1_regression_freertos_cli_camera_mismatch PROPERTIES TIMEOUT 1800)
+        # M6b review F1: `camera start` fails after configure (I2C host lost
+        # before stream-on, test image): the CLI cleans up (stop ESENSOR, state
+        # 3, ISP released), I2C back -> stop OK, `isp selftest` PASS, start and
+        # capture again against the golden. The failed start is counted.
+        fx1_expect_test(freertos_cli_camera_startfault IMAGE freertos_cli_camfault RC 1 TIMEOUT_MS 3000 LABEL fx1_regression
+            ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_startfault.txt ${_cam_rx}
+            REGEX "camera probe: PASS.*test fault: I2C host disabled before stream-on.*camera start: cleanup stop ESENSOR, state stopped, sensor not confirmed.*camera start: EDEV.*camera start: FAIL.*camera: stopped, sensor not confirmed, last start EDEV.*isp 8-frame fixture: PASS.*0x10030010 <- 0x00000001.*camera stop: OK in [0-9]+ us, state idle.*isp 8-frame fixture: PASS.*camera start: OK.*= golden frame 1.*= golden frame 2.*camera capture: PASS.*camera stop: OK.*poweroff: 1 failed.*RESULT FAIL")
+        # M6b review F2: TPG 4K with the CRC skipped: a good frame (spot ok),
+        # then ODMA Y of slot 0 moved to scratch DDR (Y not written: Y spot
+        # BAD, UV ok), then UV moved (UV spot BAD, Y ok); the poisoned sample
+        # positions keep the first frame's data from passing.
+        fx1_expect_test(freertos_cli_camera_nv12_fault IMAGE freertos_cli RC 1 TIMEOUT_MS 5000 LABEL fx1_regression
+            ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_nv12_fault.txt ${_cam_rx}
+            REGEX "3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot ok UV spot ok.*camera capture: PASS.*0x110030a0 <- 0x8f000000.*3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot BAD UV spot ok.*camera capture: FAIL.*0x110030a8 <- 0x8f800000.*3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot ok UV spot BAD.*camera capture: FAIL.*poweroff: 2 failed.*RESULT FAIL")
+        # M6b re-review F2: CRC captures, then spot-checked ones on the same
+        # ring (test image: the 4K CRC is the golden's): slot 0 went through
+        # the CRC path and must come back poisoned, so a redirected UV, then
+        # Y, of slot 0 is caught after the ring has wrapped.
+        fx1_expect_test(freertos_cli_camera_mixed_crc IMAGE freertos_cli_camfault RC 1 TIMEOUT_MS 5000 LABEL fx1_regression
+            ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_mixed_crc.txt ${_cam_rx}
+            REGEX "capture 1 FRAME_ID 1 side 0 isp seq 0 zero-copy out 0 3840x2160 raw ok crc 0xdd6da3bb = golden.*3/3 frames.*camera capture: PASS.*0x110030a8 <- 0x8f800000.*out 0 3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot ok UV spot BAD.*camera capture: FAIL.*camera stop: OK.*crc 0xdd6da3bb = golden.*3/3 frames.*0x110030a0 <- 0x8f000000.*out 0 3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot BAD UV spot ok.*camera capture: FAIL.*poweroff: 2 failed.*RESULT FAIL")
+        set_tests_properties(fx1_regression_freertos_cli_camera_startfault fx1_regression_freertos_cli_camera_nv12_fault
+            fx1_regression_freertos_cli_camera_mixed_crc PROPERTIES TIMEOUT 1800)
+        foreach(_t freertos_cli_camera freertos_cli_camera_fault freertos_cli_camera_absent)
+            set_tests_properties(fx1_smoke_${_t} PROPERTIES TIMEOUT 1800)
+        endforeach()
+        set_tests_properties(fx1_regression_freertos_cli_camera_tpg PROPERTIES TIMEOUT 1800)
+    endif()
     # The handoff example (docs/FW_GETTING_STARTED.md): kept building and passing.
     fx1_smoke_test(example_quickstart TIMEOUT_MS 200
         SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/examples/quickstart/main.c)
@@ -371,6 +545,32 @@ if(CDC_BUILD_TESTS)
                      COMMAND ${FX1_PYTHON3} ${_isp_dir}/gen_fixture.py --check)
             set_tests_properties(fx1_regression_isp_fixture_check PROPERTIES
                 TIMEOUT 120 LABELS "fx1;fx1_regression")
+            # CSI-2 M6a: the camera -> ISP golden header is up to date, and the
+            # artifacts of a RAW12 / RAW10 run check out on the host.
+            if(TARGET cdc::components::fx1_csi2_controller AND TARGET fx1_isp_run_raw)
+                add_test(NAME fx1_regression_camera_isp_golden_check
+                         COMMAND ${FX1_PYTHON3} ${_cisp}/gen_golden.py --check
+                                 --run-raw $<TARGET_FILE:fx1_isp_run_raw>)
+                set_tests_properties(fx1_regression_camera_isp_golden_check PROPERTIES
+                    TIMEOUT 600 LABELS "fx1;fx1_regression")
+                foreach(_bits 12 10)
+                    add_test(NAME fx1_regression_camera_isp_artifacts_raw${_bits}
+                             COMMAND ${FX1_PYTHON3} ${_cisp}/check_artifacts.py --bits ${_bits}
+                                     --sim $<TARGET_FILE:fx1_soc>
+                                     --elf ${CMAKE_CURRENT_BINARY_DIR}/camera_isp_art_raw${_bits}.elf
+                                     --run-raw $<TARGET_FILE:fx1_isp_run_raw>
+                                     --out ${CMAKE_CURRENT_BINARY_DIR}/camera_isp_art_raw${_bits})
+                    set_tests_properties(fx1_regression_camera_isp_artifacts_raw${_bits} PROPERTIES
+                        TIMEOUT 1800 LABELS "fx1;fx1_regression")
+                endforeach()
+                # Large frames: 3840x2160 RAW12 from the CSI-2 RX TPG (stdlib only).
+                add_test(NAME fx1_regression_camera_isp_tpg4k
+                         COMMAND ${FX1_PYTHON3} ${_cisp}/check_tpg4k.py --sim $<TARGET_FILE:fx1_soc>
+                                 --elf ${CMAKE_CURRENT_BINARY_DIR}/camera_isp_tpg4k.elf
+                                 --out ${CMAKE_CURRENT_BINARY_DIR}/camera_isp_tpg4k)
+                set_tests_properties(fx1_regression_camera_isp_tpg4k PROPERTIES
+                    TIMEOUT 3600 LABELS "fx1;fx1_regression")
+            endif()
         endif()
         # The ISP demo's pack step (isp_pack.py, stdlib only) on synthetic
         # dumps: damaged results, dumps, jobs and a failing preview must all

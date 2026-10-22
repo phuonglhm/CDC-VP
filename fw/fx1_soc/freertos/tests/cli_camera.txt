@@ -1,0 +1,13 @@
+camera probe
+camera mode 64 16 12 4
+camera start
+isp selftest
+camera capture 4
+camera status
+camera stop
+camera mode 64 16 10 2
+camera start
+camera capture 2
+camera stop
+isp selftest
+poweroff

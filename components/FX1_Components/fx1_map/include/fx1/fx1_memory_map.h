@@ -39,6 +39,7 @@
 #define FX1_UART_BASE           FX1_U32(0x10000000)
 #define FX1_SYS_DMA_CSR_BASE    FX1_U32(0x10010000)
 #define FX1_SIM_CTRL_BASE       FX1_U32(0x10020000) /* VP only, not on silicon        */
+#define FX1_I2C0_BASE           FX1_U32(0x10030000) /* I2C host (camera sensor control) */
 #define FX1_ISP_CSR_BASE        FX1_U32(0x11000000)
 /* DDR3 controller CSR (AXI4-Lite, 64 KiB, SYSBUS_0, offsets as in fx1_ddr3/fx1_ddr3_regs.h)
  * and DDR_SYSCTRL, the VP SoC glue for the controller's sideband (DEC-04,
@@ -50,7 +51,7 @@
 #define FX1_NPU_CSR_BASE        FX1_U32(0x11010000) /* reserved                       */
 #define FX1_H264_H265_CSR_BASE  FX1_U32(0x11020000) /* reserved                       */
 #define FX1_ETH_CSR_BASE        FX1_U32(0x11030000) /* reserved                       */
-#define FX1_MIPI_CSR_BASE       FX1_U32(0x11040000) /* reserved                       */
+#define FX1_MIPI_CSR_BASE       FX1_U32(0x11040000) /* CSI-2 RX; fx1_soc --camera only */
 
 #define FX1_DDR_BASE            FX1_U32(0x80000000)
 #define FX1_DDR_SIZE            FX1_U32(0x20000000) /* 512 MiB                        */
@@ -76,7 +77,7 @@
 #define FX1_PLIC_ENABLE_STRIDE  FX1_U32(0x80)
 #define FX1_PLIC_CONTEXT_OFF    FX1_U32(0x200000) /* + 0x1000 * context               */
 #define FX1_PLIC_CONTEXT_STRIDE FX1_U32(0x1000)   /* +0 threshold, +4 claim/complete  */
-#define FX1_PLIC_NUM_SOURCES    FX1_U32(9)        /* IDs 1..8 used/reserved; 0 = none */
+#define FX1_PLIC_NUM_SOURCES    FX1_U32(10)       /* IDs 1..9 used/reserved; 0 = none */
 #define FX1_PLIC_PRIORITY_MAX   FX1_U32(7)
 /* Context n is hart n in M-mode. */
 #define FX1_PLIC_CONTEXT_HART_M(hart) (hart)
@@ -88,15 +89,16 @@
 #define FX1_IRQ_NPU             FX1_U32(4) /* reserved */
 #define FX1_IRQ_H264_H265       FX1_U32(5) /* reserved */
 #define FX1_IRQ_ETH             FX1_U32(6) /* reserved */
-#define FX1_IRQ_MIPI            FX1_U32(7) /* reserved */
+#define FX1_IRQ_MIPI            FX1_U32(7) /* CSI-2 RX csi2_irq; undriven without --camera */
 #define FX1_IRQ_DDR             FX1_U32(8) /* DDR3 controller level interrupt */
+#define FX1_IRQ_I2C0            FX1_U32(9) /* I2C0 level interrupt */
 
 /* ---- VP sim-control (finisher) ---------------------------------------------- */
 #define FX1_SIM_CTRL_FINISH_OFF FX1_U32(0x0)
 #define FX1_SIM_CTRL_PASS       FX1_U32(0x5555)
 #define FX1_SIM_CTRL_FAIL       FX1_U32(0x3333) /* written as (code << 16) | FAIL     */
 #define FX1_SIM_CTRL_IRQ_OFF    FX1_U32(0x4)    /* bit i drives test line i       */
-#define FX1_SIM_CTRL_IRQ_LINES  FX1_U32(4)      /* lines -> PLIC sources 4..7     */
+#define FX1_SIM_CTRL_IRQ_LINES  FX1_U32(3)      /* lines -> PLIC sources 4..6     */
 #define FX1_SIM_CTRL_IRQ_FIRST_SOURCE FX1_U32(4)
 
 /* ---- Default firmware DDR layout ------------------------------------------- */
@@ -129,8 +131,11 @@ FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_DDR3_CSR_BASE, FX1_DDR3_CSR_APERTURE_SIZE, F
 FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_DDR_SYSCTRL_BASE, FX1_DDR_SYSCTRL_SIZE, FX1_DDR_BASE, FX1_DDR_SIZE),
                "DDR_SYSCTRL overlaps DDR");
 FX1_MAP_ASSERT(FX1_IRQ_DDR < FX1_PLIC_NUM_SOURCES, "DDR IRQ source outside the PLIC");
-FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE + FX1_SIM_CTRL_IRQ_LINES <= FX1_IRQ_DDR,
-               "sim-control test lines overlap the DDR IRQ source");
+FX1_MAP_ASSERT(FX1_IRQ_I2C0 < FX1_PLIC_NUM_SOURCES, "I2C0 IRQ source outside the PLIC");
+FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE + FX1_SIM_CTRL_IRQ_LINES <= FX1_IRQ_MIPI,
+               "sim-control test lines overlap the CSI-2 RX IRQ source");
+FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE, FX1_I2C0_BASE, FX1_APB_SLOT_SIZE),
+               "SIM_CTRL/I2C0 overlap");
 #undef FX1_MAP_ASSERT
 #endif
 

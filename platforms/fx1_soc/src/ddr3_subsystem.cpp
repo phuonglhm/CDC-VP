@@ -20,7 +20,7 @@ static_assert(FX1_DDR3_CSR_APERTURE_SIZE == FX1_DDR3_CSR_SIZE, "DDR3_CSR bus win
 
 // Mission readiness must come within this simulated time after GLOBAL_CTRL.enable. The
 // ECC startup scrub of the 4 GiB baseline takes about 0.67 s (DEC-10).
-const sc_core::sc_time kPreinitLimit(10, sc_core::SC_SEC);
+sc_core::sc_time kPreinitLimit() { return sc_core::sc_time(10, sc_core::SC_SEC); }
 
 // Baseline physical model (plan §5.1): NATIVE_R2, DDR3-1600, 4 Gb x8 devices on the x32
 // bus, 2 ranks = 4 GiB physical, ECC on; one memory port (MEMCTL_DDR).
@@ -283,7 +283,7 @@ void Ddr3Subsystem::preinit_thread()
     w(FX1_DDR3_DFI_TIMING_COMMIT, 1);
     w(FX1_DDR3_GLOBAL_CTRL, FX1_DDR3_GLOBAL_CTRL_ENABLE);
 
-    const sc_core::sc_time end = sc_core::sc_time_stamp() + kPreinitLimit;
+    const sc_core::sc_time end = sc_core::sc_time_stamp() + kPreinitLimit();
     while (failed.empty() && !ctrl_->mission_ready() && !ctrl_->init_failed() && !ctrl_->fatal()) {
         const sc_core::sc_time now = sc_core::sc_time_stamp();
         if (now >= end) break;
@@ -292,7 +292,7 @@ void Ddr3Subsystem::preinit_thread()
     if (failed.empty() && !ctrl_->mission_ready())
         failed = ctrl_->init_failed() ? "initialization failed"
                : ctrl_->fatal()       ? "fatal event during initialization"
-                                      : "no mission readiness within " + kPreinitLimit.to_string();
+                                      : "no mission readiness within " + kPreinitLimit().to_string();
 
     // Preload strictly after the scrub: debug_write regenerates the ECC records.
     for (const auto& s : staged_) {

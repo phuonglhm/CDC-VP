@@ -21,11 +21,17 @@ The external CPU core is **not** bundled in this repository. It is fetched into
 | SAURIA NPU v4 | optional external `SAURIA_NPU_ROOT`; not bundled in public CDC-VP | [`bsc-loca/sauria`](https://github.com/bsc-loca/sauria) architecture, private SystemC implementation | `Apache-2.0 WITH SHL-2.1` upstream; private implementation is internal-only | optional `npu_tlm_v4_model`, internal VP binary |
 | CMake 3.21.7 installer | `cmake-3.21.7-linux-x86_64.sh` | Kitware official binary release | BSD-3-Clause; see `licenses/CMAKE.*` | optional host build tool; not linked |
 | VPU TLM 3.0 subtree | `components/vpu_tlm3.0` | CDC-VP Authors | MIT; see `components/vpu_tlm3.0/LICENSE` and `PROVENANCE.md` | optional VPU model |
+| MIPI D-PHY RX model `mipirxphy` | `components/FX1_Components/mipi-csi2/src`, `include/vl` | converted to SystemC from RTL, gate-level netlists and analog behavioural models; **provenance pending**: supplier, owner and original licence not confirmed | **not determined**: no licence or distribution terms are asserted for it here | CSI-2 RX camera path of `fx1_soc` (`--camera`); **statically linked** into an `fx1_soc` built with `-DFX1_BUILD_MIPI_CSI2=ON`, as shipped in VP_FX1_V3.0 |
 
 The public repository ships only the CDC-VP adapter, register ABI, tests, and
 upstream attribution. It does not ship the private SystemC source or an
 NPU-enabled binary. See `licenses/SAURIA.PROVENANCE.md` for the upstream
 revision and public/private boundary.
+
+The `mipirxphy` D-PHY RX model was converted to SystemC from RTL, gate-level
+netlists and analog behavioural models. Its supplier, owner and original
+licence have not been confirmed (provenance pending). This inventory does not
+assign it a licence or distribution terms; that record is open.
 
 The ISP RAW inputs and architecture JPEG are project assets released under
 Apache-2.0 by the CDC-VP Authors. Their identity hashes and license record are

@@ -1,0 +1,5 @@
+camera probe
+camera start
+camera capture 2
+camera stop
+poweroff

@@ -10,6 +10,43 @@ The peripheral exposes a memory-mapped register interface through a TLM target s
 
 ---
 
+## Functional host mode (CSI-2 M5a)
+
+`i2c(name, i2c_config)` selects the behaviour; the default `i2c_config` keeps
+the legacy model unchanged (mini_soc, riscv_custom_soc, noc_soc, i2c_platform).
+With `i2c_config::functional_host = true` (fx1_soc) the host executes the FMT
+FIFO on a bus with SCL timing (`scl_hz`, default 400 kHz) against devices
+attached with `attach(addr7, i2c_device*)` (`include/i2c_device.h`, one call
+per bus event):
+
+* START: 1 bit time; each byte: 9 bit times (8 data + ACK); STOP: 1 bit time
+* repeated START (FDATA.START on a later command of the same transaction)
+* READB: n bytes (0 = 256), the last NACKed unless FDATA.RCONT (bit 11)
+* RX FIFO full: the clock stretches until software reads RDATA
+* NACK of an address or data byte: INTR_STATE.nak (bit 4), STOP at once, the
+  rest of the transaction discarded up to its STOP (or a FIFO_CTRL FMT reset);
+  FDATA.NAKOK (bit 12) lets a NACKed byte continue
+* CMD_COMPLETE after each STOP; STATUS.HOSTIDLE = no transaction running and
+  the FMT FIFO empty
+* CTRL.enablehost = 0 pauses the host between transactions: a transaction
+  already started runs to its STOP, the queue is kept and resumes when the host
+  is enabled again (FDATA writes are ignored while disabled, so the STOP of a
+  started transaction must be queued before disabling); FIFO_CTRL FMT reset
+  drops the queue; with a transaction open it also aborts it (M5b): the byte
+  on the bus completes (a READB stops after its current byte), then STOP at
+  once, the host is idle; no NAK or CMD_COMPLETE is reported for it. An abort
+  that arrives during the STOP bit itself (also the STOP after a NACK) wins:
+  nothing is discarded from the emptied queue, no completion is reported; a
+  byte read that completes after the abort is not put in the RX FIFO
+* `irq` = (INTR_STATE & INTR_ENABLE) != 0, from one process
+* register accesses copy at most 4 bytes; console traces only in legacy mode
+  or with `i2c_config::verbose`
+
+Test: `tests/test_i2c_functional.cpp` (ctest `i2c_tlm_functional`); the legacy
+behaviour stays covered by `test_i2c_tlm`.
+
+---
+
 ## Implemented Components
 
 * TLM-2.0 target socket interface

@@ -15,8 +15,9 @@
 #                 when the manifest is missing/unreadable/empty, stop with FAIL
 #                 before building (a gate that silently runs fewer tests must
 #                 not report PASS). FX1_CI_MANIFEST=<file> overrides the path.
-#   3. build      target fx1_all only (see platforms/fx1_soc/CMakeLists.txt)
-#   4. smoke      ctest -L "fx1_unit|fx1_smoke", plus the components stage:
+#   3. build      targets fx1_all (see platforms/fx1_soc/CMakeLists.txt) and
+#                 fx1_csi2_unit_tests (CSI-2 RX component tests without PHY traffic)
+#   4. smoke      ctest -L "fx1_unit|fx1_smoke|fx1_csi2_unit", plus the components stage:
 #                 the FX1 bus tests and the UART models FX1 uses (by name)
 #   5. regression ctest -L fx1_regression (skipped with --smoke-only); needs
 #                 python3 with numpy (fx1_regression_isp_fixture_check)
@@ -84,9 +85,10 @@ stage configure cmake -S "${ROOT}" -B "${BUILD}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCDC_BUILD_FX1_SOC=ON -DFX1_SOC_BUILD_FIRMWARE=ON -DCDC_BUILD_TESTS=ON \
     -DFX1_DMA_BUILD_TESTS=ON -DFX1_DMA_BUILD_BUS_TESTS=ON -DBUS_SYSTEM_BUILD_TESTS=ON \
+    -DFX1_BUILD_MIPI_CSI2=ON -DFX1_MIPI_CSI2_BUILD_TESTS=ON \
     || { log "configure failed: no build, no tests"; exit 1; }
 
-SMOKE_SEL=(-L "fx1_unit|fx1_smoke")
+SMOKE_SEL=(-L "fx1_unit|fx1_smoke|fx1_csi2_unit") # fx1_csi2_unit: CSI-2 RX tests without PHY traffic (M5b)
 COMPONENTS_SEL=(-R '^(bus_behavior|bus_config|bus_arbitration|uart2_tlm|uart_host_bridge|uart_host_bridge_hold)$')
 REGRESSION_SEL=(-L fx1_regression)
 MANIFEST="${FX1_CI_MANIFEST:-${ROOT}/platforms/fx1_soc/ci/required_tests.txt}" # override: tests of the gate itself
@@ -150,7 +152,7 @@ check_manifest() {
 }
 stage manifest check_manifest \
     || { log "required tests missing (see manifest.log): not running a reduced gate"; exit 1; }
-stage build cmake --build "${BUILD}" --target fx1_all -j "${JOBS}" \
+stage build cmake --build "${BUILD}" --target fx1_all fx1_csi2_unit_tests -j "${JOBS}" \
     || { log "build failed: no tests"; exit 1; }
 
 CTEST=(ctest --test-dir "${BUILD}" --no-tests=error -j "${JOBS}" --output-on-failure)

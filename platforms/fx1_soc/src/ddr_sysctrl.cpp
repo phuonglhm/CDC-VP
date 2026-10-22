@@ -9,14 +9,16 @@
 namespace cdc::platforms::fx1_soc {
 
 namespace {
+// Times are functions, not namespace-scope sc_time objects: main() sets the
+// time resolution (1 fs) before any sc_time exists.
 // Register access latency of the glue block (VP placeholder).
-const sc_core::sc_time kAccessLatency(10, sc_core::SC_NS);
+sc_core::sc_time kAccessLatency() { return sc_core::sc_time(10, sc_core::SC_NS); }
 // Reset pulse width and the reset-safe wait of a coordinated core reset (VP placeholders).
-const sc_core::sc_time kResetPulse(100, sc_core::SC_NS);
-const sc_core::sc_time kResetSafeLimit(1, sc_core::SC_MS);
+sc_core::sc_time kResetPulse() { return sc_core::sc_time(100, sc_core::SC_NS); }
+sc_core::sc_time kResetSafeLimit() { return sc_core::sc_time(1, sc_core::SC_MS); }
 // Back-off of a denied automatic wake: doubles from 1 us up to 1 ms.
-const sc_core::sc_time kWakeRetryMin(1, sc_core::SC_US);
-const sc_core::sc_time kWakeRetryMax(1, sc_core::SC_MS);
+sc_core::sc_time kWakeRetryMin() { return sc_core::sc_time(1, sc_core::SC_US); }
+sc_core::sc_time kWakeRetryMax() { return sc_core::sc_time(1, sc_core::SC_MS); }
 
 std::uint32_t load_le32(const unsigned char* p)
 {
@@ -139,7 +141,7 @@ void DdrSysctrl::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& del
         tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
         return;
     }
-    sc_core::wait(kAccessLatency);
+    sc_core::wait(kAccessLatency());
     if (tx.is_read()) {
         std::uint32_t v = 0;
         const bool ok = read_word(off, v);
@@ -192,19 +194,19 @@ void DdrSysctrl::reset_sequence(std::uint32_t op)
     rst_safe_timeout_ = false;
     if (op == FX1_DDRSC_RST_COLD) {
         ddr_.set_cold_reset(true);
-        sc_core::wait(kResetPulse);
+        sc_core::wait(kResetPulse());
         ddr_.set_cold_reset(false);
         ++cold_resets_;
         rst_done_ = true;
     } else {
         // Coordinated core reset (HAS §7.1 Table 7-4): request, reset-safe, pulse.
         ddr_.core_reset_request(true);
-        const sc_core::sc_time end = sc_core::sc_time_stamp() + kResetSafeLimit;
+        const sc_core::sc_time end = sc_core::sc_time_stamp() + kResetSafeLimit();
         while (!ddr_.core_reset_safe() && sc_core::sc_time_stamp() < end)
             sc_core::wait(end - sc_core::sc_time_stamp(), ddr_.lifecycle_event());
         if (ddr_.core_reset_safe()) {
             ddr_.set_core_reset(true);
-            sc_core::wait(kResetPulse);
+            sc_core::wait(kResetPulse());
             ddr_.set_core_reset(false);
             ++core_resets_;
             rst_done_ = true;
@@ -247,8 +249,8 @@ void DdrSysctrl::sequencer()
                 // firmware request is served meanwhile (review S5-R1).
                 wake_denied_ = true;
                 ++wake_denials_;
-                wake_backoff_ = wake_backoff_ == sc_core::SC_ZERO_TIME ? kWakeRetryMin
-                              : std::min(wake_backoff_ * 2.0, kWakeRetryMax);
+                wake_backoff_ = wake_backoff_ == sc_core::SC_ZERO_TIME ? kWakeRetryMin()
+                              : std::min(wake_backoff_ * 2.0, kWakeRetryMax());
                 wake_retry_at_ = sc_core::sc_time_stamp() + wake_backoff_;
             }
             continue;

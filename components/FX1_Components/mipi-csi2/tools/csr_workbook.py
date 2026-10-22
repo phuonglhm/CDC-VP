@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Read the CSI-2 RX CSR workbook (FTEL_MEMORY_MAP_REGISTERS_v1_4.xlsx), check it
+and emit the register inventory used by docs/REGISTER_CONTRACT.md.
+
+Checks: every register's fields cover bits 31..0 exactly once, the field reset
+values compose to the register reset value (fields reading a build parameter,
+reset "-", count as 0), and offsets are unique and word aligned. Optionally
+cross-checks a field CSV exported during the review (--csv).
+
+The workbook is the source of truth; this script never edits it.
+Requires openpyxl.
+"""
+import argparse
+import csv
+import hashlib
+import re
+import sys
+
+import openpyxl
+
+
+def parse_bits(text):
+    m = re.fullmatch(r"\[(\d+)(?::(\d+))?\]", text.strip())
+    if not m:
+        raise ValueError(f"bad bit range {text!r}")
+    hi = int(m.group(1))
+    lo = int(m.group(2)) if m.group(2) is not None else hi
+    return hi, lo
+
+
+def parse_int(text):
+    text = str(text).strip().replace("_", "")
+    return None if text in ("-", "") else int(text, 0)
+
+
+def load(path):
+    ws = openpyxl.load_workbook(path, data_only=True)["Register Definition"]
+    regs, cur = [], None
+    for row_no, row in enumerate(ws.iter_rows(min_row=4, values_only=True), start=4):
+        reg, off, field, bits, acc, reset, desc = (row + (None,) * 7)[:7]
+        if reg:
+            cur = {"name": str(reg).strip(), "offset": int(str(off), 16), "reset": parse_int(reset),
+                   "desc": str(desc or "").strip(), "row": row_no, "fields": []}
+            regs.append(cur)
+        elif field and cur is not None:
+            hi, lo = parse_bits(str(bits))
+            cur["fields"].append({"name": str(field).strip(), "hi": hi, "lo": lo,
+                                  "access": str(acc).strip(), "reset": parse_int(reset),
+                                  "desc": " ".join(str(desc or "").split()), "row": row_no})
+    return regs
+
+
+def check(regs):
+    errors = []
+    offsets = [r["offset"] for r in regs]
+    if len(set(offsets)) != len(offsets):
+        errors.append("duplicate offsets")
+    for r in regs:
+        if r["offset"] % 4:
+            errors.append(f"{r['name']}: offset not word aligned")
+        covered = 0
+        value = 0
+        for f in r["fields"]:
+            mask = ((1 << (f["hi"] - f["lo"] + 1)) - 1) << f["lo"]
+            if covered & mask:
+                errors.append(f"{r['name']}.{f['name']}: overlapping bits")
+            covered |= mask
+            value |= ((f["reset"] or 0) << f["lo"]) & mask
+        if covered != 0xFFFFFFFF:
+            errors.append(f"{r['name']}: fields cover 0x{covered:08X}, not all 32 bits")
+        if r["reset"] is not None and value != r["reset"]:
+            errors.append(f"{r['name']}: field resets give 0x{value:08X}, register says 0x{r['reset']:08X}")
+    return errors
+
+
+def cross_check_csv(regs, path):
+    errors = []
+    wb = {(r["name"], f["name"], f"[{f['hi']}:{f['lo']}]" if f["hi"] != f["lo"] else f"[{f['hi']}]"):
+          (f["access"], f["reset"], f["row"]) for r in regs for f in r["fields"]}
+    with open(path, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    seen = set()
+    for row in rows:
+        key = (row["register"], row["field"], row["bits"])
+        seen.add(key)
+        if key not in wb:
+            errors.append(f"CSV row not in workbook: {key}")
+            continue
+        acc, reset, sheet_row = wb[key]
+        if row["access"] != acc or parse_int(row["reset"]) != reset or int(row["sheet_row"]) != sheet_row:
+            errors.append(f"CSV mismatch {key}: csv={row['access']},{row['reset']},{row['sheet_row']} "
+                          f"workbook={acc},{reset},{sheet_row}")
+    for key in wb.keys() - seen:
+        errors.append(f"workbook field missing from CSV: {key}")
+    return errors
+
+
+def markdown(regs):
+    out = ["| Offset | Register | Reset | Field | Bits | Access | Field reset | Row |",
+           "|---|---|---|---|---|---|---|---|"]
+    for r in regs:
+        first = True
+        for f in sorted(r["fields"], key=lambda f: f["lo"]):
+            bits = f"[{f['hi']}:{f['lo']}]" if f["hi"] != f["lo"] else f"[{f['hi']}]"
+            reset = "param" if f["reset"] is None else f"0x{f['reset']:X}"
+            head = (f"0x{r['offset']:02X}", r["name"], f"0x{r['reset']:08X}") if first else ("", "", "")
+            out.append(f"| {head[0]} | {head[1]} | {head[2]} | {f['name']} | {bits} | {f['access']} | {reset} | {f['row']} |")
+            first = False
+    return "\n".join(out)
+
+
+def is_reserved(f):
+    return f["name"].lower() == "reserved"
+
+
+def ident(name):
+    return re.sub(r"[^A-Za-z0-9]", "_", name).upper()
+
+
+def c_header(regs, digest):
+    """C99 register map: offsets, field shift/mask/width, register resets."""
+    out = ["/*",
+           " * FX1 MIPI CSI-2 RX controller register map for C firmware (C99).",
+           " *",
+           " * GENERATED by tools/csr_workbook.py from FTEL_MEMORY_MAP_REGISTERS_v1_4.xlsx",
+           f" * (SHA-256 {digest}). Do not edit; regenerate.",
+           " * Offsets are relative to the CSI-2 CSR base (VP placeholder 0x11040000,",
+           " * fx1/fx1_memory_map.h). Registers are 32-bit, accessed as aligned words.",
+           " * Fields that read a build parameter have reset 0 in *_RESET (workbook rule).",
+           " */",
+           "#ifndef FX1_CSI2_REGS_H", "#define FX1_CSI2_REGS_H", "",
+           "#define FX1_CSI2_CSR_APERTURE_BYTES 0x1000u",
+           "#define FX1_CSI2_CSR_DECODED_BYTES  0x100u",
+           f"#define FX1_CSI2_REGISTER_COUNT     {len(regs)}u", ""]
+    for r in regs:
+        n = ident(r["name"])
+        out.append(f"/* {r['name']} (0x{r['offset']:02X}): {r['desc']} */")
+        out.append(f"#define FX1_CSI2_{n} 0x{r['offset']:02X}u")
+        out.append(f"#define FX1_CSI2_{n}_RESET 0x{(r['reset'] or 0):08X}u")
+        for f in sorted(r["fields"], key=lambda f: f["lo"]):
+            if is_reserved(f):
+                continue
+            fn = f"FX1_CSI2_{n}_{ident(f['name'])}"
+            w = f["hi"] - f["lo"] + 1
+            mask = ((1 << w) - 1) << f["lo"]
+            out.append(f"#define {fn}_SHIFT {f['lo']}u")
+            out.append(f"#define {fn}_WIDTH {w}u")
+            out.append(f"#define {fn}_MASK 0x{mask:08X}u")
+        out.append("")
+    out += ["#endif /* FX1_CSI2_REGS_H */", ""]
+    return "\n".join(out)
+
+
+def test_table(regs, digest):
+    """C++ initializer rows for the CSR contract test (independent of the model)."""
+    out = [f"// GENERATED by tools/csr_workbook.py from the v1.4 workbook (SHA-256 {digest}). Do not edit.",
+           "// {offset, register, field, hi, lo, access, reset (-1 = build parameter), excel row}"]
+    for r in regs:
+        for f in sorted(r["fields"], key=lambda f: f["lo"]):
+            acc = "RSVD" if is_reserved(f) else f["access"]
+            reset = -1 if f["reset"] is None else f["reset"]
+            out.append(f'{{0x{r["offset"]:02X}, "{r["name"]}", "{f["name"]}", {f["hi"]}, {f["lo"]}, '
+                       f'Acc::{acc}, {reset}, {f["row"]}}},')
+    return "\n".join(out) + "\n"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("workbook")
+    ap.add_argument("--csv", help="review field CSV to cross-check")
+    ap.add_argument("--markdown", action="store_true", help="print the register/field table")
+    ap.add_argument("--c-header", help="write the C99 register header to this path")
+    ap.add_argument("--test-table", help="write the CSR contract test table to this path")
+    args = ap.parse_args()
+    regs = load(args.workbook)
+    errors = check(regs)
+    if args.csv:
+        errors += cross_check_csv(regs, args.csv)
+    nfields = sum(len(r["fields"]) for r in regs)
+    print(f"registers={len(regs)} fields={nfields} errors={len(errors)}", file=sys.stderr)
+    for e in errors:
+        print("ERROR:", e, file=sys.stderr)
+    if errors:
+        return 1
+    digest = hashlib.sha256(open(args.workbook, "rb").read()).hexdigest()
+    if args.markdown:
+        print(markdown(regs))
+    if args.c_header:
+        open(args.c_header, "w").write(c_header(regs, digest))
+    if args.test_table:
+        open(args.test_table, "w").write(test_table(regs, digest))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

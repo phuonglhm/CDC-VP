@@ -5,7 +5,10 @@
 //           [--dump ADDR:LEN:FILE ...] [--uart0-socket PORT [--uart0-wait]]
 //           [--uart0-rx-file FILE [--uart0-rx-delay-us N]]
 //           [--ddr-boot preinit|firmware] [--ddr3-ecc on|off]
-//           [--ddr3-fault T_US:KIND[:ARG] ...]
+//           [--ddr3-fault T_US:KIND[:ARG] ...] [--camera [--camera-raw FILE]]
+//
+// Time resolution is 1 fs (the detailed D-PHY model of the camera needs it;
+// set for every run so that a run with and without --camera is timed alike).
 //
 // Simulated time: with --ddr-boot preinit (default) the DDR3 controller is
 // initialized and scrubbed before the CPUs run; --timeout-ms, --uart0-rx-delay-us
@@ -38,7 +41,12 @@ void version()
               << "  build type      " << fx1_soc_build::build_type << ", " << fx1_soc_build::cxx_compiler << "\n"
               << "  SystemC         " << sc_core::sc_release() << "\n"
               << "  RISC-V VP++     " << fx1_soc_build::vpp_revision << " + CDC-VP patch series\n"
-              << "  firmware ABI    " << fx1_soc_build::firmware_abi << "\n";
+              << "  firmware ABI    " << fx1_soc_build::firmware_abi << "\n"
+              << "  camera          "
+              << (cdc::platforms::fx1_soc::fx1_soc_top::camera_built()
+                      ? "CSI-2 RX + D-PHY + CCS sensor model (--camera)"
+                      : "not built (configure with -DFX1_BUILD_MIPI_CSI2=ON)")
+              << "\n";
 }
 
 void usage()
@@ -49,6 +57,7 @@ void usage()
                  "              [--uart0-socket PORT [--uart0-wait]] [--uart0-rx-file FILE [--uart0-rx-delay-us N]]\n"
                  "              [--uart0-rx-byte-us N]\n"
                  "              [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...]\n"
+                 "              [--camera [--camera-raw FILE]]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
                  "  --uart0-wait        with --uart0-socket: wait for the client before starting\n"
@@ -75,6 +84,11 @@ void usage()
                  "                such as a RAW frame; after the DDR3 preinit); may be repeated\n"
                  "  --dump        after the run, write LEN bytes of DDR at ADDR (hex or\n"
                  "                decimal) to FILE; may be repeated\n"
+                 "  --camera      CSI-2 RX controller (CSR 0x1104_0000, PLIC source 7) with its\n"
+                 "                D-PHY and a CCS camera sensor model on I2C0 (address 0x10);\n"
+                 "                without it MIPI_CSR answers DECERR and source 7 stays low\n"
+                 "  --camera-raw  frames for the sensor: 16-bit little-endian samples, W x H\n"
+                 "                per frame at the mode firmware sets (default: built-in pattern)\n"
               << cdc::platforms::fx1_soc::ddr3_fault_usage();
 }
 
@@ -159,6 +173,8 @@ bool parse_load(const std::string& text, dump_request& request)
 
 int sc_main(int argc, char* argv[])
 {
+    // Before any sc_time exists (P02: the D-PHY model needs femtoseconds).
+    sc_core::sc_set_time_resolution(1, sc_core::SC_FS);
     using cdc::platforms::fx1_soc::fx1_soc_top;
     cdc::platforms::fx1_soc::fx1_soc_options options;
     double timeout_ms = 1000.0;
@@ -270,13 +286,19 @@ int sc_main(int argc, char* argv[])
         else if (arg == "--quiet-uart") options.uart_stdout = false;
         else if (arg == "--trace") options.bus_trace = true;
         else if (arg == "--no-exclusive-monitor") options.exclusive_monitor = false;
+        else if (arg == "--camera") options.camera = true;
+        else if (arg == "--camera-raw") options.camera_raw = value();
         else {
             usage();
             return 4;
         }
     }
-    if (options.firmware.empty()) {
+    if (options.firmware.empty() || (!options.camera_raw.empty() && !options.camera)) {
         usage();
+        return 4;
+    }
+    if (options.camera && !fx1_soc_top::camera_built()) {
+        std::cerr << "fx1_soc: --camera: this build has no camera (configure with -DFX1_BUILD_MIPI_CSI2=ON)\n";
         return 4;
     }
 
@@ -286,6 +308,7 @@ int sc_main(int argc, char* argv[])
             sc_core::sc_time(static_cast<double>(quantum_ns), sc_core::SC_NS));
         fx1_soc_top top("fx1_soc", options);
         std::cout << top.ddr3_banner() << '\n';
+        if (!top.camera_banner().empty()) std::cout << "[fx1_soc] camera: " << top.camera_banner() << '\n';
         for (const auto& l : loads) top.load_ddr(l.address, l.path);
         const auto wall_start = std::chrono::steady_clock::now();
         top.run_until_cpu_release();

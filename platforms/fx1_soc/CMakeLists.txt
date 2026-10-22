@@ -58,7 +58,18 @@ target_link_libraries(fx1_soc PRIVATE
     cdc::components::fx1_isp_tlm
     cdc::components::uart2_tlm
     cdc::components::uart_host_tlm
+    cdc::components::i2c_tlm
     fx1_soc_ddr3)
+# --camera: present when the MIPI CSI-2 component is configured
+# (-DFX1_BUILD_MIPI_CSI2=ON). Its D-PHY netlist adds ~45 s of build at -j8.
+if(TARGET cdc::components::fx1_csi2_controller)
+    target_link_libraries(fx1_soc PRIVATE
+        cdc::components::fx1_csi2_controller
+        cdc::components::fx1_mipi_dphy_wrapper
+        cdc::components::fx1_csi2_dphy_bfm
+        cdc::components::fx1_csi2_sensor)
+    target_compile_definitions(fx1_soc PRIVATE FX1_SOC_HAS_CAMERA=1)
+endif()
 # Self-contained like the other packaged platforms (cmake/modules/CdcPortable.cmake):
 # RPATH=$ORIGIN, and the SystemC runtime copied beside the binary. The SDK
 # package (package/package_sdk.sh, target fx1_soc_package) ships exactly that.
@@ -106,6 +117,21 @@ if(CDC_BUILD_TESTS)
     endforeach()
 endif()
 
+# CSI-2 M6a follow-up review R2: budget contract of the BSP I2C driver (built
+# for the host with tests/hostshim/fx1_fw.h) against the real I2C0 model.
+add_library(fx1_i2c_bsp_host STATIC ${CMAKE_SOURCE_DIR}/fw/fx1_soc/drivers/fx1_i2c.c)
+target_include_directories(fx1_i2c_bsp_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/hostshim
+                                                   ${CMAKE_SOURCE_DIR}/fw/fx1_soc/drivers)
+set_target_properties(fx1_i2c_bsp_host PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_compile_options(fx1_i2c_bsp_host PRIVATE -Wall -Wextra -Werror)
+add_executable(test_fx1_i2c_bsp_budget tests/test_i2c_bsp_budget.cpp)
+target_compile_options(test_fx1_i2c_bsp_budget PRIVATE -Wall -Wextra)
+target_link_libraries(test_fx1_i2c_bsp_budget PRIVATE fx1_i2c_bsp_host cdc::components::i2c_tlm SystemC::systemc)
+if(CDC_BUILD_TESTS)
+    add_test(NAME fx1_i2c_bsp_budget COMMAND test_fx1_i2c_bsp_budget)
+    set_tests_properties(fx1_i2c_bsp_budget PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit")
+endif()
+
 # ── CI aggregate (plan P5) ─────────────────────────────────────────────────────
 # `fx1_all` builds everything the FX1 tests need (simulator, harnesses, FX1
 # component and VP++ backend targets, firmware images) and nothing else of the
@@ -114,6 +140,13 @@ endif()
 # unrelated to FX1. The list is collected once the whole tree is configured.
 add_custom_target(fx1_all)
 function(_fx1_collect_targets out dir)
+    # A subtree added with add_subdirectory(... EXCLUDE_FROM_ALL) is opt-in
+    # (e.g. the MIPI CSI-2 D-PHY netlist) and stays out of fx1_all as well.
+    get_property(_excluded DIRECTORY "${dir}" PROPERTY EXCLUDE_FROM_ALL)
+    if(_excluded)
+        set(${out} "" PARENT_SCOPE)
+        return()
+    endif()
     get_property(_targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
     get_property(_subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
     set(_list "")

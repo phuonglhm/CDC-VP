@@ -4,7 +4,10 @@
 #include <tlm_utils/simple_target_socket.h>
 #include <queue>
 #include <cstdint>
+#include <map>
 #include <vector>
+
+#include "i2c_device.h"
 
 #define I2C_INTR_STATE 0x00
 #define I2C_INTR_ENABLE 0x04
@@ -27,6 +30,8 @@
 #define FDATA_START (1 << 8)
 #define FDATA_STOP (1 << 9)
 #define FDATA_READB (1 << 10)
+#define FDATA_RCONT (1 << 11)  /* functional host: ACK the last byte read, the read continues */
+#define FDATA_NAKOK (1 << 12)  /* functional host: a NACK of this byte does not halt */
 
 #define CTRL_ENABLETARGET (1 << 1)
 #define CTRL_ENABLEHOST (1 << 0)
@@ -44,13 +49,14 @@
 #define STATUS_TARGETIDLE  (1 << 4)
 
 #define INTR_CMD_COMPLETE (1 << 9)
+#define INTR_NAK          (1 << 4)  /* functional host: an address or data byte was not acknowledged */
 
 #define INTR_TX_STRETCH     (1 << 6)
 #define INTR_ACQ_THRESHOLD  (1 << 1)
 #define INTR_ACQ_OVERFLOW   (1 << 3)
 #define INTR_TX_THRESHOLD   (1 << 0)
 
-#define TARGET_ID_ADDRESS0_MASK  0x7F 
+#define TARGET_ID_ADDRESS0_MASK  0x7F
 #define TARGET_ID_MASK0_MASK     (0x7F << 7)
 
 #define ACQDATA_SIGNAL_NONE  0x0
@@ -70,6 +76,8 @@ struct I2CCommand {
     bool stop;
     bool read;
     uint8_t byte;
+    bool rcont = false;
+    bool nakok = false;
 };
 
 struct AcqEntry {
@@ -77,13 +85,32 @@ struct AcqEntry {
     uint8_t signal;
 };
 
+// Host-mode behaviour. Legacy (default, for the platforms built on it so
+// far): FDATA commands complete at once when a STOP is written, no device
+// answers, a read returns 0xAB. Functional: the FMT FIFO is executed by the
+// controller in bus order against the devices attached with attach(); every
+// bit takes 1/scl_hz (START and STOP one bit, a byte and its ACK nine);
+// repeated START; FDATA READB reads FBYTE bytes (0 = 256), the last one NACKed
+// unless RCONT; an unacknowledged address or data byte (no device, or the
+// device NACKs) raises INTR_NAK and halts the transaction: the commands up to
+// its STOP are discarded, a STOP is sent, INTR_CMD_COMPLETE follows; NAKOK
+// lets the transaction continue. A full RX FIFO stretches the clock (no byte
+// is lost).
+struct i2c_config {
+    bool functional_host = false;
+    double scl_hz = 400e3;
+    bool verbose = false;  // interrupt trace on stdout
+};
+
 class i2c : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<i2c> socket;
     sc_core::sc_out<bool> irq;
-    SC_CTOR(i2c) : socket("socket"), irq("irq") {
-        socket.register_b_transport(this, &i2c::b_transport);
-    }
+    SC_HAS_PROCESS(i2c);
+    explicit i2c(sc_core::sc_module_name name, const i2c_config& cfg = i2c_config());
+
+    // Functional host mode: a device on the bus at 7-bit address addr7.
+    void attach(uint8_t addr7, i2c_device* dev);
 
     void receive_transaction(uint8_t master_addr,
                              bool     is_read,
@@ -91,7 +118,7 @@ public:
                              std::vector<uint8_t>& read_data);
 private:
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay);
-    
+
     uint32_t read_reg(uint32_t offset);
     void write_reg(uint32_t offset, uint32_t data);
 
@@ -106,6 +133,20 @@ private:
 
     void update_status();
     void fire_interrupt(uint32_t intr_bits);
+    void host_thread();
+    void irq_method();
+    void end_transaction(bool discard_rest, bool complete);  // functional: STOP, host idle
+    sc_core::sc_event irq_ev_;
+    sc_core::sc_time bits(unsigned n) const { return bit_time_ * static_cast<double>(n); }
+
+    i2c_config cfg_;
+    sc_core::sc_time bit_time_;
+    std::map<uint8_t, i2c_device*> devices_;
+    sc_core::sc_event fmt_ev_, rx_ev_;
+    bool host_busy_ = false;   // functional: a transaction is open on the bus
+    bool discarding_ = false;  // functional: commands of a NACKed transaction dropped up to its STOP
+    bool abort_req_ = false;   // functional: FMT FIFO reset with a transaction open: end it with STOP
+    i2c_device* cur_dev_ = nullptr;
 
     uint32_t intr_state  = 0x0;
     uint32_t intr_enable = 0x0;

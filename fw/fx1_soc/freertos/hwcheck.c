@@ -3,6 +3,11 @@
 #include "fx1_fw.h"
 #include "dma/fx1_dma_regs.h"
 #include "fx1_isp/fx1_isp_csr.h"
+#ifdef FX1_FW_HAS_CAMERA
+#include "fx1_ccs_sensor.h"
+#include "fx1_csi2/fx1_csi2_regs.h"
+#include "fx1_i2c.h"
+#endif
 
 #define UNMAPPED       0x60000000u
 #define DDR_WINDOW     (FX1_DDR_BASE + FX1_DDR_SIZE - 0x1000u) /* last 4 KiB of DDR */
@@ -199,6 +204,48 @@ static void check_isp(void)
        0xFFFFFFF0u);
 }
 
+#ifdef FX1_FW_HAS_CAMERA
+#define I2C_CTRL   0x10u
+#define I2C_STATUS 0x14u
+#define I2C_STATUS_HOSTIDLE (1u << 3)
+
+static void check_camera(void)
+{
+    begin("CSI-2 RX");
+    const uint32_t base = FX1_MIPI_CSR_BASE;
+    const uint32_t before = faults;
+    const uint32_t ver = fx1_read32(base + FX1_CSI2_IP_VERSION);
+    const int present = faults == before;
+    if (!present) {
+        cur->skipped = "absent (fx1_soc without --camera)";
+    } else {
+        expect_eq("IP_VERSION", base + FX1_CSI2_IP_VERSION, ver, FX1_CSI2_IP_VERSION_RESET);
+        expect_eq("CORE_CONFIG reset value", base + FX1_CSI2_CORE_CONFIG, fx1_read32(base + FX1_CSI2_CORE_CONFIG),
+                  FX1_CSI2_CORE_CONFIG_RESET);
+        expect_eq("DMA_CONTROL reset value", base + FX1_CSI2_DMA_CONTROL, fx1_read32(base + FX1_CSI2_DMA_CONTROL),
+                  FX1_CSI2_DMA_CONTROL_RESET);
+        rw("EXPECTED_RESOLUTION", base + FX1_CSI2_EXPECTED_RESOLUTION, 0x02D00500u, 0xFFFFFFFFu);
+        rw("DMA_BUFFER0_ADDR", base + FX1_CSI2_DMA_BUFFER0_ADDR, 0x8ABCDE00u, 0xFFFFFFFFu);
+        rw("DMA_BUFFER1_ADDR", base + FX1_CSI2_DMA_BUFFER1_ADDR, 0x81234500u, 0xFFFFFFFFu);
+    }
+    begin(present ? "I2C0 + sensor" : "I2C0");
+    const uint32_t i2c = FX1_I2C0_BASE;
+    const uint32_t st = fx1_read32(i2c + I2C_STATUS);
+    expect((st & I2C_STATUS_HOSTIDLE) != 0, "STATUS host idle", i2c + I2C_STATUS, st, I2C_STATUS_HOSTIDLE);
+    rw("CTRL enablehost", i2c + I2C_CTRL, 1u, 1u);
+    if (present) { /* the sensor exists only with --camera */
+        const uint32_t ctrl = fx1_read32(i2c + I2C_CTRL);
+        fx1_i2c_t bus;
+        fx1_ccs s;
+        uint16_t id = 0;
+        const int ok = fx1_i2c_open(&bus, i2c, 0, 0, 0) == FX1_I2C_OK && fx1_ccs_probe(&s, &bus, FX1_CCS_ADDR, 2000) == FX1_CCS_OK &&
+                       fx1_ccs_read16(&s, 0x0000u, &id) == FX1_CCS_OK;
+        expect(ok && id == FX1_CCS_MODEL_ID, "sensor model_id over I2C0", FX1_CCS_ADDR, id, FX1_CCS_MODEL_ID);
+        fx1_write32(i2c + I2C_CTRL, ctrl); /* as found */
+    }
+}
+#endif
+
 void hwcheck_run(void)
 {
     fx1_set_trap_handler(trap);
@@ -210,6 +257,9 @@ void hwcheck_run(void)
     check_uart();
     check_dma();
     check_isp();
+#ifdef FX1_FW_HAS_CAMERA
+    check_camera();
+#endif
     fx1_set_trap_handler(0);
     fx1_release(); /* the report before the flag */
     hwcheck_report.done = 1;
@@ -221,6 +271,14 @@ void hwcheck_print(void)
     fx1_log("hwcheck (hart 1, at boot):");
     for (uint32_t i = 0; i < r->ips; ++i) {
         const hwcheck_ip* ip = &r->ip[i];
+        if (ip->skipped) {
+            fx1_puts("  --   ");
+            fx1_puts(ip->name);
+            fx1_puts(": ");
+            fx1_puts(ip->skipped);
+            fx1_puts(", skipped\n");
+            continue;
+        }
         fx1_puts(ip->failures ? "  FAIL " : "  ok   ");
         fx1_puts(ip->name);
         fx1_puts(", checks ");

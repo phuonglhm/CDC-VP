@@ -14,6 +14,10 @@
 #   + 0001         upstream backport b710fa7b                 (F11, D8)
 #   + 0002         downstream conformance patch               (F12, D12)
 #   + 0003         downstream conformance patch               (F13, D13)
+#   + 0004         downstream conformance patch               (D19)
+#   + 0005         downstream conformance patch               (CSI-2 RX M5a, P15:
+#                  instruction time in ns independent of the SystemC time
+#                  resolution; fx1_soc runs at 1 fs for the D-PHY model)
 #   = effective source for cdc::cpu::riscv_vp_plusplus
 #
 # Two kinds of patch, and the difference matters more than it looks:
@@ -57,6 +61,7 @@ readonly PATCH_SERIES=(
     "0002-d12-rv32-index-eew64-illegal.patch                   de147236d885b6a76584ad1ac83da6f4d6cab975a0464b40acdb9c619090a319 downstream-conformance"
     "0003-d13-bus-error-is-an-access-fault.patch               c3535b21b849581af340b755ad1d22c33647c88dc3b9659072b75fd7fefce84b downstream-conformance"
     "0004-d19-cycle-baseline-survives-reset.patch             e1ce2d42f3fd30114b35240098a49e6df6ce091c5389d308d5fe1afe8a351054 downstream-conformance"
+    "0005-resolution-independent-instr-time.patch             9d1dde49ccd3f176051215ea48a5370601a59a3d16a7b059f5e560faeff20e5c downstream-conformance"
 )
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

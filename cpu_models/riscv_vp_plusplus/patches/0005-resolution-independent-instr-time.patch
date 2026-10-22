@@ -1,0 +1,29 @@
+--- a/vp/src/core/rv32/iss_ctemplate.cpp
++++ b/vp/src/core/rv32/iss_ctemplate.cpp
+@@ -41,14 +41,23 @@
+ 	 * If you want to add a dynamic cycle model, you have add this in the
+ 	 * operation implementations below (OPCASE)
+ 	 */
++	/*
++	 * Resolution-independent nanoseconds. `instr_time` is accumulated and
++	 * turned back into time as `sc_time(raw, SC_NS)` (commit_cycles), so it
++	 * must be in ns whatever the SystemC time resolution. `value() / 1000`
++	 * is ns only at the default 1 ps; at 1 fs (a platform with a model that
++	 * needs femtoseconds) it charged 1000x the time per instruction. Same
++	 * truncation as before, so identical results at 1 ps.
++	 */
++	const sc_core::sc_time one_ns(1, sc_core::SC_NS);
+ 	for (int i = 0; i < Operation::OpId::NUMBER_OF_OPERATIONS; ++i) {
+ 		opMap[i].opId = (Operation::OpId)i;
+-		opMap[i].instr_time = cycle_time.value() / 1000; /* ns */
++		opMap[i].instr_time = static_cast<unsigned long>(cycle_time / one_ns); /* ns */
+ 		opMap[i].labelPtr = nullptr;
+ 	}
+ 
+-	unsigned long memory_access_cycles = 4 * cycle_time.value() / 1000;
+-	unsigned long mul_div_cycles = 8 * cycle_time.value() / 1000;
++	unsigned long memory_access_cycles = static_cast<unsigned long>(4 * cycle_time / one_ns);
++	unsigned long mul_div_cycles = static_cast<unsigned long>(8 * cycle_time / one_ns);
+ 
+ 	opMap[Operation::OpId::LB].instr_time = memory_access_cycles;
+ 	opMap[Operation::OpId::LBU].instr_time = memory_access_cycles;

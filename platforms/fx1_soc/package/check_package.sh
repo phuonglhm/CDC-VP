@@ -42,6 +42,15 @@ required=(
     "${sdk}/ddr3/examples/fault_recovery.c" "${sdk}/ddr3/examples/power_recovery.c" "${sdk}/ddr3/examples/boot_loader.c"
     "${doc}/ddr3/README.md" "${doc}/ddr3/programming_guide.md"
     "${sdk}/drivers/isp/fx1_isp_drv.c" "${sdk}/isp_selftest/isp_common.c" "${sdk}/demo/isp_demo_job.h"
+    "${sdk}/include/fx1_csi2/fx1_csi2_drv.h" "${sdk}/include/fx1_csi2/fx1_csi2_regs.h" "${sdk}/drivers/csi2/fx1_csi2_drv.c"
+    "${sdk}/drivers/camera/fx1_i2c.c" "${sdk}/drivers/camera/fx1_i2c.h" "${sdk}/drivers/camera/fx1_ccs_sensor.c"
+    "${sdk}/drivers/camera/fx1_ccs_sensor.h" "${sdk}/drivers/camera/fx1_csi2_hal_mmio.c" "${sdk}/drivers/camera/fx1_csi2_hal_mmio.h"
+    "${sdk}/camera/camera.c" "${sdk}/camera/camera.h" "${sdk}/camera/raw.c" "${sdk}/camera/recover.c"
+    "${sdk}/camera/decerr.c" "${sdk}/camera/slverr.c" "${sdk}/camera/i2c_irq.c" "${sdk}/camera/i2c_timeout.c"
+    "${sdk}/drivers/camera/fx1_camera.c" "${sdk}/drivers/camera/fx1_camera.h" "${sdk}/drivers/camera/fx1_isp_hal_mmio.c"
+    "${sdk}/drivers/camera/fx1_isp_hal_mmio.h" "${sdk}/app/cmd_camera.c" "${sdk}/camera_isp/cam_isp.c" "${sdk}/camera_isp/cam_isp.h"
+    "${sdk}/camera_isp/stream.c" "${sdk}/camera_isp/camera_isp_golden.h" "${test}/cli_camera.txt"
+    "${doc}/camera/README.md"
     "${sdk}/third_party/FreeRTOS-Kernel/LICENSE.md" "${sdk}/third_party/FreeRTOS-Kernel/tasks.c"
     "${sdk}/third_party/FreeRTOS-Kernel/portable/GCC/RISC-V/portASM.S"
     "${build}/freertos_cli.elf" "${build}/freertos_cli.dis" "${build}/freertos_cli.map"
@@ -90,6 +99,15 @@ grep -q "Permission is hereby granted" "${lic}/FREERTOS-KERNEL.MIT.txt" || bad "
 grep -q "Regents of the University of" "${lic}/BERKELEY-SOFTFLOAT-3d.BSD-3-Clause.txt" \
     || bad "SoftFloat notice lacks its copyright line"
 ok "licence texts checked"
+# The D-PHY RX model in the camera build: its record must be there; its
+# provenance is open and reported, not a failure (user decision, CSI-2 M5b).
+if grep -q "mipirxphy" "${lic}/THIRD_PARTY.md" && grep -q "provenance pending" "${lic}/THIRD_PARTY.md"; then
+    echo "  note mipirxphy (MIPI D-PHY RX model in fx1_soc): provenance pending -- supplier, owner and original licence not confirmed (THIRD_PARTY.md)"
+else
+    bad "THIRD_PARTY.md has no mipirxphy record with its provenance status"
+fi
+"${bin}/fx1_soc" --version 2>/dev/null | grep -q '^  camera *CSI-2 RX' && ok "fx1_soc contains the camera (--camera)" \
+    || bad "fx1_soc --version does not report the camera"
 
 # ── checksums: every tracked file, nothing from build/ ───────────────────────
 if sha256sum --quiet -c "${doc}/SHA256SUMS" > /dev/null 2>&1; then

@@ -1,0 +1,13 @@
+camera probe
+camera start
+camera capture 2
+mw 0x10030010 0
+camera stop
+camera status
+camera start
+mw 0x10030010 1
+camera stop
+camera recover
+camera capture 2
+camera stop
+poweroff

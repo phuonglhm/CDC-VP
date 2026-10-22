@@ -189,7 +189,9 @@ What the build gives every image:
 | UART | 0x1000_0000 | 32-bit access only |
 | SYS_DMA CSR | 0x1001_0000 | 32-bit access only |
 | sim-control (VP only) | 0x1002_0000 | |
+| I2C0 | 0x1003_0000 | 32-bit access only, `i2c_tlm` register map (`components/i2c_tlm/include/i2c.h`) |
 | ISP CSR | 0x1100_0000 | 64 KiB |
+| CSI-2 RX CSR | 0x1104_0000 | `--camera` only, `fx1_csi2/fx1_csi2_regs.h`; drivers in `fw/fx1_soc/drivers` (I2C0, sensor, CSI-2 MMIO HAL) and `mipi-csi2/driver`, examples `fw/fx1_soc/tests/camera` |
 | DDR3 CSR | 0x1200_0000 | 64 KiB, `fx1_ddr3/fx1_ddr3_regs.h` |
 | DDR_SYSCTRL (VP only) | 0x1201_0000 | `fx1/fx1_ddr_sysctrl.h` |
 | DDR | 0x8000_0000 | 512 MiB |
@@ -203,8 +205,8 @@ What the build gives every image:
 | `FX1_FW_YUV_BUF_BASE` | 0x8800_0000 | ISP NV12 outputs |
 | `FX1_FW_TEST_AREA_BASE` | 0x9000_0000 | Scratch for tests |
 
-PLIC sources: UART = 1, SYS_DMA = 2, ISP = 3, DDR3 = 8. Sources 4 to 7 are VP test lines
-driven by sim-control. All sources are level-triggered, so clear the source at
+PLIC sources: UART = 1, SYS_DMA = 2, ISP = 3, CSI-2 RX = 7 (`--camera` only), DDR3 = 8,
+I2C0 = 9. Sources 4 to 6 are VP test lines driven by sim-control. All sources are level-triggered, so clear the source at
 the device before `fx1_plic_complete()`.
 
 ## 6. Rules that matter on this platform

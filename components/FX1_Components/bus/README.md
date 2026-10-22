@@ -28,7 +28,7 @@ Data width AXI/APB và socket được chốt **32 bit**. `axi_data_width` phả
 
 Tạo bằng `BusConfig::fx1()`. `BusConfig{}` là cấu hình rỗng để platform tự điền, không phải mặc định FX1.
 
-Initiator: `CPU1`, `CPU2`, `SYS_DMA`, `ISP_IDMA`, `ISP_ODMA`, `NPU_DMA`, `H264_H265_DMA`, `ETH_DMA`. ISP có hai master; MIPI chỉ có CSR target.
+Initiator: `CPU1`, `CPU2`, `SYS_DMA`, `ISP_IDMA`, `ISP_ODMA`, `NPU_DMA`, `H264_H265_DMA`, `ETH_DMA`, `MIPI_DMA`. ISP có hai master. `MIPI_DMA` là AXI write master của DMA trong CSI-2 RX (MAS CSI-2 RX; quyết định VP M5, workbook chưa vẽ nhánh này); MIPI CSR là target trên PERIBUS_1.
 
 Ảnh FX1 cập nhật ngày 2026-10-06 dùng nhãn H264/H265 và lấy nhánh dữ liệu tới NPU từ ISP. Các kết nối dữ liệu MIPI/ISP/NPU/video/ETH do platform ghép giữa IP; bus này cung cấp đường truy cập memory-mapped. Xem [đối chiếu workbook](docs/WORKBOOK_MAPPING.md) để phân biệt phần đã xác nhận và phần sơ đồ chưa mô tả chi tiết.
 
@@ -44,7 +44,7 @@ Initiator: `CPU1`, `CPU2`, `SYS_DMA`, `ISP_IDMA`, `ISP_ODMA`, `NPU_DMA`, `H264_H
 
 Địa chỉ lấy từ `components/FX1_Components/fx1_map/include/fx1/fx1_memory_map.h`. Đây là **VP placeholder, chờ HAS**, và chỉ được sửa ở file đó. `ISP_CSR` và `SYS_DMA_CSR` đã có base placeholder nhưng mặc định vẫn disabled; platform chỉ bật target khi đã instantiate và bind IP tương ứng.
 
-`SRAM`, `CPU1_IRAM`, `CPU2_IRAM`, `NPU_CSR`, `H264_H265_CSR`, `ETH_CSR`, `MIPI_CSR` còn TBD và mặc định disabled. Disabled target không có socket hoặc route. Multimedia CSR được dự kiến ở PERIBUS_1; SYS_DMA_CSR ở PERIBUS_0. AES/QSPI có thể khai báo thêm trên `SysBus0Axi`, không tự gán map production cho hai IP này.
+`CPU1_IRAM`, `CPU2_IRAM`, `NPU_CSR`, `H264_H265_CSR`, `ETH_CSR` còn TBD và mặc định disabled. `SRAM`, `MIPI_CSR` (0x1104_0000) và `I2C0` (0x1003_0000, PERIBUS_0) có base placeholder trong `fx1_memory_map.h`, mặc định disabled; platform bật khi khởi tạo IP. Disabled target không có socket hoặc route. Multimedia CSR được dự kiến ở PERIBUS_1; SYS_DMA_CSR ở PERIBUS_0. AES/QSPI có thể khai báo thêm trên `SysBus0Axi`, không tự gán map production cho hai IP này.
 
 ```cpp
 #include <bus/bus_system.h>

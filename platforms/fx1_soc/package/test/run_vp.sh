@@ -26,10 +26,14 @@ Usage:
   ./run_vp.sh isp list                 # the samples (default d65)
   ./run_vp.sh version                  # VP build identity
   ./run_vp.sh ddr3                     # DDR3 firmware-init examples (BootROM/SRAM, --ddr-boot firmware)
+  ./run_vp.sh camera [NAME...]         # camera examples (fx1_soc --camera; minutes each: detailed D-PHY)
+  ./run_vp.sh camera-isp [NAME...]     # camera -> ISP examples (camera manager; NV12 = ISP model golden)
+  ./run_vp.sh camera-cli               # FreeRTOS CLI with --camera, scripted camera session (cli_camera.txt)
 
 FX1_FW=<image.elf> runs another firmware image instead of freertos_cli.elf.
 Build the firmware first: make -C sw/bootloader/sources/VP_FX1_V3.0
 DDR3 examples: make -C sw/bootloader/sources/VP_FX1_V3.0 ddr3 (see ddr3/README.md there)
+Camera examples: make -C sw/bootloader/sources/VP_FX1_V3.0 camera (see vp/doc/VP_FX1_V3.0/camera/README.md)
 EOF
 }
 
@@ -87,6 +91,70 @@ case "${mode}" in
             --uart0-rx-delay-us 1000000 --uart0-rx-byte-us 87
         [[ ${overall} -eq 0 ]] && echo "DDR3 EXAMPLES PASS" || echo "DDR3 EXAMPLES FAIL"
         exit ${overall}
+        ;;
+    camera)
+        # The examples of sw/bootloader/sources/VP_FX1_V3.0/camera. camera_slverr's
+        # fault time belongs to its image (comment at the top of camera/slverr.c).
+        cam="${build}/camera"
+        [[ -f "${cam}/camera_raw10.elf" ]] \
+            || die "missing ${cam}/camera_raw10.elf; build with: make -C sw/bootloader/sources/${version} camera"
+        names=("$@")
+        [[ ${#names[@]} -gt 0 ]] || names=(camera_raw10 camera_raw12 camera_recover camera_decerr camera_slverr camera_i2c_irq camera_i2c_timeout)
+        overall=0
+        echo "VP_FX1_V3.0 camera examples (fx1_soc --camera)"
+        for name in "${names[@]}"; do
+            extra=(--timeout-ms 40)
+            case "${name}" in
+                camera_recover) extra=(--timeout-ms 80) ;;
+                camera_i2c_timeout) extra=(--timeout-ms 60) ;;
+                camera_slverr) extra=(--timeout-ms 40 --ddr3-ecc off --ddr3-fault 6200:write-result:1) ;;
+            esac
+            [[ -f "${cam}/${name}.elf" ]] || die "no camera example ${name}"
+            set +e
+            "${vp}" --fw "${cam}/${name}.elf" --camera "${extra[@]}" > "${cam}/${name}.log" 2>&1
+            rc=$?
+            set -e
+            if [[ ${rc} -eq 0 ]]; then
+                echo "  PASS ${name}"
+            else
+                echo "  FAIL ${name}, exit ${rc} (log ${cam}/${name}.log)"
+                overall=1
+            fi
+        done
+        [[ ${overall} -eq 0 ]] && echo "CAMERA EXAMPLES PASS" || echo "CAMERA EXAMPLES FAIL"
+        exit ${overall}
+        ;;
+    camera-isp)
+        # sw/bootloader/sources/VP_FX1_V3.0/camera_isp: sensor -> CSI-2 RX ->
+        # camera manager -> ISP -> NV12, eight frames, each NV12 checked by the
+        # firmware against the stand-alone ISP model's CRC.
+        cam="${build}/camera"
+        names=("$@")
+        [[ ${#names[@]} -gt 0 ]] || names=(camera_isp_raw12 camera_isp_raw10)
+        overall=0
+        echo "VP_FX1_V3.0 camera -> ISP examples (fx1_soc --camera)"
+        for name in "${names[@]}"; do
+            [[ -f "${cam}/${name}.elf" ]] \
+                || die "missing ${cam}/${name}.elf; build with: make -C sw/bootloader/sources/${version} camera"
+            set +e
+            "${vp}" --fw "${cam}/${name}.elf" --camera --timeout-ms 80 > "${cam}/${name}.log" 2>&1
+            rc=$?
+            set -e
+            if [[ ${rc} -eq 0 ]]; then
+                echo "  PASS ${name}"
+            else
+                echo "  FAIL ${name}, exit ${rc} (log ${cam}/${name}.log)"
+                overall=1
+            fi
+        done
+        [[ ${overall} -eq 0 ]] && echo "CAMERA ISP EXAMPLES PASS" || echo "CAMERA ISP EXAMPLES FAIL"
+        exit ${overall}
+        ;;
+    camera-cli)
+        # The FreeRTOS CLI with the camera: probe, 64x16 RAW12 and RAW10 captures
+        # checked against the golden, status, stop (cli_camera.txt).
+        "${vp}" --fw "${build}/freertos_cli.elf" --camera --timeout-ms 3000 --uart0-rx-file "${here}/cli_camera.txt" \
+            --uart0-rx-delay-us 60000 --uart0-rx-byte-us 87
         ;;
     smoke)
         need_fw

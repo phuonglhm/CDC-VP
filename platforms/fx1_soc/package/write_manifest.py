@@ -42,7 +42,8 @@ def memory_map(header):
     regions = []
     for name, size in (("BOOTROM", "FX1_BOOTROM_SIZE"), ("SRAM", "FX1_SRAM_SIZE"), ("CLINT", "FX1_CLINT_SIZE"),
                        ("PLIC", "FX1_PLIC_SIZE"), ("UART", "FX1_APB_SLOT_SIZE"), ("SYS_DMA_CSR", "FX1_APB_SLOT_SIZE"),
-                       ("SIM_CTRL", "FX1_APB_SLOT_SIZE"), ("ISP_CSR", "FX1_APB_SLOT_SIZE"),
+                       ("SIM_CTRL", "FX1_APB_SLOT_SIZE"), ("I2C0", "FX1_APB_SLOT_SIZE"), ("ISP_CSR", "FX1_APB_SLOT_SIZE"),
+                       ("MIPI_CSR", "FX1_APB_SLOT_SIZE"),
                        ("DDR3_CSR", "FX1_DDR3_CSR_APERTURE_SIZE"), ("DDR_SYSCTRL", "FX1_DDR_SYSCTRL_SIZE"),
                        ("DDR", "FX1_DDR_SIZE")):
         regions.append({"name": name, "base": "0x%08x" % val("FX1_%s_BASE" % name), "size": "0x%08x" % val(size)})
@@ -130,9 +131,21 @@ def main():
                     "UART (PL011-style) + host TCP bridge", "SYS_DMA", "FX1 ISP",
                     "DDR3 controller (NATIVE_R2, DDR3-1600, 2 ranks 4 Gb x8, ECC; CSR, init, training, scrub, "
                     "power, error injection from the host)", "DDR_SYSCTRL sideband glue (VP only)", "boot SRAM",
-                    "sim-control finisher (VP only)"],
-        "absent": ["NPU", "H.264/H.265", "Ethernet", "MIPI", "I2C", "SPI/QSPI", "timers/WDT/PWM", "GPIO", "RTC",
+                    "sim-control finisher (VP only)", "I2C0 host (functional)",
+                    "camera with --camera: CSI-2 RX controller + DMA (MIPI_DMA), detailed D-PHY RX model, "
+                    "CCS-subset camera sensor model on I2C0"],
+        "absent": ["NPU", "H.264/H.265", "Ethernet", "SPI/QSPI", "timers/WDT/PWM", "GPIO", "RTC",
                    "ADC", "TRNG", "OTP", "PMU/CMU/clock-reset", "caches", "MMU"],
+        "camera": {
+            "built": "CSI-2 RX" in ver,
+            "option": "--camera [--camera-raw FILE]",
+            "dphy_model": "mipirxphy, converted to SystemC from RTL/netlists/analog models",
+            "dphy_model_provenance": "pending: supplier, owner and original licence not confirmed",
+            "firmware": "camera manager (CSI-2 -> ISP -> NV12), FreeRTOS CLI `camera` commands, "
+                        "camera and camera -> ISP examples",
+            "open_items": ["RAW12 zero-copy writes the ISP's IDMA_BUF_ADDR outside the ISP driver: "
+                           "to be confirmed by the ISP owner"],
+        },
         "isp_samples": json.load(open(a.samples)),
         "artefacts": artefacts,
     }

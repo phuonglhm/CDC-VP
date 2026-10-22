@@ -19,8 +19,10 @@ rebuild. `BUILD_MANIFEST.json` lists the values this binary was built with.
 | UART | `0x1000_0000` | 64 KiB slot | `FX1_UART_BASE` | PL011-style: DR, FR, IBRD/FBRD, LCR_H, CR, IFLS, IMSC/RIS/MIS/ICR; 16-entry FIFOs |
 | SYS_DMA CSR | `0x1001_0000` | 64 KiB slot | `FX1_SYS_DMA_CSR_BASE` | register map in `include/dma/fx1_dma_regs.h` |
 | sim-control | `0x1002_0000` | 64 KiB slot | `FX1_SIM_CTRL_BASE` | **VP only, not on silicon**: PASS/FAIL verdict ends the simulation (`fx1_pass`, `fx1_fail`) |
+| I2C0 | `0x1003_0000` | 64 KiB slot | `FX1_I2C0_BASE` | I2C host (driver `drivers/camera/fx1_i2c.h`); the camera sensor at address 0x10 with `--camera`, no device otherwise |
 | ISP CSR | `0x1100_0000` | 64 KiB | `FX1_ISP_CSR_BASE` | register map in `include/fx1_isp/fx1_isp_csr.h` (generated from the ISP CSR specification) |
-| NPU, H.264/H.265, Ethernet, MIPI CSR | `0x1101_0000` … `0x1104_0000` | 64 KiB each | `FX1_*_CSR_BASE` | reserved: not modelled, an access faults |
+| NPU, H.264/H.265, Ethernet CSR | `0x1101_0000` … `0x1103_0000` | 64 KiB each | `FX1_*_CSR_BASE` | reserved: not modelled, an access faults |
+| MIPI CSI-2 RX CSR | `0x1104_0000` | 64 KiB | `FX1_MIPI_CSR_BASE` | with `--camera`: register map `include/fx1_csi2/fx1_csi2_regs.h`, driver `drivers/csi2`; without it an access faults |
 | DDR3 controller CSR | `0x1200_0000` | 64 KiB | `FX1_DDR3_CSR_BASE` | AXI4-Lite, 32-bit accesses. The VP initializes the controller before the harts start, so firmware need not touch it |
 | DDR_SYSCTRL | `0x1201_0000` | 64 KiB | `FX1_DDR_SYSCTRL_BASE` | **VP only**: DDR3 readiness, power requests, QoS sideband, resets |
 | DDR | `0x8000_0000` | 512 MiB | `FX1_DDR_BASE` | DDR3 controller model (ECC on). Initialized and scrubbed before the harts start; then normal memory |
@@ -28,7 +30,7 @@ rebuild. `BUILD_MANIFEST.json` lists the values this binary was built with.
 The CPU sees an access fault (load mcause 5, store mcause 7) on:
 
 - an unmapped address, including the reserved devices;
-- a byte or halfword access to UART or SYS_DMA. Hart 1 checks both at boot.
+- a byte or halfword access to UART, SYS_DMA or I2C0. Hart 1 checks UART and SYS_DMA at boot.
 
 Treat every register block as word-only. Use naturally aligned 32-bit
 accesses (`fx1_read32` / `fx1_write32`); other sizes are not part of the
@@ -41,8 +43,10 @@ contract.
 | 1 | `FX1_IRQ_UART` | UART (RX, RX timeout, TX, errors; enabled in `IMSC`) |
 | 2 | `FX1_IRQ_SYS_DMA` | SYS_DMA channel completion/error |
 | 3 | `FX1_IRQ_ISP` | ISP (frame done, DMA events, statistics) |
-| 4–7 | `FX1_IRQ_NPU`, `_H264_H265`, `_ETH`, `_MIPI` | reserved |
+| 4–6 | `FX1_IRQ_NPU`, `_H264_H265`, `_ETH` | reserved |
+| 7 | `FX1_IRQ_MIPI` | CSI-2 RX (`--camera`; never raised otherwise) |
 | 8 | `FX1_IRQ_DDR` | DDR3 controller (ECC, quarantine, fatal; masked at reset) |
+| 9 | `FX1_IRQ_I2C0` | I2C0 (command complete, NACK) |
 
 Interrupt delivery:
 

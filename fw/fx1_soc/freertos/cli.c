@@ -73,6 +73,10 @@ static const region regions[] = {
     {FX1_UART_BASE, 0x1000u, 1, "UART"},
     {FX1_SYS_DMA_CSR_BASE, 0x2000u, 1, "SYS_DMA"},
     {FX1_ISP_CSR_BASE, 0x10000u, 1, "ISP"},
+    {FX1_I2C0_BASE, 0x1000u, 1, "I2C0"},
+#ifdef FX1_FW_HAS_CAMERA
+    {FX1_MIPI_CSR_BASE, 0x1000u, 1, "MIPI_CSR"}, /* faults on the bus without --camera */
+#endif
     {FX1_DDR_BASE, FX1_DDR_SIZE, 1, "DDR"},
 };
 /* The region holding all of [addr, addr + bytes), or 0. Written so that no
@@ -320,6 +324,10 @@ static const command commands[] = {
     {"isp", cmd_isp, "isp selftest|run [auto]|stats  fixture; RAW job with optional adaptive WB/tone; statistics"},
     {"dma", cmd_dma, "dma test [BYTES]     SYS_DMA M2M copy with IRQ, verified"},
     {"fpu", cmd_fpu, "fpu test             two tasks interleaving FP work (context switch check)"},
+#ifdef FX1_FW_HAS_CAMERA
+    {"camera", cmd_camera,
+     "camera probe|mode [W H BITS LANES]|source [sensor|tpg]|start|capture N [crc]|status|stop [US]|recover"},
+#endif
     {"selftest", cmd_selftest, "selftest             hwcheck + fpu + dma + isp"},
     {"poweroff", cmd_poweroff, "poweroff             end the simulation: PASS if no check failed"},
 };

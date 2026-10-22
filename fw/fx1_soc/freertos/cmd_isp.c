@@ -38,8 +38,29 @@ static struct {
     fx1_isp_af_scores af;
 } last_stats;
 
+static volatile int isp_owner; /* ISP_OWNER_*: written by the CLI task, read by the ISR */
+
+int isp_claim(int owner)
+{
+    taskENTER_CRITICAL();
+    const int ok = isp_owner == ISP_OWNER_NONE || isp_owner == owner;
+    if (ok) isp_owner = owner;
+    taskEXIT_CRITICAL();
+    return ok;
+}
+
+void isp_release(int owner)
+{
+    taskENTER_CRITICAL();
+    if (isp_owner == owner) isp_owner = ISP_OWNER_NONE;
+    taskEXIT_CRITICAL();
+}
+
 static BaseType_t isp_isr(void)
 {
+#ifdef FX1_FW_HAS_CAMERA
+    if (isp_owner == ISP_OWNER_CAMERA) return camera_isp_isr();
+#endif
     BaseType_t woken = pdFALSE;
     fx1_isp_events ev;
     fx1_isp_irq(&dev, &ev); /* reads and acknowledges at the ISP: the line drops */
@@ -318,16 +339,39 @@ static void stats(void)
     }
 }
 
+/* selftest / run use the ISP: refused while the camera owns it. */
+static int claim_for(const char* what)
+{
+    if (isp_claim(ISP_OWNER_ISP)) return 1;
+    out(what);
+    out_line(": the ISP is in use by the camera (camera stop first)");
+    return 0;
+}
+
 int cmd_isp(int argc, char** argv)
 {
     if (argc == 3 && !strcmp(argv[1], "run") && !strcmp(argv[2], "auto")) {
-        run_job(1);
+        if (claim_for("isp run auto")) {
+            run_job(1);
+            isp_release(ISP_OWNER_ISP);
+        }
         return 0;
     }
     if (argc != 2) return 1;
-    if (!strcmp(argv[1], "selftest")) selftest();
-    else if (!strcmp(argv[1], "run")) run_job(0);
-    else if (!strcmp(argv[1], "stats")) stats();
-    else return 1;
+    if (!strcmp(argv[1], "selftest")) {
+        if (claim_for("isp selftest")) {
+            selftest();
+            isp_release(ISP_OWNER_ISP);
+        }
+    } else if (!strcmp(argv[1], "run")) {
+        if (claim_for("isp run")) {
+            run_job(0);
+            isp_release(ISP_OWNER_ISP);
+        }
+    } else if (!strcmp(argv[1], "stats")) {
+        stats();
+    } else {
+        return 1;
+    }
     return 0;
 }

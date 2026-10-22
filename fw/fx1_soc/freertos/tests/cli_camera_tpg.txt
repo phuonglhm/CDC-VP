@@ -1,0 +1,12 @@
+camera source tpg
+camera probe
+camera mode 640 480 12 4
+camera start
+camera capture 2
+camera stop
+camera mode 3840 2160 12 4
+camera start
+camera capture 1
+camera status
+camera stop
+poweroff
