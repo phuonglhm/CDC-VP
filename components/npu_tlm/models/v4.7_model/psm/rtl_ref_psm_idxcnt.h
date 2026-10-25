@@ -22,6 +22,9 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             bool cnt_clear = false; // i_cnt_clear
             bool wr_flag = false;   // i_wr_flag (dual-context select for tiling counters)
             bool start = false;     // i_start (: needed for o_mask's first-position logic)
+            // i_pause (RTL psm_idxcnt.sv): hold the write counters and their alignment pipeline while the PSM write is held
+            // by the stream backpressure. Default false: no effect (run = cnt_en, clear = cnt_clear || !cnt_en as before).
+            bool pause = false;
 
             uint32_t cxlim = 0, cxstep = 0;         // i_cxlim, i_cxstep
             uint32_t cklim = 0, ckstep = 0;         // i_cklim, i_ckstep
@@ -59,8 +62,10 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
         {
             // ---------- Phase 1: combinational (pre-tick register state) ----------
 
-            // --- X counter (cnt_generic.sv): i_en=cnt_en, i_clear=cnt_clear||!cnt_en ---
-            const bool x_clear = in.cnt_clear || !in.cnt_en;
+            // RTL psm_idxcnt.sv:104-105: idx_run = cnt_en && !pause; idx_clear = cnt_clear || (!cnt_en && !pause)
+            const bool idx_run = in.cnt_en && !in.pause;
+            // --- X counter (cnt_generic.sv): i_en=idx_run, i_clear=idx_clear ---
+            const bool x_clear = in.cnt_clear || (!in.cnt_en && !in.pause);
             bool x_ov_flag;
             uint32_t x_next;
             generic_counter(x_q_, in.cxstep, in.cxlim, x_clear, x_ov_flag, x_next);
@@ -98,15 +103,20 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             const bool til_done_d = til_xyk_flag;
 
             bool done_q_next, til_done_q_next;
-            if (in.cnt_clear || !in.cnt_en)
+            if (x_clear)
             {
                 done_q_next = false;
                 til_done_q_next = false;
             }
-            else // in.cnt_en (the only remaining branch that updates, per RTL)
+            else if (idx_run)
             {
                 done_q_next = done_d;
                 til_done_q_next = til_done_d;
+            }
+            else // paused: hold
+            {
+                done_q_next = done_q_;
+                til_done_q_next = til_done_q_;
             }
 
             // ----------: address & mask generation (RTL lines
@@ -179,8 +189,8 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             // them, same discipline as the existing done/til_done output
             // (self-caught bug class, see original file header). ----------
             Outputs out;
-            out.done = done_q_ && in.cnt_en;
-            out.til_done = til_done_q_ && in.cnt_en;
+            out.done = done_q_ && in.cnt_en && !in.pause;           // RTL psm_idxcnt.sv:350-351
+            out.til_done = til_done_q_ && in.cnt_en && !in.pause;
             out.sram_addr = sram_addr_q_;
             out.wr_fifo_pop = wr_fifo_pop_outshim_;
             out.mask = (((!in.cnt_en) && !done_outshim_) || (in.start && in.wr_flag))
@@ -190,20 +200,20 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             // ---------- Register commits (each counter's OWN enable, per RTL) ----------
             // X/K registers: `if (i_en || i_clear) cnt_q <= cnt_d;` -- i_en=cnt_en
             // (X) / cnt_en&&x_flag (K), i_clear=x_clear (same for both here).
-            if (in.cnt_en || x_clear)
+            if (idx_run || x_clear)
                 x_q_ = x_next;
-            if ((in.cnt_en && x_flag) || x_clear)
+            if ((idx_run && x_flag) || x_clear)
                 k_q_ = k_next;
 
             // Tiling registers: `if (i_en || i_clear) {cnt_q1<=cnt_d1;cnt_q2<=cnt_d2;}`
             // -- i_en=cnt_en&&xk_flag (til_xy) / cnt_en&&til_xy_flag (til_k),
             // i_clear=cnt_clear (NOT gated by !cnt_en, unlike X/K above).
-            if ((in.cnt_en && xk_flag) || in.cnt_clear)
+            if ((idx_run && xk_flag) || in.cnt_clear)
             {
                 til_xy_q1_ = til_xy_q1_next;
                 til_xy_q2_ = til_xy_q2_next;
             }
-            if ((in.cnt_en && til_xy_flag) || in.cnt_clear)
+            if ((idx_run && til_xy_flag) || in.cnt_clear)
             {
                 til_k_q1_ = til_k_q1_next;
                 til_k_q2_ = til_k_q2_next;
@@ -220,32 +230,30 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             til_done_q_ = til_done_q_next;
 
             // --- transition_flag_q (RTL lines 182-193) ---
-            if (in.cnt_en && !in.cnt_clear)
-                transition_flag_q_ = transition_flag_d;
-            else
-                transition_flag_q_ = false;
+            if (!in.pause)   // RTL psm_idxcnt.sv:195: held while paused
+                transition_flag_q_ = (in.cnt_en && !in.cnt_clear) ? transition_flag_d : false;
 
             // --- gen_reg (RTL lines 269-292): sram_addr_q, mask_q ---
-            if (in.cnt_clear || !in.cnt_en)
+            if (x_clear)
             {
                 sram_addr_q_ = 0;
                 mask_q_ = 0;
             }
-            else if (in.cnt_en)
+            else if (idx_run)
             {
                 sram_addr_q_ = (uint32_t)sram_addr_d;
                 mask_q_ = mask_d;
             }
 
             // --- out_shimming_reg (RTL lines 298-321) ---
-            if (in.cnt_clear || !in.cnt_en)
+            if (x_clear)
             {
                 mask_outshim_ = 0;
                 done_outshim_ = false;
                 til_done_outshim_ = false;
                 wr_fifo_pop_outshim_ = false;
             }
-            else if (in.cnt_en)
+            else if (idx_run)
             {
 #ifdef FX1_A3_IDXCNT_SHIM_PRETICK
                 mask_outshim_ = pre_mask_q_;

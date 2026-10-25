@@ -243,6 +243,8 @@ Rules the instruction must meet (checked at the push; a violation refuses the in
   likewise for the width (`BAD_GEOM` otherwise);
 - every tile must respect the row-sweep limit of the IFMAP feeder, which depends on stride, dilation and `Y_USED`
   (`TILING_GUIDE.md`, section 3; `SWEEP` otherwise);
+- the dilated kernel must fit the 64-position dilation pattern of the IFMAP feeder: `(KW - 1) x DILATION <= 63`
+  (`BAD_GEOM` otherwise).
 
 The SRAM limits of `TILING_GUIDE.md`, section 3, are computed with the padded window (padding included). A tile above
 them is not refused: the model prints a warning line at the push and runs it all the same, and the result may be

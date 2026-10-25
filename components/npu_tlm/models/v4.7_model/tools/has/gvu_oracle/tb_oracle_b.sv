@@ -252,10 +252,24 @@ module tb_b_spad;
     .i_vbank2_buf_sel(v2_sel), .i_vbank2_port_sel(v2_ps),
     .i_vbank2_en_0(v2_en0), .i_vbank2_wen_0(v2_wen0), .i_vbank2_addr_0(v2_a0), .i_vbank2_wmask_0(v2_wm0), .i_vbank2_wdata_0(v2_wd0), .o_vbank2_rdata_0(v2_rd0),
     .i_vbank2_en_1(v2_en1), .i_vbank2_wen_1(v2_wen1), .i_vbank2_addr_1(v2_a1), .i_vbank2_wmask_1(v2_wm1), .i_vbank2_wdata_1(v2_wd1), .o_vbank2_rdata_1(v2_rd1),
-    .i_dma_en(1'b0), .i_dma_wen(1'b0), .i_dma_addr('0), .i_dma_wdata('0), .i_dma_wmask('0), .o_dma_rdata());
+    .i_dma_sbank_en(1'b0), .i_dma_sbank_wen(1'b0), .i_dma_sbank_addr('0), .i_dma_sbank_wmask('0), .i_dma_sbank_wdata('0), .o_dma_sbank_rdata(),
+    .i_dma_vbank_en(1'b0), .i_dma_vbank_wen(1'b0), .i_dma_vbank_addr('0), .i_dma_vbank_wdata('0), .i_dma_vbank_wmask('0), .o_dma_vbank_rdata());
   logic [31:0] g [0:40]; logic [1023:0] w [0:8], e [0:5]; logic [31:0] e_s0, e_s1;
   initial begin
     if (!$value$plusargs("dir=%s", dir)) dir = ".";
+    // reset for two edges (the word-address delay registers of the narrow ports have one), then the memories and their
+    // read registers, which have no reset, are cleared: the port starts from zero, Verilator too
+    s_a1 = '0; v1_a1 = '0; v1_a2 = '0; v2_a1 = '0;   // the narrow ports delay their address by two edges: start from 0
+    rstn = 0; @(negedge clk); @(negedge clk);
+`ifndef VERILATOR
+    for (int k = 0; k < SBANK_DEPTH; k++) begin u.i_sbank_buf0.mem[k] = '0; u.i_sbank_buf1.mem[k] = '0; end
+    for (int k = 0; k < VBANK0_DEPTH; k++) begin u.i_vbank0_buf0.mem[k] = '0; u.i_vbank0_buf1.mem[k] = '0; end
+    for (int k = 0; k < VBANK1_DEPTH; k++) begin u.i_vbank1_buf0.mem[k] = '0; u.i_vbank1_buf1.mem[k] = '0; end
+    for (int k = 0; k < VBANK2_DEPTH; k++) begin u.i_vbank2_buf0.mem[k] = '0; u.i_vbank2_buf1.mem[k] = '0; end
+    u.i_sbank_buf0.o_rdata_0 = '0; u.i_sbank_buf0.o_rdata_1 = '0; u.i_sbank_buf1.o_rdata_0 = '0; u.i_sbank_buf1.o_rdata_1 = '0;
+    u.i_vbank0_buf0.o_rdata = '0; u.i_vbank0_buf1.o_rdata = '0; u.i_vbank1_buf0.o_rdata = '0; u.i_vbank1_buf1.o_rdata = '0;
+    u.i_vbank2_buf0.o_rdata = '0; u.i_vbank2_buf1.o_rdata = '0;
+`endif
     rstn = 1;
     fd = $fopen({dir, "/spadb.txt"}, "r"); n = 0; bad = 0; bs = 0; b0 = 0; b1 = 0; b2 = 0;
     while (fd != 0 && !$feof(fd)) begin
@@ -302,6 +316,11 @@ module tb_b_vlsu;
   logic [VBANK2_AW-1:0] o_v2_a0; logic [VBANK2_AW+1:0] o_v2_a1;
   logic agu_rst;
   gvu_vlsu u (.i_clk(clk), .i_rstn(rstn), .i_agu_addr_reset(agu_rst),
+    // pooling inputs of the RTL since the 18/10 drop: not driven by the dump (no pooling stimulus), tied to 0 as Verilator
+    // does for an unconnected input (a 4-state simulator would leave them floating)
+    .i_pooling_enable(1'b0), .i_pooling_mode(POOLING_2X2), .i_pooling_stride('0), .i_pooling_num_w_tile('0), .i_pooling_c('0),
+    .i_pooling_oh('0), .i_pooling_c_move('0), .i_pooling_h_move('0), .i_pooling_rdata('0), .i_pooling_valid('0),
+    .o_pooling_window_valid(), .o_pooling_window_data(), .o_feeder_fisrt(), .o_feeder_last(), .o_pooling_last_wr(),
     .i_sbank_rd_0(s_rd0), .i_sbank_wr_0(s_wr0), .i_sbank_agu_mode_0(s_md0), .i_sbank_start_addr_0(s_sa0), .i_sbank_wmask_0(s_wm0),
     .i_sbank_rd_1(s_rd1), .i_sbank_wr_1(s_wr1), .i_sbank_agu_mode_1(s_md1), .i_sbank_start_addr_1(s_sa1), .i_sbank_wmask_1(s_wm1),
     .i_vbank0_rd(v0_rd), .i_vbank0_wr(v0_wr), .i_vbank0_agu_mode(v0_md), .i_vbank0_start_addr(v0_sa), .i_vbank0_lane_wmask(v0_lm),
@@ -318,7 +337,9 @@ module tb_b_vlsu;
   logic ctl_bad, addr_bad;
   initial begin
     if (!$value$plusargs("dir=%s", dir)) dir = ".";
-    rstn = 1;
+    // reset for two edges first: the pooling counters of the RTL (18/10 on) have an asynchronous reset that a 4-state
+    // simulator never sees if rstn starts at 1 (Verilator starts every register at 0)
+    rstn = 0; @(negedge clk); @(negedge clk); rstn = 1;
     fd = $fopen({dir, "/vlsub.txt"}, "r"); n = 0; bad = 0; bad_addr = 0; bad_ctl = 0;
     while (fd != 0 && !$feof(fd)) begin
       rc = $fscanf(fd, "%h %h %h %h %h %h %h %h %h %h %h %h %h %h %h", g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], g[9], g[10], g[11], g[12], g[13], g[14]); if (rc != 15) break;

@@ -179,6 +179,16 @@ namespace sauria_rtl
             return mem_c[npu_c_idx][addr % ROWS_C];
         }
 
+        // HAS_GVU_TOP=3: result of the vector unit back into the NPU half of SRAM-C, lanes of `mask` only (the half is taken from
+        // the live i_select like peek_sramc_npu). No hardware logic of the SRAM changes; nothing calls this unless the knob is on.
+        void poke_sramc_npu(uint32_t addr, const psum_vector_t<Y_DIM, T_PSUM> &v, uint32_t mask)
+        {
+            sc_bv<3> sel = i_select.read();
+            int npu_c_idx = sel[2].to_bool() ? 0 : 1;
+            for (int i = 0; i < Y_DIM; i++)
+                if ((mask >> i) & 1u) mem_c[npu_c_idx][addr % ROWS_C][i] = v[i];
+        }
+
         // Testbench helpers (not in sauria_model's Sram): write_bank_data / read_bank_data, API-compatible with v4.5's
         // sram/sram_top.h, used by tools/fe/sysc/tb_fe_core_tile.cpp and tools/test_sauria_ref_layer_runner.cpp to load
         // stimulus directly from C++, bypassing the host port. No change to beh_process().

@@ -12,7 +12,7 @@ mkdir -p "$W"
 F=$R/FUs; S=$R/stream_switch; P=$R/scratchpad
 SRC="$R/gvu_pkg.sv $R/pipeline_reg.sv $F/clz.sv $F/gvu_lut_mem.sv $F/gvu_lut_lookup_lane.sv $F/gvu_lut_unit.sv $F/gvu_vcmp32.sv $F/gvu_vmul48x40.sv
      $S/vstream_reg_int32.sv $S/vstream_reg_int64_type0.sv $S/vstream_reg_int64_type1.sv $S/stream_vrf.sv
-     $P/sram_single_port.sv $P/sram_dual_port.sv $P/gvu_scratchpad.sv $R/gvu_vlsu.sv $HERE/shift_reg_standin.sv"
+     $P/sram_single_port.sv $P/sram_dual_port.sv $P/gvu_scratchpad.sv $R/vlsu/gvu_vlsu.sv $R/vlsu/gvu_pooling_feeder.sv $HERE/fifo_v3_standin.sv $HERE/shift_reg_standin.sv"
 rc=0
 for top in ${TOPS:-tb_b_lut tb_b_lut32 tb_b_cmp0 tb_b_cmp1 tb_b_mulb tb_b_svrf tb_b_spad tb_b_vlsu}; do
   nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module $top --Mdir "$W/$top" $SRC "$HERE/tb_oracle_b.sv" > "$W/$top.build.log" 2>&1 \

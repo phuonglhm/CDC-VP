@@ -6,8 +6,9 @@
 // the result is compared byte by byte with the reference image at the output address.
 // Not replayed: average pool (no cycle-level module yet) and an add whose operand lies at the output address (the
 // reference image holds the result there, not the operand).
-// --gvu-top: the residual adds run on GvuTop through the socket of the instruction path (has::GvuTopBridge::add of
-// has/gvu_top_bridge.h, as with HAS_GVU_TOP=1); the max pools stay on GvuMaxPoolPipe, as in the socket.
+// --gvu-top: the residual adds and the max pools run on GvuTop through the socket of the instruction path
+// (has::GvuTopBridge::add and ::maxpool of has/gvu_top_bridge.h, as with HAS_GVU_TOP=1); a max pool goes in the channel
+// groups of has::HasElemwise::maxpool with the default Scratchpad (Knobs::spec_default), as on the instruction path.
 // build: g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_replay.cpp -o tb_rtl_ref_gvu_replay
 // usage: tb_rtl_ref_gvu_replay <program dir> [max instructions, 0 = all] [--gvu-top]
 #include <cinttypes>
@@ -124,6 +125,41 @@ static uint64_t replay_add(const int8_t *A, const int8_t *B, const int8_t *want,
     return bad;
 }
 
+// Max pool on GvuTop through the socket, channel groups as has::HasElemwise::maxpool with the default Scratchpad (banked:
+// the padded input in vbank#0, the result in vbank#1); returns the number of bytes that differ from want ([C, Ho, Wo]).
+static uint64_t replay_maxpool_top(const int8_t *in, const int8_t *want, int C, int H, int W, int kk, int s, int p, Totals *t, uint64_t *cyc, uint64_t *elems)
+{
+    const int Hp = H + 2 * p, Wp = W + 2 * p, Ho = (Hp - kk) / s + 1, Wo = (Wp - kk) / s + 1;
+    has::Knobs k;
+    k.spec_default();
+    int group = k.sp_banked ? std::min(static_cast<int>(k.sp_v0 / static_cast<uint32_t>(Hp * Wp)), static_cast<int>(k.sp_v1 / static_cast<uint32_t>(Ho * Wo)))
+                            : static_cast<int>(k.scratch_bytes / static_cast<uint32_t>(Hp * Wp));
+    if (group < 1) group = 1;
+    std::vector<int8_t> o(want, want + static_cast<size_t>(C) * Ho * Wo);   // the socket compares with this and returns GvuTop's result in it
+    for (int c0 = 0; c0 < C; c0 += group)
+    {
+        const int g = std::min(group, C - c0);
+        uint64_t pc = 0;
+        if (!has::GvuTopBridge::maxpool(in + static_cast<size_t>(c0) * H * W, o.data() + static_cast<size_t>(c0) * Ho * Wo, g, H, W, kk, s, p, 0, &pc))
+        {
+            std::printf("  max pool: not expressible on GvuTop (or a run did not finish), channels %d..%d\n", c0, c0 + g - 1);
+            return static_cast<uint64_t>(C) * Ho * Wo;
+        }
+        *cyc += pc; t->runs++;
+    }
+    uint64_t bad = 0;
+    for (size_t e = 0; e < o.size(); e++)
+    {
+        if (o[e] != want[e])
+        {
+            if (bad < 5) std::printf("  max pool element %zu: got %d, reference %d\n", e, o[e], want[e]);
+            bad++;
+        }
+        (*elems)++;
+    }
+    return bad;
+}
+
 // Max pool on [C, H, W]; returns the number of bytes that differ from want ([C, Ho, Wo]).
 static uint64_t replay_maxpool(const int8_t *in, const int8_t *want, int C, int H, int W, int kk, int s, int p, Totals *t, uint64_t *cyc, uint64_t *elems)
 {
@@ -188,7 +224,7 @@ int main(int argc, char **argv)
     const long max_instr = argc > 2 && std::strcmp(argv[2], "--gvu-top") != 0 ? std::atol(argv[2]) : 0;
     for (int a = 2; a < argc; a++) if (std::strcmp(argv[a], "--gvu-top") == 0) g_gvu_top = true;
     // the socket reads HAS_GVU_TOP once, at its first use (after this line)
-    if (g_gvu_top) { setenv("HAS_GVU_TOP", "1", 1); std::printf("[replay] residual adds on GvuTop (has::GvuTopBridge)\n"); }
+    if (g_gvu_top) { setenv("HAS_GVU_TOP", "1", 1); std::printf("[replay] residual adds and max pools on GvuTop (has::GvuTopBridge)\n"); }
     std::vector<uint8_t> gold;
     std::ifstream f(dir + "/mmio.txt");
     if (!f || !read_file(dir + "/dram_golden.bin", gold)) { std::printf("cannot read %s/mmio.txt or dram_golden.bin\n", dir.c_str()); return 2; }
@@ -230,7 +266,7 @@ int main(int argc, char **argv)
                 const int Ho = (li.h + 2 * li.pool_p - li.pool_k) / li.pool_s + 1, Wo = (li.w + 2 * li.pool_p - li.pool_k) / li.pool_s + 1;
                 if (static_cast<uint64_t>(li.a_addr) + static_cast<uint64_t>(li.c) * li.h * li.w > gold.size() ||
                     static_cast<uint64_t>(li.out_addr) + static_cast<uint64_t>(li.c) * Ho * Wo > gold.size()) { skipped_range++; continue; }
-                bad = replay_maxpool(g + li.a_addr, g + li.out_addr, li.c, li.h, li.w, li.pool_k, li.pool_s, li.pool_p, &mp, &cyc, &elems);
+                bad = (g_gvu_top ? replay_maxpool_top : replay_maxpool)(g + li.a_addr, g + li.out_addr, li.c, li.h, li.w, li.pool_k, li.pool_s, li.pool_p, &mp, &cyc, &elems);
                 mp.instr++; mp.elems += elems; mp.bad += bad; mp.cycles += cyc;
             }
             std::printf("[replay] %" PRIu64 " %s elements %" PRIu64 " bad %" PRIu64 " cycles %" PRIu64 " %s  # %s\n", idx, li.mode == 0 ? "ADD" : "MAX_POOL", elems, bad, cyc,

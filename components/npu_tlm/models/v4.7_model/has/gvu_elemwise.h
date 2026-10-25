@@ -13,6 +13,7 @@
 #include <systemc.h>
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <stdexcept>
 #include <vector>
 #include "has/gvu_quant.h"
@@ -28,6 +29,22 @@ namespace has
         int zpA{0}, zpB{0}, zpO{0};
         uint32_t SA{1}, SB{1}, SO{1}; // raw 32-bit scale words, decoded with Knobs::scale_fmt
         int sA{0}, sB{0}, sO{0};
+    };
+
+    // HAS_GVU_ELEM_CLK=1 (set by HasNpuTop with HAS_GVU_TOP=3): a residual add chunk or a max pool group that GvuTop takes runs as
+    // a job on the clock of has::GvuTopStream instead of the call to GvuTopBridge::add / maxpool. fits_*: GvuTop takes the
+    // parameters (if not, the call style runs as before and counts them); start_*: the job starts at the next clock edge (the
+    // operands are copied, the result is written into out when the job is done); finish: waits in the calling thread until the
+    // job is done and gives its GvuTop cycles.
+    struct ElemClock
+    {
+        std::function<bool(int, int, int, int64_t, int64_t, int64_t, int, int, int, int, bool, bool)> fits_add;
+        std::function<void(const int8_t *, const int8_t *, int8_t *, size_t, int, int, int, int64_t, int64_t, int64_t, int, int, int, int,
+                           uint64_t)> start_add;
+        std::function<bool(int, int, int, int, int, int)> fits_maxpool;
+        std::function<void(const int8_t *, int8_t *, int, int, int, int, int, int, uint64_t)> start_maxpool;
+        std::function<uint64_t()> finish;
+        bool on() const { return static_cast<bool>(finish); }
     };
 
     struct ElemStats
@@ -54,6 +71,8 @@ namespace has
         // Scratchpad transfers per bank and address mode (load/store unit accounting, has/gvu_lsu.h).
         GvuLsu lsu;
         const Knobs &knobs() const { return k_; }
+        // HAS_GVU_ELEM_CLK=1: residual add and max pool on the clock of GvuTopStream (empty = off)
+        ElemClock clk;
 
         // ---- ADD: out[i] = Requant(sat32(Dequant(A[i]) + Dequant(B[i])), SO, sO, zpO)
         // Chunk = 4096 elements: A 4 KB + B 4 KB + Sum 16 KB = 24 KB (HAS_IFACE §6.2); scaled down if the Scratchpad is smaller.
@@ -98,6 +117,22 @@ namespace has
                 for (uint32_t i = 0; i < m; i++)
                     sp_.put<int8_t>(offA + i, requant(sp_.get<int32_t>(offS + 4 * i), SO, p.sO, p.zpO, k_, &st_.qc_req));
                 uint64_t cyc1 = vectors(m) + uint64_t(k_.lat_add1), cyc2 = vectors(m) + uint64_t(k_.lat_add2);
+                // HAS_GVU_ELEM_CLK: the compute of the chunk is a job on the clock of GvuTopStream, which writes GvuTop's values into
+                // out when it is done (the model values go there first; the operands are copied first, out may be A)
+                if (clk.on() && clk.fits_add(p.zpA, p.zpB, p.zpO, SA, SB, SO, p.sA, p.sB, p.sO, k_.round_mode, k_.deq_zp_order == SUB_BEFORE,
+                                             k_.req_narrow == SAT16))
+                {
+                    std::vector<int8_t> a(A + base, A + base + m), b(B + base, B + base + m);
+                    sp_.read(offA, out + base, m);
+                    int8_t *o = out + base;
+                    const AddParams q = p;
+                    const int rm = k_.round_mode;
+                    const uint64_t mc = cyc1 + cyc2;
+                    compute_job([this, a, b, o, m, q, SA, SB, SO, rm, mc]
+                                { clk.start_add(a.data(), b.data(), o, m, q.zpA, q.zpB, q.zpO, SA, SB, SO, q.sA, q.sB, q.sO, rm, mc); });
+                    dma(m);
+                    continue;
+                }
                 // HAS_GVU_TOP (GvuTop) or HAS_ELEM_RTL (GvuResAddPipe): values and compute cycles of the chunk from the cycle-level unit
                 if (GvuTopBridge::on() || RtlElem::on())
                 {
@@ -160,6 +195,7 @@ namespace has
                               static_cast<uint32_t>(padded.size()));
                 }
                 dma(static_cast<uint64_t>(g) * H * Wd);
+                uint64_t group_model_cycles = 0;   // HAS_GVU_TOP: compute cycles of the model for the group (for the report)
                 for (int c = 0; c < g; c++)
                 {
                     const uint32_t base = k_.sp_banked ? static_cast<uint32_t>(c * Hp * Wp) : static_cast<uint32_t>(c) * per_ch;
@@ -195,14 +231,41 @@ namespace has
                                 out[(static_cast<size_t>(c0 + c) * Ho + y) * Wo + x] = mx;
                             }
                         uint64_t cyc = static_cast<uint64_t>(Ho) * vec_per_row * kk * kk + uint64_t(k_.lat_max), pc = 0;
-                        // HAS_ELEM_RTL, and HAS_GVU_TOP (GvuTop has no max pool): values and compute cycles of the channel from
-                        // GvuMaxPoolPipe
-                        if (GvuTopBridge::on()) GvuTopBridge::maxpool_elsewhere();
-                        if ((RtlElem::on() || GvuTopBridge::on()) && RtlElem::maxpool(in + static_cast<size_t>(c0 + c) * H * Wd, out + static_cast<size_t>(c0 + c) * Ho * Wo,
+                        // HAS_GVU_TOP: the whole group runs on GvuTop below, after the model values of every channel
+                        if (GvuTopBridge::on()) { group_model_cycles += cyc; continue; }
+                        // HAS_ELEM_RTL: values and compute cycles of the channel from GvuMaxPoolPipe
+                        if (RtlElem::on() && RtlElem::maxpool(in + static_cast<size_t>(c0 + c) * H * Wd, out + static_cast<size_t>(c0 + c) * Ho * Wo,
                                                               H, Wd, kk, s, p, cyc, &pc))
                             cyc = pc;
                         compute(cyc);
                     }
+                }
+                // HAS_GVU_TOP, direct max pool: the group on GvuTop (POOLING_MAX of the latest hardware RTL drop), its values and compute
+                // cycles; a (k, s) that GvuTop does not pool goes per channel to GvuMaxPoolPipe as before
+                if (GvuTopBridge::on() && k_.mp_mode != MP_SEPARABLE)
+                {
+                    uint64_t pc = 0;
+                    // HAS_GVU_ELEM_CLK: the group is a job on the clock of GvuTopStream (the input of the group copied first)
+                    if (clk.on() && clk.fits_maxpool(g, H, Wd, kk, s, p))
+                    {
+                        std::vector<int8_t> grp(in + static_cast<size_t>(c0) * H * Wd, in + static_cast<size_t>(c0 + g) * H * Wd);
+                        int8_t *o = out + static_cast<size_t>(c0) * Ho * Wo;
+                        const uint64_t mc = group_model_cycles;
+                        compute_job([this, grp, o, g, H, Wd, kk, s, p, mc] { clk.start_maxpool(grp.data(), o, g, H, Wd, kk, s, p, mc); });
+                    }
+                    else if (GvuTopBridge::maxpool(in + static_cast<size_t>(c0) * H * Wd, out + static_cast<size_t>(c0) * Ho * Wo, g, H, Wd, kk, s, p,
+                                              group_model_cycles, &pc))
+                        compute(pc);
+                    else
+                        for (int c = 0; c < g; c++)
+                        {
+                            uint64_t cyc = static_cast<uint64_t>(Ho) * vec_per_row * kk * kk + uint64_t(k_.lat_max), pc1 = 0;
+                            GvuTopBridge::maxpool_elsewhere();
+                            if (RtlElem::maxpool(in + static_cast<size_t>(c0 + c) * H * Wd, out + static_cast<size_t>(c0 + c) * Ho * Wo,
+                                                 H, Wd, kk, s, p, cyc, &pc1))
+                                cyc = pc1;
+                            compute(cyc);
+                        }
                 }
                 dma(static_cast<uint64_t>(g) * Ho * Wo);
             }
@@ -272,7 +335,10 @@ namespace has
         // Serial (sp_banked = 0): every DMA / compute step waits in turn. Banked: steps are collected per chunk
         // (DMA before the first compute = input, after = output) and scheduled ping-pong at sched_end():
         //   in(0), then per chunk i max(compute(i), in(i+1) + out(i-1)), then out(last). One AXI port: in + out add up.
-        struct Chunk { uint64_t in{0}, comp{0}, out{0}; };
+        // HAS_GVU_ELEM_CLK: the compute of a chunk can be a job on the clock (job starts it; ElemClock::finish waits for it). The same
+        // ping-pong then runs along the clock: chunk i computes while the input of chunk i+1 and the output of chunk i-1 move, and the
+        // step takes the longer of the two, as the formula.
+        struct Chunk { uint64_t in{0}, comp{0}, out{0}; std::function<void()> job; };
         std::vector<Chunk> chunks_;
         bool sched_{false}, in_phase_{true};
         void sched_begin() { chunks_.clear(); sched_ = k_.sp_banked != 0; }
@@ -282,6 +348,30 @@ namespace has
             if (!sched_) return;
             sched_ = false;
             if (chunks_.empty()) return;
+            bool live = false;
+            for (const Chunk &c : chunks_) if (c.job) live = true;
+            if (live)
+            {
+                wait_cycles(chunks_[0].in);
+                for (size_t i = 0; i < chunks_.size(); i++)
+                {
+                    const uint64_t side = (i + 1 < chunks_.size() ? chunks_[i + 1].in : 0) + (i > 0 ? chunks_[i - 1].out : 0);
+                    uint64_t comp = chunks_[i].comp;
+                    if (chunks_[i].job)
+                    {
+                        chunks_[i].job();
+                        wait_cycles(side);
+                        const uint64_t c = clk.finish();
+                        st_.cyc_compute += c;
+                        comp += c;
+                    }
+                    else wait_cycles(std::max(comp, side));
+                    st_.cyc_overlap_saved += std::min(comp, side);
+                }
+                wait_cycles(chunks_.back().out);
+                chunks_.clear();
+                return;
+            }
             uint64_t t = chunks_[0].in;
             for (size_t i = 0; i < chunks_.size(); i++)
             {
@@ -297,6 +387,13 @@ namespace has
             st_.cyc_compute += cyc;
             if (sched_ && !chunks_.empty()) { chunks_.back().comp += cyc; in_phase_ = false; return; }
             wait_cycles(cyc);
+        }
+        // HAS_GVU_ELEM_CLK: the compute of the current chunk as a job on the clock; serial: now, banked: at its place in sched_end.
+        void compute_job(std::function<void()> start)
+        {
+            if (sched_ && !chunks_.empty()) { chunks_.back().job = std::move(start); in_phase_ = false; return; }
+            start();
+            st_.cyc_compute += clk.finish();
         }
         void dma(uint64_t bytes)
         {

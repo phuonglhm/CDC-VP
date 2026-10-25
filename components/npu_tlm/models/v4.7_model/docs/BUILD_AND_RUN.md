@@ -230,12 +230,17 @@ Single options are added on top of a profile (list: header of `tools/has/tb_has_
 `has::HasNpuTop npu("npu", has::Profile::Proposals);` another one.
 
 ```bash
-tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3                          # YOLOv8m, run C (about 10 hours, one core)
-tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals       # YOLOv8m, run D
-tools/has/tb_has_npu_top $FE_WORK/has/vit_full                            # ViT-B/16, hardware as drawn (about 5 hours)
-tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast                  # ViT-B/16 with the bias-broadcast proposal
-tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 40 --count 2      # a window of two instructions
-tools/has/tb_has_npu_top $FE_WORK/has/insts_has --profile legacy --overlap --dma has   # YOLOv8m baseline (regenerate insts_has first)
+tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3                          # YOLOv8m, default vector-unit flow (about 10 hours, one core)
+tools/has/tb_has_npu_top $FE_WORK/has/vit_full                            # ViT-B/16, default vector-unit flow (about 5 hours)
+# the reference results of the table below: the five vector-unit knobs set to 0
+K0="HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0"
+env $K0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3                          # YOLOv8m, hardware as drawn (62,666,123 cycles)
+env $K0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full                            # ViT-B/16, hardware as drawn (41,680,289 cycles)
+env $K0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3          # YOLOv8m, run C
+env $K0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals   # YOLOv8m, run D
+env $K0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast # ViT-B/16 with the bias-broadcast proposal
+env $K0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 40 --count 2      # a window of two instructions (1,658,986 cycles)
+env $K0 tools/has/tb_has_npu_top $FE_WORK/has/insts_has --profile legacy --overlap --dma has   # YOLOv8m baseline (regenerate insts_has first)
 ```
 
 Environment: `FE_METRICS_CSV=<file>` writes per-tile core counters, `FE_SNAPSHOT_DIR=<dir>` writes the DRAM image
@@ -245,30 +250,56 @@ micro-architecture specification), `v47ref` = the configuration of the results m
 `mas10` = the typical bank sizes of the specification's capacity table, `rtl` = the behaviours of the functional-unit
 RTL over the `v47ref` scratchpad.
 
+### Vector-unit flow
+
+By default the vector unit runs on its top level `GvuTop`, next to the core on the core clock, with the
+full flow that follows the RTL most closely: `HAS_GVU_TOP=3` (stream of the partial-sum path into `GvuTop`), `HAS_GVU_STALL=1`
+(the core stops on a full stream FIFO), `HAS_GVU_ELEM_CLK=1` (residual add and max pool on the clock), `HAS_GVU_REGS=1` (the
+data flow controller configures and starts the unit through its register file) and `HAS_GVU_AGU_ND=1` (the residual add and the
+max pool address the Scratchpad through the multi-dimensional address generator, `docs/SLICE_CONCAT_ON_GVU.md`). Setting a
+variable to 0 switches that part off (`docs/GVU_TOP_CORE_INTEGRATION.md`, section 1.3). The reference results of this package were
+measured with all five set to 0; the commands that reproduce them carry the prefix
+`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`. Whole-network totals of the default: YOLOv8m 62,422,935 cycles,
+ViT-B/16 41,582,468 cycles.
+
+| Variable | Default | 0 gives |
+|---|---|---|
+| `HAS_GVU_TOP` | 3 | the model's own epilogue, residual add and max pool (1 and 2: `GvuTop` called as a function) |
+| `HAS_GVU_STALL` | 1 | the core never stops on the stream; a full FIFO is counted as `STALL NEEDED` |
+| `HAS_GVU_ELEM_CLK` | 1 | residual add and max pool called as functions (still forced on by `HAS_GVU_REGS=1`) |
+| `HAS_GVU_REGS` | 1 | `GvuTop` configured by assignments instead of the register file |
+| `HAS_GVU_AGU_ND` | 1 | no address program bound (2: shifted programs, for demonstration) |
+
+The last three only act with `HAS_GVU_TOP=3`. The report printed at exit is described in `GVU_TOP_CORE_INTEGRATION.md`, section 6.3.
+
 ### Expected results
 
 | Program and options | Instructions | Result | Total cycles |
 |---|---:|---|---:|
-| `insts_pe3`, default | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,666,123 |
-| `vit_full`, default | 244 | PASS, 26,068,616 elements, 0 mismatches | 41,680,289 |
-| `insts_pe3`, default, `HAS_SPEC=v47ref` (run C) | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,681,721 |
+| `insts_pe3`, default (vector-unit flow on, every knob default) | 98 + 2 host steps | PASS, 0 mismatches | 62,422,935 |
+| `vit_full`, default (vector-unit flow on, every knob default) | 244 | PASS, 0 mismatches | 41,582,468 |
+| `insts_pe3`, knobs off | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,666,123 |
+| `vit_full`, knobs off | 244 | PASS, 26,068,616 elements, 0 mismatches | 41,680,289 |
+| `insts_pe3`, knobs off, `HAS_SPEC=v47ref` (run C) | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,681,721 |
 | `insts_pe4`, `--profile proposals`, `HAS_SPEC=v47ref` (run D) | 98 + 2 host steps | PASS, 0 mismatches | 60,386,685 |
-| `vit_full`, default, `HAS_SPEC=v47ref` | 244 | PASS, 26,068,616 elements, 0 mismatches | 41,065,258 |
+| `vit_full`, knobs off, `HAS_SPEC=v47ref` | 244 | PASS, 26,068,616 elements, 0 mismatches | 41,065,258 |
 | `vit_full`, `--c-bcast`, `HAS_SPEC=v47ref` | 244 | PASS, 26,068,616 elements, 0 mismatches | 39,922,498 |
-| `insts_pe3`, `--first 40 --count 2` (either configuration: two convolutions) | 2 | PASS | 1,658,986 |
-| `insts_pe3`, default, `HAS_FEEDER_PAD=1` (padding by the IFMAP feeder) | 98 + 2 host steps | PASS, 0 mismatches | 62,698,248 |
-| `insts_pe3`, `--first 40 --count 2`, `HAS_GVU_TOP=1` / `HAS_GVU_TOP=2` (vector unit on `GvuTop`) | 2 | PASS | 1,658,651 / 1,650,477 |
-| `rce_gate` (transformer instruction check), default / `HAS_SPEC=v47ref` | 14 | PASS | 285,205 / 250,885 vector-unit cycles |
-| `insts_has`, `--profile legacy --overlap --dma has` (baseline) | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 112,912,950 |
+| `insts_pe3`, `--first 40 --count 2`, knobs off (either `HAS_SPEC`: two convolutions) | 2 | PASS | 1,658,986 |
+| `insts_pe3`, knobs off, `HAS_FEEDER_PAD=1` (padding by the IFMAP feeder) | 98 + 2 host steps | PASS, 0 mismatches | 62,698,248 |
+| `insts_pe3`, `--first 40 --count 2`, `HAS_GVU_TOP=1` / `HAS_GVU_TOP=2` with `HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` (vector unit on `GvuTop` as a function) | 2 | PASS | 1,658,651 / 1,650,477 |
+| `rce_gate` (transformer instruction check), knobs off / knobs off + `HAS_SPEC=v47ref` | 14 | PASS | 285,205 / 250,885 vector-unit cycles |
+| `insts_has`, knobs off, `--profile legacy --overlap --dma has` (baseline) | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 112,912,950 |
 
-The run prints one `[STEP]` line per instruction and ends with `[tb_fe_core_net] RESULT: PASS|FAIL (...)` and the
-total `sim cycles`; exit code 0 on PASS. Instruction-path check of the transformer instructions:
+"knobs off" is the prefix `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` (variable `K0` above); every row
+except the first two was measured that way. The run prints one `[STEP]` line per instruction and ends with
+`[tb_fe_core_net] RESULT: PASS|FAIL (...)` and the total `sim cycles`; exit code 0 on PASS. Instruction-path check of the transformer instructions:
 `tools/has/tb_has_npu_top $FE_WORK/has/rce_gate` (14 instructions, PASS; the program is shipped in the data package
 and `python3 tools/has/make_rce_gate.py <vector dir> <table dir> <out dir>` regenerates it).
 
 Regression of the vector-unit blocks and of the instruction path (transformer check, window D, AVG_POOL, padding,
-short contexts, dilation, `GvuTop`): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 58 items,
-about 1.5 hours on one core; a second argument `--unit-only` runs the unit tests only. The last line is
+short contexts, dilation, `GvuTop`; the script sets the five vector-unit knobs to 0 itself and each item sets the knob it
+checks): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 131 items,
+about 5 hours on one core; a second argument `--unit-only` runs the unit tests only. The last line is
 `RESULT: <n> passed, <m> failed`. The script was written for the development tree and reads the programs and vectors
 under `fe_work/` at the repository root (`fe_work/has/...`); in this repository that is the extracted data package
 (for example `ln -s sauria_npu_data fe_work`). The package check runs its own subset of these items, not this script.

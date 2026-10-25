@@ -60,6 +60,9 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             bool pipeline_en = false;  // i_pipeline_en
             bool done = false;         // i_done (from PsmIdxCnt::Outputs::done)
             bool til_done = false;     // i_til_done (from PsmIdxCnt::Outputs::til_done)
+            // i_write_stall (RTL psm_shift_fsm.sv): the PSM write is held because the FIFO of the PSM -> vector-unit stream is
+            // full. Default false: no effect.
+            bool write_stall = false;
 
             // NOT an RTL signal -- deliberate, documented wiring-layer
             // simplification (user's explicit choice,).
@@ -515,9 +518,10 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             compute_counter_enables(main_state_, cyc_cnt_, cyc_cnt_en, cyc_cnt_clear,
                                      scan_cnt_en, scan_cnt_clear, ctx_cnt_en);
 
+            // RTL psm_shift_fsm.sv:157: the cycle counter does not count while the write is held
             uint32_t cyc_cnt_next = cyc_cnt_clear ? 0
-                                     : cyc_cnt_en  ? (cyc_cnt_ + 1)
-                                                   : cyc_cnt_;
+                                     : (cyc_cnt_en && !in.write_stall) ? (cyc_cnt_ + 1)
+                                                                       : cyc_cnt_;
             uint32_t scan_cnt_next = scan_cnt_clear ? 0
                                       : (scan_cnt_en && in.pipeline_en) ? (scan_cnt_ + 1)
                                                                         : scan_cnt_;
@@ -526,7 +530,8 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                                                   : ctx_cnt_;
 
             // ---------- Phase 2: commit ----------
-            main_state_ = next_state;
+            if (!in.write_stall)   // RTL psm_shift_fsm.sv:185-187: the state holds while the write is held
+                main_state_ = next_state;
             cyc_cnt_ = cyc_cnt_next;
             scan_cnt_ = scan_cnt_next;
             ctx_cnt_ = ctx_cnt_next;

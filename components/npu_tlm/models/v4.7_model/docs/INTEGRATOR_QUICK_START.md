@@ -25,8 +25,9 @@ Both give the same numbers. The file way needs no firmware change and is the qui
 
 ### 2.1 Platform files to update for this release
 
-The model adds six extension registers and one error code (`CHANGES_SINCE_INTEGRATED_MODEL.md`, sections 2 and
-5.1). Programs that do not use them run unchanged, so nothing below blocks the update of section 2. Firmware that
+This release adds no register and no error code (`CHANGES_SINCE_INTEGRATED_MODEL.md`, section 2). The integrated model
+already added six extension registers and one error code; if the platform files below do not list them yet, add them.
+Programs that do not use them run unchanged, so nothing below blocks the update of section 2. Firmware that
 uses padding per side or dilation, or that decodes the error codes of the model, needs the names; the wrapper's
 document should list them. In the system wrapper repository these are integration-owned files; the model tree is
 not edited.
@@ -62,7 +63,7 @@ not edited.
    results should read it after every extended push (`SW_EVALUATION_GUIDE.md`, section 4).
 
 The native path and the wrapper's 32x32 GEMM bank are not changed by this release
-(`CHANGES_SINCE_INTEGRATED_MODEL.md`, section 9).
+(`CHANGES_SINCE_INTEGRATED_MODEL.md`, section 7).
 
 ## 3. Switch the outputs on in the launch script
 

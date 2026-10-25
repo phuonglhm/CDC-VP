@@ -28,25 +28,35 @@ bash tools/has/build_tb_has_npu_top.sh                    # -> tools/has/tb_has_
 
 ### 1.3 Quick check
 
-Two YOLOv8m instructions, about 20 minutes on one core:
+Two YOLOv8m instructions, about 20 minutes on one core, with the vector-unit knobs off as for the reference results
+(section 1.4):
 
 ```bash
-tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 40 --count 2     # PASS, 1,658,986 cycles
+HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 \
+  tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 40 --count 2   # PASS, 1,658,986 cycles
 ```
 
 ### 1.4 Whole networks
 
+By default the vector unit runs on `GvuTop` with the full flow (`HAS_GVU_TOP=3`, `HAS_GVU_STALL=1`, `HAS_GVU_ELEM_CLK=1`,
+`HAS_GVU_REGS=1`, `HAS_GVU_AGU_ND=1`; `BUILD_AND_RUN.md`, section 6). Each variable set to 0 switches its part off. The
+reference results were measured with all five set to 0, and the commands that reproduce them below carry the prefix
+`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`.
+
 | Network and configuration | Command | Time on one core | Expected result |
 |---|---|---|---|
-| YOLOv8m, hardware as drawn (reference) | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,666,123 cycles (12.77 FPS at 0.8 GHz) |
-| ViT-B/16, hardware as drawn (reference) | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 244 instructions, 0 mismatches, 41,680,289 cycles (19.19 FPS) |
-| YOLOv8m, vector-unit configuration before the micro-architecture specification (run C) | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 62,681,721 cycles (12.76 FPS) |
-| ViT-B/16, same earlier configuration | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 41,065,258 cycles (19.48 FPS) |
-| ViT-B/16 with the bias-broadcast proposal, earlier configuration | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast` | about 5 hours | PASS, 39,922,498 cycles (20.04 FPS) |
-| YOLOv8m with the two hardware proposals (run D), earlier configuration | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals` | about 10 hours | PASS, 60,386,685 cycles (13.25 FPS) |
+| YOLOv8m, default vector-unit flow | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles |
+| ViT-B/16, default vector-unit flow | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 244 instructions, 0 mismatches, 41,582,468 cycles |
+| YOLOv8m, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,666,123 cycles (12.77 FPS at 0.8 GHz) |
+| ViT-B/16, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 244 instructions, 0 mismatches, 41,680,289 cycles (19.19 FPS) |
+| YOLOv8m, vector-unit configuration before the micro-architecture specification (run C) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 62,681,721 cycles (12.76 FPS) |
+| ViT-B/16, same earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 41,065,258 cycles (19.48 FPS) |
+| ViT-B/16 with the bias-broadcast proposal, earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast` | about 5 hours | PASS, 39,922,498 cycles (20.04 FPS) |
+| YOLOv8m with the two hardware proposals (run D), earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals` | about 10 hours | PASS, 60,386,685 cycles (13.25 FPS) |
 
-The two proposal runs have not been repeated with the default configuration; the expected totals are 60,371,087 and
-40,537,529 cycles (DERIVED from the measured difference of the as-drawn runs, `PERFORMANCE_REPORT.md`, section 5.8).
+The two proposal runs have not been repeated with the default `HAS_SPEC` configuration; with the knobs off the expected totals
+are 60,371,087 and 40,537,529 cycles (DERIVED from the measured difference of the as-drawn runs, `PERFORMANCE_REPORT.md`,
+section 5.8).
 
 Every instruction prints one `[STEP]` line as soon as it finishes; the run ends with `RESULT: PASS` or `FAIL` and
 the total `sim cycles`. To keep a log, the per-tile counters and the final memory image of a long run:
@@ -103,7 +113,8 @@ Details: `FRONTEND_GUIDE.md`; file formats: `INTERFACE_SPEC.md`, section 6.5; ho
        -> data flow controller: walks the tiles of the layer
             -> DMA (AXI-128, 3-D descriptors) loads weights and input window into SRAM A / B, ping-pong
             -> cycle-accurate core: controller, feeders, 32x32 array, partial-sum manager
-            -> epilogue on the partial-sum path into SRAM-C (requant, activation table)
+            -> epilogue on the partial-sum path into SRAM-C (requant, activation table); with the default
+               vector-unit flow it runs on GvuTop next to the core, configured through the register file
             -> DMA writes the int8 results to the DRAM
        -> vector unit: ELEM_WISE (ADD, MAX_POOL, AVG_POOL), softmax, LAYERNORM;
           FUSED_ATTN: the two matrix products run on the core, the softmax in the vector unit
@@ -127,6 +138,23 @@ Details: `ARCHITECTURE.md`, sections 7 and 8. Which numbers are measured and whi
 
 For an own run, replace the reference directory by the run directory (`run_c` above). The numbers to expect are in
 `PERFORMANCE_REPORT.md`, section 5.7.
+
+### 3.1 The vector-unit report
+
+With `GvuTop` on (the default), the run prints `[gvu-stream]` lines at exit. The full list is in
+`GVU_TOP_CORE_INTEGRATION.md`, section 6.3; the lines to check first:
+
+| Line | Expected |
+|---|---|
+| `[gvu-stream] packets pushed ... differ from the model` | `differ` 0 |
+| `FIFO max depth ..., STALL NEEDED ...` and `core stall cycles` | `STALL NEEDED` 0 and core stall cycles 0 on both networks |
+| `register file (HAS_GVU_REGS=1): ... register writes, edges the DFC waited on the write port, layer exits by oc_last & oc_tile_last N (model stop as fallback 0, timeouts 0) ...` | fallback 0 and timeouts 0; the waited edges equal the write latency times the writes |
+| `F1' in the tap: ... calls with the flag not on the one last packet` | the last number 0 (the "calls whose oc_last packets != contexts" count is information only) |
+| `residual add and max pool on the clock: jobs (failed ...) ...` and `[gvu-stream] residual add / max pool \| ... differ ...` | failed 0, `differ` 0 |
+
+The address generator (`HAS_GVU_AGU_ND=1`) has no line of its own. Its register writes (Reg 16 to 24, `SLICE_CONCAT_ON_GVU.md`)
+are counted in the `register writes` of the register-file line, so a run with `HAS_GVU_AGU_ND=0` shows fewer writes and the same
+results.
 
 ## 4. Using the model in a system platform
 

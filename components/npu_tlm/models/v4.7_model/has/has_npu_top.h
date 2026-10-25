@@ -42,6 +42,7 @@
 #include "has/gvu_obp.h"
 #include "has/gvu_psm_probe.h"
 #include "has/gvu_elemwise.h"
+#include "has/gvu_top_stream.h"
 #include "has/gvu_vrf.h"
 #include "has/gvu_sp_map.h"
 #include "has/has_mmio_compat.h"
@@ -241,6 +242,7 @@ namespace has
             core_->i_host_wdata(core_host_wdata_); core_->i_host_wmask(core_host_wmask_); core_->o_host_rdata(core_host_rdata_);
             core_->i_threshold(core_threshold_); core_->i_select(core_select_); core_->i_total_contexts(core_total_contexts_);
             port_.core = core_;
+            if (GvuTopBridge::level() == 3) build_stream();
 
             SC_METHOD(host_port);
             sensitive << i_clk.pos();
@@ -260,7 +262,7 @@ namespace has
                 dont_initialize();
             }
         }
-        ~HasNpuTop() { delete core_; delete obp_; delete dma_; delete sram_; delete ew_; }
+        ~HasNpuTop() { delete gvs_; delete tap_; delete core_; delete obp_; delete dma_; delete sram_; delete ew_; }
 
         // Call before sc_start(). overlap=false: sequential schedule. overlap=true: overlapped schedule -- the DMA
         // works on the host half of the core's ping-pong SRAM, and while the core computes tile i the DFC
@@ -283,10 +285,23 @@ namespace has
         void set_obp_inline(bool on)
         {
             obp_inline_ = on;
-            if (!on) { core_->set_sramc_write_hook(nullptr); return; }
+            if (!on) { core_->set_sramc_write_hook(nullptr); if (obp_) obp_->stream_sink = nullptr; return; }
+            // HAS_GVU_TOP=3: the beats of the last Cin pass go into the clocked stream (PsmStreamTap); the write itself is not changed
+            // (SRAM-C keeps the int32 psum as in the RTL) and the int8 result is written back by GvuTopStream one edge plus the stream depth later
+            if (gvs_) obp_->stream_sink = [this](const psum_vector_t<W32, int32_t> &in, uint32_t mask, uint32_t ch, int64_t S, int s, bool bypass,
+                                                 const psum_vector_t<W32, int32_t> &model)
+            {
+                StreamPacket p;
+                for (int l = 0; l < W32; l++) p.data[size_t(l)] = ((mask >> l) & 1u) ? in[size_t(l)] : 0;   // lanes without a mask are 0 in the packet
+                p.mask = mask; p.addr = obp_->inline_word_addr; p.ch = ch; p.S = S; p.s = s; p.bypass = bypass || !stream_zp_fits_; p.model = model;
+                p.oc_last = (ch + 1 == inl_nch_); p.oc_tile_last = inl_oc_tile_last_;
+                p.call_last = inl_seg_last_;
+                tap_->push(p);
+            };
             core_->set_sramc_write_hook([this](uint32_t addr, psum_vector_t<W32, int32_t> &v, const sramc_mask_t<W32> &m)
             {
                 if (!inl_active_) return;   // S1: earlier Cin passes keep the int32 psum for the next pass
+                const bool strm = gvs_ != nullptr;
                 const uint32_t e0 = (addr % 1536u) * W32;
                 psum_vector_t<W32, int32_t> out = v;
                 uint32_t k = 0;
@@ -305,8 +320,16 @@ namespace has
                     if (x >= inl_nch_) inline_out_of_tile++;
                     else
                     {
+                        if (strm)
+                        {
+                            // the write that holds the last element of the tile (last channel, last position) is the last of the call
+                            uint32_t ql = k;
+                            for (uint32_t q = k; q < j; q++) if (mx[q]) ql = q;
+                            inl_seg_last_ = (x + 1 == inl_nch_) && (e0 + ql + 1 == inl_nch_ * inl_npos_);
+                            obp_->inline_word_addr = addr;
+                        }
                         const auto r = obp_->apply_inline(v, x, mx);
-                        for (uint32_t q = k; q < j; q++) if (mx[q]) out[q] = r[q];
+                        if (!strm) for (uint32_t q = k; q < j; q++) if (mx[q]) out[q] = r[q];
                         st.vectors++;
                     }
                     k = j;
@@ -372,7 +395,17 @@ namespace has
         sc_time clk_period_{10, SC_NS};
         bool obp_inline_{false};
         uint32_t inl_npos_{1}, inl_nch_{1};
+        bool inl_seg_last_{false};     // the segment of the write being streamed holds the last element of the tile
+        int stall_mode_{0};   // HAS_GVU_STALL, see build_stream
         bool inl_active_{true};
+        // HAS_GVU_TOP=3: GvuTop on the clock of the core (has/gvu_top_stream.h)
+        PsmStreamTap *tap_{nullptr};
+        GvuTopStream *gvs_{nullptr};
+        bool inl_oc_tile_last_{false};
+        uint8_t stream_lut_[256];
+        bool stream_zp_fits_{true};    // the zero point of the layer fits the 8 bits of the RTL register (stream_begin)
+        bool regs_on_{false};          // HAS_GVU_REGS=1: the DFC drives GvuTop through the register file (has/gvu_regs_dfc.h)
+        bool inl_call_last_{false};    // this core call is the last of the layer: its packets of the last context carry oc_tile_last (F1')
         uint64_t halo_copy_done_{0};   // cycle at which the in-SRAM-A halo copy of the prefetched window ends
         SramPort port_;
         // ================================================================ host port
@@ -520,6 +553,147 @@ namespace has
         }
         void wait_ch1() { while (dma_->is_read_active(1)) { wait(); st.dma_cycles++; } }
 
+        // ---- HAS_GVU_TOP=3 ----
+        bool stream_on() const { return gvs_ != nullptr && obp_inline_; }
+        void build_stream()
+        {
+            tap_ = new PsmStreamTap("psm_stream_tap");
+            gvs_ = new GvuTopStream("gvu_top_stream");
+            tap_->i_clk(i_clk); tap_->i_rstn(i_rstn); tap_->i_psum_ready(st_ready_);
+            tap_->o_psum_valid(st_valid_); tap_->o_psum_data(st_data_); tap_->o_oc_last(st_oc_last_); tap_->o_oc_tile_last(st_oc_tile_last_);
+            tap_->o_psum_empty(st_empty_); tap_->o_stream_stall(st_stall_);
+            tap_->o_side_addr(st_addr_); tap_->o_side_mask(st_mask_); tap_->o_side_ch(st_ch_); tap_->o_side_scale(st_scale_);
+            tap_->o_side_shift(st_shift_); tap_->o_side_bypass(st_bypass_); tap_->o_side_model(st_model_); tap_->o_side_push(st_push_);
+            gvs_->i_clk(i_clk); gvs_->i_rstn(i_rstn); gvs_->i_psum_valid(st_valid_); gvs_->i_psum_data(st_data_); gvs_->i_oc_last(st_oc_last_);
+            gvs_->i_oc_tile_last(st_oc_tile_last_); gvs_->i_psum_empty(st_empty_); gvs_->i_stream_stall(st_stall_); gvs_->o_psum_ready(st_ready_);
+            gvs_->i_side_addr(st_addr_); gvs_->i_side_mask(st_mask_); gvs_->i_side_ch(st_ch_); gvs_->i_side_scale(st_scale_);
+            gvs_->i_side_shift(st_shift_); gvs_->i_side_bypass(st_bypass_); gvs_->i_side_model(st_model_); gvs_->i_side_push(st_push_);
+            gvs_->result_sink = [this](uint32_t addr, uint32_t mask, const psum_vector_t<W32, int32_t> &v) { core_->poke_sramc(addr, v, mask); };
+            gvs_->dump = GvuTopBridge::dump_file();
+            GvuTopBridge::attach_elem(
+                [this](const int8_t *A, const int8_t *B, int8_t *out, size_t n, int zpA, int zpB, int zpO, int64_t SA, int64_t SB, int64_t SO, int sA,
+                       int sB, int sO, int rm, bool sub_before, bool sat16, uint64_t mc, uint64_t *cyc)
+                { return gvs_->add(A, B, out, n, zpA, zpB, zpO, SA, SB, SO, sA, sB, sO, rm, sub_before, sat16, mc, cyc); },
+                [this](const int8_t *in, int8_t *out, int g, int H, int W, int kk, int s, int p, uint64_t mc, uint64_t *cyc)
+                { return gvs_->maxpool(in, out, g, H, W, kk, s, p, mc, cyc); });
+            // HAS_GVU_REGS=1: the DFC configures and starts the unit through the register file of gvu_core (Reg 0..8), the register writes cost
+            // HAS_GVU_REG_LAT clock edges each (default 4, an ESTIMATE of AXI-Lite into gvu_core); the layer ends by the flags of the PSM stream
+            // (F1' in the tap), max pool and residual add run by registers (residual add: register proposal Reg 9..15, HAS_GVU_REGS_ADD=0 keeps it outside).
+            // It needs the jobs on the clock of the next knob, which it switches on.
+            // default on; HAS_GVU_REGS=0 drives GvuTop by assignments as before the register file
+            const char *regs_env = std::getenv("HAS_GVU_REGS");
+            if ((regs_env ? std::atoi(regs_env) : 1) == 1)
+                {
+                    unsigned lat = 4;
+                    if (const char *l = std::getenv("HAS_GVU_REG_LAT")) lat = static_cast<unsigned>(std::max(2, std::atoi(l)));
+                    regs_on_ = true;
+                    bool add_regs = true;     // HAS_GVU_REGS_ADD=0: residual add stays outside the register file (as before the add sequence existed)
+                    if (const char *a = std::getenv("HAS_GVU_REGS_ADD")) add_regs = std::atoi(a) != 0;
+                    gvs_->enable_regs(lat, add_regs);
+                    tap_->enable_f1();
+                }
+            // HAS_GVU_ELEM_CLK=1: residual add and max pool as jobs on the clock of the unit instead of the call style above; the DFC thread
+            // waits for each job (HasElemwise keeps its overlap of DMA and compute, now along the clock)
+            bool elem_clk = regs_on_;
+            const char *clk_env = std::getenv("HAS_GVU_ELEM_CLK");   // default on; HAS_GVU_ELEM_CLK=0 keeps the call style (unless HAS_GVU_REGS=1)
+            if ((clk_env ? std::atoi(clk_env) : 1) == 1) elem_clk = true;
+            if (elem_clk)
+                {
+                    ElemClock &c = ew_->clk;
+                    c.fits_add = &GvuTopStream::add_fits;
+                    c.start_add = [this](const int8_t *A, const int8_t *B, int8_t *out, size_t n, int zpA, int zpB, int zpO, int64_t SA, int64_t SB,
+                                         int64_t SO, int sA, int sB, int sO, int rm, uint64_t mc)
+                    { gvs_->start_add(A, B, out, n, zpA, zpB, zpO, SA, SB, SO, sA, sB, sO, rm, mc); };
+                    c.fits_maxpool = [this](int g, int H, int W, int kk, int s, int p) { return gvs_->maxpool_fits_now(g, H, W, kk, s, p); };
+                    c.start_maxpool = [this](const int8_t *in, int8_t *out, int g, int H, int W, int kk, int s, int p, uint64_t mc)
+                    { gvs_->start_maxpool(in, out, g, H, W, kk, s, p, mc); };
+                    c.finish = [this]()
+                    {
+                        while (!gvs_->job_done()) sc_core::wait(gvs_->job_event());
+                        return gvs_->job_cycles();
+                    };
+                }
+            // HAS_GVU_STALL=1: the core stops on o_stream_stall as in psm_top.sv (FIFO of 4 packets full and none leaving: the SRAM-C
+            // write is blocked and the whole core holds; the write goes through, once, in the first cycle with room). Off (HAS_GVU_STALL=0):
+            // the packet is taken anyway and counted (STALL NEEDED). HAS_GVU_STALL=2 is for tests only: the stall is computed and
+            // its edges counted, but not applied (the core never stops).
+            const char *stall_env = std::getenv("HAS_GVU_STALL");   // default 1 (the core stops on o_stream_stall); HAS_GVU_STALL=0 switches it off
+            stall_mode_ = stall_env ? std::atoi(stall_env) : 1;
+            if (stall_mode_ != 1 && stall_mode_ != 2) stall_mode_ = 0;
+            stream_stats().stall_mode = stall_mode_;
+            if (stall_mode_)
+                core_->set_stream_backpressure([this](uint32_t addr, const sramc_mask_t<W32> &m) { return stream_room(addr, m); });
+            std::atexit(&GvuTopStream::report);
+        }
+        // Packets the write hook pushes for an SRAM-C write (one per output channel of its lanes; the same walk as the hook in
+        // set_obp_inline); 0 when the write does not go into the stream.
+        uint32_t stream_packets_of(uint32_t addr, const sramc_mask_t<W32> &m) const
+        {
+            if (!obp_inline_ || !inl_active_) return 0;
+            const uint32_t e0 = (addr % 1536u) * W32;
+            uint32_t n = 0, k = 0;
+            while (k < uint32_t(W32))
+            {
+                if (!m[k]) { k++; continue; }
+                const uint32_t x = (e0 + k) / inl_npos_;
+                uint32_t j = k;
+                for (; j < uint32_t(W32); j++)
+                {
+                    if (!m[j]) continue;
+                    if ((e0 + j) / inl_npos_ != x) break;
+                }
+                if (x < inl_nch_) n++;
+                k = j;
+            }
+            return n;
+        }
+        // Backpressure of the core (rtl_ref_npu_top.h, set_stream_backpressure): true when the FIFO of the tap takes the packets of
+        // the write the PSM makes in this cycle.
+        bool stream_room(uint32_t addr, const sramc_mask_t<W32> &m)
+        {
+            StreamStats &ss = stream_stats();
+            ss.peek_checked = core_->stream_write_peek_checked();
+            ss.peek_mismatch = core_->stream_write_peek_mismatch();
+            const uint32_t n = stream_packets_of(addr, m);
+            if (n == 0 || tap_->in_ready_now(n)) return true;
+            if (stall_mode_ == 2)
+            {
+                ss.predicted_edges++;
+                ss.predicted_hash = StreamStats::hash_step(ss.predicted_hash, sc_core::sc_time_stamp().value());
+                return true;
+            }
+            ss.core_stall_cycles++;
+            if (n > 1) ss.stall_multi++;
+            return false;
+        }
+        // Start of a GEMM_FUSED layer: the unit takes the table and the parameters of the layer and enters its stream state on its own
+        // clock; the DFC waits for o_psum_ready (table load: LUT_ACT_INIT, a few cycles). The unit holds 8 bits of zero point (RTL
+        // register GEMM_FUSED [15:8], sign-extended): the beats of a layer whose zero point is outside int8 go as bypassed.
+        void stream_begin(const LayerInstr &li)
+        {
+            if (!stream_on()) return;
+            stream_zp_fits_ = GvuTopBridge::zp_fits(li.zp_out);
+            if (regs_on_)
+            {
+                // the layer configuration and the start are register writes; the DFC waits until the last one has been answered
+                gvs_->begin_layer_regs(li.act != 0 ? reinterpret_cast<const int8_t *>(stream_lut_) : nullptr, li.zp_out, knobs.round_mode, li.act != 0, knobs.req_narrow);
+                gvs_->reg_wait();
+            }
+            else
+            gvs_->begin_layer(li.act != 0 ? reinterpret_cast<const int8_t *>(stream_lut_) : nullptr, li.zp_out, knobs.round_mode, li.act != 0, knobs.req_narrow);
+            int g = 0;
+            while (!gvs_->ready_for_beats() && g++ < 1000) wait();
+            if (g >= 1000) st.framing_errors++;
+        }
+        void stream_end()
+        {
+            if (!stream_on()) return;
+            if (regs_on_) { gvs_->end_layer_regs(); return; }     // the unit has left GEMM_FUSED by itself; clear the done flag
+            gvs_->end_layer();
+            int g = 0;
+            while (!gvs_->layer_closed() && g++ < 1000) wait();
+        }
+
         // ---- GEMM_FUSED: one layer ----
         void exec_gemm(const LayerInstr &li)
         {
@@ -539,16 +713,18 @@ namespace has
                     // HAS_GVU_TOP=2: the table takes GvuTop's path, a DMA of 256 bytes into vbank1 and LUT_ACT_INIT, instead
                     // of 32 copies over the host port; the epilogue model gets the same table without bus cycles
                     obp_->load_lut(lut);
-                    wait(static_cast<int>(GvuTopBridge::table_cycles(dma_est(256))));
+                    if (stream_on()) { std::memcpy(stream_lut_, lut, 256); wait(static_cast<int>(dma_est(256))); }   // the unit loads it on its own clock (stream_begin)
+                    else wait(static_cast<int>(GvuTopBridge::table_cycles(dma_est(256))));
                 }
                 else
                     for (uint32_t lane = 0; lane < W32; lane++)
                         for (uint32_t e = 0; e < 256; e += 4) obp_write4(LUT_BASE + lane * 256 + e, lut + e);
             }
             obp_write(CFG_BASE + ObpT::REG_ZP_OUT, static_cast<uint32_t>(li.zp_out));
+            stream_begin(li);
             st.cfg_cycles += cycles_now() - t0;
             lut_en_.write(li.act != 0);
-            if (overlap_) { exec_tiles_ovl(li, K); return; }
+            if (overlap_) { exec_tiles_ovl(li, K); stream_end(); return; }
 
             TileIter it(g);
             uint32_t cur_a_bank = 2;
@@ -768,6 +944,7 @@ namespace has
             // 0 marks CON.INCNTLIM = 0 as a real value (one MAC per context); the core honours it with
             // FX1_A3_INCNTLIM_ZERO_RTL, otherwise it reads 0 as 1 like before
             core_mvm_k_.write(f[F_CFG_INCNTLIM] ? 1 : 0);
+            if (tap_ && tap_->f1_on()) tap_->begin_call(uint32_t(f[F_CFG_NCONTEXTS]), inl_call_last_);   // F1': the invocation starts
             wait();
             core_start_.write(true);
             core_busy_open();
@@ -796,8 +973,18 @@ namespace has
             if (obp_inline_)
             {
                 // OBP pipeline tail behind the PSM's last write (latency = HasObp LAT, ESTIMATE until the MAS)
-                wait(obp_->inline_latency());
+                if (obp_->inline_latency() > 0) wait(obp_->inline_latency());
                 st.obp_cycles += uint64_t(obp_->inline_latency());
+                if (stream_on())
+                {
+                    // HAS_GVU_TOP=3: no fixed tail; wait until nothing is left between the PSM and SRAM-C (usually 0 cycles: the last
+                    // result is written back the stream depth plus one edge after the last PSM write, o_done comes four edges after it, plus wait(8) above)
+                    uint64_t extra = 0;
+                    while (!gvs_->drained(*tap_) && extra < 10000) { wait(); extra++; }
+                    GvuTopStream::count_drain(extra);
+                    st.obp_cycles += extra;
+                    if (tap_->f1_on()) tap_->end_call();
+                }
                 core_rstn_.write(false);
                 return got_done && !got_stuck;
             }
@@ -863,6 +1050,7 @@ namespace has
             }
             obp_->set_nch(nch);
             inl_nch_ = nch;
+            inl_oc_tile_last_ = int(t.c0) + int(t.x_used) >= li.geom.cout;
             inl_npos_ = uint32_t(t.oy1 - t.oy0) * uint32_t(t.ox1 - t.ox0);
         }
         // CH2 from the C host half, then the int8 scatter into the destination tensor (descriptor emulation, D3).
@@ -932,6 +1120,7 @@ namespace has
                 const sauria_rtl::PerfCounters m0 = perf_;
 #endif
                 if (obp_inline_) { if (first) inline_params(li, cur); inl_active_ = last; }
+                inl_call_last_ = last && (i + 1 == n);       // F1': oc_tile_last only in the last call of the layer
                 core_begin(cin_t, cur, g, pad_tile(li, cur));
                 // ---- overlapped with core(i, part)
                 TileGeom nxt{};
@@ -1483,6 +1672,13 @@ namespace has
         sc_signal<sauria::host_data_t> obp_host_wdata_{"obp_host_wdata"}, obp_host_rdata_{"obp_host_rdata"};
         sc_signal<sauria::host_mask_t> obp_host_wmask_{"obp_host_wmask"};
 
+        sc_signal<bool> st_ready_{"st_ready"}, st_valid_{"st_valid"}, st_oc_last_{"st_oc_last"}, st_oc_tile_last_{"st_oc_tile_last"},
+                        st_empty_{"st_empty"}, st_stall_{"st_stall"}, st_bypass_{"st_bypass"};
+        sc_signal<psum_vector_t<W32, int32_t>> st_data_{"st_data"}, st_model_{"st_model"};
+        sc_signal<uint32_t> st_addr_{"st_addr"}, st_mask_{"st_mask"}, st_ch_{"st_ch"};
+        sc_signal<int64_t> st_scale_{"st_scale"};
+        sc_signal<int32_t> st_shift_{"st_shift"};
+        sc_signal<uint64_t> st_push_{"st_push"};
         sc_signal<bool> core_rstn_{"core_rstn"}, core_start_{"core_start"}, core_done_{"core_done"}, core_deadlock_{"core_deadlock"};
         uint64_t core_t0_{0};
         bool core_running_{false};

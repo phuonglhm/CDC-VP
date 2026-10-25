@@ -4,31 +4,43 @@
 //   HAS_GVU_TOP=1
 //     GEMM_FUSED epilogue  every beat of the PSM -> SRAM-C write path (has::HasObp::apply_inline) goes through GvuTop in
 //                          stream mode: the model first computes its own result, then the beat (32 psums, lane mask,
-//                          word address, Out_Scale / Out_Shift of its output channel) is run through the 9-cycle pipeline
-//                          to completion inside the call, so the value lands in the cycle of the PSM write as in the model.
+//                          word address, Out_Scale / Out_Shift of its output channel) is run through the stream pipeline
+//                          (kDepth cycles) to completion inside the call, so the value lands in the cycle of the PSM write as in the model.
+//                          The zero point is the 8-bit field of the GEMM_FUSED register, sign-extended into the 16-bit adder
+//                          (zp_fits / zp_reg); a zero point outside int8 keeps the model result.
 //                          The activation table of the layer is loaded through GvuTop's own path: the 256 bytes in rows
 //                          0 and 1 of vbank1 buffer 1, then LUT_ACT_INIT (i_gemm_lut_reload). The tail behind the last
 //                          write of a core pass is the stream depth (kDepth).
 //     residual add         every chunk of has::HasElemwise::add runs on GvuTop in runs of at most 128 rows (the int8 rows
 //                          of vbank1), the lanes past the tensor masked in the last row; the compute cycles of the chunk are
 //                          GvuTop's, from the start of a run to its done output.
-//     max pool             stays on GvuMaxPoolPipe (has::RtlElem::maxpool): GvuTop has no max pool state.
+//     max pool             every channel group of has::HasElemwise::maxpool (direct mode) runs on GvuTop in POOLING_MAX (port
+//                          of the latest hardware RTL drop): the tensor padded with -128 is written straight into vbank0 buffer 0 as
+//                          rows of 32 bytes (the role of the DMA with npu_pad2d; who pads is question Q-MP1), in runs that
+//                          fit vbank0 (800 rows) and vbank2 port 1 (1 024 rows), each run from a reset of the unit (bug
+//                          B12: the pooling feeder keeps first_load_cnt between runs and a run that follows another without
+//                          a reset is wrong); the result is read from vbank2 port 1. Compute cycles of the group: GvuTop's,
+//                          from the start of each run to its done output. A (k, s) the RTL does not pool (it has 2x2 s1/s2,
+//                          3x3 s1, 4x4 s1/s2/s4, 5x5 s1) stays on GvuMaxPoolPipe (has::RtlElem::maxpool), counted.
 //   HAS_GVU_TOP=2          as 1, and in has/has_npu_top.h the activation table of a layer costs the cycles of that path (a
 //                          DMA of 256 bytes into vbank1 plus LUT_ACT_INIT, table_cycles()) instead of 32 copies over the
 //                          host port of the model's epilogue.
 // The Scratchpad DMA port of GvuTop does nothing (as in the RTL), so the operands are written straight into its banks and
 // the DMA cycles stay those of the model. Every result is compared with the model's and counted; values outside the
-// containers of GvuTop keep the model result and are counted as "not expressible". One GvuTop serves both instructions
-// (they run one after the other): before an add the epilogue run is stopped, before a beat the controller is put back
-// into GEMM_FUSED_ST1. A table is printed when the program exits ("[gvu-top] ..." lines).
+// containers of GvuTop keep the model result and are counted as "not expressible". One GvuTop serves all three operations
+// (they run one after the other): before an add or a max pool the epilogue run is stopped, before a beat the controller is
+// put back into GEMM_FUSED_ST1 (after the reset of a max pool run the activation table is loaded again). A table is
+// printed when the program exits ("[gvu-top] ..." lines).
 #ifndef HAS_GVU_TOP_BRIDGE_H
 #define HAS_GVU_TOP_BRIDGE_H
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#include "has/gvu_quant.h"
 #include "has/rtl_ref_gvu_top.h"
 
 namespace has
@@ -36,28 +48,62 @@ namespace has
     class GvuTopBridge
     {
     public:
-        static constexpr int kDepth = 9;                 // stream depth of GEMM_FUSED in GvuTop (register cuts of the MAS)
+        // stream depth of GEMM_FUSED in GvuTop: the one shared value rtl_ref_gvu::GEMM_STREAM_DEPTH (default 9, the register
+        // cuts of the MAS; -DGVU_GEMM_STREAM_DEPTH=11 for the depth the hardware RTL measures)
+        static constexpr int kDepth = rtl_ref_gvu::GEMM_STREAM_DEPTH;
 
         static bool on() { return inst().level_ > 0; }
+        // HAS_GVU_TOP=3 (has/gvu_top_stream.h): residual add and max pool run on the unit of the clocked connection instead of
+        // this class's own unit; the epilogue never comes here at level 3 (it travels the clocked stream).
+        typedef std::function<bool(const int8_t *, const int8_t *, int8_t *, size_t, int, int, int, int64_t, int64_t, int64_t, int, int, int, int,
+                                   bool, bool, uint64_t, uint64_t *)> AddFn;
+        typedef std::function<bool(const int8_t *, int8_t *, int, int, int, int, int, int, uint64_t, uint64_t *)> MaxpoolFn;
+        static void attach_elem(AddFn a, MaxpoolFn m) { inst().ext_add_ = std::move(a); inst().ext_maxpool_ = std::move(m); }
+        // HAS_GVU_TOP_DUMP=<file>: one line per epilogue beat in the order of the beats, "B <channel> <mask> <32 hex bytes>"; the clocked
+        // connection writes the same lines, so the two files can be compared byte for byte.
+        static std::FILE *dump_file()
+        {
+            static std::FILE *f = nullptr;
+            static bool tried = false;
+            if (!tried) { tried = true; if (const char *p = std::getenv("HAS_GVU_TOP_DUMP")) f = std::fopen(p, "w"); }
+            return f;
+        }
         static int level() { return inst().level_; }
         // Cycles of loading one activation table through GvuTop: DMA of the 256 bytes (dma_cycles, from the caller's DMA
         // estimate) plus the controller from IDLE through LUT_ACT_INIT into GEMM_FUSED_ST1 (measured once on a spare unit).
         static uint64_t table_cycles(uint64_t dma_cycles) { return dma_cycles + uint64_t(inst().init_cycles_); }
 
+        // Narrowing of the requant knob (has::Knobs::req_narrow) on GvuTop: SAT16 -> NARROW_SATURATE, WRAP16 -> NARROW_WRAP.
+        // Returns false for a narrowing GvuTop does not have (NARROW_NONE).
+        static bool map_narrow(int req_narrow, rtl_ref_gvu::NarrowMode *nm)
+        {
+            if (req_narrow == SAT16) { *nm = rtl_ref_gvu::NARROW_SATURATE; return true; }
+            if (req_narrow == WRAP16) { *nm = rtl_ref_gvu::NARROW_WRAP; return true; }
+            return false;
+        }
+
+        // Zero point of GEMM_FUSED: the RTL holds 8 bits (gvu_config_regs.sv, GEMM_FUSED register [15:8]) and sign-extends them
+        // into the 16-bit adder (gvu_top.sv, adder2_b = {{8{z[7]}}, z}). zp_fits: the value has those 8 bits; zp_reg: what
+        // the adder gets from the low byte of the value.
+        static bool zp_fits(int64_t zp) { return fit(zp, 8); }
+        static int32_t zp_reg(int64_t zp) { return static_cast<int8_t>(static_cast<uint8_t>(zp & 0xFF)); }
+
         // One beat of the GEMM_FUSED epilogue. out holds the model result on entry and GvuTop's result on return (masked
         // lanes). lut: the layer's table (256 entries, index = int8 value + 128); table_new: it changed since the last beat.
-        // round_mode: has::RoundMode. Returns false (out untouched) when the parameters do not fit GvuTop.
+        // round_mode: has::RoundMode; req_narrow: has::ReqNarrow (the requant knob). Returns false (out untouched) when the
+        // parameters do not fit GvuTop.
         template <class Vec>
-        static bool gemm_beat(const Vec &in, Vec &out, uint32_t mask, uint32_t addr, int64_t S, int s, int zp, int round_mode, bool sat16,
-                              bool act, const int8_t *lut, bool table_new)
+        static bool gemm_beat_narrow(const Vec &in, Vec &out, uint32_t mask, uint32_t addr, int64_t S, int s, int zp, int round_mode,
+                                     int req_narrow, bool act, const int8_t *lut, bool table_new)
         {
             namespace R = rtl_ref_gvu;
             GvuTopBridge &b = inst();
             Stat &st = b.st_[0];
             st.calls++;
-            if (!sat16 || !fit(S, 32) || s < 0 || s > 63 || !fit(zp, 16) || round_mode < 0 || round_mode > 6) { st.not_expr++; return false; }
+            R::NarrowMode nm = R::NARROW_SATURATE;
+            if (!map_narrow(req_narrow, &nm) || !fit(S, 32) || s < 0 || s > 63 || !zp_fits(zp) || round_mode < 0 || round_mode > 6) { st.not_expr++; return false; }
             if (table_new || !b.table_loaded_) b.load_table(lut);
-            b.enter_gemm(map_round(round_mode), zp, act);
+            b.enter_gemm(map_round(round_mode), nm, zp, act);
             R::GvuTop::In &i = b.gin_;
             i.i_psum_valid = true;
             for (size_t l = 0; l < size_t(R::GVU_LANES); l++) i.i_psum_vec[l] = static_cast<int32_t>(in[l]);
@@ -79,7 +125,59 @@ namespace has
                 out[l] = h;
             }
             st.cycles += uint64_t(n);
+            if (std::FILE *df = dump_file())
+            {
+                std::fprintf(df, "B %u %08x", addr, mask);
+                for (int l = 0; l < 32; l++) std::fprintf(df, " %02x", ((mask >> l) & 1u) ? unsigned(static_cast<uint8_t>(static_cast<int8_t>(out[size_t(l)]))) : 0u);
+                std::fprintf(df, "\n");
+            }
             return true;
+        }
+        // As gemm_beat_narrow with sat16 = (req_narrow == has::SAT16); any other narrowing is not expressible here.
+        template <class Vec>
+        static bool gemm_beat(const Vec &in, Vec &out, uint32_t mask, uint32_t addr, int64_t S, int s, int zp, int round_mode, bool sat16,
+                              bool act, const int8_t *lut, bool table_new)
+        {
+            return gemm_beat_narrow(in, out, mask, addr, S, s, zp, round_mode, sat16 ? int(SAT16) : int(NARROW_NONE), act, lut, table_new);
+        }
+
+        // ---- HAS_GVU_AGU_ND (slice / concat on the GVU, model proposal, has/gvu_agu_nd.h): where the residual add and the max pool keep
+        // their data in the Scratchpad. 0 / unset: as before (nothing bound). 1: AGU_ND bound with programs that give the same rows as
+        // before. 2: shifted programs -- residual add: A at vbank0 rows 37 + 2r (source, stride 2), result at rows 400 + r (destination);
+        // max pool: output rows permuted [C][OH][Wt] -> [OH][C][Wt] (destination). Loads and read-backs follow the programs, so the
+        // values and the cycles of GvuTop are those of 0.
+        static int agu_nd_level()
+        {
+            static const int v = [] { const char *e = std::getenv("HAS_GVU_AGU_ND"); return e ? std::atoi(e) : 1; }();   // default 1
+            return v;
+        }
+        static unsigned agu_nd_a_row(size_t r) { return static_cast<unsigned>(agu_nd_level() == 2 ? 37 + 2 * r : r); }
+        static unsigned agu_nd_out_row(size_t r) { return static_cast<unsigned>(agu_nd_level() == 2 ? 400 + r : r); }
+        // residual add run of `rows` rows (at most 128: A fits vbank0 below row 400 in level 2)
+        static void agu_nd_add(rtl_ref_gvu::GvuTop::In &i, size_t rows)
+        {
+            namespace R = rtl_ref_gvu;
+            if (!agu_nd_level()) return;
+            const bool sh = agu_nd_level() == 2;
+            i.i_agu_nd_ctrl.src_port = R::AguNdCtrl::VBANK0; i.i_agu_nd_ctrl.src_on = true;
+            i.i_agu_nd_ctrl.dst_port = R::AguNdCtrl::VBANK0; i.i_agu_nd_ctrl.dst_on = true;
+            i.i_agu_src.base = sh ? 37u : 0u; i.i_agu_src.n = {{static_cast<unsigned>(rows), 1, 1, 1}}; i.i_agu_src.s = {{sh ? 2 : 1, 0, 0, 0}};
+            i.i_agu_dst.base = sh ? 400u : 0u; i.i_agu_dst.n = {{static_cast<unsigned>(rows), 1, 1, 1}}; i.i_agu_dst.s = {{1, 0, 0, 0}};
+        }
+        // max pool run of c channels, OH output rows, Wt W tiles: c * OH * Wt output rows of vbank2 port 1
+        static void agu_nd_pool(rtl_ref_gvu::GvuTop::In &i, unsigned wt, unsigned oh, unsigned c)
+        {
+            namespace R = rtl_ref_gvu;
+            if (!agu_nd_level()) return;
+            i.i_agu_nd_ctrl.dst_port = R::AguNdCtrl::VBANK2; i.i_agu_nd_ctrl.dst_on = true;
+            i.i_agu_dst.base = 0;
+            if (agu_nd_level() == 2) { i.i_agu_dst.n = {{wt, oh, c, 1}}; i.i_agu_dst.s = {{1, static_cast<int>(c * wt), static_cast<int>(wt), 0}}; }
+            else { i.i_agu_dst.n = {{c * oh * wt, 1, 1, 1}}; i.i_agu_dst.s = {{1, 0, 0, 0}}; }
+        }
+        // vbank2 port 1 row (int8 rows) where output row `row` of the run lies
+        static unsigned agu_nd_pool_row(const rtl_ref_gvu::GvuTop::In &i, unsigned row)
+        {
+            return i.i_agu_nd_ctrl.dst_on ? i.i_agu_dst.addr_at(row, 10) : row;
         }
 
         // Residual add of one chunk of n elements, out holds the model result on entry and GvuTop's on return. cycles: the
@@ -89,6 +187,7 @@ namespace has
         {
             namespace R = rtl_ref_gvu;
             GvuTopBridge &b = inst();
+            if (b.ext_add_) return b.ext_add_(A, B, out, n, zpA, zpB, zpO, SA, SB, SO, sA, sB, sO, round_mode, sub_before, sat16, model_cycles, cycles);
             Stat &st = b.st_[1];
             st.calls++;
             if (!sub_before || !sat16 || !fit(SA, 32) || !fit(SB, 32) || !fit(SO, 32) || !fit(zpA, 8) || !fit(zpB, 8) || !fit(zpO, 8) ||
@@ -111,7 +210,7 @@ namespace has
                         ra[l] = static_cast<uint8_t>(A[e]);
                         v1[r / 4][32 * (r % 4) + l] = static_cast<uint8_t>(B[e]);
                     }
-                    b.top_.scratchpad().sram(0, 0).poke(static_cast<unsigned>(r), ra);
+                    b.top_.scratchpad().sram(0, 0).poke(agu_nd_a_row(r), ra);
                 }
                 for (size_t k = 0; k < v1.size(); k++) b.top_.scratchpad().sram(1, 0).poke(static_cast<unsigned>(k), v1[k]);
                 R::GvuTop::In i;
@@ -122,6 +221,7 @@ namespace has
                 i.i_res_round = map_round(round_mode); i.i_res_out_int16 = false;
                 const size_t tail = n - (r0 + rows - 1) * 32;
                 i.i_res_last_lane_mask = (r0 + rows == rows_total && tail < 32) ? ((1u << tail) - 1u) : 0xFFFFFFFFu;
+                agu_nd_add(i, rows);
                 i.i_pipeline_en = true;
                 bool done = false;
                 uint64_t c = 0;
@@ -133,7 +233,7 @@ namespace has
                 st.runs++;
                 for (size_t r = 0; r < rows; r++)
                 {
-                    const R::SpBytes orow = b.top_.scratchpad().sram(0, 0).word(static_cast<unsigned>(r));
+                    const R::SpBytes orow = b.top_.scratchpad().sram(0, 0).word(agu_nd_out_row(r));
                     for (size_t l = 0; l < 32; l++)
                     {
                         const size_t e = (r0 + r) * 32 + l;
@@ -149,8 +249,81 @@ namespace has
             *cycles = cyc;
             return true;
         }
-        // Max pool chunks handed to GvuMaxPoolPipe instead (no max pool state in GvuTop): counted for the report only.
-        static void maxpool_elsewhere() { inst().st_[2].calls++; }
+        // Max pool of a group of g channels [g][H][W], padding p with -128, k x k, stride s. out holds the model result
+        // [g][Ho][Wo] on entry and GvuTop's on return. cycles: the GvuTop cycles of the runs of the group. Returns false (out
+        // untouched) when GvuTop cannot pool this shape: a (k, s) the RTL does not have, a padded channel larger than vbank0,
+        // fields wider than the 8-bit registers, or a run that does not finish.
+        static bool maxpool(const int8_t *in, int8_t *out, int g, int H, int W, int kk, int s, int p, uint64_t model_cycles, uint64_t *cycles)
+        {
+            namespace R = rtl_ref_gvu;
+            GvuTopBridge &b = inst();
+            if (b.ext_maxpool_) return b.ext_maxpool_(in, out, g, H, W, kk, s, p, model_cycles, cycles);
+            Stat &st = b.st_[2];
+            st.calls++;
+            const bool shape = (kk == 2 && (s == 1 || s == 2)) || (kk == 3 && s == 1) || (kk == 4 && (s == 1 || s == 2 || s == 4)) || (kk == 5 && s == 1);
+            const int Hp = H + 2 * p, Wp = W + 2 * p, Wt = (Wp + 31) / 32;
+            const int Ho = (Hp - kk) / s + 1, Wo = (Wp - kk) / s + 1;
+            const int OL = s == 1 ? 32 : (kk == s ? (32 - kk) / s + 1 : (32 - kk) / s + 2);   // output lanes of one W tile
+            const int cmax = std::min({800 / std::max(1, Hp * Wt), 1024 / std::max(1, Ho * Wt), 255});
+            if (!shape || p < 0 || Ho < 1 || Wo < 1 || Ho > 255 || Wt > 255 || Wo > Wt * OL || cmax < 1) { st.not_expr++; return false; }
+            b.leave_gemm();
+            std::vector<int8_t> res(static_cast<size_t>(g) * Ho * Wo);
+            uint64_t cyc = 0;
+            for (int c0 = 0; c0 < g; c0 += cmax)
+            {
+                const int n = std::min(cmax, g - c0);
+                b.reset();                                   // B12: a run must start from a reset of the pooling feeder
+                for (int c = 0; c < n; c++)
+                    for (int y = 0; y < Hp; y++)
+                        for (int t = 0; t < Wt; t++)
+                        {
+                            R::SpBytes row(32, 0);
+                            for (int l = 0; l < 32 && 32 * t + l < Wp; l++)
+                            {
+                                const int yy = y - p, xx = 32 * t + l - p;
+                                row[static_cast<size_t>(l)] = (yy < 0 || yy >= H || xx < 0 || xx >= W)
+                                    ? static_cast<uint8_t>(0x80) : static_cast<uint8_t>(in[(static_cast<size_t>(c0 + c) * H + yy) * W + xx]);
+                            }
+                            b.top_.scratchpad().sram(0, 0).poke(static_cast<unsigned>((c * Hp + y) * Wt + t), row);
+                        }
+                R::GvuTop::In i;
+                i.i_gvu_op = R::GVU_OP_MAXPOOL;
+                i.i_pooling_mode = kk - 2; i.i_pooling_stride = static_cast<unsigned>(s); i.i_pooling_num_w_tile = static_cast<unsigned>(Wt);
+                i.i_pooling_c = static_cast<unsigned>(n); i.i_pooling_oh = static_cast<unsigned>(Ho);
+                i.i_pooling_c_move = static_cast<unsigned>(Wt * Hp); i.i_pooling_h_move = static_cast<unsigned>(Wt * s);
+                agu_nd_pool(i, static_cast<unsigned>(Wt), static_cast<unsigned>(Ho), static_cast<unsigned>(n));
+                i.i_pipeline_en = true;
+                bool done = false;
+                uint64_t c = 0;
+                const uint64_t guard = static_cast<uint64_t>(n) * Ho * Wt * 64 + 1000;
+                for (; c < guard && !done; c++) done = b.top_.tick(i, true).o_maxpool_pipe_done;
+                i.i_pipeline_en = false;
+                for (int q = 0; q < 4 && b.top_.state() != R::IDLE; q++) b.top_.tick(i, true);
+                if (!done || b.top_.state() != R::IDLE) { st.no_out++; st.not_expr++; b.reset(); return false; }
+                cyc += c;
+                st.runs++;
+                for (int cc = 0; cc < n; cc++)
+                    for (int oh = 0; oh < Ho; oh++)
+                        for (int ow = 0; ow < Wo; ow++)
+                        {
+                            const unsigned row = agu_nd_pool_row(i, static_cast<unsigned>((cc * Ho + oh) * Wt + ow / OL));
+                            const R::SpBytes w = b.top_.scratchpad().sram(2, 0).word(row >> 2);
+                            res[(static_cast<size_t>(c0 + cc) * Ho + oh) * Wo + ow] = static_cast<int8_t>(w[(row & 3u) * 32u + static_cast<unsigned>(ow % OL)]);
+                        }
+            }
+            b.reset();                                       // leave the unit as a fresh one for the next operation
+            for (size_t e = 0; e < res.size(); e++)
+            {
+                st.lanes++;
+                if (res[e] != out[e]) st.miss("element %zu of the group model=%d GvuTop=%d", e, out[e], res[e]);
+                out[e] = res[e];
+            }
+            st.cycles += cyc; st.model_cycles += model_cycles;
+            *cycles = cyc;
+            return true;
+        }
+        // Max pool channels handed to GvuMaxPoolPipe instead (a shape GvuTop does not pool): counted for the report only.
+        static void maxpool_elsewhere() { inst().mp_elsewhere_++; }
 
     private:
         struct Stat
@@ -162,16 +335,18 @@ namespace has
         int level_{0};
         int init_cycles_{0};
         bool table_loaded_{false};
-        uint64_t tables_{0}, enters_{0}, stops_{0}, resets_{0};
+        uint64_t tables_{0}, enters_{0}, stops_{0}, resets_{0}, mp_elsewhere_{0};
         rtl_ref_gvu::GvuTop top_;
         rtl_ref_gvu::GvuTop::In gin_;     // inputs held between the beats of an epilogue run
+        AddFn ext_add_;
+        MaxpoolFn ext_maxpool_;
         Stat st_[3];
 
         static GvuTopBridge &inst() { static GvuTopBridge b; return b; }
         GvuTopBridge()
         {
             const char *v = std::getenv("HAS_GVU_TOP");
-            level_ = v ? std::atoi(v) : 0;
+            level_ = v ? std::atoi(v) : 3;   // default 3 (GvuTop on the clock of the core); HAS_GVU_TOP=0 switches it off
             if (level_ <= 0) { level_ = 0; return; }
             reset();
             // cycles of one table load on a spare unit: IDLE -> LUT_ACT_INIT -> GEMM_FUSED_ST1
@@ -211,11 +386,12 @@ namespace has
             stops_++;
             if (top_.state() != R::IDLE) reset();
         }
-        // Puts the controller into GEMM_FUSED_ST1 with the held parameters of the layer (rounding, zero point, activation).
-        void enter_gemm(rtl_ref_gvu::RoundMode rm, int zp, bool act)
+        // Puts the controller into GEMM_FUSED_ST1 with the held parameters of the layer (rounding, narrowing, zero point,
+        // activation).
+        void enter_gemm(rtl_ref_gvu::RoundMode rm, rtl_ref_gvu::NarrowMode nm, int zp, bool act)
         {
             namespace R = rtl_ref_gvu;
-            gin_.i_gemm_round = rm; gin_.i_gemm_zp16 = zp; gin_.i_gemm_skip_act = !act;
+            gin_.i_gemm_round = rm; gin_.i_gemm_narrow = nm; gin_.i_gemm_zp16 = zp_reg(zp); gin_.i_gemm_skip_act = !act;
             if (top_.state() == R::GEMM_FUSED_ST1) return;
             leave_gemm();
             gin_.i_gvu_op = R::GVU_OP_GEMM_FUSED; gin_.i_gemm_stream = true; gin_.i_gemm_stream_stop = false; gin_.i_psum_valid = false;
@@ -252,8 +428,9 @@ namespace has
             for (int i = 0; i < 3; i++)
             {
                 const Stat &s = b.st_[i];
+                if (i == 2 && b.mp_elsewhere_)
+                    std::printf("[gvu-top] %-13s | channels %llu on GvuMaxPoolPipe (a shape GvuTop does not pool)\n", fn[i], static_cast<unsigned long long>(b.mp_elsewhere_));
                 if (s.calls == 0) continue;
-                if (i == 2) { std::printf("[gvu-top] %-13s | chunks %llu on GvuMaxPoolPipe (no max pool in GvuTop)\n", fn[i], static_cast<unsigned long long>(s.calls)); continue; }
                 std::printf("[gvu-top] %-13s | calls %10llu | not expressible %6llu | lanes %12llu | differ %8llu | GvuTop cycles %12llu | model cycles %12llu | %s\n",
                             fn[i], static_cast<unsigned long long>(s.calls), static_cast<unsigned long long>(s.not_expr), static_cast<unsigned long long>(s.lanes),
                             static_cast<unsigned long long>(s.differ), static_cast<unsigned long long>(s.cycles), static_cast<unsigned long long>(s.model_cycles),

@@ -242,20 +242,31 @@ namespace rtl_ref_gvu
     // accumulate beat without in_last is also held back while out_ready = 0. OUT_PIPE = 1: in_ready = pipe_en, output
     // register, one cycle (the "Latency: one cycle" of the file header). Out::unstable is kept for callers and is always
     // false (an earlier RTL had a combinational loop here).
+    // Per-lane mode (latest hardware RTL drop, in_lane_mode = 1, used by MAXPOOL): every lane has its own valid / ready / first / last
+    // and its own accumulator update; the shared in_valid / in_ready path is then closed (in_ready = 0). in_lane_ready =
+    // out_lane_ready (OUT_PIPE = 0) or the lane's own pipe enable (OUT_PIPE = 1); a lane emits on in_lane_last (every
+    // accepted beat in CMP_ELEMENTWISE). With in_lane_mode = 0 nothing changes from the shared mode above. OUT_PIPE = 1
+    // keeps out_valid_q while in per-lane mode, as the RTL does (B10 of the review 1051; gvu_top builds OUT_PIPE = 0).
     class Vcmp32
     {
     public:
-        struct In { bool in_valid; CmpMode in_cmp_mode; CmpOp in_op; ElemW in_elem_w; bool in_signed, in_src1_bcast, in_first, in_last; V32 in_src0, in_src1; bool out_ready; };
-        struct Out { bool in_ready, out_valid, unstable; V32 out_res; };
+        struct In
+        {
+            bool in_valid; CmpMode in_cmp_mode; CmpOp in_op; ElemW in_elem_w; bool in_signed, in_src1_bcast, in_first, in_last; V32 in_src0, in_src1; bool out_ready;
+            bool in_lane_mode{false};
+            uint32_t in_lane_valid{0}, in_lane_first{0}, in_lane_last{0}, out_lane_ready{0};
+        };
+        struct Out { bool in_ready, out_valid, unstable; V32 out_res; uint32_t in_lane_ready{0}, out_lane_valid{0}; };
         explicit Vcmp32(const FuParams &p = FuParams()) : P_(p) { acc_q_.fill(0); out_res_q_.fill(0); }
-        void reset() { acc_q_.fill(0); out_valid_q_ = false; }
+        void reset() { acc_q_.fill(0); out_valid_q_ = false; lane_out_valid_q_ = 0; }
         V32 result(const In &i) const
         {
             V32 r{};
             for (int l = 0; l < GVU_LANES; l++)
             {
                 const uint32_t src1_eff = i.in_src1_bcast ? i.in_src1[0] : i.in_src1[l];
-                const uint32_t cmp_b = (i.in_cmp_mode == CMP_ELEMENTWISE) ? src1_eff : (i.in_first ? i.in_src0[l] : acc_q_[l]);
+                const bool first = i.in_lane_mode ? ((i.in_lane_first >> l) & 1u) != 0 : i.in_first;
+                const uint32_t cmp_b = (i.in_cmp_mode == CMP_ELEMENTWISE) ? src1_eff : (first ? i.in_src0[l] : acc_q_[l]);
                 r[l] = lane_minmax(i.in_src0[l], cmp_b, i.in_elem_w, i.in_signed, i.in_op);
             }
             return r;
@@ -264,29 +275,54 @@ namespace rtl_ref_gvu
         {
             Out o{};
             const bool emit = (i.in_cmp_mode == CMP_ELEMENTWISE) || i.in_last;
+            const uint32_t lane_on = i.in_lane_mode ? 0xFFFFFFFFu : 0u;
+            const uint32_t lane_emit = (i.in_cmp_mode == CMP_ELEMENTWISE) ? 0xFFFFFFFFu : i.in_lane_last;
             if (P_.CMP_OUT_PIPE)
             {
-                o.in_ready = !out_valid_q_ || i.out_ready;
+                o.in_ready = (!out_valid_q_ || i.out_ready) && !i.in_lane_mode;
                 o.out_valid = out_valid_q_;
                 o.out_res = out_res_q_;
+                o.in_lane_ready = (~lane_out_valid_q_ | i.out_lane_ready) & lane_on;
+                o.out_lane_valid = lane_out_valid_q_;
             }
             else
             {
                 o.unstable = false;
-                o.in_ready = i.out_ready;
-                o.out_valid = i.in_valid && i.out_ready && emit;
+                o.in_ready = i.out_ready && !i.in_lane_mode;
+                o.out_valid = i.in_valid && o.in_ready && emit;
                 o.out_res = result(i);
+                o.in_lane_ready = i.out_lane_ready & lane_on;
+                o.out_lane_valid = i.in_lane_valid & o.in_lane_ready & lane_emit;
             }
             return o;
         }
         void tick(const In &i)
         {
             const Out o = eval(i);
-            const bool pipe_en = P_.CMP_OUT_PIPE ? o.in_ready : true, accept = i.in_valid && o.in_ready;
+            const bool pipe_en = P_.CMP_OUT_PIPE ? (!out_valid_q_ || i.out_ready) : true, accept = i.in_valid && o.in_ready;
             const bool emit = (i.in_cmp_mode == CMP_ELEMENTWISE) || i.in_last;
             const V32 r = result(i);
-            if (P_.CMP_OUT_PIPE && pipe_en) { out_valid_q_ = accept && emit; if (accept) out_res_q_ = r; }
-            if (pipe_en && accept && i.in_cmp_mode == CMP_ACCUMULATE) acc_q_ = r;
+            if (!i.in_lane_mode)
+            {
+                if (P_.CMP_OUT_PIPE && pipe_en) { out_valid_q_ = accept && emit; if (accept) out_res_q_ = r; }
+                if (pipe_en && accept && i.in_cmp_mode == CMP_ACCUMULATE) acc_q_ = r;
+                return;
+            }
+            const uint32_t lane_emit = (i.in_cmp_mode == CMP_ELEMENTWISE) ? 0xFFFFFFFFu : i.in_lane_last;
+            const uint32_t lane_accept = i.in_lane_valid & o.in_lane_ready;
+            // OUT_PIPE = 0: lane_out_valid_q is lane_accept & lane_emit, so the lane pipe enable reduces to lane_accept
+            const uint32_t lane_pipe_en = P_.CMP_OUT_PIPE ? (~lane_out_valid_q_ | i.out_lane_ready) : 0xFFFFFFFFu;
+            for (int l = 0; l < GVU_LANES; l++)
+            {
+                const uint32_t b = 1u << l;
+                if (!(lane_pipe_en & b)) continue;
+                if (P_.CMP_OUT_PIPE)
+                {
+                    lane_out_valid_q_ = (lane_accept & lane_emit & b) ? (lane_out_valid_q_ | b) : (lane_out_valid_q_ & ~b);
+                    if (lane_accept & b) out_res_q_[l] = r[l];
+                }
+                if ((lane_accept & b) && i.in_cmp_mode == CMP_ACCUMULATE) acc_q_[l] = r[l];
+            }
         }
         const V32 &acc() const { return acc_q_; }
 
@@ -294,6 +330,7 @@ namespace rtl_ref_gvu
         FuParams P_;
         V32 acc_q_, out_res_q_;
         bool out_valid_q_{false};
+        uint32_t lane_out_valid_q_{0};
     };
 
     // ---- FUs/gvu_vector_clamp.sv, module gvu_vector_clamp32 ------------------------------------------------------------

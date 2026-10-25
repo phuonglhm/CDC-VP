@@ -158,6 +158,35 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
         // set by npu_top: points to Control's shadow seam_pipeline_en_.
         std::function<bool()> peek_pipe_en_{};
 #endif
+        bool stream_stall_{false};   // stream backpressure of this step (set_stream_stall); false: no effect
+#if defined(FX1_A3_PSM_SHIFT_FSM) && defined(FX1_A3_PSM_WDATA_MGR) && defined(FX1_A3_WRADDR_Q4)
+        // Stream backpressure (RTL psm_top.sv:303-324, write_pipeline_stall): when the FIFO of the PSM -> vector-unit stream
+        // is full, the write of the cycle is blocked and the write path holds (address / write-enable shim, write data manager,
+        // index counter, shift FSM, the pop into the output shift buffer); the same write is presented again in the next
+        // cycle. set_stream_stall(): the core is held in this step; set by the top level before any block of the core steps.
+        void set_stream_stall(bool s) { stream_stall_ = s; }
+        bool stream_stall() const { return stream_stall_; }
+        // The SRAM-C write this step will make, read from the registers before the step, so that the top level can decide
+        // the stall before any block steps, in the same cycle as the write (the stall of the RTL is combinational).
+        // Returns false when the step makes no write.
+        bool peek_write_now(uint32_t &addr, sramc_mask_t<Y_DIM> &mask) const
+        {
+            if (!i_rstn.read() || i_fsm_reset.read()) return false;
+            sauria_rtl::PsmShiftFsm<X_DIM> f = psm_fsm_;
+            const auto fo = f.compute_outputs(typename sauria_rtl::PsmShiftFsm<X_DIM>::Inputs());   // write outputs: state only
+            if (!fo.wr_flag || fo.wr_feeder_clear) return false;
+            // the step shifts the shim when wr_feeder_en, then writes from q4 (FX1_A3_WRADDR_Q4)
+            if (!(fo.wr_feeder_en ? sramc_wren_q3_ : sramc_wren_q4_)) return false;
+            addr = fo.wr_feeder_en ? sramc_addr_q3_ : sramc_addr_q4_;
+            auto w = psm_wdata_mgr_;   // tick() returns the registers before the step, whatever the inputs
+            const auto wo = w.tick(typename sauria_rtl::PsmWdataManager<Y_DIM, Y_DIM, psum_vector_t<Y_DIM, T_PSUM>, T_PSUM>::Inputs());
+            for (int j = 0; j < Y_DIM; j++) mask[j] = (wo.sramc_wmask >> j) & 1u;
+            return true;
+        }
+        // Self-check of peek_write_now() against the write the step really makes (counted while check_write_peek is set).
+        bool check_write_peek{false};
+        uint64_t write_peek_checked{0}, write_peek_mismatch{0};
+#endif
 
         ///Task#5 retry v3: per-context SRAM-C drain
         // accessors (Gap A2 fix). Backing members stay private below.
@@ -515,6 +544,11 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             }
 
             dbg_cycle++;
+#if defined(FX1_A3_PSM_SHIFT_FSM) && defined(FX1_A3_PSM_WDATA_MGR) && defined(FX1_A3_WRADDR_Q4)
+            uint32_t peek_addr_ = 0;
+            sramc_mask_t<Y_DIM> peek_mask_;
+            const bool peek_write_ = check_write_peek && peek_write_now(peek_addr_, peek_mask_);
+#endif
 #ifdef FX1_A3_PSM_SEAM_ORDER
             // Control has already stepped, so the shadow holds THIS cycle's value.
             const bool pipe_en_now_ = peek_pipe_en_ ? peek_pipe_en_()
@@ -582,6 +616,7 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                 fsm_in.inactive_cols = 0;        // Psm has no real i_inactive_cols port
 #endif
                 fsm_in.pipeline_en = pipe_en_now_;
+                fsm_in.write_stall = stream_stall_;
 #ifdef FX1_A3_PSM_REAL_PRELOAD
                 // wire the REAL preload_en (the port already
                 // exists, was just ignored) and drop force_write_path, so the
@@ -760,6 +795,7 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                 typename sauria_rtl::PsmIdxCnt<11, Y_DIM>::Inputs idx_in;
                 idx_in.cnt_en = fsm_out.cnt_en;
                 idx_in.cnt_clear = fsm_out.cnt_clear;
+                idx_in.pause = stream_stall_;
                 idx_in.wr_flag = fsm_out.wr_flag;
                 idx_in.cxlim = i_cxlim.read();
                 idx_in.cxstep = i_cxstep.read();
@@ -922,7 +958,7 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                         (cscan_cap_fire) ||
                         iso_buff_shift ||
                         rdata_out.fifo_push ||
-                        psm_wdata_mgr_.peek_fifo_pop();
+                        (psm_wdata_mgr_.peek_fifo_pop() && !stream_stall_);   // RTL psm_top.sv:414-415
                     if (buff_shift_en)    ++g_fx1_shift_cnt;   // T1c
                     if (fsm_out.cscan_en) ++g_fx1_cscan_cnt;   // T1c
 
@@ -1050,7 +1086,7 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                     typename sauria_rtl::PsmWdataManager<Y_DIM, Y_DIM,
                         psum_vector_t<Y_DIM, T_PSUM>, T_PSUM>::Inputs wdata_in;
                     wdata_in.fifo_dout = buff_dout;
-                    wdata_in.feeder_en = fsm_out.wr_feeder_en;
+                    wdata_in.feeder_en = fsm_out.wr_feeder_en && !stream_stall_;   // RTL psm_top.sv:311 wr_feed_en_eff
                     wdata_in.clearbuff = fsm_out.wr_feeder_clear;
                     wdata_in.mask = idx_out.mask;
                     wdata_in.fifo_pop = idx_out.wr_fifo_pop;
@@ -1118,7 +1154,7 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                         sramc_wren_q4_ = false;
 #endif
                     }
-                    else if (fsm_out.wr_feeder_en)
+                    else if (fsm_out.wr_feeder_en && !stream_stall_)   // RTL psm_top.sv:311 wr_feed_en_eff
                     {
 #ifdef FX1_A3_WRADDR_Q4
                         // read BEFORE q3 is overwritten -- same pattern as q3 <- q2.
@@ -1177,8 +1213,22 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                     // why wiring o_sramc_rden alone changed nothing.
                     // Drive it unconditionally, matching the continuous assign.
                     o_sramc_addr.write(real_addr);
+#if defined(FX1_A3_PSM_SHIFT_FSM) && defined(FX1_A3_PSM_WDATA_MGR) && defined(FX1_A3_WRADDR_Q4)
+                    if (check_write_peek && !stream_stall_)
+                    {
+                        bool same = peek_write_ == real_wren;
+                        if (same && real_wren)
+                        {
+                            same = peek_addr_ == real_addr;
+                            for (int j = 0; j < Y_DIM; j++)
+                                if (peek_mask_[j] != (((wdata_out.sramc_wmask >> j) & 1u) != 0)) same = false;
+                        }
+                        write_peek_checked++;
+                        if (!same) write_peek_mismatch++;
+                    }
+#endif
 
-                    if (real_wren)
+                    if (real_wren && !stream_stall_)   // RTL psm_top.sv:322: the write is blocked while held
                     {
                         // SRAMC_N==Y_DIM for this project (see psm_idxcnt_'s
                         // declaration comment above), so this is a 1:1

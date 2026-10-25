@@ -22,7 +22,7 @@
 #   ORACLE scratchpad cycles 40000 mismatches 0
 #   ORACLE shift vectors 400000 mismatches 0
 #   ORACLE stream_vrf cycles 6000 mismatches 0
-#   ORACLE vlsu cycles 40000 mismatches 0
+#   ORACLE vlsu cycles 40000 mismatches 0 (vlsub.txt: replayed again after the VLSU port followed a newer RTL drop, gvu sha c018fd2713c7cfe12c00d7006d8c559969a6ac7b181d2703c7a54fca1b18c1d2)
 #   ORACLE vrf cycles 20000 mismatches 0
 # Format: file, first line of the chunk, lines in the chunk, FNV-1a 64 of the chunk
 adder32.txt 0 10000 7e9805580cf6f3d4
@@ -502,9 +502,9 @@ spadb.txt 10000 10000 8d0a192d8c1393d4
 spadb.txt 20000 10000 3a978406a004e061
 spadb.txt 30000 10000 e09cb21bacbadf31
 svrf.txt 0 6000 11f502310a456189
-vlsub.txt 0 10000 15d4667e203be596
-vlsub.txt 10000 10000 6d71533ee5b36fce
-vlsub.txt 20000 10000 87b6da4cc62eed9d
-vlsub.txt 30000 10000 efd0e554ccac5c95
+vlsub.txt 0 10000 bdd8c75bed640185
+vlsub.txt 10000 10000 745a17d26408c645
+vlsub.txt 20000 10000 601d0a39d7316e88
+vlsub.txt 30000 10000 9887b94e3ee154f7
 vrf.txt 0 10000 789434a61ac7b51e
 vrf.txt 10000 10000 9e9494d0ab76011d

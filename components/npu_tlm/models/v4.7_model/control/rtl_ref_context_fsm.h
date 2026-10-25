@@ -143,6 +143,8 @@ namespace sauria_rtl
             bool finalwrite = false;  // i_finalwrite
             bool feeders_done = false; // i_feeders_done
             bool pipeline_en = false;  // i_pipeline_en (feedback, see mapping note)
+            // Stream backpressure of the PSM (RTL context_fsm.sv i_stream_stall). Default false: no effect.
+            bool stream_stall = false;
         };
 
         struct Outputs
@@ -639,7 +641,7 @@ namespace sauria_rtl
 
             // --- o_outbuf_start edge-detect (RTL line 157: outbuf_enable_d &
             // !outbuf_enable_q) ---
-            out.outbuf_start = outbuf_enable_d && !outbuf_enable_q_;
+            out.outbuf_start = !in.stream_stall && outbuf_enable_d && !outbuf_enable_q_;   // RTL context_fsm.sv:159
             // SELF-CHECK: the split-out table must match the switch block exactly.
             if (outbuf_enable_of(main_state_) != outbuf_enable_d)
             {
@@ -874,8 +876,12 @@ namespace sauria_rtl
             }
 
             // ---------- Phase 2: commit ----------
-            main_state_ = next_state;
-            stall_state_ = next_stall;
+            // RTL context_fsm.sv:170-174: the stream backpressure holds both state registers
+            if (!in.stream_stall)
+            {
+                main_state_ = next_state;
+                stall_state_ = next_stall;
+            }
             // outbuf_done_q_ (RTL "hold_reg", lines 124-139): i_soft_reset takes
             // priority (forces 0) over the normal set/clear priority-if-chain
             // below, matching RTL's own `if (i_soft_reset) outbuf_done_q<=0;
@@ -893,7 +899,8 @@ namespace sauria_rtl
             {
                 outbuf_done_q_ = false;
             }
-            outbuf_enable_q_ = cached_outbuf_enable_d_;
+            if (!in.stream_stall)   // RTL context_fsm.sv:153
+                outbuf_enable_q_ = cached_outbuf_enable_d_;
         }
 
         // Convenience wrapper for standalone use (e.g. unit tests) where

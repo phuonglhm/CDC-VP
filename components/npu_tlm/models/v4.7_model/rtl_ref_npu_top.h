@@ -130,6 +130,11 @@ namespace sauria_rtl
         {
             return sram_inst->peek_sramc_npu(addr);
         }
+        // HAS_GVU_TOP=3: result of the vector unit into the NPU half of SRAM-C (see Sram::poke_sramc_npu).
+        void poke_sramc(uint32_t addr, const psum_vector_t<Y_DIM, T_PSUM> &v, uint32_t mask)
+        {
+            sram_inst->poke_sramc_npu(addr, v, mask);
+        }
 
 #ifdef FX1_A3_SRAM_BACKDOOR_LOAD
         // Testbench-only backdoor load (off by default): writes straight into Sram::write_bank_data, skipping the host-bus
@@ -159,6 +164,36 @@ namespace sauria_rtl
         void read_sram_host_side(int bank_id, uint32_t offset_bytes, uint8_t *dst, uint32_t size_bytes)
         {
             sram_inst->read_host_side(bank_id, offset_bytes, dst, size_bytes);
+        }
+        // Stream backpressure of the PSM (RTL psm_top.sv write_pipeline_stall / o_stream_stall): set by the owner of the stream
+        // FIFO (has/has_npu_top.h, HAS_GVU_STALL). Called once per clock step, before any block of the core steps, with the
+        // SRAM-C write the PSM will make in this step; returns true when the FIFO takes it (or the write does not go into the
+        // stream). On false the whole core is held for the step: the write is blocked and presented again in the next step.
+        // Unset: no stall, nothing changes.
+        void set_stream_backpressure(std::function<bool(uint32_t, const sramc_mask_t<Y_DIM> &)> f)
+        {
+            stream_in_ready_ = std::move(f);
+#if defined(FX1_A3_PSM_SHIFT_FSM) && defined(FX1_A3_PSM_WDATA_MGR) && defined(FX1_A3_WRADDR_Q4)
+            psm_inst->check_write_peek = static_cast<bool>(stream_in_ready_);
+#endif
+        }
+        uint64_t stream_stall_cycles() const { return stream_stall_cycles_; }
+        // Self-check of the write read before the step against the write made (both 0 mismatches expected).
+        uint64_t stream_write_peek_checked() const
+        {
+#if defined(FX1_A3_PSM_SHIFT_FSM) && defined(FX1_A3_PSM_WDATA_MGR) && defined(FX1_A3_WRADDR_Q4)
+            return psm_inst->write_peek_checked;
+#else
+            return 0;
+#endif
+        }
+        uint64_t stream_write_peek_mismatch() const
+        {
+#if defined(FX1_A3_PSM_SHIFT_FSM) && defined(FX1_A3_PSM_WDATA_MGR) && defined(FX1_A3_WRADDR_Q4)
+            return psm_inst->write_peek_mismatch;
+#else
+            return 0;
+#endif
         }
         // OBP on the PSM -> SRAM-C write path, pass-through to Psm::sramc_write_hook_.
         void set_sramc_write_hook(std::function<void(uint32_t, psum_vector_t<Y_DIM, T_PSUM> &, const sramc_mask_t<Y_DIM> &)> f)
@@ -698,6 +733,19 @@ namespace sauria_rtl
         {
             // Order = RTL combinational resolution order: Control first (outputs from the
             // registered state), then the feeders consume them.
+#if defined(FX1_A3_PSM_SEAM_ORDER) && defined(FX1_A3_PSM_SHIFT_FSM) && defined(FX1_A3_PSM_WDATA_MGR) && defined(FX1_A3_WRADDR_Q4)
+            // Stream backpressure, decided first: in the RTL it is combinational in the cycle of the write (psm_top.sv:310)
+            // and reaches the controller in the same cycle (main_controller.sv i_stream_stall).
+            if (stream_in_ready_)
+            {
+                uint32_t wa = 0;
+                sramc_mask_t<Y_DIM> wm;
+                const bool st = psm_inst->peek_write_now(wa, wm) && !stream_in_ready_(wa, wm);
+                ctrl_inst->set_stream_stall(st);
+                psm_inst->set_stream_stall(st);
+                if (st) stream_stall_cycles_++;
+            }
+#endif
             ctrl_inst->seam_step();
 #ifdef FX1_A3_IFMAP_FEEDER_RTL
             // On-the-fly padding of the IFMAP feeder (not in the RTL): the ACT_PAD_* configuration registers drive the
@@ -1175,6 +1223,8 @@ namespace sauria_rtl
         WeightFeeder<X_DIM, T_WEI, SRAMB_CAP, WEI_FIFO_POS, 0> *wei_feeder{nullptr};
         SystolicArray<X_DIM, Y_DIM, T_ACT, T_WEI, T_PSUM> *array_inst{nullptr};
         Psm<X_DIM, Y_DIM, T_PSUM, SRAMC_CAP> *psm_inst{nullptr};
+        std::function<bool(uint32_t, const sramc_mask_t<Y_DIM> &)> stream_in_ready_{};   // set_stream_backpressure
+        uint64_t stream_stall_cycles_{0};
         ConfigRegs<32, 32, X_DIM, Y_DIM, 2, 15, 15, 15, DILP_W, 8> *config_regs_inst{nullptr};
 
         // ---------------------------------------------------------

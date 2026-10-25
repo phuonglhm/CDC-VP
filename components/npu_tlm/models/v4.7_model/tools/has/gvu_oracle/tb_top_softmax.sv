@@ -17,10 +17,14 @@ module tb_top_softmax;
   logic lut_done, pipe_done;
   logic [8:0] token_len;
   gvu_top u (.i_clk(clk), .i_rstn(rstn), .i_pipeline_en(en), .i_gvu_op(GVU_SOFTMAX), .i_psum_valid(1'b0), .o_psum_ready(), .i_psum_data('0),
-    .o_softmax_lut_init_done(lut_done), .o_softmax_pipe_done(pipe_done), .i_num_tile(9'd1), .i_token_len(token_len),
+    .o_lut_init_done(lut_done), .o_pipe_done(pipe_done),
+    .i_lut_act_reset(1'b0), .i_lut_exp_reset(1'b0), .i_lut_recip_reset(1'b0), .i_lut_rsqrt_reset(1'b0), .i_oc_last(1'b0), .i_oc_tile_last(1'b0),
+    .i_gemm_fused_skip_act(1'b0), .i_gemm_fused_z(8'sd0), .i_pooling_mode(POOLING_2X2), .i_pooling_stride(3'd0), .i_pooling_num_w_tile(8'd0),
+    .i_pooling_c(8'd0), .i_pooling_oh(8'd0), .i_pooling_c_move('0), .i_pooling_h_move('0), .i_num_tile(9'd1), .i_token_len(token_len),
     .i_attn_z(8'sd0), .i_attn_scale(32'sd35), .i_attn_shift(8'd8),
     .i_sbank_buf_sel(1'b0), .i_vbank0_buf_sel(1'b0), .i_vbank1_buf_sel(1'b0), .i_vbank2_buf_sel(1'b0),
-    .i_scratch_dma_en(1'b0), .i_scratch_dma_wen(1'b0), .i_scratch_dma_addr('0), .i_scratch_dma_wdata('0), .i_scratch_dma_wmask('0), .o_scratch_dma_rdata());
+    .i_dma_sbank_en(1'b0), .i_dma_sbank_wen(1'b0), .i_dma_sbank_addr('0), .i_dma_sbank_wmask('0), .i_dma_sbank_wdata('0), .o_dma_sbank_rdata(),
+    .i_dma_vbank_en(1'b0), .i_dma_vbank_wen(1'b0), .i_dma_vbank_addr('0), .i_dma_vbank_wdata('0), .i_dma_vbank_wmask('0), .o_dma_vbank_rdata());
   control_fsm_t st, st_q;
   logic [1023:0] row; logic [255:0] row8;
   logic seen_done;
@@ -59,7 +63,7 @@ module tb_top_softmax;
       if (u.vbank0_en) begin if (u.vbank0_wen) n_wr0++; else n_rd0++; end
       if (u.vbank1_en_0 | u.vbank1_en_1 | u.vbank1_en_2) begin if (u.vbank1_wen_0 | u.vbank1_wen_1 | u.vbank1_wen_2) n_wr1++; else n_rd1++; end
       if (u.vbank2_en_0 | u.vbank2_en_1) begin if (u.vbank2_wen_0 | u.vbank2_wen_1) n_wr2++; else n_rd2++; end
-      if (pipe_done && !seen_done) begin seen_done = 1; $display("TOP cycle %0d: o_softmax_pipe_done = 1 (state %0d)", cyc, st); end
+      if (pipe_done && !seen_done) begin seen_done = 1; $display("TOP cycle %0d: o_pipe_done = 1 (state %0d)", cyc, st); end
       if (st == SOFTMAX_ST1 && st_q == SOFTMAX_ST1 && cyc % 100000 == 99999) $display("TOP cycle %0d: still in SOFTMAX_ST1", cyc);
       @(negedge clk); cyc++;
     end

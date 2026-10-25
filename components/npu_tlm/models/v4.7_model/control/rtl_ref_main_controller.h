@@ -346,6 +346,12 @@ namespace sauria_rtl
 #endif
         void seam_set_wei_valid_(bool v) { o_wei_valid.write(v); seam_wei_valid_ = v; }
         void seam_set_pipeline_en_(bool v) { o_pipeline_en.write(v); seam_pipeline_en_ = v; }
+        // Stream backpressure of the PSM (RTL main_controller.sv i_stream_stall, from psm_top.sv o_stream_stall): set by the
+        // top level before this block steps. It holds the context FSM and the feeders FSM and gates the feeders reset, the
+        // clear and force of the context switch controller, o_outbuf_reset and o_sa_clear (main_controller.sv:118-119, 172,
+        // 232-233). Used with FX1_A3_CONTEXT_FSM and FX1_A3_FEEDERS_FSM (the defaults). false: no effect.
+        void set_stream_stall(bool s) { stream_stall_ = s; }
+        bool stream_stall_{false};
         // shadow of o_outbuf_start (combinational to the PSM in the RTL, sauria_logic.sv:305/459; an sc_signal is one
         // cycle late). Written together with the port so Psm reads THIS cycle's value.
         void seam_set_outbuf_start_(bool v) { o_outbuf_start.write(v); seam_outbuf_start_ = v; }
@@ -600,6 +606,7 @@ namespace sauria_rtl
 #endif
                 ctx_in.feeders_done = true;
                 ctx_in.pipeline_en = !feeder_stall;
+                ctx_in.stream_stall = stream_stall_;
                 // ctx_in.cdone / ctx_in.cswitch_done filled in below, AFTER
                 // running ContextSwitchController with THIS tick's cswitch_en/
                 // cswitch_force (compute_outputs()/commit() split exists
@@ -669,7 +676,8 @@ namespace sauria_rtl
                 typename sauria_rtl::FeedersFsm<X_DIM, Y_DIM, FEEDER_FIFO_POS, FEEDER_FIFO_POS>::Inputs fd_in;
                 fd_in.pipeline_gate = ctx_out.pipeline_gate;
                 fd_in.feeders_start = ctx_out.feeders_start || feeders_rearm_pending_;
-                fd_in.fsm_reset = ctx_out.feeders_reset || fd_ctx_edge; // soft_reset handled by the top-level reset branch
+                fd_in.fsm_reset = (ctx_out.feeders_reset && !stream_stall_) || fd_ctx_edge; // soft_reset handled by the top-level reset branch
+                fd_in.stream_stall = stream_stall_;
                 fd_in.pop_gate = ctx_out.pop_gate;
                 fd_in.act_reps = i_act_reps.read();
                 fd_in.wei_reps = i_wei_reps.read();
@@ -826,7 +834,7 @@ namespace sauria_rtl
 
                 typename sauria_rtl::ContextSwitchController<X_DIM, Y_DIM, /*PE_LAT=*/2, /*EXTRA_CSREG=*/FX1_A3_EXTRA_CSREG>::Inputs cs_in;
                 cs_in.incntlim = incntlim;
-                cs_in.clear = ctx_out.cswitch_cnt_clear; // soft_reset handled by top-level reset branch (calls cs_ctrl.reset())
+                cs_in.clear = ctx_out.cswitch_cnt_clear && !stream_stall_; // soft_reset handled by top-level reset branch (calls cs_ctrl.reset())
 #ifdef FX1_A3_FEEDERS_FSM
                 // THE Gap A2 seam: these three inputs are exactly the
                 // wires feeders_fsm owns in real RTL (main_controller.sv lines
@@ -842,7 +850,7 @@ namespace sauria_rtl
                 cs_in.act_pop_en = pop_now;
 #endif
                 cs_in.cswitch_en = ctx_out.cswitch_en;
-                cs_in.cswitch_force = ctx_out.cswitch_force;
+                cs_in.cswitch_force = ctx_out.cswitch_force && !stream_stall_;
 
                 auto cs_out = cs_ctrl.tick(cs_in);
 
@@ -1267,9 +1275,9 @@ namespace sauria_rtl
 
                 o_softstall.write(ctx_out.ctx_status == 14u);
                 seam_set_outbuf_start_(ctx_out.outbuf_start);
-                o_outbuf_reset.write(ctx_out.outbuf_reset);
+                o_outbuf_reset.write(ctx_out.outbuf_reset && !stream_stall_);
 
-                o_sa_clear.write(ctx_out.sa_clear);
+                o_sa_clear.write(ctx_out.sa_clear && !stream_stall_);
                 // Real per-column staggered array-swap pulse from
                 // ContextSwitchController -- NOT a single
                 // "all bits at once" pulse, and NOT context_fsm's cswitch_force

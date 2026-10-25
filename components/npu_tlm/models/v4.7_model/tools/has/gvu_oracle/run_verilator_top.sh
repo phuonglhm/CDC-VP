@@ -8,7 +8,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 command -v verilator > /dev/null || { echo "verilator not found (version 5 or later)"; exit 2; }
 mkdir -p "$W"
 SRC="$R/gvu_pkg.sv $R/pipeline_reg.sv $(ls $R/FUs/*.sv | tr '\n' ' ') $(ls $R/stream_switch/*.sv | tr '\n' ' ') $(ls $R/scratchpad/*.sv | tr '\n' ' ')
-     $R/gvu_vlsu.sv $R/gvu_pipe_controller.sv $R/gvu_top.sv $HERE/shift_reg_standin.sv $HERE/spill_register_standin.sv"
+     $(ls $R/vlsu/*.sv | tr '\n' ' ') $R/gvu_pipe_controller.sv $R/gvu_top.sv $HERE/shift_reg_standin.sv $HERE/spill_register_standin.sv $HERE/fifo_v3_standin.sv"
 nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module tb_top_softmax --Mdir "$W/tb_top_softmax" $SRC "$HERE/tb_top_softmax.sv" > "$W/build.log" 2>&1
 rc=$?
 echo "build rc=$rc; errors $(grep -c '^%Error' "$W/build.log"); warnings by kind:"

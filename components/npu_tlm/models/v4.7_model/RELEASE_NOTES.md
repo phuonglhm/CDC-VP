@@ -17,6 +17,25 @@ lists the extracted data and the build outputs.
 
 ## 2. What this release contains
 
+- **New default: the flow closest to the hardware RTL.** With no knob set, `HasNpuTop` now runs the vector-unit top level
+  `GvuTop` on the core clock behind the PSM stream (FIFO of 4 packets, the core stops on the stream back-pressure),
+  the residual add and the max pool as jobs on the clock of the unit, and the data flow controller configures and starts
+  the unit only through the register file of `gvu_core` (`HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1
+  HAS_GVU_REGS=1 HAS_GVU_AGU_ND=1`). Setting a knob to 0 returns to the path it replaces; with all five at 0 the model
+  gives the values and cycles of the previous release. The parts the RTL does not have yet (residual-add registers
+  Reg 9..15, multi-dimensional address generation Reg 16..24) are on as well, as the reference for the hardware team
+  (`docs/GVU_DFC_REFERENCE_FLOW.md`).
+- **Register file of the vector unit and the data flow controller's write sequences**: a port of `gvu_config_regs.sv`
+  (16 registers as delivered, 32 with the proposals), the AXI-Lite write port of the controller with a write latency
+  parameter (`HAS_GVU_REG_LAT`, default 4, an estimate), the sequences of GEMM_FUSED, max pool and residual add, and the
+  end of a GEMM_FUSED layer by the end-of-tile flag of the stream (`docs/GVU_TOP_CORE_INTEGRATION.md`).
+- **Slice and concat on the vector unit**: AGU_ND (4-D stride address mode, as the MAS describes) on the ports of the
+  residual add and the max pool, and the MOVE operation as a proposal; the compiler's address alias stays the way
+  outermost-axis slices and concats are done (`docs/SLICE_CONCAT_ON_GVU.md`).
+- **Three new documents**: `docs/GVU_TOP_CORE_INTEGRATION.md` (every flow of the vector unit in the core, the model
+  against the RTL, the pitfalls met and how they were solved), `docs/GVU_DFC_REFERENCE_FLOW.md` (block diagram, register
+  map and write order of the recommended flow for the RTL), `docs/SLICE_CONCAT_ON_GVU.md` (options, comparison,
+  proposed RTL change).
 - **Delivery top level `HasNpuTop`**: the NPU driven only by the v4.5 memory-mapped protocol, with a compatibility layer,
   the data flow controller, the cycle-accurate RTL-ref core, the DMA with HAS bus parameters and the vector-unit blocks
   (`docs/ARCHITECTURE.md`, section 7; `docs/SW_INTEGRATION_GUIDE.md`).
@@ -171,9 +190,40 @@ lists the extracted data and the build outputs.
   `tools/has/tb_gvu_top_vs_model.cpp` compares it with the model's cycle-level units on random data (in
   `regress_gvu.sh`). A stream mode of GEMM_FUSED (one beat per cycle, nine stages after the register cuts of the
   specification) and the socket `has/gvu_top_bridge.h` connect it to the instruction path behind the option
-  `HAS_GVU_TOP=1|2` (off by default; with it off nothing changes): the GEMM epilogue and the residual add then run on
-  `GvuTop`, max pool stays on the model's cycle-level unit (`docs/GVU_TOP_CORE_INTEGRATION.md`, section 9).
+  `HAS_GVU_TOP=1|2` (call style): the GEMM epilogue, the residual add and the max pool then run on `GvuTop`
+  (`docs/GVU_TOP_CORE_INTEGRATION.md`, section 1.1).
   `docs/GVU_TOP_VERIFICATION_REPORT.md` describes the runs of its own test benches.
+- **`GvuTop` connected to the core on the core clock** (`HAS_GVU_TOP=3`, the default; `has/gvu_top_stream.h`): a
+  stream tap of the partial-sum manager hands every GEMM_FUSED epilogue beat to `GvuTop` with the signals of the PSM-to-GVU
+  stream of the hardware RTL (FIFO of 4 packets, `valid` / `ready`, `oc_last` / `oc_tile_last`); the int8 result is written
+  back into SRAM-C. Whole YOLOv8m (98 / 98) and whole ViT-B/16 (244 / 244) pass with 0 lanes different from the
+  functional model, in 62,420,669 and 41,581,353 cycles (level B without the register file); the core busy cycles equal those of the
+  runs with the knobs at 0. With
+  `HAS_GVU_STALL=1` the core stops on the back-pressure of the stream (`o_stream_stall`) as `psm_top.sv` does
+  (`docs/GVU_TOP_CORE_INTEGRATION.md`, sections 2.1, 2.5 and 5.4; `docs/VERIFICATION_REPORT.md`, V36).
+- **Max pool on `GvuTop`** (`POOLING_MAX`): the pooling feeder (`has/rtl_ref_gvu_pool_feeder.h`), the per-lane mode of the
+  comparator and the pooling address mode of the load/store unit, ported from the hardware RTL and checked against it
+  cycle by cycle with Verilator (`tools/has/gvu_oracle/run_verilator_maxpool.sh`); the unit is reset before each run
+  because the RTL keeps a counter between runs (`docs/GVU_TOP_IMPLEMENTATION_AND_TEST.md`, section 6). A whole layer
+  checked against the RTL: the three SPPF max pools of YOLOv8m as vector sets in the format of the hardware vectors, run
+  back to back without a reset on the RTL with the fix of that counter, equal to the model trace line by line in ModelSim
+  and Verilator (`docs/VERIFICATION_REPORT.md`, V39).
+- **Parameters for open hardware choices in `GvuTop`**: the depth of the GEMM_FUSED stream pipeline is one build
+  parameter (`GVU_GEMM_STREAM_DEPTH`, 9 as the specification, 11 as the hardware RTL measures) and the narrowing after the
+  round-shift follows `HAS_REQ_NARROW` (saturate or wrap to 16 bits). Defaults leave every result and cycle unchanged.
+- **GEMM_FUSED output zero point as in the hardware register**: `GvuTop` takes the 8-bit zero point of its GEMM_FUSED
+  register, sign-extended into the 16-bit adder, as the latest hardware RTL does; a layer whose zero point is outside
+  int8 keeps the result of the functional model and is counted as "not expressible". Both reference networks use zero
+  point 0, so their results and cycles do not change.
+- **Residual add and max pool on the core clock** (`HAS_GVU_ELEM_CLK=1`, with `HAS_GVU_TOP=3`, the default): the two
+  ELEM_WISE operations run as jobs that tick `GvuTop` once per clock edge instead of the call style; values and cycles
+  equal the call style (check programs and YOLOv8m windows of the three SPPF max pools and two residual adds, difference
+  0 cycles) (`docs/GVU_TOP_CORE_INTEGRATION.md`, sections 2.6 and 2.7).
+- **Checks against the latest hardware RTL**: every ported vector-unit block was compared again with the latest RTL drop
+  (scratchpad, load/store unit, LUT load, max pool and the other oracle lines: 0 mismatches) and the oracle harness was
+  adapted to it; two test references of the load/store unit that still described an older drop were brought to it
+  (`tools/has/tb_rtl_ref_gvu_g2.cpp`, `tools/has/gvu_oracle/rtl_trace_digest.txt`) and both checks are now part of
+  `tools/has/regress_gvu.sh`.
 - **Padding documents**: `docs/IFMAP_FEEDER_PADDING.md` describes the padding by the IFMAP feeder for the hardware team
   (SRAM-A layout, registers, feeder datapath, per-tile generator, cost, how to check an RTL implementation);
   `docs/SW_INTEGRATION_GUIDE.md`, section 4.7, lists what a compiler writes for each padding case of a framework and
@@ -204,15 +254,22 @@ lists the extracted data and the build outputs.
 All at 0.8 GHz with the HAS AXI-128 DMA, bit-exact against the integer golden. Details and the timing fidelity of each
 block: `docs/PERFORMANCE_REPORT.md`, sections 5.4 to 5.6, and `docs/VERIFICATION_REPORT.md`, section 1.1.
 
+Since this release the default runs the vector-unit flow of section 2 (first two rows). The other rows were measured with
+the functional vector unit: reproduce them with the five knobs at 0, written `GVU0` below for
+`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`.
+
 | Workload | Command (data package as `$FE_WORK`) | Total cycles | Frame rate |
 |---|---|---:|---:|
-| YOLOv8m, hardware as drawn | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | 62,666,123 | 12.77 FPS |
-| ViT-B/16, hardware as drawn | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | 41,680,289 | 19.19 FPS |
-| YOLOv8m, earlier vector-unit configuration (run C) | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | 62,681,721 | 12.76 FPS |
-| YOLOv8m, two proposed hardware options (run D), earlier configuration | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals` | 60,386,685 | 13.25 FPS |
-| ViT-B/16, earlier configuration | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | 41,065,258 (1) | 19.48 FPS |
-| ViT-B/16, bias-broadcast proposal, earlier configuration | `HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast` | 39,922,498 | 20.04 FPS |
-| Quick check, two YOLOv8m instructions | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 40 --count 2` | 1,658,986 | |
+| YOLOv8m, default (vector unit as in the RTL, through its register file) | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | 62,422,935 | 12.82 FPS |
+| ViT-B/16, default (vector unit as in the RTL, through its register file) | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | 41,582,468 | 19.24 FPS |
+| YOLOv8m, vector unit on the core clock, configured by assignment (no register file) | `HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | 62,420,669 | 12.82 FPS |
+| YOLOv8m, hardware as drawn, functional vector unit | `GVU0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | 62,666,123 | 12.77 FPS |
+| ViT-B/16, hardware as drawn, functional vector unit | `GVU0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | 41,680,289 | 19.19 FPS |
+| YOLOv8m, earlier vector-unit configuration (run C) | `GVU0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | 62,681,721 | 12.76 FPS |
+| YOLOv8m, two proposed hardware options (run D), earlier configuration | `GVU0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals` | 60,386,685 | 13.25 FPS |
+| ViT-B/16, earlier configuration | `GVU0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | 41,065,258 (1) | 19.48 FPS |
+| ViT-B/16, bias-broadcast proposal, earlier configuration | `GVU0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast` | 39,922,498 | 20.04 FPS |
+| Quick check, two YOLOv8m instructions, functional vector unit | `GVU0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 40 --count 2` | 1,658,986 | |
 
 Program files (data package):
 
@@ -250,7 +307,7 @@ On Ubuntu 22.04 with g++ 11 and SystemC 2.3.3, from a fresh copy of the reposito
 | Unit tests: run profiles, register decoder, quantization, element-wise, DMA, attention, LayerNorm, softmax tables | PASS |
 | Transformer instruction path (14 instructions) | PASS, 285,205 vector-unit cycles; 250,885 with `HAS_SPEC=v47ref` |
 | Vector-unit items of the micro-architecture specification: `tb_gvu_mas` and the frontend golden against the independent reference `mas_ref.py` | PASS |
-| Two-instruction YOLOv8m window, default profile | PASS, 1,658,986 cycles (equal to the reference run) |
+| Two-instruction YOLOv8m window, default profile, functional vector unit (`GVU0`) | PASS, 1,658,986 cycles (equal to the reference run) |
 | Native model regression (fresh build, v4.6 revision with the OBP and Reduction Engine update) | PASS |
 | Python byte-compilation of `tools/` | PASS |
 | YOLOv8m program regenerated by the packaged frontend from the data package | byte-identical to the shipped program |
@@ -278,8 +335,23 @@ measured on the core and on the SAURIA RTL, the instructions past it refused at 
 programs refused. Vector-unit top level: its test benches, `tools/has/tb_gvu_top_vs_model.cpp` against the model's
 cycle-level units (51 runs, stream mode included), and through the instruction path with `HAS_GVU_TOP`: YOLOv8m
 instructions 86 to 88 and a two-instruction window bit-exact with the cycles of `HAS_OBP_RTL=1`, the recorded epilogue
-beats replayed on `GvuTop` outside the core, the residual adds of both networks replayed on `GvuTop` (V35). The package check
-of this tree passed 81 of 81 items, and `tools/has/regress_gvu.sh` 58 of 58.
+beats replayed on `GvuTop` outside the core, the residual adds of both networks replayed on `GvuTop` (V35). Clocked
+connection and max pool on `GvuTop` (V36): whole YOLOv8m and whole ViT-B/16 with `HAS_GVU_TOP=3`, each in one continuous run
+(PASS, 62,420,669 and 41,581,353 cycles, 0 lanes different, core busy cycles equal to the default runs); YOLOv8m also in
+28 windows of instructions; the core stop on the stream back-pressure with the ready of the unit held low; max pool against
+the hardware RTL with Verilator. Zero point of the hardware register: unit test of the 8-bit zero point (inside and
+outside int8) and the check program with an output zero point of 200 (results equal, the layer counted as not
+expressible). Residual add and max pool on the clock: unit test (12 cases equal to the call style) and five YOLOv8m windows
+(difference 0 cycles). Whole YOLOv8m with `HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1` in one run: PASS, 62,420,669 cycles,
+equal to the earlier clocked run cycle for cycle, 0 lanes different, core busy cycles equal to the default run. Register file of
+the vector unit (V37): its port against the RTL (200,000 cycles, 0 mismatches), the write sequences at three write latencies,
+the check programs of 6 and 9 instructions, and YOLOv8m through the register file in seven windows of instructions (98 of 98
+PASS, 0 elements different, 83 of 83 layers ended by the stream flag, 1,819 cycles more than the run without it) plus the 12
+residual adds one at a time (values and cycles equal with and without the register file). Max pool of a whole layer against
+the hardware RTL (V39): the SPPF layers in 21 runs back to back on the patched RTL, traces equal to the model (32 ModelSim
+cases, 26 Verilator traces). Default flow in one continuous run
+(V38): YOLOv8m PASS, 62,422,935 cycles; ViT-B/16 PASS, 41,582,468 cycles; 0 elements different. The package check of this tree passed 81 of 81 items, and
+`tools/has/regress_gvu.sh` 131 of 131 with the new defaults.
 
 The row "System TLM wrapper ... whole YOLOv8m and ViT-B/16 programs" was measured on the previous release (earlier
 vector-unit configuration); it was not repeated. Network testbenches that use the native OBP (`tb_fe_network`,
@@ -310,9 +382,16 @@ The whole-network results of section 3 come from the measured runs whose logs ar
 - The accuracy of the integer ViT-B/16 against the floating-point model is limited by the per-tensor LayerNorm
   quantization (`docs/KNOWN_LIMITATIONS.md`, Q4).
 - Debug-only accessors and diagnostic macro blocks (all off by default) remain in the RTL-ref sources.
+- Softmax, LayerNorm and FUSED_ATTN still run on the functional vector-unit models on the instruction path; `GvuTop` has
+  their pipelines and test benches, but `HasNpuTop` does not call them yet.
+- The latency of one register write (`HAS_GVU_REG_LAT`, 4 cycles) is an estimate; the residual-add registers (Reg 9..15)
+  and AGU_ND (Reg 16..24) are proposals that the hardware RTL does not have yet (`docs/GVU_DFC_REFERENCE_FLOW.md`).
 
 ## 7. Integration notes
 
+- The default changed (section 2): a system wrapper or script that relied on the cycle counts of the previous release must
+  set the five vector-unit knobs to 0 (`GVU0`, section 3); `tools/has/regress_gvu.sh` and `tools/pkg/check_package_vm.sh`
+  do so for their reference values.
 - The native top level (`npu_top.h`, class `NpuTop`) keeps the port list and register map used by existing
   integration wrappers: a wrapper built for the previous native model builds and runs unchanged against this tree.
   Point the wrapper's model root (for example a `SAURIA_NPU_ROOT` build variable) at the extracted source tree.

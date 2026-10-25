@@ -497,17 +497,20 @@ static void test_vlsu()
     dut.tick(idle);
     CHECK(dut.eval(idle).o_vbank0_addr == 798, "vlsu: without a request the register follows the start address");
     n += 2;
-    {   // address modes: AGU_FIXED follows the start address input during the burst, AGU_WRAPPED keeps the register
+    {   // address modes: AGU_FIXED follows the start address input during the burst, AGU_POOLING (code 2) keeps the
+        // register; in AGU_POOLING the vbank0 address output is the pooling address, so the register is read in AGU_FIXED
         GvuVlsu d2(P);
         GvuVlsu::In q; q.i_vbank0_start_addr = 100; d2.tick(q);
         q.i_vbank0_rd = true; q.i_vbank0_agu_mode = AGU_FIXED; q.i_vbank0_start_addr = 7;
         CHECK(d2.eval(q).o_vbank0_addr == 100, "vlsu AGU_FIXED: first beat at the address loaded before the request");
         d2.tick(q); q.i_vbank0_start_addr = 9;
         CHECK(d2.eval(q).o_vbank0_addr == 7, "vlsu AGU_FIXED: second beat at the start address of the previous clock");
-        d2.tick(q); q.i_vbank0_agu_mode = AGU_WRAPPED; q.i_vbank0_start_addr = 300;
+        d2.tick(q);
         CHECK(d2.eval(q).o_vbank0_addr == 9, "vlsu AGU_FIXED: third beat");
+        q.i_vbank0_agu_mode = AGU_POOLING; q.i_vbank0_start_addr = 300;
         d2.tick(q); d2.tick(q);
-        CHECK(d2.eval(q).o_vbank0_addr == 9, "vlsu AGU_WRAPPED: the register keeps its value");
+        q.i_vbank0_agu_mode = AGU_FIXED;
+        CHECK(d2.eval(q).o_vbank0_addr == 9, "vlsu AGU_POOLING: the register keeps its value");
         // vbank1: one register for the three ports; it advances with the request even when no port is selected
         GvuVlsu::In r; r.i_vbank1_start_addr = 0x7E; d2.tick(r);
         r.i_vbank1_rd = true; r.i_vbank1_port_sel = 3;

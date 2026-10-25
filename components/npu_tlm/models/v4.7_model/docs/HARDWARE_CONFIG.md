@@ -216,9 +216,17 @@ registers (more than 65,535 columns). Whether the comparators fit a clock period
 
 | Option | Default | Meaning |
 |---|---|---|
-| `HAS_GVU_TOP` (environment) | not set | 1: the GEMM epilogue (stream mode of GEMM_FUSED, nine stages) and the residual add of the instruction path run on the vector-unit top level `GvuTop` (`has/rtl_ref_gvu_top.h`, socket `has/gvu_top_bridge.h`); max pool stays on the cycle-level pipeline; values are compared with the functional model and a `[gvu-top]` table is printed at exit. 2: as 1, and the activation table of a layer costs a DMA of 256 bytes plus 5 cycles (`GvuTop`'s own path) instead of 4,096 host-port cycles |
+| `HAS_GVU_TOP` (environment) | 3 | 0: the functional vector unit of the previous releases. 1: the GEMM epilogue (stream mode of GEMM_FUSED, nine stages) and the residual add of the instruction path run on the vector-unit top level `GvuTop` (`has/rtl_ref_gvu_top.h`, socket `has/gvu_top_bridge.h`); max pool also runs on `GvuTop` (a shape `GvuTop` does not have goes per channel to the cycle-level max pool pipeline); values are compared with the functional model and a `[gvu-top]` table is printed at exit. 2: as 1, and the activation table of a layer costs a DMA of 256 bytes plus 5 cycles (`GvuTop`'s own path) instead of 4,096 host-port cycles. 3: level B, `GvuTop` on the core clock connected by the PSM-to-GVU stream (`GVU_TOP_CORE_INTEGRATION.md`, sections 4.2 and 5) |
+| `HAS_GVU_STALL` (environment, with `HAS_GVU_TOP=3`) | 1 | 1: the core stops on `o_stream_stall` as `psm_top.sv` does (`GVU_TOP_CORE_INTEGRATION.md`, section 2.5); 0: the stall is computed and counted only |
+| `HAS_GVU_ELEM_CLK` (environment, with `HAS_GVU_TOP=3`) | 1 | 1: residual add and max pool run as jobs on the clock of `GvuTop` instead of the call style; same values and cycles (`GVU_TOP_CORE_INTEGRATION.md`, sections 2.6, 2.7) |
+| `HAS_GVU_REGS` (environment, with `HAS_GVU_TOP=3`) | 1 | 1: the data flow controller configures and starts `GvuTop` only through the register file (`GVU_DFC_REFERENCE_FLOW.md`); implies `HAS_GVU_ELEM_CLK=1` |
+| `HAS_GVU_REGS_ADD` (environment) | 1 | 0: the residual add stays outside the register file |
+| `HAS_GVU_REG_LAT` (environment) | 4 | Cycles of one register write seen by the data flow controller, minimum 2 (ESTIMATED) |
+| `HAS_GVU_AGU_ND` (environment) | 1 | 1: identity AGU_ND programs for the residual add and the max pool; 2: shifted programs for demonstration; 0: off (`SLICE_CONCAT_ON_GVU.md`) |
+| `-DGVU_GEMM_STREAM_DEPTH=<n>` (build) | 9 | Stages of the `GvuTop` GEMM epilogue, 9 to 16; 9 as the specification, 11 as the hardware RTL measures (pure delay stages) |
+| `HAS_GVU_TOP_DUMP=<file>` (environment, with `HAS_GVU_TOP` 1 or 3) | not set | One line per epilogue beat; changes no value and no cycle (`GVU_TOP_CORE_INTEGRATION.md`, section 1.3) |
 | `HAS_OBP_DUMP=<file>` (environment, with `HAS_OBP_RTL=1`) | not set | Writes every activation table and epilogue beat to the file for `tools/has/tb_gvu_top_replay.cpp`; changes no value and no cycle |
 
-With `HAS_GVU_TOP` not set nothing computed by the model changes. The other vector-unit options (`HAS_ELEM_RTL`,
+With `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` the model computes and counts what the previous releases did. The other vector-unit options (`HAS_ELEM_RTL`,
 `HAS_OBP_RTL`, `HAS_ARITH_RTL`, `HAS_RANGE_PROBE`, `HAS_PSM_PROBE`) are described in `GVU_RTL_CONFORMANCE.md`,
 section 4.10. Results: `VERIFICATION_REPORT.md`, V35; limits: `KNOWN_LIMITATIONS.md`, O25.

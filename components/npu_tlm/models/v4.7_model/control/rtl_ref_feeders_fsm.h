@@ -148,6 +148,9 @@ namespace sauria_rtl
             bool wei_fifo_full_peek = false;
             bool wei_stall_peek = false;
 #endif
+            // Stream backpressure of the PSM (RTL feeders_fsm.sv i_stream_stall: the FIFO of the PSM -> vector-unit stream is
+            // full). Default false: no effect.
+            bool stream_stall = false;
         };
 
         struct Outputs
@@ -842,6 +845,23 @@ namespace sauria_rtl
                 }
             }
 
+            // Stream backpressure (RTL feeders_fsm.sv:168/173/178, :187-188, :194-195, :1175-1190): o_pipeline_en, the pop and
+            // counter enables are low in the cycle; unless the synchronous reset is on, the one-cycle controls are low too and
+            // every register holds (commit()).
+            if (in.stream_stall)
+            {
+                out.pipeline_en = false;
+                out.act_pop_en = out.wei_pop_en = false;
+                out.act_cnt_en = out.wei_cnt_en = false;
+                if (!in.fsm_reset)
+                {
+                    out.act_feeder_en = out.act_feeder_clear = out.act_start = out.act_valid = false;
+                    out.act_finalpush = out.act_cnt_clear = out.act_clearfifo = false;
+                    out.wei_feeder_en = out.wei_feeder_clear = out.wei_start = out.wei_valid = false;
+                    out.wei_finalpush = out.wei_cnt_clear = out.wei_clearfifo = false;
+                }
+            }
+            p.stream_hold = in.stream_stall && !in.fsm_reset;
             p.next_state = next;
             p.a_cnt_en = a_cnt_en;
             p.a_cnt_clear = a_cnt_clear;
@@ -903,6 +923,13 @@ namespace sauria_rtl
             if (!pending_.valid)
                 return;
             const Pending &p = pending_;
+            // Stream backpressure without the synchronous reset: every register of the block holds (RTL feeders_fsm.sv:261,
+            // :289-304, :362, :378-394, :408).
+            if (p.stream_hold)
+            {
+                pending_.valid = false;
+                return;
+            }
 
             // --- State register (RTL 391-397) ---
             main_state_q_ = p.next_state;
@@ -995,6 +1022,7 @@ namespace sauria_rtl
             bool act_til_done_q_d = false, wei_til_done_q_d = false;
             bool act_ov_flag_shim_d = false, wei_ov_flag_shim_d = false;
             bool act_cnt_hold_d = false, wei_cnt_hold_d = false;
+            bool stream_hold = false;
         };
 
         State main_state_q_{IDLE};

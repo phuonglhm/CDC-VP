@@ -31,6 +31,11 @@ Clock frequency for all time and throughput figures: 0.8 GHz (assumption of the 
    hold for both. Run D (section 5.5, 60.4 M cycles, 13.25 FPS) and the ViT-B/16 bias-broadcast run (39.9 M cycles,
    20.04 FPS) assume proposed hardware options and are valid only if the hardware team adopts them. Runs A and B
    are kept for traceability. ViT-B/16 has a larger estimated share than YOLOv8m.
+6. **The default configuration changed.** The vector unit is now clocked beside the core and driven through its register file by
+   default (`GVU_TOP_CORE_INTEGRATION.md`). The totals of item 5 and of sections 3 to 5.8 (62,666,123 and 41,680,289 cycles
+   included) are for the model's own vector-unit epilogue, add and max pool, that is, with the five knobs `HAS_GVU_TOP`,
+   `HAS_GVU_STALL`, `HAS_GVU_ELEM_CLK`, `HAS_GVU_REGS` and `HAS_GVU_AGU_ND` set to 0, which reproduces them. Section 5.9 gives
+   the figures of the new default: a continuous run with no variable set is 0.1 to 0.4 % shorter.
 
 ## 2. Workload
 
@@ -255,8 +260,10 @@ Summary of the whole-network totals in this report:
 | `HasNpuTop`, run D (run C plus two hardware proposals, section 5.5) | 60.4 M | 13.25 | HAS AXI-128 |
 | `HasNpuTop`, ViT-B/16, hardware as drawn (section 5.6; `HAS_SPEC=v47ref`) | 41.1 M | 19.48 | HAS AXI-128 |
 | `HasNpuTop`, ViT-B/16 with the bias-broadcast proposal (section 5.6; `HAS_SPEC=v47ref`) | 39.9 M | 20.04 | HAS AXI-128 |
-| `HasNpuTop`, YOLOv8m, default configuration (current reference, section 5.8) | 62.7 M | 12.77 | HAS AXI-128 |
-| `HasNpuTop`, ViT-B/16, default configuration (current reference, section 5.8) | 41.7 M | 19.19 | HAS AXI-128 |
+| `HasNpuTop`, YOLOv8m, vector-unit knobs 0 (section 5.8) | 62.7 M | 12.77 | HAS AXI-128 |
+| `HasNpuTop`, ViT-B/16, vector-unit knobs 0 (section 5.8) | 41.7 M | 19.19 | HAS AXI-128 |
+| `HasNpuTop`, YOLOv8m, clocked vector unit (section 5.9) | 62.4 M | 12.82 | HAS AXI-128 |
+| `HasNpuTop`, ViT-B/16, clocked vector unit (section 5.9) | 41.6 M | 19.24 | HAS AXI-128 |
 
 DRAM latency is 0 in all these runs. A latency of 100 cycles adds 4.85 % on a DMA-limited window (MEASURED);
 the whole-network effect is ESTIMATED at 1 to 5 %.
@@ -411,7 +418,10 @@ Reading the table:
   and 715,327,488 MACs (included in the end-to-end rows). The gap between 19.48 FPS and the core-only bound is the
   DMA wait and the estimated vector-unit time (section 5.6).
 
-### 5.8 Default configuration: scratchpad of the micro-architecture specification
+### 5.8 Scratchpad of the micro-architecture specification (vector-unit knobs 0, the former default)
+
+The figures of this section are for the model's own vector-unit epilogue, add and max pool (the five knobs of item 6 of section 1
+set to 0). Section 5.9 gives the new default.
 
 The micro-architecture specification of the vector unit fixes the scratchpad at 128 KB, double-buffered (64 KB per
 half). The default configuration of `HasNpuTop` follows it (`HARDWARE_CONFIG.md`, section 6.3): four banks of
@@ -423,7 +433,7 @@ and always 32 rows per group (`HAS_SPEC=v47ref`).
 | Quantity | YOLOv8m `insts_pe3` | ViT-B/16 `vit_full` | Label |
 |---|---:|---:|---|
 | Result against the golden | PASS, 98 of 98 instructions, 58,425,600 elements, 0 mismatches | PASS, 244 of 244 instructions, 26,068,616 elements, 0 mismatches | MEASURED |
-| Total cycles, default configuration | 62,666,123 | 41,680,289 | MEASURED |
+| Total cycles, vector-unit knobs 0 (the former default) | 62,666,123 | 41,680,289 | MEASURED |
 | Total cycles, `HAS_SPEC=v47ref` (sections 5.4 and 5.6) | 62,681,721 | 41,065,258 | MEASURED |
 | Difference | -15,598 (-0.025 %) | +615,031 (+1.50 %) | DERIVED |
 | Frame rate at 0.8 GHz | 12.77 FPS | 19.19 FPS | DERIVED |
@@ -450,6 +460,37 @@ and always 32 rows per group (`HAS_SPEC=v47ref`).
   DERIVED from the differences above: 60,371,087 cycles (13.25 FPS) and 40,537,529 cycles (19.73 FPS).
 
 Logs: `reference_runs/yolov8m_default/` and `reference_runs/vit_b16_default/` of the data package.
+
+### 5.9 New default: the clocked vector unit, driven through its register file
+
+With no variable set the vector unit runs on the core clock behind the stream of the partial-sum manager, the core stops on the
+back-pressure of the stream, residual add and max pool run on the clock, and the data flow controller configures and starts the
+unit by register writes (`GVU_TOP_CORE_INTEGRATION.md`; `HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1 HAS_GVU_REGS=1`, and
+`HAS_GVU_AGU_ND=1` for slice and concat). The core figures (core busy, PE utilization, GOPS) do not change.
+
+| Quantity | YOLOv8m `insts_pe3` | ViT-B/16 `vit_full` | Label |
+|---|---:|---:|---|
+| Total cycles, vector-unit knobs 0 (section 5.8) | 62,666,123 | 41,680,289 | MEASURED |
+| Total cycles, clocked stream, one continuous run (`HAS_GVU_TOP=3`; for YOLOv8m also with the stop and the clocked add and max pool, the same count to the cycle) | 62,420,669 | 41,581,353 | MEASURED |
+| Difference | -245,454 (-0.39 %) | -98,936 (-0.24 %) | DERIVED |
+| Frame rate at 0.8 GHz | 12.82 FPS | 19.24 FPS | DERIVED |
+| Core busy cycles | 55,653,442 (unchanged) | 24,852,624 (unchanged) | MEASURED |
+| Register writes of the DFC in the windows (YOLOv8m: 387 GEMM_FUSED, 252 max pool, 14,822 residual add) | 15,461 | not run in windows | MEASURED |
+| Register writes of the DFC in the continuous run, with the descriptors of the address generator | 20,036 | 11,952 | MEASURED |
+| Cycles added by the register writes (YOLOv8m: sum over the 91 instructions of seven windows; ViT-B/16: continuous run against the clocked-stream run; 4 clock edges per write) | +1,819 (0.003 %) | +1,115 (0.003 %) | MEASURED |
+| Continuous run with no variable set (the default) | 62,422,935 (12.82 FPS; +2,266 against the clocked-stream run) | 41,582,468 (19.24 FPS; +1,115) | MEASURED |
+
+- **Why the clocked stream is shorter.** The activation table goes in by a DMA of 256 bytes plus 5 cycles instead of 4,096
+  host-port cycles per layer with a table (4,087 cycles saved per layer, MEASURED), a core pass no longer ends with a fixed
+  wait of 9 cycles, and, for YOLOv8m, the max pool of the RTL feeder is slower than the model's formula (about 32 cycles per
+  output row).
+- **What the register writes cost.** At 4 clock edges per write (`HAS_GVU_REG_LAT`, ESTIMATED: the latency is the hardware
+  team's) the DFC waits at the write port for 61,844 edges in the whole network, 0.10 % of the run; 0.05 % at 2 edges and 0.17 % at
+  7 (DERIVED, linear). Only +1,819 cycles show in the count: the writes of the residual add (96 % of all writes) are hidden by the
+  DMA of the neighbouring chunks, 0 cycles measured on all 12 instructions. The test bench steps in 67 cycles, so a difference
+  per instruction below 134 cycles is not meaningful (`KNOWN_LIMITATIONS.md`, O30).
+- **ViT-B/16.** Its residual adds go through the same sequence (11,952 writes in the continuous run, +1,115 cycles); the
+  attention products, Softmax and LayerNorm do not use `GvuTop` (`KNOWN_LIMITATIONS.md`, O29).
 
 ## 6. Estimated components
 

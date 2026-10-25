@@ -208,7 +208,7 @@ specification. `tools/fe/sysc/tb_has_net.cpp` is the network testbench that uses
 | `HasLut` | `has/gvu_lut.h` | Indirect LUT for reciprocal and reciprocal square root (mantissa index with linear interpolation) |
 | Pipeline registers | `has/gvu_vrf.h` | Structure model of the vector-unit pipeline registers (3 x v32int64 + 4 x v32int32 with reconfiguration): checks that the registers of every pipeline stage fit (`tools/has/tb_gvu_vrf`) |
 | `GvuLsu` | `has/gvu_lsu.h` | Load/store unit accounting: Scratchpad transfers per bank (`sbank`, `vbank#0..2`) and address mode (v32int32, v32int8, int32, int8), reported as `[GVU]` lines by `tools/has/tb_has_npu_top` |
-| `GvuTop` | `has/rtl_ref_gvu_top.h`, `has/gvu_top_bridge.h` | Vector-unit top level: controller with Softmax, LayerNorm, GEMM_FUSED and residual-add states over the ported units. With `HAS_GVU_TOP=1` or `2` (off by default) the GEMM epilogue and the residual add of the instruction path run on it; max pool stays on the cycle-level pipeline (`GVU_TOP_CORE_INTEGRATION.md`, section 9) |
+| `GvuTop` | `has/rtl_ref_gvu_top.h`, `has/gvu_top_bridge.h` | Vector-unit top level: controller with Softmax, LayerNorm, GEMM_FUSED and residual-add states over the ported units. By default (`HAS_GVU_TOP=3` with the full flow) the GEMM epilogue, the residual add and the max pool of the instruction path run on it on the core clock, configured by the data flow controller through its register file; `HAS_GVU_TOP=1` or `2` calls it as a function, `0` returns the functional units of the previous releases (`GVU_TOP_CORE_INTEGRATION.md`, sections 1 and 2; `GVU_DFC_REFERENCE_FLOW.md`) |
 
 Model options, identical in Python and C++:
 

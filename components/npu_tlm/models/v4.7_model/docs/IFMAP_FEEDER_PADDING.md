@@ -68,8 +68,9 @@ exactly as the unchanged address counters do with the row step `wr` and the chan
 front, the real element `(wy - pt, wx - pl)` sits at that address, so the counters need no offset and never go below
 zero. Addresses of window positions outside the image point into the lead, into other real elements, or past the real
 part (old SRAM-A content); their data is never used, because the mask replaces it (the model fills the lead with
-`0x5A` so that a masking fault shows). The highest address is below `Cin x ah x aw`, so a window that fits SRAM-A in
-way 1 also keeps every address of way 2 inside SRAM-A.
+`0x5A` so that a masking fault shows). Since `wr <= aw` and `hr <= ah`, every address of way 2 is at most the address
+of the same position in way 1 (row sweeps included), so a window that fits SRAM-A in way 1 also keeps every address of
+way 2 inside SRAM-A.
 
 Worked example (3x3 kernel, stride 1, padding 1, image 6 x 6, one output tile 4 x 6, window rows `[-1, 5)`, columns
 `[-1, 7)`):
@@ -163,7 +164,7 @@ The staged way (way 1) is kept for a tile when:
 
 | Case | Reason |
 |---|---|
-| 1x1 kernel, stride 1, dilation 1 | This layer uses the aligned address mode of the feeder (one SRAM word per group of positions); it needs rows that are a multiple of 32 elements, which `wr` is not. In YOLOv8m their only padding comes from tile widths rounded up (`PAD_TAIL`) |
+| 1x1 kernel, stride 1, dilation 1 | Such a layer can use the aligned address mode of the feeder (one SRAM word per group of positions, when the input channels and `Y_USED` are multiples of 32); that mode needs rows that are a multiple of 32 elements, which `wr` is not. The generator keeps way 1 for every such layer. In YOLOv8m their only padding comes from tile widths rounded up (`PAD_TAIL`) |
 | The window lies entirely in the padding | Nothing to load |
 | The window lies entirely inside the image | No padding in this tile |
 | A value does not fit its register | `pl + wr` > 65,535, or `(pt + hr) x wr` or `ah x wr` exceed the counter width |
@@ -178,7 +179,7 @@ combinational, a few sequential steps in the Data Flow Controller, or firmware.
 | Item | Value |
 |---|---|
 | Configuration | 4 register writes per core pass with feeder padding, 8 cycles in the model |
-| Whole YOLOv8m | 4,006 core passes padded by the feeder; 62,666,123 cycles with way 1, 62,698,248 with way 2 (+0.05 %); core busy cycles equal (55,653,442) |
+| Whole YOLOv8m | 4,006 core passes padded by the feeder; 62,666,123 cycles with way 1, 62,698,248 with way 2 (+0.05 %); core busy cycles equal (55,653,442); both measured with the vector-unit knobs off (`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`, `BUILD_AND_RUN.md`, section 6) |
 | Core busy | Equal in total on the whole YOLOv8m and on the padding check programs. On the dilation check program one extreme tile (1x8 kernel, dilation 9, window 103 columns of which 40 real) runs 8 cycles longer, every other tile is equal: the real rows fall differently on the 32-element words |
 | SRAM-A | `lead + Cin x hr x wr` elements instead of `Cin x ah x aw` |
 | Row sweep | One row sweep of the feeder is limited to 256 positions by the 8-bit lane counters (`KNOWN_LIMITATIONS.md`, O24), with or without padding; the mask uses the same counter width. Instructions past it are refused |
@@ -193,7 +194,7 @@ reference `tools/has/ref_program.py` are the references for the results.
 | `tools/has/make_pad_gate.py <dir>` | Check program: 13 convolutions with the old `PAD` form and per-side padding, padding values -128, -121, -3, 0, 5, 7, 127, kernels 1x1 to 7x7, strides 1 and 2, 4 x 2 tiles, `PAD_TAIL`, 64 input channels in two passes. Golden image computed in the script |
 | `make_pad_gate.py --set random`, `--set dilation`, `--set dilrandom` | Random padded layers; dilation 2 to 9 with and without padding; random dilation layers |
 | `tools/has/ref_program.py <dir>` | Independent result for any of these programs |
-| `tools/has/tb_has_npu_top <dir>` with and without `HAS_FEEDER_PAD=1` | Results and `core busy` of both ways; they must be equal (results) and equal or explained (core busy, section 7) |
+| `tools/has/tb_has_npu_top <dir>` with and without `HAS_FEEDER_PAD=1` | Results and `core busy` of both ways; they must be equal (results) and equal or explained (core busy, section 7). Use the same vector-unit knobs in both runs; the knobs-off prefix of `BUILD_AND_RUN.md`, section 6, reproduces the numbers of this document |
 | `tools/has/tb_has_pad_gen.cpp` | The padding generator alone: 4,000 random layers, every element the feeder reads addressed with the generator's registers and compared with the image or the padding value; a hardware or firmware generator can be compared with its values |
 | Build flag `-DFX1_A3_FEED_SIG` (for `tools/has/tb_has_npu_top`) | One line per cycle and core pass with the feeder's status flags (`done`, `til_done`, `fifo_empty`, `fifo_full`, `stall`) and a hash of the 32 lane outputs (`SAURIA_FEED_SIG_FULL=1`: the 32 values); file named by `SAURIA_FEED_SIG`. Cycles are numbered from the start pulse of each pass, so an RTL simulation of the same tile can be compared cycle by cycle |
 | `tools/has/regress_gvu.sh` | Runs the check programs, the random and dilation sets and the generator test in both ways |

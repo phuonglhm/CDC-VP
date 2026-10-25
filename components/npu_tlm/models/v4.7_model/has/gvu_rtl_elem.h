@@ -176,7 +176,7 @@ namespace has
             on_ = v && std::atoi(v) != 0;
             // HAS_GVU_TOP also hands the max pool to these pipelines (has/gvu_top_bridge.h): report then as well
             const char *t = std::getenv("HAS_GVU_TOP");
-            if (on_ || (t && std::atoi(t) > 0)) std::atexit(&RtlElem::report);
+            if (on_ || (t ? std::atoi(t) : 3) > 0) std::atexit(&RtlElem::report);   // HAS_GVU_TOP default 3 (has/gvu_top_bridge.h)
         }
         static bool fit(int64_t v, int bits) { const int64_t h = static_cast<int64_t>(1) << (bits - 1); return v >= -h && v < h; }
         static rtl_ref_gvu::RoundMode map_round(int m)

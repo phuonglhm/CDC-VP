@@ -15,6 +15,7 @@
 #include <systemc.h>
 #include <array>
 #include <deque>
+#include <functional>
 #include <vector>
 #include "sauria_types.h"
 #include "has/gvu_quant.h"
@@ -86,6 +87,10 @@ namespace has
         // double-buffered Scratchpad sbank, loaded by DMA behind the previous tile (GVU §4), so the DFC sets them here
         // without host-bus cycles. apply_inline() = the same arithmetic as the streamed path (compute), one channel.
         uint64_t inline_vectors{0};
+        // HAS_GVU_TOP=3 (has/gvu_top_stream.h): the beat is not replaced here; it goes into the clocked stream through this sink
+        // (psum vector, lane mask, channel, Out_Scale, Out_Shift, "GvuTop cannot express these parameters", model result).
+        std::function<void(const psum_vector_t<W, int32_t> &, uint32_t, uint32_t, int64_t, int, bool, const psum_vector_t<W, int32_t> &)> stream_sink;
+        uint32_t inline_word_addr{0};   // word address of the SRAM-C write of the beat being applied (set by the write hook)
         void set_channel_params(uint32_t ch, uint32_t scale_word, int shift_amount)
         {
             if (ch >= MAX_CH) { cfg_errors++; return; }
@@ -97,13 +102,15 @@ namespace has
         {
             inline_vectors++;
             psum_vector_t<W, int32_t> r = compute(in, ch, m);
-            if (GvuTopBridge::on()) top_beat(in, ch, m, r);
+            if (stream_sink) stream_beat(in, ch, m, r);
+            else if (GvuTopBridge::on()) top_beat(in, ch, m, r);
             else if (RtlObp::on()) rtl_beat(in, ch, m, r);
             return r;
         }
         // Tail behind the last write of a core pass: the depth of the cycle-level pipeline with HAS_GVU_TOP (GvuTop, stream
         // mode) or HAS_OBP_RTL, else LAT.
-        int inline_latency() const { return GvuTopBridge::on() ? GvuTopBridge::kDepth : RtlObp::on() ? RtlObp::kLatency : lat; }
+        // HAS_GVU_TOP=3: no fixed tail; the DFC waits until the stream is empty instead.
+        int inline_latency() const { return stream_sink ? 0 : GvuTopBridge::on() ? GvuTopBridge::kDepth : RtlObp::on() ? RtlObp::kLatency : lat; }
         // HAS_GVU_TOP=2: the layer's table set without host-bus cycles (the instruction path charges the cycles of the
         // Scratchpad path instead, GvuTopBridge::table_cycles()). The same table as 32 copies over the host port.
         void load_lut(const uint8_t *table)
@@ -135,6 +142,22 @@ namespace has
         bool rtl_lut_stale{true};
         bool top_lut_stale{true};     // HAS_GVU_TOP: the table changed since GvuTop loaded it
 
+        // HAS_GVU_TOP=3: the beat goes into the clocked stream; r (the model result) stays what the hook may use for comparison.
+        void stream_beat(const psum_vector_t<W, int32_t> &in, uint32_t x, const sramc_mask_t<W> &m, const psum_vector_t<W, int32_t> &r)
+        {
+            if (W != 32) return;
+            const uint32_t ch = x % nch;
+            const int64_t S = decode_scale(perch ? scale_bits[ch] : i_requant_scale.read(), k.scale_fmt);
+            const int s = perch ? shift[ch] : static_cast<int>(i_requant_shift.read());
+            uint32_t mask = 0;
+            for (int i = 0; i < W; i++) if (m[i]) mask |= 1u << i;
+            auto fit = [](int64_t v, int bits) { const int64_t h = static_cast<int64_t>(1) << (bits - 1); return v >= -h && v < h; };
+            // the parameters GvuTop's stream cannot take (same conditions as GvuTopBridge::gemm_beat_narrow, zero point in the 8 bits
+            // of the RTL register): the model result goes back instead
+            const bool bypass = k.req_narrow == NARROW_NONE || !fit(S, 32) || s < 0 || s > 63 || !GvuTopBridge::zp_fits(zp_out) || k.round_mode < 0 || k.round_mode > 6;
+            stream_sink(in, mask, ch, S, s, bypass, r);
+        }
+
         // HAS_GVU_TOP: the beat of compute() on GvuTop (stream mode); r holds the model result and gets GvuTop's.
         void top_beat(const psum_vector_t<W, int32_t> &in, uint32_t addr, const sramc_mask_t<W> &m, psum_vector_t<W, int32_t> &r)
         {
@@ -144,7 +167,7 @@ namespace has
             const int s = perch ? shift[ch] : static_cast<int>(i_requant_shift.read());
             uint32_t mask = 0;
             for (int i = 0; i < W; i++) if (m[i]) mask |= 1u << i;
-            if (GvuTopBridge::gemm_beat(in, r, mask, addr, S, s, zp_out, k.round_mode, k.req_narrow == SAT16, i_lut_en.read(), lut.data(), top_lut_stale))
+            if (GvuTopBridge::gemm_beat_narrow(in, r, mask, addr, S, s, zp_out, k.round_mode, k.req_narrow, i_lut_en.read(), lut.data(), top_lut_stale))
                 top_lut_stale = false;
         }
 

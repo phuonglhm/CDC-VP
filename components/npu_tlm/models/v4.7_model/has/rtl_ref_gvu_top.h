@@ -22,13 +22,33 @@
 #include "has/rtl_ref_gvu_vrf.h"
 #include "has/rtl_ref_gvu_lut.h"
 #include "has/rtl_ref_gvu_vlsu.h"
+#include "has/gvu_agu_nd_vlsu.h"
 #include "has/rtl_ref_gvu_ctrl.h"
+
+// Depth of the GEMM_FUSED stream pipeline (In::i_gemm_stream): clock edges from the latch of a beat to its result on
+// o_gemm_fused_data. The one place that sets it for GvuTop, the clocked connection (GvuTopStream::kDepth) and the
+// call-style connection (GvuTopBridge::kDepth); override at build time with -DGVU_GEMM_STREAM_DEPTH=<n>. 9 = the register
+// cuts of the MAS Requant / GEMM_FUSED drawings. The hardware RTL measures 11: two more cycles to read the per-channel
+// Out_Scale / Out_Shift from the sbank in front of the multiplier. A depth above 9 adds pure delay stages (values do not
+// change); the computing stages stay those of the MAS. Range 9 .. GEMM_STREAM_DEPTH_MAX.
+#ifndef GVU_GEMM_STREAM_DEPTH
+#define GVU_GEMM_STREAM_DEPTH 9
+#endif
 
 namespace rtl_ref_gvu
 {
+    static constexpr int GEMM_STREAM_DEPTH_MAS = 9;
+    static constexpr int GEMM_STREAM_DEPTH_MAX = 16;
+    static constexpr int GEMM_STREAM_DEPTH = GVU_GEMM_STREAM_DEPTH;
+    static_assert(GEMM_STREAM_DEPTH >= GEMM_STREAM_DEPTH_MAS && GEMM_STREAM_DEPTH <= GEMM_STREAM_DEPTH_MAX,
+                  "GVU_GEMM_STREAM_DEPTH out of range");
+
     // ---- GVU Top Parameters matching gvu_top.sv -------------------------------------------------------------
     struct GvuTopParams
     {
+        // Depth of the GEMM_FUSED stream pipeline of this unit (see GEMM_STREAM_DEPTH; a test may build one unit with
+        // another depth). Values outside 9 .. GEMM_STREAM_DEPTH_MAX are clamped to that range.
+        int gemm_stream_depth{GEMM_STREAM_DEPTH};
         int NUM_LANE{GVU_LANES};
         int DMA_AW{32};
         int DMA_DW{128};
@@ -71,7 +91,8 @@ namespace rtl_ref_gvu
         LAYERNORM_ST5   = 12,
         GEMM_FUSED_ST1  = 13,
         RESIDUAL_ST1    = 14,
-        RESIDUAL_ST2    = 15
+        RESIDUAL_ST2    = 15,
+        POOLING_MAX     = 16     // latest hardware RTL drop (gvu_pkg.sv numbers its states differently; the names are the same)
     };
 
     // ---- Cycle-accurate structural C++ core model of gvu_top.sv --------------------------------------------
@@ -127,9 +148,12 @@ namespace rtl_ref_gvu
             bool    i_gemm_skip_zp{false};
             bool    i_gemm_out_int16{false};
             // Round-shift mode of the Requant step (the layer's rounding mode on the core path; the default keeps the
-            // datasets of target/test/gemm_fused). The narrowing after the shift saturates to int16, as
-            // GvuRequantPipe (has/rtl_ref_gvu_requant.h) and has::requant.
+            // datasets of target/test/gemm_fused).
             RoundMode i_gemm_round{RND_NEAR_AWAY};
+            // Narrowing to int16 after the round-shift, in the tile mode and in the stream mode: NARROW_SATURATE (default, as
+            // GvuRequantPipe of has/rtl_ref_gvu_requant.h and has::requant with has::SAT16) or NARROW_WRAP (keep the low 16
+            // bits, as the hardware RTL; has::requant with has::WRAP16). Held while beats are in flight, like the rounding mode.
+            NarrowMode i_gemm_narrow{NARROW_SATURATE};
             // Load the activation table again from vbank1 buffer 1 before the next GEMM_FUSED run (a new layer has its own
             // table). Hold it with i_pipeline_en until the controller is in LUT_ACT_INIT, then drop it: the controller passes
             // through IDLE between tiles and would load the table again.
@@ -139,14 +163,25 @@ namespace rtl_ref_gvu
             // PSUM SRAM, at most one beat per cycle, gaps allowed. A beat is i_psum_valid + i_psum_vec, with its word address
             // and lane mask carried through the pipeline, and the Out_Scale / Out_Shift of its output channel (one channel
             // per beat). The zero point is 16 bits (i_gemm_zp16; i_gemm_skip_zp still forces 0), the output is int8 (no
-            // i_gemm_out_int16), and the rounding mode, zero point and i_gemm_skip_act are held while beats are in flight.
-            // In GEMM_FUSED_ST1 the mode counts no tokens and does not read vbank2 or the sbank or write vbank0;
+            // i_gemm_out_int16), and the rounding mode, narrowing, zero point and i_gemm_skip_act are held while beats are in
+            // flight. In GEMM_FUSED_ST1 the mode counts no tokens and does not read vbank2 or the sbank or write vbank0;
             // i_gemm_stream_stop ends the run (back to IDLE) once the pipeline is empty. A beat with an empty mask goes
-            // through and leaves with an empty mask. Depth 9 cycles, the register cuts of the MAS Requant / GEMM_FUSED
-            // drawings: multiplier 32x32 4 + v32int64 register 1, round-shift (saturate to int16) 1 + v32int16 register 1,
-            // add zero point (16 bits, wraps) + v32int16 register 1, clamp to int8 + v32int8 register 1, LUT_act 0.
+            // through and leaves with an empty mask. Depth GvuTopParams::gemm_stream_depth cycles (default 9), the register
+            // cuts of the MAS Requant / GEMM_FUSED drawings: multiplier 32x32 4 + v32int64 register 1, round-shift (narrow
+            // to int16, i_gemm_narrow) 1 + v32int16 register 1, add zero point (16 bits, wraps) + v32int16 register 1, clamp
+            // to int8 + v32int8 register 1, LUT_act 0; a depth above 9 lengthens the multiplier register chain by pure delay.
             bool     i_gemm_stream{false};
             bool     i_gemm_stream_stop{false};
+            // HAS_GVU_REGS: the run ends by the flags of the PSM stream, as the RTL controller does (gvu_pipe_controller.sv:250-266,
+            // 624): a beat carrying i_oc_last & i_oc_tile_last (with i_gemm_exit_flags set) is marked, and when it leaves the pipeline
+            // (the last write) the unit goes back to IDLE and reports pipe_done. i_gemm_stream_stop (a signal of the model only) is
+            // not needed then; it stays for the callers that do not set i_gemm_exit_flags (default: off, nothing changes for them).
+            bool     i_gemm_exit_flags{false};
+            bool     i_oc_last{false};
+            bool     i_oc_tile_last{false};
+            // Level reset of the activation table flag (RTL i_lut_act_reset, gvu_pipe_controller.sv:698): while high the flag is cleared,
+            // the next run from IDLE loads the table. Unlike i_gemm_lut_reload it acts in any state.
+            bool     i_lut_act_reset{false};
             uint32_t i_psum_addr{0};
             uint32_t i_psum_mask{0xFFFFFFFFu};
             int32_t  i_psum_scale{1};
@@ -171,6 +206,25 @@ namespace rtl_ref_gvu
             // Lanes written in the last row of a residual run (last tile, last token) by both stages: a tensor whose length
             // is not a multiple of 32 leaves the other lanes of that row untouched. Default all lanes.
             uint32_t i_res_last_lane_mask{0xFFFFFFFFu};
+
+            // Max pool (latest hardware RTL drop, gvu_top.sv i_pooling_*; GVU registers POOLING_0 / POOLING_1). The input tensor sits in
+            // vbank0 buffer i_vbank0_buf_sel as rows of 32 bytes: row c * H * num_w_tile + h * num_w_tile + w_tile (no
+            // padding in the unit); the result goes to vbank2 port 1 (v32int8), row c * OH * num_w_tile + oh * num_w_tile +
+            // w_tile, from row 0. c_move = num_w_tile * H, h_move = num_w_tile * stride. Supported as in the RTL: 2x2 s1/s2,
+            // 3x3 s1, 4x4 s1/s2/s4, 5x5 s1.
+            int      i_pooling_mode{POOLING_2X2};
+            unsigned i_pooling_stride{1};
+            unsigned i_pooling_num_w_tile{1};
+            unsigned i_pooling_c{1};
+            unsigned i_pooling_oh{1};
+            unsigned i_pooling_c_move{0};
+            unsigned i_pooling_h_move{0};
+
+            // AGU_ND (model proposal, Reg 16..24, has/gvu_agu_nd.h): AGU_ND_CTRL and the source / destination descriptors. Nothing bound
+            // (default) = the unit as before. Residual add: vbank0 bound as source (A, RESIDUAL_ST1) and / or destination (result,
+            // RESIDUAL_ST2), num_tile 1. Max pool: destination bound to vbank2 places output row k at addr_at(k).
+            AguNdCtrl i_agu_nd_ctrl{};
+            AguNdDesc i_agu_src{}, i_agu_dst{};
 
             // Ping-pong buffer selection
             bool i_sbank_buf_sel{false};
@@ -206,15 +260,26 @@ namespace rtl_ref_gvu
             bool o_gemm_fused_busy{false};     // stream mode: a beat is in the pipeline
             std::array<int8_t, GVU_LANES> o_residual_data{};
             bool o_residual_valid{false};
+            bool o_maxpool_pipe_done{false};
+            // Scratchpad requests of this cycle, for cycle traces against the RTL (tools/has/gvu_oracle/tb_oracle_maxpool.sv)
+            bool d_vbank0_en{false};
+            unsigned d_vbank0_addr{0};
+            bool d_vbank2_wen_1{false};
+            unsigned d_vbank2_addr_1{0};
+            uint32_t d_vbank2_wmask_1{0};
+            std::array<uint8_t, GVU_LANES> d_vbank2_wdata_1{};
         };
 
         explicit GvuTop(const GvuTopParams &p = GvuTopParams())
             : P_(p),
+              mul_n_(kStreamMul + std::min(std::max(p.gemm_stream_depth, GEMM_STREAM_DEPTH_MAS), GEMM_STREAM_DEPTH_MAX) - GEMM_STREAM_DEPTH_MAS),
               scratchpad_(p.sp_params),
               vlsu_(p.sp_params),
               stream_vrf_(),
               vlut_(p.lut_params),
-              vcmp_(p.fu_params)
+              vcmp_(p.fu_params),
+              sm_v_(static_cast<size_t>(mul_n_), 0),
+              sm_d_(static_cast<size_t>(mul_n_))
         {
             exp_e_shift_buf_.fill({});
             vbank0_rd_delay_.fill(false);
@@ -226,6 +291,8 @@ namespace rtl_ref_gvu
         }
 
         const GvuTopParams &params() const { return P_; }
+        // Depth of the GEMM_FUSED stream pipeline of this unit (GvuTopParams::gemm_stream_depth after the clamp).
+        int gemm_stream_depth() const { return mul_n_ + kStreamRs + 2; }
 
         // Component accessors for inspection and testing
         GvuScratchpad &scratchpad() { return scratchpad_; }
@@ -234,8 +301,8 @@ namespace rtl_ref_gvu
         const StreamVrf &stream_vrf() const { return stream_vrf_; }
         LutUnit &vlut() { return vlut_; }
         const LutUnit &vlut() const { return vlut_; }
-        GvuVlsu &vlsu() { return vlsu_; }
-        const GvuVlsu &vlsu() const { return vlsu_; }
+        GvuVlsu &vlsu() { return vlsu_.frozen(); }
+        const GvuVlsu &vlsu() const { return vlsu_.frozen(); }
         control_fsm_t state() const { return pipe_ctrl_fsm_; }
         uint32_t start_d_cnt() const { return start_d_cnt_; }
         uint32_t end_d_cnt() const { return end_d_cnt_; }
@@ -299,6 +366,7 @@ namespace rtl_ref_gvu
                 b_part_delay_.fill(0);
                 scratchpad_.reset_addr_delays();
                 stream_clear();
+                vlsu_.reset_pooling();
                 return o;
             }
 
@@ -310,6 +378,7 @@ namespace rtl_ref_gvu
             vlut_.tick(w.lut_in, i_rstn);
 
             scratchpad_.tick(w.sp_in);
+            vlsu_.bind(in.i_agu_nd_ctrl, in.i_agu_src, in.i_agu_dst, w.agu_nd_sel);
             vlsu_.tick(w.vlsu_in);
             stream_vrf_.tick(w.vrf_in, i_rstn);
             vcmp_.tick(w.cmp_in);
@@ -448,9 +517,15 @@ namespace rtl_ref_gvu
         }
 
     private:
+        // Stream mode of GEMM_FUSED: stage counts of the MAS cuts (see In::i_gemm_stream)
+        static constexpr int kStreamMul = 5;                  // multiplier 32x32 4 + v32int64 register
+        static constexpr int kStreamRs = 2;                   // round-shift 1 + v32int16 register
+        static_assert(kStreamMul + kStreamRs + 2 == GEMM_STREAM_DEPTH_MAS, "stream stages of the MAS");
+
         GvuTopParams P_;
+        int mul_n_;                                           // multiplier chain in use: kStreamMul + delay stages
         GvuScratchpad scratchpad_;
-        GvuVlsu vlsu_;
+        GvuVlsuNdPort vlsu_;   // the frozen GvuVlsu, plus AGU_ND when bound
         StreamVrf stream_vrf_;
         LutUnit vlut_;
         Vcmp32 vcmp_;
@@ -467,25 +542,27 @@ namespace rtl_ref_gvu
         bool softmax_st1_pipe_en_r_{false};
 
         // Stream mode of GEMM_FUSED: pipeline registers (valid + data), see In::i_gemm_stream
-        struct StreamProd { V64 p{}; unsigned shift{0}; uint32_t addr{0}, mask{0}; };
-        struct StreamBeat { V32 v{}; uint32_t addr{0}, mask{0}; };
-        static constexpr int kStreamMul = 5;                  // multiplier 32x32 4 + v32int64 register
-        static constexpr int kStreamRs = 2;                   // round-shift 1 + v32int16 register
-        std::array<bool, kStreamMul> sm_v_{};
-        std::array<StreamProd, kStreamMul> sm_d_{};
+        struct StreamProd { V64 p{}; unsigned shift{0}; uint32_t addr{0}, mask{0}; bool last{false}; };
+        struct StreamBeat { V32 v{}; uint32_t addr{0}, mask{0}; bool last{false}; };
+        // multiplier chain of mul_n_ registers; the ones past kStreamMul are the pure delay stages. On the heap: the unit is
+        // built on the stack of SystemC threads, whose stack is small.
+        std::vector<uint8_t> sm_v_;
+        std::vector<StreamProd> sm_d_;
         std::array<bool, kStreamRs> sr_v_{};
         std::array<StreamBeat, kStreamRs> sr_d_{};
         bool sz_v_{false};                                    // add zero point + v32int16 register
         StreamBeat sz_d_{};
         bool s8_v_{false};                                    // clamp + v32int8 register
         StreamBeat s8_d_{};
+        // The beat marked by the flags of the PSM stream leaves the pipeline in this cycle (see In::i_gemm_exit_flags).
+        bool stream_exit(const In &in) const { return in.i_gemm_exit_flags && s8_v_ && s8_d_.last; }
         bool stream_busy() const
         {
-            for (bool b : sm_v_) if (b) return true;
+            for (uint8_t b : sm_v_) if (b) return true;
             for (bool b : sr_v_) if (b) return true;
             return sz_v_ || s8_v_;
         }
-        void stream_clear() { sm_v_.fill(false); sr_v_.fill(false); sz_v_ = false; s8_v_ = false; }
+        void stream_clear() { std::fill(sm_v_.begin(), sm_v_.end(), uint8_t(0)); sr_v_.fill(false); sz_v_ = false; s8_v_ = false; }
         // Residual add: the write of this cycle belongs to the last row of the run and i_res_last_lane_mask is in use.
         bool res_last_row(const In &in) const
         {
@@ -501,14 +578,15 @@ namespace rtl_ref_gvu
                 for (int l = 0; l < GVU_LANES; l++)
                     po.p[l] = vmul32x32_lane(MA_32X32, static_cast<uint32_t>(in.i_psum_vec[l]), static_cast<uint32_t>(in.i_psum_scale));
                 po.shift = in.i_psum_shift & 0x3Fu; po.addr = in.i_psum_addr; po.mask = in.i_psum_mask;
+                po.last = in.i_gemm_exit_flags && in.i_oc_last && in.i_oc_tile_last;
             }
             StreamBeat rs{};
-            if (sm_v_[kStreamMul - 1])
+            if (sm_v_[mul_n_ - 1])
             {
-                const StreamProd &q = sm_d_[kStreamMul - 1];
+                const StreamProd &q = sm_d_[mul_n_ - 1];
                 for (int l = 0; l < GVU_LANES; l++)
-                    rs.v[l] = vroundshift64_lane(q.p[l], q.shift, in.i_gemm_round, NARROW_SATURATE, NW_16).out_data & 0xFFFFu;
-                rs.addr = q.addr; rs.mask = q.mask;
+                    rs.v[l] = vroundshift64_lane(q.p[l], q.shift, in.i_gemm_round, in.i_gemm_narrow, NW_16).out_data & 0xFFFFu;
+                rs.addr = q.addr; rs.mask = q.mask; rs.last = q.last;
             }
             StreamBeat zs{};
             if (sr_v_[kStreamRs - 1])
@@ -516,19 +594,19 @@ namespace rtl_ref_gvu
                 const StreamBeat &q = sr_d_[kStreamRs - 1];
                 const uint32_t zp16 = static_cast<uint32_t>(in.i_gemm_skip_zp ? 0 : in.i_gemm_zp16) & 0xFFFFu;
                 for (int l = 0; l < GVU_LANES; l++) zs.v[l] = adder32_lane(ADD_16, 0, 0, false, q.v[l], zp16) & 0xFFFFu;
-                zs.addr = q.addr; zs.mask = q.mask;
+                zs.addr = q.addr; zs.mask = q.mask; zs.last = q.last;
             }
             StreamBeat c8{};
             if (sz_v_)
             {
                 for (int l = 0; l < GVU_LANES; l++) c8.v[l] = clamp_lane(sz_d_.v[l], static_cast<uint32_t>(-128), 127, 16, true) & 0xFFu;
-                c8.addr = sz_d_.addr; c8.mask = sz_d_.mask;
+                c8.addr = sz_d_.addr; c8.mask = sz_d_.mask; c8.last = sz_d_.last;
             }
             s8_v_ = sz_v_; s8_d_ = c8;
             sz_v_ = sr_v_[kStreamRs - 1]; sz_d_ = zs;
             for (int s = kStreamRs - 1; s > 0; s--) { sr_v_[s] = sr_v_[s - 1]; sr_d_[s] = sr_d_[s - 1]; }
-            sr_v_[0] = sm_v_[kStreamMul - 1]; sr_d_[0] = rs;
-            for (int s = kStreamMul - 1; s > 0; s--) { sm_v_[s] = sm_v_[s - 1]; sm_d_[s] = sm_d_[s - 1]; }
+            sr_v_[0] = sm_v_[mul_n_ - 1]; sr_d_[0] = rs;
+            for (int s = mul_n_ - 1; s > 0; s--) { sm_v_[s] = sm_v_[s - 1]; sm_d_[s] = sm_d_[s - 1]; }
             sm_v_[0] = in.i_psum_valid; sm_d_[0] = po;
         }
 
@@ -553,6 +631,7 @@ namespace rtl_ref_gvu
         {
             // Controller FSM signals
             control_fsm_t fsm_nxt{IDLE};
+            std::array<uint8_t, 5> agu_nd_sel{{0, 0, 0, 0, 0}};   // AGU_ND pick per VLSU port for the clock edge
             bool is_lut_exp_init_nxt{false}, is_lut_recip_init_nxt{false}, is_lut_rsqrt_init_nxt{false}, is_lut_act_init_nxt{false};
             bool softmax_token_last{false};
             bool softmax_st1_last_rd{false};
@@ -667,7 +746,7 @@ namespace rtl_ref_gvu
                                 (pipe_ctrl_fsm_ == RESIDUAL_ST1 && !token_read_done));
             w.ctrl_vbank0_wr = false;
 
-            w.ctrl_vbank2_port_sel = (pipe_ctrl_fsm_ == SOFTMAX_ST2 || pipe_ctrl_fsm_ == SOFTMAX_ST3); // true = port 1 (v32int8), false = port 0 (v32int32)
+            w.ctrl_vbank2_port_sel = (pipe_ctrl_fsm_ == SOFTMAX_ST2 || pipe_ctrl_fsm_ == SOFTMAX_ST3 || pipe_ctrl_fsm_ == POOLING_MAX); // true = port 1 (v32int8), false = port 0 (v32int32)
             w.ctrl_vbank2_rd = ((pipe_ctrl_fsm_ == SOFTMAX_ST3 && vlut_.o_pipe_almost_done(LUT_PWL)) ||
                                 (pipe_ctrl_fsm_ == LAYERNORM_ST4 && !token_read_done) ||
                                 (pipe_ctrl_fsm_ == GEMM_FUSED_ST1 && !in.i_gemm_stream && !in.i_psum_valid && !token_read_done) ||
@@ -723,6 +802,24 @@ namespace rtl_ref_gvu
                 ? tile_offset
                 : (is_res ? (in.i_res_sum_row + tile_offset) : 0u);
             w.vlsu_in.i_vbank2_lane_wmask = 0xFFFFFFFFu;
+
+            // Pooling (latest hardware RTL drop): the configuration inputs go to the VLSU as they are, the controller enables the feeder
+            // in POOLING_MAX and gives vbank0 / vbank2 the pooling AGU. The read data and the comparator's lane valid are
+            // filled in below once the Scratchpad and the comparator are evaluated.
+            const bool pool = pipe_ctrl_fsm_ == POOLING_MAX;
+            w.vlsu_in.i_pooling_enable = pool;
+            w.vlsu_in.i_pooling_mode = in.i_pooling_mode;
+            w.vlsu_in.i_pooling_stride = in.i_pooling_stride;
+            w.vlsu_in.i_pooling_num_w_tile = in.i_pooling_num_w_tile;
+            w.vlsu_in.i_pooling_c = in.i_pooling_c;
+            w.vlsu_in.i_pooling_oh = in.i_pooling_oh;
+            w.vlsu_in.i_pooling_c_move = in.i_pooling_c_move;
+            w.vlsu_in.i_pooling_h_move = in.i_pooling_h_move;
+            if (pool)
+            {
+                w.vlsu_in.i_vbank0_agu_mode = AGU_POOLING;
+                w.vlsu_in.i_vbank2_agu_mode = AGU_POOLING;
+            }
 
             w.vlsu_out = vlsu_.eval(w.vlsu_in);
 
@@ -781,10 +878,11 @@ namespace rtl_ref_gvu
             w.sp_out = scratchpad_.out(w.sp_in);
             w.pipe_ctrl_lut_init_data = w.sp_out.o_vbank1_rdata_0;
 
-            // ---- 4. Comparator Execution (SOFTMAX_ST1) -----------------------------------------------------
-            w.cmp_in.in_cmp_mode = (pipe_ctrl_fsm_ == SOFTMAX_ST1) ? CMP_ACCUMULATE : CMP_ELEMENTWISE;
+            // ---- 4. Comparator Execution (SOFTMAX_ST1, POOLING_MAX) ----------------------------------------
+            w.cmp_in.in_cmp_mode = (pipe_ctrl_fsm_ == SOFTMAX_ST1 || pool) ? CMP_ACCUMULATE : CMP_ELEMENTWISE;
             w.cmp_in.in_op = CMP_MAX;
-            w.cmp_in.in_elem_w = (pipe_ctrl_fsm_ == SOFTMAX_ST1) ? EW_8 : EW_32;
+            w.cmp_in.in_elem_w = (pipe_ctrl_fsm_ == SOFTMAX_ST1 || pool) ? EW_8 : EW_32;
+            w.cmp_in.in_lane_mode = pool;
             w.cmp_in.in_signed = true;
             w.cmp_in.in_src1_bcast = false;
             w.cmp_in.in_first = w.softmax_st1_cmp_first;
@@ -797,7 +895,35 @@ namespace rtl_ref_gvu
                     ? static_cast<uint32_t>(w.sp_out.o_vbank0_rdata[l]) : 0u;
                 w.cmp_in.in_src1[l] = 0;
             }
+            // MAXPOOL (gvu_top.sv vcmp_inp_arb, keyed on the opcode, not the state): the comparator takes the feeder's lane
+            // stream (byte in bits 7:0 of each lane), every lane ready at the output.
+            if (in.i_gvu_op == GVU_OP_MAXPOOL)
+            {
+                w.vlsu_in.i_pooling_rdata = w.sp_out.o_vbank0_rdata;
+                w.vlsu_out = vlsu_.eval(w.vlsu_in);
+                w.cmp_in.in_lane_valid = w.vlsu_out.o_pooling_window_valid;
+                w.cmp_in.out_lane_ready = 0xFFFFFFFFu;
+                w.cmp_in.in_lane_first = w.vlsu_out.o_feeder_first;
+                w.cmp_in.in_lane_last = w.vlsu_out.o_feeder_last;
+                for (int l = 0; l < GVU_LANES; l++) w.cmp_in.in_src0[l] = w.vlsu_out.o_pooling_window_data[static_cast<size_t>(l)];
+            }
             w.cmp_out = vcmp_.eval(w.cmp_in);
+            // MAXPOOL write: lane valid of the comparator -> vbank2 port 1 at the pooling address, its bytes as data
+            if (in.i_gvu_op == GVU_OP_MAXPOOL)
+            {
+                w.vlsu_in.i_pooling_valid = w.cmp_out.out_lane_valid;
+                w.vlsu_out = vlsu_.eval(w.vlsu_in);
+                w.sp_in.i_vbank0_en = w.vlsu_out.o_vbank0_en;
+                w.sp_in.i_vbank0_wen = w.vlsu_out.o_vbank0_wen;
+                w.sp_in.i_vbank0_addr = w.vlsu_out.o_vbank0_addr;
+                w.sp_in.i_vbank2_port_sel = w.vlsu_out.o_vbank2_port_sel;
+                w.sp_in.i_vbank2_en_1 = w.vlsu_out.o_vbank2_en_1;
+                w.sp_in.i_vbank2_wen_1 = w.vlsu_out.o_vbank2_wen_1;
+                w.sp_in.i_vbank2_addr_1 = (in.i_agu_nd_ctrl.dst_on && in.i_agu_nd_ctrl.dst_port == AguNdCtrl::VBANK2)
+                    ? in.i_agu_dst.addr_at(w.vlsu_out.o_vbank2_addr_1, P_.sp_params.VBANK2_AW() + 2) : w.vlsu_out.o_vbank2_addr_1;   // AGU_ND destination
+                for (int b = 0; b < P_.NUM_LANE / 8; b++) w.sp_in.i_vbank2_wmask_1[static_cast<size_t>(b)] = static_cast<uint8_t>(w.vlsu_out.o_vbank2_wmask_1 >> (8 * b));
+                for (int l = 0; l < GVU_LANES; l++) w.sp_in.i_vbank2_wdata_1[static_cast<size_t>(l)] = static_cast<uint8_t>(w.cmp_out.out_res[l] & 0xFFu);
+            }
 
             if (pipe_ctrl_fsm_ == SOFTMAX_ST1 && w.cmp_out.out_valid)
             {
@@ -811,7 +937,7 @@ namespace rtl_ref_gvu
             }
 
             // ---- 5. Stream VRF Initial Evaluation (registered outputs from previous clock edge) ----------
-            w.vrf_in.i_vint32_0_cfg_mode = (pipe_ctrl_fsm_ == SOFTMAX_ST1 || pipe_ctrl_fsm_ == SOFTMAX_ST2) ? 2
+            w.vrf_in.i_vint32_0_cfg_mode = (pipe_ctrl_fsm_ == SOFTMAX_ST1 || pipe_ctrl_fsm_ == SOFTMAX_ST2 || pool) ? 2
                                          : ((pipe_ctrl_fsm_ == SOFTMAX_ST3) ? 1 : 0);
             w.vrf_in.i_vint64_0_cfg_mode = (pipe_ctrl_fsm_ == SOFTMAX_ST3);
             w.vrf_in.i_vint64_2_cfg_mode = false;
@@ -843,7 +969,7 @@ namespace rtl_ref_gvu
                         );
                     }
                     w.mul1_prod[l] = vmul32x32_lane(MA_32X32, static_cast<uint32_t>(psum_l), static_cast<uint32_t>(scale));
-                    w.roundshift1_out[l] = vroundshift64_lane(w.mul1_prod[l], shift & 0x3Fu, in.i_gemm_round, NARROW_SATURATE, NW_16).out_data;
+                    w.roundshift1_out[l] = vroundshift64_lane(w.mul1_prod[l], shift & 0x3Fu, in.i_gemm_round, in.i_gemm_narrow, NW_16).out_data;
                     w.adder2_r[l] = adder32_lane(ADD_16, 0, 0, false, w.roundshift1_out[l] & 0xFFFFu, zp16) & 0xFFFFu;
                     w.clamp_out[l] = clamp_lane(w.adder2_r[l], static_cast<uint32_t>(lo), hi, 16, true) & 0xFFu;
                     w.lut_8b_idx[l] = static_cast<uint8_t>(w.clamp_out[l] & 0xFFu);
@@ -1489,6 +1615,14 @@ namespace rtl_ref_gvu
                 {
                     w.fsm_nxt = RESIDUAL_ST1;
                 }
+                else if (in.i_gvu_op == GVU_OP_MAXPOOL)
+                {
+                    w.fsm_nxt = POOLING_MAX;
+                }
+                break;
+            case POOLING_MAX:
+                if (w.vlsu_out.o_pooling_last_wr)
+                    w.fsm_nxt = IDLE;
                 break;
             case LUT_ACT_INIT:
                 if (vlut_.mem.o_init_done(LUT_ACT))
@@ -1551,7 +1685,7 @@ namespace rtl_ref_gvu
                     w.fsm_nxt = IDLE;
                 break;
             case GEMM_FUSED_ST1:
-                if (in.i_gemm_stream ? (in.i_gemm_stream_stop && !stream_busy()) : w.gemm_fused_token_last)
+                if (in.i_gemm_stream ? ((in.i_gemm_stream_stop && !stream_busy()) || stream_exit(in)) : w.gemm_fused_token_last)
                     w.fsm_nxt = IDLE;
                 break;
             case RESIDUAL_ST1:
@@ -1567,7 +1701,19 @@ namespace rtl_ref_gvu
                 break;
             }
 
+            // RTL gvu_pipe_controller.sv:698: the reset wins over the init-done update above
+            if (in.i_lut_act_reset) w.is_lut_act_init_nxt = false;
+
             w.vlsu_in.i_agu_addr_reset = (w.fsm_nxt != pipe_ctrl_fsm_);
+            // AGU_ND: with vbank0 bound, A is read with the source descriptor in RESIDUAL_ST1 and the result written with the destination
+            // descriptor in RESIDUAL_ST2; the pick is the one of the state the address register enters at this edge (bound in tick()).
+            {
+                const control_fsm_t st = w.vlsu_in.i_agu_addr_reset ? w.fsm_nxt : pipe_ctrl_fsm_;
+                const AguNdCtrl &c = in.i_agu_nd_ctrl;
+                if (st == RESIDUAL_ST1 && c.src_on && c.src_port == AguNdCtrl::VBANK0) w.agu_nd_sel[2] = 1;
+                if (st == RESIDUAL_ST2 && c.dst_on && c.dst_port == AguNdCtrl::VBANK0) w.agu_nd_sel[2] = 2;
+                if (w.agu_nd_sel[2]) w.vlsu_in.i_vbank0_agu_mode = AGU_ND;
+            }
 
             // ---- 9. Populate Top-Level Outputs -------------------------------------------------------------
             Out o;
@@ -1581,7 +1727,7 @@ namespace rtl_ref_gvu
             o.o_gemm_fused_lut_init_done = is_lut_act_init_;
             if (in.i_gemm_stream)
             {
-                o.o_gemm_fused_pipe_done = (pipe_ctrl_fsm_ == GEMM_FUSED_ST1) && in.i_gemm_stream_stop && !stream_busy();
+                o.o_gemm_fused_pipe_done = (pipe_ctrl_fsm_ == GEMM_FUSED_ST1) && ((in.i_gemm_stream_stop && !stream_busy()) || stream_exit(in));
                 o.o_gemm_fused_valid = (pipe_ctrl_fsm_ == GEMM_FUSED_ST1) && s8_v_;
                 o.o_gemm_fused_addr = s8_d_.addr;
                 o.o_gemm_fused_mask = s8_v_ ? s8_d_.mask : 0u;
@@ -1604,6 +1750,13 @@ namespace rtl_ref_gvu
             {
                 o.o_residual_data[l] = static_cast<int8_t>(w.clamp_out[l] & 0xFFu);
             }
+            o.o_maxpool_pipe_done = pool && w.vlsu_out.o_pooling_last_wr;
+            o.d_vbank0_en = w.sp_in.i_vbank0_en;
+            o.d_vbank0_addr = w.sp_in.i_vbank0_addr;
+            o.d_vbank2_wen_1 = w.sp_in.i_vbank2_wen_1;
+            o.d_vbank2_addr_1 = w.sp_in.i_vbank2_addr_1;
+            for (size_t b = 0; b < w.sp_in.i_vbank2_wmask_1.size() && b < 4; b++) o.d_vbank2_wmask_1 |= static_cast<uint32_t>(w.sp_in.i_vbank2_wmask_1[b]) << (8 * b);
+            for (size_t l = 0; l < static_cast<size_t>(GVU_LANES) && l < w.sp_in.i_vbank2_wdata_1.size(); l++) o.d_vbank2_wdata_1[l] = w.sp_in.i_vbank2_wdata_1[l];
             o.o_gvu_pipe_ctrl_state = pipe_ctrl_fsm_;
             o.o_scratch_dma_rdata = SpBytes(P_.DMA_DW / 8, 0);
 
@@ -1686,9 +1839,10 @@ namespace rtl_ref_gvu
 
         void config_gemm_fused(int32_t scale, int8_t shift, int8_t zp,
                                bool per_channel = false, bool skip_act = false,
-                               bool skip_zp = false, bool out_int16 = false, RoundMode round = RND_NEAR_AWAY)
+                               bool skip_zp = false, bool out_int16 = false, RoundMode round = RND_NEAR_AWAY,
+                               NarrowMode narrow = NARROW_SATURATE)
         {
-            gemm_scale_ = scale; gemm_shift_ = shift; gemm_zp_ = zp; gemm_round_ = round;
+            gemm_scale_ = scale; gemm_shift_ = shift; gemm_zp_ = zp; gemm_round_ = round; gemm_narrow_ = narrow;
             gemm_per_channel_ = per_channel; gemm_skip_act_ = skip_act;
             gemm_skip_zp_ = skip_zp; gemm_out_int16_ = out_int16;
         }
@@ -1719,6 +1873,7 @@ namespace rtl_ref_gvu
         int32_t gemm_scale_{1}; int8_t gemm_shift_{0}; int8_t gemm_zp_{0};
         bool gemm_per_channel_{false}; bool gemm_skip_act_{false};
         bool gemm_skip_zp_{false}; bool gemm_out_int16_{false}; RoundMode gemm_round_{RND_NEAR_AWAY};
+        NarrowMode gemm_narrow_{NARROW_SATURATE};
         std::array<int32_t, GVU_LANES> psum_vec_{};
         int32_t res_scale_a_{1}; uint8_t res_shift_a_{0}; int8_t res_zp_a_{0};
         int32_t res_scale_b_{1}; uint8_t res_shift_b_{0}; int8_t res_zp_b_{0};
@@ -1753,6 +1908,7 @@ namespace rtl_ref_gvu
             in.i_gemm_zp = gemm_zp_;
             in.i_gemm_per_channel = gemm_per_channel_;
             in.i_gemm_round = gemm_round_;
+            in.i_gemm_narrow = gemm_narrow_;
             in.i_gemm_skip_act = gemm_skip_act_;
             in.i_gemm_skip_zp = gemm_skip_zp_;
             in.i_gemm_out_int16 = gemm_out_int16_;
