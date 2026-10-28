@@ -15,17 +15,10 @@ of the CLI.
 `data/`: `t20_rx.txt` (console line), `t20_rx_pass_fail.txt` (a line that
 prints both verdict texts: FAIL wins), `t20_flash.bin` (NOR content).
 
-`fw-src/`: the sources of these images (ROM stub `ibex_rom.S`, start-up files,
-linker scripts `ibex.ld`/`cva6.ld`, trap runtime, the test programs) and
-`fu3_vp_abi.h`. Build (xPack riscv-none-elf-gcc 15.2):
-
-```sh
-COMMON="-O1 -g -ffreestanding -nostdlib -nostartfiles -msmall-data-limit=0 -Ifw-src fw-src/fw_trap.S fw-src/fw_runtime.c"
-riscv-none-elf-gcc -march=rv32imc_zcb_zicsr_zifencei -mabi=ilp32 $COMMON \
-    fw-src/ibex_rom.S fw-src/ibex_start.S fw-src/t20_console.c -T fw-src/ibex.ld -o t20_console.elf
-riscv-none-elf-gcc -march=rv32imfc_zicsr_zifencei -mabi=ilp32f $COMMON \
-    fw-src/cva6_start.S fw-src/t19_cva6.c -T fw-src/cva6.ld -o t19_cva6.elf
-```
+The sources of these images, their `Makefile` and the demo script are in the
+fx1 firmware tree: `sw/bootloader/sources/VP_FU3_V1.0/` (`make` builds into
+`sw/bootloader/build/VP_FU3_V1.0/`) and `sw/bootloader/test/VP_FU3_V1.0/run_vp.sh`.
+The images here are prebuilt copies for machines without a RISC-V toolchain.
 
 `run_package_tests.sh`: the package checks (exit 0 = all pass); the GDB check
 runs when `riscv-none-elf-gdb` is on PATH or given as `GDB=...`.

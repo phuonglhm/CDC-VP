@@ -12,8 +12,8 @@ What the VP is and is not:
   TLM loosely-timed model, not cycle accurate; it is **not** an RTL equivalence
   or silicon-timing reference.
 - The images it runs are preloaded test images. The product Boot ROM and
-  firmware belong to FW/SW; the small programs shipped in
-  `vp/configs/VP_FU3_V1.0/fw-src/` are VP verification firmware, examples only.
+  firmware belong to FW/SW; the small programs in
+  `sw/bootloader/sources/VP_FU3_V1.0/` are VP verification firmware, examples only.
 
 ## Package layout
 
@@ -21,7 +21,9 @@ What the VP is and is not:
 | --- | --- |
 | `vp/bin/VP_FU3_V1.0/vp_fu3_soc` | the VP executable |
 | `vp/bin/VP_FU3_V1.0/libsystemc.so*` | SystemC 2.3.4 runtime (found through RPATH `$ORIGIN`) |
-| `vp/configs/VP_FU3_V1.0/` | example images (`fw/`), their sources (`fw-src/`), stimulus files (`data/`), `run_package_tests.sh` |
+| `vp/configs/VP_FU3_V1.0/` | prebuilt example images (`fw/`), stimulus files (`data/`), `run_package_tests.sh` |
+| `sw/bootloader/sources/VP_FU3_V1.0/` | example firmware sources, `Makefile` (`make` builds into `sw/bootloader/build/VP_FU3_V1.0/`), `README.md` |
+| `sw/bootloader/test/VP_FU3_V1.0/run_vp.sh` | demos of the example firmware on the VP (`smoke`, `console`, `handoff`, `wake`, `gdb`, `run`) |
 | `vp/doc/VP_FU3_V1.0/` | this guide, firmware baseline, maps, CSR headers, ISA, clock/reset contract, R1 gaps, test results, `MANIFEST.txt` |
 | `vp/licenses/` | notices of the bundled third-party code |
 
@@ -43,6 +45,8 @@ $VP --rom $CFG/fw/fu3_t20_console.elf --mode 10 --boot-pin 1 \
     --uart-rx-file $CFG/data/t20_rx.txt --uart-rx-delay-us 400 \
     --flash $CFG/data/t20_flash.bin --expect-uart PASS --timeout-ms 20
 $CFG/run_package_tests.sh     # the package checks (exit 0 = all pass)
+make -C sw/bootloader/sources/VP_FU3_V1.0      # build the example firmware
+sw/bootloader/test/VP_FU3_V1.0/run_vp.sh smoke  # run its demos
 ```
 
 ## Running firmware
