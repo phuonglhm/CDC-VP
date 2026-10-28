@@ -34,7 +34,7 @@ struct Bench : sc_core::sc_module, Checks {
     unsigned access(unsigned i,bool write,unsigned offset,unsigned value=0) {
         unsigned char data=static_cast<unsigned char>(value);tlm::tlm_generic_payload tx;
         // Deliberately independent constants verify the bank's published address map.
-        const std::uint64_t bases[]{0x440d0000,0x440e0000,0x50050000};
+        const std::uint64_t bases[]{0x440d0000,0x440e0000,0x44090000};
         tx.set_address(bases[i]+offset);tx.set_command(write?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND);
         tx.set_data_ptr(&data);tx.set_data_length(1);tx.set_streaming_width(1);fu3_bus::ScopedAccess metadata(tx,1);
         auto delay=sc_core::sc_time(2,sc_core::SC_NS);cpu->b_transport(tx,delay);settle();

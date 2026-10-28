@@ -34,12 +34,15 @@ flowchart LR
   A1 --> P1[PERIBUS_1 APB4]
 ```
 
-The latest Common Spec v2.0 workbook is authoritative: PERIBUS_1 connects
-through A2P_PP1 directly to SYSBUS_1; PERIBUS_0 stays behind SYSBUS_0.
-This supersedes the earlier HAS-figure routing decision. Addresses remain
-unchanged. See [Common baseline decisions](docs/COMMON_REBASELINE.md).
+Common Spec v2.1 (MemoryMap revision 18/10/2026) is authoritative for the map
+(`BusConfig::revision` names it): PERIBUS_1 connects through A2P_PP1 directly
+to SYSBUS_1; PERIBUS_0 stays behind SYSBUS_0. See
+[Common baseline decisions](docs/COMMON_REBASELINE.md), which records the
+v2.1 rebaseline (plan T04).
 
-`BusConfig::fu3()` enables four initiators and 36 targets. Bind every enabled
+`BusConfig::fu3()` has four initiators and 44 targets: 40 enabled and four
+disabled windows for IP delivered later (EDHOC_OSCORE, PWM0, PWM1, CAN), which
+decode nowhere until a platform enables and binds them. Bind every enabled
 target before `sc_start`; unused initiators may remain unbound. Disable missing
 targets before constructing the fabric; their addresses become unmapped.
 Configuration is fixed during elaboration. Names, ranges, overlaps, widths and
@@ -114,9 +117,12 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
 - Common Full strobes apply at Timer, WDT, I2C, UART, SPI and AP_HBCTRL
   model boundaries. Word-register endpoints merge enabled lanes internally;
   no bus CSR read-modify-write is performed. Zero write strobes cause no effect.
-- AP_PLIC is the explicit Common exception: every functional access requires
-  an aligned complete word with all lanes enabled. The guard applies before
-  widening or dispatch, independently of the peer's provisional CSR map.
+- AP_PLIC: only CLAIM/COMPLETE (offset 0x3004 of the VP PLIC ABI) is a
+  protected side-effect word (`strict_word_offsets`); narrow or partial access
+  to it is refused before dispatch. Other PLIC CSRs take lanes like any
+  word-register endpoint, and the PLIC reports a partial write itself.
+- QSPI_XIP is read/execute for functional masters (`AccessPolicy::ReadExecute`);
+  the flash image is a host preload and programming goes through AP_QSPIC.
 - Production AP_DMA needs `fu3_bus::DmaAdapter` to translate its native
   metadata and lane strobes; see the [integration contract](docs/MODEL_CONTRACT.md#production-ip-integration-contract-2026-10-20).
 - Downstream error stops the request; completed beats are not rolled back.
@@ -155,6 +161,8 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
   AP 2 ns (`axi_cycle_ns`), PP 10 ns (`apb_cycle_ns`), router decode 2 ns
   (`router_latency_ns`), A2P setup+access two APB cycles per beat. These are VP
   parameters, not confirmed RTL frequencies. APB timing tests include all stages.
+  `set_clock(axi, apb, router)` replaces them while running, for a platform
+  whose bus clock comes from a clock controller (fu3_soc: the CRM bus clock).
 - Functional requests yield to the kernel. Validation/policy failures consume
   router latency so an error loop does not starve a time-scheduled peer. With
   all latencies zero, fairness is only among runnable processes; an infinite
@@ -168,11 +176,15 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
   remain allowed during staging. ROM remains Ibex-only and read-only.
 - MMIO, debug control, DSRAM and HyperRAM reject instruction fetches.
   CPU PMP/ePMP, privilege and cache policy still belong to the CPU/platform.
-- Each SRAM reserves its final 4 KiB for debug code, leaving 60 KiB for a
-  normal image. Trusted CPU adapters set `Access::debug` for debug-mode accesses.
+- Each ISRAM ends with a 4 KiB debug-code partition: CVA6 0x0004_0000 after a
+  192 KiB image, Ibex 0x0006_0000 after a 64 KiB image. Trusted CPU adapters set `Access::debug` for debug-mode accesses.
   DBG and the explicit untimed loader backdoor are separate platform facilities.
 - Stop IBEX traffic and drain it before `finish_staging()`. The call throws if
-  Ibex work is pending. Stop producers and call `quiesce()` outside transport
+  Ibex work is pending. When an IBEX request itself commits the release (CRM
+  FCLK_SW write), call `close_staging()` from an SC_THREAD instead: it closes
+  staging for every later request at once and returns when the IBEX requests
+  accepted before it have completed, without rejecting new ones; `staging()`
+  reports the state. Stop producers and call `quiesce()` outside transport
   callbacks, reset attached IPs, call `reset()`, release IP reset, `resume()`
   and restart producers. Debug loaders must stop separately. No hung-target
   timeout/cancellation policy is invented; bus reset itself requires idle.
@@ -183,8 +195,9 @@ silently guesses instruction/data or beat width. `transport_dbg` is for loaders.
 
 | Condition | TLM response |
 |---|---|
-| Unmapped, cross-window, misalignment | ADDRESS_ERROR |
-| Unsupported command, denied policy, instruction write | COMMAND_ERROR |
+| Unmapped, disabled target, cross-window, misalignment | ADDRESS_ERROR (DECERR) |
+| Well-formed request refused by access policy, debug partition or a side-effect word | GENERIC_ERROR (SLVERR) |
+| Unsupported command, instruction write | COMMAND_ERROR |
 | Unsupported beat/count/burst/streaming | BURST_ERROR |
 | Invalid byte enables | BYTE_ENABLE_ERROR |
 | Missing required metadata, null data, zero length | GENERIC_ERROR |

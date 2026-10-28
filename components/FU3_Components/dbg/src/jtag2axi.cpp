@@ -6,7 +6,12 @@ namespace fu3_dbg {
 
 void Jtag2Axi::test_logic_reset() {
     ir_ = FU3_DBG_IR_CMD_IDCODE;
+    reset_registers();
+}
+
+void Jtag2Axi::reset_registers() {
     address_ = rdata_ = status_ = 0;
+    ++epoch_;
 }
 
 void Jtag2Axi::scan_ir(std::uint8_t ir) {
@@ -71,7 +76,10 @@ void Jtag2Axi::access(bool write, std::uint32_t wdata) {
     tx.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
     fu3_bus::ScopedAccess scoped(tx, 4);
     sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    const std::uint64_t epoch = epoch_;
     axi->b_transport(tx, delay);
+    if (epoch != epoch_)
+        return;   // the registers were reset meanwhile: the result belongs to no one
 
     if (!tx.is_response_ok()) {
         status_ |= tx.get_response_status() == tlm::TLM_ADDRESS_ERROR_RESPONSE ? FU3_DBG_STATUS_DECERR

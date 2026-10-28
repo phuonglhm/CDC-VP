@@ -16,6 +16,19 @@ DebugModule::DebugModule(sc_core::sc_module_name name, std::vector<DebugHart*> h
     reset_dm();
     SC_METHOD(update);
     sensitive << changed_;
+    SC_THREAD(domain_reset);
+}
+
+void DebugModule::domain_reset() {
+    if (!reset_n.size())
+        return;
+    while (true) {
+        if (!reset_n->read()) {
+            reset_dm();
+            for (auto& s : state_) s.havereset = true;
+        }
+        wait(reset_n->value_changed_event());
+    }
 }
 
 void DebugModule::reset_dm() {
@@ -45,8 +58,11 @@ std::uint32_t DebugModule::dmstatus() const {
 
     // hasel = 0: chỉ 1 hart được chọn nên any = all
     const HartState& st = state_[hartsel_];
-    s |= h->halted() ? (FU3_DBG_DMSTATUS_ANYHALTED | FU3_DBG_DMSTATUS_ALLHALTED)
-                     : (FU3_DBG_DMSTATUS_ANYRUNNING | FU3_DBG_DMSTATUS_ALLRUNNING);
+    if (h->unavailable())
+        s |= FU3_DBG_DMSTATUS_ANYUNAVAIL | FU3_DBG_DMSTATUS_ALLUNAVAIL;
+    else
+        s |= h->halted() ? (FU3_DBG_DMSTATUS_ANYHALTED | FU3_DBG_DMSTATUS_ALLHALTED)
+                         : (FU3_DBG_DMSTATUS_ANYRUNNING | FU3_DBG_DMSTATUS_ALLRUNNING);
     if (st.resumeack)
         s |= FU3_DBG_DMSTATUS_ANYRESUMEACK | FU3_DBG_DMSTATUS_ALLRESUMEACK;
     if (st.havereset)
@@ -96,7 +112,7 @@ void DebugModule::execute(std::uint32_t cmd) {
         return;
     }
     DebugHart* h = selected();
-    if (!h || !h->halted()) {
+    if (!h || h->unavailable() || !h->halted()) {
         cmderr_ = FU3_DBG_CMDERR_HALTRESUME;
         return;
     }
@@ -134,6 +150,8 @@ std::uint32_t DebugModule::dmi_read(std::uint8_t address) {
 }
 
 void DebugModule::dmi_write(std::uint8_t address, std::uint32_t v) {
+    if (reset_n.size() && !reset_n->read())
+        return;   // held in DBG-domain reset
     if (address == FU3_DBG_DMCONTROL) {
         write_dmcontrol(v);
         return;

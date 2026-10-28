@@ -66,12 +66,57 @@ if(CDC_BUILD_FX1_SOC)
    add_subdirectory(FX1_Components)
 endif()
 
-if(CDC_BUILD_FU3_SOC)
+# Every FU3 model, for platforms/fu3_soc. A function, so that BUILD_TESTING
+# follows CDC_BUILD_TESTS for the FU3 models only (several of them gate their
+# tests on BUILD_TESTING, which other components set in the cache). bus comes
+# first: the peripherals only pull in their own copy of it when fu3::bus_system
+# does not exist. IO_PAD is not listed: GPIO adds it (fu3::io_pad) and a second
+# add_subdirectory would define its targets twice.
+function(cdc_add_fu3_components)
+   set(BUILD_TESTING ${CDC_BUILD_TESTS})
    add_subdirectory(FU3_Components/bus)
    add_subdirectory(FU3_Components/GPIO)
    add_subdirectory(FU3_Components/QSPI)
    add_subdirectory(FU3_Components/AES-256)
    add_subdirectory(FU3_Components/cpu)
+   add_subdirectory(FU3_Components/ADC)
+   add_subdirectory(FU3_Components/DMA0/AP_DMA)
+   add_subdirectory(FU3_Components/crm)
+   add_subdirectory(FU3_Components/dbg)
+   add_subdirectory(FU3_Components/hyperram)
+   add_subdirectory(FU3_Components/i2c)
+   add_subdirectory(FU3_Components/mailbox)
+   add_subdirectory(FU3_Components/plic)
+   add_subdirectory(FU3_Components/rng)
+   add_subdirectory(FU3_Components/spi)
+   add_subdirectory(FU3_Components/syscsr)
+   add_subdirectory(FU3_Components/timer)
+   add_subdirectory(FU3_Components/uart)
+   add_subdirectory(FU3_Components/wdt)
+   # Every FU3 model test carries the "fu3" label, so that `ctest -L fu3` runs
+   # the component tests together with the platform's (review T21: several
+   # component directories set no label and dropped out of the FU3 regression).
+   get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY SUBDIRECTORIES)
+   foreach(dir IN LISTS dirs)
+      if(dir MATCHES "/FU3_Components/")
+         cdc_label_fu3_tests(${dir})
+      endif()
+   endforeach()
+endfunction()
+
+function(cdc_label_fu3_tests dir)
+   get_property(tests DIRECTORY ${dir} PROPERTY TESTS)
+   if(tests)
+      set_property(TEST ${tests} DIRECTORY ${dir} APPEND PROPERTY LABELS fu3)
+   endif()
+   get_property(subdirs DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
+   foreach(sub IN LISTS subdirs)
+      cdc_label_fu3_tests(${sub})
+   endforeach()
+endfunction()
+
+if(CDC_BUILD_FU3_SOC)
+   cdc_add_fu3_components()
 endif()
 
 # ── Install/export so a standalone platform can find_package(cdc-components) ──

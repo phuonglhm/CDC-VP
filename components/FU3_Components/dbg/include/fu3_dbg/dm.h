@@ -22,12 +22,19 @@ public:
     // Access Register: regno 0x0000-0x0FFF CSR, 0x1000-0x101F GPR
                         // false = không truy cập được
     virtual bool access_register(std::uint16_t regno, bool write, std::uint32_t& value) = 0;
+    // Hart exists but cannot be debugged now (held in reset): DMSTATUS reports
+    // it unavailable, neither running nor halted (Debug Spec 0.13.2, 3.12.2).
+    virtual bool unavailable() const { return false; }
 };
 
 class DebugModule : public sc_core::sc_module {
 public:
     tlm_utils::simple_target_socket<DebugModule> socket{"socket"};   // <- bus target IBEX_DBG, offset cục bộ
     sc_core::sc_out<bool> ndmreset{"ndmreset"};                      // -> CRM cpu_reset_req
+    // DBG-domain reset (active low, optional): while low the DM is held at its
+    // reset values, halt requests released and havereset set for every hart.
+    // ndmreset does not reach it (the DBG domain stays up during ndmreset).
+    sc_core::sc_port<sc_core::sc_signal_in_if<bool>, 1, sc_core::SC_ZERO_OR_MORE_BOUND> reset_n{"reset_n"};
 
     SC_HAS_PROCESS(DebugModule);
     // harts[i] = hart i (0 = CVA6, 1 = Ibex)
@@ -62,6 +69,7 @@ private:
     void write_dmcontrol(std::uint32_t value);
     void execute(std::uint32_t command);
     void update();   // Process duy nhất lái ndmreset
+    void domain_reset();   // follows reset_n when bound
     void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
     unsigned transport_dbg(tlm::tlm_generic_payload& tx);
     void access(tlm::tlm_generic_payload& tx);

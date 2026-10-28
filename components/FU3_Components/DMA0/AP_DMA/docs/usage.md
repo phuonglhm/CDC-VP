@@ -342,3 +342,11 @@ command. Bytes already written downstream remain committed; reset the external
 target separately if its state must also be cleared. A target call that never
 returns cannot be cancelled by the DMA; use a target or simulation watchdog to
 handle that integration failure.
+
+## Clock gate
+
+`set_clock_enabled(false)` (default enabled) models the clock controller's gate:
+the scheduler neither dispatches nor retires, and no new bus transfer starts; a
+transfer already on the bus completes. Channel state is kept and the engine
+continues on enable. With nonzero `transaction_timeout`/`watchdog_timeout`, the
+time spent gated counts toward them.

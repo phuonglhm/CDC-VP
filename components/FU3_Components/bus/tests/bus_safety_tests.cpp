@@ -70,20 +70,21 @@ struct Safety : sc_core::sc_module, Checks {
             {fu3_bus::ScopedAccess a(t,4);transfer(main_cpu,t,tlm::TLM_ADDRESS_ERROR_RESPONSE);}
         }
         expect(fixed1.visits==2&&fixed0.visits==2,"INCR window rejection has no target side effects");
+        // Side-effect words refuse narrow/partial requests as slave errors (Q02-f).
         for(const unsigned base:{0x44000000u,0x40100000u}){
             auto& ip=base==0x44000000u?csr0:csr1;const auto before=ip.visits.size();
             for(unsigned size:{1u,2u})for(auto cmd:{tlm::TLM_READ_COMMAND,tlm::TLM_WRITE_COMMAND}){
                 payload(t,cmd,base+0x24,bytes,size);fu3_bus::ScopedAccess a(t,size);
-                transfer(main_cpu,t,tlm::TLM_BURST_ERROR_RESPONSE);
+                transfer(main_cpu,t,tlm::TLM_GENERIC_ERROR_RESPONSE);
             }
             unsigned char sparse[4]={0xff,0,0xff,0xff};
             payload(t,tlm::TLM_READ_COMMAND,base+0x24,bytes,4);t.set_byte_enable_ptr(sparse);t.set_byte_enable_length(4);
-            {fu3_bus::ScopedAccess a(t,4);transfer(main_cpu,t,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);}
+            {fu3_bus::ScopedAccess a(t,4);transfer(main_cpu,t,tlm::TLM_GENERIC_ERROR_RESPONSE);}
             payload(t,tlm::TLM_WRITE_COMMAND,base+0x20,bytes,8);
-            {fu3_bus::ScopedAccess a(t,4);transfer(main_cpu,t,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);}
+            {fu3_bus::ScopedAccess a(t,4);transfer(main_cpu,t,tlm::TLM_GENERIC_ERROR_RESPONSE);}
             t.set_byte_enable_ptr(nullptr);t.set_byte_enable_length(0);
             payload(t,tlm::TLM_READ_COMMAND,base+0x20,bytes,8);
-            {fu3_bus::ScopedAccess a(t,2);transfer(main_cpu,t,tlm::TLM_BURST_ERROR_RESPONSE);}
+            {fu3_bus::ScopedAccess a(t,2);transfer(main_cpu,t,tlm::TLM_GENERIC_ERROR_RESPONSE);}
             expect(ip.visits.size()==before,"every rejected footprint is checked before preceding-register side effects");
             payload(t,tlm::TLM_READ_COMMAND,base+0x24,bytes,4);
             {fu3_bus::ScopedAccess a(t,4);transfer(main_cpu,t,tlm::TLM_OK_RESPONSE);}

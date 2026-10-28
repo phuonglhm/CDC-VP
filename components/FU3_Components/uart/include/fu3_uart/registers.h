@@ -4,7 +4,7 @@
 /* Byte offsets, not word indices. Use byte MMIO through the FU3 bus. */
 #define FU3_UART0_BASE UINT32_C(0x440d0000)
 #define FU3_UART1_BASE UINT32_C(0x440e0000)
-#define FU3_UART2_BASE UINT32_C(0x50050000)
+#define FU3_UART2_BASE UINT32_C(0x44090000) /* Common v2.1, Q02-c */
 #define FU3_UART_RBR 0u
 #define FU3_UART_THR 0u
 #define FU3_UART_DLL 0u

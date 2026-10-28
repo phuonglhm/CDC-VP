@@ -35,25 +35,41 @@ public:
     SC_HAS_PROCESS(Crm);
     // Hold: độ dài xung reset hệ thống 
     // Startup_delay: từ lúc nhả hệ thống tới lúc nhả Ibex (24 chu kỳ MRV ở OSC 20 MHz)
+    // por_filter: PRSTN reset filter, a level must be stable this long before
+    // it takes effect, shorter pulses are rejected (spec 3.2: 4 taps x 25 ns).
+    // readiness_cycles: power-readiness qualification after the first release
+    // of PRSTN, in OSC cycles, before the controller starts; locked until the
+    // next PRSTN (spec 3.1.1: 255, counted even with readiness bypassed).
     explicit Crm(sc_core::sc_module_name name,
                  sc_core::sc_time hold = sc_core::sc_time(1400, sc_core::SC_NS),
-                 sc_core::sc_time startup_delay = sc_core::sc_time(1200, sc_core::SC_NS));
+                 sc_core::sc_time startup_delay = sc_core::sc_time(1200, sc_core::SC_NS),
+                 sc_core::sc_time por_filter = sc_core::sc_time(100, sc_core::SC_NS),
+                 unsigned readiness_cycles = 255);
 
     // Đọc không side effect (offset không map trả 0)
     std::uint32_t read_register(std::uint32_t offset) const;
     std::uint64_t pll_clock_hz() const;   // = 0 khi PLL tắt
     std::uint64_t cpu_clock_hz() const;   // FCLK của cả 2 CPU: không thông qua bộ chia
     std::uint64_t bus_clock_hz() const;
+    // Notified after any register write or reset change; the platform re-reads
+    // the clock getters and the outputs on it.
+    const sc_core::sc_event& changed_event() const { return changed_; }
 
 private:
     static constexpr unsigned kWords = 0x60 / 4;   // 0x0000..0x005C
     std::uint32_t regs_[kWords] = {};
     bool pending_ = false, keep_dbg_ = false, debug_only_ = true;
+    bool por_released_ = false;   // PRSTN after the reset filter
+    bool ready_ = false;          // power readiness qualified since the last PRSTN
+    sc_core::sc_time lock_start_;  // PLL lock counter start (power-up or new dividers)
     bool last_req_[3] = {};
-    const sc_core::sc_time hold_, startup_delay_;
-    sc_core::sc_event changed_, request_, restart_;
+    const sc_core::sc_time hold_, startup_delay_, por_filter_;
+    const unsigned readiness_cycles_;
+    sc_core::sc_event changed_, request_, restart_, por_changed_;
 
-    bool in_reset() const { return !prst_n.read() || sw_global_rst_req.read(); }
+    bool in_reset() const { return !por_released_ || sw_global_rst_req.read(); }
+    void filter_por();                // PRSTN reset filter
+    bool pll_locked() const;
     std::uint32_t& reg(std::uint32_t offset) { return regs_[offset / 4]; }
     std::uint64_t branch_hz() const;
     void reset_registers();

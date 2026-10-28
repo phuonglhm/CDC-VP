@@ -3,7 +3,7 @@
 #include "fu3_bus/transaction.h"
 
 namespace fu3_bus {
-ApbBridge::ApbBridge(sc_core::sc_module_name name,unsigned cycle_ns) : sc_module(name),cycle_ns_(cycle_ns) {
+ApbBridge::ApbBridge(sc_core::sc_module_name name,unsigned cycle_ns) : sc_module(name),cycle_(cycle_ns,sc_core::SC_NS) {
     target.register_b_transport(this, &ApbBridge::b_transport);
     target.register_transport_dbg(this, &ApbBridge::transport_dbg);
 }
@@ -55,7 +55,7 @@ void ApbBridge::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& dela
         }
         tx.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
         // Even zero configured latency yields to other SystemC threads.
-        sc_core::wait(2.0 * cycle_ns_, sc_core::SC_NS);
+        sc_core::wait(2.0 * cycle_);
         out->b_transport(tx, delay);
         consume_delay(delay);
         if (!tx.is_response_ok()) break; // Earlier beats are not rolled back.

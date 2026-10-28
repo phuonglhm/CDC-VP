@@ -147,10 +147,10 @@ struct Bench : sc_core::sc_module {
         wr(FU3_PLIC_PRIORITY_OFFSET(0), ~0u);
         check(rd(FU3_PLIC_PRIORITY_OFFSET(0)) == 0, "ID 0 priority reads zero");
         wr(FU3_PLIC_ENABLE_OFFSET, ~0u);
-        check(rd(FU3_PLIC_ENABLE_OFFSET) == FU3_PLIC_ENABLE_MASK, "Enable bits 1-23, bit 0 fixed 0");
+        check(rd(FU3_PLIC_ENABLE_OFFSET) == FU3_PLIC_ENABLE_MASK, "Enable bits 1-31, bit 0 fixed 0");
         wr(FU3_PLIC_ENABLE_OFFSET, 0);
         wr(FU3_PLIC_THRESHOLD_OFFSET, ~0u);
-        check(rd(FU3_PLIC_THRESHOLD_OFFSET) == 0x7, "Threshold 3 bit");
+        check(rd(FU3_PLIC_THRESHOLD_OFFSET) == 0x1F, "Threshold 5 bit");
         wr(FU3_PLIC_THRESHOLD_OFFSET, 0);
         wr(FU3_PLIC_PENDING_OFFSET, ~0u);
         check(rd(FU3_PLIC_PENDING_OFFSET) == 0, "Pending RO");
@@ -206,10 +206,10 @@ struct Bench : sc_core::sc_module {
         wr(FU3_PLIC_THRESHOLD_OFFSET, 2);
         settle();
         check(irq.read(), "priority > threshold interrupts");
-        set_priority(FU3_PLIC_ID_DMA0, 7);
-        wr(FU3_PLIC_THRESHOLD_OFFSET, 7);
+        set_priority(FU3_PLIC_ID_DMA0, FU3_PLIC_MAX_PRIORITY);
+        wr(FU3_PLIC_THRESHOLD_OFFSET, FU3_PLIC_MAX_PRIORITY);
         settle();
-        check(!irq.read() && claim() == 0, "Threshold 7 masks priority 7");
+        check(!irq.read() && claim() == 0, "Threshold 31 masks priority 31");
         wr(FU3_PLIC_THRESHOLD_OFFSET, 0);
         wr(FU3_PLIC_ENABLE_OFFSET, 0);
         settle();
@@ -260,17 +260,30 @@ struct Bench : sc_core::sc_module {
         settle();
         check(claim() == FU3_PLIC_ID_RNG, "Reset clears in-service state");
 
-        // Lỗi truy cập: offset không map và ghi thiếu PSTRB => PSLVERR
+        // Access errors: unmapped offsets => PSLVERR; ID 24-31 exist (Common v2.1)
         v = 0;
-        check(xfer(false, FU3_PLIC_PRIORITY_OFFSET(24), v) == tlm::TLM_GENERIC_ERROR_RESPONSE, "Priority ID 24 unmapped");
+        check(xfer(false, FU3_PLIC_PRIORITY_OFFSET(31), v) == tlm::TLM_OK_RESPONSE, "Priority ID 31 mapped");
+        check(xfer(false, FU3_PLIC_PRIORITY_OFFSET(32), v) == tlm::TLM_GENERIC_ERROR_RESPONSE, "Priority ID 32 unmapped");
         check(xfer(true, 0x1004, v) == tlm::TLM_GENERIC_ERROR_RESPONSE, "0x1004 unmapped");
         check(xfer(false, 0x3008, v) == tlm::TLM_GENERIC_ERROR_RESPONSE, "0x3008 unmapped");
-        const unsigned char strb[4] = {0xFF, 0x00, 0x00, 0x00};
-        v = 0x7;
-        check(xfer(true, FU3_PLIC_THRESHOLD_OFFSET, v, 4, strb) == tlm::TLM_GENERIC_ERROR_RESPONSE, "Partial PSTRB rejected");
-        check(rd(FU3_PLIC_THRESHOLD_OFFSET) == 0, "Partial write has no effect");
+        // Decision Q02-g: enabled byte lanes merge, a zero-strobe write has no
+        // effect; CLAIM/COMPLETE (side effects) takes full words only.
+        const unsigned char strb[4] = {0xFF, 0x00, 0x00, 0x00}, none[4] = {0, 0, 0, 0};
+        v = 0x0000'1F07;
+        check(xfer(true, FU3_PLIC_THRESHOLD_OFFSET, v, 4, strb) == tlm::TLM_OK_RESPONSE, "Partial PSTRB accepted");
+        check(rd(FU3_PLIC_THRESHOLD_OFFSET) == 0x7, "Only the enabled lane is written");
+        v = 0x1F;
+        check(xfer(true, FU3_PLIC_THRESHOLD_OFFSET, v, 4, none) == tlm::TLM_OK_RESPONSE &&
+                  rd(FU3_PLIC_THRESHOLD_OFFSET) == 0x7, "Zero-strobe write has no effect");
+        wr(FU3_PLIC_THRESHOLD_OFFSET, 0);
+        v = 0;
+        check(xfer(true, FU3_PLIC_CLAIM_OFFSET, v, 4, strb) == tlm::TLM_GENERIC_ERROR_RESPONSE, "Partial COMPLETE refused");
         if (base == 0) {   // Bus FU3 tự chặn các lỗi này trước khi tới PLIC
-            check(xfer(false, 0x6, v, 2) == tlm::TLM_BURST_ERROR_RESPONSE, "Halfword rejected");
+            set_priority(1, 0x1F);
+            v = 0xFFFF;
+            check(xfer(false, 0x4, v, 2) == tlm::TLM_OK_RESPONSE && (v & 0xFFFF) == 0x1F, "Halfword read, low lanes");
+            check(xfer(false, 0x6, v, 2) == tlm::TLM_OK_RESPONSE && (v & 0xFFFF) == 0, "Halfword read, high lanes");
+            set_priority(1, 0);
             check(xfer(false, 0x2, v) == tlm::TLM_ADDRESS_ERROR_RESPONSE, "Misaligned word");
             check(xfer(false, 0x10000, v) == tlm::TLM_ADDRESS_ERROR_RESPONSE, "Outside 64 KiB");
         }

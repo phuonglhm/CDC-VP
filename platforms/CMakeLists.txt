@@ -116,3 +116,9 @@ if(CDC_BUILD_FX1_SOC)
           "cpu_models/riscv_vp_plusplus/fetch_riscv_vp_plusplus.sh.")
    endif()
 endif()
+
+# FU3 SoC for FW/SW bring-up (plan T03 skeleton). Off by default; see
+# platforms/fu3_soc/README.md.
+if(CDC_BUILD_FU3_SOC)
+   add_subdirectory(fu3_soc)
+endif()

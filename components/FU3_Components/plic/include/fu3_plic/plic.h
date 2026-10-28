@@ -1,5 +1,5 @@
 #pragma once
-// FU3 AP_PLIC (pulp rv_plic): APB4, 23 nguồn level-high, 1 target (CVA6 irq_i[0]), priority 1-7
+// FU3 AP_PLIC (pulp rv_plic): APB4, 31 level-high sources (ID 1-31), 1 target (CVA6 irq_i[0]), priority 1-31
 // Bus (PERIBUS_1, 0x4010_0000) đưa vào offset cục bộ
 #include <cstdint>
 #include <systemc>
@@ -17,7 +17,7 @@ public:
     tlm_utils::simple_target_socket<Plic> socket{"socket"};
     sc_core::sc_in<bool> reset_n{"reset_n"};
 
-    // irq_sources_i[22:0]: phần tử k = Source ID k+1. 
+    // irq_sources_i[30:0]: element k = Source ID k+1.
     // Nguồn không dùng nối mức 0.
     sc_core::sc_vector<sc_core::sc_in<bool>> irq_sources{"irq_sources", kSources};
 
@@ -30,6 +30,12 @@ public:
     // Đọc trạng thái không side effect: đọc CLAIM ở đây KHÔNG claim
     std::uint32_t read_register(std::uint32_t offset) const;
     std::uint32_t pending() const { return ip_; }   // bit n = Source ID n
+    // Clock gate from the clock controller (platform CRM): while disabled the
+    // gateways capture no source; levels still high are captured once enabled.
+    void set_clock_enabled(bool on) {
+        if (on != clock_enabled_) { clock_enabled_ = on; clock_gate_changed_.notify(sc_core::SC_ZERO_TIME); }
+    }
+    bool clock_enabled() const { return clock_enabled_; }
 
 private:
     std::uint32_t priority_[kSources + 1] = {};
@@ -37,6 +43,8 @@ private:
     std::uint32_t ip_ = 0;           // Gateway: pending đã chốt, giữ tới khi claim
     std::uint32_t in_service_ = 0;   // Đã claim, chưa complete
     sc_core::sc_event changed_;
+    bool clock_enabled_ = true;
+    sc_core::sc_event clock_gate_changed_;
 
     unsigned best() const;           // ID tốt nhất có thể claim: 0 = không có
     unsigned claim();

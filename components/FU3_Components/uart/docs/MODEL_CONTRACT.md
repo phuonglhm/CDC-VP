@@ -169,3 +169,7 @@ Clock ticks continue while idle. Dynamic clocks, electrical RS232/RS485 behavior
 pad muxing, real PLIC and DMA implementations and CPU firmware execution are
 outside the component tests. Known spec gaps are tracked separately from code
 defects in REVIEW.md, with at most three repair attempts per issue.
+
+## Clock gate (platform integration)
+
+The clock controller (FU3 CRM gate, through the platform) drives the gate; it is enabled by default, so a stand-alone bench needs no change. `set_clock_enabled(false)` removes clock edges: no RX sampling, no TX progress, no MMIO completion; state is kept. A gate during a period cancels that edge and the phase restarts on enable. Reset stays synchronous: a reset pulse that sees no clock edge (entirely inside the gate) does not reset the UART; a reset still asserted when the clock returns does.

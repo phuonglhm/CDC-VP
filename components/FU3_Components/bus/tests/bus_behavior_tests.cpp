@@ -16,6 +16,8 @@ struct Test : sc_core::sc_module, Checks {
     explicit Test(sc_core::sc_module_name n) : sc_module(n) {
         for(unsigned i=0;i<4;++i) masters[i].socket.bind(fabric.initiator(cfg.initiators[i].name));
         for(const auto& t:cfg.targets) {
+            // Disabled windows get no fixture: their slot stays empty.
+            if(!t.enabled) { targets.emplace_back(); continue; }
             auto ip=std::make_unique<fu3_bus::test::ProbeTarget>(sc_core::sc_gen_unique_name("ip"),t.size);
             fabric.target(t.name).bind(ip->socket); targets.push_back(std::move(ip));
         }
@@ -49,6 +51,11 @@ struct Test : sc_core::sc_module, Checks {
         // Independently check both boundaries of every physical aperture.
         for(unsigned i=0;i<cfg.targets.size();++i) {
             const auto& t=cfg.targets[i];
+            if(!t.enabled) {
+                // R2 windows stay in the map but decode nowhere until integrated.
+                payload(tx,tlm::TLM_READ_COMMAND,t.base,data,4); send(1,tx,tlm::TLM_ADDRESS_ERROR_RESPONSE);
+                continue;
+            }
             for(auto offset:{std::uint64_t{0},t.size-4}) {
                 payload(tx,tlm::TLM_READ_COMMAND,t.base+offset,data,4);
                 fu3_bus::ScopedAccess debug_access(tx,4,fu3_bus::Burst::Increment,false,0,true);
@@ -57,13 +64,17 @@ struct Test : sc_core::sc_module, Checks {
             }
             const auto visits=targets[i]->visits.size();
             payload(tx,tlm::TLM_WRITE_COMMAND,t.base+t.size-2,data,4);
-            send(1,tx,(t.name=="ROM" || t.name=="IBEX_DBG")?tlm::TLM_COMMAND_ERROR_RESPONSE:tlm::TLM_ADDRESS_ERROR_RESPONSE);
+            // Policy is checked before the window footprint: writes the master may
+            // never make are slave errors, the rest cross the window edge.
+            send(1,tx,(t.name=="ROM" || t.name=="IBEX_DBG" || t.name=="QSPI_XIP")?
+                 tlm::TLM_GENERIC_ERROR_RESPONSE:tlm::TLM_ADDRESS_ERROR_RESPONSE);
             expect(targets[i]->visits.size()==visits,"cross-boundary transfer never reaches target");
         }
-        for(auto a:{0x1000ULL,0x30000ULL,0x1010000ULL,0x1a111000ULL,0x30020000ULL,
-                    0x30110000ULL,0x40010000ULL,0x40110000ULL,0x44090000ULL,0x440a0000ULL,
-                    0x44100000ULL,0x50000000ULL,0x500d0000ULL,0x50100000ULL,0x62000000ULL,
-                    0xffffffffULL,0x100000000ULL}) {
+        // Reserved rows of Common v2.1 MemoryMap and the disabled R2 windows.
+        for(auto a:{0x1000ULL,0xfffcULL,0x41000ULL,0x4fffcULL,0x61000ULL,0x1040000ULL,0x1a111000ULL,
+                    0x31000000ULL,0x31010000ULL,0x31020000ULL,0x40010000ULL,0x40110000ULL,
+                    0x44100000ULL,0x44110000ULL,0x44120000ULL,0x50000000ULL,0x50100000ULL,
+                    0x50110000ULL,0x62000000ULL,0xffffffffULL,0x100000000ULL}) {
             payload(tx,tlm::TLM_READ_COMMAND,a,data,1); send(1,tx,tlm::TLM_ADDRESS_ERROR_RESPONSE);
         }
         for(auto name:{"AP_PLIC","SYSCSR"}) {
@@ -81,9 +92,16 @@ struct Test : sc_core::sc_module, Checks {
             tx.set_byte_enable_ptr(enables); tx.set_byte_enable_length(3);
             auto count=targets[i]->visits.size();
             if(name==std::string("AP_PLIC")){
-                send(3,tx,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
-                expect(targets[i]->visits.size()==count,"PLIC partial burst rejected before any CSR effect");
-                tx.set_byte_enable_ptr(nullptr);tx.set_byte_enable_length(0);continue;
+                // Only CLAIM/COMPLETE is a bus-protected side-effect word (Q03-a).
+                payload(tx,tlm::TLM_WRITE_COMMAND,base+0x3000,data,8);
+                tx.set_byte_enable_ptr(enables); tx.set_byte_enable_length(3);
+                send(3,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
+                expect(targets[i]->visits.size()==count,"partial CLAIM/COMPLETE burst rejected before any CSR effect");
+                tx.set_byte_enable_ptr(nullptr);tx.set_byte_enable_length(0);
+                payload(tx,tlm::TLM_READ_COMMAND,base+0x3006,data,2); send(0,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
+                expect(targets[i]->visits.size()==count,"narrow CLAIM read cannot claim");
+                payload(tx,tlm::TLM_WRITE_COMMAND,base+0x100,data,64);
+                tx.set_byte_enable_ptr(enables); tx.set_byte_enable_length(3);
             }
             send(3,tx,tlm::TLM_OK_RESPONSE);
             expect(targets[i]->visits.size()==count+16,"DMA 16-word payload becomes 16 APB transfers");
@@ -116,27 +134,30 @@ struct Test : sc_core::sc_module, Checks {
             send(3,tx,tlm::TLM_OK_RESPONSE); // Router and bridge ownership released by unwinding.
             tx.set_byte_enable_ptr(nullptr);tx.set_byte_enable_length(0);
         }
-        payload(tx,tlm::TLM_READ_COMMAND,0,data,4); send(0,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);
-        send(1,tx,tlm::TLM_OK_RESPONSE); send(3,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);
-        payload(tx,tlm::TLM_WRITE_COMMAND,0,data,4); send(1,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);
+        payload(tx,tlm::TLM_READ_COMMAND,0,data,4); send(0,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
+        send(1,tx,tlm::TLM_OK_RESPONSE); send(3,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
+        payload(tx,tlm::TLM_WRITE_COMMAND,0,data,4); send(1,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
         payload(tx,tlm::TLM_WRITE_COMMAND,0x10000,data,4); send(1,tx,tlm::TLM_OK_RESPONSE);
-        fabric.finish_staging(); send(1,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);send(0,tx,tlm::TLM_OK_RESPONSE);
+        fabric.finish_staging(); send(1,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);send(0,tx,tlm::TLM_OK_RESPONSE);
+        payload(tx,tlm::TLM_WRITE_COMMAND,0x30000000,data,4);
+        for(unsigned m:{0U,1U,3U}) send(m,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
+        payload(tx,tlm::TLM_READ_COMMAND,0x30000000,data,4); send(0,tx,tlm::TLM_OK_RESPONSE);
         fu3_bus::Access access; access.instruction=true;
         payload(tx,tlm::TLM_READ_COMMAND,0x1000000,data,4); tx.set_extension(&access);
-        send(0,tx,tlm::TLM_COMMAND_ERROR_RESPONSE); tx.clear_extension(&access); send(0,tx,tlm::TLM_OK_RESPONSE);
+        send(0,tx,tlm::TLM_GENERIC_ERROR_RESPONSE); tx.clear_extension(&access); send(0,tx,tlm::TLM_OK_RESPONSE);
         // Firmware loader backdoor: known bytes, no kernel time and no functional policy bypass via b_transport.
         unsigned char image[8]={0x13,0,0,0,0x73,0,0x10,0};
-        payload(tx,tlm::TLM_WRITE_COMMAND,0x20000,image,8);
+        payload(tx,tlm::TLM_WRITE_COMMAND,0x50000,image,8);
         auto before=sc_core::sc_time_stamp();
         expect(masters[2].socket->transport_dbg(tx)==8,"load image into IBEX_ISRAM");
-        expect(sc_core::sc_time_stamp()==before && tx.get_address()==0x20000 && !tx.is_dmi_allowed(),"untimed loader");
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,data,8);send(1,tx,tlm::TLM_OK_RESPONSE);
+        expect(sc_core::sc_time_stamp()==before && tx.get_address()==0x50000 && !tx.is_dmi_allowed(),"untimed loader");
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,data,8);send(1,tx,tlm::TLM_OK_RESPONSE);
         expect(std::equal(image,image+8,data),"loaded image readback (no CPU execution claimed)");
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,data,4);tx.set_streaming_width(2);send(1,tx,tlm::TLM_BURST_ERROR_RESPONSE);
-        payload(tx,tlm::TLM_IGNORE_COMMAND,0x20000,data,4);send(1,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,nullptr,4);send(1,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,data,4);tx.set_streaming_width(2);send(1,tx,tlm::TLM_BURST_ERROR_RESPONSE);
+        payload(tx,tlm::TLM_IGNORE_COMMAND,0x50000,data,4);send(1,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,nullptr,4);send(1,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
         unsigned char invalid_enable=1;
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,data,4);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,data,4);
         tx.set_byte_enable_ptr(&invalid_enable);tx.set_byte_enable_length(1);
         send(1,tx,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
         tx.set_byte_enable_ptr(nullptr);tx.set_byte_enable_length(0);
@@ -151,13 +172,13 @@ struct Test : sc_core::sc_module, Checks {
         wait(flood_start);
         unsigned char data[4]={}; tlm::tlm_generic_payload tx;
         payload(tx,tlm::TLM_READ_COMMAND,0,data,4);
-        for(unsigned i=0;i<100;++i) { send(0,tx,tlm::TLM_COMMAND_ERROR_RESPONSE); ++rejected; }
+        for(unsigned i=0;i<100;++i) { send(0,tx,tlm::TLM_GENERIC_ERROR_RESPONSE); ++rejected; }
         ++flood_workers_done; flood_done.notify(sc_core::SC_ZERO_TIME);
     }
     void timed_victim() {
         wait(flood_start); wait(1,sc_core::SC_NS);
         unsigned char data[4]={}; tlm::tlm_generic_payload tx;
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,data,4);send(1,tx,tlm::TLM_OK_RESPONSE);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,data,4);send(1,tx,tlm::TLM_OK_RESPONSE);
         expect(rejected<100,"continuous denied requests do not starve a time-scheduled master");
         ++flood_workers_done; flood_done.notify(sc_core::SC_ZERO_TIME);
     }

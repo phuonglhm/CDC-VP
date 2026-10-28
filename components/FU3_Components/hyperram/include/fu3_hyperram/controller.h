@@ -29,6 +29,13 @@ public:
     SC_HAS_PROCESS(Controller);
     explicit Controller(sc_core::sc_module_name,Config = {});
     static void configure_bus(fu3_bus::BusConfig&);
+    // Controller clock from the clock controller (platform CRM); zero is ignored.
+    void set_core_period(sc_core::sc_time period) {if(period>sc_core::SC_ZERO_TIME)config_.core_period=period;}
+    // Core clock gate from the clock controller (platform CRM): while disabled
+    // the engine and an in-flight memory transfer make no progress and resume
+    // where they stopped on enable. Enabled by default.
+    void set_clock_enabled(bool on){if(on!=clock_enabled_){clock_enabled_=on;clock_gate_changed_.notify(sc_core::SC_ZERO_TIME);}}
+    bool clock_enabled() const {return clock_enabled_;}
     unsigned peak_reads() const {return reads_.peak();}
     unsigned peak_writes() const {return writes_.peak();}
 private:
@@ -41,7 +48,8 @@ private:
     bool valid_=false,pending_=false,done_=false,command_error_=false;
     fu3_bus::Admission reads_,writes_;
     fu3_bus::Fifo engine_;
-    sc_core::sc_event work_,changed_,cancel_;
+    sc_core::sc_event work_,changed_,cancel_,clock_gate_changed_;
+    bool clock_enabled_=true;
     void reset(); void publish(); void worker();
     bool coherent() const; bool ready() const; unsigned status() const;
     bool pause(unsigned,unsigned); void fault(unsigned,unsigned=0,unsigned=0,bool=false);

@@ -45,3 +45,7 @@ Four-byte payloads with streaming width at least four are supported. Little-endi
 ## Open fidelity items
 
 Confirm collection without NEXT, disable behavior, exact DELAY/tick recurrence, bit ordering, simultaneous-command priority, and consecutive NEXT edge detection against an updated spec or RTL before claiming full generator-state equivalence. Runtime clock gating/frequency changes and actual CPU firmware boot are not tested. These gaps do not justify introducing extra registers or unsupported HAS features.
+
+## Clock gate (platform integration)
+
+The clock controller (FU3 CRM gate, through the platform) drives the gate; it is enabled by default, so a stand-alone bench needs no change. `set_clock_enabled(false)` removes clock edges: no sample is collected and no word becomes valid; the sample index is kept, so the sequence after the gate is the one without it. Reset is synchronous (applies on a clock edge).

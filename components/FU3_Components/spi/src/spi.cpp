@@ -23,7 +23,12 @@ void Spi::run(){
             reset();if(pending_){pending_->set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);pending_=nullptr;complete_.notify(sc_core::SC_ZERO_TIME);}
             changed_.notify(sc_core::SC_ZERO_TIME);wait(reset_n.posedge_event());continue;
         }
-        wait(sys_,reset_n.negedge_event());if(!reset_n.read())continue;
+        // Gated: no edge until enabled (reset stays asynchronous); a gate
+        // during the period cancels the edge.
+        if(!clock_enabled_){wait(clock_gate_changed_|reset_n.negedge_event());continue;}
+        const auto due=sc_core::sc_time_stamp()+sys_;
+        wait(sys_,reset_n.negedge_event()|clock_gate_changed_);if(!reset_n.read())continue;
+        if(!clock_enabled_||sc_core::sc_time_stamp()<due)continue;
         cycle();changed_.notify(sc_core::SC_ZERO_TIME);
     }
 }

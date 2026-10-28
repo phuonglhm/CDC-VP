@@ -51,9 +51,11 @@ if(CDC_BUILD_TPU_V3_SOC OR CDC_BUILD_RISCV_VPP_COMPILER_VP OR CDC_BUILD_FX1_SOC)
     endif()
 endif()
 
-# The CVA6 wrapper is built on the Bremen `riscv_vp` target and is used by
-# riscv_cpu_eval and FU3, so it follows the same guard; a VP++-only build (TPU_V3, FX1)
-# must not need the Bremen checkout.
+# The CVA6 wrapper runs the FU3 fork of the Bremen ISS (fu3_iss), which reuses
+# the untouched riscv_vp checkout and its vendored softfloat; it is used by
+# riscv_cpu_eval and FU3, so it follows the same guard; a VP++-only build
+# (TPU_V3, FX1) must not need the Bremen checkout.
 if(TARGET riscv_vp)
+    add_subdirectory(fu3_iss)
     add_subdirectory(cva6_vp)
 endif()

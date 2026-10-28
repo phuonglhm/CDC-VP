@@ -1,4 +1,16 @@
-# AP_PLIC validation - 2026-10-20
+# AP_PLIC validation
+
+## 2026-10-23 - Common v2.1 (platform build, fu3_soc T08)
+
+Environment: AlmaLinux 9, GCC 11.5.0, SystemC 2.3.4, Release build of the CDC-VP tree (`build-fu3-t07/root`).
+
+- Behavior: 708 checks, zero failures.
+- Integration (FU3 bus): 702 checks, zero failures.
+- INTMAP (v2.1 routes and enables): 1408 checks, zero failures.
+
+The packaging run below (`tests/run_all.sh`) has not been repeated for v2.1.
+
+## 2026-10-20 - Common v2.0 (historical)
 
 Environment: Ubuntu under WSL, GNU C++ 15.2.0, C++17, SystemC 2.3.4 shared installation.
 Built with `-Wall -Wextra -Wpedantic`: no warnings.

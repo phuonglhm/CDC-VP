@@ -12,7 +12,7 @@ struct Router::FifoArbiter : Fifo {};
 Router::~Router() = default;
 Router::Router(sc_core::sc_module_name name, std::vector<Region> regions,
                unsigned outputs, unsigned latency_ns, bool trace)
-    : sc_module(name), regions_(std::move(regions)), forwarded_(outputs, 0), trace_(trace), latency_ns_(latency_ns) {
+    : sc_module(name), regions_(std::move(regions)), forwarded_(outputs, 0), trace_(trace), latency_(latency_ns, sc_core::SC_NS) {
     if (!outputs) throw std::invalid_argument("Router requires outputs");
     for (std::size_t i = 0; i < regions_.size(); ++i) {
         const auto& r = regions_[i];
@@ -43,21 +43,21 @@ void Router::b_transport(int source, tlm::tlm_generic_payload& tx, sc_core::sc_t
         const auto beat=access->beat_bytes;
         if ((beat!=1 && beat!=2 && beat!=4) || tx.get_data_length()%beat ||
             (access->burst!=Burst::Fixed && access->burst!=Burst::Increment)) {
-            sc_core::wait(latency_ns_,sc_core::SC_NS);
+            sc_core::wait(latency_);
             tx.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);++errors_;return;
         }
         if(access->burst==Burst::Fixed) footprint=beat;
     }
     // A preserved FIXED payload repeatedly visits one beat, not a linear block.
     if (!selected || footprint > selected->end - address) {
-        sc_core::wait(latency_ns_, sc_core::SC_NS);
+        sc_core::wait(latency_);
         tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
         ++errors_;
         return;
     }
     {
         FifoArbiter::Lease dispatch(*arbiters_[selected->port]);
-        sc_core::wait(latency_ns_, sc_core::SC_NS);
+        sc_core::wait(latency_);
     } // Arbitration owns dispatch, not the downstream response lifetime.
     RestoreAddress restore(tx);
     if (selected->translate) tx.set_address(address - selected->begin);

@@ -115,3 +115,19 @@ Also run the ordinary installed bus consumers and FX1 coexistence commands in
 the README. All generated peer builds stay inside the selected bus build tree;
 DMA0, PLIC, CPU, CRM, SYSCSR, DBG and other owners' sources are not modified.
 Test success validates these functional contracts, not a full firmware boot.
+
+## Common Spec v2.1 rebaseline (plan T04, 2026-10-23)
+
+Decisions Q02-a/c/f/g/h of the FU3 VP plan (`T02_De_Xuat_Q01_Q08.md`) applied to
+the bus. This section supersedes the v2.0 statements above where they differ.
+
+| Item | v2.1 rule in the bus |
+|---|---|
+| Map | `BusConfig::revision = "FU3 Common Spec v2.1"`; CVA6_ISRAM 0x0001_0000 + 0x31000 (debug 0x0004_0000), IBEX_ISRAM 0x0005_0000 + 0x11000 (debug 0x0006_0000), DSRAM 256 KiB, QSPI_XIP 16 MiB, EDHOC_OSCORE 0x3101_0000 |
+| UARTs | UART2 0x4409_0000 and UART3 0x440A_0000 on PERIBUS_0; the former 0x5005_0000 window is UART4; UART5-7 at 0x500D/E/F_0000 |
+| R2 IP | EDHOC_OSCORE, PWM0 (0x4410_0000), CAN (0x4411_0000), PWM1 (0x5010_0000) are in the map with `enabled=false` |
+| Errors (Q02-f) | Decode miss/disabled -> ADDRESS_ERROR; well-formed request refused by policy, debug partition or a side-effect word -> GENERIC_ERROR (was COMMAND/BURST/BYTE_ENABLE); malformed payloads keep their diagnostic |
+| Strobes (Q02-g) | v2.1 dropped the v2.0 PLIC "PSTRB=0xF" row: AP_PLIC protects only CLAIM/COMPLETE (0x3004); other CSRs take lanes |
+| XIP (Q02-h) | `AccessPolicy::ReadExecute`: functional writes refused before any effect |
+| Open | DMA0/DBG permission matrix (Q02-d), CVA6 XIP execution/entry (Q02-e), staging trigger from CRM (Q02-b, T07) |
+

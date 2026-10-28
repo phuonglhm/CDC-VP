@@ -26,14 +26,14 @@ constexpr Expect kExpect[] = {
     {0x0020, 0x0, 0x1},
     {0x0024, 0x0, 0x3FF},
     {0x0028, 0x0000'01FF, 0x1FF},
-    {0x002C, 0x01FF'FFFF, 0x1FF'FFFF},
+    {0x002C, 0x3FFF'FFFF, 0x3FFF'FFFF},
     {0x0030, 0x0, 0x1},
     {0x0034, 0x0, 0x1},
     {0x0038, 0x1, 0x1},
     {0x003C, 0x1, 0x1},
     {0x0040, 0x1, 0x1},
     {0x0044, 0x0000'00FF, 0xFF},
-    {0x0048, 0x01FF'FFFF, 0x1FF'FFFF},
+    {0x0048, 0x3FFF'FFFF, 0x3FFF'FFFF},
     {0x0054, 0x0, 0x1},
     {0x0058, 0x0, 0x0},
     {0x005C, 0x0, 0x1},
@@ -41,6 +41,8 @@ constexpr Expect kExpect[] = {
 
 // Độ dài trong bench: giữ reset 200 ns, chờ ổn định 1 us
 const sc_core::sc_time kHold(200, sc_core::SC_NS), kStartup(1, sc_core::SC_US);
+// Spec 3.2 reset filter (4 x 25 ns) and 3.1.1 readiness qualification (255 OSC cycles at 20 MHz).
+const sc_core::sc_time kFilter(100, sc_core::SC_NS), kQualify(255 * 50, sc_core::SC_NS);
 
 struct Bench : sc_core::sc_module {
     tlm_utils::simple_initiator_socket<Bench> cpu{"cpu"};
@@ -168,7 +170,14 @@ struct Bench : sc_core::sc_module {
     }
 
     // Hệ thống và DBG nhả trước, Ibex sau thời gian ổn định, CVA6 vẫn giữ
-    void check_startup(const std::string& w) {
+    // After PRSTN (por): the filter and the readiness qualification come first,
+    // the controller does not start before both.
+    void check_startup(const std::string& w, bool por = false) {
+        if (por) {
+            sc_core::wait(kFilter + kQualify - sc_core::sc_time(20, sc_core::SC_NS));
+            check(!sys_rst_n.read() && !ibex_rst_n.read(), w + ": held through the PRSTN filter and readiness");
+            sc_core::wait(20, sc_core::SC_NS);
+        }
         settle();
         check(sys_rst_n.read() && dbg_rst_n.read(), w + ": System and DBG released first");
         check(!ibex_rst_n.read() && !cva6_rst_n.read(), w + ": Both CPUs held during stabilization");
@@ -188,8 +197,8 @@ struct Bench : sc_core::sc_module {
             check(rd(e.offset) == expect, w + ": value at " + hex(e.offset));
         }
         check(rd(0x004C) == 0 && rd(0x0050) == 0, w + ": Removed CPU_DEBUG / SW_RST_N_2 offsets read 0");
-        check(gate0.read() == 0x1FF && gate1.read() == 0x1FF'FFFF, w + ": All gates on");
-        check(rst0.read() == 0xFF && rst1.read() == 0x1FF'FFFF, w + ": All IP resets released");
+        check(gate0.read() == 0x1FF && gate1.read() == 0x3FFF'FFFF, w + ": All gates on");
+        check(rst0.read() == 0xFF && rst1.read() == 0x3FFF'FFFF, w + ": All IP resets released");
         check(!irq.read(), w + ": IRQ low");
     }
 
@@ -201,7 +210,7 @@ struct Bench : sc_core::sc_module {
         check(xfer(true, FU3_CRM_CRM_OFFSET, v) == tlm::TLM_OK_RESPONSE, "Write in PRSTN OK");
         check(rd(FU3_CRM_CRM_OFFSET) == 0, "Write ignored in PRSTN");
         prst_n = true;
-        check_startup("Power-on");
+        check_startup("Power-on", true);
         check_reset_values("Power-on");
     }
 
@@ -253,16 +262,38 @@ struct Bench : sc_core::sc_module {
         check(!(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK), "No lock while powered down");
         wr(FU3_CRM_PLL_CTRL_OFFSET, 0x5949 | FU3_CRM_PLL_LKEN);
         check(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK, "lken forces lock");
+        // CSR v2: lock_type = 1 (reset) locks after pll_ctrl.count = 404 OSC cycles.
         wr(FU3_CRM_PLL_CTRL_OFFSET, 0x5949 & ~FU3_CRM_PLL_POWERDOWN);
-        check(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK, "Lock after power-up");
+        check(!(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK), "No lock right after power-up");
+        sc_core::wait(404 * 50 - 100, sc_core::SC_NS);
+        check(!(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK), "No lock before the counter ends");
+        sc_core::wait(200, sc_core::SC_NS);
+        check(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK, "Lock after 404 OSC cycles");
+        wr(FU3_CRM_PLL_OFFSET, 0x231);
+        check(!(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK), "New dividers restart the lock counter");
+        wr(FU3_CRM_PLL_CTRL_OFFSET, 0x5949 & ~FU3_CRM_PLL_POWERDOWN & ~FU3_CRM_PLL_LOCK_TYPE);
+        check(rd(FU3_CRM_PLL_OFFSET) & FU3_CRM_PLL_LOCK, "lock_type = 0: PLL LOCK signal, locked while running");
+        wr(FU3_CRM_PLL_CTRL_OFFSET, 0x5949 & ~FU3_CRM_PLL_POWERDOWN);
+        sc_core::wait(404 * 50 + 100, sc_core::SC_NS);
         check(dut.pll_clock_hz() == 60'000'000, "Reset dividers: 20 MHz * 12 / 2 / 2 = 60 MHz");
         check(dut.cpu_clock_hz() == FU3_CRM_OSC_HZ, "PLL unused until both selectors pick it");
         wr(FU3_CRM_CLK_0_OFFSET, 1);
         check(dut.cpu_clock_hz() == FU3_CRM_OSC_HZ, "CLK_0 alone has no effect");
         wr(FU3_CRM_CLK_1_OFFSET, 1);
         check(dut.cpu_clock_hz() == 60'000'000 && dut.bus_clock_hz() == 60'000'000, "CPU and bus on PLL");
+        // Spec 3.7.4: change the divider only with both selectors on the OSC.
+        wr(FU3_CRM_CLK_1_OFFSET, 0);
+        wr(FU3_CRM_CLK_0_OFFSET, 0);
         wr(FU3_CRM_CLK_OFFSET, 3);
+        check(sc_core::sc_report_handler::get_count("fu3_crm/clock_switch") == 0, "Divider set on the OSC: no warning");
+        wr(FU3_CRM_CLK_0_OFFSET, 1);
+        wr(FU3_CRM_CLK_1_OFFSET, 1);
         check(dut.bus_clock_hz() == 10'000'000 && dut.cpu_clock_hz() == 60'000'000, "Divider 3: bus / 6, CPU undivided");
+        wr(FU3_CRM_CLK_OFFSET, 2);
+        check(sc_core::sc_report_handler::get_count("fu3_crm/clock_switch") == 1,
+              "Divider change on the selected branch is reported");
+        wr(FU3_CRM_CLK_OFFSET, 2);
+        check(sc_core::sc_report_handler::get_count("fu3_crm/clock_switch") == 1, "Same value again is not reported");
         wr(FU3_CRM_PLL_OFFSET, (2u << 8) | (20u << 2) | 0);
         check(dut.pll_clock_hz() == 200'000'000, "N 2, M 20, OD 1: 200 MHz");
         wr(FU3_CRM_PLL_CTRL_OFFSET, (0x5949 & ~FU3_CRM_PLL_POWERDOWN) | FU3_CRM_PLL_BYPASS);
@@ -287,9 +318,9 @@ struct Bench : sc_core::sc_module {
         check(rst0.read() == FU3_CRM_RST0_HYPERBUS, "sw_rst_n_0 follows register");
         check(rst1.read() == (FU3_CRM_PERI_AP_HBCTRL | FU3_CRM_PERI_PLL_CTRL), "sw_rst_n_1 follows register");
         wr(FU3_CRM_CLK_GATE_0_OFFSET, 0x1FF);
-        wr(FU3_CRM_CLK_GATE_1_OFFSET, 0x1FF'FFFF);
+        wr(FU3_CRM_CLK_GATE_1_OFFSET, 0x3FFF'FFFF);
         wr(FU3_CRM_SW_RST_N_0_OFFSET, 0xFF);
-        wr(FU3_CRM_SW_RST_N_1_OFFSET, 0x1FF'FFFF);
+        wr(FU3_CRM_SW_RST_N_1_OFFSET, 0x3FFF'FFFF);
 
         // Ibex nhả CVA6 bằng FCLK_SW 
         wr(FU3_CRM_FCLK_SW_OFFSET, 1);
@@ -378,11 +409,25 @@ struct Bench : sc_core::sc_module {
         wdt = true;   // Mức giữ qua PRSTN không là sườn
         settle();
         sc_core::wait(kHold + kStartup);
+        // Spec 3.2: a PRSTN pulse shorter than the filter is rejected.
+        prst_n = false;
+        sc_core::wait(kFilter - sc_core::sc_time(30, sc_core::SC_NS));
+        prst_n = true;
+        sc_core::wait(kFilter + kFilter);
+        check(sys_rst_n.read() && ibex_rst_n.read(), "Short PRSTN pulse rejected by the filter");
         prst_n = false;
         settle();
+        check(sys_rst_n.read(), "PRSTN takes effect only after the filter span");
+        sc_core::wait(kFilter);
         check(!sys_rst_n.read() && !ibex_rst_n.read() && !dbg_rst_n.read(), "PRSTN: every reset held");
+        // A glitch high during reset is rejected too.
         prst_n = true;
-        check_startup("After PRSTN");
+        sc_core::wait(kFilter / 2);
+        prst_n = false;
+        sc_core::wait(kFilter + kQualify + kStartup);
+        check(!sys_rst_n.read(), "Short release glitch rejected");
+        prst_n = true;
+        check_startup("After PRSTN", true);
         zero_falls();
         sc_core::wait(kHold + kStartup);
         check(falls[0] == 0, "Request held across PRSTN is not an edge");

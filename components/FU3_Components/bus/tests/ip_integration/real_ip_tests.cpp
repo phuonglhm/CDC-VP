@@ -113,19 +113,19 @@ struct RealIp : sc_core::sc_module, Checks {
         expect(false,"real DMA bounded completion");
     }
     void dma_case(){
-        for(unsigned i=0;i<80;++i)access(true,0x00020080+i,(i*29+7)&255,1);
+        for(unsigned i=0;i<80;++i)access(true,0x00050080+i,(i*29+7)&255,1);
         // Unaligned byte tails cross target word lanes without CSR RMW.
-        configure(6,0x00020081,0x01000001,63,0x8101001f,0x81010017);start(6);completed(6);
+        configure(6,0x00050081,0x01000001,63,0x8101001f,0x81010017);start(6);completed(6);
         for(unsigned i=0;i<63;++i)expect(access(false,0x01000001+i,0,1)==((i+1)*29+7)%256,"real DMA M2M independent byte oracle");
-        for(unsigned i=0;i<8;++i)access(true,0x00020100+i*4,0x40+i);
+        for(unsigned i=0;i<8;++i)access(true,0x00050100+i*4,0x40+i);
         // SPI0 uses DMA channel 0 RX / 1 TX; UART2 uses channel 4 RX / 5 TX.
         access(true,0x440c0000,0xe2);access(true,0x440c0004,3);access(true,0x440c0024,0x40403);access(true,0x440c0000,0xe3);
-        access(true,0x50050003,0x83,1);access(true,0x50050000,1,1);access(true,0x50050001,0,1);
-        access(true,0x50050003,3,1);access(true,0x50050002,9,1);access(true,0x50050004,0x10,1);
+        access(true,0x44090003,0x83,1);access(true,0x44090000,1,1);access(true,0x44090001,0,1);
+        access(true,0x44090003,3,1);access(true,0x44090002,9,1);access(true,0x44090004,0x10,1);
         configure(0,0x440c0010,0x01000100,32,0x01010010,0x81010010,2);
-        configure(1,0x00020100,0x440c000c,32,0x81010010,0x01010010,1u<<16);
-        configure(4,0x50050000,0x01000201,8,0x01010001,0x81010008,4);
-        configure(5,0x00020081,0x50050000,8,0x81010008,0x01010001,3u<<16);
+        configure(1,0x00050100,0x440c000c,32,0x81010010,0x01010010,1u<<16);
+        configure(4,0x44090000,0x01000201,8,0x01010001,0x81010008,4);
+        configure(5,0x00050081,0x44090000,8,0x81010008,0x01010001,3u<<16);
         for(unsigned ch:{0u,1u,4u,5u})start(ch);
         for(unsigned ch:{0u,1u,4u,5u})completed(ch);
         for(unsigned i=0;i<8;++i){expect(access(false,0x01000100+i*4)==0x40+i,"real SPI/DMA loopback word order");
@@ -133,42 +133,44 @@ struct RealIp : sc_core::sc_module, Checks {
         expect(spi_tx_acks==2&&spi_rx_acks==2,"two four-word SPI request credits serviced per direction");
         expect(uart_tx_acks==8&&uart_rx_acks==8,"UART byte service credits acknowledged exactly once");
         expect(!(access(false,0x440c0020)&(FU3_SPI_OVR|FU3_SPI_RXUDF|FU3_SPI_TXOVF)),"real DMA obeys SPI FIFO bounds");
-        expect(!(access(false,0x50050005,0,1)&0x1e),"real DMA UART path has no receive errors");
+        expect(!(access(false,0x44090005,0,1)&0x1e),"real DMA UART path has no receive errors");
     }
     void plic_case(){
         access(true,0x40100018,1);access(true,0x40102000,1u<<6);
         access(true,0x44070008,7);access(true,0x44070000,7);wait(30,sc_core::SC_NS);settle();
         expect(!timer_irq.read()&&plic_irq.read(),"real PLIC captures a real one-tick Timer1 pulse");
         for(unsigned size:{1u,2u}){
-            access(false,0x40103004+(size==1?1:0),0,size,tlm::TLM_BURST_ERROR_RESPONSE);
-            access(true,0x40103004,6,size,tlm::TLM_BURST_ERROR_RESPONSE);
+            access(false,0x40103004+(size==1?1:0),0,size,tlm::TLM_GENERIC_ERROR_RESPONSE);
+            access(true,0x40103004,6,size,tlm::TLM_GENERIC_ERROR_RESPONSE);
             expect(plic_irq.read(),"rejected narrow claim/complete preserves pending source");
         }
         unsigned char sparse[4]={0xff,0,0,0},none[4]{};
-        access(false,0x40103004,0,4,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,sparse);
-        access(false,0x40103004,0,4,tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE,none);
+        access(false,0x40103004,0,4,tlm::TLM_GENERIC_ERROR_RESPONSE,sparse);
+        access(false,0x40103004,0,4,tlm::TLM_GENERIC_ERROR_RESPONSE,none);
         expect(plic_irq.read(),"disabled or partial read lanes cannot consume the claim");
         expect(access(false,0x40103004)==6,"full word claim returns the Timer1 ID");
         timer_adapter.acknowledge();settle();
         expect(access(false,0x40103004)==0,"source is claimed exactly once");access(true,0x40103004,6);
         expect(!plic_irq.read(),"complete after the timer pulse leaves no pending IRQ");
-        access(false,0x40100000,0,1,tlm::TLM_BURST_ERROR_RESPONSE);
+        // Only CLAIM/COMPLETE is a protected word (Q02-g): a byte read of a plain
+        // CSR (reserved ID0 priority) is widened to lanes and answered.
+        expect(access(false,0x40100000,0,1)==0,"narrow read of a side-effect-free PLIC CSR");
         expect(access(false,0x40100024)==0,"old claim offset is now priority ID 9 without claim side effects");
     }
     void adapter_case(){
         unsigned char bytes[8]={0x11,0x22,0x33,0x44};tlm::tlm_generic_payload t;
-        payload(t,tlm::TLM_WRITE_COMMAND,0x00020001,bytes,4);
+        payload(t,tlm::TLM_WRITE_COMMAND,0x00050001,bytes,4);
         fu3::dma::TransferExtension meta;meta.unit_bytes=1;meta.beats=4;meta.axi_id=4;
         meta.write_strobes={2,4,8,1};t.set_extension(&meta);
         unsigned char enables[2]={0xff,0};t.set_byte_enable_ptr(enables);t.set_byte_enable_length(2);
         auto send=[&](tlm::tlm_response_status expected){auto d=sc_core::sc_time(5,sc_core::SC_NS);native.socket->b_transport(t,d);
             expect(t.get_response_status()==expected&&d==sc_core::SC_ZERO_TIME,"DMA adapter response/delay");
             expect(t.get_extension<fu3::dma::TransferExtension>()==&meta&&!t.get_extension<fu3_bus::Access>()&&
-                   t.get_byte_enable_ptr()==enables&&t.get_byte_enable_length()==2&&t.get_address()==0x00020001,"DMA adapter restores caller fields and native metadata");};
+                   t.get_byte_enable_ptr()==enables&&t.get_byte_enable_length()==2&&t.get_address()==0x00050001,"DMA adapter restores caller fields and native metadata");};
         send(tlm::TLM_OK_RESPONSE);
-        for(unsigned i=0;i<4;++i)expect(access(false,0x00020001+i,0,1)==(i%2==0?bytes[i]:0),"native WSTRB and original byte enables are both honored");
+        for(unsigned i=0;i<4;++i)expect(access(false,0x00050001+i,0,1)==(i%2==0?bytes[i]:0),"native WSTRB and original byte enables are both honored");
         meta.increment=false;meta.write_strobes={2,2,2,2};send(tlm::TLM_OK_RESPONSE);
-        expect(access(false,0x00020001,0,1)==bytes[2]&&access(false,0x00020002,0,1)==0,
+        expect(access(false,0x00050001,0,1)==bytes[2]&&access(false,0x00050002,0,1)==0,
                "native FIXED progression repeats the byte lane without incrementing");
         meta.increment=true;meta.write_strobes={2,4,8,1};
         isram.on_visit=[&](const auto&){
@@ -193,17 +195,17 @@ struct RealIp : sc_core::sc_module, Checks {
             expect(t.get_response_status()==tlm::TLM_COMMAND_ERROR_RESPONSE&&t.get_extension<fu3_bus::Access>()->beat_bytes==4,"conflicting caller metadata is rejected and preserved");}
         isram.throw_once=true;bool threw=false;auto d=sc_core::SC_ZERO_TIME;
         try{native.socket->b_transport(t,d);}catch(const std::runtime_error&){threw=true;}
-        expect(threw&&t.get_address()==0x00020001&&t.get_byte_enable_ptr()==enables&&!t.get_extension<fu3_bus::Access>(),"adapter restores payload after a target exception");
+        expect(threw&&t.get_address()==0x00050001&&t.get_byte_enable_ptr()==enables&&!t.get_extension<fu3_bus::Access>(),"adapter restores payload after a target exception");
         send(tlm::TLM_OK_RESPONSE);
         t.set_byte_enable_ptr(nullptr);t.set_byte_enable_length(0);t.set_command(tlm::TLM_READ_COMMAND);
-        t.set_address(0x00020000);auto raw_delay=sc_core::SC_ZERO_TIME;raw.socket->b_transport(t,raw_delay);
+        t.set_address(0x00050000);auto raw_delay=sc_core::SC_ZERO_TIME;raw.socket->b_transport(t,raw_delay);
         expect(t.get_response_status()==tlm::TLM_GENERIC_ERROR_RESPONSE,"default raw ingress still rejects missing Access metadata");
         t.clear_extension<fu3::dma::TransferExtension>();
     }
     void reset_case(){
-        access(true,0x00020000,0x93c57a21);
+        access(true,0x00050000,0x93c57a21);
         access(true,0x00010000,0x1234);bus.finish_staging();
-        configure(6,0x00020000,0x01000000,32,0x81010010,0x81010010);
+        configure(6,0x00050000,0x01000000,32,0x81010010,0x81010010);
         isram.latency_ns=1000;program.latency_ns=1000;
         access(true,0x44051004,40);access(true,0x4405100c,3);start(6);
         background_start.notify(sc_core::SC_ZERO_TIME);
@@ -214,7 +216,7 @@ struct RealIp : sc_core::sc_module, Checks {
         expect(!wdt_request.read()&&!wdt_irq.read()&&!dma_irq.read(),"IP reset clears watchdog and DMA outputs");
         reset_n=true;wait(30,sc_core::SC_NS);bus.resume();isram.latency_ns=7;program.latency_ns=7;
         access(true,0x00010000,0x5678);expect(access(false,0x00010000)==0x5678,"reset reopens the boot staging policy");
-        configure(0,0x00020000,0x01000020,4,0x81010004,0x81010004);start(0);completed(0);
+        configure(0,0x00050000,0x01000020,4,0x81010004,0x81010004);start(0);completed(0);
         expect(access(false,0x01000020)==0x93c57a21,"real DMA restarts cleanly after coordinated reset");
         expect(access(false,0x4405100c)==FU3_WDT_RESEN,"watchdog reset profile is restored");
     }

@@ -9,7 +9,7 @@ const sc_core::sc_time kNoDeadline = sc_core::sc_max_time();
 
 Watchdog::Watchdog(sc_core::sc_module_name name, sc_core::sc_time tick,
                    unsigned apb_wait_cycles, sc_core::sc_time apb_period)
-    : sc_module(name), tick_(tick),
+    : sc_module(name), apb_wait_cycles_(apb_wait_cycles), tick_(tick),
       apb_latency_(apb_period * static_cast<double>(apb_wait_cycles)) {
     if (tick <= sc_core::SC_ZERO_TIME || apb_period <= sc_core::SC_ZERO_TIME || apb_wait_cycles == 0)
         throw std::invalid_argument("WDT clock period and APB wait cycles must be positive");
@@ -18,6 +18,27 @@ Watchdog::Watchdog(sc_core::sc_module_name name, sc_core::sc_time tick,
     SC_THREAD(run);
     SC_METHOD(publish);
     sensitive << outputs_;
+}
+
+void Watchdog::set_clock(sc_core::sc_time tick, sc_core::sc_time apb_period) {
+    if (tick == sc_core::SC_ZERO_TIME || apb_period == sc_core::SC_ZERO_TIME || tick == tick_)
+        return;
+    if (sc_core::sc_is_running())
+        synchronize();   // commit the ticks elapsed at the old period
+    tick_ = tick;
+    apb_latency_ = apb_period * static_cast<double>(apb_wait_cycles_);
+    if (sc_core::sc_is_running())
+        changed_.notify(sc_core::SC_ZERO_TIME);
+}
+
+void Watchdog::set_clock_enabled(bool on) {
+    if (on == clock_enabled_)
+        return;
+    if (sc_core::sc_is_running())
+        synchronize();   // ticks before the gate change count with the old state
+    clock_enabled_ = on;
+    if (sc_core::sc_is_running())
+        changed_.notify(sc_core::SC_ZERO_TIME);
 }
 
 void Watchdog::programming_reset() {
@@ -75,7 +96,7 @@ void Watchdog::synchronize() {
     if(core_reset_){count_=load_;core_reset_=false;}
     const auto elapsed_ticks = (now.value() - last_tick_.value()) / tick_.value();
     auto remaining = elapsed_ticks;
-    while (remaining && !reset_pending_ && (control_ & FU3_WDT_INTEN) && !halt_) {
+    while (remaining && clock_enabled_ && !reset_pending_ && (control_ & FU3_WDT_INTEN) && !halt_) {
         // A count of N expires on the N+1th eligible edge, when old count is zero.
         const std::uint64_t until_timeout = static_cast<std::uint64_t>(count_) + 1;
         const auto step = std::min<std::uint64_t>(remaining, until_timeout);
@@ -104,7 +125,7 @@ void Watchdog::run() {
                             wdogres_n.value_changed_event();
         const auto now = sc_core::sc_time_stamp();
         auto next = kNoDeadline;
-        if (wdogres_n.read() && !reset_pending_ && !halt_ &&
+        if (clock_enabled_ && wdogres_n.read() && !reset_pending_ && !halt_ &&
             (control_ & FU3_WDT_INTEN)) {
             const auto until_timeout = static_cast<std::uint64_t>(count_) + 1;
             next = last_tick_ + tick_ * static_cast<double>(until_timeout);

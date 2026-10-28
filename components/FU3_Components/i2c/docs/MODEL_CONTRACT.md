@@ -47,3 +47,7 @@ The model samples pins at HCLK boundaries through two synchronizer stages and an
 Programmable timing uses each timing register plus one HCLK period. Master phases preserve programmed minimum holds, setup, and free-bus delays. Legacy nominal low/high durations use 3/2 prescaler units. Synchronization, filtering, and phase scheduling add latency: pin frequency is not an RTL cycle-accuracy claim. External low SCL stalls released-high phases indefinitely, with no invented timeout. Configure data hold below the low duration; the VP clamps an excessive hold to the low duration and retains a minimum data-setup step.
 
 Reset is asynchronous active-low and releases outputs even between HCLK boundaries. Core disable is not reset. No electrical metastability, runtime clock gating/frequency changes, simultaneous master/slave operation, FIFO, DMA, 10-bit address engine, general call, or slave-generated stretching is claimed.
+
+## Clock gate (platform integration)
+
+The clock controller (FU3 CRM gate, through the platform) drives the gate; it is enabled by default, so a stand-alone bench needs no change. `set_clock_enabled(false)` removes clock edges: a transfer stops with its bus levels held and continues on enable; the clock phase restarts on enable. Reset stays asynchronous and applies while gated.

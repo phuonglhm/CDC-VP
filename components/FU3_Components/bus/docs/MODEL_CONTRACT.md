@@ -38,8 +38,9 @@ recorded review references; this documentation restoration is not a new PDF audi
 
 ## Elaboration and routing
 
-`BusConfig::fu3()` defines four masters (`CVA6`, `IBEX`, `DBG`, `DMA0`) and 36
-enabled physical windows. The maintained map is in [config.cpp](../src/config.cpp).
+`BusConfig::fu3()` defines four masters (`CVA6`, `IBEX`, `DBG`, `DMA0`) and the
+Common Spec v2.1 map: 44 windows, 40 enabled; EDHOC_OSCORE, PWM0, PWM1 and CAN
+are present but disabled until their models are delivered. The maintained map is in [config.cpp](../src/config.cpp).
 An independent expected map is in [bus_contract_tests.cpp](../tests/bus_contract_tests.cpp).
 Regions are half-open intervals `[base, base + size)`.
 
@@ -92,8 +93,8 @@ on narrow register reads in firmware.
 
 Common Full strobes supersede the older Timer/WDT/I2C no-partial profile.
 Endpoints merge storage internally and qualify command/W1C effects without
-fabric RMW. AP_PLIC alone requires complete word access across its aperture
-under its explicit Common integration rule. See COMMON_REBASELINE.md.
+fabric RMW. Common v2.1 has no PLIC-wide word-only rule: only the AP_PLIC
+CLAIM/COMPLETE word (0x3004) is protected. See COMMON_REBASELINE.md.
 
 ## Admission and ordering
 
@@ -126,6 +127,9 @@ Default timing parameters are `axi_cycle_ns = 2`, `apb_cycle_ns = 10` and
 `router_latency_ns = 2`. A2P adds setup plus access time (two APB cycles per beat),
 in addition to other path stages and target latency. These are functional VP
 parameters, not confirmed chip frequencies or throughput guarantees.
+`BusSystem::set_clock(axi_cycle, apb_cycle, router_latency)` replaces the three
+values while running (routers, A2P bridges, AP stages, master pipelines, target
+ports, rejection latency); each stage uses the new value from its next wait.
 
 Input and downstream annotated delays are consumed once; the returned delay is
 zero. Functional ingress yields to the kernel. Validation/policy rejection consumes
@@ -142,6 +146,11 @@ not by itself downstream overlap.
 - IBEX may write CVA6_ISRAM during staging. Stop and drain IBEX traffic before
   calling `finish_staging()` and releasing CVA6 reset. Pending IBEX traffic causes
   `std::logic_error` without changing the policy.
+- `close_staging()` (SC_THREAD only) is the form for a release committed by an
+  IBEX request: staging closes immediately for every request checked later, then
+  the call waits until every IBEX request accepted before it has completed
+  (tracked by sequence number), so no staging-era write is still in flight when
+  the caller releases CVA6. New requests are neither rejected nor stalled.
 - `reset()` requires all masters quiescent. Otherwise it throws without policy
   changes. It reopens staging, retains peak counters and does not abort transfers
   or reset external IPs.
@@ -156,8 +165,9 @@ does not establish complete security or software boot correctness.
 
 | Condition | TLM response |
 |---|---|
-| Unmapped address, cross-window footprint, misalignment | ADDRESS_ERROR |
-| Unsupported command, denied policy, instruction write | COMMAND_ERROR |
+| Unmapped address, disabled target, cross-window footprint, misalignment | ADDRESS_ERROR (DECERR) |
+| Well-formed request refused by access policy, debug partition or a side-effect word | GENERIC_ERROR (SLVERR) |
+| Unsupported command, instruction write | COMMAND_ERROR |
 | Unsupported beat size/count/burst/streaming | BURST_ERROR |
 | Invalid byte-enable representation | BYTE_ENABLE_ERROR |
 | Missing required metadata, null data, zero length | GENERIC_ERROR |
@@ -198,11 +208,11 @@ rules and reset coordination are VP integration policies, not new HAS claims.
   Link both `fu3::bus_system` and `cdc::components::fu3_ap_dma` to supply the
   native DMA header. The ordinary bus library has no DMA dependency and no
   DMA0 sources need modification.
-- Default AP_PLIC uses `TargetConfig::strict_word_access` for the entire
-  endpoint: full aligned four-byte beats, all effective enables set, validated
-  before the first CSR effect. Other endpoints may opt into per-word
-  `strict_word_offsets`. Current peer PLIC context offsets 0x3000/0x3004 remain
-  provisional under Common; no stale claim protection is placed at 0x24.
+- Default AP_PLIC protects only CLAIM/COMPLETE with `strict_word_offsets`
+  {0x3004}: full aligned four-byte beat, all effective enables set, validated
+  before the first CSR effect. The PLIC offsets are the VP ABI of decision
+  Q03-a. `strict_word_access` (whole endpoint) remains available to other
+  configurations.
 - Optional preserved FIXED routing uses one beat as its physical footprint on
   both SYSBUS levels. Original payload length and repeating byte enables remain
   available to the endpoint. `preserve_burst` is restricted to AXI endpoints;

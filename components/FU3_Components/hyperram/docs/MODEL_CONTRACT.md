@@ -68,3 +68,7 @@ Error bits 0..7 are DECODE, PROFILE, NOT_READY, TIMING, CONFIG, UNDERFLOW, READ_
 ## Fault injection
 
 `Fault::refresh` requests doubled variable latency. `fail_after_words` terminates a transfer after the specified prefix: writes preserve committed enabled bytes; reads preserve the valid prefix and zero-fill enabled bytes of the failed suffix. The request returns error. No byte-accurate device commit acknowledgement, real elapsed no-progress timeout, or electrical failure detection is inferred.
+
+## Clock gate (platform integration)
+
+The clock controller (FU3 CRM gate, through the platform) drives the gate; it is enabled by default, so a stand-alone bench needs no change. `set_clock_enabled(false)` stops the core clock: engine operations and memory transfers in progress make no progress (`pause()` counts only enabled cycles) and continue where they stopped on enable. Reset and device reset still cancel them.

@@ -19,10 +19,21 @@ public:
         sc_core::sc_time tick=sc_core::sc_time(5,sc_core::SC_NS),
         unsigned apb_wait_cycles=10,
         sc_core::sc_time apb_period=sc_core::sc_time(5,sc_core::SC_NS));
+    // Watchdog tick and APB clock from the clock controller (platform CRM,
+    // decision Q05-f). Ticks elapsed so far count with the old tick; zero is ignored.
+    void set_clock(sc_core::sc_time tick, sc_core::sc_time apb_period);
+    sc_core::sc_time tick() const { return tick_; }
+    // Clock gate from the clock controller (platform CRM): while disabled no
+    // tick elapses (the counter holds, as during a debug halt) and the APB side
+    // is reached only through the platform's gate. Enabled by default.
+    void set_clock_enabled(bool on);
+    bool clock_enabled() const { return clock_enabled_; }
 private:
+    unsigned apb_wait_cycles_;
     std::uint32_t load_=FU3_WDT_RESET_VALUE, count_=FU3_WDT_RESET_VALUE,
                   control_=FU3_WDT_RESEN;
     bool timeout_seen_=false, reset_pending_=false, halt_=false, locked_=false;
+    bool clock_enabled_=true;
     bool core_reset_=true;
     sc_core::sc_time tick_, apb_latency_, last_tick_;
     sc_core::sc_mutex access_mutex_;

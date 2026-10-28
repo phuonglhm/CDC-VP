@@ -9,7 +9,11 @@ int sc_main(int, char**) {
     };
     auto cfg = fu3_bus::BusConfig::fu3();
     c.expect(good(cfg), "FU3 map validates");
-    c.expect(cfg.initiators.size()==4 && cfg.targets.size()==36, "4 masters, 36 physical target windows");
+    unsigned enabled=0;
+    for(const auto& t:cfg.targets) enabled+=t.enabled;
+    c.expect(cfg.initiators.size()==4 && cfg.targets.size()==44 && enabled==40,
+             "4 masters, 44 v2.1 windows, 40 enabled (EDHOC/PWM0/PWM1/CAN wait for R2)");
+    c.expect(cfg.revision=="FU3 Common Spec v2.1", "map names its spec revision");
     auto bad = [&](auto mutate, const char* label) { auto x=cfg; mutate(x); c.expect(!good(x),label); };
     bad([](auto& x){x.targets[1].base=0;}, "overlap");
     bad([](auto& x){x.targets[0].size=0;}, "empty range");

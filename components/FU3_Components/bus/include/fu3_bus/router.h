@@ -18,6 +18,8 @@ public:
     ~Router() override;
     std::uint64_t forwarded(unsigned port) const { return forwarded_.at(port); }
     std::uint64_t errors() const { return errors_; }
+    // Decode/dispatch latency; changeable while running (bus clock).
+    void latency(sc_core::sc_time t) { latency_ = t; }
 private:
     void b_transport(int source, tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
     unsigned transport_dbg(int source, tlm::tlm_generic_payload& tx);
@@ -28,6 +30,6 @@ private:
     std::vector<std::uint64_t> forwarded_;
     std::uint64_t errors_ = 0;
     bool trace_;
-    unsigned latency_ns_;
+    sc_core::sc_time latency_;
 };
 } // namespace fu3_bus

@@ -54,10 +54,20 @@ void Uart::reset_delta_async() {
         outputs_.notify(sc_core::SC_ZERO_TIME);
     }
 }
-void Uart::run() {
-    // Reset is synchronous: pulses that miss a clock edge do not reset the IP.
+void Uart::wait_clock_edge() {
+    // A gate during the period cancels the edge; the phase restarts on enable.
     while (true) {
-        wait(config_.clock_period);
+        while (!clock_enabled_) wait(clock_gate_changed_);
+        const auto due = sc_core::sc_time_stamp() + config_.clock_period;
+        wait(config_.clock_period, clock_gate_changed_);
+        if (clock_enabled_ && sc_core::sc_time_stamp() >= due) return;
+    }
+}
+void Uart::run() {
+    // Reset is synchronous: pulses that miss a clock edge (including edges
+    // removed by the clock gate) do not reset the IP.
+    while (true) {
+        wait_clock_edge();
         if (!reset_n.read()) {
             reset_state();
             if (pending_) {

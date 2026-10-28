@@ -102,17 +102,6 @@ Syscsr::Syscsr(sc_core::sc_module_name name) : sc_core::sc_module(name) {
     reset_registers();
     SC_METHOD(on_reset);
     sensitive << reset_n << sys_ctrl_changed_;
-    SC_METHOD(sample_straps);
-    sensitive << reset_n << boot << mode_0 << mode_1;
-}
-
-void Syscsr::sample_straps() {
-    // Strap được lưu trong SYSCSR, thời điểm lấy mẫu chưa có => VP theo chân khi reset_n thấp
-    // Chốt giá trị lúc nhả reset (Lần đầu: Lúc khởi tạo nếu không có reset)
-    if (!reset_n.read() || !captured_) {
-        straps_ = (std::uint32_t(mode_1.read()) << 2) | (std::uint32_t(mode_0.read()) << 1) | std::uint32_t(boot.read());
-        captured_ = reset_n.read();
-    }
 }
 
 void Syscsr::reset_registers() {
@@ -129,7 +118,10 @@ void Syscsr::on_reset() {
 
 std::uint32_t Syscsr::read_register(std::uint32_t offset) const {
     if (offset == kSyscsrStatus) {
-        return (std::uint32_t(test_mode_sel.read()) << 4) | (std::uint32_t(test_mode.read()) << 3) | straps_;
+        // FU3_SYSCSR_v1: live pin values, no capture in SYSCSR (a captured
+        // copy for the Boot ROM is a platform extension, FU3_VP_ABI_1).
+        return (std::uint32_t(test_mode_sel.read()) << 4) | (std::uint32_t(test_mode.read()) << 3) |
+               (std::uint32_t(mode_1.read()) << 2) | (std::uint32_t(mode_0.read()) << 1) | std::uint32_t(boot.read());
     }
     return (offset % 4 == 0 && find(offset)) ? regs_[offset / 4] : 0;
 }

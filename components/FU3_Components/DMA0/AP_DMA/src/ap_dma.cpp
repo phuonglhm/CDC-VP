@@ -422,6 +422,8 @@ void ApDma::worker(bool read,unsigned slot) {
     while(true) {
         wait((read?read_jobs_:write_jobs_)[slot]);
         for(unsigned offset=0;offset<job.data.size();) {
+            while(!clock_enabled_ && job.epoch==reset_epoch_ && reset_n.read())
+                wait(clock_gate_changed_|reset_n.negedge_event());
             if(job.epoch!=reset_epoch_ || !reset_n.read() || job.timed_out) break;
             const std::uint32_t address=job.increment?job.address+offset:job.address;
             const auto count=job.increment?std::min(unsigned(job.data.size())-offset,4096u-(address&4095)):job.unit;
@@ -554,6 +556,10 @@ sc_core::sc_time ApDma::next_deadline() const {
 }
 void ApDma::engine() {
     while(true) {
+        if(!clock_enabled_ && reset_n.read()) {
+            wait(clock_gate_changed_|reset_n.negedge_event());
+            continue;
+        }
         ++scheduler_wakeups_;
         bool changed=retire(true); changed=retire(false)||changed;
         if(reset_n.read()) {

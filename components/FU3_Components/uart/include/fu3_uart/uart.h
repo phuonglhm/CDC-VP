@@ -26,10 +26,22 @@ public:
     sc_core::sc_out<bool> dma_tx_request{"dma_tx_request"}, dma_rx_request{"dma_rx_request"};
     SC_HAS_PROCESS(Uart);
     explicit Uart(sc_core::sc_module_name, Config = {});
+    // Clock period from the clock controller (platform CRM); used from the next
+    // cycle, zero is ignored.
+    void set_clock_period(sc_core::sc_time period) { if (period != sc_core::SC_ZERO_TIME) config_.clock_period = period; }
+    // Clock gate from the clock controller (platform CRM): while disabled the
+    // IP gets no clock edge, keeps its state and resumes on the next enabled
+    // edge. Enabled by default.
+    void set_clock_enabled(bool on) { if (on != clock_enabled_) { clock_enabled_ = on; clock_gate_changed_.notify(sc_core::SC_ZERO_TIME); } }
+    bool clock_enabled() const { return clock_enabled_; }
+    // Line timing for a board-side peer (console): one bit lasts oversampling x
+    // divisor clock periods (zero while the divisor is 0); LCR gives the format.
+    sc_core::sc_time bit_time() const { return config_.clock_period * double(config_.oversampling * divisor()); }
+    std::uint8_t line_control() const { return lcr_; }
 private:
     struct Received {std::uint8_t data, errors; bool reported = false;};
     struct Segment {bool level; unsigned samples;};
-    const Config config_;
+    Config config_;
     std::uint8_t ier_=0, fcr_=0, lcr_=0, mcr_=0, scr_=0, dll_=0, dlm_=0;
     std::uint8_t modem_=0, delta_=0;
     bool overrun_=false, thre_pending_=false, timeout_=false, tx_level_=true;
@@ -46,6 +58,9 @@ private:
     tlm::tlm_generic_payload* pending_=nullptr;
     sc_core::sc_mutex access_;
     sc_core::sc_event completed_, outputs_;
+    bool clock_enabled_ = true;
+    sc_core::sc_event clock_gate_changed_;
+    void wait_clock_edge();
     void run();
     void reset_delta_async();
     void reset_state();

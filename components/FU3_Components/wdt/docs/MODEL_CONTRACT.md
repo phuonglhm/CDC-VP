@@ -52,3 +52,7 @@ remain unbound; i_wdt_other_unlock has no V1.2 effect.
 WDT1 uses PLIC ID 18. Common leaves WDT0's exact INTMAP/NMI assignment and
 reset escalation unresolved; standalone fixtures label any assumed route.
 The platform owns reset scope, source conditioning and CPU interrupt delivery.
+
+## Clock gate (platform integration)
+
+The clock controller (FU3 CRM gate, through the platform) drives the gate; it is enabled by default, so a stand-alone bench needs no change. `set_clock_enabled(false)` commits the ticks elapsed so far and then holds the counter, as during a debug halt: no timeout, no reset request. Counting resumes on enable; the partial tick at the gate is dropped (at most one tick). `wdogres_n`/`preset_n` stay asynchronous.

@@ -36,7 +36,7 @@ All 51 registers in 0x0000-0x00D8 use the reset values and field types of the re
 
 ## Reset and outputs
 
-`reset_n` is active low. While low, registers hold reset values, functional writes are ignored and the strap fields follow the pins. When `reset_n` rises they keep the pin values of that moment until the next reset. Without any reset they hold the values at simulation start. `sw_reset_req` and `sw_global_rst_req` mirror sys_ctrl bits 0 and 4 as levels. They are not self-clearing and CRM detects the rising edge.
+`reset_n` is active low. While low, registers hold reset values and functional writes are ignored. The strap and test fields of `syscsr_status` are the live pin values at all times (FU3_SYSCSR_v1: "SYSCSR does not latch these values"); a captured copy for the Boot ROM is a platform extension (FU3_VP_ABI_1 BOOT_STATUS), not part of this model. `sw_reset_req` and `sw_global_rst_req` mirror sys_ctrl bits 0 and 4 as levels. They are not self-clearing and CRM detects the rising edge.
 One SystemC method drives both outputs, so they update two delta cycles after the write. jtagmux_sel/jtagmux_block are stored only.
 The FU3 top leaves them open.
 
@@ -44,7 +44,7 @@ The FU3 top leaves them open.
 
 | Topic | VP choice | Status |
 | --- | --- | --- |
-| Strap capture | boot, mode_0, mode_1 captured when `reset_n` rises (HAS 11: "stored in SYSCSR") | HAS: sampling event TBD. The v1 table describes live pins |
+| Strap capture | None: `syscsr_status` reads the live pins, as FU3_SYSCSR_v1 (2026-10-26) | Architecture v2.0 requires captured straps (sampling event TBD); the FU3 platform provides them outside this model (FU3_VP_ABI_1) |
 | Unmapped offsets inside the window (e.g. 0x0084) | Read 0, write ignored, OK response | Pending RTL: PSLVERR or not |
 | Strap pin order | Separate `boot`/`mode_0`/`mode_1` ports | IOPAD MAP: PIN_2 BOOT, PIN_3 MODE_1, PIN_4 MODE_0 |
 | Pad config to IO_PAD `select[80]` | `read_register()` only, no ports | Side-local pad to package position mapping not specified |

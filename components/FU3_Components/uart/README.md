@@ -35,7 +35,7 @@ enables automatic RTS behavior.
 |---|---|---|---|---|
 | UART0 | 0x440D0000 | PERIBUS_0 | 2 | fast[7] |
 | UART1 | 0x440E0000 | PERIBUS_0 | 10 | fast[4], OR with UART2 |
-| UART2 | 0x50050000 | PERIBUS_1 | 11 | fast[4], OR with UART1 |
+| UART2 | 0x44090000 | PERIBUS_0 | 11 | fast[4], OR with UART1 (v2.1 address, decision Q02-c; the v2.0 0x50050000 window is UART4) |
 
 Offsets are **bytes 0..7**, as stated by the HDS programming sequence. Use byte
 MMIO through the existing FU3 bus, with `fu3_bus::ScopedAccess(tx,1)` for a TLM

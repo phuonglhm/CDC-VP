@@ -50,12 +50,9 @@ private:
     static constexpr unsigned kWords = 0xDC / 4;   // 0x0000..0x00D8
     std::uint32_t regs_[kWords] = {};
     sc_core::sc_event sys_ctrl_changed_;
-    std::uint32_t straps_ = 0;   // {mode_1, mode_0, boot} đã chốt
-    bool captured_ = false;
 
     void reset_registers();
     void on_reset();
-    void sample_straps();
     void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
     unsigned transport_dbg(tlm::tlm_generic_payload& tx);
     void access(tlm::tlm_generic_payload& tx, bool backdoor);

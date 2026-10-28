@@ -49,7 +49,8 @@ struct FakeHart : DebugHart {
 
 constexpr std::uint32_t kDsram = 0x0100'0000;
 
-// Bộ nhớ 64 KiB tại DSRAM (offset cục bộ). Offset 0xFFF0 trả lỗi slave
+// Bộ nhớ 64 KiB tại DSRAM (offset cục bộ). Offset 0xFFF0 trả lỗi slave;
+// offset 0xFFE0 trả lỗi slave sau 1 us (an access still on its way when the bridge resets)
 struct Memory : sc_core::sc_module {
     tlm_utils::simple_target_socket<Memory> socket{"socket"};
     unsigned char mem[0x10000] = {};
@@ -60,6 +61,11 @@ struct Memory : sc_core::sc_module {
 
     void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time&) {
         const std::uint64_t a = tx.get_address();
+        if (a == 0xFFE0) {
+            sc_core::wait(1, sc_core::SC_US);
+            tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
+            return;
+        }
         if (a == 0xFFF0) {
             tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
             return;
@@ -137,6 +143,21 @@ struct Bench : sc_core::sc_module {
         router.ram.bind(memory.socket);
 #endif
         SC_THREAD(run);
+        SC_THREAD(resetter);
+    }
+
+    // Bridge reset 100 ns after `reset_go` (TRST when `reset_tap`, else the DBG-domain reset).
+    sc_core::sc_event reset_go;
+    bool reset_tap = false;
+    void resetter() {
+        while (true) {
+            wait(reset_go);
+            wait(100, sc_core::SC_NS);
+            if (reset_tap)
+                jtag.test_logic_reset();
+            else
+                jtag.reset_registers();
+        }
     }
 
     void check(bool ok, const std::string& what) {
@@ -257,8 +278,11 @@ struct Bench : sc_core::sc_module {
         check(status() == FU3_DBG_STATUS_SLVERR, "Slave error -> SLVERR");
         status(FU3_DBG_STATUS_SLVERR);
 #ifdef FU3_DBG_WITH_BUS
-        axi_read(0x0000'0000u);
-        check(status() == FU3_DBG_STATUS_SLVERR, "Boot ROM is Ibex-only on the bus -> SLVERR");
+        // FU3_VP_ABI_1 section 7 access profile: DBG may read the ROM, not write it.
+        rom_sink.mem[0x10] = 0x5a;
+        check(axi_read(0x0000'0010u) == 0x5a && status() == 0, "Boot ROM readable by DBG (ABI_1 section 7)");
+        axi_write(0x0000'0010u, 0);
+        check(status() == FU3_DBG_STATUS_SLVERR && rom_sink.mem[0x10] == 0x5a, "Boot ROM write by DBG -> SLVERR");
         status(FU3_DBG_STATUS_SLVERR);
 #endif
         set_address(FU3_DBG_DM_BASE + 0x800);
@@ -399,8 +423,40 @@ struct Bench : sc_core::sc_module {
         check(dmi_rd(FU3_DBG_SBCS) == 0, "SBCS reads 0: no System Bus Access in the DM");
     }
 
+    // Review T21-R01: a reset of the bridge while its AXI access is on its way
+    // starts a new epoch; the late result (SLVERR here) does not reach the
+    // registers of the new epoch. Without a reset the error is reported.
+    void test_reset_in_flight() {
+        const std::uint32_t slow = kDsram + 0xFFE0;
+        for (const bool tap : {false, true}) {
+            const std::string what = tap ? "TRST" : "DBG reset";
+            status(FU3_DBG_STATUS_ERRORS);
+            reset_tap = tap;
+            reset_go.notify(sc_core::SC_ZERO_TIME);   // delta: the resetter waits by then
+            set_address(slow);
+            jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+            jtag.scan_dr(FU3_DBG_DATA_READ);   // returns after the reset
+            check(status() == 0, what + " during an access: the late SLVERR does not reach STATUS");
+            jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+            check(jtag.scan_dr(0) == 0, what + " during an access: ADDR stays at its reset value");
+            jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+            check(jtag.scan_dr(0) == 0, what + " during an access: read data stays at its reset value");
+            axi_write(kDsram + 0x20, 0x600D'0001u);
+            check(axi_read(kDsram + 0x20) == 0x600D'0001u && status() == 0, what + ": next access works");
+        }
+        status(FU3_DBG_STATUS_ERRORS);
+        set_address(slow);
+        jtag.scan_ir(FU3_DBG_IR_CMD_DATA);
+        jtag.scan_dr(FU3_DBG_DATA_READ);
+        check(status() == FU3_DBG_STATUS_SLVERR, "no reset: the slow access reports SLVERR");
+        jtag.scan_ir(FU3_DBG_IR_CMD_ADDR);
+        check(jtag.scan_dr(0) == slow, "no reset: ADDR not incremented by the failed access");
+        status(FU3_DBG_STATUS_ERRORS);
+    }
+
     void run() {
         test_jtag();
+        test_reset_in_flight();
         test_system_access();
         test_activation();
         test_havereset();

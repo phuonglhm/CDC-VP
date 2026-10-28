@@ -38,9 +38,18 @@ unsigned Controller::status() const {
         unsigned(done_)*reg::DONE|unsigned(command_error_)*reg::COMMAND_ERROR;
 }
 bool Controller::pause(unsigned cycles,unsigned epoch) {
-    if(epoch!=epoch_||!reset_n.read()||!device_reset_n.read())return false;
-    wait(config_.core_period*double(cycles),cancel_);
-    return epoch==epoch_&&reset_n.read()&&device_reset_n.read();
+    // Core cycles elapse only while the core clock runs (gate pauses them).
+    auto remaining=config_.core_period*double(cycles);
+    while(true){
+        if(epoch!=epoch_||!reset_n.read()||!device_reset_n.read())return false;
+        if(!clock_enabled_){wait(clock_gate_changed_|cancel_);continue;}
+        const auto start=sc_core::sc_time_stamp();
+        wait(remaining,cancel_|clock_gate_changed_);
+        const auto elapsed=sc_core::sc_time_stamp()-start;
+        if(elapsed>=remaining&&clock_enabled_)
+            return epoch==epoch_&&reset_n.read()&&device_reset_n.read();
+        remaining=elapsed>=remaining?sc_core::SC_ZERO_TIME:remaining-elapsed;
+    }
 }
 void Controller::fault(unsigned code,unsigned address,unsigned words,bool partial) {
     if(!r_[reg::ERRORS/4]){r_[reg::FAULT_ADDRESS/4]=address;r_[reg::FAULT_WORDS/4]=words;r_[reg::FAULT_FLAGS/4]=partial?1:0;}

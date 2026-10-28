@@ -22,6 +22,17 @@ public:
     explicit Spi(sc_core::sc_module_name,unsigned depth=16,
         sc_core::sc_time sys_period=sc_core::sc_time(10,sc_core::SC_NS),
         sc_core::sc_time apb_period=sc_core::sc_time(10,sc_core::SC_NS));
+    // System and APB clocks from the clock controller (platform CRM); used from
+    // the next cycle, zero is ignored.
+    // Clock gate from the clock controller (platform CRM): while disabled the
+    // IP gets no clock edge, keeps its state and resumes on the next enabled
+    // edge. Enabled by default.
+    void set_clock_enabled(bool on){if(on!=clock_enabled_){clock_enabled_=on;clock_gate_changed_.notify(sc_core::SC_ZERO_TIME);}}
+    bool clock_enabled() const {return clock_enabled_;}
+    void set_clock(sc_core::sc_time sys_period, sc_core::sc_time apb_period) {
+        if(sys_period!=sc_core::SC_ZERO_TIME) sys_=sys_period;
+        if(apb_period!=sc_core::SC_ZERO_TIME) apb_=apb_period;
+    }
 private:
     enum class Phase {Idle,Setup,Shift,Gap,Hold,CsIdle};
     unsigned depth_;
@@ -38,6 +49,8 @@ private:
     std::array<bool,7> has_set_{};
     sc_core::sc_mutex access_;
     sc_core::sc_event complete_,changed_;
+    bool clock_enabled_=true;
+    sc_core::sc_event clock_gate_changed_;
     tlm::tlm_generic_payload* pending_=nullptr;
     unsigned apb_epoch_=0,sys_epoch_=0;
     void run();void reset();void cycle();void publish();void observe_reset();

@@ -11,6 +11,8 @@ struct RegDef {
 
 // CSR_CRM_fu3_v2: 
 // Reset của CLK_GATE_1/SW_RST_N_1 lấy theo field (25 bit = 1), 0x03FF_FFFF
+// FU3_VP_ABI_1 (2026-10-26): bits 25-29 = UART3-7 (Q05-d, VP extension of CSR v2)
+// -> 30 field bits, reset 0x3FFF_FFFF
 // CLK_GATE_0 lấy theo field (9 bit = 1),  0x3FF
 constexpr RegDef kRegs[] = {
     {FU3_CRM_VERSION_OFFSET,       0x0001'0000, 0x0},
@@ -20,14 +22,14 @@ constexpr RegDef kRegs[] = {
     {FU3_CRM_CLK_1_OFFSET,         0x0,         0x1},
     {FU3_CRM_CLK_OFFSET,           0x0,         0x3FF},
     {FU3_CRM_CLK_GATE_0_OFFSET,    0x0000'01FF, 0x1FF},
-    {FU3_CRM_CLK_GATE_1_OFFSET,    0x01FF'FFFF, 0x1FF'FFFF},
+    {FU3_CRM_CLK_GATE_1_OFFSET,    0x3FFF'FFFF, 0x3FFF'FFFF},
     {FU3_CRM_IBEX_SW_OFFSET,       0x0,         0x1},
     {FU3_CRM_FCLK_SW_OFFSET,       0x0,         0x1},
     {FU3_CRM_ACLK_SW_OFFSET,       0x1,         0x1},
     {FU3_CRM_PCLK_0_SW_OFFSET,     0x1,         0x1},
     {FU3_CRM_PCLK_1_SW_OFFSET,     0x1,         0x1},
     {FU3_CRM_SW_RST_N_0_OFFSET,    0x0000'00FF, 0xFF},
-    {FU3_CRM_SW_RST_N_1_OFFSET,    0x01FF'FFFF, 0x1FF'FFFF},
+    {FU3_CRM_SW_RST_N_1_OFFSET,    0x3FFF'FFFF, 0x3FFF'FFFF},
     {FU3_CRM_SYSTEM_CLK_SW_OFFSET, 0x0,         0x1},
     {FU3_CRM_SW_RESET_REQ_OFFSET,  0x0,         0x0},      // Mức live, tính khi đọc
     {FU3_CRM_CRM_OFFSET,           0x0,         0x1},
@@ -49,14 +51,18 @@ enum Request { kWdt, kCpu, kSystem };
 
 }  // namespace
 
-Crm::Crm(sc_core::sc_module_name name, sc_core::sc_time hold, sc_core::sc_time startup_delay)
-    : sc_core::sc_module(name), hold_(hold), startup_delay_(startup_delay) {
+Crm::Crm(sc_core::sc_module_name name, sc_core::sc_time hold, sc_core::sc_time startup_delay,
+         sc_core::sc_time por_filter, unsigned readiness_cycles)
+    : sc_core::sc_module(name), hold_(hold), startup_delay_(startup_delay), por_filter_(por_filter),
+      readiness_cycles_(readiness_cycles) {
     socket.register_b_transport(this, &Crm::b_transport);
     socket.register_transport_dbg(this, &Crm::transport_dbg);
     reset_registers();
 
+    SC_THREAD(filter_por);
+
     SC_METHOD(on_reset_inputs);
-    sensitive << prst_n << sw_global_rst_req;
+    sensitive << por_changed_ << sw_global_rst_req;
 
     SC_METHOD(on_request);
     sensitive << wdt_reset_req << cpu_reset_req << sw_reset_req;
@@ -66,7 +72,29 @@ Crm::Crm(sc_core::sc_module_name name, sc_core::sc_time hold, sc_core::sc_time s
 
     // Output chỉ được lái từ đây
     SC_METHOD(update);
-    sensitive << changed_ << prst_n << sw_global_rst_req;
+    sensitive << changed_ << por_changed_ << sw_global_rst_req;
+}
+
+void Crm::filter_por() {
+    // Spec 3.2: a PRSTN transition takes effect once the pin has kept its new
+    // level for por_filter_; a pulse shorter than that is rejected. Asserted at
+    // time 0 (power-on).
+    while (true) {
+        if (prst_n.read() == por_released_)
+            sc_core::wait(prst_n.value_changed_event());
+        while (true) {
+            const sc_core::sc_time start = sc_core::sc_time_stamp();
+            sc_core::wait(por_filter_, prst_n.value_changed_event());
+            if (sc_core::sc_time_stamp() - start >= por_filter_)
+                break;   // stable for the whole filter span
+        }
+        if (prst_n.read() != por_released_) {
+            por_released_ = prst_n.read();
+            if (!por_released_)
+                ready_ = false;   // spec 3.1.1: readiness stays locked only until PRSTN
+            por_changed_.notify(sc_core::SC_ZERO_TIME);
+        }
+    }
 }
 
 void Crm::reset_registers() {
@@ -124,6 +152,13 @@ void Crm::sequencer() {
     while (true) {
         while (in_reset())
             sc_core::wait(restart_);
+        // Spec 3.1.1: after PRSTN the controller starts once readiness has been
+        // qualified for readiness_cycles_ OSC cycles (bypassed inputs still count).
+        if (!ready_) {
+            if (!delay(sc_core::sc_time(1.0 / FU3_CRM_OSC_HZ, sc_core::SC_SEC) * readiness_cycles_))
+                continue;
+            ready_ = true;
+        }
         if (!startup())
             continue;
 
@@ -163,13 +198,9 @@ void Crm::update() {
 std::uint32_t Crm::read_register(std::uint32_t offset) const {
     if (offset % 4 || !find(offset))
         return 0;
-    const std::uint32_t ctrl = regs_[FU3_CRM_PLL_CTRL_OFFSET / 4];
     switch (offset) {
-        case FU3_CRM_PLL_OFFSET: {
-            // PLL và bộ đếm lock khoá ngay khi bật (untimed), lken ép lock
-            const bool lock = (ctrl & FU3_CRM_PLL_LKEN) || !(ctrl & FU3_CRM_PLL_POWERDOWN);
-            return regs_[offset / 4] | (lock ? FU3_CRM_PLL_LOCK : 0);
-        }
+        case FU3_CRM_PLL_OFFSET:
+            return regs_[offset / 4] | (pll_locked() ? FU3_CRM_PLL_LOCK : 0);
         case FU3_CRM_SW_RESET_REQ_OFFSET:
             return (sw_global_rst_req.read() ? FU3_CRM_REQ_GLOBAL : 0) |
                    (sw_reset_req.read() ? FU3_CRM_REQ_SYSTEM : 0) |
@@ -178,6 +209,23 @@ std::uint32_t Crm::read_register(std::uint32_t offset) const {
         default:
             return regs_[offset / 4];
     }
+}
+
+bool Crm::pll_locked() const {
+    // CSR v2 pll_ctrl: lken forces lock; lock_type = 1 (reset) locks after
+    // `count` OSC cycles of the programmable lock counter (reset 404 = 20.2 us).
+    // The counter restarts at power-up and when the dividers are written while
+    // running (VP choice). lock_type = 0 selects the PLL LOCK signal: there is
+    // no analog PLL in the VP, so it is taken as locked while powered up.
+    const std::uint32_t ctrl = regs_[FU3_CRM_PLL_CTRL_OFFSET / 4];
+    if (ctrl & FU3_CRM_PLL_LKEN)
+        return true;
+    if (ctrl & FU3_CRM_PLL_POWERDOWN)
+        return false;
+    if (!(ctrl & FU3_CRM_PLL_LOCK_TYPE))
+        return true;
+    const unsigned count = (ctrl >> 4) & 0x3FF;
+    return sc_core::sc_time_stamp() - lock_start_ >= sc_core::sc_time(1.0 / FU3_CRM_OSC_HZ, sc_core::SC_SEC) * count;
 }
 
 std::uint64_t Crm::pll_clock_hz() const {
@@ -245,7 +293,19 @@ void Crm::access(tlm::tlm_generic_payload& tx, bool backdoor) {
         if (def && (backdoor || !in_reset())) {
             std::uint32_t value = 0;
             for (unsigned i = 0; i < 4; ++i) value |= std::uint32_t(data[i]) << (8 * i);
-            reg(offset) = (reg(offset) & ~def->wmask) | (value & def->wmask);
+            const std::uint32_t next = (reg(offset) & ~def->wmask) | (value & def->wmask);
+            // Spec 3.7.4: change the bus divider only with both selectors on the
+            // oscillator; anything else is outside the supported sequence.
+            if (!backdoor && offset == FU3_CRM_CLK_OFFSET && next != reg(offset) &&
+                ((reg(FU3_CRM_CLK_0_OFFSET) & 1) || (reg(FU3_CRM_CLK_1_OFFSET) & 1)))
+                SC_REPORT_WARNING("fu3_crm/clock_switch",
+                                  "CLK.div changed while a selector is on the branch: outside the supported "
+                                  "switching sequence (CRM spec 3.7.4: select the oscillator first)");
+            const bool running = !(reg(FU3_CRM_PLL_CTRL_OFFSET) & FU3_CRM_PLL_POWERDOWN);
+            reg(offset) = next;
+            const bool now_running = !(reg(FU3_CRM_PLL_CTRL_OFFSET) & FU3_CRM_PLL_POWERDOWN);
+            if ((now_running && !running) || (offset == FU3_CRM_PLL_OFFSET && now_running))
+                lock_start_ = sc_core::sc_time_stamp();   // PLL (re)locks
             changed_.notify(sc_core::SC_ZERO_TIME);
         }
     } else {

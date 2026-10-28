@@ -3,7 +3,7 @@
 namespace fu3_plic {
 namespace {
 
-constexpr std::uint32_t kPriorityMask = 0x7;           // MAX_PRIO 7 => 3 bit
+constexpr std::uint32_t kPriorityMask = 0x1F;          // MAX_PRIO 31 => 5 bit
 constexpr std::uint32_t kApertureSize = 0x1'0000;      // Cửa sổ AP_PLIC 64 KiB
 
 bool is_priority(std::uint32_t offset) {
@@ -22,7 +22,7 @@ Plic::Plic(sc_core::sc_module_name name) : sc_core::sc_module(name) {
     socket.register_transport_dbg(this, &Plic::transport_dbg);
 
     SC_METHOD(sample);
-    sensitive << reset_n;
+    sensitive << reset_n << clock_gate_changed_;
     for (auto& src : irq_sources) sensitive << src;
 
     // irq chỉ được lái từ đây, bus thread chỉ notify changed_
@@ -60,7 +60,7 @@ unsigned Plic::claim() {
 }
 
 void Plic::complete(std::uint32_t id) {
-    // Chỉ nhận ID 1-23 đang được claim, còn lại không làm gì
+    // Only an ID 1-31 that is in service completes; anything else is ignored
     if (id >= 1 && id <= kSources && ((in_service_ >> id) & 1)) {
         in_service_ &= ~(1u << id);
         // Nguồn level vẫn lên thì pending lại ngay
@@ -72,7 +72,9 @@ void Plic::complete(std::uint32_t id) {
 void Plic::sample() {
     if (!reset_n.read()) {
         reset_state();
-    } else {
+    } else if (clock_enabled_) {
+        // Gated clock: the gateways capture nothing; a level still high is
+        // captured on the first sample after the clock is enabled again.
         // Gateway level: nguồn lên khi chưa in-service => chốt pending tới khi claim
         // Giữ được xung 1 tick của TIMER FU3
         for (unsigned n = 1; n <= kSources; ++n)
@@ -107,38 +109,45 @@ unsigned Plic::transport_dbg(tlm::tlm_generic_payload& tx) {
 
 void Plic::access(tlm::tlm_generic_payload& tx, bool backdoor) {
     const std::uint64_t addr = tx.get_address();
-    // Common v2.0 APB access contract: chỉ word 32 bit căn hàng, PSTRB = 0xF
-    if (tx.get_data_length() != 4) {
+    const unsigned length = tx.get_data_length();
+    const unsigned lane = static_cast<unsigned>(addr % 4);
+    // Decision Q02-g (Common v2.1 "Full" strobes): byte and halfword accesses
+    // inside one word are served on their lanes; byte enables select lanes.
+    if (length == 0 || length == 3 || length > 4) {
         tx.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
         return;
     }
-    if (addr % 4 != 0 || addr >= kApertureSize) {
+    if (lane % length || addr >= kApertureSize) {   // misaligned or outside the window
+
         tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
         return;
     }
+    std::uint32_t lanes = 0;   // byte lanes this access touches
     const unsigned char* be = tx.get_byte_enable_ptr();
     const unsigned be_len = tx.get_byte_enable_length();
-    bool partial = false;
-    for (unsigned i = 0; be && be_len && i < 4; ++i) partial |= be[i % be_len] == TLM_BYTE_DISABLED;
+    for (unsigned i = 0; i < length; ++i)
+        if (!be || !be_len || be[i % be_len] != TLM_BYTE_DISABLED) lanes |= 0xFFu << (8 * (lane + i));
 
-    const auto offset = static_cast<std::uint32_t>(addr);
-    // Offset không map hoặc ghi thiếu byte => PSLVERR
-    if (!is_mapped(offset) || (tx.is_write() && partial)) {
+    const auto offset = static_cast<std::uint32_t>(addr - lane);
+    // Unmapped offset => PSLVERR. CLAIM/COMPLETE has side effects: full word only.
+    if (!is_mapped(offset) || (offset == FU3_PLIC_CLAIM_OFFSET && lanes != 0xFFFF'FFFFu)) {
         tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
         return;
     }
 
     unsigned char* data = tx.get_data_ptr();
     if (tx.is_read()) {
-        // Đọc CLAIM qua bus = claim, debug read chỉ xem
+        // A bus read of CLAIM claims; a debug read only looks
         const std::uint32_t value = (offset == FU3_PLIC_CLAIM_OFFSET && !backdoor && reset_n.read())
                                         ? claim() : read_register(offset);
-        for (unsigned i = 0; i < 4; ++i) data[i] = (value >> (8 * i)) & 0xFF;
+        for (unsigned i = 0; i < length; ++i) data[i] = (value >> (8 * (lane + i))) & 0xFF;
     } else if (tx.is_write()) {
-        std::uint32_t value = 0;
-        for (unsigned i = 0; i < 4; ++i) value |= std::uint32_t(data[i]) << (8 * i);
-        // Đang giữ reset thì ghi không có tác dụng (trừ backdoor)
-        if (backdoor || reset_n.read()) {
+        std::uint32_t written = 0;
+        for (unsigned i = 0; i < length; ++i) written |= std::uint32_t(data[i]) << (8 * (lane + i));
+        // Merge the enabled lanes into the register; no enabled lane: no effect
+        const std::uint32_t value = (read_register(offset) & ~lanes) | (written & lanes);
+        // Writes are ignored while held in reset (except the debug path)
+        if (lanes && (backdoor || reset_n.read())) {
             if (is_priority(offset)) {
                 if (offset != 0) priority_[offset / 4] = value & kPriorityMask;
             } else if (offset == FU3_PLIC_ENABLE_OFFSET) {

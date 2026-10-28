@@ -1,39 +1,35 @@
-// INTMAP: Bật từng nguồn một, chỉ đúng chân Ibex theo HAS v2.0 section 10.2 lên 
-// Thêm OR nhiều nguồn và cause
+// INTMAP: each source alone raises exactly its Ibex input per the Common v2.1
+// Ibex interrupt mapping, only while its route enable is set (reset: disabled,
+// decision Q03-b); OR of several sources; causes.
 #include <fu3_plic/intmap.h>
 
 #include <iostream>
 
 using namespace fu3_plic;
 
-// Bảng kỳ vọng chép độc lập từ HAS 
-constexpr unsigned kExpected[kIntmapSources] = {
-    kOutNmi,       // WDT0
-    14,            // MAILBOX_IBEX
-    13,            // CRM
-    12,            // AES
-    11,            // EDHOC OSCORE
-    10,            // RNG
-    9,             // DMA0
-    8,             // QSPI
-    7,             // UART0
-    6,             // SPI0
-    5,             // GPIO0_WAKE
-    4,             // UART1
-    4,             // UART2
-    3,             // SPI1
-    3,             // SPI2
-    3,             // SPI3
-    2,             // I2C0
-    1,             // GPIOA
-    1,             // GPIOB
-    1,             // GPIOC
-    0,             // TIMER2
-    0,             // TIMER3
-    kOutExternal,  // ADC
-    kOutExternal,  // AP_HBCTRL
-    kOutSoftware,  // SYSCSR software IRQ (Ibex)
-    kOutTimer,     // TIMER1
+// Expected input per source, transcribed independently from the Common v2.1
+// sheet "Interrupt Mapping" (Ibex proposal), not from kIntmapRoute.
+constexpr int kExpected[kIntmapSources] = {
+    0,             // WDT0 warning: irq_fast_i[0]
+    1,             // CRM: fast[1]
+    2,             // GPIO0_WAKE: fast[2]
+    3,             // EDHOC OSCORE: fast[3]
+    4,             // AES-256: fast[4]
+    5,             // RNG: fast[5]
+    6,             // DMA0: fast[6]
+    7,             // QSPI: fast[7]
+    8, 8, 8, 8, 8, 8, 8, 8,   // UART0-7: fast[8]
+    9, 9, 9, 9,    // SPI0-3: fast[9]
+    10,            // CAN: fast[10]
+    11, 11, 11,    // GPIOA/B/C: fast[11]
+    12,            // I2C: fast[12]
+    13,            // ADC: fast[13]
+    14, 14,        // PWM0/PWM1: fast[14]
+    kOutExternal, kOutExternal,   // TIMER2/3: irq_external_i
+    kOutExternal,  // WDT1: irq_external_i
+    kOutExternal,  // MAILBOX_IBEX (optional): irq_external_i
+    kOutSoftware,  // SYSCSR software: irq_software_i
+    kOutTimer,     // TIMER1: irq_timer_i
 };
 
 struct Bench : sc_core::sc_module {
@@ -72,6 +68,16 @@ struct Bench : sc_core::sc_module {
         settle();
         expect_only(-1, "all sources low");
 
+        // Route enables reset disabled: no source reaches Ibex.
+        for (auto& s : src)
+            s.write(true);
+        settle();
+        expect_only(-1, "all sources high, all routes disabled");
+        for (auto& s : src)
+            s.write(false);
+        dut.enable_all(true);
+        settle();
+
         for (unsigned s = 0; s < kIntmapSources; ++s) {
             src[s].write(true); 
             settle();
@@ -91,8 +97,17 @@ struct Bench : sc_core::sc_module {
         src[kSrcSpi1].write(false); 
         settle();
 
-        expect_only(3, "SPI3 keeps irq_fast_i[3] after SPI1 falls");
-        src[kSrcSpi3].write(false); 
+        expect_only(9, "SPI3 keeps irq_fast_i[9] after SPI1 falls");
+        // Disabling one route masks that source only.
+        dut.set_enable(kSrcSpi3, false);
+        settle();
+        expect_only(-1, "SPI3 route disabled");
+        src[kSrcSpi1].write(true);
+        settle();
+        expect_only(9, "SPI1 still routed");
+        src[kSrcSpi1].write(false);
+        src[kSrcSpi3].write(false);
+        dut.set_enable(kSrcSpi3, true);
         settle();
 
         // Tất cả nguồn lên (mọi chân lên)
@@ -100,8 +115,8 @@ struct Bench : sc_core::sc_module {
             s.write(true);
         settle();
         
-        for (unsigned o = 0; o < kIntmapOutputs; ++o) 
-            check(out[o].read(), "all high, out " + std::to_string(o));
+        for (unsigned o = 0; o < kIntmapOutputs; ++o)
+            check(out[o].read() == (o != kOutNmi), "all high, out " + std::to_string(o) + " (NMI tied low)");
         
             for (auto& s : src) 
             s.write(false);

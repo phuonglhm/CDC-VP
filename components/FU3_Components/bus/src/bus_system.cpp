@@ -125,6 +125,29 @@ void BusSystem::finish_staging() {
         throw std::logic_error("Drain IBEX transactions before closing staging/releasing CVA6 reset");
     staging_=false;
 }
+void BusSystem::set_clock(sc_core::sc_time axi, sc_core::sc_time apb, sc_core::sc_time router) {
+    for(auto* r:{sysbus1_.get(),sysbus0_.get(),peribus1_.get(),peribus0_.get()}) if(r) r->latency(router);
+    for(auto* b:{a2p0_.get(),a2p1_.get()}) if(b) b->cycle(apb);
+    for(auto* p:{ap_sb0_.get(),ap_pp0_.get(),ap_pp1_.get()}) if(p) p->cycle(axi);
+    for(auto& p:master_pipelines_) p.cycle(axi);
+    for(auto& p:initiator_ports_) p.rejection_latency(router);
+    for(const auto& t:config_.targets) {
+        const auto it=target_index_.find(t.name);
+        if(it==target_index_.end()) continue;
+        const bool apb_target=t.path==TargetPath::Peribus0Apb || t.path==TargetPath::Peribus1Apb;
+        target_ports_[it->second].cycle(apb_target?apb:axi);
+    }
+}
+void BusSystem::close_staging() {
+    if(sc_core::sc_get_current_process_handle().proc_kind()!=sc_core::SC_THREAD_PROC_)
+        throw std::logic_error("close_staging must run in SC_THREAD outside a bus transaction");
+    staging_=false;
+    const auto it=initiator_index_.find("IBEX");
+    if(it==initiator_index_.end()) return;
+    const auto& ibex=initiator_ports_[it->second];
+    const auto mark=ibex.issued();
+    while(!ibex.completed_before(mark)) sc_core::wait(activity_);
+}
 unsigned BusSystem::peak_outstanding(const std::string& name, bool write) const {
     const auto it=initiator_index_.find(name);
     if(it==initiator_index_.end()) throw std::out_of_range("Unknown initiator: "+name);

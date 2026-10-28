@@ -79,6 +79,12 @@
 #define FU3_CRM_PERI_MAILBOX_IBEX (1u << 22)
 #define FU3_CRM_PERI_MAILBOX_CVA6 (1u << 23)
 #define FU3_CRM_PERI_AP_HBCTRL    (1u << 24)
+// FU3_VP_ABI_1 extension (Q05-d, not in CSR_CRM_fu3_v2): UART3-7 gate/reset
+#define FU3_CRM_PERI_UART3        (1u << 25)
+#define FU3_CRM_PERI_UART4        (1u << 26)
+#define FU3_CRM_PERI_UART5        (1u << 27)
+#define FU3_CRM_PERI_UART6        (1u << 28)
+#define FU3_CRM_PERI_UART7        (1u << 29)
 
 // SW_RESET_REQ (RO, mức live)
 #define FU3_CRM_REQ_GLOBAL      (1u << 0)   // SYSCSR sw_global_rst_req: khởi động lại cả CRM

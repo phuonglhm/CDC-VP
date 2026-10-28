@@ -15,6 +15,13 @@ public:
     sc_core::sc_out<bool> scl_oe_n{"scl_oe_n"}, sda_oe_n{"sda_oe_n"}, irq{"irq"};
     SC_HAS_PROCESS(I2c);
     explicit I2c(sc_core::sc_module_name, Config = {});
+    // Clock from the clock controller (platform CRM); zero is ignored.
+    void set_clock_period(sc_core::sc_time period) { if(period>sc_core::SC_ZERO_TIME) config_.clock_period=period; }
+    // Clock gate from the clock controller (platform CRM): while disabled the
+    // IP gets no clock edge, keeps its state and resumes on the next enabled
+    // edge. Enabled by default.
+    void set_clock_enabled(bool on){if(on!=clock_enabled_){clock_enabled_=on;clock_gate_changed_.notify(sc_core::SC_ZERO_TIME);}}
+    bool clock_enabled() const {return clock_enabled_;}
 private:
     Config config_;
     std::array<unsigned,17> r_{};
@@ -36,6 +43,8 @@ private:
     tlm::tlm_generic_payload* pending_=nullptr;
     sc_core::sc_mutex mutex_;
     sc_core::sc_event completed_,outputs_;
+    bool clock_enabled_=true;
+    sc_core::sc_event clock_gate_changed_;
     void run(); void publish(); void reset(); void cycle();
     void filter(Filter&,bool,bool); void slave_tick(bool,bool,bool,bool);
     void master_tick(); void command(unsigned); void abort(); void lose_arbitration();

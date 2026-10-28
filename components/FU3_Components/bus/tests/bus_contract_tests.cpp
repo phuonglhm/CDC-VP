@@ -5,14 +5,16 @@
 #include <memory>
 #include <array>
 
-// Independent transcription of HAS v2.0 pp.46-47, not generated from BusConfig.
-struct Expected { const char* name; std::uint64_t base,size; fu3_bus::TargetPath path; };
+// Independent transcription of Common Spec v2.1 MemoryMap (rev. 18/10/2026),
+// not generated from BusConfig. Rows 0-35 keep the v2.0 order so fixture
+// indices stay stable; v2.1 additions and the disabled R2 windows follow.
+struct Expected { const char* name; std::uint64_t base,size; fu3_bus::TargetPath path; bool enabled=true; };
 using P=fu3_bus::TargetPath;
 const Expected golden[] = {
-    {"ROM",0,0x1000,P::SysBus1Axi}, {"CVA6_ISRAM",0x10000,0x10000,P::SysBus1Axi},
-    {"IBEX_ISRAM",0x20000,0x10000,P::SysBus1Axi}, {"DSRAM",0x01000000,0x10000,P::SysBus1Axi},
-    {"IBEX_DBG",0x1a110000,0x1000,P::SysBus1Axi}, {"QSPI_XIP",0x30000000,0x20000,P::SysBus0Axi},
-    {"EDHOC_OSCORE",0x30100000,0x10000,P::SysBus0Axi}, {"AES",0x40000000,0x10000,P::SysBus0Axi},
+    {"ROM",0,0x1000,P::SysBus1Axi}, {"CVA6_ISRAM",0x10000,0x31000,P::SysBus1Axi},
+    {"IBEX_ISRAM",0x50000,0x11000,P::SysBus1Axi}, {"DSRAM",0x01000000,0x40000,P::SysBus1Axi},
+    {"IBEX_DBG",0x1a110000,0x1000,P::SysBus1Axi}, {"QSPI_XIP",0x30000000,0x1000000,P::SysBus0Axi},
+    {"EDHOC_OSCORE",0x31010000,0x10000,P::SysBus0Axi,false}, {"AES",0x40000000,0x10000,P::SysBus0Axi},
     {"HYPERBUS",0x60000000,0x2000000,P::SysBus1Axi}, {"AP_PLIC",0x40100000,0x10000,P::Peribus1Apb},
     {"AP_QSPIC",0x44000000,0x10000,P::Peribus0Apb}, {"SYSCSR",0x44010000,0x10000,P::Peribus0Apb},
     {"AP_DMA",0x44020000,0x10000,P::Peribus0Apb}, {"RNG",0x44030000,0x10000,P::Peribus0Apb},
@@ -23,10 +25,15 @@ const Expected golden[] = {
     {"UART1",0x440e0000,0x10000,P::Peribus0Apb}, {"GPIOC",0x440f0000,0x10000,P::Peribus0Apb},
     {"CRM",0x50010000,0x10000,P::Peribus1Apb}, {"MAILBOX_CVA6",0x50020000,0x10000,P::Peribus1Apb},
     {"GPIOA",0x50030000,0x10000,P::Peribus1Apb}, {"GPIOB",0x50040000,0x10000,P::Peribus1Apb},
-    {"UART2",0x50050000,0x10000,P::Peribus1Apb}, {"TIMER2",0x50060000,0x10000,P::Peribus1Apb},
+    {"UART4",0x50050000,0x10000,P::Peribus1Apb}, {"TIMER2",0x50060000,0x10000,P::Peribus1Apb},
     {"TIMER3",0x50070000,0x10000,P::Peribus1Apb}, {"I2C",0x50080000,0x10000,P::Peribus1Apb},
     {"SPI2",0x50090000,0x10000,P::Peribus1Apb}, {"ADC",0x500a0000,0x10000,P::Peribus1Apb},
-    {"AP_HBCTRL",0x500b0000,0x10000,P::Peribus1Apb}, {"SPI3",0x500c0000,0x10000,P::Peribus1Apb}
+    {"AP_HBCTRL",0x500b0000,0x10000,P::Peribus1Apb}, {"SPI3",0x500c0000,0x10000,P::Peribus1Apb},
+    {"UART2",0x44090000,0x10000,P::Peribus0Apb}, {"UART3",0x440a0000,0x10000,P::Peribus0Apb},
+    {"UART5",0x500d0000,0x10000,P::Peribus1Apb}, {"UART6",0x500e0000,0x10000,P::Peribus1Apb},
+    {"UART7",0x500f0000,0x10000,P::Peribus1Apb},
+    {"PWM0",0x44100000,0x10000,P::Peribus0Apb,false}, {"CAN",0x44110000,0x10000,P::Peribus0Apb,false},
+    {"PWM1",0x50100000,0x10000,P::Peribus1Apb,false}
 };
 struct Worker : sc_core::sc_module {
     std::function<void()> body;
@@ -39,6 +46,9 @@ struct Test : sc_core::sc_module, Checks {
     fu3_bus::BusSystem fabric{"fabric",cfg};
     sc_core::sc_vector<Master> masters{"masters",4};
     sc_core::sc_vector<Worker> workers{"workers",12};
+    Worker staged{"staged"};
+    sc_core::sc_event go_staged;
+    bool staged_done=false;
     std::vector<std::unique_ptr<fu3_bus::test::ProbeTarget>> targets;
     sc_core::sc_event start,done;
     unsigned completed=0,phase=0;
@@ -47,10 +57,20 @@ struct Test : sc_core::sc_module, Checks {
     explicit Test(sc_core::sc_module_name n):sc_module(n) {
         for(unsigned i=0;i<4;++i) masters[i].socket.bind(fabric.initiator(cfg.initiators[i].name));
         for(const auto& row:golden) {
+            // Disabled windows get no fixture: their slot stays empty.
+            if(!row.enabled) { targets.emplace_back(); continue; }
             auto ip=std::make_unique<fu3_bus::test::ProbeTarget>(sc_core::sc_gen_unique_name("target"),row.size);
             fabric.target(row.name).bind(ip->socket);targets.push_back(std::move(ip));
         }
         for(unsigned i=0;i<workers.size();++i) workers[i].body=[this,i]{work(i);};
+        staged.body=[this]{
+            // An IBEX staging write still in flight when the release commits.
+            wait(go_staged);
+            unsigned char bytes[4]={1,2,3,4};tlm::tlm_generic_payload tx;
+            payload(tx,tlm::TLM_WRITE_COMMAND,0x10000,bytes,4);
+            {fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_OK_RESPONSE);}
+            staged_done=true;
+        };
         SC_THREAD(run);SC_THREAD(watchdog);
     }
     void transfer(unsigned master, tlm::tlm_generic_payload& tx, tlm::tlm_response_status expected) {
@@ -67,7 +87,7 @@ struct Test : sc_core::sc_module, Checks {
             unsigned char bytes[4]={};tlm::tlm_generic_payload tx;
             const bool write=phase==3 && i>=6;
             payload(tx,write?tlm::TLM_WRITE_COMMAND:tlm::TLM_READ_COMMAND,
-                    secondary?(write?0x30000000:0x40000000):(write?0x01000000:(phase==0?0x00010000:0x00020000)),bytes,4);
+                    secondary?(write?0x40000000:0x30000000):(write?0x01000000:(phase==0?0x00010000:0x00050000)),bytes,4);
             fu3_bus::ScopedAccess access(tx,4,fu3_bus::Burst::Increment,false,independent_ids?i:0);
             transfer(phase,tx,tlm::TLM_OK_RESPONSE);
             ++completed;done.notify(sc_core::SC_ZERO_TIME);
@@ -76,21 +96,45 @@ struct Test : sc_core::sc_module, Checks {
     void run() {
         expect(cfg.targets.size()==std::size(golden),"exact number of physical windows");
         unsigned char bytes[80]={};tlm::tlm_generic_payload tx;
+        // set_clock(): every stage follows the bus clock. With the endpoint's own
+        // latency off, a DMA0 read on an AXI and on an APB path takes exactly ten
+        // times longer at a ten times slower clock, and the defaults come back.
+        auto timed=[&](const char* name,std::uint64_t address){
+            std::size_t i=0; while(std::string(golden[i].name)!=name) ++i;
+            auto& probe=*targets[i]; const auto saved=probe.latency_ns; probe.latency_ns=0;
+            payload(tx,tlm::TLM_READ_COMMAND,address,bytes,4);
+            const auto t0=sc_core::sc_time_stamp();
+            {fu3_bus::ScopedAccess access(tx,4);transfer(3,tx,tlm::TLM_OK_RESPONSE);}
+            probe.latency_ns=saved; return sc_core::sc_time_stamp()-t0;
+        };
+        const auto axi=timed("DSRAM",0x01000000), apb=timed("UART0",0x440d0000);
+        fabric.set_clock(sc_core::sc_time(20,sc_core::SC_NS),sc_core::sc_time(100,sc_core::SC_NS),
+                         sc_core::sc_time(20,sc_core::SC_NS));
+        expect(axi>sc_core::SC_ZERO_TIME && timed("DSRAM",0x01000000)==10*axi,"AXI path scales with the bus clock");
+        expect(apb>axi && timed("UART0",0x440d0000)==10*apb,"APB path scales with the bus clock");
+        fabric.set_clock(sc_core::sc_time(cfg.axi_cycle_ns,sc_core::SC_NS),sc_core::sc_time(cfg.apb_cycle_ns,sc_core::SC_NS),
+                         sc_core::sc_time(cfg.router_latency_ns,sc_core::SC_NS));
+        expect(timed("DSRAM",0x01000000)==axi && timed("UART0",0x440d0000)==apb,"configured clock restored");
         for(unsigned i=0;i<std::size(golden);++i) {
             const auto& row=golden[i];
             auto it=std::find_if(cfg.targets.begin(),cfg.targets.end(),[&](const auto& t){return t.name==row.name;});
-            expect(it!=cfg.targets.end() && it->base==row.base && it->size==row.size && it->path==row.path,
-                   std::string("HAS map: ")+row.name);
+            expect(it!=cfg.targets.end() && it->base==row.base && it->size==row.size && it->path==row.path &&
+                   it->enabled==row.enabled, std::string("Common v2.1 map: ")+row.name);
+            if(!row.enabled) {
+                payload(tx,tlm::TLM_READ_COMMAND,row.base,bytes,4);
+                fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_ADDRESS_ERROR_RESPONSE);
+                continue;
+            }
             for(auto offset:{std::uint64_t{0},row.size-4}) {
                 payload(tx,tlm::TLM_READ_COMMAND,row.base+offset,bytes,4);
                 fu3_bus::ScopedAccess access(tx,4,fu3_bus::Burst::Increment,false,0,true);transfer(row.name==std::string("IBEX_DBG")?2:1,tx,tlm::TLM_OK_RESPONSE);
                 expect(targets[i]->visits.back().address==offset,"independent target boundary");
             }
         }
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,bytes,4);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,bytes,4);
         for(unsigned m=0;m<4;++m) transfer(m,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);
         { fu3_bus::ScopedAccess fetch(tx,4,fu3_bus::Burst::Increment,true);
-          tx.set_address(0x01000000);transfer(0,tx,tlm::TLM_COMMAND_ERROR_RESPONSE); }
+          tx.set_address(0x01000000);transfer(0,tx,tlm::TLM_GENERIC_ERROR_RESPONSE); }
         // Fixed narrow requests to the final halfword of an APB aperture.
         auto& fifo=*targets[10];
         const auto count=fifo.visits.size();
@@ -116,34 +160,41 @@ struct Test : sc_core::sc_module, Checks {
         payload(tx,tlm::TLM_READ_COMMAND,0x44000200,observed,10);
         {fu3_bus::ScopedAccess access(tx,2);transfer(3,tx,tlm::TLM_OK_RESPONSE);}
         for(unsigned i=0;i<10;++i)expect(observed[i]==(i%3==1?0:bytes[i]),"subword strobes survive beat boundaries");
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,bytes,4);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,bytes,4);
         for(unsigned invalid:{0U,3U,8U}) {
             fu3_bus::ScopedAccess access(tx,invalid);transfer(0,tx,tlm::TLM_BURST_ERROR_RESPONSE);
         }
         {fu3_bus::ScopedAccess access(tx,4,static_cast<fu3_bus::Burst>(99));transfer(0,tx,tlm::TLM_BURST_ERROR_RESPONSE);}
-        payload(tx,tlm::TLM_WRITE_COMMAND,0x20000,bytes,4);
+        payload(tx,tlm::TLM_WRITE_COMMAND,0x50000,bytes,4);
         {fu3_bus::ScopedAccess access(tx,4,fu3_bus::Burst::Increment,true);transfer(0,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);}
         // DBG's explicitly specified interface rejects narrow and fixed requests.
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,bytes,4);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,bytes,4);
         {fu3_bus::ScopedAccess access(tx,2);transfer(2,tx,tlm::TLM_BURST_ERROR_RESPONSE);}
         {fu3_bus::ScopedAccess access(tx,4,fu3_bus::Burst::Fixed);transfer(2,tx,tlm::TLM_BURST_ERROR_RESPONSE);}
         // Narrow DMA writes reach a word-only SRAM as aligned lane strobes.
-        payload(tx,tlm::TLM_WRITE_COMMAND,0x20001,bytes,3);
+        payload(tx,tlm::TLM_WRITE_COMMAND,0x50001,bytes,3);
         {fu3_bus::ScopedAccess access(tx,1);transfer(3,tx,tlm::TLM_OK_RESPONSE);}
         expect(targets[2]->visits.back().length==4 && targets[2]->visits.back().address==0,
                "word-only target gets aligned word beats");
         unsigned char word[4]={};
-        payload(tx,tlm::TLM_READ_COMMAND,0x20000,word,4);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,word,4);
         {fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_OK_RESPONSE);}
         expect(word[0]==0 && word[1]==bytes[0] && word[2]==bytes[1] && word[3]==bytes[2],
                "lane conversion preserves untouched byte without RMW");
-        payload(tx,tlm::TLM_READ_COMMAND,0x20001,word,3);
+        payload(tx,tlm::TLM_READ_COMMAND,0x50001,word,3);
         {fu3_bus::ScopedAccess access(tx,1);transfer(3,tx,tlm::TLM_OK_RESPONSE);}
         expect(word[0]==bytes[0] && word[1]==bytes[1] && word[2]==bytes[2],"narrow read extraction");
         // The QSPI word/SINGLE boundary receives normalized metadata, even for
         // repeated narrow functional transfers. Disabled read lanes stay intact.
+        // XIP is read/execute for functional masters (Q02-h): the flash image is
+        // a host preload, here through the debug path.
+        payload(tx,tlm::TLM_WRITE_COMMAND,0x30000000,bytes,4);
+        expect(masters[3].socket->transport_dbg(tx)==4,"host preload of the XIP image");
+        payload(tx,tlm::TLM_WRITE_COMMAND,0x30000000,bytes,4);
+        {fu3_bus::ScopedAccess access(tx,4);transfer(3,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);}
         auto qspi_before=targets[5]->visits.size();
-        payload(tx,tlm::TLM_WRITE_COMMAND,0x30000002,bytes,4);
+        unsigned char fixed_read[4]={};
+        payload(tx,tlm::TLM_READ_COMMAND,0x30000002,fixed_read,4);
         {fu3_bus::ScopedAccess access(tx,2,fu3_bus::Burst::Fixed);transfer(3,tx,tlm::TLM_OK_RESPONSE);}
         expect(targets[5]->visits.size()==qspi_before+2,"QSPI decomposes into two singles");
         for(unsigned i=0;i<2;++i) {
@@ -158,12 +209,12 @@ struct Test : sc_core::sc_module, Checks {
         expect(narrow[0]==bytes[2] && narrow[1]==0xee,"widened read honors disabled lanes");
         tx.set_byte_enable_ptr(nullptr);tx.set_byte_enable_length(0);
         // Measure real target occupancy, not merely admission counters.
-        for(auto& target:targets) target->latency_ns=100;
+        for(auto& target:targets) if(target) target->latency_ns=100;
         targets[2]->on_visit=[this](const auto&){if(targets[3]->active)overlap=true;};
         targets[3]->on_visit=[this](const auto&){if(targets[2]->active)overlap=true;};
         // Exercise admission through real ports, including independent DMA engines.
         for(phase=0;phase<4;++phase) {
-            completed=0;for(auto& t:targets)t->peak=0;start.notify(sc_core::SC_ZERO_TIME);
+            completed=0;for(auto& t:targets)if(t)t->peak=0;start.notify(sc_core::SC_ZERO_TIME);
             wait(1,sc_core::SC_NS);
             if(phase==1) {
                 bool blocked=false;try{fabric.finish_staging();}catch(const std::logic_error&){blocked=true;}
@@ -184,7 +235,7 @@ struct Test : sc_core::sc_module, Checks {
         }
         // Same ordering ID remains serialized, even with four admission slots.
         phase=3;independent_ids=false;completed=0;
-        for(auto& t:targets)t->peak=0;
+        for(auto& t:targets)if(t)t->peak=0;
         start.notify(sc_core::SC_ZERO_TIME);while(completed<12)wait(done);
         expect(targets[2]->peak==1 && targets[3]->peak==1,"same-ID ordering preserved");
         // Both independent targets behind AP_SB0 must overlap; QSPI remains single outstanding.
@@ -194,9 +245,19 @@ struct Test : sc_core::sc_module, Checks {
         start.notify(sc_core::SC_ZERO_TIME);while(completed<12)wait(done);
         expect(targets[7]->peak==4 && targets[5]->peak==1 && overlap,
                "SYSBUS0 link overlaps AES and single-outstanding QSPI");
+        // close_staging(): later IBEX requests see the closed policy at once and
+        // are not rejected for draining; the call returns after the IBEX write
+        // accepted before it has completed.
+        go_staged.notify(sc_core::SC_ZERO_TIME);
+        wait(1,sc_core::SC_NS);
+        expect(!staged_done && fabric.staging(),"staging write in flight");
+        fabric.close_staging();
+        expect(staged_done && !fabric.staging(),"close_staging drains the earlier IBEX write");
+        payload(tx,tlm::TLM_READ_COMMAND,0x50000,bytes,4);
+        {fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_OK_RESPONSE);}
         fabric.finish_staging();
         payload(tx,tlm::TLM_WRITE_COMMAND,0x10000,bytes,4);
-        {fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_COMMAND_ERROR_RESPONSE);}
+        {fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_GENERIC_ERROR_RESPONSE);}
         fabric.reset();
         {fu3_bus::ScopedAccess access(tx,4);transfer(1,tx,tlm::TLM_OK_RESPONSE);}
         finished=true;sc_core::sc_stop();

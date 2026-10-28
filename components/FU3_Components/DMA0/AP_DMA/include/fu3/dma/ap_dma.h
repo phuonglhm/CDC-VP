@@ -40,7 +40,21 @@ public:
                    sc_core::sc_time peripheral_cycle = sc_core::SC_ZERO_TIME,
                    const EngineConfig& config = EngineConfig{});
     std::uint64_t scheduler_wakeups() const noexcept { return scheduler_wakeups_; }
+    // Peripheral clock from the clock controller (platform CRM); zero is ignored.
+    void set_peripheral_cycle(sc_core::sc_time cycle) { if (cycle > sc_core::SC_ZERO_TIME) peripheral_cycle_ = cycle; }
+    sc_core::sc_time peripheral_cycle() const { return peripheral_cycle_; }
+    // Clock gate from the clock controller (platform CRM): while disabled the
+    // scheduler neither dispatches nor retires and no new bus transfer starts
+    // (one already on the bus completes); state is kept. Enabled by default.
+    void set_clock_enabled(bool on) {
+        if (on == clock_enabled_) return;
+        clock_enabled_ = on;
+        clock_gate_changed_.notify(sc_core::SC_ZERO_TIME);
+    }
+    bool clock_enabled() const { return clock_enabled_; }
 private:
+    bool clock_enabled_ = true;
+    sc_core::sc_event clock_gate_changed_;
     struct Channel {
         std::array<std::uint32_t, 64> words{};
         std::array<unsigned char, 32> fifo{};

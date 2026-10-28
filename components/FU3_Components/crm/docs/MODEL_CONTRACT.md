@@ -23,7 +23,7 @@ The MRV controller and its ROM are not executed. A SystemC thread performs the s
 | Offset | Register | Access | Reset | Behavior |
 | --- | --- | --- | --- | --- |
 | 0x0000 | VERSION | RO | 0x0001_0000 | major 1, minor 0 |
-| 0x0010 | PLL | RW [13:0], RO [14] | 0x0000_0231 | n_div [13:8], m_div [7:2], od [1:0]. lock [14] reads 1 when lken = 1 or the PLL is powered up |
+| 0x0010 | PLL | RW [13:0], RO [14] | 0x0000_0231 | n_div [13:8], m_div [7:2], od [1:0]. lock [14]: 1 with lken = 1; with lock_type = 1 (reset) `count` OSC cycles (reset 404 = 20.2 us) after power-up or a divider write; with lock_type = 0 while powered up (no analog PLL in the VP) |
 | 0x0018 | PLL_CTRL | RW [14:0] | 0x0000_5949 | oe, count, lock_type, lken, bypass, powerdown |
 | 0x001C | CLK_0 | RW [0] | 0 | 0 OSC, 1 PLL |
 | 0x0020 | CLK_1 | RW [0] | 0 | 0 OSC, 1 CLK_0 branch |
@@ -44,8 +44,10 @@ The MRV controller and its ROM are not executed. A SystemC thread performs the s
 - PLL (HAS 3.6): output = OSC x M / (N x OD) with OD = 1, 2, 4, 8, or OSC / N in bypass, 0 when powered down, oe = 0 or N = 0. Reset values give 60 MHz once powered up.
 - The PLL branch is used only when CLK_0.sel = 1 and CLK_1.sel = 1, otherwise both clocks are OSC (section 3.7.1).
 - `cpu_clock_hz()`: the selected source, never divided (FCLK shared by both CPUs). `bus_clock_hz()`: the selected source divided by 2 x CLK.div when div > 0 and the branch is selected.
-- `clk_gate_0/1` and `sw_rst_n_0/1` drive output ports with the register values. The platform applies them to the IPs. The model does not block bus access to a gated IP (HAS 6.1 calls it prohibited).
-- Untimed: no switch pause, no lock counter delay, no reset synchronizer latency.
+- `clk_gate_0/1` and `sw_rst_n_0/1` drive output ports with the register values. The platform applies them to the IPs. The model does not block bus access to a gated IP (HAS 6.1 calls it prohibited); `platforms/fu3_soc` answers such an access with `TLM_GENERIC_ERROR_RESPONSE` (decision Q02-i).
+- `changed_event()` is notified after every register write and reset change, so a platform can follow the clocks (`cpu_clock_hz()`, `bus_clock_hz()`) without polling. `platforms/fu3_soc` sets both CPU clock periods from `cpu_clock_hz()` on it.
+- PLL lock follows the lock counter (see PLL). The divider must change only with both selectors on the OSC (spec 3.7.4); a functional write of a new CLK.div while CLK_0 or CLK_1 selects the branch is reported as warning `fu3_crm/clock_switch` (the value still applies).
+- Untimed: no switch pause, no reset synchronizer latency.
 
 ## Resets
 
@@ -53,12 +55,14 @@ Outputs: `sys_rst_n` = SYSTEM_CLK_SW, `ibex_rst_n` = SYSTEM_CLK_SW & IBEX_SW, `c
 
 | Event | System | CPU1 (Ibex) | CPU0 (CVA6) | DBG | CRM registers |
 | --- | --- | --- | --- | --- | --- |
-| PRSTN low or global request high | Held | Held | Held | Held | Reset values |
+| PRSTN low (after the filter) or global request high | Held | Held | Held | Held | Reset values |
 | Startup after release (spec 4.1) | Released at once | Released `startup_delay` later | Held until software writes FCLK_SW | Released with the system | SYSTEM_CLK_SW then IBEX_SW written to 1 |
 | Watchdog or SYSCSR system request (HAS 6.5.1, 6.5.2) | Pulse of `hold`, then startup | Held, released by startup | Held, FCLK_SW cleared | Reset with the system | Kept, except the three reset bits |
 | Debug request, ndmreset (HAS 6.5.3) | Same | Same | Same | Kept running | Same |
 
-- `hold` defaults to 1.4 us (VP choice). `startup_delay` defaults to 1.2 us, the 24 MRV clocks at 20 MHz of section 4.2. Both are constructor arguments.
+- PRSTN goes through the reset filter (spec 3.2): a level counts once stable for `por_filter` (100 ns, 4 taps x 25 ns), on both edges; shorter pulses are rejected. After the first filtered release the controller waits for the power-readiness qualification (spec 3.1.1: `readiness_cycles` = 255 OSC cycles, 12.75 us, counted although readiness is bypassed), then runs startup. Readiness stays locked until the next PRSTN: a global reset does not qualify again.
+- `hold` defaults to 1.4 us (VP choice). `startup_delay` defaults to 1.2 us, the 24 MRV clocks at 20 MHz of section 4.2. All four are constructor arguments.
+- A global reset lasts as long as the request (spec 3.1.3); the spec gives no minimum width. With the SYSCSR request, which the system reset clears, it ends within the same time step in the VP.
 - Requests are rising edges. One pending reset is kept. If any watchdog or system edge is part of it, DBG is reset too. A level held across PRSTN or a global reset is not an edge.
 - The global request is a level: while it is high the CRM stays in reset, and startup runs again after it returns low (section 3.1.3).
 - Software can write IBEX_SW, FCLK_SW and SYSTEM_CLK_SW at any time, and the outputs follow the registers.
@@ -78,5 +82,8 @@ Outputs: `sys_rst_n` = SYSTEM_CLK_SW, `ibex_rst_n` = SYSTEM_CLK_SW & IBEX_SW, `c
 | CLK_GATE_0 reset | - | Sheet 0x3FF, fields [8:0] | 0x1FF (fields) |
 | CLK_GATE_1 / SW_RST_N_1 reset | - | Sheet 0x03FF_FFFF, fields [24:0] | 0x01FF_FFFF (fields) |
 | Common WDT gate/reset | - | wdt0/wdt1 descriptions AND with a common wdt bit that is not in the map | Not modeled |
-| Reset filter, readiness qualifier, synchronizers | Not described | 100 ns filter, 255 OSC cycles | Not modeled |
+| Reset filter, readiness qualifier | Not described | 3.2: 100 ns filter; 3.1.1: 255 OSC cycles | Modeled (PRSTN only) |
+| Synchronizers, MRV instruction timing before SYSTEM_CLK_SW | Not described | 3.1.2, 3.4.2: destination edges, 4 MRV clocks per instruction; ROM instruction count not published | Not modeled: system released when startup begins |
+| Integrated wrapper clock | 400 MHz CPU, 200 MHz buses (HAS 2, 5.1) | 1, 3.7.1: no analog PLL in the wrapper, branch input is the OSC, processor stays at OSC frequency | PLL computed from the registers (HAS targets reachable); open question |
+| CLK_GATE_1 / SW_RST_N_1 uart2 [13] | - | CSR v2 describes it on PERIBUS_1 (the 0x5005_0000 instance, UART4 in Common v2.1) | Mapped by name to UART2 at 0x4409_0000 by the platform (decision Q02-c); open question |
 | LDO | 6.2: Power-Good handshake not defined | Power-ready inputs tied high | Not modeled |

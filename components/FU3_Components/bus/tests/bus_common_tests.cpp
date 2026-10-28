@@ -40,35 +40,35 @@ struct CommonTest : sc_core::sc_module, Checks {
     void run(){
         using namespace tlm;
         request(ibex,0,false,true,false,TLM_OK_RESPONSE);
-        request(cva6,0,false,true,false,TLM_COMMAND_ERROR_RESPONSE);
-        for(bool write:{false,true})for(unsigned a:{0x20000u,0x2fffcu,0x1a110000u})
-            request(cva6,a,write,false,false,TLM_COMMAND_ERROR_RESPONSE);
+        request(cva6,0,false,true,false,TLM_GENERIC_ERROR_RESPONSE);
+        for(bool write:{false,true})for(unsigned a:{0x50000u,0x60ffcu,0x1a110000u})
+            request(cva6,a,write,false,false,TLM_GENERIC_ERROR_RESPONSE);
         request(ibex,0x10000,true,false,false,TLM_OK_RESPONSE);
         request(ibex,0x10000,false,false,false,TLM_OK_RESPONSE); // Trusted verification read.
-        request(ibex,0x1f000,true,false,false,TLM_OK_RESPONSE);
-        request(ibex,0x1f000,false,false,false,TLM_OK_RESPONSE);
-        request(ibex,0x20000,true,false,false,TLM_OK_RESPONSE);
-        request(ibex,0x2f000,false,true,false,TLM_COMMAND_ERROR_RESPONSE);
-        request(ibex,0x2f000,false,true,true,TLM_OK_RESPONSE);
-        request(ibex,0x1a110000,false,false,false,TLM_COMMAND_ERROR_RESPONSE);
+        request(ibex,0x40000,true,false,false,TLM_OK_RESPONSE);
+        request(ibex,0x40000,false,false,false,TLM_OK_RESPONSE);
+        request(ibex,0x50000,true,false,false,TLM_OK_RESPONSE);
+        request(ibex,0x60000,false,true,false,TLM_GENERIC_ERROR_RESPONSE);
+        request(ibex,0x60000,false,true,true,TLM_OK_RESPONSE);
+        request(ibex,0x1a110000,false,false,false,TLM_GENERIC_ERROR_RESPONSE);
         request(ibex,0x1a110000,false,false,true,TLM_OK_RESPONSE);
         request(dbg,0x1a110000,false,false,false,TLM_OK_RESPONSE);
         for(unsigned a:{0x01000000u,0x40000000u,0x40100000u,0x60000000u}){
-            request(cva6,a,false,true,false,TLM_COMMAND_ERROR_RESPONSE);
-            request(ibex,a,false,true,false,TLM_COMMAND_ERROR_RESPONSE);
+            request(cva6,a,false,true,false,TLM_GENERIC_ERROR_RESPONSE);
+            request(ibex,a,false,true,false,TLM_GENERIC_ERROR_RESPONSE);
         }
         bus.finish_staging();
-        request(ibex,0x10000,false,false,false,TLM_COMMAND_ERROR_RESPONSE);
-        request(ibex,0x10000,true,false,false,TLM_COMMAND_ERROR_RESPONSE);
-        request(ibex,0x20000,true,false,false,TLM_COMMAND_ERROR_RESPONSE);
-        request(ibex,0x20000,false,true,false,TLM_OK_RESPONSE);
+        request(ibex,0x10000,false,false,false,TLM_GENERIC_ERROR_RESPONSE);
+        request(ibex,0x10000,true,false,false,TLM_GENERIC_ERROR_RESPONSE);
+        request(ibex,0x50000,true,false,false,TLM_GENERIC_ERROR_RESPONSE);
+        request(ibex,0x50000,false,true,false,TLM_OK_RESPONSE);
         request(cva6,0x10000,true,false,false,TLM_OK_RESPONSE);
-        request(cva6,0x1f000,false,true,false,TLM_COMMAND_ERROR_RESPONSE);
-        request(cva6,0x1f000,false,true,true,TLM_OK_RESPONSE);
-        request(cva6,0x1f000,true,false,false,TLM_COMMAND_ERROR_RESPONSE);
-        request(cva6,0x1f000,true,false,true,TLM_COMMAND_ERROR_RESPONSE);
-        request(dbg,0x1f000,true,false,false,TLM_OK_RESPONSE);
-        bus.quiesce();bus.reset();bus.resume();request(ibex,0x20000,true,false,false,TLM_OK_RESPONSE);
+        request(cva6,0x40000,false,true,false,TLM_GENERIC_ERROR_RESPONSE);
+        request(cva6,0x40000,false,true,true,TLM_OK_RESPONSE);
+        request(cva6,0x40000,true,false,false,TLM_GENERIC_ERROR_RESPONSE);
+        request(cva6,0x40000,true,false,true,TLM_GENERIC_ERROR_RESPONSE);
+        request(dbg,0x40000,true,false,false,TLM_OK_RESPONSE);
+        bus.quiesce();bus.reset();bus.resume();request(ibex,0x50000,true,false,false,TLM_OK_RESPONSE);
         reset_n=false;source=false;settle();reset_n=true;settle();
         source=true;settle();source=false;settle();expect(level,"IRQ pulse is held until service acknowledgment");
         adapter.acknowledge();settle();expect(!level,"ack clears an ended pulse");

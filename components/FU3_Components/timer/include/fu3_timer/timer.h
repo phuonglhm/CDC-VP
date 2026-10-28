@@ -24,6 +24,10 @@ public:
     SC_HAS_PROCESS(Timer);
     explicit Timer(sc_core::sc_module_name name,
                    sc_core::sc_time period=sc_core::sc_time(10,sc_core::SC_NS));
+    // Clock period from the clock controller (platform CRM, decision Q05-f);
+    // used from the next tick. Zero is ignored (a stopped clock is clock_enabled).
+    void set_period(sc_core::sc_time period) { if(period!=sc_core::SC_ZERO_TIME) period_=period; }
+    sc_core::sc_time period() const { return period_; }
 private:
     State state_;
     sc_core::sc_time period_;

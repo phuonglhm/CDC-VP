@@ -27,8 +27,9 @@ if(NOT MSVC)
 endif()
 
 if(BUILD_TESTING)
-  set(FU3_BUS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   if(NOT TARGET fu3::bus_system)
+    # Own copy of the bus: skip its tests in this scope only, never in the cache.
+    set(FU3_BUS_BUILD_TESTS OFF)
     add_subdirectory(../bus bus)
   endif()
   foreach(kind behavior integration)

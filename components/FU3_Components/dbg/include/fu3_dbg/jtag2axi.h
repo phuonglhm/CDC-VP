@@ -19,6 +19,12 @@ public:
         : sc_core::sc_module(name), idcode_(idcode) {}
 
     void test_logic_reset();          // IR = CMD_IDCODE, xoá address, data, status
+    // DBG-domain reset of the bridge's AXI-side registers (address, read data,
+    // status); the TAP state (IR) belongs to TCK/TRST and is kept.
+    // Both resets start a new epoch: an AXI access still on its way from
+    // before the reset leaves no result (status, read data, address) in the
+    // registers of the new epoch.
+    void reset_registers();
     void scan_ir(std::uint8_t ir);    // 5 bit
     unsigned dr_length() const;       // Độ dài DR của IR hiện tại
     // Shift DR qua Update-DR, trả giá trị Capture-DR
@@ -29,6 +35,7 @@ private:
     const std::uint32_t idcode_;
     std::uint8_t ir_ = FU3_DBG_IR_CMD_IDCODE;
     std::uint32_t address_ = 0, rdata_ = 0, status_ = 0;
+    std::uint64_t epoch_ = 0;   // incremented by every reset of the registers
 
     void access(bool write, std::uint32_t wdata);
 };

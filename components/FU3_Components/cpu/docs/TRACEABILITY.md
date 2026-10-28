@@ -1,23 +1,27 @@
 # FU3 CPU configuration traceability
 
-Source: private FU3 HAS v2.0 and FTEL_FU3_Common_Spec v2.0, reviewed 2026-10-20. CPU0 is CVA6 and CPU1 is Ibex. Verification ran with an out-of-repository harness (CVA6 + Ibex + FU3 bus + four memories) and the `riscv_cpu_eval` platform regression.
+Source: private FTEL_FU3_Common_Spec v2.1 (revision 18/10/2026) and HAS v2.1,
+decisions Q01/Q02 of the FU3 VP plan. Verification: firmware tests on the
+assembled platform (`platforms/fu3_soc`, ctest `fu3_soc_cpu_cva6` and
+`fu3_soc_cpu_ibex`, check ids in `tests/fw/*_tests.c` and `tests/fw/fw_debug.c`)
+and the wrapper test `fu3_cpu_debug_{cva6,ibex}`.
 
 | Source | Requirement | Verification |
 | --- | --- | --- |
-| Table 8-1 | CVA6 RV32IMC, M-mode only | Harness reads `misa` = I, M, C |
-| Table 8-3 | Ibex RV32IMC with U-mode | Harness reads `misa` = I, M, C, U |
-| Table 11-1/11-2 | CPU0 (CVA6) is hart 0 | Harness reads `mhartid` = 0 |
-| Leader decision | CPU1 (Ibex) is hart 1 | Harness reads `mhartid` = 1 |
-| Common CVA6-Config #45-#46, Ibex-Config #33-#36 | Debug addresses | Constants compiled into the harness, values reviewed against the sheets |
-| Section 9 | Ibex resets to ROM 0x0000_0000 | Ibex executes the harness boot ROM |
-| Section 9, 14.2 | CVA6 held in reset, starts at 0x0001_0000 after staging | Released by the harness boot controller after `finish_staging()` and runs the staged image |
-| Section 9 | Ibex writes CVA6_ISRAM only while staging | Write before close succeeds and write after close traps with mcause 7 |
-| Section 9 | CVA6 denied ROM | CVA6 ROM load traps with mcause 5 |
-| Section 9 | DSRAM shared and non-executable | CVA6 fetch from DSRAM traps with mcause 1 |
-| Table 7-1, bus contract | One AXI4 master per CPU, `Access` on every request | Both CPUs run on the actual FU3 bus |
-| Bus contract | Word fetch and RVC at 2-byte-aligned PC | 16-bit at aligned PC, 32-bit at PC%4==2 crossing a word, 16-bit at PC%4==2 |
-| Bus contract | Narrow stores use lane enables | sb/sh/sb to DSRAM reads back 0x22334411 |
-| Table 11-2 | CVA6 cause 7 (timer) | riscv_cpu_eval `timer_irq` firmware |
-| Table 11-2 | CVA6 causes 7 and 11 on FU3 peers | Harness outside the repository: TIMER0 -> cause 7 (`fw/timer_irq_riscv`, PLATFORM=fu3), TIMER1 -> PLIC ID 6 -> cause 11 (`fw/fu3_plic_irq`) and cause 3 not exercised (SYSCSR v1 has no software IRQ) |
-
-Not covered: the open ISS features in [MODEL_CONTRACT.md](MODEL_CONTRACT.md) and real PLIC/INTMAP, CRM and debug peers.
+| CVA6-Config #2-#12 | RV32IMFC, M-mode only, no A/D | cva6 checks 1, 3, 4-13 |
+| CVA6-Config #42/#43 | 8 PMP entries, NAPOT, lock binds M-mode | cva6 checks 40-44 |
+| CVA6-Config #59 | Reset PC 0x0001_0000 | cva6 image entry (test runs) |
+| Interrupt Mapping (CVA6) | time_irq_i cause 7, irq_i[0] cause 11, vectored mtvec | cva6 checks 30-32 |
+| Booting #22, Q01-b | Ibex first fetch 0x80, mtvec 0x1, vectored only | ibex checks 1, 2, 12 |
+| Ibex-Config #1, #13-#15, Q01-e | RV32IMC + Zcb, U-mode, no A/F/D | ibex checks 10, 13, 20-28 |
+| Ibex-Config #2-#4, #9, Q01-d | 16 PMP regions, Smepmp, mseccfg RLB/MMWP reset | ibex checks 3, 4, 40-43, 60-67 |
+| Interrupt Mapping (Ibex) | fast causes 16-30, priority fast[0..14] > MEI | ibex checks 30-32 |
+| Q01-c | Hart IDs 0 (CVA6) and 1 (Ibex) | cva6 check 2, ibex check 11 |
+| CVA6-Config #44-#46, Ibex-Config #33-#36, Q04-b | Debug Mode entry/exit, HaltAddress/ExceptionAddress, debug partition only in Debug Mode | both: checks 78-90, 95-99; `fu3_cpu_debug_*` |
+| Ibex-Config #33-#36 | Debug Mode accesses to the DM aperture bypass PMP | `fu3_cpu_debug_ibex` |
+| CVA6-Config #47, Q04-e | 2 triggers (CVA6), 4 (Ibex), mcontrol exact execute | both: checks 82-84, 91-94 |
+| Q04-b/c | Debug control for the DM (halt, resume, step, abstract register access, reset) | `fu3_cpu_debug_{cva6,ibex}` |
+| Q01-g | Core clock from the CRM, changeable, stop; latency counted once | `fu3_cpu_clock`, `fu3_soc_clock_reset` |
+| Q02-b, Booting | Ibex released by the CRM, CVA6 by FCLK_SW after staging closes | `fu3_soc_clock_reset`, `fu3_soc_boot` |
+| Q04-c | One DebugHart per CPU, hartsel 0 = CVA6, 1 = Ibex (`fu3_soc_top::debug_harts()`) | `fu3_soc_cpu_*` (debug request through that DebugHart) |
+| Ibex U-mode | ebreaku, haltreq from U, DRET to U | ibex checks 100-102 |

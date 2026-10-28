@@ -66,7 +66,9 @@ struct Bench:sc_module {
         expect(device_read(2)==0x8f2f&&device_read(3)==0xffc2,"device POR register defaults");
         std::vector<unsigned char> data(64);for(unsigned i=0;i<data.size();++i)data[i]=static_cast<unsigned char>(i*7+3);
         transfer(true,0,data,tlm::TLM_GENERIC_ERROR_RESPONSE);expect(rd(64)&4,"not-ready error before init");wr(68,255);
-        transfer(false,0,data,tlm::TLM_COMMAND_ERROR_RESPONSE,nullptr,nullptr,0,4,fu3_bus::Burst::Increment,true);
+        // Fabric NX denial is a slave error (Q02-f); the endpoint's own check reports a command error.
+        transfer(false,0,data,integrated?tlm::TLM_GENERIC_ERROR_RESPONSE:tlm::TLM_COMMAND_ERROR_RESPONSE,
+                 nullptr,nullptr,0,4,fu3_bus::Burst::Increment,true);
         wr(68,255); // Direct and fabric paths reject NX without launching a memory read.
         init();auto before=rd(100);transfer(true,0,data);expect(rd(100)==before+1&&rd(104)==16,"one burst stays one device transaction");
         std::vector<unsigned char> readback(64,0);transfer(false,0,readback);expect(readback==data,"burst data roundtrip");

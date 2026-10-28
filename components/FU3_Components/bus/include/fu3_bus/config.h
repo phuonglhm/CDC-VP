@@ -7,7 +7,16 @@ namespace fu3_bus {
 struct Region { std::string name; std::uint64_t begin, end; unsigned port; bool translate; };
 enum class TargetPath { SysBus1Axi, SysBus0Axi, Peribus0Apb, Peribus1Apb };
 enum class ArbitrationPolicy { Fifo };
-enum class AccessPolicy { Open, BootRom, Cva6Program, DataOnly, IbexProgram, DebugControl };
+// ReadExecute: functional masters may read and fetch, never write (QSPI XIP aperture).
+enum class AccessPolicy { Open, BootRom, Cva6Program, DataOnly, IbexProgram, DebugControl, ReadExecute };
+// One right of an access profile: `target` (by name), the access kinds and,
+// when `offsets` is not empty, the local [begin, end) ranges the whole access
+// must lie in.
+struct AccessGrant {
+    std::string target;
+    bool read = false, write = false, execute = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> offsets{};
+};
 struct InitiatorConfig {
     std::string name;
     unsigned outstanding = 1;
@@ -15,6 +24,12 @@ struct InitiatorConfig {
     bool require_access = false;
     unsigned max_beats = 256; // VP transaction bound; DMA overrides to 16.
     bool word_increment_only = false; // DBG interface, Table 7-1.
+    // Access profile (platform policy): with grants_only, this initiator reaches
+    // only what a grant allows; the target policies still apply on top.
+    bool grants_only = false;
+    std::vector<AccessGrant> grants{};
+    // Targets this initiator may not fetch instructions from.
+    std::vector<std::string> no_execute{};
 };
 struct TargetConfig {
     std::string name;
@@ -33,6 +48,8 @@ struct TargetConfig {
     std::uint64_t debug_offset = 0; // Nonzero: remaining upper partition is CPU debug code.
 };
 struct BusConfig {
+    // Spec revision the address map follows; reported by platforms with the map.
+    std::string revision;
     // All sockets and both buses use 32-bit data. Reject unsupported widths.
     unsigned axi_data_width = 32, axi_address_width = 32;
     unsigned router_latency_ns = 2, apb_cycle_ns = 10;

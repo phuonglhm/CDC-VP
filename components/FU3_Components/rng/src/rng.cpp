@@ -41,8 +41,17 @@ unsigned Rng::execute(tlm::tlm_generic_payload& tx) {
     }
     tx.set_response_status(tlm::TLM_OK_RESPONSE);return 0;
 }
+void Rng::wait_clock_edge() {
+    // A gate during the period cancels the edge; the phase restarts on enable.
+    while(true){
+        while(!clock_enabled_)wait(clock_gate_changed_);
+        const auto due=sc_core::sc_time_stamp()+config_.clock_period;
+        wait(config_.clock_period,clock_gate_changed_);
+        if(clock_enabled_&&sc_core::sc_time_stamp()>=due)return;
+    }
+}
 void Rng::run() {
-    while(true){wait(config_.clock_period);error_=false;
+    while(true){wait_clock_edge();error_=false;
         if(!reset_n.read()){
             reset();if(pending_)pending_->set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
         }else{

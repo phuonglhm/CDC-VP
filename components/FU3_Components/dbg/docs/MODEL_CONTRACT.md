@@ -73,3 +73,17 @@ Bus window: local offsets 0x000-0xFFF, DMI register n at offset 4 x n (0x000-0x1
 | DEBUG_EN / debug permission | Not modeled: always authenticated | HAS uses DEBUG_EN only as a boot gate |
 | TAP state machine, TCK | Scan level only | Functional model |
 | CPU halt/step/triggers | `DebugHart` interface | ISS has no debug mode (dcsr/dpc read 0, no dret) |
+
+## DBG-domain reset and hart availability (platform integration)
+
+- `DebugModule::reset_n` (optional, active low): while low the DM is held at its
+  reset values (DMCONTROL, DATA0/1, hartsel, cmderr), halt requests are
+  released, havereset is set for every hart and DMI writes are ignored. The
+  platform binds it to the DBG-domain reset (watchdog, global and POR resets);
+  ndmreset does not reach it.
+- `Jtag2Axi::reset_registers()` clears the AXI-side registers (ADDR, read data,
+  STATUS) on the DBG-domain reset; the TAP state (IR) is kept.
+- `DebugHart::unavailable()` (default false): a hart that cannot be debugged now
+  (held in reset) is reported `anyunavail`/`allunavail` in DMSTATUS, neither
+  running nor halted, and abstract commands to it fail with cmderr HALTRESUME. A
+  halt request set meanwhile halts it on its first instruction once available.

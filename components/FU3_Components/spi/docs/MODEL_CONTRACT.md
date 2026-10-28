@@ -157,3 +157,7 @@ is invented. Existing HAS DMA assignments are SPI0 RX/TX 0/1 and SPI1 RX/TX 6/7.
 
 Test fixtures provide serial peers, interrupt receivers and a DMA initiator. They
 validate controller communication, not CPU firmware execution or complete boot.
+
+## Clock gate (platform integration)
+
+The clock controller (FU3 CRM gate, through the platform) drives the gate; it is enabled by default, so a stand-alone bench needs no change. `set_clock_enabled(false)` removes system clock edges: a transfer stops where it is (SCK, shift state and FIFOs kept) and continues on enable. A gate during a period cancels that edge. Reset stays asynchronous and applies while gated.

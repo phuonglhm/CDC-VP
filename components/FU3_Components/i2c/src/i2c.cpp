@@ -20,7 +20,14 @@ void I2c::run(){
         if(!reset_n.read()&&pending_){pending_->set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);pending_=nullptr;completed_.notify(sc_core::SC_ZERO_TIME);}
         outputs_.notify(sc_core::SC_ZERO_TIME);
         if(sc_core::sc_time_stamp()>=next)next+=config_.clock_period;
-        wait(next-sc_core::sc_time_stamp(),reset_n.negedge_event());
+        if(!clock_enabled_&&reset_n.read()){
+            // Gated: no edge (reset stays asynchronous); the phase restarts on enable.
+            wait(clock_gate_changed_|reset_n.negedge_event());
+            next=sc_core::sc_time_stamp()+config_.clock_period;
+            if(!reset_n.read())continue;
+        }
+        wait(next-sc_core::sc_time_stamp(),reset_n.negedge_event()|clock_gate_changed_);
+        if(!clock_enabled_&&sc_core::sc_time_stamp()<next)next=sc_core::sc_time_stamp()+config_.clock_period;
     }
 }
 void I2c::filter(Filter& f,bool raw,bool sample){
