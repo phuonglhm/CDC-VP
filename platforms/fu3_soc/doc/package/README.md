@@ -22,9 +22,9 @@ What the VP is and is not:
 | `vp/bin/VP_FU3_V1.0/vp_fu3_soc` | the VP executable |
 | `vp/bin/VP_FU3_V1.0/libsystemc.so*` | SystemC 2.3.4 runtime (found through RPATH `$ORIGIN`) |
 | `vp/configs/VP_FU3_V1.0/` | prebuilt example images (`fw/`), stimulus files (`data/`), `run_package_tests.sh` |
-| `sw/bootloader/sources/VP_FU3_V1.0/` | example firmware sources, `Makefile` (`make` builds into `sw/bootloader/build/VP_FU3_V1.0/`), `README.md` |
+| `sw/bootloader/sources/VP_FU3_V1.0/` | example firmware sources, `Makefile` (`make` builds into `sw/bootloader/build/VP_FU3_V1.0/`), `README.md`; `include/`: `fu3_vp_abi.h` and `csr/` (register headers of every IP) |
 | `sw/bootloader/test/VP_FU3_V1.0/run_vp.sh` | demos of the example firmware on the VP (`smoke`, `console`, `handoff`, `wake`, `gdb`, `run`) |
-| `vp/doc/VP_FU3_V1.0/` | this guide, firmware baseline, maps, CSR headers, ISA, clock/reset contract, R1 gaps, test results, `MANIFEST.txt` |
+| `vp/doc/VP_FU3_V1.0/` | this guide, firmware baseline, maps, ISA, clock/reset contract, R1 gaps, test results summary, `MANIFEST.txt` |
 | `vp/licenses/` | notices of the bundled third-party code |
 
 ## Requirements
@@ -110,14 +110,16 @@ hart with one owner at a time.
 
 ## Firmware interface (R1 baseline)
 
-- `FU3_VP_ABI_1.md` and `include/fu3_vp_abi.h`: register interfaces, the SYSCSR
+- `FU3_VP_ABI_1.md` and `fu3_vp_abi.h` (in `sw/bootloader/sources/VP_FU3_V1.0/include/`,
+  `SWINC` below): register interfaces, the SYSCSR
   extension (boot status, reset cause, INTMAP enables, software interrupts),
   boot contract, Ibex PMP profile, debug, access profile, pads, VP/RTL
   differences with their owners, agreements still needed.
 - `memory_map.md`: the bus map of this build (Common Spec v2.1).
 - `irq_dma_map.md`: interrupt sources, PLIC IDs, INTMAP routes, CPU inputs, DMA
   channels.
-- `csr/`: register definitions of every IP (C/C++ headers), see `csr/README.md`.
+- `SWINC/csr/`: register definitions of every IP (C or C++ headers), see its
+  `README.md`.
 - `isa.md`: both CPUs (extensions, PMP, triggers, reset).
 - `clock_reset.md`: clock, reset and gate contract.
 - `r1_gaps.md`: what R1 does not cover, open spec decisions, IP not received.
@@ -128,7 +130,8 @@ hart with one owner at a time.
 demo with straps, console input, NOR and memory dump, wake and watchdog-reset
 firmware on both CPUs, GDB-pair firmware, error cases). `test_results.md`
 summarises the full regression of the build this package comes from (FU3:
-platform and component tests) and the logs are in `test_results/`.
+platform and component tests), these checks and the example firmware build and
+demos (their logs: `sw/bootloader/build/VP_FU3_V1.0/`).
 
 ## Responsibilities
 

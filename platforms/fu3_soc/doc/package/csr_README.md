@@ -1,11 +1,13 @@
 # VP_FU3_V1.0 — CSR reference
 
-The register definitions the VP models implement, as C/C++ headers copied
-from the CDC-VP model sources at this package's revision. Base addresses: use
-`../memory_map.md` (the integrated map is authoritative; a base macro in a
-header is the model's default). Offsets, fields and reset values: the headers
-and the model documents named below. FU3_VP_ABI_1 (`../FU3_VP_ABI_1.md`,
-`../include/fu3_vp_abi.h`) adds the SYSCSR extension and the access profile.
+The register definitions the VP models implement, as headers copied from the
+CDC-VP model sources at this package's revision. Most are C headers; AES, GPIO,
+QSPI, HyperRAM, I2C and RNG are C++ (namespaces, `<cstdint>`). Base addresses:
+use `vp/doc/VP_FU3_V1.0/memory_map.md` (the integrated map is authoritative; a
+base macro in a header is the model's default). Offsets, fields and reset
+values: the headers and the model documents named below. FU3_VP_ABI_1
+(`vp/doc/VP_FU3_V1.0/FU3_VP_ABI_1.md`, `../fu3_vp_abi.h`) adds the SYSCSR
+extension and the access profile.
 
 | IP (bus targets) | Header | Notes |
 | --- | --- | --- |

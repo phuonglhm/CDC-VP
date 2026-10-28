@@ -13,6 +13,7 @@ belong to FW/SW); copy what helps, the interfaces are in
 | `common/fw_trap.S`, `common/fw_runtime.c`, `common/fw_common.h` | trap entry and the small test runtime |
 | `common/ibex.ld`, `common/cva6.ld` | linker scripts: ROM + IBEX_ISRAM + DSRAM; CVA6_ISRAM + DSRAM |
 | `include/fu3_vp_abi.h` | FU3_VP_ABI_1 register definitions (SYSCSR extension) |
+| `include/csr/` | register definitions of every IP, one `registers.h` per IP (`csr/README.md`); not used by the examples |
 | `examples/t20_console.c` | Ibex: console, straps and reset cause, one console input line, NOR via XIP, PASS |
 | `examples/t19_ibex.c`, `examples/t19_cva6.c` | Ibex boots twice around a software reset and releases CVA6 (CRM `FCLK_SW`); CVA6 computes single-precision values and stops at `t19_fp_stop` (GDB demo) |
 | `examples/t21_ibex.c`, `examples/t21_cva6.c` | WFI wakes from real interrupt sources on both CPUs, a gated timer that does not wake, SWIRQ both ways, then a watchdog reset during the traffic of both CPUs |

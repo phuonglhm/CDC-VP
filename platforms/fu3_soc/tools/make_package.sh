@@ -2,21 +2,22 @@
 # Assemble the FU3 VP release package (plan T23) into an fx1-style vp/ tree:
 #   vp/bin/<NAME>/      vp_fu3_soc + SystemC runtime (RPATH $ORIGIN)
 #   vp/configs/<NAME>/  prebuilt example images, stimulus, run_package_tests.sh
-#   vp/doc/<NAME>/      guide, FU3_VP_ABI_1, maps, CSR headers, ISA, clock/reset,
-#                       R1 gaps, test results, MANIFEST.txt (sha256 of every file)
+#   vp/doc/<NAME>/      guide, FU3_VP_ABI_1, maps, ISA, clock/reset, R1 gaps,
+#                       test results summary, MANIFEST.txt (sha256 of every file)
 #   vp/licenses/README.md  gains a section for <NAME> (once)
-# and, with SW_DIR (fx1 sw/bootloader), the example firmware in the fx1 layout:
-#   sw/bootloader/sources/<NAME>/  sources, Makefile, README (built with make)
-#   sw/bootloader/build/<NAME>/    make output (git-ignored in fx1)
+# and the firmware side in the fx1 sw/bootloader layout (SW_DIR):
+#   sw/bootloader/sources/<NAME>/  example firmware, Makefile, README (built with
+#                                  make), include/ (fu3_vp_abi.h, csr/ IP headers)
+#   sw/bootloader/build/<NAME>/    make output and demo logs (git-ignored in fx1)
 #   sw/bootloader/test/<NAME>/     run_vp.sh (demos, smoke check)
 #
 #   make_package.sh BUILD_DIR VP_DIR [NAME]
 #     BUILD_DIR  a CDC-VP build configured with -DFU3_SOC_PACKAGE_NAME=NAME
 #     VP_DIR     the vp/ directory of the fx1 repository
-#   env: TEST_LOGS=dir   regression logs of BUILD_DIR to ship (test_results/)
+#   env: SW_DIR=dir      the sw/bootloader directory of the fx1 repository (required)
+#        TEST_LOGS=dir   regression logs of BUILD_DIR, summarised in test_results.md
 #        SPEC_DIRS=a:b   directories of spec documents to fingerprint in the manifest
 #        GDB=path        riscv-none-elf-gdb for the package's GDB check
-#        SW_DIR=dir      the sw/bootloader directory of the fx1 repository
 #        FORCE=1         replace an existing package of the same name (an empty
 #                        directory is used without FORCE)
 set -euo pipefail
@@ -29,23 +30,22 @@ PLAT=$SRC/platforms/fu3_soc
 COMP=$SRC/components/FU3_Components
 BINSRC=$BUILD/platforms/fu3_soc
 BIN=$VPDIR/bin/$NAME CFG=$VPDIR/configs/$NAME DOC=$VPDIR/doc/$NAME
+SW=$(cd "${SW_DIR:?make_package: SW_DIR (fx1 sw/bootloader) is required}" && pwd)
+SWSRC=$SW/sources/$NAME SWBUILD=$SW/build/$NAME SWTEST=$SW/test/$NAME
 
 version=$("$BINSRC/vp_fu3_soc" --version 2>/dev/null)
 grep -q "vp_fu3_soc $NAME " <<< "$version" ||
     { echo "make_package: $BINSRC/vp_fu3_soc is not built as $NAME (-DFU3_SOC_PACKAGE_NAME)"; exit 1; }
-targets=("$BIN" "$CFG" "$DOC")
-if [ -n "${SW_DIR:-}" ]; then
-    SW=$(cd "$SW_DIR" && pwd)
-    SWSRC=$SW/sources/$NAME SWBUILD=$SW/build/$NAME SWTEST=$SW/test/$NAME
-    targets+=("$SWSRC" "$SWBUILD" "$SWTEST")
-fi
-for d in "${targets[@]}"; do
+for d in "$BIN" "$CFG" "$DOC" "$SWSRC" "$SWBUILD" "$SWTEST"; do
     if [ -e "$d" ] && [ -n "$(ls -A "$d")" ]; then
         [ "${FORCE:-0}" = 1 ] || { echo "make_package: $d exists and is not empty (FORCE=1 replaces it)"; exit 1; }
     fi
     rm -rf "$d"
 done
-mkdir -p "$BIN" "$CFG/fw" "$CFG/data" "$DOC/include" "$DOC/csr" "$DOC/test_results"
+mkdir -p "$BIN" "$CFG/fw" "$CFG/data" "$DOC" "$SWSRC/common" "$SWSRC/include/csr" "$SWSRC/examples" \
+         "$SWBUILD" "$SWTEST"
+LOGS=$(mktemp -d)   # regression and package-check logs: summarised, not shipped
+trap 'rm -rf "$LOGS"' EXIT
 
 # Binary and runtime.
 cp -p "$BINSRC/vp_fu3_soc" "$BINSRC"/libsystemc.so* "$BIN/"
@@ -63,7 +63,6 @@ cp -p "$PLAT/tools/package/configs_README.md" "$CFG/README.md"
 P=$PLAT/doc/package
 cp -p "$P/README.md" "$P/irq_dma_map.md" "$P/isa.md" "$P/clock_reset.md" "$P/r1_gaps.md" "$DOC/"
 cp -p "$PLAT/doc/FU3_VP_ABI_1.md" "$DOC/"
-cp -p "$PLAT/include/fu3_vp_abi.h" "$DOC/include/"
 {
     echo "# $NAME — bus memory map"
     echo
@@ -74,60 +73,61 @@ cp -p "$PLAT/include/fu3_vp_abi.h" "$DOC/include/"
     "$BINSRC/vp_fu3_soc" --list-instances 2>/dev/null | grep -v -e "SystemC 2" -e "Copyright" -e "ALL RIGHTS" | sed '/^$/d'
     echo '```'
 } > "$DOC/memory_map.md"
-cp -p "$P/csr_README.md" "$DOC/csr/README.md"
-cp -p "$P/fu3_adc_registers.md" "$DOC/csr/"
-cp -p "$COMP/ADC/docs/spec-decisions.md" "$DOC/csr/fu3_adc_spec_decisions.md"
-cp -p "$COMP/DMA0/AP_DMA/docs/registers.md" "$DOC/csr/fu3_ap_dma_registers.md"
+
+# Firmware headers: FU3_VP_ABI_1 and the register definitions of every IP.
+cp -p "$PLAT/include/fu3_vp_abi.h" "$SWSRC/include/"
+CSR=$SWSRC/include/csr
+cp -p "$P/csr_README.md" "$CSR/README.md"
+cp -p "$P/fu3_adc_registers.md" "$CSR/"
+cp -p "$COMP/ADC/docs/spec-decisions.md" "$CSR/fu3_adc_spec_decisions.md"
+cp -p "$COMP/DMA0/AP_DMA/docs/registers.md" "$CSR/fu3_ap_dma_registers.md"
 for h in crm/include/fu3_crm syscsr/include/fu3_syscsr plic/include/fu3_plic timer/include/fu3_timer \
          wdt/include/fu3_wdt uart/include/fu3_uart spi/include/fu3_spi i2c/include/fu3_i2c \
          GPIO/include/fu3/gpio QSPI/include/fu3/qspi hyperram/include/fu3_hyperram AES-256/include/fu3/aes \
          rng/include/fu3_rng mailbox/include/fu3_mailbox dbg/include/fu3_dbg; do
     rel=${h#*/include/}
-    mkdir -p "$DOC/csr/$rel"
-    cp -p "$COMP/$h/registers.h" "$DOC/csr/$rel/"
+    mkdir -p "$CSR/$rel"
+    cp -p "$COMP/$h/registers.h" "$CSR/$rel/"
 done
 
-# Example firmware in the fx1 sw/bootloader layout: sources, then make and the demos.
-if [ -n "${SW_DIR:-}" ]; then
-    mkdir -p "$SWSRC/common" "$SWSRC/include" "$SWSRC/examples" "$SWBUILD" "$SWTEST"
-    for f in ibex_rom.S ibex_start.S cva6_start.S fw_trap.S fw_runtime.c fw_common.h ibex.ld cva6.ld; do
-        cp -p "$PLAT/tests/fw/$f" "$SWSRC/common/"
-    done
-    for f in t20_console.c t19_ibex.c t19_cva6.c t21_ibex.c t21_cva6.c vp_debug_blob.S; do
-        cp -p "$PLAT/tests/fw/$f" "$SWSRC/examples/"
-    done
-    cp -p "$PLAT/include/fu3_vp_abi.h" "$SWSRC/include/"
-    cp -p "$PLAT/tools/package/sw/Makefile" "$PLAT/tools/package/sw/README.md" "$SWSRC/"
-    cp -p "$PLAT/tools/package/sw/run_vp.sh" "$SWTEST/"
-    chmod +x "$SWTEST/run_vp.sh"
-    make -C "$SWSRC" OUTPUT_DIR="$SWBUILD" > "$DOC/test_results/sw_build.log" 2>&1 ||
-        { cat "$DOC/test_results/sw_build.log"; echo "make_package: example firmware build failed"; exit 1; }
-    echo "sw build: $(ls "$SWBUILD"/*.elf | wc -l) images and vp_debug_blob.bin" >> "$DOC/test_results/sw_build.log"
-    "$SWTEST/run_vp.sh" smoke > "$DOC/test_results/sw_demos.log" 2>&1 ||
-        { cat "$DOC/test_results/sw_demos.log"; echo "make_package: example firmware demos failed"; exit 1; }
-    echo "sw demos: $(grep -c '^ok ' "$DOC/test_results/sw_demos.log") passed" >> "$DOC/test_results/sw_demos.log"
-fi
+# Example firmware in the fx1 sw/bootloader layout: sources, then make and the demos
+# (their logs stay in the git-ignored build directory).
+for f in ibex_rom.S ibex_start.S cva6_start.S fw_trap.S fw_runtime.c fw_common.h ibex.ld cva6.ld; do
+    cp -p "$PLAT/tests/fw/$f" "$SWSRC/common/"
+done
+for f in t20_console.c t19_ibex.c t19_cva6.c t21_ibex.c t21_cva6.c vp_debug_blob.S; do
+    cp -p "$PLAT/tests/fw/$f" "$SWSRC/examples/"
+done
+cp -p "$PLAT/tools/package/sw/Makefile" "$PLAT/tools/package/sw/README.md" "$SWSRC/"
+cp -p "$PLAT/tools/package/sw/run_vp.sh" "$SWTEST/"
+chmod +x "$SWTEST/run_vp.sh"
+make -C "$SWSRC" OUTPUT_DIR="$SWBUILD" > "$SWBUILD/sw_build.log" 2>&1 ||
+    { cat "$SWBUILD/sw_build.log"; echo "make_package: example firmware build failed"; exit 1; }
+echo "sw build: $(ls "$SWBUILD"/*.elf | wc -l) images and vp_debug_blob.bin" >> "$SWBUILD/sw_build.log"
+"$SWTEST/run_vp.sh" smoke > "$SWBUILD/sw_demos.log" 2>&1 ||
+    { cat "$SWBUILD/sw_demos.log"; echo "make_package: example firmware demos failed"; exit 1; }
+echo "sw demos: $(grep -c '^ok ' "$SWBUILD/sw_demos.log") passed" >> "$SWBUILD/sw_demos.log"
 
-# Test results: the regression of BUILD_DIR, then the package's own checks.
+# Test results: the regression of BUILD_DIR, the package's own checks, the firmware.
 if [ -n "${TEST_LOGS:-}" ]; then
-    cp -p "$TEST_LOGS"/*.log "$DOC/test_results/"
+    cp -p "$TEST_LOGS"/*.log "$LOGS/"
 fi
-"$CFG/run_package_tests.sh" > "$DOC/test_results/package_tests.log" 2>&1 ||
-    { cat "$DOC/test_results/package_tests.log"; echo "make_package: package checks failed"; exit 1; }
+"$CFG/run_package_tests.sh" > "$LOGS/package_tests.log" 2>&1 ||
+    { cat "$LOGS/package_tests.log"; echo "make_package: package checks failed"; exit 1; }
 {
     echo "# $NAME — test results"
     echo
-    echo "| Run | Result | Log |"
-    echo "| --- | --- | --- |"
-    for log in "$DOC"/test_results/*.log; do
+    echo "| Run | Result |"
+    echo "| --- | --- |"
+    for log in "$LOGS"/*.log "$SWBUILD/sw_build.log" "$SWBUILD/sw_demos.log"; do
         result=$(grep -hE "tests passed|package checks:|sw demos:|sw build:" "$log" | tail -1 || true)
-        echo "| $(basename "$log" .log) | ${result:-see log} | \`test_results/$(basename "$log")\` |"
+        echo "| $(basename "$log" .log) | ${result:-no summary line} |"
     done
     echo
-    echo "\`ctest -L fu3\` covers the platform tests and every FU3 component test of the CDC-VP"
-    echo "build this package comes from; \`package_tests\` is \`configs/$NAME/run_package_tests.sh\`"
+    echo "\`ctest_fu3\` is \`ctest -L fu3\` (the platform tests and every FU3 component test) of the"
+    echo "CDC-VP build this package comes from; \`package_tests\` is \`configs/$NAME/run_package_tests.sh\`"
     echo "run on this package; \`sw_build\`/\`sw_demos\` are \`make\` in \`sw/bootloader/sources/$NAME\`"
-    echo "and \`sw/bootloader/test/$NAME/run_vp.sh smoke\`."
+    echo "and \`sw/bootloader/test/$NAME/run_vp.sh smoke\` (logs in \`sw/bootloader/build/$NAME/\`)."
 } > "$DOC/test_results.md"
 
 # License notices (shared fx1 file: add the section once).
@@ -174,11 +174,9 @@ fingerprint=$(git ls-files -co --exclude-standard -- platforms/fu3_soc component
     echo "Files (sha256, paths relative to vp/):"
     (cd "$VPDIR" && find "bin/$NAME" "configs/$NAME" "doc/$NAME" -type f ! -name MANIFEST.txt | sort |
         while read -r f; do echo "  $(sha256sum "$f" | cut -d' ' -f1)  $f"; done)
-    if [ -n "${SW_DIR:-}" ]; then
-        echo
-        echo "Example firmware (sha256, paths relative to sw/bootloader/; build/ is make output, not listed):"
-        (cd "$SW" && find "sources/$NAME" "test/$NAME" -type f | sort |
-            while read -r f; do echo "  $(sha256sum "$f" | cut -d' ' -f1)  $f"; done)
-    fi
+    echo
+    echo "Firmware (sha256, paths relative to sw/bootloader/; build/ is make output, not listed):"
+    (cd "$SW" && find "sources/$NAME" "test/$NAME" -type f | sort |
+        while read -r f; do echo "  $(sha256sum "$f" | cut -d' ' -f1)  $f"; done)
 } > "$DOC/MANIFEST.txt"
 echo "make_package: $NAME assembled in $VPDIR ($(grep -c '^  [0-9a-f]\{64\}  [bcd]' "$DOC/MANIFEST.txt") files)"
