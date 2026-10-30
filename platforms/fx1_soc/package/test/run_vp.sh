@@ -24,6 +24,10 @@ Usage:
   ./run_vp.sh isp [SAMPLE]             # RAW frame through `isp run`, NV12 + PNG, golden check
   ./run_vp.sh isp [SAMPLE] interactive [port]   # same job, console in this terminal: isp run, poweroff
   ./run_vp.sh isp list                 # the samples (default d65)
+  ./run_vp.sh isp FILE.raw [auto] [interactive [port]]
+                                       # your own frame, same format as the samples (2688x1520 BGGR,
+                                       # RAW10 in bits [15:6] of LE uint16, 8171520 bytes); d65's job
+                                       # and profile; NV12 + PNG, no golden (nothing to compare with)
   ./run_vp.sh version                  # VP build identity
   ./run_vp.sh ddr3                     # DDR3 firmware-init examples (BootROM/SRAM, --ddr-boot firmware)
   ./run_vp.sh camera [NAME...]         # camera examples (fx1_soc --camera; minutes each: detailed D-PHY)
@@ -196,15 +200,35 @@ case "${mode}" in
             done
             exit 0
         fi
+        raw_file=""
         if [[ $# -gt 0 && -d "${samples}/$1" ]]; then
             sample="$1"
             shift
+        elif [[ $# -gt 0 && ( "$1" == */* || "$1" == *.raw ) ]]; then
+            # A RAW file of the user's. An unquoted path with spaces arrives
+            # as several words: join them until they name a file.
+            raw_file="$1"
+            shift
+            while [[ ! -f "${raw_file}" && $# -gt 0 ]]; do
+                raw_file="${raw_file} $1"
+                shift
+            done
+            [[ -f "${raw_file}" ]] || die "RAW file not found: ${raw_file}"
         fi
         adaptive=0
         if [[ "${1:-}" == "auto" ]]; then adaptive=1; shift; fi
         sub="${1:-smoke}"
         isp_in="${samples}/${sample}"
         isp_out="${build}/isp/${sample}"
+        input="${isp_in}/input.isp16"
+        if [[ -n "${raw_file}" ]]; then
+            # d65's job (geometry, buffers, frames) and profile, another frame.
+            name="$(basename "${raw_file}")"
+            name="${name%.*}"
+            name="$(printf '%s' "${name}" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_' '_')"
+            isp_out="${build}/isp/raw_${name}"
+            input="${isp_out}/input.isp16"
+        fi
         [[ -f "${isp_in}/job.env" ]] || die "no ISP sample '${sample}' (./run_vp.sh isp list)"
         # shellcheck source=/dev/null
         unset PROFILE_ID
@@ -215,6 +239,31 @@ case "${mode}" in
         rm -rf "${isp_out}"
         mkdir -p "${isp_out}"
         cp "${isp_in}/job.bin" "${isp_out}/job.bin"
+        if [[ -n "${raw_file}" ]]; then
+            # The samples' conversion (le16_raw10_msb): RAW10 in bits [15:6] to
+            # the ISP's 12-bit scale, i.e. >> 4; the 6 low bits must be zero.
+            python3 - "${raw_file}" "${input}" <<'PY' || die "cannot use ${raw_file} (see above)"
+import array, sys
+w, h = 2688, 1520
+src, out = sys.argv[1], sys.argv[2]
+a = array.array("H")
+with open(src, "rb") as f:
+    data = f.read()
+if len(data) != 2 * w * h:
+    sys.exit("%s: %d bytes; expected %d (%dx%d, 16-bit samples, stride %d)" % (src, len(data), 2 * w * h, w, h, 2 * w))
+a.frombytes(data)
+if sys.byteorder != "little":
+    a.byteswap()
+bad = sum(1 for v in a if v & 0x3F)
+if bad:
+    sys.exit("%s: %d samples have bits [5:0] set: not RAW10 in bits [15:6] (le16_raw10_msb)" % (src, bad))
+o = array.array("H", (v >> 4 for v in a))
+if sys.byteorder != "little":
+    o.byteswap()
+with open(out, "wb") as f:
+    f.write(o.tobytes())
+PY
+        fi
         replay="${here}/isp_run.txt"
         command="isp run"
         if [[ ${adaptive} -eq 1 ]]; then
@@ -223,13 +272,17 @@ case "${mode}" in
             replay="${isp_out}/auto_run.txt"
             printf 'isp run auto\risp stats\rpoweroff\r' > "${replay}"
         fi
-        io=(--load "${RAW_ADDR}:${isp_in}/input.isp16" --load "${JOB_ADDR}:${isp_out}/job.bin"
+        io=(--load "${RAW_ADDR}:${input}" --load "${JOB_ADDR}:${isp_out}/job.bin"
             --load "${PROFILE_ADDR}:${profile_bin}"
             --dump "${RESULT_ADDR}:${RESULT_LEN}:${isp_out}/result.bin"
             --dump "${Y_ADDR}:${Y_LEN}:${isp_out}/y.bin" --dump "${UV_ADDR}:${UV_LEN}:${isp_out}/uv.bin")
         case "${sub}" in
             smoke)
-                echo "VP_FX1_V3.0 isp ${sample}: $(head -n 1 "${isp_in}/SAMPLE.txt")"
+                if [[ -n "${raw_file}" ]]; then
+                    echo "VP_FX1_V3.0 isp ${raw_file}: ${sample}'s job and profile (${PROFILE_ID})"
+                else
+                    echo "VP_FX1_V3.0 isp ${sample}: $(head -n 1 "${isp_in}/SAMPLE.txt")"
+                fi
                 set +e
                 "${vp}" --fw "${fw}" "${io[@]}" --uart0-rx-file "${replay}" "${rx_pacing[@]}" \
                     --timeout-ms 5000 > "${isp_out}/platform.log" 2>&1
@@ -280,16 +333,23 @@ case "${mode}" in
             python3 "${here}/isp_auto.py" capture "${isp_out}" "${here}/profiles/${PROFILE_ID}/profile.csrw"
             expected="${isp_in}/expected_auto_nv12.sha256"
         fi
+        [[ -z "${raw_file}" ]] || expected=""  # a user frame has no golden
         expect_args=()
-        if [[ -f "${expected}" ]]; then expect_args=(--expect-sha256 "$(cat "${expected}")"); fi
-        [[ ${adaptive} -eq 1 || -f "${expected}" ]] || die "fixed sample golden missing: ${expected}"
+        if [[ -n "${expected}" && -f "${expected}" ]]; then
+            golden="$(tr -d ' \r\n' < "${expected}")"
+            [[ "${golden}" =~ ^[0-9a-fA-F]{64}$ ]] || die "golden ${expected} is not a SHA-256 (64 hex digits)"
+            expect_args=(--expect-sha256 "${golden}")
+        fi
+        [[ ${adaptive} -eq 1 || -n "${raw_file}" || -f "${expected}" ]] || die "fixed sample golden missing: ${expected}"
         set +e
         python3 "${here}/isp_pack.py" "${isp_out}" "${expect_args[@]}"
         rc=$?
         set -e
         case ${rc} in
-            0) if [[ -f "${expected}" ]]; then
+            0) if [[ ${#expect_args[@]} -gt 0 ]]; then
                    echo "ISP PASS: NV12 equals the stand-alone ISP model's output; preview ${isp_out}/platform.png"
+               elif [[ -n "${raw_file}" ]]; then
+                   echo "ISP DONE: ${raw_file} processed (no golden, not compared); NV12 ${isp_out}/platform.nv12, preview ${isp_out}/platform.png"
                else
                    echo "ISP AUTO COMPLETE: output valid, no adaptive golden; preview ${isp_out}/platform.png"
                fi ;;

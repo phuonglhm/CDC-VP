@@ -78,6 +78,7 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh smoke
 # 3. A RAW camera frame through the ISP, driven by the firmware
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp            # D65 ColorChecker sample
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp outdoor1   # second sample (internal use only)
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw"   # your own frame (see "Your own RAW frame")
 ```
 
 `run_vp.sh smoke` passes when hart 1's boot IP check reports 0 failures and
@@ -265,6 +266,28 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
 - **`DMA_ERR 0x2`** (`IDMA_UNDERRUN`) is expected: no next frame was queued.
 - **The preview** uses the same inverse transform as the ISP team's tool. It
   is a visual check; the pass/fail criterion is the SHA-256.
+
+### Your own RAW frame
+
+```bash
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw"
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw" auto
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw" interactive 5000
+```
+
+- **Format:** the samples' format only: 2688×1520 BGGR, RAW10 in bits
+  [15:6] of little-endian 16-bit words, no padding (8 171 520 bytes). The
+  frame is converted the way the samples are (`>> 4` to the ISP's 12-bit
+  scale; the 6 low bits must be zero) and runs with `d65`'s job and the
+  shared profile. Another size, Bayer order or bit layout is refused: it needs
+  its own job and profile.
+- **No golden.** Nothing in the SDK computes the stand-alone ISP model's
+  output for a new frame, so the run ends with `ISP DONE` (not compared), not
+  `ISP PASS`. The result is in `sw/bootloader/build/VP_FX1_V3.0/isp/raw_<name>/`
+  (`platform.nv12`, `platform.png`), `<name>` being the file name without its
+  extension, in lower case, other characters than `a-z0-9_` replaced by `_`.
+- **Paths with spaces:** quote them. An unquoted one is accepted as long as
+  its words, joined with single spaces, name the file.
 
 ## Integrity and provenance
 

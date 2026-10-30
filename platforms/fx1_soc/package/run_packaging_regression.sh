@@ -8,7 +8,9 @@
 #   3. check_package.sh on the copy, including "no text file names CDC-VP";
 #   4. with an empty environment (env -i, no LD_LIBRARY_PATH):
 #      run_vp.sh version, smoke, isp for every sample; a sample with a wrong
-#      golden SHA must FAIL (the check is not a rubber stamp);
+#      golden SHA must FAIL and an empty golden be refused (the check is not a
+#      rubber stamp); `isp FILE.raw` with d65's frame under an unquoted path
+#      with spaces gives d65's golden, and a RAW of the wrong size is refused;
 #   5. the firmware rebuilt from the shipped sources with the shipped Makefile
 #      must equal the packaged ELF byte for byte, and pass smoke again; the
 #      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
@@ -103,7 +105,31 @@ run "${test}/run_vp.sh" isp tampered > "${tmp}/isp_tampered.log" 2>&1
 rc=$?
 [[ ${rc} -eq 1 ]] && grep -q "ISP FAIL: NV12 differs" "${tmp}/isp_tampered.log" \
     && pass "wrong golden is reported (exit 1)" || bad "wrong golden gave exit ${rc}"
+# an empty golden is refused, never a PASS
+: > "${test}/isp/tampered/expected_nv12.sha256"
+run "${test}/run_vp.sh" isp tampered > "${tmp}/isp_empty_golden.log" 2>&1
+rc=$?
+[[ ${rc} -eq 2 ]] && grep -q "is not a SHA-256" "${tmp}/isp_empty_golden.log" \
+    && pass "empty golden is refused (exit 2)" || bad "empty golden gave exit ${rc}"
 rm -rf "${test}/isp/tampered" "${pkg}/sw/bootloader/build/${version}/isp/tampered"
+# a user's RAW file: d65's frame under a path with spaces, passed unquoted
+# (one word per argument), must give d65's golden without being compared
+user_raw="${tmp}/elsewhere/my raw/d65 frame.raw"
+mkdir -p "$(dirname "${user_raw}")"
+cp "${src}/components/isp_tlm/input/D65_raw_2688x1520_5376.raw" "${user_raw}"
+run "${test}/run_vp.sh" isp "${tmp}/elsewhere/my" "raw/d65" "frame.raw" > "${tmp}/isp_user_raw.log" 2>&1
+rc=$?
+user_nv12="${pkg}/sw/bootloader/build/${version}/isp/raw_d65_frame/platform.nv12"
+[[ ${rc} -eq 0 ]] && grep -q "ISP DONE" "${tmp}/isp_user_raw.log" && [[ -s "${user_nv12}" ]] \
+    && [[ "$(sha256sum "${user_nv12}" | cut -d' ' -f1)" == "$(cat "${test}/isp/d65/expected_nv12.sha256")" ]] \
+    && pass "isp FILE.raw (unquoted path with spaces): d65's frame gives d65's golden, not compared" \
+    || { tail -n 15 "${tmp}/isp_user_raw.log"; bad "isp FILE.raw gave exit ${rc}"; }
+head -c 1000 "${user_raw}" > "${tmp}/elsewhere/short.raw"
+run "${test}/run_vp.sh" isp "${tmp}/elsewhere/short.raw" > "${tmp}/isp_short_raw.log" 2>&1
+rc=$?
+[[ ${rc} -eq 2 ]] && grep -q "expected 8171520" "${tmp}/isp_short_raw.log" \
+    && pass "isp FILE.raw of the wrong size is refused (exit 2)" || bad "short RAW gave exit ${rc}"
+rm -rf "${tmp}/elsewhere/my raw" "${tmp}/elsewhere/short.raw" "${pkg}/sw/bootloader/build/${version}/isp/raw_"*
 
 step "5. firmware rebuilt from the shipped sources"
 want="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artefacts"]["sw/bootloader/build/VP_FX1_V3.0/freertos_cli.elf"]["sha256"])' \
