@@ -170,10 +170,15 @@ for s in m["isp_samples"]:
         if not os.path.isfile(p) or hashlib.sha256(open(p, "rb").read()).hexdigest() != s.get(key):
             errors.append("sample %s: shared %s differs from the manifest" % (s["name"], file))
     job = open(os.path.join(d, "job.bin"), "rb").read()
+    # isp_demo_job.h: version 1 is 64 bytes, version 2 (mode, outputs, CH1/CH2) 96.
+    words = struct.unpack("<%dI" % (len(job) // 4), job) if len(job) in (64, 96) else ()
+    if not words or words[1] != {64: 1, 96: 2}[len(job)]:
+        errors.append("sample %s: job.bin is not a version 1 (64 bytes) or 2 (96 bytes) job" % s["name"])
+        words = ()
     p = os.path.join(pdir, "profile.bin")
-    if len(job) != 64 or not os.path.isfile(p) or os.path.getsize(p) != struct.unpack("<16I", job)[10] * 8:
+    if not words or not os.path.isfile(p) or os.path.getsize(p) != words[10] * 8:
         errors.append("sample %s: job profile_count differs from the shared profile" % s["name"])
-    if "frames" in s and (len(job) != 64 or s["frames"] != struct.unpack("<16I", job)[11]):
+    if "frames" in s and (not words or s["frames"] != words[11]):
         errors.append("sample %s: job frames differs from the manifest" % s["name"])
 for e in errors:
     print("  FAIL " + e)

@@ -313,15 +313,21 @@ static int run_job(int adaptive, int force_legacy)
         if (ok) {
             const isp_auto_choice c=auto_meter();
             const uint32_t ctrl=dev.hal.read32(dev.hal.ctx, FX1_ISP_GTM_CTRL_OFFSET);
+            const uint32_t ee_ctrl=dev.hal.read32(dev.hal.ctx, FX1_ISP_EE_CTRL_OFFSET);
             /* Policy only supports enabled WB and automatic GTM. */
             if ((ctrl & FX1_ISP_GTM_CTRL_MANUAL_MASK) || !(ctrl & FX1_ISP_GTM_CTRL_EN_MASK)) ok=0;
             taskENTER_CRITICAL();
             (void)fx1_isp_stop(&dev);
+            /* An EE scalar write (EE_BETA) clears resident 0's confirmation
+             * (MAS v1.07 §9.9.1): confirm it again, then restore EE_CTRL;
+             * fx1_isp_apply disables EE for the confirmation and checks it. */
             const fx1_isp_reg_write writes[]={
                 {FX1_ISP_WB_GAIN_R_OFFSET,c.r},{FX1_ISP_WB_GAIN_G_OFFSET,c.g},{FX1_ISP_WB_GAIN_B_OFFSET,c.b},
                 {FX1_ISP_GTM_KEY_OFFSET,c.key},{FX1_ISP_GTM_LWHITE_OFFSET,c.white},{FX1_ISP_EE_BETA_OFFSET,c.beta},
+                {FX1_ISP_EE_LUT_CTRL_OFFSET,FX1_ISP_EE_LUT_CTRL_PROFILE_LOAD_CONFIRM_MASK},
+                {FX1_ISP_EE_CTRL_OFFSET,ee_ctrl},
                 {FX1_ISP_GTM_CTRL_OFFSET,ctrl & ~FX1_ISP_GTM_CTRL_EN_MASK}};
-            fx1_isp_apply(&dev,writes,sizeof(writes)/sizeof(writes[0]));
+            if (fx1_isp_apply(&dev,writes,sizeof(writes)/sizeof(writes[0])) != FX1_ISP_OK) ok=0;
             gtm_enable=ctrl;
             if (ok) ok=fx1_isp_start(&dev,&bufs)==FX1_ISP_OK;
             taskEXIT_CRITICAL();

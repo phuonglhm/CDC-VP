@@ -125,7 +125,7 @@ cp "${isp}/include/fx1_isp/fx1_isp_csr.h" "${isp}/driver/include/fx1_isp/fx1_isp
 cp "${isp}/driver/src/fx1_isp_drv.c" "${sdk}/drivers/isp/"
 cp "${fw}"/tests/isp_stream/isp_common.c "${fw}"/tests/isp_stream/isp_common.h "${fw}"/tests/isp_stream/isp_fixture.h \
    "${sdk}/isp_selftest/"
-cp "${fw}/demo/isp_raw_frame/isp_demo_job.h" "${sdk}/demo/"
+cp "${fw}/demo/isp_raw_frame/isp_demo_job.h" "${fw}/demo/isp_raw_frame/isp_demo_setup.h" "${sdk}/demo/"
 # Camera (CSI-2 M5b): reference CSI-2 RX driver, BSP drivers, examples (make camera).
 cp "${csi2}/include/fx1_csi2/fx1_csi2_drv.h" "${csi2}/include/fx1_csi2/fx1_csi2_regs.h" "${sdk}/include/fx1_csi2/"
 cp "${csi2}/src/fx1_csi2_drv.c" "${sdk}/drivers/csi2/"
