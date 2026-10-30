@@ -2,11 +2,20 @@
  * ISP commands, through the reference C99 driver from a task:
  *   isp selftest  the 8-frame 64x48 fixture (basic profile); every NV12 must
  *                 match the reference CRC-32 (tests/isp_stream/isp_fixture.h)
+ *   isp selftest profile  the same in profile mode (CSR v1.07, MAS §9.7-9.9):
+ *                 the basic configuration is built in bank 0 (INIT copies it),
+ *                 sealed as profile 1 and applied; the same CRCs, and every
+ *                 output carries profile ID 1
  *   isp run       the host-loaded RAW job of the ISP demo (fx1_soc --load, see
  *                 fw/fx1_soc/demo/isp_raw_frame/isp_demo_job.h): fixed frames,
- *                 NV12 left in DDR for --dump, result block written
+ *                 NV12 left in DDR for --dump, result block written. In the
+ *                 job's mode: profile mode by default (CSR v1.07: the profile
+ *                 built into bank 0, sealed, applied), legacy for a version-1
+ *                 job; the job's output channels
+ *   isp run legacy  the same job in legacy mode, for comparison
  *   isp run auto  one AWB probe + at least two render frames, using a shared
- *                 base profile and a bounded demo neutral-zone policy
+ *                 base profile and a bounded demo neutral-zone policy; in
+ *                 legacy mode (the policy rewrites WB/GTM between frames)
  *   isp stats     AEC/AWB/AF publications of the last frame, captured before
  *                 the stream is stopped (fx1_isp_stop soft-resets the ISP,
  *                 which clears the statistics results; FRAME_IDs survive)
@@ -23,6 +32,7 @@
 #include "isp_common.h"
 #include "isp_auto_policy.h"
 #include "isp_demo_job.h"
+#include "isp_demo_setup.h"
 #include "rtos_app.h"
 #include "rtos_bsp.h"
 
@@ -104,18 +114,56 @@ static void stop(void)
     taskEXIT_CRITICAL();
 }
 
-static int selftest(void)
+/* Profile mode (CSR v1.07): INIT copies the legacy configuration just
+ * written into bank 0, but clears the bank's payload validity, so a profile
+ * that enables Gamma loads its curve into the bank after INIT (the banked
+ * port; LUT_LOAD_CONFIRM is a legacy command, MODE in profile mode), then
+ * SEAL and APPLY. The curve is the one the profile writes to GAMMA_LUT_DATA. */
+#define SELFTEST_PROFILE_ID 1u
+static int gamma_of(const fx1_isp_reg_write* w, size_t n, uint16_t lut[256])
+{
+    unsigned k = 0;
+    for (size_t i = 0; i < n; ++i)
+        if (w[i].offset == FX1_ISP_GAMMA_LUT_DATA_OFFSET && k < 256u) lut[k++] = (uint16_t)w[i].value;
+    return k == 256u;
+}
+
+static int enter_profile(const fx1_isp_reg_write* writes, size_t n)
+{
+    uint32_t err = 0;
+    static uint16_t lut[256];
+    if (fx1_isp_require_caps(&dev, FX1_ISP_TUNE_CAPS_PROFILE_MASK) != FX1_ISP_OK) {
+        out_line("isp: TUNE_CAPS has no PROFILE capability");
+        return 0;
+    }
+    int rc = fx1_isp_profile_mode(&dev, 1);
+    if (rc == FX1_ISP_OK) rc = fx1_isp_profile_begin(&dev, 0, &err);
+    if (rc == FX1_ISP_OK && gamma_of(writes, n, lut)) rc = fx1_isp_profile_load_gamma(&dev, 0, lut, &err);
+    if (rc == FX1_ISP_OK) rc = fx1_isp_profile_seal(&dev, 0, SELFTEST_PROFILE_ID, &err);
+    if (rc == FX1_ISP_OK) rc = fx1_isp_profile_apply(&dev, 0, 0, 0, &err);
+    if (rc != FX1_ISP_OK) {
+        out("isp: profile transaction failed, TUNE_ERROR ");
+        out_hex(err);
+        out_line("");
+    }
+    return rc == FX1_ISP_OK;
+}
+
+static int selftest(int profile_mode)
 {
     fx1_isp_buffers bufs;
     isp_buffers(&bufs);
     isr_fatal = 0;
     xSemaphoreTake(done, 0);
-    int ok = fx1_isp_init(&dev, &isp_hal) == FX1_ISP_OK &&
+    int ok = fx1_isp_init(&dev, &isp_hal) == FX1_ISP_OK && fx1_isp_profile_mode(&dev, 0) == FX1_ISP_OK &&
              fx1_isp_set_geometry(&dev, ISP_FX_WIDTH, ISP_FX_HEIGHT, ISP_FX_BAYER) == FX1_ISP_OK;
     if (ok) {
-        fx1_isp_apply(&dev, isp_fx_profile_basic, sizeof(isp_fx_profile_basic) / sizeof(isp_fx_profile_basic[0]));
+        ok = fx1_isp_apply(&dev, isp_fx_profile_basic, sizeof(isp_fx_profile_basic) / sizeof(isp_fx_profile_basic[0])) ==
+             FX1_ISP_OK;
+        if (ok && profile_mode)
+            ok = enter_profile(isp_fx_profile_basic, sizeof(isp_fx_profile_basic) / sizeof(isp_fx_profile_basic[0]));
         isp_outputs_to_device(&bufs);
-        ok = fx1_isp_start(&dev, &bufs) == FX1_ISP_OK;
+        ok = ok && fx1_isp_start(&dev, &bufs) == FX1_ISP_OK;
     }
     dev_ready = ok;
     uint32_t matched = 0;
@@ -128,18 +176,23 @@ static int selftest(void)
         }
         isp_output_to_cpu(bufs.y[index], bufs.uv[index]);
         const uint32_t crc = isp_nv12_crc(bufs.y[index], bufs.uv[index]);
-        if (crc == isp_fx_crc_basic[k]) ++matched;
+        uint32_t profile = 0;
+        fx1_isp_output_meta(&dev, 0, (unsigned)index, NULL, NULL, &profile);
+        if (crc == isp_fx_crc_basic[k] && profile == (profile_mode ? SELFTEST_PROFILE_ID : 0u)) ++matched;
         isp_output_to_device(bufs.y[index], bufs.uv[index]);
     }
     if (dev_ready) stop();
+    if (profile_mode) (void)fx1_isp_profile_mode(&dev, 0); /* back to legacy for the other commands */
     out("isp: ");
     out_dec(matched);
     out("/");
     out_dec(ISP_FX_FRAMES);
-    out(" frames 64x48 match the reference CRC, DMA_ERR fatal ");
+    out(profile_mode ? " frames 64x48 (profile mode) match the reference CRC, DMA_ERR fatal "
+                     : " frames 64x48 match the reference CRC, DMA_ERR fatal ");
     out_hex(isr_fatal);
     out_line("");
-    return report("isp 8-frame fixture", ok && matched == ISP_FX_FRAMES && !isr_fatal);
+    return report(profile_mode ? "isp 8-frame fixture (profile mode)" : "isp 8-frame fixture",
+                  ok && matched == ISP_FX_FRAMES && !isr_fatal);
 }
 
 
@@ -179,14 +232,20 @@ static isp_auto_choice auto_meter(void)
     return c;
 }
 
-static int run_job(int adaptive)
+static int run_job(int adaptive, int force_legacy)
 {
     const volatile isp_demo_job* job = (const volatile isp_demo_job*)(FX1_FW_SHARED_BASE + ISP_DEMO_JOB_OFFSET);
     volatile isp_demo_result* res = (volatile isp_demo_result*)(FX1_FW_SHARED_BASE + ISP_DEMO_RESULT_OFFSET);
-    if (job->magic != ISP_DEMO_JOB_MAGIC || job->version != ISP_DEMO_VERSION) {
-        out_line("isp run: no job descriptor in DDR (load one with run_isp_demo.py / fx1_soc --load)");
+    if (!isp_demo_job_ok(job)) {
+        out_line("isp run: no valid job descriptor in DDR (load one with run_isp_demo.py / fx1_soc --load)");
         return 0;
     }
+    uint32_t mode = force_legacy ? ISP_DEMO_MODE_LEGACY : isp_demo_mode(job);
+    if (adaptive && mode == ISP_DEMO_MODE_PROFILE) {
+        out_line("isp run auto: legacy mode (the policy rewrites WB/GTM between frames)");
+        mode = ISP_DEMO_MODE_LEGACY;
+    }
+    const uint32_t outputs = isp_demo_outputs(job);
     if (adaptive && job->frames < 3u) {
         out_line("isp run auto: job needs a probe plus at least 2 render frames");
         return report("isp run auto", 0);
@@ -203,11 +262,20 @@ static int run_job(int adaptive)
     isr_fatal = 0;
     xSemaphoreTake(done, 0);
     res->magic = 0;
-    int ok = fx1_isp_init(&dev, &isp_hal) == FX1_ISP_OK &&
-             fx1_isp_set_geometry(&dev, job->width, job->height, job->bayer) == FX1_ISP_OK;
+    uint32_t tune_error = 0;
+    int ok = fx1_isp_init(&dev, &isp_hal) == FX1_ISP_OK;
+    if (ok && isp_demo_configure(&dev, job, (const fx1_isp_reg_write*)(FX1_FW_SHARED_BASE + ISP_DEMO_PROFILE_OFFSET),
+                                 mode, &tune_error) != FX1_ISP_OK) {
+        out("isp run: ISP profile / geometry refused, TUNE_ERROR ");
+        out_hex(tune_error);
+        out_line(" (no fallback to legacy mode)");
+        res->status = 2;
+        res->mode = mode;
+        res->tune_error = tune_error;
+        res->magic = ISP_DEMO_RESULT_MAGIC;
+        return report("isp run", 0);
+    }
     if (ok) {
-        fx1_isp_apply(&dev, (const fx1_isp_reg_write*)(FX1_FW_SHARED_BASE + ISP_DEMO_PROFILE_OFFSET),
-                      job->profile_count);
         if (adaptive) {
             const uint32_t ctrl=dev.hal.read32(dev.hal.ctx,FX1_ISP_GTM_CTRL_OFFSET);
             const uint32_t wb=dev.hal.read32(dev.hal.ctx,FX1_ISP_WB_CTRL_OFFSET);
@@ -223,6 +291,15 @@ static int run_job(int adaptive)
                         FX1_DMA_FROM_DEVICE);
         fx1_dma_prepare((const volatile void*)(uintptr_t)job->uv_addr, job->out_stride * (job->height / 2u),
                         FX1_DMA_FROM_DEVICE);
+        if (outputs & 2u) {
+            fx1_dma_prepare((const volatile void*)(uintptr_t)job->ch1_y_addr, job->ch1_stride * job->height,
+                            FX1_DMA_FROM_DEVICE);
+            fx1_dma_prepare((const volatile void*)(uintptr_t)job->ch1_uv_addr, job->ch1_stride * (job->height / 2u),
+                            FX1_DMA_FROM_DEVICE);
+        }
+        if (outputs & 4u)
+            fx1_dma_prepare((const volatile void*)(uintptr_t)job->ch2_addr, job->ch2_stride * job->height,
+                            FX1_DMA_FROM_DEVICE);
         ok = fx1_isp_start(&dev, &bufs) == FX1_ISP_OK;
     }
     dev_ready = ok;
@@ -267,8 +344,31 @@ static int run_job(int adaptive)
                      FX1_DMA_FROM_DEVICE);
     fx1_dma_complete((const volatile void*)(uintptr_t)job->uv_addr, job->out_stride * (job->height / 2u),
                      FX1_DMA_FROM_DEVICE);
+    if (outputs & 2u) {
+        fx1_dma_complete((const volatile void*)(uintptr_t)job->ch1_y_addr, job->ch1_stride * job->height,
+                         FX1_DMA_FROM_DEVICE);
+        fx1_dma_complete((const volatile void*)(uintptr_t)job->ch1_uv_addr, job->ch1_stride * (job->height / 2u),
+                         FX1_DMA_FROM_DEVICE);
+    }
+    if (outputs & 4u)
+        fx1_dma_complete((const volatile void*)(uintptr_t)job->ch2_addr, job->ch2_stride * job->height,
+                         FX1_DMA_FROM_DEVICE);
     fx1_isp_progress p;
     fx1_isp_get_progress(&dev, &p);
+    uint32_t prof = 0, w1 = 0, h1 = 0, w2 = 0, h2 = 0;
+    if (dev_ready && mode == ISP_DEMO_MODE_PROFILE)
+        fx1_isp_output_meta(&dev, 0, (job->frames - 1u) % FX1_ISP_NUM_BUFFERS, NULL, NULL, &prof);
+    if (dev_ready && (outputs & 2u)) isp_demo_channel_size(&dev, 1, &w1, &h1);
+    if (dev_ready && (outputs & 4u)) isp_demo_channel_size(&dev, 2, &w2, &h2);
+    res->mode = mode;
+    res->outputs = outputs;
+    res->profile_id = prof;
+    res->tune_error = 0;
+    res->ch1_width = w1;
+    res->ch1_height = h1;
+    res->ch2_width = w2;
+    res->ch2_height = h2;
+    if (mode == ISP_DEMO_MODE_PROFILE && prof != isp_demo_profile_id(job)) ok = 0; /* the profile must be active */
     res->status = ok ? 0u : 1u;
     res->out_width = dev.out_width;
     res->out_height = dev.out_height;
@@ -298,7 +398,15 @@ static int run_job(int adaptive)
     out_hex(job->uv_addr);
     out(", ");
     out_dec(job->frames);
-    out(" frame(s), DMA_ERR ");
+    out(" frame(s), ");
+    out(mode == ISP_DEMO_MODE_PROFILE ? "profile mode (ID " : "legacy mode");
+    if (mode == ISP_DEMO_MODE_PROFILE) {
+        out_dec(prof);
+        out(")");
+    }
+    out(", outputs ");
+    out_hex(outputs);
+    out(", DMA_ERR ");
     out_hex(p.dma_err);
     out_line("");
     return report("isp run", ok && !isr_fatal);
@@ -316,11 +424,18 @@ static void stats(void)
     if (last_stats.aec_ok) {
         out("AEC FRAME_ID ");
         out_dec(aec.frame_id);
-        out(", count R/Gr/Gb/B ");
-        for (int c = 0; c < 4; ++c) {
-            out_dec(aec.count[c]);
-            out(c < 3 ? "/" : "");
-        }
+        /* v1.07: one clip-qualified Bayer aggregate (MAS Table 9-193), no
+         * per-CFA sums; printed without a 64-bit division (no libgcc call). */
+        out(", count ");
+        out_dec((uint32_t)aec.count);
+        out(", sum hi ");
+        out_hex((uint32_t)(aec.sum >> 32));
+        out(" lo ");
+        out_hex((uint32_t)aec.sum);
+        out(", min ");
+        out_dec(aec.min);
+        out(", max ");
+        out_dec(aec.max);
         out_line("");
     }
     if (last_stats.awb_ok) {
@@ -352,7 +467,21 @@ int cmd_isp(int argc, char** argv)
 {
     if (argc == 3 && !strcmp(argv[1], "run") && !strcmp(argv[2], "auto")) {
         if (claim_for("isp run auto")) {
-            run_job(1);
+            run_job(1, 1);
+            isp_release(ISP_OWNER_ISP);
+        }
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "run") && !strcmp(argv[2], "legacy")) {
+        if (claim_for("isp run")) {
+            run_job(0, 1);
+            isp_release(ISP_OWNER_ISP);
+        }
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "selftest") && !strcmp(argv[2], "profile")) {
+        if (claim_for("isp selftest")) {
+            selftest(1);
             isp_release(ISP_OWNER_ISP);
         }
         return 0;
@@ -360,12 +489,12 @@ int cmd_isp(int argc, char** argv)
     if (argc != 2) return 1;
     if (!strcmp(argv[1], "selftest")) {
         if (claim_for("isp selftest")) {
-            selftest();
+            selftest(0);
             isp_release(ISP_OWNER_ISP);
         }
     } else if (!strcmp(argv[1], "run")) {
         if (claim_for("isp run")) {
-            run_job(0);
+            run_job(0, 0);
             isp_release(ISP_OWNER_ISP);
         }
     } else if (!strcmp(argv[1], "stats")) {

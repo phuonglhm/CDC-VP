@@ -33,8 +33,14 @@ void isp_buffers(fx1_isp_buffers* bufs);
  * ahead of it (an ECC write burst takes 100-200 ns, MAS companion read). With
  * 16-beat bursts the CPU needs about 18.5 us for the abort sequence; with 2
  * beats it needs about 12 us while the input read spans 31-37 us. The burst
- * length changes no data and no completion order (DDR3 decision log VPL-49). */
-#define ISP_ABORT_MAX_BURST_BEATS 2u
+ * length changes no data and no completion order (DDR3 decision log VPL-49).
+ * Since CSR v1.07 the driver reads the recovery status, sequence and tuning
+ * error before every reset request (rejected-request detection), which adds
+ * about 20 us between the abort point and the reset write: with 2 beats the
+ * input was fully read about 6 us before the reset landed. With 1 beat the
+ * soft reset of isp_recovery C lands after 3952 of the 6144 input bytes,
+ * about 30 us before the read would end (bus trace, V107-11). */
+#define ISP_ABORT_MAX_BURST_BEATS 1u
 /* Must match raw_sample() in gen_fixture.py exactly. */
 uint32_t isp_raw_sample(uint32_t frame, uint32_t x, uint32_t y);
 /* CPU writes fixture frame `frame` into the input buffer at `base`, then hands

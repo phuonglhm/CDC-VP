@@ -9,8 +9,9 @@
 
 namespace cdc::components::fx1_isp::csr {
 
-// Access types of HAS Table 8-1.
-enum class access : std::uint8_t { rw, ro, w1c, w1s, w1sc };
+// Access types of MAS v1.07 Table 8-178. W1P is a one-clock command that reads
+// zero; W1SC is the soft-reset recovery request (also reads zero).
+enum class access : std::uint8_t { rw, ro, w1c, w1s, w1sc, w1p };
 
 struct field_desc {
    const char *name;
@@ -32,12 +33,13 @@ struct reg_desc {
    std::uint32_t w1c_mask;
    std::uint32_t w1s_mask;
    std::uint32_t w1sc_mask;
+   std::uint32_t w1p_mask;
    const field_desc *fields;
    std::uint8_t num_fields;
    std::uint16_t source_row;
 
    std::uint32_t defined_mask() const {
-      return rw_mask | ro_mask | w1c_mask | w1s_mask | w1sc_mask;
+      return rw_mask | ro_mask | w1c_mask | w1s_mask | w1sc_mask | w1p_mask;
    }
 };
 

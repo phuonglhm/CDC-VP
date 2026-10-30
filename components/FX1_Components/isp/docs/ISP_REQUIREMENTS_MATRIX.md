@@ -28,10 +28,10 @@ Status as of 2026-10-01, after M5. M4 evidence in detail:
 
 | Req | Source | Test | Status |
 |---|---|---|---|
-| 226 registers / 298 fields, offsets, masks and resets match the spreadsheet | CSR XLSX | G (generator self-check + independent cross-check, 1346 values), U `test_table_shape` | PASS |
+| 573 registers / 819 fields (CSR v1.07), offsets, masks and resets match the spreadsheet | CSR XLSM | G (generator self-check + independent cross-check, 4422 values incl. access and msb), U `test_table_shape` | PASS |
 | Reset values, independent hand-copied spot checks (49 registers) | CSR XLSX | U `test_literal_resets` | PASS |
-| RW/RO/W1C/W1S/W1SC behaviour for every register, all-ones and all-zeros writes | HAS Tab. 8-1 | U `test_access_sweep` | PASS (the 8 registers with read hooks or soft-reset side effects are covered by dedicated tests) |
-| Unmapped read 0 / write ignored (all 16 158 unmapped words); reserved bits read 0; RO ignores writes | HAS §8, Tab. 7-10 | U `test_unmapped_and_reserved`, I | PASS |
+| RW/RO/W1C/W1S/W1SC/W1P behaviour for every register, all-ones and all-zeros writes | MAS Table 8-178 | U `test_access_sweep` | PASS (the 14 registers with read hooks or write side effects are covered by dedicated tests) |
+| Unmapped read 0 / write ignored (all 15 811 unmapped words); reserved bits read 0; RO ignores writes | HAS §8, Tab. 7-10 | U `test_unmapped_and_reserved`, I | PASS |
 | Byte strobes, no-strobe write, address bits [1:0] ignored | HAS Tab. 7-10 | U `test_strobes_and_alias`, I `test_identity_and_subword` | PASS |
 | Sub-word TLM accesses, cross-word / burst / out-of-aperture responses | CSR-23 | I `test_identity_and_subword`, `test_decode_errors` | PASS |
 | Hardware set wins over a same-cycle W1C; per-bit W1C | HAS Tab. 7-10 | U `test_w1c_semantics` | PASS |
@@ -54,7 +54,7 @@ Status as of 2026-10-01, after M5. M4 evidence in detail:
 | Req | Source | Test | Status |
 |---|---|---|---|
 | `irq` = OR of both groups after masking; latched when masked; per-bit clear | HAS §9.2 | U `test_irq_aggregation`, I `test_irq_pin` | PASS |
-| Error aggregation into `COMMON_STATUS.error` / `error_irq` for all 9 sources | DEC-15 | U `test_error_aggregation`, I `test_irq_pin` | PASS |
+| Error aggregation into `COMMON_STATUS.error` / `error_irq`: DMA ALIGN/AXI_RD/AXI_WR, LSC_ERROR, EE_STATUS.ERROR, TUNE_ERROR; not flow control or statistics drops | MAS v1.07 Table 9-188 (DEC-15 superseded), review R7 | U `test_error_aggregation`, I `test_irq_pin` | PASS |
 | `stats_ready_irq` from AEC/AWB/AF done | HAS Tab. 9-2 | U `test_stats_ready`, S `test_frame_id_abort_irq` | PASS |
 | IRQ edge count, no glitches | HAS §9.2 | I `test_irq_pin` | PASS |
 | DMA sources: IDMA_START/DONE/UNDERRUN, ODMA_DONE/OVERFLOW, AXI_ERROR; `frame_done_irq` | HAS §6.25.11 | D (all tests) | PASS |
@@ -98,13 +98,13 @@ Status as of 2026-10-01, after M5. M4 evidence in detail:
 | DEC-04 geometry BGGR 2688×1520 → NV12 2686×1518, strides 5376/2688 | HAS Tab. 6-17 | D `test_real_geometry_bggr` | PASS (stub pixels) |
 | Resizer output geometry through the ODMA (1280×720 → 640×360) | HAS §6.20.10 | D `test_resizer_scaling` | PASS (geometry; nearest stub, not the HAS scaler) |
 | 4-buffer rotation, recycle order DONE→FREE, frame order kept | HAS §6.25.10 | D `test_rotation_and_recycle` | PASS |
-| Underrun: level held, rising-edge IRQ, cleared only after the condition drops | HAS §6.25.8.3, CSR-06, DEC-15 | D `test_underrun` | PASS |
+| Underrun: level held, rising-edge DMA IRQ, cleared only after the condition drops; not an aggregate error | HAS §6.25.8.3, CSR-06, Table 9-188 | D `test_underrun` | PASS |
 | Overflow: lossless stall, back-pressure to the IDMA, status held while stalled, IRQ once per episode | DEC-18, MAS Table 161, U5-A5 | D `test_overflow_lossless` | PASS |
 | Frame metadata: tag/timestamp follow the frame across out-of-step rotations; snapshot at frame start; `FREE` cleared at frame start; exact SOF/EOF edges; nothing published for aborted/failed frames; reset retention | MAS §6.25.4.1.0.3 Table 159–160, U5-A2..A4 | D `test_metadata_rotation`, `test_metadata_snapshot_and_points`, `test_metadata_resets`, `test_axi_read_error`, `test_axi_write_error`; DRV `test_metadata_driver` | PASS |
 | `FRAME_COUNTER`: core clocks since `i_rst_n` release, read edge exact, 0 in reset, kept by soft resets, wraps modulo 2^32 with no clock events | MAS Table 160, U5-A1 | U `test_time_base`; D `test_frame_counter`, `test_frame_counter_wrap` | PASS |
 | ISP_EN ordering trap reported as ALIGN + `IRQ_CFG_ERROR`; recovery | DEC-20, MAS Table 161 | D `test_isp_en_trap` | PASS |
-| AXI read error: VALID released, rotation kept, no DONE, output buffer still FREE, re-arm works | DEC-19 | D `test_axi_read_error` | PASS |
-| AXI write error: no DONE, FREE cleared, rotation kept, no further write of that frame, IDMA unaffected | DEC-19 | D `test_axi_write_error` | PASS |
+| AXI read error: automatic DMA-scope recovery, record (cause 1), every VALID/FREE cleared, rotation 0, DMA_ERR kept, re-arm works | V107-D62..D65 (DEC-19 superseded) | D `test_axi_read_error` | PASS |
+| AXI write error: no DONE, recovery record (cause 2), OUTPUT_IRQ ERROR[0], rotation 0, re-arm from buffer 0 | V107-D62..D65 (DEC-19 superseded) | D `test_axi_write_error` | PASS |
 | 64-bit address registers on a 40-bit port | M2-A3 | R `test_port_address`, D `test_address_width` | PASS |
 | IDMA_EN cleared mid-frame takes effect at the frame boundary | M2-A2 | D `test_idma_disable_at_frame_boundary` | PASS |
 | ODMA armed then disabled: no new frame starts, no overflow report, frame kept and completed on re-enable | M2-A2, M2-A6, review M2-R1 | D `test_odma_disabled_after_arm` | PASS |
@@ -148,6 +148,10 @@ Python reference, run at unit level (V) and through the whole IP (E).
 | Between-frame CSR writes (vector format `frames.csrw`) | — | V/E | PASS |
 
 ## G-STATS — AEC / AWB / AF (M3)
+
+> Superseded in part by V107-6 (section "CSR v1.07 — statistics" below): the AEC rows on
+> channel classes, the last zone absorbing the remainder, the in-place memory (DEC-30) and the
+> driver's untrusted-zone tracking describe the 07/10 contract. The AWB bank rows still hold.
 
 | Req | Source | Test | Status |
 |---|---|---|---|
@@ -200,7 +204,7 @@ equivalent:
 | 100+ frames, fixed seed, every completed frame compared; configuration changes between bursts; all five geometries and four Bayer orders | DEC-36 | C (53 bursts, 102 frames) | PASS |
 | Rotation through 4 buffers, recycle, frame order, no loss or duplication outside the defined error behaviour | HAS §6.25.10, DEC-18/19 | C (outputs, counters, rotation after each burst) | PASS |
 | Soft reset mid-frame (COMMON and DMA), AXI read/write errors, underrun, overflow, each followed by recovery | DEC-14, DEC-18/19, CSR-06 | C (27 bursts with events) | PASS |
-| Aborted frames' SOF effects and failed outputs' EOF effects carried into later frames | ALG-STAT-09, DEC-19 | C (reference models both), mutation check | PASS |
+| Aborted frames' SOF effects carried into later frames (an aborted frame has no EOF effects) | ALG-STAT-09, V107-D70 | C (reference models it), mutation check | PASS |
 | No deadlock | Plan §10 | C (every wait has a timeout) | PASS |
 | Counter wrap: FRAME_ID, `IDMA/ODMA_FRAME_COUNT` | Plan §10 | C (fixture M4-A1) | PASS |
 
@@ -244,6 +248,150 @@ equivalent:
 | UB / container checks of the above | — | UBSan trap + `_GLIBCXX_ASSERTIONS`: driver, DMA, G-CONT tests | PASS |
 | CPU integration ABI (memory map, IRQ, barriers, cache) | Audit item 4 | — | Deferred: CPU not chosen (DEC-08) |
 | Image quality against tuned camera output | Audit item 5 | — | Deferred: needs owner tuning / paired data (DEC-05) |
+
+## CSR v1.07 — ABI and register engine (V107-1)
+
+| Requirement | Source | Test | Status |
+|---|---|---|---|
+| Generated ABI equals the v1.07 map (573 registers, 819 fields, access, msb, reset) | CSR v1.07 | `csr.header_crosscheck`, `unit.control` counts and access sweep | PASS |
+| W1P: one-clock command, reads 0, not stored, repeatable, strobe-qualified; all 19 fields | MAS Table 8-178/8-180 | `unit.register_engine` | PASS |
+| W1S software set wins over a hardware clear on the same edge (Q = 0/1, either order) | MAS Table 8-180 | `unit.register_engine` | PASS |
+| Consumers sample requests as registered: VALID/FREE/commit set on edge c taken from c + 1; a re-assert on the take edge is a new request | MAS Table 8-180; V107-A6 | `unit.register_engine`, `integration.dma_tlm` (next-edge and re-assert tests), `driver_tlm` fault campaign | PASS |
+| W1C hardware set wins over software and hardware clear; Table 8-180 worked examples (W1C, RW strobes) | MAS Table 8-180 | `unit.register_engine` | PASS |
+| W1P dropped in a soft-reset window, RW kept | V107-D4 | `unit.register_engine` | PASS |
+| Pre-write filter, bus-read actions not run by debug reads | V107-D5 | `unit.register_engine` | PASS |
+| Reserved custom-size words and buffer bits 7:4 read 0, ignore writes | CSR v1.07; CSR107-BUFCOUNT | `unit.register_engine` | PASS |
+| Discovery: VER_ID/DATE, TUNE_ID/REV constants, TUNE_CAPS implemented subset | MAS §8.2; V107-A1, V107-D3 | `unit.register_engine`, `integration.csr_tlm` | PASS |
+| Resizer 5-bit scale: no out-of-range table read, no alias; codes 15..31 FullRes until V107-7 | CSR v1.07; V107-A7 | `unit.control`, `unit.pipeline_vectors` (`resizer_plans.txt`) | PASS |
+| Every new register classified with its milestone | Plan V107-1 | `reference.traceability_up_to_date` | PASS (316 deferred) |
+
+## CSR v1.07 — RAW and ingress (V107-2)
+
+| Requirement | Source | Test | Status |
+|---|---|---|---|
+| RAW10 right-aligned → RAW12 `<< 2` exactly once; RAW12 unchanged; same scene gives same output and statistics | MAS v1.07 §6.6.3.2, Table 6-18 | `unit.pipeline_vectors` (`input_raw10/raw12_*`), `integration.dma_tlm` `test_input_depth`, `tools.input_depth` | PASS |
+| Double shift (normalized data declared RAW10) is detectable | Plan V107-2 gate | `dma_tlm` `test_input_depth`, `tools.input_depth`, driver `fx1_isp_raw_upper_bits` | PASS |
+| DEPTH 2/3 refuse the input buffer | Table 8-184; V107-A10 | `dma_tlm` alignment cases, `unit.dma_rules` | PASS |
+| External geometry ≤ 3842 × 2162 (DMA check); active `((W−SH)&~1, (H−SV)&~1)` 32..3840 × 32..2160 (software check), four CFA | §6.6.3.4–6.6.3.5, Table 6-20, Table 6-153; V107-A9 | `unit.dma_rules` `test_active_extent`, `dma_tlm` alignment cases, driver `run_error_cases` | PASS |
+| Refused input buffer: not read, VALID cleared, rotation kept | §6.25.3.4; V107-D6 | `dma_tlm` `test_idma_reject_keeps_rotation` | PASS |
+| `FRAME_START` compatibility no-op | CSR v1.07; V107-D7 | `unit.control` | PASS |
+| Ingress sequence from 1, wrap32, kept by soft resets and mode changes, restarted only by `i_rst_n` | §9.9.8–9.9.9, Table 9-192 | `unit.control` `test_ingress_sequence` | PASS |
+| IDLE-update rejection of geometry/depth writes; hold without an active profile | §9.7, Table 8-184 | see V107-3 | PASS (V107-3) |
+
+## CSR v1.07 — profile controller (V107-3)
+
+| Requirement | Source | Test | Status |
+|---|---|---|---|
+| Two banks; selected-bank readback even when sealed; LOCKED writes have no effect; extension controls are storage in legacy mode | §9.7, Table 9-194/9-195 | `unit.profile` | PASS |
+| INIT copies legacy scalars + extension defaults; SEAL validates without activating; UNSEAL refused while active/pending/referenced | §9.7, §9.9.4 | `unit.profile` | PASS |
+| One command per TUNE_CMD write; EXACT only with APPLY; legacy mode MODE only | §9.9.7 | `unit.profile` | PASS |
+| APPLY error priority; EXACT d = 0 / < 2^31 / = 2^31 / > 2^31; initial profile NEXT or EXACT = NEXT_FRAME only; APPLY of the active bank INVALID | §9.9.7 | `unit.profile` | PASS |
+| Pending eligible next edge; NEXT drains the old epoch; EXACT future admits older sequences first; CANCEL loses on the admission edge; wrap32 | §9.7, §9.9.7 | `unit.profile` | PASS |
+| Ingress held with no active profile and with no output enabled; four context credits | §9.7, §9.9.7 | `unit.profile`, `dma_tlm` `test_profile_admission` | PASS |
+| References retire once; status bits; ACTIVE_ID/ACTIVE_FRAME; DMA recovery keeps the active profile and cancels pending without MISSED; common reset clears active/seals/errors; hard reset the bank scalars | §9.7 | `unit.profile`, `dma_tlm` | PASS |
+| IDLE class and same-value no-op; input domain locked in profile mode; TUNE_MODE needs idle and no lease | §9.9.3, §9.9.6 | `unit.profile`, `dma_tlm`, G-CONT harness | PASS (RESIZER_CTRL/crops: V107-7) |
+| SEAL rules of Table 9-196 | §9.9.4 | `unit.profile` `test_seal_validation` | PASS (payload rules V107-4, AE rules V107-6) |
+| Per-frame token to every consumer | §9.7 | by construction (single SOF capture + drain barrier, V107-D11) | PASS (VP) |
+
+## CSR v1.07 — tables and residents (V107-4)
+
+| Requirement | Source | Test | Status |
+|---|---|---|---|
+| Gamma two banks, write flags, unwritten reads zero, legacy/profile confirmation, pass-through until confirmed, LUT_LOADED = bank 0, reset matrix | §6.14.4 | `unit.control` `test_table_confirmation`, `unit.profile` `test_profile_tables` | PASS |
+| GTM manual bank per profile, both byte lanes, complete curve only, readback rules, separate from the automatic curve | §6.16.4.2-6.16.4.3 | `unit.control`, `unit.profile`, G-CONT | PASS |
+| EE residents: 192 flags, confirmation rules, invalidation by writes and input domain, selected-resident readback/merge, code 3 → resident 0, status bits, pins | §9.9.1 | `unit.control`, `unit.ee_profiles`, `unit.profile` | PASS |
+| NR/BPC/LSC-sector bank payloads and TUNE_TABLE_CMD checks (count, order, bounds, intervals), combined bits, LOCKED, COUNT clears | §9.9.5, Table 9-197 | `unit.profile` | PASS (datapath V107-5) |
+| SEAL payload readiness and resident pins | Table 9-196, §9.9.1 | `unit.profile` | PASS |
+| LSC mesh 2..32 | §6.8.4 | `unit.control`, `driver_tlm` | PASS (owner A13) |
+| Driver loaders verify and confirm, with explicit status | Plan V107-4 gate | `driver_tlm` | PASS |
+
+## CSR v1.07 — kernel parameters (V107-5)
+
+| Requirement | Source | Test | Status |
+|---|---|---|---|
+| CSC range by Table 6-92 (full range by reset, legacy too), look matrix, R(n, d) rounding | §6.15.3.3 | `unit.kernels` (MAS-derived endpoints, ties, saturation), `unit.pipeline_vectors` (`tune_*csc*`, every legacy vector), RAW | PASS |
+| GTM KEY/LWHITE/MANUAL captured at SOF | §6.16.4.1, §6.16.4.3 | `unit.control` `test_gtm_capture_at_sof` | PASS |
+| WB Gb gain, demosaic margins, CNF blend | §6.10.3.6, §6.12.3.7, §6.19.3.6 | `unit.kernels` (Gr ≠ Gb, blend 0/64/256), `unit.pipeline_vectors` | PASS |
+| BPC colour thresholds and factory list | §6.9.3.6 | `unit.pipeline_vectors` (`tune_bpc_lsc_sectors`) | PASS |
+| LSC programmed sectors | §6.8.3.9; V107-A18 | `unit.pipeline_vectors` (`tune_bpc_lsc_sectors`, uniform-equivalent pair) | PASS |
+| 2DNR modes, seed, scale, limits, band scales, MEDIAN_EN, blend | §6.17.3.10; V107-A19..A21 | `unit.kernels` `test_nr_models`, `unit.profile` `test_history_per_epoch`, `unit.pipeline_vectors` (`tune_nr_*`), `unit.block_vectors` | PASS (epoch change under TLM stalls: not tested, see report V107-5) |
+| Legacy mode ignores extension values | Table 9-195 | `unit.pipeline_vectors` (`tune_ignored_in_legacy`) | PASS |
+
+## CSR v1.07 — statistics (V107-6)
+
+| Req | Source | Test | Status |
+|---|---|---|---|
+| AEC: RAW12 Bayer at the post-BPC or post-DG tap (`TUNE_AEC_SOURCE`, live in legacy and in the COMMIT set); clip-qualified sum/count; strict OE/UE, min/max and 64-bin histogram over every sample | §6.21; V107-D31/D32 | `unit.stats` `test_aec_numeric`, `test_aec_commit`; `unit.pipeline_vectors` (`stats_*`); `e2e_tlm` | PASS |
+| AEC legality: (NX−1)·ZW < W ≤ NX·ZW (and H), MIN ≤ MAX, UE < OE, histogram ROI/steps; an illegal set is skipped and counted | §6.21.4 | `unit.stats`; vectors `stats_illegal_grids_64x32`, `stats_reset_grids_af_edges_130x90`, edge vectors | PASS |
+| Weighted histogram: ROI lattice, steps, 5×5 weights | §6.21.3.4; V107-D33 | `unit.stats` `test_aec_weighted` | PASS |
+| AWB: post-BPC 2×2 cells, strict limits, G half-up, cell-raster zones, legality; ROI, R/G/B limits, MIN_G, ellipse union and quadratic form (A, C unsigned; B signed) | §6.22; V107-D34 | `unit.stats` `test_awb_cells` (incl. limits, quadratic form, indexed E5); vectors | PASS |
+| AF: Sobel − NOISE floored; uniform 4×4 ceil cut; 16 rectangles with mask; focus/luma/count, 64-bit saturating | §6.23; V107-D35 | `unit.stats` `test_af` (incl. W15 by index); vectors | PASS |
+| AE/AF result banks: states, ACQUIRE/RELEASE (combined, errors), edge eligibility, INDEX/DATA_LO/HI snapshot, reserved index, NO_LEASE, DROPS W1C, MODE with a lease, reset scopes | §9.8, Table 9-193, Table 9-198; V107-D36 | `unit.stats` `test_aec_lease`, `test_readout_widths`, `test_resets`, `test_frame_id_abort_irq`; `driver_tlm` | PASS |
+| `LEASE_VALID` one edge after ACQUIRE; driver waits one clock | V107-D37 | `driver_tlm_fast_csr` | PASS |
+| No partial result visible during a frame; nothing READY or leased mid-frame | §9.8 | `e2e_tlm` mid-frame probe | PASS |
+| SEAL: AEC relations; ellipse A, C unsigned (A = 2.0 legal) | Table 9-196; V107-D38 | `unit.profile` `test_seal_validation` | PASS |
+| SEAL: EE radial of the selected resident; AWB ROI in cells, AF/histogram in pixels | Table 9-196; V107-D41/D42 | `unit.profile` `test_seal_ee_radial`, `test_seal_rect_domains` | PASS |
+| BPC COUNT write clears BPC_CONFIRM (also unchanged), LOCKED on a protected bank | §9.9.5; V107-D43 | `unit.profile` `test_profile_tables`, `test_bpc_count_locked` | PASS |
+| EE active_valid cleared by invalidation of the active resident and by reset | §9.9.1; V107-D44 | `unit.profile` `test_ee_active_valid` | PASS |
+| Bus-read errors on the read's edge (same-edge W1C loses) | Table 8-180; V107-D45 | `unit.stats` `test_read_error_edges` | PASS |
+| Profile mode takes the AEC set from the active bank | V107-D39 | `unit.stats` `test_aec_weighted`, `test_aec_lease` | PASS |
+| `TUNE_CAPS` = `0x0030FFFF` | V107-A1, V107-D40 | `unit.register_engine` `test_discovery` | PASS |
+| Driver: AE/AF lease API, compatibility readers drain and keep the newest; DMA reset keeps leases | §9.8 | `driver_tlm` (`check_aec`, `check_af`, `test_dma_reset_stats`, `test_stats_after_abort`) | PASS |
+| Firmware callers of the removed `fx1_isp_read_aec_zones` and per-CFA structures; FW fixture statistics | — | V107-10 (`output/v107_migration_todo.md`) | OPEN |
+
+## CSR v1.07 — output geometry (V107-7)
+
+| Req | Source | Test | Status |
+|---|---|---|---|
+| Per-channel geometry key, validation priority codes 1..6, BUSY/VALID/ERROR, ACTIVE_CROP, OUT_W/H reset zero and last-valid readback | §6.20.4.3, §8.3; V107-D46, A27/A28 | `unit.control` `test_channel_geometry`, `test_resizer_*`; `unit.pipeline_vectors` (geometry table, 9504 sets) | PASS |
+| 21 presets, reserved 15/22..31, CH2 code set, no FullRes fallback, channel limits | Table 6-122, Table 6-115; V107-D47 | as above | PASS |
+| Decimation vertical then horizontal per stage (audit R1) | §6.20.3.6; V107-D48 | `unit.pipeline_vectors` (k = 1 vectors, 4K FHD), RAW, mutant M1 | PASS |
+| Post-IQ YUV444 crop per channel | §6.20.1.1; V107-D49 | `unit.pipeline_vectors` (crop vectors), `e2e_tlm` | PASS |
+| CH2 RGB888 inverse CSC (601/709 × full/limited), bytes R, G, B | Table 6-89, §6.24.7; V107-D50 | `unit.kernels` `test_rgb888`, `unit.pipeline_vectors` (`ch2_rgb_*`) | PASS (kernel level; CH2 DMA in V107-8) |
+| IDLE class for Resizer and crop words | §9.9.3; V107-D51 | `unit.control`, `dma_tlm` `test_resizer_switch`, `cont_tlm` | PASS |
+| Admission needs VALID geometry for enabled channels; below 32 × 32 never admitted | §8.3; V107-D52 | `unit.control`, `e2e_tlm`, `driver_tlm` | PASS |
+| Frame retirement waits for the pipeline with a crop | §9.7; V107-D53 | `e2e_tlm` crop vectors, mutant M4 | PASS |
+| Driver channel geometry API; start refuses an invalid CH0 | V107-D54 | `driver_tlm` | PASS |
+| CH1/CH2 streams to memory, TUNE_CAPS CHANNEL_CROP / CSC_WIDE_RANGE | §6.25 | V107-8 (below) | PASS |
+
+## CSR v1.07 — three outputs and ODMA (V107-8)
+
+| Req | Source | Test | Status |
+|---|---|---|---|
+| CH0-only, CH1-only, CH2-only, every pair, all three: DONE, counts, bytes, untouched disabled outputs | §9.5.1, §6.25.3.8; V107-D55/D57 | `integration.outputs_tlm` `test_masks`; `e2e_tlm` (CH1/CH2 vectors in memory) | PASS |
+| One channel without a buffer stalls all, nothing lost, completes after free | §9.5.1, §6.25.3.9 | `outputs_tlm` `test_backpressure` | PASS |
+| Different rotations, one ingress frame ID; per-channel metadata | Table 6-159, §9.9.9; V107-D58 | `outputs_tlm` `test_rotations`, `test_metadata` | PASS |
+| Output IRQ group, masked events latch, per-bit W1C, o_irq | Table 9-188; V107-D59 | `outputs_tlm` `test_output_irq` | PASS |
+| Claim-time Table 6-153 check (CH2 3W), rejected buffer, frame waits | §6.25.3.4, §6.25.3.8; V107-D56 | `outputs_tlm` `test_ch2_stride`, `dma_tlm` | PASS |
+| FRAME_DONE at retirement at every output | V107-D57 | `outputs_tlm`, `e2e_tlm` | PASS |
+| Driver channel-buffer API | V107-A34 → V107-D72 | `driver_tlm` `test_v107_api` | PASS |
+
+## CSR v1.07 — observable recovery (V107-9)
+
+| Req | Source | Test | Status |
+|---|---|---|---|
+| Request, abort set capture, SEQUENCE, BUSY/PHASE/SCOPE, ERROR_IRQ, admission blocked | §9.9.8; V107-D62 | U `test_control_unit` `test_recovery` | PASS |
+| Drain until issued responses, pulse, final retirement (VALID/FREE cleared, records + DONE, ERROR[c], FRAME_DONE) | §9.9.8, Table 9-188; V107-D63/D64 | U `test_recovery`; D `dma_tlm` error tests; I `driver_tlm` (slow-memory drain) | PASS |
+| DMA scope keeps DMA_ERR, DMA_IRQ_STAT, DONE and metadata; common scope clears them | §9.9.8; V107-D65 | D `test_metadata_resets`, `test_soft_reset_mid_frame` | PASS |
+| Request while BUSY: PENDING; AXI error joins | §9.9.8; V107-D66 | U `test_recovery` | PASS |
+| Records survive soft reset, cleared by i_rst_n | §9.9.8; V107-D67 | U `test_recovery` | PASS |
+| Driver: settle on SEQUENCE, DONE prefix kept, losses reported, EAGAIN on restarted rotation, report API | V107-D68 | I `driver_tlm` (error cases, `test_immediate_loss`, 48-run fault campaign) | PASS |
+| `TUNE_CAPS` full contract `0x003FFFFF` | V107-D69 | U `test_register_engine` | PASS |
+| G-CONT AXI-error bursts with the recovery semantics | V107-D70 | I `cont_tlm` | PASS |
+| Cause 5 (malformed framing) | V107-A36 | not reachable in the memory-to-memory build | N/A |
+
+## CSR v1.07 — driver, tools and firmware (V107-10)
+
+| Req | Source | Test | Status |
+|---|---|---|---|
+| Discovery (ID, REV, CAPS) and capability check | §9.9.10; V107-D71 | I `driver_tlm` `test_v107_api` | PASS |
+| CH1/CH2 buffers through the driver, completion on every channel, partial DONE cleared after a recovery | §6.25.3.8; V107-D72 | I `driver_tlm` `test_v107_api`, CH1/CH2 vectors | PASS |
+| Profile transaction API with TUNE_ERROR reporting | §9.7-9.9; V107-D73 | I `driver_tlm` `test_v107_api` | PASS |
+| Per-frame statistics readout in run_raw and the reference | V107-D75 | RAW regression | PASS (attributed) |
+| `gtm_manual_qhd` legal grid | V107-D76 | RAW regression | PASS |
+| Firmware compiles against the v1.07 driver | V107-D77 | `output/v107_10/fw_compile.sh` (28 units) | PASS (compile only) |
+| Firmware runs on the platform | V107-D77 | platform CI | V107-11 |
+| Camera tests at a v1.07-legal frame size | V107-A43 | — | OPEN |
 
 ## Later gates
 

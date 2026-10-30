@@ -14,7 +14,8 @@ Writes isp_fixture.h next to this script:
     order through the reference so temporal state carries over;
   * a third profile, stats = basic + AEC (4x3 zones of 16x16), AWB (one zone
     over the frame) and AF, with the publication every frame must produce: AEC/AWB/AF
-    FRAME_ID and RESULT_CONTEXT_ID, AEC global sums and counts per channel.
+    FRAME_ID and RESULT_CONTEXT_ID, the AEC global Bayer sum and count (MAS v1.07
+    Table 9-193: one aggregate, no per-CFA sums), all read under a lease;
     Statistics do not change the image, so its NV12 CRCs equal basic's.
   * the AWB ownership script (CSR/MAS 07/10, MAS §6.22.4): the stats profile
     run one frame at a time with REPORT / ACQUIRE / RELEASE / CLEAR_REPORT
@@ -23,7 +24,7 @@ Writes isp_fixture.h next to this script:
   * a resize case (MAS §6.20.4): 648x368 RGGB (raw_sample_rz), its own basic
     profile, and the CRCs of three frames: scaled to 640x360 from the first
     frame, then pass-through, then 640x360 again (mode switched between
-    frames while streaming).
+    frames; v1.07: with the stream stopped, RESIZER_CTRL is IDLE class).
 
 The RAW frames are not stored: raw_sample() below is an integer formula that
 the firmware evaluates identically (isp_stream/main.c, raw_sample()).
@@ -167,18 +168,26 @@ def run(profile, raws, stats=None):
         assert y.shape == (HEIGHT, WIDTH) and uv.shape == (HEIGHT // 2, WIDTH), (y.shape, uv.shape)
         crcs.append(zlib.crc32(y.astype(np.uint8).tobytes() + uv.astype(np.uint8).tobytes()) & 0xFFFFFFFF)
         if stats is not None:
-            st, ro = regs.stats, regs.stats.ro
-            # AWB results are read under a lease, frame by frame, as the
-            # firmware's driver does (MAS §6.22.4).
+            st = regs.stats
+            # Every engine's result is read under a lease, frame by frame, as
+            # the firmware's driver does (MAS v1.07 §9.8, §6.22.4): acquire,
+            # read, release. AEC globals through the wide indexed port (index
+            # 0 sum, 1 count).
+            def wide(index):
+                regs.write("TUNE_AEC_INDEX", index)
+                return (st.read(regs, "TUNE_AEC_DATA_HI") << 32) | st.read(regs, "TUNE_AEC_DATA_LO")
+            regs.write("TUNE_AEC_CMD", 1)
+            aec = (st.read(regs, "AEC_FRAME_ID"), st.read(regs, "AEC_RESULT_CONTEXT_ID"), wide(0), wide(1))
+            regs.write("TUNE_AEC_CMD", 2)
             regs.write("AWB_RESULT_CTRL", 1)
             awb_fid, awb_ctx = st.read(regs, "AWB_FRAME_ID"), st.read(regs, "AWB_RESULT_CONTEXT_ID")
             regs.write("AWB_RESULT_CTRL", 2)
+            regs.write("TUNE_AF_CMD", 1)
+            af_fid, af_ctx = st.read(regs, "AF_FRAME_ID"), st.read(regs, "AF_RESULT_CONTEXT_ID")
+            regs.write("TUNE_AF_CMD", 2)
             stats.append({
-                "aec_frame_id": ro["AEC_FRAME_ID"], "aec_ctx": ro["AEC_RESULT_CONTEXT_ID"],
-                "aec_sum": [v & ((1 << 33) - 1) for v in st.aec["gsum"]],
-                "aec_count": [v & 0x1FFFFF for v in st.aec["gcnt"]],
-                "awb_frame_id": awb_fid, "awb_ctx": awb_ctx,
-                "af_frame_id": ro["AF_FRAME_ID"], "af_ctx": ro["AF_RESULT_CONTEXT_ID"]})
+                "aec_frame_id": aec[0], "aec_ctx": aec[1], "aec_sum": aec[2], "aec_count": aec[3],
+                "awb_frame_id": awb_fid, "awb_ctx": awb_ctx, "af_frame_id": af_fid, "af_ctx": af_ctx})
     return crcs
 
 
@@ -244,15 +253,12 @@ def render():
     def publications(name, values):
         rows = []
         for p in values:
-            rows.append("    {%du, 0x%Xu, {%s}, {%s}, %du, 0x%Xu, %du, 0x%Xu}" % (
-                p["aec_frame_id"], p["aec_ctx"],
-                ", ".join("0x%XULL" % v for v in p["aec_sum"]),
-                ", ".join("%du" % v for v in p["aec_count"]),
+            rows.append("    {%du, 0x%Xu, 0x%XULL, %dULL, %du, 0x%Xu, %du, 0x%Xu}" % (
+                p["aec_frame_id"], p["aec_ctx"], p["aec_sum"], p["aec_count"],
                 p["awb_frame_id"], p["awb_ctx"], p["af_frame_id"], p["af_ctx"]))
         return ("typedef struct isp_fx_publication {\n"
                 "    uint32_t aec_frame_id, aec_ctx;\n"
-                "    uint64_t aec_sum[4];   /* R, Gr, Gb, B */\n"
-                "    uint32_t aec_count[4];\n"
+                "    uint64_t aec_sum, aec_count;   /* clip-qualified Bayer aggregate (MAS v1.07 Table 9-193) */\n"
                 "    uint32_t awb_frame_id, awb_ctx, af_frame_id, af_ctx;\n"
                 "} isp_fx_publication;\n"
                 "static const isp_fx_publication %s[ISP_FX_FRAMES] ISP_FX_UNUSED = {\n%s\n};\n" % (name, ",\n".join(rows)))

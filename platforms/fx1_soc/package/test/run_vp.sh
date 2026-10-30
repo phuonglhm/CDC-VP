@@ -151,7 +151,7 @@ case "${mode}" in
         exit ${overall}
         ;;
     camera-cli)
-        # The FreeRTOS CLI with the camera: probe, 64x16 RAW12 and RAW10 captures
+        # The FreeRTOS CLI with the camera: probe, 64x32 RAW12 and RAW10 captures
         # checked against the golden, status, stop (cli_camera.txt).
         "${vp}" --fw "${build}/freertos_cli.elf" --camera --timeout-ms 3000 --uart0-rx-file "${here}/cli_camera.txt" \
             --uart0-rx-delay-us 60000 --uart0-rx-byte-us 87

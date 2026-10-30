@@ -10,13 +10,15 @@ through the 4-buffer rotation, optionally with one event:
   soft_reset_common/_dma    soft reset in the middle of the first frame (MAS Table 183):
                             that frame had its SOF only; rotation returns to 0
                             and software resubmits the whole burst
-  idma_axi_error            read error in the middle of the first frame (DEC-19):
-                            SOF only; software re-arms the same input buffer
-  odma_axi_error            write error in the first frame's output (DEC-19): the
-                            pipeline completed it (EOF effects happen) but it is
-                            not DONE; the next frames stall on the output buffer
-                            until software frees it again; the frame is
-                            resubmitted at the end of the burst
+  idma_axi_error            read error in the middle of the first frame's input
+  odma_axi_error            write error in the middle of the first frame's output:
+                            both start the automatic DMA-scope recovery (MAS v1.07
+                            §9.9.8, DEC-19 superseded). The first frame had its
+                            SOF only (the 2-line DMA FIFO keeps the IDMA inside
+                            it, so the pipeline never reaches its EOF); the later
+                            frames were not admitted. Ownership is cleared, the
+                            rotation returns to 0 and software resubmits the
+                            whole burst, as for soft_reset_dma
   counter_wrap (before a burst) FRAME_ID counter and frame counters near 2^32
 
 The reference processes the frames in the order the pipeline sees them,
@@ -38,7 +40,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "reference"))
-from fx1_isp_ref import blocks, regs as regs_mod  # noqa: E402
+from fx1_isp_ref import blocks, geometry, regs as regs_mod  # noqa: E402
 from fx1_isp_ref.stats import readout_script  # noqa: E402
 
 OUT = os.path.join(HERE, "..", "tests", "data", "sequences", "cont_100")
@@ -48,6 +50,10 @@ M32 = 0xFFFFFFFF
 # (width, height, Bayer code); the last one exercises the Resizer (VGA).
 GEOMETRIES = [(64, 48, 0), (66, 34, 3), (96, 64, 1), (130, 74, 2)]
 RESIZE_GEOMETRY = (644, 484, 0)
+
+
+GAMMA_CONFIRM = 1 << 8   # GAMMA_CTRL.LUT_LOAD_CONFIRM (W1P, MAS v1.07 §6.14.4)
+EE_CONFIRM = 1 << 8      # EE_LUT_CTRL.PROFILE_LOAD_CONFIRM (W1P, MAS v1.07 §9.9.1)
 
 
 def gamma_lut(preset):
@@ -83,6 +89,7 @@ class Generator:
         self.idma_count = self.odma_count = 0
         self.submitted = 0
         self.geom = GEOMETRIES[0]
+        self.ee_loaded = False
         self.lsc_active = 0
         self.lsc_nodes = None
 
@@ -100,11 +107,32 @@ class Generator:
 
     # -- configuration deltas (pipeline idle) --------------------------------
     def set_geometry(self, g):
+        if self.geom == RESIZE_GEOMETRY and g != RESIZE_GEOMETRY:
+            self.write("RESIZER_CTRL", 0x4)          # VGA does not fit the small frames (no fallback)
         self.geom = g
         w, h, b = g
+        changed = (self.regs.value["COMMON_FRAME_WIDTH"], self.regs.value["COMMON_FRAME_HEIGHT"],
+                   self.regs.value["COMMON_BAYER"]) != (w, h, b)
         self.write("COMMON_FRAME_WIDTH", w)
         self.write("COMMON_FRAME_HEIGHT", h)
         self.write("COMMON_BAYER", b)
+        if changed and self.ee_loaded:
+            self.ee_reload()   # an input-domain change clears every EE resident (MAS v1.07 §9.9.1)
+
+    def ee_reload(self):
+        """Unity tables into every resident, each confirmed with EE disabled
+        (MAS v1.07 §9.9.1, legacy mode); EE_CTRL is restored afterwards."""
+        ctrl = self.regs.value["EE_CTRL"]
+        for p in range(3):                           # every resident profile (MAS §6.18.4.1)
+            self.write("EE_CTRL", p << 4)
+            for bank, n in ((0, 64), (1, 64), (2, 32), (3, 32)):
+                self.write("EE_LUT_CTRL", bank << 1)
+                self.write("EE_LUT_ADDR", 0)
+                for _ in range(n):
+                    self.write("EE_LUT_WDATA", 0x8000)
+            self.write("EE_LUT_CTRL", EE_CONFIRM)
+        self.write("EE_CTRL", ctrl)
+        self.ee_loaded = True
 
     def lsc_load(self):
         nx, ny = self.ri(2, 6), self.ri(2, 5)
@@ -149,9 +177,11 @@ class Generator:
             if r(0, 3) == 0:
                 self.write("GAMMA_CTRL", 0)
             else:
+                self.write("GAMMA_CTRL", 0)              # v1.07: load and confirm disabled
                 self.write("GAMMA_LUT_ADDR", 0)
                 for v in gamma_lut(r(0, 3)):
                     self.write("GAMMA_LUT_DATA", v)
+                self.write("GAMMA_CTRL", GAMMA_CONFIRM)
                 self.write("GAMMA_CTRL", 1)
         elif kind == "csc":
             self.write("CSC_CTRL", r(0, 1))
@@ -176,10 +206,13 @@ class Generator:
             # Program one of the three profiles; select any code (3 = profile 0).
             wr, sel = int(self.rng_ee.integers(0, 3)), int(self.rng_ee.integers(0, 4))
             ctrl = self.regs.value["EE_CTRL"]
-            self.write("EE_CTRL", (ctrl & ~0x30) | (wr << 4))
+            # v1.07 legacy mode: a scalar write clears its resident's confirmation,
+            # which is given again with EE disabled (MAS §9.9.1).
+            self.write("EE_CTRL", (ctrl & ~0x31) | (wr << 4))
             self.write("EE_ALPHA", r(0, 0xFFFF))
             self.write("EE_BETA", r(0, 0xFFFF))
             self.write("EE_CLAMP", (r(0, 255) << 8) | r(0, 255))
+            self.write("EE_LUT_CTRL", EE_CONFIRM)
             self.write("EE_CTRL", r(0, 1) | (sel << 2) | (wr << 4))
         elif kind == "cnf":
             self.write("CNF_CHROMA_TH", r(0, 60))
@@ -215,7 +248,11 @@ class Generator:
         elif kind == "geometry":
             self.set_geometry(GEOMETRIES[r(0, len(GEOMETRIES) - 1)])
         elif kind == "resizer":
-            self.write("RESIZER_CTRL", r(0, 1) | 0x4 | (r(0, 15) << 3))
+            # Only legal setups (MAS v1.07 §6.20.4.2: no silent FullRes fallback):
+            # the small sequence frames fit no preset, so the scaler is either
+            # disabled (any code, ignored) or enabled with FullRes.
+            en = r(0, 1)
+            self.write("RESIZER_CTRL", en | 0x4 | ((0 if en else r(0, 31)) << 3))
 
     # -- frames ---------------------------------------------------------------
     def new_input(self):
@@ -234,6 +271,8 @@ class Generator:
         self.lines.append("expect %s %d %d" % (name, y.shape[1], y.shape[0]))
 
     def burst(self, n, event):
+        g = geometry.channel(self.regs, 0)       # the VP admits a frame only with a valid CH0 set
+        assert g["error"] == geometry.OK, ("illegal CH0 geometry before a burst", self.geom, g)
         inputs = [self.new_input() for _ in range(n)]
         w, h, _ = self.geom
         self.lines.append("burst %d %s %d %d" % (n, event, w, h))
@@ -248,18 +287,10 @@ class Generator:
             self.regs.soft_reset("dma" if event == "soft_reset_dma" else "common")
             for raw in raws:                         # resubmitted from rotation slot 0
                 self.done(raw)
-        elif event == "idma_axi_error":
-            blocks.frame_sof(self.regs)
-            blocks.frame_abort(self.regs)            # discarded end to end
-            for raw in raws:                         # the same buffer re-armed, then the rest
-                self.done(raw)
-        elif event == "odma_axi_error":
-            st = {}
-            blocks.frame_sof(self.regs)
-            blocks.run(raws[0], self.regs, st)
-            blocks.frame_eof(self.regs, st)          # completed by the pipeline, not DONE
-            self.idma_count = (self.idma_count + 1) & M32
-            for raw in raws[1:] + raws[:1]:          # the rest, then the resubmitted frame
+        elif event in ("idma_axi_error", "odma_axi_error"):
+            blocks.frame_sof(self.regs)              # the abort set: the first frame only
+            self.regs.soft_reset("dma")              # automatic DMA-scope recovery
+            for raw in raws:                         # resubmitted from rotation slot 0
                 self.done(raw)
         else:
             for raw in raws:
@@ -273,14 +304,8 @@ class Generator:
         self.set_geometry(GEOMETRIES[0])
         # EE tables at unity, loaded once (no random draw): the tables are
         # undefined after reset (MAS §6.5.2), so the EE deltas below may only
-        # enable the block once its tables are written.
-        for p in range(3):                           # every resident profile (MAS §6.18.4.1)
-            self.write("EE_CTRL", p << 4)
-            for bank, n in ((0, 64), (1, 64), (2, 32), (3, 32)):
-                self.write("EE_LUT_CTRL", bank << 1)
-                self.write("EE_LUT_ADDR", 0)
-                for _ in range(n):
-                    self.write("EE_LUT_WDATA", 0x8000)
+        # enable the block once its tables are written and confirmed (v1.07).
+        self.ee_reload()
         self.write("EE_CTRL", 0)
         for k in ("blc", "wb", "dg", "gamma", "csc", "bpc", "lsc", "gtm", "nr", "ee", "cnf"):
             self.delta(k)
@@ -349,7 +374,8 @@ def main():
             if fn not in g.files:
                 os.remove(os.path.join(OUT, fn))
     if stale:
-        sys.exit("gen_sequence.py: out of date:\n  " + "\n  ".join(stale[:10]))
+        more = "\n  ... and %d more" % (len(stale) - 10) if len(stale) > 10 else ""
+        sys.exit("gen_sequence.py: out of date (%d files):\n  " % len(stale) + "\n  ".join(stale[:10]) + more)
     print("%s sequence: %d files, %d frames submitted, %d expected outputs" %
           ("checked" if a.check else "wrote", len(g.files), g.submitted, g.n_exp))
 

@@ -18,15 +18,15 @@
  *      (MAS Table 183: the DMA soft reset keeps statistics and AWB
  *      ownership): the leased result reads the same afterwards, nothing
  *      completes after the call, and the next frame is correct.
- *   C  Resizer from the first frame and a mode switch while streaming
- *      (MAS §6.20.4, §9.2): 648x368 RGGB, scaled to 640x360 from the first
- *      frame after fx1_isp_start, then pass-through, then 640x360 again; the
- *      mode is written between frames while streaming, without a driver
- *      stop/start, strides sized for the largest output. CRCs from the
- *      reference. (Each output buffer is freed after the new mode is
- *      published, so the ODMA's arm already sees the frame's size; a frame
- *      whose size differs from the arm geometry is covered by the ISP test
- *      test_dma_tlm/test_resizer_switch.)
+ *   C  Resizer from the first frame and mode switches (MAS §6.20.4, §9.2):
+ *      648x368 RGGB, scaled to 640x360 from the first frame after
+ *      fx1_isp_start, then pass-through, then 640x360 again, strides sized
+ *      for the largest output. CRCs from the reference. RESIZER_CTRL is an
+ *      IDLE-class word in v1.07 (MAS §9.9.3: rejected with TUNE_ERROR.MODE
+ *      while the input DMA runs), so each switch stops the stream, writes the
+ *      mode and starts again (fx1_isp_start waits for the published set).
+ *      The rz profile has no temporal block, so the stop's soft reset does
+ *      not change the reference CRCs.
  */
 #include "isp_common.h"
 
@@ -322,11 +322,12 @@ static void phase_c(void)
     expect_eq(dev.out_height, 360u, 0x73, "C: RESIZER_OUT_H at start");
     for (uint32_t k = 0; k < ISP_FX_RZ_FRAMES; ++k) {
         if (k > 0) {
-            /* Between frames, while streaming: write the mode and give the
-             * Resizer two derivations to publish it (MAS §6.20.4.3). */
+            /* Between frames: stop, write the mode while idle, start again. */
+            fx1_check(fx1_isp_stop(&dev) == 0, 0x75, "C: stop between modes, nothing in flight");
             const fx1_isp_reg_write mode = {FX1_ISP_RESIZER_CTRL_OFFSET, isp_fx_rz_mode[k]};
             fx1_isp_apply(&dev, &mode, 1);
-            isp_hal.delay_cycles(isp_hal.ctx, 80u);
+            fx1_check(fx1_isp_start(&dev, &b) == FX1_ISP_OK, 0x76, "C: start with the new mode");
+            expect_eq(dev.out_width, isp_fx_rz_mode[k] ? 640u : ISP_FX_RZ_WIDTH, 0x77, "C: RESIZER_OUT_W");
         }
         const unsigned in = fx1_isp_next_input(&dev);
         rz_fill(b.in[in], k);

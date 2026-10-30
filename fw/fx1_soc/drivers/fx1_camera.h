@@ -61,6 +61,7 @@ extern "C" {
 #define FX1_CAMERA_ETIMEOUT -22
 #define FX1_CAMERA_EDEV     -23 /* a hardware driver failed (sensor, CSI-2, ISP) */
 #define FX1_CAMERA_ESENSOR  -24 /* stop: the sensor did not confirm standby (state 3) */
+#define FX1_CAMERA_EBUSY    -25 /* stop: the ISP's reset has not finished; sides and frames kept, call again */
 
 /* fx1_camera_stop returns within timeout_us + FX1_CAMERA_STOP_SLACK_US (200 µs
  * for the whole call): a sensor transfer started before the deadline ends
@@ -93,8 +94,9 @@ typedef struct fx1_camera_cfg {
      * to keep a copy of the original RAW. Runs in fx1_camera_poll. */
     void (*capture_hook)(void* ctx, uint32_t raw16, uint32_t capture, uint16_t csi_frame_id);
     /* Optional: called on an ISP DMA error (fatal DMA_ERR bits) before the
-     * manager recovers (fx1_isp_recover_ex frees / re-arms the same buffer),
-     * so the application can repair the cause, e.g. fx1_camera_set_output. */
+     * manager settles the ISP's automatic recovery (fx1_isp_recover_ex: every
+     * frame in flight is lost, the rotations restart at buffer 0), so the
+     * application can repair the cause, e.g. fx1_camera_set_output. */
     void (*isp_error_hook)(void* ctx, uint32_t dma_err);
     void* hook_ctx;
 } fx1_camera_cfg;
@@ -131,6 +133,10 @@ typedef struct fx1_camera {
     volatile uint32_t csi_events;      /* IRQ_STATUS bits collected by the ISR */
     volatile uint32_t isp_fatal;       /* fatal DMA_ERR bits collected by the ISR */
     int state;                         /* 0 idle, 1 configured, 2 running, 3 stopped with the sensor not confirmed */
+    /* stop: sensor and CSI-2 DMA stopped, the ISP's reset still draining
+     * (fx1_isp_stop EBUSY); the next stop retries the ISP only */
+    int isp_stop_pending;
+    int stop_sensor_rc;                /* the standby result of that first stop */
     /* CSI-2 sides */
     int side_state[2];                 /* 0 HW, 1 waiting for the ISP, 2 read by the ISP (zero-copy) */
     uint32_t side_capture[2];
@@ -162,7 +168,11 @@ int fx1_camera_tpg_frame(fx1_camera* cam);
  * comment): FX1_CAMERA_OK, state 0;
  * FX1_CAMERA_ESENSOR, state 3 (CSI-2 RX and ISP stopped, the sensor maybe
  * still streaming; call again to retry the standby); FX1_CAMERA_ETIMEOUT, the
- * CSI-2 DMA did not stop, state unchanged (1 or 2; call again); FX1_CAMERA_EDEV. */
+ * CSI-2 DMA did not stop, state unchanged (1 or 2; call again);
+ * FX1_CAMERA_EBUSY, the ISP's reset is still draining (fx1_isp_stop EBUSY:
+ * MAS v1.07 §9.9.8 sets no bound): state unchanged, the CSI-2 sides and the
+ * frames stay with the ISP; call again until it finishes (only the ISP stop
+ * is retried); FX1_CAMERA_EDEV. */
 int fx1_camera_stop(fx1_camera* cam, uint32_t timeout_us);
 /* ISR hooks (see the header comment for what each one does). */
 void fx1_camera_csi_isr(fx1_camera* cam);

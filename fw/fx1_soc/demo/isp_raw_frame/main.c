@@ -15,6 +15,7 @@
 #include "fx1_isp/fx1_isp_csr.h"
 #include "fx1_isp/fx1_isp_drv.h"
 #include "isp_demo_job.h"
+#include "isp_demo_setup.h"
 
 #define FATAL_DMA_ERR (FX1_ISP_DMA_ERR_ERR_ALIGN_OR_GEOMETRY_BIT | FX1_ISP_DMA_ERR_ERR_IDMA_AXI_BIT | \
                        FX1_ISP_DMA_ERR_ERR_ODMA_AXI_BIT)
@@ -66,19 +67,28 @@ int main(void)
     volatile isp_demo_result* res = (volatile isp_demo_result*)(FX1_FW_SHARED_BASE + ISP_DEMO_RESULT_OFFSET);
     const fx1_isp_reg_write* profile = (const fx1_isp_reg_write*)(FX1_FW_SHARED_BASE + ISP_DEMO_PROFILE_OFFSET);
     res->magic = 0;
-    fx1_check(job->magic == ISP_DEMO_JOB_MAGIC && job->version == ISP_DEMO_VERSION, 0x01,
-              "job descriptor present (run through run_isp_demo.py)");
-    fx1_check(job->frames >= 1, 0x02, "at least one frame");
+    fx1_check(isp_demo_job_ok(job), 0x01, "job descriptor present (run through run_isp_demo.py)");
+    const uint32_t mode = isp_demo_mode(job);
     fx1_log_hex("ISP demo: width", job->width);
     fx1_log_hex("          height", job->height);
     fx1_log_hex("          bayer", job->bayer);
     fx1_log_hex("          profile writes", job->profile_count);
+    fx1_log_hex("          mode (0 profile, 1 legacy)", mode);
+    fx1_log_hex("          outputs", isp_demo_outputs(job));
 
-    /* Bring-up in HAS section 9.1 order: geometry, profile, then start. */
+    /* Bring-up in HAS section 9.1 order: geometry, profile (and in profile
+     * mode the bank: INIT, payloads, SEAL, APPLY), outputs, then start. */
     fx1_check(fx1_isp_init(&dev, &hal) == FX1_ISP_OK, 0x10, "driver init");
-    fx1_check(fx1_isp_set_geometry(&dev, job->width, job->height, job->bayer) == FX1_ISP_OK, 0x11,
-              "geometry accepted");
-    fx1_isp_apply(&dev, profile, job->profile_count);
+    uint32_t tune_error = 0;
+    if (isp_demo_configure(&dev, job, profile, mode, &tune_error) != FX1_ISP_OK) {
+        fx1_log_hex("ISP profile / geometry refused, TUNE_ERROR", tune_error);
+        res->status = 2;
+        res->mode = mode;
+        res->tune_error = tune_error;
+        res->magic = ISP_DEMO_RESULT_MAGIC;
+        fx1_mb();
+        fx1_fail(0x11);
+    }
 
     fx1_isp_buffers bufs;
     for (unsigned i = 0; i < FX1_ISP_NUM_BUFFERS; ++i) { /* one frame at a time: one slot is enough */
@@ -157,6 +167,20 @@ int main(void)
     res->awb_frame_id = awb_ok ? awb.frame_id : 0;
     res->af_frame_id = af_ok ? af.frame_id : 0;
     res->frame_ticks = ticks;
+    uint32_t prof = 0, w1 = 0, h1 = 0, w2 = 0, h2 = 0;
+    const uint32_t outputs = isp_demo_outputs(job);
+    /* the last frame's buffer index: the rotation advances once per frame */
+    if (mode == ISP_DEMO_MODE_PROFILE) fx1_isp_output_meta(&dev, 0, (job->frames - 1u) % FX1_ISP_NUM_BUFFERS, NULL, NULL, &prof);
+    if (outputs & 2u) isp_demo_channel_size(&dev, 1, &w1, &h1);
+    if (outputs & 4u) isp_demo_channel_size(&dev, 2, &w2, &h2);
+    res->mode = mode;
+    res->outputs = outputs;
+    res->profile_id = prof;
+    res->tune_error = 0;
+    res->ch1_width = w1;
+    res->ch1_height = h1;
+    res->ch2_width = w2;
+    res->ch2_height = h2;
     fx1_release();
     res->magic = ISP_DEMO_RESULT_MAGIC;
     fx1_mb();

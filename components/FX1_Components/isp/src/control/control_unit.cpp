@@ -17,16 +17,21 @@ constexpr std::uint32_t command_registers[] = {
    FX1_ISP_ODMA_BUF_FREE_OFFSET,  FX1_ISP_ODMA_BUF_DONE_OFFSET,
 };
 
-// Error sources of COMMON_STATUS.error / COMMON_IRQ_STATUS.error_irq (DEC-15).
+// Error sources of COMMON_STATUS.ERROR / COMMON_IRQ_STATUS.ERROR_IRQ (MAS
+// v1.07 Table 9-188, DEC-15 superseded): DMA_ERR.ALIGN, AXI_RD and AXI_WR,
+// any LSC_ERROR bit, EE_STATUS.ERROR and any TUNE_ERROR bit; ERROR_IRQ also
+// on every accepted recovery. Flow-control conditions (IDMA_UNDERRUN,
+// ODMA_OVERFLOW) and statistics drops (BPC candidate overflow) set neither.
 struct error_source {
    std::uint32_t offset;
    std::uint32_t mask;
 };
 constexpr error_source error_sources[] = {
    {FX1_ISP_LSC_ERROR_OFFSET, 0x3Fu},
-   {FX1_ISP_BPC_STATUS_OFFSET, FX1_ISP_BPC_STATUS_CAND_REJECT_OVF_MASK},
    {FX1_ISP_EE_STATUS_OFFSET, FX1_ISP_EE_STATUS_ERROR_MASK},
-   {FX1_ISP_DMA_ERR_OFFSET, FX1_ISP_DMA_ERR_ERR_MASK},
+   {FX1_ISP_DMA_ERR_OFFSET, FX1_ISP_DMA_ERR_ERR_ALIGN_OR_GEOMETRY_BIT | FX1_ISP_DMA_ERR_ERR_AXI_RD_BIT |
+                                FX1_ISP_DMA_ERR_ERR_AXI_WR_BIT},
+   {FX1_ISP_TUNE_ERROR_OFFSET, 0xFFu},
 };
 
 // Statistics publication events feeding STATS_READY_IRQ (HAS Table 9-2).
@@ -41,15 +46,49 @@ constexpr error_source stats_sources[] = {
 constexpr std::uint32_t soft_reset_preserved[] = {
    FX1_ISP_IDMA_FRAME_COUNT_OFFSET, FX1_ISP_ODMA_FRAME_COUNT_OFFSET, FX1_ISP_AEC_FRAME_ID_OFFSET,
    FX1_ISP_AWB_FRAME_ID_OFFSET,     FX1_ISP_AF_FRAME_ID_OFFSET,      FX1_ISP_LSC_PROFILE_STATUS_OFFSET,
+   FX1_ISP_CH1_ODMA_FRAME_COUNT_OFFSET, FX1_ISP_CH2_ODMA_FRAME_COUNT_OFFSET,
+   // Recovery status and records are outside the pulse domain (MAS v1.07 §9.9.8).
+   FX1_ISP_COMMON_RECOVERY_STATUS_OFFSET, FX1_ISP_COMMON_RECOVERY_SEQUENCE_OFFSET,
+   FX1_ISP_COMMON_ABORT0_FRAME_OFFSET, FX1_ISP_COMMON_ABORT0_OUTCOME_OFFSET, FX1_ISP_COMMON_ABORT1_FRAME_OFFSET,
+   FX1_ISP_COMMON_ABORT1_OUTCOME_OFFSET, FX1_ISP_COMMON_ABORT2_FRAME_OFFSET, FX1_ISP_COMMON_ABORT2_OUTCOME_OFFSET,
+   FX1_ISP_COMMON_ABORT3_FRAME_OFFSET, FX1_ISP_COMMON_ABORT3_OUTCOME_OFFSET,
 };
 
-// Resizer target sizes by RESIZER_CTRL.scale (HAS Table 6-67); 0 and 0xF
-// select FullRes.
-constexpr geometry resizer_modes[16] = {
-   {0, 0},       {3840, 2160}, {2560, 1440}, {2880, 1620}, {2304, 1296}, {1920, 1080},
-   {1280, 720},  {960, 540},   {640, 360},   {2592, 1944}, {2048, 1536}, {1600, 1200},
-   {1280, 960},  {800, 600},   {640, 480},   {0, 0},
+// DMA-scope recovery keeps the DONE bits and published metadata of buffers
+// that completed before it, DMA_ERR and DMA_IRQ_STAT (MAS v1.07 §9.9.8); the
+// common scope clears them.
+bool dma_scope_kept(std::uint32_t off) {
+   if (off == FX1_ISP_DMA_ERR_OFFSET || off == FX1_ISP_DMA_IRQ_STAT_OFFSET || off == FX1_ISP_ODMA_BUF_DONE_OFFSET ||
+       off == FX1_ISP_CH1_ODMA_BUF_DONE_OFFSET || off == FX1_ISP_CH2_ODMA_BUF_DONE_OFFSET) {
+      return true;
+   }
+   const auto in = [off](std::uint32_t first, std::uint32_t words) { return off >= first && off < first + 4u * words; };
+   return in(FX1_ISP_ODMA_BUF_TAG0_OFFSET, 16) || in(FX1_ISP_CH1_ODMA_BUF_TAG0_OFFSET, 16) ||
+          in(FX1_ISP_CH2_ODMA_BUF_TAG0_OFFSET, 16);
+}
+
+// Per-channel geometry registers (CSR v1.07): the Resizer page of CH0
+// (0x2000), CH1 (0x3200) and CH2 (0x3400), and the crop/status block of each
+// channel (0x8B40 + 0x40 * ch).
+struct channel_regs {
+   std::uint32_t resizer_ctrl, out_w, out_h, crop_ctrl, crop_origin, crop_size, status, active_origin, active_size;
 };
+constexpr channel_regs ch_regs[num_channels] = {
+   {FX1_ISP_RESIZER_CTRL_OFFSET, FX1_ISP_RESIZER_OUT_W_OFFSET, FX1_ISP_RESIZER_OUT_H_OFFSET,
+    FX1_ISP_CH0_CROP_CTRL_OFFSET, FX1_ISP_CH0_CROP_ORIGIN_OFFSET, FX1_ISP_CH0_CROP_SIZE_OFFSET,
+    FX1_ISP_CH0_GEOMETRY_STATUS_OFFSET, FX1_ISP_CH0_ACTIVE_CROP_ORIGIN_OFFSET, FX1_ISP_CH0_ACTIVE_CROP_SIZE_OFFSET},
+   {FX1_ISP_CH1_RESIZER_CTRL_OFFSET, FX1_ISP_CH1_RESIZER_OUT_W_OFFSET, FX1_ISP_CH1_RESIZER_OUT_H_OFFSET,
+    FX1_ISP_CH1_CROP_CTRL_OFFSET, FX1_ISP_CH1_CROP_ORIGIN_OFFSET, FX1_ISP_CH1_CROP_SIZE_OFFSET,
+    FX1_ISP_CH1_GEOMETRY_STATUS_OFFSET, FX1_ISP_CH1_ACTIVE_CROP_ORIGIN_OFFSET, FX1_ISP_CH1_ACTIVE_CROP_SIZE_OFFSET},
+   {FX1_ISP_CH2_RESIZER_CTRL_OFFSET, FX1_ISP_CH2_RESIZER_OUT_W_OFFSET, FX1_ISP_CH2_RESIZER_OUT_H_OFFSET,
+    FX1_ISP_CH2_CROP_CTRL_OFFSET, FX1_ISP_CH2_CROP_ORIGIN_OFFSET, FX1_ISP_CH2_CROP_SIZE_OFFSET,
+    FX1_ISP_CH2_GEOMETRY_STATUS_OFFSET, FX1_ISP_CH2_ACTIVE_CROP_ORIGIN_OFFSET, FX1_ISP_CH2_ACTIVE_CROP_SIZE_OFFSET},
+};
+static_assert(FX1_ISP_CH1_RESIZER_CTRL_SCALE_MASK == FX1_ISP_RESIZER_CTRL_SCALE_MASK &&
+                  FX1_ISP_CH2_RESIZER_CTRL_SCALE_MASK == FX1_ISP_RESIZER_CTRL_SCALE_MASK &&
+                  FX1_ISP_CH1_CROP_SIZE_W_MASK == FX1_ISP_CH0_CROP_SIZE_W_MASK &&
+                  FX1_ISP_CH2_CROP_ORIGIN_Y_MASK == FX1_ISP_CH0_CROP_ORIGIN_Y_MASK,
+              "the three channels share one register layout");
 
 // No configuration set is gated by an `updated` bit since CSR/MAS 07/10:
 // CCM and CNF are sampled at the accepted SOF (owner Q1, U1); the Resizer
@@ -77,14 +116,34 @@ control_unit::control_unit(unsigned soft_reset_cycles) : soft_reset_cycles_(soft
 
 void control_unit::external_reset() {
    regs_.reset();
+   profile_reset(reset_scope::common, true);
    commands_.clear();  // the commands' state was reset with the registers
    time_base_epoch_ = settled;  // FRAME_COUNTER held at zero until the release
    soft_reset_end_ = 0;
+   rec_ = recovery_state{};  // i_rst_n clears the recovery status and records
+   rec_seq_ = 0;
+   rec_records_ = {};
+   rec_count_ = 0;
+   live_frames_.clear();
    // LUT contents are undefined after i_rst_n (MAS §6.5.2; CSR-16 superseded):
    // poison pattern, identical to the reference.
-   for (unsigned i = 0; i < gamma_lut_.size(); ++i) {
-      gamma_lut_[i] = ram_poison(i, 0xFFFu);
+   for (unsigned b = 0; b < gamma_banks_.size(); ++b) {
+      gamma_banks_[b] = table_bank{};
+      for (unsigned i = 0; i < gamma_banks_[b].v.size(); ++i) {
+         gamma_banks_[b].v[i] = ram_poison(256u * b + i, 0xFFFu);  // bank 0 as the single table had
+      }
    }
+   for (unsigned b = 0; b < gtm_manual_.size(); ++b) {
+      gtm_manual_[b] = gtm_manual{};
+      for (unsigned i = 0; i < gtm_manual_[b].v.size(); ++i) {
+         gtm_manual_[b].v[i] = ram_poison(65u * (b + 2u) + i, 0xFFFFu);
+      }
+   }
+   for (table_payload &t : tbank_) {
+      t = table_payload{};  // contents undefined; only the write flags matter
+   }
+   ee_active_profile_ = 0;
+   ee_active_valid_ = false;
    // EE: every profile's scalars take the CSR reset values (MAS p189); its
    // tables the poison pattern, profile 0 at the indices the single table had.
    for (unsigned p = 0; p < ee_profiles; ++p) {
@@ -96,6 +155,9 @@ void control_unit::external_reset() {
             ee_[p].lut[t][i] = ram_poison(256u * p + 64u * t + i, 0xFFFFu);
          }
       }
+      ee_[p].written.reset();
+      ee_[p].valid = false;
+      ee_[p].write_cycle = settled;
    }
    ee_frame_ = ee_frame_set{};
    ee_frame_.scalar = ee_[0].scalar;
@@ -107,87 +169,28 @@ void control_unit::external_reset() {
    gtm_read_ = 0;
    gtm_valid_ = false;
    gtm_pending_ = false;
+   gtm_sof_ = gtm_capture{};
    nr_var_ = 0;
+   nr_have_ = false;
    stats_reset(true);
    lsc_ = lsc_state{};  // i_rst_n: validity and load state cleared, meshes undefined
    // Resizer: the reset set is published; derivation restarts from the live
    // configuration (MAS §6.20.4.3-4).
-   rz_ = resizer_ctrl{};
-   rz_.live = resizer_live_key();
-   rz_frame_ = resizer_set{};
+   for (unsigned ch = 0; ch < num_channels; ++ch) {
+      rz_[ch] = resizer_ctrl{};
+      rz_[ch].live = resizer_live_key(ch);
+      rz_frame_[ch] = resizer_set{};
+   }
+   outputs_frame_ = 1;
 }
 
 void control_unit::install_hooks() {
+   profile_install_hooks();
    for (const std::uint32_t off : command_registers) {
       regs_.on_write(off, [this](const register_file::write_effect &fx) { dispatch(fx, current_cycle_); });
    }
 
-   // Gamma LUT port (CSR rows 193-198, CSR-21).
-   regs_.on_write(FX1_ISP_GAMMA_LUT_DATA_OFFSET, [this](const register_file::write_effect &fx) {
-      const std::uint32_t addr = regs_.peek(FX1_ISP_GAMMA_LUT_ADDR_OFFSET) & FX1_ISP_GAMMA_LUT_ADDR_ADDR_MASK;
-      gamma_lut_[addr] = static_cast<std::uint16_t>(fx.new_value & FX1_ISP_GAMMA_LUT_DATA_DATA_MASK);
-      regs_.hw_write(FX1_ISP_GAMMA_LUT_ADDR_OFFSET, FX1_ISP_GAMMA_LUT_ADDR_ADDR_MASK, addr + 1u);
-   });
-   regs_.on_read(FX1_ISP_GAMMA_LUT_RDATA_OFFSET, [this](std::uint32_t) -> std::uint32_t {
-      return gamma_lut_[regs_.peek(FX1_ISP_GAMMA_LUT_ADDR_OFFSET) & FX1_ISP_GAMMA_LUT_ADDR_ADDR_MASK];
-   });
-
-   // EE profiles (MAS §6.18.4.1, §9.2): EE_CTRL.profile_wr_sel steers the
-   // scalar registers and the table port to one of the three profiles; code 3
-   // is reserved and its writes are ignored. A scalar register reads back the
-   // last value written through it (a partial write merges with that value,
-   // whichever profile it belonged to).
-   for (unsigned k = 0; k < ee_num_scalars; ++k) {
-      regs_.on_write(FX1_ISP_EE_ALPHA_OFFSET + 4u * k,
-                     [this, k](const register_file::write_effect &fx) { ee_scalar_write(k, fx); });
-   }
-   auto ee_wr_profile = [this] {
-      return field(regs_.peek(FX1_ISP_EE_CTRL_OFFSET), FX1_ISP_EE_CTRL_PROFILE_WR_SEL_MASK,
-                   FX1_ISP_EE_CTRL_PROFILE_WR_SEL_SHIFT);
-   };
-   auto ee_index = [this](unsigned &bank) {
-      bank = field(regs_.peek(FX1_ISP_EE_LUT_CTRL_OFFSET), FX1_ISP_EE_LUT_CTRL_LUT_SEL_MASK,
-                   FX1_ISP_EE_LUT_CTRL_LUT_SEL_SHIFT);
-      return regs_.peek(FX1_ISP_EE_LUT_ADDR_OFFSET) & (ee_bank_entries(bank) - 1u);
-   };
-   regs_.on_write(FX1_ISP_EE_LUT_WDATA_OFFSET, [this, ee_index, ee_wr_profile](const register_file::write_effect &fx) {
-      unsigned bank = 0;
-      const std::uint32_t idx = ee_index(bank);
-      const unsigned p = ee_wr_profile();
-      if (p < ee_profiles) {  // live: rows processed after this write use it
-         ee_[p].lut[bank][idx] = static_cast<std::uint16_t>(fx.new_value & FX1_ISP_EE_LUT_WDATA_LUT_WDATA_MASK);
-      }
-      // The address advances on every write, also one ignored for code 3
-      // (assumption U3-A2).
-      const std::uint32_t addr = regs_.peek(FX1_ISP_EE_LUT_ADDR_OFFSET);
-      regs_.hw_write(FX1_ISP_EE_LUT_ADDR_OFFSET, FX1_ISP_EE_LUT_ADDR_LUT_ADDR_MASK, addr + 1u);
-   });
-   regs_.on_read(FX1_ISP_EE_LUT_RDATA_OFFSET, [this, ee_index, ee_wr_profile](std::uint32_t) -> std::uint32_t {
-      unsigned bank = 0;
-      const std::uint32_t idx = ee_index(bank);
-      const unsigned p = ee_wr_profile();
-      return p < ee_profiles ? ee_[p].lut[bank][idx] : 0u;  // code 3: no profile (assumption U3-A2)
-   });
-
-   // GTM table port (CSR rows 206-217): a DATA write reaches the read bank
-   // only while EN = 0; a write while enabled is discarded whatever MANUAL
-   // says, so a frame's curve never changes part-way (MAS p146, U3). The
-   // address increments on every write, 7-bit wrap; entries 65..127 do not
-   // exist.
-   regs_.on_write(FX1_ISP_GTM_LUT_DATA_OFFSET, [this](const register_file::write_effect &fx) {
-      const std::uint32_t ctrl = regs_.peek(FX1_ISP_GTM_CTRL_OFFSET);
-      const std::uint32_t addr = regs_.peek(FX1_ISP_GTM_LUT_ADDR_OFFSET) & FX1_ISP_GTM_LUT_ADDR_ADDR_MASK;
-      const bool writable = !(ctrl & FX1_ISP_GTM_CTRL_EN_MASK);
-      if (writable && addr < 65) {
-         gtm_banks_[gtm_read_][addr] = static_cast<std::uint16_t>(fx.new_value & FX1_ISP_GTM_LUT_DATA_DATA_MASK);
-         gtm_valid_ = true;  // ALG-GTM-05
-      }
-      regs_.hw_write(FX1_ISP_GTM_LUT_ADDR_OFFSET, FX1_ISP_GTM_LUT_ADDR_ADDR_MASK, addr + 1u);
-   });
-   regs_.on_read(FX1_ISP_GTM_LUT_RDATA_OFFSET, [this](std::uint32_t) -> std::uint32_t {
-      const std::uint32_t addr = regs_.peek(FX1_ISP_GTM_LUT_ADDR_OFFSET) & FX1_ISP_GTM_LUT_ADDR_ADDR_MASK;
-      return addr < 65 ? gtm_banks_[gtm_read_][addr] : 0u;
-   });
+   tables_install_hooks();  // gamma, GTM manual, EE residents, bank payloads (V107-4)
 
    // LSC coefficient load sequencer and status (HAS §6.8.8, CSR rows 92-117).
    regs_.on_write(FX1_ISP_LSC_LOAD_CTRL_OFFSET, [this](const register_file::write_effect &fx) { lsc_load_ctrl(fx); });
@@ -217,13 +220,28 @@ void control_unit::install_hooks() {
       return v;
    });
 
-   // Derived geometry (CSR-09, CSR-10).
-   // The published set, as seen at the edge of the read (MAS §6.20.4.2).
-   regs_.on_read(FX1_ISP_RESIZER_OUT_W_OFFSET, [this](std::uint32_t) { return resizer_published(read_cycle_).out.width; });
-   regs_.on_read(FX1_ISP_RESIZER_OUT_H_OFFSET, [this](std::uint32_t) { return resizer_published(read_cycle_).out.height; });
+   // Derived geometry: the published set of each channel, as seen at the
+   // edge of the read (MAS v1.07 §6.20.4.2, §8.3).
+   for (unsigned ch = 0; ch < num_channels; ++ch) {
+      const channel_regs &r = ch_regs[ch];
+      regs_.on_read(r.out_w, [this, ch](std::uint32_t) { return resizer_published(ch, read_cycle_).out.width; });
+      regs_.on_read(r.out_h, [this, ch](std::uint32_t) { return resizer_published(ch, read_cycle_).out.height; });
+      regs_.on_read(r.status, [this, ch](std::uint32_t) { return geometry_status(ch, read_cycle_); });
+      regs_.on_read(r.active_origin, [this, ch](std::uint32_t) {
+         const resizer_set s = resizer_published(ch, read_cycle_);
+         return s.crop_x | (s.crop_y << FX1_ISP_CH0_ACTIVE_CROP_ORIGIN_Y_SHIFT);
+      });
+      regs_.on_read(r.active_size, [this, ch](std::uint32_t) {
+         const resizer_set s = resizer_published(ch, read_cycle_);
+         return s.crop_w | (s.crop_h << FX1_ISP_CH0_ACTIVE_CROP_SIZE_H_SHIFT);
+      });
+   }
 
    // FRAME_COUNTER at the edge of the read; a settled read (no cycle) sees
    // the last edge the control unit has processed.
+   // Capability discovery reports implemented behaviour only (V107-A1).
+   regs_.on_read(FX1_ISP_TUNE_CAPS_OFFSET, [](std::uint32_t) { return implemented_caps; });
+
    regs_.on_read(FX1_ISP_FRAME_COUNTER_OFFSET, [this](std::uint32_t) {
       return frame_counter(read_cycle_ == settled ? current_cycle_ : read_cycle_);
    });
@@ -236,23 +254,48 @@ void control_unit::install_hooks() {
 
    regs_.on_hw_set([this](std::uint32_t offset, std::uint32_t newly) { on_hw_set(offset, newly); });
    stats_install_hooks();
+   recovery_install_hooks();
 
-   // Resizer configuration key: active geometry (frame size and Bayer trim),
-   // mode and enable (MAS §6.20.4.3).
+   // Channel geometry keys (MAS v1.07 §6.20.4.3, §8.3): the active geometry
+   // (frame size, Bayer trim, input format) is part of every channel's key;
+   // each channel adds its crop and Resizer control.
    for (const std::uint32_t off : {FX1_ISP_COMMON_FRAME_WIDTH_OFFSET, FX1_ISP_COMMON_FRAME_HEIGHT_OFFSET,
-                                   FX1_ISP_COMMON_BAYER_OFFSET, FX1_ISP_RESIZER_CTRL_OFFSET}) {
-      regs_.on_write(off, [this](const register_file::write_effect &) { resizer_key_written(); });
+                                   FX1_ISP_COMMON_BAYER_OFFSET, FX1_ISP_COMMON_INPUT_FORMAT_OFFSET}) {
+      regs_.on_write(off, [this](const register_file::write_effect &fx) {
+         if (fx.new_value != fx.old_value) {
+            ee_invalidate_all();  // an input-domain change clears every EE resident (MAS v1.07 §9.9.1)
+         }
+         resizer_key_written();
+      });
    }
+   for (const channel_regs &r : ch_regs) {
+      for (const std::uint32_t off : {r.resizer_ctrl, r.crop_ctrl, r.crop_origin, r.crop_size}) {
+         regs_.on_write(off, [this](const register_file::write_effect &) { resizer_key_written(); });
+      }
+   }
+   // Enabling a channel whose settled geometry is invalid is an invalid setup.
+   regs_.on_write(FX1_ISP_OUTPUT_ENABLE_OFFSET, [this](const register_file::write_effect &fx) {
+      const std::uint32_t newly = fx.new_value & ~fx.old_value & FX1_ISP_OUTPUT_ENABLE_CHANNELS_MASK;
+      for (unsigned ch = 0; ch < num_channels; ++ch) {
+         const resizer_ctrl &c = rz_[ch];
+         if ((newly & (1u << ch)) && c.live == c.published.key && !c.published.valid) {
+            tune_error(FX1_ISP_TUNE_ERROR_INVALID_MASK);
+         }
+      }
+   });
 }
 
 void control_unit::csr_write(std::uint32_t addr, std::uint32_t data, std::uint32_t lane_mask,
                              std::uint64_t cycle) {
    advance_to(cycle);
    current_cycle_ = cycle;
+   data = profile_route_write(addr, data, lane_mask);  // bank-owned bits (V107-3)
    regs_.sw_write(addr, data, lane_mask, cycle);
 }
 
 void control_unit::advance_to(std::uint64_t cycle) {
+   geometry_sync(cycle);
+   recovery_sync(cycle);
    current_cycle_ = cycle;  // hardware events that follow happen on this edge
    if (cycle >= soft_reset_end_) {
       regs_.set_command_block(false);
@@ -265,8 +308,15 @@ void control_unit::dispatch(const register_file::write_effect &fx, std::uint64_t
    const bool dma_reset =
        fx.offset == FX1_ISP_DMA_CTRL_OFFSET && (fx.w1sc_pulse & FX1_ISP_DMA_CTRL_SOFT_RESET_MASK);
    const bool soft_reset = common_reset || dma_reset;
+   if (fx.offset == FX1_ISP_COMMON_CTRL_OFFSET && (fx.w1s_set & FX1_ISP_COMMON_CTRL_FRAME_START_MASK)) {
+      // Compatibility only (CSR v1.07): accepted, self-clears, no effect on
+      // the input DMA, admission or any other state (V107-2).
+      regs_.hw_ack(FX1_ISP_COMMON_CTRL_OFFSET, FX1_ISP_COMMON_CTRL_FRAME_START_MASK);
+   }
    if (soft_reset) {
-      apply_soft_reset(cycle, common_reset ? reset_scope::common : reset_scope::dma);
+      // A recovery request (MAS v1.07 §9.9.8); rejected with PENDING while
+      // one is busy (a rewrite no longer restarts the pulse).
+      recovery_request(common_reset ? reset_scope::common : reset_scope::dma, common_reset ? rc_common : rc_dma, cycle);
    }
    const auto hook = block_hooks_.find(fx.offset);
    if (hook != block_hooks_.end() && hook->second) {
@@ -297,8 +347,13 @@ void control_unit::apply_soft_reset(std::uint64_t cycle, reset_scope scope) {
           std::end(soft_reset_preserved)) {
          continue;
       }
-      if (!common && d.offset < FX1_ISP_DMA_CTRL_OFFSET) {
+      // DMA scope: the DMA blocks 0x3000..0x7FFF; the TUNE/extension pages
+      // (0x8000 up) belong to the common scope (MAS v1.07 §9.7, §9.9.8).
+      if (!common && (d.offset < FX1_ISP_DMA_CTRL_OFFSET || d.offset >= 0x8000u || dma_scope_kept(d.offset))) {
          continue;
+      }
+      if (ownership_word(d.offset)) {
+         continue;  // cleared at the final retirement (recovery_final)
       }
       std::uint32_t hw_owned = d.ro_mask | d.w1c_mask | d.w1s_mask;
       if (d.offset == FX1_ISP_AEC_CTRL_OFFSET) {
@@ -313,13 +368,18 @@ void control_unit::apply_soft_reset(std::uint64_t cycle, reset_scope scope) {
       // Resizer: the published set returns to its reset value and the
       // derivation restarts from the live configuration after the pulse
       // (MAS §6.20.4.4, Table 124 "Abort", "Restart after an abort").
-      rz_.published = resizer_set{};
-      rz_.calc = false;  // the dividers restart too
-      rz_.not_before = rz_.free_at = cycle + soft_reset_cycles_;
-      rz_.live = resizer_live_key();
-      rz_.live_since = rz_.not_before;
+      for (unsigned ch = 0; ch < num_channels; ++ch) {
+         resizer_ctrl &c = rz_[ch];
+         c.published = resizer_set{};
+         c.calc = false;  // the dividers restart too
+         c.invalid_pending = false;
+         c.not_before = c.free_at = cycle + soft_reset_cycles_;
+         c.live = resizer_live_key(ch);
+         c.live_since = c.not_before;
+      }
       commands_.clear();  // pending commands are part of the state being reset
       nr_var_ = 0;  // ALG-2DNR-09: a measured statistic, cleared like the published results
+      nr_have_ = false;
       stats_reset(false);
       lsc_.busy = false;  // a load in progress is discarded; meshes and validity survive
       lsc_.count = 0;
@@ -331,15 +391,11 @@ void control_unit::apply_soft_reset(std::uint64_t cycle, reset_scope scope) {
       // not yet published are never published, earlier ones are kept. The
       // engines of the old epoch are aborted by the hook below, so none of
       // them can clear the busy flags of a later frame.
-      regs_.hw_clear(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_BUSY_MASK);
+      hw_clear(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_BUSY_MASK);
       blocks_busy(false);
       stats_abort();
    }
-   soft_reset_end_ = cycle + soft_reset_cycles_;
-   regs_.set_command_block(true);
-   if (soft_reset_hook_) {
-      soft_reset_hook_(cycle);
-   }
+   profile_reset(scope, false);
 }
 
 void control_unit::hw_set(std::uint32_t offset, std::uint32_t mask, std::uint64_t cycle) {
@@ -354,18 +410,25 @@ void control_unit::hw_hold(std::uint32_t offset, std::uint32_t mask, bool level,
 
 void control_unit::accepted_sof(std::uint64_t cycle) {
    current_cycle_ = cycle;
-   regs_.hw_clear(FX1_ISP_COMMON_CTRL_OFFSET, FX1_ISP_COMMON_CTRL_FRAME_START_MASK);
-   regs_.hw_clear(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_FRAME_DONE_MASK);
+   profile_admit(cycle);  // activation of a due APPLY, frame token (V107-3)
+   gtm_sof_.manual = regs_.peek(FX1_ISP_GTM_CTRL_OFFSET) & FX1_ISP_GTM_CTRL_MANUAL_MASK;
+   gtm_sof_.key = regs_.peek(FX1_ISP_GTM_KEY_OFFSET) & FX1_ISP_GTM_KEY_KEY_MASK;
+   gtm_sof_.lwhite = regs_.peek(FX1_ISP_GTM_LWHITE_OFFSET) & FX1_ISP_GTM_LWHITE_LWHITE_MASK;
+   hw_clear(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_FRAME_DONE_MASK);
    // The frame takes the Resizer set published before this edge; a set
    // published on the SOF edge is the next frame's (MAS §6.20.4.3).
-   rz_.advance(cycle);
-   rz_frame_ = rz_.published;
+   geometry_sync(cycle);
+   for (unsigned ch = 0; ch < num_channels; ++ch) {
+      rz_frame_[ch] = rz_[ch].published;
+   }
+   outputs_frame_ = regs_.peek(FX1_ISP_OUTPUT_ENABLE_OFFSET) & FX1_ISP_OUTPUT_ENABLE_CHANNELS_MASK;
    if (gtm_pending_) {  // bank swap on the SOF beat (HAS p112)
       gtm_read_ ^= 1u;
       gtm_pending_ = false;
       gtm_valid_ = true;
    }
    stats_sof();
+   live_frames_.push_back({frame_id_, outputs_frame_, 0});
    ee_sof();
    // BPC counters clear at every accepted SOF and count during an enabled
    // frame (MAS §6.9 p73; the model writes the frame's counts at its
@@ -413,28 +476,15 @@ std::uint32_t control_unit::error_flags() const {
 bool control_unit::irq_level() const {
    const std::uint32_t common = regs_.peek(FX1_ISP_COMMON_IRQ_STATUS_OFFSET) & regs_.peek(FX1_ISP_COMMON_IRQ_EN_OFFSET);
    const std::uint32_t dma = regs_.peek(FX1_ISP_DMA_IRQ_STAT_OFFSET) & regs_.peek(FX1_ISP_DMA_IRQ_EN_OFFSET);
-   return (common | dma) != 0;
+   // The output group (MAS v1.07 Table 9-188): DONE[2:0] and ERROR[6:4] per channel.
+   const std::uint32_t out = regs_.peek(FX1_ISP_OUTPUT_IRQ_STATUS_OFFSET) & regs_.peek(FX1_ISP_OUTPUT_IRQ_EN_OFFSET);
+   return (common | dma | out) != 0;
 }
 
 geometry control_unit::derive_active(std::uint32_t width, std::uint32_t height, std::uint32_t bayer_pattern) {
    const std::uint32_t sh = bayer_pattern & 1u;         // bit 0: horizontal shift
    const std::uint32_t sv = (bayer_pattern >> 1) & 1u;  // bit 1: vertical shift
    return {width > sh ? (width - sh) / 2u * 2u : 0u, height > sv ? (height - sv) / 2u * 2u : 0u};
-}
-
-geometry control_unit::derive_output(const geometry &active, std::uint32_t resizer_ctrl) {
-   const std::uint32_t scale =
-       field(resizer_ctrl, FX1_ISP_RESIZER_CTRL_SCALE_MASK, FX1_ISP_RESIZER_CTRL_SCALE_SHIFT);
-   geometry out = active;
-   if (resizer_ctrl & FX1_ISP_RESIZER_CTRL_EN_MASK) {
-      const geometry target = resizer_modes[scale];
-      if (target.width != 0 && target.width <= active.width && target.height <= active.height) {
-         out = target;
-      }
-   }
-   out.width &= FX1_ISP_RESIZER_OUT_W_OUT_WIDTH_MASK;
-   out.height &= FX1_ISP_RESIZER_OUT_H_OUT_HEIGHT_MASK;
-   return out;
 }
 
 geometry control_unit::active_geometry() const {
@@ -447,21 +497,10 @@ geometry control_unit::active_geometry() const {
 
 namespace {
 
-// The complete set for a key: pass-through (input geometry, no scaling) unless
-// scaling is enabled with a non-FullRes target that fits both axes and differs
-// from the input (MAS §6.20.4.2-3).
-resizer_set resizer_derive(const resizer_key &k) {
-   resizer_set s;
-   s.key = k;
-   const geometry active{k.width, k.height};
-   const std::uint32_t ctrl = (k.en ? FX1_ISP_RESIZER_CTRL_EN_MASK : 0u) |
-                              (k.scale << FX1_ISP_RESIZER_CTRL_SCALE_SHIFT);
-   s.out = control_unit::derive_output(active, ctrl);
-   s.scaling = s.out.width != active.width || s.out.height != active.height;
-   return s;
-}
-
-bool resizer_pass_through(const resizer_key &k) { return !resizer_derive(k).scaling; }
+// Only a scaling key needs the dividers; a pass-through (FullRes, disabled
+// scaler, target = crop) or an invalid key publishes on the next edge
+// (MAS §6.20.4.3; an invalid result needs no division, V107-A27).
+bool resizer_pass_through(const resizer_key &k) { return !derive_channel(k).scaling; }
 
 }  // namespace
 
@@ -488,10 +527,14 @@ void control_unit::resizer_ctrl::advance(std::uint64_t t) {
          calc = false;
          free_at = ea;
          if (calc_key == live) {
-            published = resizer_derive(calc_key);
+            published = derive_channel(calc_key, published);
          }
       } else if (e == eb) {
-         published = resizer_derive(live);
+         published = derive_channel(live, published);
+         if (!published.valid) {
+            invalid_pending = true;  // sticky TUNE_ERROR.INVALID (MAS §8.3)
+            invalid_edge = e;
+         }
       } else {
          calc = true;  // E0: save the key and start both dividers
          e0 = ec;
@@ -500,13 +543,24 @@ void control_unit::resizer_ctrl::advance(std::uint64_t t) {
    }
 }
 
-resizer_key control_unit::resizer_live_key() const {
+resizer_key control_unit::resizer_live_key(unsigned ch) const {
+   const channel_regs &r = ch_regs[ch];
    const geometry a = active_geometry();
-   const std::uint32_t ctrl = regs_.peek(FX1_ISP_RESIZER_CTRL_OFFSET);
+   const std::uint32_t ctrl = regs_.peek(r.resizer_ctrl);
+   const std::uint32_t org = regs_.peek(r.crop_origin), size = regs_.peek(r.crop_size);
+   const std::uint32_t depth = field(regs_.peek(FX1_ISP_COMMON_INPUT_FORMAT_OFFSET),
+                                     FX1_ISP_COMMON_INPUT_FORMAT_DEPTH_MASK, FX1_ISP_COMMON_INPUT_FORMAT_DEPTH_SHIFT);
    resizer_key k;
    k.valid = true;
+   k.ch = ch;
    k.width = a.width;
    k.height = a.height;
+   k.input_ok = depth < 2u;  // RAW12 or RAW10; 2/3 reserved (MAS v1.07 Table 6-18)
+   k.crop_en = (regs_.peek(r.crop_ctrl) & FX1_ISP_CH0_CROP_CTRL_ENABLE_MASK) != 0;
+   k.crop_x = field(org, FX1_ISP_CH0_CROP_ORIGIN_X_MASK, FX1_ISP_CH0_CROP_ORIGIN_X_SHIFT);
+   k.crop_y = field(org, FX1_ISP_CH0_CROP_ORIGIN_Y_MASK, FX1_ISP_CH0_CROP_ORIGIN_Y_SHIFT);
+   k.crop_w = field(size, FX1_ISP_CH0_CROP_SIZE_W_MASK, FX1_ISP_CH0_CROP_SIZE_W_SHIFT);
+   k.crop_h = field(size, FX1_ISP_CH0_CROP_SIZE_H_MASK, FX1_ISP_CH0_CROP_SIZE_H_SHIFT);
    k.scale = field(ctrl, FX1_ISP_RESIZER_CTRL_SCALE_MASK, FX1_ISP_RESIZER_CTRL_SCALE_SHIFT);
    k.en = (ctrl & FX1_ISP_RESIZER_CTRL_EN_MASK) != 0;
    return k;
@@ -515,21 +569,51 @@ resizer_key control_unit::resizer_live_key() const {
 void control_unit::resizer_key_written() {
    // The write lands after edge current_cycle_: everything up to that edge
    // used the previous key. Several writes before one edge give one key.
-   rz_.advance(current_cycle_ + 1);
-   const resizer_key k = resizer_live_key();
-   if (k == rz_.live) {
-      return;
+   geometry_sync(current_cycle_ + 1);
+   for (unsigned ch = 0; ch < num_channels; ++ch) {
+      resizer_ctrl &c = rz_[ch];
+      const resizer_key k = resizer_live_key(ch);
+      if (k == c.live) {
+         continue;
+      }
+      c.live = k;
+      // Stable from the next edge, and never before the end of a reset pulse
+      // (MAS Table 124: derivation restarts from the live configuration).
+      c.live_since = std::max(current_cycle_ + 1, c.not_before);
    }
-   rz_.live = k;
-   // Stable from the next edge, and never before the end of a reset pulse
-   // (MAS Table 124: derivation restarts from the live configuration).
-   rz_.live_since = std::max(current_cycle_ + 1, rz_.not_before);
 }
 
-resizer_set control_unit::resizer_published(std::uint64_t cycle) const {
-   resizer_ctrl c = rz_;  // observation only: advance a copy
+void control_unit::geometry_sync(std::uint64_t t) {
+   // An invalid setup of an enabled channel sets the sticky TUNE_ERROR.INVALID
+   // on its publication edge; a disabled channel's geometry admits nothing
+   // and reports only its ERROR level (V107-A30).
+   const std::uint32_t outputs = regs_.peek(FX1_ISP_OUTPUT_ENABLE_OFFSET) & FX1_ISP_OUTPUT_ENABLE_CHANNELS_MASK;
+   for (unsigned ch = 0; ch < num_channels; ++ch) {
+      resizer_ctrl &c = rz_[ch];
+      c.advance(t);
+      if (c.invalid_pending) {
+         c.invalid_pending = false;
+         if (outputs & (1u << ch)) {
+            regs_.hw_set(FX1_ISP_TUNE_ERROR_OFFSET, FX1_ISP_TUNE_ERROR_INVALID_MASK, c.invalid_edge);
+         }
+      }
+   }
+}
+
+resizer_set control_unit::resizer_published(unsigned ch, std::uint64_t cycle) const {
+   resizer_ctrl c = rz_.at(ch);  // observation only: advance a copy
    c.advance(cycle);
    return c.published;
+}
+
+std::uint32_t control_unit::geometry_status(unsigned ch, std::uint64_t cycle) const {
+   resizer_ctrl c = rz_.at(ch);
+   c.advance(cycle);
+   if (c.live != c.published.key) {
+      return FX1_ISP_CH0_GEOMETRY_STATUS_BUSY_MASK;  // BUSY implies VALID = 0 and ERROR = 0
+   }
+   return (c.published.valid ? FX1_ISP_CH0_GEOMETRY_STATUS_VALID_MASK : 0u) |
+          (c.published.error << FX1_ISP_CH0_GEOMETRY_STATUS_ERROR_SHIFT);
 }
 
 void control_unit::set_block_hook(std::uint32_t offset, block_hook hook) {
@@ -580,6 +664,10 @@ void control_unit::lsc_load_ctrl(const register_file::write_effect &fx) {
       }
    } else if (cmd & FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK) {
       const unsigned dest = fx.new_value & FX1_ISP_LSC_LOAD_CTRL_LOAD_PROFILE_MASK;
+      if (dest < lsc_profiles && lsc_resident_owned(dest, current_cycle_)) {
+         tune_error(FX1_ISP_TUNE_ERROR_LOCKED_MASK);  // a pinned destination cannot change (§9.9.1)
+         return;
+      }
       if (lsc_.busy || dest >= lsc_profiles) {
          lsc_error(FX1_ISP_LSC_ERROR_LOAD_PROTOCOL_MASK);
       } else if (dest == lsc_.active) {
@@ -596,7 +684,7 @@ void control_unit::lsc_load_ctrl(const register_file::write_effect &fx) {
          lsc_.staging.assign(lsc_expected_count(), 0);
       }
    }
-   regs_.hw_clear(FX1_ISP_LSC_LOAD_CTRL_OFFSET, cmds);  // self-clearing commands
+   regs_.hw_ack(FX1_ISP_LSC_LOAD_CTRL_OFFSET, cmds);  // self-feedback clear (MAS §8.1.3)
 }
 
 void control_unit::lsc_coef_data(const register_file::write_effect &fx) {
@@ -615,6 +703,9 @@ void control_unit::lsc_coef_data(const register_file::write_effect &fx) {
 }
 
 void control_unit::lsc_profile_sel(const register_file::write_effect &fx) {
+   if (profile_mode()) {
+      return;  // a bank scalar: validated at SEAL, applied at activation (MAS v1.07 §9.9.4)
+   }
    const unsigned sel = fx.new_value & FX1_ISP_LSC_PROFILE_SEL_PROFILE_SEL_MASK;
    if (sel >= lsc_profiles || !lsc_.valid[sel] || (lsc_.busy && sel == lsc_.dest)) {
       lsc_error(FX1_ISP_LSC_ERROR_PROFILE_SEL_REJECT_MASK);
@@ -625,18 +716,18 @@ void control_unit::lsc_profile_sel(const register_file::write_effect &fx) {
 // ---- GTM, 2DNR, EE state -------------------------------------------------------
 
 void control_unit::gtm_end_of_frame(std::uint32_t yavg) {
-   const std::uint32_t ctrl = regs_.peek(FX1_ISP_GTM_CTRL_OFFSET);
-   if (ctrl & FX1_ISP_GTM_CTRL_MANUAL_MASK) {
+   // The builder uses the measured frame's KEY, LWHITE and MANUAL captured at
+   // its accepted SOF, not the live CSRs at EOF (MAS v1.07 §6.16.4.1, §6.16.4.3).
+   if (gtm_sof_.manual) {
       return;  // curve generator held; the software curve persists (ALG-GTM-07)
    }
-   const std::uint32_t key = regs_.peek(FX1_ISP_GTM_KEY_OFFSET) & FX1_ISP_GTM_KEY_KEY_MASK;
-   const std::uint32_t lwhite = regs_.peek(FX1_ISP_GTM_LWHITE_OFFSET) & FX1_ISP_GTM_LWHITE_LWHITE_MASK;
-   gtm_banks_[gtm_read_ ^ 1u] = pipe::gtm_build_curve(yavg, key, lwhite);
+   gtm_banks_[gtm_read_ ^ 1u] = pipe::gtm_build_curve(yavg, gtm_sof_.key, gtm_sof_.lwhite);
    gtm_pending_ = true;
 }
 
 void control_unit::nr_publish(std::uint32_t var) {
    nr_var_ = var & FX1_ISP_NR_2D_EST_VAR_EST_VAR_MASK;
+   nr_have_ = true;
    regs_.hw_write(FX1_ISP_NR_2D_EST_VAR_OFFSET, FX1_ISP_NR_2D_EST_VAR_EST_VAR_MASK, nr_var_);
 }
 
@@ -646,17 +737,6 @@ static_assert(FX1_ISP_EE_CLAMP_OFFSET == FX1_ISP_EE_ALPHA_OFFSET + 4u * ee_clamp
                   FX1_ISP_EE_RADIAL_CENTER_OFFSET == FX1_ISP_EE_ALPHA_OFFSET + 4u * ee_radial_center,
               "EE profile register order");
 
-void control_unit::ee_scalar_write(unsigned k, const register_file::write_effect &fx) {
-   const unsigned p = field(regs_.peek(FX1_ISP_EE_CTRL_OFFSET), FX1_ISP_EE_CTRL_PROFILE_WR_SEL_MASK,
-                            FX1_ISP_EE_CTRL_PROFILE_WR_SEL_SHIFT);
-   if (p < ee_profiles) {
-      ee_[p].scalar[k] = fx.new_value;  // a profile not in use can be rewritten while streaming
-   } else {
-      // Code 3: the write is ignored; the register keeps its last stored value.
-      regs_.hw_write(fx.offset, 0xFFFFFFFFu, fx.old_value);
-   }
-}
-
 void control_unit::ee_sof() {
    // PROFILE_SEL (code 3 selects profile 0), the enable and the profile's
    // scalars are sampled at the accepted SOF, so a frame never mixes two
@@ -664,7 +744,10 @@ void control_unit::ee_sof() {
    const std::uint32_t ctrl = regs_.peek(FX1_ISP_EE_CTRL_OFFSET);
    const unsigned sel = field(ctrl, FX1_ISP_EE_CTRL_PROFILE_SEL_MASK, FX1_ISP_EE_CTRL_PROFILE_SEL_SHIFT);
    ee_frame_.profile = sel < ee_profiles ? sel : 0u;
-   ee_frame_.en = (ctrl & FX1_ISP_EE_CTRL_EN_MASK) != 0;
+   // An unconfirmed selected resident passes the frame through (MAS v1.07 §9.9.1).
+   ee_active_profile_ = ee_frame_.profile;
+   ee_active_valid_ = ee_[ee_frame_.profile].valid;
+   ee_frame_.en = (ctrl & FX1_ISP_EE_CTRL_EN_MASK) != 0 && ee_active_valid_;
    ee_frame_.scalar = ee_[ee_frame_.profile].scalar;
    const geometry g = active_geometry();
    ee_frame_.width = g.width;

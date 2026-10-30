@@ -54,9 +54,33 @@ INDEXED = [
     (r"ODMA_BUF_(TAG|TS|SOF_TS|EOF_TS)[0-3]$",
      "output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5)",
      ("ODMA_BUF_TAG0", "ODMA_BUF_TS0", "ODMA_BUF_SOF_TS0", "ODMA_BUF_EOF_TS0")),
+    (r"CH[12]_ODMA_(Y|UV)_ADDR_[LH][0-3]$", "64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k "
+     "(MAS v1.07 §6.25.3.8)", ("CH1_ODMA_Y_ADDR_L0", "CH1_ODMA_UV_ADDR_L0", "CH2_ODMA_Y_ADDR_L0")),
+    (r"CH[12]_ODMA_BUF_(TAG|TS|SOF_TS|EOF_TS)[0-3]$", "CH1/CH2 output buffer metadata, + 4 * k, published at "
+     "DONE (MAS v1.07 Table 6-159)", ("CH1_ODMA_BUF_TAG0", "CH1_ODMA_BUF_TS0", "CH1_ODMA_BUF_SOF_TS0",
+                                      "CH1_ODMA_BUF_EOF_TS0", "CH2_ODMA_BUF_TAG0", "CH2_ODMA_BUF_TS0",
+                                      "CH2_ODMA_BUF_SOF_TS0", "CH2_ODMA_BUF_EOF_TS0")),
+    (r"TUNE_CH[0-2]_BUF[0-3]_(FRAME|PROFILE)$", "ingress frame ID / profile ID of channel c buffer k, + 4 * k, "
+     "published at DONE (MAS v1.07 §9.9.9)", tuple("TUNE_CH%d_BUF0_%s" % (c, f) for c in range(3)
+                                                    for f in ("FRAME", "PROFILE"))),
+    (r"TUNE_HIST_WEIGHT([0-9]|1[0-9]|2[0-4])$", "weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k "
+     "(MAS v1.07 §6.21.3.4)", ("TUNE_HIST_WEIGHT0",)),
+    (r"TUNE_AF_W([0-9]|1[0-5])_(START|END)$", "AF rectangle k at TUNE_AF_W0_START/END + k * window stride "
+     "(MAS v1.07 §6.23)", ("TUNE_AF_W0_START", "TUNE_AF_W0_END")),
+    (r"TUNE_AWB_E[0-7]_(CENTER|A|B|C|RADIUS2)$", "AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride "
+     "(MAS v1.07 §6.22.3.9)",
+     ("TUNE_AWB_E0_CENTER", "TUNE_AWB_E0_A", "TUNE_AWB_E0_B", "TUNE_AWB_E0_C", "TUNE_AWB_E0_RADIUS2")),
 ]
-CONSTANT = {"COMMON_VER_DATE", "COMMON_VER_ID"}
+CONSTANT = {"COMMON_VER_DATE", "COMMON_VER_ID", "TUNE_ID", "TUNE_REV"}
 STORAGE = {
+    "BPC_STATUS": "W1C status with no source in the VP (the candidate list never overflows in this model); "
+                  "not an ERROR_IRQ source (MAS v1.07 Table 9-188, review V107-7..10 R7)",
+    "RESIZER_CUSTOM_W": "reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2)",
+    "RESIZER_CUSTOM_H": "reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2)",
+    "CH1_RESIZER_CUSTOM_W": "reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2)",
+    "CH1_RESIZER_CUSTOM_H": "reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2)",
+    "CH2_RESIZER_CUSTOM_W": "reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2)",
+    "CH2_RESIZER_CUSTOM_H": "reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2)",
     "COMMON_SCRATCH": "software scratch register by definition",
     "BPC_MODE": "DYNAMIC_DET_EN has no effect: spatial BPC only (MAS §6.9; DEC-28 superseded)",
     "BPC_TEMPORAL_VAR": "no effect: spatial BPC only (MAS §6.9; DEC-28 superseded)",
@@ -83,14 +107,18 @@ STORAGE = {
     "OFMT_Y_STRIDE": "stride padding not modelled (DEC-39)",
     "OFMT_UV_STRIDE": "stride padding not modelled (DEC-39)",
 }
-# Registers of the CSR revision of 2026-10-07 that the model does not implement
-# yet (plan ISP_CSR_MAS_UPDATE_PLAN_2026-10-09, milestones U2 and U5). Regex ->
-# reason. An entry must disappear in the milestone that models the register.
-DEFERRED = [
-    # Empty since U5 (DMA buffer metadata and FRAME_COUNTER are modelled).
-]
+# Registers of CSR v1.07 that the model does not implement yet (plan
+# ISP_V107_UPDATE_PLAN_2026-10-28; milestone per register from the V107-0 field
+# matrix). Regex -> reason. An entry must disappear in the milestone that models
+# the register; first match wins. RO words read their reset value, TUNE_CAPS
+# reports none of their capabilities (V107-A1).
+# Since V107-3 every TUNE_* extension control is bank storage (profile
+# controller); "deferred" means its datapath function is not modelled yet.
+DEFERRED = []
 # Block prefix -> specification and decisions (first match wins).
 BLOCKS = [
+    ("COMMON_RECOVERY_", "MAS v1.07 §9.9.8; V107-D62..D67"),
+    ("COMMON_ABORT", "MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67"),
     ("COMMON_", "HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10"),
     ("BLC_", "HAS §6.7; ALG-BLC"),
     ("LSC_", "HAS §6.8; ALG-LSC, DEC-31"),
@@ -120,8 +148,13 @@ BLOCKS = [
     ("ODMA_BUF_SOF_TS", "MAS §6.25.4.1.0.3 Table 160 (U5)"),
     ("ODMA_BUF_EOF_TS", "MAS §6.25.4.1.0.3 Table 160 (U5)"),
     ("ODMA_BUF_FREE", "MAS Table 156/159 (cleared at frame start, U5); SPEC-07 superseded"),
-    ("IDMA_", "HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3"),
+    ("IDMA_", "HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3"),
     ("ODMA_", "HAS §6.25.9-6.25.10; DEC-18/19"),
+    ("TUNE_", "MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page"),
+    ("CH0_", "MAS §6.20 (CH0 crop and geometry, CSR v1.07)"),
+    ("CH1_", "MAS §6.20, §6.25 (CH1 output, CSR v1.07)"),
+    ("CH2_", "MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07)"),
+    ("OUTPUT_", "MAS §6.24, §9.5 (output enable and interrupts, CSR v1.07)"),
     ("FRAME_COUNTER", "MAS §6.25.4.1.0.3 Table 160 (core-clock time base, U5-A1)"),
 ]
 
@@ -146,7 +179,9 @@ def build():
     schema = json.load(open(os.path.join(ROOT, "docs", "csr", "fx1_isp_csr_schema.json")))
     regs = schema["registers"]
     src = read_all(["src/**/*.h", "src/**/*.cpp"])
-    src = {k: v for k, v in src.items() if "csr_table_gen" not in k}
+    # profile_fields.cpp only classifies the bank-owned words (V107-3): bank
+    # storage is not a model of the field's function.
+    src = {k: v for k, v in src.items() if "csr_table_gen" not in k and "profile_fields" not in k}
     tests = read_all(["tests/**/*.cpp", "tools/run_raw.cpp"])
     data = read_all(["tests/data/vectors/*/profile.csrw", "tests/data/vectors/*/frames.csrw",
                      "tests/data/vectors/*/expected_stats.txt", "tests/data/sequences/*/sequence.txt",
@@ -171,7 +206,11 @@ def build():
                 test_files = sorted(set(test_files) | {os.path.splitext(os.path.basename(f))[0]
                                                        for f, t in tests.items() if arith.search(t)})
         deferred = next((why for pat, why in DEFERRED if re.match(pat, name)), None)
-        if deferred and model_files:
+        if deferred and model_files == ["control_unit_profile.cpp"]:
+            # The profile controller validates the field at SEAL or rejects the
+            # command by mode (V107-3); its datapath function is still deferred.
+            deferred += "; bank storage, SEAL/mode checks since V107-3"
+        elif deferred and model_files:
             errors.append("%s: listed as deferred but the model references it (%s) -- classify it as model"
                           % (name, ", ".join(model_files)))
         if name in CONSTANT:

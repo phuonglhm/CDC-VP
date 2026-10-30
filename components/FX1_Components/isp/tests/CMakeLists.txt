@@ -16,6 +16,12 @@ target_link_libraries(fx1_isp_test_row_stage PRIVATE fx1_isp_core)
 target_compile_options(fx1_isp_test_row_stage PRIVATE ${FX1_ISP_WARNINGS})
 add_test(NAME fx1_isp.unit.row_stage COMMAND fx1_isp_test_row_stage)
 
+add_executable(fx1_isp_test_kernels unit/test_kernels.cpp)
+target_include_directories(fx1_isp_test_kernels PRIVATE common)
+target_link_libraries(fx1_isp_test_kernels PRIVATE fx1_isp_core)
+target_compile_options(fx1_isp_test_kernels PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.unit.kernels COMMAND fx1_isp_test_kernels)
+
 add_executable(fx1_isp_test_stats unit/test_stats.cpp)
 target_include_directories(fx1_isp_test_stats PRIVATE common)
 target_link_libraries(fx1_isp_test_stats PRIVATE fx1_isp_core)
@@ -28,6 +34,18 @@ target_include_directories(fx1_isp_test_ee_profiles PRIVATE common)
 target_link_libraries(fx1_isp_test_ee_profiles PRIVATE fx1_isp_core)
 target_compile_options(fx1_isp_test_ee_profiles PRIVATE ${FX1_ISP_WARNINGS})
 add_test(NAME fx1_isp.unit.ee_profiles COMMAND fx1_isp_test_ee_profiles)
+
+add_executable(fx1_isp_test_register_engine unit/test_register_engine.cpp)
+target_include_directories(fx1_isp_test_register_engine PRIVATE common)
+target_link_libraries(fx1_isp_test_register_engine PRIVATE fx1_isp_core)
+target_compile_options(fx1_isp_test_register_engine PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.unit.register_engine COMMAND fx1_isp_test_register_engine)
+
+add_executable(fx1_isp_test_profile unit/test_profile.cpp)
+target_include_directories(fx1_isp_test_profile PRIVATE common)
+target_link_libraries(fx1_isp_test_profile PRIVATE fx1_isp_core)
+target_compile_options(fx1_isp_test_profile PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.unit.profile COMMAND fx1_isp_test_profile)
 
 add_executable(fx1_isp_test_pipeline_vectors unit/test_pipeline_vectors.cpp)
 target_include_directories(fx1_isp_test_pipeline_vectors PRIVATE common)
@@ -51,6 +69,11 @@ target_include_directories(fx1_isp_test_e2e_tlm PRIVATE common)
 target_link_libraries(fx1_isp_test_e2e_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
 add_test(NAME fx1_isp.integration.e2e_tlm
          COMMAND fx1_isp_test_e2e_tlm ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors)
+
+add_executable(fx1_isp_test_outputs_tlm integration/test_outputs_tlm.cpp)
+target_include_directories(fx1_isp_test_outputs_tlm PRIVATE common)
+target_link_libraries(fx1_isp_test_outputs_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
+add_test(NAME fx1_isp.integration.outputs_tlm COMMAND fx1_isp_test_outputs_tlm)
 
 add_executable(fx1_isp_test_csr_tlm integration/test_csr_tlm.cpp)
 target_include_directories(fx1_isp_test_csr_tlm PRIVATE common)
@@ -107,8 +130,8 @@ endforeach()
 
 # The CSR artefacts in the tree must match the pinned spreadsheet. The
 # spreadsheet is confidential and not in the repository, so this check runs
-# only when its path is provided: -DFX1_ISP_CSR_XLSX=/path/FTEL_IP_ISP_CSR_v1.0.xlsx
-set(FX1_ISP_CSR_XLSX "" CACHE FILEPATH "Path to FTEL_IP_ISP_CSR_v1.0.xlsx (optional)")
+# only when its path is provided: -DFX1_ISP_CSR_XLSX=/path/FTEL_IP_ISP_CSR_v1.07.xlsm
+set(FX1_ISP_CSR_XLSX "" CACHE FILEPATH "Path to FTEL_IP_ISP_CSR_v1.07.xlsm (optional)")
 if(FX1_ISP_CSR_XLSX)
     # Prefer the `python3` on PATH over the newest versioned interpreter: the
     # tools need openpyxl, which is installed per interpreter.
@@ -145,6 +168,8 @@ if(Python3_Interpreter_FOUND)
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_block_vectors.py --check)
         add_test(NAME fx1_isp.reference.sequence_up_to_date
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_sequence.py --check)
+        add_test(NAME fx1_isp.tools.input_depth
+            COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/check_input_depth.py)
         add_test(NAME fx1_isp.reference.4k_vectors_up_to_date
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_4k_vectors.py --check)
         set_tests_properties(fx1_isp.reference.4k_vectors_up_to_date PROPERTIES TIMEOUT 600)
@@ -166,3 +191,14 @@ if(Python3_Interpreter_FOUND)
         message(STATUS "fx1_isp: numpy not found, reference vector checks disabled")
     endif()
 endif()
+
+# A wall-clock limit for every test without its own: the suite runs in about
+# three minutes, so a polling loop that never ends fails instead of stalling
+# the run (V107-6: driver_tlm once spun for hours on a dropped AEC measurement).
+get_property(_fx1_isp_tests DIRECTORY PROPERTY TESTS)
+foreach(_t IN LISTS _fx1_isp_tests)
+    get_test_property(${_t} TIMEOUT _limit)
+    if(NOT _limit)
+        set_tests_properties(${_t} PROPERTIES TIMEOUT 300)
+    endif()
+endforeach()

@@ -18,8 +18,11 @@ from a stated formula so that runs are reproducible and explainable. Presets
                   LSC profile 1 at strength 0.75, DG gain 0.9375 (attenuation),
                   AEC 16x12 of 168x128 with clipping, AWB at the maximum 64x32 grid.
   gtm_manual_qhd  basic + GTM manual LUT (software S-curve), Resizer qHD, 2DNR,
-                  EE with radial gains and non-unity tables, BPC static, AEC with
-                  an illegal grid (global + histogram only), AWB global only, AF.
+                  EE with radial gains and non-unity tables, BPC static, AEC 8x6
+                  zones sized to cover the active image, AWB 16x8, AF. (Before
+                  V107-10 an illegal AEC/AWB grid, dropped under v1.07; the
+                  illegal and reset grids are covered by the dedicated vectors
+                  stats_illegal_grids_64x32 and stats_reset_grids_af_edges_130x90.)
 
 Input: an ISP-contract container file from raw_fixture.py (bits [11:0]).
 """
@@ -80,7 +83,9 @@ def resizer(scale):
 
 
 def gamma(preset):
-    return [("GAMMA_LUT_ADDR", 0)] + [("GAMMA_LUT_DATA", v) for v in gamma_curve(preset)] + [("GAMMA_CTRL", 1)]
+    # v1.07: the curve applies only after LUT_LOAD_CONFIRM with EN = 0 (MAS §6.14.4).
+    return [("GAMMA_LUT_ADDR", 0)] + [("GAMMA_LUT_DATA", v) for v in gamma_curve(preset)] + \
+        [("GAMMA_CTRL", 1 << 8), ("GAMMA_CTRL", 1)]
 
 
 def grey_world(raw12, width, height, bayer, pedestal):
@@ -130,7 +135,9 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
         # (MAS §6.5.2), so a profile that enables EE must load them.
         for bank, n in ((0, 64), (1, 64), (2, 32), (3, 32)):
             w += [("EE_LUT_CTRL", bank << 1), ("EE_LUT_ADDR", 0)] + [("EE_LUT_WDATA", 0x8000)] * n
-        w += [("EE_ALPHA", 0x6000), ("EE_BETA", 0x4000), ("EE_CLAMP", (40 << 8) | 30), ("EE_CTRL", 1)]
+        # v1.07: confirm the resident (tables and scalars) with EE disabled (MAS §9.9.1).
+        w += [("EE_ALPHA", 0x6000), ("EE_BETA", 0x4000), ("EE_CLAMP", (40 << 8) | 30), ("EE_LUT_CTRL", 1 << 8),
+              ("EE_CTRL", 1)]
         w += [("CNF_CHROMA_TH", 30), ("CNF_LUMA_TH", 20), ("CNF_CTRL", 0x5)]
         w += resizer(14 if vga else 5)
         if vga:
@@ -156,9 +163,13 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
               ("EE_RADIAL_CENTER", ((ah - 1) << 16) | (aw - 1)), ("EE_RADIAL_R2_TH0", r2max // 10),
               ("EE_RADIAL_R2_TH1", r2max * 35 // 100), ("EE_RADIAL_R2_TH2", r2max * 70 // 100),
               ("EE_RADIAL_GAIN_01", (0x9000 << 16) | 0x8000), ("EE_RADIAL_GAIN_23", (0xC000 << 16) | 0xA000),
-              ("EE_CTRL", 1)]
+              ("EE_LUT_CTRL", 1 << 8), ("EE_CTRL", 1)]
         w += resizer(7)
-        w += aec(0, 4, 84, 64) + awb(0, 0, 16, 4000) + [("AF_CTRL", 1)] + ids
+        # A legal v1.07 grid: (NX - 1) * ZW < W <= NX * ZW on both axes (MAS
+        # v1.07 §6.21.3.1); AWB NX <= min(64, W/2), NY <= min(32, H/2).
+        nx, ny = 8, 6
+        zw, zh = -(-aw // nx), -(-ah // ny)
+        w += aec(nx, ny, zw, zh) + awb(16, 8, 16, 4000) + [("AF_CTRL", 1)] + ids
     note = "grey world means after BLC: R %.1f G %.1f B %.1f" % means
     return w, note
 
@@ -172,9 +183,16 @@ def main():
     ap.add_argument("--preset", default="basic", choices=PRESETS)
     ap.add_argument("--pedestal", type=int, default=200)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--depth", default="raw12", choices=("raw12", "raw10"),
+                    help="native depth of the right-aligned container (COMMON_INPUT_FORMAT, MAS v1.07 §6.6.3.2)")
     a = ap.parse_args()
-    raw = np.fromfile(a.input, dtype="<u2").astype(np.int64) & 0xFFF
+    words = np.fromfile(a.input, dtype="<u2").astype(np.int64)
+    # The profile is computed in the internal RAW12 domain: normalize exactly once.
+    raw = ((words & 0x3FF) << 2) if a.depth == "raw10" else words & 0xFFF
     writes, note = profile_writes(raw, a.width, a.height, a.bayer, a.preset, a.pedestal)
+    if a.depth == "raw10":
+        writes = [("COMMON_INPUT_FORMAT", 1)] + writes  # RAW12 is the reset value
+        note += "; input RAW10 right-aligned (DEPTH 1)"
     with open(a.out, "w", encoding="utf-8") as f:
         f.write("# test profile '%s' (not a calibration), tools/make_profile.py\n# %s\n" % (a.preset, note))
         for n, v in writes:

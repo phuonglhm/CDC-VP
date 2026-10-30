@@ -2,7 +2,7 @@
  * Camera commands (CSI-2 M6b), through the camera manager
  * (fw/fx1_soc/drivers/fx1_camera) from the CLI task:
  *   camera probe                    CSI-2 RX identity, sensor model_id over I2C0
- *   camera mode [W H BITS LANES]    set (default 64 16 12 4) or show the mode
+ *   camera mode [W H BITS LANES]    set (default 64 32 12 4) or show the mode
  *   camera source [sensor|tpg]      set or show the source (TPG: no D-PHY)
  *   camera start                    configure (profile basic) and start
  *   camera capture N [crc]          N frames: metadata, NV12 CRC, golden match
@@ -21,7 +21,7 @@
  *
  * Verification: NV12 CRC-32 against the golden of the stand-alone ISP model
  * (fw/fx1_soc/tests/camera_isp/camera_isp_golden.h) where one exists: sensor
- * 64x16 RAW12 / RAW10 frames 1..32 (any lane count), TPG 640x480 and
+ * 64x32 RAW12 / RAW10 frames 1..32 (any lane count), TPG 640x480 and
  * 3840x2160 RAW12. The CRC is computed for NV12 up to 1 MiB, or always with
  * `crc`: the simulated CPU runs about 0.3 MIPS from DDR, so a 12 MiB CRC at 4K
  * takes about ten minutes of host time (the bare-metal tpg4k regression checks
@@ -72,7 +72,7 @@ static fx1_camera cam;
 static struct {
     uint32_t w, h, bits, lanes;
     int tpg;
-} mode = {64u, 16u, 12u, 4u, 0};
+} mode = {64u, 32u, 12u, 4u, 0};  /* 32 lines: the ISP v1.07 minimum active size */
 static fx1_camera_cfg cfg;
 static int probed;                /* probe done, CSI-2 RX present */
 static int csi_ready;             /* the CSI-2 driver instance is valid (its ISR may run) */
@@ -109,6 +109,7 @@ static const char* rc_name(int rc)
     case FX1_CAMERA_ETIMEOUT: return "ETIMEOUT";
     case FX1_CAMERA_EDEV: return "EDEV";
     case FX1_CAMERA_ESENSOR: return "ESENSOR";
+    case FX1_CAMERA_EBUSY: return "EBUSY";
     default: return "?";
     }
 }
@@ -140,7 +141,7 @@ static uint32_t frame_us(void)
     return (uint32_t)((uint64_t)ns * frame_length() / 1000u);
 }
 
-/* 12 / 10: sensor 64x16 tables (frames 1..32); 4: TPG 4K, 6: TPG 640x480
+/* 12 / 10: sensor 64x32 tables (frames 1..32); 4: TPG 4K, 6: TPG 640x480
  * (one image each); 0: no golden. */
 static int golden_case(void)
 {
@@ -175,7 +176,7 @@ static uint32_t nv12_crc(const fx1_camera_frame* f)
     /* Test image (freertos_cli_camfault): a TPG 4K frame's CRC is taken as
      * the golden one, which takes minutes on the simulated CPU; the session
      * using it checks the ring's poisoning, not the CRC (computed for real at
-     * 64x16 and 640x480 in the other sessions). */
+     * 64x32 and 640x480 in the other sessions). */
     if (golden_case() == 4) return cam_isp_crc_tpg4k[0];
 #endif
     uint32_t crc = 0xFFFFFFFFu;
@@ -656,6 +657,7 @@ static int stop(int argc, char** argv)
     out(" us, state ");
     out_line(state_name(cam.state));
     if (rc == FX1_CAMERA_ESENSOR) out_line("  the sensor did not confirm standby: camera stop again once I2C answers");
+    if (rc == FX1_CAMERA_EBUSY) out_line("  the ISP is still draining its reset: camera stop again (buffers kept)");
     return 0;
 }
 

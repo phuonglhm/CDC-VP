@@ -55,7 +55,7 @@ fx1_camera_cfg cam_isp_cfg(uint32_t bits)
     return c;
 }
 
-/* Table CRC-32: the check of a 64x16 NV12 must stay well inside a frame
+/* Table CRC-32: the check of a 64x32 NV12 must stay well inside a frame
  * period, or the consumer itself would make the CSI-2 RX drop frames. */
 static uint32_t crc_table[256];
 

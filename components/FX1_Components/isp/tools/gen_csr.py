@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the FX1 ISP CSR artefacts from FTEL_IP_ISP_CSR_v1.0.xlsx.
+"""Generate the FX1 ISP CSR artefacts from the pinned CSR workbook (FTEL_IP_ISP_CSR_v1.07.xlsm).
 
 The spreadsheet is the ABI source (decision DEC-09: CSR wins over the HAS).
 It is confidential and is NOT stored in this repository; pass its path on the
-command line. The generated files carry the ABI only -- names, offsets, bit
+command line. The macro-enabled .xlsm is read as data only (openpyxl; no macro
+is executed). The generated files carry the ABI only -- names, offsets, bit
 positions, access types, reset values, enum names and the worksheet row of
 each item -- and never the spreadsheet's descriptive text. The generated files are kept in the source tree so that the C++
 build never needs Python or the spreadsheet:
@@ -18,7 +19,7 @@ spreadsheet text so that a new revision of the map fails loudly instead of
 silently inheriting a stale override.
 
 Usage:
-  gen_csr.py --xlsx <path/to/FTEL_IP_ISP_CSR_v1.0.xlsx> [--out <isp dir>] [--check]
+  gen_csr.py --xlsx <path/to/FTEL_IP_ISP_CSR_v1.07.xlsm> [--out <isp dir>] [--check]
 """
 
 import argparse
@@ -34,13 +35,15 @@ try:
 except ImportError:  # pragma: no cover - environment problem, not a bug
     sys.exit("gen_csr.py: openpyxl is required (pip install openpyxl)")
 
-GENERATOR_VERSION = "1.1"
-# CSR revision of 2026-10-07 (MAS of the same date). The previous pin was
-# 0980b61d... (226 registers, 298 fields); see docs/ISP_CSR_REVISION_0710.md.
-EXPECTED_SHA256 = "bda077b63d5ffe92c99e856170f4770509934ff900a270e954601b6124750db4"
-EXPECTED_COUNTS = {"registers": 254, "fields": 336,
-                   "RW": 201, "RO": 101, "W1C": 20, "W1S": 12, "W1SC": 2}
-ACCESS_TYPES = ("RW", "RO", "W1C", "W1S", "W1SC")
+GENERATOR_VERSION = "2.0"
+# CSR revision v1.07 (ABI 0x00010007, MAS v1.07 of 2026-10-18). Previous pins:
+# bda077b6... (07/10, 254 registers, 336 fields; docs/ISP_CSR_REVISION_0710.md)
+# and 0980b61d... (226 registers). See docs/ISP_CSR_REVISION_V107.md.
+EXPECTED_SHA256 = "444e72f8d7fd3f35d83a7ce47d455b87dc6df6cda833b11302c6a45fb8b721fa"
+EXPECTED_COUNTS = {"registers": 573, "fields": 819,
+                   "RW": 464, "RO": 288, "W1C": 35, "W1S": 11, "W1SC": 2, "W1P": 19}
+# MAS v1.07 Table 8-178. W1P: one-clock command, reads zero (new in v1.07).
+ACCESS_TYPES = ("RW", "RO", "W1C", "W1S", "W1SC", "W1P")
 APERTURE_BYTES = 0x10000
 
 # Overrides of the literal spreadsheet content. Each one is checked against the
@@ -55,6 +58,21 @@ APERTURE_BYTES = 0x10000
 #
 # CSR 07/10: DEC-11 is now the spreadsheet's own enum order (assert only);
 # SPEC-05 is superseded -- DMA_IRQ bit 0 is CFG_ERROR, no longer reserved.
+# CSR v1.07: buffer-ownership bits at or above the build buffer count (4,
+# PARA_DMA_NUM_BUFFERS) read zero and ignore writes (V107-1).
+BUFFER_FIELDS = [("IDMA_BUF_VALID", "idma_buf_valid", "7:4 unused"),
+                 ("ODMA_BUF_FREE", "odma_buf_free", "bits 7:4 are unused"),
+                 ("ODMA_BUF_DONE", "odma_buf_done", "bits 7:4 unused"),
+                 ("CH1_ODMA_BUF_FREE", "odma_buf_free", "bits 7:4 are unused"),
+                 ("CH1_ODMA_BUF_DONE", "odma_buf_done", "bits 7:4 unused"),
+                 ("CH2_ODMA_BUF_FREE", "odma_buf_free", "bits 7:4 are unused"),
+                 ("CH2_ODMA_BUF_DONE", "odma_buf_done", "bits 7:4 unused")]
+# MAS v1.07 Table 6-122 (codes 0xF and 0x16..0x1F reserved).
+RESIZER_PRESETS = {0: "FULLRES", 1: "RES_3840X2160", 2: "RES_2560X1440", 3: "RES_2880X1620", 4: "RES_2304X1296",
+                   5: "RES_1920X1080", 6: "RES_1280X720", 7: "RES_960X540", 8: "RES_640X360", 9: "RES_2592X1944",
+                   10: "RES_2048X1536", 11: "RES_1600X1200", 12: "RES_1280X960", 13: "RES_800X600",
+                   14: "RES_640X480", 16: "RES_640X640", 17: "RES_640X384", 18: "RES_640X352", 19: "RES_512X512",
+                   20: "RES_416X416", 21: "RES_320X320"}
 OVERRIDES = [
     {
         "id": "DEC-11",
@@ -74,8 +92,15 @@ OVERRIDES = [
         "id": "VP-NAMES-CSC",
         "register": "CSC_CTRL", "field": "std", "kind": "enum_names",
         "reason": "The values are given in prose; keep the header names BT601/BT709.",
-        "expect_text": "0 selects BT.601; 1 selects BT.709.",
+        "expect_text": "0 BT.601 (reset), 1 BT.709.",
         "enum": {0: "BT601", 1: "BT709"},
+    },
+    {
+        "id": "VP-NAMES-INPUT-DEPTH",
+        "register": "COMMON_INPUT_FORMAT", "field": "DEPTH", "kind": "enum_names",
+        "reason": "The codes are given in prose; name the two legal native depths (2/3 invalid).",
+        "expect_text": "0 RAW12 unchanged; 1 RAW10 shifted left two; 2/3 invalid.",
+        "enum": {0: "RAW12", 1: "RAW10"},
     },
     {
         "id": "VP-NAMES-ODMA-BUF",
@@ -91,6 +116,30 @@ OVERRIDES = [
         "expect_text": "Bits 3:0 identify buffers",
         "bits": {0: "BUFFER_0", 1: "BUFFER_1", 2: "BUFFER_2", 3: "BUFFER_3"},
     },
+] + [
+    {"id": "VP-NAMES-ODMA-BUF", "register": reg, "field": fld, "kind": "bit_names",
+     "reason": "Bits 3:0 identify the buffers without names; BUFFER_0..3 as on CH0.",
+     "expect_text": "Bits 3:0 identify " + ("the four buffers" if fld == "odma_buf_free" else "buffers"),
+     "bits": {0: "BUFFER_0", 1: "BUFFER_1", 2: "BUFFER_2", 3: "BUFFER_3"}}
+    for reg, fld in (("CH1_ODMA_BUF_FREE", "odma_buf_free"), ("CH1_ODMA_BUF_DONE", "odma_buf_done"),
+                     ("CH2_ODMA_BUF_FREE", "odma_buf_free"), ("CH2_ODMA_BUF_DONE", "odma_buf_done"))
+] + [
+    {"id": "VP-NAMES-RESIZER", "register": reg, "field": "scale", "kind": "enum_names",
+     "reason": "The preset codes are given in prose; name them as in MAS v1.07 Table 6-122 "
+               "(1..14 unchanged from 07/10, 16..21 the AI presets; CH2 only its legal codes).",
+     "expect_text": text, "enum": enum}
+    for reg, text, enum in (
+        ("RESIZER_CTRL", "16=640x640, 17=640x384, 18=640x352, 19=512x512, 20=416x416, 21=320x320", RESIZER_PRESETS),
+        ("CH1_RESIZER_CTRL", "16=640x640, 17=640x384, 18=640x352, 19=512x512, 20=416x416, 21=320x320",
+         RESIZER_PRESETS),
+        ("CH2_RESIZER_CTRL", "8=640x360; 14=640x480; 16=640x640; 17=640x384; 18=640x352; 19=512x512; "
+                             "20=416x416; 21=320x320",
+         {k: v for k, v in RESIZER_PRESETS.items() if k in (0, 8, 14, 16, 17, 18, 19, 20, 21)}))
+] + [
+    {"id": "CSR107-BUFCOUNT", "register": reg, "field": fld, "kind": "tied_zero",
+     "reason": "Bits at or above the build buffer count (4) read zero and ignore writes.",
+     "expect_text": text, "bits": [4, 5, 6, 7]}
+    for reg, fld, text in BUFFER_FIELDS
 ]
 
 # Header names that a revision renamed. The old macro stays as an alias of the
@@ -384,9 +433,9 @@ def gen_table(regs, src):
     w("const reg_desc registers[] = {")
     for i, r in enumerate(regs):
         masks, reset = register_summary(r)
-        w("   {0x%04Xu, %s, 0x%08Xu, 0x%08Xu, 0x%08Xu, 0x%08Xu, 0x%08Xu, 0x%08Xu, fields_%d, %d, %d}," % (
+        w("   {0x%04Xu, %s, 0x%08Xu, 0x%08Xu, 0x%08Xu, 0x%08Xu, 0x%08Xu, 0x%08Xu, 0x%08Xu, fields_%d, %d, %d}," % (
             r["offset"], c_str(r["name"]), reset, masks["RW"], masks["RO"], masks["W1C"],
-            masks["W1S"], masks["W1SC"], i, len(r["fields"]), r["row"]))
+            masks["W1S"], masks["W1SC"], masks["W1P"], i, len(r["fields"]), r["row"]))
     w("};")
     w("")
     w("const std::size_t num_registers = sizeof(registers) / sizeof(registers[0]);")
@@ -399,7 +448,7 @@ def gen_schema(regs, src, applied, counts):
     doc = {
         "generator": "tools/gen_csr.py", "generator_version": GENERATOR_VERSION,
         "source": src, "counts": counts, "overrides": applied, "compat_aliases": COMPAT_ALIASES,
-        "access_semantics": "HAS Table 8-1 / Table 7-10; see docs/ISP_CSR_CONTRACT.md",
+        "access_semantics": "MAS v1.07 Table 8-178 / Table 8-180; see docs/ISP_CSR_CONTRACT.md",
         "registers": [],
     }
     for r in regs:
@@ -421,7 +470,7 @@ def gen_schema(regs, src, applied, counts):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--xlsx", required=True, help="path to FTEL_IP_ISP_CSR_v1.0.xlsx")
+    ap.add_argument("--xlsx", required=True, help="path to FTEL_IP_ISP_CSR_v1.07.xlsm")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),
                     help="component root (default: parent of tools/)")
     ap.add_argument("--check", action="store_true",
@@ -473,7 +522,7 @@ def main():
     if stale:
         fail("generated files out of date: " + ", ".join(stale))
     print("registers=%(registers)d fields=%(fields)d RW=%(RW)d RO=%(RO)d W1C=%(W1C)d "
-          "W1S=%(W1S)d W1SC=%(W1SC)d" % counts)
+          "W1S=%(W1S)d W1SC=%(W1SC)d W1P=%(W1P)d" % counts)
 
 
 if __name__ == "__main__":

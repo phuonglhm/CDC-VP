@@ -45,11 +45,27 @@ void engine_context::wait_out_of_reset(std::uint64_t my_epoch) {
       }
       const std::uint64_t now = cycle();
       if (ctl.soft_reset_active(now)) {
+         if (ctl.soft_reset_end_cycle() == control_unit::never) {  // draining: woken when it ends
+            wait_event(kick, my_epoch);
+            continue;
+         }
          wait_time(params.core_period * static_cast<double>(ctl.soft_reset_end_cycle() - now), my_epoch);
+         ctl.advance_to(cycle());  // the recovery's final retirement (MAS v1.07 §9.9.8)
+         state_changed();
          continue;
       }
       return;
    }
+}
+
+// An AXI error response (MAS v1.07 §6.25.4.1, §9.9.8): the sticky DMA_ERR
+// bit and the interrupt, then the automatic DMA-scope recovery; during a
+// running recovery the request joins it (no new SEQUENCE or record).
+void engine_context::axi_response_error(bool read) {
+   set(FX1_ISP_DMA_ERR_OFFSET, read ? err_idma_axi : err_odma_axi);
+   set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_axi_error);
+   ctl.recovery_request(control_unit::reset_scope::dma, read ? control_unit::rc_read : control_unit::rc_write, cycle());
+   state_changed();
 }
 
 void engine_context::set(std::uint32_t offset, std::uint32_t mask) {
@@ -58,7 +74,7 @@ void engine_context::set(std::uint32_t offset, std::uint32_t mask) {
 }
 
 void engine_context::clear(std::uint32_t offset, std::uint32_t mask) {
-   ctl.hw_clear(offset, mask);
+   ctl.hw_clear(offset, mask, cycle());
    state_changed();
 }
 
@@ -77,18 +93,64 @@ void engine_context::accept_frame() {
    set(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_BUSY_MASK);
 }
 
-void engine_context::retire_frame() {
+void engine_context::retire_frame(bool completed) {
    sc_assert(frames_in_flight > 0);
+   ctl.frame_retired();  // the frame's profile reference (V107-3)
+   if (completed) {
+      // The frame has retired at every enabled output with DONE (DEC-17; MAS
+      // v1.07: FRAME_DONE is the retirement of the frame, not one channel).
+      set(FX1_ISP_COMMON_IRQ_STATUS_OFFSET, FX1_ISP_COMMON_IRQ_STATUS_FRAME_DONE_IRQ_MASK);
+      set(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_FRAME_DONE_MASK);
+   }
    if (--frames_in_flight == 0) {
       clear(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_BUSY_MASK);
    }
+   retired.notify(sc_core::SC_ZERO_TIME);
 }
+
+void engine_context::consumer_done(std::uint64_t f, bool ok) {
+   const auto it = consumers.find(f);
+   if (it == consumers.end()) {
+      return;  // abandoned by a reset
+   }
+   it->second.ok = it->second.ok && ok;
+   if (--it->second.pending == 0) {
+      const bool completed = it->second.ok;
+      consumers.erase(it);
+      retire_frame(completed);
+   }
+}
+
+// Output channel DMA registers (CSR v1.07).
+const odma_channel_regs odma_channels[num_channels] = {
+   {FX1_ISP_ODMA_BUF_FREE_OFFSET, FX1_ISP_ODMA_BUF_DONE_OFFSET, FX1_ISP_ODMA_FRAME_COUNT_OFFSET,
+    FX1_ISP_ODMA_Y_ADDR_L0_OFFSET, FX1_ISP_ODMA_UV_ADDR_L0_OFFSET, FX1_ISP_ODMA_Y_STRIDE_OFFSET,
+    FX1_ISP_ODMA_UV_STRIDE_OFFSET, FX1_ISP_ODMA_BUF_TAG0_OFFSET, FX1_ISP_ODMA_BUF_TS0_OFFSET,
+    FX1_ISP_ODMA_BUF_SOF_TS0_OFFSET, FX1_ISP_ODMA_BUF_EOF_TS0_OFFSET, FX1_ISP_TUNE_CH0_BUF0_FRAME_OFFSET,
+    FX1_ISP_TUNE_CH0_BUF0_PROFILE_OFFSET},
+   {FX1_ISP_CH1_ODMA_BUF_FREE_OFFSET, FX1_ISP_CH1_ODMA_BUF_DONE_OFFSET, FX1_ISP_CH1_ODMA_FRAME_COUNT_OFFSET,
+    FX1_ISP_CH1_ODMA_Y_ADDR_L0_OFFSET, FX1_ISP_CH1_ODMA_UV_ADDR_L0_OFFSET, FX1_ISP_CH1_ODMA_Y_STRIDE_OFFSET,
+    FX1_ISP_CH1_ODMA_UV_STRIDE_OFFSET, FX1_ISP_CH1_ODMA_BUF_TAG0_OFFSET, FX1_ISP_CH1_ODMA_BUF_TS0_OFFSET,
+    FX1_ISP_CH1_ODMA_BUF_SOF_TS0_OFFSET, FX1_ISP_CH1_ODMA_BUF_EOF_TS0_OFFSET, FX1_ISP_TUNE_CH1_BUF0_FRAME_OFFSET,
+    FX1_ISP_TUNE_CH1_BUF0_PROFILE_OFFSET},
+   {FX1_ISP_CH2_ODMA_BUF_FREE_OFFSET, FX1_ISP_CH2_ODMA_BUF_DONE_OFFSET, FX1_ISP_CH2_ODMA_FRAME_COUNT_OFFSET,
+    FX1_ISP_CH2_ODMA_Y_ADDR_L0_OFFSET, 0, FX1_ISP_CH2_ODMA_Y_STRIDE_OFFSET, 0, FX1_ISP_CH2_ODMA_BUF_TAG0_OFFSET,
+    FX1_ISP_CH2_ODMA_BUF_TS0_OFFSET, FX1_ISP_CH2_ODMA_BUF_SOF_TS0_OFFSET, FX1_ISP_CH2_ODMA_BUF_EOF_TS0_OFFSET,
+    FX1_ISP_TUNE_CH2_BUF0_FRAME_OFFSET, FX1_ISP_TUNE_CH2_BUF0_PROFILE_OFFSET},
+};
+static_assert(FX1_ISP_CH1_ODMA_Y_ADDR_L1_OFFSET - FX1_ISP_CH1_ODMA_Y_ADDR_L0_OFFSET == 16u &&
+                  FX1_ISP_CH2_ODMA_Y_ADDR_L1_OFFSET - FX1_ISP_CH2_ODMA_Y_ADDR_L0_OFFSET == 16u &&
+                  FX1_ISP_ODMA_Y_ADDR_L1_OFFSET - FX1_ISP_ODMA_Y_ADDR_L0_OFFSET == 16u,
+              "buffer address registers are 16 bytes apart in every channel");
 
 void engine_context::reset_engines() {
    ++epoch;
    idma_head = 0;
-   odma_head = 0;
+   odma_head = {};
    frames_in_flight = 0;
+   consumers.clear();
+   odma_busy = 0;
+   odma_overflowing = 0;
    for (line_fifo *f : fifos) {
       f->clear();
    }
@@ -142,11 +204,32 @@ bool memory_access(tlm::tlm_initiator_socket<> &socket, tlm::tlm_command cmd, st
    t.set_dmi_allowed(false);
    t.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
    sc_time delay = sc_core::SC_ZERO_TIME;
+   // An accepted transaction is outstanding until its response, however the
+   // target times it: a blocking target holds this thread inside b_transport,
+   // an annotated one returns the response time in `delay`. The response is
+   // received whatever happens meanwhile (MAS v1.07 §9.9.8): the drain of a
+   // recovery ends only when every accepted transaction has its response, and
+   // an error response in the drain sets its sticky bit and joins the
+   // running recovery. Only then is aborted work abandoned.
+   // A hard reset wins over everything accepted before it: such a response
+   // only ends the transaction's lifetime (no DMA_ERR, no recovery).
+   const std::uint64_t gen = ctx.hard_reset_gen;
+   ++ctx.axi_outstanding;
    socket->b_transport(t, delay);
-   // The response is observed at its annotated time; a reset in the meantime
-   // makes the result irrelevant (HAS §7.1.8: the bus is left clean).
-   ctx.wait_time(delay, my_epoch);
-   return t.is_response_ok();
+   if (delay > sc_core::SC_ZERO_TIME) {
+      sc_core::wait(delay);
+   }
+   --ctx.axi_outstanding;
+   const bool ok = t.is_response_ok();
+   if (!ok && gen == ctx.hard_reset_gen && !ctx.in_reset) {
+      ctx.axi_response_error(cmd == tlm::TLM_READ_COMMAND);
+   }
+   if (ctx.axi_outstanding == 0) {
+      ctx.ctl.recovery_drained(ctx.edge_at_or_after_now());
+      ctx.kick.notify(sc_core::SC_ZERO_TIME);
+   }
+   ctx.check(my_epoch);
+   return ok;
 }
 
 // ---- input DMA (HAS §6.25.8) -------------------------------------------------
@@ -181,7 +264,8 @@ void idma_engine::wait_for_buffer(std::uint64_t e) {
       const std::uint32_t ctrl = ctx_.reg(FX1_ISP_DMA_CTRL_OFFSET);
       const bool enabled = (ctrl & FX1_ISP_DMA_CTRL_IDMA_EN_MASK) != 0;
       const unsigned head = ctx_.idma_head;
-      const bool valid = (ctx_.reg(FX1_ISP_IDMA_BUF_VALID_OFFSET) >> head) & 1u;
+      const bool valid = (ctx_.request(FX1_ISP_IDMA_BUF_VALID_OFFSET) >> head) & 1u;
+      const bool valid_next_edge = !valid && ((ctx_.reg(FX1_ISP_IDMA_BUF_VALID_OFFSET) >> head) & 1u);
       // Underrun: enabled, idle between frames, head buffer not valid (HAS §6.25.8.3).
       set_underrun(enabled && !valid);
       if (enabled && valid) {
@@ -192,6 +276,7 @@ void idma_engine::wait_for_buffer(std::uint64_t e) {
          s.stride = ctx_.reg(FX1_ISP_IDMA_STRIDE_OFFSET);
          s.width = ctx_.reg(FX1_ISP_COMMON_FRAME_WIDTH_OFFSET) & FX1_ISP_COMMON_FRAME_WIDTH_H_ACTIVE_MASK;
          s.height = ctx_.reg(FX1_ISP_COMMON_FRAME_HEIGHT_OFFSET) & FX1_ISP_COMMON_FRAME_HEIGHT_V_ACTIVE_MASK;
+         s.depth = ctx_.reg(FX1_ISP_COMMON_INPUT_FORMAT_OFFSET) & FX1_ISP_COMMON_INPUT_FORMAT_DEPTH_MASK;
          if (dma::idma_setup_ok(s, ctx_.params.axi_data_bytes)) {
             setup_ = s;
             // The buffer's tag and capture timestamp join the working set; a
@@ -202,11 +287,20 @@ void idma_engine::wait_for_buffer(std::uint64_t e) {
             return;
          }
          // Illegal configuration: the unit does not start; DMA_ERR.ALIGN and
-         // IRQ_CFG_ERROR (MAS Table 161-162, p294-295; SPEC-05 superseded).
+         // IRQ_CFG_ERROR. The rejected buffer is not read: its VALID bit is
+         // cleared and the rotation stays (MAS v1.07 §6.25.3.4), so the unit
+         // waits as if the buffer were not available until software corrects
+         // the configuration and sets VALID again.
          ctx_.set(FX1_ISP_DMA_ERR_OFFSET, err_align);
          ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_cfg_error);
+         ctx_.clear(FX1_ISP_IDMA_BUF_VALID_OFFSET, 1u << head);
+         continue;
       }
-      ctx_.wait_event(ctx_.kick, e);
+      if (enabled && valid_next_edge) {
+         ctx_.wait_next_edge(e);  // armed on this edge: seen on the next
+      } else {
+         ctx_.wait_event(ctx_.kick, e);
+      }
    }
 }
 
@@ -225,18 +319,13 @@ void idma_engine::frame(std::uint64_t e) {
       std::uint32_t off = 0;
       for (const dma::burst &b : dma::split_line(addr, 2u * w, max_beats_, ctx_.params.axi_data_bytes)) {
          if (!memory_access(socket_, tlm::TLM_READ_COMMAND, b.addr, raw.data() + off, b.bytes, ctx_, e)) {
-            // DEC-19: terminal for the frame; release the buffer, keep the
-            // rotation position, discard the frame end to end.
-            ctx_.set(FX1_ISP_DMA_ERR_OFFSET, err_idma_axi);
-            ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_axi_error);
-            ctx_.clear(FX1_ISP_IDMA_BUF_VALID_OFFSET, bit);
-            ctx_.clear(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_IDMA_BUSY_MASK);
-            if (y > 0) {
-               line marker;
-               marker.frame = frames_;
-               marker.abort = true;
-               out_.push(std::move(marker), e);
-            }
+            // Terminal (MAS v1.07 §6.25.4.1, §9.9.8): the sticky error, then
+            // automatic DMA-scope recovery of every unretired frame. The
+            // engines stop at once; the recovery's final retirement clears
+            // the ownership bits and restarts the rotations (DEC-19 superseded).
+            // memory_access latched the error and requested the recovery.
+            (void)bit;
+            ctx_.check(e);  // aborted by the recovery
             return;
          }
          off += b.bytes;
@@ -289,21 +378,32 @@ sc_time pipeline_engine::line_time(std::uint32_t width) const {
    return ctx_.params.core_period * static_cast<double>(width + ctx_.params.pipeline_line_overhead_cycles);
 }
 
-void pipeline_engine::abort_downstream(std::uint64_t f, bool output_started, std::uint64_t e,
-                                       bool y_complete, bool uv_complete) {
+void pipeline_engine::abort_downstream(std::uint64_t f, std::uint64_t e) {
    ctx_.ctl.blocks_busy(false);
    ctx_.ctl.advance_to(ctx_.cycle());
    ctx_.ctl.stats_abort();  // no publication for an abandoned frame (ALG-STAT-09)
-   if (output_started) {
+   ctx_.consumer_done(f, false);  // the pipeline
+   for (unsigned c = 0; c < num_channels; ++c) {
+      channel_progress &p = prog_[c];
+      if (!p.on) {
+         continue;
+      }
+      p.on = false;
+      if (p.y_rows == 0) {
+         ctx_.consumer_done(f, false);  // this output never saw the frame
+         continue;
+      }
+      // Each plane ends exactly once. UV can reach EOF one luma row before
+      // Y; another marker after that EOF would poison the next frame's UV.
       line marker;
       marker.frame = f;
       marker.abort = true;
-      // Each plane ends exactly once. UV can reach EOF one luma row before
-      // Y; another marker after that EOF would poison the next frame's UV.
-      if (!y_complete) y_.push(marker, e);
-      if (!uv_complete) uv_.push(std::move(marker), e);
-   } else {
-      ctx_.retire_frame();
+      if (p.y_rows < p.height) {
+         out_[c].y->push(marker, e);
+      }
+      if (out_[c].uv && p.uv_rows < p.height / 2u) {
+         out_[c].uv->push(std::move(marker), e);
+      }
    }
 }
 
@@ -319,6 +419,19 @@ void pipeline_engine::frame(std::uint64_t e) {
       in_.pop(e);
    }
    wait_isp_enabled(e);
+   // Admission (MAS v1.07 §9.7, §9.9.7): context credits, and in profile mode
+   // an active or due profile, an enabled output and the old-epoch drain.
+   for (;;) {
+      const control_unit::admission a = ctx_.ctl.admission_state(ctx_.cycle(), ctx_.frames_in_flight);
+      if (a == control_unit::admission::go) {
+         break;
+      }
+      if (a == control_unit::admission::wait_edge) {
+         ctx_.wait_next_edge(e);
+      } else {
+         ctx_.wait_events(ctx_.kick, ctx_.retired, e);
+      }
+   }
    line l = in_.pop(e);  // accepted SOF
    // Pending commits first (DEC-26), then the configuration snapshot (HAS §9.4.3).
    ctx_.ctl.accepted_sof(ctx_.cycle());
@@ -333,43 +446,58 @@ void pipeline_engine::frame(std::uint64_t e) {
 
 void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
    const pipe::pipeline_config cfg = pipe::snapshot_config(ctx_.ctl);
-   pipe::frame_geometry g{0, 0};
-   std::uint32_t y_rows = 0, uv_rows = 0;
-   auto y_sink = [&](std::vector<std::uint8_t> &&bytes) {
-      line o;
-      o.frame = f;
-      o.sof = y_rows == 0;
-      o.eof = y_rows + 1 == g.height;
-      o.width = g.width;
-      o.height = g.height;
-      o.tag = l.tag;  // the frame's metadata follows it to the output (MAS Table 160)
-      o.ts = l.ts;
-      o.bytes = std::move(bytes);
-      ++y_rows;
-      y_.push(std::move(o), e);
-   };
-   auto uv_sink = [&](std::vector<std::uint8_t> &&bytes) {
-      line o;
-      o.frame = f;
-      o.sof = uv_rows == 0;
-      o.eof = uv_rows + 1 == g.height / 2u;
-      o.width = g.width;
-      o.height = g.height;
-      o.tag = l.tag;  // the frame's metadata follows it to the output (MAS Table 160)
-      o.ts = l.ts;
-      o.bytes = std::move(bytes);
-      ++uv_rows;
-      uv_.push(std::move(o), e);
-   };
+   const std::uint32_t ingress = ctx_.ctl.frame_id(), profile = ctx_.ctl.frame_profile_id();
+   // The distributor presents every pixel to each channel enabled by the
+   // OUTPUT_ENABLE mask of this SOF (MAS v1.07 §9.5.1); each has its FIFOs.
+   std::array<pipe::isp_pipeline::channel_sinks, num_channels> sinks{};
+   prog_ = {};
+   unsigned outputs = 0;
+   for (unsigned c = 0; c < num_channels; ++c) {
+      if (!(cfg.outputs & (1u << c))) {
+         continue;
+      }
+      ++outputs;
+      prog_[c].on = true;
+      auto make = [&, c](bool chroma) {
+         return [this, c, chroma, f, e, &l, ingress, profile](std::vector<std::uint8_t> &&bytes) {
+            channel_progress &p = prog_[c];
+            std::uint32_t &rows = chroma ? p.uv_rows : p.y_rows;
+            const std::uint32_t total = chroma ? p.height / 2u : p.height;
+            line o;
+            o.frame = f;
+            o.sof = rows == 0;
+            o.eof = rows + 1 == total;
+            o.width = p.width;
+            o.height = p.height;
+            o.tag = l.tag;  // the frame's metadata follows it to the output (MAS Table 160)
+            o.ts = l.ts;
+            o.ingress = ingress;
+            o.profile = profile;
+            o.bytes = std::move(bytes);
+            ++rows;
+            (chroma ? out_[c].uv : out_[c].y)->push(std::move(o), e);
+         };
+      };
+      sinks[c].y = make(false);
+      if (out_[c].uv) {
+         sinks[c].uv = make(true);
+      }
+   }
+   ctx_.frame_begin(f, outputs);
    auto warn = [](const std::string &msg) { SC_REPORT_WARNING("fx1_isp/pipeline", msg.c_str()); };
    try {
-      g = pipeline_.begin(cfg, l.width, l.height, y_sink, uv_sink, warn);
+      pipeline_.begin(cfg, l.width, l.height, sinks, warn);
+      for (unsigned c = 0; c < num_channels; ++c) {
+         const pipe::frame_geometry g = pipeline_.output(c);
+         prog_[c].width = g.width;
+         prog_[c].height = g.height;
+      }
       const std::uint32_t h = l.height;
       for (std::uint32_t y = 0; y < h; ++y) {
          if (y > 0) {
             l = in_.pop(e);
             if (l.abort || l.sof) {
-               abort_downstream(f, y_rows > 0, e, y_rows == g.height, uv_rows == g.height / 2u);  // frame abandoned upstream
+               abort_downstream(f, e);  // frame abandoned upstream
                return;
             }
          }
@@ -381,6 +509,10 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
       ctx_.ctl.advance_to(ctx_.cycle());  // publication edge (MAS §6.22.4.3)
       pipe::end_of_frame(ctx_.ctl, cfg, pipeline_.stats());
       ctx_.ctl.blocks_busy(false);  // the last row has left the pipeline
+      for (channel_progress &p : prog_) {
+         p.on = false;
+      }
+      ctx_.consumer_done(f, true);
       ctx_.state_changed();
    } catch (const std::runtime_error &err) {
       // Unsupported geometry for a block (e.g. ALG-DMS-03): drop the frame.
@@ -388,16 +520,22 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
       while (!l.eof && !l.abort) {
          l = in_.pop(e);
       }
-      abort_downstream(f, y_rows > 0, e, y_rows == g.height, uv_rows == g.height / 2u);
+      abort_downstream(f, e);
    }
 }
 
 void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
+   // The datapath stub (DMA tests) drives CH0 only.
+   ctx_.frame_begin(f, 1);
    const std::uint32_t pattern = ctx_.reg(FX1_ISP_COMMON_BAYER_OFFSET) & FX1_ISP_COMMON_BAYER_PATTERN_MASK;
+   const std::uint32_t depth = ctx_.reg(FX1_ISP_COMMON_INPUT_FORMAT_OFFSET) & FX1_ISP_COMMON_INPUT_FORMAT_DEPTH_MASK;
    const geometry active = control_unit::derive_active(l.width, l.height, pattern);
    // The frame's published Resizer set (MAS §6.20.4.3), if derived for this raster.
    const resizer_set &rz = ctx_.ctl.resizer_frame();
-   const geometry out = rz.key.valid && rz.key.width == active.width && rz.key.height == active.height ? rz.out : active;
+   const geometry out = rz.valid && rz.key.width == active.width && rz.key.height == active.height ? rz.out : active;
+   prog_ = {};
+   prog_[0] = channel_progress{true, out.width, out.height, 0, 0};
+   const std::uint32_t ingress = ctx_.ctl.frame_id(), profile = ctx_.ctl.frame_profile_id();
    const std::uint32_t sh = pattern & 1u;
    const std::uint32_t sv = (pattern >> 1) & 1u;
    std::uint32_t oy = 0;
@@ -406,7 +544,7 @@ void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
       if (y > 0) {
          l = in_.pop(e);
          if (l.abort || l.sof) {
-            abort_downstream(f, oy > 0, e, oy == out.height, (oy + 1u) / 2u == out.height / 2u);
+            abort_downstream(f, e);
             return;
          }
       }
@@ -425,9 +563,12 @@ void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
          yl.height = out.height;
          yl.tag = l.tag;
          yl.ts = l.ts;
+         yl.ingress = ingress;
+         yl.profile = profile;
          yl.bytes.resize(out.width);
-         stub::luma_line(l.samples.data(), sh, active.width, yl.bytes.data(), out.width);
-         y_.push(std::move(yl), e);
+         stub::luma_line(l.samples.data(), sh, active.width, yl.bytes.data(), out.width, depth);
+         out_[0].y->push(std::move(yl), e);
+         ++prog_[0].y_rows;
          if (oy % 2u == 0) {
             line ul;
             ul.frame = f;
@@ -437,14 +578,19 @@ void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
             ul.height = out.height;
             ul.tag = l.tag;
             ul.ts = l.ts;
+            ul.ingress = ingress;
+            ul.profile = profile;
             ul.bytes.assign(out.width, stub::chroma_value);
-            uv_.push(std::move(ul), e);
+            out_[0].uv->push(std::move(ul), e);
+            ++prog_[0].uv_rows;
          }
          ++oy;
       }
    }
    ctx_.ctl.stats_abort();  // the test stub measures nothing
    ctx_.ctl.blocks_busy(false);
+   prog_[0].on = false;
+   ctx_.consumer_done(f, true);
 }
 
 // ---- output DMA (HAS §6.25.9) --------------------------------------------------
@@ -452,50 +598,41 @@ void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
 void odma_engine::run() {
    for (;;) {
       const std::uint64_t e = ctx_.epoch;
-      armed_ = false;
+      busy_ = overflow_ = false;
       try {
          for (;;) {
             ctx_.wait_out_of_reset(e);
-            if (!armed_ && !arm(e)) {
+            // A new frame starts only while the ODMA is enabled (M2-A2): a
+            // disabled ODMA leaves the frame waiting, without overflow (M2-A6).
+            const bool enabled = (ctx_.reg(FX1_ISP_DMA_CTRL_OFFSET) & FX1_ISP_DMA_CTRL_ODMA_EN_MASK) != 0;
+            const line *first = y_.front();
+            if (!enabled || !first) {
+               set_overflow(false);
                ctx_.wait_events(ctx_.kick, y_.data_event(), e);
                continue;
             }
-            // A new frame starts only while the ODMA is enabled (M2-A2): an armed
-            // but disabled ODMA leaves the frame waiting, without overflow (M2-A6).
-            const bool enabled = (ctx_.reg(FX1_ISP_DMA_CTRL_OFFSET) & FX1_ISP_DMA_CTRL_ODMA_EN_MASK) != 0;
-            if (y_.empty() || !enabled) {
-               ctx_.wait_events(ctx_.kick, y_.data_event(), e);
+            if (first->abort || !first->sof) {
+               y_.pop(e);  // not the start of a frame: resynchronise
+               continue;
+            }
+            if (!claim(*first, e)) {
+               if (retry_next_edge_) {
+                  ctx_.wait_next_edge(e);  // freed on this edge: seen on the next
+               } else {
+                  ctx_.wait_events(ctx_.kick, y_.data_event(), e);
+               }
                continue;
             }
             line yl = y_.pop(e);
-            if (yl.abort || !yl.sof) {
-               continue;  // not the start of a frame: resynchronise
-            }
-            // The ODMA takes each frame's line length and line count from that
-            // frame, so a Resizer mode change needs no re-arm (MAS §9.2). The
-            // strides were checked at arm against the published set; a frame
-            // wider than a stride would overrun its buffer: refused (VP
-            // decision U4-A2; not a start attempt, so no IRQ_CFG_ERROR, U1-A2).
-            const std::uint32_t fw = yl.width, fh = yl.height;
-            if (fw > setup_.y_stride || fw > setup_.uv_stride) {
-               ctx_.set(FX1_ISP_DMA_ERR_OFFSET, err_align);
-               armed_ = false;
-               sink_frame(yl.eof, false, e);
-               end_frame();
-               continue;
-            }
-            const unsigned head = ctx_.odma_head;
+            frame_ = yl.frame;
+            const unsigned head = ctx_.odma_head[ch_];
             const std::uint32_t bit = 1u << head;
-            // The frame starts in the head buffer: hardware takes it (FREE
-            // cleared, MAS Table 159; SPEC-07 superseded) and latches the
-            // output start-of-frame time.
-            ctx_.clear(FX1_ISP_ODMA_BUF_FREE_OFFSET, bit);
-            ctx_.set(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_ODMA_BUSY_MASK);
-            const std::uint32_t tag = yl.tag, ts = yl.ts;
+            const std::uint32_t fh = yl.height;
+            const std::uint32_t tag = yl.tag, ts = yl.ts, ingress = yl.ingress, profile = yl.profile;
             const std::uint32_t sof_ts = ctx_.ctl.frame_counter(ctx_.cycle());
             std::uint32_t eof_ts = 0;
             bool y_end = false;
-            bool uv_end = false;
+            bool uv_end = uv_ == nullptr;  // CH2: one plane
             bool failed = false;
             bool aborted = false;
             for (std::uint32_t oy = 0; oy < fh && !failed && !aborted; ++oy) {
@@ -514,8 +651,8 @@ void odma_engine::run() {
                   failed = true;
                   break;
                }
-               if (oy % 2u == 0) {
-                  const line ul = uv_.pop(e);
+               if (uv_ && oy % 2u == 0) {
+                  const line ul = uv_->pop(e);
                   uv_end = ul.eof || ul.abort;
                   if (ul.abort) {
                      aborted = true;
@@ -531,92 +668,103 @@ void odma_engine::run() {
                }
             }
             if (failed) {
-               // DEC-19: no DONE, buffer released (FREE stays clear), rotation
-               // kept, no metadata published.
-               ctx_.set(FX1_ISP_DMA_ERR_OFFSET, err_odma_axi);
-               ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_axi_error);
-               armed_ = false;
+               // Terminal: memory_access latched the sticky error and requested
+               // the automatic DMA-scope recovery (MAS v1.07 §9.9.8); no DONE,
+               // no metadata (DEC-19 superseded).
+               ctx_.check(e);  // aborted by the recovery
             } else if (aborted) {
                // Frame abandoned upstream: it is processed as if it had never
                // existed (MAS §9.1.1), so the buffer it took is handed back
                // free for the next frame, rotation kept, no metadata
                // published (VP decision U5-A3).
-               ctx_.set(FX1_ISP_ODMA_BUF_FREE_OFFSET, bit);
+               ctx_.set(r_.free, bit);
             }
             if (failed || aborted) {
                sink_frame(y_end, uv_end, e);
-               end_frame();
+               end_frame(false);
                continue;
             }
-            // Both planes complete: every write response has returned. The
-            // frame's metadata is published with the buffer (MAS Table 160).
-            ctx_.write(FX1_ISP_ODMA_BUF_TAG0_OFFSET + 4u * head, 0xFFFFFFFFu, tag);
-            ctx_.write(FX1_ISP_ODMA_BUF_TS0_OFFSET + 4u * head, 0xFFFFFFFFu, ts);
-            ctx_.write(FX1_ISP_ODMA_BUF_SOF_TS0_OFFSET + 4u * head, 0xFFFFFFFFu, sof_ts);
-            ctx_.write(FX1_ISP_ODMA_BUF_EOF_TS0_OFFSET + 4u * head, 0xFFFFFFFFu, eof_ts);
-            ctx_.set(FX1_ISP_ODMA_BUF_DONE_OFFSET, bit);
-            ctx_.odma_head = (head + 1u) % dma::num_buffers;
-            ctx_.write(FX1_ISP_ODMA_FRAME_COUNT_OFFSET, 0xFFFFFFFFu,
-                       ctx_.reg(FX1_ISP_ODMA_FRAME_COUNT_OFFSET) + 1u);
+            // Every plane complete: every write response has returned. The
+            // frame's metadata is published with the buffer (MAS Table 6-159,
+            // §9.9.9: ingress frame ID and profile ID with it).
+            ctx_.write(r_.tag0 + 4u * head, 0xFFFFFFFFu, tag);
+            ctx_.write(r_.ts0 + 4u * head, 0xFFFFFFFFu, ts);
+            ctx_.write(r_.sof_ts0 + 4u * head, 0xFFFFFFFFu, sof_ts);
+            ctx_.write(r_.eof_ts0 + 4u * head, 0xFFFFFFFFu, eof_ts);
+            ctx_.write(r_.frame0 + 4u * head, 0xFFFFFFFFu, ingress);
+            ctx_.write(r_.profile0 + 4u * head, 0xFFFFFFFFu, profile);
+            ctx_.set(r_.done, bit);
+            ctx_.ctl.output_done(ingress, ch_);  // not a failed output of a later recovery
+            ctx_.odma_head[ch_] = (head + 1u) % dma::num_buffers;
+            ctx_.write(r_.count, 0xFFFFFFFFu, ctx_.reg(r_.count) + 1u);
             ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_odma_done);
-            ctx_.set(FX1_ISP_COMMON_IRQ_STATUS_OFFSET, FX1_ISP_COMMON_IRQ_STATUS_FRAME_DONE_IRQ_MASK);
-            ctx_.set(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_FRAME_DONE_MASK);  // DEC-17
-            armed_ = false;
-            end_frame();
+            ctx_.set(FX1_ISP_OUTPUT_IRQ_STATUS_OFFSET, 1u << (FX1_ISP_OUTPUT_IRQ_STATUS_DONE_SHIFT + ch_));
+            end_frame(true);
          }
       } catch (const reset_abort &) {
       }
    }
 }
 
-bool odma_engine::arm(std::uint64_t e) {
+bool odma_engine::claim(const line &first, std::uint64_t e) {
    (void)e;
    const std::uint32_t ctrl = ctx_.reg(FX1_ISP_DMA_CTRL_OFFSET);
-   const bool enabled = (ctrl & FX1_ISP_DMA_CTRL_ODMA_EN_MASK) != 0;
-   const unsigned head = ctx_.odma_head;
-   const bool free = (ctx_.reg(FX1_ISP_ODMA_BUF_FREE_OFFSET) >> head) & 1u;
-   if (!enabled) {
-      set_overflow(false);
-      return false;
-   }
-   // An output frame is waiting and the head buffer is not free: the
-   // pipeline is back-pressured, nothing is lost (DEC-18).
-   set_overflow(!free && !y_.empty() && y_.front()->sof);
+   const unsigned head = ctx_.odma_head[ch_];
+   const std::uint32_t bit = 1u << head;
+   const bool free = (ctx_.request(r_.free) >> head) & 1u;
+   retry_next_edge_ = !free && ((ctx_.reg(r_.free) >> head) & 1u);
+   // The channel's frame is waiting and the head buffer is not free: the
+   // pipeline is back-pressured, nothing is lost (MAS §6.25.3.9, DEC-18).
+   set_overflow(!free);
    if (!free) {
       return false;
    }
+   // The claim captures both plane bases and strides and the frame's own
+   // output geometry, then checks Table 6-153 (MAS §6.25.3.8): a rejected
+   // buffer is neither read nor written, its FREE bit is cleared, the rotation
+   // does not advance and the frame waits for software (U4-A2 superseded).
    dma::odma_setup s{};
    const unsigned bits = ctx_.params.axi_addr_bits;
-   s.y_base = dma::port_address(reg64(ctx_, FX1_ISP_ODMA_Y_ADDR_L0_OFFSET + 16u * head), bits);
-   s.uv_base = dma::port_address(reg64(ctx_, FX1_ISP_ODMA_UV_ADDR_L0_OFFSET + 16u * head), bits);
-   s.y_stride = ctx_.reg(FX1_ISP_ODMA_Y_STRIDE_OFFSET);
-   s.uv_stride = ctx_.reg(FX1_ISP_ODMA_UV_STRIDE_OFFSET);
-   // DEC-20: the output geometry is only driven while ISP_EN is set. The
-   // strides are checked against the published set at arm (MAS §9.2).
-   if (ctx_.reg(FX1_ISP_COMMON_CTRL_OFFSET) & FX1_ISP_COMMON_CTRL_ISP_EN_MASK) {
-      const geometry g = ctx_.ctl.resizer_published(ctx_.cycle()).out;
-      s.width = g.width;
-      s.height = g.height;
+   s.rgb = uv_ == nullptr;
+   s.y_base = dma::port_address(reg64(ctx_, r_.y_addr0 + 16u * head), bits);
+   s.y_stride = ctx_.reg(r_.y_stride);
+   if (!s.rgb) {
+      s.uv_base = dma::port_address(reg64(ctx_, r_.uv_addr0 + 16u * head), bits);
+      s.uv_stride = ctx_.reg(r_.uv_stride);
    }
+   s.width = first.width;
+   s.height = first.height;
    if (!dma::odma_setup_ok(s, ctx_.params.axi_data_bytes)) {
+      ctx_.clear(r_.free, bit);
       ctx_.set(FX1_ISP_DMA_ERR_OFFSET, err_align);
-      ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_cfg_error);  // MAS Table 162
+      ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_cfg_error);  // MAS Table 6-160
+      set_overflow(true);  // the frame now waits for a free buffer
+      retry_next_edge_ = false;
       return false;
    }
    setup_ = s;
    max_beats_ = max_beats(ctrl);
-   armed_ = true;
+   ctx_.clear(r_.free, bit);  // the frame takes the head buffer (MAS Table 6-158)
+   busy_ = true;
+   if (ctx_.odma_busy++ == 0) {
+      ctx_.set(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_ODMA_BUSY_MASK);
+   }
    return true;
 }
 
 void odma_engine::set_overflow(bool level) {
-   // DMA_ERR.ODMA_OVERFLOW stays set while the stall lasts (MAS Table 161,
-   // DEC-18 status part superseded); the interrupt is raised once per stall.
-   const bool held = (ctx_.ctl.regs().held(FX1_ISP_DMA_ERR_OFFSET) & err_overflow) != 0;
-   if (level && !held) {
-      ctx_.hold(FX1_ISP_DMA_ERR_OFFSET, err_overflow, true);
-      ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_odma_overflow);
-   } else if (!level && held) {
+   // DMA_ERR.ODMA_OVERFLOW stays set while any channel is stalled (MAS Table
+   // 6-160, DEC-18 status part superseded); the interrupt is raised once per stall.
+   if (level == overflow_) {
+      return;
+   }
+   overflow_ = level;
+   if (level) {
+      if (ctx_.odma_overflowing++ == 0) {
+         ctx_.hold(FX1_ISP_DMA_ERR_OFFSET, err_overflow, true);
+         ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_odma_overflow);
+      }
+   } else if (--ctx_.odma_overflowing == 0) {
       ctx_.hold(FX1_ISP_DMA_ERR_OFFSET, err_overflow, false);
    }
 }
@@ -637,25 +785,30 @@ bool odma_engine::write_line(std::uint64_t base, std::uint32_t stride, std::uint
 }
 
 void odma_engine::sink_frame(bool y_done, bool uv_done, std::uint64_t e) {
-   // Drain both channels together: the pipeline interleaves luma and chroma
-   // lines, so draining one channel to its end first would deadlock on the
-   // other channel's full FIFO.
+   // Drain both planes together: the pipeline interleaves luma and chroma
+   // lines, so draining one plane to its end first would deadlock on the
+   // other plane's full FIFO.
    while (!y_done || !uv_done) {
       if (!y_done && !y_.empty()) {
          const line l = y_.pop(e);
          y_done = l.eof || l.abort;
-      } else if (!uv_done && !uv_.empty()) {
-         const line l = uv_.pop(e);
+      } else if (!uv_done && uv_ && !uv_->empty()) {
+         const line l = uv_->pop(e);
          uv_done = l.eof || l.abort;
+      } else if (uv_) {
+         ctx_.wait_events(y_.data_event(), uv_->data_event(), e);
       } else {
-         ctx_.wait_events(y_.data_event(), uv_.data_event(), e);
+         ctx_.wait_event(y_.data_event(), e);
       }
    }
 }
 
-void odma_engine::end_frame() {
-   ctx_.clear(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_ODMA_BUSY_MASK);
-   ctx_.retire_frame();
+void odma_engine::end_frame(bool ok) {
+   busy_ = false;
+   if (--ctx_.odma_busy == 0) {
+      ctx_.clear(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_ODMA_BUSY_MASK);
+   }
+   ctx_.consumer_done(frame_, ok);
 }
 
 }  // namespace cdc::components::fx1_isp

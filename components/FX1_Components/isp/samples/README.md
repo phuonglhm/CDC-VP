@@ -4,7 +4,8 @@ Installed under `<prefix>/share/fx1_isp/samples`.
 
 | File | Use |
 |---|---|
-| `profiles/outdoor1_bggr_2688x1520_<preset>.csrw` | The four test profiles of DEC-34 (`tools/make_profile.py --preset`), computed from one RAW frame of the project dataset: BGGR 2688×1520, grey-world white balance. They are test profiles, not calibrations. Each file is a list of `<REGISTER> <value>` writes, applied in order before `ISP_EN` (programming guide §2). |
+| `profiles/outdoor1_bggr_2688x1520_<preset>.csrw` | The four test profiles of DEC-34 (`tools/make_profile.py --preset`), computed from one RAW frame of the project dataset: BGGR 2688×1520, grey-world white balance. They are test profiles, not calibrations. Each file is a list of `<REGISTER> <value>` writes, applied in order before `ISP_EN` (programming guide §2). Regenerated for CSR/MAS v1.07 (V107-D102): the Gamma and EE legacy confirmations are part of the list. The frame is loaded as `run_regression.py` loads it (`raw_fixture.load_source`, format `le16_raw10_msb`), then `make_profile.profile_writes`: the `make_profile.py` command line reads a right-aligned container, which the dataset file is not. |
+| `profiles/shared_bggr_2688x1520_full.csrw` | The SDK sample profile (`platforms/fx1_soc/package`): the `full` preset with fixed tuned BLC, WB, CCM, EE_ALPHA and GTM values, the same for every input. |
 | `4k/<case>/` | The two 4K acceptance cases (DEC-37): profile, frame count, expected NV12 SHA-256 and statistics readout script. |
 | `run_4k_check.sh` | Runs both 4K cases through the installed `fx1_isp_run_raw`, compares each against the reference values, and prints PASS or FAIL. It needs neither Python nor the dataset. |
 

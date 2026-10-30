@@ -41,7 +41,7 @@ import numpy as np  # noqa: E402
 import gen_golden  # noqa: E402
 
 ART_BASE = 0x81000000 + 0x400000  # FX1_FW_RAW_BUF_BASE + 0x400000 (artifacts.c)
-ART_LEN = 0x10000
+ART_LEN = 0x20000  # artifacts.c CAM_ART_LEN
 MAGIC = 0x414D4143
 REC_FIELDS = ("capture", "csi_frame_id", "csi_side", "isp_seq", "isp_input", "isp_output", "zero_copy", "isp_in",
               "y", "uv", "number", "nv12_crc", "raw_capture", "width", "height", "reserved")

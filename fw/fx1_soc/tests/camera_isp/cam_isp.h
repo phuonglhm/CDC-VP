@@ -30,7 +30,7 @@ extern fx1_camera g_cam;
 
 /* Trap handler (PLIC 7 -> CSI-2, PLIC 3 -> ISP) and PLIC set-up; MIE on. */
 void cam_isp_irqs(void);
-/* Configuration of a 64x16 sensor stream at `bits` (RAW12 4 lanes, RAW10 2
+/* Configuration of a 64x32 sensor stream at `bits` (RAW12 4 lanes, RAW10 2
  * lanes), the matching golden profile. */
 fx1_camera_cfg cam_isp_cfg(uint32_t bits);
 /* CRC-32 (IEEE) of the active NV12 bytes of a frame, Y then UV. */

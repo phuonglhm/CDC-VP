@@ -18,14 +18,16 @@
  *                  held, the receiver drops); IDMA resumed, the two held
  *                  frames come out intact, then the stream after the drops.
  *                  Catches a side released before the ISP has read it, which
- *                  at 64x16 is otherwise invisible (the IDMA reads in µs)
+ *                  at 64x32 is otherwise invisible (the IDMA reads in µs)
  *   6 idma_err     review M6a F1: an IDMA read error on frame 2's zero-copy
  *                  input (its IDMA_BUF_ADDR made unmapped while the IDMA is
  *                  paused), then 7 ms with only the ISRs running while the
- *                  sensor keeps streaming; the error hook repairs the address,
- *                  recovery re-reads the same input. The side must stay held
- *                  meanwhile: the retried output is capture 2 with the pixels
- *                  of sensor frame 2, the stream resumes after the drops
+ *                  sensor keeps streaming. The ISP recovers by itself (MAS
+ *                  v1.07 §9.9.8, no in-place retry): frame 2 is lost. Its side
+ *                  must stay held while the read error is pending and go back
+ *                  to the receiver once the manager has settled the recovery;
+ *                  the next output is capture 3 (the other side) with the
+ *                  pixels of sensor frame 3, the stream resumes after the drops
  *   7 sensor_stop_timeout  review M6a F2: the I2C host disabled, so the
  *                  standby never reaches the sensor: stop returns
  *                  FX1_CAMERA_ESENSOR within its deadline, state 3, CSI-2 RX
@@ -243,21 +245,23 @@ int main(void)
     fx1_check((g_cam.isp_fatal & FX1_ISP_DMA_ERR_ERR_AXI_RD_BIT) != 0, 0x120, "idma_err: read error collected by the ISR");
     fx1_check(g_cam.side_state[s] == 2, 0x121, "idma_err: side held while the read error is pending");
     fx1_camera_frame f;
-    fx1_check(fx1_camera_dequeue(&g_cam, &f, CAM_ISP_WAIT_US) == FX1_CAMERA_OK, 0x130, "idma_err: retried frame");
+    fx1_check(fx1_camera_dequeue(&g_cam, &f, CAM_ISP_WAIT_US) == FX1_CAMERA_OK, 0x130,
+              "idma_err: the next frame after the recovery");
     const uint32_t n = cam_isp_frame_of(12, cam_isp_crc(&f, CAM_ISP_W, CAM_ISP_W));
-    fx1_log_hex("  retried capture", f.capture);
-    fx1_log_hex("  retried output = sensor frame", n);
-    fx1_check(f.capture == 2u && n == 2u && f.csi_side == s && f.isp_in == g_bad_side, 0x131,
-              "idma_err: the retry read the original frame 2");
+    fx1_log_hex("  next capture", f.capture);
+    fx1_log_hex("  next output = sensor frame", n);
+    fx1_check(f.capture == 3u && n == 3u && f.csi_side != s, 0x131,
+              "idma_err: frame 2 lost by the recovery, frame 3 (the other side) intact");
+    fx1_check(g_cam.side_state[s] != 2, 0x132, "idma_err: the lost frame's side is back with the receiver");
     fx1_camera_release(&g_cam, &f);
-    fx1_check(cam_isp_take(12, 0x140) == 3u, 0x141, "idma_err: frame 3 (the other side) intact");
+    (void)g_bad_side;
     const uint32_t d1 = drops();
     const uint32_t m = cam_isp_take(12, 0x150);
     fx1_log_hex("  drops", d1);
     fx1_log_hex("  next frame", m);
     fx1_check(d1 >= 1u && m == 4u + d1, 0x151, "idma_err: stream resumes right after the dropped frames");
-    fx1_check(g_cam.stats.isp_errors == 1u && g_cam.stats.isp_lost == 0, 0x152, "idma_err: one error, nothing lost");
-    fx1_log("idma_err: the zero-copy side stays held until the retried read succeeds");
+    fx1_check(g_cam.stats.isp_errors == 1u && g_cam.stats.isp_lost == 1u, 0x152, "idma_err: one error, one frame lost");
+    fx1_log("idma_err: the zero-copy side stays held until the recovery is settled; the frame is lost");
 #elif CAM_FAULT == 7 || CAM_FAULT == 8
     bring_up(&cfg);
     fx1_check(cam_isp_take(12, 0x100) == 1u && cam_isp_take(12, 0x110) == 2u, 0x101, "sensor_stop: frames 1-2");

@@ -46,6 +46,11 @@ add_library(fx1_isp_core STATIC
     src/registers/register_file.cpp
     src/control/control_unit.cpp
     src/control/control_unit_stats.cpp
+    src/control/channel_geometry.cpp
+    src/control/control_unit_recovery.cpp
+    src/control/control_unit_profile.cpp
+    src/control/control_unit_tables.cpp
+    src/control/profile_fields.cpp
     src/dma/dma_rules.cpp
     src/pipeline/isp_pipeline.cpp)
 target_include_directories(fx1_isp_core

@@ -191,8 +191,9 @@ in `sw/bootloader/sources/VP_FX1_V3.0/README.md`.
 | `fpu test` | two tasks interleave FP work; results must equal the switch-free value bit for bit |
 | `dma test [BYTES]` | SYS_DMA memory-to-memory copy with completion IRQ, data verified |
 | `isp selftest` | 8 synthetic 64×48 frames through the ISP driver; every NV12 CRC must match the reference |
-| `isp run auto` | one AWB probe, then at least two render frames with FW-selected WB/tone (demo policy) |
-| `isp run` | process the RAW job loaded into DDR (`run_vp.sh isp`), result block for the host |
+| `isp run auto` | one AWB probe, then at least two render frames with FW-selected WB/tone (demo policy); legacy mode |
+| `isp run` | process the RAW job loaded into DDR (`run_vp.sh isp`), result block for the host; profile mode by default (job version 2), legacy for a version-1 job |
+| `isp run legacy` | the same job in legacy mode, for comparison |
 | `isp stats` | AEC/AWB/AF statistics of the last frame |
 | `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` |
 | `poweroff` | end the simulation: PASS if no check failed so far, otherwise FAIL `0x400 + failures` |

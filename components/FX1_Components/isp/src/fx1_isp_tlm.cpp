@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "fx1_isp/fx1_isp_tlm.h"
 
+#include <cmath>
+
 #include "control/control_unit.h"
 #include "engine/engines.h"
 #include "fx1_isp/fx1_isp_csr.h"
@@ -16,19 +18,30 @@ struct fx1_isp_tlm::impl {
          in_fifo(ctx, 2),  // PARA_DMA_FIFO_LINES = 2 (HAS Table 6-87)
          y_fifo(ctx, 2),
          uv_fifo(ctx, 2),
+         ch1_y_fifo(ctx, 2),
+         ch1_uv_fifo(ctx, 2),
+         ch2_fifo(ctx, 2),
          idma(ctx, top.idma_socket, in_fifo),
-         pipeline(ctx, in_fifo, y_fifo, uv_fifo),
-         odma(ctx, top.odma_socket, y_fifo, uv_fifo) {
-      ctx.fifos = {&in_fifo, &y_fifo, &uv_fifo};
+         pipeline(ctx, in_fifo, outputs()),
+         odma{odma_engine(ctx, top.odma_socket, 0, outputs()[0]), odma_engine(ctx, top.odma_socket, 1, outputs()[1]),
+              odma_engine(ctx, top.odma_socket, 2, outputs()[2])} {
+      ctx.fifos = {&in_fifo, &y_fifo, &uv_fifo, &ch1_y_fifo, &ch1_uv_fifo, &ch2_fifo};
+   }
+   // CH0/CH1 NV12 planes, CH2 one RGB888 plane (MAS v1.07 §6.25.3.8).
+   std::array<channel_fifos, num_channels> outputs() {
+      return {channel_fifos{&y_fifo, &uv_fifo}, channel_fifos{&ch1_y_fifo, &ch1_uv_fifo}, channel_fifos{&ch2_fifo, nullptr}};
    }
    control_unit control;
    engine_context ctx;
    line_fifo in_fifo;
    line_fifo y_fifo;
    line_fifo uv_fifo;
+   line_fifo ch1_y_fifo;
+   line_fifo ch1_uv_fifo;
+   line_fifo ch2_fifo;
    idma_engine idma;
    pipeline_engine pipeline;
-   odma_engine odma;
+   std::array<odma_engine, num_channels> odma;  // one engine per channel, sharing odma_socket
 };
 
 fx1_isp_tlm::fx1_isp_tlm(sc_core::sc_module_name name, const fx1_isp_params &params)
@@ -58,6 +71,15 @@ fx1_isp_tlm::fx1_isp_tlm(sc_core::sc_module_name name, const fx1_isp_params &par
       ctl.set_block_hook(off, [](const register_file::write_effect &, std::uint64_t) {});
    }
    ctl.set_soft_reset_hook([this](std::uint64_t) { impl_->ctx.reset_engines(); });
+   // A recovery drain ends when every accepted transaction has its response
+   // (MAS v1.07 §9.9.8); the engines issue nothing for aborted work and report
+   // the edge of the last response (memory_access -> recovery_drained).
+   ctl.set_drain_probe([this](std::uint64_t cycle) -> std::uint64_t {
+      return impl_->ctx.axi_outstanding == 0 ? cycle : control_unit::never;
+   });
+   // IDLE condition (MAS v1.07 §9.9.3): no admitted context, no AXI transaction outstanding.
+   ctl.set_quiescence_probe(
+       [this] { return impl_->ctx.frames_in_flight == 0 && impl_->ctx.axi_outstanding == 0; });
 
    csr_socket.register_b_transport(this, &fx1_isp_tlm::b_transport);
    csr_socket.register_transport_dbg(this, &fx1_isp_tlm::transport_dbg);
@@ -69,11 +91,15 @@ fx1_isp_tlm::fx1_isp_tlm(sc_core::sc_module_name name, const fx1_isp_params &par
    SC_THREAD(idma_thread);
    SC_THREAD(pipeline_thread);
    SC_THREAD(odma_thread);
+   SC_THREAD(odma_ch1_thread);
+   SC_THREAD(odma_ch2_thread);
 }
 
 void fx1_isp_tlm::idma_thread() { impl_->idma.run(); }
 void fx1_isp_tlm::pipeline_thread() { impl_->pipeline.run(); }
-void fx1_isp_tlm::odma_thread() { impl_->odma.run(); }
+void fx1_isp_tlm::odma_thread() { impl_->odma[0].run(); }
+void fx1_isp_tlm::odma_ch1_thread() { impl_->odma[1].run(); }
+void fx1_isp_tlm::odma_ch2_thread() { impl_->odma[2].run(); }
 
 fx1_isp_tlm::~fx1_isp_tlm() = default;
 
@@ -89,6 +115,7 @@ void fx1_isp_tlm::state_changed(const sc_time &when) {
 void fx1_isp_tlm::reset_method() {
    const bool asserted = !rst_n.read();
    if (asserted) {
+      ++impl_->ctx.hard_reset_gen;  // responses of earlier transactions have no effect
       impl_->control.external_reset();
       impl_->ctx.reset_engines();  // frame in flight discarded, engines to idle
    } else if (in_reset_) {
@@ -189,7 +216,7 @@ void fx1_isp_tlm::b_transport(tlm::tlm_generic_payload &trans, sc_time &delay) {
    unsigned char *data = trans.get_data_ptr();
 
    if (cmd == tlm::TLM_READ_COMMAND) {
-      const std::uint32_t value = ctl.csr_read(b.word, cycle);  // hardware state at this edge
+      const std::uint32_t value = ctl.csr_bus_read(b.word, cycle);  // hardware state at this edge
       for (unsigned i = 0; i < b.length; ++i) {
          if (byte_enabled(trans, i)) {
             data[i] = static_cast<unsigned char>(value >> (8u * (b.first_lane + i)));
@@ -238,7 +265,7 @@ unsigned int fx1_isp_tlm::transport_dbg(tlm::tlm_generic_payload &trans) {
 }
 
 std::uint32_t fx1_isp_tlm::debug_idma_head() const { return impl_->ctx.idma_head; }
-std::uint32_t fx1_isp_tlm::debug_odma_head() const { return impl_->ctx.odma_head; }
+std::uint32_t fx1_isp_tlm::debug_odma_head(unsigned ch) const { return impl_->ctx.odma_head.at(ch); }
 
 void fx1_isp_tlm::debug_set_frame_counter(std::uint32_t value) { impl_->control.debug_set_frame_counter(value); }
 
@@ -259,6 +286,9 @@ void fx1_isp_tlm::debug_hw_write(std::uint32_t offset, std::uint32_t mask, std::
 
 void fx1_isp_tlm::debug_accepted_sof() {
    impl_->control.accepted_sof(cycle_at());
+   // No frame enters the pipeline: its ingress context retires at once, so it
+   // holds no profile reference or IDLE condition (V107-3).
+   impl_->control.frame_retired();
    state_changed(sc_core::SC_ZERO_TIME);
 }
 

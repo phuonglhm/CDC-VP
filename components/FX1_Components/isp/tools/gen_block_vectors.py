@@ -102,7 +102,7 @@ def main():
     ee = []
     for case in range(4):
         r = regs_mod.Registers()
-        writes = [("EE_CTRL", 1), ("EE_ALPHA", int(rng.integers(0, 0x9000))), ("EE_BETA", int(rng.integers(0, 0x9000))),
+        writes = [("EE_CTRL", 0), ("EE_ALPHA", int(rng.integers(0, 0x9000))), ("EE_BETA", int(rng.integers(0, 0x9000))),
                   ("EE_CLAMP", int(rng.integers(0, 1 << 16))), ("EE_FEATURE_EN", case % 8 if case else 7),
                   ("EE_RADIAL_CENTER", (int(rng.integers(0, 40)) << 16) | int(rng.integers(0, 60))),
                   ("EE_RADIAL_R2_TH0", 200), ("EE_RADIAL_R2_TH1", 900), ("EE_RADIAL_R2_TH2", 2500),
@@ -110,6 +110,8 @@ def main():
         for bank, n in ((0, 64), (1, 64), (2, 32), (3, 32)):
             writes += [("EE_LUT_CTRL", bank << 1), ("EE_LUT_ADDR", 0)]
             writes += [("EE_LUT_WDATA", int(v)) for v in rng.integers(0, 0x9000, size=n)]
+        # v1.07: confirm the resident with EE disabled, then enable (MAS §9.9.1).
+        writes += [("EE_LUT_CTRL", 1 << 8), ("EE_CTRL", 1)]
         for n, v in writes:
             r.write(n, v)
         w, h = 30, 20

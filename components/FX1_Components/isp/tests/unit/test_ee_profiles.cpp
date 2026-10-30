@@ -10,7 +10,9 @@
 // - PROFILE_SEL and the active profile's scalars written during a frame apply
 //   from the next frame (no mixed frame);
 // - a table write to the active profile during a frame reaches the rows
-//   processed after it (live tables, tearing) and not the rows before;
+//   processed after it (live tables, tearing) and not the rows before; it
+//   clears the resident's confirmation, so the next frame passes through until
+//   it is confirmed again (MAS v1.07 §9.9.1);
 // - PROFILE_SEL code 3 selects profile 0.
 
 #include <cstdint>
@@ -64,6 +66,7 @@ struct rig {
       p.finish();
       cu.advance_to(cycle++);
       pipe::end_of_frame(cu, cfg, p.stats());
+      cu.frame_retired();  // the frame has left: the pipeline is idle again (V107-3)
    }
    // A distinct EE profile k: scalars and the four tables.
    void load(unsigned dest, unsigned k) {
@@ -80,6 +83,15 @@ struct rig {
             wr(FX1_ISP_EE_LUT_WDATA_OFFSET, 0x4000 + ((i * (37 + 11 * k) + bank * 101 + k * 977) % 0x4000));
          }
       }
+      confirm();
+   }
+   // PROFILE_LOAD_CONFIRM of the write resident with EE disabled (MAS v1.07
+   // §9.9.1); refused (the resident stays invalid) while a frame is in flight.
+   void confirm() {
+      const std::uint32_t c = cu.csr_read(FX1_ISP_EE_CTRL_OFFSET);
+      wr(FX1_ISP_EE_CTRL_OFFSET, c & ~FX1_ISP_EE_CTRL_EN_MASK);
+      wr(FX1_ISP_EE_LUT_CTRL_OFFSET, FX1_ISP_EE_LUT_CTRL_PROFILE_LOAD_CONFIRM_MASK);
+      wr(FX1_ISP_EE_CTRL_OFFSET, c);
    }
    void select(unsigned code) {
       wr(FX1_ISP_EE_CTRL_OFFSET, (cu.csr_read(FX1_ISP_EE_CTRL_OFFSET) & ~FX1_ISP_EE_CTRL_PROFILE_SEL_MASK) |
@@ -196,8 +208,14 @@ void test_live_table_tearing() {
    for (std::uint32_t r : d) {
       FX1_CHECK_EQ_CTX(r >= rows_before ? 1 : 0, 1, "row " + std::to_string(r) + " changed before the write");
    }
-   // The next frame uses the new table everywhere: equal to a frame loaded
-   // that way from the start.
+   // v1.07: the write cleared the resident's confirmation; the next frame
+   // passes through until it is confirmed again (validity is captured at SOF).
+   t.frame();
+   FX1_CHECK_EQ_CTX(differing_rows(t.y, base.y).size() > 0 ? 1 : 0, 1, "unconfirmed resident after the write");
+   t.wr(FX1_ISP_EE_CTRL_OFFSET, t.cu.csr_read(FX1_ISP_EE_CTRL_OFFSET) | (1u << FX1_ISP_EE_CTRL_PROFILE_WR_SEL_SHIFT));
+   t.confirm();
+   // Confirmed again: the next frame uses the new table everywhere, equal to
+   // a frame loaded that way from the start.
    t.frame();
    rig ref;
    ref.load(1, 1);
@@ -206,6 +224,7 @@ void test_live_table_tearing() {
    for (unsigned i = 0; i < 64; ++i) {
       ref.wr(FX1_ISP_EE_LUT_WDATA_OFFSET, 0x8000);
    }
+   ref.confirm();
    ref.select(1);
    ref.frame();
    FX1_CHECK_EQ_CTX(differing_rows(t.y, ref.y).size(), 0u, "next frame with the rewritten table");

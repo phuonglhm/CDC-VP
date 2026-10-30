@@ -3,6 +3,7 @@
 // (HAS Table 6-89). Expected values are worked by hand from the tables.
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "dma/dma_rules.h"
@@ -73,12 +74,22 @@ void test_setup_checks() {
    s.height = 31;
    FX1_CHECK(!idma_setup_ok(s, 16));
    s = {0, 7680, 3840, 2160};
-   FX1_CHECK(idma_setup_ok(s, 16));   // 4K maximum
-   s.width = 3842;
-   s.stride = 7696;
+   FX1_CHECK(idma_setup_ok(s, 16));   // 4K
+   // MAS v1.07 Table 6-153: the external capacity includes the phase overscan.
+   s = {0, 7696, 3842, 2162};
+   FX1_CHECK(idma_setup_ok(s, 16));   // external maximum
+   s = {0, 7696, 3844, 2162};
    FX1_CHECK(!idma_setup_ok(s, 16));
-   s = {0, 7680, 3840, 2162};
+   s = {0, 7696, 3842, 2164};
    FX1_CHECK(!idma_setup_ok(s, 16));
+   s = {0, 16, 2, 2};
+   FX1_CHECK(idma_setup_ok(s, 16));   // the DMA minimum; the active-image limit is software's (V107-A9)
+   // COMMON_INPUT_FORMAT.DEPTH: 0 RAW12, 1 RAW10 start; 2/3 refuse (V107-A10).
+   for (std::uint32_t d = 0; d < 4; ++d) {
+      s = ok;
+      s.depth = d;
+      FX1_CHECK_EQ(idma_setup_ok(s, 16), d <= 1);
+   }
    s = {0, 16, 0, 2};
    FX1_CHECK(!idma_setup_ok(s, 16));  // W = 0 (e.g. ISP_EN trap on the output side)
 
@@ -101,9 +112,41 @@ void test_setup_checks() {
 
 }  // namespace
 
+// MAS v1.07 Table 6-20: external sizes giving exactly 3840x2160 and 32x32 active
+// per CFA; §6.6.3.5 legal active geometry.
+void test_active_extent() {
+   struct row {
+      std::uint32_t pattern, w4k, h4k, wmin, hmin;
+   };
+   const row rows[] = {{0, 3840, 2160, 32, 32}, {1, 3842, 2160, 34, 32}, {2, 3840, 2162, 32, 34},
+                       {3, 3842, 2162, 34, 34}};
+   for (const row &r : rows) {
+      const std::string c = "pattern " + std::to_string(r.pattern);
+      const extent a = active_extent(r.w4k, r.h4k, r.pattern);
+      FX1_CHECK_EQ_CTX(a.width, 3840u, c);
+      FX1_CHECK_EQ_CTX(a.height, 2160u, c);
+      FX1_CHECK_EQ_CTX(active_geometry_legal(r.w4k, r.h4k, r.pattern), true, c);
+      const extent m = active_extent(r.wmin, r.hmin, r.pattern);
+      FX1_CHECK_EQ_CTX(m.width, 32u, c);
+      FX1_CHECK_EQ_CTX(m.height, 32u, c);
+      FX1_CHECK_EQ_CTX(active_geometry_legal(r.wmin, r.hmin, r.pattern), true, c);
+      // Two samples fewer on a shifted axis (or more on an unshifted one) leave the limits.
+      FX1_CHECK_EQ_CTX(!active_geometry_legal(r.wmin - 2, r.hmin, r.pattern), true, c + " min W");
+      FX1_CHECK_EQ_CTX(!active_geometry_legal(r.wmin, r.hmin - 2, r.pattern), true, c + " min H");
+      FX1_CHECK_EQ_CTX(!active_geometry_legal(r.w4k + 2, r.h4k, r.pattern), true, c + " max W");
+      FX1_CHECK_EQ_CTX(!active_geometry_legal(r.w4k, r.h4k + 2, r.pattern), true, c + " max H");
+   }
+   // "Universal overscan" is not the same rectangle for every pattern.
+   FX1_CHECK(!active_geometry_legal(3842, 2162, 0));
+   FX1_CHECK_EQ(active_extent(3842, 2162, 1).height, 2162u);
+   FX1_CHECK_EQ(active_extent(35, 35, 0).width, 34u);  // odd input rounds down
+   FX1_CHECK_EQ(active_extent(1, 1, 3).width, 0u);
+}
+
 int main() {
    test_split_line();
    test_port_address();
    test_setup_checks();
+   test_active_extent();
    return fx1_test::summary("fx1_isp_test_dma_rules");
 }

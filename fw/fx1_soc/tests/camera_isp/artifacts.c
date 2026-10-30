@@ -33,12 +33,18 @@
 #define REC_OFF 0x40u
 #define REC_SIZE 0x40u
 #define FRAME_OFF 0x1000u
-#define FRAME_STRIDE 0x2000u
-#define RAW_OFF 0x0u
-#define IN_OFF 0x800u
-#define Y_OFF 0x1000u
-#define UV_OFF 0x1400u
 #define RAW_BYTES (CAM_ISP_W * CAM_ISP_H * 2u)
+/* Per frame: RAW, ISP input (RAW10 staging), Y, UV, derived from the sensor
+ * size (the fixed 64x16 offsets overlapped at 64x32, V107-11 platform CI). */
+#define RAW_OFF 0x0u
+#define IN_OFF (RAW_OFF + RAW_BYTES)
+#define Y_OFF (IN_OFF + RAW_BYTES)
+#define UV_OFF (Y_OFF + CAM_ISP_W * CAM_ISP_H)
+#define FRAME_STRIDE ((UV_OFF + CAM_ISP_W * CAM_ISP_H / 2u + 0xFFFu) & ~0xFFFu)
+#define CAM_ART_LEN 0x20000u /* dumped by check_artifacts.py (ART_LEN) */
+_Static_assert(FRAME_OFF + CAM_ART_FRAMES * FRAME_STRIDE <= CAM_ART_LEN, "artifact frames within the dumped area");
+_Static_assert(REC_OFF + CAM_ART_FRAMES * REC_SIZE <= FRAME_OFF, "records below the frames");
+_Static_assert(CAM_ART_LEN <= CAM_ART_RING - CAM_ART_BASE, "dumped area below the RAW ring");
 
 typedef struct {
     uint32_t capture, csi_frame_id, csi_side, isp_seq;
@@ -73,6 +79,10 @@ int main(void)
               0x10, "artifacts: probe");
     fx1_camera_cfg cfg = cam_isp_cfg(CAM_BITS);
     cfg.capture_hook = keep_raw;
+    /* Twice the frame period: at 64x32 the per-frame copies (RAW ring in the
+     * hook, RAW / staged input / Y / UV here, RAW10 staging in the manager)
+     * outlast one 3 ms frame and the sensor drops one (V107-11 platform CI). */
+    cfg.frame_length = 2u * CAM_ISP_FRAME_LENGTH;
     fx1_check(fx1_camera_configure(&g_cam, &cfg) == FX1_CAMERA_OK, 0x11, "artifacts: configured");
     const uint32_t hdr[16] = {0x414D4143u, 1u, CAM_BITS, CAM_ISP_W, CAM_ISP_H, CAM_ART_FRAMES,
                               cfg.csi_side[0], cfg.csi_side[1], REC_OFF, REC_SIZE, FRAME_OFF, FRAME_STRIDE,

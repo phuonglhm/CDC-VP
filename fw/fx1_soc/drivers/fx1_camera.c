@@ -62,7 +62,7 @@ int fx1_camera_configure(fx1_camera* cam, const fx1_camera_cfg* c)
     /* ISP: RGGB (no phase crop), profile, buffers. RAW12 inputs are the CSI-2
      * sides (rewritten per frame); RAW10 inputs are the staging buffers. */
     if (fx1_isp_set_geometry(&cam->isp, c->width, c->height, 0 /* RGGB */) != FX1_ISP_OK) return FX1_CAMERA_EDEV;
-    fx1_isp_apply(&cam->isp, c->profile, c->profile_len);
+    if (fx1_isp_apply(&cam->isp, c->profile, c->profile_len) != FX1_ISP_OK) return FX1_CAMERA_EDEV;
     for (unsigned i = 0; i < FX1_ISP_NUM_BUFFERS; ++i) {
         cam->bufs.in[i] = c->bits == 12 ? c->csi_side[i & 1u] : c->staging[i];
         cam->bufs.y[i] = c->y[i];
@@ -78,13 +78,14 @@ int fx1_camera_configure(fx1_camera* cam, const fx1_camera_cfg* c)
     if (fx1_isp_start(&cam->isp, &cam->bufs) != FX1_ISP_OK) return FX1_CAMERA_EDEV;
     cam->side_state[0] = cam->side_state[1] = SIDE_HW;
     cam->ready_head = cam->ready_count = 0;
+    cam->isp_stop_pending = 0;
     cam->state = 1;
     return FX1_CAMERA_OK;
 }
 
 int fx1_camera_start(fx1_camera* cam)
 {
-    if (!cam || cam->state != 1) return FX1_CAMERA_ESTATE;
+    if (!cam || cam->state != 1 || cam->isp_stop_pending) return FX1_CAMERA_ESTATE;
     if (fx1_csi2_dma_start(&cam->csi) != FX1_CSI2_OK) return FX1_CAMERA_EDEV;
     if (!cam->cfg.tpg && fx1_ccs_stream(&cam->sensor, 1) != FX1_CCS_OK) return FX1_CAMERA_EDEV;
     cam->state = 2;
@@ -117,11 +118,13 @@ static void release_side(fx1_camera* cam, unsigned s)
  * CSI-2 DMA. Called with interrupts masked (ISR, or poll in a critical
  * section): the CSI-2 DMA gets the side as soon as possible, whatever the
  * application is doing, so a slow consumer does not hold both sides.
- * A clear VALID bit alone is not a successful read: an IDMA read error
- * clears it too, and fx1_isp_recover_ex re-arms the same input from the
- * same address (review M6a F1). VALID is read first, then DMA_ERR, so an
- * error raised in between is seen; while a read error is pending (in the
- * hardware or in the ISR's snapshot) no side is released. */
+ * A clear VALID bit alone is not a successful read: an AXI error starts the
+ * ISP's automatic recovery (MAS v1.07 §9.9.8), which clears every VALID bit
+ * and aborts the frames reading them (review M6a F1). Those frames are lost
+ * (fx1_isp_next_lost) and their sides may go back too, but only once
+ * fx1_isp_recover_ex has settled the recovery: VALID is read first, then
+ * DMA_ERR, so an error raised in between is seen; while a read error is
+ * pending (in the hardware or in the ISR's snapshot) no side is released. */
 static void release_read_sides(fx1_camera* cam)
 {
     const uint32_t valid = isp_rd(cam, FX1_ISP_IDMA_BUF_VALID_OFFSET);
@@ -190,8 +193,11 @@ static int hand_over(fx1_camera* cam)
             cam->side_input[side] = input;
             cam->side_state[side] = SIDE_ISP;
         }
-    } else if (f.zero_copy) {
-        release_side(cam, side);
+    } else {
+        /* EAGAIN: a recovery restarted the rotation after the input slot was
+         * chosen (MAS v1.07 §9.9.8); the capture is dropped and counted. */
+        if (rc == FX1_ISP_EAGAIN) ++cam->stats.isp_lost;
+        if (f.zero_copy) release_side(cam, side);
     }
     fx1_irq_restore(saved2);
     return rc == FX1_ISP_OK;
@@ -199,13 +205,14 @@ static int hand_over(fx1_camera* cam)
 
 unsigned fx1_camera_poll(fx1_camera* cam)
 {
-    if (!cam || (cam->state != 1 && cam->state != 2)) return 0;
+    if (!cam || (cam->state != 1 && cam->state != 2) || cam->isp_stop_pending) return 0; /* stopping */
     uint32_t saved = fx1_irq_save();
     const uint32_t ev = cam->csi_events;
     const uint32_t fatal = cam->isp_fatal;
     cam->csi_events = 0;
     cam->isp_fatal = 0;
-    /* ISP DMA errors: the driver frees / re-arms; losses are reported below. */
+    /* ISP DMA errors: the ISP recovered by itself (every frame in flight
+     * aborted, rotations at 0); the driver settles, losses are counted below. */
     if (fatal) {
         if (cam->cfg.isp_error_hook) cam->cfg.isp_error_hook(cam->cfg.hook_ctx, fatal);
         fx1_isp_recovery r;
@@ -348,16 +355,19 @@ int fx1_camera_stop(fx1_camera* cam, uint32_t timeout_us)
      * the CSI-2 DMA start, or with the stream-on write lost: cleaned up like a
      * running stream (M6b review F1). */
     if (cam->state != 1 && cam->state != 2) return FX1_CAMERA_ESTATE;
-    const int sensor = cam->cfg.tpg ? FX1_CAMERA_OK : sensor_standby(cam, deadline);
-    /* No new claim; the capture in flight is finalised (the sensor ends its
-     * frame even when it did not get the standby), else aborted: the abort
-     * gets at least FX1_CAMERA_STOP_ABORT_US, the safe drain is not skipped. */
-    if (fx1_csi2_dma_stop(&cam->csi, left_us(deadline)) != FX1_CSI2_OK) {
-        uint32_t abort_us = left_us(deadline);
-        if (abort_us < FX1_CAMERA_STOP_ABORT_US) abort_us = FX1_CAMERA_STOP_ABORT_US;
-        if (fx1_csi2_dma_abort(&cam->csi, abort_us) != FX1_CSI2_OK) {
-            ++cam->stats.timeouts;
-            return FX1_CAMERA_ETIMEOUT; /* state unchanged (1 or 2): stop may be called again */
+    int sensor = cam->stop_sensor_rc;
+    if (!cam->isp_stop_pending) { /* a retry skips the steps a previous stop completed */
+        sensor = cam->cfg.tpg ? FX1_CAMERA_OK : sensor_standby(cam, deadline);
+        /* No new claim; the capture in flight is finalised (the sensor ends its
+         * frame even when it did not get the standby), else aborted: the abort
+         * gets at least FX1_CAMERA_STOP_ABORT_US, the safe drain is not skipped. */
+        if (fx1_csi2_dma_stop(&cam->csi, left_us(deadline)) != FX1_CSI2_OK) {
+            uint32_t abort_us = left_us(deadline);
+            if (abort_us < FX1_CAMERA_STOP_ABORT_US) abort_us = FX1_CAMERA_STOP_ABORT_US;
+            if (fx1_csi2_dma_abort(&cam->csi, abort_us) != FX1_CSI2_OK) {
+                ++cam->stats.timeouts;
+                return FX1_CAMERA_ETIMEOUT; /* state unchanged (1 or 2): stop may be called again */
+            }
         }
     }
     /* Cancel what is left in the pipeline. The CSI-2 DMA no longer writes, so
@@ -365,6 +375,16 @@ int fx1_camera_stop(fx1_camera* cam, uint32_t timeout_us)
      * still read go back; masked against the ISP ISR, which returns sides. */
     const uint32_t saved = fx1_irq_save();
     const int dropped = fx1_isp_stop(&cam->isp);
+    if (dropped == FX1_ISP_EBUSY) {
+        /* The ISP's reset drains the transactions it had accepted, possibly
+         * reading a zero-copy side (MAS v1.07 §9.9.8): nothing goes back and
+         * nothing is cleared until it has finished (review V107-7..10 R10). */
+        cam->isp_stop_pending = 1;
+        cam->stop_sensor_rc = sensor;
+        fx1_irq_restore(saved);
+        return FX1_CAMERA_EBUSY;
+    }
+    cam->isp_stop_pending = 0;
     uint32_t cancelled = (dropped > 0 ? (uint32_t)dropped : 0u) + cam->ready_count;
     for (unsigned s = 0; s < 2; ++s) {
         fx1_csi2_buf_info bi;

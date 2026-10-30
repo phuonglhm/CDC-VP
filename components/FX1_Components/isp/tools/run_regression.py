@@ -2,15 +2,17 @@
 """Real-RAW regression of the FX1 ISP model (plan task P13, gates G-E2E and G-CONT; DEC-34/35).
 
 Two kinds of run, both compared frame by frame, bit for bit, with the Python
-reference (NV12 of every frame, statistics through every readout mux after the
-last frame):
+reference (NV12 of every frame, and the statistics through every readout mux:
+acquired, read and released after every frame, V107-10; --stats-at-end reads
+them once after the last frame, as before):
 
   image     every RAW frame of the inventory x every profile preset, in its own
             VP session; presets with temporal state submit the frame twice and
             both outputs are compared.
   sequence  per preset, all selected RAW frames back to back in ONE VP session
-            (inventory order, up to 4 frames in flight through the rotation,
-            one profile applied once, computed from the first frame), so the
+            (inventory order, one profile applied once, computed from the first
+            frame; with --stats-at-end up to 4 frames in flight through the
+            rotation, else one, so the per-frame readout is deterministic), so the
             temporal state (GTM curve, 2DNR variance, statistics IDs) carries
             from one real image to the next.
 
@@ -95,16 +97,22 @@ def git_state():
 
 
 def parse_reads(lines):
-    """Readout script lines -> list of {reg, value, selectors} for the reads."""
-    sel, out = {}, []
+    """Readout script lines -> list of {reg, value, selectors[, frame]} for the
+    reads; "FRAME k" opens the readout after frame k."""
+    sel, out, frame = {}, [], None
     for ln in lines:
         p = ln.split()
         if not p:
             continue
         if p[0] == "SET":
             sel[p[1]] = int(p[2])
+        elif p[0] == "FRAME":
+            frame = int(p[1])
         else:
-            out.append({"reg": p[0], "value": int(p[1]), "selectors": dict(sel)})
+            rec = {"reg": p[0], "value": int(p[1]), "selectors": dict(sel)}
+            if frame is not None:
+                rec["frame"] = frame
+            out.append(rec)
     return out
 
 
@@ -169,7 +177,7 @@ def run_case(job):
         queue = 1
     else:
         order = list(range(len(entries)))                  # every frame once, back to back
-        queue = SEQUENCE_QUEUE
+        queue = SEQUENCE_QUEUE if a["stats_at_end"] else 1
 
     # Reference: every frame in the order the model sees them.
     t_ref = time.time()
@@ -178,12 +186,28 @@ def run_case(job):
     r.write("COMMON_FRAME_HEIGHT", h)
     for n, v in writes:
         r.write(n, v)
-    want = []
-    for k in order:
+    want, script = [], []
+    for i, k in enumerate(order):
         y, uv = blocks.run_frame(loaded[k][2].reshape(h, w), r, {})
         want.append(y.tobytes() + uv.tobytes())
+        if not a["stats_at_end"]:                          # software reads after every frame
+            script += ["FRAME %d\n" % i] + readout_script(r)
     oh, ow = y.shape
-    script = readout_script(r)
+    if a["stats_at_end"]:
+        script = readout_script(r)
+    if a["profile_mode"]:
+        # The same readout: the results carry the active profile's ID, and a
+        # legacy AEC COMMIT the profile issued stays pending (profile mode
+        # takes the AEC set from the bank and never consumes it; V107-A45).
+        commit = any(n == "AEC_CTRL" and v & 2 for n, v in writes)
+        def adjust(ln):
+            p = ln.split()
+            if p[0] in ("TUNE_AEC_PROFILE", "TUNE_AWB_PROFILE", "TUNE_AF_PROFILE"):
+                return "%s 1\n" % p[0]
+            if p[0] == "AEC_CTRL" and commit:
+                return "AEC_CTRL %d\n" % (int(p[1]) | 2)
+            return ln
+        script = [adjust(ln) for ln in script]
     exp_stats = os.path.join(d, "expected_stats.txt")
     with open(exp_stats, "w") as f:
         f.write("".join(script))
@@ -195,7 +219,8 @@ def run_case(job):
         f.write("".join(inputs[k] + "\n" for k in order))
     prefix = os.path.join(d, "output")
     cmd = [a["run_raw"], "--input-list", lst, "--width", str(w), "--height", str(h), "--profile", prof,
-           "--queue", str(queue), "--per-frame", "--stats-script", exp_stats, "--out", prefix]
+           "--queue", str(queue), "--per-frame", "--stats-script", exp_stats, "--out", prefix] + \
+        ([] if a["stats_at_end"] else ["--stats-per-frame"]) + (["--profile-mode"] if a["profile_mode"] else [])
     t_dut = time.time()
     p = subprocess.run(cmd, capture_output=True, text=True)
     t_dut = time.time() - t_dut
@@ -232,7 +257,7 @@ def run_case(job):
     comparison = {
         "reference": "reference/fx1_isp_ref (project's own, DEC-05); not an owner golden",
         "kind": job["kind"], "frames": frames,
-        "statistics": {"reads": sum(1 for e in exp_lines if not e.startswith("SET")),
+        "statistics": {"reads": sum(1 for e in exp_lines if not e.startswith(("SET", "FRAME"))),
                        "mismatches": len(stat_bad), "first_mismatches": stat_bad[:20],
                        "after_frame": len(order) - 1},
         "run_raw": {"exit": p.returncode, "stdout": p.stdout.strip().splitlines()[-4:],
@@ -292,6 +317,12 @@ def main():
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--no-preview", action="store_true")
     ap.add_argument("--keep-intermediate", action="store_true")
+    ap.add_argument("--profile-mode", action="store_true",
+                    help="run the model in profile mode (the firmware's default bring-up, V107-10) against the "
+                         "same legacy reference: every frame and statistic must be equal, the results carrying "
+                         "profile ID 1")
+    ap.add_argument("--stats-at-end", action="store_true",
+                    help="read the statistics once after the last frame (pre-V107-10), sequences queued 4 deep")
     ap.add_argument("--baseline", help="fail if any frame or statistics SHA-256 differs from this baseline")
     ap.add_argument("--write-baseline", help="write the baseline JSON (and .md) of this run")
     a = ap.parse_args()
@@ -309,6 +340,7 @@ def main():
         if m not in ("image", "sequence"):
             sys.exit("unknown mode %s" % m)
     args = {"root": root, "out": out, "run_raw": os.path.abspath(a.run_raw), "format": a.format,
+            "stats_at_end": a.stats_at_end, "profile_mode": a.profile_mode,
             "no_preview": a.no_preview, "keep_intermediate": a.keep_intermediate}
     selected = [e for e in inv["files"] if a.only in e["path"]]
     if not selected:
@@ -356,7 +388,7 @@ def main():
                      "statistics_sha256": r.get("statistics_sha256"), "pass": r["pass"]} for r in results}
     if a.write_baseline:
         base = {"description": "FX1 ISP real-RAW regression baseline: SHA-256 of every frame's NV12 (active bytes) "
-                               "and of the statistics readout after the last frame, model and Python reference "
+                               "and of the statistics readout (after every frame unless --stats-at-end), model and Python reference "
                                "bit-exact (DEC-05: project reference, not an owner golden)",
                 "date": summary["date"], "git": git_state(), "inventory": os.path.basename(a.inventory),
                 "presets": presets, "modes": modes, "runs": [runs[k] for k in sorted(runs)]}
@@ -373,8 +405,8 @@ def main():
                 for i, h in enumerate(r["frame_sha256"] or []):
                     f.write("| %s | %s | %s | %sx%s | %d | `%s` |\n" % (r["kind"], r["raw"], r["preset"], r["output"][0],
                                                                      r["output"][1], i, h))
-            f.write("\nStatistics readout SHA-256 (after the last frame):\n\n| kind | RAW | preset | SHA-256 |\n"
-                    "|---|---|---|---|\n")
+            f.write("\nStatistics readout SHA-256 (%s):\n\n| kind | RAW | preset | SHA-256 |\n|---|---|---|---|\n"
+                    % ("after the last frame" if a.stats_at_end else "after every frame"))
             for k in sorted(runs):
                 r = runs[k]
                 f.write("| %s | %s | %s | `%s` |\n" % (r["kind"], r["raw"], r["preset"], r["statistics_sha256"]))

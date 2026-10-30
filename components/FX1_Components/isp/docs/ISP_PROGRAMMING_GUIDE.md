@@ -49,10 +49,10 @@ each marked behaviour easy to change.
 |---|---|---|
 | 1 | Release `i_rst_n`. Every register takes its reset value. LUT and mesh contents are undefined (MAS §6.5.2): the VP fills them with a deterministic poison pattern, so load every table before enabling its block (Gamma, EE, GTM manual curve, LSC). | — |
 | 2 | Optional soft reset, to start from a known engine state (§7). | `fx1_isp_init` |
-| 3 | Input geometry `COMMON_FRAME_WIDTH/HEIGHT` and Bayer order `COMMON_BAYER` (0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR, DEC-11). W and H must be even, 2..3840 × 2..2160. Change them only while the pipeline is idle (HAS §9.4.4). | `fx1_isp_set_geometry` |
+| 3 | Input geometry `COMMON_FRAME_WIDTH/HEIGHT` and Bayer order `COMMON_BAYER` (0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR, DEC-11). W and H are the even external dimensions before the phase trim, up to 3842 × 2162 (the DMA checks only this). The active image `((W − SH) & ~1, (H − SV) & ~1)` must be 32 × 32..3840 × 2160; software validates it (MAS v1.07 §6.6.3.4–6.6.3.5). Native input depth `COMMON_INPUT_FORMAT.DEPTH`: 0 RAW12 (reset), 1 RAW10. The containers are right-aligned and zero-extended; the ISP shifts RAW10 left two exactly once. Before queuing, check the unused upper bits of every frame (`fx1_isp_raw_upper_bits`). Change all of these only while the pipeline is idle: with the input DMA stopped (or `ISP_EN` clear) and nothing in flight (MAS v1.07 §9.9.3). Otherwise the hardware ignores the write and sets `TUNE_ERROR.MODE`; the driver then returns `FX1_ISP_EBUSY`. | `fx1_isp_set_geometry`, `fx1_isp_set_input_format`, `fx1_isp_raw_upper_bits` |
 | 4 | Profile: block enables and parameters, LUTs (§4), the LSC profile, statistics configuration. | `fx1_isp_apply`, §4 helpers |
-| 5 | `COMMON_CTRL.isp_en` = 1. **Before the DMA**: while `isp_en` = 0 the output geometry is 0×0, so an ODMA armed then fails with `ALIGN` and `IRQ_CFG_ERROR` (DEC-20). | `fx1_isp_start` |
-| 6 | Wait for the Resizer to publish: up to two derivations (2 × 36 core clocks) after the last change of geometry, Bayer phase or `RESIZER_CTRL`, because a key changed while a derivation runs is derived after it (MAS §6.20.4.3). Then read the output geometry `RESIZER_OUT_W/H`: the Input Formatter crop, then the Resizer mode if it fits. Example: BGGR 2688×1520 gives 2686×1518. The two registers alone do not show that the derivation has finished (a new key can give the same size): wait the time. | `fx1_isp_start` (waits 80 clocks; `dev.out_width/height`) |
+| 5 | `COMMON_CTRL.isp_en` = 1, before the DMA (HAS §9.1). Setting `ODMA_BUF_FREE` captures nothing (MAS v1.07 §6.25.3.8): each output channel claims its head buffer at the channel's output SOF, with the frame's geometry and the current bases/strides, so a buffer freed before `isp_en` or before a geometry change is fine. | `fx1_isp_start` |
+| 6 | Channel geometry (MAS v1.07 §6.20.1.1, §8.3): with the input stopped, program each enabled channel's crop (`CHc_CROP_*`: even, inside the active image; disabled = full image) and Resizer (`RESIZER_CTRL` / `CH1_` / `CH2_RESIZER_CTRL`: SCALE preset or FullRes; scaler disabled passes the crop). Then poll `CHc_GEOMETRY_STATUS` until BUSY clears (a scaling key derives in 35 clocks; a key changed meanwhile is derived after it) and require VALID; ERROR gives the reason (1 active size/format, 2 crop bounds, 3 odd crop, 4 reserved mode, 5 above the channel limit, 6 above the crop). Read `RESIZER_OUT_W/H` only then. An invalid enabled channel admits no frame and sets the sticky `TUNE_ERROR.INVALID`. Example: BGGR 2688×1520 FullRes gives 2686×1518. | `fx1_isp_set_crop`, `fx1_isp_set_resize`, `fx1_isp_geometry_status`; `fx1_isp_start` (polls CH0, `EINVAL` if not VALID; `dev.out_width/height`) |
 | 7 | Strides, the 4 input and 4 output buffer addresses (64-bit register pairs; 40 address bits are used), interrupt enables. | `fx1_isp_start` |
 | 8 | Queue the first frame(s), **then** enable the engines with `DMA_CTRL` (`idma_en`, `odma_en`, `max_burst_m1`). Enabling first makes the idle IDMA report an underrun before the stream starts (M4-R5). | `fx1_isp_queue_frame` (enables on the first call) |
 
@@ -110,7 +110,7 @@ the handler sets its bit again, so the line stays asserted.
 |---|---|
 | `frame_done_irq` | A frame is in memory (both planes written). |
 | `stats_ready_irq` | AEC, AWB or AF published results. It is raised for each publication, even if the block's done bit was not cleared (M3-A4). |
-| `error_irq` | Rising edge of any error flag: `LSC_ERROR`, `BPC_STATUS.cand_reject_ovf`, `EE_STATUS.error`, `DMA_ERR[4:0]` (DEC-15). |
+| `error_irq` | Rising edge of `DMA_ERR.ALIGN/AXI_RD/AXI_WR`, any `LSC_ERROR` bit, `EE_STATUS.error`, any `TUNE_ERROR` bit, and every accepted recovery (MAS v1.07 Table 9-188). Not underrun, overflow or statistics drops. Debug code must not read result words without a lease: that sets `TUNE_ERROR.NO_LEASE` and so `error_irq`. |
 | `DMA_IRQ_STAT` | `IDMA_START/DONE/UNDERRUN`, `ODMA_DONE/OVERFLOW`, `AXI_ERROR`. |
 
 **Frame metadata (MAS Table 160).** Before setting `IDMA_BUF_VALID[k]`,
@@ -148,7 +148,8 @@ geometry changes require the pipeline to be idle.
 |---|---|---|
 | Scalar parameters (enables, gains, thresholds) | Sampled at SOF. | `fx1_isp_apply` |
 | CCM set, CNF thresholds | Sampled at the accepted SOF and held for the frame. `updated` is a compatibility field with no effect (owner answer Q1, CSR/MAS 07/10). Write the whole set between frames; a write during a frame applies to the next one. | `fx1_isp_ccm_set` |
-| Resizer mode | `RESIZER_CTRL` may be written at any time; `updated` has no effect. The Resizer derives a complete set from the key {active size, mode, enable} in 35 core clocks and publishes it (a key changed during a derivation is derived after it: allow 2 × 36 clocks); disabling, FullRes or an oversized mode publish the unscaled set on the next edge, even during a derivation; `RESIZER_OUT_W/H` report it. A frame uses the set published before its SOF and keeps it to its end: a mode written during a frame, or too close to the next SOF, applies one frame later, and no frame mixes two sizes. The ODMA takes each frame's size from the frame, so a mode change needs no re-arm; size the output buffers and strides for the largest mode (the stride check is made at arm; a wider frame is refused with `ALIGN`, U4-A2). A frame whose raster does not match the published set (started before the derivation finished) is not scaled. After a COMMON soft reset the set is the reset set until the derivation from the live key completes, from the end of the 15-clock pulse (MAS Table 124). | `fx1_isp_start`, `fx1_isp_soft_reset` (both wait) |
+| Output channels | OUTPUT_ENABLE (IDLE class) selects CH0/CH1 (NV12) and CH2 (RGB888, one plane, stride ≥ 3W); each channel has four buffers (`CHc_ODMA_*`), its own rotation, DONE, FRAME_COUNT and metadata (`CHc_ODMA_BUF_TAG/TS/SOF_TS/EOF_TS`, `TUNE_CHc_BUFn_FRAME/PROFILE`), and `OUTPUT_IRQ_STATUS.DONE[c]`. An enabled channel without a free buffer stalls every channel (no frame lost); FRAME_DONE rises when a frame has retired at every enabled output. The driver arms CH0; its CH1/CH2 buffer API is V107-10. | — |
+| Channel geometry | IDLE class (v1.07): `RESIZER_CTRL` (three channels) and the crop words are written only with the input stopped and every frame retired, else the write is rejected with `TUNE_ERROR.MODE` and nothing changes. `updated` has no effect. Presets (Table 6-122): 1..14, 16..21 (AI 640×640 .. 320×320); 15 and 22..31 reserved; CH2 accepts 0, 8, 14, 16..21. No FullRes fallback: a target larger than the crop or the channel limit (CH0/CH1 3840×2160, CH2 640×640) is invalid. Each stage decimates vertically, then horizontally. A frame uses the sets published before its SOF. Frames below 32×32 active are never admitted (ERROR 1). After a COMMON soft reset the readback is zero until the live key publishes, from the end of the 15-clock pulse. | `fx1_isp_set_crop`, `fx1_isp_set_resize`, `fx1_isp_start` |
 | Gamma table | **Live**: takes effect as written (DEC-25). Change it between frames, or accept a frame that mixes old and new values. | `fx1_isp_load_gamma` |
 | EE profiles | **Three resident profiles** (MAS §6.18.4.1). Each owns `EE_ALPHA` … `EE_RADIAL_GAIN_23` and the four tables. `EE_CTRL.profile_wr_sel` names the profile that register and table-port writes go to (code 3: ignored); `EE_LUT_RDATA` reads that profile; a scalar register reads back the last value written through it. `EE_CTRL.en` and `profile_sel` (code 3 = profile 0) and the selected profile's scalars are sampled at the SOF, so a frame never mixes profiles. Its tables stay **live**: a write to the in-use profile's table reaches the rows processed after it. Load a profile no frame in flight uses, with full 32-bit writes (a partial write merges the bytes last written, possibly another profile's), then select it. | `fx1_isp_ee_load_profile` (refuses, while EE is busy, every profile selected since EE was last seen idle), `fx1_isp_ee_select`; `fx1_isp_load_ee_table` (profile `profile_wr_sel`) |
 | Gamma / EE / GTM table ports | Write the address register, then the data port. The address increments after each data write (Gamma modulo 256, EE 64, GTM 128). | as above |
@@ -165,50 +166,43 @@ lists WDR and TNR as unsupported (M5-A1).
 
 ## 5. Statistics readout
 
-Each block publishes at the end of a frame it measured. It sets its done bit
-(`AEC_STATUS.stat_done`, `AWB_STATUS.stat_done`, `AF_STATUS.frame_done`;
-W1C) and raises `stats_ready_irq`. `*_FRAME_ID` holds the ID of the
-measured frame: one counter, incremented at each accepted SOF since reset.
-A frame aborted after its SOF still consumes an ID (ALG-STAT-01/09).
+Since V107-6 every engine (AEC, AWB, AF) has **two result banks owned by
+software** (MAS v1.07 §9.8, §6.22.4). An enabled frame with a legal set
+reserves a FREE bank at its SOF; the bank becomes READY after the frame's last
+sample, sets the done bit (`AEC_STATUS.stat_done`, `AWB_STATUS.stat_done`,
+`AF_STATUS.frame_done`; W1C) and raises `stats_ready_irq`. Software leases the
+oldest READY bank, reads it and releases it. A leased bank is never written,
+so no FRAME_ID retry is needed, and no partial result of a frame in flight is
+ever visible. AE/AF results need a lease in legacy mode too. `*_FRAME_ID` is
+the measured frame's ID: one counter, +1 per accepted SOF since reset.
 
-| Data | Buffering | How to read it coherently | Driver |
-|---|---|---|---|
-| AEC globals | Double-buffered: stable until the next publication. | Read FRAME_ID, then the values, then FRAME_ID again; retry if it changed (HAS §6.21.9). | `fx1_isp_read_aec_global` |
-| AF scores (4×4) | Latched registers. | As above. | `fx1_isp_read_af` |
-| AEC zones and histogram | **One in-place memory** (DEC-30). From the next enabled SOF it shows that frame's partial sums. A zone not yet written reads empty: 0, min 4095, max 0, also after a reset. | FRAME_ID alone cannot detect the overlap. Read while `AEC_STATUS.busy` = 0 before and after, with FRAME_ID unchanged; or hold the next input buffer until the readout is done. | `fx1_isp_read_aec_zones` (returns `FX1_ISP_EAGAIN` otherwise) |
-| AWB globals, zones, FRAME_ID, CONTEXT_ID | **Two result banks owned by software** (MAS §6.22.4). A completed frame becomes READY; `AWB_RESULT_CTRL.acquire` leases the oldest READY bank; its words are stable until `release`. Without a lease every result word reads 0. | Wait for the publication (`stats_ready_irq` or `READY_COUNT`, not `ODMA_DONE`). Acquire, wait one core clock, confirm `AWB_RESULT_STATUS.read_valid`, read FRAME_ID, CONTEXT_ID, globals and zones of the captured grid (`read_num_zone_x/y`; one core clock between an `AWB_ZONE_ADDR` write and the data read), then release; a frame starting on the RELEASE clock cannot use the bank yet. A CSR access may be shorter than a core clock: wait the clocks explicitly. Release promptly: while both banks are READY or LEASED, enabled frames are skipped (`overrun`, `AWB_DROP_COUNT`); `clear_report` acknowledges them. Clearing `stat_done` releases nothing. | `fx1_isp_awb_acquire`, `fx1_isp_awb_read_global`, `fx1_isp_awb_read_zones`, `fx1_isp_awb_release`, `fx1_isp_awb_report`; `fx1_isp_read_awb_global` (compatibility: newest result) |
+| Data | How to read it | Driver |
+|---|---|---|
+| AEC (aggregate Bayer sum/count, OE/UE, min/max, 64-bin histogram, zones, weighted histogram) | `TUNE_AEC_CMD.ACQUIRE`, wait one core clock, confirm `TUNE_AEC_STATUS.LEASE_VALID`, read the identity words and the 64-bit results through `TUNE_AEC_INDEX` / `DATA_LO` (snapshots the high word) / `DATA_HI`, then `RELEASE`. The 07/10 narrow windows (`AEC_GLOBAL_*`, `AEC_ZONE_*`, `AEC_HIST_DATA`) are modulo projections of the lease; `AEC_CHANNEL_SEL` 1..3 read 0. | `fx1_isp_aec_acquire`, `fx1_isp_aec_read_global`, `fx1_isp_aec_read_zones`, `fx1_isp_aec_read_hist`, `fx1_isp_aec_result`, `fx1_isp_aec_release`, `fx1_isp_aec_drops`; `fx1_isp_read_aec_global` (compatibility: drains the READY banks, returns the newest) |
+| AF (16 windows: focus, luma, count; effective rectangles) | As AEC with `TUNE_AF_*`. `AF_STATUS.score_valid` is 1 while a readable lease is held. | `fx1_isp_af_acquire`, `fx1_isp_af_read`, `fx1_isp_af_release`, `fx1_isp_af_drops`; `fx1_isp_read_af` (compatibility: newest) |
+| AWB globals, zones, FRAME_ID, CONTEXT_ID | `AWB_RESULT_CTRL.acquire`, wait one core clock, confirm `AWB_RESULT_STATUS.read_valid`, read FRAME_ID, CONTEXT_ID, globals and zones of the captured grid (`read_num_zone_x/y`; one core clock between an `AWB_ZONE_ADDR` write and the data read), then release. Without a lease every AWB word reads 0, without error. | `fx1_isp_awb_acquire`, `fx1_isp_awb_read_global`, `fx1_isp_awb_read_zones`, `fx1_isp_awb_release`, `fx1_isp_awb_report`; `fx1_isp_read_awb_global` (compatibility: newest) |
 
-After an aborted frame, discard its zone/histogram data even if busy is 0:
-the in-place memory may contain partial sums while FRAME_ID still names the
-last completed frame. Busy plus read-tag-read alone cannot certify that data
-after an abort. Resume reading after a known successful statistics publication.
-The same holds after a soft reset: every zone reads untouched (0, min 4095)
-under the kept FRAME_ID.
-
-The reference driver enforces this. `fx1_isp_irq` (on `AXI_RD`),
-`fx1_isp_recover` and `fx1_isp_soft_reset` record the current `AEC_FRAME_ID`.
-`fx1_isp_read_aec_zones` then returns `FX1_ISP_ENODATA` until `AEC_FRAME_ID`
-moves past that mark, that is, until a new frame has been published. Each
-event refreshes the mark, so a publication nobody read cannot vouch for a
-later abort. `AEC_FRAME_ID` = 0 is not sufficient to trust the memory:
-the first accepted frame may have written partial zones before abort. The
-driver keeps data untrusted until a successful AEC publication. A pending
-`DMA_ERR.AXI_RD` also makes reads return `FX1_ISP_ENODATA` before the
-interrupt handler runs. A reset before any AEC publication still exposes
-empty defaults under FRAME_ID 0.
-
-Limits: only the aborts software can see are covered (IDMA read errors, soft reset, `fx1_isp_stop`).
-An abort the model makes internally, such as an SOF in the middle of a frame
-or a geometry rejected by a block (ALG-STAT-09), raises no software-visible
-event. An IDMA error before the frame's SOF also marks the data, which is
-conservative.
-
-Readout uses selector registers: `AEC_CHANNEL_SEL` (0 R, 1 Gr, 2 Gb, 3 B),
-`AEC_ZONE_ADDR`, `AEC_HIST_ADDR`, `AWB_ZONE_ADDR` and `AF_STAT_ADDR`. Zone
-addresses run in raster order. Addresses beyond the grid read empty. Until
-the first enabled SOF after a reset, every zone field reads 0
-(M3-A8) [assumption]. Field widths: AEC sums 33 bits (`HI` holds bit 32),
-AWB sums 35 bits (`_H` holds bits 34:32). Accumulators wrap.
+Rules common to the three engines:
+- A CSR access may be shorter than a core clock: wait the clock after
+  ACQUIRE explicitly before checking the lease (the driver does).
+- Release promptly. While both banks are READY or LEASED, enabled frames are
+  skipped and counted (`TUNE_AEC_DROPS`, `TUNE_AF_DROPS`, `AWB_DROP_COUNT` /
+  `overrun`). A frame starting on the RELEASE clock cannot use the bank yet.
+- AE/AF: a second ACQUIRE, a RELEASE without a lease and a result read
+  without a lease set `TUNE_ERROR.NO_LEASE`; a reserved index sets INVALID.
+- An illegal AEC set (MAS §6.21.4: (NX−1)·ZW < W ≤ NX·ZW and the same for H,
+  MIN_CLIP ≤ MAX_CLIP, TH_UE < TH_OE) skips the measurement and counts a drop.
+  The 07/10 "last zone absorbs the remainder" rule is gone. An illegal AWB
+  grid (frames below 32×32, NX > min(64, W/2), NY > min(32, H/2)) is skipped
+  likewise.
+- Legacy AEC: the zone grid, clip, thresholds and `TUNE_AEC_SOURCE` (0
+  post-BPC, 1 post-DG) transfer at the SOF after `AEC_CTRL.commit`. Profile
+  mode uses the active bank.
+- Resets: a COMMON soft reset clears banks, leases and drops (the driver drops
+  its lease state); the DMA reset keeps READY and LEASED banks and aborts only
+  the measurement in flight, which publishes nothing.
+- An aborted frame publishes nothing, so the 07/10 "discard zone data after
+  an abort" rule and its driver tracking are no longer needed.
 
 ## 6. Interrupt-driven streaming (example)
 
@@ -252,15 +246,15 @@ number of ISP core cycles so buffer commands are not lost inside the reset windo
 | Reset | Effect |
 |---|---|
 | `i_rst_n` | Everything returns to its reset value: registers, LUTs, LSC profiles, rotation, counters, frame metadata. `FRAME_COUNTER` reads 0 while asserted and counts from the release. |
-| Soft reset, `COMMON_CTRL.soft_rst` (pipeline + both DMA engines) | 15-core-clock W1SC pulse, restarted by a rewrite; W1S/W1C writes are ignored during it. **Kept:** RW configuration (including `isp_en`, `idma_en`/`odma_en`), LUTs, LSC profiles and their validity, GTM banks, frame counters and FRAME_IDs, a pending AEC commit, `IDMA_BUF_TAG/TS`, `FRAME_COUNTER` (free-running, U5-A1). **Cleared:** buffer ownership (`VALID/FREE/DONE`), the published `ODMA_BUF_*` metadata (U5-A2), frames in flight, statistics results and done bits, the zone memories, `COMMON_IRQ_STATUS`, `DMA_IRQ_STAT`, `DMA_ERR`, an LSC load in progress, the 2DNR variance. The rotation returns to buffer 0. No memory access or completion is reported for the aborted frames (MAS Table 183). |
-| Soft reset, `DMA_CTRL.soft_reset` (DMA engines only) | Same pulse. Clears buffer ownership, the published `ODMA_BUF_*` metadata, frames in flight, `DMA_IRQ_STAT` and `DMA_ERR` (`IDMA_BUF_TAG/TS` and `FRAME_COUNTER` kept); the pipeline is flushed to a frame boundary, and the busy flags of the abandoned frame (pixel blocks, AEC, AF) drop. Published statistics, `COMMON_IRQ_STATUS`, an LSC load and the 2DNR estimate are kept; the aborted frame publishes nothing and its FRAME_ID is skipped (MAS p317). |
+| Soft reset, `COMMON_CTRL.soft_rst` (pipeline + both DMA engines) | A recovery (§8.1): drain, then a 15-core-clock W1SC pulse. A rewrite while it runs is rejected with `TUNE_ERROR.PENDING` (v1.07; it no longer restarts the pulse); W1S/W1C writes are ignored until the final retirement. **Kept:** RW configuration (including `isp_en`, `idma_en`/`odma_en`), LUTs, LSC profiles and their validity, GTM banks, frame counters, a pending AEC commit, `IDMA_BUF_TAG/TS`, `FRAME_COUNTER` (free-running, U5-A1). **Cleared:** buffer ownership (`VALID/FREE/DONE`), the published `ODMA_BUF_*` metadata, frames in flight, statistics result banks, leases, drops and done bits, `COMMON_IRQ_STATUS`, `DMA_IRQ_STAT`, `DMA_ERR`, an LSC load in progress, the 2DNR variance. The rotation returns to buffer 0. No memory access or completion is reported for the aborted frames (MAS Table 183). |
+| Soft reset, `DMA_CTRL.soft_reset` (DMA engines only) | Same pulse. Clears `VALID` / `FREE` and frames in flight; keeps the DONE bits and published metadata of completed buffers, `DMA_IRQ_STAT` and `DMA_ERR` (MAS v1.07 §9.9.8; `IDMA_BUF_TAG/TS` and `FRAME_COUNTER` kept too); the pipeline is flushed to a frame boundary, and the busy flags of the abandoned frame (pixel blocks, AEC, AF) drop. Published statistics, `COMMON_IRQ_STATUS`, an LSC load and the 2DNR estimate are kept; the aborted frame publishes nothing and its FRAME_ID is skipped (MAS p317). |
 
 `fx1_isp_soft_reset` issues the COMMON soft reset. `fx1_isp_dma_reset` (while
 streaming) issues the DMA soft reset. It returns the number of frames it
-discarded, keeps the stream enabled and an AWB lease held. It marks the AEC
-zones untrusted until the next publication only when a dropped frame had not
-completed, because such a frame may have overwritten them (MAS §9.1.1). A GTM
-hand-over in progress then waits for one frame taken after the reset.
+discarded, keeps the stream enabled and any AWB, AEC or AF lease held (the
+DMA reset keeps READY and LEASED banks; the aborted frame publishes nothing,
+MAS §9.8). A GTM hand-over in progress then waits for one frame taken after
+the reset.
 
 After a soft reset, software re-queues its frames from buffer 0. Write
 `soft_rst` together with the current `isp_en`, because `isp_en` is RW in
@@ -270,42 +264,68 @@ the same register. The driver does both (`fx1_isp_soft_reset`).
 
 | `DMA_ERR` bit | Cause | Effect | Recovery (driver) |
 |---|---|---|---|
-| `ALIGN` (was `ALIGN_OR_GEOMETRY`) | Bad base, stride or geometry when an engine arms, also raising `IRQ_CFG_ERROR`; output geometry 0×0 because `isp_en` = 0 (DEC-20); a frame wider than the ODMA strides checked at arm (U4-A2, without `CFG_ERROR`, U1-A2). | The engine does not start, or the frame is discarded. | Fix the setting, clear the bit. |
+| `ALIGN` (was `ALIGN_OR_GEOMETRY`) | Bad base, stride or geometry when an engine captures its working set: at IDMA frame start, or at an output channel's claim (CH2: stride ≥ 3W). Also raises `IRQ_CFG_ERROR`. The rejected buffer's VALID/FREE bit is cleared, the rotation does not advance and nothing is read or written; an output frame waits (`ODMA_OVERFLOW`) until a buffer is freed again. | Correct the configuration, clear `ALIGN`, set the bit again. |
 | `IDMA_UNDERRUN` | `IDMA_EN` = 1 and the next input is not valid. | Level; no data loss. | None (expected at the end of a stream). |
 | `ODMA_OVERFLOW` | A frame is ready and the next output buffer is not free. | Lossless stall of the pipeline and the IDMA (DEC-18). The bit is held while the stall lasts; the interrupt is raised once per stall (U5-A5). | Free the buffer, then clear the bit. |
-| `AXI_RD` (was `IDMA_AXI`) | Read error response. | The frame is discarded end to end. The input buffer's VALID bit is cleared and the rotation is kept (DEC-19). | Re-arm the same input index: `fx1_isp_recover`. |
-| `AXI_WR` (was `ODMA_AXI`) | Write error response. | The frame is not DONE, its FREE bit is cleared, and the rotation is kept. The next frames stall until that buffer is free again (DEC-19). The pipeline did complete the frame, so its statistics were published. | Free the failed output index again (`fx1_isp_recover`). The failed index is the first in-flight buffer, in rotation order, whose DONE bit is clear. It is not necessarily the next buffer to collect: when the handler runs late, earlier frames may be DONE and not yet collected (M5-R5). Resubmit the frame only once `fx1_isp_next_lost` reports it (see below). |
+| `AXI_RD` (was `IDMA_AXI`) | Read error response. | Automatic DMA-scope recovery (§8.1): every admitted, unretired frame is aborted and recorded (cause 1). | `fx1_isp_recover`, then resubmit what `fx1_isp_next_lost` reports. |
+| `AXI_WR` (was `ODMA_AXI`) | Write error response. | As `AXI_RD`, cause 2. The aborted frames publish no statistics. | As `AXI_RD`. |
 
-### 8.1 When is a frame lost?
+### 8.1 Recovery and lost frames (MAS v1.07 §9.9.8)
 
-A frame whose output failed is lost **only if the IDMA finishes reading its
-input without an error**. The IDMA may still be reading that input when the
-ODMA fails. If the IDMA then also fails on the same frame, the hardware
-keeps the IDMA on that input and requires it to be re-armed. The frame is
-then read again, lands in the same output buffer and completes. A driver
-that declares the frame lost at the ODMA error therefore re-arms the wrong
-input or none: the IDMA waits forever, or the frame completes after the
-caller has resubmitted it and appears twice. The coordinated fault campaign
-found exactly that (M5-R9).
+Every soft reset and every AXI error response runs one recovery sequence;
+DEC-19 (re-arm the same index) no longer applies.
 
-The reference driver keeps such a frame in flight, marked "output failed",
-and decides its fate later:
-- **Lost.** When its input's VALID bit is clear and no IDMA error names it,
-  the driver removes the frame, moves the later frames' outputs up one
-  buffer, and queues it for `fx1_isp_next_lost`.
-- **Retried.** When the IDMA error names it, recovery re-arms its input
-  and the mark is dropped.
+1. **Request.** `COMMON_CTRL.soft_rst` (common scope, cause 4),
+   `DMA_CTRL.soft_reset` (DMA scope, cause 3) or an AXI error (automatic
+   DMA scope, cause 1 read, 2 write). `COMMON_RECOVERY_SEQUENCE` counts up,
+   `COMMON_RECOVERY_STATUS.BUSY` = 1, `COMMON_IRQ_STATUS.ERROR_IRQ` is set,
+   and the abort set is captured: up to four admitted, unretired frames, each
+   with its ingress frame ID, the enabled outputs that had no DONE yet, and
+   the cause. No frame is admitted until the end.
+2. **Drain.** No new address is issued for the aborted frames; the
+   responses already due are awaited.
+3. **Reset pulse.** 15 core clocks; the scope's effects (§7).
+4. **Final retirement.** Every `IDMA_BUF_VALID` and `CHc_ODMA_BUF_FREE` bit
+   is cleared and every rotation restarts at buffer 0. The records, `COUNT`
+   and `DONE` appear together and `BUSY` clears. `OUTPUT_IRQ_STATUS.ERROR[c]`
+   is set for each channel a recorded frame failed, and `FRAME_DONE` when a
+   frame was recorded. The DMA scope keeps `DMA_ERR`, `DMA_IRQ_STAT`, the DONE
+   bits and metadata of completed buffers; the common scope clears them.
 
-The check runs in `fx1_isp_irq`, `fx1_isp_next_done`, `fx1_isp_input_ready`,
-`fx1_isp_recover` and `fx1_isp_next_lost`. The IDMA_DONE interrupt is
-enabled so the decision is not left waiting when the lost frame is the
-last one queued.
+A software request while `BUSY` is rejected with `TUNE_ERROR.PENDING`; an
+AXI error during a recovery joins it. Read the records with `BUSY` = 0 and
+the same `SEQUENCE` before and after them: `fx1_isp_recovery_report`.
 
-`fx1_isp_recover` acts only on error bits that are still set in `DMA_ERR`.
-Calling it twice with the same interrupt snapshot is safe: the second call
-returns `FX1_ISP_ENODATA` and changes nothing. If it does handle something,
-that is a new error, for example a fault that hit again right after the
-re-arm.
+A frame the IDMA was reading ahead but whose SOF had not been accepted is
+not in the abort set (V107-A35): it is lost without a record.
+
+The reference driver settles its queue against `SEQUENCE` in
+`fx1_isp_irq`, `fx1_isp_next_done`, `fx1_isp_input_ready`,
+`fx1_isp_queue_frame`, `fx1_isp_recover` and `fx1_isp_next_lost`. Frames whose
+CH0 output is DONE stay collectable; every other frame in flight is lost
+and reported by `fx1_isp_next_lost`, oldest first, for the caller to
+resubmit. Queueing waits while a recovery runs and while the restarted
+rotation reaches an output that still holds an uncollected frame. If a
+recovery finishes between `fx1_isp_next_input()` and `fx1_isp_queue_frame()`,
+the latter returns `FX1_ISP_EAGAIN`: fill the new `fx1_isp_next_input()` and
+call it again.
+
+Nothing is collected while a recovery runs: `fx1_isp_next_done` returns
+`FX1_ISP_ENODATA` until it is settled, and `FX1_ISP_EAGAIN` (frame kept) if a
+recovery started during the collection and dropped the DONE acknowledgement.
+
+The reset calls (`fx1_isp_soft_reset_ex`, `fx1_isp_dma_reset`, `fx1_isp_stop`,
+`fx1_isp_init`) wait, bounded, for their recovery. A drain lasts as long as the
+transactions already accepted, which MAS does not bound, so they return
+`FX1_ISP_EBUSY` when it outlasts the wait: nothing in the driver changed, the
+reset stays pending, and calling again completes it without a second request.
+Buffers are not reusable before it returns `FX1_ISP_OK`.
+
+`fx1_isp_recover` waits (bounded) for the recovery to finish, settles the
+queue and clears the error bits it handled. It acts only on error bits that
+are still set in `DMA_ERR`: a second call with the same interrupt snapshot
+returns `FX1_ISP_ENODATA` and changes nothing. It returns `FX1_ISP_EBUSY`,
+keeping the bits, if the recovery is still running.
 
 ### 8.2 Driver states, cancel and watchdog
 
@@ -341,24 +361,83 @@ Timeout policy for the caller (the driver has no timer):
   `fx1_isp_stop`, then `fx1_isp_start` and re-queue.
 
 When nothing else helps, recover with a soft reset (§7) and re-queue. Also
-watch `LSC_ERROR` (load protocol), `BPC_STATUS.cand_reject_ovf` and
-`EE_STATUS.error` (a radial gain of the frame's profile above 1.5, raised
-again for every frame EE processes while it stays programmed). All three feed
-`error_irq`.
+watch `LSC_ERROR` (load protocol), `EE_STATUS.error` (a radial gain of the
+frame's profile above 1.5, raised again for every frame EE processes while it
+stays programmed) and `TUNE_ERROR`; they feed `error_irq`.
+`BPC_STATUS.cand_reject_ovf` is a statistics-drop indication and does not
+(MAS v1.07 Table 9-188).
 
 ## 9. Reference driver
 
 | Function | Section |
 |---|---|
-| `fx1_isp_init`, `fx1_isp_soft_reset`, `fx1_isp_dma_reset` | 2, 7 |
-| `fx1_isp_set_geometry`, `fx1_isp_apply`, `fx1_isp_start` | 2 |
+| `fx1_isp_init`, `fx1_isp_soft_reset(_ex)`, `fx1_isp_dma_reset` | 2, 7, 8.1 |
+| `fx1_isp_set_geometry`, `fx1_isp_set_input_format`, `fx1_isp_apply`, `fx1_isp_start` | 2 |
 | `fx1_isp_stop`, `fx1_isp_get_progress` | 8.2 |
 | `fx1_isp_load_gamma`, `fx1_isp_load_ee_table`, `fx1_isp_load_gtm_lut`, `fx1_isp_lsc_load`, `fx1_isp_lsc_select`, `fx1_isp_ccm_set`, `fx1_isp_aec_configure` | 4 |
 | `fx1_isp_input_ready`, `fx1_isp_queue_frame(_ex, _meta)`, `fx1_isp_next_input`, `fx1_isp_irq`, `fx1_isp_next_done(_ex, _meta)`, `fx1_isp_frame_counter` | 3, 6 |
 | `fx1_isp_awb_acquire`, `fx1_isp_awb_read_global`, `fx1_isp_awb_read_zones`, `fx1_isp_awb_release`, `fx1_isp_awb_report` | 5 |
 | `fx1_isp_ee_load_profile`, `fx1_isp_ee_select`, `fx1_isp_gtm_manual_begin` | 4 |
-| `fx1_isp_recover(_ex)`, `fx1_isp_next_lost` | 8, 8.1 |
-| `fx1_isp_read_aec_global`, `fx1_isp_read_aec_zones`, `fx1_isp_read_awb_global`, `fx1_isp_read_af` | 5 |
+| `fx1_isp_recover(_ex)`, `fx1_isp_next_lost`, `fx1_isp_recovery_report` | 8, 8.1 |
+| `fx1_isp_discover`, `fx1_isp_require_caps` | 9.1 |
+| `fx1_isp_set_channel_buffers`, `fx1_isp_output_meta`, `fx1_isp_set_crop`, `fx1_isp_set_resize`, `fx1_isp_geometry_status` | 9.2 |
+| `fx1_isp_profile_mode`, `fx1_isp_profile_begin`, `fx1_isp_profile_confirm_tables`, `fx1_isp_profile_seal`, `fx1_isp_profile_apply`, `fx1_isp_profile_cancel`, `fx1_isp_profile_unseal`, `fx1_isp_profile_state` | 9.3 |
+| `fx1_isp_aec_acquire`, `fx1_isp_aec_result`, `fx1_isp_aec_read_global/zones/hist`, `fx1_isp_aec_release`, `fx1_isp_aec_drops`, `fx1_isp_af_acquire`, `fx1_isp_af_read`, `fx1_isp_af_release`, `fx1_isp_af_drops` | 5 |
+| `fx1_isp_read_aec_global`, `fx1_isp_read_awb_global`, `fx1_isp_read_af` (compatibility readers) | 5 |
+
+### 9.1 Discovery (V107-10)
+
+`fx1_isp_discover` returns `TUNE_ID`, `TUNE_REV` (0x00010007 for CSR v1.07)
+and `TUNE_CAPS`. Firmware calls `fx1_isp_require_caps` with the
+`FX1_ISP_TUNE_CAPS_*_MASK` bits it relies on (for example `PROFILE`,
+`RECOVERY_REPORT`, `CHANNEL_CROP`) before using them; a missing bit returns
+`FX1_ISP_ENOTSUP` instead of silently running a different behaviour.
+
+### 9.2 Output channels (V107-10)
+
+CH1 (NV12) and CH2 (packed RGB888, `y_stride` ≥ 3 × width, no UV plane) get
+their buffers with `fx1_isp_set_channel_buffers` in CONFIG state. Set
+`OUTPUT_ENABLE` (IDLE class) before `fx1_isp_start`. Start latches the mask.
+It refuses a stream (`FX1_ISP_EINVAL`) when an enabled channel has no
+buffers, an invalid geometry, or a stride shorter than a line. Every queued
+frame arms the same buffer index on every enabled channel. `next_done`
+returns that index once every enabled channel published DONE, and returns
+all of them to software. `fx1_isp_output_meta(ch, index)` reads a channel's
+metadata, ingress frame ID and profile ID. The ID is the same on every
+channel for one frame. After a recovery, a channel that had already
+published DONE for an aborted frame has that DONE cleared by the driver.
+
+### 9.3 Profile transaction (V107-10)
+
+1. Set the input geometry and format while still in legacy mode.
+2. `fx1_isp_profile_mode(1)` (idle only, else `EBUSY`).
+3. `fx1_isp_profile_begin(bank)`: INIT copies the current configuration
+   into the bank.
+4. Write the bank with `fx1_isp_apply`. INIT clears the bank's payload
+   validity: load a Gamma curve with `fx1_isp_profile_load_gamma` (banked
+   port, verified, confirmed); other bank payloads are confirmed with
+   `fx1_isp_profile_confirm_tables`.
+5. `fx1_isp_profile_seal(bank, id)`.
+6. `fx1_isp_profile_apply(bank, exact, frame)`: from the next admitted
+   frame, or EXACT at ingress frame `frame`.
+
+`fx1_isp_profile_from_legacy(bank, writes, n, id)` is the firmware's
+default bring-up of a legacy profile (V107-10): after `fx1_isp_apply` of the
+writes in legacy mode it enters profile mode, INITs the bank from that
+configuration, reloads what INIT cleared (the confirmed legacy Gamma curve,
+read back through `GAMMA_LUT_RDATA`, through the banked port; the GTM manual
+curve and TUNE payload writes replayed in order through their own ports),
+seals with `id` and applies. An unconfirmed legacy curve with Gamma enabled
+makes SEAL fail (`NOT_READY`): legacy mode would pass the pixels through,
+which a profile cannot express. On the VP this reproduces
+the legacy output and statistics of every test vector with a single profile
+and of every RAW regression run; a configuration that legacy mode measures
+with drops (an illegal AEC/AWB grid) is refused at SEAL (`INVALID`).
+
+`fx1_isp_profile_state` reports the active ID, the first frame and
+`NEXT_FRAME`. Every command returns `FX1_ISP_EIO` with the `TUNE_ERROR` bits
+it raised (LOCKED, NOT_READY, MODE, ...) and acknowledges them. Outputs
+carry the profile ID in `TUNE_CHc_BUFn_PROFILE`.
 
 The driver is C99 with no allocation; all access goes through
 `fx1_isp_hal`. It is not thread-safe. Build: CMake target
@@ -390,13 +469,13 @@ How it was verified (CTest `fx1_isp.integration.driver_tlm`):
   - AWB ownership, with normal and with sub-clock CSR timing (`driver_tlm_fast_csr`);
   - EE profile loading and selection;
   - the GTM manual hand-over;
-  - the Resizer start waits;
+  - the Resizer start waits (v1.07: GEOMETRY_STATUS polling, refused starts);
   - frame metadata through the rotation and when queued to a waiting IDMA;
   - `fx1_isp_dma_reset` in the middle of a frame.
 - On the FX1 platform (CI): `fx1_smoke_isp_mas0710`, `fx1_smoke_isp_recovery`.
   - AWB lease, drops and bank reuse against the reference.
   - An AWB lease kept across `fx1_isp_dma_reset`.
-  - Resizer from the first frame and a mode switch while streaming.
+  - Resizer from the first frame and a mode switch while streaming (07/10 contract; under v1.07 the switch needs stop/drain, ported in V107-10).
   - Tags matched while input and output indices differ.
   - DMA reset mid-frame, then the stream continues.
 - A frame whose output fails while its input is still being read, in both
@@ -419,7 +498,8 @@ How it was verified (CTest `fx1_isp.integration.driver_tlm`):
   and the read order of VALID and `DMA_ERR`.
   The survivor removes the IDMA_DONE interrupt. On this model it is
   equivalent: when the lost frame is the last one, the end of input raises
-  `IDMA_UNDERRUN`, whose rising edge sets `error_irq` (DEC-15). The driver
+  `IDMA_UNDERRUN`, whose rising edge set `error_irq` under DEC-15 (no longer
+  since v1.07, Table 9-188). The driver
   keeps IDMA_DONE so it does not depend on an error source to end a normal
   stream.
 - Driver mutation check (M5): 15 mutants, 10 killed. The 5 survivors are

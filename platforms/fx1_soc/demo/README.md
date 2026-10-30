@@ -45,6 +45,17 @@ Open `platform.png` with `code`, `eog` or `xdg-open`.
 
 ## Run it from the FreeRTOS CLI
 
+Job descriptor version 2 (V107-10): `--mode profile` (default) runs the
+ISP in CSR v1.07 profile mode (the profile is applied, then built into
+bank 0, sealed and applied; a refused profile ends the run with status 2
+and its TUNE_ERROR bits, without a legacy fallback); `--mode legacy` runs
+the legacy path for comparison. Either output is compared with the
+stand-alone model's legacy run of the same profile. `--outputs` selects
+the channels (bit 0 CH0, required; bit 1 CH1 NV12; bit 2 CH2 RGB888); CH1
+and CH2 are dumped (`y1.bin`, `uv1.bin`, `rgb2.bin`), packed
+(`platform_ch1.nv12`, `platform_ch2.rgb`) and reported with their SHA-256.
+A version-1 job (64 bytes) still runs, in legacy mode, CH0 only.
+
 The same job can be processed by `isp run` in the FreeRTOS CLI
 (`fw/fx1_soc/freertos/`), typed by hand. One command does it all:
 
@@ -89,7 +100,7 @@ halves around the session.
 
    ```text
    root@fx1:~# isp run
-   isp run: 2688x1520 RAW -> 1920x1080 NV12 at Y 0x88000000 UV 0x88400000, 1 frame(s), DMA_ERR 0x00000002
+   isp run: 2688x1520 RAW -> 1920x1080 NV12 at Y 0x88000000 UV 0x88400000, 1 frame(s), profile mode (ID 1), outputs 0x00000001, DMA_ERR 0x00000002
      isp run: PASS
    root@fx1:~# isp stats
    AEC FRAME_ID 1, count R/Gr/Gb/B 1019337/1019337/1019337/1019337

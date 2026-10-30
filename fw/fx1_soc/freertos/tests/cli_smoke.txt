@@ -13,6 +13,7 @@ regdump plic
 fpu test
 dma test 1023
 isp selftest
+isp selftest profile
 isp stats
 isp run
 nosuchcommand

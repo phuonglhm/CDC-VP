@@ -71,7 +71,9 @@ computed without any task switch.
 | `fpu test` | FP context-switch check (above) |
 | `dma test [BYTES]` | SYS_DMA M2M copy: completion IRQ → semaphore, ownership calls, data verified |
 | `isp selftest` | The 8-frame 64×48 fixture through the driver from a task, ISR → semaphore; every NV12 CRC must match the reference |
-| `isp run` | Process the RAW job that the host loaded into DDR (see `platforms/fx1_soc/demo/`); the NV12 stays in DDR for `--dump` |
+| `isp selftest profile` | The same fixture in CSR v1.07 profile mode: the basic configuration built in bank 0 (INIT), sealed as profile 1 and applied; the same CRCs, every output carrying profile ID 1 |
+| `isp run` | Process the RAW job that the host loaded into DDR (see `platforms/fx1_soc/demo/`); the NV12 stays in DDR for `--dump`. In the job's mode: CSR v1.07 profile mode by default (the profile built into bank 0, sealed and applied; a refused profile is reported, never run in legacy mode instead), legacy for a version-1 job; the job's output channels (CH0, CH1 NV12, CH2 RGB888) |
+| `isp run legacy` | The same job in legacy mode, for comparison |
 | `isp stats` | AEC/AWB/AF publications of the last frame |
 | `camera ...` | Camera build only (CSI-2 M6b), see "Camera" below |
 | `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` |
@@ -89,7 +91,7 @@ DDR → ISP → NV12 path through the camera manager
 | Command | Does |
 |---|---|
 | `camera probe` | CSI-2 RX `IP_VERSION`, the sensor's `model_id` over I2C0; without `--camera`: `camera: absent` |
-| `camera mode [W H BITS LANES]` | Set (W 8..3840, multiple of 8; H 2..2160, even; RAW10 / RAW12; 1, 2 or 4 lanes; default 64 16 12 4) or show the mode, and whether a golden exists for it |
+| `camera mode [W H BITS LANES]` | Set (W 8..3840, multiple of 8; H 2..2160, even; RAW10 / RAW12; 1, 2 or 4 lanes; default 64 32 12 4) or show the mode, and whether a golden exists for it |
 | `camera source [sensor\|tpg]` | The sensor through the detailed D-PHY, or the CSI-2 RX test pattern generator (no D-PHY: fast at any size); probe again after a change |
 | `camera start` | Configure (ISP profile basic of the committed golden header) and start; takes the ISP. A start that fails after configure is cleaned up at once (`cleanup stop ...`; with the sensor not answering: state "stopped, sensor not confirmed", `camera stop` again later) |
 | `camera capture N [crc]` | N frames (≤ 32): collected first, then one line each: capture, CSI-2 FRAME_ID and side, ISP sequence, zero-copy / staged, output slot, RAW spot check (sensor pattern with the frame number, or TPG colour bars), NV12 CRC-32 and golden match. The CRC is computed for NV12 up to 1 MiB, or with `crc` (about 0.3 MIPS from DDR: ten minutes of host time at 4K); without it a golden mode is spot-checked (TPG 4K: 32 Y + 32 UV bytes, positions poisoned before each frame), any other mode prints `NV12 not checked (no golden)` |
@@ -97,7 +99,7 @@ DDR → ISP → NV12 path through the camera manager
 | `camera stop [US]` | Stop within US (default 24000) + 200 µs: `OK`, `ESENSOR` (the sensor did not confirm standby: CSI-2 RX and ISP stopped, state "stopped, sensor not confirmed"; `camera stop` again once I2C answers), `ETIMEOUT` |
 | `camera recover` | Stop, sensor software reset (frame numbers from 1), configure, start; on an error it prints the step and leaves a valid state, no automatic retry |
 
-Golden (`fw/fx1_soc/tests/camera_isp/camera_isp_golden.h`): sensor 64x16
+Golden (`fw/fx1_soc/tests/camera_isp/camera_isp_golden.h`): sensor 64x32
 RAW12 and RAW10, frame numbers 1..32 since the last sensor reset, any lane
 count; TPG 640x480 and 3840x2160 RAW12. Other modes print `no golden`.
 
@@ -109,7 +111,7 @@ keep running. `camera stop` results are printed, not counted as failures;
 refused commands (not probed, running, absent, ISP busy) are not counted
 either; probe and capture checks and start / recover failures are.
 
-Large sensor frames go through the netlist-level D-PHY: a 64x16 frame costs
+Large sensor frames go through the netlist-level D-PHY: a 64x32 frame costs
 seconds of host time, 640x480 minutes. Use `camera source tpg` for large
 frames.
 
@@ -178,7 +180,7 @@ of 64×48, each CRC compared with the reference.
 | Test | Checks |
 |---|---|
 | `fx1_smoke_freertos_cli_q*ns` | The scripted session at both quanta. hwcheck must report 0 failures; the `fpu`, `dma`, `isp` and `selftest` lines must say PASS; an unknown command must be reported; `poweroff` must end with PASS |
-| `fx1_smoke_freertos_cli_camera` | `tests/cli_camera.txt` with `--camera`: hwcheck of CSI-2 RX and I2C0 + sensor, probe, 64x16 RAW12 4 lanes (4 frames = golden 1..4, zero-copy) and RAW10 2 lanes (staged, golden), `isp selftest` refused while the camera runs and PASS after `camera stop` |
+| `fx1_smoke_freertos_cli_camera` | `tests/cli_camera.txt` with `--camera`: hwcheck of CSI-2 RX and I2C0 + sensor, probe, 64x32 RAW12 4 lanes (4 frames = golden 1..4, zero-copy) and RAW10 2 lanes (staged, golden), `isp selftest` refused while the camera runs and PASS after `camera stop` |
 | `fx1_smoke_freertos_cli_camera_fault` | `tests/cli_camera_fault.txt`: I2C host disabled with `mw` → `camera stop` ESENSOR, state "stopped, sensor not confirmed", `camera start` refused; I2C back → stop OK; `camera recover` → frames 1 and 2 again (golden) |
 | `fx1_smoke_freertos_cli_camera_absent` | `tests/cli_camera_absent.txt` without `--camera`: hwcheck `CSI-2 RX: absent, skipped`, `camera: absent`, refused commands, bad mode reported, nothing counted as failed |
 | `fx1_regression_freertos_cli_camera_startfault` | Test image `freertos_cli_camfault` (I2C host lost once between configure and stream-on): `camera start` EDEV, cleanup stop ESENSOR, ISP free again (`isp selftest` PASS); I2C back → stop OK; start and capture against the golden |

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """RAW fixture adapter for the FX1 ISP (plan task P07).
 
-Converts a source RAW file into the ISP input contract of HAS Table 6-88:
-one little-endian 16-bit container per sample, the sample in bits [11:0]
-(RAW10 MSB-aligned as {raw[9:0], 2'b00}), bits [15:12] zero. The conversion
-happens here, outside the IP; the IDMA never shifts. Source files are never
-modified.
+Converts a source RAW file into the ISP input contract of MAS v1.07 §6.6.3.2:
+one little-endian 16-bit container per sample, right-aligned and zero-extended,
+with an explicit native depth (COMMON_INPUT_FORMAT.DEPTH):
+  --out-depth raw12  (default) the sample in bits [11:0]; a RAW10 source is
+                     written normalized as {raw[9:0], 2'b00}; DEPTH = 0
+  --out-depth raw10  a RAW10 source written native in bits [9:0]; DEPTH = 1,
+                     and the ISP shifts it left two exactly once
+The same scene gives the same ISP output either way; never normalize data and
+also declare it RAW10. The conversion happens here, outside the IP; the IDMA
+never shifts. Source files are never modified.
 
 The source layout is always given explicitly (never guessed from the data):
 
@@ -80,9 +85,22 @@ def write_container(samples, path, out_stride=None):
     return stride
 
 
+RAW10_SOURCES = ("le16_raw10_msb", "le16_raw10_has")
+
+
 def cmd_convert(a):
     samples, stats = load_source(a.inp, a.format, a.width, a.height, a.src_stride)
-    stride = write_container(samples, a.out, a.out_stride)
+    if a.out_depth == "raw10":
+        if a.format not in RAW10_SOURCES:
+            sys.exit("--out-depth raw10 needs a RAW10 source (%s)" % ", ".join(RAW10_SOURCES))
+        if int(np.count_nonzero(samples & 0x3)):
+            raise AssertionError("normalized RAW10 with nonzero bits [1:0]")
+        container = (samples >> 2).astype(np.uint16)  # native RAW10, bits [9:0]
+        layout, depth = "LE uint16, native RAW10 right-aligned in bits [9:0]", 1
+    else:
+        container = samples
+        layout, depth = "LE uint16, RAW12 right-aligned in bits [11:0]", 0
+    stride = write_container(container, a.out, a.out_stride)
     bayer = a.bayer.upper()
     manifest = {
         "tool": "tools/raw_fixture.py",
@@ -90,7 +108,7 @@ def cmd_convert(a):
                    "stride": a.src_stride or 2 * a.width},
         "conversion": "container = word >> %d; bits 0x%04X checked zero" % (FORMATS[a.format][1], FORMATS[a.format][0]),
         "output": {"path": os.path.abspath(a.out), "sha256": sha256_file(a.out), "stride": stride,
-                   "layout": "LE uint16, sample in bits [11:0] (HAS Table 6-88)"},
+                   "layout": layout, "common_input_format_depth": depth},
         "width": a.width, "height": a.height,
         "bayer": bayer, "common_bayer_code": BAYER_CODES[bayer],
         "stats_12bit": stats,
@@ -128,6 +146,7 @@ def main():
     c.add_argument("--out", required=True)
     c.add_argument("--src-stride", type=int)
     c.add_argument("--out-stride", type=int)
+    c.add_argument("--out-depth", default="raw12", choices=("raw12", "raw10"))
     c.set_defaults(func=cmd_convert)
     v = sub.add_parser("verify-inventory")
     v.add_argument("--inventory", required=True)

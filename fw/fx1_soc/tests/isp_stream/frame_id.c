@@ -8,7 +8,8 @@
  * registers are stable when read and belong to exactly that frame. For every
  * frame k the driver's read-tag-read accessors must return the reference's
  * AEC/AWB/AF FRAME_ID (1..8 after reset), RESULT_CONTEXT_ID, and the AEC
- * global sums and counts per channel; the NV12 must still match basic's CRC.
+ * global Bayer sum and count (MAS v1.07 Table 9-193: one clip-qualified
+ * aggregate, no per-CFA sums); the NV12 must still match basic's CRC.
  */
 #include "isp_common.h"
 
@@ -104,15 +105,12 @@ int main(void)
         expect_eq(aec.context_id, e->aec_ctx, 0x70, "AEC_RESULT_CONTEXT_ID");
         expect_eq(awb.context_id, e->awb_ctx, 0x71, "AWB_RESULT_CONTEXT_ID");
         expect_eq(af.context_id, e->af_ctx, 0x72, "AF_RESULT_CONTEXT_ID");
-        for (unsigned c = 0; c < 4; ++c) {
-            expect_eq((uint32_t)aec.sum[c], (uint32_t)e->aec_sum[c], 0x80 + k, "AEC global sum (low)");
-            expect_eq((uint32_t)(aec.sum[c] >> 32), (uint32_t)(e->aec_sum[c] >> 32), 0x80 + k,
-                      "AEC global sum (high)");
-            expect_eq(aec.count[c], e->aec_count[c], 0x90 + k, "AEC global count");
-        }
+        expect_eq((uint32_t)aec.sum, (uint32_t)e->aec_sum, 0x80 + k, "AEC global sum (low)");
+        expect_eq((uint32_t)(aec.sum >> 32), (uint32_t)(e->aec_sum >> 32), 0x80 + k, "AEC global sum (high)");
+        expect_eq((uint32_t)aec.count, (uint32_t)e->aec_count, 0x90 + k, "AEC global count");
     }
     fx1_log_hex("last AEC/AWB/AF FRAME_ID", isp_fx_stats_expected[ISP_FX_FRAMES - 1].aec_frame_id);
     fx1_check(fx1_isp_stop(&dev) >= 0, 0xA0, "stream stopped");
-    fx1_log("8 frames: FRAME_ID 1..8, context tags and AEC global sums match the reference");
+    fx1_log("8 frames: FRAME_ID 1..8, context tags and the AEC global sum/count match the reference");
     return 0;
 }

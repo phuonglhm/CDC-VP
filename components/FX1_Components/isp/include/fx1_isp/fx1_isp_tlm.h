@@ -72,7 +72,7 @@ public:
    std::size_t debug_pending_commands() const;
    // Current rotation positions of the DMA engines (not software visible).
    std::uint32_t debug_idma_head() const;
-   std::uint32_t debug_odma_head() const;
+   std::uint32_t debug_odma_head(unsigned ch = 0) const;
    // Sets the statistics frame counter (FRAME_ID source, not software visible)
    // so a fixture can test its 32-bit wrap without 2^32 frames.
    void debug_set_frame_counter(std::uint32_t value);
@@ -85,6 +85,8 @@ private:
    void idma_thread();
    void pipeline_thread();
    void odma_thread();
+   void odma_ch1_thread();
+   void odma_ch2_thread();
    void state_changed(const sc_core::sc_time &when);
 
    struct impl;

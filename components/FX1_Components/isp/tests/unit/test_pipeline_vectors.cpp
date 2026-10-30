@@ -55,6 +55,9 @@ bool apply_profile(control_unit &cu, const fs::path &p) {
    return true;
 }
 
+std::size_t channel_vectors = 0;  // CH1/CH2 outputs compared
+std::size_t below_minimum = 0;    // frames of an illegal (below 32 x 32) active size
+
 void run_vector(const fs::path &dir) {
    const std::string name = dir.filename().string();
    std::ifstream meta(dir / "meta.txt");
@@ -70,6 +73,8 @@ void run_vector(const fs::path &dir) {
       return;
    }
    std::vector<std::uint8_t> got_y, got_uv;
+   std::vector<pipe::yuv> post_iq;  // the last frame's post-IQ YUV444, for CH1/CH2
+   pipe::pipeline_config last_cfg;
    std::vector<std::uint16_t> line(in_w);
    pipe::isp_pipeline p;
    std::vector<std::string> warnings;
@@ -85,13 +90,28 @@ void run_vector(const fs::path &dir) {
       const pipe::pipeline_config cfg = pipe::snapshot_config(cu);
       got_y.clear();
       got_uv.clear();
+      post_iq.clear();
+      last_cfg = cfg;
       const pipe::frame_geometry g = p.begin(
           cfg, in_w, in_h, [&](std::vector<std::uint8_t> &&r) { got_y.insert(got_y.end(), r.begin(), r.end()); },
           [&](std::vector<std::uint8_t> &&r) { got_uv.insert(got_uv.end(), r.begin(), r.end()); },
-          [&](const std::string &w) { warnings.push_back(w); });
+          [&](const std::string &w) { warnings.push_back(w); },
+          [&](const std::vector<pipe::yuv> &r) { post_iq.insert(post_iq.end(), r.begin(), r.end()); });
       FX1_CHECK_EQ_CTX(g.width, out_w, name + " out_w");
       FX1_CHECK_EQ_CTX(g.height, out_h, name + " out_h");
-      FX1_CHECK_EQ_CTX(cu.resizer_output_geometry().width, out_w, name + " RESIZER_OUT_W");
+      // An active image below 32 x 32 is not a legal channel geometry (MAS
+      // v1.07 §6.20.1.1, ERROR 1): such a frame is never admitted; the
+      // kernels still process it here (block-level coverage of the edges).
+      const geometry act0 = control_unit::derive_active(in_w, in_h, cfg.bayer_pattern);
+      const std::uint32_t st = cu.geometry_status(0, ~std::uint64_t{0})  /* settled */;
+      if (act0.width >= 32 && act0.height >= 32) {
+         FX1_CHECK_EQ_CTX(st, FX1_ISP_CH0_GEOMETRY_STATUS_VALID_MASK, name + " GEOMETRY_STATUS");
+         FX1_CHECK_EQ_CTX(cu.resizer_output_geometry().width, out_w, name + " RESIZER_OUT_W");
+      } else {
+         FX1_CHECK_EQ_CTX(st, unsigned{geo_input} << FX1_ISP_CH0_GEOMETRY_STATUS_ERROR_SHIFT,
+                          name + " GEOMETRY_STATUS below 32 x 32");
+         below_minimum += f + 1 == frames ? 1 : 0;  // once per vector
+      }
       for (std::uint32_t y = 0; y < in_h; ++y) {
          for (std::uint32_t x = 0; x < in_w; ++x) {
             const std::size_t i = 2u * (std::size_t{y} * in_w + x);
@@ -127,6 +147,28 @@ void run_vector(const fs::path &dir) {
    };
    compare(got_y, want_y, "Y", out_w);
    compare(got_uv, want_uv, "UV", out_w);
+   // CH1 / CH2 (MAS v1.07 §6.20.1.1, §6.24.7): the same post-IQ frame through
+   // each channel's crop, Resizer and formatter.
+   std::ifstream chf(dir / "channels.txt");
+   unsigned ch = 0;
+   std::uint32_t cw = 0, chh = 0;
+   const geometry act = control_unit::derive_active(in_w, in_h, last_cfg.bayer_pattern);
+   while (chf >> ch >> cw >> chh) {
+      const std::string c = " CH" + std::to_string(ch);
+      FX1_CHECK_EQ_CTX(post_iq.size(), std::size_t{act.width} * act.height, name + c + " post-IQ frame");
+      FX1_CHECK_EQ_CTX(cu.resizer_output_geometry(ch).width, cw, name + c + " RESIZER_OUT_W");
+      FX1_CHECK_EQ_CTX(cu.resizer_output_geometry(ch).height, chh, name + c + " RESIZER_OUT_H");
+      const pipe::channel_output o = pipe::run_channel(last_cfg, ch, post_iq, act.width, act.height);
+      FX1_CHECK_EQ_CTX(o.width, cw, name + c + " width");
+      FX1_CHECK_EQ_CTX(o.height, chh, name + c + " height");
+      if (ch == 2) {
+         compare(o.rgb, read_file(dir / "expected_ch2_rgb.bin"), "CH2 RGB", 3 * cw);
+      } else {
+         compare(o.y, read_file(dir / ("expected_ch" + std::to_string(ch) + "_y.bin")), "CH1 Y", cw);
+         compare(o.uv, read_file(dir / ("expected_ch" + std::to_string(ch) + "_uv.bin")), "CH1 UV", cw);
+      }
+      ++channel_vectors;
+   }
 
    // Published block counters and statistics, as software reads them
    // (SET lines program the readout selectors).
@@ -137,35 +179,53 @@ void run_vector(const fs::path &dir) {
          write_named(cu, l.reg, l.value, cycle++);
          sel = " @" + l.reg + "=" + std::to_string(l.value);
       } else if (const csr::reg_desc *d = find_register(l.reg)) {
-         FX1_CHECK_EQ_CTX(cu.csr_read(d->offset), l.value, name + " " + l.reg + sel);
+         // A software (bus) read: DATA_LO snapshots, NO_LEASE (MAS §9.8).
+         FX1_CHECK_EQ_CTX(cu.csr_bus_read(d->offset, cycle++), l.value, name + " " + l.reg + sel);
       }
    }
 }
 
+// Channel geometry (MAS v1.07 §6.20, §8.3): validation code, pass-through,
+// decimation stages and output size against the reference table.
 void check_resizer_plans(const fs::path &table) {
    std::ifstream f(table);
    std::string line;
    std::size_t rows = 0;
+   std::array<std::size_t, 7> codes{};
    while (std::getline(f, line)) {
       if (line.empty() || line[0] == '#') {
          continue;
       }
       std::istringstream is(line);
-      std::uint32_t w, h, scale, pass, k, ow, oh;
-      is >> w >> h >> scale >> pass >> k >> ow >> oh;
-      const pipe::resizer_plan p = pipe::plan_resizer(true, scale, w, h);
+      channel_key k;
+      unsigned ce = 0, en = 0, err = 0, pass = 0, stages = 0;
+      std::uint32_t ow = 0, oh = 0;
+      is >> k.width >> k.height >> k.ch >> ce >> k.crop_x >> k.crop_y >> k.crop_w >> k.crop_h >> en >> k.scale >> err >>
+          pass >> stages >> ow >> oh;
+      k.valid = true;
+      k.crop_en = ce != 0;
+      k.en = en != 0;
+      const channel_set c = derive_channel(k);
       const std::string ctx = line;
-      FX1_CHECK_EQ_CTX(p.pass ? 1u : 0u, pass, ctx);
-      FX1_CHECK_EQ_CTX(p.out_w, ow, ctx);
-      FX1_CHECK_EQ_CTX(p.out_h, oh, ctx);
-      if (!p.pass) {
-         FX1_CHECK_EQ_CTX(p.stages, k, ctx);
-         // DEC-23 invariant: the bilinear never upscales.
-         FX1_CHECK_EQ_CTX(p.dec_w >= p.out_w && p.dec_h >= p.out_h ? 1 : 0, 1, ctx);
+      FX1_CHECK_EQ_CTX(c.error, err, ctx);
+      FX1_CHECK_EQ_CTX(c.valid ? 1u : 0u, err == 0 ? 1u : 0u, ctx);
+      if (err == 0) {
+         FX1_CHECK_EQ_CTX(c.plan.pass ? 1u : 0u, pass, ctx);
+         FX1_CHECK_EQ_CTX(c.out.width, ow, ctx);
+         FX1_CHECK_EQ_CTX(c.out.height, oh, ctx);
+         if (!c.plan.pass) {
+            FX1_CHECK_EQ_CTX(c.plan.stages, stages, ctx);
+            // The bilinear never upscales (MAS §6.20.3.6).
+            FX1_CHECK_EQ_CTX(c.plan.dec_w >= c.plan.out_w && c.plan.dec_h >= c.plan.out_h ? 1 : 0, 1, ctx);
+         }
       }
+      ++codes.at(err);
       ++rows;
    }
-   FX1_CHECK(rows == 160);
+   FX1_CHECK(rows == 9504);
+   for (unsigned e = 0; e < codes.size(); ++e) {  // every ERROR code is exercised
+      FX1_CHECK_EQ_CTX(codes[e] > 0 ? 1 : 0, 1, "ERROR code " + std::to_string(e));
+   }
 }
 
 }  // namespace
@@ -184,6 +244,8 @@ int main(int argc, char **argv) {
       }
    }
    FX1_CHECK(n >= 32);
+   FX1_CHECK(channel_vectors >= 6);
+   FX1_CHECK(below_minimum == 5);  // the four edge vectors and blc_profile2_bggr_64x32
    check_resizer_plans(root / "resizer_plans.txt");
    return fx1_test::summary("fx1_isp_test_pipeline_vectors");
 }

@@ -5,9 +5,9 @@ Writes camera_isp_golden.h next to this script. The expected images come from
 the stand-alone SystemC ISP model, fx1_isp_run_raw (components/FX1_Components/
 isp/tools/run_raw.cpp), run on the exact input the ISP receives on fx1_soc:
 
-  raw12   sensor 64x16 RAW12 (zero-copy: the CSI-2 RAW16 side is the ISP input),
+  raw12   sensor 64x32 RAW12 (zero-copy: the CSI-2 RAW16 side is the ISP input),
           sample = CcsSensor::pattern(f, x, y, 12)
-  raw10   sensor 64x16 RAW10, staged by the firmware as sample << 2
+  raw10   sensor 64x32 RAW10, staged by the firmware as sample << 2
           (ISP container bits [11:2]): pattern(f, x, y, 10) << 2
   tpg4k   CSI-2 RX test pattern generator, 3840x2160 RAW12 (colour bars,
           spec_decisions C35/D11), zero-copy
@@ -49,7 +49,7 @@ from fx1_isp_ref import regs as regs_mod  # noqa: E402
 import make_profile  # noqa: E402
 
 OUT = os.path.join(HERE, "camera_isp_golden.h")
-CAM_W, CAM_H, CAM_FRAMES = 64, 16, 32
+CAM_W, CAM_H, CAM_FRAMES = 64, 32, 32  # 32 lines: the v1.07 minimum active size (MAS §6.6.3.4)
 TPG_W, TPG_H = 3840, 2160
 TPG640_W, TPG640_H = 640, 480
 

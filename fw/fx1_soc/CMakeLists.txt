@@ -352,7 +352,7 @@ if(CDC_BUILD_TESTS)
     set(_demo_dir ${CMAKE_CURRENT_SOURCE_DIR}/demo/isp_raw_frame)
     fx1_firmware(isp_demo SOURCES ${_demo_dir}/main.c ${_isp}/driver/src/fx1_isp_drv.c
         INCLUDES ${_isp}/driver/include ${_isp}/include ${_demo_dir}
-        DEPENDS ${_demo_dir}/isp_demo_job.h ${_isp}/driver/include/fx1_isp/fx1_isp_drv.h
+        DEPENDS ${_demo_dir}/isp_demo_job.h ${_demo_dir}/isp_demo_setup.h ${_isp}/driver/include/fx1_isp/fx1_isp_drv.h
                 ${_isp}/include/fx1_isp/fx1_isp_csr.h)
     # Optional: the demo on a real RAW frame as a test, outside the gate (label
     # fx1_demo). Point FX1_DEMO_RAW at a BGGR 2688x1520 le16_raw10_msb frame
@@ -403,7 +403,7 @@ if(CDC_BUILD_TESTS)
     set(_rtos_includes ${_rtos_dir} ${_kernel}/include ${_kernel}/portable/GCC/RISC-V
         ${_isp_includes} ${_demo_dir})
     file(GLOB _rtos_headers ${_rtos_dir}/*.h)
-    set(_rtos_depends ${_rtos_headers} ${_isp_depends} ${_demo_dir}/isp_demo_job.h)
+    set(_rtos_depends ${_rtos_headers} ${_isp_depends} ${_demo_dir}/isp_demo_job.h ${_demo_dir}/isp_demo_setup.h)
     # The upstream RV32 port casts the uint64_t mtimecmp base to a pointer
     # (port.c, vPortSetupTimerInterrupt); harmless below 4 GiB, but -Werror.
     set(_rtos_cflags -Wno-int-to-pointer-cast)
@@ -446,7 +446,7 @@ if(CDC_BUILD_TESTS)
         fx1_expect_test(freertos_cli_q${quantum}ns IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
             ARGS --quantum-ns ${quantum} --uart0-rx-file ${_rtos_dir}/tests/cli_smoke.txt
                  --uart0-rx-delay-us 60000 ${_rtos_rx}
-            REGEX "total: [0-9]+ checks, 0 failures -> PASS.*root@fx1:~# .*fpu context switch: PASS.*dma copy: PASS.*isp 8-frame fixture: PASS.*nosuchcommand: unknown command.*selftest: PASS.*poweroff: 0 failed.*RESULT PASS")
+            REGEX "total: [0-9]+ checks, 0 failures -> PASS.*root@fx1:~# .*fpu context switch: PASS.*dma copy: PASS.*isp 8-frame fixture: PASS.*isp 8-frame fixture \\(profile mode\\): PASS.*nosuchcommand: unknown command.*selftest: PASS.*poweroff: 0 failed.*RESULT PASS")
     endforeach()
     # Bad md/mw input: out-of-range numbers, ranges that wrap past 4 GiB or a
     # region end, and register holes that fault on the bus must all be
@@ -458,7 +458,7 @@ if(CDC_BUILD_TESTS)
     fx1_expect_test(freertos_cli_hwcheck_fail IMAGE freertos_cli_hwfail RC 1 TIMEOUT_MS 300
         REGEX "FAIL ISP.*boot halted: hwcheck FAIL.*RESULT FAIL code=0x50")
     # CSI-2 M6b: the `camera` commands. With --camera: nominal session (probe,
-    # 64x16 RAW12 4 lanes and RAW10 2 lanes against the golden, ISP ownership
+    # 64x32 RAW12 4 lanes and RAW10 2 lanes against the golden, ISP ownership
     # with `isp selftest`, status, stop) and fault session (I2C host disabled ->
     # stop ESENSOR / state 3, start refused, I2C back -> stop OK, recover,
     # frames from 1 again); without --camera: absent everywhere, nothing
@@ -468,7 +468,7 @@ if(CDC_BUILD_TESTS)
         set(_cam_rx --uart0-rx-delay-us 60000 ${_rtos_rx})
         fx1_expect_test(freertos_cli_camera IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera.txt ${_cam_rx}
-            REGEX "ok   CSI-2 RX, checks [0-9]+.*ok   I2C0 \\+ sensor, checks [0-9]+.*total: [0-9]+ checks, 0 failures -> PASS.*sensor model_id 0x0000f1c5.*camera probe: PASS.*camera start: PASS.*isp selftest: the ISP is in use by the camera.*capture 1 FRAME_ID 1 side 0 isp seq 0 zero-copy out 0 64x16 raw frame 1 raw ok crc 0x[0-9a-f]+ = golden frame 1.*capture 4 FRAME_ID 4 side 1 isp seq 3 zero-copy out 3 64x16 raw frame 4 raw ok crc 0x[0-9a-f]+ = golden frame 4.*4/4 frames, drops 0.*camera capture: PASS.*csi ok 4 err 0.*camera stop: OK.*64x16 RAW10, 2 lane.*staged out 0 64x16 raw frame [0-9]+ raw ok crc 0x[0-9a-f]+ = golden frame.*2/2 frames, drops 0.*camera capture: PASS.*camera stop: OK.*isp 8-frame fixture: PASS.*poweroff: 0 failed.*RESULT PASS")
+            REGEX "ok   CSI-2 RX, checks [0-9]+.*ok   I2C0 \\+ sensor, checks [0-9]+.*total: [0-9]+ checks, 0 failures -> PASS.*sensor model_id 0x0000f1c5.*camera probe: PASS.*camera start: PASS.*isp selftest: the ISP is in use by the camera.*capture 1 FRAME_ID 1 side 0 isp seq 0 zero-copy out 0 64x32 raw frame 1 raw ok crc 0x[0-9a-f]+ = golden frame 1.*capture 4 FRAME_ID 4 side 1 isp seq 3 zero-copy out 3 64x32 raw frame 4 raw ok crc 0x[0-9a-f]+ = golden frame 4.*4/4 frames, drops 0.*camera capture: PASS.*csi ok 4 err 0.*camera stop: OK.*64x32 RAW10, 2 lane.*staged out 0 64x32 raw frame [0-9]+ raw ok crc 0x[0-9a-f]+ = golden frame.*2/2 frames, drops 0.*camera capture: PASS.*camera stop: OK.*isp 8-frame fixture: PASS.*poweroff: 0 failed.*RESULT PASS")
         fx1_expect_test(freertos_cli_camera_fault IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_fault.txt ${_cam_rx}
             REGEX "camera capture: PASS.*0x10030010 <- 0x00000000.*camera stop: ESENSOR in [0-9]+ us, state stopped, sensor not confirmed.*camera: stopped, sensor not confirmed, last stop ESENSOR.*sensor errors 1.*camera start: camera is stopped, sensor not confirmed \\(camera stop first\\).*0x10030010 <- 0x00000001.*camera stop: OK in [0-9]+ us, state idle.*camera recover: OK, state running.*camera recover: PASS.*raw frame 1 raw ok crc 0x[0-9a-f]+ = golden frame 1.*raw frame 2 raw ok crc 0x[0-9a-f]+ = golden frame 2.*camera capture: PASS.*camera stop: OK.*poweroff: 0 failed.*RESULT PASS")
@@ -478,13 +478,13 @@ if(CDC_BUILD_TESTS)
         fx1_expect_test(freertos_cli_camera_tpg IMAGE freertos_cli RC 0 TIMEOUT_MS 5000 LABEL fx1_regression
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_tpg.txt ${_cam_rx}
             REGEX "camera probe: PASS.*640x480 RAW12, source tpg, golden yes.*640x480 raw ok crc 0x[0-9a-f]+ = golden.*640x480 raw ok crc 0x[0-9a-f]+ = golden.*2/2 frames, drops 0.*3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot ok UV spot ok \\(64 bytes\\).*1/1 frames, drops 0.*camera capture: PASS.*camera stop: OK.*poweroff: 0 failed.*RESULT PASS")
-        # Negative: frames from a RAW file (64x16 RAW12, every sample 0x123)
+        # Negative: frames from a RAW file (64x32 RAW12, every sample 0x123)
         # instead of the pattern: the RAW spot check and the golden must both
         # fail, the capture is counted failed, poweroff ends with FAIL.
         fx1_expect_test(freertos_cli_camera_mismatch IMAGE freertos_cli RC 1 TIMEOUT_MS 3000 LABEL fx1_regression
             ARGS --camera --camera-raw ${_rtos_dir}/tests/cli_camera_mismatch.raw
                  --uart0-rx-file ${_rtos_dir}/tests/cli_camera_mismatch.txt ${_cam_rx}
-            REGEX "camera probe: PASS.*camera start: PASS.*64x16 raw frame [0-9]+ raw BAD crc 0x[0-9a-f]+ GOLDEN MISMATCH.*64x16 raw frame [0-9]+ raw BAD crc 0x[0-9a-f]+ GOLDEN MISMATCH.*camera capture: 2/2 frames.*camera capture: FAIL.*camera stop: OK.*poweroff: 1 failed.*RESULT FAIL")
+            REGEX "camera probe: PASS.*camera start: PASS.*64x32 raw frame [0-9]+ raw BAD crc 0x[0-9a-f]+ GOLDEN MISMATCH.*64x32 raw frame [0-9]+ raw BAD crc 0x[0-9a-f]+ GOLDEN MISMATCH.*camera capture: 2/2 frames.*camera capture: FAIL.*camera stop: OK.*poweroff: 1 failed.*RESULT FAIL")
         set_tests_properties(fx1_regression_freertos_cli_camera_mismatch PROPERTIES TIMEOUT 1800)
         # M6b review F1: `camera start` fails after configure (I2C host lost
         # before stream-on, test image): the CLI cleans up (stop ESENSOR, state
@@ -506,7 +506,7 @@ if(CDC_BUILD_TESTS)
         # Y, of slot 0 is caught after the ring has wrapped.
         fx1_expect_test(freertos_cli_camera_mixed_crc IMAGE freertos_cli_camfault RC 1 TIMEOUT_MS 5000 LABEL fx1_regression
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_mixed_crc.txt ${_cam_rx}
-            REGEX "capture 1 FRAME_ID 1 side 0 isp seq 0 zero-copy out 0 3840x2160 raw ok crc 0xdd6da3bb = golden.*3/3 frames.*camera capture: PASS.*0x110030a8 <- 0x8f800000.*out 0 3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot ok UV spot BAD.*camera capture: FAIL.*camera stop: OK.*crc 0xdd6da3bb = golden.*3/3 frames.*0x110030a0 <- 0x8f000000.*out 0 3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot BAD UV spot ok.*camera capture: FAIL.*poweroff: 2 failed.*RESULT FAIL")
+            REGEX "capture 1 FRAME_ID 1 side 0 isp seq 0 zero-copy out 0 3840x2160 raw ok crc 0x1420e85c = golden.*3/3 frames.*camera capture: PASS.*0x110030a8 <- 0x8f800000.*out 0 3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot ok UV spot BAD.*camera capture: FAIL.*camera stop: OK.*crc 0x1420e85c = golden.*3/3 frames.*0x110030a0 <- 0x8f000000.*out 0 3840x2160 raw ok crc skipped \\(size\\): full golden not compared, Y spot BAD UV spot ok.*camera capture: FAIL.*poweroff: 2 failed.*RESULT FAIL")
         set_tests_properties(fx1_regression_freertos_cli_camera_startfault fx1_regression_freertos_cli_camera_nv12_fault
             fx1_regression_freertos_cli_camera_mixed_crc PROPERTIES TIMEOUT 1800)
         foreach(_t freertos_cli_camera freertos_cli_camera_fault freertos_cli_camera_absent)

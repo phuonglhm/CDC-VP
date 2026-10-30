@@ -2,24 +2,26 @@
  * G5 / plan P5: ISP error and reset recovery on the platform, driven by the
  * reference driver from firmware. Real bus errors: a buffer address that the
  * FX1 fabric does not decode makes the IDMA/ODMA see DECERR, i.e. an AXI error
- * (ISP programming guide section 8, DEC-19).
+ * (ISP programming guide section 8; MAS v1.07 §9.9.8, which superseded DEC-19).
+ * An AXI error starts an automatic DMA-scope recovery in the ISP: every
+ * admitted, unretired frame is aborted and recorded, every VALID / FREE bit
+ * is cleared and both rotations restart at buffer 0.
  *
  *   A  ODMA AXI error. Output buffer 2's Y/UV addresses are unmapped. The
  *      frame that lands there fails; the ISR reports DMA_ERR.ODMA_AXI. The
- *      firmware repairs the buffer's address registers (it owns the buffer
- *      again: the hardware cleared FREE), then fx1_isp_recover_ex() frees the
- *      same index again; the driver reports the frame through
- *      fx1_isp_next_lost() and the firmware resubmits it. Every frame 0..7
- *      must complete exactly once with the reference CRC; exactly one loss.
- *      Frames are queued in pairs (both inputs filled first, then queued back
- *      to back, only when nothing is in flight), so the failed frame has a
- *      frame behind it whose output waits for the failed buffer; and after an
- *      error nothing new is queued until the frames in flight have drained.
- *      Both are what make the test depend on recover freeing the failed
- *      output: any later queue frees it as well and would mask a recover
- *      that does not (mutation M13 survived the first version).
+ *      firmware repairs the buffer's address registers (the hardware cleared
+ *      every FREE bit), then fx1_isp_recover_ex() waits for the recovery and
+ *      settles the queue: the failed frame and any frame queued behind it
+ *      are reported through fx1_isp_next_lost() and the firmware resubmits
+ *      them. Every frame 0..7 must complete exactly once with the reference
+ *      CRC; one or two losses (the pair partner, if it was behind). Frames are
+ *      queued in pairs (both inputs filled first, then queued back to back,
+ *      only when nothing is in flight); after an error nothing new is queued
+ *      until the frames in flight have drained. The recovery report must name
+ *      the failed frame with CH0 failed and cause 2 (write error).
  *   B  IDMA AXI error. Input buffer 2's address is unmapped. Repair, recover:
- *      the frame is retried from the same input (no loss), all 8 correct.
+ *      the frame is lost (no in-place retry since v1.07), resubmitted, all 8
+ *      correct; a recorded frame has cause 1 (read error).
  *   C  Soft reset in the middle of a frame (fx1_isp_soft_reset). No
  *      completion or ODMA progress may follow for the aborted frames; the
  *      stream then restarts from buffer 0 and all 8 frames are correct.
@@ -32,9 +34,9 @@
  *      restart; all 8 correct.
  *
  * Every frame is queued with a software tag (fx1_isp_queue_frame_meta) and
- * collected with fx1_isp_next_done_meta: the tag must be the frame's, also
- * after phase A's output failure has put the input and output rotations out
- * of step (input k completes in output k - 1; MAS Table 160).
+ * collected with fx1_isp_next_done_meta: the tag must be the frame's (MAS
+ * Table 160). The input and output rotations restart together after every
+ * recovery, so each frame completes in the output index of its input.
  *
  * Making the fault transient by repairing the address is a test device: a
  * silicon AXI error has its own cause. The driver sequence (recover, lost
@@ -81,9 +83,10 @@ static void write_addr64(uint32_t lo_offset, uint64_t addr)
 
 typedef struct {
     uint32_t index_mismatch; /* completions whose output index differs from the input index */
-    uint32_t lost, odma_failed, idma_rearmed;
-    unsigned odma_output, idma_input;
+    uint32_t lost, odma_failed, idma_rearmed, recoveries;
+    unsigned odma_output;
     uint32_t fatal_seen;
+    fx1_isp_abort_report report; /* of the last recovery */
 } phase_result;
 
 /* Streams frames 0..7 (resubmitting every reported loss) until each has
@@ -112,14 +115,14 @@ static void stream_all(const fx1_isp_buffers* good, int fault_out, int fault_in,
             }
             fx1_isp_recovery rec;
             fx1_check(fx1_isp_recover_ex(&dev, fatal, &rec) == FX1_ISP_OK, code + 1, "recover handled the error");
+            ++r->recoveries;
             if (rec.odma_failed) {
                 ++r->odma_failed;
                 r->odma_output = rec.odma_output;
             }
-            if (rec.idma_rearmed) {
-                ++r->idma_rearmed;
-                r->idma_input = rec.idma_input;
-            }
+            r->idma_rearmed += (uint32_t)rec.idma_rearmed;
+            fx1_check(fx1_isp_recovery_report(&dev, &r->report) == FX1_ISP_OK && r->report.sequence == rec.sequence,
+                      code + 8, "recovery report of the settled recovery");
             fx1_check(fx1_isp_recover_ex(&dev, fatal, &rec) == FX1_ISP_ENODATA, code + 2,
                       "a second recover with the same snapshot is a no-op");
             draining = 1; /* quiesce: let the frames in flight finish first */
@@ -130,6 +133,7 @@ static void stream_all(const fx1_isp_buffers* good, int fault_out, int fault_in,
         while (fx1_isp_next_lost(&dev, &lost_seq, &lost_input) == FX1_ISP_OK) {
             ++r->lost;
             fx1_check(tail - head < 16u, code + 3, "resubmission queue");
+            (void)lost_input;
             pending[(tail++) & 15u] = frame_of_seq[lost_seq % SEQ_SLOTS]; /* resubmit */
         }
         if (!draining && head != tail && dev.in_flight == 0 && fx1_isp_input_ready(&dev)) {
@@ -139,11 +143,22 @@ static void stream_all(const fx1_isp_buffers* good, int fault_out, int fault_in,
                 isp_fill_input(good->in[(first + k) % FX1_ISP_NUM_BUFFERS], pending[(head + k) & 15u]);
             for (uint32_t k = 0; k < n; ++k) {
                 uint32_t seq = 0;
-                const unsigned input = fx1_isp_next_input(&dev);
+                /* An automatic recovery (MAS v1.07 §9.9.8) may start or settle
+                 * between the two queues of a pair: any driver call settles it
+                 * and restarts the rotation at 0. A running one leaves the rest
+                 * pending; a settled one moved the slot, so the frame is filled
+                 * again where it now goes (V107-11 platform CI). */
+                if (!fx1_isp_input_ready(&dev)) break;
+                unsigned input = fx1_isp_next_input(&dev);
+                if (input != (first + k) % FX1_ISP_NUM_BUFFERS) isp_fill_input(good->in[input], pending[head & 15u]);
                 const uint32_t tag = 0x7A000000u | (++tags_issued << 8) | pending[head & 15u];
-                fx1_check(fx1_isp_input_ready(&dev), code + 4, "input ready");
-                fx1_check(fx1_isp_queue_frame_meta(&dev, tag, fx1_isp_frame_counter(&dev), &seq) == FX1_ISP_OK,
-                          code + 4, "frame queued");
+                int rc = fx1_isp_queue_frame_meta(&dev, tag, fx1_isp_frame_counter(&dev), &seq);
+                if (rc == FX1_ISP_EAGAIN) { /* settled inside the queue: the slot read above is stale */
+                    input = fx1_isp_next_input(&dev);
+                    isp_fill_input(good->in[input], pending[head & 15u]);
+                    rc = fx1_isp_queue_frame_meta(&dev, tag, fx1_isp_frame_counter(&dev), &seq);
+                }
+                fx1_check(rc == FX1_ISP_OK, code + 4, "frame queued");
                 frame_of_seq[seq % SEQ_SLOTS] = pending[(head++) & 15u];
                 tag_of_seq[seq % SEQ_SLOTS] = tag;
                 input_of_seq[seq % SEQ_SLOTS] = input;
@@ -274,7 +289,9 @@ int main(void)
     fx1_global_irq_enable();
 
     /* A: ODMA AXI error on output buffer 1 */
-    phase_result a = {0};
+    /* static (zeroed .bss, main runs once): a {0} initialiser of this size
+     * is compiled to a memset call, which -nostdlib does not provide. */
+    static phase_result a;
     bad = good;
     bad.y[2] = UNMAPPED;
     bad.uv[2] = UNMAPPED + 0x1000u;
@@ -282,32 +299,39 @@ int main(void)
     fx1_check(fx1_isp_start(&dev, &bad) == FX1_ISP_OK, 0x10, "A: start with output 2 unmapped");
     stream_all(&good, 2, -1, 0x10, &a);
     fx1_check(a.fatal_seen == FX1_ISP_DMA_ERR_ERR_ODMA_AXI_BIT, 0x18, "A: exactly ODMA_AXI reported");
-    fx1_check(a.odma_failed == 1 && a.odma_output == 2 && a.lost == 1 && a.idma_rearmed == 0, 0x19,
-              "A: one output failure on buffer 2, one lost frame resubmitted");
-    fx1_check(a.index_mismatch > 0, 0x1E, "A: frames completed in an output index other than their input's");
-    fx1_log_hex("A: completions with output index != input index (tags matched)", a.index_mismatch);
+    fx1_check(a.recoveries == 1 && a.odma_failed == 1 && a.odma_output == 2 && a.lost >= 1 && a.lost <= 2 &&
+                  a.idma_rearmed == 0,
+              0x19, "A: one recovery, output buffer 2 failed, its frame (and the one behind) resubmitted");
+    fx1_check(a.report.count >= 1 && (a.report.rec[0].failed_outputs & 1u) &&
+                  a.report.rec[0].cause == FX1_ISP_ABORT_CAUSE_WRITE,
+              0x1F, "A: the record names a frame with CH0 failed by a write error");
+    fx1_check(a.index_mismatch == 0, 0x1E, "A: the rotations restarted together: output index = input index");
+    fx1_log_hex("A: frames lost and resubmitted", a.lost);
     expect_idle(0x1A);
     fx1_check(fx1_isp_stop(&dev) == 0, 0x1D, "A: stop with nothing in flight");
-    fx1_log("A: ODMA AXI error -> recover, lost frame resubmitted, 8 frames correct");
+    fx1_log("A: ODMA AXI error -> recovery, lost frames resubmitted, 8 frames correct");
 
     /* B: IDMA AXI error on input buffer 2 */
-    phase_result b = {0};
+    static phase_result b;
     bad = good;
     bad.in[2] = UNMAPPED;
     isp_outputs_to_device(&good);
     fx1_check(fx1_isp_start(&dev, &bad) == FX1_ISP_OK, 0x20, "B: start with input 2 unmapped");
     stream_all(&good, -1, 2, 0x20, &b);
     fx1_check(b.fatal_seen == FX1_ISP_DMA_ERR_ERR_IDMA_AXI_BIT, 0x28, "B: exactly IDMA_AXI reported");
-    fx1_check(b.idma_rearmed == 1 && b.idma_input == 2 && b.lost == 0 && b.odma_failed == 0, 0x29,
-              "B: input 2 re-armed, the frame retried, nothing lost");
+    fx1_check(b.recoveries == 1 && b.idma_rearmed == 0 && b.lost >= 1 && b.odma_failed == 0, 0x29,
+              "B: one recovery, the frame of input 2 lost and resubmitted (no in-place retry)");
+    for (unsigned i = 0; i < b.report.count; ++i)
+        fx1_check(b.report.rec[i].cause == FX1_ISP_ABORT_CAUSE_READ, 0x2E, "B: recorded frames have cause 1 (read)");
+    fx1_log_hex("B: frames lost and resubmitted", b.lost);
     expect_idle(0x2A);
     fx1_check(fx1_isp_stop(&dev) == 0, 0x2D, "B: stop with nothing in flight");
-    fx1_log("B: IDMA AXI error -> recover, frame retried from the same input, 8 frames correct");
+    fx1_log("B: IDMA AXI error -> recovery, lost frame resubmitted, 8 frames correct");
 
     /* C: soft reset in the middle of a frame. C, D and E abort frames in
      * flight: short ISP bursts keep the abort window open (isp_common.h). */
     good.max_burst_beats = ISP_ABORT_MAX_BURST_BEATS;
-    phase_result c = {0};
+    static phase_result c;
     uint32_t odma_before = 0;
     isp_outputs_to_device(&good);
     fx1_check(fx1_isp_start(&dev, &good) == FX1_ISP_OK, 0x30, "C: start");
@@ -327,7 +351,7 @@ int main(void)
     fx1_log("C: soft reset mid-frame: no stale completion, restart from buffer 0, 8 frames correct");
 
     /* D: stop in the middle of a frame, then start again */
-    phase_result d = {0};
+    static phase_result d;
     isp_outputs_to_device(&good);
     fx1_check(fx1_isp_start(&dev, &good) == FX1_ISP_OK, 0x50, "D: start");
     saved = frame_mid_flight(&good, 0x51, &odma_before);
@@ -349,7 +373,7 @@ int main(void)
     fx1_log("D: stop mid-frame, start again, 8 frames correct");
 
     /* E: DMA soft reset in the middle of a frame, stream kept enabled */
-    phase_result e = {0};
+    static phase_result e;
     isp_outputs_to_device(&good);
     fx1_check(fx1_isp_start(&dev, &good) == FX1_ISP_OK, 0x70, "E: start");
     /* Two frames queued back to back, then the reset at once: the second

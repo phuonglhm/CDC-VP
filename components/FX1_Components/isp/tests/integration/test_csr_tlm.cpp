@@ -149,7 +149,7 @@ struct test_master : sc_module {
       wait(10, SC_NS);
       write32(FX1_ISP_COMMON_SCRATCH_OFFSET, 0xFFFFFFFFu);
       FX1_CHECK_EQ(read32(FX1_ISP_COMMON_SCRATCH_OFFSET), 0);
-      FX1_CHECK_EQ(read32(FX1_ISP_COMMON_VER_ID_OFFSET), 0x00010002);
+      FX1_CHECK_EQ(read32(FX1_ISP_COMMON_VER_ID_OFFSET), 0x00010007);  // MAS v1.07 §8.2
       rst_n.write(true);
       wait(10, SC_NS);
 
@@ -169,12 +169,12 @@ struct test_master : sc_module {
    }
 
    void test_identity_and_subword() {
-      FX1_CHECK_EQ(read32(FX1_ISP_COMMON_VER_DATE_OFFSET), 0x18072026);
+      FX1_CHECK_EQ(read32(FX1_ISP_COMMON_VER_DATE_OFFSET), 0x18102026);  // 2026-10-18, BCD
       unsigned char b[4] = {};
       FX1_CHECK_EQ(access(tlm::TLM_READ_COMMAND, FX1_ISP_COMMON_VER_ID_OFFSET + 2, b, 1), tlm::TLM_OK_RESPONSE);
-      FX1_CHECK_EQ(b[0], 0x01);  // byte lane 2 of 0x00010002
+      FX1_CHECK_EQ(b[0], 0x01);  // byte lane 2 of 0x00010007
       FX1_CHECK_EQ(access(tlm::TLM_READ_COMMAND, FX1_ISP_COMMON_VER_ID_OFFSET, b, 2), tlm::TLM_OK_RESPONSE);
-      FX1_CHECK_EQ(b[0] | (b[1] << 8), 0x0002);
+      FX1_CHECK_EQ(b[0] | (b[1] << 8), 0x0007);
 
       const std::uint32_t s = FX1_ISP_COMMON_SCRATCH_OFFSET;
       write32(s, 0xDEADBEEFu);
@@ -252,14 +252,22 @@ struct test_master : sc_module {
       FX1_CHECK(!irq.read());
       // One rising and one falling edge over the sequence.
       FX1_CHECK_EQ(monitor->edges.size() - e0, 2);
-      // DEC-15: an error flag raises error_irq; with its enable set the pin rises.
+      // Table 9-188: an error flag raises error_irq; with its enable set the pin
+      // rises. A flow-control condition (underrun) does not.
       write32(FX1_ISP_COMMON_IRQ_STATUS_OFFSET, 0x7);
       write32(FX1_ISP_COMMON_IRQ_EN_OFFSET, FX1_ISP_COMMON_IRQ_EN_ERROR_EN_MASK);
       dut->debug_hw_hold(FX1_ISP_DMA_ERR_OFFSET, FX1_ISP_DMA_ERR_ERR_IDMA_UNDERRUN_BIT, true);
       settle();
+      FX1_CHECK(!irq.read());
+      FX1_CHECK_EQ(read32(FX1_ISP_COMMON_STATUS_OFFSET) & FX1_ISP_COMMON_STATUS_ERROR_MASK, 0u);
+      dut->debug_hw_hold(FX1_ISP_DMA_ERR_OFFSET, FX1_ISP_DMA_ERR_ERR_IDMA_UNDERRUN_BIT, false);
+      write32(FX1_ISP_DMA_ERR_OFFSET, FX1_ISP_DMA_ERR_ERR_IDMA_UNDERRUN_BIT);
+      write32(FX1_ISP_TUNE_CMD_OFFSET, FX1_ISP_TUNE_CMD_APPLY_MASK);  // MODE: APPLY in legacy mode
+      settle();
       FX1_CHECK(irq.read());
       FX1_CHECK_EQ(read32(FX1_ISP_COMMON_STATUS_OFFSET) & FX1_ISP_COMMON_STATUS_ERROR_MASK,
                    FX1_ISP_COMMON_STATUS_ERROR_MASK);
+      write32(FX1_ISP_TUNE_ERROR_OFFSET, FX1_ISP_TUNE_ERROR_MODE_MASK);
       write32(FX1_ISP_COMMON_IRQ_STATUS_OFFSET, FX1_ISP_COMMON_IRQ_STATUS_ERROR_IRQ_MASK);
       settle();
       FX1_CHECK(!irq.read());
@@ -339,12 +347,15 @@ struct test_master : sc_module {
       const sc_time t0 = sc_time_stamp();
       socket->b_transport(t, delay);  // applied at t0
       FX1_CHECK(dut->debug_soft_reset_active());
-      FX1_CHECK_EQ(dut->debug_peek(FX1_ISP_IDMA_BUF_VALID_OFFSET), 0);
+      // Ownership is kept through the pulse and cleared at the final
+      // retirement (MAS v1.07 §9.9.8; review V107-7..10 R8).
+      FX1_CHECK_EQ(dut->debug_peek(FX1_ISP_IDMA_BUF_VALID_OFFSET), 0x3);
       FX1_CHECK_EQ(dut->debug_peek(FX1_ISP_COMMON_SCRATCH_OFFSET), 0xA5A5A5A5u);
       wait(t0 + period * 14 - sc_time_stamp());
       FX1_CHECK(dut->debug_soft_reset_active());
       wait(period);
       FX1_CHECK(!dut->debug_soft_reset_active());  // exactly 15 core cycles (MAS §6.5.3)
+      FX1_CHECK_EQ(read32(FX1_ISP_IDMA_BUF_VALID_OFFSET), 0);  // final retirement
       FX1_CHECK_EQ(read32(FX1_ISP_DMA_CTRL_OFFSET), 0x3F00);
    }
 
@@ -384,7 +395,7 @@ struct test_master : sc_module {
       t.set_data_length(4);
       t.set_streaming_width(4);
       FX1_CHECK_EQ(socket->transport_dbg(t), 4);
-      FX1_CHECK_EQ(b[0] | (b[2] << 16), 0x00010002);
+      FX1_CHECK_EQ(b[0] | (b[2] << 16), 0x00010007);
       t.set_command(tlm::TLM_WRITE_COMMAND);
       FX1_CHECK_EQ(socket->transport_dbg(t), 0);  // debug writes unsupported
    }

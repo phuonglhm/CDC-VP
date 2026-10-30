@@ -11,7 +11,7 @@ import re
 import struct
 import sys
 sys.dont_write_bytecode = True
-from isp_pack import PackError, read_job
+from isp_pack import MODE_LEGACY, PackError, read_job
 
 NAMES = ('WB_GAIN_R', 'WB_GAIN_G', 'WB_GAIN_B', 'GTM_KEY', 'GTM_LWHITE', 'EE_BETA')
 
@@ -22,11 +22,16 @@ def main():
     p=sub.add_parser('capture');p.add_argument('dir');p.add_argument('profile')
     a=ap.parse_args()
     if a.command=='prepare':
-        job=read_job(a.job);data=list(struct.unpack('<16I',Path(a.job).read_bytes()))
+        raw=Path(a.job).read_bytes();job=read_job(a.job);n=len(raw)//4
+        data=list(struct.unpack('<%dI'%n,raw))
         render=max(2,job['frames'])
         if render>=0xffffffff:raise PackError('auto job frame count overflows')
         data[11]=render+1
-        Path(a.out).write_bytes(struct.pack('<16I',*data))
+        # `isp run auto` runs in legacy mode (its policy rewrites WB/GTM
+        # between frames): a version-2 job says so, so that the packer
+        # expects that mode (job version 1 is legacy already).
+        if n>12:data[12]=MODE_LEGACY
+        Path(a.out).write_bytes(struct.pack('<%dI'%n,*data))
         print('ISP auto: 1 AWB probe + %d render frames (%d physical frames)'%(render,render+1))
         return
     d=Path(a.dir);text=(d/'platform.log').read_text(errors='replace')

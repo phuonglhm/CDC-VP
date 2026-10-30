@@ -125,15 +125,15 @@ The FreeRTOS CLI (`run_vp.sh camera-cli`, or interactively with `--camera`;
 | Command | Does |
 |---|---|
 | `camera probe` | CSI-2 RX identity, sensor `model_id`; `camera: absent` without `--camera` |
-| `camera mode [W H BITS LANES]` | set or show the mode (default 64 16 12 4, up to 3840x2160) |
+| `camera mode [W H BITS LANES]` | set or show the mode (default 64 32 12 4, up to 3840x2160) |
 | `camera source [sensor\|tpg]` | sensor through the D-PHY, or the CSI-2 RX test pattern generator (fast at any size) |
 | `camera start` / `camera stop [US]` | start (takes the ISP: `isp selftest`/`isp run` are refused meanwhile); stop within US (default 24000) + 200 µs, `OK` / `ESENSOR` / `ETIMEOUT` |
 | `camera capture N [crc]` | N frames: metadata, RAW spot check, NV12 CRC against the golden (NV12 up to 1 MiB, or with `crc`: a 4K CRC takes about ten minutes of host time); without the CRC, TPG 4K is spot-checked on 32 Y and 32 UV bytes of the golden |
 | `camera status`, `camera recover` | counters and state; stop + sensor software reset + configure + start |
 
-Golden: sensor 64x16 RAW12 / RAW10 frames 1..32 since the last sensor reset,
+Golden: sensor 64x32 RAW12 / RAW10 frames 1..32 since the last sensor reset,
 TPG 640x480 and 3840x2160 RAW12. The script `test/VP_FX1_V3.0/cli_camera.txt`
-probes, captures 64x16 RAW12 and RAW10 frames against the golden and stops.
+probes, captures 64x32 RAW12 and RAW10 frames against the golden and stops.
 
 `camera_slverr` relies on its timing: the fault time is chosen inside frame
 2 for this image (see the comment at the top of `camera/slverr.c`); a changed
@@ -141,7 +141,7 @@ image needs a new time.
 
 ## Cost
 
-The D-PHY RX is a detailed model (netlist level). A 64x16 frame costs several
+The D-PHY RX is a detailed model (netlist level). A 64x32 frame costs several
 seconds of host time; each example takes one to three minutes. Keep camera
 images small; a 640x480 frame through this PHY takes minutes.
 

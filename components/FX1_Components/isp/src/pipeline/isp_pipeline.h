@@ -13,7 +13,9 @@
 #include <string>
 #include <vector>
 
+#include "control/channel_geometry.h"
 #include "control/ee_types.h"
+#include "fx1_isp/fx1_isp_csr.h"
 #include "control/stats_types.h"
 #include "pipeline/gtm_curve.h"
 #include "pipeline/row_stage.h"
@@ -26,6 +28,9 @@ namespace pipe {
 
 struct pipeline_config {
    std::uint32_t bayer_pattern = 0;
+   // COMMON_INPUT_FORMAT.DEPTH captured with the ingress frame: 0 RAW12, 1 RAW10
+   // (MAS v1.07 §6.6.3.2). 2/3 never reach the pipeline (IDMA refuses, V107-A10).
+   std::uint32_t input_depth = 0;
    // BLC (HAS §6.7) for the selected profile.
    bool blc_en = false;
    bool blc_range_scale = true;
@@ -38,14 +43,26 @@ struct pipeline_config {
    bool lsc_en = false;
    std::uint32_t lsc_nx = 0, lsc_ny = 0;
    std::uint32_t lsc_strength = 0;  // UQ1.16, raw 17-bit code (ALG-LSC-02)
+   // Nonuniform sectors (MAS v1.07 §6.8.3.9, profile mode): nodes - 1 intervals per axis.
+   bool lsc_sectors = false;
+   std::array<std::vector<std::uint32_t>, 2> lsc_sector{};
    std::vector<std::uint32_t> lsc_mesh;
    // BPC (MAS §6.9): spatial detection; DYNAMIC_DET_EN has no effect.
    bool bpc_en = false;
+   // Colour thresholds and factory map (MAS v1.07 §6.9.3.6, profile mode).
+   bool bpc_color = false;
+   std::uint32_t bpc_k_g = 0x100, bpc_floor_g = 0, bpc_k_rb = 0x100, bpc_floor_rb = 0;  // K UQ4.8
+   std::vector<std::uint64_t> bpc_factory;  // raster positions y * W + x, strictly increasing
+   // Demosaic decision margins (MAS v1.07 §6.12.3.7): 0 in legacy mode.
+   std::uint32_t dms_margin_green = 0, dms_margin_rb = 0;
+   // CNF output blend weight 0..256 (MAS v1.07 §6.19.3.6): 256 in legacy mode.
+   std::uint32_t cnf_blend = 256;
    std::uint32_t bpc_floor = 0;
    std::uint32_t bpc_k = 0;  // UQ8.8
    // WB / DG (HAS §6.10-6.11), UQ4.8.
    bool wb_en = false;
-   std::array<std::uint32_t, 3> wb_gain{0x100, 0x100, 0x100};  // R, G, B
+   std::array<std::uint32_t, 3> wb_gain{0x100, 0x100, 0x100};  // R, G (Gr), B
+   std::uint32_t wb_gain_gb = 0x100;  // Gb: WB_GAIN_G in legacy mode, TUNE_WB_GB in profile mode (§6.10.3.6)
    bool dg_en = false;
    std::uint32_t dg_gain = 0x100;
    // CCM (HAS §6.13), committed set (DEC-24), sign-extended Q3.9.
@@ -55,8 +72,14 @@ struct pipeline_config {
    // Gamma (HAS §6.14): live 256-entry table.
    bool gamma_en = false;
    const std::array<std::uint16_t, 256> *gamma_lut = nullptr;
-   // CSC (HAS §6.15, SPEC-03).
+   // CSC (MAS v1.07 §6.15.3.3): standard, range (TUNE_CSC_CTRL.FULL_RANGE,
+   // reset 1 and applied in legacy mode too) and the profile-mode look.
    std::uint32_t csc_std = 0;
+   bool csc_full_range = true;
+   bool csc_look = false;
+   std::uint32_t csc_contrast = 0x100;  // UQ4.8
+   std::int32_t csc_brightness = 0;     // signed 10-bit
+   std::array<std::int32_t, 4> csc_m{0x4000, 0, 0, 0x4000};  // UU, UV, VU, VV: signed Q4.14
    // GTM (HAS §6.16): read bank (live table), valid flag, ROI size.
    bool gtm_en = false;
    bool gtm_curve_valid = false;
@@ -65,6 +88,15 @@ struct pipeline_config {
    // 2DNR (HAS §6.17): enable and the previous frame's noise variance.
    bool nr_en = false;
    std::uint32_t nr_var = 0;
+   // Noise model, band strength and blend (MAS v1.07 §6.17.3.10); the reset
+   // values (mode 0, seed 0, unity scales, full limits, median on, blend 256)
+   // are the legacy behaviour.
+   bool nr_estimate_valid = false;  // an automatic estimate of this epoch exists
+   std::uint32_t nr_mode = 0, nr_seed = 0, nr_manual = 0, nr_scale = 0x100, nr_min = 0, nr_max = 0xFFFF;
+   std::array<std::uint32_t, 4> nr_band_scale{0x100, 0x100, 0x100, 0x100};  // LL, LH, HL, HH
+   bool nr_median = true;
+   std::uint32_t nr_blend = 256;
+   std::array<std::uint16_t, 17> nr_curve{};
    // EE (MAS §6.18.4.1): enable, profile and scalars sampled at SOF; the
    // profile's tables are read live through the control unit (DEC-25
    // superseded for the scalars).
@@ -74,25 +106,18 @@ struct pipeline_config {
    bool cnf_en = false;
    std::uint32_t cnf_chroma_th = 0;
    std::uint32_t cnf_luma_th = 0;
-   // Resizer (MAS §6.20.4.3): the set published before the frame's accepted
-   // SOF, with the active size it was derived for. A frame whose raster does
-   // not match that size (started before the derivation completed) is not
-   // scaled (MAS Table 124; assumption U4-A1).
-   bool resizer_en = false;
-   std::uint32_t resizer_scale = 0;
-   bool resizer_key_valid = true;
-   std::uint32_t resizer_key_w = 0, resizer_key_h = 0;  // 0 x 0: any raster (block tests)
-   // Statistics (HAS §6.21-6.23): AEC active set (after commit); the AWB set
-   // admitted at SOF (en clear when the measurement was skipped, MAS
-   // §6.22.5.5); AF enable sampled at SOF (MAS §6.23.2).
+   // Output channels (MAS v1.07 §6.20.1.1, §8.3): the geometry sets published
+   // before the frame's accepted SOF, with the active size they were derived
+   // for, and the OUTPUT_ENABLE mask of that SOF. A channel whose set is not
+   // valid for the frame's raster (only reachable without admission control:
+   // block tests, a debug SOF) passes the full active image unscaled (U4-A1).
+   std::array<channel_set, num_channels> channels{};
+   std::uint32_t outputs = 1;
+   // Statistics (MAS v1.07 §6.21-6.23): the sets of the frame; `en` is set
+   // only when the engine admitted the measurement into a FREE bank.
    aec_config aec;
    awb_config awb;
-   bool af_en = false;
-   // The control unit's AEC zone/histogram memory (DEC-30) and the AWB bank
-   // being written, updated row by row; null in block tests (the stages then
-   // use their own).
-   aec_memory *aec_mem = nullptr;
-   awb_memory *awb_mem = nullptr;
+   af_config af;
    // Requested but not modelled: reported once per frame (DEC-39, M5-A1).
    bool ofmt_stride_en = false;   // OFMT_CTRL.stride_en: the ODMA applies its own stride
    bool wdr_en = false;           // D_WDR_CTRL.en: WDR unsupported (HAS §3.1)
@@ -100,17 +125,45 @@ struct pipeline_config {
 };
 
 // Builds the SOF snapshot from the register state.
-// Non-const: the configuration carries the control unit's statistics memories.
 pipeline_config snapshot_config(control_unit &ctl);
+
+// Input-boundary adapter (MAS v1.07 Table 6-18): a right-aligned container to
+// the internal RAW12 domain, RAW10 shifted left two exactly once. Container
+// bits above the native depth are not part of the sample (V107-A8).
+constexpr std::uint16_t normalize_input(std::uint16_t container, std::uint32_t depth) {
+   return depth == FX1_ISP_COMMON_INPUT_FORMAT_DEPTH_RAW10
+              ? static_cast<std::uint16_t>((container & 0x03FFu) << 2)
+              : static_cast<std::uint16_t>(container & 0x0FFFu);
+}
 
 struct frame_geometry {
    std::uint32_t width;
    std::uint32_t height;
 };
 
-// Output geometry the pipeline produces for an input frame (Input Formatter
-// crop, then Resizer), the same derivation as RESIZER_OUT_W/H.
-frame_geometry output_geometry(const pipeline_config &cfg, std::uint32_t in_width, std::uint32_t in_height);
+// Output geometry channel `ch` produces for an input frame (Input Formatter
+// crop, channel crop, Resizer), the same derivation as RESIZER_OUT_W/H.
+frame_geometry output_geometry(const pipeline_config &cfg, std::uint32_t in_width, std::uint32_t in_height,
+                               unsigned ch = 0);
+// The crop and plan channel `ch` applies to a frame of the given active size.
+channel_set channel_for_frame(const pipeline_config &cfg, const geometry &active, unsigned ch);
+
+// CH2 YCbCr -> RGB888 (MAS v1.07 §6.15.3, Table 6-89, §6.24.7): the frame's
+// standard (0 BT.601, 1 BT.709) and range; one rounding R(n, 65536) per output.
+struct rgb8 {
+   std::uint8_t r, g, b;
+};
+rgb8 rgb888_pixel(std::uint32_t std, bool full_range, std::uint16_t y, std::uint16_t u, std::uint16_t v);
+
+// One channel of a whole post-IQ YUV444 frame (w x h, row-major) through its
+// streaming crop, Resizer and formatter: NV12 planes for CH0/CH1, packed
+// R, G, B bytes for CH2 (tests; the engine streams CH0).
+struct channel_output {
+   std::uint32_t width = 0, height = 0;
+   std::vector<std::uint8_t> y, uv, rgb;
+};
+channel_output run_channel(const pipeline_config &cfg, unsigned ch, const std::vector<yuv> &frame,
+                           std::uint32_t w, std::uint32_t h);
 
 // Per-frame results of the blocks with status outputs.
 struct frame_stats {
@@ -120,9 +173,9 @@ struct frame_stats {
    std::uint32_t gtm_yavg = 1;                   // ROI mean of the GTM input luma (HAS §6.16.4.2)
    bool nr_measured = false;                     // 2DNR enabled for the frame
    std::uint32_t nr_var = 0;                     // variance measured on the frame (HAS §6.17.7.2)
-   aec_result aec;                               // global results, valid when cfg.aec.en
-   awb_result awb;                               // global results, valid when cfg.awb.en
-   af_result af;                                 // rows accumulated while AF EN was set
+   aec_payload aec;                              // valid when cfg.aec.en
+   awb_payload awb;                              // valid when cfg.awb.en
+   af_payload af;                                // valid when cfg.af.en
 };
 
 // End-of-frame publication shared by the engine and the tests: block
@@ -134,6 +187,15 @@ public:
    using y_sink = std::function<void(std::vector<std::uint8_t> &&)>;
    using uv_sink = std::function<void(std::vector<std::uint8_t> &&)>;
    using warning_sink = std::function<void(const std::string &)>;
+   // The post-IQ YUV444 row of the active image, before the channel crops
+   // (tests: input of run_channel for CH1/CH2 until V107-8 streams them).
+   using yuv_tap = std::function<void(const std::vector<yuv> &)>;
+   // The sinks of one output channel: NV12 luma / chroma rows (CH0, CH1) or
+   // packed R, G, B rows in `y` (CH2). A channel without a `y` sink is off.
+   struct channel_sinks {
+      y_sink y;
+      uv_sink uv;
+   };
 
    isp_pipeline();
    ~isp_pipeline();
@@ -141,7 +203,14 @@ public:
    // Starts a frame of in_width x in_height input samples (the IDMA working
    // set). Returns the NV12 output geometry.
    frame_geometry begin(const pipeline_config &cfg, std::uint32_t in_width, std::uint32_t in_height,
-                        y_sink y, uv_sink uv, warning_sink warn = nullptr);
+                        y_sink y, uv_sink uv, warning_sink warn = nullptr, yuv_tap tap = nullptr);
+   // The same with a sink set per output channel (MAS v1.07 §9.5.1: the
+   // distributor presents every pixel to each enabled channel).
+   frame_geometry begin(const pipeline_config &cfg, std::uint32_t in_width, std::uint32_t in_height,
+                        const std::array<channel_sinks, num_channels> &sinks, warning_sink warn = nullptr,
+                        yuv_tap tap = nullptr);
+   // Output geometry of channel `ch` for the frame begun.
+   frame_geometry output(unsigned ch) const;
    // One input line of in_width 16-bit containers.
    void push(const std::uint16_t *samples);
    // After the last input line: flushes every block (bottom borders).
@@ -160,7 +229,7 @@ std::uint16_t blc_pixel(const pipeline_config &c, std::uint16_t p, unsigned ch);
 std::uint16_t wb_pixel(const pipeline_config &c, std::uint16_t p, unsigned ch);
 std::uint16_t dg_pixel(const pipeline_config &c, std::uint16_t p);
 rgb ccm_pixel(const pipeline_config &c, const rgb &p);
-yuv csc_pixel(std::uint32_t std_sel, const rgb &p);
+yuv csc_pixel(const pipeline_config &cfg, const rgb &p);
 
 // EE gain composition in the binding order L, A, C, R (HAS p137, ALG-EE-04).
 std::uint32_t ee_gain_chain(std::uint32_t gl, std::uint32_t ga, std::uint32_t gc, std::uint32_t gr);
@@ -178,15 +247,12 @@ std::vector<std::uint16_t> run_ee(const std::vector<std::uint16_t> &y, std::uint
                                   const control_unit &live);
 std::vector<uv_pair> run_cnf(const std::vector<yuv> &img, std::uint32_t w, std::uint32_t h, std::uint32_t tc,
                              std::uint32_t ty);
+// The same stages with a whole configuration (V107-5 NR and CNF parameters).
+std::vector<std::uint16_t> run_nr2d(const pipeline_config &c, const std::vector<std::uint16_t> &y, std::uint32_t w,
+                                    std::uint32_t h, std::uint32_t &var_out);
+std::vector<uv_pair> run_cnf(const pipeline_config &c, const std::vector<yuv> &img, std::uint32_t w,
+                             std::uint32_t h);
 
-struct resizer_plan {
-   bool pass;             // FullRes / disabled / mode not applicable
-   unsigned stages;       // k decimation stages
-   std::uint32_t out_w, out_h;
-   std::uint32_t dec_w, dec_h;  // bilinear input size
-   std::uint32_t step_x, step_y, init_x, init_y;  // UQ16.16
-};
-resizer_plan plan_resizer(bool en, std::uint32_t scale, std::uint32_t in_w, std::uint32_t in_h);
 
 }  // namespace pipe
 }  // namespace cdc::components::fx1_isp

@@ -104,6 +104,16 @@ struct bench : sc_module {
       return nullptr;
    }
 
+   static bool idle_class(std::uint32_t off) {
+      return off == FX1_ISP_COMMON_FRAME_WIDTH_OFFSET || off == FX1_ISP_COMMON_FRAME_HEIGHT_OFFSET ||
+             off == FX1_ISP_COMMON_BAYER_OFFSET || off == FX1_ISP_COMMON_INPUT_FORMAT_OFFSET ||
+             off == FX1_ISP_OUTPUT_ENABLE_OFFSET || off == FX1_ISP_LSC_MESH_NODES_OFFSET ||
+             // Channel geometry joins the IDLE class in V107-7 (MAS v1.07 §6.20.1.1).
+             off == FX1_ISP_RESIZER_CTRL_OFFSET || off == FX1_ISP_CH1_RESIZER_CTRL_OFFSET ||
+             off == FX1_ISP_CH2_RESIZER_CTRL_OFFSET || (off >= FX1_ISP_CH0_CROP_CTRL_OFFSET &&
+                                                        off <= FX1_ISP_CH2_CROP_SIZE_OFFSET &&
+                                                        (off & 0x3Fu) <= 0x08u);
+   }
    bool wait_until(const std::function<bool()> &cond, const std::string &what, sc_time timeout = sc_time(50, SC_MS)) {
       const sc_time end = sc_time_stamp() + timeout;
       while (!cond()) {
@@ -234,13 +244,17 @@ struct bench : sc_module {
          const std::uint32_t quarter = geom_h / 4u;
          wait(dut->params().core_period * static_cast<double>(geom_w) * static_cast<double>(quarter));  // a quarter in
          FX1_CHECK_EQ_CTX(odma_count(), base, where + " reset inside the first frame");
-         const std::uint32_t aec_id = read32(FX1_ISP_AEC_FRAME_ID_OFFSET);
+         // The ingress counter (TUNE_NEXT_FRAME, no lease needed; MAS v1.07
+         // §9.9.9): kept by both soft resets, the aborted frame's ID consumed.
+         const std::uint32_t next_id = read32(FX1_ISP_TUNE_NEXT_FRAME_OFFSET);
+         FX1_CHECK_EQ_CTX(next_id != 0 ? 1 : 0, 1, where + " a frame was admitted");
          if (event == "soft_reset_common") {
             write32(FX1_ISP_COMMON_CTRL_OFFSET, FX1_ISP_COMMON_CTRL_ISP_EN_MASK | FX1_ISP_COMMON_CTRL_SOFT_RST_MASK);
          } else {
             write32(FX1_ISP_DMA_CTRL_OFFSET, 0x3F03 | FX1_ISP_DMA_CTRL_SOFT_RESET_MASK);
          }
-         wait(dut->params().core_period * 40.0);  // past the 15-cycle pulse (MAS §6.5.3)
+         // Past the drain and the 15-cycle pulse: final retirement (MAS v1.07 §9.9.8).
+         wait_until([&] { return (read32(FX1_ISP_COMMON_RECOVERY_STATUS_OFFSET) & 0x3u) == 0x2u; }, "recovery done");
          FX1_CHECK_EQ_CTX(read32(FX1_ISP_IDMA_BUF_VALID_OFFSET), 0, where + " ownership cleared");
          FX1_CHECK_EQ_CTX(odma_count(), base, where + " counters kept, no late DONE");
          // The abandoned frame leaves nothing busy, before any re-arm and also
@@ -258,7 +272,7 @@ struct bench : sc_module {
                              where + " AF idle " + when);
             FX1_CHECK_EQ_CTX(read32(FX1_ISP_COMMON_STATUS_OFFSET) & FX1_ISP_COMMON_STATUS_BUSY_MASK, 0,
                              where + " pipeline idle " + when);
-            FX1_CHECK_EQ_CTX(read32(FX1_ISP_AEC_FRAME_ID_OFFSET), aec_id, where + " FRAME_ID kept " + when);
+            FX1_CHECK_EQ_CTX(read32(FX1_ISP_TUNE_NEXT_FRAME_OFFSET), next_id, where + " ingress counter kept " + when);
             FX1_CHECK_EQ_CTX(odma_count(), base, where + " no late DONE " + when);
          };
          idle("after the pulse");
@@ -272,43 +286,50 @@ struct bench : sc_module {
             submit(static_cast<unsigned>(k));
          }
          collect(exp, next, n);
-      } else if (event == "idma_axi_error") {
-         const std::uint64_t row = in_slot(idma_head) + std::uint64_t{geom_h / 2u} * in_stride;
-         mem->faults.push_back({tlm::TLM_READ_COMMAND, row, row + 2u * geom_w, 1});
+      } else if (event == "idma_axi_error" || event == "odma_axi_error") {
+         // Automatic DMA-scope recovery (MAS v1.07 §9.9.8): the first frame
+         // (admitted) is recorded and aborted, the later ones were never
+         // admitted; ownership is cleared and both rotations restart at 0.
+         const bool rd_err = event == "idma_axi_error";
+         const std::uint32_t bit = rd_err ? err_idma_axi : err_odma_axi;
+         if (rd_err) {
+            const std::uint64_t row = in_slot(idma_head) + std::uint64_t{geom_h / 2u} * in_stride;
+            mem->faults.push_back({tlm::TLM_READ_COMMAND, row, row + 2u * geom_w, 1});
+         } else {
+            const std::uint64_t row = y_slot(odma_head) + std::uint64_t{exp[0].h / 2u} * out_stride;
+            mem->faults.push_back({tlm::TLM_WRITE_COMMAND, row, row + exp[0].w, 1});
+         }
+         const std::uint32_t base = odma_count();
+         const std::uint32_t seq = read32(FX1_ISP_COMMON_RECOVERY_SEQUENCE_OFFSET);
          for (std::size_t k = 0; k < n; ++k) {
             submit(static_cast<unsigned>(k));
          }
-         wait_until([&] { return (read32(FX1_ISP_DMA_ERR_OFFSET) & err_idma_axi) != 0; }, "IDMA AXI error");
-         FX1_CHECK_EQ_CTX(read32(FX1_ISP_IDMA_BUF_VALID_OFFSET) & (1u << idma_head), 0, where + " input released");
-         write32(FX1_ISP_DMA_ERR_OFFSET, err_idma_axi);
-         write32(FX1_ISP_IDMA_BUF_VALID_OFFSET, 1u << idma_head);  // DEC-19: re-arm the same index
+         wait_until([&] { return (read32(FX1_ISP_DMA_ERR_OFFSET) & bit) != 0; }, "AXI error");
+         wait_until([&] { return (read32(FX1_ISP_COMMON_RECOVERY_STATUS_OFFSET) & 0x3u) == 0x2u; }, "recovery done");
+         FX1_CHECK_EQ_CTX(read32(FX1_ISP_COMMON_RECOVERY_SEQUENCE_OFFSET), seq + 1u, where + " one recovery");
+         const std::uint32_t st = read32(FX1_ISP_COMMON_RECOVERY_STATUS_OFFSET);
+         FX1_CHECK_EQ_CTX((st & FX1_ISP_COMMON_RECOVERY_STATUS_COUNT_MASK) >> FX1_ISP_COMMON_RECOVERY_STATUS_COUNT_SHIFT, 1u,
+                          where + " abort set: the first frame");
+         FX1_CHECK_EQ_CTX(read32(FX1_ISP_COMMON_ABORT0_OUTCOME_OFFSET), 0x1u | ((rd_err ? 1u : 2u) << 8),
+                          where + " record: CH0 failed, cause");
+         FX1_CHECK_EQ_CTX(read32(FX1_ISP_IDMA_BUF_VALID_OFFSET) | read32(FX1_ISP_ODMA_BUF_FREE_OFFSET), 0,
+                          where + " ownership cleared");
+         FX1_CHECK_EQ_CTX(odma_count(), base, where + " nothing completed");
+         write32(FX1_ISP_DMA_ERR_OFFSET, bit | err_overflow);
+         write32(FX1_ISP_COMMON_RECOVERY_STATUS_OFFSET, FX1_ISP_COMMON_RECOVERY_STATUS_DONE_MASK);
+         mem->faults.clear();
+         idma_head = odma_head = 0;
+         for (std::size_t k = 0; k < n; ++k) {
+            load(static_cast<unsigned>(k), inputs[k]);
+         }
+         for (std::size_t k = 0; k < n; ++k) {
+            submit(static_cast<unsigned>(k));
+         }
          collect(exp, next, n);
-      } else if (event == "odma_axi_error") {
-         const std::uint64_t row = y_slot(odma_head) + std::uint64_t{exp[0].h / 2u} * out_stride;
-         mem->faults.push_back({tlm::TLM_WRITE_COMMAND, row, row + exp[0].w, 1});
-         for (std::size_t k = 0; k < n; ++k) {
-            submit(static_cast<unsigned>(k));
-         }
-         wait_until([&] { return (read32(FX1_ISP_DMA_ERR_OFFSET) & err_odma_axi) != 0; }, "ODMA AXI error");
-         FX1_CHECK_EQ_CTX(read32(FX1_ISP_ODMA_BUF_FREE_OFFSET) & (1u << odma_head), 0, where + " output not FREE");
-         FX1_CHECK_EQ_CTX(read32(FX1_ISP_ODMA_BUF_DONE_OFFSET) & (1u << odma_head), 0, where + " output not DONE");
-         write32(FX1_ISP_DMA_ERR_OFFSET, err_odma_axi);
-         write32(FX1_ISP_ODMA_BUF_FREE_OFFSET, 1u << odma_head);  // DEC-19: same index again
-         collect(exp, next, n - 1);
-         // Resubmit the failed frame: next input buffer, next output buffer.
-         const unsigned in_k = (idma_head + static_cast<unsigned>(n)) % 4u;
-         idma_head = in_k;
-         load(in_k, inputs[0]);
-         write32(FX1_ISP_ODMA_BUF_FREE_OFFSET, 1u << odma_head);
-         write32(FX1_ISP_IDMA_BUF_VALID_OFFSET, 1u << in_k);
-         idma_head = (in_k + 1) % 4u;
-         collect(exp, next, 1);
       } else {
          FX1_CHECK_EQ_CTX(0, 1, where + " unknown event " + event);
       }
-      if (event != "odma_axi_error") {
-         idma_head = static_cast<unsigned>((idma_head + n) % 4u);
-      }
+      idma_head = static_cast<unsigned>((idma_head + n) % 4u);
       mem->faults.clear();
       FX1_CHECK_EQ_CTX(next, exp.size(), where + " all expected frames seen");
       // Counters and error state.
@@ -361,7 +382,27 @@ struct bench : sc_module {
             std::string name, value;
             is >> name >> value;
             if (const csr::reg_desc *d = reg(name)) {
-               write32(d->offset, static_cast<std::uint32_t>(std::stoul(value, nullptr, 0)));
+               const std::uint32_t v = static_cast<std::uint32_t>(std::stoul(value, nullptr, 0));
+               // Table confirmations need the pipeline idle too (MAS v1.07 §6.14.4, §9.9.1).
+               const bool confirm = (d->offset == FX1_ISP_GAMMA_CTRL_OFFSET &&
+                                     (v & FX1_ISP_GAMMA_CTRL_LUT_LOAD_CONFIRM_MASK)) ||
+                                    (d->offset == FX1_ISP_EE_LUT_CTRL_OFFSET &&
+                                     (v & FX1_ISP_EE_LUT_CTRL_PROFILE_LOAD_CONFIRM_MASK));
+               if (idle_class(d->offset) || confirm) {
+                  // MAS v1.07 §9.5.2, §9.9.3: input geometry and the shared
+                  // mesh shape change only with ingress stopped and drained.
+                  const std::uint32_t dma = read32(FX1_ISP_DMA_CTRL_OFFSET);
+                  write32(FX1_ISP_DMA_CTRL_OFFSET, dma & ~FX1_ISP_DMA_CTRL_IDMA_EN_MASK);
+                  FX1_CHECK(wait_until([&] { return !(read32(FX1_ISP_COMMON_STATUS_OFFSET) &
+                                                      FX1_ISP_COMMON_STATUS_BUSY_MASK); },
+                                       "drained for " + name));
+                  write32(d->offset, v);
+                  FX1_CHECK_EQ_CTX(read32(FX1_ISP_TUNE_ERROR_OFFSET) & FX1_ISP_TUNE_ERROR_MODE_MASK, 0u,
+                                   "IDLE-class write " + name);
+                  write32(FX1_ISP_DMA_CTRL_OFFSET, dma);
+               } else {
+                  write32(d->offset, v);
+               }
                configured = true;
             }
          } else if (cmd == "counter") {

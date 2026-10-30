@@ -8,6 +8,8 @@
 
 #include <cstdint>
 
+#include "pipeline/isp_pipeline.h"
+
 namespace cdc::components::fx1_isp::stub {
 
 // Nearest-neighbour source index of output index `o` for an `in` -> `out`
@@ -20,11 +22,13 @@ inline std::uint32_t source_index(std::uint32_t o, std::uint32_t in, std::uint32
 //   in    : input line, `sh + active_width` samples used
 //   sh    : Input Formatter horizontal shift (0/1)
 //   out   : `out_width` bytes
+// `depth` is COMMON_INPUT_FORMAT.DEPTH of the frame: the stub normalizes the
+// container at the same input boundary as the pipeline (MAS v1.07 Table 6-18).
 inline void luma_line(const std::uint16_t *in, std::uint32_t sh, std::uint32_t active_width, std::uint8_t *out,
-                      std::uint32_t out_width) {
+                      std::uint32_t out_width, std::uint32_t depth = 0) {
    for (std::uint32_t ox = 0; ox < out_width; ++ox) {
       const std::uint32_t ix = sh + source_index(ox, active_width, out_width);
-      out[ox] = static_cast<std::uint8_t>((in[ix] & 0x0FFFu) >> 4);
+      out[ox] = static_cast<std::uint8_t>(pipe::normalize_input(in[ix], depth) >> 4);
    }
 }
 

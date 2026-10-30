@@ -44,7 +44,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import isp_pack  # noqa: E402  (stdlib packer and checks, shared with the SDK)
-from isp_pack import BAYER, JOB_MAGIC, RESULT_FIELDS, VERSION, PackError, sha256  # noqa: E402
+from isp_pack import BAYER, JOB_MAGIC, MODE_LEGACY, MODE_PROFILE, RESULT_FIELDS, VERSION, PackError, sha256  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 ISP = os.path.join(ROOT, "components", "FX1_Components", "isp")
@@ -152,6 +152,15 @@ def main():
     ap.add_argument("--src-stride", type=int, help="RAW file stride in bytes (default 2 x width)")
     ap.add_argument("--profile", default=DEFAULT_PROFILE, help=".csrw profile (default: outdoor1 'full')")
     ap.add_argument("--frames", type=int, default=1, help="process the frame N times (temporal blocks)")
+    ap.add_argument("--mode", default="profile", choices=("profile", "legacy"),
+                    help="ISP mode of the job (CSR v1.07): profile (default; the profile is built into bank 0, "
+                         "sealed and applied) or legacy, for comparison. Either is compared with the stand-alone "
+                         "model's legacy run of the same profile")
+    ap.add_argument("--expect-mode", choices=("profile", "legacy"),
+                    help="--pack-only: the mode the console ran (`isp run legacy`), default the job's")
+    ap.add_argument("--outputs", type=lambda v: int(v, 0), default=1,
+                    help="OUTPUT_ENABLE channel mask (bit 0 CH0 NV12, required; bit 1 CH1 NV12; bit 2 CH2 RGB888); "
+                         "CH1/CH2 are dumped and reported, CH0 is compared")
     ap.add_argument("--build-dir", default=os.path.join(ROOT, "build-fx1"))
     ap.add_argument("--out", required=True, help="output directory")
     ap.add_argument("--timeout-ms", type=int, default=5000, help="simulated-time budget")
@@ -172,6 +181,8 @@ def main():
     a = ap.parse_args()
     if a.frames < 1:
         fail("--frames must be >= 1", 3)
+    if not (a.outputs & 1) or a.outputs > 7:
+        fail("--outputs must include CH0 (bit 0) and only bits 0..2", 3)
     if a.prepare_only + a.pack_only + a.interactive > 1:
         fail("--prepare-only, --pack-only and --interactive exclude each other", 3)
     if a.job_env and not a.prepare_only:
@@ -205,6 +216,8 @@ def main():
             fail(str(e))
         a.width, a.height, a.frames = job["width"], job["height"], job["frames"]
         a.bayer = next(k for k, v in BAYER.items() if v == job["bayer"])
+        a.mode = "legacy" if job["mode"] == MODE_LEGACY else "profile"
+        a.outputs = job["outputs"]
 
     shared, raw_base, yuv_base = (map_constant(n) for n in
                                   ("FX1_FW_SHARED_BASE", "FX1_FW_RAW_BUF_BASE", "FX1_FW_YUV_BUF_BASE"))
@@ -214,6 +227,18 @@ def main():
     uv_addr = yuv_base + align(out_stride * a.height, 1 << 20)
     if raw_base + in_stride * a.height > yuv_base:
         fail("frame too large for the RAW buffer region")
+    # CH1 (NV12) and CH2 (packed RGB888) after CH0, each plane 1 MiB aligned.
+    ch1_stride, ch2_stride = out_stride, align(3 * a.width, 16)
+    ch1_y_addr = uv_addr + align(out_stride * (a.height // 2), 1 << 20)
+    ch1_uv_addr = ch1_y_addr + align(ch1_stride * a.height, 1 << 20)
+    ch2_addr = ch1_uv_addr + align(ch1_stride * (a.height // 2), 1 << 20)
+    if ch2_addr + ch2_stride * a.height > map_constant("FX1_FW_TEST_AREA_BASE"):
+        fail("frame too large for the YUV buffer region")
+    extra_dumps = []  # (address, length, file) of the enabled CH1 / CH2 planes
+    if a.outputs & 2:
+        extra_dumps += [(ch1_y_addr, ch1_stride * a.height, "y1.bin"), (ch1_uv_addr, ch1_stride * (a.height // 2), "uv1.bin")]
+    if a.outputs & 4:
+        extra_dumps += [(ch2_addr, ch2_stride * a.height, "rgb2.bin")]
 
     writes = load_profile(a.profile)
     y_len, uv_len = out_stride * a.height, out_stride * (a.height // 2)
@@ -238,11 +263,15 @@ def main():
                 f.write(struct.pack("<II", off, val))
         if PROFILE_OFFSET + 8 * len(writes) > map_constant("FX1_FW_SHARED_SIZE"):
             fail("profile too large")
-        job = struct.pack("<16I", JOB_MAGIC, VERSION, a.width, a.height, BAYER[a.bayer], raw_base, in_stride,
-                          y_addr, uv_addr, out_stride, len(writes), a.frames, 0, 0, 0, 0)
+        job = isp_pack.pack_job(magic=JOB_MAGIC, version=VERSION, width=a.width, height=a.height,
+                                bayer=BAYER[a.bayer], in_addr=raw_base, in_stride=in_stride, y_addr=y_addr,
+                                uv_addr=uv_addr, out_stride=out_stride, profile_count=len(writes), frames=a.frames,
+                                mode=MODE_LEGACY if a.mode == "legacy" else MODE_PROFILE, outputs=a.outputs,
+                                profile_id=1, ch1_y_addr=ch1_y_addr, ch1_uv_addr=ch1_uv_addr, ch1_stride=ch1_stride,
+                                ch2_addr=ch2_addr, ch2_stride=ch2_stride)
         with open(out("job.bin"), "wb") as f:
             f.write(job)
-        for name in ("result.bin", "y.bin", "uv.bin"):  # never pack the dumps of an earlier run
+        for name in ["result.bin", "y.bin", "uv.bin", "y1.bin", "uv1.bin", "rgb2.bin"]:  # never pack the dumps of an earlier run
             if os.path.exists(out(name)):
                 os.remove(out(name))
 
@@ -254,16 +283,19 @@ def main():
                              ("RESULT_LEN", 4 * len(RESULT_FIELDS)), ("Y_ADDR", y_addr), ("Y_LEN", y_len),
                              ("UV_ADDR", uv_addr), ("UV_LEN", uv_len)):
                     f.write("%s=%s\n" % (k, ("0x%08x" % v) if k.endswith("ADDR") else str(v)))
+                # CH1 / CH2 planes of the job (version 2), when enabled.
+                f.write("EXTRA_DUMPS=\"%s\"\n" % " ".join("0x%08x:%d:%s" % (ad, ln, n) for ad, ln, n in extra_dumps))
         if a.prepare_only:
             print("\nJob prepared in %s. Start the FreeRTOS CLI with it loaded:\n" % a.out)
             print("  %s --fw %s \\\n    --uart0-socket %d --uart0-wait --timeout-ms 0 --realtime \\\n"
                   "    --load 0x%x:%s --load 0x%x:%s --load 0x%x:%s \\\n"
-                  "    --dump 0x%x:%d:%s \\\n    --dump 0x%x:%d:%s --dump 0x%x:%d:%s"
+                  "    --dump 0x%x:%d:%s \\\n    --dump 0x%x:%d:%s --dump 0x%x:%d:%s%s"
                   % (sim, elf, a.port, raw_base, out("input.isp16"), shared + JOB_OFFSET, out("job.bin"),
                      shared + PROFILE_OFFSET, out("profile.bin"), shared + RESULT_OFFSET, 4 * len(RESULT_FIELDS),
-                     out("result.bin"), y_addr, y_len, out("y.bin"), uv_addr, uv_len, out("uv.bin")))
+                     out("result.bin"), y_addr, y_len, out("y.bin"), uv_addr, uv_len, out("uv.bin"),
+                     "".join(" \\\n    --dump 0x%x:%d:%s" % (ad, ln, out(n)) for ad, ln, n in extra_dumps)))
             print("\nthen in another terminal: platforms/fx1_soc/tools/fx1_console.sh %d" % a.port)
-            print("and type: isp run, isp stats, poweroff (the --dump files are written at poweroff)")
+            print("and type: isp run (or isp run legacy), isp stats, poweroff (the --dump files are written at poweroff)")
             print("finally: %s --pack-only --out %s%s" % (sys.argv[0], a.out, "" if a.profile == DEFAULT_PROFILE
                                                              else " --profile " + a.profile))
             sys.exit(0)
@@ -275,6 +307,8 @@ def main():
               "--dump", "0x%x:%d:%s" % (shared + RESULT_OFFSET, 4 * len(RESULT_FIELDS), out("result.bin")),
               "--dump", "0x%x:%d:%s" % (y_addr, y_len, out("y.bin")),
               "--dump", "0x%x:%d:%s" % (uv_addr, uv_len, out("uv.bin"))]
+        for ad, ln, n in extra_dumps:
+            io += ["--dump", "0x%x:%d:%s" % (ad, ln, out(n))]
         if a.interactive:
             run_interactive([sim, "--fw", elf, "--uart0-socket", str(a.port), "--uart0-wait", "--timeout-ms", "0",
                              "--realtime"] + io, a.port, out("platform.log"))
@@ -289,6 +323,10 @@ def main():
         res = isp_pack.read_result(out("result.bin"))
         y, uv = open(out("y.bin"), "rb").read(), open(out("uv.bin"), "rb").read()
         isp_pack.check_output(res, a.width, a.height, a.frames, out_stride, y, uv)
+        job = isp_pack.read_job(out("job.bin"))
+        isp_pack.check_identity(job, res, None if a.expect_mode is None else
+                                (MODE_LEGACY if a.expect_mode == "legacy" else MODE_PROFILE))
+        channel_lines = isp_pack.pack_channels(a.out, job, res)
         ow, oh, stride = res["out_width"], res["out_height"], res["out_stride"]
         nv12 = isp_pack.pack_nv12(y, uv, ow, oh, stride)
         with open(out("platform.nv12"), "wb") as f:
@@ -301,6 +339,7 @@ def main():
     except PackError as e:
         fail(str(e))
     platform_sha = sha256(out("platform.nv12"))
+
 
     # 5. the stand-alone ISP model, same input and profile
     verdict, ref_sha = "not compared (--no-reference)", None
@@ -320,13 +359,16 @@ def main():
         "RAW            %s (%dx%d %s, %s)" % (a.raw or out("input.isp16"), a.width, a.height, a.bayer, a.format),
         "profile        %s (%d CSR writes)" % (a.profile, len(writes)),
         "frames         %d" % a.frames,
+        "mode           %s%s; outputs 0x%x" % (a.mode, " (profile ID %d)" % res["profile_id"] if a.mode == "profile"
+                                                 else "", a.outputs),
         "output         %dx%d NV12, stride %d" % (ow, oh, stride),
         "ISP counters   IDMA %d, ODMA %d frames; DMA_ERR 0x%x" % (res["idma_frames"], res["odma_frames"], res["dma_err"]),
         "FRAME_ID       AEC %d, AWB %d, AF %d" % (res["aec_frame_id"], res["awb_frame_id"], res["af_frame_id"]),
         "simulated time %.3f ms first queue to last completion" % (res["frame_ticks"] * 50e-6),
         "platform NV12  %s  sha256 %s" % (out("platform.nv12"), platform_sha),
         "reference NV12 %s" % ("sha256 " + ref_sha if ref_sha else "-"),
-        "result         %s" % verdict,
+    ] + channel_lines + [
+        "result         %s (CH0 against the stand-alone model's legacy run)" % verdict,
         "preview        %s" % out("platform.png"),
     ]
     with open(out("summary.txt"), "w") as f:

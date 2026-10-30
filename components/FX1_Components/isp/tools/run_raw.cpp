@@ -5,7 +5,8 @@
 //
 //   fx1_isp_run_raw (--input F.isp16 | --input-list LIST | --synthetic) --width W --height H
 //                   --profile p.csrw --out prefix [--frames N] [--queue Q] [--per-frame]
-//                   [--stats-script expected_stats.txt] [--check-stats] [--expect-sha256 HEX]
+//                   [--stats-script expected_stats.txt] [--stats-per-frame] [--check-stats]
+//                   [--expect-sha256 HEX] [--profile-mode]
 //
 // Inputs: --input is an ISP-contract container file (tools/raw_fixture.py
 // convert); --input-list names one such file per line, all of the same
@@ -21,12 +22,22 @@
 // temporal state (GTM curve, 2DNR variance, statistics IDs) carries from frame
 // to frame.
 //
+// --profile-mode runs the firmware's default bring-up (CSR v1.07, V107-10):
+// after the profile, profile mode, INIT of bank 0, the confirmed legacy
+// Gamma curve (read back) through the banked port and its confirmation, the GTM manual
+// curve and TUNE payload writes replayed, PROFILE_ID 1, SEAL, APPLY (as
+// fx1_isp_profile_from_legacy). Any TUNE_ERROR fails the run.
+//
 // Outputs:
 //   <prefix>.nv12          NV12 of the last frame, active bytes, Y then UV
 //   <prefix>.fNNN.nv12     with --per-frame: NV12 of every frame
 //   <prefix>.txt           geometry, status and the SHA-256 of every frame
 //   <prefix>.stats.txt     with --stats-script: the script's reads after the
-//                          last frame ("SET" lines are executed and echoed)
+//                          last frame ("SET" lines are executed and echoed);
+//                          with --stats-per-frame the script has one section
+//                          per frame ("FRAME k" lines), run once frame k is
+//                          done and its statistics are published (queue 1:
+//                          the next frame is submitted only after the reads)
 //   <prefix>.events.log    time-stamped interrupt and frame events
 // --check-stats fails the run if a read differs from the script's value;
 // --expect-sha256 fails it if the last frame's NV12 SHA-256 differs.
@@ -80,7 +91,7 @@ struct options {
    std::vector<std::string> inputs;
    std::string profile, out, stats_script, expect_sha256;
    std::uint32_t width = 0, height = 0, frames = 0, queue = 1;
-   bool synthetic = false, check_stats = false, per_frame = false;
+   bool synthetic = false, check_stats = false, per_frame = false, stats_per_frame = false, profile_mode = false;
 };
 
 // Deterministic test pattern, bit-identical to tools/gen_4k_vectors.py
@@ -126,6 +137,7 @@ struct runner : sc_module {
    int status = 1;
    std::vector<std::string> events;
    unsigned stats_mismatches = 0;
+   bool stats_per_frame_ok = true;
 
    SC_HAS_PROCESS(runner);
    explicit runner(sc_module_name n) : sc_module(n), socket("socket"), rst_n("rst_n"), irq("irq") {
@@ -172,6 +184,7 @@ struct runner : sc_module {
          std::cerr << "cannot open profile " << opt.profile << "\n";
          return false;
       }
+      std::vector<std::pair<std::uint32_t, std::uint32_t>> writes;
       for (const fx1_test::csr_line &l : fx1_test::read_profile(opt.profile)) {
          const csr::reg_desc *d = find_register(l.reg);
          if (!d) {
@@ -179,13 +192,81 @@ struct runner : sc_module {
             return false;
          }
          write32(d->offset, l.value);
+         writes.emplace_back(d->offset, l.value);
       }
-      return true;
+      return !opt.profile_mode || build_profile_bank(writes);
    }
 
-   bool run_stats_script() {
-      std::ofstream out(opt.out + ".stats.txt");
+   // fx1_isp_profile_from_legacy over CSR writes (driver/src/fx1_isp_drv.c).
+   bool build_profile_bank(const std::vector<std::pair<std::uint32_t, std::uint32_t>> &writes) {
+      write32(FX1_ISP_TUNE_ERROR_OFFSET, 0xFFFFFFFFu);
+      bool ok = true;
+      const auto cmd = [&](std::uint32_t off, std::uint32_t v, const char *what) {
+         if (!ok) {
+            return;
+         }
+         write32(off, v);
+         const std::uint32_t e = read32(FX1_ISP_TUNE_ERROR_OFFSET);
+         if (e) {
+            std::cerr << "profile mode: " << what << " raised TUNE_ERROR 0x" << std::hex << e << std::dec << "\n";
+            ok = false;
+         }
+      };
+      // The confirmed legacy curve as the model holds it, read back before
+      // INIT (review V107-10 completion R1: not rebuilt from the writes).
+      std::vector<std::uint32_t> gamma;
+      if (read32(FX1_ISP_GAMMA_STATUS_OFFSET) & FX1_ISP_GAMMA_STATUS_LUT_LOADED_MASK) {
+         for (std::uint32_t i = 0; i < 256; ++i) {
+            write32(FX1_ISP_GAMMA_LUT_ADDR_OFFSET, i);
+            gamma.push_back(read32(FX1_ISP_GAMMA_LUT_RDATA_OFFSET));
+         }
+      }
+      cmd(FX1_ISP_TUNE_MODE_OFFSET, FX1_ISP_TUNE_MODE_ENABLE_MASK, "TUNE_MODE");
+      cmd(FX1_ISP_TUNE_BANK_OFFSET, 0, "TUNE_BANK");
+      cmd(FX1_ISP_TUNE_CMD_OFFSET, FX1_ISP_TUNE_CMD_INIT_MASK, "INIT");
+      if (gamma.size() == 256) {
+         for (std::uint32_t i = 0; i < 256; ++i) {
+            write32(FX1_ISP_TUNE_GAMMA_PORT_OFFSET, i);
+            cmd(FX1_ISP_TUNE_GAMMA_DATA_OFFSET, gamma[i] & FX1_ISP_TUNE_GAMMA_DATA_VALUE_MASK, "gamma entry");
+         }
+         cmd(FX1_ISP_TUNE_TABLE_CMD_OFFSET, FX1_ISP_TUNE_TABLE_CMD_GAMMA_CONFIRM_MASK, "GAMMA_CONFIRM");
+      }
+      for (const auto &w : writes) {
+         const std::uint32_t o = w.first;
+         if (o == FX1_ISP_GTM_CTRL_OFFSET || o == FX1_ISP_GTM_LUT_ADDR_OFFSET || o == FX1_ISP_GTM_LUT_DATA_OFFSET ||
+             o == FX1_ISP_TUNE_NR_LUT_ADDR_OFFSET || o == FX1_ISP_TUNE_NR_LUT_DATA_OFFSET ||
+             o == FX1_ISP_TUNE_BPC_COUNT_OFFSET || o == FX1_ISP_TUNE_BPC_ADDR_OFFSET ||
+             o == FX1_ISP_TUNE_BPC_DATA_OFFSET || o == FX1_ISP_TUNE_LSC_SECTOR_ADDR_OFFSET ||
+             o == FX1_ISP_TUNE_LSC_SECTOR_DATA_OFFSET || o == FX1_ISP_TUNE_TABLE_CMD_OFFSET) {
+            cmd(o, w.second, "payload replay");
+         }
+      }
+      cmd(FX1_ISP_TUNE_PROFILE_ID_OFFSET, 1, "PROFILE_ID");
+      cmd(FX1_ISP_TUNE_CMD_OFFSET, FX1_ISP_TUNE_CMD_SEAL_MASK, "SEAL");
+      cmd(FX1_ISP_TUNE_CMD_OFFSET, FX1_ISP_TUNE_CMD_APPLY_MASK, "APPLY");
+      return ok;
+   }
+
+   // The script's lines of section `frame` (-1: the whole script). "FRAME k"
+   // lines open section k and are echoed.
+   std::ofstream stats_out;
+   bool run_stats_script(long frame = -1) {
+      if (!stats_out.is_open()) {
+         stats_out.open(opt.out + ".stats.txt");
+      }
+      std::ofstream &out = stats_out;
+      long section = -1;
       for (const fx1_test::csr_line &l : fx1_test::read_expected(opt.stats_script)) {
+         if (l.reg == "FRAME" && !l.set) {
+            section = static_cast<long>(l.value);
+            if (section == frame) {
+               out << "FRAME " << l.value << "\n";
+            }
+            continue;
+         }
+         if (frame >= 0 && section != frame) {
+            continue;
+         }
          const csr::reg_desc *d = find_register(l.reg);
          if (!d) {
             std::cerr << "stats script: unknown register " << l.reg << "\n";
@@ -345,13 +426,29 @@ struct runner : sc_module {
          log("frame " + std::to_string(completed) + " done, buffer " + std::to_string(slot) +
              "  COMMON_IRQ_STATUS=" + hex(common) + " DMA_IRQ_STAT=" + hex(dma) +
              " DMA_ERR=" + hex(read32(FX1_ISP_DMA_ERR_OFFSET)) +
-             " AEC/AF_FRAME_ID=" + std::to_string(read32(FX1_ISP_AEC_FRAME_ID_OFFSET)) + "/" +
-             std::to_string(read32(FX1_ISP_AF_FRAME_ID_OFFSET)) +
-             " AWB_RESULT_STATUS=" + hex(read32(FX1_ISP_AWB_RESULT_STATUS_OFFSET)) +  // results need a lease
+             // Status words only: a result word read without a lease raises
+             // TUNE_ERROR.NO_LEASE and hence ERROR_IRQ (MAS v1.07 Table 9-188).
+             " TUNE_AEC/AF_STATUS=" + hex(read32(FX1_ISP_TUNE_AEC_STATUS_OFFSET)) + "/" +
+             hex(read32(FX1_ISP_TUNE_AF_STATUS_OFFSET)) +
+             " AWB_RESULT_STATUS=" + hex(read32(FX1_ISP_AWB_RESULT_STATUS_OFFSET)) +
              " sha256=" + shas.back().substr(0, 16));
          write32(FX1_ISP_COMMON_IRQ_STATUS_OFFSET, common);
          write32(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma);
          write32(FX1_ISP_ODMA_BUF_DONE_OFFSET, 1u << slot);
+         if (opt.stats_per_frame) {
+            // Every statistics engine publishes at the frame's end (U2-A7):
+            // wait for the pipeline and the measurements to be idle, then
+            // acquire / read / release what the frame published.
+            const sc_time limit = sc_time_stamp() + sc_time(1, SC_MS);
+            while (((read32(FX1_ISP_COMMON_STATUS_OFFSET) & FX1_ISP_COMMON_STATUS_BUSY_MASK) ||
+                    (read32(FX1_ISP_AEC_STATUS_OFFSET) & FX1_ISP_AEC_STATUS_BUSY_MASK) ||
+                    (read32(FX1_ISP_AF_STATUS_OFFSET) & FX1_ISP_AF_STATUS_BUSY_MASK)) &&
+                   sc_time_stamp() < limit) {
+               wait(1, SC_US);
+            }
+            wait(1, SC_US);
+            stats_per_frame_ok = run_stats_script(static_cast<long>(completed)) && stats_per_frame_ok;
+         }
          ++completed;
       }
       const bool done = ok && completed == opt.frames;
@@ -362,8 +459,8 @@ struct runner : sc_module {
          read_out((completed - 1) % 4u, ow, oh, out_stride, opt.out + ".nv12");
       }
       const bool sha_ok = opt.expect_sha256.empty() || digest == opt.expect_sha256;
-      bool stats_ok = true;
-      if (!opt.stats_script.empty()) {
+      bool stats_ok = stats_per_frame_ok;
+      if (!opt.stats_script.empty() && !opt.stats_per_frame) {
          stats_ok = run_stats_script();
       }
       std::ofstream ev(opt.out + ".events.log");
@@ -403,8 +500,13 @@ bool parse(int argc, char **argv, options &o) {
    std::string list;
    for (int i = 1; i < argc; i += 2) {
       const std::string k = argv[i];
-      if (k == "--synthetic" || k == "--check-stats" || k == "--per-frame") {  // flags without a value
-         (k == "--synthetic" ? o.synthetic : k == "--check-stats" ? o.check_stats : o.per_frame) = true;
+      if (k == "--synthetic" || k == "--check-stats" || k == "--per-frame" || k == "--stats-per-frame" ||
+          k == "--profile-mode") {
+         (k == "--synthetic"         ? o.synthetic
+          : k == "--check-stats"     ? o.check_stats
+          : k == "--stats-per-frame" ? o.stats_per_frame
+          : k == "--profile-mode"    ? o.profile_mode
+                                     : o.per_frame) = true;  // flags without a value
          --i;
          continue;
       }
@@ -434,7 +536,7 @@ bool parse(int argc, char **argv, options &o) {
       }
    }
    if (o.synthetic == !o.inputs.empty() || o.profile.empty() || o.out.empty() || !o.width || !o.height ||
-       o.queue < 1 || o.queue > 4) {
+       o.queue < 1 || o.queue > 4 || (o.stats_per_frame && (o.queue != 1 || o.stats_script.empty()))) {
       return false;
    }
    if (!o.frames) {
@@ -450,7 +552,8 @@ int sc_main(int argc, char *argv[]) {
    if (!parse(argc, argv, opt)) {
       std::cerr << "usage: fx1_isp_run_raw (--input F.isp16 | --input-list LIST | --synthetic) --width W --height H\n"
                    "                      --profile P.csrw --out PREFIX [--frames N] [--queue 1-4] [--per-frame]\n"
-                   "                      [--stats-script EXPECTED_STATS] [--check-stats] [--expect-sha256 HEX]\n";
+                   "                      [--stats-script EXPECTED_STATS] [--stats-per-frame (queue 1)] [--check-stats]\n"
+                   "                      [--expect-sha256 HEX]\n";
       return 2;
    }
    sc_signal<bool> rst_n("rst_n");

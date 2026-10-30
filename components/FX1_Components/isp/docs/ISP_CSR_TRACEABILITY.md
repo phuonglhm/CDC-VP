@@ -17,37 +17,37 @@ show that every member was written with a non-zero value.
 
 | Class | Registers |
 |---|---|
-| model | 152 |
-| model (indexed) | 75 |
-| constant | 2 |
-| storage | 25 |
+| model | 319 |
+| model (indexed) | 218 |
+| constant | 4 |
+| storage | 32 |
 | deferred | 0 |
-| total | 254 |
+| total | 573 |
 
 | Offset | Register | Access | Class | Model / reason | Specification, decisions | Dedicated tests | Vector uses |
 |---|---|---|---|---|---|---|---|
-| 0x0000 | `COMMON_VER_DATE` | RO | constant | read-only identification value | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | main, test_csr_tlm | 0 |
-| 0x0004 | `COMMON_VER_ID` | RO | constant | read-only identification value | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_control_unit, test_csr_tlm | 0 |
-| 0x0008 | `COMMON_CTRL` | RW, W1SC, W1S | model | control_unit.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_stats | 0 |
-| 0x000C | `COMMON_STATUS` | RO | model | control_unit.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm | 0 |
-| 0x0010 | `COMMON_IRQ_STATUS` | W1C | model | control_unit.cpp, control_unit_stats.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_stats | 0 |
+| 0x0000 | `COMMON_VER_DATE` | RO | constant | read-only identification value | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | main, test_csr_tlm, test_register_engine | 0 |
+| 0x0004 | `COMMON_VER_ID` | RO | constant | read-only identification value | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_control_unit, test_csr_tlm, test_register_engine | 0 |
+| 0x0008 | `COMMON_CTRL` | RW, W1SC, W1S | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm, test_profile, test_stats | 0 |
+| 0x000C | `COMMON_STATUS` | RO | model | control_unit.cpp, control_unit_recovery.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x0010 | `COMMON_IRQ_STATUS` | W1C | model | control_unit.cpp, control_unit_recovery.cpp, control_unit_stats.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_stats | 0 |
 | 0x0014 | `COMMON_IRQ_EN` | RW | model | control_unit.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_stats | 0 |
-| 0x0018 | `COMMON_FRAME_WIDTH` | RW | model | control_unit.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_control_unit, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_stats | 34 |
-| 0x001C | `COMMON_FRAME_HEIGHT` | RW | model | control_unit.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_control_unit, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_stats | 34 |
-| 0x0020 | `COMMON_BAYER` | RW | model | control_unit.cpp, engines.cpp, isp_pipeline.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_control_unit, test_dma_tlm, test_driver_tlm | 18 |
-| 0x0028 | `COMMON_SCRATCH` | RW | storage | software scratch register by definition | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_control_unit, test_csr_tlm | 0 |
-| 0x0200 | `BLC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 13 |
-| 0x0204 | `BLC_GAIN_SEL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | test_control_unit | 10 |
+| 0x0018 | `COMMON_FRAME_WIDTH` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_outputs_tlm, test_profile, test_stats | 54 |
+| 0x001C | `COMMON_FRAME_HEIGHT` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_outputs_tlm, test_profile, test_stats | 54 |
+| 0x0020 | `COMMON_BAYER` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp, isp_pipeline.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_profile | 23 |
+| 0x0028 | `COMMON_SCRATCH` | RW | storage | software scratch register by definition | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_control_unit, test_csr_tlm, test_register_engine | 0 |
+| 0x0200 | `BLC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 15 |
+| 0x0204 | `BLC_GAIN_SEL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | test_control_unit | 12 |
 | 0x0208 | `BLC_OFS_G0_DFT` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | test_control_unit | 10 |
 | 0x020C | `BLC_OFS_G0_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0210 | `BLC_OFS_G0_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0214 | `BLC_OFS_G0_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0218 | `BLC_OFS_G0_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x021C | `BLC_OFS_G1_DFT` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 4 |
-| 0x0220 | `BLC_OFS_G1_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 4 |
-| 0x0224 | `BLC_OFS_G1_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 4 |
-| 0x0228 | `BLC_OFS_G1_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 4 |
-| 0x022C | `BLC_OFS_G1_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 4 |
+| 0x021C | `BLC_OFS_G1_DFT` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 6 |
+| 0x0220 | `BLC_OFS_G1_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
+| 0x0224 | `BLC_OFS_G1_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
+| 0x0228 | `BLC_OFS_G1_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
+| 0x022C | `BLC_OFS_G1_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
 | 0x0230 | `BLC_OFS_G2_DFT` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0234 | `BLC_OFS_G2_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0238 | `BLC_OFS_G2_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
@@ -59,119 +59,124 @@ show that every member was written with a non-zero value.
 | 0x0250 | `BLC_OFS_G3_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0254 | `BLC_OFS_G3_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0258 | `BLC_SCALE_G0` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 10 |
-| 0x025C | `BLC_SCALE_G1` | RW | model (indexed) | BLC_SCALE_G0 + 4 * g | HAS §6.7; ALG-BLC | — | 4 |
+| 0x025C | `BLC_SCALE_G1` | RW | model (indexed) | BLC_SCALE_G0 + 4 * g | HAS §6.7; ALG-BLC | — | 6 |
 | 0x0260 | `BLC_SCALE_G2` | RW | model (indexed) | BLC_SCALE_G0 + 4 * g | HAS §6.7; ALG-BLC | — | 3 |
 | 0x0264 | `BLC_SCALE_G3` | RW | model (indexed) | BLC_SCALE_G0 + 4 * g | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0400 | `LSC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 10 |
-| 0x0404 | `LSC_MESH_NODES` | RW | model | control_unit.cpp, isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm | 10 |
-| 0x0408 | `LSC_STRENGTH` | RW | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 10 |
-| 0x040C | `LSC_PROFILE_SEL` | RW | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm | 10 |
-| 0x0410 | `LSC_LOAD_CTRL` | RW, W1S | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm | 10 |
-| 0x0414 | `LSC_COEF_DATA` | RW | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm | 10 |
+| 0x0400 | `LSC_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_profile | 13 |
+| 0x0404 | `LSC_MESH_NODES` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_cont_tlm, test_control_unit, test_driver_tlm, test_profile | 13 |
+| 0x0408 | `LSC_STRENGTH` | RW | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 13 |
+| 0x040C | `LSC_PROFILE_SEL` | RW | model | control_unit.cpp, control_unit_profile.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 13 |
+| 0x0410 | `LSC_LOAD_CTRL` | RW, W1S | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 13 |
+| 0x0414 | `LSC_COEF_DATA` | RW | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 13 |
 | 0x0418 | `LSC_LOAD_STATUS` | RO | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit | 0 |
 | 0x041C | `LSC_PROFILE_STATUS` | RO | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit | 0 |
-| 0x0420 | `LSC_ERROR` | W1C | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm | 0 |
-| 0x0424 | `LSC_STAT_OVF_CNT_R` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 33 |
-| 0x0428 | `LSC_STAT_OVF_CNT_GR` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 33 |
-| 0x042C | `LSC_STAT_OVF_CNT_GB` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 33 |
-| 0x0430 | `LSC_STAT_OVF_CNT_B` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 33 |
-| 0x0600 | `BPC_CTRL` | RW | model | isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 11 |
-| 0x0604 | `BPC_MODE` | RW | storage | DYNAMIC_DET_EN has no effect: spatial BPC only (MAS §6.9; DEC-28 superseded) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 10 |
+| 0x0420 | `LSC_ERROR` | W1C | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 0 |
+| 0x0424 | `LSC_STAT_OVF_CNT_R` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
+| 0x0428 | `LSC_STAT_OVF_CNT_GR` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
+| 0x042C | `LSC_STAT_OVF_CNT_GB` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
+| 0x0430 | `LSC_STAT_OVF_CNT_B` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
+| 0x0600 | `BPC_CTRL` | RW | model | isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 12 |
+| 0x0604 | `BPC_MODE` | RW | storage | DYNAMIC_DET_EN has no effect: spatial BPC only (MAS §6.9; DEC-28 superseded) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 11 |
 | 0x0608 | `BPC_TEMPORAL_VAR` | RW | storage | no effect: spatial BPC only (MAS §6.9; DEC-28 superseded) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | — | 0 |
-| 0x060C | `BPC_THRESH` | RW | model | isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 9 |
+| 0x060C | `BPC_THRESH` | RW | model | isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 10 |
 | 0x0610 | `BPC_PIXEL_AGE` | RW | storage | no effect: spatial BPC only (MAS §6.9; DEC-28 superseded) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | — | 0 |
-| 0x0614 | `BPC_NUM_CANDIDATES` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 33 |
-| 0x0618 | `BPC_NUM_DEFECTIVE` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 33 |
-| 0x061C | `BPC_STATUS` | W1C | model | control_unit.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_control_unit | 0 |
-| 0x0800 | `WB_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | — | 11 |
-| 0x0804 | `WB_GAIN_R` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | — | 11 |
-| 0x0808 | `WB_GAIN_G` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | — | 7 |
-| 0x080C | `WB_GAIN_B` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | — | 11 |
-| 0x0A00 | `DG_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.11; ALG-DG | — | 9 |
-| 0x0A04 | `DG_GAIN` | RW | model | isp_pipeline.cpp | HAS §6.11; ALG-DG | — | 9 |
+| 0x0614 | `BPC_NUM_CANDIDATES` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 53 |
+| 0x0618 | `BPC_NUM_DEFECTIVE` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 53 |
+| 0x061C | `BPC_STATUS` | W1C | storage | W1C status with no source in the VP (the candidate list never overflows in this model); not an ERROR_IRQ source (MAS v1.07 Table 9-188, review V107-7..10 R7) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_control_unit | 0 |
+| 0x0800 | `WB_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | test_stats | 15 |
+| 0x0804 | `WB_GAIN_R` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | test_driver_tlm, test_profile, test_stats | 15 |
+| 0x0808 | `WB_GAIN_G` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | — | 11 |
+| 0x080C | `WB_GAIN_B` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | — | 15 |
+| 0x0A00 | `DG_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.11; ALG-DG | test_stats | 11 |
+| 0x0A04 | `DG_GAIN` | RW | model | isp_pipeline.cpp | HAS §6.11; ALG-DG | test_stats | 11 |
 | 0x0C00 | `D_WDR_CTRL` | RW | storage | WDR unsupported (HAS §3.1); enable warns (M5-A1) | HAS §3.1 (unsupported); M5-A1 | test_stats | 0 |
 | 0x0C04 | `D_WDR_STRENGTH` | RW | storage | WDR unsupported (HAS §3.1) (M5-A1) | HAS §3.1 (unsupported); M5-A1 | — | 0 |
 | 0x0E00 | `DEMOSAIC_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.12; ALG-DMS, DEC-38 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_stats | 0 |
-| 0x1000 | `CCM_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x1004 | `CCM_CRR` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_control_unit, test_driver_tlm | 9 |
-| 0x1008 | `CCM_CRG` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x100C | `CCM_CRB` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x1010 | `CCM_CGR` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x1014 | `CCM_CGG` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x1018 | `CCM_CGB` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x101C | `CCM_CBR` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x1020 | `CCM_CBG` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x1024 | `CCM_CBB` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 9 |
-| 0x1028 | `CCM_OFS_R` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 2 |
-| 0x102C | `CCM_OFS_G` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 2 |
-| 0x1030 | `CCM_OFS_B` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 2 |
+| 0x1000 | `CCM_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x1004 | `CCM_CRR` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_control_unit, test_driver_tlm | 11 |
+| 0x1008 | `CCM_CRG` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x100C | `CCM_CRB` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x1010 | `CCM_CGR` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x1014 | `CCM_CGG` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x1018 | `CCM_CGB` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x101C | `CCM_CBR` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x1020 | `CCM_CBG` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x1024 | `CCM_CBB` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
+| 0x1028 | `CCM_OFS_R` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 4 |
+| 0x102C | `CCM_OFS_G` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 4 |
+| 0x1030 | `CCM_OFS_B` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 4 |
 | 0x1034 | `CCM_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_cont_tlm, test_control_unit, test_e2e_tlm, test_stats | 0 |
-| 0x1200 | `GAMMA_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | — | 10 |
-| 0x1204 | `GAMMA_LUT_ADDR` | RW | model | control_unit.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_control_unit, test_driver_tlm | 10 |
-| 0x1208 | `GAMMA_LUT_DATA` | RW | model | control_unit.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_control_unit, test_driver_tlm | 10 |
-| 0x120C | `GAMMA_LUT_RDATA` | RO | model | control_unit.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_control_unit, test_driver_tlm | 0 |
-| 0x1210 | `GAMMA_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_cont_tlm, test_control_unit, test_e2e_tlm, test_stats | 0 |
-| 0x1400 | `CSC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.15; SPEC-03 | run_raw | 8 |
-| 0x1600 | `GTM_CTRL` | RW | model | control_unit.cpp, isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm | 11 |
-| 0x1604 | `GTM_LUT_ADDR` | RW | model | control_unit.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm | 2 |
-| 0x1608 | `GTM_LUT_DATA` | RW | model | control_unit.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm | 2 |
-| 0x160C | `GTM_KEY` | RW | model | control_unit.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | — | 10 |
-| 0x1610 | `GTM_LWHITE` | RW | model | control_unit.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | — | 8 |
+| 0x1200 | `GAMMA_CTRL` | RW, W1P | model | control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_cont_tlm, test_control_unit, test_driver_tlm, test_profile, test_register_engine | 12 |
+| 0x1204 | `GAMMA_LUT_ADDR` | RW | model | control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_control_unit, test_driver_tlm | 12 |
+| 0x1208 | `GAMMA_LUT_DATA` | RW | model | control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_control_unit, test_driver_tlm | 12 |
+| 0x120C | `GAMMA_LUT_RDATA` | RO | model | control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_control_unit, test_driver_tlm | 0 |
+| 0x1210 | `GAMMA_STATUS` | RO | model | control_unit_stats.cpp, control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_profile, test_stats | 0 |
+| 0x1400 | `CSC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.15; SPEC-03 | run_raw, test_outputs_tlm | 13 |
+| 0x1600 | `GTM_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_profile | 11 |
+| 0x1604 | `GTM_LUT_ADDR` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_profile | 2 |
+| 0x1608 | `GTM_LUT_DATA` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_profile | 2 |
+| 0x160C | `GTM_KEY` | RW | model | control_unit.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit | 10 |
+| 0x1610 | `GTM_LWHITE` | RW | model | control_unit.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit | 8 |
 | 0x1614 | `GTM_ROI_LOG2` | RW | model | isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | — | 9 |
-| 0x1618 | `GTM_LUT_RDATA` | RO | model | control_unit.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm | 0 |
+| 0x1618 | `GTM_LUT_RDATA` | RO | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm | 0 |
 | 0x161C | `GTM_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_stats | 0 |
-| 0x1800 | `NR_2D_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.17; ALG-2DNR, DEC-38 | — | 10 |
-| 0x1804 | `NR_2D_EST_VAR` | RO | model | control_unit.cpp | HAS §6.17; ALG-2DNR, DEC-38 | — | 7 |
+| 0x1800 | `NR_2D_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.17; ALG-2DNR, DEC-38 | test_profile | 16 |
+| 0x1804 | `NR_2D_EST_VAR` | RO | model | control_unit.cpp | HAS §6.17; ALG-2DNR, DEC-38 | — | 13 |
 | 0x1808 | `NR_2D_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.17; ALG-2DNR, DEC-38 | test_cont_tlm, test_control_unit, test_e2e_tlm, test_stats | 0 |
 | 0x1A00 | `TNR_3D_CTRL` | RW | storage | 3DNR unsupported (HAS §3.1); enable warns (M5-A1) | HAS §3.1 (unsupported); M5-A1 | test_stats | 0 |
 | 0x1A04 | `TNR_3D_MTF_SEL` | RW | storage | 3DNR unsupported (HAS §3.1) (M5-A1) | HAS §3.1 (unsupported); M5-A1 | — | 0 |
 | 0x1A08 | `TNR_3D_HIST_BASE` | RW | storage | 3DNR unsupported (HAS §3.1) (M5-A1) | HAS §3.1 (unsupported); M5-A1 | — | 0 |
-| 0x1C00 | `EE_CTRL` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles | 10 |
-| 0x1C04 | `EE_ALPHA` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles | 9 |
-| 0x1C08 | `EE_BETA` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_ee_profiles | 9 |
+| 0x1C00 | `EE_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 10 |
+| 0x1C04 | `EE_ALPHA` | RW | model | control_unit.cpp, control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 9 |
+| 0x1C08 | `EE_BETA` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles | 9 |
 | 0x1C0C | `EE_CLAMP` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles | 9 |
-| 0x1C10 | `EE_FEATURE_EN` | RW | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles | 2 |
-| 0x1C14 | `EE_RADIAL_CENTER` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | — | 2 |
-| 0x1C18 | `EE_RADIAL_R2_TH0` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | — | 2 |
-| 0x1C1C | `EE_RADIAL_R2_TH1` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | — | 2 |
-| 0x1C20 | `EE_RADIAL_R2_TH2` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | — | 2 |
+| 0x1C10 | `EE_FEATURE_EN` | RW | model | control_unit.cpp, control_unit_profile.cpp, isp_pipeline.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles, test_profile | 2 |
+| 0x1C14 | `EE_RADIAL_CENTER` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
+| 0x1C18 | `EE_RADIAL_R2_TH0` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
+| 0x1C1C | `EE_RADIAL_R2_TH1` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
+| 0x1C20 | `EE_RADIAL_R2_TH2` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
 | 0x1C24 | `EE_RADIAL_GAIN_01` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit | 2 |
 | 0x1C28 | `EE_RADIAL_GAIN_23` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm | 2 |
-| 0x1C2C | `EE_LUT_CTRL` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles | 10 |
-| 0x1C30 | `EE_LUT_ADDR` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles | 10 |
-| 0x1C34 | `EE_LUT_WDATA` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles | 10 |
-| 0x1C38 | `EE_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_stats.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_stats | 0 |
-| 0x1C3C | `EE_LUT_RDATA` | RO | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit | 0 |
-| 0x1E00 | `CNF_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | — | 9 |
-| 0x1E04 | `CNF_CHROMA_TH` | RW | model | isp_pipeline.cpp | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | — | 9 |
-| 0x1E08 | `CNF_LUMA_TH` | RW | model | isp_pipeline.cpp | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | test_control_unit | 9 |
+| 0x1C2C | `EE_LUT_CTRL` | RW, W1P | model | control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_cont_tlm, test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 10 |
+| 0x1C30 | `EE_LUT_ADDR` | RW | model | control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 10 |
+| 0x1C34 | `EE_LUT_WDATA` | RW | model | control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 10 |
+| 0x1C38 | `EE_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_stats.cpp, control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_profile, test_stats | 0 |
+| 0x1C3C | `EE_LUT_RDATA` | RO | model | control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit | 0 |
+| 0x1E00 | `CNF_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | — | 11 |
+| 0x1E04 | `CNF_CHROMA_TH` | RW | model | isp_pipeline.cpp | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | — | 11 |
+| 0x1E08 | `CNF_LUMA_TH` | RW | model | isp_pipeline.cpp | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | test_control_unit | 11 |
 | 0x1E0C | `CNF_STRENGTH` | RW | storage | no hardware behind it (CSR) | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | — | 0 |
 | 0x1E10 | `CNF_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.19; DEC-27, ALG-CNF, DEC-38 | test_cont_tlm, test_control_unit, test_e2e_tlm, test_stats | 0 |
-| 0x2000 | `RESIZER_CTRL` | RW | model | control_unit.cpp | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | test_control_unit, test_dma_tlm, test_driver_tlm | 10 |
+| 0x2000 | `RESIZER_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm | 12 |
+| 0x2004 | `RESIZER_CUSTOM_W` | RO | storage | reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2) | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | test_register_engine | 0 |
+| 0x2008 | `RESIZER_CUSTOM_H` | RO | storage | reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2) | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | test_register_engine | 0 |
 | 0x2014 | `RESIZER_OUT_W` | RO | model | control_unit.cpp | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | main, run_raw, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
-| 0x2018 | `RESIZER_OUT_H` | RO | model | control_unit.cpp | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | main, run_raw, test_control_unit, test_dma_tlm, test_e2e_tlm | 0 |
+| 0x2018 | `RESIZER_OUT_H` | RO | model | control_unit.cpp | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | main, run_raw, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
 | 0x201C | `RESIZER_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.20; DEC-23/24/26, CSR-09, DEC-38 | test_cont_tlm, test_control_unit, test_e2e_tlm, test_stats | 0 |
-| 0x2200 | `AEC_CTRL` | RW, W1S | model | control_unit.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_csr_tlm, test_driver_tlm, test_stats | 13 |
+| 0x2020 | `OUTPUT_ENABLE` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.24, §9.5 (output enable and interrupts, CSR v1.07) | test_cont_tlm, test_control_unit, test_driver_tlm, test_outputs_tlm, test_profile | 5 |
+| 0x2024 | `OUTPUT_IRQ_EN` | RW | model | control_unit.cpp | MAS §6.24, §9.5 (output enable and interrupts, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x2028 | `OUTPUT_IRQ_STATUS` | W1C | model | control_unit.cpp, control_unit_recovery.cpp, engines.cpp | MAS §6.24, §9.5 (output enable and interrupts, CSR v1.07) | test_control_unit, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x2200 | `AEC_CTRL` | RW, W1S | model | control_unit.cpp, control_unit_profile.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_csr_tlm, test_driver_tlm, test_profile, test_register_engine, test_stats | 13 |
 | 0x2204 | `AEC_CONTEXT_ID` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 11 |
 | 0x2208 | `AEC_ZONE_CFG` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_driver_tlm, test_stats | 12 |
 | 0x220C | `AEC_ZONE_SIZE` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 12 |
-| 0x2210 | `AEC_SAMPLE_CLIP` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm | 12 |
-| 0x2214 | `AEC_THRESH` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm | 12 |
-| 0x2218 | `AEC_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x221C | `AEC_FRAME_ID` | RO | model | control_unit.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | run_raw, test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x2220 | `AEC_RESULT_CONTEXT_ID` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 13 |
-| 0x2224 | `AEC_CHANNEL_SEL` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x2228 | `AEC_GLOBAL_SUM_LO` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_stats | 13 |
-| 0x222C | `AEC_GLOBAL_SUM_HI` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 13 |
-| 0x2230 | `AEC_GLOBAL_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 13 |
-| 0x2234 | `AEC_ZONE_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x2238 | `AEC_ZONE_SUM` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x223C | `AEC_ZONE_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 13 |
-| 0x2240 | `AEC_ZONE_GREEN_OE_UE` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 13 |
-| 0x2244 | `AEC_ZONE_GREEN_MIN_MAX` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x2248 | `AEC_HIST_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x224C | `AEC_HIST_DATA` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 13 |
-| 0x2400 | `AWB_CTRL` | RW | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_stats | 13 |
+| 0x2210 | `AEC_SAMPLE_CLIP` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 12 |
+| 0x2214 | `AEC_THRESH` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_register_engine, test_stats | 12 |
+| 0x2218 | `AEC_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | run_raw, test_cont_tlm, test_control_unit, test_driver_tlm, test_stats | 13 |
+| 0x221C | `AEC_FRAME_ID` | RO | model | control_unit.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_e2e_tlm, test_stats | 13 |
+| 0x2220 | `AEC_RESULT_CONTEXT_ID` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 5 |
+| 0x2224 | `AEC_CHANNEL_SEL` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 5 |
+| 0x2228 | `AEC_GLOBAL_SUM_LO` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_driver_tlm, test_stats | 13 |
+| 0x222C | `AEC_GLOBAL_SUM_HI` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 5 |
+| 0x2230 | `AEC_GLOBAL_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
+| 0x2234 | `AEC_ZONE_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
+| 0x2238 | `AEC_ZONE_SUM` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
+| 0x223C | `AEC_ZONE_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 5 |
+| 0x2240 | `AEC_ZONE_GREEN_OE_UE` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 5 |
+| 0x2244 | `AEC_ZONE_GREEN_MIN_MAX` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_stats | 5 |
+| 0x2248 | `AEC_HIST_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
+| 0x224C | `AEC_HIST_DATA` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
+| 0x2400 | `AWB_CTRL` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_profile, test_stats | 13 |
 | 0x2404 | `AWB_X_BOUND_ADDR` | RW | storage | no hardware: equal zones only (CSR, ALG-AWB-05) | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 0 |
 | 0x2408 | `AWB_Y_BOUND_ADDR` | RW | storage | no hardware: equal zones only (CSR, ALG-AWB-05) | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 0 |
 | 0x240C | `AWB_X_BOUND_DATA` | RW | storage | no hardware: equal zones only (CSR, ALG-AWB-05) | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 0 |
@@ -179,9 +184,9 @@ show that every member was written with a non-zero value.
 | 0x2414 | `AWB_GLOBAL_SUM_R_H` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_stats | 7 |
 | 0x2418 | `AWB_GLOBAL_SUM_R_L` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_stats | 7 |
 | 0x241C | `AWB_GLOBAL_SUM_G_H` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 7 |
-| 0x2420 | `AWB_GLOBAL_SUM_G_L` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 7 |
+| 0x2420 | `AWB_GLOBAL_SUM_G_L` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_stats | 7 |
 | 0x2424 | `AWB_GLOBAL_SUM_B_H` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 7 |
-| 0x2428 | `AWB_GLOBAL_SUM_B_L` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 7 |
+| 0x2428 | `AWB_GLOBAL_SUM_B_L` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_stats | 7 |
 | 0x242C | `AWB_GLOBAL_COUNT` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_driver_tlm, test_stats | 13 |
 | 0x2430 | `AWB_ZONE_ADDR` | RW | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_driver_tlm, test_stats | 7 |
 | 0x2434 | `AWB_ZONE_SUM_R_H` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_stats | 7 |
@@ -197,53 +202,53 @@ show that every member was written with a non-zero value.
 | 0x245C | `AWB_CONTEXT_ID` | RW | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_stats | 11 |
 | 0x2460 | `AWB_RESULT_CONTEXT_ID` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_driver_tlm, test_stats | 7 |
 | 0x2464 | `AWB_FRAME_ID` | RO | model | control_unit.cpp, control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_driver_tlm, test_stats | 13 |
-| 0x2468 | `AWB_RESULT_CTRL` | W1S | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_control_unit, test_driver_tlm, test_stats | 7 |
+| 0x2468 | `AWB_RESULT_CTRL` | W1P | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_control_unit, test_driver_tlm, test_stats | 7 |
 | 0x246C | `AWB_RESULT_STATUS` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | run_raw, test_driver_tlm, test_stats | 13 |
 | 0x2470 | `AWB_DROP_COUNT` | RO | model | control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_driver_tlm, test_stats | 13 |
 | 0x2600 | `AF_CTRL` | RW, W1S | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_control_unit, test_stats | 11 |
 | 0x2604 | `AF_ZONE_EN` | RW | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
 | 0x2608 | `AF_METRIC_CFG` | RW | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
-| 0x260C | `AF_STAT_ADDR` | RW | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_driver_tlm, test_stats | 13 |
-| 0x2610 | `AF_STAT_DATA` | RO | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_driver_tlm, test_stats | 13 |
+| 0x260C | `AF_STAT_ADDR` | RW | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_driver_tlm, test_stats | 11 |
+| 0x2610 | `AF_STAT_DATA` | RO | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_driver_tlm, test_stats | 11 |
 | 0x2614 | `AF_LUT_ADDR` | RW | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
 | 0x2618 | `AF_LUT_DATA` | RW | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
 | 0x261C | `AF_VCM_CUR_POS` | RW | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
 | 0x2620 | `AF_VCM_BEST_POS` | RO | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
 | 0x2624 | `AF_PEAK_SCORE` | RO | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
 | 0x2628 | `AF_FOCUS_RANGE` | RW | storage | no hardware (CSR, ALG-F §3.2) | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | — | 0 |
-| 0x262C | `AF_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_cont_tlm, test_control_unit, test_driver_tlm, test_stats | 13 |
+| 0x262C | `AF_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | run_raw, test_cont_tlm, test_control_unit, test_driver_tlm, test_stats | 13 |
 | 0x2630 | `AF_CONTEXT_ID` | RW | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_stats | 11 |
-| 0x2634 | `AF_RESULT_CONTEXT_ID` | RO | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_driver_tlm, test_stats | 13 |
-| 0x2638 | `AF_FRAME_ID` | RO | model | control_unit.cpp, control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | run_raw, test_driver_tlm, test_stats | 13 |
+| 0x2634 | `AF_RESULT_CONTEXT_ID` | RO | model | control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_driver_tlm, test_stats | 11 |
+| 0x2638 | `AF_FRAME_ID` | RO | model | control_unit.cpp, control_unit_stats.cpp | MAS §6.23 (EN sampled at SOF, U2); ALG-AF-01/02 superseded, CSR-07/15 | test_stats | 13 |
 | 0x2800 | `OFMT_CTRL` | RW | storage | stride padding not modelled; stride_en warns (DEC-39, owner query B14) | HAS §6.24; DEC-39, owner query B14 | test_stats | 0 |
 | 0x2804 | `OFMT_Y_STRIDE` | RW | storage | stride padding not modelled (DEC-39) | HAS §6.24; DEC-39, owner query B14 | — | 0 |
 | 0x2808 | `OFMT_UV_STRIDE` | RW | storage | stride padding not modelled (DEC-39) | HAS §6.24; DEC-39, owner query B14 | — | 0 |
-| 0x3000 | `DMA_CTRL` | RW, W1SC | model | control_unit.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_stats | 0 |
+| 0x3000 | `DMA_CTRL` | RW, W1SC | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm, test_profile, test_register_engine, test_stats | 0 |
 | 0x3004 | `DMA_STAT` | RO | model | engines.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | test_dma_tlm, test_driver_tlm | 0 |
-| 0x3008 | `DMA_ERR` | W1C | model | control_unit.cpp, engines.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
+| 0x3008 | `DMA_ERR` | W1C | model | control_unit.cpp, engines.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm, test_register_engine | 0 |
 | 0x300C | `DMA_IRQ_EN` | RW | model | control_unit.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm | 0 |
-| 0x3010 | `DMA_IRQ_STAT` | W1C | model | control_unit.cpp, engines.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm | 0 |
-| 0x3020 | `IDMA_STRIDE` | RW | model | engines.cpp | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3024 | `IDMA_BUF_VALID` | W1S | model | control_unit.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
-| 0x3028 | `IDMA_FRAME_COUNT` | RO | model | control_unit.cpp, engines.cpp | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm | 0 |
-| 0x3040 | `IDMA_BUF_ADDR_L0` | RW | model | engines.cpp | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3044 | `IDMA_BUF_ADDR_H0` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3048 | `IDMA_BUF_ADDR_L1` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x304C | `IDMA_BUF_ADDR_H1` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3050 | `IDMA_BUF_ADDR_L2` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3054 | `IDMA_BUF_ADDR_H2` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3058 | `IDMA_BUF_ADDR_L3` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x305C | `IDMA_BUF_ADDR_H3` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; DEC-19, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3080 | `ODMA_Y_STRIDE` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3084 | `ODMA_UV_STRIDE` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3088 | `ODMA_BUF_FREE` | W1S | model | control_unit.cpp, engines.cpp, fx1_isp_tlm.cpp | MAS Table 156/159 (cleared at frame start, U5); SPEC-07 superseded | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
-| 0x308C | `ODMA_BUF_DONE` | W1C | model | control_unit.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
-| 0x3090 | `ODMA_FRAME_COUNT` | RO | model | control_unit.cpp, engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
-| 0x30A0 | `ODMA_Y_ADDR_L0` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
+| 0x3010 | `DMA_IRQ_STAT` | W1C | model | control_unit.cpp, engines.cpp | HAS §6.25, MAS Table 161 (ODMA_OVERFLOW held while stalled, U5); DEC-14/15/19, DEC-18 status superseded, CSR-06 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3020 | `IDMA_STRIDE` | RW | model | engines.cpp | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3024 | `IDMA_BUF_VALID` | W1S | model | control_unit.cpp, control_unit_recovery.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm, test_register_engine | 0 |
+| 0x3028 | `IDMA_FRAME_COUNT` | RO | model | control_unit.cpp, engines.cpp | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm | 0 |
+| 0x3040 | `IDMA_BUF_ADDR_L0` | RW | model | engines.cpp | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3044 | `IDMA_BUF_ADDR_H0` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3048 | `IDMA_BUF_ADDR_L1` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x304C | `IDMA_BUF_ADDR_H1` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3050 | `IDMA_BUF_ADDR_L2` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3054 | `IDMA_BUF_ADDR_H2` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3058 | `IDMA_BUF_ADDR_L3` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x305C | `IDMA_BUF_ADDR_H3` | RW | model (indexed) | 64-bit buffer address, IDMA_BUF_ADDR_L0 + 8 * k | HAS §6.25.8, §6.25.10; V107-D62..D65, M2-A1..A3 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3080 | `ODMA_Y_STRIDE` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3084 | `ODMA_UV_STRIDE` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3088 | `ODMA_BUF_FREE` | W1S | model | control_unit.cpp, control_unit_recovery.cpp, engines.cpp, fx1_isp_tlm.cpp | MAS Table 156/159 (cleared at frame start, U5); SPEC-07 superseded | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm, test_register_engine | 0 |
+| 0x308C | `ODMA_BUF_DONE` | W1C | model | control_unit.cpp, engines.cpp, fx1_isp_tlm.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3090 | `ODMA_FRAME_COUNT` | RO | model | control_unit.cpp, engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x30A0 | `ODMA_Y_ADDR_L0` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
 | 0x30A4 | `ODMA_Y_ADDR_H0` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x30A8 | `ODMA_UV_ADDR_L0` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
+| 0x30A8 | `ODMA_UV_ADDR_L0` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
 | 0x30AC | `ODMA_UV_ADDR_H0` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x30B0 | `ODMA_Y_ADDR_L1` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
+| 0x30B0 | `ODMA_Y_ADDR_L1` | RW | model | engines.cpp | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
 | 0x30B4 | `ODMA_Y_ADDR_H1` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
 | 0x30B8 | `ODMA_UV_ADDR_L1` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
 | 0x30BC | `ODMA_UV_ADDR_H1` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
@@ -255,28 +260,342 @@ show that every member was written with a non-zero value.
 | 0x30D4 | `ODMA_Y_ADDR_H3` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
 | 0x30D8 | `ODMA_UV_ADDR_L3` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
 | 0x30DC | `ODMA_UV_ADDR_H3` | RW | model (indexed) | 64-bit buffer address, ODMA_Y_ADDR_L0 + 16 * k | HAS §6.25.9-6.25.10; DEC-18/19 | run_raw, test_cont_tlm, test_dma_tlm, test_e2e_tlm | 0 |
-| 0x3100 | `IDMA_BUF_TAG0` | RW | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x3104 | `IDMA_BUF_TAG1` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x3108 | `IDMA_BUF_TAG2` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x310C | `IDMA_BUF_TAG3` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x3110 | `IDMA_BUF_TS0` | RW | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x3114 | `IDMA_BUF_TS1` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x3118 | `IDMA_BUF_TS2` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x311C | `IDMA_BUF_TS3` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm | 0 |
-| 0x3120 | `ODMA_BUF_TAG0` | RO | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3124 | `ODMA_BUF_TAG1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3128 | `ODMA_BUF_TAG2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x312C | `ODMA_BUF_TAG3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3130 | `ODMA_BUF_TS0` | RO | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3134 | `ODMA_BUF_TS1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3138 | `ODMA_BUF_TS2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x313C | `ODMA_BUF_TS3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3140 | `ODMA_BUF_SOF_TS0` | RO | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3144 | `ODMA_BUF_SOF_TS1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3148 | `ODMA_BUF_SOF_TS2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x314C | `ODMA_BUF_SOF_TS3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3150 | `ODMA_BUF_EOF_TS0` | RO | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3154 | `ODMA_BUF_EOF_TS1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x3158 | `ODMA_BUF_EOF_TS2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
-| 0x315C | `ODMA_BUF_EOF_TS3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm | 0 |
+| 0x3100 | `IDMA_BUF_TAG0` | RW | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x3104 | `IDMA_BUF_TAG1` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x3108 | `IDMA_BUF_TAG2` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x310C | `IDMA_BUF_TAG3` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x3110 | `IDMA_BUF_TS0` | RW | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x3114 | `IDMA_BUF_TS1` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x3118 | `IDMA_BUF_TS2` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x311C | `IDMA_BUF_TS3` | RW | model (indexed) | input buffer metadata, IDMA_BUF_TAG0/TS0 + 4 * k, captured at frame start (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_driver_tlm, test_outputs_tlm | 0 |
+| 0x3120 | `ODMA_BUF_TAG0` | RO | model | control_unit.cpp, engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3124 | `ODMA_BUF_TAG1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3128 | `ODMA_BUF_TAG2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x312C | `ODMA_BUF_TAG3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3130 | `ODMA_BUF_TS0` | RO | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3134 | `ODMA_BUF_TS1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3138 | `ODMA_BUF_TS2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x313C | `ODMA_BUF_TS3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3140 | `ODMA_BUF_SOF_TS0` | RO | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3144 | `ODMA_BUF_SOF_TS1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3148 | `ODMA_BUF_SOF_TS2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x314C | `ODMA_BUF_SOF_TS3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3150 | `ODMA_BUF_EOF_TS0` | RO | model | engines.cpp | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3154 | `ODMA_BUF_EOF_TS1` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x3158 | `ODMA_BUF_EOF_TS2` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
+| 0x315C | `ODMA_BUF_EOF_TS3` | RO | model (indexed) | output buffer metadata, ODMA_BUF_TAG0/TS0/SOF_TS0/EOF_TS0 + 4 * k, published at completion (U5) | MAS §6.25.4.1.0.3 Table 160 (U5) | test_dma_tlm, test_outputs_tlm | 0 |
 | 0x3160 | `FRAME_COUNTER` | RO | model | control_unit.cpp, fx1_isp_tlm.cpp | MAS §6.25.4.1.0.3 Table 160 (core-clock time base, U5-A1) | test_control_unit, test_dma_tlm | 0 |
+| 0x3200 | `CH1_RESIZER_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_cont_tlm, test_control_unit | 1 |
+| 0x3204 | `CH1_RESIZER_CUSTOM_W` | RO | storage | reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_register_engine | 0 |
+| 0x3208 | `CH1_RESIZER_CUSTOM_H` | RO | storage | reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_register_engine | 0 |
+| 0x3214 | `CH1_RESIZER_OUT_W` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit, test_driver_tlm | 0 |
+| 0x3218 | `CH1_RESIZER_OUT_H` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit | 0 |
+| 0x321C | `CH1_RESIZER_STATUS` | RO | model | control_unit_stats.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3280 | `CH1_ODMA_Y_STRIDE` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3284 | `CH1_ODMA_UV_STRIDE` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3288 | `CH1_ODMA_BUF_FREE` | W1S | model | control_unit_recovery.cpp, engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x328C | `CH1_ODMA_BUF_DONE` | W1C | model | control_unit.cpp, engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_driver_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3290 | `CH1_ODMA_FRAME_COUNT` | RO | model | control_unit.cpp, engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32A0 | `CH1_ODMA_Y_ADDR_L0` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32A4 | `CH1_ODMA_Y_ADDR_H0` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32A8 | `CH1_ODMA_UV_ADDR_L0` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32AC | `CH1_ODMA_UV_ADDR_H0` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32B0 | `CH1_ODMA_Y_ADDR_L1` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32B4 | `CH1_ODMA_Y_ADDR_H1` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32B8 | `CH1_ODMA_UV_ADDR_L1` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32BC | `CH1_ODMA_UV_ADDR_H1` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32C0 | `CH1_ODMA_Y_ADDR_L2` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32C4 | `CH1_ODMA_Y_ADDR_H2` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32C8 | `CH1_ODMA_UV_ADDR_L2` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32CC | `CH1_ODMA_UV_ADDR_H2` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32D0 | `CH1_ODMA_Y_ADDR_L3` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32D4 | `CH1_ODMA_Y_ADDR_H3` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32D8 | `CH1_ODMA_UV_ADDR_L3` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x32DC | `CH1_ODMA_UV_ADDR_H3` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3300 | `CH1_ODMA_BUF_TAG0` | RO | model | control_unit.cpp, engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3304 | `CH1_ODMA_BUF_TAG1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3308 | `CH1_ODMA_BUF_TAG2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x330C | `CH1_ODMA_BUF_TAG3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3310 | `CH1_ODMA_BUF_TS0` | RO | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3314 | `CH1_ODMA_BUF_TS1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3318 | `CH1_ODMA_BUF_TS2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x331C | `CH1_ODMA_BUF_TS3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3320 | `CH1_ODMA_BUF_SOF_TS0` | RO | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3324 | `CH1_ODMA_BUF_SOF_TS1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3328 | `CH1_ODMA_BUF_SOF_TS2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x332C | `CH1_ODMA_BUF_SOF_TS3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3330 | `CH1_ODMA_BUF_EOF_TS0` | RO | model | engines.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3334 | `CH1_ODMA_BUF_EOF_TS1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3338 | `CH1_ODMA_BUF_EOF_TS2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x333C | `CH1_ODMA_BUF_EOF_TS3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3400 | `CH2_RESIZER_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_cont_tlm, test_control_unit | 1 |
+| 0x3404 | `CH2_RESIZER_CUSTOM_W` | RO | storage | reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_register_engine | 0 |
+| 0x3408 | `CH2_RESIZER_CUSTOM_H` | RO | storage | reserved (CSR v1.07): reads zero, writes ignored; no custom targets (MAS §6.20.4.2) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_register_engine | 0 |
+| 0x3414 | `CH2_RESIZER_OUT_W` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit, test_driver_tlm | 0 |
+| 0x3418 | `CH2_RESIZER_OUT_H` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit | 0 |
+| 0x341C | `CH2_RESIZER_STATUS` | RO | model | control_unit_stats.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3480 | `CH2_ODMA_Y_STRIDE` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3488 | `CH2_ODMA_BUF_FREE` | W1S | model | control_unit_recovery.cpp, engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm, test_register_engine | 0 |
+| 0x348C | `CH2_ODMA_BUF_DONE` | W1C | model | control_unit.cpp, engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_driver_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3490 | `CH2_ODMA_FRAME_COUNT` | RO | model | control_unit.cpp, engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34A0 | `CH2_ODMA_Y_ADDR_L0` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34A4 | `CH2_ODMA_Y_ADDR_H0` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34B0 | `CH2_ODMA_Y_ADDR_L1` | RW | model | engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34B4 | `CH2_ODMA_Y_ADDR_H1` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34C0 | `CH2_ODMA_Y_ADDR_L2` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34C4 | `CH2_ODMA_Y_ADDR_H2` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34D0 | `CH2_ODMA_Y_ADDR_L3` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x34D4 | `CH2_ODMA_Y_ADDR_H3` | RW | model (indexed) | 64-bit buffer address of CH1/CH2, CHc_ODMA_Y/UV_ADDR_L0 + 16 * k (MAS v1.07 §6.25.3.8) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x3500 | `CH2_ODMA_BUF_TAG0` | RO | model | control_unit.cpp, engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3504 | `CH2_ODMA_BUF_TAG1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3508 | `CH2_ODMA_BUF_TAG2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x350C | `CH2_ODMA_BUF_TAG3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3510 | `CH2_ODMA_BUF_TS0` | RO | model | engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3514 | `CH2_ODMA_BUF_TS1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3518 | `CH2_ODMA_BUF_TS2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x351C | `CH2_ODMA_BUF_TS3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3520 | `CH2_ODMA_BUF_SOF_TS0` | RO | model | engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3524 | `CH2_ODMA_BUF_SOF_TS1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3528 | `CH2_ODMA_BUF_SOF_TS2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x352C | `CH2_ODMA_BUF_SOF_TS3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3530 | `CH2_ODMA_BUF_EOF_TS0` | RO | model | engines.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3534 | `CH2_ODMA_BUF_EOF_TS1` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x3538 | `CH2_ODMA_BUF_EOF_TS2` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x353C | `CH2_ODMA_BUF_EOF_TS3` | RO | model (indexed) | CH1/CH2 output buffer metadata, + 4 * k, published at DONE (MAS v1.07 Table 6-159) | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_outputs_tlm | 0 |
+| 0x8000 | `TUNE_ID` | RO | constant | read-only identification value | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_register_engine | 0 |
+| 0x8004 | `TUNE_REV` | RO | constant | read-only identification value | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_register_engine | 0 |
+| 0x8008 | `TUNE_CAPS` | RO | model | control_unit.cpp, control_unit.h | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_control_unit, test_driver_tlm, test_register_engine | 0 |
+| 0x800C | `TUNE_MODE` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile, test_stats | 12 |
+| 0x8010 | `TUNE_BANK` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile | 0 |
+| 0x8014 | `TUNE_PROFILE_ID` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile, test_stats | 12 |
+| 0x8018 | `TUNE_APPLY_FRAME` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 0 |
+| 0x801C | `TUNE_CMD` | W1P | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_profile, test_register_engine, test_stats | 12 |
+| 0x8020 | `TUNE_STATUS` | RO | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_dma_tlm, test_driver_tlm, test_profile | 0 |
+| 0x8024 | `TUNE_ACTIVE_ID` | RO | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_dma_tlm, test_profile | 0 |
+| 0x8028 | `TUNE_ACTIVE_FRAME` | RO | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_dma_tlm, test_profile | 0 |
+| 0x802C | `TUNE_ERROR` | W1C | model | control_unit.cpp, control_unit_profile.cpp, control_unit_recovery.cpp, control_unit_stats.cpp, control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_profile, test_stats | 13 |
+| 0x8030 | `TUNE_NEXT_FRAME` | RO | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_cont_tlm, test_dma_tlm, test_driver_tlm, test_profile | 0 |
+| 0x8040 | `TUNE_CH0_BUF0_PROFILE` | RO | model | engines.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8044 | `TUNE_CH0_BUF1_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8048 | `TUNE_CH0_BUF2_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x804C | `TUNE_CH0_BUF3_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8050 | `TUNE_CH1_BUF0_PROFILE` | RO | model | engines.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8054 | `TUNE_CH1_BUF1_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8058 | `TUNE_CH1_BUF2_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x805C | `TUNE_CH1_BUF3_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8060 | `TUNE_CH2_BUF0_PROFILE` | RO | model | engines.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8064 | `TUNE_CH2_BUF1_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8068 | `TUNE_CH2_BUF2_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x806C | `TUNE_CH2_BUF3_PROFILE` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8100 | `TUNE_NR_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 4 |
+| 0x8104 | `TUNE_NR_VARIANCE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 2 |
+| 0x8108 | `TUNE_NR_SCALE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
+| 0x810C | `TUNE_NR_LIMITS` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
+| 0x8110 | `TUNE_NR_LL_SCALE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
+| 0x8114 | `TUNE_NR_LH_SCALE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
+| 0x8118 | `TUNE_NR_HL_SCALE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
+| 0x811C | `TUNE_NR_HH_SCALE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
+| 0x8120 | `TUNE_NR_BLEND` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
+| 0x8124 | `TUNE_NR_LUT_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
+| 0x8128 | `TUNE_NR_LUT_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
+| 0x812C | `TUNE_NR_SEED` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 2 |
+| 0x8200 | `TUNE_WB_GB` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
+| 0x8204 | `TUNE_DEMOSAIC_MARGIN` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 2 |
+| 0x8208 | `TUNE_CNF_BLEND` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
+| 0x8210 | `TUNE_CSC_CTRL` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 5 |
+| 0x8214 | `TUNE_CSC_CONTRAST` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
+| 0x8218 | `TUNE_CSC_BRIGHTNESS` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
+| 0x8220 | `TUNE_CSC_UU` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
+| 0x8224 | `TUNE_CSC_UV` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
+| 0x8228 | `TUNE_CSC_VU` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
+| 0x822C | `TUNE_CSC_VV` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
+| 0x8300 | `TUNE_AWB_CTRL` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8304 | `TUNE_AWB_ROI_START` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8308 | `TUNE_AWB_ROI_END` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8310 | `TUNE_AWB_R_LIMITS` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8314 | `TUNE_AWB_G_LIMITS` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8318 | `TUNE_AWB_B_LIMITS` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x831C | `TUNE_AWB_MIN_G` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 0 |
+| 0x8340 | `TUNE_AWB_E0_CENTER` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8344 | `TUNE_AWB_E0_A` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8348 | `TUNE_AWB_E0_B` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x834C | `TUNE_AWB_E0_C` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8350 | `TUNE_AWB_E0_RADIUS2` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8360 | `TUNE_AWB_E1_CENTER` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8364 | `TUNE_AWB_E1_A` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8368 | `TUNE_AWB_E1_B` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x836C | `TUNE_AWB_E1_C` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8370 | `TUNE_AWB_E1_RADIUS2` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8380 | `TUNE_AWB_E2_CENTER` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8384 | `TUNE_AWB_E2_A` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8388 | `TUNE_AWB_E2_B` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x838C | `TUNE_AWB_E2_C` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8390 | `TUNE_AWB_E2_RADIUS2` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83A0 | `TUNE_AWB_E3_CENTER` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83A4 | `TUNE_AWB_E3_A` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83A8 | `TUNE_AWB_E3_B` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83AC | `TUNE_AWB_E3_C` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83B0 | `TUNE_AWB_E3_RADIUS2` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83C0 | `TUNE_AWB_E4_CENTER` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83C4 | `TUNE_AWB_E4_A` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83C8 | `TUNE_AWB_E4_B` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83CC | `TUNE_AWB_E4_C` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83D0 | `TUNE_AWB_E4_RADIUS2` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83E0 | `TUNE_AWB_E5_CENTER` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83E4 | `TUNE_AWB_E5_A` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83E8 | `TUNE_AWB_E5_B` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83EC | `TUNE_AWB_E5_C` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x83F0 | `TUNE_AWB_E5_RADIUS2` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8400 | `TUNE_AWB_E6_CENTER` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8404 | `TUNE_AWB_E6_A` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8408 | `TUNE_AWB_E6_B` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x840C | `TUNE_AWB_E6_C` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8410 | `TUNE_AWB_E6_RADIUS2` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8420 | `TUNE_AWB_E7_CENTER` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8424 | `TUNE_AWB_E7_A` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8428 | `TUNE_AWB_E7_B` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x842C | `TUNE_AWB_E7_C` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8430 | `TUNE_AWB_E7_RADIUS2` | RW | model (indexed) | AWB ellipse k at TUNE_AWB_E0_* + k * ellipse stride (MAS v1.07 §6.22.3.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8500 | `TUNE_AF_CTRL` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8504 | `TUNE_AF_NOISE` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8540 | `TUNE_AF_W0_START` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8544 | `TUNE_AF_W0_END` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8548 | `TUNE_AF_W1_START` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x854C | `TUNE_AF_W1_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8550 | `TUNE_AF_W2_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8554 | `TUNE_AF_W2_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8558 | `TUNE_AF_W3_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x855C | `TUNE_AF_W3_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8560 | `TUNE_AF_W4_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8564 | `TUNE_AF_W4_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8568 | `TUNE_AF_W5_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x856C | `TUNE_AF_W5_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8570 | `TUNE_AF_W6_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8574 | `TUNE_AF_W6_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8578 | `TUNE_AF_W7_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x857C | `TUNE_AF_W7_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8580 | `TUNE_AF_W8_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8584 | `TUNE_AF_W8_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8588 | `TUNE_AF_W9_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x858C | `TUNE_AF_W9_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8590 | `TUNE_AF_W10_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8594 | `TUNE_AF_W10_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8598 | `TUNE_AF_W11_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x859C | `TUNE_AF_W11_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85A0 | `TUNE_AF_W12_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85A4 | `TUNE_AF_W12_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85A8 | `TUNE_AF_W13_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85AC | `TUNE_AF_W13_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85B0 | `TUNE_AF_W14_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85B4 | `TUNE_AF_W14_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85B8 | `TUNE_AF_W15_START` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x85BC | `TUNE_AF_W15_END` | RW | model (indexed) | AF rectangle k at TUNE_AF_W0_START/END + k * window stride (MAS v1.07 §6.23) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8600 | `TUNE_HIST_CTRL` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8604 | `TUNE_HIST_START` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8608 | `TUNE_HIST_END` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x860C | `TUNE_HIST_STEP` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile, test_stats | 0 |
+| 0x8640 | `TUNE_HIST_WEIGHT0` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8644 | `TUNE_HIST_WEIGHT1` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8648 | `TUNE_HIST_WEIGHT2` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x864C | `TUNE_HIST_WEIGHT3` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8650 | `TUNE_HIST_WEIGHT4` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8654 | `TUNE_HIST_WEIGHT5` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8658 | `TUNE_HIST_WEIGHT6` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x865C | `TUNE_HIST_WEIGHT7` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8660 | `TUNE_HIST_WEIGHT8` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8664 | `TUNE_HIST_WEIGHT9` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8668 | `TUNE_HIST_WEIGHT10` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x866C | `TUNE_HIST_WEIGHT11` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8670 | `TUNE_HIST_WEIGHT12` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8674 | `TUNE_HIST_WEIGHT13` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8678 | `TUNE_HIST_WEIGHT14` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x867C | `TUNE_HIST_WEIGHT15` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8680 | `TUNE_HIST_WEIGHT16` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8684 | `TUNE_HIST_WEIGHT17` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8688 | `TUNE_HIST_WEIGHT18` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x868C | `TUNE_HIST_WEIGHT19` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8690 | `TUNE_HIST_WEIGHT20` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8694 | `TUNE_HIST_WEIGHT21` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8698 | `TUNE_HIST_WEIGHT22` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x869C | `TUNE_HIST_WEIGHT23` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x86A0 | `TUNE_HIST_WEIGHT24` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8700 | `TUNE_AEC_CMD` | W1P | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8704 | `TUNE_AEC_STATUS` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_driver_tlm, test_e2e_tlm, test_stats | 13 |
+| 0x8708 | `TUNE_AEC_DROPS` | W1C | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 13 |
+| 0x870C | `TUNE_AEC_FRAME` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8710 | `TUNE_AEC_PROFILE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8714 | `TUNE_AEC_INDEX` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 5 |
+| 0x8718 | `TUNE_AEC_DATA_LO` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 5 |
+| 0x871C | `TUNE_AEC_DATA_HI` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 5 |
+| 0x8740 | `TUNE_AF_CMD` | W1P | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
+| 0x8744 | `TUNE_AF_STATUS` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_stats | 13 |
+| 0x8748 | `TUNE_AF_DROPS` | W1C | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 13 |
+| 0x874C | `TUNE_AF_FRAME` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm | 11 |
+| 0x8750 | `TUNE_AF_PROFILE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 11 |
+| 0x8754 | `TUNE_AF_INDEX` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 11 |
+| 0x8758 | `TUNE_AF_DATA_LO` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 11 |
+| 0x875C | `TUNE_AF_DATA_HI` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 11 |
+| 0x8780 | `TUNE_AWB_PROFILE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 7 |
+| 0x8800 | `TUNE_GAMMA_PORT` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 0 |
+| 0x8804 | `TUNE_GAMMA_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 0 |
+| 0x8808 | `TUNE_TABLE_CMD` | W1P | model | control_unit_profile.cpp, control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_driver_tlm, test_profile | 4 |
+| 0x880C | `TUNE_TABLE_STATUS` | RO | model | control_unit_profile.cpp, control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 0 |
+| 0x8900 | `TUNE_BPC_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 1 |
+| 0x8904 | `TUNE_BPC_G_THRESH` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
+| 0x8908 | `TUNE_BPC_RB_THRESH` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
+| 0x8910 | `TUNE_BPC_COUNT` | RW | model | control_unit_profile.cpp, control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 1 |
+| 0x8914 | `TUNE_BPC_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 1 |
+| 0x8918 | `TUNE_BPC_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 1 |
+| 0x8A00 | `TUNE_LSC_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
+| 0x8A04 | `TUNE_LSC_SECTOR_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
+| 0x8A08 | `TUNE_LSC_SECTOR_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
+| 0x8B00 | `COMMON_INPUT_FORMAT` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_stats.cpp, engines.cpp, isp_pipeline.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_profile | 2 |
+| 0x8B08 | `TUNE_AEC_SOURCE` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
+| 0x8B0C | `TUNE_AEC_RESULT_META` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8B40 | `CH0_CROP_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_cont_tlm, test_control_unit | 3 |
+| 0x8B44 | `CH0_CROP_ORIGIN` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit | 3 |
+| 0x8B48 | `CH0_CROP_SIZE` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit | 3 |
+| 0x8B4C | `CH0_GEOMETRY_STATUS` | RO | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit, test_driver_tlm, test_e2e_tlm, test_pipeline_vectors | 0 |
+| 0x8B50 | `CH0_ACTIVE_CROP_ORIGIN` | RO | model | control_unit.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit | 0 |
+| 0x8B54 | `CH0_ACTIVE_CROP_SIZE` | RO | model | control_unit.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit | 0 |
+| 0x8B58 | `CH0_OUTPUT_LIMIT` | RO | model | channel_geometry.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit | 0 |
+| 0x8B80 | `CH1_CROP_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit, test_outputs_tlm | 0 |
+| 0x8B84 | `CH1_CROP_ORIGIN` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit, test_outputs_tlm | 0 |
+| 0x8B88 | `CH1_CROP_SIZE` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit, test_outputs_tlm | 0 |
+| 0x8B8C | `CH1_GEOMETRY_STATUS` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8B90 | `CH1_ACTIVE_CROP_ORIGIN` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8B94 | `CH1_ACTIVE_CROP_SIZE` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8B98 | `CH1_OUTPUT_LIMIT` | RO | model | channel_geometry.cpp | MAS §6.20, §6.25 (CH1 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8BC0 | `CH2_CROP_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit, test_outputs_tlm | 2 |
+| 0x8BC4 | `CH2_CROP_ORIGIN` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit, test_outputs_tlm | 2 |
+| 0x8BC8 | `CH2_CROP_SIZE` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_cont_tlm, test_control_unit, test_outputs_tlm | 2 |
+| 0x8BCC | `CH2_GEOMETRY_STATUS` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8BD0 | `CH2_ACTIVE_CROP_ORIGIN` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8BD4 | `CH2_ACTIVE_CROP_SIZE` | RO | model | control_unit.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8BD8 | `CH2_OUTPUT_LIMIT` | RO | model | channel_geometry.cpp | MAS §6.20, §6.25 (CH2 RGB888 output, CSR v1.07) | test_control_unit | 0 |
+| 0x8C00 | `COMMON_RECOVERY_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62..D67 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm | 0 |
+| 0x8C04 | `COMMON_RECOVERY_SEQUENCE` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62..D67 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm | 0 |
+| 0x8C10 | `COMMON_ABORT0_FRAME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_control_unit, test_dma_tlm | 0 |
+| 0x8C14 | `COMMON_ABORT0_OUTCOME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_cont_tlm, test_control_unit, test_dma_tlm | 0 |
+| 0x8C18 | `COMMON_ABORT1_FRAME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_control_unit | 0 |
+| 0x8C1C | `COMMON_ABORT1_OUTCOME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_control_unit | 0 |
+| 0x8C20 | `COMMON_ABORT2_FRAME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_control_unit | 0 |
+| 0x8C24 | `COMMON_ABORT2_OUTCOME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_control_unit | 0 |
+| 0x8C28 | `COMMON_ABORT3_FRAME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_control_unit | 0 |
+| 0x8C2C | `COMMON_ABORT3_OUTCOME` | RO | model | control_unit.cpp, control_unit_recovery.cpp | MAS v1.07 §9.9.8; V107-D62, V107-D64, V107-D67 | test_control_unit | 0 |
+| 0x8C40 | `TUNE_CH0_BUF0_FRAME` | RO | model | engines.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C44 | `TUNE_CH0_BUF1_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C48 | `TUNE_CH0_BUF2_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C4C | `TUNE_CH0_BUF3_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C50 | `TUNE_CH1_BUF0_FRAME` | RO | model | engines.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C54 | `TUNE_CH1_BUF1_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C58 | `TUNE_CH1_BUF2_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C5C | `TUNE_CH1_BUF3_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C60 | `TUNE_CH2_BUF0_FRAME` | RO | model | engines.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C64 | `TUNE_CH2_BUF1_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C68 | `TUNE_CH2_BUF2_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C6C | `TUNE_CH2_BUF3_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_e2e_tlm, test_outputs_tlm | 0 |
+| 0x8C80 | `TUNE_AE_FRAME_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8C84 | `TUNE_AE_GRID` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8C88 | `TUNE_AE_ZONE_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8C90 | `TUNE_AWB_FRAME_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 7 |
