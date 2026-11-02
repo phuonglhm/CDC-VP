@@ -11,6 +11,16 @@ namespace cdc::components::fx1_isp::pipe {
 
 using gtm_curve = std::array<std::uint16_t, 65>;  // UQ8.8 ratios, point i covers luma 4*i
 
+// Default curve when no usable history exists: unity gain at every point.
+// Applying it preserves Y/Cb/Cr exactly, as required for reset pass-through.
+inline constexpr gtm_curve gtm_identity_curve() {
+   gtm_curve r{};
+   for (auto &ratio : r) {
+      ratio = 0x0100u;  // 1.0 in UQ8.8
+   }
+   return r;
+}
+
 // round(2^16 / Lw^2), Lw = lwhite / 256, saturated to 16 bits (ALG-GTM-01).
 inline std::uint32_t gtm_lw2_recip(std::uint32_t lwhite) {
    if (lwhite == 0) {

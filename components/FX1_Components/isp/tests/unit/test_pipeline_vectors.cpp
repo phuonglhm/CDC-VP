@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -228,6 +229,116 @@ void check_resizer_plans(const fs::path &table) {
    }
 }
 
+// Explicit frame barrier: measure all pixels, prepare N+1, then map N with
+// N-1. A manual replay of the frozen old curve is the selection oracle;
+// existing vectors independently check the numeric kernels against Python.
+void check_staged_gtm() {
+   constexpr std::uint32_t w = 64, h = 48;
+   auto setup = [](control_unit &cu) {
+      std::uint64_t t = 1;
+      write_named(cu, "COMMON_FRAME_WIDTH", w, t++);
+      write_named(cu, "COMMON_FRAME_HEIGHT", h, t++);
+      write_named(cu, "GTM_CTRL", FX1_ISP_GTM_CTRL_EN_MASK, t++);
+      write_named(cu, "GTM_KEY", 0xBB, t++);
+      write_named(cu, "GTM_LWHITE", 0x0180, t++);
+      write_named(cu, "GTM_ROI_LOG2", 5, t++);
+      write_named(cu, "COMMON_CTRL", FX1_ISP_COMMON_CTRL_ISP_EN_MASK, t++);
+   };
+   // Store each plane separately: the arrival interleaving is not part of
+   // the expected pixel contract when the frame barrier moves output time.
+   auto render_reference = [&](pipe::pipeline_config cfg, const pipe::gtm_curve &old, std::uint16_t level) {
+      cfg.gtm_manual = true;
+      cfg.gtm_curve_valid = true;
+      cfg.gtm_bank = &old;
+      std::vector<std::uint8_t> y, uv;
+      pipe::isp_pipeline ref;
+      ref.begin(cfg, w, h, [&](std::vector<std::uint8_t> &&r) { y.insert(y.end(), r.begin(), r.end()); },
+                [&](std::vector<std::uint8_t> &&r) { uv.insert(uv.end(), r.begin(), r.end()); });
+      std::vector<std::uint16_t> row(w, level);
+      for (unsigned k = 0; k < h; ++k) ref.push(row.data());
+      ref.finish();
+      y.insert(y.end(), uv.begin(), uv.end());
+      return y;
+   };
+   control_unit cu;
+   setup(cu);
+   pipe::isp_pipeline pipeline;
+   const std::array<std::uint16_t, 3> levels{400, 1600, 3200};
+   for (unsigned f = 0; f < levels.size(); ++f) {
+      const std::string ctx = "staged GTM frame " + std::to_string(f + 1);
+      const std::uint64_t sof = std::uint64_t{f + 1u} << 20;
+      write_named(cu, "GTM_KEY", 0xBB, sof - 4u);
+      cu.accepted_sof(sof);
+      const pipe::pipeline_config cfg = pipe::snapshot_config(cu);
+      const pipe::gtm_curve old = cfg.gtm_curve_valid ? *cfg.gtm_bank : pipe::gtm_identity_curve();
+      FX1_CHECK_EQ_CTX(cfg.gtm_curve_valid ? 1u : 0u, f != 0u ? 1u : 0u, ctx + " prior history");
+      const auto expected = render_reference(cfg, old, levels[f]);
+      unsigned fed = 0, callbacks = 0;
+      std::vector<std::uint8_t> y, uv;
+      auto ready = [&] {
+         if (callbacks++ == 0) {
+            FX1_CHECK_EQ_CTX(fed, h, ctx + " no output until all input was measured");
+            FX1_CHECK(pipeline.stats().gtm_curve_generated);
+            FX1_CHECK(pipeline.stats().gtm_next_curve ==
+                      pipe::gtm_build_curve(pipeline.stats().gtm_yavg, cfg.gtm_key, cfg.gtm_lwhite));
+            FX1_CHECK(pipeline.stats().gtm_next_curve != old);  // newly generated LUT would change this image
+            FX1_CHECK_EQ_CTX(cu.gtm_curve_valid() ? 1u : 0u, f != 0u ? 1u : 0u,
+                             ctx + " prepared history not active during replay");
+            if (f) FX1_CHECK(cu.gtm_read_bank() == old);
+         }
+      };
+      pipeline.begin(cfg, w, h, [&](std::vector<std::uint8_t> &&r) { ready(); y.insert(y.end(), r.begin(), r.end()); },
+                     [&](std::vector<std::uint8_t> &&r) { ready(); uv.insert(uv.end(), r.begin(), r.end()); });
+      std::vector<std::uint16_t> row(w, levels[f]);
+      for (unsigned k = 0; k < h; ++k) {
+         ++fed;
+         pipeline.push(row.data());
+         if (k == h / 2u) {
+            write_named(cu, "GTM_KEY", 0x21, sof + 100u);  // builder must use captured 0xBB
+         }
+      }
+      FX1_CHECK_EQ_CTX(callbacks, 0u, ctx + " output blocked before finish");
+      pipeline.finish();
+      FX1_CHECK_EQ_CTX(callbacks, h + h / 2u, ctx + " all NV12 rows emitted");
+      y.insert(y.end(), uv.begin(), uv.end());
+      FX1_CHECK_EQ_CTX(y == expected ? 1u : 0u, 1u, ctx + " mapped with old LUT, not freshly generated LUT");
+      pipe::end_of_frame(cu, cfg, pipeline.stats());
+   }
+
+   // A replay can be aborted after generation but before successful EOF.
+   // It must not publish its curve or contaminate the next begin's buffer.
+   control_unit aborted;
+   setup(aborted);
+   aborted.accepted_sof(1u << 20);
+   auto cfg = pipe::snapshot_config(aborted);
+   pipeline.begin(cfg, w, h, [&](std::vector<std::uint8_t> &&) {
+      FX1_CHECK(pipeline.stats().gtm_curve_generated);
+      throw std::runtime_error("simulated output abort");
+   }, [](std::vector<std::uint8_t> &&) {});
+   std::vector<std::uint16_t> row(w, 500);
+   for (unsigned k = 0; k < h; ++k) pipeline.push(row.data());
+   bool failed = false;
+   try {
+      pipeline.finish();
+   } catch (const std::runtime_error &e) {
+      failed = std::string(e.what()) == "simulated output abort";
+   }
+   FX1_CHECK(failed);
+   FX1_CHECK(!aborted.gtm_curve_valid());  // no end_of_frame publication for an aborted replay
+   aborted.stats_abort();
+   aborted.accepted_sof(2u << 20);
+   cfg = pipe::snapshot_config(aborted);
+   FX1_CHECK(!cfg.gtm_curve_valid);
+   std::vector<std::uint8_t> y, uv;
+   pipeline.begin(cfg, w, h, [&](std::vector<std::uint8_t> &&r) { y.insert(y.end(), r.begin(), r.end()); },
+                  [&](std::vector<std::uint8_t> &&r) { uv.insert(uv.end(), r.begin(), r.end()); });
+   std::fill(row.begin(), row.end(), 2800);
+   for (unsigned k = 0; k < h; ++k) pipeline.push(row.data());
+   pipeline.finish();
+   y.insert(y.end(), uv.begin(), uv.end());
+   FX1_CHECK(y == render_reference(cfg, pipe::gtm_identity_curve(), 2800));
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -247,5 +358,6 @@ int main(int argc, char **argv) {
    FX1_CHECK(channel_vectors >= 6);
    FX1_CHECK(below_minimum == 5);  // the four edge vectors and blc_profile2_bggr_64x32
    check_resizer_plans(root / "resizer_plans.txt");
+   check_staged_gtm();
    return fx1_test::summary("fx1_isp_test_pipeline_vectors");
 }

@@ -211,7 +211,9 @@ public:
    bool gtm_curve_valid() const { return gtm_valid_; }
    // End of frame: builds from the KEY, LWHITE and MANUAL captured at the
    // frame's accepted SOF (MAS v1.07 §6.16.4.3; ALG-GTM-09 superseded).
-   void gtm_end_of_frame(std::uint32_t yavg);
+   // A curve prepared before pixel replay can be committed here. Direct
+   // callers without one keep the SOF-captured builder used by block tests.
+   void gtm_end_of_frame(std::uint32_t yavg, const pipe::gtm_curve *prepared = nullptr);
    // Statistics (MAS v1.07 §6.21-6.23, §9.8). The sets of the frame just
    // accepted (valid after accepted_sof()); `en` is set only when the engine
    // admitted the measurement into a FREE bank with a legal configuration.

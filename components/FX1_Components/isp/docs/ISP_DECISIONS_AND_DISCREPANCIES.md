@@ -755,3 +755,28 @@ area). Platform CI after the fixes: 341 / 341.
 | V107-D101 | Camera artifact test (`fw/fx1_soc/tests/camera_isp/artifacts.c`): the dump layout is derived from the frame size (it overlapped at 64x32, V107-A43), dump 0x20000 bytes (`check_artifacts.py` follows), and the frame period doubled for that test: the CPU copies of the 64x32 planes outlast one 3 ms frame and dropped a frame in RAW10. The 4K TPG golden of the `mixed_crc` CLI regex is the post-V107-5 CRC `0x1420e85c`. | platform `fx1_regression_camera_isp_artifacts_raw10/raw12`, `fx1_regression_freertos_cli_camera_mixed_crc` |
 | V107-A46 | (Closed by V107-D102.) The sample profiles `samples/profiles/*.csrw` (and the SDK shared profile built from them) predate v1.07: they enable Gamma / EE without the v1.07 legacy confirmation, so under v1.07 those blocks run bypassed. | — |
 | V107-D102 | A46 (user, 2026-10-30): the sample profiles are regenerated. The four `outdoor1` presets are `make_profile.profile_writes` of the dataset frame loaded as `run_regression.py` loads it (format `le16_raw10_msb`); they equal the RAW regression's v1.07 profiles of that frame write for write. Against the old files: the Gamma and EE confirmations, and for `gtm_manual_qhd` the legal AEC grid (V107-D76) and its AWB_CTRL. `shared_bggr_2688x1520_full` is the new `full` with the 16 tuned values of the old shared profile kept (BLC, WB, CCM, EE_ALPHA, GTM key / white), i.e. only the two confirmations added. Probe on the SDK D65 input (`fx1_isp_run_raw`, 2 frames): the old shared profile gives the same NV12 as the new one with Gamma and EE disabled, the new one differs. SDK goldens are computed at packaging time (`package_sdk.sh`), none is checked in. | write-for-write equality with the RAW regression profiles; probe (`output/v107_11_profiles`); host `test_pack.py` |
+
+
+## 11. Staged automatic GTM execution (user request, 2026-11-02)
+
+The user requested this order explicitly: measure all of frame N, generate
+its LUT for N+1, then apply the LUT passed from N-1 to frame N. Frame 1 uses
+the fixed identity LUT (65 UQ8.8 ratios of 0x0100). Enabled automatic GTM
+therefore buffers the pre-GTM YUV888 image (3 bytes/pixel) and replays it
+only after the next curve has been generated using the frame's SOF-captured
+KEY/LWHITE. Its old mapping LUT is copied at begin and cannot be replaced by
+the freshly generated LUT. Disabled GTM and manual mode remain streaming.
+
+Generation and publication are separate: the prepared curve remains local
+to the frame until successful pipeline completion. Abort/reset while replay
+is in progress discards it; a new begin discards buffered pixels. The next
+accepted SOF still activates the last committed curve. CSR layout and pixel
+arithmetic are unchanged. This deliberately changes output latency and FIFO
+backpressure relative to the MAS v1.07 row-streaming GTM architecture. It
+adds up to 23.73 MiB host storage at 3840x2160; it does not imply ASIC frame
+RAM or a new DDR allocation. Earlier streaming timing claims are qualified
+by this override. No clock-accurate timing is claimed for LUT calculation.
+
+Evidence: `test_pipeline_vectors` staged-GTM ordering/history/abort checks;
+existing numerical/reference and recovery suites; workspace report
+`report/ISP_GTM_STAGED_EXECUTION_2026-11-02.md`.

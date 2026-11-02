@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// FX1 ISP pixel pipeline (M3): a chain of row-streaming blocks in the order of
-// HAS Table 6-2. Pure C++, no SystemC. The configuration is a snapshot taken
+// FX1 ISP pixel pipeline (M3): row stages in HAS Table 6-2 order. Enabled
+// automatic GTM inserts a full-frame measure/build/replay barrier (user
+// schedule, 2026-11-02); other modes remain streaming.
+// Pure C++, no SystemC. The configuration is a snapshot taken
 // at the accepted SOF (HAS §9.4.3), with the exceptions the decisions define:
 // gated sets use their committed values (DEC-24..27) and the Gamma/EE tables
 // are live (HAS Table 9-4, DEC-25).
@@ -82,6 +84,8 @@ struct pipeline_config {
    std::array<std::int32_t, 4> csc_m{0x4000, 0, 0, 0x4000};  // UU, UV, VU, VV: signed Q4.14
    // GTM (HAS §6.16): read bank (live table), valid flag, ROI size.
    bool gtm_en = false;
+   bool gtm_manual = false;
+   std::uint32_t gtm_key = 0x2E, gtm_lwhite = 0x0400;  // captured at SOF for the next curve
    bool gtm_curve_valid = false;
    const gtm_curve *gtm_bank = nullptr;
    std::uint32_t gtm_roi_log2 = 11;
@@ -171,6 +175,8 @@ struct frame_stats {
    std::uint32_t bpc_candidates = 0;             // dev > FLOOR (ALG-BPC-03)
    std::uint32_t bpc_defective = 0;              // dev > T
    std::uint32_t gtm_yavg = 1;                   // ROI mean of the GTM input luma (HAS §6.16.4.2)
+   bool gtm_curve_generated = false;             // prepared before replay, committed only at end_of_frame
+   gtm_curve gtm_next_curve{};                   // curve for the NEXT frame, never this frame's mapping
    bool nr_measured = false;                     // 2DNR enabled for the frame
    std::uint32_t nr_var = 0;                     // variance measured on the frame (HAS §6.17.7.2)
    aec_payload aec;                              // valid when cfg.aec.en
@@ -213,9 +219,12 @@ public:
    frame_geometry output(unsigned ch) const;
    // One input line of in_width 16-bit containers.
    void push(const std::uint16_t *samples);
-   // After the last input line: flushes every block (bottom borders).
+   // After the last input line: flushes upstream borders, generates the
+   // next automatic GTM curve, then replays buffered pixels with the old
+   // curve and flushes the remaining blocks. Does not publish new history.
    void finish();
-   // Valid after finish().
+   // All fields are valid after finish(). During buffered-auto output sink
+   // callbacks the GTM mean and prepared curve are already valid.
    const frame_stats &stats() const;
 
 private:

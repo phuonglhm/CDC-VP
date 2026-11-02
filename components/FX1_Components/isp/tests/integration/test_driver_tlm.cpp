@@ -1549,36 +1549,47 @@ struct bench : sc_module {
       FX1_CHECK_EQ_CTX(lut_mismatches(), 0u, ctx + " the software curve survives the next SOFs");
       fx1_isp_stop(&dev);
 
-      // The first automatic frame loses its output (ODMA write error, review
-      // U3-R3). The recovery stops the IDMA inside the frame (MAS v1.07
-      // §9.9.8): the pipeline never took it completely and its end built no
-      // curve, so the state is cold and the load proceeds at once.
+      // A read error aborts before the first automatic frame was fully
+      // taken: still cold. With staged GTM an ODMA error happens only after
+      // the entire input was buffered: the driver's conservative manual
+      // hand-over then needs one frame even though the output was lost.
       const fx1_isp_hal hal{&bench::hal_read, &bench::hal_write, &bench::hal_delay, this};
-      reset_and_init();
-      apply_profile(fx1_test::read_profile(dir / "profile.csrw"));
-      FX1_CHECK_EQ_CTX(fx1_isp_start(&dev, &b), FX1_ISP_OK, ctx + " start (lost frame)");
-      load_input(fx1_isp_next_input(&dev), input, in_w, in_h, in_stride, b);
-      mem->faults.push_back({tlm::TLM_WRITE_COMMAND, b.y[0], b.y[0] + 64u, 1});
-      FX1_CHECK_EQ_CTX(fx1_isp_queue_frame(&dev), FX1_ISP_OK, ctx + " queue");
-      const sc_time end = sc_time_stamp() + sc_time(20, SC_MS);
-      while (!(rd(FX1_ISP_DMA_ERR_OFFSET) & FX1_ISP_DMA_ERR_ERR_AXI_WR_BIT) && sc_time_stamp() < end) {
-         wait(100, SC_NS);
+      for (const bool read_error : {true, false}) {
+         const std::string lost = ctx + (read_error ? " lost first input" : " lost buffered output");
+         reset_and_init();
+         apply_profile(fx1_test::read_profile(dir / "profile.csrw"));
+         FX1_CHECK_EQ_CTX(fx1_isp_start(&dev, &b), FX1_ISP_OK, lost + " start");
+         load_input(fx1_isp_next_input(&dev), input, in_w, in_h, in_stride, b);
+         const std::uint64_t fault = read_error ? b.in[0] : b.y[0];
+         mem->faults.push_back({read_error ? tlm::TLM_READ_COMMAND : tlm::TLM_WRITE_COMMAND,
+                                fault, fault + 64u, 1});
+         FX1_CHECK_EQ_CTX(fx1_isp_queue_frame(&dev), FX1_ISP_OK, lost + " queue");
+         const auto err = read_error ? FX1_ISP_DMA_ERR_ERR_AXI_RD_BIT : FX1_ISP_DMA_ERR_ERR_AXI_WR_BIT;
+         const sc_time end = sc_time_stamp() + sc_time(20, SC_MS);
+         while (!(rd(FX1_ISP_DMA_ERR_OFFSET) & err) && sc_time_stamp() < end) wait(100, SC_NS);
+         FX1_CHECK_EQ_CTX(rd(FX1_ISP_DMA_ERR_OFFSET) & err, err, lost + " injected error observed");
+         wait(sc_time(1, SC_MS));
+         fx1_isp_events ev{};
+         fx1_isp_irq(&dev, &ev);
+         fx1_isp_recovery rec{};
+         FX1_CHECK_EQ_CTX(fx1_isp_recover_ex(&dev, ev.dma_err, &rec), FX1_ISP_OK, lost + " recover");
+         FX1_CHECK_EQ_CTX(fx1_isp_next_lost(&dev, nullptr, nullptr), FX1_ISP_OK, lost + " frame lost");
+         mem->faults.clear();
+         FX1_CHECK_EQ_CTX(rd(FX1_ISP_ODMA_FRAME_COUNT_OFFSET), 0u, lost + " no output succeeded");
+         FX1_CHECK_EQ_CTX(dev.in_flight, 0u, lost + " nothing queued");
+         FX1_CHECK_EQ_CTX(rd(FX1_ISP_IDMA_FRAME_COUNT_OFFSET), read_error ? 0u : 1u,
+                          lost + " input not taken / fully buffered before output");
+         FX1_CHECK_EQ_CTX(fx1_isp_load_gtm_lut(&dev, lut), read_error ? FX1_ISP_OK : FX1_ISP_EAGAIN,
+                          lost + " cold load / conservative hand-over");
+         if (!read_error) {
+            one_frame();
+            FX1_CHECK_EQ_CTX(fx1_isp_load_gtm_lut(&dev, lut), FX1_ISP_OK, lost + " load after hand-over");
+         }
+         one_frame();
+         one_frame();
+         FX1_CHECK_EQ_CTX(lut_mismatches(), 0u, lost + " manual curve survives subsequent SOFs");
+         fx1_isp_stop(&dev);
       }
-      wait(sc_time(1, SC_MS));  // the frame's end
-      fx1_isp_events ev{};
-      fx1_isp_irq(&dev, &ev);
-      fx1_isp_recovery rec{};
-      FX1_CHECK_EQ_CTX(fx1_isp_recover_ex(&dev, ev.dma_err, &rec), FX1_ISP_OK, ctx + " recover");
-      FX1_CHECK_EQ_CTX(fx1_isp_next_lost(&dev, nullptr, nullptr), FX1_ISP_OK, ctx + " frame lost");
-      mem->faults.clear();
-      FX1_CHECK_EQ_CTX(rd(FX1_ISP_ODMA_FRAME_COUNT_OFFSET), 0u, ctx + " no output succeeded");
-      FX1_CHECK_EQ_CTX(dev.in_flight, 0u, ctx + " nothing queued");
-      FX1_CHECK_EQ_CTX(rd(FX1_ISP_IDMA_FRAME_COUNT_OFFSET), 0u, ctx + " the aborted frame was not taken");
-      FX1_CHECK_EQ_CTX(fx1_isp_load_gtm_lut(&dev, lut), FX1_ISP_OK, ctx + " lost frame: cold");
-      one_frame();
-      one_frame();
-      FX1_CHECK_EQ_CTX(lut_mismatches(), 0u, ctx + " curve kept after a lost first frame");
-      fx1_isp_stop(&dev);
 
       // Re-initialised without i_rst_n after an automatic frame: the pending
       // curve survives the soft reset of fx1_isp_init, so this is not cold.

@@ -59,6 +59,19 @@ Three SystemC threads connected by 2-line FIFOs (HAS Table 6-87,
 A full FIFO back-pressures its producer, so an ODMA with no free buffer stalls
 the pipeline and then the IDMA without losing data (DEC-18).
 
+**Staged automatic GTM (user request, 2026-11-02):** when GTM is enabled in
+automatic mode, the pipeline holds a complete pre-GTM YUV888 frame before
+it emits any output. It measures the frame, prepares the next frame's LUT,
+then replays the stored pixels with the old LUT captured for this frame.
+The extra host buffer is 3 x active W x active H bytes (23.73 MiB at
+3840x2160), not an additional mapped DDR region. Output FIFO backpressure
+therefore reaches the IDMA later than in the MAS streaming architecture;
+input N may be fully read before ODMA starts N. This is an intentional VP
+schedule override, not a claim that the ASIC has this frame store. Disabled
+GTM and manual mode retain the streaming path. Prepared history is not
+published if replay is aborted; the existing reset/epoch rules still apply.
+
+
 | Step | Event | Register effects |
 |---|---|---|
 | 1 | IDMA arm: `IDMA_EN` and head `IDMA_BUF_VALID` | Working set captured (base, stride, `COMMON_FRAME_*`, burst length, `IDMA_BUF_TAG/TS` of the buffer, carried with every line of the frame); illegal → `ALIGN_OR_GEOMETRY`, no start. `idma_busy`, `IRQ_IDMA_START` |

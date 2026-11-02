@@ -715,13 +715,13 @@ void control_unit::lsc_profile_sel(const register_file::write_effect &fx) {
 
 // ---- GTM, 2DNR, EE state -------------------------------------------------------
 
-void control_unit::gtm_end_of_frame(std::uint32_t yavg) {
+void control_unit::gtm_end_of_frame(std::uint32_t yavg, const pipe::gtm_curve *prepared) {
    // The builder uses the measured frame's KEY, LWHITE and MANUAL captured at
    // its accepted SOF, not the live CSRs at EOF (MAS v1.07 §6.16.4.1, §6.16.4.3).
    if (gtm_sof_.manual) {
       return;  // curve generator held; the software curve persists (ALG-GTM-07)
    }
-   gtm_banks_[gtm_read_ ^ 1u] = pipe::gtm_build_curve(yavg, gtm_sof_.key, gtm_sof_.lwhite);
+   gtm_banks_[gtm_read_ ^ 1u] = prepared ? *prepared : pipe::gtm_build_curve(yavg, gtm_sof_.key, gtm_sof_.lwhite);
    gtm_pending_ = true;
 }
 

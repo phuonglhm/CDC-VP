@@ -112,6 +112,9 @@ pipeline_config snapshot_config(control_unit &ctl) {
    // Manual mode reads the frame bank's manual curve, applied only when complete;
    // automatic mode the published ping-pong curve (MAS v1.07 §6.16.4.3).
    const bool gtm_manual = reg(FX1_ISP_GTM_CTRL_OFFSET) & FX1_ISP_GTM_CTRL_MANUAL_MASK;
+   c.gtm_manual = gtm_manual;
+   c.gtm_key = reg(FX1_ISP_GTM_KEY_OFFSET) & FX1_ISP_GTM_KEY_KEY_MASK;
+   c.gtm_lwhite = reg(FX1_ISP_GTM_LWHITE_OFFSET) & FX1_ISP_GTM_LWHITE_LWHITE_MASK;
    c.gtm_curve_valid = gtm_manual ? ctl.gtm_manual_complete() : ctl.gtm_curve_valid();
    c.gtm_bank = gtm_manual ? &ctl.gtm_manual_curve() : &ctl.gtm_read_bank();
    c.gtm_roi_log2 = reg(FX1_ISP_GTM_ROI_LOG2_OFFSET) & FX1_ISP_GTM_ROI_LOG2_ROI_LOG2_MASK;
@@ -605,17 +608,24 @@ public:
       x0_ = (w - (1u << kx_)) >> 1;  // ALG-GTM-03
       y0_ = (h - (1u << ky_)) >> 1;
    }
-   void apply(yuv_row &r) {
+   void measure(const yuv_row &r) {
       if (y_ >= y0_ && y_ < y0_ + (1u << ky_)) {
          for (std::uint32_t x = x0_; x < x0_ + (1u << kx_); ++x) {
             sum_ += r[x].y;  // input luma, regardless of EN
          }
       }
       ++y_;
-      if (!c_->gtm_en || !c_->gtm_curve_valid) {
+   }
+   void apply(yuv_row &r) {
+      if (!c_->gtm_en) {
          return;
       }
-      const gtm_curve &R = *c_->gtm_bank;
+      // The first automatic frame has no curve from a preceding frame.
+      // Apply the default identity LUT through the same interpolation path;
+      // do not read uninitialised SRAM or mark automatic history valid.
+      // An incomplete manual curve likewise retains its specified pass-through.
+      static constexpr gtm_curve default_curve = gtm_identity_curve();
+      const gtm_curve &R = c_->gtm_curve_valid ? *c_->gtm_bank : default_curve;
       for (yuv &p : r) {
          const std::int64_t a = p.y >> 2, f = p.y & 3;
          const std::int64_t ratio = R[a] + ((f * (std::int64_t{R[a + 1]} - R[a])) >> 2);
@@ -1527,6 +1537,9 @@ struct isp_pipeline::impl {
    std::deque<row<uv>> join_uv; // chroma path output (CNF)
    std::uint32_t y_post_bpc = 0;
    frame_stats stats;
+   bool gtm_buffered = false;
+   gtm_curve gtm_frame_curve{};  // immutable old curve, copied before the new one is generated
+   std::vector<std::uint8_t> gtm_frame;  // pre-GTM packed YUV888, at most 3 * active W * H bytes
    demosaic_stage dms;
    std::array<channel_path, num_channels> paths;
    isp_pipeline::yuv_tap tap;
@@ -1554,6 +1567,18 @@ struct isp_pipeline::impl {
    // compares against the GTM luma) run separately and are re-joined by row
    // before the Resizer: Y from EE, U/V from CNF (ALG-CNF-01).
    void yuv_rows(yuv_row &&r) {
+      gtm.measure(r);  // always measure pre-GTM luma, also while mapping is disabled
+      if (gtm_buffered) {
+         for (const yuv &p : r) {  // CSC output components are unsigned 8-bit
+            gtm_frame.push_back(static_cast<std::uint8_t>(p.y));
+            gtm_frame.push_back(static_cast<std::uint8_t>(p.u));
+            gtm_frame.push_back(static_cast<std::uint8_t>(p.v));
+         }
+         return;
+      }
+      mapped_rows(std::move(r));
+   }
+   void mapped_rows(yuv_row &&r) {
       gtm.apply(r);
       y_row y(r.size());
       for (std::size_t x = 0; x < r.size(); ++x) {
@@ -1561,6 +1586,25 @@ struct isp_pipeline::impl {
       }
       cnf.push(r, [this](row<uv> &&o) { join_uv.push_back(std::move(o)); join(); });
       nr.push(std::move(y), [this](y_row &&o) { luma(std::move(o)); });
+   }
+   void replay_gtm() {
+      if (!gtm_buffered) {
+         return;
+      }
+      const std::size_t expected = 3u * std::size_t{active.width} * active.height;
+      if (gtm_frame.size() != expected) {
+         throw std::runtime_error("GTM buffered frame is incomplete");
+      }
+      std::size_t at = 0;
+      for (std::uint32_t y = 0; y < active.height; ++y) {
+         yuv_row r(active.width);
+         for (yuv &p : r) {
+            p = {gtm_frame[at], gtm_frame[at + 1u], gtm_frame[at + 2u]};
+            at += 3u;
+         }
+         mapped_rows(std::move(r));  // uses only the old curve, not stats.gtm_next_curve
+      }
+      gtm_frame.clear();
    }
    void luma(y_row &&r) {
       ee.push(std::move(r), [this](y_row &&o) { join_y.push_back(std::move(o)); join(); });
@@ -1654,6 +1698,13 @@ frame_geometry isp_pipeline::begin(const pipeline_config &cfg, std::uint32_t in_
    m.sh = cfg.bayer_pattern & 1u;
    m.sv = (cfg.bayer_pattern >> 1) & 1u;
    m.active = control_unit::derive_active(in_width, in_height, cfg.bayer_pattern);
+   m.gtm_buffered = cfg.gtm_en && !cfg.gtm_manual;
+   m.gtm_frame.clear();  // also discards a frame abandoned before finish()
+   if (m.gtm_buffered) {
+      m.gtm_frame.reserve(3u * std::size_t{m.active.width} * m.active.height);
+      m.gtm_frame_curve = cfg.gtm_curve_valid ? *cfg.gtm_bank : gtm_identity_curve();
+      m.cfg.gtm_bank = &m.gtm_frame_curve;
+   }
    m.tap = std::move(tap);
    m.sinks = sinks;
    m.y_in = m.y_bayer = m.y_post_bpc = 0;
@@ -1715,6 +1766,14 @@ void isp_pipeline::finish() {
    m.bpc.finish([&](row<std::uint16_t> &&r) { m.bayer_row(std::move(r)); });
    m.dms.finish([&](row<rgb> &&r) { m.rgb_row(std::move(r)); });
    m.af.finish();
+   // User-requested schedule: finish measuring N, generate N+1, then map
+   // N with the immutable curve from N-1 (identity for a cold first frame).
+   m.stats.gtm_yavg = m.gtm.yavg();
+   if (!m.cfg.gtm_manual) {
+      m.stats.gtm_next_curve = gtm_build_curve(m.stats.gtm_yavg, m.cfg.gtm_key, m.cfg.gtm_lwhite);
+      m.stats.gtm_curve_generated = true;
+   }
+   m.replay_gtm();
    m.cnf.finish([&](row<uv> &&o) { m.join_uv.push_back(std::move(o)); m.join(); });
    m.nr.finish([&](y_row &&o) { m.luma(std::move(o)); });
    m.ee.finish([&](y_row &&o) { m.join_y.push_back(std::move(o)); m.join(); });
@@ -1723,7 +1782,6 @@ void isp_pipeline::finish() {
          m.paths[c].finish([&m, c](yuv_row &&o) { m.ofmt(c, o); });
       }
    }
-   m.stats.gtm_yavg = m.gtm.yavg();
    m.stats.nr_measured = m.nr.enabled();
    m.stats.nr_var = m.nr.variance();
    m.stats.lsc_overflow = m.lsc.overflow();
@@ -1804,7 +1862,9 @@ void end_of_frame(control_unit &ctl, const pipeline_config &cfg, const frame_sta
       ctl.hw_write(FX1_ISP_BPC_NUM_CANDIDATES_OFFSET, 0x3FFFu, std::min<std::uint32_t>(st.bpc_candidates, 0x3FFFu));
       ctl.hw_write(FX1_ISP_BPC_NUM_DEFECTIVE_OFFSET, 0x3FFFu, std::min<std::uint32_t>(st.bpc_defective, 0x3FFFu));
    }
-   ctl.gtm_end_of_frame(st.gtm_yavg);  // stats and rebuild run regardless of EN (HAS p105)
+   // Publish only after processing completed. A reset/abort during buffered
+   // replay discards the prepared curve instead of leaking it to another frame.
+   ctl.gtm_end_of_frame(st.gtm_yavg, st.gtm_curve_generated ? &st.gtm_next_curve : nullptr);
    ctl.ee_end_of_frame();              // radial gain range event, once per processed frame
    if (st.nr_measured) {
       ctl.nr_publish(st.nr_var);         // held while 2DNR is disabled (ALG-2DNR-09)

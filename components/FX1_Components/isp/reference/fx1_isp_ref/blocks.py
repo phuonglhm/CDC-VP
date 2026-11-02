@@ -323,6 +323,11 @@ def gtm(yuv, regs, stats):
     x0, y0 = (w - (1 << kx)) >> 1, (h - (1 << ky)) >> 1        # ALG-GTM-03
     total = int(yuv[y0:y0 + (1 << ky), x0:x0 + (1 << kx), 0].sum())
     stats["_gtm_yavg"] = max(total >> (kx + ky), 1)
+    # Staged auto GTM: measure N completely and prepare N+1 before mapping
+    # N with the preceding frame's curve. Publication stays at successful EOF.
+    manual, key, lwhite = regs.gtm_cap
+    if not manual:
+        stats["_gtm_next_curve"] = gtm_curve(stats["_gtm_yavg"], key, lwhite)
     if regs.f("GTM_CTRL", "manual"):
         # Manual bank 0, applied only when all 65 points are complete (MAS v1.07 §6.16.4.3).
         if not (regs.f("GTM_CTRL", "en") and all(regs.gtm_manual_written)):
@@ -656,7 +661,9 @@ def frame_eof(regs, stats):
     statistics publication."""
     manual, key, lwhite = regs.gtm_cap         # captured at the frame's SOF, not live at EOF
     if not manual:
-        regs.gtm_banks[regs.gtm_read ^ 1] = gtm_curve(stats["_gtm_yavg"], key, lwhite)
+        prepared = stats.get("_gtm_next_curve")
+        regs.gtm_banks[regs.gtm_read ^ 1] = (prepared if prepared is not None
+                                            else gtm_curve(stats["_gtm_yavg"], key, lwhite))
         regs.gtm_pending = True
     if "_nr_var" in stats:
         regs.nr_var = stats["_nr_var"]
