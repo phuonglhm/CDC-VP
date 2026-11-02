@@ -15,7 +15,14 @@ set, `HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1 HAS_GVU_REGS=1 HAS_GVU_AG
 back-pressure, the DFC driving `GvuTop` through the register file of `gvu_core`, residual add and max pool on the clock). The checks
 V1 to V36 were made before that change; their numbers (for example 62,666,123 and 41,680,289 cycles) belong to the configuration
 with the five knobs set to 0 (the model's own epilogue, add and max pool), which is still available by setting them to 0. Sections
-6.14 and 6.15 (V37, V38) give the checks of the new default.
+6.14 and 6.15 (V37, V38) give the checks of that default. V40 to V42 (sections 6.17 to 6.19) cover average pool, Softmax,
+attention requant and LayerNorm on `GvuTop` and the `DMA_TENSOR` COPY instruction, checked while they were options in the call
+style. Since V43 (section 6.20) the four operations run as jobs on the clock of `GvuTop` and are on by default (`HAS_GVU_AVG`,
+`HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN`); with these four knobs set to 0 the model gives the numbers of V38. `DMA_TENSOR`
+and slice / concat by 4-D DMA descriptors (`HAS_DMA_ND`, V44, section 6.21) are on by default since V46 (section 6.23),
+together with the `GvuTop` epilogue depth of the RTL (11). Section 6.22 (V45)
+gives the verification by instruction flow: what each step of each flow of the vector unit is checked against. Section 6.24 (V47)
+covers the options that follow the `neo_lite` RTL and the transpose after the epilogue, all off by default (`HW_RTL_ALIGNMENT.md`).
 
 ## 1. Verification strategy
 
@@ -103,6 +110,14 @@ integer network is to the floating-point model; that accuracy question is outsid
 | V37 | Register file of the vector unit and the DFC flow (`HAS_GVU_REGS=1`, `GVU_TOP_CORE_INTEGRATION.md`, sections 2.8 and 5; section 6.14) | Register-file and sequence unit tests at three write latencies; the register file against the RTL (200,000 cycles, two simulators); check programs of 6 and 9 instructions through the registers and with the residual add outside them; whole YOLOv8m in seven windows plus the 12 residual adds one by one; the same window with the register file on and off; the end-of-layer flag on a layer whose rows straddle two SRAM-C words; the regression of the vector unit | Every check PASS; 98 of 98 instructions, 83 of 83 layers left by the flags, 0 elements different; +1,819 cycles (0.003 %) over the reference; regression 131 of 131 | MEASURED |
 | V38 | New default configuration (section 6.15) | Whole YOLOv8m with the knobs of V36 on one continuous run; regression with the new defaults; continuous runs of both networks with no variable set | YOLOv8m 98 of 98, 62,420,669 cycles (equal to the earlier continuous run to the cycle); with no variable set: YOLOv8m 62,422,935, ViT-B/16 41,582,468, both PASS; regression 131 of 131 | MEASURED |
 | V39 | Max pool over a whole layer against the hardware RTL: runs back to back without a reset, the SPPF max pools of YOLOv8m as vector sets (section 6.16) | `tools/has/gvu_oracle/tb_oracle_maxpool_runs.sv` on the RTL with the fixes, `tools/has/tb_gvu_top_maxpool_runs.cpp` on `GvuTop`, traces compared line by line and with the golden outputs; ModelSim and Verilator | 32 of 32 ModelSim cases and 26 of 26 Verilator traces equal to the model; every case with the fix of B12 equal to the golden | MEASURED |
+| V40 | Average pool on `GvuTop` with the data path of the RTL patch (`HAS_GVU_AVG`; section 6.17) | Tail unit against an independent reference; `GvuTop` on the datasets of the vector-unit owner, on generated cases and on runs; the patch in an RTL simulation; the AVG_POOL check program through the register file; negative control with the rounding and narrowing of the delivered RTL | 0 lanes different everywhere; write delay D = 5 in the RTL simulation and in `GvuTop`; check program 8 of 8, 4 instructions on the unit; negative control fails | MEASURED |
+| V41 | Softmax, attention requant and LayerNorm on `GvuTop` (`HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN`; section 6.18) | Softmax rows of three ViT-B/16 heads through `GvuTop`; B20 and B21 in an RTL simulation; transformer check program with each option and all three; lane LayerNorm unit test; negative control | 0 lanes different with the fixes; transformer check 14 of 14 in every run; delivered RTL: 326 / 3,443 / 2,033 outputs different on the three heads; whole ViT-B/16 PASS 244 / 244, 0 different, 40,782,987 cycles in the call style with the register file (a configuration that no longer exists; the default is V43) | MEASURED |
+| V42 | `DMA_TENSOR` COPY (opcode `0x16`, `HAS_DMA_TENSOR`, on by default since V46; section 6.19) | Instruction unit test; check program of 25 instructions (19 COPY) on the model and on the independent reference in several configurations; cycle formula; default programs with the option off and on; YOLOv8m concat program windows | 25 of 25 PASS and MATCH everywhere; every COPY takes the cycles of the formula; default logs and images identical; whole YOLOv8m with the COPY program PASS 135 / 135, 0 different, 63,902,431 cycles | MEASURED |
+| V43 | The four operations of V40 and V41 as jobs on the clock of `GvuTop`, on by default; Softmax stage 3 with an exponent of 0 (section 6.20) | Check programs with the four knobs at 0, on the clock and in the call style; regression with the new defaults; whole ViT-B/16 with no variable set; a constructed Softmax case with E = 0 on the model and in an RTL simulation | Four knobs at 0: logs identical byte for byte to V38; transformer check 263,816 cycles on the clock (epilogue depth 9; 263,883 at the depth 11 of V46), 242,711 in the call style; regression 162 of 162; ViT-B/16 PASS 244 / 244, 41,244,030 cycles; YOLOv8m PASS 98 / 98, 62,422,935 cycles; E = 0: model 0 of 64 different, delivered RTL and B20 patch 8 of 64 | MEASURED |
+| V44 | Slice and concat by 4-D DMA descriptors (`HAS_DMA_ND`, on by default since V46; `DMA_SLICE_CONCAT.md`; section 6.21) | Descriptor unit test; 27-instruction check program and 10 slices / concats of 256 KB tensors on the model and on `ref_program.py`; the same programs with the option off; tile window and write-back by descriptors on a check program; the default with the option off | 0 mismatches; 27 of 27 and 10 of 10 PASS, `ref_program.py` MATCH; option off: the 14 and 10 slice / concat instructions refused; tile window and write-back: same DRAM image and cycles as with the option off; transformer check 263,816 cycles at the epilogue depth 9, unchanged | MEASURED |
+| V45 | Verification by instruction flow (`FLOW_VERIFICATION.md`; section 6.22) | `tools/has/verify_flows.py` on the logs of the regression: the ten flows of the vector unit and the DMA, every numbered step with the checks that look at it, each against the RTL simulation, the specification, a proposed definition or the model only, with negative checks | 67 of 67 steps PASS; 1 step end to end only (DMA load of average pool); 3 steps follow the specification where the delivered RTL differs, the size of the difference measured | MEASURED |
+| V46 | Defaults closest to the hardware: `HAS_DMA_TENSOR` and `HAS_DMA_ND` on, `GvuTop` epilogue depth 11 as the RTL; YOLOv8m with concat by 4-D DMA descriptors (`insts_pe3_nd`; section 6.23) | Regression with the new defaults; the runs of concat instructions of `insts_pe3_nd` on the model and on `ref_program.py`; whole YOLOv8m `insts_pe3_nd` and whole ViT-B/16 with no variable set; benches whose expected latency follows the depth, built with 11 and with 9 | 182 of 182; 13 of 13 windows PASS, MATCH 13 of 13; YOLOv8m PASS 135 / 135, 64,135,381 cycles; ViT-B/16 PASS 244 / 244, 41,244,621 cycles; 0 elements and 0 lanes different; `tb_gvu_top_vs_model` 0 of 51 different at both depths | MEASURED |
+| V47 | Options that follow the `neo_lite` RTL (register map, vbank#1 depth, RESIDUAL, one-dimensional DFC commands, write-back through vbank2, bus cost) and the corner turn after the epilogue, all off by default (`HW_RTL_ALIGNMENT.md`; section 6.24) | Ports against RTL simulations; every option on the reference check program; options off identical; regression; one ViT-B/16 block and the whole ViT-B/16 with V token-major; ViT-B/16 closest to the RTL; package check | 0 differences against the RTL for the register map (30,000 cycles), vbank#1 and RESIDUAL (98,304 elements); regression 193 of 193; ViT-B/16 with V token-major PASS 244 / 244, 41,245,003 cycles; closest to the RTL PASS, 41,608,570 cycles; package check 100 of 100 | MEASURED |
 | V29 | System wrapper revision that already contains the DRAM-window registers, with the current v4.6 native model | The wrapper built unchanged against the model root `core_rtl/`: its own unit test; the C replay engine through the wrapper on the transformer check, in the default configuration and with `HAS_SPEC=v47ref`; host steps and output CRCs of whole YOLOv8m and ViT-B/16 on the golden images; negative controls: one corrupted output byte, and one instruction pushed with an unsupported opcode | Unit test passes; transformer check 14 of 14 with 285,205 cycles (250,885 with `HAS_SPEC=v47ref`); 100 and 244 output CRCs match; the corrupted byte is detected; the refused instruction fails its step with error code 4 read from the model's status register, the other 13 instructions pass | MEASURED |
 | V21 | Vector-unit additions | AVG_POOL through the instruction path (8 instructions: 2x2 to global windows, int16 wrap, saturation, negative scale); pipeline registers of table 2; load/store unit counting | AVG_POOL 8/8 bit-exact; 16/16 stages fit the specified registers; window D unchanged (1,658,986) | MEASURED |
 | V20 | RTL-accurate core through the TLM wrapper | Wrapper with the DRAM-window change, model root `core_rtl/`, 1.25 ns clock: the wrapper's own unit test, and the whole YOLOv8m (98 instructions, 2 host steps) and ViT-B/16 (244 instructions) programs replayed as firmware would | Unit test PASS (0 failed checks); every instruction and host step PASS, 0 mismatches; per-instruction cycles equal to the reference runs (YOLOv8m 98/98, sum 62,681,370; ViT-B/16 244/244, sum 39,922,316) | MEASURED |
@@ -537,6 +552,159 @@ padding). The script checks that each reference equals a plain max pool and that
 With the fix of B12 the RTL needs no reset between runs: the runs back to back give the same trace as the model's reset
 before each run. The RTL patches, the sets and the scripts went to the hardware team as a separate test package.
 
+Two more fixed datasets of the owner of the vector unit (`target/test/maxpool/{tile,vec}`: 3 channels of 80 x 80 with a 5 x 5
+window over several W tiles, and 40 channels of 20 x 20 with a 3 x 3 window in one W tile, stride 1, no padding) run on
+`GvuTop` with `tools/has/tb_gvu_top_maxpool_vectors.cpp`: 0 of 17,328 and 0 of 12,960 values differ, `POOLING_MAX` ends after
+21,911 and 23,049 cycles (MEASURED); a plain max pool written separately gives the same golden values. The regression
+(`tools/has/regress_gvu.sh`) has three items for them and passes 134 of 134 (MEASURED).
+
+### 6.17 Average pool on the vector unit (V40)
+
+The delivered RTL has no average pool data path; the model implements the one of the RTL patch (MAS drawing "Avg_Pool": 16-bit
+window sum, product with the int32 Avg_Scale, round-shift by Avg_Shift with the rounding mode of the instruction, saturation to
+int8; Reg 25 / 26, opcode 8) in `GvuTop` behind `HAS_GVU_AVG` (`GVU_OPS_ON_GVUTOP.md`, section 2).
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Tail unit | `tools/has/tb_gvu_avgpool_pipe.cpp` against a reference written from the drawing | 58,784 lanes, 0 different | MEASURED |
+| Datasets of the vector-unit owner | `tools/has/tb_gvu_top_avgpool.cpp vectors` on `target/test/avgpool/{tile,vec}` | 0 of 17,328 and 0 of 12,960 values different; done after 21,916 and 23,054 cycles | MEASURED |
+| RTL patch in an RTL simulation (ModelSim) | the same datasets on the RTL with the patch | 0 different; the first round-shift output comes 5 edges after the last element of a window, so the write is delayed by D = 5 (D = 4 gives wrong data); done = max pool done + 5, equal to `GvuTop` | MEASURED |
+| Generated cases and runs | `tb_gvu_top_avgpool cases`, `runs`; `tools/has/ref_avgpool.py` (independent Python reference) | 19 of 19 cases; runs back to back as max pool; the Python reference 0 different | MEASURED |
+| Instruction path | AVG_POOL check program, `HAS_GVU_AVG=1`, register file on | 8 of 8; 4 instructions on `GvuTop` (1,104 lanes, 0 different, 24 register writes); 4 with a window the pooling data path does not handle stay on the model; 3,687 cycles (3,486 with the option off) | MEASURED |
+| Negative control | `HAS_GVU_AVG_AS_RTL=1` (round half away and wrap, as the RTL arithmetic units would do without the patch) | cases: 12 of 19 different; check program FAIL, 175 lanes different | MEASURED |
+
+### 6.18 Softmax, attention requant and LayerNorm on the vector unit (V41)
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Softmax rows of ViT-B/16 on `GvuTop` | `tools/has/tb_gvu_top_softmax_vit.cpp` on three heads (blocks 0, 6, 11), every stage compared with the functional model | row maximum and sum 0 different; outputs 0 / 0 / 0 different with the stage-3 shift `E + q - P`; 326 / 3,443 / 2,033 of 6,304 different with the shift `E` of the delivered RTL (B20) | MEASURED |
+| B20 in an RTL simulation (ModelSim) | the RTL with stage 3 shifting by `E - 1` | 0 / 0 / 0 different; the delivered RTL gives the same differences as the port | MEASURED |
+| B21 in an RTL simulation (ModelSim) | Softmax through the register file of `gvu_core` | delivered RTL: the vbank1 buffer bit flips 617 times during one Softmax and on every idle edge after it, the row maximum is read wrong 99 of 197 times, every output differs; with the patch (flip on the rising edge) the register path equals the direct drive value for value | MEASURED |
+| Transformer check program | 9 FUSED_ATTN and 5 LAYERNORM, each option and all three (`GVU_OPS_ON_GVUTOP.md`, section 6) | 14 of 14 in every run, 0 lanes different; 243,649 cycles with all three in the call style with the register file, a configuration that no longer exists (285,256 with the options off; the default is in section 6.20) | MEASURED |
+| Negative control | `HAS_GVU_SOFTMAX_AS_RTL=1` | FAIL, 94,961 of 242,070 lanes different | MEASURED |
+| Lane LayerNorm | `tools/has/tb_gvu_ln_lanes.cpp`: 300 random groups, H 1 to 768, 1 to 32 rows, every round mode | 2,013,991 lanes, 0 different; 4 of 4 unsupported parameter sets refused. The cycles of the lane data path are an ESTIMATE (no RTL) | MEASURED |
+| Whole ViT-B/16 with the three options, call style with the register file (a configuration that no longer exists; the default is in section 6.20) | `tb_has_npu_top $FE_WORK/has/vit_full` with `HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 HAS_GVU_LN=1` (average pool and COPY options also on, not used) | PASS 244 / 244, 0 elements different, 40,782,987 cycles (options off: 41,582,468; the whole difference, -799,481 cycles, is in FUSED_ATTN and LAYERNORM, and the LayerNorm cycles are an ESTIMATE), core busy cycles unchanged (24,852,624); Softmax 144 instructions, 1,008 groups, 5,588,496 lanes, 0 different, 4,032 register writes; attention requant 288 phases, 7,404,048 lanes, 0 different, 864 register writes, 200,592 ST1 cycles behind phase 1; LayerNorm 175 groups, 3,782,400 lanes, 0 different, 542,675 cycles (ESTIMATE) | MEASURED |
+
+### 6.19 DMA_TENSOR COPY (V42)
+
+`DMA_TENSOR` (`DMA_TENSOR_MODE.md`) copies one contiguous DRAM block through the DMA read and write ports; the YOLOv8m program
+built with `fe_emit_insts.py --slice-concat dma` uses it for every concat.
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Instruction unit test | `tools/has/tb_has_dma_tensor_isa.cpp`: encoding, refusals (length 0, past 2^32, overlap, op other than 0) | PASS | MEASURED |
+| Check program | `tools/has/make_dma_tensor_gate.py`: 4 GEMM_FUSED, 1 ADD, 1 MAX_POOL, 19 COPY (concat read by a GEMM, COPY of an ADD output read by a max pool, COPY of a COPY, COPY over a later input, 13 sizes from 1 to 200,000 bytes) | 25 of 25 on the model and MATCH 25 of 25 on `ref_program.py` in the default configuration, with the five vector-unit knobs at 0, with the legacy profile, with chunks of 128 and 4,096 bytes and with a DRAM latency of 20; a third reference (16 copied regions from the input data) PASS | MEASURED |
+| Negative control | option off | the 19 COPY instructions refused, FAIL | MEASURED |
+| Cycle formula | every COPY of the check program in every configuration | equal to the formula of `DMA_TENSOR_MODE.md`, section 4, cycle for cycle | MEASURED |
+| Default programs unchanged | five earlier check programs, option off and on, default and five knobs at 0 | logs (cycles included) and memory images identical | MEASURED |
+| YOLOv8m COPY program | 135 instructions (98 + 37 COPY, 23,270,400 bytes); 13 windows around the COPY instructions | 13 of 13 PASS, `ref_program.py` MATCH 13 of 13, 37 of 37 COPY equal to the formula (1,479,532 cycles); the default (`alias`) program regenerated identical byte for byte | MEASURED |
+| Whole YOLOv8m with the COPY program | `HAS_DMA_TENSOR=1 tb_has_npu_top $FE_WORK/has/insts_pe3_dma` with the four vector-unit options on; predicted 63,902,467 cycles (DERIVED) | PASS 135 / 135, 0 elements different, 63,902,431 cycles (predicted 63,902,467: the default 62,422,935 plus 1,479,496 cycles of the COPY instructions against 1,479,532 by the formula; the 36 cycles are the poll step of the bench), core busy cycles equal to the default (55,653,442); on `GvuTop` 52,017,408 epilogue lanes, 6,374,400 residual-add lanes, 345,600 max pool lanes, 0 different, STALL NEEDED 0 | MEASURED |
+
+### 6.20 The four operations as jobs on the clock, on by default (V43)
+
+Average pool, Softmax, the requant of FUSED_ATTN and LayerNorm run on `GvuTop` as jobs on its clock: the data flow controller
+starts a job (`start_avgpool`, `start_softmax`, `start_requant`, `start_layernorm`) and waits for its end; the job takes one step
+per edge. The requant of each attention phase starts after the multiplication of the core; the Softmax row maximum is no longer
+counted as hidden behind phase 1. The lane LayerNorm is a state machine ticked once per edge. With `HAS_GVU_REGS=0
+HAS_GVU_ELEM_CLK=0` the operations run in the call style. The four knobs are on by default. Softmax stage 3 uses the exponent of
+the current table lookup, also when it is 0 (left shift).
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Four knobs at 0 | transformer check and AVG_POOL check program with `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0` | logs identical byte for byte to the previous default (V38), cycles included: 285,256 and 3,486 | MEASURED |
+| Default, check programs | transformer check; AVG_POOL check | 14 of 14, 263,816 cycles (epilogue depth 9; 263,883 at the depth 11 of V46), 32 jobs, 0 failed; 8 of 8, 3,687 cycles | MEASURED |
+| Call style | transformer check with `HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0` | 14 of 14, 242,711 cycles | MEASURED |
+| Lane LayerNorm on the clock | `tools/has/tb_gvu_ln_lanes.cpp` | same values and the same cycle count as the call style | MEASURED |
+| Regression | `bash tools/has/regress_gvu.sh`, 162 items (the earlier items with the four knobs at 0; adds the default run and the call style of the transformer check) | 162 of 162 | MEASURED |
+| Whole ViT-B/16, no variable set | `tb_has_npu_top $FE_WORK/has/vit_full`, one continuous run | PASS 244 / 244, 0 elements different, 41,244,030 cycles (four knobs at 0: 41,582,468; LayerNorm cycles ESTIMATED), core busy cycles 24,852,624 (unchanged), 457 jobs, 0 failed, 0 lanes different | MEASURED |
+| Whole YOLOv8m, no variable set | `tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS 98 / 98, 0 elements different, 62,422,935 cycles (the same with the four knobs at 0: YOLOv8m has none of the four operations), core busy cycles 55,653,442 (unchanged) | MEASURED |
+| Softmax stage 3 with E = 0 | a constructed row whose exponential sum is 1, through `GvuTop` and through the RTL in ModelSim (shift 37) | model 0 of 64 different (1 of 64 before the correction); delivered RTL 8 of 64, RTL with the B20 patch 8 of 64 (no left shift: B20b); ViT-B/16 heads of blocks 0, 6 and 11 unchanged, 0 different | MEASURED |
+
+### 6.21 Slice and concat by 4-D DMA descriptors (V44)
+
+With `HAS_DMA_ND` (on by default since V46, section 6.23) ELEM_WISE mode 6 (slice) and mode 7 (concat) run by the DMA from DRAM to DRAM through 4-D
+descriptors, and the tile input window and the tile write-back of GEMM_FUSED go through the same descriptors
+(`DMA_SLICE_CONCAT.md`). A proposal of the model team: the RTL DMA has no strided mode.
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Descriptor unit test | `tools/has/tb_has_dma.cpp` D1 to D5: parity of the 1-D interface with the v4.5 DMA (400 random transfers), timing, 4-D slice / split / concat on the C / H / W axes and the SPPF 4-way concat, SRAM-C write-back scatter, C2f 3-way split / concat and 300 random descriptors | 0 mismatches | MEASURED |
+| Check program | `tools/has/make_ref_gate_dma_slice_concat.py`: 27 instructions (slice / concat on the three axes, a C2f block, an SPPF block, average pool) | PASS 27 / 27, 149,504 elements, 0 different, 179,787 cycles; `ref_program.py` MATCH on the model's image | MEASURED |
+| Large tensors | `tools/has/make_dma_nd_big_gate.py`: 10 slices and concats of 256 KB tensors, larger than SRAM-A | PASS 10 / 10, 2,048,000 elements, 0 different | MEASURED |
+| Negative control | both programs with the option off | the 14 and the 10 slice / concat instructions refused | MEASURED |
+| Tile window and write-back | 6-instruction check program with `HAS_DMA_ND=1` | same DRAM image and same cycles as with the option off | MEASURED |
+| Default unchanged | transformer check, option off | 263,816 cycles at the epilogue depth 9 (263,883 at depth 11, option on or off) | MEASURED |
+
+### 6.22 Verification by instruction flow (V45)
+
+`tools/has/verify_flows.py` reads the logs of one run of `tools/has/regress_gvu.sh` and writes one log per flow
+(`FLOW_VERIFICATION.md`). For each numbered step of a flow the log names what is checked, the reference and its kind (R RTL
+simulation, S specification, D proposed definition, M model only), the method, the measured result with the log line it comes
+from, and a verdict. A step counts as checked only when a check looks at that step's own output. Benches extended for it:
+`tb_gvu_top_avgpool` (mode `states`: controller states and done cycle of every case), `tb_gvu_ln_lanes` (mode `tiers`: the lane
+machine stopped at the end of each tier and compared with `has::layernorm_row`), `tb_has_dma_tensor_isa` (one line per
+push-time case), the Softmax bench on three ViT-B/16 heads (stage results and buffer flips), the benches of the vector-unit owner
+on their vector sets, and the trace line of every COPY (`HAS_TRACE_DMA_TENSOR=1`) for the cycle formula.
+
+| Flow | Steps | Result | Label |
+|---|---|---|---|
+| GEMM_FUSED | 7 + whole flow | PASS; step 5 (Out_Scale index) PASS with a known RTL difference: 1,168 packets of the RTL run read a scale with an index that is not the packet's channel | MEASURED |
+| MAX_POOL | 7 + whole flow | PASS; load / store unit and comparator digests equal to the RTL run; negative check without the feeder reset: 97,557 of 115,200 outputs different | MEASURED |
+| AVG_POOL | 7 | PASS; step 1 end to end only; 18 of 18 cases IDLE -> POOLING_AVG -> IDLE, done 5 cycles after the max pool of the same window | MEASURED |
+| ADD | 7 + whole flow | PASS; both multipliers equal to the RTL run (300,000 vectors each); stage 1 and stage 2 on the vector sets of the vector-unit owner, 0 different | MEASURED |
+| SOFTMAX | 7 + whole flow | PASS; steps 3 and 6 with known RTL differences: buffer select flipped on the level gives 1,686 / 5,156 / 3,621 of 6,304 outputs different on three heads, the stage-3 shift of the delivered RTL 326 / 3,443 / 2,033 | MEASURED |
+| FUSED_ATTN | 7 | PASS; requant of the phases 327,958 lanes, 0 different | MEASURED |
+| LAYERNORM | 7 + whole flow | PASS; 1,714 tokens, S / V / v / w / r / E and 647,785 elements of n and y, 0 different; negative check with a wrong variance scale: 32 of 32 tokens different | MEASURED |
+| DMA_COPY | 3 | PASS; 15 push-time cases as expected; every COPY of the check program equal to the cycle formula | MEASURED |
+| MOVE | 5 | PASS (proposal, not on the instruction path) | MEASURED |
+| DMA_SLICE_CONCAT | 5 | PASS (V44) | MEASURED |
+
+### 6.23 Defaults closest to the hardware (V46)
+
+The hardware team has chosen the DMA for the tensor operations, and the RTL takes 11 beats from the psum to the result of
+the epilogue. The model follows both by default: `HAS_DMA_TENSOR` (`DMA_TENSOR` COPY, opcode `0x16`) and `HAS_DMA_ND`
+(ELEM_WISE modes 6 and 7, tile window and write-back through 4-D descriptors) are on, and `GVU_GEMM_STREAM_DEPTH` is 11
+(`EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9` builds the depth 9 of the specification and of the earlier releases). The depth
+adds delay stages only: no value changes, and every epilogue result comes two cycles later. The frontend option
+`fe_emit_insts.py --plan pe3 --slice-concat dma_nd` writes the YOLOv8m program `insts_pe3_nd`: the 13 concats of
+`insts_pe3` as 37 ELEM_WISE mode 7 instructions (`A_ADDR` the run, `OUT_ADDR` the concat output, `IN_C/H/W` = `OUT_C/H/W`
+the output shape, `POOL_MODE` 0, `POOL_P` the first channel, `POOL_K` the channels of the run), 23,270,400 bytes copied
+instead of aliased in place, 135 instructions in all.
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Regression | `bash tools/has/regress_gvu.sh` with the new defaults | 182 of 182; values unchanged, the items that pin cycles of a `GvuTop` path take 67 cycles more (one poll step of the bench for the two stages): transformer check 263,816 -> 263,883, YOLOv8m instructions 86 to 88 with `HAS_GVU_TOP=1` 280,003 -> 280,070, with `HAS_GVU_TOP=2` 271,829 -> 271,896 | MEASURED |
+| Benches whose latency follows the depth | `tools/has/tb_gvu_top_vs_model.cpp`, `tb_gvu_top_replay.cpp`: the expected latency is `GVU_GEMM_STREAM_DEPTH` | `tb_gvu_top_vs_model` built with 11 and with 9: 0 of 51 runs different each; replay at depth 11 in the regression | MEASURED |
+| Runs of concat instructions | each of the 13 runs of `insts_pe3_nd` with the instruction before it, cold start from the golden image; the same windows on `tools/has/ref_program.py` | PASS 13 of 13; MATCH 13 of 13 | MEASURED |
+| Whole YOLOv8m, no variable set | `tb_has_npu_top $FE_WORK/has/insts_pe3_nd`, one continuous run | PASS 135 / 135, 0 elements different, 64,135,381 cycles, PE utilization 69.26 %, core busy cycles 55,653,442 (unchanged); 233,618 cycles more than the COPY program `insts_pe3_dma` at depth 9 (63,902,431), all in the 37 concat instructions, whose pieces are smaller than the chunk (`DMA_SLICE_CONCAT.md`, section 3) | MEASURED |
+| Whole ViT-B/16, no variable set | `tb_has_npu_top $FE_WORK/has/vit_full`, one continuous run | PASS 244 / 244, 0 elements different, 41,244,621 cycles (41,244,030 at depth 9), core busy cycles 24,852,624 (unchanged), PE utilization 69.61 %, 457 jobs on the clock of `GvuTop`, 0 failed, 0 lanes different, latch to result 11 edges | MEASURED |
+| Programs without modes 6 / 7 | transformer check with `HAS_DMA_ND` on and off | 263,883 cycles both | MEASURED |
+
+### 6.24 Options that follow the neo_lite RTL, and the transpose after the epilogue (V47)
+
+The hardware repository `neo_lite` (commit `9b704bb`) adds the data flow controller, a one-dimensional DMA and a new register
+map of the vector unit. The model follows it with seven options, all off by default; with all of them off values and cycles
+equal the default of V46. Each one is explained, with its measured cost and what it does not model, in
+`HW_RTL_ALIGNMENT.md`; the open points are `KNOWN_LIMITATIONS.md`, O35 to O38.
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Register map against the RTL | `has/rtl_ref_gvu_config_regs_neo.h` against a ModelSim simulation of `gvu_config_regs.sv`; negative control with two values changed by hand | 0 differences over 30,000 cycles; the control gives 2 | MEASURED |
+| Register map in the model | `HAS_GVU_REGS_NEO=1` on the check programs: fields compared after every tick of the model's register file | all PASS, 0 fields different, 0 LUT pulse differences; cycles +792 (+0.29 %) on a YOLOv8m-shaped program, +268 to +402 on the padding programs, -67 to 0 on the others | MEASURED |
+| vbank#1 depth 200 | load / store unit and scratchpad against the RTL simulation; check programs at 32 and 200 | 0 differences; all PASS | MEASURED |
+| RESIDUAL as the hardware builds it | `has/rtl_ref_gvu_residual_hw.h` against the RTL simulation, delivered (logical shift) and patched (arithmetic shift); translation of the model's ADD parameters | 98,304 elements equal in both variants; latency 13 + vectors, 5 of 5; 0 differences on 615,684 samples; 20 of 22 ADD chunks of the check program expressible | MEASURED |
+| One-dimensional DFC commands | `HAS_DMA_DFC_1D=1`, command cost measured on `neo_dma_controller.sv` (19 / 15 / 7 cycles, one beat per cycle) | all PASS; +1.0 % on a YOLOv8m-shaped program, +57 % on a depthwise-separable program, x14 on a large strided slice / concat program (one command per byte, O36) | MEASURED |
+| Write-back through vbank2 | `HAS_GVU_OUT_VBANK2=1` | all PASS; +134 cycles on the reference program, +0.9 % to +17.7 % on the others | MEASURED |
+| Bus cost of the DFC data | `HAS_BUS_STRICT=1`; off against the default on 22 checks | off identical 22 of 22; on PASS 22 of 22, 0 to +1,054 cycles, attention check +31,490 (predicted +31,488) | MEASURED |
+| Corner-turn unit | `tools/has/tb_gvu_out_transpose.cpp` | 90 of 90 | MEASURED |
+| GEMM_FUSED token-major | `TMAJ_C0` on the reference check program against `tools/has/ref_program.py`; the reference tool against numpy | equal; PASS | MEASURED |
+| One ViT-B/16 block, V token-major | `fe_vit_block.py --v-token-major`, `HAS_OUT_TRANSPOSE=1`; the same program with the option off as negative control | PASS 20 / 20, 3,301,548 cycles (+26 against the channel-major program), 72 token-major tiles; control FAIL, 19 tensors | MEASURED |
+| Whole ViT-B/16, V token-major | `fe_vit_full.py --v-token-major`, `HAS_OUT_TRANSPOSE=1`, one continuous run | PASS 244 / 244, 26,068,616 elements, 0 different, 41,245,003 cycles (+382 against 41,244,621), 864 token-major tiles; top-1 class of the integer model equals the floating-point one | MEASURED |
+| Whole ViT-B/16 closest to the RTL | `HAS_GVU_FA=0 HAS_GVU_LN=0`, one continuous run | PASS 244 / 244, 41,608,570 cycles; against the default: LayerNorm on the functional model +627,547, attention requant on the functional model -263,440 | MEASURED |
+| Core against the RTL | core of the model against the core of `neo_lite@9b704bb` in ModelSim, 8 cases | SRAM C writes identical 8 of 8; model minus RTL -2 to +1 cycles per write, not accumulating | MEASURED |
+| Regression | `bash tools/has/regress_gvu.sh`: the items of V46 plus 11 for the options (each on the reference check program, unit tests) | 193 of 193 | MEASURED |
+| Package check | package of this tree from a fresh copy, with the system wrapper's own unit test and the C replay engine through the wrapper | 100 of 100 (89 items of V46 plus 11 for the options); through the wrapper, default configuration, 263,808 cycles | MEASURED |
+
 ## 7. HAS blocks, unit level (V10)
 
 All vector files were generated by independent Python implementations written from the interface
@@ -612,12 +780,19 @@ The total cycles of the reference runs (62,681,721 and 39,922,498, section 3 of 
 count the host register writes before the first instruction. `tb_has_npu_top` itself gives the same cycles with a
 10 ns and a 1.25 ns clock (`--clk-ns`).
 
-## 9. Pending verification
+## 9. Verification status
 
 | Item | Content | Status |
 |---|---|---|
 | Delivery acceptance run | All 98 instructions of YOLOv8m through `HasNpuTop`, overlapped, HAS DMA, compared with the golden | Done: PASS (V12, section 6.4) |
 | Transformer pipelines | SOFTMAX, LAYERNORM and FUSED_ATTN bit-exact, then ViT-B/16 through the network flow | Done: V17, V18. Open points of the drawings stay knobs until hardware answers (`KNOWN_LIMITATIONS.md`, section 7.1) |
+| Regression with the new items | `bash tools/has/regress_gvu.sh`, 193 items (adds the items of V40 to V45 and V47) | Done: 193 of 193 (MEASURED) |
+| Verification by instruction flow | Every step of the ten flows of the vector unit and the DMA with its references (V45) | Done: 67 of 67 steps PASS (MEASURED) |
+| Whole networks with the options of V40 to V42 | YOLOv8m with the COPY program, ViT-B/16 with Softmax, attention requant and LayerNorm on `GvuTop` | Done: PASS, 63,902,431 and 40,782,987 cycles (sections 6.18, 6.19) |
+| Whole networks in the default of V43 | ViT-B/16 and YOLOv8m with no variable set | Done: ViT-B/16 PASS, 41,244,030 cycles (section 6.20); YOLOv8m PASS 98 / 98, 62,422,935 cycles; both rerun with the binary of this release's tree, equal cycle for cycle (MEASURED) |
+| Whole networks in the defaults of V46 | YOLOv8m `insts_pe3_nd` and ViT-B/16 with no variable set (DMA options on, epilogue depth 11) | Done: YOLOv8m PASS 135 / 135, 64,135,381 cycles; ViT-B/16 PASS 244 / 244, 41,244,621 cycles (section 6.23, MEASURED) |
+| Options that follow the `neo_lite` RTL, transpose after the epilogue | The checks of V47, all options off by default | Done: ViT-B/16 with V token-major PASS 244 / 244, 41,245,003 cycles; closest to the RTL PASS 244 / 244, 41,608,570 cycles (section 6.24, MEASURED). Not run on whole networks: the options of sections 2 and 5 to 7 of `HW_RTL_ALIGNMENT.md` (check programs only) |
+| Package check | Build and checks of the package of this release from a fresh copy (`RELEASE_NOTES.md`, section 4) | Done: 100 of 100 items (MEASURED) |
 | Accuracy | mAP evaluation on a dataset | Not planned in this package. Integer against floating point on 112 images (YOLOv8m) and 5 images (ViT-B/16), four and two images through the model (section 6.7) |
 
 ## 10. Reproducing the checks
@@ -634,7 +809,7 @@ count the host register writes before the first instruction. `tb_has_npu_top` it
 | V10 | `tools/has/tb_gvu_quant <vector files>`, `tools/has/tb_gvu_lut`, `tools/has/tb_gvu_elemwise`, `tools/has/tb_has_dma` |
 | V11 | `bash tools/has/regress_native.sh` |
 | V19 | The integrator's own TLM wrapper and its unit test (not part of this package), rebuilt with the model root set to this tree (`SW_INTEGRATION_GUIDE.md`, section 9); expected: 0 failed checks, output identical to the previous native revision |
-| V20 | Wrapper with `tools/has/wrapper/npu_tlm_rich_window.patch` applied and the model root set to `core_rtl/`; build `tools/has/wrapper/test_npu_tlm_core_rtl.cpp` with the wrapper sources (build line in the file header, `SW_INTEGRATION_GUIDE.md`, section 10); run `test_npu_tlm_core_rtl $FE_WORK/has/insts_pe3 all` and `SAURIA_CORE_RTL_C_BCAST=1 test_npu_tlm_core_rtl $FE_WORK/has/vit_full all`; compare the per-instruction cycles with `reference_runs/yolov8m_run_c/run.log` and `reference_runs/vit_b16/run.log` of the data package. A whole network takes hours; `test_npu_tlm_core_rtl <insts dir>` alone runs the first two instructions |
+| V20 | Wrapper with `tools/has/wrapper/npu_tlm_rich_window.patch` applied and the model root set to `core_rtl/`; build `tools/has/wrapper/test_npu_tlm_core_rtl.cpp` with the wrapper sources (build line in the file header, `SW_INTEGRATION_GUIDE.md`, section 10); run `test_npu_tlm_core_rtl $FE_WORK/has/insts_pe3 all` and `SAURIA_CORE_RTL_C_BCAST=1 test_npu_tlm_core_rtl $FE_WORK/has/vit_full all`; compare the per-instruction cycles with `reference_runs/yolov8m_run_c/run.log` and `reference_runs/vit_b16/run.log` of the data package. A whole network is a long run; `test_npu_tlm_core_rtl <insts dir>` alone runs the first two instructions |
 | V21 | `python3 tools/has/make_avgpool_gate.py <out dir>` then `tools/has/tb_has_npu_top <out dir>`; `g++ -std=c++17 -O2 -I. tools/has/tb_gvu_vrf.cpp -o tb_gvu_vrf && ./tb_gvu_vrf`; window D: `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 40 --count 2` (1,658,986 cycles) |
 | V22 | Programs for another image: `python3 tools/fe/fe_has_export_net.py --mode has --image-path <jpg>` then `python3 tools/fe/fe_emit_insts.py --plan pe3`; `python3 tools/fe/fe_vit_full.py --image <coco128 index>` (these need the trained weights, not in the package); then `FE_SNAPSHOT_DIR=<dir> tools/has/tb_has_npu_top <insts dir>` and `tools/fe/fe_sysc_detect.py --dram <snapshot> --net-dir <insts dir> --compare-golden` (boxes) or `tools/fe/fe_vit_top5.py --net-dir <vit dir> --dram <snapshot>` (top-5 classes). Measured log of the ViT-B/16 run: `reference_runs/vit_b16_as_drawn/` of the data package |
 | V23 | Step 2 as V22, one program per image. Step 1 needs the trained weights and the coco128 images and was run with scripts that are not part of the package: it calls the golden of the frontend (`tools/fe/fe_ref_has.py` for YOLOv8m, the golden chain of `tools/fe/fe_vit_full.py` for ViT-B/16) and the floating-point references on each image and compares the decoded results |
@@ -654,5 +829,13 @@ count the host register writes before the first instruction. `tb_has_npu_top` it
 | V37 | `g++ -std=c++17 -O2 -I. tools/has/tb_gvu_regs_dfc.cpp -lsystemc -o t && ./t 2 && ./t 4 && ./t 7`; `bash tools/has/regress_gvu.sh` (register file, address generator and check-program items); one instruction: `HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1 HAS_GVU_REGS=1 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3 --first 66 --count 1`; register file against the RTL: `tools/has/gvu_oracle/run_modelsim_cfgregs.sh` and `run_verilator_cfgregs.sh` |
 | V38 | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` and `... $FE_WORK/has/vit_full` with no variable set; the earlier configuration: `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` |
 | V39 | Sets: `g++ -std=c++17 -O2 -I. tools/has/dump_maxpool.cpp -o dump && ./dump $FE_WORK/has/insts_pe3 <dir>`, then `python3 tools/has/gvu_oracle/gen_sppf_sets.py <dir> <sets>`. Model trace: `tools/has/tb_gvu_top_maxpool_runs.cpp` (`g++ -std=c++17 -O2 -I.`; arguments input, trace, H, W, k, s, C, channels per run). RTL trace: `tools/has/gvu_oracle/tb_oracle_maxpool_runs.sv` with the RTL tree and the stand-ins of `tools/has/gvu_oracle/` (plusargs `+in +out +h +w +k +s +c +group`). Compare the traces with `diff` and each run with `tools/has/gvu_oracle/chk_maxpool_runs.py` |
+| V40 | `bash tools/has/regress_gvu.sh` (average pool unit tests, datasets, negative control, AVG_POOL check program with `HAS_GVU_AVG=1`); one run: `python3 tools/has/make_avgpool_gate.py <dir>`, then `tools/has/tb_has_npu_top <dir>` (`HAS_GVU_AVG` is on by default). The RTL simulation of the patch needs the RTL tree and is not part of this package |
+| V41 | `bash tools/has/regress_gvu.sh` (Softmax rows of ViT-B/16, lane LayerNorm, transformer check with each option); one run: `tools/has/tb_has_npu_top <transformer check dir>` (the three knobs are on by default; set one to 0 to leave that operation on the functional model) |
+| V42 | `bash tools/has/regress_gvu.sh` (COPY group); program: `python3 tools/fe/fe_emit_insts.py --plan pe3 --slice-concat dma`, then `HAS_DMA_TENSOR=1 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3_dma` |
+| V43 | `bash tools/has/regress_gvu.sh` (transformer check on the clock and in the call style); one run: `tools/has/tb_has_npu_top <transformer check dir>` with no variable set, with `HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0` (call style) and with `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0` (previous default); whole networks as V38. The Softmax case with E = 0 and its RTL simulation are not part of this package |
+| V44 | `bash tools/has/regress_gvu.sh` (`HAS_DMA_ND` group); one run: `python3 tools/has/make_ref_gate_dma_slice_concat.py <dir>`, then `HAS_DMA_ND=1 tools/has/tb_has_npu_top <dir>` and `python3 tools/has/ref_program.py <dir> --image <snapshot>`; `tools/has/tb_has_dma` |
+| V45 | `bash tools/has/regress_gvu.sh <dir>` (last item), or `python3 tools/has/verify_flows.py <dir>` on the logs of an earlier run; logs in `<dir>/flows/` |
+| V46 | `bash tools/has/regress_gvu.sh`; `python3 tools/fe/fe_emit_insts.py --plan pe3 --slice-concat dma_nd`, then `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3_nd` (whole, or `--first <n> --count <m>` for one run of concat instructions) and `python3 tools/has/ref_program.py $FE_WORK/has/insts_pe3_nd --first <n> --count <m>`; depth 9: `EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9 bash tools/has/build_tb_has_npu_top.sh` |
+| V47 | `bash tools/has/regress_gvu.sh`; one option: `HAS_GVU_REGS_NEO=1 tools/has/tb_has_npu_top <program dir>` (likewise the others); unit tests and programs: `HW_RTL_ALIGNMENT.md`, section 11. The RTL simulations need the RTL tree, which is not part of this package |
 | V13, V14 | Earlier planner options, superseded by V15 (same flow and checks, options of section 6.5); rerun V15 instead |
 | V1 | Requires the reference SAURIA core model, which is not part of this package |

@@ -1,7 +1,8 @@
 # Slice and concat on the GVU
 
 How the SystemC model handles the slice, split and concat operators of YOLOv8m and ViT-B/16, the options for doing them on the vector
-unit (GVU) as the MAS describes, what the model implements, what was measured, and the RTL change proposed to the hardware team.
+unit (GVU) as the MAS describes, the concat by DMA COPY in the instruction path, what the model implements, what was measured, and
+the RTL change proposed to the hardware team.
 
 Labels used for numbers: **MEASURED** (simulated or counted), **ESTIMATED** (computed from sizes, not simulated), **READ** (taken from
 the RTL or MAS text).
@@ -67,7 +68,8 @@ GVU operations that touch a slice or a concat:
   - the Detect anchor concat;
   - a tensor that feeds two concats;
   - data that should stay in the Scratchpad between two GVU operations.
-- **Status.** This is the model's default for both networks, measured end to end in all whole-network runs.
+- **Status.** This is the model's default for both networks, measured end to end in all whole-network runs; every published cycle
+  count uses it.
 
 ### 2.1 (A) AGU_ND on the ports of the residual add and max pool
 
@@ -146,22 +148,51 @@ GVU operations that touch a slice or a concat:
   - MOVE is modelled and checked on the frozen Scratchpad and VLSU ports (section 4).
   - The compiler mode and the RTL state are not done.
 
-### 2.4 Comparison and recommendation
+### 2.4 (D) Concat by DMA COPY in the instruction path
 
-| | Alias (now) | (A) AGU_ND on ADD / max pool | (B) SPPF in Scratchpad | (C) MOVE |
-|---|---|---|---|---|
-| Cycles, YOLOv8m | 0 | ≤ ~600 register-write cycles (ESTIMATED) | −2…−4 × 10⁴ (ESTIMATED) | +2.3 … +6.2 % if used for every concat (ESTIMATED) |
-| Memory | 0 | 0 | less DMA traffic | 0 (direct to cells) |
-| Covers | outermost axis, contiguous | as alias + strided blocks in the Scratchpad for ADD / max pool | SPPF chain | any block-of-rows permutation |
-| New hardware | none | AGU mode + 9 registers + controller selection | AGU_ND + lane rotation | AGU_ND + MOVE state |
-| Evidence | whole networks | model + RTL patch, simulated (sections 4, 5) | none | model only |
+- **How.** The compiler gives every concat input and the concat output regions of their own; after the last input is written, one
+  `DMA_TENSOR` COPY instruction (opcode `0x16`, op COPY) per run of adjacent inputs copies the block into its cell of the output. Slices
+  stay views at an offset (no copy). Described in `DMA_TENSOR_MODE.md`.
+- **Registers.** No new address: the instruction reuses `A_ADDR` (source), `OUT_ADDR` (destination), `LEN` (bytes) and `MODE_PACK`
+  (op 0 = COPY). One COPY maps one to one onto the registers of the DMA of the RTL (`redma`: reader start address, writer start
+  address, byte count, start), which can copy DRAM to DRAM.
+- **Who programs.** The compiler emits the instruction (`tools/fe/fe_emit_insts.py --slice-concat dma`); in the model the data flow
+  controller executes it in order with the other instructions. In the RTL no block decodes such an instruction: either the DFC is
+  extended to write the DMA registers for it, or the firmware writes them (open question).
+- **Cost.** YOLOv8m: 13 concats become 37 COPY instructions, 23,270,400 bytes, 1,479,532 cycles (MEASURED per COPY on windows of the
+  model, equal to the cycle formula), so the whole network was predicted at 63,902,467 cycles (DERIVED); the whole-network run gives 63,902,431 cycles, +2.37 %, PASS
+  135 / 135 (MEASURED). The DRAM image grows from 85,779,392 to 109,049,792 bytes. ViT-B/16 needs no COPY program (its heads read and write 64-channel
+  blocks of channel-major tensors, so every slice and concat is an address on the outermost axis).
+- **Limits.** Contiguous blocks only (the RTL DMA copies one block per start); overlapping source and destination are refused. A COPY
+  program and AGU_ND (A) must not both place data into a concat cell: the compiler checks that no other instruction of a COPY program
+  writes into a concat output (0 of 98 in YOLOv8m). The descriptor registers of (A) are GVU registers (Reg 16..24, byte 0x40..0x60 of
+  the GVU register block); they are not DMA registers.
+- **Status.** Requested by the company (slice and concat as data movement inside the instruction path instead of compiler aliases);
+  modelled behind `HAS_DMA_TENSOR` (on by default), checked on a 25-instruction program, on the 13 YOLOv8m concat windows and with the
+  independent reference.
+
+### 2.5 Comparison and recommendation
+
+The three mechanisms answer different needs: the **alias** is the reference of every published cycle count and the default of the
+programs; **DMA COPY (D)** is what the company asked for and runs on the DMA the RTL already has; **AGU_ND (A)** is the proposal for
+the vector unit, for blocks that stay in the Scratchpad.
+
+| | Alias (default, reference numbers) | (A) AGU_ND on ADD / max pool (GVU proposal) | (B) SPPF in Scratchpad | (C) MOVE | (D) DMA COPY (company request) |
+|---|---|---|---|---|---|
+| Cycles, YOLOv8m | 0 | ≤ ~600 register-write cycles (ESTIMATED) | −2…−4 × 10⁴ (ESTIMATED) | +2.3 … +6.2 % if used for every concat (ESTIMATED) | +1,479,496, +2.37 % (MEASURED, whole network) |
+| Memory | 0 | 0 | less DMA traffic | 0 (direct to cells) | +23,270,400 bytes of DRAM |
+| Covers | outermost axis, contiguous | as alias + strided blocks in the Scratchpad for ADD / max pool | SPPF chain | any block-of-rows permutation | contiguous blocks in DRAM |
+| New hardware | none | AGU mode + 9 registers + controller selection | AGU_ND + lane rotation | AGU_ND + MOVE state | none in the data path; an issuer of the DMA registers (DFC or firmware) |
+| Evidence | whole networks | model + RTL patch, simulated (sections 4, 5) | none | model only | model + independent reference (`VERIFICATION_REPORT.md`, V42) |
 
 **Recommendations for the RTL:**
 1. **Adopt (A).** It is the address-only mechanism the MAS describes, and it costs one AGU unit per port plus nine registers. It keeps
    the delivered behaviour when nothing is bound. The patch in section 5 implements it and has been simulated against the model.
-2. Keep the compiler alias for outermost-axis slices and concats; it is free.
-3. Add MOVE (C) when a network needs inner-axis or NHWC concats, or tensors kept in the Scratchpad.
-4. Consider (B) together with the VLSU padding block.
+2. Keep the compiler alias for outermost-axis slices and concats; it is free, and it stays the reference of the published numbers.
+3. Where data movement in the instruction path is required, use (D): it needs no change of the DMA, only a decision on who writes its
+   registers.
+4. Add MOVE (C) when a network needs inner-axis or NHWC concats, or tensors kept in the Scratchpad.
+5. Consider (B) together with the VLSU padding block.
 
 Two rules come from the simulation and must be kept in any implementation:
 - A change of descriptor takes effect at the clock edge of `i_agu_addr_reset`. An access in that cycle still uses the old program.
@@ -173,6 +204,8 @@ Two rules come from the simulation and must be kept in any implementation:
 2. Is the VLSU padding / lane-rotation block planned?
 3. Is the VLSU AXI master of the MAS planned? It decides whether a concatenation is assembled in DRAM by DMA addresses or by the GVU.
 4. Are Reg 16..24 and `GVU_REG_AW` = 5 acceptable, together with Reg 9..15 of the residual-add proposal?
+5. Who issues a DMA COPY (section 2.4): the data flow controller, extended with one instruction type that writes the four DMA
+   registers, or the firmware? Is an overlapping source and destination defined for the DMA (the model refuses it)?
 
 ## 4. The model
 

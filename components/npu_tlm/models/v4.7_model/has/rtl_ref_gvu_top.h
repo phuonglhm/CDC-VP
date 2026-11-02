@@ -24,15 +24,17 @@
 #include "has/rtl_ref_gvu_vlsu.h"
 #include "has/gvu_agu_nd_vlsu.h"
 #include "has/rtl_ref_gvu_ctrl.h"
+#include "has/rtl_ref_gvu_avgpool_pipe.h"
 
 // Depth of the GEMM_FUSED stream pipeline (In::i_gemm_stream): clock edges from the latch of a beat to its result on
 // o_gemm_fused_data. The one place that sets it for GvuTop, the clocked connection (GvuTopStream::kDepth) and the
-// call-style connection (GvuTopBridge::kDepth); override at build time with -DGVU_GEMM_STREAM_DEPTH=<n>. 9 = the register
-// cuts of the MAS Requant / GEMM_FUSED drawings. The hardware RTL measures 11: two more cycles to read the per-channel
-// Out_Scale / Out_Shift from the sbank in front of the multiplier. A depth above 9 adds pure delay stages (values do not
-// change); the computing stages stay those of the MAS. Range 9 .. GEMM_STREAM_DEPTH_MAX.
+// call-style connection (GvuTopBridge::kDepth); override at build time with -DGVU_GEMM_STREAM_DEPTH=<n>. Default 11, the
+// depth the hardware RTL measures: the 9 register cuts of the MAS Requant / GEMM_FUSED drawings plus two cycles to read the
+// per-channel Out_Scale / Out_Shift from the sbank in front of the multiplier. A depth above 9 adds pure delay stages (values
+// do not change); the computing stages stay those of the MAS. -DGVU_GEMM_STREAM_DEPTH=9 gives the MAS depth of the earlier
+// releases. Range 9 .. GEMM_STREAM_DEPTH_MAX.
 #ifndef GVU_GEMM_STREAM_DEPTH
-#define GVU_GEMM_STREAM_DEPTH 9
+#define GVU_GEMM_STREAM_DEPTH 11
 #endif
 
 namespace rtl_ref_gvu
@@ -56,6 +58,9 @@ namespace rtl_ref_gvu
         ScratchpadParams sp_params{};
         LutParams lut_params{false, true, true, 32 * GVU_LANES}; // LERP_MUL_PIPE=1, LERP_SHIFT_PIPE=1, INIT_DW=1024
         FuParams fu_params{};
+        // AVG_POOL (POOLING_AVG): the data path of the RTL patch for average pooling (the delivered RTL has none). Off (default) = the unit
+        // as before: an AVGPOOL opcode stays in IDLE.
+        bool avg_enable{false};
     };
 
     // Opcode definitions from gvu_pkg.sv
@@ -92,7 +97,8 @@ namespace rtl_ref_gvu
         GEMM_FUSED_ST1  = 13,
         RESIDUAL_ST1    = 14,
         RESIDUAL_ST2    = 15,
-        POOLING_MAX     = 16     // latest hardware RTL drop (gvu_pkg.sv numbers its states differently; the names are the same)
+        POOLING_MAX     = 16,    // latest hardware RTL drop (gvu_pkg.sv numbers its states differently; the names are the same)
+        POOLING_AVG     = 17     // average pool (the RTL patch numbers it 15): compare states by name in any trace against the RTL, not by number
     };
 
     // ---- Cycle-accurate structural C++ core model of gvu_top.sv --------------------------------------------
@@ -115,6 +121,11 @@ namespace rtl_ref_gvu
             int8_t i_attn_z{0};
             int32_t i_attn_scale{0};
             uint8_t i_attn_shift{0};
+            // Softmax stage 3 shift of RoundShift#0 (model option, default off = as the hardware RTL: the shift is E). On: E + Q - P as the
+            // functional model (has/gvu_softmax.h, MAS stage 3): the probability keeps P bits; a negative shift (E + Q - P < 0) is a left shift.
+            bool    i_softmax_qp{false};
+            int8_t  i_softmax_q{14};
+            int8_t  i_softmax_p{15};
 
             // LayerNorm configuration parameters matching MAS Section 5.2.5 and has::LnParams
             int32_t i_ln_h{0};           // H channel dimension (defaults to i_token_len if 0)
@@ -220,6 +231,14 @@ namespace rtl_ref_gvu
             unsigned i_pooling_c_move{0};
             unsigned i_pooling_h_move{0};
 
+            // Average pool (POOLING_AVG, GvuTopParams::avg_enable): the window geometry is that of max pool (i_pooling_*); Avg_Scale (int32),
+            // Avg_Shift (6 bits), round mode and narrowing of Round-Shift#1 (register 25 / 26 of the RTL patch). The RTL patch uses the
+            // controller's NEAR_AWAY / wrap defaults only if no register is written; the model default is NEAR_UP + saturate (the instruction path).
+            int32_t   i_avg_scale{1};
+            uint8_t   i_avg_shift{0};
+            RoundMode i_avg_round{RND_NEAR_UP};
+            NarrowMode i_avg_narrow{NARROW_SATURATE};
+
             // AGU_ND (model proposal, Reg 16..24, has/gvu_agu_nd.h): AGU_ND_CTRL and the source / destination descriptors. Nothing bound
             // (default) = the unit as before. Residual add: vbank0 bound as source (A, RESIDUAL_ST1) and / or destination (result,
             // RESIDUAL_ST2), num_tile 1. Max pool: destination bound to vbank2 places output row k at addr_at(k).
@@ -261,6 +280,7 @@ namespace rtl_ref_gvu
             std::array<int8_t, GVU_LANES> o_residual_data{};
             bool o_residual_valid{false};
             bool o_maxpool_pipe_done{false};
+            bool o_avgpool_pipe_done{false};
             // Scratchpad requests of this cycle, for cycle traces against the RTL (tools/has/gvu_oracle/tb_oracle_maxpool.sv)
             bool d_vbank0_en{false};
             unsigned d_vbank0_addr{0};
@@ -290,6 +310,8 @@ namespace rtl_ref_gvu
             b_part_delay_.fill(0);
         }
 
+        // Softmax stage 3 lane evaluations that needed a left shift (E + Q - P < 0); diagnostic of i_softmax_qp, 0 when it is off.
+        uint64_t softmax_lshift() const { return softmax_lshift_; }
         const GvuTopParams &params() const { return P_; }
         // Depth of the GEMM_FUSED stream pipeline of this unit (GvuTopParams::gemm_stream_depth after the clamp).
         int gemm_stream_depth() const { return mul_n_ + kStreamRs + 2; }
@@ -367,6 +389,7 @@ namespace rtl_ref_gvu
                 scratchpad_.reset_addr_delays();
                 stream_clear();
                 vlsu_.reset_pooling();
+                avg_clear();
                 return o;
             }
 
@@ -507,8 +530,22 @@ namespace rtl_ref_gvu
                 tile_cnt_ = (tile_cnt_ == max_tiles - 1) ? 0 : (tile_cnt_ + 1);
             }
 
+            // AVG_POOL registers: window sums, the tail, the delayed last-write flag, the feeder-done flag
+            if (pipe_ctrl_fsm_ == POOLING_AVG)
+            {
+                for (int l = 0; l < GVU_LANES; l++)
+                    if (w.avg_acc_upd >> l & 1u) avg_acc_[static_cast<size_t>(l)] = w.avg_sum_next[static_cast<size_t>(l)];
+                AvgCfg c;
+                c.scale = in.i_avg_scale; c.shift = in.i_avg_shift; c.round = in.i_avg_round; c.narrow = in.i_avg_narrow;
+                avg_tail_.tick(w.avg_emit != 0, w.avg_sum_next, w.avg_req_mask, w.avg_req_addr, c);
+                avg_last_dly_.pop_front();
+                avg_last_dly_.push_back(w.vlsu_out.o_pooling_last_wr);
+                if (w.vlsu_out.o_pooling_last_wr) avg_feeder_done_ = true;
+                avg_dirty_ = true;
+            }
             if (in.i_pipeline_en)
                 pipe_ctrl_fsm_ = w.fsm_nxt;
+            if (pipe_ctrl_fsm_ != POOLING_AVG && avg_dirty_) avg_clear();
             is_lut_exp_init_ = w.is_lut_exp_init_nxt;
             is_lut_recip_init_ = w.is_lut_recip_init_nxt;
             is_lut_rsqrt_init_ = w.is_lut_rsqrt_init_nxt;
@@ -619,6 +656,21 @@ namespace rtl_ref_gvu
 
         // Shift buffers
         std::array<std::array<uint32_t, GVU_LANES>, 4> exp_e_shift_buf_{};
+        // AVG_POOL (POOLING_AVG)
+        std::array<int16_t, GVU_LANES> avg_acc_{};
+        GvuAvgTail avg_tail_;
+        std::deque<bool> avg_last_dly_ = std::deque<bool>(kAvgTailDepth, false);
+        bool avg_feeder_done_{false};
+        bool avg_dirty_{false};
+        void avg_clear()
+        {
+            avg_dirty_ = false;
+            avg_acc_.fill(0);
+            avg_tail_.reset();
+            avg_last_dly_.assign(kAvgTailDepth, false);
+            avg_feeder_done_ = false;
+        }
+        mutable uint64_t softmax_lshift_{0};   // lane evaluations of Softmax stage 3 with a negative shift and a non-zero product (i_softmax_qp)
         std::array<bool, 2> vbank0_rd_delay_{false, false};
         std::array<bool, 2> vbank1_rd_delay_{false, false};
         std::array<bool, 2> vbank2_rd_delay_{false, false};
@@ -681,6 +733,9 @@ namespace rtl_ref_gvu
             std::array<MulbOut, GVU_LANES> mul0_out{};
             V32 roundshift0_out{}, roundshift1_out{};
             V32 clamp_out{};
+            // AVG_POOL
+            uint32_t avg_emit{0}, avg_acc_upd{0}, avg_req_mask{0}, avg_req_addr{0};
+            std::array<int16_t, GVU_LANES> avg_sum_next{};
         };
 
         Out comb(const In &in, Wires &w) const
@@ -746,7 +801,7 @@ namespace rtl_ref_gvu
                                 (pipe_ctrl_fsm_ == RESIDUAL_ST1 && !token_read_done));
             w.ctrl_vbank0_wr = false;
 
-            w.ctrl_vbank2_port_sel = (pipe_ctrl_fsm_ == SOFTMAX_ST2 || pipe_ctrl_fsm_ == SOFTMAX_ST3 || pipe_ctrl_fsm_ == POOLING_MAX); // true = port 1 (v32int8), false = port 0 (v32int32)
+            w.ctrl_vbank2_port_sel = (pipe_ctrl_fsm_ == SOFTMAX_ST2 || pipe_ctrl_fsm_ == SOFTMAX_ST3 || pipe_ctrl_fsm_ == POOLING_MAX || pipe_ctrl_fsm_ == POOLING_AVG); // true = port 1 (v32int8), false = port 0 (v32int32)
             w.ctrl_vbank2_rd = ((pipe_ctrl_fsm_ == SOFTMAX_ST3 && vlut_.o_pipe_almost_done(LUT_PWL)) ||
                                 (pipe_ctrl_fsm_ == LAYERNORM_ST4 && !token_read_done) ||
                                 (pipe_ctrl_fsm_ == GEMM_FUSED_ST1 && !in.i_gemm_stream && !in.i_psum_valid && !token_read_done) ||
@@ -807,7 +862,8 @@ namespace rtl_ref_gvu
             // in POOLING_MAX and gives vbank0 / vbank2 the pooling AGU. The read data and the comparator's lane valid are
             // filled in below once the Scratchpad and the comparator are evaluated.
             const bool pool = pipe_ctrl_fsm_ == POOLING_MAX;
-            w.vlsu_in.i_pooling_enable = pool;
+            const bool pool_avg = pipe_ctrl_fsm_ == POOLING_AVG;
+            w.vlsu_in.i_pooling_enable = pool || (pool_avg && !avg_feeder_done_);
             w.vlsu_in.i_pooling_mode = in.i_pooling_mode;
             w.vlsu_in.i_pooling_stride = in.i_pooling_stride;
             w.vlsu_in.i_pooling_num_w_tile = in.i_pooling_num_w_tile;
@@ -815,7 +871,7 @@ namespace rtl_ref_gvu
             w.vlsu_in.i_pooling_oh = in.i_pooling_oh;
             w.vlsu_in.i_pooling_c_move = in.i_pooling_c_move;
             w.vlsu_in.i_pooling_h_move = in.i_pooling_h_move;
-            if (pool)
+            if (pool || pool_avg)
             {
                 w.vlsu_in.i_vbank0_agu_mode = AGU_POOLING;
                 w.vlsu_in.i_vbank2_agu_mode = AGU_POOLING;
@@ -923,6 +979,42 @@ namespace rtl_ref_gvu
                     ? in.i_agu_dst.addr_at(w.vlsu_out.o_vbank2_addr_1, P_.sp_params.VBANK2_AW() + 2) : w.vlsu_out.o_vbank2_addr_1;   // AGU_ND destination
                 for (int b = 0; b < P_.NUM_LANE / 8; b++) w.sp_in.i_vbank2_wmask_1[static_cast<size_t>(b)] = static_cast<uint8_t>(w.vlsu_out.o_vbank2_wmask_1 >> (8 * b));
                 for (int l = 0; l < GVU_LANES; l++) w.sp_in.i_vbank2_wdata_1[static_cast<size_t>(l)] = static_cast<uint8_t>(w.cmp_out.out_res[l] & 0xFFu);
+            }
+
+            // AVG_POOL: per lane 16-bit sum of the window (Adder#1 ADD_16), the lane's last element completes it; the write request of the VLSU
+            // (address, lane mask, as for max pool in the cycle of that element) enters the tail with the sums and comes out kAvgTailDepth
+            // cycles later together with the Round-Shift#1 result (has/rtl_ref_gvu_avgpool_pipe.h). The last-write flag is delayed the same.
+            if (pool_avg)
+            {
+                w.vlsu_in.i_pooling_rdata = w.sp_out.o_vbank0_rdata;
+                w.vlsu_out = vlsu_.eval(w.vlsu_in);
+                const uint32_t emit = w.vlsu_out.o_pooling_window_valid & w.vlsu_out.o_feeder_last;
+                w.avg_emit = emit;
+                for (int l = 0; l < GVU_LANES; l++)
+                {
+                    const uint32_t bit = 1u << l;
+                    if (!(w.vlsu_out.o_pooling_window_valid & bit)) continue;
+                    const int16_t prev = (w.vlsu_out.o_feeder_first & bit) ? int16_t(0) : avg_acc_[static_cast<size_t>(l)];
+                    w.avg_sum_next[static_cast<size_t>(l)] = static_cast<int16_t>(static_cast<uint16_t>(
+                        prev + static_cast<int8_t>(w.vlsu_out.o_pooling_window_data[static_cast<size_t>(l)])));
+                    w.avg_acc_upd |= bit;
+                }
+                w.vlsu_in.i_pooling_valid = emit;
+                w.vlsu_out = vlsu_.eval(w.vlsu_in);
+                w.avg_req_addr = (in.i_agu_nd_ctrl.dst_on && in.i_agu_nd_ctrl.dst_port == AguNdCtrl::VBANK2)
+                    ? in.i_agu_dst.addr_at(w.vlsu_out.o_vbank2_addr_1, P_.sp_params.VBANK2_AW() + 2) : w.vlsu_out.o_vbank2_addr_1;
+                w.avg_req_mask = w.vlsu_out.o_vbank2_wen_1 ? w.vlsu_out.o_vbank2_wmask_1 : 0u;
+                // the write of this cycle is the one that left the tail
+                const GvuAvgTail::Beat &tb = avg_tail_.out();
+                w.sp_in.i_vbank0_en = w.vlsu_out.o_vbank0_en;
+                w.sp_in.i_vbank0_wen = w.vlsu_out.o_vbank0_wen;
+                w.sp_in.i_vbank0_addr = w.vlsu_out.o_vbank0_addr;
+                w.sp_in.i_vbank2_port_sel = w.vlsu_out.o_vbank2_port_sel;
+                w.sp_in.i_vbank2_en_1 = tb.valid;
+                w.sp_in.i_vbank2_wen_1 = tb.valid;
+                w.sp_in.i_vbank2_addr_1 = tb.addr;
+                for (int b = 0; b < P_.NUM_LANE / 8; b++) w.sp_in.i_vbank2_wmask_1[static_cast<size_t>(b)] = tb.valid ? static_cast<uint8_t>(tb.mask >> (8 * b)) : uint8_t(0);
+                for (int l = 0; l < GVU_LANES; l++) w.sp_in.i_vbank2_wdata_1[static_cast<size_t>(l)] = static_cast<uint8_t>(tb.data[static_cast<size_t>(l)]);
             }
 
             if (pipe_ctrl_fsm_ == SOFTMAX_ST1 && w.cmp_out.out_valid)
@@ -1149,8 +1241,24 @@ namespace rtl_ref_gvu
                 {
                     const int32_t p32 = static_cast<int32_t>(w.mul1_prod[l]);
                     const u128 prod72 = static_cast<u128>(static_cast<i128>(p32));
-                    const unsigned sh = (w.lut_out.o_e_shift[l] != 0) ? (w.lut_out.o_e_shift[l] & 0x1Fu) : (exp_e_shift_buf_[3][l] & 0x1Fu);
-                    w.roundshift0_out[l] = vroundshift72_lane(prod72, sh, RND_NEAR_AWAY, NARROW_WRAP, NW_32).out_data;
+                    // i_softmax_qp (the corrected model): the exponent of the reciprocal lookup is one value for every beat of a row, so the live o_e_shift is
+                    // the one for the beat, a true 0 included; the delayed copy of the earlier cycles may hold the E of a lookup made before the stream.
+                    // Without i_softmax_qp (HAS_GVU_SOFTMAX_AS_RTL) the earlier rule stays.
+                    const unsigned sh = in.i_softmax_qp ? (w.lut_out.o_e_shift[l] & 0x1Fu)
+                                      : (w.lut_out.o_e_shift[l] != 0) ? (w.lut_out.o_e_shift[l] & 0x1Fu) : (exp_e_shift_buf_[3][l] & 0x1Fu);
+                    if (!in.i_softmax_qp)
+                        w.roundshift0_out[l] = vroundshift72_lane(prod72, sh, RND_NEAR_AWAY, NARROW_WRAP, NW_32).out_data;
+                    else
+                    {
+                        const int shq = int(sh) + int(in.i_softmax_q) - int(in.i_softmax_p);
+                        if (shq >= 0)
+                            w.roundshift0_out[l] = vroundshift72_lane(prod72, unsigned(shq), RND_NEAR_AWAY, NARROW_WRAP, NW_32).out_data;
+                        else
+                        {
+                            if (prod72 != 0) softmax_lshift_++;
+                            w.roundshift0_out[l] = vroundshift72_lane(prod72 << unsigned(-shq), 0u, RND_NEAR_AWAY, NARROW_WRAP, NW_32).out_data;
+                        }
+                    }
                 }
             }
 
@@ -1619,9 +1727,17 @@ namespace rtl_ref_gvu
                 {
                     w.fsm_nxt = POOLING_MAX;
                 }
+                else if (in.i_gvu_op == GVU_OP_AVGPOOL && P_.avg_enable)
+                {
+                    w.fsm_nxt = POOLING_AVG;
+                }
                 break;
             case POOLING_MAX:
                 if (w.vlsu_out.o_pooling_last_wr)
+                    w.fsm_nxt = IDLE;
+                break;
+            case POOLING_AVG:
+                if (avg_last_dly_.front())
                     w.fsm_nxt = IDLE;
                 break;
             case LUT_ACT_INIT:
@@ -1751,6 +1867,7 @@ namespace rtl_ref_gvu
                 o.o_residual_data[l] = static_cast<int8_t>(w.clamp_out[l] & 0xFFu);
             }
             o.o_maxpool_pipe_done = pool && w.vlsu_out.o_pooling_last_wr;
+            o.o_avgpool_pipe_done = pool_avg && avg_last_dly_.front();
             o.d_vbank0_en = w.sp_in.i_vbank0_en;
             o.d_vbank0_addr = w.sp_in.i_vbank0_addr;
             o.d_vbank2_wen_1 = w.sp_in.i_vbank2_wen_1;

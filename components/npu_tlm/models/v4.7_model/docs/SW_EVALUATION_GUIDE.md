@@ -164,7 +164,8 @@ an address register. The recording does not change results or cycle counts; it w
 
 `tools/has/tb_has_npu_top <directory>/segNNN` replays a segment without the wrapper and prints the internal error
 counters. Measured: the recording of the 14-instruction transformer program replays with all outputs equal and the same
-285,205 cycles. On a segment that contains a refused push the testbench prints a `REFUSED` line with the error code for
+285,205 cycles (configuration of the previous delivery, that is, the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`,
+`HAS_GVU_FA`, `HAS_GVU_LN` at 0; with the default of this package the recording was not replayed; the same program gives 263,808 cycles through the wrapper). On a segment that contains a refused push the testbench prints a `REFUSED` line with the error code for
 that instruction, checks the others and ends with FAIL.
 
 ## 5. Comparing with the reference
@@ -175,7 +176,7 @@ the image.
 
 | Tool | What it does | Needs |
 |---|---|---|
-| `tools/has/wrapper/test_npu_tlm_core_rtl <program dir> [count or all]` | Builds the real wrapper with a bus and a memory, replays the program, compares the output of every instruction with `dram_golden.bin`, prints the cycles and the PE utilization of every instruction | The wrapper sources and the model root `core_rtl/`. Start with `has/rce_gate` (14 instructions, minutes), then the first instructions of `has/insts_pe3`, then a whole network (hours) |
+| `tools/has/wrapper/test_npu_tlm_core_rtl <program dir> [count or all]` | Builds the real wrapper with a bus and a memory, replays the program, compares the output of every instruction with `dram_golden.bin`, prints the cycles and the PE utilization of every instruction | The wrapper sources and the model root `core_rtl/`. Start with `has/rce_gate` (14 instructions), then the first instructions of `has/insts_pe3`, then a whole network |
 | `tools/has/wrapper/fw/` (`npu_has_fw.c`, `make_fw_program.py`) | C99 firmware that replays a program and checks a CRC-32 of every output; no reference image inside the firmware | A CPU on the platform. This firmware has run on the host through the wrapper, not yet on a CPU model |
 | RAM dump compared with `dram_golden.bin` | Region by region, in instruction order | A way to dump RAM after the run |
 | `tools/has/ref_program.py <program dir>` | Computes the output of every GEMM_FUSED and ELEM_WISE instruction from `mmio.txt` and `dram_init.bin` with plain integer arithmetic, independent of the model, and compares it with an image (section 5.1) | Python 3 with numpy |
@@ -223,8 +224,7 @@ of one channel (232 elements), the bias of one channel (382 elements), weights o
 without extension registers, ADD with real-valued scales, a table activation with a last channel range shorter than
 `TILE_COUT`): on three random data sets the image the model produces equals the reference on all six instructions
 (17,536 elements each), and the same program written with bus addresses gives the same result with `--addr-base`.
-FUSED_ATTN and LAYERNORM are not computed. No program from another compiler has been run. A whole YOLOv8m takes
-minutes.
+FUSED_ATTN and LAYERNORM are not computed. No program from another compiler has been run.
 
 `--write-ref` writes the reference alone (it implies `--no-resync`). An instruction without extension registers reads its
 input as `[K][1][M]`, the layout of every other tensor; `tools/has/tb_has_npu_top` does not compare the output of such
@@ -271,7 +271,8 @@ join by order with the program. The frames per second use the clock that drives 
 one run of these instructions per frame; the steps the CPU does between instructions (the two `upsample2x` of YOLOv8m)
 and the copies the wrapper makes between RAM and the model are not in any of these numbers.
 
-Measured through the wrapper: on the 14-instruction transformer program the lines add up to 285,205 cycles and the
+Measured through the wrapper with the four operation knobs at 0 (the previous default; the default of this package gives
+263,808 cycles through the wrapper): on the 14-instruction transformer program the lines add up to 285,205 cycles and the
 summary gives 23.18 % PE utilization, the values the wrapper test reads from the registers; every line equals
 `PERF_EXEC_CYCLES` of its instruction; a program with a refused push reports 13 lines and 1 refused push; with and
 without the report the run gives the same outputs and cycles. Not yet run on a whole network.

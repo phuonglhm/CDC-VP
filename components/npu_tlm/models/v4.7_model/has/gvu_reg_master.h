@@ -23,7 +23,7 @@ namespace has
         static constexpr unsigned kApply = 2;
 
         explicit GvuRegMaster(unsigned lat = 4) { set_lat(lat); }
-        void set_lat(unsigned lat) { lat_ = lat < kApply ? kApply : lat; }
+        void set_lat(unsigned lat) { lat_ = lat < 1 ? 1 : lat; }   // lat < kApply only with HAS_GVU_REGS_NEO (measured: 1 write per edge)
         unsigned lat() const { return lat_; }
 
         bool busy() const { return active_; }
@@ -51,7 +51,8 @@ namespace has
             busy_edges_++;
             const unsigned n = static_cast<unsigned>(seq_.size());
             if (idx_ < n && ctr_ == idx_ * lat_ + kApply) { s.apply = true; s.w = seq_[idx_]; idx_++; writes_++; }
-            if (ctr_ == n * lat_) { s.drained = true; active_ = false; }
+            const unsigned last_apply = (n - 1) * lat_ + kApply;
+            if (ctr_ == (n * lat_ > last_apply ? n * lat_ : last_apply)) { s.drained = true; active_ = false; }
             return s;
         }
 

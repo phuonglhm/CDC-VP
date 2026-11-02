@@ -9,12 +9,21 @@
 # Register file of the vector unit (HAS_GVU_REGS=1, the data flow controller drives GvuTop through the registers of gvu_core): the
 # register-file and AGU unit tests, and the check programs (6 instructions; 9 with three max pools) through the register file with
 # the residual add by registers and outside it (HAS_GVU_REGS_ADD=0).
-# Number of items of a full run: 105 + 26 (register file group) = 131.
+# DMA_TENSOR COPY (opcode 0x16, HAS_DMA_TENSOR=1, the default): the instruction unit test and a check program of 25 instructions (19 COPY) on
+# the model, the reference tool and the legacy profile, with the opcode refused when the knob is off.
+# Vector-unit operations on GvuTop behind default-off knobs (HAS_GVU_AVG, HAS_GVU_SOFTMAX, HAS_GVU_FA, HAS_GVU_LN): the check programs with
+# each knob, two negative controls with the rounding / shift of the delivered RTL.
+# Number of items of a full run: 136 + 26 (register file group) + 6 (HAS_DMA_ND) + 14 (verification by instruction flow) = 182.
 set -u
-# The vector-unit knobs default to on in the model (HAS_GVU_TOP=3, HAS_GVU_STALL=1, HAS_GVU_ELEM_CLK=1, HAS_GVU_REGS=1, HAS_GVU_AGU_ND=1).
+# The vector-unit knobs default to on in the model (HAS_GVU_TOP=3, HAS_GVU_STALL=1, HAS_GVU_ELEM_CLK=1, HAS_GVU_REGS=1, HAS_GVU_AGU_ND=1,
+# HAS_GVU_AVG=1, HAS_GVU_SOFTMAX=1, HAS_GVU_FA=1, HAS_GVU_LN=1).
 # The reference values below are those of the path with every knob off, so they are set to 0 here; an entry that checks a knob sets
 # it on its own command line (the command-line value wins), and the register-file benches run with HAS_GVU_AGU_ND=0.
 export HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0
+# The four operations on the unit (average pool, softmax, attention requant, LayerNorm) also default to on in the model; off here too.
+export HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0
+# The DMA tensor operations (HAS_DMA_TENSOR, HAS_DMA_ND) default to on in the model; off here, the DMA entries set them to 1.
+export HAS_DMA_TENSOR=0 HAS_DMA_ND=0
 OUT=${1:-/var/tmp/npu_safe/regress_gvu}; MODE=${2:-all}
 export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}
 mkdir -p "$OUT"
@@ -23,7 +32,7 @@ res() { if [ "$1" = 0 ]; then echo "PASS  $2"; ok=$((ok+1)); else echo "FAIL  $2
 V=fe_work/has/vectors/gvu; T=tools/has/vec_gvu
 
 echo "== build unit testbenches"
-for t in tb_gvu_fused_attn tb_gvu_layernorm tb_gvu_softmax tb_gvu_lut_vectors tb_gvu_vrf tb_gvu_mas tb_has_mmio_compat tb_has_pad_gen; do
+for t in tb_gvu_fused_attn tb_gvu_layernorm tb_gvu_softmax tb_gvu_lut_vectors tb_gvu_vrf tb_gvu_mas tb_has_mmio_compat tb_has_dma_tensor_isa tb_has_pad_gen tb_gvu_avgpool_pipe tb_gvu_top_avgpool tb_gvu_top_softmax_vit tb_gvu_ln_lanes; do
   [ -f tools/has/$t.cpp ] || continue
   nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/$t.cpp -o "$OUT/$t" 2> "$OUT/$t.build.log"; res $? "build $t"
 done
@@ -43,7 +52,32 @@ run tb_gvu_fused_attn "$OUT/tb_gvu_fused_attn" $V $T
 run tb_gvu_vrf "$OUT/tb_gvu_vrf"
 run tb_has_dma "$OUT/tb_has_dma"
 [ -x "$OUT/tb_has_mmio_compat" ] && run tb_has_mmio_compat "$OUT/tb_has_mmio_compat"
+[ -x "$OUT/tb_has_dma_tensor_isa" ] && { "$OUT/tb_has_dma_tensor_isa" > "$OUT/tb_has_dma_tensor_isa.log" 2>&1; grep -q "^tb_has_dma_tensor_isa: PASS (0 failures)" "$OUT/tb_has_dma_tensor_isa.log"; res $? tb_has_dma_tensor_isa; }
 [ -x "$OUT/tb_has_pad_gen" ] && run tb_has_pad_gen "$OUT/tb_has_pad_gen"
+# AVG_POOL on GvuTop (GvuTopParams::avg_enable, off by default) and Softmax stage 3 shifted by E + Q - P (GvuTop::In::i_softmax_qp,
+# off by default = shift E as the RTL): the tail unit test, the vector sets of the vector-unit owner and generated cases, and the
+# Softmax rows of ViT-B/16 with and without the option.
+run tb_gvu_avgpool_pipe "$OUT/tb_gvu_avgpool_pipe"
+if [ -d target/test/avgpool ]; then run tb_gvu_top_avgpool_vectors "$OUT/tb_gvu_top_avgpool" vectors target/test; fi
+run tb_gvu_top_avgpool_cases "$OUT/tb_gvu_top_avgpool" cases
+run tb_gvu_top_avgpool_runs "$OUT/tb_gvu_top_avgpool" runs
+# Controller states of every generated case (IDLE -> POOLING_AVG -> IDLE) and the done cycle 5 cycles after a max pool of the same window
+run tb_gvu_top_avgpool_states "$OUT/tb_gvu_top_avgpool" states
+# LayerNorm with the statistics per lane (has/rtl_ref_gvu_ln_lanes.h, the model's proposal) against has::layernorm_row on random groups
+run tb_gvu_ln_lanes "$OUT/tb_gvu_ln_lanes"
+# The same machine stopped at the end of every stage: S, V, v, w, r, E of every lane, n_k and y_k against has::layernorm_row
+run tb_gvu_ln_lanes_tiers "$OUT/tb_gvu_ln_lanes" tiers
+HAS_GVU_AVG_AS_RTL=1 "$OUT/tb_gvu_top_avgpool" cases > "$OUT/tb_gvu_top_avgpool_asrtl.log" 2>&1; grep -q "RESULT: FAIL (12 failing)" "$OUT/tb_gvu_top_avgpool_asrtl.log"; res $? "AVG_POOL on GvuTop with the rounding and narrowing of the delivered RTL (negative control): 12 of 19 cases differ"
+smx() { for v in b0_h0 b6_h3 b11_h7; do "$OUT/tb_gvu_top_softmax_vit" tools/has/gvu_top_vectors/softmax_vit_$v.txt | head -1 | sed 's/.*A differ \([0-9]*\) .*/\1/'; done | tr '\n' ' '; }
+[ "$(HAS_GVU_SOFTMAX=1 smx)" = "0 0 0 " ]; res $? "Softmax rows of ViT-B/16 on GvuTop, stage 3 shift E + Q - P: 0 / 0 / 0 differ"
+[ "$(smx)" = "326 3443 2033 " ]; res $? "Softmax rows of ViT-B/16 on GvuTop, shift E as the RTL: 326 / 3443 / 2033 differ"
+# The three stages of the same rows (row maximum after ST1, sum after ST2, outputs after ST3) and the vbank1 buffer select flipped
+# once on the edge of the table-load done; with the select flipped on the level (as the delivered register file) the outputs go wrong.
+for v in b0_h0 b6_h3 b11_h7; do HAS_GVU_SOFTMAX=1 "$OUT/tb_gvu_top_softmax_vit" tools/has/gvu_top_vectors/softmax_vit_$v.txt; done > "$OUT/smx_edge.log" 2>&1
+for v in b0_h0 b6_h3 b11_h7; do HAS_GVU_SOFTMAX=1 "$OUT/tb_gvu_top_softmax_vit" tools/has/gvu_top_vectors/softmax_vit_$v.txt level; done > "$OUT/smx_level.log" 2>&1
+for v in b0_h0 b6_h3 b11_h7; do "$OUT/tb_gvu_top_softmax_vit" tools/has/gvu_top_vectors/softmax_vit_$v.txt; done > "$OUT/smx_rtlshift.log" 2>&1
+[ "$(grep -c 'M differ 0, SIG differ 0, A differ 0 / 6304 .*buf_sel flips 1,' "$OUT/smx_edge.log")" = 3 ]; res $? "Softmax stages of ViT-B/16 on GvuTop: row maximum, sum and outputs of 3 heads, 0 differ, buffer select flipped once"
+[ "$(grep -c 'mode=level .*A differ [1-9]' "$OUT/smx_level.log")" = 3 ]; res $? "Softmax with the buffer select flipped on the level (negative control): outputs of the 3 heads differ"
 # Optional: test vectors of the hardware drop (LUT unit and Softmax) on the ported units. GVU_HW_VEC names the directory
 # that holds lut_data/ and softmax/; the item is skipped when it does not exist.
 HWV=${GVU_HW_VEC:-fe_work/has/vectors/hw}
@@ -51,6 +85,14 @@ if [ -f tools/has/tb_rtl_ref_gvu_hwvec.cpp ] && [ -d "$HWV/softmax" ]; then
   nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_hwvec.cpp -o "$OUT/tb_rtl_ref_gvu_hwvec" 2> "$OUT/tb_rtl_ref_gvu_hwvec.build.log"; res $? "build tb_rtl_ref_gvu_hwvec"
   run tb_rtl_ref_gvu_hwvec "$OUT/tb_rtl_ref_gvu_hwvec" "$HWV"
 fi
+# GvuTop on the vector sets of the vector-unit owner (target/test, golden outputs of the MAS formulas): residual add (stage 1 int32
+# sums in vbank2 and stage 2 outputs), GEMM_FUSED requant and activation, Softmax; tile and vec sets.
+for p in residual_add:tb_gvu_top_residual_add gemm_fused:tb_gvu_top_gemm_fused softmax:tb_gvu_top; do
+  n=${p%%:*}; t=${p#*:}
+  [ -f $t.cpp ] || continue
+  nice -n 19 g++ -std=c++17 -O2 -I. -I/usr/include $t.cpp -lsystemc -lm -pthread -o "$OUT/$t" 2> "$OUT/$t.build.log"; res $? "build $t"
+  for m in tile vec; do "$OUT/$t" $m > "$OUT/root_${n}_$m.log" 2>&1; grep -q "RESULT: PASS" "$OUT/root_${n}_$m.log"; res $? "$t $m (vectors of the vector-unit owner): 0 mismatches"; done
+done
 # GvuTop (GEMM_FUSED, residual add) against the model's cycle-level units, random data over the whole ranges
 if [ -f tools/has/tb_gvu_top_vs_model.cpp ] && [ -f has/rtl_ref_gvu_top.h ]; then
   nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_gvu_top_vs_model.cpp -o "$OUT/tb_gvu_top_vs_model" 2> "$OUT/tb_gvu_top_vs_model.build.log"; res $? "build tb_gvu_top_vs_model"
@@ -110,12 +152,12 @@ if [ -f has/gvu_top_bridge.h ]; then
   HAS_OBP_RTL=1 HAS_OBP_DUMP="$OUT/obp86.dump" "$OUT/tb_has_npu_top" $D/insts_pe3 --first 86 --count 3 > "$OUT/i86_obp.log" 2>&1
   grep -q "RESULT: PASS (steps 3" "$OUT/i86_obp.log" && grep -q "sim cycles 280003 " "$OUT/i86_obp.log" && epi "^\[obp-rtl\] GEMM_FUSED" "$OUT/i86_obp.log" && grep -q "beats written to HAS_OBP_DUMP: 3392" "$OUT/i86_obp.log"; res $? "instructions 86-88 with HAS_OBP_RTL=1: 3/3, 280003 cycles, 108544 lanes 0 differ, 3392 beats dumped"
   "$OUT/tb_gvu_top_replay" "$OUT/obp86.dump" > "$OUT/gvu_top_replay.log" 2>&1
-  grep -q "RESULT: PASS" "$OUT/gvu_top_replay.log"; res $? "GvuTop replays the 3392 epilogue beats back to back and one at a time: 0 differ, depth 9"
+  grep -q "RESULT: PASS" "$OUT/gvu_top_replay.log"; res $? "GvuTop replays the 3392 epilogue beats back to back and one at a time: 0 differ, latency = the stream depth (11)"
   rm -f "$OUT/obp86.dump"
   HAS_GVU_TOP=1 "$OUT/tb_has_npu_top" $D/insts_pe3 --first 86 --count 3 > "$OUT/i86_top1.log" 2>&1
-  grep -q "RESULT: PASS (steps 3" "$OUT/i86_top1.log" && grep -q "sim cycles 280003 " "$OUT/i86_top1.log" && epi "^\[gvu-top\] GEMM epilogue" "$OUT/i86_top1.log"; res $? "instructions 86-88 with HAS_GVU_TOP=1: 3/3, 280003 cycles (= knobs off), 108544 lanes 0 differ"
+  grep -q "RESULT: PASS (steps 3" "$OUT/i86_top1.log" && grep -q "sim cycles 280070 " "$OUT/i86_top1.log" && epi "^\[gvu-top\] GEMM epilogue" "$OUT/i86_top1.log"; res $? "instructions 86-88 with HAS_GVU_TOP=1: 3/3, 280070 cycles (= knobs off + 67, one bench poll step for the 2 extra stages), 108544 lanes 0 differ"
   HAS_GVU_TOP=2 "$OUT/tb_has_npu_top" $D/insts_pe3 --first 86 --count 3 > "$OUT/i86_top2.log" 2>&1
-  grep -q "RESULT: PASS (steps 3" "$OUT/i86_top2.log" && grep -q "sim cycles 271829 " "$OUT/i86_top2.log" && epi "^\[gvu-top\] GEMM epilogue" "$OUT/i86_top2.log"; res $? "instructions 86-88 with HAS_GVU_TOP=2: 3/3, 271829 cycles (2 tables x (4096 - 9)), 108544 lanes 0 differ"
+  grep -q "RESULT: PASS (steps 3" "$OUT/i86_top2.log" && grep -q "sim cycles 271896 " "$OUT/i86_top2.log" && epi "^\[gvu-top\] GEMM epilogue" "$OUT/i86_top2.log"; res $? "instructions 86-88 with HAS_GVU_TOP=2: 3/3, 271896 cycles (2 tables x (4096 - 9)), 108544 lanes 0 differ"
   # Residual add of every ELEM_WISE instruction of YOLOv8m, replayed from the program's tensors on GvuTop (12 instructions)
   nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_replay.cpp -o "$OUT/tb_rtl_ref_gvu_replay" 2> "$OUT/tb_rtl_ref_gvu_replay.build.log"; res $? "build tb_rtl_ref_gvu_replay"
   "$OUT/tb_rtl_ref_gvu_replay" $D/insts_pe3 0 --gvu-top > "$OUT/replay_top.log" 2>&1
@@ -131,6 +173,15 @@ if [ -f tools/has/tb_gvu_top_maxpool.cpp ]; then
   MPV=${GVU_HW_MAXPOOL:--}; [ "$MPV" != "-" ] && [ ! -d "$MPV" ] && MPV=-
   run tb_gvu_top_maxpool "$OUT/tb_gvu_top_maxpool" "$MPV" 1
 fi
+# Max pool of GvuTop on the two fixed datasets of target/test/maxpool (bench of the vector-unit owner): multi W-tile
+# (3 channels of 80 x 80, 5 x 5, stride 1) and single W-tile (40 channels of 20 x 20, 3 x 3, stride 1)
+if [ -f tools/has/tb_gvu_top_maxpool_vectors.cpp ] && [ -d target/test/maxpool ]; then
+  nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_gvu_top_maxpool_vectors.cpp -o "$OUT/tb_gvu_top_maxpool_vectors" 2> "$OUT/tb_gvu_top_maxpool_vectors.build.log"; res $? "build tb_gvu_top_maxpool_vectors"
+  for mv in tile:17328 vec:12960; do m=${mv%:*}; n=${mv#*:}
+    "$OUT/tb_gvu_top_maxpool_vectors" $m > "$OUT/tb_gvu_top_maxpool_vectors_$m.log" 2>&1
+    grep -q "RESULT: PASS" "$OUT/tb_gvu_top_maxpool_vectors_$m.log" && grep -q "Total mismatches: *0 / $n$" "$OUT/tb_gvu_top_maxpool_vectors_$m.log"; res $? "max pool datasets on GvuTop, $m: 0 of $n differ"
+  done
+fi
 # ---- HAS_GVU_TOP=3: GvuTop on the clock of the core (has/gvu_top_stream.h, docs/GVU_TOP_CORE_INTEGRATION.md, section 5).
 # Cycle bands: level A with HAS_GVU_TOP=2, less up to 12 cycles per core pass for the fixed tail that level B removes.
 echo "== level B: stream unit test"
@@ -139,23 +190,23 @@ nice -n 19 g++ -std=c++17 -O2 -Wall -Wno-unused-variable -I. -I/usr/include tool
 "$OUT/tb_gvu_top_stream" after > "$OUT/stream_after.log" 2>&1; grep -q "RESULT: PASS" "$OUT/stream_after.log"; res $? "stream unit test, hook after the tap"
 "$OUT/tb_gvu_top_stream" elem > "$OUT/stream_elem.log" 2>&1; grep -q "RESULT: PASS (cases not as expected: 0 of 12)" "$OUT/stream_elem.log"; res $? "residual add and max pool as jobs on the clock = call style: values, cycles, runs, resets, thread time (12 cases)"
 [ "$(grep -h 'trace checksum' "$OUT/stream_before.log" | sed 's/.*packet) //;s/ over.*//')" = "$(grep -h 'trace checksum' "$OUT/stream_after.log" | sed 's/.*packet) //;s/ over.*//')" ]; res $? "same trace of the packets in both orders of the processes"
-grep -q "trace checksum (push, latch, result of every packet) 0aa7538aad238ffb over 112 packets" "$OUT/stream_before.log"; res $? "stream unit test: trace checksum of the default depth 9 (0aa7538aad238ffb)"
+grep -q "latch->result 11): 0 of 112" "$OUT/stream_before.log" && grep -q "trace checksum (push, latch, result of every packet) e8fab7eb30d95077 over 112 packets" "$OUT/stream_before.log"; res $? "stream unit test: latch->result 11 for every packet, trace checksum of the default depth 11 (e8fab7eb30d95077)"
 
-# ---- GEMM_FUSED parameters of GvuTop that follow open hardware choices: stream depth (default 9, the hardware RTL measures
-# 11) and the narrowing after the round-shift (has::Knobs::req_narrow SAT16 / WRAP16), tile and stream mode
+# ---- GEMM_FUSED parameters of GvuTop that follow open hardware choices: stream depth (default 11 as the hardware RTL measures;
+# 9 = the MAS drawing, -DGVU_GEMM_STREAM_DEPTH=9) and the narrowing after the round-shift (has::Knobs::req_narrow SAT16 / WRAP16), tile and stream mode
 echo "== GvuTop GEMM_FUSED parameters: stream depth and narrowing"
 nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_gvu_top_params.cpp -o "$OUT/tb_gvu_top_params" 2> "$OUT/tb_gvu_top_params.build.log"; res $? "build tb_gvu_top_params"
 run tb_gvu_top_params "$OUT/tb_gvu_top_params" 8 1
 grep -q "RESULT: PASS (runs not as expected: 0 of 25)" "$OUT/tb_gvu_top_params.log"; res $? "depth 11 = depth 9 beat by beat (latency 11 / 9); SAT16 and WRAP16 = has::requant in tile and stream mode"
-nice -n 19 g++ -std=c++17 -O2 -Wall -DGVU_GEMM_STREAM_DEPTH=11 -I. tools/has/tb_gvu_top_params.cpp -o "$OUT/tb_gvu_top_params_d11" 2> "$OUT/tb_gvu_top_params_d11.build.log"; res $? "build tb_gvu_top_params with GVU_GEMM_STREAM_DEPTH=11"
-run tb_gvu_top_params_d11 "$OUT/tb_gvu_top_params_d11" 8 1
+nice -n 19 g++ -std=c++17 -O2 -Wall -DGVU_GEMM_STREAM_DEPTH=9 -I. tools/has/tb_gvu_top_params.cpp -o "$OUT/tb_gvu_top_params_d9" 2> "$OUT/tb_gvu_top_params_d9.build.log"; res $? "build tb_gvu_top_params with GVU_GEMM_STREAM_DEPTH=9 (MAS)"
+run tb_gvu_top_params_d9 "$OUT/tb_gvu_top_params_d9" 8 1
 run tb_gvu_top_params_zp "$OUT/tb_gvu_top_params" zp 1
 grep -q "not expressible 361 (expected 361; the case ZP_OUT = 200 with one beat counts 1)" "$OUT/tb_gvu_top_params_zp.log"; res $? "zero point of GEMM_FUSED = 8 bits of the RTL register: int8 taken, 0 differ; outside int8 not expressible (361 of 721 beats, ZP_OUT 200 one beat = 1)"
-nice -n 19 g++ -std=c++17 -O2 -Wall -Wno-unused-variable -DGVU_GEMM_STREAM_DEPTH=11 -I. -I/usr/include tools/has/tb_gvu_top_stream.cpp -lsystemc -lm -pthread -o "$OUT/tb_gvu_top_stream_d11" 2> "$OUT/tb_gvu_top_stream_d11.build.log"; res $? "build tb_gvu_top_stream with GVU_GEMM_STREAM_DEPTH=11"
-"$OUT/tb_gvu_top_stream_d11" before > "$OUT/stream_d11_before.log" 2>&1; grep -q "RESULT: PASS" "$OUT/stream_d11_before.log"; res $? "stream unit test at depth 11, hook before the tap"
-"$OUT/tb_gvu_top_stream_d11" after > "$OUT/stream_d11_after.log" 2>&1; grep -q "RESULT: PASS" "$OUT/stream_d11_after.log"; res $? "stream unit test at depth 11, hook after the tap"
-grep -q "latch->result 11): 0 of 112" "$OUT/stream_d11_before.log" && grep -q "trace checksum (push, latch, result of every packet) e8fab7eb30d95077 over 112 packets" "$OUT/stream_d11_before.log" && \
-  [ "$(grep -h 'trace checksum' "$OUT/stream_d11_before.log")" = "$(grep -h 'trace checksum' "$OUT/stream_d11_after.log")" ]; res $? "stream unit test at depth 11: latch->result 11 for every packet, same trace in both orders (e8fab7eb30d95077)"
+nice -n 19 g++ -std=c++17 -O2 -Wall -Wno-unused-variable -DGVU_GEMM_STREAM_DEPTH=9 -I. -I/usr/include tools/has/tb_gvu_top_stream.cpp -lsystemc -lm -pthread -o "$OUT/tb_gvu_top_stream_d9" 2> "$OUT/tb_gvu_top_stream_d9.build.log"; res $? "build tb_gvu_top_stream with GVU_GEMM_STREAM_DEPTH=9 (MAS)"
+"$OUT/tb_gvu_top_stream_d9" before > "$OUT/stream_d9_before.log" 2>&1; grep -q "RESULT: PASS" "$OUT/stream_d9_before.log"; res $? "stream unit test at depth 9, hook before the tap"
+"$OUT/tb_gvu_top_stream_d9" after > "$OUT/stream_d9_after.log" 2>&1; grep -q "RESULT: PASS" "$OUT/stream_d9_after.log"; res $? "stream unit test at depth 9, hook after the tap"
+grep -q "latch->result 9): 0 of 112" "$OUT/stream_d9_before.log" && grep -q "trace checksum (push, latch, result of every packet) 0aa7538aad238ffb over 112 packets" "$OUT/stream_d9_before.log" && \
+  [ "$(grep -h 'trace checksum' "$OUT/stream_d9_before.log")" = "$(grep -h 'trace checksum' "$OUT/stream_d9_after.log")" ]; res $? "stream unit test at depth 9 (MAS): latch->result 9 for every packet, same trace in both orders (0aa7538aad238ffb)"
 
 # ---- HAS_GVU_REGS=1: the data flow controller configures and starts GvuTop through the register file (has/gvu_regs_dfc.h,
 # has/gvu_reg_master.h, has/rtl_ref_gvu_config_regs.h; GEMM_FUSED, max pool and residual add), the layer leaves by the flags of the
@@ -263,6 +314,54 @@ fi
 python3 tools/has/make_avgpool_gate.py "$OUT/avgpool_gate" > /dev/null && "$OUT/tb_has_npu_top" "$OUT/avgpool_gate" > "$OUT/avg.log" 2>&1
 grep -q "RESULT: PASS (steps 8" "$OUT/avg.log"; res $? "AVG_POOL instruction path 8/8"
 grep "sim cycles" "$OUT/avg.log" | tail -1
+# The vector-unit operations on GvuTop behind their knobs (default off), with the other vector-unit knobs at their model defaults (on):
+# average pool (HAS_GVU_AVG, POOLING_AVG of the RTL patch, by Reg 7 / 8 / 25 / 26), softmax rows of FUSED_ATTN (HAS_GVU_SOFTMAX, by
+# Reg 4..6), requant of the attention products (HAS_GVU_FA), LayerNorm with lane statistics (HAS_GVU_LN, the model's proposal); each
+# value of GvuTop goes into the output, so the program checks it; the delivered RTL's rounding / shift fails (negative controls).
+GD="HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1 HAS_GVU_REGS=1 HAS_GVU_AGU_ND=1"
+env $GD HAS_GVU_AVG=1 "$OUT/tb_has_npu_top" "$OUT/avgpool_gate" > "$OUT/avg_gvu.log" 2>&1
+grep -q "RESULT: PASS (steps 8" "$OUT/avg_gvu.log" && grep -q "avg pool     | calls 8 | not expressible 4 | lanes 1104 | differ 0 | runs 4 " "$OUT/avg_gvu.log" && grep -q "writes 24 | runs whose values the register fields do not hold 0" "$OUT/avg_gvu.log"
+res $? "AVG_POOL on GvuTop (HAS_GVU_AVG=1, by registers): 8/8, 4 instructions on GvuTop (1104 lanes, 0 differ), 4 with a window the RTL does not pool"
+env $GD HAS_GVU_AVG=1 HAS_GVU_AVG_AS_RTL=1 "$OUT/tb_has_npu_top" "$OUT/avgpool_gate" > "$OUT/avg_gvu_asrtl.log" 2>&1
+grep -q "RESULT: FAIL" "$OUT/avg_gvu_asrtl.log" && grep -q "lanes 1104 | differ 175 " "$OUT/avg_gvu_asrtl.log"; res $? "AVG_POOL on GvuTop with the rounding / narrowing of the delivered RTL (negative control): FAIL, 175 lanes differ"
+env $GD HAS_GVU_SOFTMAX=1 "$OUT/tb_has_npu_top" $D/rce_gate > "$OUT/rce_smx.log" 2>&1
+grep -q "RESULT: PASS (steps 14" "$OUT/rce_smx.log" && grep -q "groups 47 | not expressible 0 | lanes 242070 | differ 0 " "$OUT/rce_smx.log" && grep -q "writes 188 | groups whose values the register fields do not hold 0" "$OUT/rce_smx.log"
+res $? "transformer check, softmax on GvuTop (HAS_GVU_SOFTMAX=1, by Reg 4..6): 14/14, 47 groups, 242070 lanes, 0 differ"
+env $GD HAS_GVU_SOFTMAX=1 HAS_GVU_SOFTMAX_AS_RTL=1 "$OUT/tb_has_npu_top" $D/rce_gate > "$OUT/rce_smx_asrtl.log" 2>&1
+grep -q "RESULT: FAIL" "$OUT/rce_smx_asrtl.log" && grep -q "lanes 242070 | differ 94961 " "$OUT/rce_smx_asrtl.log"; res $? "softmax on GvuTop with the stage-3 shift of the delivered RTL (negative control): FAIL, 94961 lanes differ"
+env $GD HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 "$OUT/tb_has_npu_top" $D/rce_gate > "$OUT/rce_fa.log" 2>&1
+grep -q "RESULT: PASS (steps 14" "$OUT/rce_fa.log" && grep -q "phases 18 | not expressible 0 | lanes 327958 | differ 0 | beats 11246 " "$OUT/rce_fa.log"
+res $? "transformer check, attention requant on GvuTop (HAS_GVU_FA=1): 14/14, 18 phases, 327958 lanes, 0 differ"
+env $GD HAS_GVU_LN=1 "$OUT/tb_has_npu_top" $D/rce_gate > "$OUT/rce_ln.log" 2>&1
+grep -q "RESULT: PASS (steps 14" "$OUT/rce_ln.log" && grep -q "groups 8 | not expressible 0 | lanes 174080 | differ 0 " "$OUT/rce_ln.log"
+res $? "transformer check, LayerNorm with lane statistics (HAS_GVU_LN=1): 14/14, 8 groups, 174080 lanes, 0 differ"
+env $GD HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 HAS_GVU_LN=1 "$OUT/tb_has_npu_top" $D/rce_gate > "$OUT/rce_all.log" 2>&1
+grep -q "RESULT: PASS (steps 14" "$OUT/rce_all.log" && grep -q "sim cycles 263883 " "$OUT/rce_all.log" && grep -q "jobs 32 (failed 0), edges 61543" "$OUT/rce_all.log" && ! grep -q "<== FAIL" "$OUT/rce_all.log"
+res $? "transformer check with softmax, attention requant and LayerNorm as jobs on the clock: 14/14, 263883 cycles, 32 jobs, 0 failed"
+# the same three in the call style (no register file, no jobs on the clock): the values are the same, the requant counts its stream tail only
+env HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=1 HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 HAS_GVU_LN=1 "$OUT/tb_has_npu_top" $D/rce_gate > "$OUT/rce_all_call.log" 2>&1
+grep -q "RESULT: PASS (steps 14" "$OUT/rce_all_call.log" && grep -q "sim cycles 242711 " "$OUT/rce_all_call.log"; res $? "transformer check with the three operations in the call style: 14/14, 242711 cycles"
+rm -rf "$OUT/dma_gate" "$OUT"/snap_dma*; mkdir -p "$OUT/snap_dma" "$OUT/snap_dma0"
+# ref_program.py also compares against the input image given by --image, so it exits 1 while it writes the reference image
+python3 tools/has/make_dma_tensor_gate.py "$OUT/dma_gate" > /dev/null && { python3 tools/has/ref_program.py "$OUT/dma_gate" --image "$OUT/dma_gate/dram_init.bin" --write-ref "$OUT/dma_gate/dram_golden.bin" > /dev/null 2>&1; [ -s "$OUT/dma_gate/dram_golden.bin" ]; }; res $? "DMA_TENSOR COPY check program (25 instructions, 19 COPY): generated, reference image written"
+python3 tools/has/make_dma_tensor_gate.py "$OUT/dma_gate" --check "$OUT/dma_gate/dram_golden.bin" > "$OUT/dma_expect.log" 2>&1; res $? "DMA_TENSOR COPY: reference image = expected bytes of 16 copies"
+HAS_DMA_TENSOR=1 HAS_TRACE_DMA_TENSOR=1 FE_SNAPSHOT_DIR="$OUT/snap_dma" "$OUT/tb_has_npu_top" "$OUT/dma_gate" > "$OUT/dma.log" 2>&1; res $? "DMA_TENSOR COPY gate on the model: 25 / 25"
+python3 tools/has/ref_program.py "$OUT/dma_gate" --image "$OUT/snap_dma/dram_snapshot.bin" > "$OUT/dma_ref.log" 2>&1; res $? "DMA_TENSOR COPY gate: ref_program.py MATCH on the model's image"
+HAS_DMA_TENSOR=1 FE_SNAPSHOT_DIR="$OUT/snap_dma0" "$OUT/tb_has_npu_top" "$OUT/dma_gate" --profile legacy > "$OUT/dma_legacy.log" 2>&1; res $? "DMA_TENSOR COPY gate, legacy profile: 25 / 25"
+"$OUT/tb_has_npu_top" "$OUT/dma_gate" > "$OUT/dma_neg.log" 2>&1; [ $? -ne 0 ] && [ "$(grep -c REFUSED "$OUT/dma_neg.log")" = 19 ]; res $? "DMA_TENSOR off (negative control): the 19 COPY instructions are refused"
+# HAS_DMA_ND (4-D DMA descriptors, ELEM_WISE modes 6 slice / 7 concat; model proposal, default 1): the slice / concat check
+# program of 27 instructions (golden written by its generator), a gate of tensors larger than SRAM-A (64 x 64 x 64, golden
+# by numpy) and the tile gather / scatter through the descriptors on ref_gate (same image as with the knob off).
+rm -rf "$OUT/dsc_gate" "$OUT/big_sc" "$OUT"/snap_dsc "$OUT"/snap_dnd; mkdir -p "$OUT/snap_dsc" "$OUT/snap_dnd"
+python3 tools/has/make_ref_gate_dma_slice_concat.py "$OUT/dsc_gate" > /dev/null && HAS_DMA_ND=1 FE_SNAPSHOT_DIR="$OUT/snap_dsc" "$OUT/tb_has_npu_top" "$OUT/dsc_gate" > "$OUT/dsc.log" 2>&1
+grep -q "RESULT: PASS (steps 27, tensors 27" "$OUT/dsc.log"; res $? "slice / concat by 4-D DMA (HAS_DMA_ND=1): 27/27"
+python3 tools/has/ref_program.py "$OUT/dsc_gate" --image "$OUT/snap_dsc/dram_snapshot.bin" > "$OUT/dsc_ref.log" 2>&1; res $? "slice / concat by 4-D DMA: ref_program.py MATCH on the model's image"
+"$OUT/tb_has_npu_top" "$OUT/dsc_gate" > "$OUT/dsc_neg.log" 2>&1; [ $? -ne 0 ] && [ "$(grep -c REFUSED "$OUT/dsc_neg.log")" = 14 ]; res $? "HAS_DMA_ND off (negative control): the 14 slice / concat instructions are refused"
+python3 tools/has/make_dma_nd_big_gate.py "$OUT/big_sc" > /dev/null && HAS_DMA_ND=1 "$OUT/tb_has_npu_top" "$OUT/big_sc" > "$OUT/big_sc.log" 2>&1
+grep -q "RESULT: PASS (steps 10, tensors 10" "$OUT/big_sc.log"; res $? "slice / concat of tensors larger than SRAM-A (256 KB, HAS_DMA_ND=1): 10 of 10 steps"
+"$OUT/tb_has_npu_top" "$OUT/big_sc" > "$OUT/big_sc_neg.log" 2>&1; [ $? -ne 0 ] && [ "$(grep -c REFUSED "$OUT/big_sc_neg.log")" = 10 ]; res $? "HAS_DMA_ND off (negative control): the 10 instructions of the large gate are refused"
+HAS_DMA_ND=1 FE_SNAPSHOT_DIR="$OUT/snap_dnd" "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_dnd.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/gate_dnd.log" && cmp -s "$OUT/snap_0/dram_snapshot.bin" "$OUT/snap_dnd/dram_snapshot.bin" && [ "$(grep -o 'sim cycles [0-9]*' "$OUT/gate_dnd.log")" = "$(grep -o 'sim cycles [0-9]*' "$OUT/gate0.log")" ]; res $? "ref_gate with tile gather / scatter by 4-D descriptors (HAS_DMA_ND=1): same image and cycles as with the knob off"
 # Convolution padding (padding per side, padding value): golden from explicit loops in make_pad_gate.py, then the
 # independent reference tool, the model with the padding staged, and the model with the padding generated by the feeder.
 rm -rf "$OUT/pad_gate" "$OUT/pad_rnd"; rm -f "$OUT"/pad_ref.log "$OUT"/pad.log "$OUT"/pad_feeder.log "$OUT"/pad_rnd*.log
@@ -312,5 +411,33 @@ grep -q "RESULT: MATCH (checked 6: match 6" "$OUT/dil_rnd_ref.log"; res $? "rand
 grep -q "RESULT: PASS (steps 6" "$OUT/dil_rnd.log"; res $? "random dilation layers, padding staged 6/6"
 HAS_FEEDER_PAD=1 "$OUT/tb_has_npu_top" "$OUT/dil_rnd" > "$OUT/dil_rnd_feeder.log" 2>&1
 grep -q "RESULT: PASS (steps 6" "$OUT/dil_rnd_feeder.log"; res $? "random dilation layers, padding by the IFMAP feeder 6/6 (core busy $(busy "$OUT/dil_rnd.log") staged, $(busy "$OUT/dil_rnd_feeder.log") by the feeder)"
+# Transpose after the epilogue (HAS_OUT_TRANSPOSE, default off; proposal of the model, has/gvu_out_transpose.h): the corner-turn unit,
+# the reference tool with X_TMAJ_C0 against numpy on two generated programs, GEMM_FUSED token-major on the reference gate with the
+# knob on, and FUSED_ATTN reading V token-major (FLAGS bit 2) against an independent Python reference.
+nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_gvu_out_transpose.cpp -o "$OUT/tb_gvu_out_transpose" 2> "$OUT/tb_gvu_out_transpose.build.log" && "$OUT/tb_gvu_out_transpose" > "$OUT/tb_gvu_out_transpose.log" 2>&1
+grep -q "RESULT PASS: 90 / 90" "$OUT/tb_gvu_out_transpose.log"; res $? "corner turn unit (gvu_out_transpose) 90/90"
+python3 -I tools/has/test_ref_tmaj.py "$OUT/ref_gate" "$OUT/dsc_gate" > "$OUT/ref_tmaj.log" 2>&1; res $? "reference tool, GEMM_FUSED token-major vs numpy: $(tail -1 "$OUT/ref_tmaj.log")"
+rm -rf "$OUT/tmaj_gate"; python3 -I tools/has/make_tmaj_gate.py "$OUT/ref_gate" "$OUT/tmaj_gate" > "$OUT/tmaj_gate.gen.log" 2>&1 && HAS_OUT_TRANSPOSE=1 "$OUT/tb_has_npu_top" "$OUT/tmaj_gate" > "$OUT/tmaj_gate.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/tmaj_gate.log"; res $? "GEMM_FUSED token-major (HAS_OUT_TRANSPOSE=1) on the reference gate = reference tool"
+rm -rf "$OUT/fa_vtmaj"; python3 -I tools/has/make_fa_vtmaj_gate.py "$OUT/fa_vtmaj" > "$OUT/fa_vtmaj.gen.log" 2>&1 && "$OUT/tb_has_npu_top" "$OUT/fa_vtmaj" > "$OUT/fa_vtmaj.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/fa_vtmaj.log"; res $? "FUSED_ATTN with V token-major (FLAGS bit 2) and channel-major: $(grep -o 'RESULT: PASS (steps [0-9]*' "$OUT/fa_vtmaj.log")"
+# Realignment with the hardware repository (knobs default off): the RESIDUAL operation of the hardware (HAS_GVU_RESIDUAL_HW,
+# has/rtl_ref_gvu_residual_hw.h, mapping self-check) and the reference gate with it and with vbank#1 of 200 rows (HAS_GVU_VBANK1_DEPTH=200).
+nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_residual_hw.cpp -o "$OUT/tb_rtl_ref_gvu_residual_hw" 2> "$OUT/tb_rtl_ref_gvu_residual_hw.build.log" && "$OUT/tb_rtl_ref_gvu_residual_hw" > "$OUT/tb_rtl_ref_gvu_residual_hw.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/tb_rtl_ref_gvu_residual_hw.log"; res $? "RESIDUAL of the hardware: mapping of the ADD parameters (self-check)"
+HAS_GVU_RESIDUAL_HW=1 HAS_GVU_VBANK1_DEPTH=200 "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_neo.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/gate_neo.log"; res $? "reference gate with HAS_GVU_RESIDUAL_HW=1 HAS_GVU_VBANK1_DEPTH=200"
+# Realignment, second part (knobs default off): the GVU register file of the hardware repository (HAS_GVU_REGS_NEO, self-check of
+# has/rtl_ref_gvu_config_regs_neo.h), the DMA as one-dimensional commands of the DFC (HAS_DMA_DFC_1D), the GEMM_FUSED result through
+# vbank2 to DRAM (HAS_GVU_OUT_VBANK2) and the bus cost of the data moved outside the DMA model (HAS_BUS_STRICT), each on the reference gate.
+nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_config_regs_neo.cpp -o "$OUT/tb_rtl_ref_gvu_config_regs_neo" 2> "$OUT/tb_rtl_ref_gvu_config_regs_neo.build.log" && "$OUT/tb_rtl_ref_gvu_config_regs_neo" > "$OUT/tb_rtl_ref_gvu_config_regs_neo.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/tb_rtl_ref_gvu_config_regs_neo.log"; res $? "GVU register file of the hardware repository (self-check)"
+for k in HAS_GVU_REGS_NEO HAS_DMA_DFC_1D HAS_GVU_OUT_VBANK2 HAS_BUS_STRICT; do
+  env $k=1 "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_$k.log" 2>&1
+  grep -q "RESULT: PASS" "$OUT/gate_$k.log"; res $? "reference gate with $k=1"
+done
+# Verification by instruction flow: every numbered step of the drawn flows with its checks, references and results, read from
+# the logs above (one log per flow and a summary in $OUT/flows).
+python3 tools/has/verify_flows.py "$OUT" > "$OUT/flows.log" 2>&1; res $? "verification by instruction flow: $(tail -1 "$OUT/flows.log" | cut -d, -f1 | sed 's/^RESULT: //')"
 echo "RESULT: $ok passed, $bad failed"
 exit $bad

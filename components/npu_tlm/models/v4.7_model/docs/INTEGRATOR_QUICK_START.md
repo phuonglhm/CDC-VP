@@ -25,7 +25,7 @@ Both give the same numbers. The file way needs no firmware change and is the qui
 
 ### 2.1 Platform files to update for this release
 
-This release adds no register and no error code (`CHANGES_SINCE_INTEGRATED_MODEL.md`, section 2). The integrated model
+This release adds one optional extension register, `TMAJ_C0` (`0x40000500`, used only with the option `HAS_OUT_TRANSPOSE=1`, off by default; `HW_RTL_ALIGNMENT.md`, section 8), and no error code. Firmware that does not use the option needs no change. The integrated model
 already added six extension registers and one error code; if the platform files below do not list them yet, add them.
 Programs that do not use them run unchanged, so nothing below blocks the update of section 2. Firmware that
 uses padding per side or dilation, or that decodes the error codes of the model, needs the names; the wrapper's
@@ -43,21 +43,24 @@ not edited.
    #define CDC_NPU_VP_RICH_PAD_B       (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4F4u)
    #define CDC_NPU_VP_RICH_PAD_R       (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4F8u)
    #define CDC_NPU_VP_RICH_DILATION    (CDC_NPU_VP_RICH_ALIAS_BASE + 0x4FCu) /* 0 or not written: 1; (KW - 1) x DILATION <= 63 */
+   #define CDC_NPU_VP_RICH_TMAJ_C0     (CDC_NPU_VP_RICH_ALIAS_BASE + 0x500u) /* optional: only with HAS_OUT_TRANSPOSE=1 */
    #define CDC_NPU_RICH_ERROR_SWEEP    11u   /* a row sweep of the IFMAP feeder would exceed 256 positions */
    ```
 
    The same registers under the names of this package: `tools/has/wrapper/fw/npu_has_fw.h` (`NPU_HAS_PAD_VALUE` ...
-   `NPU_HAS_DILATION`, `NPU_HAS_ERR_SWEEP`). Meaning and rules: `SW_INTEGRATION_GUIDE.md`, section 3.3 (rows 31 to
+   `NPU_HAS_DILATION`, `NPU_HAS_ERR_SWEEP`, and the optional `NPU_HAS_TMAJ_C0`). Meaning and rules: `SW_INTEGRATION_GUIDE.md`, section 3.3 (rows 31 to
    36, padding, dilation) and the error table of section 3.2.
 2. **Wrapper document** (the register tables of the wrapper's README): the compact rich alias now reaches
    `0x104FC` (model `0x400004FC`) instead of `0x104E4`; the extension table gets the six rows above; the error table
    of `RICH_STATUS` gets `11 SWEEP`.
 3. **Wrapper source, one constant (recommended).** The wrapper stages its DRAM window for an instruction when one of
    the model addresses `0x4000046C` to `0x400004E7` was written since the previous push. The model treats every
-   write up to `0x400004FF` as extended. Today every extended GEMM_FUSED also writes the geometry registers below
+   write up to `0x40000503` as extended (`0x400004FF` before `TMAJ_C0`). Today every extended GEMM_FUSED also writes the geometry registers below
    `0x400004E8`, so no program depends on it; to keep the two ranges equal, change the end of that range in the
    wrapper's parameter decode from `0x400004E8` to `0x40000500` (the change carried by
-   `tools/has/wrapper/npu_tlm_rich_window.patch` for older revisions).
+   `tools/has/wrapper/npu_tlm_rich_window.patch` for older revisions). `TMAJ_C0` (`0x40000500`) is always written together
+   with the geometry registers of its GEMM_FUSED, so a wrapper whose range ends at `0x40000500` still stages the window
+   for it; firmware that uses it must make sure the wrapper forwards writes of `0x40000500` to the model.
 4. **Firmware status check.** The wrapper's `STATUS` reports DONE also for an instruction the model refused at the
    push; the refusal and its code are in `RICH_STATUS` (`0x10318`, bit 2 and bits 31:16). Firmware that checks
    results should read it after every extended push (`SW_EVALUATION_GUIDE.md`, section 4).

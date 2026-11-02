@@ -149,7 +149,7 @@ Examples:
 # one layer in isolation, all tiles on the core
 FE_CORE_STEPS=39 FE_CORE_GOLD_INPUT=1 FE_STEP_FIRST=39 ./fe_work/step6b/tb_fe_core_net fe_work/step6b/net 40
 
-# full network, chained, with snapshots and metrics (about 14 hours on 4 cores)
+# full network, chained, with snapshots and metrics
 mkdir -p run/snap
 FE_CORE_STEPS=all FE_SRAM_BACKDOOR=1 FE_SNAPSHOT_DIR=run/snap FE_METRICS_CSV=run/metrics_tiles.csv \
   stdbuf -oL ./fe_work/step6b/tb_fe_core_net_full fe_work/step6b/net > run/run.log 2>&1 &
@@ -208,6 +208,8 @@ bash tools/has/build_tb_has_npu_top.sh                     # -> tools/has/tb_has
 python3 tools/fe/fe_emit_insts.py --plan pe3               # YOLOv8m, reference tiling  -> $FE_WORK/has/insts_pe3
 python3 tools/fe/fe_emit_insts.py --plan has               # YOLOv8m, baseline tiling   -> $FE_WORK/has/insts_has (not shipped)
 python3 tools/fe/fe_emit_insts.py --plan pe4 --halo --c-bcast   # tiling for the proposals profile -> $FE_WORK/has/insts_pe4
+python3 tools/fe/fe_emit_insts.py --plan pe3 --slice-concat dma # concat by DMA_TENSOR COPY   -> $FE_WORK/has/insts_pe3_dma (not shipped)
+python3 tools/fe/fe_emit_insts.py --plan pe3 --slice-concat dma_nd # concat by 4-D descriptors -> $FE_WORK/has/insts_pe3_nd (not shipped)
 python3 tools/fe/fe_vit_full.py                            # ViT-B/16, 12 blocks          -> $FE_WORK/has/vit_full
 ```
 
@@ -230,8 +232,8 @@ Single options are added on top of a profile (list: header of `tools/has/tb_has_
 `has::HasNpuTop npu("npu", has::Profile::Proposals);` another one.
 
 ```bash
-tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3                          # YOLOv8m, default vector-unit flow (about 10 hours, one core)
-tools/has/tb_has_npu_top $FE_WORK/has/vit_full                            # ViT-B/16, default vector-unit flow (about 5 hours)
+tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3                          # YOLOv8m, default vector-unit flow
+tools/has/tb_has_npu_top $FE_WORK/has/vit_full                            # ViT-B/16, default vector-unit flow
 # the reference results of the table below: the five vector-unit knobs set to 0
 K0="HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0"
 env $K0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3                          # YOLOv8m, hardware as drawn (62,666,123 cycles)
@@ -256,11 +258,16 @@ By default the vector unit runs on its top level `GvuTop`, next to the core on t
 full flow that follows the RTL most closely: `HAS_GVU_TOP=3` (stream of the partial-sum path into `GvuTop`), `HAS_GVU_STALL=1`
 (the core stops on a full stream FIFO), `HAS_GVU_ELEM_CLK=1` (residual add and max pool on the clock), `HAS_GVU_REGS=1` (the
 data flow controller configures and starts the unit through its register file) and `HAS_GVU_AGU_ND=1` (the residual add and the
-max pool address the Scratchpad through the multi-dimensional address generator, `docs/SLICE_CONCAT_ON_GVU.md`). Setting a
-variable to 0 switches that part off (`docs/GVU_TOP_CORE_INTEGRATION.md`, section 1.3). The reference results of this package were
-measured with all five set to 0; the commands that reproduce them carry the prefix
-`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`. Whole-network totals of the default: YOLOv8m 62,422,935 cycles,
-ViT-B/16 41,582,468 cycles.
+max pool address the Scratchpad through the multi-dimensional address generator, `docs/SLICE_CONCAT_ON_GVU.md`). Average pool,
+Softmax, the requant of FUSED_ATTN and LayerNorm also run on `GvuTop` as jobs on its clock (`HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`,
+`HAS_GVU_FA`, `HAS_GVU_LN`, all 1; `docs/GVU_OPS_ON_GVUTOP.md`). Setting a variable to 0 switches that part off
+(`docs/GVU_TOP_CORE_INTEGRATION.md`, section 1.3). The reference results of this package were measured with the first five set to 0;
+the commands that reproduce them carry the prefix
+`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`. Whole-network totals of the default: YOLOv8m 64,135,381
+cycles with `insts_pe3_nd`, ViT-B/16 41,244,621 cycles. The `GvuTop` epilogue has the depth 11 of the hardware RTL;
+`EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9 bash tools/has/build_tb_has_npu_top.sh` builds the depth 9 of the earlier releases,
+with which YOLOv8m `insts_pe3` takes 62,422,935 cycles (the same with the four operation knobs at 0) and ViT-B/16 41,244,030
+(41,582,468 with the four operation knobs at 0).
 
 | Variable | Default | 0 gives |
 |---|---|---|
@@ -269,15 +276,42 @@ ViT-B/16 41,582,468 cycles.
 | `HAS_GVU_ELEM_CLK` | 1 | residual add and max pool called as functions (still forced on by `HAS_GVU_REGS=1`) |
 | `HAS_GVU_REGS` | 1 | `GvuTop` configured by assignments instead of the register file |
 | `HAS_GVU_AGU_ND` | 1 | no address program bound (2: shifted programs, for demonstration) |
+| `HAS_GVU_AVG` | 1 | ELEM_WISE AVG_POOL on the functional model instead of `GvuTop` with the average pool data path of the RTL patch |
+| `HAS_GVU_SOFTMAX` | 1 | the Softmax rows of FUSED_ATTN on the functional model (also switches `HAS_GVU_FA` off) |
+| `HAS_GVU_FA` | 1 | the requant of the two attention products on the functional model |
+| `HAS_GVU_LN` | 1 | LAYERNORM on the functional model instead of the lane data path proposed by the model (`has/rtl_ref_gvu_ln_lanes.h`) |
 
-The last three only act with `HAS_GVU_TOP=3`. The report printed at exit is described in `GVU_TOP_CORE_INTEGRATION.md`, section 6.3.
+The last seven only act with `HAS_GVU_TOP=3`; with `HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0` the four operations run in the call style
+instead of as jobs on the clock (same values). The report printed at exit is described in `GVU_TOP_CORE_INTEGRATION.md`, section 6.3.
+
+Options that are off by default:
+
+| Variable | Default | 1 gives |
+|---|---|---|
+| `HAS_GVU_AVG_AS_RTL`, `HAS_GVU_SOFTMAX_AS_RTL` | 0 | negative controls: the rounding of the delivered RTL (average pool), the stage-3 shift of the delivered RTL (Softmax); the run fails |
+| `HAS_GVU_LN_DUMP=<dir>` | unset | every LayerNorm group written as a text vector file |
+| `HAS_DMA_TENSOR` | 1 | accepts the `DMA_TENSOR` COPY instruction (opcode `0x16`), used by `insts_pe3_dma` (`docs/DMA_TENSOR_MODE.md`); 0 refuses it at the push |
+| `HAS_DMA_TENSOR_CHUNK=<bytes>` | 1024 | chunk of one COPY step (16 to 98,304); also the chunk of the slice / concat of `HAS_DMA_ND` |
+| `HAS_TRACE_DMA_TENSOR` | 0 | one line per COPY: bytes, chunk, cycles waiting for the idle DMA, cycles of the copy (read by `tools/has/verify_flows.py`) |
+| `HAS_DMA_ND` | 1 | slice / concat by 4-D DMA descriptors: ELEM_WISE modes 6 and 7 accepted, tile window and write-back through descriptors, used by `insts_pe3_nd` (`docs/DMA_SLICE_CONCAT.md`); 0 refuses modes 6 / 7 at the push |
+| `HAS_GVU_REGS_NEO` | 0 | register map of the vector unit of the `neo_lite` RTL run next to the model's register file: 14 writes per command, fields compared after every tick; values unchanged (`docs/HW_RTL_ALIGNMENT.md`, section 2). `HAS_GVU_NEO_WRITE_LAT` (1): cycles per write |
+| `HAS_GVU_VBANK1_DEPTH=<rows>` | 32 | rows of vbank#1; 200 = the `neo_lite` RTL |
+| `HAS_GVU_RESIDUAL_HW` | 0 | residual add through the RESIDUAL operation as the hardware builds it, when its parameters are expressible; `HAS_GVU_RESIDUAL_HW_SHIFT_LOGICAL=1` reproduces the logical shift of the delivered RTL (section 4 of `docs/HW_RTL_ALIGNMENT.md`) |
+| `HAS_DMA_DFC_1D` | 0 | slice / concat (modes 6 / 7) as one-dimensional DMA commands of the DFC, with the measured command cost; `HAS_DMA_DFC1D_FIRST` (19), `HAS_DMA_DFC1D_CHAIN` (15), `HAS_DMA_DFC1D_TAIL` (7), `HAS_DMA_DFC1D_STAGE` (25600) |
+| `HAS_GVU_OUT_VBANK2` | 0 | GEMM_FUSED write-back charged as vbank2 -> DRAM by one-dimensional DFC commands; data path unchanged |
+| `HAS_BUS_STRICT` | 0 | bus cost of the per-channel scale / shift of a tile and of the Softmax output A of FUSED_ATTN (data the DFC moves through the DMA); `HAS_BUS_STRICT_LUT=1` (test only) loads the activation table as a DMA transfer |
+| `HAS_OUT_TRANSPOSE` | 0 | corner turn after the epilogue (proposal of the model, not in the RTL): GEMM_FUSED channels from `TMAJ_C0` (`0x40000500`) on are written token-major; programs: `tools/fe/fe_vit_full.py --v-token-major` (`docs/HW_RTL_ALIGNMENT.md`, section 8) |
 
 ### Expected results
 
 | Program and options | Instructions | Result | Total cycles |
 |---|---:|---|---:|
-| `insts_pe3`, default (vector-unit flow on, every knob default) | 98 + 2 host steps | PASS, 0 mismatches | 62,422,935 |
-| `vit_full`, default (vector-unit flow on, every knob default) | 244 | PASS, 0 mismatches | 41,582,468 |
+| `insts_pe3_nd`, default (every knob default, epilogue depth 11) | 135 + 2 host steps | PASS, 0 mismatches | 64,135,381 |
+| `vit_full`, default (every knob default, epilogue depth 11) | 244 | PASS, 0 mismatches | 41,244,621 (LayerNorm cycles ESTIMATED) |
+| `insts_pe3`, epilogue depth 9 (`EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9`, as every row with `GvuTop` below) | 98 + 2 host steps | PASS, 0 mismatches | 62,422,935 |
+| `insts_pe3`, depth 9, four operation knobs at 0 (the previous default) | 98 + 2 host steps | PASS, 0 mismatches | 62,422,935 |
+| `vit_full`, depth 9 | 244 | PASS, 0 mismatches | 41,244,030 (LayerNorm cycles ESTIMATED) |
+| `vit_full`, depth 9, four operation knobs at 0 (the previous default) | 244 | PASS, 0 mismatches | 41,582,468 |
 | `insts_pe3`, knobs off | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,666,123 |
 | `vit_full`, knobs off | 244 | PASS, 26,068,616 elements, 0 mismatches | 41,680,289 |
 | `insts_pe3`, knobs off, `HAS_SPEC=v47ref` (run C) | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,681,721 |
@@ -288,19 +322,29 @@ The last three only act with `HAS_GVU_TOP=3`. The report printed at exit is desc
 | `insts_pe3`, knobs off, `HAS_FEEDER_PAD=1` (padding by the IFMAP feeder) | 98 + 2 host steps | PASS, 0 mismatches | 62,698,248 |
 | `insts_pe3`, `--first 40 --count 2`, `HAS_GVU_TOP=1` / `HAS_GVU_TOP=2` with `HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` (vector unit on `GvuTop` as a function) | 2 | PASS | 1,658,651 / 1,650,477 |
 | `rce_gate` (transformer instruction check), knobs off / knobs off + `HAS_SPEC=v47ref` | 14 | PASS | 285,205 / 250,885 vector-unit cycles |
+| `rce_gate`, default / four operation knobs at 0 / call style (`HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0`) | 14 | PASS | 263,883 / 285,256 / 242,711 (default with `-DGVU_GEMM_STREAM_DEPTH=9`: 263,816) |
+| AVG_POOL check (`python3 tools/has/make_avgpool_gate.py <dir>`), default / four operation knobs at 0 | 8 | PASS | 3,687 / 3,486 |
+| `DMA_TENSOR` check (`docs/DMA_TENSOR_MODE.md`, section 8), `HAS_DMA_TENSOR=1` | 25 | PASS | — |
+| `insts_pe3_dma`, depth 9 | 135 + 2 host steps | PASS, 0 mismatches | 63,902,431 |
+| slice / concat check (`python3 tools/has/make_ref_gate_dma_slice_concat.py <dir>`), `HAS_DMA_ND=1` | 27 | PASS, 149,504 elements, 0 mismatches | 179,787 |
+| slice / concat of 256 KB tensors (`python3 tools/has/make_dma_nd_big_gate.py <dir>`, needs `numpy`), `HAS_DMA_ND=1` | 10 | PASS, 2,048,000 elements, 0 mismatches | 127,636 |
 | `insts_has`, knobs off, `--profile legacy --overlap --dma has` (baseline) | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 112,912,950 |
 
 "knobs off" is the prefix `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` (variable `K0` above); every row
-except the first two was measured that way. The run prints one `[STEP]` line per instruction and ends with
+except the rows that name the default or the four operation knobs was measured that way. "Four operation knobs at 0" is the prefix
+`HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0`. The run prints one `[STEP]` line per instruction and ends with
 `[tb_fe_core_net] RESULT: PASS|FAIL (...)` and the total `sim cycles`; exit code 0 on PASS. Instruction-path check of the transformer instructions:
 `tools/has/tb_has_npu_top $FE_WORK/has/rce_gate` (14 instructions, PASS; the program is shipped in the data package
 and `python3 tools/has/make_rce_gate.py <vector dir> <table dir> <out dir>` regenerates it).
 
 Regression of the vector-unit blocks and of the instruction path (transformer check, window D, AVG_POOL, padding,
-short contexts, dilation, `GvuTop`; the script sets the five vector-unit knobs to 0 itself and each item sets the knob it
-checks): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 131 items,
-about 5 hours on one core; a second argument `--unit-only` runs the unit tests only. The last line is
-`RESULT: <n> passed, <m> failed`. The script was written for the development tree and reads the programs and vectors
+short contexts, dilation, `GvuTop`, `DMA_TENSOR`; the script sets the nine vector-unit knobs to 0 itself and each item sets the knobs it
+checks): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 193 items
+(including the four operations on `GvuTop`, their negative controls, the `DMA_TENSOR` group, the `HAS_DMA_ND` group, the
+verification by instruction flow, and the options of `docs/HW_RTL_ALIGNMENT.md` each on the reference check program with their unit tests); a second argument `--unit-only` runs the unit tests only. The last line is
+`RESULT: <n> passed, <m> failed`. The last item runs `python3 tools/has/verify_flows.py <output dir>`, which writes
+`<output dir>/flows/<FLOW>.log` and `<output dir>/flows/SUMMARY.md`: every step of the ten flows of the vector unit and the
+DMA with its checks, references and measured results (`docs/FLOW_VERIFICATION.md`); it can be run again on the logs alone. The script was written for the development tree and reads the programs and vectors
 under `fe_work/` at the repository root (`fe_work/has/...`); in this repository that is the extracted data package
 (for example `ln -s sauria_npu_data fe_work`). The package check runs its own subset of these items, not this script.
 

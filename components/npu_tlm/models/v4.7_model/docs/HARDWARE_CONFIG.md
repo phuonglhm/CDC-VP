@@ -223,10 +223,42 @@ registers (more than 65,535 columns). Whether the comparators fit a clock period
 | `HAS_GVU_REGS_ADD` (environment) | 1 | 0: the residual add stays outside the register file |
 | `HAS_GVU_REG_LAT` (environment) | 4 | Cycles of one register write seen by the data flow controller, minimum 2 (ESTIMATED) |
 | `HAS_GVU_AGU_ND` (environment) | 1 | 1: identity AGU_ND programs for the residual add and the max pool; 2: shifted programs for demonstration; 0: off (`SLICE_CONCAT_ON_GVU.md`) |
-| `-DGVU_GEMM_STREAM_DEPTH=<n>` (build) | 9 | Stages of the `GvuTop` GEMM epilogue, 9 to 16; 9 as the specification, 11 as the hardware RTL measures (pure delay stages) |
+| `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN` (environment, with `HAS_GVU_TOP=3`) | 1 | 1: average pool, the Softmax rows of FUSED_ATTN, the requant of the two attention products and LayerNorm (lane data path proposed by the model) run on `GvuTop` as jobs on its clock, in the call style with `HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0`; 0: that operation stays on the functional model. `HAS_GVU_FA` needs `HAS_GVU_SOFTMAX` (`GVU_OPS_ON_GVUTOP.md`) |
+| `-DGVU_GEMM_STREAM_DEPTH=<n>` (build) | 11 | Stages of the `GvuTop` GEMM epilogue, 9 to 16; 11 as the hardware RTL measures (9 computing stages and 2 cycles to read Out_Scale / Out_Shift), 9 as the MAS drawing and the earlier releases (pure delay stages: values unchanged) |
 | `HAS_GVU_TOP_DUMP=<file>` (environment, with `HAS_GVU_TOP` 1 or 3) | not set | One line per epilogue beat; changes no value and no cycle (`GVU_TOP_CORE_INTEGRATION.md`, section 1.3) |
 | `HAS_OBP_DUMP=<file>` (environment, with `HAS_OBP_RTL=1`) | not set | Writes every activation table and epilogue beat to the file for `tools/has/tb_gvu_top_replay.cpp`; changes no value and no cycle |
 
-With `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` the model computes and counts what the previous releases did. The other vector-unit options (`HAS_ELEM_RTL`,
+With `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0` the model computes and counts what the previous release did;
+with `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` (the four operation knobs then have no
+effect), what the releases before it did. The other vector-unit options (`HAS_ELEM_RTL`,
 `HAS_OBP_RTL`, `HAS_ARITH_RTL`, `HAS_RANGE_PROBE`, `HAS_PSM_PROBE`) are described in `GVU_RTL_CONFORMANCE.md`,
 section 4.10. Results: `VERIFICATION_REPORT.md`, V35; limits: `KNOWN_LIMITATIONS.md`, O25.
+
+### 6.7 Tensor copy instruction (`HAS_DMA_TENSOR`)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `HAS_DMA_TENSOR` (environment) | 1 | 1: the push accepts the `DMA_TENSOR` COPY instruction (opcode `0x16`), a proposal of the model team; 0: it is refused at the push. Used by the program `insts_pe3_dma` (`DMA_TENSOR_MODE.md`; limits: `KNOWN_LIMITATIONS.md`, O32) |
+| `HAS_DMA_TENSOR_CHUNK` (environment) | 1024 | bytes of one copy step through DMA SRAM bank 4 (16 to 98,304) |
+| `HAS_TRACE_DMA_TENSOR` (environment) | 0 | 1: one line per COPY with the bytes, the chunk, the cycles waiting for the idle DMA and the cycles of the copy; no change of results or cycles |
+
+### 6.8 Slice and concat by 4-D DMA descriptors (`HAS_DMA_ND`)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `HAS_DMA_ND` (environment) | 1 | 1: ELEM_WISE mode 6 (slice) and mode 7 (concat) are accepted and run by the DMA from DRAM to DRAM in chunks of `HAS_DMA_TENSOR_CHUNK` bytes through DMA SRAM bank 4; the tile input window and the tile write-back of GEMM_FUSED go through 4-D descriptors (same bytes and cycles). 0: modes 6 / 7 are refused with UNSUPPORTED_MODE. A proposal of the model team (`DMA_SLICE_CONCAT.md`; limits: `KNOWN_LIMITATIONS.md`, O34) |
+
+### 6.9 Options that follow the `neo_lite` RTL, and the transpose after the epilogue
+
+All off by default; with all of them off nothing changes. Details, measured costs and what is not modelled:
+`HW_RTL_ALIGNMENT.md`.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `HAS_GVU_REGS_NEO` (environment) | 0 | 1: register map of the vector unit of the RTL (14 registers, byte addresses, opcode outside CONTROL) run next to the model's register file; 14 writes per command |
+| `HAS_GVU_VBANK1_DEPTH` (environment) | 32 | Rows of vbank#1; 200 (25 KB) as in the RTL |
+| `HAS_GVU_RESIDUAL_HW` (environment) | 0 | 1: residual add through the RESIDUAL operation (opcode 6) of the RTL, one vector per cycle, 13 + vectors cycles |
+| `HAS_DMA_DFC_1D` (environment) | 0 | 1: slice / concat as one-dimensional DMA commands: first command 19 cycles, next command 15, end 7, data one 128-bit beat per cycle, pieces of at most 25,600 bytes |
+| `HAS_GVU_OUT_VBANK2` (environment) | 0 | 1: GEMM_FUSED write-back as vbank2 -> DRAM by DFC commands (cost of the line above) |
+| `HAS_BUS_STRICT` (environment) | 0 | 1: per-channel scale / shift of a tile (8 bytes per channel) on the DMA read port with the bias prefetch; Softmax output A written out of the vector unit and read into SRAM A |
+| `HAS_OUT_TRANSPOSE` (environment) | 0 | 1: corner turn of two W x W int8 banks after the epilogue; channels from `TMAJ_C0` on written token-major (proposal of the model) |

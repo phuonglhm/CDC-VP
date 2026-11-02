@@ -186,6 +186,15 @@ the register-write stream of the v4.5 protocol (one instruction per layer) and a
   cannot all be placed stays a host copy (`H copy ...`) and is listed in the manifest (none for YOLOv8m). Weights
   are stored per output-channel band in SAURIA order (`SW_INTEGRATION_GUIDE.md`, sections 5 and 6.1). LUT, scale,
   shift and bias keep their values.
+- **Concat by DMA.** With `--slice-concat dma` (default `alias`) every concat input and the concat output get regions of their own
+  and one `DMA_TENSOR` COPY instruction per run of adjacent inputs copies them into place after the last input is written; slices
+  stay address views. The program goes to `$FE_WORK/has/insts_<plan>_dma`, needs `HAS_DMA_TENSOR` (on by default) and is checked by the same
+  self-check plus copy checks; `--dram-limit` (default 256 MiB) bounds the image (`DMA_TENSOR_MODE.md`, section 5).
+  With `--slice-concat dma_nd` the same regions are used and every run becomes one ELEM_WISE mode 7 instruction (concat by
+  4-D DMA descriptors: `A_ADDR` the run, `OUT_ADDR` the concat output, `IN_C/H/W` = `OUT_C/H/W` the output shape, `POOL_MODE`
+  0 for the channel axis, `POOL_P` the first channel, `POOL_K` the channels of the run). The program goes to
+  `$FE_WORK/has/insts_<plan>_nd` and runs in the default configuration (`HAS_DMA_ND` on; `DMA_SLICE_CONCAT.md`). For
+  YOLOv8m: 13 concats as 37 instructions, 23,270,400 bytes copied, 135 instructions in all.
 - **Host steps.** The two x2 upsamples stay host steps (`H upsample2x ...`, question H15).
 - **Self-check.** Every tensor is compared by name with the HAS golden before the files are written.
 
@@ -238,8 +247,8 @@ utilization alone. The limits, the cycle laws behind the rules, a step-by-step p
 | `fe_vit_float.py` | Float reference in numpy from the timm weights (`$FE_WORK/weights/`), checked against an independent PyTorch forward and on labelled images |
 | `fe_vit_quant.py` | Int8 quantization laid out on the vector-unit pipelines (per-channel weights, per-tensor activations), calibrated on coco128; writes `$FE_WORK/has/vit/vit_scales.json` |
 | `fe_ref_gvu.py` | Independent integer golden of the vector unit: indirect LUT, SOFTMAX, FUSED_ATTN, LAYERNORM (`has/HAS_IFACE_RCE.md`). Knobs for the items of the micro-architecture specification (rounding modes ceil, toward zero, away from zero; table depths 256 / 512; LUT input 0; log-scale LUT mode); `--only mas` compares them with `tools/has/mas_ref.py`. The defaults keep the shipped vectors unchanged |
-| `fe_vit_block.py` | Integer golden of one encoder block in the form the data flow controller runs it, and the instruction emitter |
-| `fe_vit_full.py` | Whole network: patch embedding, 12 encoder blocks, final LayerNorm and head, 244 instructions, no host step. Output `$FE_WORK/has/vit_full/` |
+| `fe_vit_block.py` | Integer golden of one encoder block in the form the data flow controller runs it, and the instruction emitter; `--v-token-major` as for `fe_vit_full.py` |
+| `fe_vit_full.py` | Whole network: patch embedding, 12 encoder blocks, final LayerNorm and head, 244 instructions, no host step. Output `$FE_WORK/has/vit_full/`, or `--out <dir>`. `--v-token-major`: V of every QKV output token-major (`TMAJ_C0` = 1536 on the QKV GEMM_FUSED, FUSED_ATTN `FLAGS` bit 2); run with `HAS_OUT_TRANSPOSE=1` (`HW_RTL_ALIGNMENT.md`, section 8) |
 
 - **Layout.** Every activation is channel-major `[C][tokens]` with 197 tokens; FUSED_ATTN and LAYERNORM set
   `FLAGS.CHANNEL_MAJOR`.

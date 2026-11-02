@@ -28,15 +28,24 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 #include "has/rtl_ref_gvu_fu.h"
 
 namespace rtl_ref_gvu
 {
+    // Rows of vbank#1: 32 in the earlier RTL drops, 200 (25 KB) in gvu_pkg.sv of neo_lite@9b704bb. Env HAS_GVU_VBANK1_DEPTH=200 selects the new
+    // depth; unset = 32 (nothing changes).
+    inline int vbank1_depth_default()
+    {
+        static const int v = [] { const char *e = std::getenv("HAS_GVU_VBANK1_DEPTH"); const int d = e ? std::atoi(e) : 0; return d > 0 ? d : 32; }();
+        return v;
+    }
+
     struct ScratchpadParams
     {
         int NUM_LANE{32};
-        int SBANK_DEPTH{768}, VBANK0_DEPTH{800}, VBANK1_DEPTH{32}, VBANK2_DEPTH{256};   // gvu_pkg.sv
+        int SBANK_DEPTH{768}, VBANK0_DEPTH{800}, VBANK1_DEPTH{vbank1_depth_default()}, VBANK2_DEPTH{256};   // gvu_pkg.sv
         bool SBANK_PIPE{true}, VBANK0_PIPE{true}, VBANK1_PIPE{true}, VBANK2_PIPE{true};
         bool wmask_as_written{false};
         bool narrow_sel_delayed{true};

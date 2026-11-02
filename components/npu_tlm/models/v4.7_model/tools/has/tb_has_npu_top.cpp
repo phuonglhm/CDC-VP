@@ -210,6 +210,24 @@ SC_MODULE(TbHasNpuTop)
                     else if (in.opcode == 0x14)   // LAYERNORM: Y = [rows][H] int8 (w doubled below for int16 outputs)
                     { in.c = 1; in.h = ext[M::X_ROWS]; in.w = sticky[(M::LEN - M::IN_ADDR) / 4]; in.param = ext[M::X_PARAM_ADDR]; }
                     else if (mode == 0) { in.c = 1; in.h = 1; in.w = sticky[(M::LEN - M::IN_ADDR) / 4]; }
+                    else if (mode == 6)   // DMA_SLICE
+                    {
+                        in.c = ext[M::X_IN_C]; in.h = ext[M::X_IN_H]; in.w = ext[M::X_IN_W];
+                        const uint32_t ax = ext[M::X_POOL_MODE], k = ext[M::X_POOL_K], s = std::max(1u, sticky[(M::STRIDE - M::IN_ADDR) / 4]);
+                        const uint32_t sliced_len = (k + s - 1u) / s;
+                        if (ax == 0) in.c = sliced_len; else if (ax == 1) in.h = sliced_len; else in.w = sliced_len;
+                    }
+                    else if (mode == 7)   // DMA_CONCAT
+                    {
+                        in.c = ext[M::X_OUT_C] ? ext[M::X_OUT_C] : ext[M::X_IN_C];
+                        in.h = ext[M::X_OUT_H] ? ext[M::X_OUT_H] : ext[M::X_IN_H];
+                        in.w = ext[M::X_OUT_W] ? ext[M::X_OUT_W] : ext[M::X_IN_W];
+                        if (sticky[(M::B_ADDR - M::IN_ADDR) / 4] == 0 && ext[M::X_POOL_MODE] == 0)
+                        {
+                            in.out_addr += ext[M::X_POOL_P] * in.h * in.w;
+                            in.c = ext[M::X_POOL_K];
+                        }
+                    }
                     else
                     {
                         const uint32_t k = ext[M::X_POOL_K], p = ext[M::X_POOL_P], s = sticky[(M::STRIDE - M::IN_ADDR) / 4];
@@ -385,6 +403,10 @@ SC_MODULE(TbHasNpuTop)
         }
         std::printf("[tb_has_npu_top] weight blocks: DMA loads %llu, reused by B flip %llu\n",
                     (unsigned long long)st.weight_loads, (unsigned long long)st.weight_reuse_flips);
+        if (dut->dma_stats().rd_nd_ops || dut->dma_stats().wr_nd_ops)   // HAS_DMA_ND only: the default log is unchanged
+            std::printf("[tb_has_npu_top] HasDma 4-D slice/concat descriptors: rd_nd_ops %llu, wr_nd_ops %llu, nd_bytes %llu B\n",
+                    (unsigned long long)dut->dma_stats().rd_nd_ops, (unsigned long long)dut->dma_stats().wr_nd_ops,
+                    (unsigned long long)dut->dma_stats().nd_bytes);
         if (st.attn || st.ln || st.rce_param_errors)
             std::printf("[tb_has_npu_top] RCE: FUSED_ATTN %llu, LAYERNORM %llu, rows %llu, cycles %llu (ESTIMATE), ovf16 %llu, param errors %llu\n",
                         (unsigned long long)st.attn, (unsigned long long)st.ln, (unsigned long long)st.rce_rows,
@@ -400,6 +422,9 @@ SC_MODULE(TbHasNpuTop)
             std::printf("[tb_has_npu_top] halo reuse: layers %llu, tiles %llu, rows copied in SRAM-A %llu B (%u B/cycle)\n",
                         (unsigned long long)dut->halo_layers, (unsigned long long)dut->halo_tiles, (unsigned long long)dut->halo_bytes,
                         dut->halo_copy_bpc);
+        if (dut->out_transpose)
+            std::printf("[tb_has_npu_top] HAS_OUT_TRANSPOSE: token-major tiles %llu, corner-turn tail cycles %llu, tiles across X_TMAJ_C0 %llu\n",
+                        (unsigned long long)dut->tmaj_tiles, (unsigned long long)dut->tmaj_tail_cycles, (unsigned long long)dut->tmaj_straddle);
         std::printf("[tb_has_net] HasElemwise: add %llu calls / %llu elems, max %llu calls / %llu elems, cycles %llu, req clamp8 %llu\n",
                     (unsigned long long)es.add_calls, (unsigned long long)es.add_elems, (unsigned long long)es.max_calls,
                     (unsigned long long)es.max_elems, (unsigned long long)st.elem_cycles, (unsigned long long)es.qc_req.clamp8);

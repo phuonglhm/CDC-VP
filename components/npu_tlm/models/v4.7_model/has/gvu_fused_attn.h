@@ -51,8 +51,15 @@ namespace has
         return r;
     }
 
+    // After the softmax rows of the model: the DFC may run them on the vector unit (HasNpuTop, HAS_GVU_SOFTMAX) and put that unit's rows
+    // into A before A.V. Arguments: scores X, rows A (in / out), the masked positions per row (empty = no mask in the instruction).
+    typedef std::function<void(const Mat &, Mat &, const std::vector<std::vector<uint8_t>> &)> SoftmaxFn;
+    // After the requant of phase 1 (phase = 1, before the mask) and of phase 3 (phase = 3): the DFC may run it on the vector unit (HAS_GVU_FA)
+    // and put that unit's values into the matrix. Arguments: the int32 sums with the zero-point corrections, the values (in / out), M, TS, Z.
+    typedef std::function<void(int, const Mat64 &, Mat &, int64_t, int, int)> RequantFn;
     inline AttnResult fused_attn(const Mat &Q, const Mat &K, const Mat &V, const Mat &mask, const AttnParams &p,
-                                 const int32_t *exp_table, const LutIndirect &recip, const Knobs &k, const DotFn &dot = dot_cpu)
+                                 const int32_t *exp_table, const LutIndirect &recip, const Knobs &k, const DotFn &dot = dot_cpu,
+                                 const SoftmaxFn &smx = SoftmaxFn(), const RequantFn &req = RequantFn())
     {
         const size_t L = K.size(), D = Q[0].size(), NQ = Q.size();
         const int Zq = p.asym_zp ? p.Zq : 0, Zk = p.asym_zp ? p.Zk : 0, Zv = p.asym_zp ? p.Zv : 0;
@@ -64,6 +71,8 @@ namespace has
         for (auto v : kcol) { r.ovf16 += std::llabs(v) > 32767; RangeProbe::pt(RangeProbe::FA_KCOL, v); }
         r.X.assign(NQ, std::vector<int>(L));
         const Mat64 qk = dot(Q, K);
+        Mat64 acc1;
+        if (req) acc1.assign(NQ, std::vector<int64_t>(L, 0));
         for (size_t i = 0; i < NQ; i++)
             for (size_t j = 0; j < L; j++)
             {
@@ -71,13 +80,18 @@ namespace has
                 acc += -int64_t(Zk) * qrow[i] - int64_t(Zq) * kcol[j] + int64_t(D) * Zq * Zk;
                 const RangeProbe::Scope probe_scope(RangeProbe::C_ATTN_QK);
                 RangeProbe::pt(RangeProbe::FA_ACC_QK, acc);
-                const int x = requant(acc, p.Mqk, p.TSqk, p.Zqk, k);
-                r.X[i][j] = (mask[i][j] == -128) ? -128 : x;
+                if (req) acc1[i][j] = acc;
+                r.X[i][j] = requant(acc, p.Mqk, p.TSqk, p.Zqk, k);
             }
+        if (req) req(1, acc1, r.X, p.Mqk, p.TSqk, p.Zqk);
+        for (size_t i = 0; i < NQ; i++)
+            for (size_t j = 0; j < L; j++)
+                if (mask[i][j] == -128) r.X[i][j] = -128;
         SoftmaxCfg sc;
         sc.exp = exp_table;
         sc.log_recip = &recip;
         r.A.resize(NQ);
+        std::vector<std::vector<uint8_t>> zeros;
         for (size_t i = 0; i < NQ; i++)
         {
             std::vector<uint8_t> z(L);
@@ -85,7 +99,9 @@ namespace has
             SoftmaxRow row = softmax_row(r.X[i], sc, k, p.mask_e_zero ? &z : nullptr);
             r.A[i].assign(row.a.begin(), row.a.end());
             r.stats.push_back(row);
+            if (p.mask_e_zero) zeros.push_back(z);
         }
+        if (smx) smx(r.X, r.A, zeros);
         const int Za = sc.zp;
         std::vector<int64_t> vcol(D, 0), arow(NQ, 0);
         for (size_t n = 0; n < D; n++) for (size_t j = 0; j < L; j++) vcol[n] += V[j][n];
@@ -95,6 +111,8 @@ namespace has
         Mat Vt(D, std::vector<int>(L));
         for (size_t j = 0; j < L; j++) for (size_t n = 0; n < D; n++) Vt[n][j] = V[j][n];
         const Mat64 av = dot(r.A, Vt);
+        Mat64 acc3;
+        if (req) acc3.assign(NQ, std::vector<int64_t>(D, 0));
         for (size_t i = 0; i < NQ; i++)
             for (size_t n = 0; n < D; n++)
             {
@@ -103,8 +121,10 @@ namespace has
                 if (p.av_zv_corr) acc += -int64_t(Zv) * arow[i] + int64_t(L) * Za * Zv;
                 const RangeProbe::Scope probe_scope(RangeProbe::C_ATTN_AV);
                 RangeProbe::pt(RangeProbe::FA_ACC_AV, acc);
+                if (req) acc3[i][n] = acc;
                 r.O[i][n] = requant(acc, p.Mav, p.TSav, p.Zav, k);
             }
+        if (req) req(3, acc3, r.O, p.Mav, p.TSav, p.Zav);
         return r;
     }
 } // namespace has

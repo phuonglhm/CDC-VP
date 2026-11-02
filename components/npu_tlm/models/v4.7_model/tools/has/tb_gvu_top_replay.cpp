@@ -21,7 +21,7 @@
 using namespace rtl_ref_gvu;
 
 static const RoundMode kRtl[7] = {RND_FLOOR, RND_NEAR_UP, RND_NEAR_AWAY, RND_NEAR_EVEN, RND_CEIL, RND_TRUNC, RND_AWAY};
-static const int kDepth = 9;
+static const int kDepth = GVU_GEMM_STREAM_DEPTH;   // 11 = RTL (default), 9 = MAS build
 
 struct Beat { int32_t h[9]; int32_t ps[GVU_LANES]; int8_t res[GVU_LANES]; int table; };
 

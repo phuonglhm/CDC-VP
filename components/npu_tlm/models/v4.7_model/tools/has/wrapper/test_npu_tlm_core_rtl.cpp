@@ -142,7 +142,7 @@ int sc_main(int argc, char *argv[])
             std::string tag;
             Write w{};
             is >> tag >> std::hex >> w.addr >> w.val;
-            if (w.addr >= 0x4000046C && w.addr < 0x40000500) ext[(w.addr - 0x4000046C) / 4] = w.val;
+            if (w.addr >= 0x4000046C && w.addr < 0x40000504) ext[(w.addr - 0x4000046C) / 4] = w.val;
             else if (w.addr >= 0x40000400 && w.addr <= 0x40000468) sticky[(w.addr - 0x40000400) / 4] = w.val;
             cur.writes.push_back(w);
             if (w.addr == 0x40000310)

@@ -36,6 +36,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 
 namespace rtl_ref_gvu
 {
@@ -105,6 +106,8 @@ namespace rtl_ref_gvu
         explicit GvuConfigRegs(const GvuConfigParams &p = GvuConfigParams()) : P_(p) { P_.num_regs = (p.num_regs == 32) ? 32u : 16u; reset(); }
         const GvuConfigParams &params() const { return P_; }
         void reset() { reg_.fill(0u); }
+        // optional observer called at the end of every tick (HAS_GVU_REGS_NEO shadow); empty = nothing changes
+        void set_observer(std::function<void(const GvuConfigIn &, const GvuConfigRegs &)> f) { obs_ = std::move(f); }
 
         // One rising edge. Order as in reg_wr_proc / the read process of the RTL.
         void tick(const GvuConfigIn &in)
@@ -137,6 +140,7 @@ namespace rtl_ref_gvu
                 reg_ = n;
             }
             if (in.rden) rdata_ = (in.rstn ? cur_rd : 0u);          // while rstn is low the registers are 0 when the edge samples them
+            if (obs_) obs_(in, *this);
         }
 
         uint32_t reg(unsigned i) const { return reg_[i & (P_.num_regs - 1u)]; }
@@ -207,6 +211,7 @@ namespace rtl_ref_gvu
         GvuConfigParams P_;
         std::array<uint32_t, GvuConfigParams::kMaxRegs> reg_{};
         uint32_t rdata_{0};
+        std::function<void(const GvuConfigIn &, const GvuConfigRegs &)> obs_;
     };
 }
 

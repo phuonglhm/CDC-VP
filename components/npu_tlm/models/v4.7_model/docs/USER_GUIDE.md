@@ -28,7 +28,7 @@ bash tools/has/build_tb_has_npu_top.sh                    # -> tools/has/tb_has_
 
 ### 1.3 Quick check
 
-Two YOLOv8m instructions, about 20 minutes on one core, with the vector-unit knobs off as for the reference results
+Two YOLOv8m instructions, with the vector-unit knobs off as for the reference results
 (section 1.4):
 
 ```bash
@@ -39,20 +39,29 @@ HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0
 ### 1.4 Whole networks
 
 By default the vector unit runs on `GvuTop` with the full flow (`HAS_GVU_TOP=3`, `HAS_GVU_STALL=1`, `HAS_GVU_ELEM_CLK=1`,
-`HAS_GVU_REGS=1`, `HAS_GVU_AGU_ND=1`; `BUILD_AND_RUN.md`, section 6). Each variable set to 0 switches its part off. The
-reference results were measured with all five set to 0, and the commands that reproduce them below carry the prefix
+`HAS_GVU_REGS=1`, `HAS_GVU_AGU_ND=1`; `BUILD_AND_RUN.md`, section 6), and average pool, Softmax, the requant of FUSED_ATTN and
+LayerNorm run on `GvuTop` as jobs on its clock (`HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN`, all 1;
+`GVU_OPS_ON_GVUTOP.md`). Each variable set to 0 switches its part off. The four operation knobs act only with `HAS_GVU_TOP=3`. The
+reference results were measured with the first five set to 0, and the commands that reproduce them below carry the prefix
 `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`.
 
-| Network and configuration | Command | Time on one core | Expected result |
-|---|---|---|---|
-| YOLOv8m, default vector-unit flow | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles |
-| ViT-B/16, default vector-unit flow | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 244 instructions, 0 mismatches, 41,582,468 cycles |
-| YOLOv8m, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,666,123 cycles (12.77 FPS at 0.8 GHz) |
-| ViT-B/16, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 244 instructions, 0 mismatches, 41,680,289 cycles (19.19 FPS) |
-| YOLOv8m, vector-unit configuration before the micro-architecture specification (run C) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | about 10 hours | PASS, 62,681,721 cycles (12.76 FPS) |
-| ViT-B/16, same earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | about 5 hours | PASS, 41,065,258 cycles (19.48 FPS) |
-| ViT-B/16 with the bias-broadcast proposal, earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast` | about 5 hours | PASS, 39,922,498 cycles (20.04 FPS) |
-| YOLOv8m with the two hardware proposals (run D), earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals` | about 10 hours | PASS, 60,386,685 cycles (13.25 FPS) |
+| Network and configuration | Command | Expected result |
+|---|---|---|
+| YOLOv8m, default (concat by 4-D DMA descriptors) | `python3 tools/fe/fe_emit_insts.py --plan pe3 --slice-concat dma_nd`, then `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3_nd` | PASS, 135 instructions + 2 host steps, 0 mismatches, 64,135,381 cycles |
+| ViT-B/16, default vector-unit flow | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,244,621 cycles (LayerNorm cycles estimated) |
+| YOLOv8m, concat by aliasing, default build (no DMA instruction: the closest program to the hardware RTL) | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles (equal to depth 9) |
+| ViT-B/16 closest to the hardware RTL (attention requant and LayerNorm on the functional model) | `HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,608,570 cycles (`HW_RTL_ALIGNMENT.md`, section 10) |
+| ViT-B/16 with V token-major (transpose after the epilogue, proposal) | `python3 tools/fe/fe_vit_full.py --v-token-major --out <dir>` (needs the trained weights), then `HAS_OUT_TRANSPOSE=1 tools/has/tb_has_npu_top <dir>` | PASS, 244 instructions, 0 mismatches, 41,245,003 cycles |
+| YOLOv8m, concat by aliasing, epilogue depth 9 (build with `EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9`, as the rows below) | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles |
+| ViT-B/16, epilogue depth 9 | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,244,030 cycles |
+| YOLOv8m, previous default (four operation knobs at 0) | `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles |
+| ViT-B/16, previous default (four operation knobs at 0) | `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,582,468 cycles |
+| YOLOv8m, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,666,123 cycles (12.77 FPS at 0.8 GHz) |
+| ViT-B/16, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,680,289 cycles (19.19 FPS) |
+| YOLOv8m, vector-unit configuration before the micro-architecture specification (run C) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 62,681,721 cycles (12.76 FPS) |
+| ViT-B/16, same earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 41,065,258 cycles (19.48 FPS) |
+| ViT-B/16 with the bias-broadcast proposal, earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast` | PASS, 39,922,498 cycles (20.04 FPS) |
+| YOLOv8m with the two hardware proposals (run D), earlier configuration | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe4 --profile proposals` | PASS, 60,386,685 cycles (13.25 FPS) |
 
 The two proposal runs have not been repeated with the default `HAS_SPEC` configuration; with the knobs off the expected totals
 are 60,371,087 and 40,537,529 cycles (DERIVED from the measured difference of the as-drawn runs, `PERFORMANCE_REPORT.md`,
