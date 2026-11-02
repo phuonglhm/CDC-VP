@@ -163,6 +163,179 @@ SC_MODULE(Tb)
             std::printf("[D2] %-26s reads %u B + write %u B: all done at cycle %6ld (%.2fx v4.5)\n", names[k], A + W + P, P, end,
                         double(end) / double(base));
         }
+
+        // ---------------- D3 4-D DMA Slice / Split / Concat (C, H, W axes + YOLOv8m C2f & SPPF)
+        neu->prm = has::DmaParams::v45();
+        rstn.write(false); tick(3); rstn.write(true); tick(1);
+        auto run_dma_nd = [&](const has::DmaNdDesc &sd, const has::DmaNdDesc &dd) {
+            neu->start_read_nd(1, sd, 2, 0);
+            tick();
+            while (neu->is_read_active(1)) tick();
+            neu->start_write_nd(dd, 2, 0);
+            tick();
+            while (neu->is_write_active()) tick();
+        };
+        long d3_bad = 0;
+        // (a) Split & concat along C (axis 0), H (axis 1), W (axis 2) on a [16][12][20] tensor
+        {
+            const unsigned C = 16, H = 12, W = 20, N = C * H * W;
+            dram_new.assign(200000, 0);
+            for (unsigned i = 0; i < N; i++) dram_new[1000 + i] = uint8_t((i * 73 + 19) & 0xFF);
+            for (int axis = 0; axis < 3; axis++)
+            {
+                const unsigned dim = (axis == 0) ? C : (axis == 1 ? H : W);
+                const unsigned k1 = dim / 2, k2 = dim - k1;
+                const uint32_t part1_addr = 10000, part2_addr = 20000, out_addr = 30000 + uint32_t(axis) * 10000;
+                // Slice part 1 [0..k1) and part 2 [k1..dim)
+                const auto sd1 = has::DmaNdDesc::tensor_chw(1000, C, H, W).sliced_chw(axis, 0, k1, 1);
+                const auto dd1 = has::DmaNdDesc::linear(part1_addr, sd1.total_bytes(), 1);
+                run_dma_nd(sd1, dd1);
+                const auto sd2 = has::DmaNdDesc::tensor_chw(1000, C, H, W).sliced_chw(axis, k1, k2, 1);
+                const auto dd2 = has::DmaNdDesc::linear(part2_addr, sd2.total_bytes(), 1);
+                run_dma_nd(sd2, dd2);
+                // Concat part 1 and part 2 back into [C][H][W] at out_addr
+                const auto cd1 = has::DmaNdDesc::concat_chw(out_addr, C, H, W, axis, 0, k1, 1);
+                run_dma_nd(has::DmaNdDesc::linear(part1_addr, cd1.total_bytes(), 1), cd1);
+                const auto cd2 = has::DmaNdDesc::concat_chw(out_addr, C, H, W, axis, k1, k2, 1);
+                run_dma_nd(has::DmaNdDesc::linear(part2_addr, cd2.total_bytes(), 1), cd2);
+                for (unsigned i = 0; i < N; i++)
+                    if (dram_new[out_addr + i] != dram_new[1000 + i]) d3_bad++;
+            }
+        }
+        // (b) Strided slice along H and W (step 2) and YOLOv8m SPPF 4-way channel concat (4 x [8][10][10] -> [32][10][10])
+        {
+            const unsigned C = 8, H = 10, W = 10, P = C * H * W;
+            for (unsigned p = 0; p < 4; p++)
+                for (unsigned i = 0; i < P; i++)
+                    dram_new[80000 + p * P + i] = uint8_t((p * 53 + i * 17 + 3) & 0xFF);
+            const uint32_t sppf_out = 90000;
+            for (unsigned p = 0; p < 4; p++)
+            {
+                const auto cd = has::DmaNdDesc::concat_chw(sppf_out, 4 * C, H, W, 0, p * C, C, 1);
+                run_dma_nd(has::DmaNdDesc::linear(80000 + p * P, P, 1), cd);
+            }
+            for (unsigned p = 0; p < 4; p++)
+                for (unsigned i = 0; i < P; i++)
+                    if (dram_new[sppf_out + p * P + i] != dram_new[80000 + p * P + i]) d3_bad++;
+        }
+        std::printf("[D3] 4-D DMA Slice/Split/Concat (C/H/W axes + SPPF 4-way concat): mismatches %ld, rd_nd_ops %llu, wr_nd_ops %llu\n",
+                    d3_bad, (unsigned long long)neu->st.rd_nd_ops, (unsigned long long)neu->st.wr_nd_ops);
+        if (d3_bad) fails++;
+
+        // ---------------- D4 3-D tile window gather & SRAM-C int32->int8 write-back scatter/concat
+        long d4_bad = 0;
+        {
+            const unsigned OC = 12, OH = 8, OW = 16;
+            const uint32_t stage_c = 120000, out_base = 140000;
+            dram_new.assign(200000, 0);
+            // Tile [c0=4..10, y0=2..6, x0=4..12]: nch=8 (with 2 tail channels >6), ht=4, wt=8
+            const uint32_t nch = 8, ht = 4, wt = 8, npos = ht * wt, swords = (nch * npos + 31) / 32;
+            std::vector<int32_t> sramc_words(swords * 32, 0);
+            for (uint32_t x = 0; x < nch; x++)
+                for (uint32_t p = 0; p < npos; p++)
+                    sramc_words[x * npos + p] = int32_t(int8_t((x * 31 + p * 7) & 0xFF));
+            box_new->sram.write_bank_data(4, 0, reinterpret_cast<const uint8_t *>(sramc_words.data()), swords * 128);
+            const uint32_t real_c = 6, real_w = 8; // only 6 of the 8 channels are real
+            const auto wb_desc = has::DmaNdDesc::tile_writeback_3d(out_base, OC, OH, OW, 4, real_c, 2, ht, 4, real_w);
+            neu->start_write_sramc_nd(stage_c, 4, 0, swords * 128, real_c * ht * real_w, wb_desc, nch, ht, wt, real_c, real_w);
+            tick();
+            while (neu->is_write_active()) tick();
+            for (uint32_t c = 0; c < OC; c++)
+                for (uint32_t y = 0; y < OH; y++)
+                    for (uint32_t x = 0; x < OW; x++)
+                    {
+                        const uint8_t got = dram_new[out_base + (c * OH + y) * OW + x];
+                        uint8_t want = 0;
+                        if (c >= 4 && c < 4 + real_c && y >= 2 && y < 2 + ht && x >= 4 && x < 4 + real_w)
+                        {
+                            const uint32_t xc = c - 4, p = (y - 2) * wt + (x - 4);
+                            want = uint8_t((xc * 31 + p * 7) & 0xFF);
+                        }
+                        if (got != want) d4_bad++;
+                    }
+        }
+        std::printf("[D4] 3-D tile SRAM-C int32->int8 write-back scatter/concat: mismatches %ld\n", d4_bad);
+        if (d4_bad) fails++;
+
+        // ---------------- D5 YOLOv8m C2f 3-way split/concat + 300 random 4-D slice/concat descriptors
+        long d5_bad = 0;
+        {
+            // (a) YOLOv8m C2f: split [32, 12, 16] -> branch0 [16, 12, 16], branch1 [16, 12, 16]; concat 3 branches -> [48, 12, 16]
+            const unsigned C = 16, H = 12, W = 16, P = C * H * W;
+            dram_new.assign(300000, 0);
+            for (unsigned i = 0; i < 2 * P; i++) dram_new[2000 + i] = uint8_t((i * 41 + 7) & 0xFF);
+            for (unsigned i = 0; i < P; i++) dram_new[50000 + i] = uint8_t((i * 97 + 31) & 0xFF);
+            const uint32_t b0_addr = 20000, b1_addr = 30000, c2f_out = 100000;
+            run_dma_nd(has::DmaNdDesc::tensor_chw(2000, 2 * C, H, W).sliced_chw(0, 0, C, 1),
+                       has::DmaNdDesc::linear(b0_addr, P, 1));
+            run_dma_nd(has::DmaNdDesc::tensor_chw(2000, 2 * C, H, W).sliced_chw(0, C, C, 1),
+                       has::DmaNdDesc::linear(b1_addr, P, 1));
+            run_dma_nd(has::DmaNdDesc::linear(b0_addr, P, 1),
+                       has::DmaNdDesc::concat_chw(c2f_out, 3 * C, H, W, 0, 0, C, 1));
+            run_dma_nd(has::DmaNdDesc::linear(b1_addr, P, 1),
+                       has::DmaNdDesc::concat_chw(c2f_out, 3 * C, H, W, 0, C, C, 1));
+            run_dma_nd(has::DmaNdDesc::linear(50000, P, 1),
+                       has::DmaNdDesc::concat_chw(c2f_out, 3 * C, H, W, 0, 2 * C, C, 1));
+            for (unsigned i = 0; i < 2 * P; i++)
+                if (dram_new[c2f_out + i] != dram_new[2000 + i]) d5_bad++;
+            for (unsigned i = 0; i < P; i++)
+                if (dram_new[c2f_out + 2 * P + i] != dram_new[50000 + i]) d5_bad++;
+
+            // (b) 300 random 4-D slice & concat descriptors across C, H, W axes with random strides (1..4)
+            std::mt19937 r5(20261028);
+            for (int iter = 0; iter < 300; iter++)
+            {
+                const uint32_t rC = 2 + r5() % 15, rH = 2 + r5() % 15, rW = 2 + r5() % 20;
+                const uint32_t rN = rC * rH * rW;
+                const int axis = int(r5() % 3);
+                const uint32_t dim = (axis == 0) ? rC : (axis == 1 ? rH : rW);
+                const uint32_t start = r5() % dim;
+                const uint32_t len = 1 + r5() % (dim - start);
+                const uint32_t step = 1 + r5() % 4;
+                const uint32_t sliced_dim = (len + step - 1) / step;
+                const uint32_t src_base = 1000, slice_base = 60000, cat_base = 120000;
+                for (uint32_t i = 0; i < rN; i++) dram_new[src_base + i] = uint8_t((iter * 13 + i * 29 + 5) & 0xFF);
+                const auto sd = has::DmaNdDesc::tensor_chw(src_base, rC, rH, rW, 1).sliced_chw(axis, start, len, step);
+                const auto dd = has::DmaNdDesc::linear(slice_base, sd.total_bytes(), 1);
+                run_dma_nd(sd, dd);
+                // Verify sliced tensor matches golden strided slice
+                const uint32_t oC = (axis == 0) ? sliced_dim : rC;
+                const uint32_t oH = (axis == 1) ? sliced_dim : rH;
+                const uint32_t oW = (axis == 2) ? sliced_dim : rW;
+                uint32_t idx = 0;
+                for (uint32_t c = 0; c < oC; c++)
+                    for (uint32_t y = 0; y < oH; y++)
+                        for (uint32_t x = 0; x < oW; x++)
+                        {
+                            const uint32_t sc = (axis == 0) ? (start + c * step) : c;
+                            const uint32_t sy = (axis == 1) ? (start + y * step) : y;
+                            const uint32_t sx = (axis == 2) ? (start + x * step) : x;
+                            const uint8_t want = dram_new[src_base + (sc * rH + sy) * rW + sx];
+                            if (dram_new[slice_base + idx] != want) d5_bad++;
+                            idx++;
+                        }
+                // Scatter-concat the sliced tensor back into a zeroed [rC, rH, rW] tensor at offset `start` (when step==1)
+                if (step == 1)
+                {
+                    std::fill(dram_new.begin() + cat_base, dram_new.begin() + cat_base + rN, 0);
+                    const auto cd = has::DmaNdDesc::concat_chw(cat_base, rC, rH, rW, axis, start, len, 1);
+                    run_dma_nd(has::DmaNdDesc::linear(slice_base, cd.total_bytes(), 1), cd);
+                    for (uint32_t c = 0; c < rC; c++)
+                        for (uint32_t y = 0; y < rH; y++)
+                            for (uint32_t x = 0; x < rW; x++)
+                            {
+                                const uint32_t coord = (axis == 0) ? c : (axis == 1 ? y : x);
+                                const bool in_slice = (coord >= start && coord < start + len);
+                                const uint8_t want = in_slice ? dram_new[src_base + (c * rH + y) * rW + x] : 0;
+                                if (dram_new[cat_base + (c * rH + y) * rW + x] != want) d5_bad++;
+                            }
+                }
+            }
+        }
+        std::printf("[D5] YOLOv8m C2f 3-way split/concat + 300 random 4-D slice/concat descriptors: mismatches %ld, total rd_nd_ops %llu, wr_nd_ops %llu, nd_bytes %llu\n",
+                    d5_bad, (unsigned long long)neu->st.rd_nd_ops, (unsigned long long)neu->st.wr_nd_ops, (unsigned long long)neu->st.nd_bytes);
+        if (d5_bad) fails++;
+
         std::printf("[tb_has_dma] RESULT: %s\n", fails ? "FAIL" : "PASS");
         sc_stop();
     }

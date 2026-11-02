@@ -272,13 +272,14 @@ Written to `PUSH_A` (`0x40000310`), bits 7:0.
 | `0x12` | GEMM_FUSED | One convolution or matrix product layer; the hardware iterates the tiles |
 | `0x13` | FUSED_ATTN | One attention head; parameter block `ATN1` |
 | `0x14` | LAYERNORM | A block of rows; parameter block `LNP1` |
-| `0x15` | ELEM_WISE | ADD (mode 0), MAX_POOL (mode 1) or AVG_POOL (mode 5; Avg_Scale / Avg_Shift in `SO` / `SHO`) |
+| `0x15` | ELEM_WISE | ADD (mode 0), MAX_POOL (mode 1) or AVG_POOL (mode 5; Avg_Scale / Avg_Shift in `SO` / `SHO`); also slice (mode 6) and concat (mode 7) by 4-D DMA descriptors, registers in `DMA_SLICE_CONCAT.md`, section 3.1 (default; with `HAS_DMA_ND=0` `UNSUPPORTED_MODE`) |
+| `0x16` | DMA_TENSOR | Accepted by default (with `HAS_DMA_TENSOR=0` `UNSUPPORTED_OP`). COPY of `LEN` bytes from `A_ADDR` to `OUT_ADDR` in DRAM; `MODE_PACK` must be 0; length 0, a range past 2^32 or overlapping ranges set `BAD_GEOM` (`DMA_TENSOR_MODE.md`) |
 
 Any other opcode sets error `UNSUPPORTED_OP`.
 
 ### 6.3 Extension registers and `FLAGS`
 
-Extension register `i` is at `0x4000046C + 4 x i`, `i` = 0 to 36 (last address `0x400004FC`). All are cleared
+Extension register `i` is at `0x4000046C + 4 x i`, `i` = 0 to 37 (last address `0x40000500`). All are cleared
 after every push. Indices 0 to 25 carry the layer geometry, tiling, quantization and pooling parameters;
 indices 26 to 36 were added for the planner options, the transformer instructions, the convolution padding and the
 dilation:
@@ -293,6 +294,7 @@ dilation:
 | 31 | `0x400004E8` | `PAD_VALUE` | GEMM_FUSED: value of the padded positions, int8 in the low byte (not written: 0) |
 | 32 to 35 | `0x400004EC` to `0x400004F8` | `PAD_T`, `PAD_L`, `PAD_B`, `PAD_R` | GEMM_FUSED: padding rows above, columns left, rows below, columns right. Writing any of the four replaces `PAD`; the ones not written are 0 |
 | 36 | `0x400004FC` | `DILATION` | GEMM_FUSED: kernel taps `DILATION` positions apart (not written or 0: 1); `(KW - 1) x DILATION` at most 63 |
+| 37 | `0x40000500` | `TMAJ_C0` | GEMM_FUSED, option `HAS_OUT_TRANSPOSE=1` (off by default; proposal of the model): channels `TMAJ_C0` .. `OUT_C - 1` written token-major (a multiple of `TILE_COUT`; ignored with the option off; `HW_RTL_ALIGNMENT.md`, section 8) |
 
 `FLAGS` (index 13, `0x400004A0`):
 
@@ -300,7 +302,8 @@ dilation:
 |---|---|---|---|
 | 0 | `PAD_TAIL` | GEMM_FUSED | Edge tiles computed at full `TILE_COUT` and a width rounded up to a multiple of the positions per context; only real channels and positions are written back. The last output-channel band of the weights must be zero-padded |
 | 1 | `CHANNEL_MAJOR` | FUSED_ATTN, LAYERNORM | Element (token i, channel j) at `address + j x rows + i`, the layout a GEMM_FUSED over tokens writes |
-| 31:2 | reserved | | Write 0 |
+| 2 | `V_TOKEN_MAJOR` | FUSED_ATTN | V row (token) i, channel j at `V_ADDR + i x IN_C + j`: a head of a GEMM_FUSED output written token-major with `TMAJ_C0` (`HW_RTL_ALIGNMENT.md`, section 8) |
+| 31:3 | reserved | | Write 0 |
 
 Full definitions: `SW_INTEGRATION_GUIDE.md`, sections 3.3 and 6.1.
 

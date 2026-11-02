@@ -31,6 +31,7 @@ Companion documents: `GVU_DFC_REFERENCE_FLOW.md` (one block diagram of the recom
 | 6 | Max pool | 2.6 | `GvuTopStream::job_step_pool_regs`, `pool_geom` |
 | 7 | Residual add on the clock | 2.7 | `GvuTopStream::job_step_add_regs`, `HasElemwise` |
 | 8 | DFC configures and starts the unit through the register file | 2.8 | `has/gvu_regs_dfc.h`, `has/gvu_reg_master.h`, `has/rtl_ref_gvu_config_regs.h` |
+| 9 | Average pool, Softmax rows, attention requant and LayerNorm on the unit as jobs on the clock (knobs on by default) | 2.9 | `GvuTopStream::start_avgpool`, `start_softmax`, `start_requant`, `start_layernorm`; `GVU_OPS_ON_GVUTOP.md` |
 
 ### 1.2 Block diagram of the full flow (the configuration closest to the RTL)
 
@@ -72,11 +73,12 @@ The dashed arrow is the back-pressure of section 2.5. Residual add and max pool 
 | `HAS_GVU_REG_LAT` | integer, default 4, minimum 2 | clock edges of one register write seen by the DFC (**ESTIMATED**: AW and W handshake, `axi_lite_2ram`, B response) |
 | `HAS_GVU_REGS_ADD` | 0, 1, default 1 | 0: the residual add stays outside the register file (its parameters go straight to the unit's ports) |
 | `HAS_GVU_TOP_DUMP=<file>` | path | one line per epilogue beat (levels 1 and 3), for byte comparison between levels |
-| `-DGVU_GEMM_STREAM_DEPTH=11` | build option | pipeline depth of the RTL (pure delay stages; values unchanged) |
+| `-DGVU_GEMM_STREAM_DEPTH=<n>` | build option, default 11 | pipeline depth; 11 as the RTL, 9 as the MAS drawing and the earlier releases (pure delay stages; values unchanged) |
 | `HAS_REQ_NARROW=1` | | the narrowing after the round-shift wraps (RTL) instead of saturating to 16 bits |
 | `HAS_GVU_AGU_ND` | 0, 1, 2 | multi-dimensional address generator for slice / concat on the unit; described in `SLICE_CONCAT_ON_GVU.md` |
+| `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN` | 0, 1, default 1 | average pool, Softmax rows, attention requant and lane LayerNorm on the unit as jobs on the clock (level B only; call style with `HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0`; section 2.9, `GVU_OPS_ON_GVUTOP.md`); `_AS_RTL` variants are negative controls |
 
-**The full flow** is `HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1 HAS_GVU_REGS=1` (plus `HAS_GVU_AGU_ND=1` for slice and concat) and is the default of this package (`CODE_MAP.md`); setting a knob to 0 returns to the simpler path it replaces. Its parts: the stream through the tap with the real FIFO and back-pressure, the layer left by the flags of the stream, max pool and residual add on the clock, and every start and configuration through the register file. It is the flow that follows the RTL most closely, including the parts the RTL does not have yet (residual add registers, section 2.8), and it is the flow to read when anchoring RTL work on the model. The other combinations exist to compare against it.
+**The full flow** is `HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1 HAS_GVU_REGS=1` (plus `HAS_GVU_AGU_ND=1` for slice and concat, and the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN`) and is the default of this package (`CODE_MAP.md`); setting a knob to 0 returns to the simpler path it replaces. Its parts: the stream through the tap with the real FIFO and back-pressure, the layer left by the flags of the stream, max pool, residual add and the four operations of section 2.9 on the clock, and every start and configuration through the register file (LayerNorm excepted, section 2.9). It is the flow that follows the RTL most closely, including the parts the RTL does not have yet (residual add registers, section 2.8), and it is the flow to read when anchoring RTL work on the model. The other combinations exist to compare against it.
 
 ## 2. The flows
 
@@ -95,7 +97,7 @@ The dashed arrow is the back-pressure of section 2.5. Residual add and max pool 
 
 **Where they differ.**
 - The result goes back into SRAM-C; the RTL writes `vbank#2` port 1 (`gvu_top.sv:1389-1395`). How a GEMM_FUSED result leaves the unit towards DRAM is not described in the RTL (open question F8).
-- Depth: 9 stages after the latch in the model, 11 beats from psum to the `vbank#2` write in the RTL (two of them the sbank read for the scale). `-DGVU_GEMM_STREAM_DEPTH=11` builds the model with the RTL depth (delay stages only).
+- Depth: 11 beats from psum to the `vbank#2` write in the RTL (two of them the sbank read for the scale), the default of the model; the MAS drawing has 9 stages after the latch, built with `-DGVU_GEMM_STREAM_DEPTH=9` (delay stages only).
 - Timing of the push: for the same PSM write the model's packet enters the FIFO one cycle earlier than the RTL (the core port steps the PSM write of cycle (E, E+1) at edge E and the tap commits it in the delta cycle after E; the RTL pushes at edge E+1). The stall is still decided in the cycle of the write, as in `psm_top.sv:310`.
 - A write that holds lanes of two output channels would give two packets in the model and one in the RTL; it was never seen (**MEASURED**: `writes with more than one segment 0` on both networks).
 
@@ -193,7 +195,7 @@ Push to latch 1 edge, latch to result 9 edges for every packet that is not held 
 - `has/gvu_regs_dfc.h` builds the sequences of writes (addresses are byte addresses = register index x 4, strobe 0xF).
 - `GvuTopStream::regs_to_in` (`has/gvu_top_stream.h:612`) converts the outputs of the register file into the inputs of `GvuTop` at every edge exactly as `gvu_core.sv` wires them; `regs_post` (`:653`) applies `pipe_done` (clears Reg 0 bit 0, sets bit 1) and the end of the table load (toggles Reg 2 bit 2) in the order of `gvu_config_regs.sv`.
 
-**Register map and order of the writes.** The register map (Reg 0 to 24, bit fields, which write sets what) and the order of the writes of each operation are in `GVU_DFC_REFERENCE_FLOW.md`; they are not repeated here. In short: Reg 0..8 are the registers of the RTL, Reg 9..15 are the residual-add proposal, Reg 16..24 belong to the address generator of `SLICE_CONCAT_ON_GVU.md`; the write that sets Reg 0 bit 0 is always the last one of an operation. The full flow does not write Reg 2 (the unit toggles bit 2 itself) and does not use Reg 5 and 6 (Softmax).
+**Register map and order of the writes.** The register map (Reg 0 to 26, bit fields, which write sets what) and the order of the writes of each operation are in `GVU_DFC_REFERENCE_FLOW.md`; they are not repeated here. In short: Reg 0..8 are the registers of the RTL, Reg 9..15 are the residual-add proposal, Reg 16..24 belong to the address generator of `SLICE_CONCAT_ON_GVU.md`, Reg 25 / 26 to the average pool patch; the write that sets Reg 0 bit 0 is always the last one of an operation. The full flow does not write Reg 2 (the unit toggles bit 2 itself) and uses Reg 5 and 6 (Softmax) only with `HAS_GVU_SOFTMAX=1`.
 
 **What each sequence costs the DFC (MEASURED edges at `L = 4`).**
 
@@ -210,6 +212,14 @@ The write of Reg 0 that starts an operation is the last one; the unit begins tic
 
 **Cost (MEASURED / ESTIMATED).** Writes through the whole network at `L = 4`: GEMM_FUSED 387 (83 layers), max pool 252 (63 runs), residual add 14,822; total 15,461 writes, 61,844 edges of the DFC at the write port (0.10 % of 62.4 million cycles; 0.05 % at `L = 2`, 0.17 % at `L = 7`, **ESTIMATED** by linear scaling). What shows up in the cycle count is +1,819 cycles (0.003 %) for GEMM_FUSED and max pool and 0 for the residual add (section 5.3).
 
+### 2.9 Average pool, Softmax, attention requant and LayerNorm (knobs on by default)
+
+**RTL (READ).** The controller has Softmax and LayerNorm states and an average pool opcode, but no average pool data path (B6); Softmax stage 3 shifts by `E` instead of `E + q - P` (B20); the register file toggles the vbank1 buffer bit on the level of the table-init done output, not on its edge (B21); stage 3 has no left shift, so an exponent E = 0 cannot be expressed, also with the B20 patch (B20b); LayerNorm keeps one statistic for all 32 lanes and writes 128 rows of vbank1, so it cannot hold H = 768.
+
+**Model.** Behind `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA` and `HAS_GVU_LN` (on by default), the instruction path runs these operations on `GvuTop` as jobs on its clock (one step per edge; the DFC starts the job and waits for its end), compares every lane with the functional model and writes the value of `GvuTop`: average pool with the data path of the RTL patch through Reg 7 / 8 / 25 / 26; Softmax groups of 32 rows through Reg 4..6 with the fixes of B20 and B21, and a left shift for an exponent E = 0; the requant of the two attention products as GEMM_FUSED stream beats, after the multiplication of the core; LayerNorm on a lane data path the model proposes (`has/rtl_ref_gvu_ln_lanes.h`, not a port, ticked once per edge). With `HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0` the same operations run in the call style.
+
+**Where they differ, and the evidence.** Layouts, registers, proposals (P-AVG2, P-SMX3, P-FA1..P-FA4, P-LN1..P-LN6) and the checks are in `GVU_OPS_ON_GVUTOP.md`; the RTL simulations of the average pool patch, B20 and B21 are summarised in `VERIFICATION_REPORT.md`, sections 6.17 and 6.18. Whole ViT-B/16 in the default configuration (MEASURED): PASS 244 / 244, 0 elements different, 41,244,030 cycles against 41,582,468 with the four operation knobs at 0 (LayerNorm cycles ESTIMATED); 457 jobs on the clock, 0 failed. Whole YOLOv8m in the default configuration (MEASURED): PASS 98 / 98, 0 elements different, 62,422,935 cycles, equal to the four operation knobs at 0 (it has none of these operations).
+
 ## 3. Differences between the model and the RTL (summary)
 
 | Id | Difference | Why | Consequence |
@@ -218,7 +228,7 @@ The write of Reg 0 that starts an operation is the last one; the unit begins tic
 | L2 | scale and shift travel with the packet; the RTL reads the sbank, one per beat (`gvu_pipe_controller.sv:489-498`) | sbank layout and index sequencing are open (M3, F2) | the model does not show a wrong scale index; it counts it (section 2.3) |
 | L3 | the run ends on the last element of the tile (flag on the last packet); the delivered RTL ends 9 beats after the first `i_oc_tile_last & i_oc_last` | findings F1, B9 | the model never loses beats at a context boundary |
 | L4 | by default the core is not stopped by `o_stream_stall` | the stop changes the core port | `STALL NEEDED` counted; with `HAS_GVU_STALL=1` the core stops as in the RTL |
-| L5 | 9 stages from latch to result; the RTL takes 11 beats | the scale comes with the packet | `-DGVU_GEMM_STREAM_DEPTH=11` builds the RTL depth |
+| L5 | The MAS drawing has 9 stages from latch to result; the RTL takes 11 beats | the scale comes with the packet | 11 by default; `-DGVU_GEMM_STREAM_DEPTH=9` builds the MAS depth |
 | L6 | after the round-shift the model saturates to 16 bits; the RTL wraps | question M1 | none seen: 48,326,400 requantizations on YOLOv8m, none outside 16 bits; `HAS_REQ_NARROW=1` wraps |
 | L7 | a packet enters the FIFO one cycle earlier than in the RTL | order of the clocked steps of the core port | latencies measured from the PSM write are one cycle shorter; the stall is decided in the cycle of the write |
 | L8 | the register write takes `L` edges (default 4) and is not an AXI-Lite transaction | the bus path to `gvu_core` is abstracted | `L` is **ESTIMATED**; the totals scale linearly |
@@ -376,7 +386,7 @@ The difference to the default configuration is the table load through the DMA, t
 
 ### 5.5 Regression
 
-`bash tools/has/regress_gvu.sh <out dir>` runs every check of this guide (`--unit-only` stops after the unit benches): 131 items, covering the unit benches, level A, level B, the stall, the parameters of the stream pipeline, the register file unit tests, the check programs of 5.2 and the windows of YOLOv8m. Result (MEASURED on the Linux machine): `RESULT: 131 passed, 0 failed`.
+`bash tools/has/regress_gvu.sh <out dir>` runs every check of this guide (`--unit-only` stops after the unit benches), covering the unit benches, level A, level B, the stall, the parameters of the stream pipeline, the register file unit tests, the check programs of 5.2, the windows of YOLOv8m, the two fixed max pool datasets, the operations of section 2.9 (on the clock and in the call style) the `DMA_TENSOR` COPY group (`DMA_TENSOR_MODE.md`), the `HAS_DMA_ND` group (`DMA_SLICE_CONCAT.md`) and the verification by instruction flow (`FLOW_VERIFICATION.md`): 182 items. Result (MEASURED on the Linux machine): `RESULT: 182 passed, 0 failed`.
 
 ## 6. Switching it on, running it, reading the report
 
@@ -436,15 +446,15 @@ HAS_GVU_TOP=3 HAS_GVU_REGS=1 HAS_GVU_REGS_ADD=0 tb_has_npu_top <program dir>    
 | Exit of `GEMM_FUSED`: flag on the packet with the last element of the last context (patch F1′, version 3), with the DFC setting `oc_tile_last` only in the last call of a layer | to confirm; `o_pipe_done` is then the end of the pass, not of a context |
 | Register addressing: by word (patch B17) or by byte; all four bytes writable (patch B13) | to confirm; the model assumes both patches |
 | Residual add: registers 9..15, opcode 6, `o_residual_pipe_done` into the `pipe_done` selector (patch R3); is it on the RTL roadmap, or a different split (room for LayerNorm)? | proposal; the model runs it; 50 RTL cases equal to the model |
-| LayerNorm needs about 17 fields, several 64 bits wide: they do not fit registers 25..31 | a register block of its own, 64 registers, or descriptors in the instruction? |
+| LayerNorm needs about 20 fields, several 64 bits wide: they do not fit registers 27..31 (25 / 26 go to the average pool) | a register block of its own, 64 registers (P-LN6), or descriptors in the instruction? |
 | Latency of one register write seen by the DFC (AXI-Lite into `gvu_core`) | `HAS_GVU_REG_LAT`, 4 is **ESTIMATED** |
 | The DFC of the RTL adds one or two AXI-Lite writes per tile (last-tile metadata) and waits for `psum_done` through a 2-flop synchronizer before the next tile (`df_controller/sauria_interface.sv`); the instruction path of the model does not charge this | is it the final control path? |
 | Transpose mode: a packet holds the whole OC row in its lanes but the unit multiplies by one scale per beat (`gvu_top.sv:828`) | will GEMM_FUSED be used with transpose? |
 | Clock of the unit | the same clock as the core is assumed; the RTL comment says a crossing is needed otherwise (`sauria_logic.sv:65`) |
 | `gvu_core.sv` with the patches (B13, B17, R3) has not been compiled by anyone: it needs the AXI library | file names or versions of the libraries |
 | Output width 16 bits of the residual add (Reg 12 bit 27) | not exercised |
-| Softmax, LayerNorm, FUSED_ATTN | still on the functional models on the instruction path; the unit has the pipelines and their benches but they are not called from `HasNpuTop` |
-| Average pool | the RTL data path is not connected (B6) |
+| Softmax, LayerNorm, FUSED_ATTN | on the functional models by default; on the unit behind knobs (section 2.9), with B20, B21 and the proposals P-SMX3, P-FA1..P-FA4, P-LN1..P-LN6 to confirm (`GVU_OPS_ON_GVUTOP.md`) |
+| Average pool | the RTL data path is not connected (B6); the model runs the data path of the RTL patch behind `HAS_GVU_AVG` (Reg 25 / 26, opcode 8, D = 5); P-AVG2 for the windows it does not handle |
 
 ## 8. Rules for changes
 
@@ -460,9 +470,10 @@ HAS_GVU_TOP=3 HAS_GVU_REGS=1 HAS_GVU_REGS_ADD=0 tb_has_npu_top <program dir>    
 
 | File | What it is |
 |---|---|
-| `has/rtl_ref_gvu_top.h` | `GvuTop`: the unit (stream mode, residual add, max pool, Softmax, LayerNorm) |
+| `has/rtl_ref_gvu_top.h` | `GvuTop`: the unit (stream mode, residual add, max pool, Softmax, LayerNorm; average pool of the RTL patch and the B20 shift as options) |
+| `has/rtl_ref_gvu_avgpool_pipe.h`, `has/rtl_ref_gvu_ln_lanes.h` | average pool tail; LayerNorm with statistics per lane (proposal) |
 | `has/rtl_ref_gvu_{fu,lut,vrf,vlsu,scratchpad,ctrl,pool_feeder}.h` | the blocks ported from the RTL (frozen headers) |
-| `has/rtl_ref_gvu_config_regs.h` | the register file of `gvu_core` (`gvu_config_regs.sv`) with the proposal registers 9..15 |
+| `has/rtl_ref_gvu_config_regs.h` | the register file of `gvu_core` (`gvu_config_regs.sv`) with the proposal registers 9..15 decoded; 16..31 are storage, of which 16..24 (address generator) and 25 / 26 (average pool) are decoded by `GvuTopStream` |
 | `has/gvu_reg_master.h` | the register write port of the DFC (`L` edges per write) |
 | `has/gvu_regs_dfc.h` | the register sequences of each operation |
 | `has/gvu_top_stream.h` | level B: `PsmStreamTap`, `GvuTopStream` (stream, jobs on the clock, register-file hookup), counters |

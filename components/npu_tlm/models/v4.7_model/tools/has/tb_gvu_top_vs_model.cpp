@@ -11,7 +11,7 @@
 // small, medium and full int32 values.
 // Per-channel parameters through the sbank are not exercised (the tile mode reads them by cycle count, see the plan of the
 // core connection). Then the core-path modes: GEMM_FUSED in stream mode (one beat per PSM write, scale and shift per beat,
-// lane masks, bursts and gaps, depth 9) and residual adds whose last row is partial (i_res_last_lane_mask).
+// lane masks, bursts and gaps, depth GVU_GEMM_STREAM_DEPTH) and residual adds whose last row is partial (i_res_last_lane_mask).
 // build: g++ -std=c++17 -O2 -Wall -I. tools/has/tb_gvu_top_vs_model.cpp -o tb_gvu_top_vs_model
 // usage: tb_gvu_top_vs_model [runs per operation, default 12] [seed, default 1]
 #include <cstdio>
@@ -256,11 +256,11 @@ static int res_tail_runs(int runs)
 // every fifth run skips the activation. Beats come in bursts of 1..64 back to back separated by 0..100 idle cycles (more
 // than 64, as between two PSM write sequences); every beat has its own scale and shift (one output channel per beat) and a
 // random lane mask, empty masks included. Checks: every masked lane equals RtlObp::beat (GvuGemmEpilogue, one beat at a
-// time); every beat leaves exactly 9 cycles after it entered, with its address and mask, in order; nothing leaves in a
+// time); every beat leaves exactly GVU_GEMM_STREAM_DEPTH cycles after it entered, with its address and mask, in order; nothing leaves in a
 // gap; the run ends in IDLE after the stop.
 static int stream_runs(int runs)
 {
-    static const int kBeats = 400, kDepth = 9;
+    static const int kBeats = 400, kDepth = GVU_GEMM_STREAM_DEPTH;   // 11 = RTL (default), 9 = MAS build
     GvuTop dut;
     GvuTop::In in;
     for (int c = 0; c < 5; c++) dut.tick(in, false);

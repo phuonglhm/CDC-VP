@@ -6,6 +6,9 @@ Scales: fe_work/has/vit/vit_scales.json (fe_vit_quant.py calibration); weights /
 Output fe_work/has/vit_block/golden/: golden.npz (int tensors, token-major [L][C]; heads [12][L][64]) + golden.json (params,
 cos vs the float block). The instruction stream (dram_init/dram_golden/mmio.txt) is written from these by --emit (layout:
 every activation CHANNEL-MAJOR [C][tokens], FLAGS bit 1 CHANNEL_MAJOR on 0x13 / 0x14, docs/SW_INTEGRATION_GUIDE.md).
+With --v-token-major the V third of the QKV output is written token-major (GEMM_FUSED X_TMAJ_C0 = 1536: [tokens][768] after the
+1536 channel-major channels of Q and K) and every FUSED_ATTN reads its V head from it (FLAGS bit 2, row pitch IN_C = 768); the
+golden values are the same, only the bytes of V move. Runs with HAS_OUT_TRANSPOSE=1.
 block_golden() and Emitter are reused by fe_vit_full.py (all 12 blocks + embedding + head).
 Usage (repository root, FE_WORK set): python3 tools/fe/fe_vit_block.py [--block 0]   then   python3 tools/fe/fe_vit_block.py --emit
 Run: tools/has/tb_has_npu_top $FE_WORK/has/vit_block --c-bcast   (recommended profile + bias broadcast)
@@ -119,15 +122,17 @@ def sauria_block(w):
 
 EXT = ["IN_C", "IN_H", "IN_W", "OUT_C", "OUT_H", "OUT_W", "TILE_COUT", "TILE_H", "TILE_W", "SCALE_ADDR", "SHIFT_ADDR",
        "LUT_ADDR", "ZP_OUT", "FLAGS", "ZP_A", "ZP_B", "ZP_O", "SA", "SHA", "SB", "SHB", "SO", "SHO", "POOL_K", "POOL_P",
-       "POOL_MODE", "TILE_CIN", "Y_USED", "ROWS", "PARAM_ADDR", "MASK_ADDR"]
+       "POOL_MODE", "TILE_CIN", "Y_USED", "ROWS", "PARAM_ADDR", "MASK_ADDR", "PAD_VALUE", "PAD_T", "PAD_L", "PAD_B", "PAD_R",
+       "DILATION", "TMAJ_C0"]
 X = {n: 0x4000046C + 4 * i for i, n in enumerate(EXT)}  # FLAGS 0x4A0, ROWS 0x4DC, PARAM_ADDR 0x4E0 (docs/SW_INTEGRATION_GUIDE.md, section 3.3)
 
 
 class Emitter:
     """DRAM images + MMIO stream (format of fe_emit_insts.py / make_rce_gate.py); every activation channel-major [C][L]."""
 
-    def __init__(self, title):
+    def __init__(self, title, v_tmaj=False):
         self.init, self.gold, self.mm, self.n = bytearray(), bytearray(), ["# " + title], 0
+        self.v_tmaj = v_tmaj   # --v-token-major: V of the QKV output token-major (X_TMAJ_C0 1536, FA FLAGS bit 2)
 
     def alloc(self, di, dg=None):
         while len(self.init) % 64:
@@ -148,10 +153,15 @@ class Emitter:
     def act(self, t):  # output region: zeros in init, golden in gold
         return self.alloc(bytes(np.asarray(t).size), self.cm(t))
 
+    def act_tmaj(self, t, c0):  # output region of a GEMM with X_TMAJ_C0 = c0: channels < c0 [C][L], channels c0.. [L][C - c0]
+        a = np.asarray(t)
+        g = np.ascontiguousarray(a[:, :c0].T).astype(np.int8).tobytes() + np.ascontiguousarray(a[:, c0:]).astype(np.int8).tobytes()
+        return self.alloc(bytes(a.size), g)
+
     def w(self, a, v):
         self.mm.append("W %08x %x" % (a, int(v) & 0xFFFFFFFF))
 
-    def gemm(self, name, xa, oa, G, pre, L, lut=None):
+    def gemm(self, name, xa, oa, G, pre, L, lut=None, tmaj_c0=None):
         """1x1 GEMM over L tokens; cout padded to a multiple of 32 (PAD_TAIL computes whole channel tiles)."""
         wq = G[pre + "_w"].astype(np.int8)
         cout, cin = wq.shape
@@ -182,6 +192,8 @@ class Emitter:
             self.w(X["LUT_ADDR"], la)
         if cin_t != cin:
             self.w(X["TILE_CIN"], cin_t)
+        if tmaj_c0 is not None:
+            self.w(X["TMAJ_C0"], tmaj_c0)
         self.w(0x40000310, 0x12)
         self.n += 1
 
@@ -218,23 +230,29 @@ class Emitter:
         blk += struct.pack("<qi", at["Mav"], at["TSav"]) + struct.pack("<II", flags, 0) + struct.pack("<256i", *at["exp"])
         pa = self.alloc(blk)
         for hd in range(12):  # head h: rows hd*64 .. hd*64+63 of the [C][L] tensors (channel-major)
-            self.mm.append("# [%d] FUSED_ATTN %shead %d NQ %d L %d D 64 channel-major" % (self.n, tag, hd, L, L))
+            self.mm.append("# [%d] FUSED_ATTN %shead %d NQ %d L %d D 64 channel-major%s" % (self.n, tag, hd, L, L,
+                                                                                         ", V token-major" if self.v_tmaj else ""))
+            # V: rows hd*64.. of the [C][L] tensor, or with --v-token-major columns hd*64.. of the [L][768] V region
+            va = qkva + 1536 * L + hd * 64 if self.v_tmaj else qkva + (1536 + hd * 64) * L
             for a, v in ((0x40000444, qkva + hd * 64 * L), (0x40000448, qkva + (768 + hd * 64) * L),
-                         (0x4000044C, qkva + (1536 + hd * 64) * L), (0x40000450, L), (0x40000458, 64),
-                         (0x40000408, oa + hd * 64 * L), (X["ROWS"], L), (X["PARAM_ADDR"], pa), (X["FLAGS"], 2)):
+                         (0x4000044C, va), (0x40000450, L), (0x40000458, 64),
+                         (0x40000408, oa + hd * 64 * L), (X["ROWS"], L), (X["PARAM_ADDR"], pa), (X["FLAGS"], 6 if self.v_tmaj else 2)):
                 self.w(a, v)
+            if self.v_tmaj:
+                self.w(X["IN_C"], 768)
             self.w(0x40000310, 0x13)
             self.n += 1
 
     def block(self, G, P, xa):
         """The 20 instructions of one encoder block reading the residual stream at xa; returns the address of its output y."""
         L, e, t = G["x"].shape[0], G["x"].size, "b%d " % P["block"]
-        ln1a, qkva = self.act(G["ln1"]), self.act(G["qkv"])
+        ln1a = self.act(G["ln1"])
+        qkva = self.act_tmaj(G["qkv"], 1536) if self.v_tmaj else self.act(G["qkv"])
         oa = self.act(G["attn_o"].transpose(1, 0, 2).reshape(L, 768))
         proja, x1a, ln2a = self.act(G["proj"]), self.act(G["x1"]), self.act(G["ln2"])
         ga, mlpa, ya = self.act(G["g"]), self.act(G["mlp"]), self.act(G["y"])
         self.lnorm(t + "ln1", xa, ln1a, P["ln1"], L)
-        self.gemm(t + "qkv", ln1a, qkva, G, "qkv", L)
+        self.gemm(t + "qkv", ln1a, qkva, G, "qkv", L, tmaj_c0=1536 if self.v_tmaj else None)
         self.attn(qkva, oa, P["attn"], L, t)
         self.gemm(t + "proj", oa, proja, G, "proj", L)
         self.add(t + "x1 = x + proj", xa, proja, x1a, P["add1"], e)
@@ -255,11 +273,12 @@ class Emitter:
         return len(self.init)
 
 
-def emit(gdir, out):
+def emit(gdir, out, v_tmaj=False):
     """golden.npz/json -> dram_init.bin, dram_golden.bin, mmio.txt."""
     G = dict(np.load(os.path.join(gdir, "golden.npz")))
     P = json.load(open(os.path.join(gdir, "golden.json")))
-    em = Emitter("fe_vit_block.py --emit: ViT-B/16 block %d, L %d, channel-major [C][L]" % (P["block"], G["x"].shape[0]))
+    em = Emitter("fe_vit_block.py --emit: ViT-B/16 block %d, L %d, channel-major [C][L]%s" % (
+        P["block"], G["x"].shape[0], ", V token-major (run with HAS_OUT_TRANSPOSE=1)" if v_tmaj else ""), v_tmaj)
     em.block(G, P, em.data(G["x"]))
     size = em.write(out)
     print("[vit-block] emit: %d instructions, DRAM %d B -> %s" % (em.n, size, out))
@@ -269,11 +288,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--block", type=int, default=0)
     ap.add_argument("--emit", action="store_true", help="write the instruction stream from an existing golden")
+    ap.add_argument("--v-token-major", action="store_true", help="with --emit: V token-major (X_TMAJ_C0, FA FLAGS bit 2)")
+    ap.add_argument("--golden", help="golden directory (default FE_WORK/has/vit_block/golden)")
+    ap.add_argument("--out", help="with --emit: program directory (default the parent of the golden directory)")
     args = ap.parse_args()
     t0 = time.time()
-    out = os.path.join(fc.FE_WORK, "has", "vit_block", "golden")
+    out = args.golden or os.path.join(fc.FE_WORK, "has", "vit_block", "golden")
     if args.emit:
-        return emit(out, os.path.dirname(out))
+        return emit(out, args.out or os.path.dirname(out), args.v_token_major)
     os.makedirs(out, exist_ok=True)
     W = vf.load_safetensors(vf.WEIGHTS)
     with open(os.path.join(fc.FE_WORK, "has", "vit", "vit_scales.json")) as f:

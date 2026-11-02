@@ -220,7 +220,7 @@ question for softmax and LayerNorm; the softmax data path of `gvu_top.sv` has to
 
 `HAS_SP_PRESET=rtl` selects the bank depths of the RTL in the functional model (the other knobs stay at their defaults).
 MEASURED on the transformer check of the regression (14 instructions): 285,205 vector-unit cycles with the default
-configuration, 307,045 with the preset. With these depths a LayerNorm of 768 channels runs 10 rows per group instead of
+configuration of the functional model (vector-unit knobs at 0, as in the regression), 307,045 with the preset. With these depths a LayerNorm of 768 channels runs 10 rows per group instead of
 14, and the scalar bank (3,072 B) does not hold gamma and beta of 768 channels; the model counts the instruction and
 continues. The two networks have not been run with the preset.
 
@@ -318,6 +318,12 @@ feedback package at these points. The model is built so that each assumption is 
 | B12 | the pooling feeder is reset between max pool runs | its counter keeps its value | `GvuTopStream::reset_unit` before each run; the patched RTL run back to back gives the same trace (`VERIFICATION_REPORT.md`, V39) |
 | B19 | the round-shift is arithmetic for negative inputs | logical (the packed element is unsigned) | the frozen port keeps the arithmetic shift |
 | R3 (proposal) | registers 9 to 15 and the residual add path | neither exists | `GvuTopStream::job_step_add_regs` |
+
+The other codes of the hardware feedback package named in these documents: B2 (`psm_wdata_manager.sv` delivered empty while
+`psm_top.sv` instantiates it), B4 (DMA row decode of the scratchpad: `vbank1` rows written 8 rows off, the `sbank` rows wrong
+or not written), B6 and B8 (`GVU_TOP_IMPLEMENTATION_AND_TEST.md`, section 9.3), B7 (the GEMM case of `tb_gvu_top.sv` has no
+golden compare), B11 (the comment of register 7, `POOLING_0`, swaps the C and OH fields), B14 (`gvu_core` does not drive the DMA port
+enables of the scratchpad), B16 (five RTL files use a package `sauria_addr_pkg` that the drop does not contain).
 
 ## 5. Pipeline depths
 

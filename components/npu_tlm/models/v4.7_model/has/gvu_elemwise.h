@@ -18,6 +18,7 @@
 #include <vector>
 #include "has/gvu_quant.h"
 #include "has/gvu_scratchpad.h"
+#include "has/rtl_ref_gvu_residual_hw.h"
 #include "has/gvu_lsu.h"
 #include "has/gvu_rtl_elem.h"
 #include "has/gvu_top_bridge.h"
@@ -43,6 +44,9 @@ namespace has
                            uint64_t)> start_add;
         std::function<bool(int, int, int, int, int, int)> fits_maxpool;
         std::function<void(const int8_t *, int8_t *, int, int, int, int, int, int, uint64_t)> start_maxpool;
+        // HAS_GVU_AVG=1: average pool groups as jobs on the clock (POOLING_AVG of the RTL patch)
+        std::function<bool(int, int, int, int, int, int64_t, int, int)> fits_avgpool;
+        std::function<void(const int8_t *, int8_t *, int, int, int, int, int, int64_t, int, int, uint64_t)> start_avgpool;
         std::function<uint64_t()> finish;
         bool on() const { return static_cast<bool>(finish); }
     };
@@ -117,9 +121,21 @@ namespace has
                 for (uint32_t i = 0; i < m; i++)
                     sp_.put<int8_t>(offA + i, requant(sp_.get<int32_t>(offS + 4 * i), SO, p.sO, p.zpO, k_, &st_.qc_req));
                 uint64_t cyc1 = vectors(m) + uint64_t(k_.lat_add1), cyc2 = vectors(m) + uint64_t(k_.lat_add2);
+                // HAS_GVU_RESIDUAL_HW: the ADD as the RESIDUAL operation of the hardware (rtl_ref_gvu_residual_hw.h) when its parameters are expressible there
+                bool hw_ok = false;
+                rtl_ref_gvu::ResidualHwParams hwp;
+                if (rtl_ref_gvu::ResidualHw::on() &&
+                    rtl_ref_gvu::ResidualHw::map(p.zpA, p.zpB, p.zpO, SA, SB, SO, p.sA, p.sB, p.sO, k_.round_mode, k_.deq_zp_order == SUB_BEFORE, &hwp))
+                {
+                    for (uint32_t i = 0; i < m; i++)
+                        sp_.put<int8_t>(offA + i, static_cast<int8_t>(rtl_ref_gvu::residual_hw_lane(A[base + i], B[base + i], hwp)));
+                    const uint64_t pc = rtl_ref_gvu::residual_hw_cycles(m);
+                    cyc1 = pc - pc / 2; cyc2 = pc / 2;
+                    hw_ok = true;
+                }
                 // HAS_GVU_ELEM_CLK: the compute of the chunk is a job on the clock of GvuTopStream, which writes GvuTop's values into
                 // out when it is done (the model values go there first; the operands are copied first, out may be A)
-                if (clk.on() && clk.fits_add(p.zpA, p.zpB, p.zpO, SA, SB, SO, p.sA, p.sB, p.sO, k_.round_mode, k_.deq_zp_order == SUB_BEFORE,
+                if (!hw_ok && clk.on() && clk.fits_add(p.zpA, p.zpB, p.zpO, SA, SB, SO, p.sA, p.sB, p.sO, k_.round_mode, k_.deq_zp_order == SUB_BEFORE,
                                              k_.req_narrow == SAT16))
                 {
                     std::vector<int8_t> a(A + base, A + base + m), b(B + base, B + base + m);
@@ -134,7 +150,7 @@ namespace has
                     continue;
                 }
                 // HAS_GVU_TOP (GvuTop) or HAS_ELEM_RTL (GvuResAddPipe): values and compute cycles of the chunk from the cycle-level unit
-                if (GvuTopBridge::on() || RtlElem::on())
+                if (!hw_ok && (GvuTopBridge::on() || RtlElem::on()))
                 {
                     std::vector<int8_t> res(m);
                     for (uint32_t i = 0; i < m; i++) res[i] = sp_.get<int8_t>(offA + i);
@@ -278,6 +294,9 @@ namespace has
         // the shift; this model saturates to int8 and COUNTS it (clamp8), and counts int16 accumulator overflow (acc16_ovf,
         // question H5: windows > 258 elements of |x| = 127 can overflow). ACC16 wraps like a 16-bit register would.
         uint64_t acc16_ovf{0};
+        // HAS_GVU_AVG=1 (set by HasNpuTop with HAS_GVU_TOP=3): a channel group runs on GvuTop (POOLING_AVG of the RTL patch) after the model values,
+        // GvuTop's values and cycles are kept; false = the unit does not take the parameters, the model values and cycles stay.
+        std::function<bool(const int8_t *, int8_t *, int, int, int, int, int, int64_t, int, int, uint64_t, uint64_t *)> gvu_avg;
         void avgpool(const int8_t *in, int8_t *out, int C, int H, int Wd, int kk, int s, uint32_t avg_scale_raw, int avg_shift)
         {
             const int Ho = (H - kk) / s + 1, Wo = (Wd - kk) / s + 1;
@@ -321,7 +340,20 @@ namespace has
                             if (o != r) st_.qc_req.clamp8++;
                             out[(static_cast<size_t>(c0 + c) * Ho + y) * Wo + x] = static_cast<int8_t>(o);
                         }
-                compute(static_cast<uint64_t>(g) * Ho * vec_per_row * kk * kk + uint64_t(k_.lat_add2));
+                const uint64_t mc = static_cast<uint64_t>(g) * Ho * vec_per_row * kk * kk + uint64_t(k_.lat_add2);
+                uint64_t pc = 0;
+                if (clk.on() && clk.fits_avgpool && clk.fits_avgpool(g, H, Wd, kk, s, S, avg_shift, k_.round_mode))
+                {
+                    const int8_t *gi = in + static_cast<size_t>(c0) * per_ch;
+                    int8_t *go = out + static_cast<size_t>(c0) * Ho * Wo;
+                    const int rm = k_.round_mode;
+                    compute_job([this, gi, go, g, H, Wd, kk, s, S, avg_shift, rm, mc] { clk.start_avgpool(gi, go, g, H, Wd, kk, s, S, avg_shift, rm, mc); });
+                }
+                else if (gvu_avg && gvu_avg(in + static_cast<size_t>(c0) * per_ch, out + static_cast<size_t>(c0) * Ho * Wo, g, H, Wd, kk, s, S, avg_shift,
+                                            k_.round_mode, mc, &pc))
+                    compute(pc);
+                else
+                    compute(mc);
                 dma(static_cast<uint64_t>(g) * Ho * Wo);
             }
         }

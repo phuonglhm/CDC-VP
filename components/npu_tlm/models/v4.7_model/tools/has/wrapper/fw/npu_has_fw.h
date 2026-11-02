@@ -105,7 +105,8 @@ extern "C" {
 #define NPU_HAS_PAD_B             NPU_HAS_EXT(34)
 #define NPU_HAS_PAD_R             NPU_HAS_EXT(35)
 #define NPU_HAS_DILATION          NPU_HAS_EXT(36)   /* GEMM_FUSED: kernel taps DILATION apart; not written / 0 = 1 */
-#define NPU_HAS_EXT_END           NPU_HAS_EXT(37)   /* exclusive */
+#define NPU_HAS_TMAJ_C0           NPU_HAS_EXT(37)   /* GEMM_FUSED: channels from TMAJ_C0 on written token-major (HAS_OUT_TRANSPOSE) */
+#define NPU_HAS_EXT_END           NPU_HAS_EXT(38)   /* exclusive */
 
 #define NPU_HAS_FLAG_PAD_TAIL      0x1u
 #define NPU_HAS_FLAG_CHANNEL_MAJOR 0x2u

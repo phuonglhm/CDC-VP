@@ -205,9 +205,16 @@ int main()
         CHECK(m.last_error() == Err::NONE && m.pop(a) && a.opcode == 0x14 && a.in_addr == 0x700 && a.seq_len == 768 &&
               a.rows == 197 && a.param_addr == 0x800, "LAYERNORM decoded");
         m.retire(a);
-        m.write(0x40000310, 0x16);
+        // 0x7F is no opcode of the model in any configuration (0x16 is DMA_TENSOR, accepted by default: HAS_DMA_TENSOR=1)
+        m.write(0x40000310, 0x7F);
         CHECK(m.last_error() == Err::UNSUPPORTED_OP, "unknown opcode rejected");
-        CHECK(!m.owns(0x40000500) && m.owns(0x40000318) && m.owns(ext(M::X_POOL_MODE)) && !m.owns(M::EXT_END), "address ownership");
+        {
+            MmioCompat md;
+            md.dma_tensor = false;   // as HAS_DMA_TENSOR=0
+            md.write(0x40000310, 0x16);
+            CHECK(md.last_error() == Err::UNSUPPORTED_OP && md.queued() == 0, "DMA_TENSOR refused when off (HAS_DMA_TENSOR=0)");
+        }
+        CHECK(!m.owns(0x40000504) && m.owns(0x40000318) && m.owns(ext(M::X_POOL_MODE)) && !m.owns(M::EXT_END), "address ownership");
     }
     // ---------------------------------------------------------------- C8
     {
@@ -373,8 +380,31 @@ int main()
         m5.write(ext(M::X_DILATION), 0xFFFFFFFFu);
         m5.write(0x40000310, 0x12);
         CHECK(m5.queued() == 0 && m5.last_error() == Err::BAD_GEOM, "DILATION -1: BAD_GEOM");
-        CHECK(m.owns(ext(M::X_DILATION)) && ext(M::X_DILATION) == 0x400004FC && !m.owns(M::EXT_END) && M::EXT_END == 0x40000500,
-              "DILATION at 0x400004FC, extension registers end at 0x40000500");
+        CHECK(m.owns(ext(M::X_DILATION)) && ext(M::X_DILATION) == 0x400004FC && m.owns(ext(M::X_TMAJ_C0)) && ext(M::X_TMAJ_C0) == 0x40000500 &&
+              !m.owns(M::EXT_END) && M::EXT_END == 0x40000504,
+              "DILATION at 0x400004FC, TMAJ_C0 at 0x40000500, extension registers end at 0x40000504");
+        // TMAJ_C0 (0x40000500): written = channels from it on token-major; one-shot; out of [0, OUT_C) or with HAS_SKIP refused
+        MmioCompat m6;
+        conv(m6, 3);
+        m6.write(0x40000310, 0x12);
+        CHECK(m6.pop(li) && li.tmaj_c0 == -1, "TMAJ_C0 not written: -1, got %d", li.tmaj_c0);
+        conv(m6, 3);
+        m6.write(ext(M::X_TMAJ_C0), 0);
+        m6.write(0x40000310, 0x12);
+        CHECK(m6.pop(li) && li.tmaj_c0 == 0, "TMAJ_C0 0 written: 0, got %d", li.tmaj_c0);
+        conv(m6, 3);
+        m6.write(0x40000310, 0x12);
+        CHECK(m6.pop(li) && li.tmaj_c0 == -1, "TMAJ_C0 is one-shot: next push -1, got %d", li.tmaj_c0);
+        conv(m6, 3);
+        m6.write(ext(M::X_TMAJ_C0), uint32_t(li.geom.cout));
+        m6.write(0x40000310, 0x12);
+        CHECK(m6.queued() == 0 && m6.last_error() == Err::BAD_GEOM, "TMAJ_C0 = OUT_C: BAD_GEOM");
+        MmioCompat m7;
+        conv(m7, 3);
+        m7.write(0x40000430, 1);
+        m7.write(ext(M::X_TMAJ_C0), 0);
+        m7.write(0x40000310, 0x12);
+        CHECK(m7.queued() == 0 && m7.last_error() == Err::UNSUPPORTED_MODE, "TMAJ_C0 with HAS_SKIP: UNSUPPORTED_MODE");
     }
 
     // ---------------------------------------------------------------- C13

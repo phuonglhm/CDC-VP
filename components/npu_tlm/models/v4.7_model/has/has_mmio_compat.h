@@ -8,6 +8,8 @@
 //   0x40000318 STATUS  (R; any write clears the sticky error)   0x4000031C RETIRED (R)
 //   0x4000046C..0x400004F8 extension registers -- ONE-SHOT: cleared after every push, so a later old-style push can
 //   never pick up stale conv geometry. The old registers stay sticky exactly as in instruction_decoder.h.
+//   Opcode 0x16 DMA_TENSOR (environment HAS_DMA_TENSOR=1; otherwise refused as before): op COPY = MODE_PACK 0, LEN bytes
+//   from A_ADDR to OUT_ADDR, one contiguous block (the READER_START_ADDR / WRITER_START_ADDR / BTT registers of the RTL DMA).
 // Nothing is executed here: the DFC pops instructions and calls retire(). Pure C++ (no SystemC) so it can be unit
 // tested alone (tools/has/tb_has_mmio_compat.cpp).
 #ifndef HAS_MMIO_COMPAT_H
@@ -16,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include "has/has_tile_iter.h"
@@ -55,9 +58,12 @@ namespace has
             X_PAD_B,      // 0x400004F4  written all four sides use PAD, as before
             X_PAD_R,      // 0x400004F8
             X_DILATION,   // 0x400004FC: GEMM_FUSED dilation, kernel taps DILATION apart; unset / 0 = 1
+            X_TMAJ_C0,    // 0x40000500: GEMM_FUSED, written (a multiple of TILE_COUT): channels TMAJ_C0 .. OUT_C-1 token-major (position p of
+                          //             channel c at OUT_ADDR + TMAJ_C0*OH*OW + p*(OUT_C - TMAJ_C0) + c - TMAJ_C0); runs with
+                          //             HAS_OUT_TRANSPOSE=1 (corner turn after the epilogue), ignored otherwise; not with HAS_SKIP
             X_COUNT
         };
-        constexpr uint32_t EXT_END = EXT_BASE + 4 * X_COUNT;   // exclusive (0x40000500)
+        constexpr uint32_t EXT_END = EXT_BASE + 4 * X_COUNT;   // exclusive (0x40000504)
         constexpr int MAX_DIL_SPAN = 63;   // (KW - 1) x DILATION: the dilation pattern of the IFMAP feeder has 64 positions
         // One row sweep of the IFMAP feeder, xlim = 1 + (Y_used - 1) x stride + B_w_eff + 1 - (B_w_eff mod 2) + 32
         // (sauria_compute_core_fields), must stay within the 8-bit position counters of its lanes (PARAMS_W of the
@@ -80,7 +86,7 @@ namespace has
 
     struct LayerInstr
     {
-        uint8_t opcode{0};             // 0x12 GEMM_FUSED, 0x13 FUSED_ATTN, 0x14 LAYERNORM, 0x15 ELEM_WISE
+        uint8_t opcode{0};             // 0x12 GEMM_FUSED, 0x13 FUSED_ATTN, 0x14 LAYERNORM, 0x15 ELEM_WISE, 0x16 DMA_TENSOR
         uint32_t host_seq{0};          // number of the host push this came from
         bool last_of_host{true};       // false for the GEMM half of a split has_skip instruction
         // GEMM_FUSED
@@ -97,9 +103,10 @@ namespace has
         int zp_out{0};
         int pad_val{0};                // value of the padding around the input (int8); 0 unless PAD_VALUE is written
         uint32_t flags{0};
+        int tmaj_c0{-1};               // X_TMAJ_C0: first output channel written token-major (HAS_OUT_TRANSPOSE); -1 = not written
         bool from_float_scale{false};  // approximate path, not bit-exact with the old emulator
         bool default_tiling{false};    // tiling chosen by default_tiling(), not by the offline planner
-        // ELEM_WISE
+        // ELEM_WISE; DMA_TENSOR COPY: mode 0, a_addr source, out_addr destination, n bytes
         int mode{0};                   // 0 ADD, 1 MAX_POOL, 5 AVG_POOL
         uint32_t a_addr{0}, b_addr{0};
         uint32_t n{0};
@@ -110,6 +117,7 @@ namespace has
         // FUSED_ATTN (Q = a_addr, K = b_addr, V = v_addr, O = out_addr) / LAYERNORM (X = in_addr, Y = out_addr)
         uint32_t v_addr{0}, param_addr{0}, mask_addr{0};
         int rows{0}, seq_len{0}, head_dim{0};
+        int v_stride{0};               // FUSED_ATTN FLAGS bit 2: row pitch of a token-major V (IN_C); 0 = V as the other operands
     };
 
     // HAS SRAM capacities (bytes / PSUM elements) used for the fallback tiling of old-style m/k/n instructions.
@@ -158,7 +166,16 @@ namespace has
     class MmioCompat
     {
     public:
-        explicit MmioCompat(size_t q_depth = 16, SramCaps caps = SramCaps()) : q_depth_(q_depth), caps_(caps) {}
+        explicit MmioCompat(size_t q_depth = 16, SramCaps caps = SramCaps()) : q_depth_(q_depth), caps_(caps)
+        {
+            if (const char *v = std::getenv("HAS_DMA_TENSOR")) dma_tensor = std::atoi(v) != 0;
+            if (const char *v = std::getenv("HAS_DMA_ND")) dma_nd = std::atoi(v) != 0;
+        }
+        // Opcode 0x16 DMA_TENSOR accepted (default; environment HAS_DMA_TENSOR=0 refuses it with UNSUPPORTED_OP).
+        bool dma_tensor{true};
+        // ELEM_WISE modes 6 (slice) / 7 (concat) by 4-D DMA descriptors accepted (default; environment HAS_DMA_ND=0 refuses them
+        // with UNSUPPORTED_MODE).
+        bool dma_nd{true};
 
         // Host write. Returns true if the address belongs to this block.
         bool write(uint32_t addr, uint32_t data)
@@ -263,7 +280,7 @@ namespace has
         }
 
         // counters (evidence for the hand-over report)
-        uint64_t n_nsplit_ignored{0}, n_float_scale{0}, n_default_tiling{0}, n_skip_split{0}, n_errors{0};
+        uint64_t n_nsplit_ignored{0}, n_float_scale{0}, n_default_tiling{0}, n_skip_split{0}, n_errors{0}, n_dma_tensor{0};
         Err last_error() const { return last_err_; }
         size_t queued() const { return q_.size(); }
         // Testbench windows (--first): an instruction that is replayed but not pushed must still drop its one-shot extension
@@ -296,6 +313,7 @@ namespace has
             else if (opcode == 0x12) push_gemm();
             else if (opcode == 0x15) push_elem();
             else if (opcode == 0x13 || opcode == 0x14) push_rce(uint8_t(opcode));
+            else if (opcode == 0x16 && dma_tensor) push_dma_tensor();
             else error(Err::UNSUPPORTED_OP);
             clear_ext();
         }
@@ -350,6 +368,12 @@ namespace has
             li.zp_out = ext_i(X_ZP_OUT);
             li.flags = ext_[X_FLAGS];
             g.pad_tail = (li.flags & 1u) != 0;   // FLAGS bit 0 = PAD_TAIL, bit 1 = CHANNEL_MAJOR (RCE only)
+            if (ext_set_[X_TMAJ_C0])
+            {
+                li.tmaj_c0 = ext_i(X_TMAJ_C0);
+                if (li.tmaj_c0 < 0 || li.tmaj_c0 >= g.cout || li.tmaj_c0 % g.cout_t != 0) { error(Err::BAD_GEOM); return; }
+                if (r_has_skip_) { error(Err::UNSUPPORTED_MODE); return; }
+            }
             if (max_sweep(g) > mmio::MAX_SWEEP) { error(Err::SWEEP); return; }
             if (ext_set_[X_SCALE_ADDR])
             {
@@ -449,6 +473,31 @@ namespace has
                     li.h < li.pool_k || li.w < li.pool_k || li.avg_shift < 0 || li.avg_shift > 63)
                 { error(Err::BAD_GEOM); return; }
             }
+            else if ((li.mode == 6 || li.mode == 7) && dma_nd)
+            {
+                // DMA_SLICE (mode 6) / DMA_CONCAT (mode 7) executed via HasDma 4-D descriptors (has/has_dma.h):
+                //   c, h, w = [C][H][W] of the full tensor (source for SLICE, destination for CONCAT)
+                //   pool_mode = axis (0 = C, 1 = H, 2 = W)
+                //   pool_p = start offset along axis; pool_k = slice/part length along axis; pool_s = step (default 1)
+                //   For DMA_CONCAT: if b_addr != 0, concatenates a_addr (length pool_k at offset 0) and
+                //   b_addr (length dim - pool_k at offset pool_k) into out_addr; pool_p must then be 0.
+                // Only with HAS_DMA_ND=1 (otherwise refused with UNSUPPORTED_MODE as before). SLICE takes the source shape from
+                // IN_C / IN_H / IN_W; CONCAT the destination shape from OUT_C / OUT_H / OUT_W when written, else from IN_*.
+                const bool has_out = li.mode == 7 && ext_set_[X_OUT_C];
+                if (!ext_set_[X_IN_C] && !has_out) { error(Err::BAD_GEOM); return; }
+                li.c = has_out ? ext_i(X_OUT_C) : ext_i(X_IN_C);
+                li.h = has_out ? ext_i(X_OUT_H) : ext_i(X_IN_H);
+                li.w = has_out ? ext_i(X_OUT_W) : ext_i(X_IN_W);
+                li.pool_mode = ext_i(X_POOL_MODE);
+                li.pool_p = ext_i(X_POOL_P);
+                li.pool_k = ext_i(X_POOL_K);
+                li.pool_s = r_stride_ > 0 ? int(r_stride_) : 1;
+                const int dim = (li.pool_mode == 0) ? li.c : (li.pool_mode == 1 ? li.h : li.w);
+                if (li.c <= 0 || li.h <= 0 || li.w <= 0 || li.pool_mode < 0 || li.pool_mode > 2 ||
+                    li.pool_p < 0 || li.pool_k <= 0 || li.pool_s <= 0 ||
+                    li.pool_p + li.pool_k > dim || (li.mode == 7 && li.b_addr != 0 && (li.pool_p != 0 || li.pool_k >= dim)))
+                { error(Err::BAD_GEOM); return; }
+            }
             else { error(Err::UNSUPPORTED_MODE); return; }                   // MUL / SUB / DIV: not in the HAS ISA
             enqueue(li);
         }
@@ -479,8 +528,29 @@ namespace has
                 li.rows = ext_set_[X_ROWS] ? ext_i(X_ROWS) : 0;
                 if (li.rows <= 0 || li.seq_len <= 0) { error(Err::BAD_GEOM); return; }
             }
-            li.flags = ext_[X_FLAGS];   // bit 1 = CHANNEL_MAJOR operands; other bits reserved
+            li.flags = ext_[X_FLAGS];   // bit 1 = CHANNEL_MAJOR operands, bit 2 = V token-major (FUSED_ATTN); other bits reserved
+            // FUSED_ATTN FLAGS bit 2: V row (token) i, channel j at V_ADDR + i * IN_C + j (a head of a token-major GEMM output, X_TMAJ_C0)
+            if (op == 0x13 && (li.flags & 4u))
+            {
+                if (!ext_set_[X_IN_C] || ext_i(X_IN_C) < li.head_dim) { error(Err::BAD_GEOM); return; }
+                li.v_stride = ext_i(X_IN_C);
+            }
             enqueue(li);
+        }
+
+        // DMA_TENSOR COPY: LEN bytes from A_ADDR to OUT_ADDR. Refused: another op, no bytes, a region past 2^32, overlapping
+        // regions (the RTL DMA reads ahead through its FIFO, so an overlapping copy has no defined result).
+        void push_dma_tensor()
+        {
+            LayerInstr li;
+            li.opcode = 0x16;
+            li.host_seq = host_seq_;
+            li.mode = int(r_mode_);
+            li.a_addr = r_a_; li.out_addr = r_out_; li.n = r_len_;
+            if (li.mode != 0) { error(Err::UNSUPPORTED_MODE); return; }
+            const uint64_t s = li.a_addr, d = li.out_addr, n = li.n;
+            if (n == 0 || s + n > (1ull << 32) || d + n > (1ull << 32) || (s < d + n && d < s + n)) { error(Err::BAD_GEOM); return; }
+            if (enqueue(li)) n_dma_tensor++;
         }
 
         // same validity rule as emulate_elem_wise()

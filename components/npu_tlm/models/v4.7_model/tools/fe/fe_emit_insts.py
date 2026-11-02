@@ -22,7 +22,19 @@ DRAM layout (new):
   - LUT int8[256], scale u32[cout], shift u32[cout], bias i32[cout] (PSUM preload), unchanged values.
   - upsample x2 stays a host step "H upsample2x in=.. out=.. c h w" (HW question H15).
 Self-check: every tensor of net_has is compared by name, value for value, against net_has/dram_golden.bin.
-Usage (repository root, FE_WORK set): python3 tools/fe/fe_emit_insts.py [--plan pe3] [--config pc_p9999_has]
+--slice-concat dma (default alias = the layout above): concat by DMA_TENSOR COPY (opcode 0x16, MODE_PACK 0, src A_ADDR, dst
+OUT_ADDR, LEN bytes; the model needs HAS_DMA_TENSOR=1). Only concat is copied; slice_ch stays a view at its offset in the
+source tensor. Every concat input keeps its own DRAM region (like every other tensor), the concat output has its own region,
+and one COPY per run of inputs that are adjacent in memory is pushed at the position of the concat step, after the last
+input is written. Output directory FE_WORK/has/insts_<plan>_dma/ (the alias program is not overwritten). No AGU_ND
+destination is generated, so the vector unit never writes a result into a concat cell. Checks (stop on failure): every input
+written before its COPY, copy regions inside the image and not overlapping, golden bytes of source and destination equal,
+image below --dram-limit.
+--slice-concat dma_nd: the same placement and checks as dma, but each run is one ELEM_WISE mode 7 (concat by 4-D DMA
+descriptors, has/has_dma.h) with one part: A_ADDR = the run, B_ADDR = 0, OUT_ADDR = the concat output, destination shape in
+IN_C/H/W and OUT_C/H/W, axis C (POOL_MODE 0), POOL_P = first channel of the run, POOL_K = its channels. Output directory
+FE_WORK/has/insts_<plan>_nd/; the model runs it with HAS_DMA_ND=1 (the default). slice_ch stays a view, as in dma.
+Usage (repository root, FE_WORK set): python3 tools/fe/fe_emit_insts.py [--plan pe3] [--config pc_p9999_has] [--slice-concat dma|dma_nd]
 Default plan: pe3 (the program of the recommended testbench profile, tools/has/tb_has_npu_top). --plan has = HAS default
 tiling (no PE optimisation).
 
@@ -385,8 +397,18 @@ def main():
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--halo", action="store_true", help="pe4: cost DMA with the SRAM-A halo reuse (tb --halo)")
     ap.add_argument("--c-bcast", action="store_true", help="pe4: cost CH3 bias as 4 B/channel (tb --c-bcast)")
+    ap.add_argument("--slice-concat", choices=["alias", "dma", "dma_nd"], default="alias",
+                    help="alias: slices and concats are address aliases (0 cycles); dma: concats are DMA_TENSOR COPY instructions "
+                         "(slices stay views), output directory insts_<plan>_dma; dma_nd: concats are ELEM_WISE mode 7 (4-D DMA "
+                         "descriptors), output directory insts_<plan>_nd")
+    ap.add_argument("--dram-limit", type=lambda v: int(v, 0), default=256 << 20,
+                    help="dma mode: refuse a DRAM image larger than this many bytes (ESTIMATE of the target DRAM; the model has "
+                         "no capacity limit of its own)")
     args = ap.parse_args()
-    want = os.path.join(fc.FE_WORK, "has", {"has": "insts_has", "pe": "insts_pe", "pe2": "insts_pe2", "pe3": "insts_pe3", "pe4": "insts_pe4"}[args.plan])
+    dma_mode = args.slice_concat in ("dma", "dma_nd")
+    nd_mode = args.slice_concat == "dma_nd"
+    want = os.path.join(fc.FE_WORK, "has", {"has": "insts_has", "pe": "insts_pe", "pe2": "insts_pe2", "pe3": "insts_pe3", "pe4": "insts_pe4"}[args.plan]
+                        + ("_nd" if nd_mode else "_dma" if dma_mode else ""))
     out_dir = os.path.abspath(args.out_dir or want)
     if out_dir != os.path.abspath(want):
         raise SystemExit("refusing out-dir other than %s for --plan %s: %s" % (want, args.plan, out_dir))
@@ -443,7 +465,7 @@ def main():
 
     # ---- 1. placement: slices first (always a view of their input), then concats in program order ----
     pl = Placement()
-    host_left, notes = [], []
+    host_left, notes, dma_left = [], [], []
     for st in prog["steps"]:
         if st["kind"] == "host" and st["op"] == "slice_ch":
             o = ops[st["op_id"]]
@@ -452,6 +474,9 @@ def main():
     for st in prog["steps"]:
         if st["kind"] == "host" and st["op"] == "concat":
             o = ops[st["op_id"]]
+            if dma_mode:   # b1: the output and every input keep their own regions; a COPY moves the data
+                dma_left.append(st)
+                continue
             offs, off = [], 0
             for t in o["inputs"]:
                 offs.append(off)
@@ -530,6 +555,33 @@ def main():
     if bad:
         raise SystemExit("self-check FAILED: %d tensors differ after aliasing, first %s" % (len(bad), bad[0]))
 
+    # ---- 4b. dma mode: the COPY list of every concat (runs of inputs adjacent in memory are merged into one COPY) ----
+    dma_copies, dma_by_step = [], {}
+    if dma_mode:
+        if total > args.dram_limit:
+            raise SystemExit("DRAM image %d B exceeds --dram-limit %d B" % (total, args.dram_limit))
+        if total + (1 << 20) >= 1 << 32:
+            raise SystemExit("DRAM image %d B leaves no room below 2^32 for the staging area of the DFC" % total)
+        for st in dma_left:
+            o = ops[st["op_id"]]
+            dst, off, runs = taddr[o["output"]], 0, []
+            for t in o["inputs"]:
+                if runs and runs[-1][0] + runs[-1][2] == taddr[t] and runs[-1][1] + runs[-1][2] == dst + off:
+                    runs[-1][2] += nbytes[t]
+                    runs[-1][3].append(t)
+                else:
+                    runs.append([taddr[t], dst + off, nbytes[t], [t]])
+                off += nbytes[t]
+            if off != nbytes[o["output"]]:
+                raise SystemExit("concat %s: inputs total %d B, output %d B" % (o["output"], off, nbytes[o["output"]]))
+            for src, d, n, ts in runs:
+                if n <= 0 or src + n > total or d + n > total or (src < d + n and d < src + n):
+                    raise SystemExit("concat %s: COPY 0x%x -> 0x%x, %d B is outside the image or overlaps" % (o["output"], src, d, n))
+                if not np.array_equal(gold[src:src + n], gold[d:d + n]):
+                    raise SystemExit("concat %s: golden bytes of source 0x%x and destination 0x%x differ" % (o["output"], src, d))
+                dma_copies.append({"op_id": st["op_id"], "output": o["output"], "src": src, "dst": d, "bytes": n, "inputs": ts})
+                dma_by_step.setdefault(id(st), []).append(dma_copies[-1])
+
     # ---- 5. MMIO stream ----
     lines, n_w, n_push, n_h = [], 0, 0, 0
 
@@ -545,6 +597,7 @@ def main():
 
     lines.append("# fe_emit_insts.py: %s, %d program steps, DRAM %d B" % (args.config, len(prog["steps"]), total))
     host_ids = {id(s) for s in host_left}
+    written = {ir["graph_input"]}
     for si, st in enumerate(prog["steps"]):
         k = st["kind"]
         if k == "conv":
@@ -575,6 +628,7 @@ def main():
                 W(X["Y_USED"], st["y_used_reg"])
             W(PUSH_A, 0x12)
             n_push += 1
+            written.add(st["output"])
         elif k == "elem_add":
             n = nbytes[st["out"]]
             lines.append("# [%d] step %d ELEM_WISE ADD from %s, %d elements" % (n_push, si, st["from_job"], n))
@@ -585,6 +639,7 @@ def main():
                 W(X[nm], st[key])
             W(PUSH_A, 0x15)
             n_push += 1
+            written.add(st["out"])
         elif k == "elem_max":
             _, c, h, w = shapes[st["in"]]
             lines.append("# [%d] step %d ELEM_WISE MAX_POOL %dx%d s%d p%d" % (n_push, si, st["k"], st["k"], st["s"], st["p"]))
@@ -593,11 +648,38 @@ def main():
             W(X["POOL_K"], st["k"]); W(X["POOL_P"], st["p"]); W(X["POOL_MODE"], 0)
             W(PUSH_A, 0x15)
             n_push += 1
+            written.add(st["out"])
         else:
             o = ops[st["op_id"]]
             if o["op"] == "slice_ch":
                 lines.append("# step %d slice_ch %s = %s[%d:%d] -> address alias 0x%x"
                              % (si, o["output"], o["inputs"][0], o["start"], o["end"], taddr[o["output"]]))
+                if o["inputs"][0] in written:
+                    written.add(o["output"])
+            elif o["op"] == "concat" and id(st) in dma_by_step:
+                late = [t for t in o["inputs"] if t not in written]
+                if late:
+                    raise SystemExit("concat %s: input(s) %s not written before the COPY" % (o["output"], late))
+                _, oc, oh, ow = shapes[o["output"]]
+                for cp in dma_by_step[id(st)]:
+                    if nd_mode:   # one-part concat along C: the run lands at channel POOL_P of the output
+                        off = cp["dst"] - taddr[o["output"]]
+                        if off % (oh * ow) or cp["bytes"] % (oh * ow):
+                            raise SystemExit("concat %s: run at byte %d, %d B is not whole channels" % (o["output"], off, cp["bytes"]))
+                        c0, cn = off // (oh * ow), cp["bytes"] // (oh * ow)
+                        lines.append("# [%d] step %d ELEM_WISE DMA_CONCAT concat %s <- %s, channels %d..%d of %d, %d bytes"
+                                     % (n_push, si, o["output"], "+".join(cp["inputs"]), c0, c0 + cn, oc, cp["bytes"]))
+                        W(A_ADDR, cp["src"]); W(B_ADDR, 0); W(OUT_ADDR, taddr[o["output"]]); W(MODE_PACK, 7); W(STRIDE, 1)
+                        for nm, v in (("IN_C", oc), ("IN_H", oh), ("IN_W", ow), ("OUT_C", oc), ("OUT_H", oh), ("OUT_W", ow),
+                                      ("POOL_MODE", 0), ("POOL_P", c0), ("POOL_K", cn)):
+                            W(X[nm], v)
+                        W(PUSH_A, 0x15)
+                    else:
+                        lines.append("# [%d] step %d DMA_TENSOR COPY concat %s <- %s, %d bytes" % (n_push, si, o["output"], "+".join(cp["inputs"]), cp["bytes"]))
+                        W(A_ADDR, cp["src"]); W(OUT_ADDR, cp["dst"]); W(LEN, cp["bytes"]); W(MODE_PACK, 0)
+                        W(PUSH_A, 0x16)
+                    n_push += 1
+                written.add(o["output"])
             elif o["op"] == "concat" and id(st) not in host_ids:
                 lines.append("# step %d concat %s -> inputs already written in place at 0x%x"
                              % (si, o["output"], taddr[o["output"]]))
@@ -611,6 +693,7 @@ def main():
             elif o["op"] == "upsample_nearest":
                 _, c, h, w = shapes[o["inputs"][0]]
                 H("upsample%dx in=0x%x out=0x%x c=%d h=%d w=%d" % (o["factor"], taddr[o["inputs"][0]], taddr[o["output"]], c, h, w))
+                written.add(o["output"])
             else:
                 raise SystemExit("unsupported host op %s" % o["op"])
 
@@ -633,13 +716,26 @@ def main():
                           "y_used_reg": conv_steps[j].get("y_used_reg"), "pad_tail": bool(conv_steps[j].get("pad_tail"))}
                       for j, v in plan.items()},
     }
-    if args.plan != "has":
+    if dma_mode:
+        manifest["slice_concat"] = args.slice_concat
+        manifest["dma_nd" if nd_mode else "dma_tensor"] = {
+            "opcode": "0x15" if nd_mode else "0x16", "op": "DMA_CONCAT (mode 7)" if nd_mode else "COPY",
+            "instructions": len(dma_copies), "bytes": sum(c["bytes"] for c in dma_copies),
+            "concats": len(dma_left), "agu_nd_into_concat_cells": 0, "dram_limit": args.dram_limit,
+            "requires": "HAS_DMA_ND=1 (default)" if nd_mode else "HAS_DMA_TENSOR=1 (default)",
+            "copies": [{"output": c["output"], "src": c["src"], "dst": c["dst"], "bytes": c["bytes"], "inputs": c["inputs"]} for c in dma_copies]}
+    if args.plan != "has" and not dma_mode:
         write_prog_pe(os.path.join(net_dir, "prog.bin"),
                       os.path.join(fc.FE_WORK, "has", "net_" + args.plan, "prog.bin"), prog)
     with open(os.path.join(out_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=1)
-    print("[emit] %d instructions (%d GEMM_FUSED + %d ELEM_WISE), %d MMIO writes, %d H lines, concats kept on host %d"
-          % (n_push, len(conv), n_push - len(conv), n_w, n_h, len(notes)))
+    kind = "ELEM_WISE DMA_CONCAT" if nd_mode else "DMA_TENSOR COPY"
+    print("[emit] %d instructions (%d GEMM_FUSED + %d ELEM_WISE + %d %s), %d MMIO writes, %d H lines, concats kept on host %d"
+          % (n_push, len(conv), n_push - len(conv) - len(dma_copies), len(dma_copies), kind, n_w, n_h, len(notes)))
+    if dma_mode:
+        print("[emit] slice-concat %s: %d concats -> %d %s, %d bytes copied; every input written before its copy, regions inside the "
+              "image and disjoint, golden bytes equal" % (args.slice_concat, len(dma_left), len(dma_copies), kind,
+                                                          sum(c["bytes"] for c in dma_copies)))
     print("[emit] plan %s: %d tiles (has plan %d), %d layers retiled" % (args.plan, manifest["tiles"], old_tiles, len(plan)))
     print("[emit] DRAM %d B (tensors %d B) vs net_has %d B; self-check: %d/%d tensors equal by name"
           % (total, tensor_bytes, old["dram_bytes"], len(shapes), len(shapes)))

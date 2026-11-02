@@ -7,7 +7,9 @@ Instruction stream (channel-major [C][L], L = 197, no host step):
   head   LAYERNORM 0x14 (all 197 rows) + GEMM 0x12 768 -> 1000 (cout padded to 1024, PAD_TAIL) over all tokens; logits = token 0
 Golden: fe_vit_block.block_golden per block; quality vs fe_vit_quant.forward_taps (float) per block + logits cos + top-1.
 Output fe_work/has/vit_full/: dram_init.bin, dram_golden.bin, mmio.txt, summary.json.
-Usage (repository root, FE_WORK set): python3 tools/fe/fe_vit_full.py [--blocks 12] [--image 16]
+Usage (repository root, FE_WORK set): python3 tools/fe/fe_vit_full.py [--blocks 12] [--image 16] [--v-token-major] [--out DIR]
+  --v-token-major: V of every QKV output token-major (fe_vit_block.Emitter, GEMM_FUSED X_TMAJ_C0 = 1536, FUSED_ATTN FLAGS bit 2);
+  run with HAS_OUT_TRANSPOSE=1. --out: program directory instead of fe_work/has/vit_full/.
 Run: tools/has/tb_has_npu_top $FE_WORK/has/vit_full --c-bcast   (recommended profile + bias broadcast, as measured)
 """
 import argparse
@@ -31,10 +33,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--blocks", type=int, default=12)
     ap.add_argument("--image", type=int, default=16, help="coco128 index (16 = first after the calibration images)")
+    ap.add_argument("--v-token-major", action="store_true", help="V token-major (X_TMAJ_C0 + FA FLAGS bit 2; HAS_OUT_TRANSPOSE=1)")
+    ap.add_argument("--out", help="program directory (default FE_WORK/has/vit_full)")
     args = ap.parse_args()
     t0 = time.time()
     log = lambda m: print("[vit-full %5.0fs] %s" % (time.time() - t0, m), flush=True)  # noqa: E731
-    out = os.path.join(fc.FE_WORK, "has", "vit_full")
+    out = args.out or os.path.join(fc.FE_WORK, "has", "vit_full")
     W = vf.load_safetensors(vf.WEIGHTS)
     with open(os.path.join(fc.FE_WORK, "has", "vit", "vit_scales.json")) as f:
         sc = json.load(f)
@@ -42,8 +46,12 @@ def main():
     img = imgs[args.image]
     x = vf.preprocess(img)
     tp = vq.forward_taps(W, x)
-    em = vb.Emitter("fe_vit_full.py: ViT-B/16, %d blocks, image %s, channel-major [C][197]" % (args.blocks, os.path.basename(img)))
+    em = vb.Emitter("fe_vit_full.py: ViT-B/16, %d blocks, image %s, channel-major [C][197]%s" % (
+        args.blocks, os.path.basename(img), ", V token-major (run with HAS_OUT_TRANSPOSE=1)" if args.v_token_major else ""),
+        args.v_token_major)
     S = {"image": os.path.basename(img), "blocks": args.blocks, "cos_block_y": [], "gemm_raised": {}, "psum_max": 0}
+    if args.v_token_major:
+        S["v_token_major"] = True
 
     # ---- patch embedding + CLS / pos (0x12 + 0x15) ----
     p = x[0].reshape(3, 14, 16, 14, 16).transpose(1, 3, 0, 2, 4).reshape(196, 768)

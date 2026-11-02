@@ -83,7 +83,7 @@ Error codes:
 
 ### 3.3 Extension registers (new)
 
-Address = `0x4000046C + 4 x index`. The last register is at `0x400004FC`.
+Address = `0x4000046C + 4 x index`. The last register is at `0x40000500`.
 
 The extension registers are **one-shot**: they are cleared after every push. A later push that does not write
 them therefore never picks up stale geometry.
@@ -103,7 +103,7 @@ them therefore never picks up stale geometry.
 | 10 | `0x40000494` | `SHIFT_ADDR` | GEMM | DRAM address of the per-channel shifts |
 | 11 | `0x40000498` | `LUT_ADDR` | GEMM | DRAM address of the 256-entry activation table |
 | 12 | `0x4000049C` | `ZP_OUT` | GEMM | Output zero point, signed 32-bit two's complement (0 for symmetric quantization; a negative value such as -128 is written as `0xFFFFFF80`). It is added after the rounding shift and before the clamp to int8 |
-| 13 | `0x400004A0` | `FLAGS` | GEMM | Bit 0 `PAD_TAIL`: edge tiles are computed at the full `TILE_COUT` channels and at a width rounded up to a multiple of the positions per context (`Y_USED`, or 32 when not written); only the real channels and positions are written back. Requires the compiler to zero-pad the weights of the last output-channel band to `TILE_COUT` (section 6.1). Bit 1 `CHANNEL_MAJOR` (FUSED_ATTN, LAYERNORM): operands and outputs are stored channel-major, element (token i, channel j) at `address + j x rows + i`, the layout a GEMM_FUSED over tokens writes. Other bits reserved, write 0 |
+| 13 | `0x400004A0` | `FLAGS` | GEMM | Bit 0 `PAD_TAIL`: edge tiles are computed at the full `TILE_COUT` channels and at a width rounded up to a multiple of the positions per context (`Y_USED`, or 32 when not written); only the real channels and positions are written back. Requires the compiler to zero-pad the weights of the last output-channel band to `TILE_COUT` (section 6.1). Bit 1 `CHANNEL_MAJOR` (FUSED_ATTN, LAYERNORM): operands and outputs are stored channel-major, element (token i, channel j) at `address + j x rows + i`, the layout a GEMM_FUSED over tokens writes. Bit 2 `V_TOKEN_MAJOR` (FUSED_ATTN, with `HAS_OUT_TRANSPOSE=1`): V row (token) i, channel j at `V_ADDR + i x IN_C + j` (row 37). Other bits reserved, write 0 |
 | 14 | `0x400004A4` | `ZP_A` | ADD | Zero point of A |
 | 15 | `0x400004A8` | `ZP_B` | ADD | Zero point of B |
 | 16 | `0x400004AC` | `ZP_O` | ADD | Zero point of the output |
@@ -127,8 +127,9 @@ them therefore never picks up stale geometry.
 | 34 | `0x400004F4` | `PAD_B` | GEMM | Padding rows below the input |
 | 35 | `0x400004F8` | `PAD_R` | GEMM | Padding columns right of the input |
 | 36 | `0x400004FC` | `DILATION` | GEMM | Kernel taps are `DILATION` input positions apart in both directions. Not written or 0: 1. `(KW - 1) x DILATION` must not exceed 63 |
+| 37 | `0x40000500` | `TMAJ_C0` | GEMM | Only with the option `HAS_OUT_TRANSPOSE=1` (off by default; a proposal of the model, not in the hardware RTL): the output channels `TMAJ_C0` .. `OUT_C - 1` are written token-major, position p of channel c at `OUT_ADDR + TMAJ_C0 x OH x OW + p x (OUT_C - TMAJ_C0) + c - TMAJ_C0`. A multiple of `TILE_COUT`; not with `HAS_SKIP`; ignored with the option off (`HW_RTL_ALIGNMENT.md`, section 8) |
 
-The ranges `0x40000318` to `0x4000031C` and `0x4000046C` to `0x400004FC` are not used by any other part of the
+The ranges `0x40000318` to `0x4000031C` and `0x4000046C` to `0x40000500` are not used by any other part of the
 model.
 
 Convolution padding. When none of `PAD_T`, `PAD_L`, `PAD_B`, `PAD_R` is written, all four sides use `PAD`, as
@@ -273,7 +274,7 @@ The compatibility layer cannot hide these changes:
    `W_ADDR + c0 * Cin * kh * kw`. A row-major `K x N` matrix is no longer accepted.
 2. **Activation layout.** Activations are flat `[C][H][W]` int8. Transformer activations are channel-major
    `[dim][token]` (a GEMM_FUSED over tokens is a 1x1 layer with the tokens as pixels); FUSED_ATTN and LAYERNORM
-   read this layout with `FLAGS.CHANNEL_MAJOR`. Software that stores `[token][dim]` needs a transpose.
+   read this layout with `FLAGS.CHANNEL_MAJOR`. Software that stores `[token][dim]` needs a transpose; the model proposes one after the epilogue (`TMAJ_C0`, row 37, option `HAS_OUT_TRANSPOSE`).
 3. **Integer per-channel quantization.** Per-channel signed 32-bit multipliers, shifts and zero point, plus the
    256-entry SiLU table, are stored in DRAM and referenced by `SCALE_ADDR`, `SHIFT_ADDR`, `LUT_ADDR`. The
    floating-point scale registers remain only as an approximate path.
@@ -421,7 +422,8 @@ behaviour is unchanged in both configurations.
 | `0x1130` | `RICH_WINDOW_BASE` | Physical address of the program's DRAM image |
 | `0x1134` | `RICH_WINDOW_SIZE` | Size of the image in bytes |
 
-   An instruction is extended when any of `0x4000046C..0x400004FF` was written since the previous push (wrapper
+   An instruction is extended when any of `0x4000046C..0x400004FF` was written since the previous push (the model
+   itself uses `0x4000046C..0x40000503` since `TMAJ_C0`, which is written only together with the geometry registers; wrapper
    revisions that have the window without this patch use `0x4000046C..0x400004E7`; `INTEGRATOR_QUICK_START.md`,
    section 2.1, item 3). For it, the
    wrapper copies the whole window into the model before the push and back to RAM after completion; other
@@ -484,7 +486,7 @@ instruction (`VERIFICATION_REPORT.md`, V20).
 | `SAURIA_CORE_RTL_REPORT=<file>` | Writes a CSV with one line per retired instruction (cycles, tiles, PE utilization, DMA wait, bus bytes) and `<file>.summary.txt` with the totals of the run; `SW_EVALUATION_GUIDE.md`, section 6.1 |
 
 - Lane A only, INT8 only (as `HasNpuTop`).
-- Simulation speed is that of the RTL-accurate core: a whole network takes hours (`RELEASE_NOTES.md`, section 4).
+- Simulation speed is that of the RTL-accurate core: a whole network is a long run (`RELEASE_NOTES.md`, section 4).
 - The model reserves a private staging area above `0x10000000` in its DRAM vector (about 256 MB of host memory);
   `set_staging_base()` moves it.
 - The DRAM window is copied in and out for every extended instruction; the CPU must not change the window while an
@@ -508,8 +510,7 @@ instruction (`VERIFICATION_REPORT.md`, V20).
 | `fw_main_example.c`, `linker_example.ld`, `Makefile` | Bare-metal example: hardware abstraction (five functions: 32-bit register access, RAM copy, idle, report), UART output, memory layout with the image at a fixed RAM address |
 | `test_fw_replay.cpp` | Host test: the same C engine driven through the wrapper with TLM transactions |
 
-Steps for a first run on a platform (a 14-instruction transformer check with a 1 MB image, 285,205 NPU cycles,
-a few minutes of simulation):
+Steps for a first run on a platform (a 14-instruction transformer check with a 1 MB image, 285,205 NPU cycles with the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN` at 0; 263,808 with the default of this package):
 
 ```bash
 cd tools/has/wrapper/fw
@@ -519,7 +520,7 @@ make PROGRAM=$FE_WORK/has/rce_gate FW_INC=<platform firmware include dir> STARTU
 
 The platform must be built with the model root `core_rtl/` and a wrapper with the DRAM window (section 10.1). Then
 `PROGRAM=$FE_WORK/has/insts_pe3 COUNT=2` runs the first two YOLOv8m instructions, and without `COUNT` the whole
-network (hours; expected cycles in `PERFORMANCE_REPORT.md`, section 5.8). The environment variable `HAS_SPEC` is
+network (expected cycles in `PERFORMANCE_REPORT.md`, section 5.8). The environment variable `HAS_SPEC` is
 read by the model inside the platform as well (`HAS_SPEC=v47ref`: 250,885 cycles on the transformer check).
 
 **Loading the DRAM image.** The image of a program must be in system RAM before the first instruction: 1 MB for

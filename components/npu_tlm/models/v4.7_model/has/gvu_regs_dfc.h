@@ -23,8 +23,9 @@ namespace has
     {
         typedef GvuRegMaster::W W;
         enum Reg : unsigned { CONTROL = 0, LUT = 1, SCRATCHPAD = 2, GEMM_FUSED = 3, SOFTMAX_0 = 4, POOLING_0 = 7, POOLING_1 = 8,
-                              RES_SCALE_A = 9, RES_SCALE_B = 10, RES_SCALE_OUT = 11, RES_SHIFT = 12, RES_ZP = 13, RES_ROW = 14, RES_LASTMASK = 15 };
-        enum Op : unsigned { OP_GEMM_FUSED = 2, OP_RESIDUAL = 6, OP_MAXPOOL = 7 };
+                              RES_SCALE_A = 9, RES_SCALE_B = 10, RES_SCALE_OUT = 11, RES_SHIFT = 12, RES_ZP = 13, RES_ROW = 14, RES_LASTMASK = 15,
+                              AVG_SCALE = 25, AVG_CFG = 26 };   // 25 / 26: average pool (RTL patch P1, proposal): Avg_Scale; [5:0] Avg_Shift, [10:8] round
+        enum Op : unsigned { OP_GEMM_FUSED = 2, OP_SOFTMAX = 3, OP_RESIDUAL = 6, OP_MAXPOOL = 7, OP_AVGPOOL = 8 };
         inline uint32_t addr(unsigned reg) { return reg * 4u; }
         inline uint32_t control(unsigned op, bool en) { return (op << 3) | (en ? 1u : 0u); }
 
@@ -47,6 +48,17 @@ namespace has
             s.push_back(W{addr(POOLING_0), (mode & 3u) | (stride & 7u) << 2 | (num_w_tile & 0xFFu) << 8 | (c & 0xFFu) << 16 | (oh & 0xFFu) << 24, 0xF});
             s.push_back(W{addr(POOLING_1), (h_move & 0x3FFu) | (c_move & 0x3FFu) << 10, 0xF});
             s.push_back(W{addr(CONTROL), control(OP_MAXPOOL, true), 0xF});
+            return s;
+        }
+        // One average pool run: the window registers of max pool, Avg_Scale (Reg 25), Avg_Shift and round (Reg 26), start with opcode AVGPOOL.
+        inline std::vector<W> avg_run(unsigned mode, unsigned stride, unsigned num_w_tile, unsigned c, unsigned oh, unsigned c_move, unsigned h_move,
+                                      int32_t scale, unsigned shift, unsigned round)
+        {
+            std::vector<W> s = pool_run(mode, stride, num_w_tile, c, oh, c_move, h_move);
+            s.pop_back();
+            s.push_back(W{addr(AVG_SCALE), static_cast<uint32_t>(scale), 0xF});
+            s.push_back(W{addr(AVG_CFG), (shift & 0x3Fu) | (round & 7u) << 8, 0xF});
+            s.push_back(W{addr(CONTROL), control(OP_AVGPOOL, true), 0xF});
             return s;
         }
         // Residual add: the parameters of one add and the values of the registers they go to.

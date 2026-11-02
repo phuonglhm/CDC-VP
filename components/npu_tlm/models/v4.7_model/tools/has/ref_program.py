@@ -11,7 +11,7 @@ So it tells a compiler apart from the model: when the model and this reference a
 what its registers say; when they disagree, the report names the first instruction and element.
 
 Covered: GEMM_FUSED (0x12) with integer scales or real-valued scales, the residual form (HAS_SKIP), ELEM_WISE (0x15)
-ADD, MAX_POOL and AVG_POOL, and the host step "H upsample2x". FUSED_ATTN (0x13) and LAYERNORM (0x14) are not computed:
+ADD, MAX_POOL and AVG_POOL, DMA_TENSOR (0x16) COPY, and the host step "H upsample2x". FUSED_ATTN (0x13) and LAYERNORM (0x14) are not computed:
 their output is copied from the image under test and reported as "not checked".
 
 Arithmetic (default configuration of the model):
@@ -20,9 +20,14 @@ Arithmetic (default configuration of the model):
                padding: PAD on all four sides, or PAD_T / PAD_L / PAD_B / PAD_R when any of them is written (the
                unwritten ones are then 0); the padded positions hold PAD_VALUE (int8, 0 when not written);
                kernel taps DILATION apart (1 when not written or 0)
+               TMAJ_C0 written (0x40000500, value c0 < OUT_C): channels c0 .. OUT_C-1 are stored token-major in their own
+               region, position p of channel c at OUT_ADDR + c0 * OH * OW + p * (OUT_C - c0) + (c - c0); channels below c0
+               stay [C][H][W]; c0 a multiple of TILE_COUT; not with HAS_SKIP
   ADD          a' = sat32(round((A - zpA) * SA >> sA)), b' likewise, out = requant(sat32(a' + b'), SO, sO, zpO)
   MAX_POOL     window k x k, stride, padding value -128
   AVG_POOL     sum of the window as int16 (wraps), out = clamp8(round(sum * S >> s)), no padding
+  COPY         MODE_PACK 0: LEN bytes from A_ADDR to OUT_ADDR; refused when LEN is 0, a region passes 2^32 or the two
+               regions overlap (the model runs it only with HAS_DMA_TENSOR=1)
 Tensors are int8 [C][H][W]; scales are signed 32-bit words.
 
 Usage:
@@ -54,7 +59,7 @@ EXT_BASE = 0x46C
 EXT = ["IN_C", "IN_H", "IN_W", "OUT_C", "OUT_H", "OUT_W", "TILE_COUT", "TILE_H", "TILE_W", "SCALE_ADDR", "SHIFT_ADDR",
        "LUT_ADDR", "ZP_OUT", "FLAGS", "ZP_A", "ZP_B", "ZP_O", "SA", "SHA", "SB", "SHB", "SO", "SHO", "POOL_K", "POOL_P",
        "POOL_MODE", "TILE_CIN", "Y_USED", "ROWS", "PARAM_ADDR", "MASK_ADDR", "PAD_VALUE", "PAD_T", "PAD_L", "PAD_B", "PAD_R",
-       "DILATION"]
+       "DILATION", "TMAJ_C0"]
 EXT_END = EXT_BASE + 4 * len(EXT)
 ADDR_REGS = ("in", "w", "out", "bias", "skip", "a", "b", "v")
 ADDR_EXT = ("SCALE_ADDR", "SHIFT_ADDR", "LUT_ADDR", "PARAM_ADDR", "MASK_ADDR")
@@ -252,6 +257,11 @@ def gemm(st, img, notes):
         raise Refused("NEED_LUT")
     zp, flags = s32(x.get("ZP_OUT", 0)), x.get("FLAGS", 0)
     pad_tail = bool(flags & 1)
+    tmaj_c0 = s32(x["TMAJ_C0"]) if "TMAJ_C0" in x else None
+    if tmaj_c0 is not None and (not 0 <= tmaj_c0 < cout or tmaj_c0 % cout_t):
+        raise Refused("BAD_GEOM")
+    if tmaj_c0 is not None and r["has_skip"]:
+        raise Refused("UNSUPPORTED_MODE")
     # one row sweep of the IFMAP feeder must stay within the 8-bit position counters of its lanes:
     # xlim = 1 + (Y_used - 1) x stride + effective kernel width + 1 - (width mod 2) + 32 <= 256 for every tile width
     def y_used_of(wt):
@@ -317,7 +327,14 @@ def gemm(st, img, notes):
     elif act in (2, 3):
         q = img.i8(x["LUT_ADDR"], 256, "activation table")[q.astype(np.int16) + 128]
     out_addr, n = r["out"], cout * oh * ow
-    img.put(out_addr, q, "output tensor")
+    if tmaj_c0 is None:
+        img.put(out_addr, q, "output tensor")
+    else:
+        # channels c0.. token-major [OH*OW][OUT_C - c0] in the region they would take channel-major
+        q = q.reshape(cout, oh * ow)
+        img.put(out_addr, q[:tmaj_c0], "output tensor")
+        img.put(out_addr + tmaj_c0 * oh * ow, q[tmaj_c0:].T, "output tensor (token-major)")
+        notes.append("TMAJ_C0 %d: channels %d..%d token-major [%d][%d]" % (tmaj_c0, tmaj_c0, cout - 1, oh * ow, cout - tmaj_c0))
     regions = [(out_addr, n)]
     if r["has_skip"]:
         # residual form: the convolution, then out = sat8(out + skip) in place
@@ -392,7 +409,57 @@ def elem(st, img, notes):
             out = np.clip(round_shift_any(mul(wrapped, s32(x["SO"])), sh), -128, 127)
         img.put(r["out"], out, "output tensor")
         return [(r["out"], c * ho * wo)], "[%d][%d][%d]" % (c, ho, wo)
+    if mode == 6:   # DMA_SLICE (HAS_DMA_ND=1)
+        c, h, w = s32(x.get("IN_C", 0)), s32(x.get("IN_H", 0)), s32(x.get("IN_W", 0))
+        ax, start, length = s32(x.get("POOL_MODE", 0)), s32(x.get("POOL_P", 0)), s32(x.get("POOL_K", 0))
+        s_ = max(1, s32(r.get("stride", 1)))
+        dim = (c, h, w)[ax] if 0 <= ax <= 2 else 0
+        if min(c, h, w, length) <= 0 or not (0 <= ax <= 2) or start < 0 or start + length > dim:
+            raise Refused("BAD_GEOM")
+        X = img.i8(r["a"], c * h * w, "input tensor").reshape(c, h, w)
+        if ax == 0:
+            out = X[start:start + length:s_, :, :]
+        elif ax == 1:
+            out = X[:, start:start + length:s_, :]
+        else:
+            out = X[:, :, start:start + length:s_]
+        img.put(r["out"], out, "output tensor")
+        return [(r["out"], out.size)], "[%d][%d][%d]" % out.shape
+    if mode == 7:   # DMA_CONCAT (HAS_DMA_ND=1): A at POOL_P (length POOL_K) along the axis; with B: A at 0, B after it to the end
+        oc = s32(x.get("OUT_C", 0)) or s32(x.get("IN_C", 0))
+        oh = s32(x.get("OUT_H", 0)) or s32(x.get("IN_H", 0))
+        ow = s32(x.get("OUT_W", 0)) or s32(x.get("IN_W", 0))
+        ax, start, len_a = s32(x.get("POOL_MODE", 0)), s32(x.get("POOL_P", 0)), s32(x.get("POOL_K", 0))
+        dim = (oc, oh, ow)[ax] if 0 <= ax <= 2 else 0
+        has_b = r.get("b", 0) != 0
+        if min(oc, oh, ow, len_a) <= 0 or not (0 <= ax <= 2) or start < 0 or start + len_a > dim or                 (has_b and (start != 0 or len_a >= dim)):
+            raise Refused("BAD_GEOM")
+        parts = [(r["a"], start, len_a, "operand A")] + ([(r["b"], len_a, dim - len_a, "operand B")] if has_b else [])
+        T = img.i8(r["out"], oc * oh * ow, "output tensor").copy().reshape(oc, oh, ow)
+        for addr, off, ln, what in parts:
+            sh = [oc, oh, ow]
+            sh[ax] = ln
+            idx = [slice(None)] * 3
+            idx[ax] = slice(off, off + ln)
+            T[tuple(idx)] = img.i8(addr, int(np.prod(sh)), what).reshape(sh)
+        if not has_b and ax == 0:
+            dst = r["out"] + start * oh * ow
+            img.put(dst, T[start:start + len_a], "output tensor slice")
+            return [(dst, len_a * oh * ow)], "[%d][%d][%d]" % (len_a, oh, ow)
+        img.put(r["out"], T, "output tensor")
+        return [(r["out"], T.size)], "[%d][%d][%d]" % T.shape
     raise Refused("UNSUPPORTED_MODE")
+
+
+def dma_copy(st, img):
+    r = st.reg
+    if r["mode"] != 0:
+        raise Refused("UNSUPPORTED_MODE")
+    s, d, n = r["a"], r["out"], r["len"]
+    if n == 0 or s + n > 1 << 32 or d + n > 1 << 32 or (s < d + n and d < s + n):
+        raise Refused("BAD_GEOM")
+    img.put(d, img.i8(s, n, "copy source").copy(), "copy destination")
+    return [(d, n)], "[%d] B" % n
 
 
 def not_computed(st):
@@ -441,11 +508,31 @@ def output_region(st):
     if st.opcode == 0x15:
         if r["mode"] == 0:
             return [(r["out"], r["len"])]
+        if r["mode"] == 6:
+            c, h, w = s32(x.get("IN_C", 0)), s32(x.get("IN_H", 0)), s32(x.get("IN_W", 0))
+            ax, k, s_ = s32(x.get("POOL_MODE", 0)), s32(x.get("POOL_K", 0)), max(1, s32(r.get("stride", 1)))
+            sl = (k + s_ - 1) // s_
+            if ax == 0:
+                c = sl
+            elif ax == 1:
+                h = sl
+            else:
+                w = sl
+            return [(r["out"], max(0, c * h * w))]
+        if r["mode"] == 7:
+            oc = s32(x.get("OUT_C", 0)) or s32(x.get("IN_C", 0))
+            oh = s32(x.get("OUT_H", 0)) or s32(x.get("IN_H", 0))
+            ow = s32(x.get("OUT_W", 0)) or s32(x.get("IN_W", 0))
+            if r.get("b", 0) == 0 and s32(x.get("POOL_MODE", 0)) == 0:
+                return [(r["out"] + s32(x.get("POOL_P", 0)) * oh * ow, max(0, s32(x.get("POOL_K", 0)) * oh * ow))]
+            return [(r["out"], max(0, oc * oh * ow))]
         k, p_, s_ = s32(x.get("POOL_K", 0)), s32(x.get("POOL_P", 0)), r["stride"]
         c, h, w = s32(x.get("IN_C", 0)), s32(x.get("IN_H", 0)), s32(x.get("IN_W", 0))
         if min(c, h, w, k, s_) <= 0 or h + 2 * p_ < k or w + 2 * p_ < k:
             return []
         return [(r["out"], c * ((h + 2 * p_ - k) // s_ + 1) * ((w + 2 * p_ - k) // s_ + 1))]
+    if st.opcode == 0x16:
+        return [(r["out"], r["len"])]
     if st.opcode in (0x13, 0x14):
         try:
             return not_computed(st)
@@ -454,7 +541,7 @@ def output_region(st):
     return []
 
 
-OPNAME = {0x05: "SET_NSPLIT", 0x12: "GEMM_FUSED", 0x13: "FUSED_ATTN", 0x14: "LAYERNORM", 0x15: "ELEM_WISE"}
+OPNAME = {0x05: "SET_NSPLIT", 0x12: "GEMM_FUSED", 0x13: "FUSED_ATTN", 0x14: "LAYERNORM", 0x15: "ELEM_WISE", 0x16: "DMA_TENSOR"}
 
 
 def main():
@@ -523,6 +610,8 @@ def main():
                 regions, shape = gemm(st, ref, notes)
             elif st.opcode == 0x15:
                 regions, shape = elem(st, ref, notes)
+            elif st.opcode == 0x16:
+                regions, shape = dma_copy(st, ref)
             elif st.opcode in (0x13, 0x14):
                 regions = not_computed(st)
                 status = "NOT CHECKED"
