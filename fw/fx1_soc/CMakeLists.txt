@@ -8,6 +8,9 @@ set(FX1_FW_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/common")
 # C register headers of FX1 IPs (dma/fx1_dma_regs.h, ...).
 set(FX1_FW_IP_INCLUDES "${CMAKE_SOURCE_DIR}/components/FX1_Components/dma/include")
 set(FX1_FW_CC "${FX1_RISCV_PREFIX}gcc")
+# Portable Ethernet driver (compiled per image with the cross compiler, never
+# the host-built eth_drv library).
+set(_eth_drv "${CMAKE_SOURCE_DIR}/components/FX1_Components/ethernet/driver")
 
 # CVA6 configuration of the FX1 harts (plan D6). ilp32f: the toolchain's
 # multilib for rv32imafc is rv32imafc_zicsr_zaamo_zalrsc/ilp32f.
@@ -202,6 +205,72 @@ if(CDC_BUILD_TESTS)
     fx1_smoke_test(plic_irq)
     fx1_smoke_test(bus_fault)
     fx1_smoke_test(dma_m2m)
+    # Ethernet plan M2/M3: the MAC through the FX1 bus, DDR3, PLIC source 6 and
+    # its write guard, on the FX1 manager (drivers/fx1_eth.c) and the portable
+    # driver (components/FX1_Components/ethernet/driver). Every --eth-peer, and
+    # the negative control: without the guard the LR/SC case must fail (0x81).
+    set(_eth_fw_sources ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_eth.c ${_eth_drv}/src/eth_drv.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/freertos/rtos_libc.c)
+    set(_eth_fw_includes ${CMAKE_CURRENT_SOURCE_DIR}/drivers ${_eth_drv}/include)
+    set(_eth_fw_depends ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_eth.h ${_eth_drv}/include/eth_drv.h
+        ${_eth_drv}/include/eth_regs.h)
+    fx1_smoke_test(eth_wiring EXTRA_SOURCES ${_eth_fw_sources}
+        INCLUDES ${_eth_fw_includes} ${CMAKE_CURRENT_SOURCE_DIR}/tests/atomic
+        DEPENDS ${_eth_fw_depends} ${CMAKE_CURRENT_SOURCE_DIR}/tests/atomic/atomic_common.h)
+    foreach(_peer loopback partner none)
+        fx1_expect_test(eth_wiring_${_peer} IMAGE eth_wiring RC 0 TIMEOUT_MS 200 ARGS --eth-peer ${_peer}
+            REGEX "1: CSR through the CPU.*eth peer: ${_peer}.*4: DMA through DDR3.*8: LR/SC.*9: stop/restart.*RESULT PASS")
+    endforeach()
+    fx1_expect_test(eth_wiring_unguarded IMAGE eth_wiring RC 1 TIMEOUT_MS 200 ARGS --eth-unguarded-dma
+        REGEX "UNGUARDED.*8: RX payload written into the reserved granule: SC fails.*RESULT FAIL code=0x81")
+    # Ethernet gap G1: SLVERR from the DDR3 controller on an Ethernet DMA
+    # write. T (us after the CPU release) inside the 10 Mbps burst while the
+    # CPU only reads: see tests/eth_ddr_slverr/main.c.
+    set(FX1_ETH_SLVERR_T_US 20500 CACHE STRING "eth_ddr_slverr: --ddr3-fault time, inside the burst")
+    fx1_firmware(eth_ddr_slverr SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/eth_ddr_slverr/main.c ${_eth_fw_sources}
+        INCLUDES ${_eth_fw_includes} DEPENDS ${_eth_fw_depends})
+    fx1_expect_test(eth_ddr_slverr IMAGE eth_ddr_slverr RC 0 TIMEOUT_MS 200
+        ARGS --ddr3-ecc off --ddr3-fault ${FX1_ETH_SLVERR_T_US}:write-result:1
+        REGEX "eth slverr: halted \\(bit 0 RX, bit 1 TX\\) 0x0000000[12].*eth slverr: ERRINFO 0x0000000[23].*burst frames delivered from the RX FIFO after the recovery.*RESULT PASS")
+    # Ethernet gap G3 (GAPS_REVIEW GR01): CPU atomics against Ethernet DMA
+    # writes, one image per cell (see tests/eth_amo/main.c): amoor.w or LR/SC
+    # on the RX payload, on the RX DES0 granule, on the TX DES0 granule. A pass
+    # must show a write held by the guard. Negative controls bypass the
+    # Ethernet write guard: the payload cells lose the DMA write (0x20), the
+    # SC cells see no reservation cancelled (0x24 on DES0), the AMO/DES0 cells
+    # still pass on data (different words) but hold nothing.
+    set(_eth_atomic_cells "eth_amo:0:0" "eth_sc:1:0" "eth_amo_rxdes0:0:1" "eth_sc_rxdes0:1:1"
+        "eth_amo_txdes0:0:2" "eth_sc_txdes0:1:2")
+    set(_eth_atomic_tests)
+    foreach(_cell ${_eth_atomic_cells})
+        string(REPLACE ":" ";" _cell "${_cell}")
+        list(GET _cell 0 _name)
+        list(GET _cell 1 _sc)
+        list(GET _cell 2 _target)
+        fx1_firmware(${_name} SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/eth_amo/main.c ${_eth_fw_sources}
+            DEFINES ETH_AMO_SC=${_sc} ETH_AMO_TARGET=${_target}
+            INCLUDES ${_eth_fw_includes} ${CMAKE_CURRENT_SOURCE_DIR}/tests/atomic
+            DEPENDS ${_eth_fw_depends} ${CMAKE_CURRENT_SOURCE_DIR}/tests/atomic/atomic_common.h)
+        fx1_expect_test(${_name} IMAGE ${_name} RC 0 TIMEOUT_MS 200
+            REGEX "eth atomic: .* no Ethernet DMA write lost, every atomic kept.*device writes held [1-9][0-9]*.*RESULT PASS")
+        if(_target STREQUAL "0")
+            fx1_expect_test(${_name}_unguarded IMAGE ${_name} RC 1 TIMEOUT_MS 200
+                ARGS --eth-unguarded-dma REGEX "UNGUARDED.*RESULT FAIL code=0x20")
+        elseif(_sc STREQUAL "1")
+            fx1_expect_test(${_name}_unguarded IMAGE ${_name} RC 1 TIMEOUT_MS 200
+                ARGS --eth-unguarded-dma REGEX "UNGUARDED.*RESULT FAIL code=0x24")
+        else()
+            fx1_expect_test(${_name}_unguarded IMAGE ${_name} RC 0 TIMEOUT_MS 200
+                ARGS --eth-unguarded-dma REGEX "UNGUARDED.*device writes held 0,.*RESULT PASS")
+        endif()
+        list(APPEND _eth_atomic_tests fx1_smoke_${_name} fx1_smoke_${_name}_unguarded)
+    endforeach()
+    fx1_expect_test(eth_amo_no_monitor IMAGE eth_amo RC 1 TIMEOUT_MS 200
+        ARGS --no-exclusive-monitor REGEX "RESULT FAIL code=0x20")
+    # Ethernet review: a required Ethernet test gets at most 120 s (fx1_expect_test sets 300)
+    set_tests_properties(fx1_smoke_eth_wiring_loopback fx1_smoke_eth_wiring_partner fx1_smoke_eth_wiring_none
+        fx1_smoke_eth_wiring_unguarded fx1_smoke_eth_ddr_slverr ${_eth_atomic_tests} fx1_smoke_eth_amo_no_monitor
+        PROPERTIES TIMEOUT 120)
     # CSI-2 M5a: camera integration. Without --camera: MIPI_CSR faults, I2C0
     # present with no device, source 7 low. With --camera (a build with
     # -DFX1_BUILD_MIPI_CSI2=ON): CSR probe, I2C0 to the sensor on source 9,
@@ -395,15 +464,17 @@ if(CDC_BUILD_TESTS)
     set(_rtos_sources
         ${_rtos_dir}/main.c ${_rtos_dir}/rtos_bsp.c ${_rtos_dir}/rtos_libc.c ${_rtos_dir}/cli.c
         ${_rtos_dir}/hwcheck.c ${_rtos_dir}/cmd_fpu.c ${_rtos_dir}/cmd_dma.c ${_rtos_dir}/cmd_isp.c
+        ${_rtos_dir}/cmd_eth.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_eth.c ${_eth_drv}/src/eth_drv.c
         ${_rtos_dir}/probe.S
         ${_kernel}/tasks.c ${_kernel}/queue.c ${_kernel}/list.c
         ${_kernel}/portable/MemMang/heap_4.c
         ${_kernel}/portable/GCC/RISC-V/port.c ${_kernel}/portable/GCC/RISC-V/portASM.S
         ${_isp_dir}/isp_common.c ${_isp}/driver/src/fx1_isp_drv.c)
     set(_rtos_includes ${_rtos_dir} ${_kernel}/include ${_kernel}/portable/GCC/RISC-V
-        ${_isp_includes} ${_demo_dir})
+        ${_isp_includes} ${_demo_dir} ${CMAKE_CURRENT_SOURCE_DIR}/drivers ${_eth_drv}/include)
     file(GLOB _rtos_headers ${_rtos_dir}/*.h)
-    set(_rtos_depends ${_rtos_headers} ${_isp_depends} ${_demo_dir}/isp_demo_job.h ${_demo_dir}/isp_demo_setup.h)
+    set(_rtos_depends ${_rtos_headers} ${_isp_depends} ${_demo_dir}/isp_demo_job.h ${_demo_dir}/isp_demo_setup.h
+        ${_eth_fw_depends})
     # The upstream RV32 port casts the uint64_t mtimecmp base to a pointer
     # (port.c, vPortSetupTimerInterrupt); harmless below 4 GiB, but -Werror.
     set(_rtos_cflags -Wno-int-to-pointer-cast)
@@ -448,6 +519,82 @@ if(CDC_BUILD_TESTS)
                  --uart0-rx-delay-us 60000 ${_rtos_rx}
             REGEX "total: [0-9]+ checks, 0 failures -> PASS.*root@fx1:~# .*fpu context switch: PASS.*dma copy: PASS.*isp 8-frame fixture: PASS.*isp 8-frame fixture \\(profile mode\\): PASS.*nosuchcommand: unknown command.*selftest: PASS.*poweroff: 0 failed.*RESULT PASS")
     endforeach()
+    # Ethernet plan M4/M5: the `eth` commands on the service task. Nominal with
+    # every --eth-peer; faults (test image: a DMA access past the DDR aperture
+    # on TX, then on RX) with recovery; background traffic with a payload check
+    # while SYS_DMA and the ISP run, then 10 stop/start cycles (required); the
+    # same at 100 cycles twice (fx1_stress, not required).
+    fx1_firmware(freertos_cli_ethfault SOURCES ${_rtos_sources} DEFINES FX1_ETH_TEST_FAULTS ${_rtos_defines}
+        CFLAGS ${_rtos_cflags} INCLUDES ${_rtos_includes} DEPENDS ${_rtos_depends})
+    set(_eth_rx --uart0-rx-delay-us 60000 ${_rtos_rx})
+    set(_eth_nominal "eth: uninitialized.*eth probe: PASS.*eth start: OK in [0-9]+ us, state running.*eth start: OK \\(already running, nothing done\\).*eth send: 20 x 1514 bytes queued, 0 refused, @BACK@ received back.*eth mdio read 1.2: 0x00000007.*eth mdio write 1.0: refused: BMCR.*eth mdio read 9.2: EMDIO.*eth mdio: PHY and register are 0..31.*eth send: LEN 60..1514.*usage: eth .*eth tx ring at .*ETH_ID +0x11030000  0x45544801.*eth stats .*tx pkts 20 .*eth stop: OK in [0-9]+ us, state stopped.*eth stop: OK \\(not running, nothing done\\).*eth mdio write 1.0: 0x00003100.*eth recover: OK.*eth start: OK in .*eth selftest: PHY loopback, 60/61/512/1514 bytes: 100 Mbps ok, 10 Mbps ok, interrupt path ok.*eth selftest: PASS.*eth cycle: 10/10 stop/start cycles.*eth cycle: PASS.*eth stats: cleared.*selftest: PASS.*poweroff: 0 failed.*RESULT PASS")
+    foreach(_peer loopback partner none)
+        if(_peer STREQUAL "none")
+            string(REPLACE "@BACK@" "0" _re "${_eth_nominal}")
+            string(REPLACE "eth probe: PASS" "link down.*eth probe: PASS" _re "${_re}")
+        else()
+            string(REPLACE "@BACK@" "20" _re "${_eth_nominal}")
+            string(REPLACE "eth probe: PASS" "link up.*eth probe: PASS" _re "${_re}")
+        endif()
+        fx1_expect_test(freertos_cli_eth_${_peer} IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --eth-peer ${_peer} --uart0-rx-file ${_rtos_dir}/tests/cli_eth.txt ${_eth_rx}
+            REGEX "${_re}")
+    endforeach()
+    fx1_expect_test(freertos_cli_eth_fault IMAGE freertos_cli_ethfault RC 0 TIMEOUT_MS 3000
+        ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_eth_fault.txt ${_eth_rx}
+        REGEX "eth fault: TX descriptor past the DDR aperture queued.*errors: halted tx, last TX ERRINFO 0x00000013.*eth send: 0 x 100 bytes queued, 1 refused \\(ESTATE\\).*eth recover: OK in [0-9]+ us, TX state running.*eth send: 3 x 200 bytes queued, 0 refused, 3 received back.*eth fault: RX buffer past the DDR aperture.*eth send: 1 x 100 bytes queued, 0 refused, 0 received back.*errors: halted rx, .*last RX ERRINFO 0x00000013.*eth recover: OK in [0-9]+ us, RX state running.*eth send: 3 x 200 bytes queued, 0 refused, 3 received back.*halts tx 1 rx 1 .*recoveries 2.*eth fault: TX_TOO_LONG frame, then a TX descriptor past the DDR aperture, queued.*errors: halted tx.*eth send: 0 x 100 bytes queued, 1 refused \\(ESTATE\\).*eth recover: OK in [0-9]+ us, TX state running.*eth send: 3 x 200 bytes queued, 0 refused, 3 received back.*halts tx 2 rx 1 soft-errors [01] recoveries 3 .*poweroff: 0 failed.*RESULT PASS")
+    fx1_expect_test(freertos_cli_eth_load IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+        ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_eth_load.txt ${_eth_rx}
+        REGEX "eth load: started.*dma copy: PASS.*eth mdio read 1.1: 0x0000782d.*isp 8-frame fixture: PASS.*eth mdio read 1.2: 0x00000007.*dma copy: PASS.*eth: running.*eth load: sent [1-9][0-9]*, received [1-9][0-9]*, payload errors 0, refused [0-9]+.*eth load: PASS.*eth cycle: 10/10.*eth cycle: PASS.*poweroff: 0 failed.*RESULT PASS")
+    # Ethernet review ER01/ER02 (F08 on FX1): every DES0 write-back held 8 ms
+    # (--eth-wb-delay-us). A frame whose write-back commits after the 2 ms
+    # deadline is still taken with no further interrupt; a TX data error is
+    # halting from ERR on (submit refused while HALTED is still 0), recovered
+    # once HALTED came.
+    fx1_expect_test(freertos_cli_eth_wbdelay IMAGE freertos_cli_ethfault RC 0 TIMEOUT_MS 3000
+        ARGS --eth-wb-delay-us 8000 --uart0-rx-file ${_rtos_dir}/tests/cli_eth_wbdelay.txt ${_eth_rx}
+        REGEX "DES0 write-backs held 8000 us \\(fault injection\\).*eth send: 1 x 100 bytes queued, 0 refused, 0 received back.*eth wait: 30 ms.*driver: tx 1 rx 1 .*halts tx 0 rx 0 soft-errors 0 .*wb-timeouts 1 .*eth fault: TX descriptor past the DDR aperture queued.*STAT 0x00000011 \\|.*errors: halted tx, last TX ERRINFO 0x00000013.*eth send: 0 x 100 bytes queued, 1 refused \\(ESTATE\\).*eth wait: 20 ms.*STAT 0x00000016 \\|.*errors: halted tx.*eth send: 0 x 100 bytes queued, 1 refused \\(ESTATE\\).*eth recover: OK in [0-9]+ us, TX state running.*eth send: 2 x 100 bytes queued, 0 refused.*eth wait: 40 ms.*driver: tx 3 rx 3 .*desc-errors tx 1 rx 0 .*halts tx 1 rx 0 soft-errors 0 recoveries 1 recover-timeouts 0 .*eth stop: OK.*poweroff: 0 failed.*DES0 write-backs held [1-9].*RESULT PASS")
+    # F08 with ring wraps (decisions review): every DES0 write-back held 3 ms,
+    # past the 2 ms deadline, through about 6 turns of the 16-descriptor ring
+    # with the transmit ring full: 48 frames, then `eth load` (sequence and
+    # payload checked) over at least 2 turns; nothing lost, no descriptor
+    # error. All 48 back within `eth send`'s wait (2 ms per frame): the last
+    # write-back, in slot 15 with the DMA's index wrapped to 0, is polled
+    # after the deadline, not left to the 100 ms idle poll. Coalescing stays at the FX1 default (0); CNT/TIMER != 0 with
+    # delayed write-backs is covered by fx1_eth_manager_wb-wrap.
+    fx1_expect_test(freertos_cli_eth_wbwrap IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+        ARGS --eth-wb-delay-us 3000 --uart0-rx-file ${_rtos_dir}/tests/cli_eth_wbwrap.txt ${_eth_rx}
+        REGEX "DES0 write-backs held 3000 us \\(fault injection\\).*eth send: 48 x 200 bytes queued, 0 refused, 48 received back.*driver: tx 48 rx 48 rx-trunc 0 desc-errors tx 0 rx 0 dropped 0 ring-full [1-9][0-9]*.*halts tx 0 rx 0 soft-errors 0 .*wb-timeouts [1-9][0-9]* .*eth load: sent ([3-9][0-9]|[1-9][0-9][0-9]), received [0-9]+, payload errors 0, refused 0.*eth load: PASS.*desc-errors tx 0 rx 0 dropped 0 .*halts tx 0 rx 0 .*eth stop: OK.*poweroff: 0 failed.*DES0 write-backs held [1-9][0-9]*.*RESULT PASS")
+    # Ethernet review ER04: after `eth stats clear` the RX descriptor error of
+    # an earlier fault stays cleared over further services and good traffic.
+    fx1_expect_test(freertos_cli_eth_stats_clear IMAGE freertos_cli_ethfault RC 0 TIMEOUT_MS 3000
+        ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_eth_stats_clear.txt ${_eth_rx}
+        REGEX "eth fault: RX buffer past the DDR aperture.*eth recover: OK in [0-9]+ us, RX state running.*desc-errors tx 0 rx 1 .*halts tx 0 rx 1 soft-errors 0 recoveries 1 recover-timeouts 0 wb-inflight 0 wb-timeouts 0 .*eth stats: cleared.*desc-errors tx 0 rx 0 .*eth wait: 20 ms.*desc-errors tx 0 rx 0 .*halts tx 0 rx 0 .*eth send: 2 x 100 bytes queued, 0 refused, 2 received back.*driver: tx 2 rx 2 rx-trunc 0 desc-errors tx 0 rx 0 .*poweroff: 0 failed.*RESULT PASS")
+    # Ethernet review gap 2 / N2: the FAULTED path on FX1. DES0 write-backs
+    # held 100 ms keep the DMA from halting: `eth stop 0` times out, nothing is
+    # accepted. `eth recover` while the old session's writes are in flight
+    # fails and stays FAULTED (no reset, no ring rebuilt); once they landed it
+    # succeeds, and no frame of the old session is delivered (rx 0 before new
+    # traffic). Failed checks by design: stop, start, the first recover (3).
+    fx1_expect_test(freertos_cli_eth_faulted IMAGE freertos_cli RC 1 TIMEOUT_MS 3000
+        ARGS --eth-wb-delay-us 100000 --uart0-rx-file ${_rtos_dir}/tests/cli_eth_faulted.txt ${_eth_rx}
+        REGEX "DES0 write-backs held 100000 us.*eth stop: ETIMEOUT in [0-9]+ us, state FAULTED.*eth: FAULTED.*eth send: 0 x 100 bytes queued, 1 refused \\(ESTATE\\).*eth start: ESTATE in [0-9]+ us, state FAULTED.*eth recover: ETIMEOUT in [0-9]+ us, from FAULTED, state FAULTED.*eth wait: 150 ms.*eth recover: OK in [0-9]+ us, from FAULTED, state running.*eth wait: 20 ms.*driver: tx 1 rx 0 .*recoveries 1 recover-timeouts 1 .*eth wait: 500 ms.*driver: tx 3 rx 2 .*failed 1.*eth stop: OK.*poweroff: 3 failed check\\(s\\).*RESULT FAIL code=0x403")
+    # Ethernet gap G5: MDIO from a second task (`eth mdiopoll`) while the CLI
+    # runs start, 20 cycles, a TX fault and recovery, the selftest (BMCR
+    # writes), stop, an RX fault and recovery: every read returns the PHY ID,
+    # some of them between stop and start and some with a direction halted.
+    fx1_expect_test(freertos_cli_eth_mdio_lifecycle IMAGE freertos_cli_ethfault RC 0 TIMEOUT_MS 3000
+        ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_eth_mdio_lifecycle.txt ${_eth_rx}
+        REGEX "eth mdiopoll: started.*eth cycle: 20/20.*eth recover: OK in [0-9]+ us, TX state running.*eth selftest: PASS.*eth recover: OK in [0-9]+ us, RX state running.*eth send: 5 x 200 bytes queued, 0 refused, 5 received back.*eth mdiopoll: [1-9][0-9]* reads, 0 wrong or failed; [1-9][0-9]* while not running, [1-9][0-9]* with a direction halted.*eth mdiopoll: PASS.*poweroff: 0 failed.*RESULT PASS")
+    set_tests_properties(fx1_smoke_freertos_cli_eth_faulted fx1_smoke_freertos_cli_eth_mdio_lifecycle fx1_smoke_freertos_cli_eth_loopback fx1_smoke_freertos_cli_eth_partner
+        fx1_smoke_freertos_cli_eth_none fx1_smoke_freertos_cli_eth_fault fx1_smoke_freertos_cli_eth_load
+        fx1_smoke_freertos_cli_eth_wbdelay fx1_smoke_freertos_cli_eth_wbwrap fx1_smoke_freertos_cli_eth_stats_clear
+        PROPERTIES TIMEOUT 120)
+    fx1_expect_test(freertos_cli_eth_stress IMAGE freertos_cli RC 0 TIMEOUT_MS 10000 LABEL fx1_stress
+        ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_eth_stress.txt ${_eth_rx}
+        REGEX "eth cycle: 100/100.*eth cycle: PASS.*eth load: PASS.*eth cycle: 100/100.*eth cycle: PASS.*poweroff: 0 failed.*RESULT PASS")
+    set_tests_properties(fx1_stress_freertos_cli_eth_stress PROPERTIES TIMEOUT 1800)
+
     # Bad md/mw input: out-of-range numbers, ranges that wrap past 4 GiB or a
     # region end, and register holes that fault on the bus must all be
     # reported by the CLI, which then keeps working (no trap, no halt).
@@ -469,6 +616,14 @@ if(CDC_BUILD_TESTS)
         fx1_expect_test(freertos_cli_camera IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera.txt ${_cam_rx}
             REGEX "ok   CSI-2 RX, checks [0-9]+.*ok   I2C0 \\+ sensor, checks [0-9]+.*total: [0-9]+ checks, 0 failures -> PASS.*sensor model_id 0x0000f1c5.*camera probe: PASS.*camera start: PASS.*isp selftest: the ISP is in use by the camera.*capture 1 FRAME_ID 1 side 0 isp seq 0 zero-copy out 0 64x32 raw frame 1 raw ok crc 0x[0-9a-f]+ = golden frame 1.*capture 4 FRAME_ID 4 side 1 isp seq 3 zero-copy out 3 64x32 raw frame 4 raw ok crc 0x[0-9a-f]+ = golden frame 4.*4/4 frames, drops 0.*camera capture: PASS.*csi ok 4 err 0.*camera stop: OK.*64x32 RAW10, 2 lane.*staged out 0 64x32 raw frame [0-9]+ raw ok crc 0x[0-9a-f]+ = golden frame.*2/2 frames, drops 0.*camera capture: PASS.*camera stop: OK.*isp 8-frame fixture: PASS.*poweroff: 0 failed.*RESULT PASS")
+        # Ethernet gap G6: the camera (two sessions, frames against the golden)
+        # while `eth load` runs background traffic with a payload check. Found
+        # the I2C false timeout after a preemption (drivers/fx1_i2c.c finish).
+        # 90..340 s host: label fx1_stress (not required; the gate's 120 s).
+        fx1_expect_test(freertos_cli_eth_camera IMAGE freertos_cli RC 0 TIMEOUT_MS 3000 LABEL fx1_stress
+            ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_eth_camera.txt ${_cam_rx}
+            REGEX "eth load: started.*camera start: PASS.*= golden frame 4.*camera capture: 4/4 frames.*camera capture: PASS.*camera start: PASS.*camera capture: 2/2 frames.*camera capture: PASS.*eth load: sent [1-9][0-9]*, received [1-9][0-9]*, payload errors 0.*eth load: PASS.*eth cycle: 5/5.*poweroff: 0 failed.*RESULT PASS")
+        set_tests_properties(fx1_stress_freertos_cli_eth_camera PROPERTIES TIMEOUT 1800)
         fx1_expect_test(freertos_cli_camera_fault IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_fault.txt ${_cam_rx}
             REGEX "camera capture: PASS.*0x10030010 <- 0x00000000.*camera stop: ESENSOR in [0-9]+ us, state stopped, sensor not confirmed.*camera: stopped, sensor not confirmed, last stop ESENSOR.*sensor errors 1.*camera start: camera is stopped, sensor not confirmed \\(camera stop first\\).*0x10030010 <- 0x00000001.*camera stop: OK in [0-9]+ us, state idle.*camera recover: OK, state running.*camera recover: PASS.*raw frame 1 raw ok crc 0x[0-9a-f]+ = golden frame 1.*raw frame 2 raw ok crc 0x[0-9a-f]+ = golden frame 2.*camera capture: PASS.*camera stop: OK.*poweroff: 0 failed.*RESULT PASS")

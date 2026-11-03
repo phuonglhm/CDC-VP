@@ -1,0 +1,13 @@
+eth start
+eth fault rx
+eth send 1 100
+eth status
+eth recover
+eth stats
+eth stats clear
+eth wait 20
+eth stats
+eth send 2 100
+eth wait 5
+eth stats
+poweroff

@@ -23,6 +23,10 @@
 #include <fx1/word_access_guard.h>
 #include <fx1_isp/fx1_isp_tlm.h>
 #include <i2c.h>
+#include <icsl_eth/eth_mac_tlm.h>
+#include <icsl_eth/eth_phy_tlm.h>
+#include "eth_line_peer.h"
+#include "eth_wb_delay.h"
 #include <riscv_vp_plusplus_wrapper.h>
 #include <uart.h>
 #include <uart_host_bridge.h>
@@ -49,6 +53,25 @@ constexpr double kResetPulseNs = 20;
 constexpr unsigned kMasterSysDma = 0x100;
 constexpr unsigned kMasterIspOdma = 0x101;
 constexpr unsigned kMasterMipiDma = 0x102;
+constexpr unsigned kMasterEthDma = 0x103;
+
+// Ethernet MAC instance parameters: the defaults of MAS Table 5-1 (32-bit AXI,
+// the only width the FX1 fabric takes) and the DDR base added to every DMA
+// offset, once, inside the MAC.
+icsl_eth::EthMacParams eth_params()
+{
+    icsl_eth::EthMacParams p;
+    p.dram_base = FX1_DDR_BASE;
+    return p;
+}
+
+EthLinePeer::Mode eth_peer_mode(const std::string& text)
+{
+    EthLinePeer::Mode mode;
+    if (!EthLinePeer::parse(text, mode))
+        throw std::invalid_argument("fx1_soc: --eth-peer " + text + ": expected loopback, partner or none");
+    return mode;
+}
 
 // I2C0: functional host at fast-mode 400 kHz; the camera sensor answers at
 // 7-bit address 0x10 (CcsSensorConfig default).
@@ -109,8 +132,8 @@ bus::BusConfig make_bus_config(bool camera)
     for (auto& target : cfg.targets)
         if (target.name == "SYS_DMA_CSR" || target.name == "ISP_CSR" || target.name == "SRAM" ||
             target.name == "DDR3_CSR" || target.name == "DDR_SYSCTRL" || target.name == "I2C0" ||
-            (camera && target.name == "MIPI_CSR"))
-            target.enabled = true;  // instantiated below (G3, G4, DDR3 subtask 5, CSI-2 M5)
+            target.name == "ETH_CSR" || (camera && target.name == "MIPI_CSR"))
+            target.enabled = true;  // instantiated below (G3, G4, DDR3 subtask 5, CSI-2 M5, Ethernet M2)
     cfg.targets.push_back({kSimCtrlTarget, FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE,
                            bus::TargetPath::Peribus0Apb, true});
     return cfg;
@@ -186,6 +209,20 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     // copies up to 4 bytes: the guard faults any non-word access, as for UART.
     fx1::WordAccessGuard i2c_guard;
     i2c i2c0;
+    // Ethernet MAC (components/FX1_Components/ethernet, plan M2): CSR on
+    // PERIBUS_1 at local offsets behind a word-access guard (FX1 MMIO policy:
+    // one aligned 32-bit access, else an access fault; the MAC's own decode is
+    // MAS Table 6-47), DMA as ETH_DMA through a write guard (physical
+    // addresses: the MAC adds FX1_DDR_BASE), level IRQ on source 6, the PHY at
+    // MDIO address 1 and the line peer of --eth-peer.
+    fx1::WordAccessGuard eth_csr_guard;
+    std::unique_ptr<fx1::WriteGuard> eth_dma_guard;  // null with --eth-unguarded-dma only
+    EthWbDelay eth_wb_delay;                         // --eth-wb-delay-us (a pass-through at 0)
+    icsl_eth::EthMacTlm eth;
+    icsl_eth::EthPhyTlm eth_phy;
+    EthLinePeer eth_peer;
+    sc_core::sc_signal<bool> eth_rst_n{"eth_rst_n"};
+    sc_core::sc_signal<bool> eth_rmii_rst_n{"eth_rmii_rst_n"};
 #ifdef FX1_SOC_HAS_CAMERA
     std::unique_ptr<camera> cam;  // --camera only
 #endif
@@ -231,6 +268,11 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         , isp("isp")
         , i2c_guard("i2c_guard")
         , i2c0("i2c0", make_i2c_config())
+        , eth_csr_guard("eth_csr_guard")
+        , eth_wb_delay("eth_wb_delay", opts.eth_wb_delay_us)
+        , eth("eth", eth_params())
+        , eth_phy("eth_phy", 1)
+        , eth_peer("eth_peer", eth_peer_mode(opts.eth_peer))
     {
         if (options.firmware.empty())
             throw std::invalid_argument("fx1_soc: a firmware ELF is required");
@@ -267,6 +309,24 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         isp.rst_n(isp_rst_n);
         fabric.target("I2C0").bind(i2c_guard.target);
         i2c_guard.out.bind(i2c0.socket);
+        fabric.target("ETH_CSR").bind(eth_csr_guard.target);
+        eth_csr_guard.out.bind(eth.csr);
+        eth.axi.bind(eth_wb_delay.target);
+        if (options.eth_unguarded_dma) {
+            eth_wb_delay.out.bind(fabric.initiator("ETH_DMA"));
+        } else {
+            eth_dma_guard = std::make_unique<fx1::WriteGuard>("eth_dma_guard", monitor, kMasterEthDma);
+            eth_wb_delay.out.bind(eth_dma_guard->target);
+            eth_dma_guard->out.bind(fabric.initiator("ETH_DMA"));
+        }
+        eth.phy_tx.bind(eth_phy.mac_tx);
+        eth_phy.mac_rx.bind(eth.phy_rx);
+        eth.mdio.bind(eth_phy.mdio);
+        eth_phy.line_tx.bind(eth_peer.line_rx);
+        eth_peer.line_tx.bind(eth_phy.line_rx);
+        eth_phy.set_link(eth_peer.mode() != EthLinePeer::Mode::none);
+        eth.rst_n(eth_rst_n);
+        eth.rmii_rst_n(eth_rmii_rst_n);
         if (options.camera) {
 #ifdef FX1_SOC_HAS_CAMERA
             // CSR on PERIBUS_1 (local offsets), DMA as MIPI_DMA, csi2_irq on
@@ -294,7 +354,8 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         if (!ddr3.released()) uart_host.hold_until(ddr3.release_event());
 
         // Interrupt sources (fx1_memory_map.h): 1 UART, 2 SYS_DMA, 3 ISP;
-        // 4..6 are the VP-only test lines; 7 CSI-2 RX (--camera); 8 DDR3; 9 I2C0.
+        // 4..5 are the VP-only test lines; 6 Ethernet; 7 CSI-2 RX (--camera);
+        // 8 DDR3; 9 I2C0.
         for (unsigned id = 1; id < FX1_PLIC_NUM_SOURCES; ++id) plic.irq_in[id - 1](irq_line[id - 1]);
         uart.irq(irq_line[FX1_IRQ_UART - 1]);
         sys_dma.irq(irq_line[FX1_IRQ_SYS_DMA - 1]);
@@ -303,6 +364,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
             sim.test_irq[i](irq_line[FX1_SIM_CTRL_IRQ_FIRST_SOURCE - 1 + i]);
         ddr3.irq()(irq_line[FX1_IRQ_DDR - 1]);
         i2c0.irq(irq_line[FX1_IRQ_I2C0 - 1]);
+        eth.irq(irq_line[FX1_IRQ_ETH - 1]);
 #ifdef FX1_SOC_HAS_CAMERA
         if (cam) cam->ctl.irq(irq_line[FX1_IRQ_MIPI - 1]);
 #endif
@@ -367,17 +429,23 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         if (options.realtime) SC_THREAD(pace_to_wall_clock);
     }
 
-    // Hold SYS_DMA, the ISP and the CSI-2 RX in reset for a short pulse after
-    // power-up, then release them.
+    // Hold SYS_DMA, the ISP, the CSI-2 RX and both Ethernet domains (system
+    // and RMII, MAS 11.3) in reset for a short pulse after power-up, then
+    // release them. ETH_CTRL then reads 0: every MAC block stays held until
+    // firmware writes it (MAS 9.1).
     void power_on_reset()
     {
         dma_reset_n.write(false);
         isp_rst_n.write(false);
         csi_rst_n.write(false);
+        eth_rst_n.write(false);
+        eth_rmii_rst_n.write(false);
         wait(sc_core::sc_time(kResetPulseNs, sc_core::SC_NS));
         dma_reset_n.write(true);
         isp_rst_n.write(true);
         csi_rst_n.write(true);
+        eth_rst_n.write(true);
+        eth_rmii_rst_n.write(true);
     }
 
     // Receives the PT_LOAD segments of the firmware ELF (cdc::cpu::load_elf
@@ -513,6 +581,27 @@ sc_core::sc_time fx1_soc_top::cpu_release_time() const { return impl_->ddr3.rele
 std::string fx1_soc_top::ddr3_banner() const { return impl_->ddr3.banner(); }
 std::string fx1_soc_top::ddr3_report() const { return impl_->ddr3.report(); }
 
+std::string fx1_soc_top::eth_banner() const
+{
+    std::ostringstream out;
+    out << "MAC at 0x" << std::hex << FX1_ETH_CSR_BASE << std::dec << " (IRQ " << FX1_IRQ_ETH
+        << ", DMA via ETH_DMA" << (impl_->eth_dma_guard ? "" : " UNGUARDED (negative control)")
+        << "), PHY at MDIO 1, line " << EthLinePeer::name_of(impl_->eth_peer.mode());
+    if (impl_->options.eth_wb_delay_us)
+        out << ", DES0 write-backs held " << impl_->options.eth_wb_delay_us << " us (fault injection)";
+    return out.str();
+}
+
+std::string fx1_soc_top::eth_report() const
+{
+    std::ostringstream out;
+    out << "frames sent " << impl_->eth.frames_sent() << " received " << impl_->eth.frames_received()
+        << ", line peer in " << impl_->eth_peer.frames_in() << " out " << impl_->eth_peer.frames_out()
+        << ", PHY dropped " << impl_->eth_phy.dropped() << ", CSR accesses refused " << impl_->eth_csr_guard.rejected();
+    if (impl_->options.eth_wb_delay_us) out << ", DES0 write-backs held " << impl_->eth_wb_delay.held();
+    return out.str();
+}
+
 std::string fx1_soc_top::camera_banner() const
 {
 #ifdef FX1_SOC_HAS_CAMERA
@@ -547,7 +636,7 @@ std::string fx1_soc_top::atomics_report() const
         << " by device " << s.cancelled_by_device << " by DDR3 reset/remap " << s.cancelled_by_platform
         << ", device writes held "
         << impl_->sys_dma_guard.writes_held() + impl_->isp_odma_guard.writes_held() +
-               impl_->camera_writes_held()
+               impl_->camera_writes_held() + (impl_->eth_dma_guard ? impl_->eth_dma_guard->writes_held() : 0)
         << ", atomics drained " << s.brackets_waited;
     return out.str();
 }

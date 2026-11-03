@@ -59,6 +59,8 @@ target_link_libraries(fx1_soc PRIVATE
     cdc::components::uart2_tlm
     cdc::components::uart_host_tlm
     cdc::components::i2c_tlm
+    cdc::components::fx1_ethernet
+    eth_phy_tlm
     fx1_soc_ddr3)
 # --camera: present when the MIPI CSI-2 component is configured
 # (-DFX1_BUILD_MIPI_CSI2=ON). Its D-PHY netlist adds ~45 s of build at -j8.
@@ -122,6 +124,7 @@ endif()
 add_library(fx1_i2c_bsp_host STATIC ${CMAKE_SOURCE_DIR}/fw/fx1_soc/drivers/fx1_i2c.c)
 target_include_directories(fx1_i2c_bsp_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/hostshim
                                                    ${CMAKE_SOURCE_DIR}/fw/fx1_soc/drivers)
+target_link_libraries(fx1_i2c_bsp_host PUBLIC cdc::components::fx1_map)
 set_target_properties(fx1_i2c_bsp_host PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_compile_options(fx1_i2c_bsp_host PRIVATE -Wall -Wextra -Werror)
 add_executable(test_fx1_i2c_bsp_budget tests/test_i2c_bsp_budget.cpp)
@@ -130,6 +133,40 @@ target_link_libraries(test_fx1_i2c_bsp_budget PRIVATE fx1_i2c_bsp_host cdc::comp
 if(CDC_BUILD_TESTS)
     add_test(NAME fx1_i2c_bsp_budget COMMAND test_fx1_i2c_bsp_budget)
     set_tests_properties(fx1_i2c_bsp_budget PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit")
+endif()
+# Ethernet gap G6 (review): a task preempted between a status read and the
+# deadline check must not abort a transaction that completed meanwhile.
+add_executable(test_fx1_i2c_bsp_preempt tests/test_i2c_bsp_preempt.cpp)
+target_compile_options(test_fx1_i2c_bsp_preempt PRIVATE -Wall -Wextra)
+target_link_libraries(test_fx1_i2c_bsp_preempt PRIVATE fx1_i2c_bsp_host cdc::components::i2c_tlm SystemC::systemc)
+if(CDC_BUILD_TESTS)
+    add_test(NAME fx1_i2c_bsp_preempt COMMAND test_fx1_i2c_bsp_preempt)
+    set_tests_properties(fx1_i2c_bsp_preempt PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit")
+endif()
+
+# Ethernet review ER01-ER04: the FX1 manager (fw/fx1_soc/drivers/fx1_eth.c,
+# built for the host) with an ISR thread and a service thread shaped like the
+# FreeRTOS owner, on the MAC model through the driver bench of the component.
+if(TARGET eth_vp_support)
+    add_library(fx1_eth_host STATIC ${CMAKE_SOURCE_DIR}/fw/fx1_soc/drivers/fx1_eth.c)
+    target_include_directories(fx1_eth_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/hostshim
+                                                   ${CMAKE_SOURCE_DIR}/fw/fx1_soc/drivers)
+    target_link_libraries(fx1_eth_host PUBLIC eth_drv cdc::components::fx1_map)
+    set_target_properties(fx1_eth_host PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    target_compile_options(fx1_eth_host PRIVATE -Wall -Wextra -Werror)
+    add_executable(test_fx1_eth_manager tests/test_eth_manager.cpp)
+    target_compile_options(test_fx1_eth_manager PRIVATE -Wall -Wextra)
+    target_include_directories(test_fx1_eth_manager PRIVATE
+                               ${CMAKE_SOURCE_DIR}/components/FX1_Components/ethernet/tests)
+    target_link_libraries(test_fx1_eth_manager PRIVATE fx1_eth_host cdc::components::fx1_ethernet eth_phy_tlm
+                                                       eth_vp_support SystemC::systemc)
+    if(CDC_BUILD_TESTS)
+        foreach(_m error-tx error-rx soft soft-halt wb-deadline wb-wrap stop-flush stats faulted)
+            add_test(NAME fx1_eth_manager_${_m} COMMAND test_fx1_eth_manager ${_m})
+            set_tests_properties(fx1_eth_manager_${_m} PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit"
+                PASS_REGULAR_EXPRESSION "=== fx1_eth manager ${_m}: [0-9]+ checks, 0 failures ===")
+        endforeach()
+    endif()
 endif()
 
 # ── CI aggregate (plan P5) ─────────────────────────────────────────────────────

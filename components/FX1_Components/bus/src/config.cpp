@@ -10,7 +10,7 @@ BusConfig BusConfig::fx1() {
     c.initiators = {{"CPU1"},{"CPU2"},{"SYS_DMA"},{"ISP_IDMA"},{"ISP_ODMA"},
                     {"NPU_DMA"},{"H264_H265_DMA"},{"ETH_DMA"},{"MIPI_DMA"}};
     // Addresses come from fx1_memory_map.h (VP placeholders pending the HAS).
-    // ISP_CSR, SYS_DMA_CSR, SRAM, DDR3_CSR, DDR_SYSCTRL, MIPI_CSR and I2C0 have a placeholder base but
+    // ISP_CSR, SYS_DMA_CSR, SRAM, DDR3_CSR, DDR_SYSCTRL, MIPI_CSR, ETH_CSR and I2C0 have a placeholder base but
     // stay disabled: a platform enables a target only once it instantiates and binds the IP.
     c.targets = {
         {"BootROM",FX1_BOOTROM_BASE,FX1_BOOTROM_SIZE,TargetPath::SysBus1Axi,true},
@@ -24,7 +24,7 @@ BusConfig BusConfig::fx1() {
         {"ISP_CSR",FX1_ISP_CSR_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus1Apb,false},
         {"NPU_CSR",0,0,TargetPath::Peribus1Apb,false},
         {"H264_H265_CSR",0,0,TargetPath::Peribus1Apb,false},
-        {"ETH_CSR",0,0,TargetPath::Peribus1Apb,false},
+        {"ETH_CSR",FX1_ETH_CSR_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus1Apb,false},
         {"MIPI_CSR",FX1_MIPI_CSR_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus1Apb,false},
         {"SYS_DMA_CSR",FX1_SYS_DMA_CSR_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus0Apb,false},
         {"I2C0",FX1_I2C0_BASE,FX1_APB_SLOT_SIZE,TargetPath::Peribus0Apb,false},

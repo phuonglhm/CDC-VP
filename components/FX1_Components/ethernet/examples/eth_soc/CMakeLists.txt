@@ -1,0 +1,2 @@
+add_executable(vp_eth_echo vp_eth_echo.cpp)
+target_link_libraries(vp_eth_echo PRIVATE eth_mac_tlm eth_phy_tlm eth_vp_support eth_drv)

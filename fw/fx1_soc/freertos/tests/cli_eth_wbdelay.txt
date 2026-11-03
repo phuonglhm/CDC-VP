@@ -1,0 +1,16 @@
+eth start
+eth send 1 100
+eth wait 30
+eth stats
+eth fault tx
+eth status
+eth send 1 100
+eth wait 20
+eth status
+eth send 1 100
+eth recover
+eth send 2 100
+eth wait 40
+eth stats
+eth stop
+poweroff

@@ -71,11 +71,16 @@ static void ack_irq(fx1_i2c_t* bus)
 
 /* One transaction has been queued: wait for its STOP, polling, bounded by the
  * budget. The end is the I2C interrupt at the PLIC with use_irq, the
- * controller's interrupt state otherwise; HOSTIDLE confirms the STOP. */
+ * controller's interrupt state otherwise; HOSTIDLE confirms the STOP. The
+ * time is sampled before the status is read: a task preempted between a
+ * status read and the deadline check (seen on FreeRTOS with Ethernet traffic,
+ * 3.1 ms) looks at the status once more before it aborts a transaction that
+ * meanwhile completed. */
 static int finish(fx1_i2c_t* bus, uint8_t* rdata, uint32_t rlen, uint64_t start, uint32_t timeout_us)
 {
     uint32_t got = 0;
     for (;;) {
+        const int late = fx1_mtime() - start > ticks(timeout_us);
         while (rdata && got < rlen && !(rd(bus, I2C_STATUS) & STATUS_RXEMPTY))
             rdata[got++] = (uint8_t)rd(bus, I2C_RDATA);
         const int signalled = bus->use_irq ? (fx1_plic_pending() & (1u << bus->irq_source)) != 0 : 1;
@@ -87,7 +92,7 @@ static int finish(fx1_i2c_t* bus, uint8_t* rdata, uint32_t rlen, uint64_t start,
             if (st & INTR_NAK) return FX1_I2C_ENACK;
             return got == rlen ? FX1_I2C_OK : FX1_I2C_ETIMEOUT;
         }
-        if (fx1_mtime() - start > ticks(timeout_us)) {
+        if (late) {
             /* Abort: drop what is left; the controller ends the transaction
              * with STOP after the byte on the bus. */
             wr(bus, I2C_FIFO_CTRL, FIFO_CTRL_RXRST | FIFO_CTRL_FMTRST);

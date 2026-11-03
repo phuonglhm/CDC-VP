@@ -1,0 +1,17 @@
+eth start
+eth send 1 100
+eth stop 0
+eth status
+eth send 1 100
+eth start
+eth recover
+eth wait 150
+eth recover
+eth wait 20
+eth dump rx
+eth stats
+eth send 2 100
+eth wait 500
+eth stats
+eth stop
+poweroff

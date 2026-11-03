@@ -1,0 +1,20 @@
+eth start
+eth send 3 200
+eth fault tx
+eth status
+eth send 1 100
+eth recover
+eth send 3 200
+eth fault rx
+eth send 1 100
+eth status
+eth recover
+eth send 3 200
+eth stats
+eth fault softtx
+eth status
+eth send 1 100
+eth recover
+eth send 3 200
+eth stats
+poweroff

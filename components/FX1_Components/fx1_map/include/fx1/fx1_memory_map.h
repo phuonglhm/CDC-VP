@@ -50,7 +50,7 @@
 #define FX1_DDR_SYSCTRL_SIZE    FX1_U32(0x00010000)
 #define FX1_NPU_CSR_BASE        FX1_U32(0x11010000) /* reserved                       */
 #define FX1_H264_H265_CSR_BASE  FX1_U32(0x11020000) /* reserved                       */
-#define FX1_ETH_CSR_BASE        FX1_U32(0x11030000) /* reserved                       */
+#define FX1_ETH_CSR_BASE        FX1_U32(0x11030000) /* Ethernet MAC CSR (local offsets) */
 #define FX1_MIPI_CSR_BASE       FX1_U32(0x11040000) /* CSI-2 RX; fx1_soc --camera only */
 
 #define FX1_DDR_BASE            FX1_U32(0x80000000)
@@ -88,7 +88,7 @@
 #define FX1_IRQ_ISP             FX1_U32(3)
 #define FX1_IRQ_NPU             FX1_U32(4) /* reserved */
 #define FX1_IRQ_H264_H265       FX1_U32(5) /* reserved */
-#define FX1_IRQ_ETH             FX1_U32(6) /* reserved */
+#define FX1_IRQ_ETH             FX1_U32(6) /* Ethernet MAC level interrupt */
 #define FX1_IRQ_MIPI            FX1_U32(7) /* CSI-2 RX csi2_irq; undriven without --camera */
 #define FX1_IRQ_DDR             FX1_U32(8) /* DDR3 controller level interrupt */
 #define FX1_IRQ_I2C0            FX1_U32(9) /* I2C0 level interrupt */
@@ -98,7 +98,7 @@
 #define FX1_SIM_CTRL_PASS       FX1_U32(0x5555)
 #define FX1_SIM_CTRL_FAIL       FX1_U32(0x3333) /* written as (code << 16) | FAIL     */
 #define FX1_SIM_CTRL_IRQ_OFF    FX1_U32(0x4)    /* bit i drives test line i       */
-#define FX1_SIM_CTRL_IRQ_LINES  FX1_U32(3)      /* lines -> PLIC sources 4..6     */
+#define FX1_SIM_CTRL_IRQ_LINES  FX1_U32(2)      /* lines -> PLIC sources 4..5     */
 #define FX1_SIM_CTRL_IRQ_FIRST_SOURCE FX1_U32(4)
 
 /* ---- Default firmware DDR layout ------------------------------------------- */
@@ -134,6 +134,10 @@ FX1_MAP_ASSERT(FX1_IRQ_DDR < FX1_PLIC_NUM_SOURCES, "DDR IRQ source outside the P
 FX1_MAP_ASSERT(FX1_IRQ_I2C0 < FX1_PLIC_NUM_SOURCES, "I2C0 IRQ source outside the PLIC");
 FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE + FX1_SIM_CTRL_IRQ_LINES <= FX1_IRQ_MIPI,
                "sim-control test lines overlap the CSI-2 RX IRQ source");
+FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE + FX1_SIM_CTRL_IRQ_LINES <= FX1_IRQ_ETH,
+               "sim-control test lines overlap the Ethernet IRQ source");
+FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_ETH_CSR_BASE, FX1_APB_SLOT_SIZE, FX1_MIPI_CSR_BASE, FX1_APB_SLOT_SIZE),
+               "ETH_CSR/MIPI_CSR overlap");
 FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE, FX1_I2C0_BASE, FX1_APB_SLOT_SIZE),
                "SIM_CTRL/I2C0 overlap");
 #undef FX1_MAP_ASSERT

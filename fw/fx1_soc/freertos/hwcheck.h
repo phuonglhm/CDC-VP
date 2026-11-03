@@ -6,6 +6,9 @@
  * touches the IPs while the check runs, so the "one owner per IP" rule of the
  * platform contract holds.
  *
+ * Ethernet: identity, BUILDCFG, power-on ETH_CTRL 0, a hash register
+ * write-readback-restore, byte and hole access faults, the PHY ID over MDIO;
+ * ETH_CTRL, MDIO_DATA and MDIO_STAT restored before hart 0 owns the MAC.
  * Per IP: identity / reset values, write-readback-restore on registers without
  * side effects, and the bus-error contract (bad access -> access fault). DDR:
  * pattern, address-in-address and sub-word tests on a 4 KiB window.
@@ -19,7 +22,7 @@
 
 #include <stdint.h>
 
-#define HWCHECK_MAX_IPS 10u
+#define HWCHECK_MAX_IPS 12u
 
 typedef struct {
     const char* name;

@@ -1,0 +1,19 @@
+Ethernet MAC Virtual Prototype v1.0.6
+Validated: 25 October 2026
+
+Windows host: GCC 13.2, SystemC 2.3.4; 7/7 CTest tests passed.
+Linux container: Ubuntu 24.04, SystemC 2.3.4; 8/8 CTest tests passed,
+including the RV32 firmware bring-up test.
+
+MAC unit test: 205 checks, zero failures.
+Frame-core replay: 3,073 checks, zero failures.
+Full-duplex replay: 200 scenarios, 13,792 checks, zero failures.
+Memory transactions: 22,967 bursts, zero shape violations.
+Driver receive test: six cases passed.
+100 Mbps echo: 64 frames passed.
+10 Mbps echo: 26 frames passed.
+Line-rate burst: 2,000 frames received, zero drops, 148.8 kframes/s.
+RV32 firmware: FW: ALL PASS.
+Register definitions: all 91 registers match the CSR workbook.
+
+SHA256SUMS.txt records the SHA-256 digest of every other delivered file.

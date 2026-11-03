@@ -57,7 +57,8 @@ void usage()
                  "              [--uart0-socket PORT [--uart0-wait]] [--uart0-rx-file FILE [--uart0-rx-delay-us N]]\n"
                  "              [--uart0-rx-byte-us N]\n"
                  "              [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...]\n"
-                 "              [--camera [--camera-raw FILE]]\n"
+                 "              [--camera [--camera-raw FILE]] [--eth-peer loopback|partner|none]\n"
+                 "              [--eth-unguarded-dma] [--eth-wb-delay-us N]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
                  "  --uart0-wait        with --uart0-socket: wait for the client before starting\n"
@@ -89,6 +90,14 @@ void usage()
                  "                without it MIPI_CSR answers DECERR and source 7 stays low\n"
                  "  --camera-raw  frames for the sensor: 16-bit little-endian samples, W x H\n"
                  "                per frame at the mode firmware sets (default: built-in pattern)\n"
+                 "  --eth-peer    line side of the Ethernet PHY (MAC CSR 0x1103_0000, PLIC source 6):\n"
+                 "                loopback (default): frames come back to the MAC; partner: a station\n"
+                 "                that echoes each frame to its sender; none: link down\n"
+                 "  --eth-unguarded-dma  the Ethernet DMA bypasses its write guard (negative\n"
+                 "                control only: its writes no longer cancel LR reservations)\n"
+                 "  --eth-wb-delay-us  fault injection: every DES0 write-back of the Ethernet DMA\n"
+                 "                is held N us (0..100000) after its completion is signalled, so\n"
+                 "                firmware sees DONE with OWN still 1 (MAS 9.3; default 0: off)\n"
               << cdc::platforms::fx1_soc::ddr3_fault_usage();
 }
 
@@ -288,6 +297,23 @@ int sc_main(int argc, char* argv[])
         else if (arg == "--no-exclusive-monitor") options.exclusive_monitor = false;
         else if (arg == "--camera") options.camera = true;
         else if (arg == "--camera-raw") options.camera_raw = value();
+        else if (arg == "--eth-peer") {
+            const std::string mode = value();
+            if (mode != "loopback" && mode != "partner" && mode != "none") {
+                usage();
+                return 4;
+            }
+            options.eth_peer = mode;
+        }
+        else if (arg == "--eth-unguarded-dma") options.eth_unguarded_dma = true;
+        else if (arg == "--eth-wb-delay-us") {
+            unsigned long us = 0;
+            if (!parse_uint(value(), 100000ul, us)) {
+                usage();
+                return 4;
+            }
+            options.eth_wb_delay_us = static_cast<unsigned>(us);
+        }
         else {
             usage();
             return 4;
@@ -309,6 +335,7 @@ int sc_main(int argc, char* argv[])
         fx1_soc_top top("fx1_soc", options);
         std::cout << top.ddr3_banner() << '\n';
         if (!top.camera_banner().empty()) std::cout << "[fx1_soc] camera: " << top.camera_banner() << '\n';
+        std::cout << "[fx1_soc] ethernet: " << top.eth_banner() << '\n';
         for (const auto& l : loads) top.load_ddr(l.address, l.path);
         const auto wall_start = std::chrono::steady_clock::now();
         top.run_until_cpu_release();
@@ -334,6 +361,7 @@ int sc_main(int argc, char* argv[])
                   << (wall_s > 0 ? instret / wall_s / 1e6 : 0.0) << " MIPS (all harts)\n";
         std::cout << "[fx1_soc] atomics: " << top.atomics_report() << '\n';
         std::cout << "[fx1_soc] ddr3: " << top.ddr3_report() << '\n';
+        std::cout << "[fx1_soc] ethernet: " << top.eth_report() << '\n';
 
         switch (top.outcome()) {
         case fx1_soc_top::result::pass:

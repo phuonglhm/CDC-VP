@@ -15,7 +15,9 @@
 #   vp/doc/VP_FX1_V3.0       README, memory map, camera guide, licences, BUILD_MANIFEST.json,
 #                            SHA256SUMS (tracked files only, see below)
 #   sw/bootloader/sources/   the FreeRTOS CLI sources, BSP, ISP driver, the camera
-#                            drivers (CSI-2 RX, I2C0, sensor) and examples, and the
+#                            drivers (CSI-2 RX, I2C0, sensor) and examples, the
+#                            Ethernet driver (portable eth_drv + FX1 manager) and
+#                            its bare-metal example, and the
 #                            FreeRTOS-Kernel subset it compiles, with a
 #                            stand-alone Makefile; copied, never rewritten
 #   sw/bootloader/build/     outputs of that Makefile, run here by this script
@@ -104,7 +106,8 @@ cp -L "${build_dir}/platforms/fx1_soc/${needed}" "${bin}/${needed}"
 log "firmware sources"
 mkdir -p "${sdk}/app" "${sdk}/bsp" "${sdk}/include/fx1" "${sdk}/include/dma" "${sdk}/include/fx1_isp" "${sdk}/include/fx1_ddr3" \
          "${sdk}/drivers/isp" "${sdk}/isp_selftest" "${sdk}/demo" "${sdk}/tests" "${sdk}/ddr3/examples" \
-         "${sdk}/include/fx1_csi2" "${sdk}/drivers/csi2" "${sdk}/drivers/camera" "${sdk}/camera" "${sdk}/camera_isp"
+         "${sdk}/include/fx1_csi2" "${sdk}/drivers/csi2" "${sdk}/drivers/camera" "${sdk}/camera" "${sdk}/camera_isp" \
+         "${sdk}/drivers/eth" "${sdk}/eth"
 cp "${here}/sdk/Makefile" "${here}/sdk/README.md" "${sdk}/"
 cp "${fw}"/freertos/*.c "${fw}"/freertos/*.h "${fw}"/freertos/*.S "${sdk}/app/"
 cp "${fw}/freertos/tests/isp_auto_policy_test.c" "${sdk}/tests/"
@@ -129,6 +132,14 @@ cp "${fw}/demo/isp_raw_frame/isp_demo_job.h" "${fw}/demo/isp_raw_frame/isp_demo_
 # Camera (CSI-2 M5b): reference CSI-2 RX driver, BSP drivers, examples (make camera).
 cp "${csi2}/include/fx1_csi2/fx1_csi2_drv.h" "${csi2}/include/fx1_csi2/fx1_csi2_regs.h" "${sdk}/include/fx1_csi2/"
 cp "${csi2}/src/fx1_csi2_drv.c" "${sdk}/drivers/csi2/"
+# Ethernet (plan M5): the portable driver and its register header (the files the
+# CDC-VP build compiles, components/FX1_Components/ethernet/driver), the FX1
+# manager (drivers/fx1_eth.[ch]) and the bare-metal wiring example (make eth).
+eth_drv="${src}/components/FX1_Components/ethernet/driver"
+cp "${eth_drv}/include/eth_drv.h" "${eth_drv}/include/eth_regs.h" "${eth_drv}/src/eth_drv.c" \
+   "${fw}"/drivers/fx1_eth.[ch] "${sdk}/drivers/eth/"
+cp "${fw}/tests/eth_wiring/main.c" "${sdk}/eth/eth_wiring.c"
+cp "${fw}/tests/atomic/atomic_common.h" "${sdk}/eth/"
 cp "${fw}"/drivers/fx1_i2c.[ch] "${fw}"/drivers/fx1_ccs_sensor.[ch] "${fw}"/drivers/fx1_csi2_hal_mmio.[ch] "${sdk}/drivers/camera/"
 cp "${fw}"/tests/camera/*.[ch] "${sdk}/camera/"
 # Camera manager and camera -> ISP examples (CSI-2 M6a/M6b): the manager is
@@ -164,6 +175,7 @@ rm -rf "${camcheck}" "${out}/.make.log"
 log "launchers"
 cp "${here}/test/run_vp.sh" "${here}/test/isp_run.txt" "${test}/"
 cp "${fw}/freertos/tests/cli_smoke.txt" "${fw}/freertos/tests/cli_camera.txt" "${test}/"
+cp "${fw}/freertos/tests/cli_eth.txt" "${fw}/freertos/tests/cli_eth_load.txt" "${test}/"
 cp "${src}/platforms/fx1_soc/tools/fx1_console.sh" "${test}/"
 cp "${src}/platforms/fx1_soc/demo/isp_pack.py" "${test}/"
 cp "${here}/test/isp_auto.py" "${test}/"

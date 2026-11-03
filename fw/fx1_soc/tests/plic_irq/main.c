@@ -1,7 +1,8 @@
 /*
  * G2: PLIC with two M-mode contexts (hart 0 / hart 1).
  *
- * Sources: 1 = UART (real device), 4..6 = VP-only test lines (sim-control).
+ * Sources: 1 = UART (real device), 4..5 = VP-only test lines (sim-control);
+ * source 6 belongs to the Ethernet MAC (idle here: never enabled).
  * Source 7 (CSI-2 RX) is driven only with fx1_soc --camera: never raised here.
  *   A  interrupt delivery on hart 0: one claim per request, line lowered in the
  *      handler before complete, no re-entry
@@ -90,8 +91,7 @@ int main(void)
     fx1_check(wait_for(&hart1_ready, 1), 0x01, "hart 1 ready");
     fx1_plic_set_priority(FX1_IRQ_UART, 4);
     fx1_plic_set_priority(4, 3);
-    fx1_plic_set_priority(5, 2);
-    fx1_plic_set_priority(6, 5);
+    fx1_plic_set_priority(5, 5);
 
     /* A: delivery on hart 0 */
     fx1_set_trap_handler(handler);
@@ -110,34 +110,28 @@ int main(void)
     /* B: priority/threshold/mask/re-pend, polled */
     fx1_global_irq_disable();
     fx1_plic_enable(c0, 5, 1);
-    fx1_plic_enable(c0, 6, 1);
     line(4, 1);
     line(5, 1);
-    line(6, 1);
     fx1_check(fx1_read_mip() & MIP_MEIP, 0x20, "B: MEIP pending with MIE off");
-    const uint32_t first = fx1_plic_claim(c0), second = fx1_plic_claim(c0),
-                   third = fx1_plic_claim(c0), none = fx1_plic_claim(c0);
-    fx1_check(first == 6 && second == 4 && third == 5 && none == 0, 0x21,
-              "B: claims in priority order 6 (5), 4 (3), 5 (2)");
+    const uint32_t first = fx1_plic_claim(c0), second = fx1_plic_claim(c0), none = fx1_plic_claim(c0);
+    fx1_check(first == 5 && second == 4 && none == 0, 0x21, "B: claims in priority order 5 (5), 4 (3)");
     line(4, 0);
     line(5, 0);
-    line(6, 0);
-    fx1_plic_complete(c0, 6);
-    fx1_plic_complete(c0, 4);
     fx1_plic_complete(c0, 5);
+    fx1_plic_complete(c0, 4);
     fx1_check(fx1_plic_pending() == 0 && !(fx1_read_mip() & MIP_MEIP), 0x22, "B: drained");
 
     /* The threshold gates notification (MEIP) only; claim ignores it. */
-    line(6, 1);
+    line(5, 1);
     fx1_plic_set_threshold(c0, 5);
     fx1_check(!(fx1_read_mip() & MIP_MEIP), 0x23, "B: threshold 5 masks notification of priority 5");
     fx1_plic_set_threshold(c0, 4);
     fx1_check(fx1_read_mip() & MIP_MEIP, 0x24, "B: threshold 4 notifies priority 5");
     fx1_plic_set_threshold(c0, 7);
-    fx1_check(!(fx1_read_mip() & MIP_MEIP) && fx1_plic_claim(c0) == 6, 0x29,
+    fx1_check(!(fx1_read_mip() & MIP_MEIP) && fx1_plic_claim(c0) == 5, 0x29,
               "B: polled claim at threshold 7 still returns the request");
-    line(6, 0);
-    fx1_plic_complete(c0, 6);
+    line(5, 0);
+    fx1_plic_complete(c0, 5);
     fx1_plic_set_threshold(c0, 0);
 
     fx1_plic_enable(c0, 4, 0);
@@ -156,7 +150,6 @@ int main(void)
               "B: lowered source does not pend again");
     fx1_plic_enable(c0, 4, 0);
     fx1_plic_enable(c0, 5, 0);
-    fx1_plic_enable(c0, 6, 0);
     fx1_log("B: priority, threshold, mask and level re-pend");
 
     /* C: hart 1 routing from WFI, and a shared source claimed once */

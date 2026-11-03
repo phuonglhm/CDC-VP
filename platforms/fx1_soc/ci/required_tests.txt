@@ -220,6 +220,7 @@ fx1_smoke_camera_isp_stop_held
 fx1_smoke_camera_isp_sensor_stop_budget
 fx1_smoke_camera_isp_start_fail
 fx1_i2c_bsp_budget
+fx1_i2c_bsp_preempt
 # FreeRTOS CLI camera commands (M6b)
 fx1_smoke_freertos_cli_camera
 fx1_smoke_freertos_cli_camera_fault
@@ -327,6 +328,89 @@ fx1_csi2_drv_probe_bad_version
 fx1_csi2_drv_timeouts
 fx1_csi2_drv_irq_ts_gsp
 
+# Ethernet MAC (plan M1-M5): component tests (labels fx1;fx1_unit), the FX1
+# manager on the MAC model (fx1_eth_manager_*, review ER01-ER04), the
+# bare-metal wiring test on every --eth-peer and its unguarded-DMA negative
+# control, and the FreeRTOS `eth` sessions (DES0 write-back delay and stats
+# clear included); gaps G1 (DDR3 SLVERR), G3 (AMO, with its negative control)
+# and G5 (MDIO from a second task during the lifecycle).
+# fx1_stress_freertos_cli_eth_stress (100 stop/start cycles twice, background
+# traffic) and fx1_stress_freertos_cli_eth_camera (gap G6, camera + Ethernet,
+# over 120 s) are not required.
+eth_core_golden
+eth_drv_cfg
+eth_drv_inflight
+eth_drv_irq-mdio
+eth_drv_receive
+eth_drv_recover
+eth_drv_stop
+eth_m1_coal-collision
+eth_m1_collisions
+eth_m1_csr-contract
+eth_m1_csr-edge
+eth_m1_dma-bus
+eth_m1_invalid_axi_data_bytes
+eth_m1_invalid_axi_max_burst_0
+eth_m1_invalid_axi_max_burst_17
+eth_m1_invalid_clk_period
+eth_m1_invalid_csr_window
+eth_m1_invalid_dram_base
+eth_m1_invalid_fifo_capacity
+eth_m1_invalid_fifo_pow2
+eth_m1_invalid_max_frame_len
+eth_m1_invalid_mdio_clk_div
+eth_m1_invalid_poll_cycles
+eth_m1_invalid_rx_unicast_num_0
+eth_m1_invalid_rx_unicast_num_5
+eth_m1_invalid_tx_meta_depth
+eth_m1_param-reset
+eth_m1_rmon-wrap
+eth_m1_rx-fifo-reset
+eth_m1_unicast-absent
+eth_mac_scenarios
+eth_mac_tlm_unit
+fx1_eth_manager_error-rx
+fx1_eth_manager_error-tx
+fx1_eth_manager_faulted
+fx1_eth_manager_soft
+fx1_eth_manager_soft-halt
+fx1_eth_manager_stats
+fx1_eth_manager_stop-flush
+fx1_eth_manager_wb-deadline
+fx1_eth_manager_wb-wrap
+fx1_smoke_eth_amo
+fx1_smoke_eth_amo_no_monitor
+fx1_smoke_eth_amo_rxdes0
+fx1_smoke_eth_amo_rxdes0_unguarded
+fx1_smoke_eth_amo_txdes0
+fx1_smoke_eth_amo_txdes0_unguarded
+fx1_smoke_eth_amo_unguarded
+fx1_smoke_eth_ddr_slverr
+fx1_smoke_eth_sc
+fx1_smoke_eth_sc_rxdes0
+fx1_smoke_eth_sc_rxdes0_unguarded
+fx1_smoke_eth_sc_txdes0
+fx1_smoke_eth_sc_txdes0_unguarded
+fx1_smoke_eth_sc_unguarded
+fx1_smoke_eth_wiring
+fx1_smoke_eth_wiring_loopback
+fx1_smoke_eth_wiring_none
+fx1_smoke_eth_wiring_partner
+fx1_smoke_eth_wiring_q10us
+fx1_smoke_eth_wiring_unguarded
+fx1_smoke_freertos_cli_eth_fault
+fx1_smoke_freertos_cli_eth_faulted
+fx1_smoke_freertos_cli_eth_load
+fx1_smoke_freertos_cli_eth_loopback
+fx1_smoke_freertos_cli_eth_mdio_lifecycle
+fx1_smoke_freertos_cli_eth_none
+fx1_smoke_freertos_cli_eth_partner
+fx1_smoke_freertos_cli_eth_stats_clear
+fx1_smoke_freertos_cli_eth_wbdelay
+fx1_smoke_freertos_cli_eth_wbwrap
+vp_eth_burst_line_rate
+vp_eth_echo_100m
+vp_eth_echo_10m
 [components]
 bus_arbitration
 bus_behavior

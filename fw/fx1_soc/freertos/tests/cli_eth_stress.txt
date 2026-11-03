@@ -1,0 +1,10 @@
+eth cycle 100
+eth load start
+isp selftest
+dma test
+isp selftest
+dma test 1000
+eth load stop
+eth cycle 100
+heap
+poweroff

@@ -17,6 +17,7 @@
 #
 #   make ddr3   DDR3 firmware-init examples (BootROM/SRAM images, ddr3/README.md)
 #               in $(OUT)/ddr3; run them with test/VP_FX1_V3.0/run_vp.sh ddr3
+#   make eth    the bare-metal Ethernet wiring example in $(OUT)/eth
 #   make camera camera examples (CSI-2 RX, I2C0, sensor; camera -> ISP through
 #               the camera manager; doc camera/README.md) in $(OUT)/camera; run
 #               them with test/VP_FX1_V3.0/run_vp.sh camera / camera-isp
@@ -44,7 +45,7 @@ CFLAGS  := $(ARCH) -O2 -g -std=c11 -ffreestanding -fno-builtin --param=min-pages
            -ffunction-sections -fdata-sections -Wall -Wextra -Werror \
            -I$(HERE)/bsp -I$(HERE)/include \
            -I$(HERE)/app -I$(KERNEL)/include -I$(KERNEL)/portable/GCC/RISC-V \
-           -I$(HERE)/isp_selftest -I$(HERE)/demo \
+           -I$(HERE)/isp_selftest -I$(HERE)/demo -I$(HERE)/drivers/eth \
            -Wno-int-to-pointer-cast
 # The CLI with the camera (CSI-2 M6b): `camera` commands, boot check of the
 # CSI-2 RX / I2C0 / sensor; without fx1_soc --camera they report it absent.
@@ -64,16 +65,16 @@ LDFLAGS := -nostdlib -nostartfiles -Wl,--gc-sections -Wl,--no-warn-rwx-segments
 
 SOURCES := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c \
            $(addprefix $(HERE)/app/,main.c rtos_bsp.c rtos_libc.c cli.c hwcheck.c cmd_fpu.c cmd_dma.c \
-                                    cmd_isp.c cmd_camera.c probe.S) \
+                                    cmd_isp.c cmd_camera.c cmd_eth.c probe.S) \
            $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/portable/MemMang/heap_4.c \
            $(KERNEL)/portable/GCC/RISC-V/port.c $(KERNEL)/portable/GCC/RISC-V/portASM.S \
            $(HERE)/isp_selftest/isp_common.c $(HERE)/drivers/isp/fx1_isp_drv.c \
            $(addprefix $(HERE)/drivers/camera/,fx1_camera.c fx1_isp_hal_mmio.c fx1_i2c.c fx1_ccs_sensor.c \
                                                fx1_csi2_hal_mmio.c) \
-           $(HERE)/drivers/csi2/fx1_csi2_drv.c
+           $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/eth/fx1_eth.c $(HERE)/drivers/eth/eth_drv.c
 HEADERS := $(wildcard $(HERE)/bsp/*.h $(HERE)/app/*.h $(HERE)/include/*/*.h $(HERE)/isp_selftest/*.h \
                       $(HERE)/demo/*.h $(KERNEL)/include/*.h $(KERNEL)/portable/GCC/RISC-V/*.h \
-                      $(HERE)/drivers/camera/*.h $(HERE)/camera_isp/*.h)
+                      $(HERE)/drivers/camera/*.h $(HERE)/camera_isp/*.h $(HERE)/drivers/eth/*.h)
 
 ELF  := $(OUT)/freertos_cli.elf
 LDS  := $(OUT)/fx1.ld
@@ -164,6 +165,19 @@ CISPCOMMON := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c $(HERE)/camera_isp/cam_isp
                                                   fx1_csi2_hal_mmio.c) \
               $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/isp/fx1_isp_drv.c
 CISPHDRS   := $(CAMHDRS) $(wildcard $(HERE)/camera_isp/*.h)
+
+# ── Ethernet example (plan M5): the MAC through the bus, DDR3, PLIC source 6
+# and the write guard on the FX1 manager (CDC-VP fx1_smoke_eth_wiring). Run it
+# with the simulator: fx1_soc --fw $(OUT)/eth/eth_wiring.elf [--eth-peer partner|none].
+ETHOUT    := $(OUT)/eth
+ETHCFLAGS := $(filter-out -Wno-int-to-pointer-cast,$(CFLAGS)) -I$(HERE)/drivers/eth -I$(HERE)/eth
+ETHSRCS   := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c $(HERE)/eth/eth_wiring.c $(HERE)/drivers/eth/fx1_eth.c \
+             $(HERE)/drivers/eth/eth_drv.c $(HERE)/app/rtos_libc.c
+.PHONY: eth
+eth: $(ETHOUT)/eth_wiring.elf
+$(ETHOUT)/eth_wiring.elf: $(ETHSRCS) $(wildcard $(HERE)/drivers/eth/*.h $(HERE)/eth/*.h $(HERE)/bsp/*.h) $(LDS)
+	@mkdir -p $(ETHOUT)
+	cd $(ETHOUT) && $(CC) $(ETHCFLAGS) $(LDFLAGS) -T $(LDS) $(ETHSRCS) -lgcc -o $(notdir $@)
 
 .PHONY: camera
 camera: $(CAMELFS)

@@ -37,6 +37,16 @@ SECTIONS
         __bss_end = .;
     } > IMAGE
 
+    /* Ethernet descriptor rings and buffers (fx1_eth.h): DMA memory of its
+     * own, never zeroed by crt0, 4 KiB aligned at both ends so no CPU datum
+     * shares a reservation granule (FX1_RESERVATION_GRANULE) with it. */
+    .eth_dma (NOLOAD) : ALIGN(4096) {
+        __eth_dma_start = .;
+        KEEP(*(.eth_dma .eth_dma.*))
+        . = ALIGN(4096);
+        __eth_dma_end = .;
+    } > IMAGE
+
     .stack (NOLOAD) : {
         __stack_base = .;
         . += FX1_FW_STACK_SIZE * FX1_NUM_HARTS;

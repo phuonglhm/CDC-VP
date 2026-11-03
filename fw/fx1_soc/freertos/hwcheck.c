@@ -3,6 +3,8 @@
 #include "fx1_fw.h"
 #include "dma/fx1_dma_regs.h"
 #include "fx1_isp/fx1_isp_csr.h"
+#include "eth_drv.h"
+#include "eth_regs.h"
 #ifdef FX1_FW_HAS_CAMERA
 #include "fx1_ccs_sensor.h"
 #include "fx1_csi2/fx1_csi2_regs.h"
@@ -204,6 +206,41 @@ static void check_isp(void)
        0xFFFFFFF0u);
 }
 
+/* Ethernet MAC: nothing left changed for hart 0 (ETH_CTRL back to 0 holds
+ * every block again, MDIO_DATA and MDIO_STAT restored). */
+static void check_eth(void)
+{
+#define ER(off) (FX1_ETH_CSR_BASE + (off))
+    begin("ETH");
+    expect_eq("ETH_ID", ER(ETH_ID), fx1_read32(ER(ETH_ID)), 0x45544801u);
+    expect_eq("DMA_BUILDCFG (driver build)", ER(ETH_DMA_BUILDCFG), fx1_read32(ER(ETH_DMA_BUILDCFG)), ETH_DRV_BUILDCFG);
+    expect_eq("ETH_CTRL at power-on", ER(ETH_CTRL), fx1_read32(ER(ETH_CTRL)), 0);
+    rw("HASH_L", ER(ETH_HASH_L), 0xA5C3965Au, 0xFFFFFFFFu);
+    byte_load_faults("byte access faults", ER(ETH_ID));
+    const uint32_t before = faults;
+    volatile uint32_t sink = *(volatile uint32_t*)ER(0x0024u);   /* a CSR hole: SLVERR */
+    (void)sink;
+    expect(faults == before + 1u && fault_cause == 5u && fault_addr == ER(0x0024u), "hole access faults",
+           ER(0x0024u), fault_cause, 5u);
+    /* PHY ID over MDIO: the MDIO block alone out of reset, then back */
+    const uint32_t ctrl = fx1_read32(ER(ETH_CTRL)), data = fx1_read32(ER(ETH_MDIO_DATA));
+    fx1_write32(ER(ETH_CTRL), ctrl | ETH_CTRL_RST_N_MASK | ETH_CTRL_MDIO_RST_N_MASK);
+    fx1_write32(ER(ETH_MDIO_CTRL), ETH_MDIO_CTRL_START_MASK | (2u << ETH_MDIO_CTRL_REGAD_SHIFT) |
+                                       (1u << ETH_MDIO_CTRL_PHYAD_SHIFT) | (40u << ETH_MDIO_CTRL_CLK_DIV_SHIFT));
+    const uint64_t t0 = fx1_mtime();
+    while (!(fx1_read32(ER(ETH_MDIO_STAT)) & ETH_MDIO_STAT_DONE_MASK) && fx1_mtime() - t0 < FX1_MTIME_HZ / 10000u) {
+    }
+    const uint32_t mstat = fx1_read32(ER(ETH_MDIO_STAT));
+    expect((mstat & ETH_MDIO_STAT_DONE_MASK) && !(mstat & ETH_MDIO_STAT_NO_RESPONSE_MASK), "MDIO frame done, PHY answered",
+           ER(ETH_MDIO_STAT), mstat, ETH_MDIO_STAT_DONE_MASK);
+    expect_eq("PHY ID1 over MDIO", ER(ETH_MDIO_DATA), fx1_read32(ER(ETH_MDIO_DATA)) & 0xFFFFu, 0x0007u);
+    fx1_write32(ER(ETH_MDIO_STAT), 0xFFFFFFFFu);
+    fx1_write32(ER(ETH_MDIO_DATA), data);
+    fx1_write32(ER(ETH_CTRL), ctrl);
+    expect_eq("ETH_CTRL restored", ER(ETH_CTRL), fx1_read32(ER(ETH_CTRL)), ctrl);
+#undef ER
+}
+
 #ifdef FX1_FW_HAS_CAMERA
 #define I2C_CTRL   0x10u
 #define I2C_STATUS 0x14u
@@ -257,6 +294,7 @@ void hwcheck_run(void)
     check_uart();
     check_dma();
     check_isp();
+    check_eth();
 #ifdef FX1_FW_HAS_CAMERA
     check_camera();
 #endif

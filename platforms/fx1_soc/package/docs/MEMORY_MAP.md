@@ -22,6 +22,7 @@ rebuild. `BUILD_MANIFEST.json` lists the values this binary was built with.
 | I2C0 | `0x1003_0000` | 64 KiB slot | `FX1_I2C0_BASE` | I2C host (driver `drivers/camera/fx1_i2c.h`); the camera sensor at address 0x10 with `--camera`, no device otherwise |
 | ISP CSR | `0x1100_0000` | 64 KiB | `FX1_ISP_CSR_BASE` | register map in `include/fx1_isp/fx1_isp_csr.h` (generated from the ISP CSR specification) |
 | NPU, H.264/H.265, Ethernet CSR | `0x1101_0000` … `0x1103_0000` | 64 KiB each | `FX1_*_CSR_BASE` | reserved: not modelled, an access faults |
+| Ethernet MAC CSR | `0x1103_0000` | 64 KiB | `FX1_ETH_CSR_BASE` | aligned 32-bit accesses only; register map `drivers/eth/eth_regs.h`, driver `drivers/eth` (portable `eth_drv` + FX1 manager `fx1_eth`); DMA buffers in the linker section `.eth_dma` |
 | MIPI CSI-2 RX CSR | `0x1104_0000` | 64 KiB | `FX1_MIPI_CSR_BASE` | with `--camera`: register map `include/fx1_csi2/fx1_csi2_regs.h`, driver `drivers/csi2`; without it an access faults |
 | DDR3 controller CSR | `0x1200_0000` | 64 KiB | `FX1_DDR3_CSR_BASE` | AXI4-Lite, 32-bit accesses. The VP initializes the controller before the harts start, so firmware need not touch it |
 | DDR_SYSCTRL | `0x1201_0000` | 64 KiB | `FX1_DDR_SYSCTRL_BASE` | **VP only**: DDR3 readiness, power requests, QoS sideband, resets |
@@ -43,7 +44,8 @@ contract.
 | 1 | `FX1_IRQ_UART` | UART (RX, RX timeout, TX, errors; enabled in `IMSC`) |
 | 2 | `FX1_IRQ_SYS_DMA` | SYS_DMA channel completion/error |
 | 3 | `FX1_IRQ_ISP` | ISP (frame done, DMA events, statistics) |
-| 4–6 | `FX1_IRQ_NPU`, `_H264_H265`, `_ETH` | reserved |
+| 4–5 | `FX1_IRQ_NPU`, `_H264_H265` | reserved (VP test lines of sim-control) |
+| 6 | `FX1_IRQ_ETH` | Ethernet MAC, level |
 | 7 | `FX1_IRQ_MIPI` | CSI-2 RX (`--camera`; never raised otherwise) |
 | 8 | `FX1_IRQ_DDR` | DDR3 controller (ECC, quarantine, fatal; masked at reset) |
 | 9 | `FX1_IRQ_I2C0` | I2C0 (command complete, NACK) |

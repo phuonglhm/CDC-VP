@@ -67,7 +67,7 @@ computed without any task switch.
 | `uptime`, `tasks`, `heap` | Tick time and `mtime`; FreeRTOS tasks with state, priority and stack headroom; heap use |
 | `hwcheck` | Reprint hart 1's boot report |
 | `md ADDR [WORDS]`, `mw ADDR VALUE` | 32-bit reads and writes. Refused outside the mapped regions, for writes to BootROM, and for numbers above 32 bits. An address the device rejects inside a region (such as a CLINT or PLIC register hole) prints `bus error` instead of trapping (`probe.S`) |
-| `regdump isp\|dma\|plic\|clint\|uart` | Key registers of one IP |
+| `regdump isp\|dma\|plic\|clint\|uart\|eth` | Key registers of one IP (`eth`: no RMON counter, so a dump never clears one) |
 | `fpu test` | FP context-switch check (above) |
 | `dma test [BYTES]` | SYS_DMA M2M copy: completion IRQ → semaphore, ownership calls, data verified |
 | `isp selftest` | The 8-frame 64×48 fixture through the driver from a task, ISR → semaphore; every NV12 CRC must match the reference |
@@ -75,12 +75,59 @@ computed without any task switch.
 | `isp run` | Process the RAW job that the host loaded into DDR (see `platforms/fx1_soc/demo/`); the NV12 stays in DDR for `--dump`. In the job's mode: CSR v1.07 profile mode by default (the profile built into bank 0, sealed and applied; a refused profile is reported, never run in legacy mode instead), legacy for a version-1 job; the job's output channels (CH0, CH1 NV12, CH2 RGB888) |
 | `isp run legacy` | The same job in legacy mode, for comparison |
 | `isp stats` | AEC/AWB/AF publications of the last frame |
+| `eth ...` | Ethernet MAC, see "Ethernet" below |
 | `camera ...` | Camera build only (CSI-2 M6b), see "Camera" below |
-| `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` |
+| `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` + `eth selftest` |
 | `poweroff` | End the simulation: PASS when no check failed so far, otherwise FAIL `0x400 + failures` |
 
 A command that checks something prints `name: PASS|FAIL`. Failures are counted
 for `poweroff`.
+
+## Ethernet (plan M4)
+
+The MAC (`ETH_CSR` 0x1103_0000, PLIC source 6) through the FX1 manager
+`fw/fx1_soc/drivers/fx1_eth.[ch]` on the portable driver
+(`components/FX1_Components/ethernet/driver`). One owner: the service task
+`eth` (priority 3) runs the manager's service under a mutex that every `eth`
+command also takes; the ISR only takes and acknowledges `ETH_INT_STATUS` (DONE
+cleared, level error sources masked so the line falls before the PLIC
+completion) and notifies the task. A descriptor whose DES0 write-back is still
+in flight after DONE (MAS 9.3) is polled every 1 ms, every 10 ms once past a
+2 ms deadline (counted once in `wb-timeouts`), for as long as it stays owned:
+never left for an interrupt that will not come, never reclaimed while OWN reads
+1. A DMA error is classified by its ERRINFO class: class 4 (TX_TOO_LONG,
+RX_TRUNC) is a soft error, every other class halts that direction from the
+moment ERR is seen, before HALTED (submissions refused at once); `eth recover`
+waits up to 2 ms for HALTED, else the device goes FAULTED. A halting error that
+came while a class-4 one still held ERR shows only as HALTED (no new ERR, no
+interrupt): after a class-4 clear the direction is watched (1 ms, then 10 ms,
+up to 100 ms or until TX is suspended), every service pass checks HALTED and
+the task runs at least every 100 ms while the MAC is running; `eth send`
+reads TX HALTED before queuing. MDIO completion is polled (MDIO_DONE masked);
+RMON counters are read without READ_CLEAR_EN, so `eth stats` never clears them.
+Hart 1's boot check covers the MAC (identity, BUILDCFG, a hash register,
+byte/hole faults, the PHY ID over MDIO) and restores what it changed.
+
+| Command | Behaviour |
+|---|---|
+| `eth probe` | ID, CAP, BUILDCFG (MAC not the expected IP → FAIL), PHY ID/BMCR/BMSR over MDIO, link and speed; a PHY that does not answer is told apart from a bad MAC |
+| `eth status` | State (uninitialized, stopped, running, stopping, FAULTED), speed, TX_EN/RX_EN, ETH_STATUS, INT_EN/RAW/STATUS, ring indices and CUR_DESC, the halted direction and the last error snapshot (ERRINFO, CUR_DESC), the last stop |
+| `eth stats [clear]` | RMON (non-destructive), DMA no-descriptor drops, FIFO_STAT, overflow flags, driver counters (interrupts, halts, soft errors, recoveries and their timeouts, write-backs found in flight and past their deadline, stop outcomes with stops that flushed written-back frames); `clear`: RMON CLEAR_ALL, RX_DROP_CNT, every driver counter (all count from the clear) |
+| `eth start` | Cold init from uninitialized, SRST + rebuilt rings from stopped; nothing to do when running; refused when FAULTED |
+| `eth stop [DRAIN_US]` | Drain the queued frames (default 20000 µs), HALT_REQ, a second HALT_REQ when needed, MAC enables cleared only after HALTED, both MACs idle, FIFOs flushed, interrupts masked: `OK` (stopped, frames dropped and forced printed; `eth status` tells whether frames already written back, so not yet confirmed on the line, were flushed with the TX FIFO) or `ETIMEOUT` (FAULTED: the DMA may still own the rings; `eth recover`). `eth stop 0` skips only the drain: queued frames are dropped, but the command still waits for HALTED (with the forced second HALT_REQ, up to its deadline) and idle MACs before it reports STOPPED, so it does not return at once. A flushed TX FIFO means frames may have been lost; how many is not known. Repeating it is harmless |
+| `eth recover` | A direction halted by a DMA error (or with ERR pending): HALTED awaited (≤ 2 ms, else `ETIMEOUT` and FAULTED), snapshot, SRST, that ring rebuilt, the other direction untouched. FAULTED: quiesce again (5 ms per HALT_REQ); both directions HALTED means every write of the old session landed, then SRST, rings rebuilt, running. Otherwise `ETIMEOUT`, still FAULTED, nothing reset or rebuilt (no global reset: MAS 9.1 needs both directions HALTED first, and issued writes would still land); repeat later |
+| `eth selftest` | PHY loopback (independent of `--eth-peer`): 60/61/512/1514-byte frames compared at 100 and 10 Mbps, then one frame through the interrupt path; the previous state restored |
+| `eth mdio read P R`, `eth mdio write P R V` | Clause 22, validated (0..31, 0..0xffff); a BMCR write is refused while running (speed, loopback, reset only with the MAC stopped) |
+| `eth send N [LEN] [PATTERN]` | N frames (≤ 1000, 60..1514 bytes) to ourselves, one per hold of the device; prints how many came back (loopback or partner echo) |
+| `eth dump rx\|tx` | The ring's descriptors with CUR_DESC, the software head and the transmit tail |
+| `eth cycle N` | N start/frame/stop cycles with one frame each (ends stopped); heap before/after, the service task's stack headroom; PASS without stale frames or heap change |
+| `eth load start\|stop` | Background 1 KiB frames with a sequence number and a payload check, for concurrency with SYS_DMA and the ISP; `stop` reports sent, received and payload errors |
+| `eth mdiopoll start\|stop` | A second task reads the PHY ID over MDIO every tick, under the owner's mutex; `stop` reports reads, wrong or failed ones, and how many came while the MAC was not running or a direction was halted (MDIO concurrent with the lifecycle) |
+| `eth wait MS` | Scripts: let MS milliseconds (≤ 10000) pass without holding the device |
+
+`fx1_soc --eth-peer` chooses the line: `loopback` (default), `partner` (an
+echo station) or `none` (link down). Tests: `fx1_smoke_freertos_cli_eth_*`
+(see `platforms/fx1_soc/README.md`).
 
 ## Camera (CSI-2 M6b)
 

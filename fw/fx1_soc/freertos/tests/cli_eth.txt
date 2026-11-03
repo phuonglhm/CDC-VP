@@ -1,0 +1,25 @@
+eth status
+eth probe
+eth start
+eth start
+eth send 20 1514
+eth mdio read 1 2
+eth mdio write 1 0 0x3100
+eth mdio read 9 2
+eth mdio read 40 1
+eth send 5 2000
+eth bogus
+eth dump tx
+regdump eth
+eth stats
+eth stop
+eth stop
+eth mdio write 1 0 0x3100
+eth recover
+eth start
+eth selftest
+eth cycle 10
+eth stats clear
+eth status
+selftest
+poweroff

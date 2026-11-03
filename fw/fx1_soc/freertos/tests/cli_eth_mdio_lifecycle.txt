@@ -1,0 +1,19 @@
+eth start
+eth mdiopoll start
+eth cycle 20
+eth start
+eth fault tx
+eth send 1 100
+eth recover
+eth selftest
+eth stop 0
+eth start
+eth fault rx
+eth send 1 100
+eth recover
+eth send 5 200
+eth stop
+eth start
+eth mdiopoll stop
+eth stats
+poweroff

@@ -36,6 +36,7 @@ int fx1_probe_write32(uint32_t addr, uint32_t value);
 int cmd_isp(int argc, char** argv);
 int cmd_dma(int argc, char** argv);
 int cmd_fpu(int argc, char** argv);
+int cmd_eth(int argc, char** argv);
 #ifdef FX1_FW_HAS_CAMERA
 int cmd_camera(int argc, char** argv);
 #endif
@@ -43,6 +44,7 @@ int cmd_camera(int argc, char** argv);
 /* Device setup after the scheduler starts (IRQ handlers, semaphores). */
 void isp_service_init(void);
 void dma_service_init(void);
+void eth_service_init(void); /* Ethernet: service task (owner) + PLIC source 6 */
 
 /* ISP ownership between the `isp` commands and the camera (CSI-2 M6b): one
  * owner at a time; the ISP interrupt goes to the owner's handler. Claims are

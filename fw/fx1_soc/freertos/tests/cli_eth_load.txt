@@ -1,0 +1,12 @@
+eth start
+eth load start
+dma test
+eth mdio read 1 1
+isp selftest
+eth mdio read 1 2
+dma test 1000
+eth status
+eth load stop
+eth cycle 10
+heap
+poweroff

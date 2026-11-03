@@ -49,6 +49,15 @@ struct fx1_soc_options {
     // little-endian samples for the sensor; empty for its built-in pattern.
     bool camera = false;
     std::string camera_raw;
+    // Ethernet MAC (always present): what the PHY's line side meets,
+    // "loopback" (default), "partner" (echo station) or "none" (link down).
+    std::string eth_peer = "loopback";
+    // Negative control only: the MAC's DMA bypasses its write guard, so its
+    // writes no longer cancel LR reservations (tests prove the guard matters).
+    bool eth_unguarded_dma = false;
+    // Fault injection (Ethernet review F08/ER02): each DES0 write-back of the
+    // MAC is held this long after its DONE; 0: off.
+    unsigned eth_wb_delay_us = 0;
 };
 
 // FX1 SoC for FW/SW bring-up: two VP++ RV32IMAFC harts, FX1 bus, BootROM,
@@ -90,6 +99,9 @@ public:
     static bool camera_built() noexcept;
     // One line of exclusive-monitor counters ("off" without a monitor).
     std::string atomics_report() const;
+    // One line describing the Ethernet MAC wiring (start of run) and its counters (end).
+    std::string eth_banner() const;
+    std::string eth_report() const;
 
 private:
     struct impl;

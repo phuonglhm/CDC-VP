@@ -271,6 +271,18 @@ static int cmd_regdump(int argc, char** argv)
                                 {"MTIME_HI", FX1_CLINT_BASE + FX1_CLINT_MTIME_OFF + 4u}};
     static const reg uart[] = {{"FR", FX1_UART_BASE + 0x018u}, {"IFLS", FX1_UART_BASE + 0x034u},
                                {"IMSC", FX1_UART_BASE + 0x038u}, {"RIS", FX1_UART_BASE + 0x03Cu}};
+    /* Ethernet: no RMON counter here (a read could clear it under
+     * READ_CLEAR_EN); `eth stats` reads those. */
+#define ETHR(n, off) {n, FX1_ETH_CSR_BASE + (off)}
+    static const reg eth[] = {ETHR("ETH_ID", 0x0000u), ETHR("ETH_CTRL", 0x0004u), ETHR("ETH_STATUS", 0x0008u),
+                              ETHR("ETH_INT_RAW", 0x0010u), ETHR("ETH_INT_EN", 0x0014u),
+                              ETHR("ETH_INT_STATUS", 0x001Cu), ETHR("ETH_FIFO_STAT", 0x0020u),
+                              ETHR("ETH_RMII_CFG", 0x1000u), ETHR("ETH_RX_MAC_CFG", 0x2000u),
+                              ETHR("ETH_TX_MAC_CFG", 0x3000u), ETHR("DMA_TX_STAT", 0x6014u),
+                              ETHR("DMA_TX_ERRINFO", 0x6028u), ETHR("DMA_TX_CUR_DESC", 0x602Cu),
+                              ETHR("DMA_RX_STAT", 0x6804u), ETHR("DMA_RX_ERRINFO", 0x6818u),
+                              ETHR("DMA_RX_CUR_DESC", 0x681Cu), ETHR("DMA_RX_DROP_CNT", 0x6824u),
+                              ETHR("RMON_CTRL", 0x7000u), ETHR("MDIO_STAT", 0x8008u)};
 #define DUMP(t) dump(t, sizeof(t) / sizeof(t[0]))
     if (argc != 2) return 1;
     if (!strcmp(argv[1], "isp")) DUMP(isp);
@@ -278,6 +290,7 @@ static int cmd_regdump(int argc, char** argv)
     else if (!strcmp(argv[1], "plic")) DUMP(plic);
     else if (!strcmp(argv[1], "clint")) DUMP(clint);
     else if (!strcmp(argv[1], "uart")) DUMP(uart);
+    else if (!strcmp(argv[1], "eth")) DUMP(eth);
     else return 1;
     return 0;
 }
@@ -289,12 +302,14 @@ static int cmd_selftest(int argc, char** argv)
     static char* fpu[] = {"fpu", "test"};
     static char* dma[] = {"dma", "test"};
     static char* isp[] = {"isp", "selftest"};
+    static char* eth[] = {"eth", "selftest"};
     const uint32_t before = app_failures;
-    out_line("selftest: hwcheck report, FPU context, SYS_DMA, ISP");
+    out_line("selftest: hwcheck report, FPU context, SYS_DMA, ISP, Ethernet");
     report("hwcheck (hart 1 at boot)", hwcheck_report.done && hwcheck_report.total_failures == 0);
     cmd_fpu(2, fpu);
     cmd_dma(2, dma);
     cmd_isp(2, isp);
+    cmd_eth(2, eth);
     out("selftest: ");
     out_line(app_failures == before ? "PASS" : "FAIL");
     return 0;
@@ -320,15 +335,18 @@ static const command commands[] = {
     {"hwcheck", cmd_hwcheck, "hwcheck              hart 1 boot IP check report"},
     {"md", cmd_md, "md ADDR [WORDS]      read 32-bit words (mapped regions only)"},
     {"mw", cmd_mw, "mw ADDR VALUE        write one 32-bit word"},
-    {"regdump", cmd_regdump, "regdump isp|dma|plic|clint|uart"},
+    {"regdump", cmd_regdump, "regdump isp|dma|plic|clint|uart|eth"},
     {"isp", cmd_isp, "isp selftest [profile]|run [legacy|auto]|stats  fixture (legacy or profile mode); RAW job (profile mode by default) with optional adaptive WB/tone; statistics"},
     {"dma", cmd_dma, "dma test [BYTES]     SYS_DMA M2M copy with IRQ, verified"},
     {"fpu", cmd_fpu, "fpu test             two tasks interleaving FP work (context switch check)"},
+    {"eth", cmd_eth,
+     "eth probe|status|stats [clear]|start|stop [DRAIN_US]|recover|selftest|mdio read P R|mdio write P R V|"
+     "send N [LEN] [PATTERN]|dump rx|tx|cycle N|load start|stop|mdiopoll start|stop|wait MS"},
 #ifdef FX1_FW_HAS_CAMERA
     {"camera", cmd_camera,
      "camera probe|mode [W H BITS LANES]|source [sensor|tpg]|start|capture N [crc]|status|stop [US]|recover"},
 #endif
-    {"selftest", cmd_selftest, "selftest             hwcheck + fpu + dma + isp"},
+    {"selftest", cmd_selftest, "selftest             hwcheck + fpu + dma + isp + eth"},
     {"poweroff", cmd_poweroff, "poweroff             end the simulation: PASS if no check failed"},
 };
 

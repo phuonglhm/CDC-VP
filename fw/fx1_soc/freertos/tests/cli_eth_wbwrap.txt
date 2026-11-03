@@ -1,0 +1,11 @@
+eth start
+eth send 48 200
+eth wait 150
+eth stats
+eth load start
+eth wait 200
+eth load stop
+eth wait 50
+eth stats
+eth stop
+poweroff

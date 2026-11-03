@@ -1,0 +1,17 @@
+eth start
+eth load start
+camera probe
+camera mode 64 32 12 4
+camera start
+camera capture 4
+eth mdio read 1 1
+camera status
+camera stop
+camera mode 64 32 10 2
+camera start
+camera capture 2
+camera stop
+eth load stop
+eth cycle 5
+eth stats
+poweroff
