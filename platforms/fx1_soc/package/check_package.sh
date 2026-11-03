@@ -53,7 +53,7 @@ required=(
     "${doc}/camera/README.md"
     "${sdk}/drivers/eth/eth_drv.c" "${sdk}/drivers/eth/eth_drv.h" "${sdk}/drivers/eth/eth_regs.h"
     "${sdk}/drivers/eth/fx1_eth.c" "${sdk}/drivers/eth/fx1_eth.h" "${sdk}/app/cmd_eth.c" "${sdk}/eth/eth_wiring.c"
-    "${sdk}/eth/atomic_common.h" "${test}/cli_eth.txt" "${test}/cli_eth_load.txt"
+    "${sdk}/eth/atomic_common.h" "${test}/cli_eth.txt" "${test}/cli_eth_load.txt" "${doc}/eth/README.md"
     "${sdk}/third_party/FreeRTOS-Kernel/LICENSE.md" "${sdk}/third_party/FreeRTOS-Kernel/tasks.c"
     "${sdk}/third_party/FreeRTOS-Kernel/portable/GCC/RISC-V/portASM.S"
     "${build}/freertos_cli.elf" "${build}/freertos_cli.dis" "${build}/freertos_cli.map"

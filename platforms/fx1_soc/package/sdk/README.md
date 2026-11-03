@@ -5,6 +5,7 @@ with the FX1 SoC VP. It is the starting point for FX1 drivers on FreeRTOS:
 - BSP;
 - interrupt handling through the PLIC;
 - the ISP and SYS_DMA drivers called from tasks;
+- the Ethernet MAC through its FX1 manager, owned by a service task;
 - a UART command line.
 
 It builds with GNU Make and the xPack `riscv-none-elf-gcc` 15.2. It needs
@@ -23,7 +24,7 @@ Outputs go to `sw/bootloader/build/VP_FX1_V3.0/`: `freertos_cli.elf`, `.dis`,
 
 | Directory | Content |
 |---|---|
-| `app/` | the application: `main.c` (boot, hart roles), `cli.c` (console, commands), `cmd_isp.c`, `cmd_dma.c`, `cmd_fpu.c`, `hwcheck.c` (hart 1 boot IP check), `rtos_bsp.c` (trap/IRQ glue, UART RX), `probe.S` (fault-tolerant `md`/`mw`), `FreeRTOSConfig.h`, the FP context extension |
+| `app/` | the application: `main.c` (boot, hart roles), `cli.c` (console, commands), `cmd_isp.c`, `cmd_dma.c`, `cmd_fpu.c`, `cmd_eth.c` (Ethernet owner task and `eth` commands), `hwcheck.c` (hart 1 boot IP check), `rtos_bsp.c` (trap/IRQ glue, UART RX), `probe.S` (fault-tolerant `md`/`mw`), `FreeRTOSConfig.h`, the FP context extension |
 | `bsp/` | bare-metal support: `crt0.S` (both harts), `fx1_fw.c/.h` (MMIO, console, CLINT, PLIC, hart release, locks, traps, sim-control verdict), `fx1.ld.S` (linker script, preprocessed with the map) |
 | `include/fx1/fx1_memory_map.h` | **the** address/IRQ/clock map (VP placeholders pending the HAS) |
 | `include/dma/fx1_dma_regs.h` | SYS_DMA register map |
@@ -32,6 +33,8 @@ Outputs go to `sw/bootloader/build/VP_FX1_V3.0/`: `freertos_cli.elf`, `.dis`,
 | `ddr3/`, `bsp/crt0_rom.S`, `bsp/fx1_rom.ld.S` | DDR3 reference bring-up code and firmware-init examples that run from BootROM/SRAM (`make ddr3`, then `run_vp.sh ddr3`); guide in `vp/doc/VP_FX1_V3.0/ddr3/README.md` |
 | `include/fx1_isp/` | ISP register map (`fx1_isp_csr.h`, generated from the ISP CSR specification) and the ISP driver API (`fx1_isp_drv.h`) |
 | `drivers/isp/fx1_isp_drv.c` | the reference ISP driver (C99, HAL-based, no OS dependency) |
+| `drivers/eth/` | Ethernet: register map `eth_regs.h`, portable driver `eth_drv.[ch]`, FX1 manager `fx1_eth.[ch]` (start here); guide in `vp/doc/VP_FX1_V3.0/eth/README.md` |
+| `eth/` | bare-metal Ethernet example `eth_wiring.c` (`make eth`, then `run_vp.sh eth`) |
 | `isp_selftest/` | the 8-frame synthetic fixture behind `isp selftest`, with its reference CRCs |
 | `demo/isp_demo_job.h` | the host ↔ firmware job contract of `isp run` (job, result block, profile in shared DDR) |
 | `third_party/FreeRTOS-Kernel/` | the subset of FreeRTOS-Kernel V11.2.0 (`0adc196`) this build compiles, MIT |
@@ -71,13 +74,15 @@ Outputs go to `sw/bootloader/build/VP_FX1_V3.0/`: `freertos_cli.elf`, `.dis`,
    - SYS_DMA: identity, idle state, command registers, and a byte access
      faults.
    - ISP: `COMMON_VER_ID`, `DMA_ERR` clear, and the buffer-address registers.
+   - Ethernet MAC: identity, BUILDCFG, a hash register, byte and hole
+     faults, and the PHY ID over MDIO.
 
    Every read/write probe restores the original value.
 3. **Hart 0 prints the report.** On any failure it prints
    `boot halted: hwcheck FAIL` and ends with FAIL code 0x50; the scheduler
    never starts.
 4. **Hart 0 starts FreeRTOS.** It sets `mtvec` to the kernel trap entry (hart 0
-   only). Then it installs the UART, SYS_DMA and ISP interrupt services,
+   only). Then it installs the UART, SYS_DMA, ISP and Ethernet interrupt services,
    creates the CLI task and starts the scheduler.
 
 ## FP registers in task context
@@ -105,6 +110,11 @@ The pattern used by `cmd_isp.c` and `cmd_dma.c`:
 - **Shared driver state:** a driver that both the ISR and the task call into
   is called from the task inside `taskENTER_CRITICAL()` /
   `taskEXIT_CRITICAL()`.
+- **A device with its own owner task:** Ethernet (`cmd_eth.c`) uses a
+  service task instead of a semaphore. The ISR only acknowledges and notifies;
+  the task runs `fx1_eth_service()` under a mutex that every `eth` command
+  takes, and waits for the next notification at most as long as the service
+  asked for (DMA write-backs can commit after their interrupt).
 - **Buffer ownership:** hand buffers to and from a DMA master with
   `fx1_dma_prepare()` / `fx1_dma_complete()`. These are no-ops on the VP
   (no caches). Silicon will need them, so keep the calls.

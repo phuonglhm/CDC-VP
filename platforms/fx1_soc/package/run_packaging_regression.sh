@@ -14,7 +14,8 @@
 #   5. the firmware rebuilt from the shipped sources with the shipped Makefile
 #      must equal the packaged ELF byte for byte, and pass smoke again; the
 #      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
-#      camera -> ISP: camera_isp_raw12);
+#      camera -> ISP: camera_isp_raw12), and the Ethernet example on every line
+#      peer and the scripted Ethernet CLI session pass;
 #   6. a copy without build/ (what a clone of the SDK repository holds) must
 #      pass `sha256sum -c SHA256SUMS`;
 #   7. the one-terminal `run_vp.sh isp d65 interactive` flow through a
@@ -177,6 +178,20 @@ else
     cat "${tmp}/make_camera.log"
     bad "make camera with the shipped Makefile failed"
 fi
+
+step "5d. Ethernet example, built from the shipped sources, on every line peer; scripted eth CLI session"
+if run make -s -C "${pkg}/sw/bootloader/sources/${version}" TOOLDIR="${tooldir}" eth > "${tmp}/make_eth.log" 2>&1; then
+    run "${test}/run_vp.sh" eth > "${tmp}/eth.log" 2>&1 && grep -q "ETH EXAMPLES PASS" "${tmp}/eth.log" \
+        && pass "run_vp.sh eth: $(grep -c '  PASS ' "${tmp}/eth.log") line peers PASS" \
+        || { cat "${tmp}/eth.log"; bad "run_vp.sh eth"; }
+    rm -rf "${pkg}/sw/bootloader/build/${version}/eth"
+else
+    cat "${tmp}/make_eth.log"
+    bad "make eth with the shipped Makefile failed"
+fi
+run "${test}/run_vp.sh" eth-cli > "${tmp}/eth_cli.log" 2>&1 && grep -q "ETH CLI PASS" "${tmp}/eth_cli.log" \
+    && pass "run_vp.sh eth-cli PASS" || { cat "${tmp}/eth_cli.log"; bad "run_vp.sh eth-cli"; }
+rm -f "${pkg}/sw/bootloader/build/${version}/eth-cli.log"
 
 step "6. SHA256SUMS on a copy without build/ (an SDK repository clone)"
 clone="${tmp}/clone"

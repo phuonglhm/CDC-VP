@@ -170,6 +170,11 @@ camcheck="$(mktemp -d "${TMPDIR:-/tmp}/fx1_camera_check.XXXXXX")"
 make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${camcheck}" camera > "${out}/.make.log" 2>&1 \
     || { cat "${out}/.make.log" >&2; rm -rf "${camcheck}"; die "the SDK Makefile failed on the camera examples"; }
 rm -rf "${camcheck}" "${out}/.make.log"
+# The Ethernet example must build from the shipped sources too (outputs not shipped).
+ethcheck="$(mktemp -d "${TMPDIR:-/tmp}/fx1_eth_check.XXXXXX")"
+make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${ethcheck}" eth > "${out}/.make.log" 2>&1 \
+    || { cat "${out}/.make.log" >&2; rm -rf "${ethcheck}"; die "the SDK Makefile failed on the Ethernet example"; }
+rm -rf "${ethcheck}" "${out}/.make.log"
 
 # ── test launchers and ISP samples ───────────────────────────────────────────
 log "launchers"
@@ -282,6 +287,8 @@ log "documentation and licences"
 cp "${here}/docs/README.md" "${here}/docs/MEMORY_MAP.md" "${doc}/"
 mkdir -p "${doc}/camera"
 cp "${here}/docs/CAMERA_FW_GUIDE.md" "${doc}/camera/README.md"
+mkdir -p "${doc}/eth"
+cp "${here}/docs/ETHERNET_FW_GUIDE.md" "${doc}/eth/README.md"
 # DDR3 documents for driver developers. Links to documents that stay in the VP
 # source tree become plain text, so the package has no dead link.
 mkdir -p "${doc}/ddr3"

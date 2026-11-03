@@ -33,11 +33,15 @@ Usage:
   ./run_vp.sh camera [NAME...]         # camera examples (fx1_soc --camera; minutes each: detailed D-PHY)
   ./run_vp.sh camera-isp [NAME...]     # camera -> ISP examples (camera manager; NV12 = ISP model golden)
   ./run_vp.sh camera-cli               # FreeRTOS CLI with --camera, scripted camera session (cli_camera.txt)
+  ./run_vp.sh eth [PEER...]            # bare-metal Ethernet example on each line peer (default: loopback partner none)
+  ./run_vp.sh eth-cli [PEER]           # FreeRTOS CLI, scripted eth session (cli_eth.txt), PEER default loopback
+  ./run_vp.sh eth-load                 # FreeRTOS CLI, Ethernet traffic with SYS_DMA and the ISP (cli_eth_load.txt)
 
 FX1_FW=<image.elf> runs another firmware image instead of freertos_cli.elf.
 Build the firmware first: make -C sw/bootloader/sources/VP_FX1_V3.0
 DDR3 examples: make -C sw/bootloader/sources/VP_FX1_V3.0 ddr3 (see ddr3/README.md there)
 Camera examples: make -C sw/bootloader/sources/VP_FX1_V3.0 camera (see vp/doc/VP_FX1_V3.0/camera/README.md)
+Ethernet example: make -C sw/bootloader/sources/VP_FX1_V3.0 eth (see vp/doc/VP_FX1_V3.0/eth/README.md)
 EOF
 }
 
@@ -153,6 +157,55 @@ case "${mode}" in
         done
         [[ ${overall} -eq 0 ]] && echo "CAMERA ISP EXAMPLES PASS" || echo "CAMERA ISP EXAMPLES FAIL"
         exit ${overall}
+        ;;
+    eth)
+        # sw/bootloader/sources/VP_FX1_V3.0/eth/eth_wiring.c on each line peer:
+        # CSR and MDIO, DMA through DDR3, interrupts, a DMA error and its
+        # recovery, LR/SC against the DMA, stop/restart.
+        ethout="${build}/eth"
+        [[ -f "${ethout}/eth_wiring.elf" ]] \
+            || die "missing ${ethout}/eth_wiring.elf; build with: make -C sw/bootloader/sources/${version} eth"
+        peers=("$@")
+        [[ ${#peers[@]} -gt 0 ]] || peers=(loopback partner none)
+        overall=0
+        echo "VP_FX1_V3.0 Ethernet example (eth_wiring)"
+        for peer in "${peers[@]}"; do
+            case "${peer}" in loopback|partner|none) ;; *) die "unknown line peer ${peer} (loopback, partner, none)" ;; esac
+            set +e
+            "${vp}" --fw "${ethout}/eth_wiring.elf" --eth-peer "${peer}" --timeout-ms 200 \
+                > "${ethout}/eth_wiring_${peer}.log" 2>&1
+            rc=$?
+            set -e
+            if [[ ${rc} -eq 0 ]]; then
+                echo "  PASS eth_wiring --eth-peer ${peer}"
+            else
+                echo "  FAIL eth_wiring --eth-peer ${peer}, exit ${rc} (log ${ethout}/eth_wiring_${peer}.log)"
+                overall=1
+            fi
+        done
+        [[ ${overall} -eq 0 ]] && echo "ETH EXAMPLES PASS" || echo "ETH EXAMPLES FAIL"
+        exit ${overall}
+        ;;
+    eth-cli|eth-load)
+        need_fw
+        mkdir -p "${build}"
+        script="${here}/cli_eth.txt" peer="${1:-loopback}" log="${build}/${mode}.log"
+        [[ "${mode}" == eth-load ]] && script="${here}/cli_eth_load.txt"
+        case "${peer}" in loopback|partner|none) ;; *) die "unknown line peer ${peer} (loopback, partner, none)" ;; esac
+        echo "VP_FX1_V3.0 ${mode}: scripted CLI session (${script}), --eth-peer ${peer}"
+        set +e
+        "${vp}" --fw "${fw}" --eth-peer "${peer}" --uart0-rx-file "${script}" "${rx_pacing[@]}" \
+            --timeout-ms 3000 > "${log}" 2>&1
+        rc=$?
+        set -e
+        grep -a -E "^eth (probe|start|send|stop|recover|selftest|cycle|load)|  eth .*: (PASS|FAIL)|poweroff:|RESULT" "${log}" \
+            | tr -d '\r' || true
+        if [[ ${rc} -eq 0 ]]; then
+            echo "ETH CLI PASS (log ${log})"
+        else
+            echo "ETH CLI FAIL, exit ${rc} (log ${log})"
+        fi
+        exit ${rc}
         ;;
     camera-cli)
         # The FreeRTOS CLI with the camera: probe, 64x32 RAW12 and RAW10 captures

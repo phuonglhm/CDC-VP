@@ -21,8 +21,8 @@ rebuild. `BUILD_MANIFEST.json` lists the values this binary was built with.
 | sim-control | `0x1002_0000` | 64 KiB slot | `FX1_SIM_CTRL_BASE` | **VP only, not on silicon**: PASS/FAIL verdict ends the simulation (`fx1_pass`, `fx1_fail`) |
 | I2C0 | `0x1003_0000` | 64 KiB slot | `FX1_I2C0_BASE` | I2C host (driver `drivers/camera/fx1_i2c.h`); the camera sensor at address 0x10 with `--camera`, no device otherwise |
 | ISP CSR | `0x1100_0000` | 64 KiB | `FX1_ISP_CSR_BASE` | register map in `include/fx1_isp/fx1_isp_csr.h` (generated from the ISP CSR specification) |
-| NPU, H.264/H.265, Ethernet CSR | `0x1101_0000` … `0x1103_0000` | 64 KiB each | `FX1_*_CSR_BASE` | reserved: not modelled, an access faults |
-| Ethernet MAC CSR | `0x1103_0000` | 64 KiB | `FX1_ETH_CSR_BASE` | aligned 32-bit accesses only; register map `drivers/eth/eth_regs.h`, driver `drivers/eth` (portable `eth_drv` + FX1 manager `fx1_eth`); DMA buffers in the linker section `.eth_dma` |
+| NPU, H.264/H.265 CSR | `0x1101_0000`, `0x1102_0000` | 64 KiB each | `FX1_*_CSR_BASE` | reserved: not modelled, an access faults |
+| Ethernet MAC CSR | `0x1103_0000` | 64 KiB | `FX1_ETH_CSR_BASE` | aligned 32-bit accesses only (others fault); register map `drivers/eth/eth_regs.h`, driver `drivers/eth` (portable `eth_drv` + FX1 manager `fx1_eth`); DMA buffers in the linker section `.eth_dma`; guide `eth/README.md` |
 | MIPI CSI-2 RX CSR | `0x1104_0000` | 64 KiB | `FX1_MIPI_CSR_BASE` | with `--camera`: register map `include/fx1_csi2/fx1_csi2_regs.h`, driver `drivers/csi2`; without it an access faults |
 | DDR3 controller CSR | `0x1200_0000` | 64 KiB | `FX1_DDR3_CSR_BASE` | AXI4-Lite, 32-bit accesses. The VP initializes the controller before the harts start, so firmware need not touch it |
 | DDR_SYSCTRL | `0x1201_0000` | 64 KiB | `FX1_DDR_SYSCTRL_BASE` | **VP only**: DDR3 readiness, power requests, QoS sideband, resets |
@@ -31,7 +31,9 @@ rebuild. `BUILD_MANIFEST.json` lists the values this binary was built with.
 The CPU sees an access fault (load mcause 5, store mcause 7) on:
 
 - an unmapped address, including the reserved devices;
-- a byte or halfword access to UART, SYS_DMA or I2C0. Hart 1 checks UART and SYS_DMA at boot.
+- a byte or halfword access to UART, SYS_DMA, I2C0 or the Ethernet MAC, and an
+  access to a hole in the Ethernet register map. Hart 1 checks UART, SYS_DMA
+  and the Ethernet MAC at boot.
 
 Treat every register block as word-only. Use naturally aligned 32-bit
 accesses (`fx1_read32` / `fx1_write32`); other sizes are not part of the

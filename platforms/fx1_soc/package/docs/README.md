@@ -20,15 +20,17 @@ one does not run on the other.
 |---|---|---|
 | CPU | 1 hart, Bremen riscv-vp, `rv32imac` / `ilp32` | **2 harts, RISC-V VP++, `rv32imafc` / `ilp32f`** (hardware FP) |
 | Interconnect | generic bus | FX1 bus model with an exclusive monitor (LR/SC and AMOs are correct against DMA) |
-| Peripherals | about 25 IPs (UART×2, I2C, SPI, timers, WDT, PWM, GPIO, …) | **UART, CLINT, PLIC, SYS_DMA, ISP, DDR3 controller, I2C0**, and with `--camera` the **CSI-2 RX camera path** ([camera/README.md](camera/README.md)) |
+| Peripherals | about 25 IPs (UART×2, I2C, SPI, timers, WDT, PWM, GPIO, …) | **UART, CLINT, PLIC, SYS_DMA, ISP, DDR3 controller, I2C0, Ethernet MAC + PHY** ([eth/README.md](eth/README.md)), and with `--camera` the **CSI-2 RX camera path** ([camera/README.md](camera/README.md)) |
 | Accelerators | NPU (functional) | **ISP** (functional, bit-exact to the stand-alone ISP model); no NPU |
 | Memory map | V2.0 map | FX1 placeholder map ([MEMORY_MAP.md](MEMORY_MAP.md)), pending the HAS |
 
 What is not modelled in V3.0:
 
-- NPU, H.264/H.265 and Ethernet: their addresses and IRQ IDs are reserved
-  only (MIPI CSI-2 RX is modelled with `--camera`, see
+- NPU and H.264/H.265: their addresses and IRQ IDs are reserved only
+  (MIPI CSI-2 RX is modelled with `--camera`, see
   [camera/README.md](camera/README.md));
+- a host network: the Ethernet MAC is modelled, but its line ends in a
+  loopback plug, an echo station or no cable (no TAP, no TCP/IP stack);
 - SPI/QSPI, timers, WDT, PWM, GPIO, RTC, ADC, TRNG, OTP (I2C0 is modelled);
 - PMU, CMU and clock/reset control;
 - caches and an MMU.
@@ -64,6 +66,17 @@ longer a plain RAM. Every CPU, SYS_DMA and ISP access to the DDR goes through it
   `make -C sw/bootloader/sources/VP_FX1_V3.0 ddr3` and run them with
   `sw/bootloader/test/VP_FX1_V3.0/run_vp.sh ddr3`.
 
+## Ethernet MAC
+
+The FTEL Ethernet MAC (CSR `0x1103_0000`, PLIC source 6) with its descriptor
+DMA and an RMII PHY on MDIO is part of the platform; `--eth-peer
+loopback|partner|none` chooses what is on the line (default loopback). The
+firmware ships the portable driver, the FX1 manager (`drivers/eth/fx1_eth.h`:
+lifecycle, interrupt split, DMA error recovery), the CLI's `eth` commands and
+a bare-metal example (`make eth`, `run_vp.sh eth`). Start with
+[eth/README.md](eth/README.md): API, ownership rules, error handling, options
+and limits.
+
 ## Quick start
 
 Run everything from the SDK repository root.
@@ -79,6 +92,10 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh smoke
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp            # D65 ColorChecker sample
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp outdoor1   # second sample (internal use only)
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw"   # your own frame (see "Your own RAW frame")
+
+# 4. Ethernet: scripted CLI session, and the bare-metal example on each line peer
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh eth-cli
+make -C sw/bootloader/sources/VP_FX1_V3.0 eth && sw/bootloader/test/VP_FX1_V3.0/run_vp.sh eth
 ```
 
 `run_vp.sh smoke` passes when hart 1's boot IP check reports 0 failures and
@@ -176,8 +193,9 @@ in `sw/bootloader/sources/VP_FX1_V3.0/README.md`.
    - BootROM is read-only;
    - a DDR window passes pattern and byte-merge tests;
    - an unmapped access faults;
-   - for CLINT, PLIC, UART, SYS_DMA and the ISP: ID/reset values, and
-     read/write registers that are restored afterwards.
+   - for CLINT, PLIC, UART, SYS_DMA, the ISP and the Ethernet MAC: ID/reset
+     values, and read/write registers that are restored afterwards (for the
+     MAC also the PHY ID over MDIO).
 3. Any failure halts the boot (`boot halted: hwcheck FAIL`, exit code 1,
    FAIL 0x50).
 4. Otherwise hart 0 starts the scheduler and the CLI.
@@ -188,7 +206,7 @@ in `sw/bootloader/sources/VP_FX1_V3.0/README.md`.
 | `uptime`, `tasks`, `heap` | tick time and `mtime`; tasks with state, priority and stack headroom; heap use |
 | `hwcheck` | reprint hart 1's boot report |
 | `md ADDR [WORDS]`, `mw ADDR VALUE` | 32-bit reads/writes in the mapped regions. An address the device rejects prints `bus error` instead of trapping |
-| `regdump isp\|dma\|plic\|clint\|uart` | key registers of one IP |
+| `regdump isp\|dma\|plic\|clint\|uart\|eth` | key registers of one IP |
 | `fpu test` | two tasks interleave FP work; results must equal the switch-free value bit for bit |
 | `dma test [BYTES]` | SYS_DMA memory-to-memory copy with completion IRQ, data verified |
 | `isp selftest` | 8 synthetic 64×48 frames through the ISP driver; every NV12 CRC must match the reference |
@@ -196,6 +214,7 @@ in `sw/bootloader/sources/VP_FX1_V3.0/README.md`.
 | `isp run` | process the RAW job loaded into DDR (`run_vp.sh isp`), result block for the host; profile mode by default (job version 2), legacy for a version-1 job |
 | `isp run legacy` | the same job in legacy mode, for comparison |
 | `isp stats` | AEC/AWB/AF statistics of the last frame |
+| `eth probe\|start\|stop\|send\|stats\|status\|recover\|selftest\|…` | the Ethernet MAC through the FX1 manager; full list in [eth/README.md](eth/README.md) |
 | `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` |
 | `poweroff` | end the simulation: PASS if no check failed so far, otherwise FAIL `0x400 + failures` |
 
@@ -222,6 +241,8 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
 | `--uart0-rx-file FILE [--uart0-rx-delay-us N] [--uart0-rx-byte-us N]` | type FILE into the UART N µs after CPU start, one byte per `--uart0-rx-byte-us` (use 60000 and 87 for the CLI, as `test/run_vp.sh` does) |
 | `--load ADDR:FILE`, `--dump ADDR:LEN:FILE` | copy host data into DDR before the CPUs start; write DDR to a file after the run (at `poweroff`) |
 | `--quantum-ns N` | TLM quantum, a multiple of 10 ns (default 1000) |
+| `--eth-peer loopback\|partner\|none` | what is on the Ethernet line: frames come back, an echo station, or link down (default loopback) |
+| `--eth-wb-delay-us N` | Ethernet fault injection: DES0 write-backs held N µs after DONE ([eth/README.md](eth/README.md)) |
 | `--trace` | bus trace |
 | `--version` | build identity: package, CDC-VP revision, build type, VP++ pin |
 
