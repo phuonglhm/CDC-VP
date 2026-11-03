@@ -58,6 +58,7 @@ required=(
     "${sdk}/third_party/FreeRTOS-Kernel/portable/GCC/RISC-V/portASM.S"
     "${build}/freertos_cli.elf" "${build}/freertos_cli.dis" "${build}/freertos_cli.map"
     "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/isp_auto.py" "${test}/cli_smoke.txt" "${test}/isp_run.txt"
+    "${test}/csrw_to_bin.sh"
 )
 for s in "${test}"/isp/*/; do
     for f in SAMPLE.txt job.env job.bin input.isp16 expected_nv12.sha256; do
@@ -76,7 +77,7 @@ for f in "${required[@]}"; do
 done
 [[ -d "${test}/isp/d65" ]] || bad "default ISP sample d65 missing"
 [[ ${missing} -eq 0 ]] && ok "${#required[@]} required files present"
-for f in "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${bin}/fx1_soc"; do
+for f in "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh" "${bin}/fx1_soc"; do
     [[ -x "${f}" ]] || bad "not executable: ${f}"
 done
 

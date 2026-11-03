@@ -132,6 +132,20 @@ rc=$?
     && pass "isp FILE.raw of the wrong size is refused (exit 2)" || bad "short RAW gave exit ${rc}"
 rm -rf "${tmp}/elsewhere/my raw" "${tmp}/elsewhere/short.raw" "${pkg}/sw/bootloader/build/${version}/isp/raw_"*
 
+step "4b. csrw_to_bin.sh rebuilds every shipped profile.bin from its profile.csrw"
+for csrw in "${test}"/profiles/*/profile.csrw; do
+    d="${tmp}/csrw/$(basename "$(dirname "${csrw}")")"
+    mkdir -p "${d}"
+    cp "${csrw}" "${d}/profile.csrw"
+    if run "${test}/csrw_to_bin.sh" "${d}/profile.csrw" > "${d}/log" 2>&1 \
+            && cmp -s "${d}/profile.bin" "$(dirname "${csrw}")/profile.bin"; then
+        pass "csrw_to_bin: $(basename "$(dirname "${csrw}")") profile.bin identical"
+    else
+        cat "${d}/log"
+        bad "csrw_to_bin: $(basename "$(dirname "${csrw}")") profile.bin differs or the script failed"
+    fi
+done
+
 step "5. firmware rebuilt from the shipped sources"
 want="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artefacts"]["sw/bootloader/build/VP_FX1_V3.0/freertos_cli.elf"]["sha256"])' \
     "${pkg}/vp/doc/${version}/BUILD_MANIFEST.json")"

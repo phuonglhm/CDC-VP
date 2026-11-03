@@ -171,7 +171,7 @@ vp/bin/VP_FX1_V3.0/                 fx1_soc + libsystemc.so.2.3
 vp/doc/VP_FX1_V3.0/                 this README, MEMORY_MAP.md, BUILD_MANIFEST.json, SHA256SUMS, licenses/
 sw/bootloader/sources/VP_FX1_V3.0/  FreeRTOS CLI firmware: app/, bsp/, include/, drivers/, kernel subset, Makefile
 sw/bootloader/build/VP_FX1_V3.0/    make outputs (freertos_cli.elf/.dis/.map); not tracked
-sw/bootloader/test/VP_FX1_V3.0/     run_vp.sh, fx1_console.sh, isp_pack.py, cli_smoke.txt, isp/<sample>/, profiles/<id>/
+sw/bootloader/test/VP_FX1_V3.0/     run_vp.sh, fx1_console.sh, isp_pack.py, csrw_to_bin.sh, cli_*.txt, isp/<sample>/, profiles/<id>/
 ```
 
 The firmware sources, their structure and how to add a command are described
@@ -274,6 +274,10 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   It is not a sensor calibration. Reading AWB statistics does not automatically
   update the WB gains; firmware needs an AWB algorithm for that.
   Changing a profile requires regenerating the golden for each affected sample.
+  After editing a `profile.csrw`, rebuild its `profile.bin` with
+  `sw/bootloader/test/VP_FX1_V3.0/csrw_to_bin.sh PATH/profile.csrw`; the
+  sample's `job.bin` must declare the same number of CSR writes (the script
+  warns when it changes, and does not update `job.bin`).
 - **Frames:** each job processes the same RAW twice from reset. The first frame
   warms up GTM auto; the delivered image and golden are from the second frame.
   When preparing a new sample, use `run_isp_demo.py --prepare-only --frames 2`

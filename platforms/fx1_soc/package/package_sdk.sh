@@ -183,8 +183,8 @@ cp "${fw}/freertos/tests/cli_smoke.txt" "${fw}/freertos/tests/cli_camera.txt" "$
 cp "${fw}/freertos/tests/cli_eth.txt" "${fw}/freertos/tests/cli_eth_load.txt" "${test}/"
 cp "${src}/platforms/fx1_soc/tools/fx1_console.sh" "${test}/"
 cp "${src}/platforms/fx1_soc/demo/isp_pack.py" "${test}/"
-cp "${here}/test/isp_auto.py" "${test}/"
-chmod +x "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py"
+cp "${here}/test/isp_auto.py" "${here}/test/csrw_to_bin.sh" "${test}/"
+chmod +x "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/fx1_package.XXXXXX")"
 trap 'rm -rf "${scratch}"' EXIT
