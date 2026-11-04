@@ -39,18 +39,24 @@ def sha256(path):
 def memory_map(header):
     text = open(header).read()
     val = lambda name: int(re.search(r"#define\s+%s\s+FX1_U32\((0x[0-9A-Fa-f]+|\d+)\)" % name, text).group(1), 0)
-    regions = []
-    for name, size in (("BOOTROM", "FX1_BOOTROM_SIZE"), ("SRAM", "FX1_SRAM_SIZE"), ("CLINT", "FX1_CLINT_SIZE"),
-                       ("PLIC", "FX1_PLIC_SIZE"), ("UART", "FX1_APB_SLOT_SIZE"), ("SYS_DMA_CSR", "FX1_APB_SLOT_SIZE"),
-                       ("SIM_CTRL", "FX1_APB_SLOT_SIZE"), ("I2C0", "FX1_APB_SLOT_SIZE"), ("ISP_CSR", "FX1_APB_SLOT_SIZE"),
-                       ("MIPI_CSR", "FX1_APB_SLOT_SIZE"),
-                       ("DDR3_CSR", "FX1_DDR3_CSR_APERTURE_SIZE"), ("DDR_SYSCTRL", "FX1_DDR_SYSCTRL_SIZE"),
-                       ("DDR", "FX1_DDR_SIZE")):
-        regions.append({"name": name, "base": "0x%08x" % val("FX1_%s_BASE" % name), "size": "0x%08x" % val(size)})
+    # Every FX1_<name>_BASE of the address-map section, so that a block added to
+    # the header cannot be left out by hand. Size: FX1_<name>_APERTURE_SIZE, else
+    # FX1_<name>_SIZE, else one APB slot. "reserved" in the comment: decoded,
+    # nothing behind it (an access faults).
+    section = text[text.index("Address map"):text.index("---- Harts")]
+    regions, reserved = [], []
+    for m in re.finditer(r"#define\s+FX1_(\w+)_BASE\s+FX1_U32\(\w+\)(.*)", section):
+        name = m.group(1)
+        size = next((k for k in ("FX1_%s_APERTURE_SIZE" % name, "FX1_%s_SIZE" % name)
+                     if re.search(r"#define\s+%s\s" % k, text)), "FX1_APB_SLOT_SIZE")
+        r = {"name": name, "base": "0x%08x" % val("FX1_%s_BASE" % name), "size": "0x%08x" % val(size)}
+        (reserved if "reserved" in m.group(2) else regions).append(r)
+    regions.sort(key=lambda r: int(r["base"], 16))
     irqs = {m.group(1): int(m.group(2)) for m in re.finditer(r"#define FX1_IRQ_(\w+)\s+FX1_U32\((\d+)\)", text)}
     return {
         "status": "VP placeholder values, pending the HAS; firmware must use fx1_memory_map.h, not literals",
         "regions": regions,
+        "reserved_regions": reserved,
         "plic_sources": irqs,
         "harts": val("FX1_NUM_HARTS"),
         "mtime_hz": val("FX1_MTIME_HZ"),
@@ -96,7 +102,8 @@ def main():
         "platform": "fx1_soc",
         "generated_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "summary": "FX1 SoC VP: 2 x RV32IMAFC (VP++) harts, FX1 bus, CLINT, PLIC, PL011-style UART, SYS_DMA, "
-                   "FX1 ISP, DDR3 controller (ECC, preinitialized by the VP before the harts start). "
+                   "FX1 ISP, DDR3 controller (ECC, preinitialized by the VP before the harts start), I2C0, "
+                   "Ethernet MAC + PHY (no host network), CSI-2 RX camera path with --camera. "
                    "FreeRTOS V11.2.0 CLI on hart 0, boot IP check on hart 1. "
                    "Not a superset of VP_FX1_V2.0: different CPU, ABI and memory map; see README.md.",
         "source": {
@@ -132,9 +139,11 @@ def main():
                     "DDR3 controller (NATIVE_R2, DDR3-1600, 2 ranks 4 Gb x8, ECC; CSR, init, training, scrub, "
                     "power, error injection from the host)", "DDR_SYSCTRL sideband glue (VP only)", "boot SRAM",
                     "sim-control finisher (VP only)", "I2C0 host (functional)",
+                    "Ethernet MAC (FTEL, MAS v1.0.7; functional LT) with descriptor DMA through the write guard, "
+                    "RMII PHY on MDIO, scripted line peer (loopback, partner, none)",
                     "camera with --camera: CSI-2 RX controller + DMA (MIPI_DMA), detailed D-PHY RX model, "
                     "CCS-subset camera sensor model on I2C0"],
-        "absent": ["NPU", "H.264/H.265", "Ethernet", "SPI/QSPI", "timers/WDT/PWM", "GPIO", "RTC",
+        "absent": ["NPU", "H.264/H.265", "host network (TAP)", "SPI/QSPI", "timers/WDT/PWM", "GPIO", "RTC",
                    "ADC", "TRNG", "OTP", "PMU/CMU/clock-reset", "caches", "MMU"],
         "camera": {
             "built": "CSI-2 RX" in ver,
@@ -144,7 +153,18 @@ def main():
             "firmware": "camera manager (CSI-2 -> ISP -> NV12), FreeRTOS CLI `camera` commands, "
                         "camera and camera -> ISP examples",
             "open_items": ["RAW12 zero-copy writes the ISP's IDMA_BUF_ADDR outside the ISP driver: "
-                           "to be confirmed by the ISP owner"],
+                           "to be confirmed by the ISP owner",
+                           "drivers/camera/fx1_i2c.c completion check after preemption: reviewed and regression-"
+                           "tested, sign-off by the CSI-2 owner pending"],
+        },
+        "ethernet": {
+            "built": "--eth-peer" in sh([binp, "--help"]),
+            "option": "--eth-peer loopback|partner|none (default loopback) [--eth-wb-delay-us N]",
+            "firmware": "portable driver (drivers/eth/eth_drv) and FX1 manager (drivers/eth/fx1_eth), FreeRTOS CLI "
+                        "`eth` commands, bare-metal example eth/eth_wiring.c (make eth)",
+            "guide": "vp/doc/%s/eth/README.md" % VERSION,
+            "limits": ["no host network: no TAP, no TCP/IP stack", "link fixed for a run by --eth-peer",
+                       "functional, loosely timed: no throughput or latency figures"],
         },
         "isp_samples": json.load(open(a.samples)),
         "artefacts": artefacts,

@@ -328,7 +328,9 @@ vp/bin/VP_FX1_V3.0/fx1_soc --version
   - the CDC-VP revision, and whether the tree was clean;
   - the compilers;
   - the VP++ pin and patch series, and the FreeRTOS pin;
-  - the memory and IRQ map, the samples and their expected hashes;
+  - the memory and IRQ map (generated from `fx1_memory_map.h`; `check_package.sh`
+    checks it against the shipped header), the modelled and absent blocks, the
+    samples and their expected hashes;
   - the SHA-256 of every binary, including the packaged firmware ELF.
 
 ## Limits

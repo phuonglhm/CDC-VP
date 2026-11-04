@@ -184,10 +184,33 @@ for s in m["isp_samples"]:
         errors.append("sample %s: job profile_count differs from the shared profile" % s["name"])
     if "frames" in s and (not words or s["frames"] != words[11]):
         errors.append("sample %s: job frames differs from the manifest" % s["name"])
+# The map and the device lists against the shipped fx1_memory_map.h: every block
+# decoded there is in regions (or reserved_regions), with its base, and a
+# modelled block is described as modelled, not absent.
+hdr = open(os.path.join(root, "sw/bootloader/sources/VP_FX1_V3.0/include/fx1/fx1_memory_map.h")).read()
+sect = hdr[hdr.index("Address map"):hdr.index("---- Harts")]
+decl = re.findall(r"#define\s+FX1_(\w+)_BASE\s+FX1_U32\((0x[0-9A-Fa-f]+)\)(.*)", sect)
+bases = {n: int(v, 0) for n, v, _ in decl}
+listed = {r["name"]: int(r["base"], 16) for r in m["memory_map"]["regions"] + m["memory_map"].get("reserved_regions", [])}
+if listed != bases:
+    errors.append("manifest memory_map differs from fx1_memory_map.h: missing %s, extra or moved %s"
+                  % (sorted(set(bases) - set(listed)), sorted(n for n in listed if bases.get(n) != listed[n])))
+irqs = {n: int(v) for n, v in re.findall(r"#define FX1_IRQ_(\w+)\s+FX1_U32\((\d+)\)", hdr)}
+if m["memory_map"]["plic_sources"] != irqs:
+    errors.append("manifest plic_sources differ from fx1_memory_map.h")
+modeled = " ".join(m["modeled"]).lower()
+absent = [a.lower() for a in m["absent"]]
+for region, word in (("UART", "uart"), ("SYS_DMA_CSR", "sys_dma"), ("I2C0", "i2c0"), ("ISP_CSR", "isp"),
+                     ("ETH_CSR", "ethernet"), ("MIPI_CSR", "csi-2"), ("DDR3_CSR", "ddr3")):
+    if any(n == region and "reserved" not in c for n, _, c in decl):
+        if word not in modeled or word not in m["summary"].lower():
+            errors.append("%s is decoded but '%s' is not in the manifest modeled list and summary" % (region, word))
+        if any(word in a for a in absent):
+            errors.append("%s is decoded but the manifest lists '%s' as absent" % (region, word))
 for e in errors:
     print("  FAIL " + e)
 if not errors:
-    print("  ok   manifest: %d artefacts, revision %s (%s), %d sample(s)"
+    print("  ok   manifest: %d artefacts, revision %s (%s), %d sample(s), map = fx1_memory_map.h"
           % (len(m["artefacts"]), m["source"]["package_revision"][:12],
              "dirty" if m["source"]["dirty_at_package_time"] else "clean", len(m["isp_samples"])))
 sys.exit(1 if errors else 0)
