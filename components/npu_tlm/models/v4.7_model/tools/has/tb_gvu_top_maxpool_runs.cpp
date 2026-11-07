@@ -2,7 +2,7 @@
 // gvu_top.sv) over a whole tensor in runs of `group` channels, written as the same cycle trace, so that the two traces can be
 // compared line by line.
 //   reset 1 (default): the unit is reset before every run after the first, outside the cycle count (what the model's data flow
-//                      controller does, has/gvu_top_stream.h reset_unit; with patch B12 the RTL needs no reset, and its trace
+//                      controller does, has/gvu_top_stream.h reset_unit; with the count cleared between runs (revision 1) the RTL needs no reset, and its trace
 //                      run back to back must equal this one);
 //   reset 0          : runs back to back with no reset (the port behaves as the RTL as delivered: runs after the first go wrong).
 // Run r: channels r*group .. r*group+n-1 of input.txt ([C][H][W] int8, already padded) poked into vbank0 buffer 0 from row 0
@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include "has/rtl_ref_gvu_top.h"
+#include "has/neo_rev.h"
 
 using namespace rtl_ref_gvu;
 
@@ -46,7 +47,9 @@ int main(int argc, char **argv)
     const int wt = (w + 31) / 32, oh = (h - k) / s + 1;
     FILE *fo = std::fopen(argv[2], "wb");   // LF line ends on every host, so trace sha256 values compare
     if (!fo) return 2;
-    GvuTop dut;
+    GvuTopParams tp;
+    tp.neo_rev = has::neo_rev();   // HAS_NEO_REV=1: the unit of neo_lite RTL revision 1 (dense max pool write with stride 2 / 4)
+    GvuTop dut(tp);
     reset(dut);
     long total = 0;
     int run = 0;

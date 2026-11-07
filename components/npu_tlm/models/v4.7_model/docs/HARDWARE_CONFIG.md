@@ -138,7 +138,7 @@ Channels: CH0 weights, CH1 input window, CH2 write-back, CH3 bias preload and ta
 | `lut_zero0` | 0: largest value | 1 | LUT input 0 returns 0 (functional-unit RTL). Environment `HAS_LUT_ZERO0` |
 | `lut_stages` | 4 | 4 | Pipeline stages of the reciprocal LUT in the softmax cycle estimate: 4 in the RTL with its default parameters, 6 in the micro-architecture specification. Environment `HAS_LUT_STAGES` |
 | `sp_s_word32` | 0: 5 bytes per LayerNorm channel | 1 | Every scalar parameter takes one int32 word of the scalar bank (8 bytes per LayerNorm channel), as the scalar-bank port of the RTL. Environment `HAS_SP_S_WORD32` |
-| `zp_add_wrap16` | 0 | 0 | 1 = the zero-point adder of the requantization wraps at 16 bits as in the RTL, instead of saturating. Off by default: reported to the hardware team as a possible defect. No effect on either network. Environment `HAS_ZP_ADD_WRAP16` |
+| `zp_add_wrap16` | 0 | 0 | 1 = the zero-point adder of the requantization wraps at 16 bits as in the RTL, instead of saturating. Off by default: a possible defect of the RTL. No effect on either network. Environment `HAS_ZP_ADD_WRAP16` |
 | `round_mode` | half up | half up | Floor, half up, half away, half even, ceil, toward zero, away from zero (`HAS_ROUND_MODE` 0 to 6); the last three were added from the micro-architecture specification |
 | `lat_obp` | 6 | 10 | Epilogue pipeline latency (cycles) |
 | `lat_add1`, `lat_add2`, `lat_max` | 6, 5, 3 | 8, 10, 3 | ELEM_WISE stage latencies (cycles) |
@@ -216,7 +216,7 @@ registers (more than 65,535 columns). Whether the comparators fit a clock period
 
 | Option | Default | Meaning |
 |---|---|---|
-| `HAS_GVU_TOP` (environment) | 3 | 0: the functional vector unit of the previous releases. 1: the GEMM epilogue (stream mode of GEMM_FUSED, nine stages) and the residual add of the instruction path run on the vector-unit top level `GvuTop` (`has/rtl_ref_gvu_top.h`, socket `has/gvu_top_bridge.h`); max pool also runs on `GvuTop` (a shape `GvuTop` does not have goes per channel to the cycle-level max pool pipeline); values are compared with the functional model and a `[gvu-top]` table is printed at exit. 2: as 1, and the activation table of a layer costs a DMA of 256 bytes plus 5 cycles (`GvuTop`'s own path) instead of 4,096 host-port cycles. 3: level B, `GvuTop` on the core clock connected by the PSM-to-GVU stream (`GVU_TOP_CORE_INTEGRATION.md`, sections 4.2 and 5) |
+| `HAS_GVU_TOP` (environment) | 3 | 0: the functional vector unit of the previous releases. 1: the GEMM epilogue (stream mode of GEMM_FUSED, 11 stages by default) and the residual add of the instruction path run on the vector-unit top level `GvuTop` (`has/rtl_ref_gvu_top.h`, socket `has/gvu_top_bridge.h`); max pool also runs on `GvuTop` (a shape `GvuTop` does not have goes per channel to the cycle-level max pool pipeline); values are compared with the functional model and a `[gvu-top]` table is printed at exit. 2: as 1, and the activation table of a layer costs a DMA of 256 bytes plus 5 cycles (`GvuTop`'s own path) instead of 4,096 host-port cycles. 3: level B, `GvuTop` on the core clock connected by the PSM-to-GVU stream (`GVU_TOP_CORE_INTEGRATION.md`, sections 4.2 and 5) |
 | `HAS_GVU_STALL` (environment, with `HAS_GVU_TOP=3`) | 1 | 1: the core stops on `o_stream_stall` as `psm_top.sv` does (`GVU_TOP_CORE_INTEGRATION.md`, section 2.5); 0: the stall is computed and counted only |
 | `HAS_GVU_ELEM_CLK` (environment, with `HAS_GVU_TOP=3`) | 1 | 1: residual add and max pool run as jobs on the clock of `GvuTop` instead of the call style; same values and cycles (`GVU_TOP_CORE_INTEGRATION.md`, sections 2.6, 2.7) |
 | `HAS_GVU_REGS` (environment, with `HAS_GVU_TOP=3`) | 1 | 1: the data flow controller configures and starts `GvuTop` only through the register file (`GVU_DFC_REFERENCE_FLOW.md`); implies `HAS_GVU_ELEM_CLK=1` |
@@ -228,7 +228,7 @@ registers (more than 65,535 columns). Whether the comparators fit a clock period
 | `HAS_GVU_TOP_DUMP=<file>` (environment, with `HAS_GVU_TOP` 1 or 3) | not set | One line per epilogue beat; changes no value and no cycle (`GVU_TOP_CORE_INTEGRATION.md`, section 1.3) |
 | `HAS_OBP_DUMP=<file>` (environment, with `HAS_OBP_RTL=1`) | not set | Writes every activation table and epilogue beat to the file for `tools/has/tb_gvu_top_replay.cpp`; changes no value and no cycle |
 
-With `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0` the model computes and counts what the previous release did;
+With `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0` the model computes and counts what an earlier release did;
 with `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0` (the four operation knobs then have no
 effect), what the releases before it did. The other vector-unit options (`HAS_ELEM_RTL`,
 `HAS_OBP_RTL`, `HAS_ARITH_RTL`, `HAS_RANGE_PROBE`, `HAS_PSM_PROBE`) are described in `GVU_RTL_CONFORMANCE.md`,
@@ -246,19 +246,30 @@ section 4.10. Results: `VERIFICATION_REPORT.md`, V35; limits: `KNOWN_LIMITATIONS
 
 | Option | Default | Meaning |
 |---|---|---|
+| `HAS_DMA_RESHAPE` (environment) | 1 | 1: `DMA_TENSOR` modes 2 (upsample) and 3 (reshape) are accepted, and the ELEM_WISE aliases; 0 refuses them with `UNSUPPORTED_MODE`; `COMPILER_GUIDE.md`, section 7.2 |
+| `HAS_DMA_RESHAPE_T` (environment) | 0 | 1: the transpose flag of a reshape is accepted (an experiment); 0 refuses it |
+| `HAS_HOST` (environment) | `neo` when not set | `neo`: the register-file window of the DFC is served at model address `0x40000800`; `neo_patched`: also the class-A codes of `HAS_HOST_NEO_PATCHES` (default `A-H1,A-H4`); `v45` or any other value: no window; `HAS_HOST_NEO_QUIET=1` silences the stderr line per refused layer (`NEO_REGISTER_FILE.md`, section 6) |
+| `HAS_HW_CHECK` (environment) | 0 | 1: one line per instruction and a summary table, whether the hardware would run it as written (`COMPILER_GUIDE.md`, section 3); changes no value and no cycle |
 | `HAS_DMA_ND` (environment) | 1 | 1: ELEM_WISE mode 6 (slice) and mode 7 (concat) are accepted and run by the DMA from DRAM to DRAM in chunks of `HAS_DMA_TENSOR_CHUNK` bytes through DMA SRAM bank 4; the tile input window and the tile write-back of GEMM_FUSED go through 4-D descriptors (same bytes and cycles). 0: modes 6 / 7 are refused with UNSUPPORTED_MODE. A proposal of the model team (`DMA_SLICE_CONCAT.md`; limits: `KNOWN_LIMITATIONS.md`, O34) |
 
 ### 6.9 Options that follow the `neo_lite` RTL, and the transpose after the epilogue
 
-All off by default; with all of them off nothing changes. Details, measured costs and what is not modelled:
+Off by default, except `HAS_DMA_ND_MERGE` and `HAS_OUT_TRANSPOSE`, which are on in this release (the second acts only on a program that writes `TMAJ_C0`). Details, measured costs and what is not modelled:
 `HW_RTL_ALIGNMENT.md`.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `HAS_GVU_REGS_NEO` (environment) | 0 | 1: register map of the vector unit of the RTL (14 registers, byte addresses, opcode outside CONTROL) run next to the model's register file; 14 writes per command |
+| `HAS_GVU_REGS_NEO` (environment) | 0 | 1: the vector unit runs on the register map of the RTL (14 registers, byte addresses, opcode outside CONTROL; proposals at 14 to 31), 14 writes per command, ping-pong buffers switched on the enable edge |
 | `HAS_GVU_VBANK1_DEPTH` (environment) | 32 | Rows of vbank#1; 200 (25 KB) as in the RTL |
 | `HAS_GVU_RESIDUAL_HW` (environment) | 0 | 1: residual add through the RESIDUAL operation (opcode 6) of the RTL, one vector per cycle, 13 + vectors cycles |
-| `HAS_DMA_DFC_1D` (environment) | 0 | 1: slice / concat as one-dimensional DMA commands: first command 19 cycles, next command 15, end 7, data one 128-bit beat per cycle, pieces of at most 25,600 bytes |
+| `HAS_DMA_DFC_1D` (environment) | 0 | 1: slice / concat as one-dimensional DMA commands: first command 6 core cycles (`HAS_DMA_DFC1D_FIRST`), next command 15 (`HAS_DMA_DFC1D_CHAIN`), end 3 (`HAS_DMA_DFC1D_TAIL`; single-clock measurement: 19 / 15 / 7; also `HAS_DMA_DFC1D_STAGE`, `HAS_DMA_DFC1D_RESTART`, `HAS_DMA_DFC1D_REPORT`), data one 128-bit beat per cycle, pieces of at most 25,600 bytes |
 | `HAS_GVU_OUT_VBANK2` (environment) | 0 | 1: GEMM_FUSED write-back as vbank2 -> DRAM by DFC commands (cost of the line above) |
 | `HAS_BUS_STRICT` (environment) | 0 | 1: per-channel scale / shift of a tile (8 bytes per channel) on the DMA read port with the bias prefetch; Softmax output A written out of the vector unit and read into SRAM A |
-| `HAS_OUT_TRANSPOSE` (environment) | 0 | 1: corner turn of two W x W int8 banks after the epilogue; channels from `TMAJ_C0` on written token-major (proposal of the model) |
+| `HAS_OUT_TRANSPOSE` (environment) | 1 | 1: corner turn of two W x W int8 banks after the epilogue; channels from `TMAJ_C0` on written token-major (proposal of the model) |
+| `HAS_DMA_ND_MERGE` (environment) | 1 | 1: contiguous dimensions of a slice / concat descriptor are merged before it is cut into DMA pieces (proposal) |
+| `HAS_GVU_FA_OVERLAP` (environment) | 0 | 1: the attention requant of one core pass runs on the vector unit during the next pass (proposal P-FA5) |
+| `HAS_GVU_NEO_CDC_LAT` (environment) | 4 | With `HAS_GVU_REGS_NEO=1`: cycles of the multiplexer and clock-domain crossing of `neo_top` per register write chain; 0 removes them |
+| `HAS_GVU_NEO_PP` (environment) | 1 | With `HAS_GVU_REGS_NEO=1`: the four buffer-select flops toggle on the enable edge; 0 turns this one behaviour off (test only) |
+| `HAS_NEO_REV` (environment) | 0 | Revision the options of this section follow: 0 = RTL revision 0, 1 = RTL revision 1 (register 12 order, forced buffer swap and final CONTROL write, dense max-pool layout, pool feeder; output tiles not contiguous in DRAM re-open a DFC command) |
+| `HAS_DFC_CORE_DMA` (environment) | 0 | With `HAS_NEO_REV=1`: each read transfer of a core tile starts `commands + (commands − 1) x 15` cycles late, one command per contiguous DRAM run of the input window |
+| `HAS_PROFILE` (environment) or `--profile` | unset | `neo` / `neo_as_rtl`: sets the options of this section to the hardware RTL revision 1 and the proposals of the model to 0 in one step (`COMPILER_GUIDE.md`, section 5) |

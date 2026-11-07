@@ -5,7 +5,11 @@
 //
 //   tb_has_npu_top <insts dir> [--profile P] [--first F] [--count N] [--trace] [--dma v45|has] [--dram-lat N] [options]
 //
-//   --profile P  recommended (default): configuration of the reference results -- overlapped ping-pong schedule,
+//   --profile P  (or the environment variable HAS_PROFILE; the option wins)
+//                neo | neo_as_rtl: the knobs of the model that follow neo_lite RTL revision 1 (has/has_profile_neo.h): recommended without the
+//                3-D descriptors, REV 1, every neo knob on, the proposals the RTL does not have off; neo_as_rtl adds the knobs that imitate
+//                the RTL (rounding, narrowing, Softmax stage 3). A HAS_* variable set by the caller wins over the table of the profile.
+//                recommended (default): configuration of the reference results -- overlapped ping-pong schedule,
 //                HAS AXI-128 DMA, epilogue inline on the PSM -> SRAM-C path, banked scratchpad, vector-unit latencies,
 //                3-D DMA descriptors, per-layer tile order, attention products on the core.
 //                proposals: recommended + the two proposed hardware options (--c-bcast, --halo).
@@ -113,6 +117,7 @@ SC_MODULE(TbHasNpuTop)
     static int g_halo_bpc;
     static bool g_rce_core;
     static bool g_c_bcast;
+    static bool g_profile_neo;   // a neo profile is selected: a refused instruction is also explained in terms of the hardware (B-DMA)
     static Knobs g_knobs;
     static double g_clk_ns;   // clock period in ns (--clk-ns); cycle counts do not depend on it
     static uint64_t now_cycles() { return sc_time_stamp().value() / uint64_t(g_clk_ns * 1000.0 + 0.5); }
@@ -204,11 +209,31 @@ SC_MODULE(TbHasNpuTop)
                     in.opcode = uint8_t(e.val);
                     in.out_addr = sticky[(M::OUT_ADDR - M::IN_ADDR) / 4];
                     const uint32_t mode = sticky[(M::MODE_PACK - M::IN_ADDR) / 4];
+                    // the mode as the decoder reads it (has_mmio_compat.h: packed form when bits 16..31 are set): the new DMA upsample / reshape modes only
+                    const uint32_t mp = (mode & 0xFFFF0000u) ? (mode >> 24) & 0xFFu : mode;
                     if (in.opcode == 0x12) { in.c = ext[M::X_OUT_C]; in.h = ext[M::X_OUT_H]; in.w = ext[M::X_OUT_W]; }
                     else if (in.opcode == 0x13)   // FUSED_ATTN: O = [NQ][D], NQ = X_ROWS or LEN
                     { in.c = 1; in.h = ext[M::X_ROWS] ? ext[M::X_ROWS] : sticky[(M::LEN - M::IN_ADDR) / 4]; in.w = sticky[(M::R458 - M::IN_ADDR) / 4]; }
                     else if (in.opcode == 0x14)   // LAYERNORM: Y = [rows][H] int8 (w doubled below for int16 outputs)
                     { in.c = 1; in.h = ext[M::X_ROWS]; in.w = sticky[(M::LEN - M::IN_ADDR) / 4]; in.param = ext[M::X_PARAM_ADDR]; }
+                    else if ((in.opcode == 0x16 && (mp == 2 || mp == 8)) || (in.opcode == 0x15 && mp == 8))   // DMA_UPSAMPLE
+                    {
+                        in.c = ext[M::X_IN_C];
+                        const uint32_t s = std::max(1u, sticky[(M::STRIDE - M::IN_ADDR) / 4]);
+                        const uint32_t sh = ext[M::X_OUT_H] ? (ext[M::X_OUT_H] / std::max(1u, ext[M::X_IN_H]))
+                                                            : (ext[M::X_POOL_K] ? ext[M::X_POOL_K] : s);
+                        const uint32_t sw = ext[M::X_OUT_W] ? (ext[M::X_OUT_W] / std::max(1u, ext[M::X_IN_W]))
+                                                            : (ext[M::X_POOL_P] ? ext[M::X_POOL_P] : (ext[M::X_POOL_K] ? ext[M::X_POOL_K] : s));
+                        in.h = ext[M::X_IN_H] * sh;
+                        in.w = ext[M::X_IN_W] * sw;
+                    }
+                    else if ((in.opcode == 0x16 && (mp == 3 || mp == 9)) || (in.opcode == 0x15 && mp == 9))   // DMA_RESHAPE
+                    {
+                        const uint64_t total = ext[M::X_IN_C]
+                            ? uint64_t(ext[M::X_IN_C]) * std::max(1u, ext[M::X_IN_H]) * std::max(1u, ext[M::X_IN_W])
+                            : uint64_t(sticky[(M::LEN - M::IN_ADDR) / 4]);
+                        in.c = 1; in.h = 1; in.w = uint32_t(total);
+                    }
                     else if (mode == 0) { in.c = 1; in.h = 1; in.w = sticky[(M::LEN - M::IN_ADDR) / 4]; }
                     else if (mode == 6)   // DMA_SLICE
                     {
@@ -230,7 +255,7 @@ SC_MODULE(TbHasNpuTop)
                     }
                     else
                     {
-                        const uint32_t k = ext[M::X_POOL_K], p = ext[M::X_POOL_P], s = sticky[(M::STRIDE - M::IN_ADDR) / 4];
+                        const uint32_t k = ext[M::X_POOL_K], p = ext[M::X_POOL_P], s = std::max(1u, sticky[(M::STRIDE - M::IN_ADDR) / 4]);
                         in.c = ext[M::X_IN_C];
                         in.h = (ext[M::X_IN_H] + 2 * p - k) / s + 1;
                         in.w = (ext[M::X_IN_W] + 2 * p - k) / s + 1;
@@ -350,6 +375,16 @@ SC_MODULE(TbHasNpuTop)
                     // The decoder refused the push: the instruction is not queued and never retires, so it is not waited for.
                     std::printf("[tb_has_npu_top] instruction %d (%s) REFUSED at the push: STATUS 0x%08x, error code %u; its output is not checked\n",
                                 i, ins[i].label.c_str(), s, s >> 16);
+                    if (g_profile_neo)
+                    {
+                        // the codes of COMPILER_GUIDE.md, support matrix: the DMA of neo_lite RTL revision 1 is 1-D and has no DMA-only opcode
+                        const uint32_t op = e.val & 0xFFu, code = s >> 16;
+                        const bool copy = op == 0x16u && code == 4u;
+                        const bool slice_concat = op == 0x15u && code == 5u && (ins[i].label.find("SLICE") != std::string::npos || ins[i].label.find("CONCAT") != std::string::npos);
+                        if (copy || slice_concat)
+                            std::printf("[tb_has_npu_top] hw-check: instruction %d refused because HW revision 1 has no %s opcode (B-DMA); the profile runs programs that join by address (insts_pe3)\n",
+                                        i, copy ? "COPY" : "slice / concat");
+                    }
                     mmio_errors++;
                     refused++;
                     mmio_write(M::STATUS, 0);
@@ -465,6 +500,7 @@ bool TbHasNpuTop::g_s4 = false;
 bool TbHasNpuTop::g_halo = false;
 int TbHasNpuTop::g_halo_bpc = -1;
 bool TbHasNpuTop::g_rce_core = false;
+bool TbHasNpuTop::g_profile_neo = false;
 bool TbHasNpuTop::g_c_bcast = false;
 Knobs TbHasNpuTop::g_knobs;
 double TbHasNpuTop::g_clk_ns = 10.0;
@@ -485,6 +521,13 @@ int sc_main(int argc, char *argv[])
     int dram_lat = 0;
     std::string dma;
     Profile profile = Profile::Recommended;
+    switch (profile_neo::from_env())   // HAS_PROFILE; --profile below wins
+    {
+    case 1: profile = Profile::Neo; break;
+    case 2: profile = Profile::NeoAsRtl; break;
+    case -1: std::fprintf(stderr, "unknown HAS_PROFILE %s (neo | neo_as_rtl)\n", std::getenv("HAS_PROFILE")); return 2;
+    default: break;
+    }
     for (int i = 2; i < argc; i++)
     {
         const std::string a = argv[i];
@@ -494,7 +537,9 @@ int sc_main(int argc, char *argv[])
             if (p == "legacy") profile = Profile::Legacy;
             else if (p == "recommended") profile = Profile::Recommended;
             else if (p == "proposals") profile = Profile::Proposals;
-            else { std::fprintf(stderr, "unknown profile %s (legacy | recommended | proposals)\n", p.c_str()); return 2; }
+            else if (p == "neo") profile = Profile::Neo;
+            else if (p == "neo_as_rtl") profile = Profile::NeoAsRtl;
+            else { std::fprintf(stderr, "unknown profile %s (legacy | recommended | proposals | neo | neo_as_rtl)\n", p.c_str()); return 2; }
         }
         else if (a == "--first" && i + 1 < argc) first = std::atoi(argv[++i]);
         else if (a == "--count" && i + 1 < argc) count = std::atoi(argv[++i]);
@@ -514,10 +559,14 @@ int sc_main(int argc, char *argv[])
         else if (a == "--clk-ns" && i + 1 < argc) TbHasNpuTop::g_clk_ns = std::atof(argv[++i]);
     }
     // A profile sets the defaults of the options below; single options on the command line are added on top.
+    // neo profiles: the variables of the profile go into the environment now, before any part reads its knob (has/has_profile_neo.h)
+    if (profile_is_neo(profile) && apply_env_profile(profile_name(profile), stdout) != 0) return 2;
+    TbHasNpuTop::g_profile_neo = profile_is_neo(profile);
     if (profile != Profile::Legacy)
     {
         overlap = sp_banked = gvu_lat = true;
-        TbHasNpuTop::g_obp_inline = TbHasNpuTop::g_desc3d = TbHasNpuTop::g_s4 = TbHasNpuTop::g_rce_core = true;
+        TbHasNpuTop::g_obp_inline = TbHasNpuTop::g_s4 = TbHasNpuTop::g_rce_core = true;
+        if (!profile_is_neo(profile)) TbHasNpuTop::g_desc3d = true;   // neo: no 3-D descriptors (--desc3d adds them back)
         if (dma.empty()) dma = "has";
     }
     if (profile == Profile::Proposals) TbHasNpuTop::g_halo = TbHasNpuTop::g_c_bcast = true;
@@ -535,6 +584,7 @@ int sc_main(int argc, char *argv[])
                 dma.c_str(), dp.bytes_per_beat, dp.burst_beats, dp.dram_latency, int(dp.ch3_low_priority));
     TbHasNpuTop tb("tb", argv[1], first, count, trace, overlap, dp);
     tb.i_clk(clk);
+    if (profile_is_neo(profile) && verify_env_profile(stdout) != 0) return 3;
     sc_start();
     return tb.exit_code;
 }

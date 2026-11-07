@@ -6,7 +6,7 @@
 //      byte for byte, rows outside the destination unchanged, source unchanged; cycles = N + 3 without idle cycles; then 300
 //      random programs (negative strides included) whose every address lies inside its bank
 //   T7 idle cycles (30 % of the read requests held back): idle cycles keep the address -> 0 rows wrong; idle_reload (as AGU_INCR
-//      does) -> rows wrong (the B18 kind of fault)
+//      does) -> rows wrong (the kind of fault an idle cycle inside a stream causes)
 //   T8 GvuVlsuNdPort: (a) unbound, and bound with AGU_ND_CTRL off = the frozen GvuVlsu, every Out field, every cycle;
 //      (b) vbank0 with a source and a destination picked per phase by sel (residual add: A read, result written), phases
 //      switched by i_agu_addr_reset with the pick of the new phase: address of every access = addr_at of the program of the phase

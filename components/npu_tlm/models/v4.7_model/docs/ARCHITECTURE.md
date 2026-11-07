@@ -261,6 +261,8 @@ Host MMIO (v4.5 protocol + extension + status registers)
        -> HasObp (requant, LUT)          -> HasElemwise (ADD, MAX_POOL, AVG_POOL)
        -> FUSED_ATTN (Q.K^T and A.V on the core, softmax) and LAYERNORM in the vector-unit blocks
   -> STATUS / RETIRED registers, o_irq
+Second front end (default): register-file window of the neo_lite DFC at 0x40000800, doorbell PUSH_A = 0x17 (NEO_REGISTER_FILE.md)
+DMA instructions (default): DMA_TENSOR COPY / upsample / reshape (0x16), ELEM_WISE slice / concat (modes 6 / 7)
 ```
 
 | Element | Status |

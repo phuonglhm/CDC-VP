@@ -1,0 +1,2 @@
+Source: neo_lite RTL revision 1 (git archive), target/test/residual/tile/{input_a,input_b,golden_output}.txt, unchanged.
+Register values: tb/tb_neo_top.sv of the same revision (RESIDUAL test config). Used by tools/has/tb_rtl_ref_gvu_residual_tile_hw.cpp.

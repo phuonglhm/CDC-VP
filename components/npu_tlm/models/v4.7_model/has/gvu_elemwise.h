@@ -6,7 +6,7 @@
 //   DMA in -> Scratchpad -> pipeline stage(s) (1 vector of 32 per cycle + fixed latency) -> Scratchpad -> DMA out.
 // Stage latencies are counted from the dashed pipeline cuts of the drawing (ESTIMATE until the MAS). DMA in/out cost is an
 // ESTIMATE too (bytes / AXI_BYTES_PER_CYCLE + DMA_LATENCY): the drawings do not say who moves operands into the
-// Scratchpad (question H9). Compute and DMA are serial here unless the banked scratchpad (Knobs::sp_banked) pipelines them.
+// Scratchpad (open question). Compute and DMA are serial here unless the banked scratchpad (Knobs::sp_banked) pipelines them.
 #ifndef HAS_ELEMWISE_H
 #define HAS_ELEMWISE_H
 
@@ -44,7 +44,7 @@ namespace has
                            uint64_t)> start_add;
         std::function<bool(int, int, int, int, int, int)> fits_maxpool;
         std::function<void(const int8_t *, int8_t *, int, int, int, int, int, int, uint64_t)> start_maxpool;
-        // HAS_GVU_AVG=1: average pool groups as jobs on the clock (POOLING_AVG of the RTL patch)
+        // HAS_GVU_AVG=1: average pool groups as jobs on the clock (POOLING_AVG of the model)
         std::function<bool(int, int, int, int, int, int64_t, int, int)> fits_avgpool;
         std::function<void(const int8_t *, int8_t *, int, int, int, int, int, int64_t, int, int, uint64_t)> start_avgpool;
         std::function<uint64_t()> finish;
@@ -174,7 +174,7 @@ namespace has
         // ---- MAX_POOL k x k, stride s, pad p (pad value -128 = -inf for INT8) on a [C, H, Wd] tensor.
         // Channels are processed in groups whose padded input (+ row-max intermediate for SEPARABLE) fits the Scratchpad.
         // Lanes = 32 consecutive output positions of one row; DIRECT reads k*k vectors per output vector, SEPARABLE reads k
-        // (row pass, result kept in Scratchpad) + k (column pass). Both must give identical results (question H6).
+        // (row pass, result kept in Scratchpad) + k (column pass). Both must give identical results (open question).
         void maxpool(const int8_t *in, int8_t *out, int C, int H, int Wd, int kk, int s, int p)
         {
             const int Hp = H + 2 * p, Wp = Wd + 2 * p;
@@ -292,9 +292,9 @@ namespace has
         // ---- AVG_POOL k x k, stride s, no padding (drawing "Avg_Pool"): v32int16 accumulate over the window, then
         // Mul int32 x int16 by Avg_Scale -> v32int64 -> Round-Shift by Avg_Shift. The drawing shows no clamp / zero point after
         // the shift; this model saturates to int8 and COUNTS it (clamp8), and counts int16 accumulator overflow (acc16_ovf,
-        // question H5: windows > 258 elements of |x| = 127 can overflow). ACC16 wraps like a 16-bit register would.
+        // open question: windows > 258 elements of |x| = 127 can overflow). ACC16 wraps like a 16-bit register would.
         uint64_t acc16_ovf{0};
-        // HAS_GVU_AVG=1 (set by HasNpuTop with HAS_GVU_TOP=3): a channel group runs on GvuTop (POOLING_AVG of the RTL patch) after the model values,
+        // HAS_GVU_AVG=1 (set by HasNpuTop with HAS_GVU_TOP=3): a channel group runs on GvuTop (POOLING_AVG of the model) after the model values,
         // GvuTop's values and cycles are kept; false = the unit does not take the parameters, the model values and cycles stay.
         std::function<bool(const int8_t *, int8_t *, int, int, int, int, int, int64_t, int, int, uint64_t, uint64_t *)> gvu_avg;
         void avgpool(const int8_t *in, int8_t *out, int C, int H, int Wd, int kk, int s, uint32_t avg_scale_raw, int avg_shift)

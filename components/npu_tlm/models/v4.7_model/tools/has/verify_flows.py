@@ -151,7 +151,7 @@ flow("GEMM_FUSED", "GEMM_FUSED flow", [
         C("gate_st.log", r"address / mask not carried (?P<a>\d+)", "int(a) == 0",
           "address and lane mask of every packet arriving at the write-back", "M", "the write of the PSM that made the packet",
           "count of packets whose address or mask was lost", "{a} not carried"),
-        C("gate_st.log", r"scale index of the AGU != channel \(F2\) (?P<f>\d+)", "True",
+        C("gate_st.log", r"scale index of the AGU != channel (?P<f>\d+)", "True",
           "channel index the RTL address generator would use for the scale, observed on every packet", "S",
           "RTL address generator of the sbank as written",
           "observed, not driven: the model takes the scale of the packet's channel",

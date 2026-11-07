@@ -201,7 +201,7 @@ namespace sauria_rtl
       UD("engine_active_cycles", e.engine_active_cycles, eng);
       UD("engine_idle_cycles",   e.engine_idle_cycles,   tot_c > eng ? tot_c - eng : 0);
     }
-    // --- bytes: measured (EvalCounters, * reps) if present, else shape-derived (pyval B2) ---
+    // --- bytes: measured (EvalCounters, * reps) if present, else shape-derived (pyval byte model) ---
     const uint64_t CB = 4;                                   // int32 output element
     const uint64_t Mt = (c.M + c.Y - 1) / c.Y, Nt = (c.N + c.X - 1) / c.X;
     const uint64_t Mp = Mt * c.Y, Np = Nt * c.X, ntl = Mt * Nt;
@@ -234,13 +234,13 @@ namespace sauria_rtl
     U("ddr_wait_cycles", e.dma_stall_cycles);   // share of measured stall
     U("l1_wait_cycles", e.wait_input_cycles);
     U("l2_wait_cycles", e.wait_output_cycles);
-    v["sram_conflict_cycles"] = "0"; v["memory_arbitration_cycles"] = "0";   // B3: n/a-by-design
+    v["sram_conflict_cycles"] = "0"; v["memory_arbitration_cycles"] = "0";   // n/a by design (no banks, no arbiter)
     v["activation_engine_cycles"] = "0"; v["pooling_engine_cycles"] = "0";   // host ops
     v["reshape_engine_cycles"] = "0"; v["reduction_engine_cycles"] = "0";
     v["pipeline_bubble_cycles"] = fmt_u((uint64_t)(c.X + c.Y) * c.tiles * reps);
     v["instruction_stall_cycles"] = fmt_u((c.config_bytes / 4) * reps);
     v["synchronization_cycles"] = "0"; v["dependency_stall_cycles"] = "0";
-    v["bias_bytes"] = "0";   // F2: SAURIA has no bias datapath (host op)
+    v["bias_bytes"] = "0";   // SAURIA has no bias datapath (host op)
     v["ddr_footprint_data_bytes"] = fmt_u(c.ddr_data_bytes ? c.ddr_data_bytes * reps
                                                            : c.M * c.K * c.eb * reps);
     v["ddr_footprint_weight_bytes"] = fmt_u(c.ddr_weight_bytes ? c.ddr_weight_bytes * reps

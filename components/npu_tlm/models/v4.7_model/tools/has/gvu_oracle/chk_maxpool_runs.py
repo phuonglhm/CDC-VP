@@ -2,19 +2,25 @@
 # tb_gvu_top_maxpool_runs; lines "T n inpool v0en v0addr v2wen v2addr mask data", one "DONE n" per run) and compares run r with
 # channels r*group .. of golden_output.txt ([C][OH][OW] int8, one value per line).
 # Prints one line per run with a wrong or missing value, then a total line "GOLDEN runs .. values .. wrong .. not written ..".
-# usage: python -I chk_maxpool_runs.py <trace> <golden_output.txt> <H> <W> <k> <s> <C> [group, default C]
+# usage: python -I chk_maxpool_runs.py <trace> <golden_output.txt> <H> <W> <k> <s> <C> [group, default C] [--dense]
+# --dense: the vbank2 layout of neo_lite RTL revision 1 for stride 2 / 4 (32 lanes per word, ceil(Wt / s) words per output row; HAS_NEO_REV=1)
 import sys
 
 def out_lanes(k, s):
     return 32 if s == 1 else ((32 - k) // s + 1 if k == s else (32 - k) // s + 2)
 
 def main():
-    trace, gold = sys.argv[1], sys.argv[2]
-    h, w, k, s, c = map(int, sys.argv[3:8])
-    group = int(sys.argv[8]) if len(sys.argv) > 8 else c
+    dense = '--dense' in sys.argv[1:]
+    argv = [a for a in sys.argv if a != '--dense']
+    trace, gold = argv[1], argv[2]
+    h, w, k, s, c = map(int, argv[3:8])
+    group = int(argv[8]) if len(argv) > 8 else c
     oh, ow = (h - k) // s + 1, (w - k) // s + 1
     wt = (w + 31) // 32
     ol = out_lanes(k, s)
+    wr = wt   # words per output row
+    if dense and s in (2, 4):
+        ol, wr = 32, (wt + s - 1) // s
     g = [int(x) for x in open(gold).read().split()]
     runs, mem, dones, timeout = [], {}, [], False
     for line in open(trace):
@@ -43,7 +49,7 @@ def main():
         for cc in range(nc):
             for y in range(oh):
                 for x in range(ow):
-                    a = (cc * oh + y) * wt + x // ol
+                    a = (cc * oh + y) * wr + x // ol
                     v = m.get(a, [None] * 32)[x % ol]
                     e = g[((c0 + cc) * oh + y) * ow + x]
                     if v is None:

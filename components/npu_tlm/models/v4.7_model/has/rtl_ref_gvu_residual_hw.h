@@ -1,8 +1,10 @@
 // rtl_ref_gvu_residual_hw.h -- RESIDUAL (opcode 6) of the vector unit as the hardware builds it (gvu_top.sv, gvu_pipe_controller.sv, gvu_config_regs.sv Reg 7..11).
 // Pure C++17, no SystemC. Per lane: s = a * Sa (+|-) b * Sb  (64 bit), s += bias (64 bit), shift right by sh, clamp to [-256, 255], + out_z, clamp to [-128, 127].
-// Measured on the RTL (ModelSim): the shift of the delivered RTL (FUs/gvu_vector_shift.sv) is LOGICAL for negative values (logical_shift = true);
-// the intended and patched behaviour is the arithmetic shift (logical_shift = false, default). One 32-lane vector per cycle, done = 13 + vectors cycles.
-// Knobs (env): HAS_GVU_RESIDUAL_HW=1 routes the ADD of HasElemwise through this unit when its parameters are expressible; HAS_GVU_RESIDUAL_HW_SHIFT_LOGICAL=1 selects the delivered shift.
+// The shift (FUs/gvu_vector_shift.sv) is arithmetic (logical_shift = false, default): neo_lite RTL revision 1 casts the data to signed, and the residual/tile
+// vectors of the hardware team match the arithmetic shift exactly (tools/has/tb_rtl_ref_gvu_residual_tile_hw.cpp). neo_lite RTL revision 0 shifted negative values
+// LOGICALLY (measured on ModelSim; logical_shift = true reproduces it). One 32-lane vector per cycle, done = 13 + vectors cycles (measured on revision 0).
+// Knobs (env): HAS_GVU_RESIDUAL_HW=1 routes the ADD of HasElemwise through this unit when its parameters are expressible; HAS_GVU_RESIDUAL_HW_SHIFT_LOGICAL=1
+// selects the logical shift of neo_lite RTL revision 0 (comparison only).
 #ifndef RTL_REF_GVU_RESIDUAL_HW_H
 #define RTL_REF_GVU_RESIDUAL_HW_H
 

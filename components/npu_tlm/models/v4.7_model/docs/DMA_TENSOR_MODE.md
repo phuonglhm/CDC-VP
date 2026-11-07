@@ -34,7 +34,7 @@ No new register address: the instruction reuses registers of the delivery interf
 | `A_ADDR` (`0x40000444`) | source address in DRAM | reader start address (`0x10`) |
 | `OUT_ADDR` (`0x40000408`) | destination address in DRAM | writer start address (`0x20`) |
 | `LEN` (`0x40000450`) | number of bytes | byte count (`0x30`) |
-| `MODE_PACK` (`0x40000454`) | op: 0 = COPY; any other value is refused (`UNSUPPORTED_MODE`) | control (`0x00`) = reader start + writer start |
+| `MODE_PACK` (`0x40000454`) | op: 0 = COPY; 2 = upsample and 3 = reshape (`HAS_DMA_RESHAPE=1`, default; `COMPILER_GUIDE.md`, section 7.2); any other value is refused (`UNSUPPORTED_MODE`) | control (`0x00`) = reader start + writer start |
 | `PUSH_A` (`0x40000310`) = `0x16` | push | — |
 
 - The four registers keep their values between pushes, so a program writes all four before each push.
@@ -44,7 +44,10 @@ No new register address: the instruction reuses registers of the delivery interf
 - **Check at execution**: a source or destination that reaches the staging regions of the data flow controller (beyond the program
   image) prints a `WARNING`, counts a framing error and copies nothing.
 - Through a system wrapper with the model root `core_rtl/`, a push of `0x16` reaches `HasNpuTop` unless `HAS_DMA_TENSOR=0` is set
-  for the wrapper process.
+  for the wrapper process. The wrapper itself knows only the opcodes `0x05` and `0x12` to `0x15`; it passes another opcode on only
+  when an extension register was written since the previous push, and COPY uses none. Firmware therefore writes 0 to `0x400004E4`
+  (`MASK_ADDR`; the model ignores a 0) just before the push of `0x16`; otherwise the wrapper rejects the push and the model never sees
+  it. This follows from the wrapper source and has not been run through the wrapper yet.
 
 ## 4. Execution and cycles
 
@@ -75,12 +78,12 @@ of 8 beats) and `L` the DRAM latency. Examples in the default profile with C = 1
 - `manifest.json` gains the keys `slice_concat` and `dma_tensor` (count, bytes, list of copies, `requires: HAS_DMA_TENSOR=1`); the
   alias program is unchanged byte for byte.
 
-| YOLOv8m | Alias (default) | COPY program |
+| YOLOv8m | Alias (`insts_pe3`) | COPY program |
 |---|---:|---:|
 | Instructions | 98 | 135 (98 + 37 COPY for 13 concats) |
 | Bytes copied | 0 | 23,270,400 |
 | DRAM image | 85,779,392 bytes | 109,049,792 bytes |
-| Cycles | 62,422,935 (MEASURED, default configuration) | 63,902,431 (MEASURED; predicted 63,902,467 from the formula, the difference of 36 cycles is the poll step of the bench) |
+| Cycles | 62,422,935 (MEASURED, epilogue depth 9) | 63,902,431 (MEASURED; predicted 63,902,467 from the formula, the difference of 36 cycles is the poll step of the bench) |
 
 ViT-B/16 needs no COPY program: the heads read and write 64-channel blocks of channel-major tensors, so every slice and concat of the
 network is an address on the outermost axis.
@@ -94,7 +97,7 @@ network is an address on the outermost axis.
 | Option off | the 19 COPY instructions refused (MEASURED) |
 | Earlier check programs with the option off and on | logs (cycles included) and memory images identical (MEASURED) |
 | YOLOv8m COPY program, 13 windows around the copies | 13 / 13 PASS, `ref_program.py` MATCH 13 / 13, 37 / 37 COPY with the cycles of section 4 (MEASURED) |
-| Whole YOLOv8m with the COPY program (`HAS_DMA_TENSOR=1`, the vector-unit options on) | PASS 135 / 135, 0 elements different, 63,902,431 cycles (predicted 63,902,467: the default 62,422,935 plus 1,479,496 cycles of the COPY instructions against 1,479,532 by the formula; the 36 cycles are the poll step of the bench), core busy cycles equal to the default (55,653,442); 52,017,408 epilogue lanes, 6,374,400 residual-add lanes and 345,600 max pool lanes on `GvuTop`, 0 different, no stall needed (MEASURED) |
+| Whole YOLOv8m with the COPY program (`HAS_DMA_TENSOR=1`, the vector-unit options on) | PASS 135 / 135, 0 elements different, 63,902,431 cycles (predicted 63,902,467: the 62,422,935 of the epilogue depth 9 plus 1,479,496 cycles of the COPY instructions against 1,479,532 by the formula; the 36 cycles are the poll step of the bench), core busy cycles equal to the default (55,653,442); 52,017,408 epilogue lanes, 6,374,400 residual-add lanes and 345,600 max pool lanes on `GvuTop`, 0 different, no stall needed (MEASURED) |
 
 The items are part of `tools/has/regress_gvu.sh`; the summary is in `VERIFICATION_REPORT.md`, V42.
 

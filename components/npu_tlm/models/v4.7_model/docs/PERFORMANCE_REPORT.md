@@ -39,10 +39,10 @@ Clock frequency for all time and throughput figures: 0.8 GHz (assumption of the 
    the figures of the new default: a continuous run with no variable set is 0.1 to 0.4 % shorter. Average pool, Softmax, the
    requant of FUSED_ATTN and LayerNorm now also run on `GvuTop` by default (`HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`,
    `HAS_GVU_LN`; `GVU_OPS_ON_GVUTOP.md`): ViT-B/16 41,244,030 cycles (section 5.9); YOLOv8m uses none of them
-   (62,422,935 cycles, unchanged, MEASURED). Setting these four knobs to 0 gives the figures of the previous default.
+   (62,422,935 cycles, unchanged, MEASURED). Setting these four knobs to 0 gives the figures of an earlier release.
    These figures are at the epilogue depth 9. The default of this release has the depth 11 of the hardware RTL and the DMA
-   options on: ViT-B/16 41,244,621 cycles, YOLOv8m 64,135,381 cycles with the program `insts_pe3_nd`, whose 13 concats are
-   copied by the DMA (section 5.9, MEASURED).
+   options on: ViT-B/16 41,244,621 cycles, YOLOv8m 63,902,513 cycles with the program `insts_pe3_nd`, whose 13 concats are
+   copied by the DMA in merged pieces (section 5.9, MEASURED).
 
 ## 2. Workload
 
@@ -448,7 +448,7 @@ and always 32 rows per group (`HAS_SPEC=v47ref`).
 | ELEM_WISE cycles | 1,677,242 (before: 1,692,832) | 737,200 | MEASURED on the model's estimate |
 | Softmax, LayerNorm and their DMA in the vector unit | not used | 5,908,480 (before: 5,284,480) | ESTIMATED |
 | Row groups of the softmax and LayerNorm instructions | not used | 1,383 | MEASURED |
-| Core busy cycles, PE utilization, core GOPS | 55,638,052, 69.27 %, 1,134.99 | 21,830,592, 76.05 %, 1,245.93 | MEASURED: unchanged |
+| Core busy cycles, PE utilization, core GOPS (YOLOv8m: run C, `HAS_SPEC=v47ref`; ViT-B/16: the GEMM_FUSED instructions only, section 5.6) | 55,638,052, 69.27 %, 1,134.99 | 21,830,592, 76.05 %, 1,245.93 | MEASURED: unchanged |
 | Effective TOPS (2 x MACs x frame rate) | 1.008 | 0.680 | DERIVED |
 
 - **YOLOv8m** changes only in its 15 ELEM_WISE instructions: the larger banks hold blocks of 5,600 elements instead
@@ -482,13 +482,14 @@ unit by register writes (`GVU_TOP_CORE_INTEGRATION.md`; `HAS_GVU_TOP=3 HAS_GVU_S
 | Total cycles, clocked stream, one continuous run (`HAS_GVU_TOP=3`; for YOLOv8m also with the stop and the clocked add and max pool, the same count to the cycle) | 62,420,669 | 41,581,353 | MEASURED |
 | Difference | -245,454 (-0.39 %) | -98,936 (-0.24 %) | DERIVED |
 | Frame rate at 0.8 GHz | 12.82 FPS | 19.24 FPS | DERIVED |
-| Core busy cycles | 55,653,442 (unchanged) | 24,852,624 (unchanged) | MEASURED |
+| Core busy cycles (default `HAS_SPEC`, all instructions of the network; run C of section 5.4 has 55,638,052, and the GEMM_FUSED instructions of ViT-B/16 alone 21,830,592, section 5.6) | 55,653,442 (unchanged) | 24,852,624 (unchanged) | MEASURED |
 | Register writes of the DFC in the windows (YOLOv8m: 387 GEMM_FUSED, 252 max pool, 14,822 residual add) | 15,461 | not run in windows | MEASURED |
 | Register writes of the DFC in the continuous run, with the descriptors of the address generator | 20,036 | 11,952 | MEASURED |
 | Cycles added by the register writes (YOLOv8m: sum over the 91 instructions of seven windows; ViT-B/16: continuous run against the clocked-stream run; 4 clock edges per write) | +1,819 (0.003 %) | +1,115 (0.003 %) | MEASURED |
-| Continuous run with the four operation knobs at 0 (the previous default) | 62,422,935 (12.82 FPS; +2,266 against the clocked-stream run) | 41,582,468 (19.24 FPS; +1,115) | MEASURED |
-| Continuous run with no variable set (the default: average pool, Softmax, attention requant and LayerNorm also on `GvuTop`, as jobs on its clock) | 62,422,935 (12.82 FPS, DERIVED; unchanged: YOLOv8m has none of these operations) | 41,244,030 (19.40 FPS, DERIVED; -338,438 against the previous default; LayerNorm cycles ESTIMATED; core busy unchanged) | MEASURED (ViT-B/16) |
-| Continuous run of the defaults of this release (epilogue depth 11 as the RTL, `HAS_DMA_TENSOR` and `HAS_DMA_ND` on; YOLOv8m program `insts_pe3_nd`: 135 instructions, the 13 concats as 37 ELEM_WISE mode 7 copies of 23,270,400 bytes) | 64,135,381 (12.47 FPS, DERIVED; PE utilization 69.26 %) | 41,244,621 (19.40 FPS, DERIVED; +591 against depth 9) | MEASURED |
+| Continuous run with the four operation knobs at 0 (the default of an earlier release) | 62,422,935 (12.82 FPS; +2,266 against the clocked-stream run) | 41,582,468 (19.24 FPS; +1,115) | MEASURED |
+| Continuous run at the epilogue depth 9 with no other variable set (average pool, Softmax, attention requant and LayerNorm also on `GvuTop`, as jobs on its clock) | 62,422,935 (12.82 FPS, DERIVED; unchanged: YOLOv8m has none of these operations) | 41,244,030 (19.40 FPS, DERIVED; -338,438 against the four operation knobs at 0; LayerNorm cycles ESTIMATED; core busy unchanged) | MEASURED (ViT-B/16) |
+| Continuous run with `HAS_DMA_ND_MERGE=0` (the default of the previous release: epilogue depth 11 as the RTL, `HAS_DMA_TENSOR` and `HAS_DMA_ND` on; YOLOv8m program `insts_pe3_nd`: 135 instructions, the 13 concats as 37 ELEM_WISE mode 7 copies of 23,270,400 bytes) | 64,135,381 (12.47 FPS, DERIVED; PE utilization 69.26 %) | 41,244,621 (19.40 FPS, DERIVED; +591 against depth 9) | MEASURED |
+| Continuous run of the defaults of this release (as the row above, plus `HAS_DMA_ND_MERGE` on, pieces of the 13 concats merged) | 63,902,513 (12.52 FPS, DERIVED; PE utilization 69.26 %, core busy cycles 55,653,442) | 41,244,621 (19.40 FPS, DERIVED; no slice / concat in this network) | MEASURED |
 
 - **Why the clocked stream is shorter.** The activation table goes in by a DMA of 256 bytes plus 5 cycles instead of 4,096
   host-port cycles per layer with a table (4,087 cycles saved per layer, MEASURED), a core pass no longer ends with a fixed
@@ -504,24 +505,54 @@ unit by register writes (`GVU_TOP_CORE_INTEGRATION.md`; `HAS_GVU_TOP=3 HAS_GVU_S
 
 ### 5.10 Closest to the hardware RTL, and the transpose after the epilogue
 
-The default of this release turns on proposals that the hardware RTL (`neo_lite@9b704bb`) does not have: 4-D DMA and COPY,
-the attention requant on the vector unit, lane LayerNorm and average pool. The runs below are the closest to the RTL, and the
+The default of this release turns on proposals that the hardware RTL (neo_lite RTL revision 0) does not have: 4-D DMA with merged pieces, COPY,
+upsample and reshape, the attention requant on the vector unit, lane LayerNorm, average pool and the transpose after the epilogue. The runs below are the closest to the RTL, and the
 cost of the transpose proposal (`HW_RTL_ALIGNMENT.md`, sections 8 and 10).
 
 | Run | Total cycles | Frame rate at 0.8 GHz | Label |
 |---|---:|---:|---|
-| YOLOv8m `insts_pe3` (concat by address, no DMA instruction), default build | 62,422,935 | 12.82 FPS | MEASURED (DERIVED for FPS) |
+| YOLOv8m `insts_pe3` (concat by address, no DMA instruction), epilogue depth 9 (the whole network at depth 11 has not been measured) | 62,422,935 | 12.82 FPS | MEASURED (DERIVED for FPS) |
 | ViT-B/16, `HAS_GVU_FA=0 HAS_GVU_LN=0` (Softmax on the vector unit as in the RTL; requant and LayerNorm on the functional model) | 41,608,570 | 19.23 FPS | MEASURED (DERIVED for FPS) |
 | ViT-B/16, V token-major with the corner turn (`--v-token-major`, `HAS_OUT_TRANSPOSE=1`) | 41,245,003 | 19.40 FPS | MEASURED (DERIVED for FPS) |
+| YOLOv8m `insts_pe3_nd` (default program) with the six RTL options of `HW_RTL_ALIGNMENT.md` sections 2 to 7 on (`HAS_GVU_REGS_NEO`, `HAS_GVU_VBANK1_DEPTH=200`, `HAS_GVU_RESIDUAL_HW`, `HAS_DMA_DFC_1D`, `HAS_GVU_OUT_VBANK2`, `HAS_BUS_STRICT`) | 69,843,642 | 11.45 FPS | MEASURED (DERIVED for FPS) |
+| ViT-B/16 with the same six options | 42,006,610 | 19.04 FPS | MEASURED (DERIVED for FPS) |
+| YOLOv8m `insts_pe3_nd` with merged DMA pieces (`HAS_DMA_ND_MERGE=1`, proposal; the default of this release) | 63,902,513 | 12.52 FPS | MEASURED (DERIVED for FPS) |
+| ViT-B/16 with the attention requant overlapped with the core (`HAS_GVU_FA_OVERLAP=1`, proposal) | 41,045,481 | 19.49 FPS | MEASURED (DERIVED for FPS) |
 
-- The YOLOv8m number is a lower bound: the options for one-dimensional DFC commands, write-back through vbank2 and the bus cost
-  of the DFC data are off. On check programs they add 0 to 17.7 % (`HW_RTL_ALIGNMENT.md`, sections 5 to 7). The clock-domain
+- The first YOLOv8m number is a lower bound: the options for one-dimensional DFC commands, write-back through vbank2 and the bus
+  cost of the DFC data are off. On check programs they add 0 to 17.7 % (`HW_RTL_ALIGNMENT.md`, sections 5 to 7). With the six
+  options on, the default program takes +5,708,261 cycles (+8.9 %) on YOLOv8m and +761,989 (+1.8 %) on ViT-B/16 against the
+  default of that time (64,135,381 with `HAS_DMA_ND_MERGE=0`, and 41,244,621); that program still uses the 4-D DMA proposal, so it is not a hardware-only number either. The clock-domain
   crossing of the RTL top is not modelled.
 - The ViT-B/16 number is not a hardware-only number: the RTL has no LayerNorm for H = 768. Against the default, LayerNorm on the
   functional model costs +627,547 cycles, and the attention requant on the functional model saves 263,440 cycles (MEASURED, step
   by step).
-- The corner turn costs 382 cycles on the whole network (864 tiles). It writes 32 cycles of tail per tile (27,648 in all), almost
+- Merged DMA pieces save 232,868 cycles (−0.36 %) on YOLOv8m; the overlapped attention requant saves 199,140 cycles (−0.48 %)
+  on ViT-B/16. Values are unchanged in both runs.
+- The corner turn costs 382 cycles on the whole network (864 tiles), measured against a default that reorders V at no cycle
+  cost (`HW_RTL_ALIGNMENT.md`, section 8). It writes 32 cycles of tail per tile (27,648 in all), almost
   all hidden behind the next tile.
+
+### 5.11 Hardware RTL revision 1, run profile `neo`
+
+The run profile `neo` (`COMPILER_GUIDE.md`, section 5) sets the options of `HW_RTL_ALIGNMENT.md` to RTL revision 1 and
+the proposals of the model to 0.
+
+| Run | Total cycles | Label |
+|---|---:|---|
+| Reference check program, profile `neo` | 39,562 | MEASURED |
+| Reference check program with max pools, profile `neo` | 68,459 | MEASURED |
+| Average pool check, profile `neo` (average pool on the functional model) | 3,486 | MEASURED |
+| YOLOv8m `insts_pe3`, profile `neo` (PASS 98 / 98, 0 elements different) | 65,371,733 | MEASURED (sum of seven windows started from the golden memory image; a continuous run is about 18,000 cycles lower) |
+
+- YOLOv8m with profile `neo` costs +2,948,798 cycles (+4.7 %) against `insts_pe3` at 62,422,935 (epilogue depth 9, concat by address; the profile run uses the default depth 11, which adds a few hundred cycles on ViT-B/16). The
+  per-layer hardware check over the same seven windows gives OK 12, TRANSFORM 3, PATCH 0, NO 83 instructions, equal to
+  `tools/has/hw_check_program.py`. The windows start from the golden memory image, so each boundary adds about 2,700 to
+  3,100 cycles of measurement difference to the sum.
+- Not included in any number of this section: the one-dimensional loads of the core operands (`HAS_DFC_CORE_DMA`), ESTIMATE
+  +132 million cycles for YOLOv8m and +129 million for ViT-B/16 with channel-major tensors (`COMPILER_GUIDE.md`, section 7.3).
+- ViT-B/16 with profile `neo` is not a hardware number: LayerNorm and the attention requant run on the functional model, and
+  the hardware has neither.
 
 ## 6. Estimated components
 

@@ -246,7 +246,7 @@ namespace rtl_ref_gvu
     // and its own accumulator update; the shared in_valid / in_ready path is then closed (in_ready = 0). in_lane_ready =
     // out_lane_ready (OUT_PIPE = 0) or the lane's own pipe enable (OUT_PIPE = 1); a lane emits on in_lane_last (every
     // accepted beat in CMP_ELEMENTWISE). With in_lane_mode = 0 nothing changes from the shared mode above. OUT_PIPE = 1
-    // keeps out_valid_q while in per-lane mode, as the RTL does (B10 of the review 1051; gvu_top builds OUT_PIPE = 0).
+    // keeps out_valid_q while in per-lane mode, as the RTL does (gvu_top builds OUT_PIPE = 0).
     class Vcmp32
     {
     public:

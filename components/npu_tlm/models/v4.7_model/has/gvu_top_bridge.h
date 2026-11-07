@@ -17,8 +17,8 @@
 //     max pool             every channel group of has::HasElemwise::maxpool (direct mode) runs on GvuTop in POOLING_MAX (port
 //                          of the latest hardware RTL drop): the tensor padded with -128 is written straight into vbank0 buffer 0 as
 //                          rows of 32 bytes (the role of the DMA with npu_pad2d; who pads is question Q-MP1), in runs that
-//                          fit vbank0 (800 rows) and vbank2 port 1 (1 024 rows), each run from a reset of the unit (bug
-//                          B12: the pooling feeder keeps first_load_cnt between runs and a run that follows another without
+//                          fit vbank0 (800 rows) and vbank2 port 1 (1 024 rows), each run from a reset of the unit (because
+//                          the delivered pooling feeder keeps first_load_cnt between runs and a run that follows another without
 //                          a reset is wrong); the result is read from vbank2 port 1. Compute cycles of the group: GvuTop's,
 //                          from the start of each run to its done output. A (k, s) the RTL does not pool (it has 2x2 s1/s2,
 //                          3x3 s1, 4x4 s1/s2/s4, 5x5 s1) stays on GvuMaxPoolPipe (has::RtlElem::maxpool), counted.
@@ -42,6 +42,7 @@
 #include <vector>
 #include "has/gvu_quant.h"
 #include "has/rtl_ref_gvu_top.h"
+#include "has/neo_rev.h"
 
 namespace has
 {
@@ -272,7 +273,7 @@ namespace has
             for (int c0 = 0; c0 < g; c0 += cmax)
             {
                 const int n = std::min(cmax, g - c0);
-                b.reset();                                   // B12: a run must start from a reset of the pooling feeder
+                if (!(has::neo_rev() >= 1 && c0 > 0)) b.reset();  // a run starts from a reset of the pooling feeder; in revision 1 (HAS_NEO_REV=1) the feeder no longer keeps its count between runs, so only the first run of the operation is reset
                 for (int c = 0; c < n; c++)
                     for (int y = 0; y < Hp; y++)
                         for (int t = 0; t < Wt; t++)
@@ -302,13 +303,14 @@ namespace has
                 if (!done || b.top_.state() != R::IDLE) { st.no_out++; st.not_expr++; b.reset(); return false; }
                 cyc += c;
                 st.runs++;
+                const R::PoolLayout lay = R::pool_layout(has::neo_rev(), s, Wt, OL);   // revision 1: dense with stride 2 / 4
                 for (int cc = 0; cc < n; cc++)
                     for (int oh = 0; oh < Ho; oh++)
                         for (int ow = 0; ow < Wo; ow++)
                         {
-                            const unsigned row = agu_nd_pool_row(i, static_cast<unsigned>((cc * Ho + oh) * Wt + ow / OL));
+                            const unsigned row = agu_nd_pool_row(i, static_cast<unsigned>((cc * Ho + oh) * static_cast<int>(lay.words_per_row) + ow / static_cast<int>(lay.lanes)));
                             const R::SpBytes w = b.top_.scratchpad().sram(2, 0).word(row >> 2);
-                            res[(static_cast<size_t>(c0 + cc) * Ho + oh) * Wo + ow] = static_cast<int8_t>(w[(row & 3u) * 32u + static_cast<unsigned>(ow % OL)]);
+                            res[(static_cast<size_t>(c0 + cc) * Ho + oh) * Wo + ow] = static_cast<int8_t>(w[(row & 3u) * 32u + static_cast<unsigned>(ow) % lay.lanes]);
                         }
             }
             b.reset();                                       // leave the unit as a fresh one for the next operation
@@ -336,7 +338,8 @@ namespace has
         int init_cycles_{0};
         bool table_loaded_{false};
         uint64_t tables_{0}, enters_{0}, stops_{0}, resets_{0}, mp_elsewhere_{0};
-        rtl_ref_gvu::GvuTop top_;
+        static rtl_ref_gvu::GvuTopParams bridge_params() { rtl_ref_gvu::GvuTopParams p; p.neo_rev = has::neo_rev(); return p; }   // HAS_NEO_REV
+        rtl_ref_gvu::GvuTop top_{bridge_params()};
         rtl_ref_gvu::GvuTop::In gin_;     // inputs held between the beats of an epilogue run
         AddFn ext_add_;
         MaxpoolFn ext_maxpool_;

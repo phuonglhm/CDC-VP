@@ -247,6 +247,12 @@ namespace sauria
             return a == 0x40000400 || a == 0x40000404 || a == 0x40000408 || a == 0x4000040C || a == 0x40000434 || a == 0x40000444 ||
                    a == 0x40000448 || a == 0x4000044C;
         }
+        // Words of the neo_lite register file that hold DRAM addresses (A, B, C, sbank, vbank0..2 starts): indices 18, 19, 20, 34, 35, 36, 37 from window offset 0x10.
+        static bool neo_is_address_word(uint32_t a)
+        {
+            const uint32_t i = (a - has::NeoPort::BASE - 0x10u) / 4u;
+            return a >= has::NeoPort::BASE + 0x10u && (a - has::NeoPort::BASE) % 4u == 0 && (i == 18 || i == 19 || i == 20 || (i >= 34 && i <= 37));
+        }
         static bool is_ext(uint32_t a) { return a >= EXT_LO && a < EXT_END; }
         static bool is_param(uint32_t a) { return a >= PARAM_LO && a <= PARAM_HI; }
         static bool is_rtl_status(uint32_t a) { return a == STATUS || a == RETIRED; }
@@ -256,16 +262,19 @@ namespace sauria
             const uint32_t a = i_host_addr.read();
             const bool w = i_host_wren.read(), r = i_host_rden.read();
             // DMA_TENSOR (0x16) has no extension register and no native counterpart: HasNpuTop when it accepts the opcode
-            const bool to_rtl_push = a == PUSH_A && (ext_seen_.read() || (rtl->mmio.dma_tensor && w && (static_cast<uint32_t>(i_host_wdata.read()[0]) & 0xFFu) == 0x16u));
-            const bool rtl_only = is_ext(a) || is_rtl_status(a) || to_rtl_push;
+            // HAS_HOST=neo: the window of the neo_lite register file and the doorbell (push of opcode 0x17) belong to HasNpuTop too
+            const bool neo_win = rtl->neo.owns(a);
+            const bool neo_bell = rtl->neo.on() && a == PUSH_A && w && (static_cast<uint32_t>(i_host_wdata.read()[0]) & 0xFFu) == has::NeoPort::BELL;
+            const bool to_rtl_push = a == PUSH_A && (ext_seen_.read() || neo_bell || (rtl->mmio.dma_tensor && w && (static_cast<uint32_t>(i_host_wdata.read()[0]) & 0xFFu) == 0x16u));
+            const bool rtl_only = is_ext(a) || is_rtl_status(a) || to_rtl_push || neo_win;
             n_addr_.write(a);
             n_wren_.write(w && !rtl_only);
             n_rden_.write(r && !rtl_only);
             h_addr_.write(a);
             h_wren_.write(w && (rtl_only || is_param(a)));
-            h_rden_.write(r && is_rtl_status(a));
+            h_rden_.write(r && (is_rtl_status(a) || neo_win));
             host_data_t d = i_host_wdata.read();
-            if (w && ext_is_address(a))
+            if (w && (ext_is_address(a) || (neo_win && neo_is_address_word(a))))
             {
                 const uint32_t v = static_cast<uint32_t>(d[0]);
                 if (v >= dram_base_) d[0] = static_cast<double>(v - dram_base_);
@@ -274,7 +283,7 @@ namespace sauria
         }
         void read_mux()
         {
-            o_host_rdata.write(is_rtl_status(i_host_addr.read()) ? h_rdata_.read() : n_rdata_.read());
+            o_host_rdata.write((is_rtl_status(i_host_addr.read()) || rtl->neo.owns(i_host_addr.read())) ? h_rdata_.read() : n_rdata_.read());
         }
         void on_clock()
         {

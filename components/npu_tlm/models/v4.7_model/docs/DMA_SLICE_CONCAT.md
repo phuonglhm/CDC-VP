@@ -1,6 +1,6 @@
 # Slice and concat by 4-D DMA descriptors (`HAS_DMA_ND`)
 
-Model proposal, default off. The RTL DMA (`redma_top`) copies one contiguous block (reader / writer start address and
+Model proposal, on by default (`HAS_DMA_ND=1`). The RTL DMA (`redma_top`) copies one contiguous block (reader / writer start address and
 bytes to transfer, registers 0x00..0x3C of `conf_regs.sv`); it has no strided or multi-dimensional mode. Nothing in this
 note is in the RTL drop.
 
@@ -44,10 +44,12 @@ along one axis), `concat_chw` (sub-window of a destination tensor), `permuted`, 
    written. The core SRAM is not touched, so a tensor of any size is moved. Each piece is a sub-descriptor that keeps the
    strides (blocks of the lower dimensions that fit the chunk). The bus time is that of the bytes moved; a strided
    access costs nothing more than a linear one (an optimistic model). A piece holds whole blocks of the lower dimensions
-   (whole rows, or whole channels when a channel fits), so it can be smaller than the chunk, and the dimensions are not merged
-   when the destination is contiguous: for the YOLOv8m concats the pieces hold 400 to 1,000 bytes instead of 1,024, and the 37
-   concat instructions of `insts_pe3_nd` take 233,618 cycles more than the same copies as `DMA_TENSOR` COPY (MEASURED, 0.36 %
-   of the network; every other instruction within 300 cycles).
+   (whole rows, or whole channels when a channel fits). By default (`HAS_DMA_ND_MERGE=1`) the model first drops dimensions of size 1
+   and merges neighbouring dimensions that are contiguous in memory, so each piece is as large as the chunk allows: whole
+   YOLOv8m `insts_pe3_nd` takes 63,902,513 cycles, 232,868 fewer than without merging (MEASURED, 0.36 %; the same DRAM image).
+   With `HAS_DMA_ND_MERGE=0` the dimensions are not merged when the destination is contiguous: for the YOLOv8m concats the
+   pieces hold 400 to 1,000 bytes instead of 1,024, and the 37 concat instructions of `insts_pe3_nd` take 233,618 cycles more
+   than the same copies as `DMA_TENSOR` COPY (MEASURED, 0.36 % of the network; every other instruction within 300 cycles).
 
 ### 3.1 Registers of modes 6 / 7 (ELEM_WISE, opcode 0x15)
 

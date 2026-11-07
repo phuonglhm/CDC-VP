@@ -12,7 +12,7 @@
 // on two back-to-back runs, as a diagnostic, outside the verdict).
 // Measured against the latest hardware RTL drop (tools/has/gvu_oracle/run_verilator_maxpool.sh): the port writes the same
 // vbank2 rows in the same cycles, and one run of the RTL equals the golden on every set, several W tiles included: the
-// 5-bit lane index that wraps (B3 of the review 1051) does not give wrong values. The table prints, per set, the output
+// 5-bit lane index that wraps does not give wrong values. The table prints, per set, the output
 // positions (ow mod lanes per tile) that differ; the verdict expects none.
 // build: g++ -std=c++17 -O2 -Wall -I. tools/has/tb_gvu_top_maxpool.cpp -o tb_gvu_top_maxpool
 // usage: tb_gvu_top_maxpool <vector directory target/test/maxpool, or - to skip (a)> [seed, default 1]
@@ -34,7 +34,7 @@ struct Case
     int C, H, W, k, s;
     std::vector<int8_t> in;      // [C][H][W]
     std::vector<int8_t> gold;    // [C][OH][OW]
-    std::set<int> expect_pos;    // output positions (ow mod lanes per tile) predicted to differ (B3 and the k4 s2 crossing)
+    std::set<int> expect_pos;    // output positions (ow mod lanes per tile) predicted to differ (the lane-index wrap and the k4 s2 crossing)
 };
 
 static int out_lanes(int k, int s) { return s == 1 ? 32 : (k == s ? (32 - k) / s + 1 : (32 - k) / s + 2); }
@@ -143,7 +143,9 @@ static int trace(const char *fin, const char *fout, int h, int w, int k, int s, 
     std::vector<int8_t> v;
     if (!read_ints(fin, v) || v.size() < static_cast<size_t>(c) * h * w) { std::fprintf(stderr, "cannot read %d channels of %s\n", c, fin); return 2; }
     const int wt = (w + 31) / 32, oh = (h - k) / s + 1;
-    GvuTop dut;
+    GvuTopParams tp;
+    tp.neo_rev = has::neo_rev();   // HAS_NEO_REV=1: the unit of neo_lite RTL revision 1 (dense max pool write with stride 2 / 4)
+    GvuTop dut(tp);
     reset(dut);
     for (int ch = 0; ch < c; ch++)
         for (int y = 0; y < h; y++)

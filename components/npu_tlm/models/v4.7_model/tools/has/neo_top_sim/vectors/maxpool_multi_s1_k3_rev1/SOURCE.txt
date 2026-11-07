@@ -1,0 +1,2 @@
+target/test/maxpool/multi/stride_1/k3/{input,golden_output}.txt of neo_lite RTL revision 1 (git archive; the repo is read-only for the model team).
+Used by tools/has/tb_neo_top_program_hw.cpp. Reference data: do not edit.

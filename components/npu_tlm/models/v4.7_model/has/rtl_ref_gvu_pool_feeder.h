@@ -1,14 +1,14 @@
 // rtl_ref_gvu_pool_feeder.h -- pooling window feeder of the vector unit, ported line by line from the latest hardware RTL drop
 // (neo_core/gvu/vlsu/gvu_pooling_feeder.sv), with the two library cells it uses (fifo_v3 with FALL_THROUGH, shift_reg of
-// depth 2) written from the behaviour of the pulp common_cells library: HW has not delivered those two files (B8 of the
-// review 1051), so their behaviour here is an assumption until the files arrive. Pure C++17, no SystemC.
+// depth 2) written from the behaviour of the pulp common_cells library: those two files are not part of the RTL drop, so their
+// behaviour here is an assumption until the files arrive. Pure C++17, no SystemC.
 //
 // What the feeder does: every vbank0 read (one row of 32 bytes = 32 columns of one W tile) is pushed, two cycles later,
 // into the 32 lane FIFOs (depth 5), byte l into FIFO l. Lane l of the output stream takes the byte of FIFO l + x_cnt[l],
 // so each output lane sees the k columns of its window one per cycle, row after row, with first / last flags per lane
 // for the accumulate mode of the comparator. Lanes start one cycle after each other (x_cnt[l - 1] == 1), or every k-th
 // lane starts on its own when the windows do not overlap. Indices are 5 bits wide as in the RTL: lane + offset wraps at
-// 32 (bug B3 of the review: with stride 1 and several W tiles the last k - 1 lanes of a tile take bytes of the same
+// 32 (with stride 1 and several W tiles the last k - 1 lanes of a tile take bytes of the same
 // tile). Supported: 2x2 s1/s2, 3x3 s1, 4x4 s1/s2/s4, 5x5 s1; the other combinations are TODO in the RTL and give no
 // output here either.
 #ifndef RTL_REF_GVU_POOL_FEEDER_H
@@ -200,7 +200,7 @@ namespace rtl_ref_gvu
             for (int l = 0; l < n; l++)
             {
                 const int base = l * step;
-                const int lane_idx = (base + static_cast<int>(xc(base))) & 31;   // 5-bit index, wraps (B3)
+                const int lane_idx = (base + static_cast<int>(xc(base))) & 31;   // 5-bit index, wraps as in the RTL
                 const int last_idx = (base + last_off) & 31;
                 const bool v = xs(lane_idx);
                 if (v) c.o.o_feeder_valid |= 1u << l;

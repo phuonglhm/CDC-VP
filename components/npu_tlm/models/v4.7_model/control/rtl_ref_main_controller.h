@@ -228,7 +228,7 @@ namespace sauria_rtl
         // act_pop_en stay driven by the ORIGINAL, unextended pop_now) --
         // extending that too could push its incnt_q_ past where cdone logic
         // expects for a genuine multi-context run. This is a wiring-layer-
-        // only patch; context_fsm.h's ported RTL state machine itself is NOT
+        // only change; context_fsm.h's ported RTL state machine itself is NOT
         // modified.
         uint32_t pop_drain_cnt_{0};
         bool cdone_prev_for_drain_{false};

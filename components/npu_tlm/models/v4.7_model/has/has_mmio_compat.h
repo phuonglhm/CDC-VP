@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -170,12 +171,22 @@ namespace has
         {
             if (const char *v = std::getenv("HAS_DMA_TENSOR")) dma_tensor = std::atoi(v) != 0;
             if (const char *v = std::getenv("HAS_DMA_ND")) dma_nd = std::atoi(v) != 0;
+            if (const char *v = std::getenv("HAS_DMA_RESHAPE")) dma_reshape = std::atoi(v) != 0;
+            if (const char *v = std::getenv("HAS_DMA_RESHAPE_T")) dma_reshape_t = std::atoi(v) != 0;
         }
         // Opcode 0x16 DMA_TENSOR accepted (default; environment HAS_DMA_TENSOR=0 refuses it with UNSUPPORTED_OP).
         bool dma_tensor{true};
         // ELEM_WISE modes 6 (slice) / 7 (concat) by 4-D DMA descriptors accepted (default; environment HAS_DMA_ND=0 refuses them
         // with UNSUPPORTED_MODE).
         bool dma_nd{true};
+        // DMA upsample (nearest neighbour) and reshape (default OFF; environment HAS_DMA_RESHAPE=1): DMA_TENSOR (0x16) modes 2 / 3 (aliases 8 / 9) and
+        // ELEM_WISE (0x15) modes 8 / 9, run by 4-D DMA descriptors (HasNpuTop::exec_dma_upsample_op / exec_dma_reshape_op). Default ON (HAS_DMA_RESHAPE=0 turns
+        // it off): then all of them are refused with UNSUPPORTED_MODE and a line on stderr, exactly the answer of the model before they existed. Model proposal,
+        // not in the RTL DMA (1-D only).
+        bool dma_reshape{true};
+        // Reshape with X_FLAGS bit 0 = corner turn [C][H*W] -> [H*W][C] (default OFF; environment HAS_DMA_RESHAPE_T=1, only meaningful with HAS_DMA_RESHAPE=1).
+        // The transpose of the model is HAS_OUT_TRANSPOSE (after the epilogue); this one is kept for the tests of the DMA descriptors only. Off: FLAGS != 0 refused.
+        bool dma_reshape_t{false};
 
         // Host write. Returns true if the address belongs to this block.
         bool write(uint32_t addr, uint32_t data)
@@ -279,8 +290,24 @@ namespace has
             clear_ext();
         }
 
+        // HAS_HOST=neo (has/has_host_neo_port.h): an instruction decoded from the register file of neo_lite joins the queue of the v4.5 host
+        // interface, so the DFC, STATUS / RETIRED and the interrupt are the ones of the v4.5 path. Not called when HAS_HOST is not set.
+        bool inject(LayerInstr li)
+        {
+            host_seq_++;
+            li.host_seq = host_seq_;
+            return enqueue(li);
+        }
+        // A neo push the model refuses (the reason is printed by the caller): sticky error, no instruction.
+        void refuse(Err e)
+        {
+            host_seq_++;
+            error(e);
+        }
+
         // counters (evidence for the hand-over report)
         uint64_t n_nsplit_ignored{0}, n_float_scale{0}, n_default_tiling{0}, n_skip_split{0}, n_errors{0}, n_dma_tensor{0};
+        uint64_t n_dma_upsample{0}, n_dma_reshape{0};
         Err last_error() const { return last_err_; }
         size_t queued() const { return q_.size(); }
         // Testbench windows (--first): an instruction that is replayed but not pushed must still drop its one-shot extension
@@ -293,6 +320,12 @@ namespace has
             sticky_err_ = true;
             last_err_ = e;
             n_errors++;
+        }
+        void refuse_ur(unsigned opcode, int mode)
+        {
+            std::fprintf(stderr, "[MmioCompat] DMA upsample / reshape refused (push %u: opcode 0x%02x mode %d): HAS_DMA_RESHAPE=0 in the environment (the default 1 accepts them)\n",
+                         host_seq_, opcode, mode);
+            error(Err::UNSUPPORTED_MODE);
         }
         void clear_ext()
         {
@@ -498,8 +531,25 @@ namespace has
                     li.pool_p + li.pool_k > dim || (li.mode == 7 && li.b_addr != 0 && (li.pool_p != 0 || li.pool_k >= dim)))
                 { error(Err::BAD_GEOM); return; }
             }
+            else if ((li.mode == 8 || li.mode == 9) && dma_nd && !dma_reshape) { refuse_ur(0x15, li.mode); return; }
+            else if (li.mode == 8 && dma_nd)
+            {
+                // DMA_UPSAMPLE (mode 8): nearest-neighbor spatial upsample [IN_C][IN_H][IN_W] -> [IN_C][IN_H*sh][IN_W*sw]
+                // executed by HasDma 4-D zero-stride descriptor (has/has_dma.h).
+                if (!decode_dma_upsample(li)) return;
+            }
+            else if (li.mode == 9 && dma_nd)
+            {
+                // DMA_RESHAPE (mode 9): tensor shape rebind / copy [IN_C][IN_H][IN_W] (or LEN) -> [OUT_C][OUT_H][OUT_W]
+                // executed by HasDma (supports one -1 inferred axis; FLAGS bit 0 optionally transposes [C][H*W] -> [H*W][C]).
+                if (!decode_dma_reshape(li)) return;
+            }
             else { error(Err::UNSUPPORTED_MODE); return; }                   // MUL / SUB / DIV: not in the HAS ISA
-            enqueue(li);
+            if (enqueue(li))
+            {
+                if (li.mode == 8) n_dma_upsample++;
+                else if (li.mode == 9) n_dma_reshape++;
+            }
         }
 
         // FUSED_ATTN = one head, LAYERNORM = X_ROWS rows; the numbers live in the PARAM_ADDR block.
@@ -538,8 +588,11 @@ namespace has
             enqueue(li);
         }
 
-        // DMA_TENSOR COPY: LEN bytes from A_ADDR to OUT_ADDR. Refused: another op, no bytes, a region past 2^32, overlapping
-        // regions (the RTL DMA reads ahead through its FIFO, so an overlapping copy has no defined result).
+        // DMA_TENSOR (0x16):
+        //   mode 0       : COPY      -- LEN bytes from A_ADDR to OUT_ADDR
+        //   mode 2 / 8   : UPSAMPLE  -- nearest-neighbor [IN_C][IN_H][IN_W] -> [IN_C][IN_H*sh][IN_W*sw]
+        //   mode 3 / 9   : RESHAPE   -- [IN_C][IN_H][IN_W] (or LEN) -> [OUT_C][OUT_H][OUT_W] (one -1 axis allowed)
+        //   other modes  : refused (UNSUPPORTED_MODE; e.g. mode 1 stays reserved/refused)
         void push_dma_tensor()
         {
             LayerInstr li;
@@ -547,10 +600,161 @@ namespace has
             li.host_seq = host_seq_;
             li.mode = int(r_mode_);
             li.a_addr = r_a_; li.out_addr = r_out_; li.n = r_len_;
-            if (li.mode != 0) { error(Err::UNSUPPORTED_MODE); return; }
-            const uint64_t s = li.a_addr, d = li.out_addr, n = li.n;
-            if (n == 0 || s + n > (1ull << 32) || d + n > (1ull << 32) || (s < d + n && d < s + n)) { error(Err::BAD_GEOM); return; }
-            if (enqueue(li)) n_dma_tensor++;
+            if (li.mode == 0)
+            {
+                const uint64_t s = li.a_addr, d = li.out_addr, n = li.n;
+                if (n == 0 || s + n > (1ull << 32) || d + n > (1ull << 32) || (s < d + n && d < s + n)) { error(Err::BAD_GEOM); return; }
+                if (enqueue(li)) n_dma_tensor++;
+            }
+            else if ((li.mode == 2 || li.mode == 3 || li.mode == 8 || li.mode == 9) && !dma_reshape) { refuse_ur(0x16, li.mode); return; }
+            else if (li.mode == 2 || li.mode == 8)
+            {
+                if (!decode_dma_upsample(li)) return;
+                if (enqueue(li)) { n_dma_tensor++; n_dma_upsample++; }
+            }
+            else if (li.mode == 3 || li.mode == 9)
+            {
+                if (!decode_dma_reshape(li)) return;
+                if (enqueue(li)) { n_dma_tensor++; n_dma_reshape++; }
+            }
+            else
+            {
+                error(Err::UNSUPPORTED_MODE);
+            }
+        }
+
+        static bool resolve_reshape_3d(uint64_t in_elems, int &oc, int &oh, int &ow)
+        {
+            if (in_elems == 0) return false;
+            int dims[3] = { oc, oh, ow };
+            int neg_idx = -1;
+            uint64_t prod = 1;
+            for (int i = 0; i < 3; i++)
+            {
+                if (dims[i] == -1)
+                {
+                    if (neg_idx >= 0) return false;
+                    neg_idx = i;
+                }
+                else if (dims[i] <= 0)
+                {
+                    return false;
+                }
+                else
+                {
+                    const uint64_t d = uint64_t(dims[i]);
+                    if (d > 0xFFFFFFFFFFFFFFFFull / prod) return false;
+                    prod *= d;
+                }
+            }
+            if (neg_idx >= 0)
+            {
+                if (prod == 0 || (in_elems % prod) != 0) return false;
+                const uint64_t inf = in_elems / prod;
+                if (inf == 0 || inf > 0x7FFFFFFFull) return false;
+                dims[neg_idx] = int(inf);
+                prod *= inf;
+            }
+            if (prod != in_elems) return false;
+            oc = dims[0]; oh = dims[1]; ow = dims[2];
+            return true;
+        }
+
+        // Shared geometry check for DMA nearest-neighbor upsample ([C][H][W] -> [C][H*sh][W*sw]).
+        // Scale factors:
+        //   1. OUT_H / OUT_W written -> sh = OUT_H / IN_H, sw = OUT_W / IN_W (must divide evenly; OUT_C if written must equal IN_C)
+        //   2. POOL_K written        -> sh = POOL_K, sw = (POOL_P written && POOL_P > 0) ? POOL_P : POOL_K
+        //   3. otherwise             -> sh = sw = STRIDE
+        bool decode_dma_upsample(LayerInstr &li)
+        {
+            using namespace mmio;
+            if (!ext_set_[X_IN_C] || !ext_set_[X_IN_H] || !ext_set_[X_IN_W]) { error(Err::BAD_GEOM); return false; }
+            li.c = ext_i(X_IN_C); li.h = ext_i(X_IN_H); li.w = ext_i(X_IN_W);
+            if (li.c <= 0 || li.h <= 0 || li.w <= 0) { error(Err::BAD_GEOM); return false; }
+            if (ext_set_[X_OUT_C] && ext_i(X_OUT_C) != li.c) { error(Err::BAD_GEOM); return false; }
+            int sh = 0, sw = 0;
+            if (ext_set_[X_OUT_H] || ext_set_[X_OUT_W])
+            {
+                if (!ext_set_[X_OUT_H] || !ext_set_[X_OUT_W]) { error(Err::BAD_GEOM); return false; }
+                const int oh = ext_i(X_OUT_H), ow = ext_i(X_OUT_W);
+                if (oh <= 0 || ow <= 0 || (oh % li.h) != 0 || (ow % li.w) != 0) { error(Err::BAD_GEOM); return false; }
+                sh = oh / li.h; sw = ow / li.w;
+                if (ext_set_[X_POOL_K])
+                {
+                    const int pk = ext_i(X_POOL_K);
+                    const int pp = (ext_set_[X_POOL_P] && ext_i(X_POOL_P) > 0) ? ext_i(X_POOL_P) : pk;
+                    if (pk != sh || pp != sw) { error(Err::BAD_GEOM); return false; }
+                }
+            }
+            else if (ext_set_[X_POOL_K])
+            {
+                sh = ext_i(X_POOL_K);
+                sw = (ext_set_[X_POOL_P] && ext_i(X_POOL_P) > 0) ? ext_i(X_POOL_P) : sh;
+            }
+            else
+            {
+                sh = sw = int(r_stride_);
+            }
+            if (sh <= 0 || sw <= 0) { error(Err::BAD_GEOM); return false; }
+            const uint64_t in_bytes = uint64_t(li.c) * uint64_t(li.h) * uint64_t(li.w);
+            const uint64_t out_bytes = in_bytes * uint64_t(sh) * uint64_t(sw);
+            const uint64_t s = li.a_addr, d = li.out_addr;
+            if (in_bytes == 0 || out_bytes == 0 || out_bytes > 0xFFFFFFFFull ||
+                s + in_bytes > (1ull << 32) || d + out_bytes > (1ull << 32) ||
+                (s < d + out_bytes && d < s + in_bytes))
+            { error(Err::BAD_GEOM); return false; }
+            li.in_c = li.c; li.in_h = li.h; li.in_w = li.w;
+            li.pool_k = sh; li.pool_s = sw;
+            li.geom.cout = li.c; li.geom.oh = li.h * sh; li.geom.ow = li.w * sw;
+            li.n = uint32_t(out_bytes);
+            return true;
+        }
+
+        // Shared geometry check for DMA reshape ([IN_C][IN_H][IN_W] or LEN -> [OUT_C][OUT_H][OUT_W]).
+        // FLAGS bit 0 (0x1): optional [C][H*W] -> [H*W][C] corner-turn transpose while reshaping.
+        bool decode_dma_reshape(LayerInstr &li)
+        {
+            using namespace mmio;
+            uint64_t in_elems = 0;
+            if (ext_set_[X_IN_C])
+            {
+                const int ic = ext_i(X_IN_C);
+                const int ih = ext_set_[X_IN_H] ? ext_i(X_IN_H) : 1;
+                const int iw = ext_set_[X_IN_W] ? ext_i(X_IN_W) : 1;
+                if (ic <= 0 || ih <= 0 || iw <= 0) { error(Err::BAD_GEOM); return false; }
+                li.c = ic; li.h = ih; li.w = iw;
+                in_elems = uint64_t(ic) * uint64_t(ih) * uint64_t(iw);
+            }
+            else
+            {
+                if (r_len_ == 0 || r_len_ > 0x7FFFFFFFu) { error(Err::BAD_GEOM); return false; }
+                li.c = int(r_len_); li.h = 1; li.w = 1;
+                in_elems = r_len_;
+            }
+            if (!ext_set_[X_OUT_C]) { error(Err::BAD_GEOM); return false; }
+            int oc = ext_i(X_OUT_C);
+            int oh = ext_set_[X_OUT_H] ? ext_i(X_OUT_H) : 1;
+            int ow = ext_set_[X_OUT_W] ? ext_i(X_OUT_W) : 1;
+            if (!resolve_reshape_3d(in_elems, oc, oh, ow)) { error(Err::BAD_GEOM); return false; }
+            li.flags = ext_[X_FLAGS];
+            if (li.flags & ~1u) { error(Err::UNSUPPORTED_MODE); return false; }
+            if ((li.flags & 1u) && !dma_reshape_t)
+            {
+                std::fprintf(stderr, "[MmioCompat] DMA reshape refused: X_FLAGS bit 0 (transpose [C][H*W] -> [H*W][C]) is not accepted here; the transpose of the model is "
+                                     "HAS_OUT_TRANSPOSE (HAS_DMA_RESHAPE_T=1 enables it for tests)\n");
+                error(Err::UNSUPPORTED_MODE); return false;
+            }
+            if ((li.flags & 1u) && !ext_set_[X_IN_C]) { error(Err::BAD_GEOM); return false; }
+            const uint64_t s = li.a_addr, d = li.out_addr;
+            const bool inplace_rebind = (s == d) && ((li.flags & 1u) == 0);
+            if (in_elems == 0 || in_elems > 0xFFFFFFFFull ||
+                s + in_elems > (1ull << 32) || d + in_elems > (1ull << 32) ||
+                (!inplace_rebind && s < d + in_elems && d < s + in_elems))
+            { error(Err::BAD_GEOM); return false; }
+            li.in_c = li.c; li.in_h = li.h; li.in_w = li.w;
+            li.geom.cout = oc; li.geom.oh = oh; li.geom.ow = ow;
+            li.n = uint32_t(in_elems);
+            return true;
         }
 
         // same validity rule as emulate_elem_wise()

@@ -1,0 +1,250 @@
+# Register map of the neo_lite RTL, revision 1, for int8_32x32, extracted from the RTL by neo_regmap_check.py --emit-table.
+# const NAME VALUE SRC | enum SET NAME VALUE SRC | field SPACE WORD HI LO NAME SRC | core BIT WIDTH NAME SRC
+# SRC = RTL file:line at that commit. SPACE: file = word of the 82-word file, gvureg = GVU register number, ctlwin = word of the controller window.
+commit 1fb7978
+param_config int8_32x32
+const ACT_IDX_W 0x11 rtl/src/sauria_pkg.sv:75
+const AXI_CONTROLLER_ADDR_MASK 0xF0000 rtl/src/neo_addr_pkg.sv:36
+const AXI_DMA_ADDR_MASK 0xF0000 rtl/src/neo_addr_pkg.sv:39
+const AXI_GVU_ADDR_MASK 0xF0000 rtl/src/neo_addr_pkg.sv:38
+const AXI_SAURIA_ADDR_MASK 0xF0000 rtl/src/neo_addr_pkg.sv:37
+const BUS_SBANK 0x180000 rtl/src/df_controller/neo_dma_controller.sv:68
+const BUS_SRAMA 0x0 rtl/src/df_controller/neo_dma_controller.sv:65
+const BUS_SRAMB 0x40000 rtl/src/df_controller/neo_dma_controller.sv:66
+const BUS_SRAMC 0x80000 rtl/src/df_controller/neo_dma_controller.sv:67
+const BUS_VBANK0 0x100000 rtl/src/df_controller/neo_dma_controller.sv:69
+const BUS_VBANK1 0x120000 rtl/src/df_controller/neo_dma_controller.sv:70
+const BUS_VBANK2 0x140000 rtl/src/df_controller/neo_dma_controller.sv:71
+const CFG_ACT_OFFSET 0x400 rtl/src/neo_addr_pkg.sv:23
+const CFG_CON_OFFSET 0x200 rtl/src/neo_addr_pkg.sv:22
+const CFG_OUT_OFFSET 0x800 rtl/src/neo_addr_pkg.sv:25
+const CFG_REGS_OFFSET 0x0 rtl/src/neo_addr_pkg.sv:21
+const CFG_WEI_OFFSET 0x600 rtl/src/neo_addr_pkg.sv:24
+const CONTROLLER_OFFSET 0x0 rtl/src/neo_addr_pkg.sv:16
+const DMA_OFFSET 0x30000 rtl/src/neo_addr_pkg.sv:19
+const GVU_CFG_OFFSET 0x4 rtl/src/df_controller/neo_interface.sv:56
+const GVU_CFG_REGS 0xD rtl/src/neo_core/gvu/gvu_pkg.sv:367
+const GVU_CONTROL_OFFSET 0x0 rtl/src/df_controller/neo_interface.sv:55
+const GVU_DMA_ADDR_MASK 0xFFF00000 rtl/src/neo_addr_pkg.sv:31
+const GVU_DMA_OFFSET 0x100000 rtl/src/neo_addr_pkg.sv:30
+const GVU_MEM_ADDR_MASK 0xF0000 rtl/src/neo_addr_pkg.sv:44
+const GVU_NUM_REGS 0xE rtl/src/neo_core/gvu/gvu_pkg.sv:366
+const GVU_OFFSET 0x20000 rtl/src/neo_addr_pkg.sv:18
+const GVU_SBANK_ADDR_MASK 0x80000 rtl/src/neo_addr_pkg.sv:45
+const IDX_CORE 0x28 rtl/src/df_controller/df_controller_pkg.sv:108
+const IDX_GVU 0x45 rtl/src/sauria_pkg.sv:109
+const INTERRUPT_EN_OFFSET 0x4 rtl/src/df_controller/neo_interface.sv:48
+const INTERRUPT_STATUS_OFFSET 0xC rtl/src/df_controller/neo_interface.sv:49
+const N_CORE 0x1D rtl/src/sauria_pkg.sv:109
+const N_CTRL_REGS 0x28 rtl/src/df_controller/df_controller_pkg.sv:108
+const N_DFC 0x28 rtl/src/df_controller/df_controller_pkg.sv:108
+const N_GVU 0xD rtl/src/neo_core/gvu/gvu_pkg.sv:367
+const N_REGS 0x52 rtl/src/df_controller/df_controller_top.sv:44
+const OUT_IDX_W 0x10 rtl/src/sauria_pkg.sv:77
+const REG_BASE 0x10 rtl/src/df_controller/df_controller_top.sv:137
+const SAURIA_CONTROL_OFFSET 0x0 rtl/src/df_controller/neo_interface.sv:47
+const SAURIA_DMA_ADDR_MASK 0xFFF00000 rtl/src/neo_addr_pkg.sv:29
+const SAURIA_DMA_OFFSET 0x0 rtl/src/neo_addr_pkg.sv:28
+const SAURIA_MEM_ADDR_MASK 0xF0000 rtl/src/neo_addr_pkg.sv:42
+const SAURIA_OFFSET 0x10000 rtl/src/neo_addr_pkg.sv:17
+const SAURIA_REG_ADDR_MASK 0xF00 rtl/src/neo_addr_pkg.sv:43
+const SBANK_OFFSET 0x80000 rtl/src/neo_addr_pkg.sv:14
+const SRAMA_OFFSET 0x0 rtl/src/neo_addr_pkg.sv:7
+const SRAMB_OFFSET 0x40000 rtl/src/neo_addr_pkg.sv:8
+const SRAMC_OFFSET 0x80000 rtl/src/neo_addr_pkg.sv:9
+const TOTAL_REGS_ACT 0x11 rtl/src/sauria_pkg.sv:105
+const TOTAL_REGS_CON 0x2 rtl/src/sauria_pkg.sv:104
+const TOTAL_REGS_OUT 0x5 rtl/src/sauria_pkg.sv:109
+const TOTAL_REGS_WEI 0x5 rtl/src/sauria_pkg.sv:106
+const VBANK0_OFFSET 0x0 rtl/src/neo_addr_pkg.sv:11
+const VBANK1_OFFSET 0x20000 rtl/src/neo_addr_pkg.sv:12
+const VBANK2_OFFSET 0x40000 rtl/src/neo_addr_pkg.sv:13
+const WEI_IDX_W 0x11 rtl/src/sauria_pkg.sv:76
+enum gvu_cfg_reg_t CONTROL_REG 0 rtl/src/neo_core/gvu/gvu_pkg.sv:374
+enum gvu_cfg_reg_t OPCODE_REG 1 rtl/src/neo_core/gvu/gvu_pkg.sv:375
+enum gvu_cfg_reg_t LUT_REG 2 rtl/src/neo_core/gvu/gvu_pkg.sv:376
+enum gvu_cfg_reg_t GEMM_FUSED_REG 3 rtl/src/neo_core/gvu/gvu_pkg.sv:377
+enum gvu_cfg_reg_t SOFTMAX_0_REG 4 rtl/src/neo_core/gvu/gvu_pkg.sv:378
+enum gvu_cfg_reg_t SOFTMAX_1_REG 5 rtl/src/neo_core/gvu/gvu_pkg.sv:379
+enum gvu_cfg_reg_t SOFTMAX_2_REG 6 rtl/src/neo_core/gvu/gvu_pkg.sv:380
+enum gvu_cfg_reg_t RESIDUAL_0_REG 7 rtl/src/neo_core/gvu/gvu_pkg.sv:381
+enum gvu_cfg_reg_t RESIDUAL_1_REG 8 rtl/src/neo_core/gvu/gvu_pkg.sv:382
+enum gvu_cfg_reg_t RESIDUAL_2_REG 9 rtl/src/neo_core/gvu/gvu_pkg.sv:383
+enum gvu_cfg_reg_t RESIDUAL_3_REG 10 rtl/src/neo_core/gvu/gvu_pkg.sv:384
+enum gvu_cfg_reg_t RESIDUAL_4_REG 11 rtl/src/neo_core/gvu/gvu_pkg.sv:385
+enum gvu_cfg_reg_t POOLING_0_REG 12 rtl/src/neo_core/gvu/gvu_pkg.sv:386
+enum gvu_cfg_reg_t POOLING_1_REG 13 rtl/src/neo_core/gvu/gvu_pkg.sv:387
+enum gvu_opcode_t GVU_REQUANT 0 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_DEQUANT 1 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_GEMM_FUSED 2 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_SOFTMAX 3 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_FUSED_ATTN 4 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_LAYERNORM 5 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_RESIDUAL 6 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_MAXPOOL 7 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_AVGPOOL 8 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum gvu_opcode_t GVU_ELEMWISE 9 rtl/src/neo_core/gvu/gvu_pkg.sv:250
+enum neo_opcode_t GEMM_FUSED 0 rtl/src/df_controller/df_controller_pkg.sv:111
+enum neo_opcode_t SOFTMAX 1 rtl/src/df_controller/df_controller_pkg.sv:112
+enum neo_opcode_t FUSED_ATTN 2 rtl/src/df_controller/df_controller_pkg.sv:113
+enum neo_opcode_t LAYERNORM 3 rtl/src/df_controller/df_controller_pkg.sv:114
+enum neo_opcode_t RESIDUAL 4 rtl/src/df_controller/df_controller_pkg.sv:115
+enum neo_opcode_t MAXPOOL 5 rtl/src/df_controller/df_controller_pkg.sv:116
+enum neo_opcode_t AVGPOOL 6 rtl/src/df_controller/df_controller_pkg.sv:117
+field file 0 31 16 sauria_dma_params.tile.y_lim rtl/src/df_controller/neo_interface.sv:447
+field file 0 15 0 sauria_dma_params.tile.x_lim rtl/src/df_controller/neo_interface.sv:446
+field file 1 31 16 sauria_dma_params.tile.k_lim rtl/src/df_controller/neo_interface.sv:451
+field file 1 15 0 sauria_dma_params.tile.c_lim rtl/src/df_controller/neo_interface.sv:450
+field file 2 31 0 sauria_dma_params.tile.psums.x_step rtl/src/df_controller/neo_interface.sv:454
+field file 3 31 0 sauria_dma_params.tile.psums.y_step rtl/src/df_controller/neo_interface.sv:455
+field file 4 31 0 sauria_dma_params.tile.psums.k_step rtl/src/df_controller/neo_interface.sv:456
+field file 5 31 0 sauria_dma_params.tile.ifmaps.x_step rtl/src/df_controller/neo_interface.sv:457
+field file 6 31 0 sauria_dma_params.tile.ifmaps.y_step rtl/src/df_controller/neo_interface.sv:458
+field file 7 31 0 sauria_dma_params.tile.ifmaps.c_step rtl/src/df_controller/neo_interface.sv:459
+field file 8 31 0 sauria_dma_params.tile.weights.k_step rtl/src/df_controller/neo_interface.sv:460
+field file 9 31 0 sauria_dma_params.tile.weights.c_step rtl/src/df_controller/neo_interface.sv:461
+field file 10 31 0 sauria_dma_params.dma.ifmaps.y_lim rtl/src/df_controller/neo_interface.sv:462
+field file 11 31 0 sauria_dma_params.dma.ifmaps.c_lim rtl/src/df_controller/neo_interface.sv:463
+field file 12 31 0 sauria_dma_params.dma.psums.y_step rtl/src/df_controller/neo_interface.sv:464
+field file 13 31 0 sauria_dma_params.dma.psums.k_step rtl/src/df_controller/neo_interface.sv:465
+field file 14 31 0 sauria_dma_params.dma.ifmaps.y_step rtl/src/df_controller/neo_interface.sv:466
+field file 15 31 0 sauria_dma_params.dma.ifmaps.c_step rtl/src/df_controller/neo_interface.sv:467
+field file 16 31 0 sauria_dma_params.dma.weights.w_step rtl/src/df_controller/neo_interface.sv:468
+field file 17 31 0 sauria_dma_params.dma.ifmaps.ett rtl/src/df_controller/neo_interface.sv:469
+field file 18 31 0 start_SRAMA_addr rtl/src/df_controller/neo_interface.sv:470
+field file 19 31 0 start_SRAMB_addr rtl/src/df_controller/neo_interface.sv:471
+field file 20 31 0 start_SRAMC_addr rtl/src/df_controller/neo_interface.sv:472
+field file 21 31 0 gvu_dma_params.tile_lim rtl/src/df_controller/neo_interface.sv:475
+field file 21 18 18 start_gate rtl/src/df_controller/neo_interface.sv:499
+field file 22 31 0 gvu_dma_params.sbank.btt rtl/src/df_controller/neo_interface.sv:476
+field file 23 31 0 gvu_dma_params.sbank.tile_move rtl/src/df_controller/neo_interface.sv:477
+field file 24 31 0 gvu_dma_params.vbank0.btt rtl/src/df_controller/neo_interface.sv:478
+field file 25 31 0 gvu_dma_params.vbank0.stride rtl/src/df_controller/neo_interface.sv:479
+field file 26 31 0 gvu_dma_params.vbank0.rep_lim rtl/src/df_controller/neo_interface.sv:480
+field file 27 31 0 gvu_dma_params.vbank0.tile_move rtl/src/df_controller/neo_interface.sv:481
+field file 28 31 0 gvu_dma_params.vbank1.btt rtl/src/df_controller/neo_interface.sv:482
+field file 29 31 0 gvu_dma_params.vbank1.tile_move rtl/src/df_controller/neo_interface.sv:483
+field file 30 31 0 gvu_dma_params.vbank2.btt rtl/src/df_controller/neo_interface.sv:484
+field file 31 31 0 gvu_dma_params.vbank2.stride rtl/src/df_controller/neo_interface.sv:485
+field file 32 31 0 gvu_dma_params.vbank2.rep_lim rtl/src/df_controller/neo_interface.sv:486
+field file 33 31 0 gvu_dma_params.vbank2.tile_move rtl/src/df_controller/neo_interface.sv:487
+field file 34 31 0 start_sbank_addr rtl/src/df_controller/neo_interface.sv:488
+field file 35 31 0 start_vbank0_addr rtl/src/df_controller/neo_interface.sv:489
+field file 36 31 0 start_vbank1_addr rtl/src/df_controller/neo_interface.sv:490
+field file 37 31 0 start_vbank2_addr rtl/src/df_controller/neo_interface.sv:491
+field file 38 31 31 WXfer_op rtl/src/df_controller/neo_interface.sv:508
+field file 38 25 25 Ck_eq rtl/src/df_controller/neo_interface.sv:504
+field file 38 24 24 Ch_eq rtl/src/df_controller/neo_interface.sv:503
+field file 38 23 23 Cw_eq rtl/src/df_controller/neo_interface.sv:502
+field file 38 22 22 start rtl/src/df_controller/neo_interface.sv:500
+field file 38 21 21 stand_alone_keep_C rtl/src/df_controller/neo_interface.sv:498
+field file 38 20 20 stand_alone_keep_B rtl/src/df_controller/neo_interface.sv:497
+field file 38 19 19 stand_alone_keep_A rtl/src/df_controller/neo_interface.sv:496
+field file 38 18 18 stand_alone rtl/src/df_controller/neo_interface.sv:495
+field file 38 18 18 start_dma_controller rtl/src/df_controller/neo_interface.sv:506
+field file 38 17 16 loop_order rtl/src/df_controller/neo_interface.sv:494
+field file 39 3 0 opcode rtl/src/df_controller/neo_interface.sv:511
+field file 69 3 0 o_gvu_op rtl/src/neo_core/gvu/gvu_config_regs.sv:273
+field file 70 3 3 lut_rsqrt_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:204
+field file 70 2 2 lut_recip_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:203
+field file 70 1 1 lut_exp_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:202
+field file 70 0 0 lut_act_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:201
+field file 71 15 8 o_gemm_fused_z rtl/src/neo_core/gvu/gvu_config_regs.sv:286
+field file 71 0 0 o_gemm_fused_skip_act rtl/src/neo_core/gvu/gvu_config_regs.sv:285
+field file 72 31 16 o_num_tile rtl/src/neo_core/gvu/gvu_config_regs.sv:289
+field file 72 15 0 o_token_len rtl/src/neo_core/gvu/gvu_config_regs.sv:288
+field file 73 31 0 o_attn_scale rtl/src/neo_core/gvu/gvu_config_regs.sv:290
+field file 74 15 8 o_attn_z rtl/src/neo_core/gvu/gvu_config_regs.sv:292
+field file 74 7 0 o_attn_shift rtl/src/neo_core/gvu/gvu_config_regs.sv:291
+field file 75 30 30 o_residual_sub_mode rtl/src/neo_core/gvu/gvu_config_regs.sv:297
+field file 75 29 24 o_residual_out_shift rtl/src/neo_core/gvu/gvu_config_regs.sv:296
+field file 75 23 16 o_residual_out_z rtl/src/neo_core/gvu/gvu_config_regs.sv:295
+field file 75 15 0 o_residual_sequence_len rtl/src/neo_core/gvu/gvu_config_regs.sv:294
+field file 76 31 0 o_residual_dequant_scale[0] rtl/src/neo_core/gvu/gvu_config_regs.sv:298
+field file 77 31 0 o_residual_dequant_scale[1] rtl/src/neo_core/gvu/gvu_config_regs.sv:299
+field file 78 31 0 o_residual_bias[31:0] rtl/src/neo_core/gvu/gvu_config_regs.sv:300
+field file 79 31 0 o_residual_bias[63:32] rtl/src/neo_core/gvu/gvu_config_regs.sv:300
+field file 80 31 24 o_pooling_c rtl/src/neo_core/gvu/gvu_config_regs.sv:306
+field file 80 23 16 o_pooling_oh rtl/src/neo_core/gvu/gvu_config_regs.sv:305
+field file 80 15 8 o_pooling_num_w_tile rtl/src/neo_core/gvu/gvu_config_regs.sv:304
+field file 80 4 2 o_pooling_stride rtl/src/neo_core/gvu/gvu_config_regs.sv:303
+field file 80 1 0 o_pooling_mode rtl/src/neo_core/gvu/gvu_config_regs.sv:302
+field file 81 25 16 o_pooling_c_move rtl/src/neo_core/gvu/gvu_config_regs.sv:308
+field file 81 9 0 o_pooling_h_move rtl/src/neo_core/gvu/gvu_config_regs.sv:307
+field gvureg 0 3 3 force_swap rtl/src/neo_core/gvu/gvu_config_regs.sv:227
+field gvureg 0 2 2 done_clear rtl/src/neo_core/gvu/gvu_config_regs.sv:199
+field gvureg 0 1 1 done rtl/src/neo_core/gvu/gvu_config_regs.sv:213
+field gvureg 0 0 0 pipe_en rtl/src/neo_core/gvu/gvu_config_regs.sv:198
+field gvureg 1 3 0 o_gvu_op rtl/src/neo_core/gvu/gvu_config_regs.sv:273
+field gvureg 2 3 3 lut_rsqrt_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:204
+field gvureg 2 2 2 lut_recip_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:203
+field gvureg 2 1 1 lut_exp_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:202
+field gvureg 2 0 0 lut_act_reset rtl/src/neo_core/gvu/gvu_config_regs.sv:201
+field gvureg 3 15 8 o_gemm_fused_z rtl/src/neo_core/gvu/gvu_config_regs.sv:286
+field gvureg 3 0 0 o_gemm_fused_skip_act rtl/src/neo_core/gvu/gvu_config_regs.sv:285
+field gvureg 4 31 16 o_num_tile rtl/src/neo_core/gvu/gvu_config_regs.sv:289
+field gvureg 4 15 0 o_token_len rtl/src/neo_core/gvu/gvu_config_regs.sv:288
+field gvureg 5 31 0 o_attn_scale rtl/src/neo_core/gvu/gvu_config_regs.sv:290
+field gvureg 6 15 8 o_attn_z rtl/src/neo_core/gvu/gvu_config_regs.sv:292
+field gvureg 6 7 0 o_attn_shift rtl/src/neo_core/gvu/gvu_config_regs.sv:291
+field gvureg 7 30 30 o_residual_sub_mode rtl/src/neo_core/gvu/gvu_config_regs.sv:297
+field gvureg 7 29 24 o_residual_out_shift rtl/src/neo_core/gvu/gvu_config_regs.sv:296
+field gvureg 7 23 16 o_residual_out_z rtl/src/neo_core/gvu/gvu_config_regs.sv:295
+field gvureg 7 15 0 o_residual_sequence_len rtl/src/neo_core/gvu/gvu_config_regs.sv:294
+field gvureg 8 31 0 o_residual_dequant_scale[0] rtl/src/neo_core/gvu/gvu_config_regs.sv:298
+field gvureg 9 31 0 o_residual_dequant_scale[1] rtl/src/neo_core/gvu/gvu_config_regs.sv:299
+field gvureg 10 31 0 o_residual_bias[31:0] rtl/src/neo_core/gvu/gvu_config_regs.sv:300
+field gvureg 11 31 0 o_residual_bias[63:32] rtl/src/neo_core/gvu/gvu_config_regs.sv:300
+field gvureg 12 31 24 o_pooling_c rtl/src/neo_core/gvu/gvu_config_regs.sv:306
+field gvureg 12 23 16 o_pooling_oh rtl/src/neo_core/gvu/gvu_config_regs.sv:305
+field gvureg 12 15 8 o_pooling_num_w_tile rtl/src/neo_core/gvu/gvu_config_regs.sv:304
+field gvureg 12 4 2 o_pooling_stride rtl/src/neo_core/gvu/gvu_config_regs.sv:303
+field gvureg 12 1 0 o_pooling_mode rtl/src/neo_core/gvu/gvu_config_regs.sv:302
+field gvureg 13 25 16 o_pooling_c_move rtl/src/neo_core/gvu/gvu_config_regs.sv:308
+field gvureg 13 9 0 o_pooling_h_move rtl/src/neo_core/gvu/gvu_config_regs.sv:307
+field ctlwin 0 1 1 done rtl/src/df_controller/df_controller_top.sv:178
+field ctlwin 0 0 0 start rtl/src/df_controller/df_controller_top.sv:177
+field ctlwin 2 0 0 ien rtl/src/df_controller/df_controller_top.sv:184
+field ctlwin 3 0 0 intr rtl/src/df_controller/df_controller_top.sv:190
+core 0 17 incntlim rtl/src/neo_core/config/config_regs.sv:802
+core 17 16 act_reps rtl/src/neo_core/config/config_regs.sv:805
+core 33 16 wei_reps rtl/src/neo_core/config/config_regs.sv:808
+core 49 2 thres rtl/src/neo_core/config/config_regs.sv:811
+core 51 1 sram_deepsleep rtl/src/neo_core/config/config_regs.sv:814
+core 52 1 sram_powergate rtl/src/neo_core/config/config_regs.sv:817
+core 64 17 xlim rtl/src/neo_core/config/config_regs.sv:827
+core 81 17 xstep rtl/src/neo_core/config/config_regs.sv:830
+core 98 17 ylim rtl/src/neo_core/config/config_regs.sv:833
+core 115 17 ystep rtl/src/neo_core/config/config_regs.sv:836
+core 132 17 chlim rtl/src/neo_core/config/config_regs.sv:839
+core 149 17 chstep rtl/src/neo_core/config/config_regs.sv:842
+core 166 17 til_xlim rtl/src/neo_core/config/config_regs.sv:845
+core 183 17 til_xstep rtl/src/neo_core/config/config_regs.sv:848
+core 200 17 til_ylim rtl/src/neo_core/config/config_regs.sv:851
+core 217 17 til_ystep rtl/src/neo_core/config/config_regs.sv:854
+core 234 64 dil_pat rtl/src/neo_core/config/config_regs.sv:857
+core 298 32 rows_active rtl/src/neo_core/config/config_regs.sv:860
+core 330 256 loc_woffs rtl/src/neo_core/config/config_regs.sv:866
+core 608 17 wlim rtl/src/neo_core/config/config_regs.sv:878
+core 625 17 wstep rtl/src/neo_core/config/config_regs.sv:881
+core 642 17 auxlim rtl/src/neo_core/config/config_regs.sv:884
+core 659 17 auxstep rtl/src/neo_core/config/config_regs.sv:887
+core 676 17 til_klim rtl/src/neo_core/config/config_regs.sv:890
+core 693 17 til_kstep rtl/src/neo_core/config/config_regs.sv:893
+core 710 32 cols_active rtl/src/neo_core/config/config_regs.sv:896
+core 742 1 waligned rtl/src/neo_core/config/config_regs.sv:899
+core 768 16 ncontexts rtl/src/neo_core/config/config_regs.sv:909
+core 784 16 cxlim rtl/src/neo_core/config/config_regs.sv:912
+core 800 16 cxstep rtl/src/neo_core/config/config_regs.sv:915
+core 816 16 cklim rtl/src/neo_core/config/config_regs.sv:918
+core 832 16 ckstep rtl/src/neo_core/config/config_regs.sv:921
+core 848 16 til_cylim rtl/src/neo_core/config/config_regs.sv:924
+core 864 16 til_cystep rtl/src/neo_core/config/config_regs.sv:927
+core 880 16 til_cklim rtl/src/neo_core/config/config_regs.sv:930
+core 896 16 til_ckstep rtl/src/neo_core/config/config_regs.sv:933
+core 912 8 inactive_cols rtl/src/neo_core/config/config_regs.sv:936
+core 920 1 preload_en rtl/src/neo_core/config/config_regs.sv:939
+core 921 1 transpose_mode rtl/src/neo_core/config/config_regs.sv:941
+core 922 1 psum_stream_en rtl/src/neo_core/config/config_regs.sv:943
+core 923 1 cin_tile_last rtl/src/neo_core/config/config_regs.sv:945
+core 924 1 oc_tile_last rtl/src/neo_core/config/config_regs.sv:947

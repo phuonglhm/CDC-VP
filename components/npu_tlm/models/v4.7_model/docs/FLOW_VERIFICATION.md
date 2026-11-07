@@ -44,7 +44,7 @@ elsewhere. The tool only reads logs: it runs nothing and changes nothing.
 | NOT RUN | the log of a check is missing |
 | OPTIONAL | the input of the check is not in this package (vectors of the hardware team); the step is decided by its other checks |
 
-The R checks rerun on any machine without the RTL: `tools/has/gvu_oracle/check_rtl_trace.sh` regenerates the vector
+The R checks rerun on any machine without the RTL: `tools/has/check_rtl_trace.sh` regenerates the vector
 files of the stored RTL runs from the model and compares their digest with the stored one (`same <file> <n> beats`).
 
 ## 3. Log format

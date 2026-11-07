@@ -2,7 +2,7 @@
 # MAXPOOL of gvu_top.sv (latest hardware RTL drop, layout with vlsu/ and the pooling feeder) against the port GvuTop, cycle by cycle:
 # for each vector set of target/test/maxpool, one run (the channels that fit vbank0) traced by tb_oracle_maxpool.sv on the
 # RTL and by tb_gvu_top_maxpool --trace on the port, then the two traces compared line by line.
-# The modules shift_reg, spill_register_flushable and fifo_v3 are taken from the *_standin.sv files (not delivered, B8).
+# The modules shift_reg, spill_register_flushable and fifo_v3 are taken from the *_standin.sv files (not delivered).
 # Prints "ORACLE maxpool <set> cycles <n> lines <rtl> / <port> mismatches <m>" per set and a RESULT line.
 # usage: bash run_verilator_maxpool.sh <rtl gvu dir> <work dir> <target/test/maxpool dir> <tb_gvu_top_maxpool binary>
 set -u

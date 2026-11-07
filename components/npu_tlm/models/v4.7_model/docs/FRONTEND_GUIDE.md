@@ -248,7 +248,7 @@ utilization alone. The limits, the cycle laws behind the rules, a step-by-step p
 | `fe_vit_quant.py` | Int8 quantization laid out on the vector-unit pipelines (per-channel weights, per-tensor activations), calibrated on coco128; writes `$FE_WORK/has/vit/vit_scales.json` |
 | `fe_ref_gvu.py` | Independent integer golden of the vector unit: indirect LUT, SOFTMAX, FUSED_ATTN, LAYERNORM (`has/HAS_IFACE_RCE.md`). Knobs for the items of the micro-architecture specification (rounding modes ceil, toward zero, away from zero; table depths 256 / 512; LUT input 0; log-scale LUT mode); `--only mas` compares them with `tools/has/mas_ref.py`. The defaults keep the shipped vectors unchanged |
 | `fe_vit_block.py` | Integer golden of one encoder block in the form the data flow controller runs it, and the instruction emitter; `--v-token-major` as for `fe_vit_full.py` |
-| `fe_vit_full.py` | Whole network: patch embedding, 12 encoder blocks, final LayerNorm and head, 244 instructions, no host step. Output `$FE_WORK/has/vit_full/`, or `--out <dir>`. `--v-token-major`: V of every QKV output token-major (`TMAJ_C0` = 1536 on the QKV GEMM_FUSED, FUSED_ATTN `FLAGS` bit 2); run with `HAS_OUT_TRANSPOSE=1` (`HW_RTL_ALIGNMENT.md`, section 8) |
+| `fe_vit_full.py` | Whole network: patch embedding, 12 encoder blocks, final LayerNorm and head, 244 instructions, no host step. Output `$FE_WORK/has/vit_full/`, or `--out <dir>`. `--v-token-major`: V of every QKV output token-major (`TMAJ_C0` = 1536 on the QKV GEMM_FUSED, FUSED_ATTN `FLAGS` bit 2); run with `HAS_OUT_TRANSPOSE` (on by default; `HW_RTL_ALIGNMENT.md`, section 8) |
 
 - **Layout.** Every activation is channel-major `[C][tokens]` with 197 tokens; FUSED_ATTN and LAYERNORM set
   `FLAGS.CHANNEL_MAJOR`.
@@ -262,3 +262,14 @@ utilization alone. The limits, the cycle laws behind the rules, a step-by-step p
 - **Golden.** Block N consumes the integer output of block N-1. The quality against the float model is reported
   per block (cosine) and on the logits (top-1); see `KNOWN_LIMITATIONS.md`, Q4.
 
+
+## 13. Programs for the hardware register file
+
+The programs of this frontend target the instruction registers of the model (`SW_INTEGRATION_GUIDE.md`). Which of their
+layers the hardware RTL revision 1 runs as written, and what the compiler changes for the others (padded
+tensors in DRAM, a uniform tile grid, per-channel requant data, concat by address), is in `COMPILER_GUIDE.md`. The
+per-layer check reads a program directory directly: `python3 tools/has/hw_check_program.py <program dir>`. Of the
+reference programs, `insts_pe3` (concat by address) is the one to use for the hardware: `insts_pe3_nd` adds slice /
+concat instructions the hardware has no opcode for. The register trace of a program, the 82 words of every layer that
+the hardware register file would receive, is written by `HAS_HOST_TRACE=<file> host_trace_gen <program dir>`
+(`NEO_REGISTER_FILE.md`, section 7).

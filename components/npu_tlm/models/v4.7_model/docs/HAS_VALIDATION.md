@@ -227,7 +227,7 @@ registers already matched the figures; the items below changed or were added.
 | LUT modes | "PWL": mantissa index with interpolation, exponent from the LUT. "Log-scale": index = {E - Base, 4 fine bits}, read directly, exponent shift from the instruction | The specification's PWL mode is the model's indirect LUT (used by softmax and LayerNorm); the log-scale mode is `has::LutLogScale` | Implemented; the instruction path uses the PWL mode |
 | LUT tables | 256 entries (reciprocal), 512 (inverse square root); RTL: the address of the second interpolation point is held at the last entry; input 0 returns 0 and a flag | Default follows the RTL (`lut_mas_depth`, `lut_zero0`) | Bit-identical results on both networks compared with the earlier 257-entry tables |
 | LUT pipeline depth | Specification: 6 stages (PWL), 3 (log-scale). RTL with default parameters: 4 and 2 | 4 stages in the softmax cycle estimate (`lut_stages`) | Open: which value is final |
-| Zero-point adder of the requantization | RTL: 16-bit adder that wraps | Saturating adder; the wrapping adder is the knob `zp_add_wrap16`, off by default | Reported as a possible defect (a wrapped value has the wrong sign). No effect on either network |
+| Zero-point adder of the requantization | RTL: 16-bit adder that wraps | Saturating adder; the wrapping adder is the knob `zp_add_wrap16`, off by default | A possible defect of the RTL (a wrapped value has the wrong sign). No effect on either network |
 | Scalar bank | RTL: the int8 port reads the low byte of an int32 word | One int32 word per scalar parameter: 8 bytes per LayerNorm channel (`sp_s_word32`) | Follows the RTL; the bank layout is to be confirmed |
 | Load/store unit | A v32int16 port, per-bank port table, 4-D stride address generation, direct store to AXI | Structure model `has/gvu_lsu.h` (counting only; no effect on results) | Timing not modelled until the controller is specified |
 | Pipeline controller | State machines of the softmax, LayerNorm and residual-add pipelines | State traces in `has/gvu_pipeline_ctrl.h`; not connected to the cycle estimate | Open: cycles per state |
@@ -235,7 +235,7 @@ registers already matched the figures; the items below changed or were added.
 
 Checks (MEASURED): `tools/has/tb_gvu_mas` against the independent reference `tools/has/mas_ref.py` (rounding modes,
 both LUT modes and table depths, softmax with the log-scale reciprocal, scratchpad capacities and port conflicts);
-both networks bit-exact with the default configuration (`PERFORMANCE_REPORT.md`, section 5.8); with `HAS_SPEC=rtl`
+both networks bit-exact with the vector-unit knobs at 0 (`PERFORMANCE_REPORT.md`, section 5.8); with `HAS_SPEC=rtl`
 both networks bit-exact and cycle-identical to the earlier reference runs.
 
 Questions raised by this comparison, in order of effect on the model:

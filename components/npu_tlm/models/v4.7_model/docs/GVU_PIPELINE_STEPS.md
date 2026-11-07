@@ -6,7 +6,7 @@ it, and where the drawing cuts the pipeline. It then derives the depth of every 
 which ported block (`has/rtl_ref_gvu_*.h`) exists for each element of the drawings. It is the starting point for
 composing a pipeline from the ported blocks.
 
-It is a table of what the drawings and the RTL say. Nothing here is implemented in the instruction path.
+It is a table of what the drawings and the RTL say. The flows of this table run on `GvuTop` in the instruction path by default (`GVU_TOP_CORE_INTEGRATION.md`); the table itself is taken from the drawings and the RTL.
 
 ## 0. Sources, labels, conventions
 
@@ -317,7 +317,7 @@ accumulation ("end of row / window") is split into the repeated part and the tai
 | Average pool: repeated part 2; tail multiply + round-shift | 2 + (4 to 6) | 2 + 3 + 1 = 6 | uses `lat_add2` (10) | 6 against 10 |
 
 The largest differences between (b) and (c) are LayerNorm stages 2, 4 and 5. These depths are added once per row group,
-not per element. ESTIMATE for ViT-B/16 with the default configuration: 25 LayerNorm instructions, 15 groups each,
+not per element. ESTIMATE for ViT-B/16 with the default configuration: 25 LayerNorm instructions, 15 groups each on the functional model (the default runs them on `GvuTop`: 175 groups, 7 per instruction, `GVU_OPS_ON_GVUTOP.md`, section 6),
 31 cycles more per group, about 11,600 cycles of 41.68 million.
 
 ## 3. State machines of the MAS (Figures 5-16 to 5-18) against `has/gvu_pipeline_ctrl.h`

@@ -6,18 +6,18 @@
 //   GvuTopStream   vector unit side. Holds one rtl_ref_gvu::GvuTop. Drives i_psum_ready (= the controller is in the state that
 //                  takes beats), latches a packet at the clock edge when valid && ready, runs the kDepth-stage stream
 //                  pipeline of GEMM_FUSED, and writes every int8 result back into the NPU half of SRAM-C (the results of the
-//                  RTL go to vbank2, which does not work in the latest hardware RTL drop -- B1 -- and has 256 rows).
+//                  RTL go to vbank2, which does not work in the latest hardware RTL drop and has 256 rows).
 // Timing as in the RTL and independent of the order of processes: a packet written by the hook at edge E is in the FIFO (valid
 // = 1) in the cycle after E and latched by GvuTop at E+1; its result comes out at E+1+kDepth (E+10 with the default depth 9,
 // the same pipeline as the call-style connection HAS_GVU_TOP=1).
 // Signals of the RTL boundary: o_psum_valid / i_psum_ready / o_psum_data / o_oc_last / o_oc_tile_last / o_psum_empty /
 // o_stream_stall. Side channel of the MODEL ONLY (not in the RTL, named o_side_* / i_side_*): the word address and lane mask of
-// the write, the output channel, the Out_Scale / Out_Shift of that channel (the RTL reads them from the sbank, finding F2; the sbank layout is an open question), the
+// the write, the output channel, the Out_Scale / Out_Shift of that channel (the RTL reads them from the sbank; the sbank layout is an open question), the
 // model result of the beat (to compare) and a flag for beats that GvuTop cannot express.
 // Back-pressure: by default the core is not stopped by o_stream_stall (the packet is accepted anyway and the stall is
 // counted: stall_needed); with HAS_GVU_STALL=1 the core stops as psm_top.sv does (HasNpuTop::stream_room, rtl_ref_npu_top.h).
-// Not done (counted and printed): the exit of GEMM_FUSED_OBP by oc_last & oc_tile_last (F1), the scale index of the AGU (F2)
-// and the write of vbank2 (B1) are only observed and counted, they do not drive values.
+// Not done (counted and printed): the exit of GEMM_FUSED_OBP by oc_last & oc_tile_last, the scale index of the AGU
+// and the write of vbank2 are only observed and counted, they do not drive values.
 // Residual add and max pool run on the same GvuTop. By default as in has/gvu_top_bridge.h, without clock process (add(),
 // maxpool()): the schedule of has::HasElemwise is an analytic overlap of DMA and compute, so the cycles of the unit are an input
 // to it. With HAS_GVU_ELEM_CLK=1 (HasNpuTop) they run as jobs on the clock of the core (start_add(), start_maxpool()): one tick
@@ -41,6 +41,7 @@
 #include "has/gvu_regs_neo_shadow.h"
 #include "has/gvu_regs_dfc.h"
 #include "has/rtl_ref_gvu_config_regs.h"
+#include "has/rtl_ref_gvu_residual_hw.h"
 #include "has/rtl_ref_gvu_top.h"
 
 namespace has
@@ -73,7 +74,7 @@ namespace has
         uint64_t rtl_exit_events{0}, rtl_at_risk{0}, rtl_agu_mismatch{0};
         uint64_t add_calls{0}, add_not_expr{0}, add_lanes{0}, add_differ{0}, add_cycles{0}, add_model_cycles{0};
         uint64_t mp_calls{0}, mp_not_expr{0}, mp_lanes{0}, mp_differ{0}, mp_cycles{0}, mp_model_cycles{0}, mp_runs{0};
-        // HAS_GVU_AVG=1: average pool on the unit (POOLING_AVG of the RTL patch)
+        // HAS_GVU_AVG=1: average pool on the unit (POOLING_AVG, a data path of the model)
         uint64_t avg_calls{0}, avg_not_expr{0}, avg_lanes{0}, avg_differ{0}, avg_cycles{0}, avg_model_cycles{0}, avg_runs{0};
         uint64_t avg_reg_writes{0}, avg_reg_fields{0};   // HAS_GVU_REGS: register writes of the average pool runs; runs the fields do not hold
         // HAS_GVU_SOFTMAX=1: the softmax rows of FUSED_ATTN on the unit
@@ -92,7 +93,7 @@ namespace has
         uint64_t regs_layers{0}, regs_exit_flags{0}, regs_exit_fallback{0}, regs_exit_timeout{0}, regs_writes{0}, regs_seqs{0}, regs_busy_edges{0};
         uint64_t regs_pool_runs{0}, regs_pool_call_style{0}, regs_flag_bypass{0}, regs_lut_toggles{0};
         uint64_t regs_add_runs{0}, regs_add_cfg_mismatch{0}, regs_add_b_buf1{0};
-        // F1' in the tap (psm_top.sv stream_ctx_q): calls that pushed packets, calls whose oc_last packets differ from i_ncontexts, packets with oc_tile_last
+        // The per-context oc_tile_last flag in the tap (psm_top.sv stream_ctx_q): calls that pushed packets, calls whose oc_last packets differ from i_ncontexts, packets with oc_tile_last
         uint64_t f1_calls{0}, f1_ctx_mismatch{0}, f1_tile_last_packets{0}, f1_flag_bad{0};
         // HAS_GVU_STALL (see HasNpuTop): 1 = the core stops on o_stream_stall; 2 = test only, the stall is computed but not applied
         int stall_mode{0};
@@ -140,9 +141,9 @@ namespace has
             StreamPacket p = q;
             if (f1_on_)
             {
-                // F1' (F1p.diff, psm_top.sv stream_ctx_q / stream_ctx_last): oc_tile_last of a packet = the configured final-OC-tile bit of
+                // Per-context flag (psm_top.sv stream_ctx_q / stream_ctx_last): oc_tile_last of a packet = the configured final-OC-tile bit of
                 // the call AND the packet belongs to the last context; the counter of contexts counts the packets that end a context (oc_last)
-                // F1' (a) of the RTL counts the packets that carry oc_last against i_ncontexts; with a row of the last channel that straddles two
+                // The RTL counts the packets that carry oc_last against i_ncontexts; with a row of the last channel that straddles two
                 // SRAM-C words of one context (positions per context not a multiple of the word) the last channel has more than one oc_last packet
                 // in a context and the count reaches ncontexts too early. The model sets the flag on the packet that holds the last element of
                 // the tile (the last write of the call), which is where the unit must leave (call_last, from the geometry of the tile).
@@ -157,7 +158,7 @@ namespace has
             stream_stats().pushed++;
             if (p.bypass) stream_stats().bypassed++;
         }
-        // HAS_GVU_REGS: F1' on. begin_call is the reset between two invocations of the core (i_fsm_reset) with the contexts of the call
+        // HAS_GVU_REGS: the per-context flag on. begin_call is the reset between two invocations of the core (i_fsm_reset) with the contexts of the call
         // and the configured oc_tile_last bit; end_call checks that the packets that ended a context are as many as the contexts.
         void enable_f1() { f1_on_ = true; }
         bool f1_on() const { return f1_on_; }
@@ -348,19 +349,20 @@ namespace has
             add_regs_ = add_by_regs;
             master_.set_lat(lat);
             reg_lat_ = lat;
-            rtl_ref_gvu::GvuConfigParams cp; cp.b13_fixed = true; cp.word_addressed = true;   // patches B13 / B17 as sent to the hardware team
+            rtl_ref_gvu::GvuConfigParams cp; cp.b13_fixed = true; cp.word_addressed = true;   // all four bytes writable, word-addressed register index
             cp.num_regs = 32;                                                                  // GVU_REG_AW 5: Reg 9..15 hold the residual add
-            regs_ = rtl_ref_gvu::GvuConfigRegs(cp);
-            // HAS_GVU_REGS_NEO: the new register map runs in parallel (checked, counted) and the write port takes the measured latency of 1 edge per write
-            if (GvuRegsNeoShadow::on())
+            // HAS_GVU_REGS_NEO: the register map of neo_lite is the functional one (has/gvu_regs_neo_shadow.h); the write port takes the measured latency of
+            // 1 edge per write and the multiplexer + clock-domain crossing of neo_top once per chain of writes
+            neo_on_ = GvuRegsNeoKnobs::on();
+            regs_.configure(cp, neo_on_);
+            if (neo_on_)
             {
-                neo_on_ = true;
-                reg_lat_ = GvuRegsNeoShadow::write_lat(); master_.set_lat(reg_lat_);
-                regs_.set_observer([this](const rtl_ref_gvu::GvuConfigIn &c, const rtl_ref_gvu::GvuConfigRegs &o) { neo_.observe(c, o); });
+                reg_lat_ = GvuRegsNeoKnobs::write_lat(); master_.set_lat(reg_lat_);
+                master_.set_chain_lat(GvuRegsNeoKnobs::cdc_lat());
             }
         }
         bool regs_on() const { return regs_on_; }
-        const rtl_ref_gvu::GvuConfigRegs &regs() const { return regs_; }
+        const GvuRegFile &regs() const { return regs_; }
         const GvuRegMaster &reg_master() const { return master_; }
         // The thread of the DFC waits until the sequence in flight is over.
         void reg_wait() { while (!reg_idle_) sc_core::wait(reg_ev_); }
@@ -380,12 +382,14 @@ namespace has
             bool table_reset = false;
             if (lut || !table_loaded_)
             {
-                const bool buf = regs_.out().vbank1_buf_sel;
+                // HAS_GVU_REGS_NEO: the table goes into the vbank1 buffer the enable edge of this command will select (the one the flop does not show now)
+                const unsigned buf = neo_on_ ? ib(1) : (regs_.out().vbank1_buf_sel ? 1u : 0u);
+                if (neo_on_) { gemm_v1_expect_ = static_cast<int>(buf); pp_note(buf); }
                 for (unsigned w = 0; w < 2; w++)
                 {
                     R::SpBytes row(128, 0);
                     if (lut) for (unsigned k = 0; k < 128; k++) row[k] = static_cast<uint8_t>(lut[128 * w + k]);
-                    top_.scratchpad().sram(1, buf ? 1 : 0).poke(w, row);
+                    top_.scratchpad().sram(1, buf).poke(w, row);
                 }
                 table_reset = table_loaded_;
                 table_loaded_ = true;
@@ -393,7 +397,7 @@ namespace has
             }
             running_ = true; stopping_ = false; pipe_done_gemm_ = false;
             rtl_agu_ = 0; rtl_window_ = 0;
-            request_regs(gvu_regs_dfc::layer_begin(zp, !act, table_reset));
+            request_regs(sq_layer_begin(zp, !act, table_reset));
         }
         // End of the layer by registers: the unit has left GEMM_FUSED by itself (the beat of the last call carried oc_last & oc_tile_last);
         // wait for pipe_done (a wire to the DFC in the RTL), then clear the done flag. Not leaving in time is counted (fallback: the stop of the model).
@@ -412,7 +416,7 @@ namespace has
                 if (!pipe_done_gemm_) st.regs_exit_timeout++;
             }
             reg_wait();
-            request_regs(gvu_regs_dfc::clear_done());
+            request_regs(gvu_regs_dfc::clear_done_last(neo_on_));   // a layer is one DFC command: its last CONTROL write (HAS_NEO_REV >= 1)
             reg_wait();
             running_ = false;
             gin_.i_gemm_stream_stop = false;
@@ -427,7 +431,7 @@ namespace has
 
         // ---- residual add and max pool on the same unit (see the header comment)
         // An operation is a sequence of runs of the unit: residual add in runs of at most 128 rows (the int8 rows of vbank1), max
-        // pool in runs of at most cmax channels, each from a reset of the unit (B12, QD-09). add() / maxpool() run every run to
+        // pool in runs of at most cmax channels, each from a reset of the unit (the delivered pooling feeder keeps its count between runs; QD-09). add() / maxpool() run every run to
         // completion inside the call (no simulated time); start_add() / start_maxpool() (HAS_GVU_ELEM_CLK=1) give the same runs to
         // clock_proc, one tick of the unit per clock edge. Both count the cycles of a run from its first tick to the tick that gives
         // done (the unit is IDLE in that tick), so both give the same cycles for the same operands.
@@ -486,7 +490,7 @@ namespace has
             for (int c0 = 0; c0 < g; c0 += q.cmax)
             {
                 const int n = std::min(q.cmax, g - c0);
-                reset_unit();                                // B12: a run starts from a reset of the pooling feeder
+                if (!(has::neo_rev() >= 1 && c0 > 0)) reset_unit();  // a run starts from a reset of the pooling feeder; in revision 1 (HAS_NEO_REV=1) the feeder no longer keeps its count between runs, so only the first run of the operation is reset
                 R::GvuTop::In i = pool_load(in, q, c0, n);
                 bool done = false;
                 uint64_t c = 0;
@@ -506,11 +510,11 @@ namespace has
             return true;
         }
 
-        // ---- average pool (HAS_GVU_AVG=1, POOLING_AVG of the RTL patch; has/rtl_ref_gvu_avgpool_pipe.h). The window geometry is that of max pool
+        // ---- average pool (HAS_GVU_AVG=1, POOLING_AVG, a data path of the model; has/rtl_ref_gvu_avgpool_pipe.h). The window geometry is that of max pool
         // without padding (pool_geom with p = 0), Avg_Scale int32, Avg_Shift 0..63, the round mode of the instruction, saturation to int8. Runs of at
         // most cmax channels, each from a reset of the unit, in the call style (no simulated time; the caller waits the GvuTop cycles; on the
-        // clock: start_avgpool). With HAS_GVU_REGS=1 a run is configured by POOLING_0 / 1 and Reg 25 / 26 (the average pool registers of the RTL
-        // patch, a proposal) and the unit takes the values read back from the register file.
+        // clock: start_avgpool). With HAS_GVU_REGS=1 a run is configured by POOLING_0 / 1 and Reg 25 / 26 (average pool registers of the model,
+        // not in the delivered RTL) and the unit takes the values read back from the register file.
         static bool avg_on() { static const bool v = env_def("HAS_GVU_AVG", true); return v; }
         static bool avgpool_fits(int g, int H, int W, int kk, int s, int64_t S, int shift, int round_mode)
         {
@@ -537,9 +541,9 @@ namespace has
                 if (regs_on_)
                 {
                     namespace D = gvu_regs_dfc;
-                    const std::vector<GvuRegMaster::W> seq = D::avg_run(static_cast<unsigned>(q.kk - 2), static_cast<unsigned>(q.s), static_cast<unsigned>(q.Wt),
+                    const std::vector<GvuRegMaster::W> seq = finish(sq_avg(static_cast<unsigned>(q.kk - 2), static_cast<unsigned>(q.s), static_cast<unsigned>(q.Wt),
                         static_cast<unsigned>(n), static_cast<unsigned>(q.Ho), static_cast<unsigned>(q.Wt * q.H), static_cast<unsigned>(q.Wt * q.s),
-                        static_cast<int32_t>(S), static_cast<unsigned>(shift), static_cast<unsigned>(i.i_avg_round));
+                        static_cast<int32_t>(S), static_cast<unsigned>(shift), static_cast<unsigned>(i.i_avg_round)));
                     for (const auto &w : seq) regs_.write_axi(w.byte_addr, w.data, w.strb);
                     R::GvuTop::In r = i;
                     regs_to_in(r);
@@ -551,7 +555,7 @@ namespace has
                     regs_.write_axi(D::addr(D::CONTROL), 1u << 2, 0xF);
                     st.avg_reg_writes += seq.size() + 1;
                     if (!same) { st.avg_reg_fields++; st.avg_not_expr++; reset_unit(); return false; }
-                    cyc += (seq.size() + 1) * reg_lat_;
+                    cyc += (seq.size() + 1) * reg_lat_ + 2 * cdc();
                 }
                 bool done = false;
                 uint64_t c = 0;
@@ -579,8 +583,8 @@ namespace has
         // ---- softmax rows of FUSED_ATTN (HAS_GVU_SOFTMAX=1, GVU_OP_SOFTMAX). One group = at most 32 rows (one row per lane), L positions
         // (vbank0 buffer 0, word = position, in place of the input); the tables: reciprocal image (vbank1 buffer 1 words 0..3, 16 bit) and
         // exponential table (words 4..5, 8 bit), one DMA per instruction (the model loads the words again after each reset of the unit, at no
-        // cost); stage 3 shifted by E + Q - P (GvuTop::In::i_softmax_qp, the fix of B20; HAS_GVU_SOFTMAX_AS_RTL=1 keeps the shift E of the
-        // delivered RTL). The vbank1 buffer bit flips once, on the edge of the table-init done output (the fix of B21). ATTN_Scale int32,
+        // cost); stage 3 shifted by E + Q - P (GvuTop::In::i_softmax_qp, the model's correction; HAS_GVU_SOFTMAX_AS_RTL=1 keeps the shift E of the
+        // delivered RTL). The vbank1 buffer bit flips once, on the edge of the table-init done output (the RTL toggles it on the level). ATTN_Scale int32,
         // ATTN_Shift 0..63, Z_ATTN int8, L <= 800 (vbank0 depth). The caller keeps a group with a masked position (mask = e 0) on the model.
         static bool softmax_on() { static const bool v = env_def("HAS_GVU_SOFTMAX", true); return v; }
         static bool softmax_as_rtl() { static const bool v = env_on("HAS_GVU_SOFTMAX_AS_RTL"); return v; }
@@ -645,18 +649,14 @@ namespace has
             // HAS_GVU_REGS=1: the DFC writes SOFTMAX_0..2 (Reg 4..6) and the start (Reg 0, opcode SOFTMAX), each write reg_lat_ edges, and the
             // unit takes the configuration from the register file; a value the fields do not hold (token length 9 bits) stays on the model.
             // The vbank1 buffer bit (Reg 2) is left to the GEMM_FUSED table logic: the run sets it on its input and flips it once on the edge
-            // of the table-init done output (the fix of B21; the register file of the RTL toggles it on the level).
+            // of the table-init done output (the register file of the RTL toggles it on the level).
             uint64_t reg_cyc = 0;
             if (regs_on_)
             {
                 namespace D = gvu_regs_dfc;
-                const std::vector<GvuRegMaster::W> seq = {
-                    {D::addr(D::SOFTMAX_0 + 1), static_cast<uint32_t>(S), 0xF},
-                    {D::addr(D::SOFTMAX_0 + 2), (static_cast<uint32_t>(shift) & 0xFFu) | (static_cast<uint32_t>(zp) & 0xFFu) << 8, 0xF},
-                    {D::addr(D::SOFTMAX_0), (static_cast<uint32_t>(L) & 0x1FFu) | 1u << 9, 0xF},
-                    {D::addr(D::CONTROL), D::control(3u, true), 0xF}};
+                const std::vector<GvuRegMaster::W> seq = finish(sq_softmax(S, shift, zp, static_cast<unsigned>(L)));
                 for (const auto &w : seq) regs_.write_axi(w.byte_addr, w.data, w.strb);
-                reg_cyc = seq.size() * reg_lat_;
+                reg_cyc = seq.size() * reg_lat_ + cdc();
                 st.smx_reg_writes += seq.size();
                 R::GvuTop::In r = in;
                 regs_to_in(r);
@@ -674,7 +674,7 @@ namespace has
             {
                 const R::GvuTop::Out o = top_.tick(in, true);
                 if (o.o_gvu_pipe_ctrl_state == R::SOFTMAX_ST1) smx_last_st1_++;
-                if (o.o_softmax_lut_init_done && in.i_vbank1_buf_sel) in.i_vbank1_buf_sel = false;   // B21: one flip, on the edge
+                if (o.o_softmax_lut_init_done && in.i_vbank1_buf_sel) in.i_vbank1_buf_sel = false;   // one flip, on the edge
                 done = o.o_softmax_pipe_done;
             }
             in.i_pipeline_en = false;
@@ -729,7 +729,7 @@ namespace has
             if (regs_on_)
             {
                 namespace D = gvu_regs_dfc;
-                const std::vector<GvuRegMaster::W> seq = D::layer_begin(Z, true, false);
+                const std::vector<GvuRegMaster::W> seq = finish(sq_layer_begin(Z, true, false));
                 for (const auto &w : seq) regs_.write_axi(w.byte_addr, w.data, w.strb);
                 R::GvuTop::In r = in;
                 regs_to_in(r);
@@ -737,8 +737,8 @@ namespace has
                 regs_.write_axi(D::addr(D::CONTROL), 1u << 2, 0xF);
                 st.fa_reg_writes += seq.size() + 1;
                 if (!same) { st.fa_not_expr++; reset_unit(); return false; }
-                c += (seq.size() + 1) * reg_lat_;
-                last_reg_cyc_ = (seq.size() + 1) * reg_lat_;
+                c += (seq.size() + 1) * reg_lat_ + 2 * cdc();
+                last_reg_cyc_ = (seq.size() + 1) * reg_lat_ + 2 * cdc();
             }
             for (int k = 0; k < 100 && top_.state() != R::GEMM_FUSED_ST1; k++) { top_.tick(in, true); c++; }
             if (top_.state() != R::GEMM_FUSED_ST1) { st.fa_not_expr++; reset_unit(); return false; }
@@ -880,8 +880,8 @@ namespace has
         // max pool group on the clock of the core, the parameters checked by the caller (add_fits / maxpool_fits). The operands are
         // copied at the request. The job starts at the first edge after the edge of the request, whatever the order of the processes;
         // then the unit takes exactly one tick per edge and a run follows the previous one at the next edge. The reset before a max pool
-        // run and the load of the banks take no time, as in the call style (QD-09: the fix of B12 clears the counter at
-        // o_pooling_last_wr; the load is the DMA of the schedule). At the done tick of the last run the results are compared with the
+        // run and the load of the banks take no time, as in the call style (QD-09: the counter is cleared at
+        // o_pooling_last_wr, as gvu_pooling_feeder.sv does in revision 1; the load is the DMA of the schedule). At the done tick of the last run the results are compared with the
         // model and written into out, job_done() turns true and job_event() is notified (delta); job_cycles() = the sum of the runs.
         void start_add(const int8_t *A, const int8_t *B, int8_t *out, size_t n, int zpA, int zpB, int zpO, int64_t SA, int64_t SB, int64_t SO,
                        int sA, int sB, int sO, int round_mode, uint64_t model_cycles)
@@ -942,8 +942,8 @@ namespace has
                             (unsigned long long)s.peek_checked, (unsigned long long)s.peek_mismatch);
             std::printf("[gvu-stream] layers %llu, activation tables loaded %llu, drain waits behind the cores %llu cycles in %llu passes, unit resets %llu\n",
                         (unsigned long long)s.layers, (unsigned long long)s.tables, (unsigned long long)s.drain_extra, (unsigned long long)s.drain_waits, (unsigned long long)s.resets);
-            std::printf("[gvu-stream] RTL stream observed, values NOT driven by it: exits of GEMM_FUSED_OBP (oc_last & oc_tile_last, F1) %llu, packets within %d beats of an exit %llu, "
-                        "scale index of the AGU != channel (F2) %llu\n", (unsigned long long)s.rtl_exit_events, kRtlExitDelay, (unsigned long long)s.rtl_at_risk, (unsigned long long)s.rtl_agu_mismatch);
+            std::printf("[gvu-stream] RTL stream observed, values NOT driven by it: exits of GEMM_FUSED_OBP (oc_last & oc_tile_last) %llu, packets within %d beats of an exit %llu, "
+                        "scale index of the AGU != channel %llu\n", (unsigned long long)s.rtl_exit_events, kRtlExitDelay, (unsigned long long)s.rtl_at_risk, (unsigned long long)s.rtl_agu_mismatch);
             if (s.add_calls)
                 std::printf("[gvu-stream] residual add | calls %llu | not expressible %llu | lanes %llu | differ %llu | GvuTop cycles %llu | model cycles %llu\n",
                             (unsigned long long)s.add_calls, (unsigned long long)s.add_not_expr, (unsigned long long)s.add_lanes, (unsigned long long)s.add_differ,
@@ -991,16 +991,18 @@ namespace has
                             (unsigned long long)s.regs_exit_flags, (unsigned long long)s.regs_exit_fallback, (unsigned long long)s.regs_exit_timeout,
                             (unsigned long long)s.regs_pool_runs, (unsigned long long)s.regs_lut_toggles, (unsigned long long)s.regs_flag_bypass,
                             (s.regs_exit_fallback || s.regs_exit_timeout || s.elem_jobs_failed) ? " <== FAIL" : "");
-            if (GvuRegsNeoShadow::on() && s.regs_seqs)
+            if (GvuRegsNeoKnobs::on() && s.regs_seqs)
             {
                 const NeoShadowStats &n = neo_shadow_stats();
-                std::printf("[gvu-stream] register map of neo_lite in parallel (HAS_GVU_REGS_NEO=1, write latency %u edge(s), MEASURED without mux and CDC = lower bound): model register-file ticks %llu, "
-                            "writes into the new map %llu (opcode writes %llu, LUT pulses %llu, pad writes to 14 per command %llu), enable edges (buffer flips) %llu, field checks %llu, "
-                            "fields that differ %llu (enable %llu, done %llu, opcode %llu, GEMM %llu, Softmax %llu, pooling %llu), LUT pulse differences %llu, done / enable races %llu%s\n",
-                            GvuRegsNeoShadow::write_lat(), (unsigned long long)n.ticks, (unsigned long long)n.neo_writes, (unsigned long long)n.opcode_writes, (unsigned long long)n.lut_pulses,
-                            (unsigned long long)n.pad_writes, (unsigned long long)n.enable_edges, (unsigned long long)n.field_checks, (unsigned long long)n.mismatches,
-                            (unsigned long long)n.bad_enable, (unsigned long long)n.bad_done, (unsigned long long)n.bad_op, (unsigned long long)n.bad_gemm, (unsigned long long)n.bad_softmax,
-                            (unsigned long long)n.bad_pool, (unsigned long long)n.lut_bad, (unsigned long long)n.done_race, (n.mismatches || n.lut_bad) ? " <== CHECK" : "");
+                std::printf("[gvu-stream] register map of neo_lite as the functional map (HAS_GVU_REGS_NEO=1, %u edge(s) per write, %u edge(s) of mux + CDC per chain, ping-pong %s): "
+                            "register-file ticks %llu, writes %llu (LUT pulses %llu, pad writes to 14 per command %llu, commands %llu, chains with the CDC delay %llu), "
+                            "enable edges (buffer flips) %llu, runs loaded by the flops %llu (into buffer 1: %llu, flops differ from the loaded buffer: %llu), "
+                            "residual output shift cut to 6 bits %llu, done / enable races %llu%s\n",
+                            GvuRegsNeoKnobs::write_lat(), GvuRegsNeoKnobs::cdc_lat(), GvuRegsNeoKnobs::pp_on() ? "on" : "off",
+                            (unsigned long long)n.ticks, (unsigned long long)n.neo_writes, (unsigned long long)n.lut_pulse_writes, (unsigned long long)n.pad_writes,
+                            (unsigned long long)n.sequences, (unsigned long long)n.cdc_chains, (unsigned long long)n.enable_edges, (unsigned long long)n.pp_runs,
+                            (unsigned long long)n.pp_loads_buf1, (unsigned long long)n.pp_flop_bad, (unsigned long long)n.shift_out_cut, (unsigned long long)n.done_race,
+                            n.pp_flop_bad ? " <== FAIL" : "");
             }
             if (s.regs_add_runs || s.regs_add_cfg_mismatch)
                 std::printf("[gvu-stream] residual add by registers: runs %llu, runs whose configuration read back from the register file differs from the call style %llu%s, "
@@ -1008,7 +1010,7 @@ namespace has
                             (unsigned long long)s.regs_add_runs, (unsigned long long)s.regs_add_cfg_mismatch, s.regs_add_cfg_mismatch ? " <== FAIL" : "",
                             (unsigned long long)s.regs_add_b_buf1);
             if (s.f1_calls)
-                std::printf("[gvu-stream] F1' in the tap: calls with packets %llu, calls whose oc_last packets != contexts %llu (the count rule of F1p.diff applied to these packets would misfire there), packets with oc_tile_last %llu, calls with the flag not on the one last packet %llu%s\n",
+                std::printf("[gvu-stream] exit rule in the tap: calls with packets %llu, calls whose oc_last packets != contexts %llu (a rule that counts oc_last packets against the contexts would misfire there), packets with oc_tile_last %llu, calls with the flag not on the one last packet %llu%s\n",
                             (unsigned long long)s.f1_calls, (unsigned long long)s.f1_ctx_mismatch, (unsigned long long)s.f1_tile_last_packets, (unsigned long long)s.f1_flag_bad,
                             s.f1_flag_bad ? " <== FAIL" : "");
             if (s.elem_jobs)
@@ -1025,11 +1027,12 @@ namespace has
     private:
         struct Meta { uint32_t addr, mask, ch; uint64_t push, accept; bool bypass{false}; };
         struct Held { uint64_t due; uint32_t addr, mask; psum_vector_t<32, int32_t> data; uint32_t ch; uint64_t push, accept; };
-        // HAS_GVU_AVG (default on): the unit has the average pool data path of the RTL patch (GvuTopParams::avg_enable); 0 = the delivered RTL
+        // HAS_GVU_AVG (default on): the unit has the average pool data path of the model (GvuTopParams::avg_enable); 0 = the delivered RTL
         static rtl_ref_gvu::GvuTopParams unit_params()
         {
             rtl_ref_gvu::GvuTopParams p;
             p.avg_enable = avg_on();
+            p.neo_rev = has::neo_rev();   // HAS_NEO_REV: 1 = neo_lite RTL revision 1 (dense max pool write with stride 2 / 4)
             return p;
         }
         rtl_ref_gvu::GvuTop top_{unit_params()};
@@ -1043,28 +1046,52 @@ namespace has
         // HAS_GVU_REGS
         bool regs_on_{false}, add_regs_{false}, reg_idle_{true}, pipe_done_gemm_{false};
         unsigned reg_lat_{4};
-        rtl_ref_gvu::GvuConfigRegs regs_;
+        GvuRegFile regs_;
         GvuRegMaster master_;
         sc_core::sc_event reg_ev_;
         bool neo_on_{false};
-        GvuRegsNeoShadow neo_;
+        int gemm_v1_expect_{-1};       // HAS_GVU_REGS_NEO: the vbank1 buffer the table of the layer was loaded into (checked when the enable bit rises)
+        // ---- HAS_GVU_REGS_NEO: the command sequences of the map in use, the 14 configuration writes of neo_interface, the mux + CDC delay, the ping-pong buffers
+        typedef GvuRegMaster::W RW;
+        std::vector<RW> sq_layer_begin(int zp, bool skip_act, bool table_reset) const
+        { return neo_on_ ? gvu_regs_dfc::neo::layer_begin(zp, skip_act, table_reset) : gvu_regs_dfc::layer_begin(zp, skip_act, table_reset); }
+        std::vector<RW> sq_pool(unsigned mode, unsigned stride, unsigned nwt, unsigned c, unsigned oh, unsigned c_move, unsigned h_move) const
+        { return neo_on_ ? gvu_regs_dfc::neo::pool_run(mode, stride, nwt, c, oh, c_move, h_move) : gvu_regs_dfc::pool_run(mode, stride, nwt, c, oh, c_move, h_move); }
+        std::vector<RW> sq_avg(unsigned mode, unsigned stride, unsigned nwt, unsigned c, unsigned oh, unsigned c_move, unsigned h_move, int32_t scale, unsigned shift,
+                               unsigned round) const
+        {
+            return neo_on_ ? gvu_regs_dfc::neo::avg_run(mode, stride, nwt, c, oh, c_move, h_move, scale, shift, round)
+                           : gvu_regs_dfc::avg_run(mode, stride, nwt, c, oh, c_move, h_move, scale, shift, round);
+        }
+        std::vector<RW> sq_softmax(int64_t S, int shift, int zp, unsigned L) const
+        {
+            namespace D = gvu_regs_dfc;
+            if (neo_on_) return D::neo::softmax_run(S, shift, zp, L);
+            return {{D::addr(D::SOFTMAX_0 + 1), static_cast<uint32_t>(S), 0xF},
+                    {D::addr(D::SOFTMAX_0 + 2), (static_cast<uint32_t>(shift) & 0xFFu) | (static_cast<uint32_t>(zp) & 0xFFu) << 8, 0xF},
+                    {D::addr(D::SOFTMAX_0), (L & 0x1FFu) | 1u << 9, 0xF},
+                    {D::addr(D::CONTROL), D::control(3u, true), 0xF}};
+        }
+        // neo_interface writes the 14 configuration registers before CONTROL for every command: a start sequence with fewer is padded (gvu_regs_dfc::neo::pad_to_14)
+        std::vector<RW> finish(std::vector<RW> s) const
+        {
+            if (!neo_on_) return s;
+            NeoShadowStats &n = neo_shadow_stats();
+            n.pad_writes += gvu_regs_dfc::neo::pad_to_14(s);
+            for (const RW &w : s) if (w.byte_addr == 0 && (w.data & 1u)) { n.sequences++; break; }
+            return s;
+        }
+        unsigned cdc() const { if (!neo_on_) return 0; neo_shadow_stats().cdc_chains++; return GvuRegsNeoKnobs::cdc_lat(); }   // one chain of writes
+        // The buffer a run is loaded into: the enable edge of the command flips the four flops, so the accelerator of that command sees the buffer the
+        // flop does not show now (ib), and the result of the run is in the buffer the flop shows after the command (ob). HAS_GVU_NEO_PP=0 or the previous map: buffer 0.
+        unsigned ib(unsigned bank) const { return (neo_on_ && GvuRegsNeoKnobs::pp_on() && !regs_.buf(bank + 1)) ? 1u : 0u; }   // bank: 0 vbank0, 1 vbank1, 2 vbank2
+        unsigned ob(unsigned bank) const { return (neo_on_ && GvuRegsNeoKnobs::pp_on() && regs_.buf(bank + 1)) ? 1u : 0u; }
+        static void pp_note(unsigned buf) { NeoShadowStats &n = neo_shadow_stats(); n.pp_runs++; if (buf) n.pp_loads_buf1++; }
+        void pp_check(unsigned bank, unsigned loaded) const { if (neo_on_ && GvuRegsNeoKnobs::pp_on() && regs_.buf(bank + 1) != (loaded != 0)) neo_shadow_stats().pp_flop_bad++; }
         void request_regs(const std::vector<GvuRegMaster::W> &seq0)
         {
-            std::vector<GvuRegMaster::W> seq = seq0;
-            if (neo_on_)   // neo_interface writes 14 configuration registers before CONTROL for every command: pad with writes of an unused register (index 31, plain storage)
-            {
-                unsigned cfg = 0;
-                for (const auto &w : seq0) if (regs_.reg_index(w.byte_addr) != 0) cfg++;
-                if (cfg < GvuRegsNeoShadow::kCfgWrites)
-                {
-                    const unsigned pad = GvuRegsNeoShadow::kCfgWrites - cfg;
-                    seq.insert(seq.begin(), pad, GvuRegMaster::W{4u * 31u, 0u, 0xFu});
-                    neo_shadow_stats().pad_writes += pad;
-                }
-                neo_shadow_stats().sequences++;
-            }
             reg_idle_ = false;
-            master_.request(seq, sc_core::sc_time_stamp().value());
+            master_.request(finish(seq0), sc_core::sc_time_stamp().value());
             stream_stats().regs_seqs++;
         }
         // The inputs the register file drives (gvu_core.sv: i_gvu_pipe_en ... i_pooling_h_move), valid in the cycle after the edge of the write.
@@ -1096,11 +1123,15 @@ namespace has
                 in.i_agu_nd_ctrl = R::AguNdRegs::ctrl(regs_.reg(R::AguNdRegs::CTRL));
                 in.i_agu_src = R::AguNdRegs::unpack({{regs_.reg(R::AguNdRegs::SRC), regs_.reg(R::AguNdRegs::SRC + 1), regs_.reg(R::AguNdRegs::SRC + 2), regs_.reg(R::AguNdRegs::SRC + 3)}});
                 in.i_agu_dst = R::AguNdRegs::unpack({{regs_.reg(R::AguNdRegs::DST), regs_.reg(R::AguNdRegs::DST + 1), regs_.reg(R::AguNdRegs::DST + 2), regs_.reg(R::AguNdRegs::DST + 3)}});
-                // average pool (RTL patch P1): Reg 25 Avg_Scale, Reg 26 [5:0] Avg_Shift [10:8] round
-                in.i_avg_scale = static_cast<int32_t>(regs_.reg(gvu_regs_dfc::AVG_SCALE));
-                in.i_avg_shift = static_cast<uint8_t>(regs_.reg(gvu_regs_dfc::AVG_CFG) & 0x3Fu);
-                in.i_avg_round = static_cast<R::RoundMode>((regs_.reg(gvu_regs_dfc::AVG_CFG) >> 8) & 7u);
+                // average pool (model registers): Reg 25 Avg_Scale, Reg 26 [5:0] Avg_Shift [10:8] round; Reg 14 / 15 with the map of neo_lite
+                const unsigned rs = neo_on_ ? static_cast<unsigned>(gvu_regs_dfc::neo::AVG_SCALE) : static_cast<unsigned>(gvu_regs_dfc::AVG_SCALE);
+                const unsigned rc = neo_on_ ? static_cast<unsigned>(gvu_regs_dfc::neo::AVG_CFG) : static_cast<unsigned>(gvu_regs_dfc::AVG_CFG);
+                in.i_avg_scale = static_cast<int32_t>(regs_.reg(rs));
+                in.i_avg_shift = static_cast<uint8_t>(regs_.reg(rc) & 0x3Fu);
+                in.i_avg_round = static_cast<R::RoundMode>((regs_.reg(rc) >> 8) & 7u);
             }
+            if (neo_on_ && !GvuRegsNeoKnobs::pp_on())   // fixed buffers (the flops still flip)
+                in.i_sbank_buf_sel = in.i_vbank0_buf_sel = in.i_vbank1_buf_sel = in.i_vbank2_buf_sel = false;
         }
         std::array<uint32_t, 9> agu_shadow_{};   // the Reg 16..24 values the DFC wrote last (HAS_GVU_AGU_ND with HAS_GVU_REGS)
         // the AGU_ND writes ahead of an operation's sequence (HAS_GVU_AGU_ND on)
@@ -1125,15 +1156,17 @@ namespace has
                 else if (in.i_gvu_op == R::GVU_OP_MAXPOOL) done = o.o_maxpool_pipe_done;
                 else if (in.i_gvu_op == R::GVU_OP_RESIDUAL || in.i_gvu_op == R::GVU_OP_ELEMWISE) done = o.o_residual_pipe_done;
             }
-            const bool pulse = ticked && st_before == R::LUT_ACT_INIT && top_.state() != R::LUT_ACT_INIT;
-            if (ms.apply || done || pulse)
+            // the previous map toggles the vbank1 buffer bit when the table load ends; the map of neo_lite has no such wire (its LUT reset is a pulse that ends on the next edge)
+            const bool pulse = !neo_on_ && ticked && st_before == R::LUT_ACT_INIT && top_.state() != R::LUT_ACT_INIT;
+            if (ms.apply || done || pulse || regs_.lut_pulse())
             {
                 R::GvuConfigIn c;
-                if (ms.apply) { c.addr = regs_.reg_index(ms.w.byte_addr); c.wren = true; c.wdata = ms.w.data; c.wmask = R::GvuConfigRegs::strb_to_mask(ms.w.strb); st.regs_writes++; }
+                if (ms.apply) { c.addr = regs_.reg_index(ms.w.byte_addr); c.wren = true; c.wdata = ms.w.data; c.wmask = GvuRegFile::strb_to_mask(ms.w.strb); st.regs_writes++; }
                 c.gvu_pipe_done = done; c.lut_init_done = pulse;
                 regs_.tick(c);
                 if (pulse) st.regs_lut_toggles++;
             }
+            if (neo_on_ && gemm_v1_expect_ >= 0 && regs_.out().pipe_en) { pp_check(1, static_cast<unsigned>(gemm_v1_expect_)); gemm_v1_expect_ = -1; }
             if (done && in.i_gvu_op == R::GVU_OP_GEMM_FUSED) { pipe_done_gemm_ = true; if (!in.i_gemm_stream_stop) st.regs_exit_flags++; }
         }
         // observer of the RTL stream
@@ -1167,7 +1200,7 @@ namespace has
         // Residual add run of `rows` rows from row r0: A into vbank0 buffer 0 (one row of 32 per word), B into vbank1 buffer 0 (four rows
         // per word); returns the inputs of the run.
         rtl_ref_gvu::GvuTop::In add_load(const int8_t *A, const int8_t *B, size_t n, size_t r0, size_t rows, size_t rows_total, const AddCfg &a,
-                                         unsigned b_buf = 0)
+                                         unsigned b_buf = 0, unsigned a_buf = 0)
         {
             namespace R = rtl_ref_gvu;
             std::vector<R::SpBytes> v1((rows + 3) / 4, R::SpBytes(128, 0));
@@ -1181,7 +1214,7 @@ namespace has
                     ra[l] = static_cast<uint8_t>(A[e]);
                     v1[r / 4][32 * (r % 4) + l] = static_cast<uint8_t>(B[e]);
                 }
-                top_.scratchpad().sram(0, 0).poke(GvuTopBridge::agu_nd_a_row(r), ra);
+                top_.scratchpad().sram(0, a_buf).poke(GvuTopBridge::agu_nd_a_row(r), ra);
             }
             for (size_t k = 0; k < v1.size(); k++) top_.scratchpad().sram(1, b_buf).poke(static_cast<unsigned>(k), v1[k]);
             R::GvuTop::In i;
@@ -1197,12 +1230,12 @@ namespace has
             return i;
         }
         // Result of a finished residual add run (vbank0 buffer 0): compared with the model result in out, GvuTop's written into out.
-        void add_read(int8_t *out, size_t n, size_t r0, size_t rows)
+        void add_read(int8_t *out, size_t n, size_t r0, size_t rows, unsigned obuf = 0)
         {
             StreamStats &st = stream_stats();
             for (size_t r = 0; r < rows; r++)
             {
-                const rtl_ref_gvu::SpBytes orow = top_.scratchpad().sram(0, 0).word(GvuTopBridge::agu_nd_out_row(r));
+                const rtl_ref_gvu::SpBytes orow = top_.scratchpad().sram(0, obuf).word(GvuTopBridge::agu_nd_out_row(r));
                 for (size_t l = 0; l < 32; l++)
                 {
                     const size_t e = (r0 + r) * 32 + l;
@@ -1216,7 +1249,7 @@ namespace has
         }
         // Max pool run of n channels from channel c0 (the unit reset just before): the tensor padded with -128 into vbank0 buffer 0 as
         // rows of 32 bytes; returns the inputs of the run.
-        rtl_ref_gvu::GvuTop::In pool_load(const int8_t *in, const PoolGeom &q, int c0, int n)
+        rtl_ref_gvu::GvuTop::In pool_load(const int8_t *in, const PoolGeom &q, int c0, int n, unsigned ibuf = 0)
         {
             namespace R = rtl_ref_gvu;
             for (int c = 0; c < n; c++)
@@ -1230,7 +1263,7 @@ namespace has
                             row[static_cast<size_t>(l)] = (yy < 0 || yy >= q.H || xx < 0 || xx >= q.W)
                                 ? static_cast<uint8_t>(0x80) : static_cast<uint8_t>(in[(static_cast<size_t>(c0 + c) * q.H + yy) * q.W + xx]);
                         }
-                        top_.scratchpad().sram(0, 0).poke(static_cast<unsigned>((c * q.Hp + y) * q.Wt + t), row);
+                        top_.scratchpad().sram(0, ibuf).poke(static_cast<unsigned>((c * q.Hp + y) * q.Wt + t), row);
                     }
             R::GvuTop::In i;
             i.i_gvu_op = R::GVU_OP_MAXPOOL;
@@ -1242,17 +1275,18 @@ namespace has
             return i;
         }
         // Result of a finished max pool run (vbank2 port 1) into res.
-        void pool_read(std::vector<int8_t> &res, const PoolGeom &q, int c0, int n)
+        void pool_read(std::vector<int8_t> &res, const PoolGeom &q, int c0, int n, unsigned obuf = 0)
         {
             rtl_ref_gvu::GvuTop::In ag;                      // the AGU_ND destination of the run (HAS_GVU_AGU_ND)
             GvuTopBridge::agu_nd_pool(ag, static_cast<unsigned>(q.Wt), static_cast<unsigned>(q.Ho), static_cast<unsigned>(n));
+            const rtl_ref_gvu::PoolLayout lay = rtl_ref_gvu::pool_layout(has::neo_rev(), q.s, q.Wt, q.OL);   // revision 1: dense with stride 2 / 4
             for (int cc = 0; cc < n; cc++)
                 for (int oh = 0; oh < q.Ho; oh++)
                     for (int ow = 0; ow < q.Wo; ow++)
                     {
-                        const unsigned row = GvuTopBridge::agu_nd_pool_row(ag, static_cast<unsigned>((cc * q.Ho + oh) * q.Wt + ow / q.OL));
-                        const rtl_ref_gvu::SpBytes w = top_.scratchpad().sram(2, 0).word(row >> 2);
-                        res[(static_cast<size_t>(c0 + cc) * q.Ho + oh) * q.Wo + ow] = static_cast<int8_t>(w[(row & 3u) * 32u + static_cast<unsigned>(ow % q.OL)]);
+                        const unsigned row = GvuTopBridge::agu_nd_pool_row(ag, static_cast<unsigned>((cc * q.Ho + oh) * static_cast<int>(lay.words_per_row) + ow / static_cast<int>(lay.lanes)));
+                        const rtl_ref_gvu::SpBytes w = top_.scratchpad().sram(2, obuf).word(row >> 2);
+                        res[(static_cast<size_t>(c0 + cc) * q.Ho + oh) * q.Wo + ow] = static_cast<int8_t>(w[(row & 3u) * 32u + static_cast<unsigned>(ow) % lay.lanes]);
                     }
         }
         // The group result compared with the model result in out, GvuTop's written into out.
@@ -1269,7 +1303,7 @@ namespace has
 
         // Average pool run of n channels from channel c0: the tensor into vbank0 buffer 0 as rows of 32 bytes (no padding); the results are read
         // from vbank2 at the plain addresses of the VLSU (the average pool tail does not use the AGU_ND destination).
-        rtl_ref_gvu::GvuTop::In avg_load(const int8_t *in, const PoolGeom &q, int c0, int n, int64_t S, int shift, int round_mode)
+        rtl_ref_gvu::GvuTop::In avg_load(const int8_t *in, const PoolGeom &q, int c0, int n, int64_t S, int shift, int round_mode, unsigned ibuf = 0)
         {
             namespace R = rtl_ref_gvu;
             for (int c = 0; c < n; c++)
@@ -1279,7 +1313,7 @@ namespace has
                         R::SpBytes row(32, 0);
                         for (int l = 0; l < 32 && 32 * t + l < q.W; l++)
                             row[static_cast<size_t>(l)] = static_cast<uint8_t>(in[(static_cast<size_t>(c0 + c) * q.H + y) * q.W + 32 * t + l]);
-                        top_.scratchpad().sram(0, 0).poke(static_cast<unsigned>((c * q.H + y) * q.Wt + t), row);
+                        top_.scratchpad().sram(0, ibuf).poke(static_cast<unsigned>((c * q.H + y) * q.Wt + t), row);
                     }
             R::GvuTop::In i;
             i.i_gvu_op = R::GVU_OP_AVGPOOL;
@@ -1295,14 +1329,14 @@ namespace has
             i.i_pipeline_en = true;
             return i;
         }
-        void avg_read(std::vector<int8_t> &res, const PoolGeom &q, int c0, int n)
+        void avg_read(std::vector<int8_t> &res, const PoolGeom &q, int c0, int n, unsigned obuf = 0)
         {
             for (int cc = 0; cc < n; cc++)
                 for (int oh = 0; oh < q.Ho; oh++)
                     for (int ow = 0; ow < q.Wo; ow++)
                     {
                         const unsigned row = static_cast<unsigned>((cc * q.Ho + oh) * q.Wt + ow / q.OL);
-                        const rtl_ref_gvu::SpBytes w = top_.scratchpad().sram(2, 0).word(row >> 2);
+                        const rtl_ref_gvu::SpBytes w = top_.scratchpad().sram(2, obuf).word(row >> 2);
                         res[(static_cast<size_t>(c0 + cc) * q.Ho + oh) * q.Wo + ow] = static_cast<int8_t>(w[(row & 3u) * 32u + static_cast<unsigned>(ow % q.OL)]);
                     }
         }
@@ -1393,17 +1427,28 @@ namespace has
         }
         // HAS_GVU_REGS: issue a register sequence now and count its edges (the unit waits that long before its first tick), then check that
         // the configuration read back from the register file is the one of the run (cmp); the done flag is cleared after the check.
-        bool regs_issue(const std::vector<GvuRegMaster::W> &seq, const std::function<bool(const rtl_ref_gvu::GvuTop::In &)> &cmp,
+        bool regs_issue(const std::vector<GvuRegMaster::W> &seq0, const std::function<bool(const rtl_ref_gvu::GvuTop::In &)> &cmp,
                         const rtl_ref_gvu::GvuTop::In &base, uint64_t *wait_edges, uint64_t *writes)
         {
             namespace D = gvu_regs_dfc;
+            const std::vector<GvuRegMaster::W> seq = finish(seq0);
             for (const auto &w : seq) regs_.write_axi(w.byte_addr, w.data, w.strb);
             rtl_ref_gvu::GvuTop::In r = base;
             regs_to_in(r);
             const bool same = cmp(r);
             regs_.write_axi(D::addr(D::CONTROL), 1u << 2, 0xF);
-            *writes += seq.size() + 1;
-            *wait_edges = (seq.size() + 1) * reg_lat_;
+            // Softmax is a DFC command of its own (the other users of this path, average pool / FA / LN, have no DFC path in the RTL): its last CONTROL
+            // write follows the clear in the same chain (HAS_NEO_REV >= 1)
+            size_t last = 0;
+            if (neo_on_)
+                for (const auto &w : seq)
+                    if (w.byte_addr == D::neo::addr(D::neo::OPCODE) && w.data == D::OP_SOFTMAX)
+                    {
+                        for (const auto &f : D::neo::final_off()) { regs_.write_axi(f.byte_addr, f.data, f.strb); last++; }
+                        break;
+                    }
+            *writes += seq.size() + 1 + last;
+            *wait_edges = (seq.size() + 1 + last) * reg_lat_ + 2 * cdc();      // the start chain and the clear of the done flag (+ the last CONTROL write)
             return same;
         }
 
@@ -1416,6 +1461,7 @@ namespace has
             int64_t S{0};
             int shift{0}, rm{0}, c0{0}, n{0};
             uint64_t wait{0}, c{0}, guard{0}, mc{0};
+            unsigned ib0{0}, ib2{0};             // HAS_GVU_REGS_NEO: the vbank0 / vbank2 buffers of the run
             rtl_ref_gvu::GvuTop::In i;
         };
         AvgJob aj_;
@@ -1425,12 +1471,15 @@ namespace has
             AvgJob &j = aj_;
             j.n = std::min(j.q.cmax, j.q.g - j.c0);
             reset_unit();
-            j.i = avg_load(j.in.data(), j.q, j.c0, j.n, j.S, j.shift, j.rm);
+            j.ib0 = ib(0); j.ib2 = ib(2);
+            if (neo_on_) pp_note(j.ib0);
+            j.i = avg_load(j.in.data(), j.q, j.c0, j.n, j.S, j.shift, j.rm, j.ib0);
+            j.i.i_vbank0_buf_sel = j.ib0 != 0; j.i.i_vbank2_buf_sel = j.ib2 != 0;
             j.c = 0; j.wait = 0; j.guard = pool_guard(j.q, j.n);
             if (!regs_on_) return true;
             namespace D = gvu_regs_dfc;
             const R::GvuTop::In &i = j.i;
-            const std::vector<GvuRegMaster::W> seq = D::avg_run(static_cast<unsigned>(j.q.kk - 2), static_cast<unsigned>(j.q.s), static_cast<unsigned>(j.q.Wt),
+            const std::vector<GvuRegMaster::W> seq = sq_avg(static_cast<unsigned>(j.q.kk - 2), static_cast<unsigned>(j.q.s), static_cast<unsigned>(j.q.Wt),
                 static_cast<unsigned>(j.n), static_cast<unsigned>(j.q.Ho), static_cast<unsigned>(j.q.Wt * j.q.H), static_cast<unsigned>(j.q.Wt * j.q.s),
                 static_cast<int32_t>(j.S), static_cast<unsigned>(j.shift), static_cast<unsigned>(i.i_avg_round));
             uint64_t w = 0;
@@ -1441,6 +1490,7 @@ namespace has
                        r.i_avg_shift == i.i_avg_shift && r.i_avg_round == i.i_avg_round; }, j.i, &j.wait, &w);
             stream_stats().avg_reg_writes += w;
             if (!same) stream_stats().avg_reg_fields++;
+            pp_check(0, j.ib0); pp_check(2, j.ib2);
             return same;
         }
         int avg_step()
@@ -1458,7 +1508,7 @@ namespace has
             st.gjob_idle_ticks += uint64_t(k);
             if (top_.state() != R::IDLE) { st.avg_not_expr++; return -1; }
             st.avg_runs++;
-            avg_read(j.res, j.q, j.c0, j.n);
+            avg_read(j.res, j.q, j.c0, j.n, j.ib2);
             j.c0 += j.q.cmax;
             if (j.c0 < j.q.g) return avg_begin_run() ? 0 : (st.avg_not_expr++, -1);
             reset_unit();
@@ -1525,11 +1575,7 @@ namespace has
             j.c = 0; j.wait = 0; j.guard = 8 * static_cast<uint64_t>(j.L) + 4000; j.ls0 = top_.softmax_lshift();
             if (!regs_on_) return true;
             namespace D = gvu_regs_dfc;
-            const std::vector<GvuRegMaster::W> seq = {
-                {D::addr(D::SOFTMAX_0 + 1), static_cast<uint32_t>(j.S), 0xF},
-                {D::addr(D::SOFTMAX_0 + 2), (static_cast<uint32_t>(j.shift) & 0xFFu) | (static_cast<uint32_t>(j.zp) & 0xFFu) << 8, 0xF},
-                {D::addr(D::SOFTMAX_0), (static_cast<uint32_t>(j.L) & 0x1FFu) | 1u << 9, 0xF},
-                {D::addr(D::CONTROL), D::control(D::OP_SOFTMAX, true), 0xF}};
+            const std::vector<GvuRegMaster::W> seq = sq_softmax(j.S, j.shift, j.zp, static_cast<unsigned>(j.L));
             uint64_t w = 0;
             const R::GvuTop::In ref = in;
             const bool same = regs_issue(seq, [&ref](const R::GvuTop::In &r) {
@@ -1548,7 +1594,7 @@ namespace has
             const R::GvuTop::Out o = top_.tick(j.in, true);
             j.c++; st.gjob_ticks++;
             if (o.o_gvu_pipe_ctrl_state == R::SOFTMAX_ST1) j.st1++;
-            if (o.o_softmax_lut_init_done && j.in.i_vbank1_buf_sel) j.in.i_vbank1_buf_sel = false;   // B21: one flip, on the edge
+            if (o.o_softmax_lut_init_done && j.in.i_vbank1_buf_sel) j.in.i_vbank1_buf_sel = false;   // one flip, on the edge
             if (!o.o_softmax_pipe_done) { if (j.c >= j.guard) { st.smx_not_expr++; return -1; } return 0; }
             j.in.i_pipeline_en = false;
             int k = 0;
@@ -1611,7 +1657,7 @@ namespace has
             namespace D = gvu_regs_dfc;
             uint64_t w = 0;
             const R::GvuTop::In ref = in;
-            const bool same = regs_issue(D::layer_begin(j.Z, true, false), [&ref](const R::GvuTop::In &r) {
+            const bool same = regs_issue(sq_layer_begin(j.Z, true, false), [&ref](const R::GvuTop::In &r) {
                 return r.i_gvu_op == R::GVU_OP_GEMM_FUSED && r.i_pipeline_en && r.i_gemm_skip_act && r.i_gemm_zp16 == ref.i_gemm_zp16; }, in, &j.wait, &w);
             st.fa_reg_writes += w;
             j.reg_cyc = j.wait;
@@ -1743,6 +1789,7 @@ namespace has
             AddCfg cfg{};
             PoolGeom q{};
             int c0{0}, nc{0};
+            unsigned pb0{0}, pb2{0}, abuf{0}, bbuf{0};   // HAS_GVU_REGS_NEO: the buffers of the run (pool: vbank0 / vbank2; add: vbank0 A + result / vbank1 B)
             rtl_ref_gvu::GvuTop::In in;          // inputs of the current run
             uint64_t c{0}, guard{0}, cyc{0}, model_cycles{0};
             sc_core::sc_time req;
@@ -1769,7 +1816,7 @@ namespace has
             else
             {
                 j.nc = std::min(j.q.cmax, j.q.g - j.c0);
-                reset_unit();                            // B12: a run starts from a reset of the pooling feeder
+                if (!(has::neo_rev() >= 1 && j.c0 > 0)) reset_unit();  // a run starts from a reset of the pooling feeder; in revision 1 (HAS_NEO_REV=1) the feeder no longer keeps its count between runs, so only the first run of the operation is reset
                 j.in = pool_load(j.a.data(), j.q, j.c0, j.nc);
                 j.guard = pool_guard(j.q, j.nc);
             }
@@ -1788,20 +1835,22 @@ namespace has
             j.a.clear(); j.b.clear(); j.res.clear();
             job_ev_.notify(sc_core::SC_ZERO_TIME);
         }
-        // HAS_GVU_REGS: a max pool run by registers. The banks are loaded and the unit reset (the model's B12 fix; the register file is not reset),
+        // HAS_GVU_REGS: a max pool run by registers. The banks are loaded and the unit reset (the model resets the pooling feeder; the register file is not reset),
         // then gvu_regs_dfc::pool_run (POOLING_0, POOLING_1, start) is issued; the unit runs when the start write lands; at pipe_done the done flag is cleared
         // by a write before the next run. The GvuTop cycles of a run are the ticks with the enable bit set, as in the call style.
         void job_begin_run_regs(const sc_core::sc_time &now)
         {
             Job &j = job_;
             j.nc = std::min(j.q.cmax, j.q.g - j.c0);
-            reset_unit();
-            j.in = pool_load(j.a.data(), j.q, j.c0, j.nc);
+            if (!(has::neo_rev() >= 1 && j.c0 > 0)) reset_unit();  // a run starts from a reset of the pooling feeder; in revision 1 (HAS_NEO_REV=1) the feeder no longer keeps its count between runs, so only the first run of the operation is reset
+            j.pb0 = ib(0); j.pb2 = ib(2);
+            if (neo_on_) pp_note(j.pb0);
+            j.in = pool_load(j.a.data(), j.q, j.c0, j.nc, j.pb0);
             j.guard = pool_guard(j.q, j.nc);
             j.c = 0; j.wait_edges = 0; j.phase = Job::WRITE;
-            master_.request(with_agu_nd(j.in, gvu_regs_dfc::pool_run(static_cast<unsigned>(j.q.kk - 2), static_cast<unsigned>(j.q.s), static_cast<unsigned>(j.q.Wt),
+            master_.request(finish(with_agu_nd(j.in, sq_pool(static_cast<unsigned>(j.q.kk - 2), static_cast<unsigned>(j.q.s), static_cast<unsigned>(j.q.Wt),
                                                    static_cast<unsigned>(j.nc), static_cast<unsigned>(j.q.Ho), static_cast<unsigned>(j.q.Wt * j.q.Hp),
-                                                   static_cast<unsigned>(j.q.Wt * j.q.s))), now.value());
+                                                   static_cast<unsigned>(j.q.Wt * j.q.s)))), now.value());
             reg_idle_ = false;
             stream_stats().regs_seqs++;
         }
@@ -1844,14 +1893,15 @@ namespace has
                 {
                     if (top_.state() != R::IDLE) { fail(); return; }
                     j.cyc += j.c; st.mp_runs++; st.regs_pool_runs++;
-                    pool_read(j.res, j.q, j.c0, j.nc);
+                    pp_check(0, j.pb0); pp_check(2, j.pb2);
+                    pool_read(j.res, j.q, j.c0, j.nc, j.pb2);
                     j.phase = Job::CLEAR_WAIT;
                 }
                 else if (j.c >= j.guard) { fail(); return; }
             }
             if (j.phase == Job::CLEAR_WAIT && !master_.busy())
             {
-                master_.request(gvu_regs_dfc::clear_done(), now.value());
+                master_.request(gvu_regs_dfc::clear_done_last(neo_on_ && j.c0 + j.q.cmax >= j.q.g), now.value());   // last run: last CONTROL write of the command
                 reg_idle_ = false; st.regs_seqs++;
                 j.phase = Job::CLEAR;
                 return;
@@ -1873,9 +1923,11 @@ namespace has
         {
             Job &j = job_;
             j.rows = std::min(kAddRows, j.rows_total - j.r0);
-            const bool b1 = regs_.out().vbank1_buf_sel;
+            const bool b1 = neo_on_ ? (ib(1) != 0) : regs_.out().vbank1_buf_sel;
             if (b1) stream_stats().regs_add_b_buf1++;
-            j.in = add_load(j.a.data(), j.b.data(), j.n, j.r0, j.rows, j.rows_total, j.cfg, b1 ? 1u : 0u);
+            j.abuf = ib(0); j.bbuf = b1 ? 1u : 0u;
+            if (neo_on_) pp_note(j.abuf);
+            j.in = add_load(j.a.data(), j.b.data(), j.n, j.r0, j.rows, j.rows_total, j.cfg, j.bbuf, j.abuf);
             j.guard = 4 * j.rows + 400;
             j.c = 0; j.wait_edges = 0; j.phase = Job::WRITE;
             gvu_regs_dfc::AddRegs c;
@@ -1885,7 +1937,19 @@ namespace has
             c.zp_a = j.in.i_res_zp_a; c.zp_b = j.in.i_res_zp_b; c.zp_out = j.in.i_res_zp_out;
             c.a_row = j.in.i_res_a_row; c.b_row = j.in.i_res_b_row; c.sum_row = j.in.i_res_sum_row;
             const bool first = j.r0 == 0;
-            master_.request(with_agu_nd(j.in, gvu_regs_dfc::add_run(first, c, static_cast<unsigned>(j.rows), j.in.i_res_last_lane_mask, j.prev_rows, j.prev_mask)), now.value());
+            if (neo_on_)
+            {
+                // the registers of the map of neo_lite hold the whole command; the bias carries the value of the RTL formula only when the add maps onto it
+                int64_t bias = 0;
+                rtl_ref_gvu::ResidualHwParams hwp;
+                if (rtl_ref_gvu::ResidualHw::on() && rtl_ref_gvu::ResidualHw::map(j.cfg.zpA, j.cfg.zpB, j.cfg.zpO, j.cfg.SA, j.cfg.SB, j.cfg.SO, j.cfg.sA, j.cfg.sB, j.cfg.sO,
+                                                                                   j.cfg.round_mode, true, &hwp))
+                    bias = hwp.bias;
+                if (c.shift_out >= 64) neo_shadow_stats().shift_out_cut++;     // RESIDUAL_0 holds 6 bits
+                master_.request(finish(with_agu_nd(j.in, gvu_regs_dfc::neo::add_run(c, static_cast<unsigned>(j.rows), j.in.i_res_last_lane_mask, bias))), now.value());
+            }
+            else
+                master_.request(with_agu_nd(j.in, gvu_regs_dfc::add_run(first, c, static_cast<unsigned>(j.rows), j.in.i_res_last_lane_mask, j.prev_rows, j.prev_mask)), now.value());
             j.prev_rows = static_cast<unsigned>(j.rows); j.prev_mask = j.in.i_res_last_lane_mask;
             reg_idle_ = false;
             stream_stats().regs_seqs++;
@@ -1921,7 +1985,7 @@ namespace has
                         in.i_res_zp_a != w.i_res_zp_a || in.i_res_zp_b != w.i_res_zp_b || in.i_res_zp_out != w.i_res_zp_out ||
                         in.i_res_round != w.i_res_round || in.i_res_out_int16 != w.i_res_out_int16 || in.i_res_a_row != w.i_res_a_row ||
                         in.i_res_b_row != w.i_res_b_row || in.i_res_sum_row != w.i_res_sum_row || in.i_res_last_lane_mask != w.i_res_last_lane_mask ||
-                        in.i_vbank0_buf_sel)
+                        in.i_vbank0_buf_sel != (j.abuf != 0))
                         st.regs_add_cfg_mismatch++;
                 }
                 o = top_.tick(in, true); j.c++; st.elem_ticks++; done = o.o_residual_pipe_done;
@@ -1944,14 +2008,15 @@ namespace has
                 {
                     if (top_.state() != R::IDLE) { fail(); return; }
                     j.cyc += j.c; st.regs_add_runs++;
-                    add_read(j.out, j.n, j.r0, j.rows);
+                    pp_check(0, j.abuf); pp_check(1, j.bbuf);
+                    add_read(j.out, j.n, j.r0, j.rows, j.abuf);
                     j.phase = Job::CLEAR_WAIT;
                 }
                 else if (j.c >= j.guard) { fail(); return; }
             }
             if (j.phase == Job::CLEAR_WAIT && !master_.busy())
             {
-                master_.request(gvu_regs_dfc::clear_done(), now.value());
+                master_.request(gvu_regs_dfc::clear_done_last(neo_on_ && j.r0 + kAddRows >= j.rows_total), now.value());   // last run: last CONTROL write of the command
                 reg_idle_ = false; st.regs_seqs++;
                 j.phase = Job::CLEAR;
                 return;

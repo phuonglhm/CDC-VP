@@ -14,6 +14,7 @@ register `0x40000310` is `0x10310`.
 | Path | Engine behind it | Use for network evaluation |
 |---|---|---|
 | Extended instructions (alias `0x10000`, push at `0x10310`) | `HasNpuTop`: RTL-accurate core, tiling, DMA, epilogue, vector unit | Yes. YOLOv8m (98 instructions) and ViT-B/16 (244 instructions) match the reference on every instruction through the wrapper (`VERIFICATION_REPORT.md`, V20) |
+| Register-file window of the DFC (model `0x40000800`, push `0x17` at `0x10310`; on by default, `HAS_HOST=v45` switches it off) | `HasNpuTop`, after the image of 82 words is decoded back into a layer and checked against the hardware | For programs meant for the hardware: only the layers the hardware runs as written are accepted; a refused layer is still reported as done by the wrapper, read `0x10318` and `0x1031C` after every layer (`NEO_REGISTER_FILE.md`, section 2.2; `COMPILER_GUIDE.md`) |
 | GEMM bank (`0x30000`) | Native array, one 32 x 32 tile, raw int32 result, no epilogue | No. Results and cycle counts do not relate to the reference programs |
 
 The verification above was done with the programs of the data package (`has/insts_pe3`, `has/vit_full`, `has/rce_gate`),
@@ -43,7 +44,7 @@ Rules that are easy to miss:
 | Rule | Why |
 |---|---|
 | One instruction at a time: never push while the previous instruction runs | Every push of an extended instruction copies the whole window from RAM into the model again; a push during a run overwrites the output being written |
-| The parameter registers `0x400..0x468` keep their values; the extension registers `0x46C..0x4E7` are cleared by every push | A program writes only what changes in the first range, and everything it needs in the second range, for every instruction |
+| The parameter registers `0x400..0x468` keep their values; the extension registers `0x46C..0x500` are cleared by every push | A program writes only what changes in the first range, and everything it needs in the second range, for every instruction |
 | An instruction that writes no extension register goes to the functional decoder, not to `HasNpuTop` | Its arithmetic is different. Measured on `tools/has/make_ref_gate.py`: an ELEM_WISE ADD with real-valued scales and no extension register gives 2,288 of 2,304 bytes different from `HasNpuTop`, and reports 0 cycles |
 | Read outputs only after DONE of the wrapper | The wrapper copies the window back to RAM when the instruction has finished |
 | The CPU must not write inside the window while an instruction runs | The copy-back overwrites the whole window |
@@ -114,8 +115,8 @@ Error codes of `RICH_STATUS`:
 | 1 | `Q_OVF` | Queue full |
 | 2 | `LANE_B` | Push on lane B: not supported on this path |
 | 3 | `LEGACY64` | 64-bit instruction interface: not supported |
-| 4 | `UNSUPPORTED_OP` | Opcode other than `0x05`, `0x12` to `0x15` |
-| 5 | `UNSUPPORTED_MODE` | Activation type above 3, or an ELEM_WISE mode other than ADD, MAX_POOL, AVG_POOL |
+| 4 | `UNSUPPORTED_OP` | Opcode other than `0x05`, `0x12` to `0x15`, `0x16` (`DMA_TENSOR`) and `0x17` (doorbell of the register-file window); also a layer refused at that doorbell |
+| 5 | `UNSUPPORTED_MODE` | Activation type above 3, or an ELEM_WISE mode other than ADD, MAX_POOL, AVG_POOL, slice, concat, upsample, reshape (modes 6 to 9, by default); `DMA_TENSOR` `MODE_PACK` other than 0, 2, 3 |
 | 6 | `BROADCAST` | ELEM_WISE ADD with operand lengths that differ |
 | 7 | `NEED_LUT` | Activation 2 or 3 without `LUT_ADDR` |
 | 8 | `BAD_GEOM` | Sizes that do not fit together, `TILE_CIN` that does not divide `IN_C`, `Y_USED` above 32, missing `PARAM_ADDR` |
@@ -164,8 +165,7 @@ an address register. The recording does not change results or cycle counts; it w
 
 `tools/has/tb_has_npu_top <directory>/segNNN` replays a segment without the wrapper and prints the internal error
 counters. Measured: the recording of the 14-instruction transformer program replays with all outputs equal and the same
-285,205 cycles (configuration of the previous delivery, that is, the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`,
-`HAS_GVU_FA`, `HAS_GVU_LN` at 0; with the default of this package the recording was not replayed; the same program gives 263,808 cycles through the wrapper). On a segment that contains a refused push the testbench prints a `REFUSED` line with the error code for
+285,205 cycles (with the vector-unit knobs at 0 (the configuration of the package check: `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`, the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN` at 0, and `HAS_DMA_TENSOR=0 HAS_DMA_ND=0`); with the default of this package the recording was not replayed; the same program gives 263,808 cycles through the wrapper). On a segment that contains a refused push the testbench prints a `REFUSED` line with the error code for
 that instruction, checks the others and ends with FAIL.
 
 ## 5. Comparing with the reference
@@ -271,7 +271,7 @@ join by order with the program. The frames per second use the clock that drives 
 one run of these instructions per frame; the steps the CPU does between instructions (the two `upsample2x` of YOLOv8m)
 and the copies the wrapper makes between RAM and the model are not in any of these numbers.
 
-Measured through the wrapper with the four operation knobs at 0 (the previous default; the default of this package gives
+Measured through the wrapper with the vector-unit knobs at 0 (the configuration of the package check: `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`, the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN` at 0, and `HAS_DMA_TENSOR=0 HAS_DMA_ND=0`); the default of this package gives
 263,808 cycles through the wrapper): on the 14-instruction transformer program the lines add up to 285,205 cycles and the
 summary gives 23.18 % PE utilization, the values the wrapper test reads from the registers; every line equals
 `PERF_EXEC_CYCLES` of its instruction; a program with a refused push reports 13 lines and 1 refused push; with and

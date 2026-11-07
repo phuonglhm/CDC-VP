@@ -276,11 +276,11 @@ int main(int argc, char **argv)
                 report(b, rb);
             else
             {
-                // B12 of the RTL review: the pooling feeder keeps first_load_cnt between runs, so a second run without a reset reads out of step and ends
+                // The delivered pooling feeder keeps first_load_cnt between runs, so a second run without a reset reads out of step and ends
                 // early; the port reproduces the RTL as delivered, as for max pool (the data flow controller resets the unit before every run). The
                 // run must therefore differ here: the check is the negative control, not a failure.
                 const bool differs = rb.bad > 0;
-                std::printf("  %-34s without reset (B12, as the delivered RTL): outputs %lld, differ %lld, done at cycle %llu  -> %s\n", b.name.c_str(), rb.n, rb.bad,
+                std::printf("  %-34s without reset (as the delivered RTL): outputs %lld, differ %lld, done at cycle %llu  -> %s\n", b.name.c_str(), rb.n, rb.bad,
                             (unsigned long long)rb.done_cycle, differs ? "differs as expected" : "UNEXPECTED: no difference   <-- FAIL");
                 if (!differs) fails++;
             }

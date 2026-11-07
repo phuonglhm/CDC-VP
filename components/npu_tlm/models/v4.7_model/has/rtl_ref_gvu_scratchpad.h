@@ -34,7 +34,7 @@
 
 namespace rtl_ref_gvu
 {
-    // Rows of vbank#1: 32 in the earlier RTL drops, 200 (25 KB) in gvu_pkg.sv of neo_lite@9b704bb. Env HAS_GVU_VBANK1_DEPTH=200 selects the new
+    // Rows of vbank#1: 32 in the earlier RTL drops, 200 (25 KB) in gvu_pkg.sv of neo_lite RTL revision 0. Env HAS_GVU_VBANK1_DEPTH=200 selects the new
     // depth; unset = 32 (nothing changes).
     inline int vbank1_depth_default()
     {

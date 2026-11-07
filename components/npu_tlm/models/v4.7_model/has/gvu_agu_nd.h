@@ -12,7 +12,7 @@
 //   access, not the last one of the program : next address
 //   access, last one (o_last)               : stop = 0 -> back to base (base input of that cycle); stop = 1 -> keeps the address
 //   no access                               : idle_reload = 0 -> keeps the address and the counters (proposal: an idle cycle
-//                                             inside a stream does not lose the position, see B18); idle_reload = 1 -> base,
+//                                             inside a stream does not lose the position); idle_reload = 1 -> base,
 //                                             counters 0 (what AGU_INCR does)
 //   i_reset                                 : base, counters 0, whatever the access is
 // INCR is the program n0 = 2^AW, s0 = 1 (idle_reload = 1); FIXED is n0 = n1 = n2 = n3 = 1; the pooling read address of vbank0 is

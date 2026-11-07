@@ -3,7 +3,7 @@
 //   <binary> --dump <out dir>   writes the cycle-by-cycle stimulus and the model outputs for replay on the RTL by
 //                               tools/has/gvu_oracle/tb_oracle_cfgregs.sv (run_verilator_cfgregs.sh / run_modelsim_cfgregs.sh):
 //                                 cfgregs_dlv.txt  model b13_fixed = false  (replay on the RTL as delivered)
-//                                 cfgregs_b13.txt  model b13_fixed = true   (replay on the RTL with the B13 patch)
+//                                 cfgregs_b13.txt  model b13_fixed = true   (replay on the RTL with all four bytes writable)
 //                                 cfgregs_dlvvl.txt model b13_fixed = false + flat_array_oob (the delivered RTL as Verilator 5 simulates it)
 //                               one line per clock edge, hex fields:
 //                                 rstn addr wren rden wmask wdata lut_init_done pipe_done |
@@ -32,7 +32,7 @@ static GvuConfigIn mk(unsigned addr, bool wren, uint32_t wdata, uint32_t wmask =
 
 static void directed()
 {
-    // ---- as delivered: only byte 0 is writable (B13)
+    // ---- as delivered: only byte 0 is writable
     { GvuConfigRegs r;
       r.tick(mk(CFG_GEMM_FUSED, true, 0xAABBCCDDu));
       CHECK(r.reg(CFG_GEMM_FUSED) == 0xDDu, "as delivered: Reg 3 reads 0x%08x, expected 0xdd", r.reg(CFG_GEMM_FUSED));
@@ -45,27 +45,27 @@ static void directed()
       r.tick(mk(CFG_SOFTMAX_1, true, 0xFFFFFFFFu, 0xFFFFFF00u));
       CHECK(r.out().attn_scale == 0x78, "as delivered: mask without bit 0 changed the register");
     }
-    // ---- patch B13: all four bytes, bit mask
+    // ---- all four bytes writable, bit mask
     { GvuConfigParams p; p.b13_fixed = true; GvuConfigRegs r(p);
       r.tick(mk(CFG_GEMM_FUSED, true, 0xAABBCCDDu));
-      CHECK(r.reg(CFG_GEMM_FUSED) == 0xAABBCCDDu, "B13: Reg 3 0x%08x", r.reg(CFG_GEMM_FUSED));
-      CHECK(static_cast<uint8_t>(r.out().gemm_fused_z) == 0xCC, "B13: z 0x%02x", static_cast<uint8_t>(r.out().gemm_fused_z));
+      CHECK(r.reg(CFG_GEMM_FUSED) == 0xAABBCCDDu, "full-word write: Reg 3 0x%08x", r.reg(CFG_GEMM_FUSED));
+      CHECK(static_cast<uint8_t>(r.out().gemm_fused_z) == 0xCC, "full-word write: z 0x%02x", static_cast<uint8_t>(r.out().gemm_fused_z));
       r.tick(mk(CFG_POOLING_0, true, 0xFFFFFFFFu));
       r.tick(mk(CFG_POOLING_0, true, 0x11223344u, 0x0000FF00u));
-      CHECK(r.reg(CFG_POOLING_0) == 0xFFFF33FFu, "B13: partial write 0x%08x", r.reg(CFG_POOLING_0));
+      CHECK(r.reg(CFG_POOLING_0) == 0xFFFF33FFu, "full-word write: partial write 0x%08x", r.reg(CFG_POOLING_0));
       r.tick(mk(CFG_SOFTMAX_1, true, 0x12345678u));
-      CHECK(r.out().attn_scale == 0x12345678, "B13 attn_scale");
+      CHECK(r.out().attn_scale == 0x12345678, "full-word write: attn_scale");
       // POOLING_1 fields (10 bits each) and SOFTMAX_0 fields (9 bits each)
       r.tick(mk(CFG_POOLING_1, true, (0x155u << 10) | 0x2AAu));
-      CHECK(r.out().pooling_h_move == 0x2AAu && r.out().pooling_c_move == 0x155u, "B13: moves");
+      CHECK(r.out().pooling_h_move == 0x2AAu && r.out().pooling_c_move == 0x155u, "full-word write: moves");
       r.tick(mk(CFG_SOFTMAX_0, true, (0x1A5u << 9) | 0x0C3u));
-      CHECK(r.out().token_len == 0x0C3u && r.out().num_tile == 0x1A5u, "B13: SOFTMAX_0");
+      CHECK(r.out().token_len == 0x0C3u && r.out().num_tile == 0x1A5u, "full-word write: SOFTMAX_0");
       r.tick(mk(CFG_SOFTMAX_2, true, 0xA55Au));
-      CHECK(r.out().attn_shift == 0x5Au && static_cast<uint8_t>(r.out().attn_z) == 0xA5u, "B13: SOFTMAX_2");
+      CHECK(r.out().attn_shift == 0x5Au && static_cast<uint8_t>(r.out().attn_z) == 0xA5u, "full-word write: SOFTMAX_2");
       r.tick(mk(CFG_CONTROL, true, (7u << 3) | 1u));
-      CHECK(r.out().op == 7 && r.out().pipe_en, "B13: opcode / enable");
+      CHECK(r.out().op == 7 && r.out().pipe_en, "full-word write: opcode / enable");
     }
-    // ---- interactions (patched variant, both give the same here)
+    // ---- interactions (both variants give the same here)
     for (int variant = 0; variant < 2; variant++)
     {
         GvuConfigParams p; p.b13_fixed = variant == 1; GvuConfigRegs r(p);
@@ -108,7 +108,7 @@ static void directed()
         in = GvuConfigIn(); in.rstn = false; r.tick(in);
         CHECK(r.reg(CFG_GEMM_FUSED) == 0 && r.reg(CFG_SCRATCHPAD) == 0 && r.rdata() == 0x55u, "reset clears registers, not o_rdata (v%d)", variant);
     }
-    // ---- word index (B17)
+    // ---- word index
     { GvuConfigRegs a; GvuConfigParams p; p.word_addressed = true; GvuConfigRegs b(p);
       CHECK(a.reg_index(0x0C) == 12 && b.reg_index(0x0C) == 3, "index 0x0C: %u / %u", a.reg_index(0x0C), b.reg_index(0x0C));
       CHECK(a.reg_index(0x14) == 4 && b.reg_index(0x14) == 5, "index 0x14: %u / %u", a.reg_index(0x14), b.reg_index(0x14));
@@ -116,8 +116,8 @@ static void directed()
       CHECK(GvuConfigRegs::strb_to_mask(0x2) == 0x0000FF00u && GvuConfigRegs::strb_to_mask(0xF) == 0xFFFFFFFFu, "strb mask");
       GvuConfigParams q; q.b13_fixed = true; q.word_addressed = true; GvuConfigRegs c(q);
       c.write_axi(0x0C, 0x0000C501u); c.write_axi(0x14, 0x12345678u);
-      CHECK(c.read_axi(0x0C) == 0xC501u && c.read_axi(0x14) == 0x12345678u, "patched host path read back");
-      CHECK(static_cast<uint8_t>(c.out().gemm_fused_z) == 0xC5 && c.out().gemm_fused_skip_act && c.out().attn_scale == 0x12345678, "patched host path decode");
+      CHECK(c.read_axi(0x0C) == 0xC501u && c.read_axi(0x14) == 0x12345678u, "corrected host path read back");
+      CHECK(static_cast<uint8_t>(c.out().gemm_fused_z) == 0xC5 && c.out().gemm_fused_skip_act && c.out().attn_scale == 0x12345678, "corrected host path decode");
       // as delivered: Reg 3 written at offset 0x0C lands in register 12 (not used), Reg 5 at 0x14 in register 4
       GvuConfigRegs d; d.write_axi(0x0C, 0x0000C501u); d.write_axi(0x14, 0x12345678u);
       CHECK(d.reg(12) == 0x01u && d.reg(4) == 0x78u && d.reg(CFG_GEMM_FUSED) == 0 && d.out().attn_scale == 0, "as delivered host path: wrong registers");

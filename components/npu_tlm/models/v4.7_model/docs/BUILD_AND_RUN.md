@@ -218,8 +218,7 @@ The `pe` plans need measured per-layer tables, and the ViT scripts need the timm
 
 ### Run profiles
 
-The testbench and the `HasNpuTop` constructor select a **profile**; the default is the configuration of the
-reference results, so no option is needed to reproduce them.
+The testbench and the `HasNpuTop` constructor select a **profile**. The reference results of this package were measured with the five vector-unit knobs at 0 (the prefix `K0`, below); the default configuration gives the numbers of the default rows in the table of the expected results.
 
 | Profile | Selects | Use |
 |---|---|---|
@@ -263,7 +262,7 @@ Softmax, the requant of FUSED_ATTN and LayerNorm also run on `GvuTop` as jobs on
 `HAS_GVU_FA`, `HAS_GVU_LN`, all 1; `docs/GVU_OPS_ON_GVUTOP.md`). Setting a variable to 0 switches that part off
 (`docs/GVU_TOP_CORE_INTEGRATION.md`, section 1.3). The reference results of this package were measured with the first five set to 0;
 the commands that reproduce them carry the prefix
-`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`. Whole-network totals of the default: YOLOv8m 64,135,381
+`HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`. Whole-network totals of the default: YOLOv8m 63,902,513
 cycles with `insts_pe3_nd`, ViT-B/16 41,244,621 cycles. The `GvuTop` epilogue has the depth 11 of the hardware RTL;
 `EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9 bash tools/has/build_tb_has_npu_top.sh` builds the depth 9 of the earlier releases,
 with which YOLOv8m `insts_pe3` takes 62,422,935 cycles (the same with the four operation knobs at 0) and ViT-B/16 41,244,030
@@ -276,7 +275,7 @@ with which YOLOv8m `insts_pe3` takes 62,422,935 cycles (the same with the four o
 | `HAS_GVU_ELEM_CLK` | 1 | residual add and max pool called as functions (still forced on by `HAS_GVU_REGS=1`) |
 | `HAS_GVU_REGS` | 1 | `GvuTop` configured by assignments instead of the register file |
 | `HAS_GVU_AGU_ND` | 1 | no address program bound (2: shifted programs, for demonstration) |
-| `HAS_GVU_AVG` | 1 | ELEM_WISE AVG_POOL on the functional model instead of `GvuTop` with the average pool data path of the RTL patch |
+| `HAS_GVU_AVG` | 1 | ELEM_WISE AVG_POOL on the functional model instead of `GvuTop` with the proposed average pool data path |
 | `HAS_GVU_SOFTMAX` | 1 | the Softmax rows of FUSED_ATTN on the functional model (also switches `HAS_GVU_FA` off) |
 | `HAS_GVU_FA` | 1 | the requant of the two attention products on the functional model |
 | `HAS_GVU_LN` | 1 | LAYERNORM on the functional model instead of the lane data path proposed by the model (`has/rtl_ref_gvu_ln_lanes.h`) |
@@ -284,7 +283,7 @@ with which YOLOv8m `insts_pe3` takes 62,422,935 cycles (the same with the four o
 The last seven only act with `HAS_GVU_TOP=3`; with `HAS_GVU_REGS=0 HAS_GVU_ELEM_CLK=0` the four operations run in the call style
 instead of as jobs on the clock (same values). The report printed at exit is described in `GVU_TOP_CORE_INTEGRATION.md`, section 6.3.
 
-Options that are off by default:
+Options (the default is in the second column; the third column says what 1 gives):
 
 | Variable | Default | 1 gives |
 |---|---|---|
@@ -294,24 +293,36 @@ Options that are off by default:
 | `HAS_DMA_TENSOR_CHUNK=<bytes>` | 1024 | chunk of one COPY step (16 to 98,304); also the chunk of the slice / concat of `HAS_DMA_ND` |
 | `HAS_TRACE_DMA_TENSOR` | 0 | one line per COPY: bytes, chunk, cycles waiting for the idle DMA, cycles of the copy (read by `tools/has/verify_flows.py`) |
 | `HAS_DMA_ND` | 1 | slice / concat by 4-D DMA descriptors: ELEM_WISE modes 6 and 7 accepted, tile window and write-back through descriptors, used by `insts_pe3_nd` (`docs/DMA_SLICE_CONCAT.md`); 0 refuses modes 6 / 7 at the push |
-| `HAS_GVU_REGS_NEO` | 0 | register map of the vector unit of the `neo_lite` RTL run next to the model's register file: 14 writes per command, fields compared after every tick; values unchanged (`docs/HW_RTL_ALIGNMENT.md`, section 2). `HAS_GVU_NEO_WRITE_LAT` (1): cycles per write |
+| `HAS_GVU_REGS_NEO` | 0 | the vector unit runs on the register map of the `neo_lite` RTL (indices 0 to 13 as the RTL, proposals at 14 to 31), 14 writes per command, ping-pong buffers switched on the enable edge; values unchanged (`docs/HW_RTL_ALIGNMENT.md`, section 2). `HAS_GVU_NEO_WRITE_LAT` (1): cycles per write; `HAS_GVU_NEO_CDC_LAT` (4): cycles of the multiplexer and clock-domain crossing per write chain |
 | `HAS_GVU_VBANK1_DEPTH=<rows>` | 32 | rows of vbank#1; 200 = the `neo_lite` RTL |
 | `HAS_GVU_RESIDUAL_HW` | 0 | residual add through the RESIDUAL operation as the hardware builds it, when its parameters are expressible; `HAS_GVU_RESIDUAL_HW_SHIFT_LOGICAL=1` reproduces the logical shift of the delivered RTL (section 4 of `docs/HW_RTL_ALIGNMENT.md`) |
-| `HAS_DMA_DFC_1D` | 0 | slice / concat (modes 6 / 7) as one-dimensional DMA commands of the DFC, with the measured command cost; `HAS_DMA_DFC1D_FIRST` (19), `HAS_DMA_DFC1D_CHAIN` (15), `HAS_DMA_DFC1D_TAIL` (7), `HAS_DMA_DFC1D_STAGE` (25600) |
+| `HAS_DMA_DFC_1D` | 0 | slice / concat (modes 6 / 7) as one-dimensional DMA commands of the DFC, with the measured command cost; `HAS_DMA_DFC1D_FIRST` (6), `HAS_DMA_DFC1D_CHAIN` (15), `HAS_DMA_DFC1D_TAIL` (3), core cycles, `HAS_DMA_DFC1D_STAGE` (25600) |
 | `HAS_GVU_OUT_VBANK2` | 0 | GEMM_FUSED write-back charged as vbank2 -> DRAM by one-dimensional DFC commands; data path unchanged |
 | `HAS_BUS_STRICT` | 0 | bus cost of the per-channel scale / shift of a tile and of the Softmax output A of FUSED_ATTN (data the DFC moves through the DMA); `HAS_BUS_STRICT_LUT=1` (test only) loads the activation table as a DMA transfer |
-| `HAS_OUT_TRANSPOSE` | 0 | corner turn after the epilogue (proposal of the model, not in the RTL): GEMM_FUSED channels from `TMAJ_C0` (`0x40000500`) on are written token-major; programs: `tools/fe/fe_vit_full.py --v-token-major` (`docs/HW_RTL_ALIGNMENT.md`, section 8) |
+| `HAS_OUT_TRANSPOSE` | 1 | corner turn after the epilogue (proposal of the model, not in the RTL): GEMM_FUSED channels from `TMAJ_C0` (`0x40000500`) on are written token-major; programs: `tools/fe/fe_vit_full.py --v-token-major` (`docs/HW_RTL_ALIGNMENT.md`, section 8) |
+| `HAS_DMA_ND_MERGE` | 1 | slice / concat by 4-D descriptors with contiguous dimensions merged, so that the DMA pieces are larger; same DRAM image (`docs/HW_RTL_ALIGNMENT.md`, section 12) |
+| `HAS_GVU_FA_OVERLAP` | 0 | the attention requant runs on `GvuTop` during the next pass of the core (proposal P-FA5); values unchanged (`docs/HW_RTL_ALIGNMENT.md`, section 11) |
+| `HAS_DMA_RESHAPE` | 1 | upsample and reshape as DMA operations (`DMA_TENSOR` modes 2 / 3); 0 refuses them with `UNSUPPORTED_MODE` (`docs/COMPILER_GUIDE.md`, section 7.2) |
+| `HAS_DMA_RESHAPE_T` | 0 | 1: the transpose flag of a reshape (`X_FLAGS` bit 0) is accepted (an experiment); 0 refuses it |
+| `HAS_NEO_REV` | 0 | which revision of the `neo_lite` RTL the options above follow: 0 = RTL revision 0, 1 = RTL revision 1 (`docs/HW_RTL_ALIGNMENT.md`, section 14) |
+| `HAS_DMA_DFC1D_RESTART`, `HAS_DMA_DFC1D_REPORT` | 0, 0 | with `HAS_NEO_REV=1`: extra cycles per re-opened DFC command (not measured); 1 = counters of the one-dimensional commands on stderr at exit |
+| `HAS_DFC_CORE_DMA` | 0 | with `HAS_NEO_REV=1`: core operand loads charged as one-dimensional DFC commands (`docs/HW_RTL_ALIGNMENT.md`, section 14.3) |
+| `HAS_PROFILE` (or `--profile neo` / `--profile neo_as_rtl`) | unset | run profiles with only what the hardware RTL revision 1 has; a variable set by the user wins over the profile (`docs/COMPILER_GUIDE.md`, section 5) |
+| `HAS_HW_CHECK` | 0 | one line per instruction: would the hardware run it as written, with reason codes (`docs/COMPILER_GUIDE.md`, section 3) |
+| `HAS_HOST`, `HAS_HOST_NEO_PATCHES`, `HAS_HOST_NEO_QUIET` | `neo` when unset (`v45` or any other value: window off), `A-H1,A-H4`, 0 | front end for the 82-word register file of the `neo_lite` DFC (`docs/NEO_REGISTER_FILE.md`, section 6) |
+| `HAS_HOST_TRACE=<file>` | unset | `tools/has/host_trace_gen`: file of the register trace of a program |
 
 ### Expected results
 
 | Program and options | Instructions | Result | Total cycles |
 |---|---:|---|---:|
-| `insts_pe3_nd`, default (every knob default, epilogue depth 11) | 135 + 2 host steps | PASS, 0 mismatches | 64,135,381 |
+| `insts_pe3_nd`, default (every knob default, epilogue depth 11) | 135 + 2 host steps | PASS, 0 mismatches | 63,902,513 |
+| `insts_pe3_nd`, `HAS_DMA_ND_MERGE=0` (the default of the previous release), epilogue depth 11 | 135 + 2 host steps | PASS, 0 mismatches | 64,135,381 |
 | `vit_full`, default (every knob default, epilogue depth 11) | 244 | PASS, 0 mismatches | 41,244,621 (LayerNorm cycles ESTIMATED) |
 | `insts_pe3`, epilogue depth 9 (`EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9`, as every row with `GvuTop` below) | 98 + 2 host steps | PASS, 0 mismatches | 62,422,935 |
-| `insts_pe3`, depth 9, four operation knobs at 0 (the previous default) | 98 + 2 host steps | PASS, 0 mismatches | 62,422,935 |
+| `insts_pe3`, depth 9, four operation knobs at 0 (the default of an earlier release) | 98 + 2 host steps | PASS, 0 mismatches | 62,422,935 |
 | `vit_full`, depth 9 | 244 | PASS, 0 mismatches | 41,244,030 (LayerNorm cycles ESTIMATED) |
-| `vit_full`, depth 9, four operation knobs at 0 (the previous default) | 244 | PASS, 0 mismatches | 41,582,468 |
+| `vit_full`, depth 9, four operation knobs at 0 (the default of an earlier release) | 244 | PASS, 0 mismatches | 41,582,468 |
 | `insts_pe3`, knobs off | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,666,123 |
 | `vit_full`, knobs off | 244 | PASS, 26,068,616 elements, 0 mismatches | 41,680,289 |
 | `insts_pe3`, knobs off, `HAS_SPEC=v47ref` (run C) | 98 + 2 host steps | PASS, 58,425,600 elements, 0 mismatches | 62,681,721 |
@@ -339,9 +350,10 @@ and `python3 tools/has/make_rce_gate.py <vector dir> <table dir> <out dir>` rege
 
 Regression of the vector-unit blocks and of the instruction path (transformer check, window D, AVG_POOL, padding,
 short contexts, dilation, `GvuTop`, `DMA_TENSOR`; the script sets the nine vector-unit knobs to 0 itself and each item sets the knobs it
-checks): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 193 items
+checks): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 242 items
 (including the four operations on `GvuTop`, their negative controls, the `DMA_TENSOR` group, the `HAS_DMA_ND` group, the
-verification by instruction flow, and the options of `docs/HW_RTL_ALIGNMENT.md` each on the reference check program with their unit tests); a second argument `--unit-only` runs the unit tests only. The last line is
+verification by instruction flow, the options of `docs/HW_RTL_ALIGNMENT.md` each on the reference check program with their unit tests,
+the RTL revision 1 group, the run profiles and the hardware check, and the register-file front end); a second argument `--unit-only` runs the unit tests only. The last line is
 `RESULT: <n> passed, <m> failed`. The last item runs `python3 tools/has/verify_flows.py <output dir>`, which writes
 `<output dir>/flows/<FLOW>.log` and `<output dir>/flows/SUMMARY.md`: every step of the ten flows of the vector unit and the
 DMA with its checks, references and measured results (`docs/FLOW_VERIFICATION.md`); it can be run again on the logs alone. The script was written for the development tree and reads the programs and vectors

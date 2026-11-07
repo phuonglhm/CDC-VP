@@ -15,10 +15,12 @@ top level, `HasNpuTop`, what stays the same, and what must change.
 | DMA with the HAS bus parameters and true ping-pong loading | `has/has_dma.h` | Implemented; verified against the v4.5 DMA cycle for cycle |
 | `HasNpuTop`: same ports as `NpuTop`, compatibility layer + data flow controller + RTL-ref core + HAS blocks. The default constructor selects the recommended run profile (`BUILD_AND_RUN.md`, section 6) | `has/has_npu_top.h` | Implemented; whole-network acceptance run in `VERIFICATION_REPORT.md`, V12 |
 | FUSED_ATTN (one attention head per instruction) and LAYERNORM (a block of rows per instruction) | `has/has_npu_top.h`, `has/gvu_rce_params.h` | Implemented; unit and instruction-path checks (`VERIFICATION_REPORT.md`, V17) and a whole ViT-B/16 (V18). The softmax, LayerNorm and DMA timing of these instructions is ESTIMATED |
-| C driver API (`npu_gemm_fused`, `npu_elem_add`, `npu_maxpool`, `npu_wait`) | not included | Developed by the integrating team; the testbench `tools/has/tb_has_npu_top.cpp` shows the register sequence |
+| C driver API (`npu_gemm_fused`, `npu_elem_add`, `npu_maxpool`, `npu_wait`) | not included (the encoder of the 82-word register file is: `driver/libneo_cfg.h`) | Developed by the integrating team; the testbench `tools/has/tb_has_npu_top.cpp` shows the register sequence |
 | Firmware starting point: C register definitions, a replay engine for whole programs, a bare-metal example | `tools/has/wrapper/fw/` | Engine checked on the host through the wrapper; example compiled for RV32 (section 10.5) |
 | Reference compiler backend: YOLOv8m program to register writes and a matching DRAM image (SAURIA-ordered weights, slice and concat as address mapping); ViT-B/16 program | `tools/fe/fe_emit_insts.py`, `tools/fe/fe_vit_full.py` | Done; accepted by the replay check (98 instructions, 2,306 writes, 9,811 of 9,811 tiles, 15 of 15 element-wise steps, no errors). Two upsample steps remain host operations pending H15 |
 | System TLM wrapper integration: drop-in model root and proposed wrapper change | `core_rtl/`, `tools/has/wrapper/` | Whole YOLOv8m and ViT-B/16 through the wrapper equal `tools/has/tb_has_npu_top` instruction by instruction (`VERIFICATION_REPORT.md`, V20); section 10 |
+| Second front end: the 82-word register file of the `neo_lite` DFC through the same host port (`HAS_HOST`, `neo` by default), with refusal of layers the hardware cannot run as written | `has/has_host_neo_port.h`, `has/has_host_neo.h`, `driver/libneo_cfg.h` | Implemented; same DRAM image and cycles as the instruction registers on the check programs; GEMM_FUSED layers are refused until the hardware fixes of `COMPILER_GUIDE.md`, section 4.2. Section 11, `NEO_REGISTER_FILE.md` |
+| Per-layer hardware check and run profiles `neo` / `neo_as_rtl` | `has/hw_capability.h`, `tools/has/hw_check_program.py`, `has/has_profile_neo.h` | Implemented; `COMPILER_GUIDE.md` |
 
 The acceptance milestone of the delivery top level is a full YOLOv8m run (83 GEMM_FUSED and 15 ELEM_WISE
 instructions) driven only by memory-mapped instructions, bit-exact against the HAS golden, with detection boxes
@@ -28,7 +30,7 @@ identical to the golden.
 
 - **Addresses:** the gather registers `0x40000400` to `0x40000468` and the push register `0x40000310`.
 - **Programming model:** write the registers of one instruction, then push its opcode.
-- **Opcodes:** `0x12` GEMM_FUSED, `0x13` FUSED_ATTN, `0x14` LAYERNORM and `0x15` ELEM_WISE.
+- **Opcodes:** `0x12` GEMM_FUSED, `0x13` FUSED_ATTN, `0x14` LAYERNORM and `0x15` ELEM_WISE; new in this model: `0x16` `DMA_TENSOR` and the doorbell `0x17` of the register-file window (`INTERFACE_SPEC.md`, section 6.2).
 - **Granularity:** one instruction per layer. The hardware iterates over the tiles.
 - **Register persistence:** the legacy registers keep their value between pushes, as before.
 
@@ -70,8 +72,8 @@ Error codes:
 | 1 | `Q_OVF` | Push while the queue is full (default depth 16); the instruction is dropped |
 | 2 | `LANE_B` | Push to the second lane |
 | 3 | `LEGACY64` | 64-bit instruction interface used |
-| 4 | `UNSUPPORTED_OP` | Opcode other than `0x05`, `0x12`, `0x13`, `0x14`, `0x15` |
-| 5 | `UNSUPPORTED_MODE` | Element-wise mode other than ADD (0), MAX_POOL (1) and AVG_POOL (5), or activation type above 3 |
+| 4 | `UNSUPPORTED_OP` | Opcode other than `0x05`, `0x12` to `0x15`, `0x16` (`DMA_TENSOR`, with `HAS_DMA_TENSOR=1`) and `0x17` (doorbell of the register-file window, with `HAS_HOST=neo`); also a layer refused at that doorbell |
+| 5 | `UNSUPPORTED_MODE` | Element-wise mode other than ADD (0), MAX_POOL (1), AVG_POOL (5), slice (6), concat (7) with `HAS_DMA_ND=1`, and upsample (8), reshape (9) with `HAS_DMA_RESHAPE=1`; `DMA_TENSOR` `MODE_PACK` other than 0 (COPY), 2 (upsample), 3 (reshape); or activation type above 3 |
 | 6 | `BROADCAST` | ADD with operands of different lengths |
 | 7 | `NEED_LUT` | SiLU or GELU without `LUT_ADDR` |
 | 8 | `BAD_GEOM` | Inconsistent or missing geometry |
@@ -127,10 +129,10 @@ them therefore never picks up stale geometry.
 | 34 | `0x400004F4` | `PAD_B` | GEMM | Padding rows below the input |
 | 35 | `0x400004F8` | `PAD_R` | GEMM | Padding columns right of the input |
 | 36 | `0x400004FC` | `DILATION` | GEMM | Kernel taps are `DILATION` input positions apart in both directions. Not written or 0: 1. `(KW - 1) x DILATION` must not exceed 63 |
-| 37 | `0x40000500` | `TMAJ_C0` | GEMM | Only with the option `HAS_OUT_TRANSPOSE=1` (off by default; a proposal of the model, not in the hardware RTL): the output channels `TMAJ_C0` .. `OUT_C - 1` are written token-major, position p of channel c at `OUT_ADDR + TMAJ_C0 x OH x OW + p x (OUT_C - TMAJ_C0) + c - TMAJ_C0`. A multiple of `TILE_COUT`; not with `HAS_SKIP`; ignored with the option off (`HW_RTL_ALIGNMENT.md`, section 8) |
+| 37 | `0x40000500` | `TMAJ_C0` | GEMM | Only with the option `HAS_OUT_TRANSPOSE` (on by default; a proposal of the model, not in the hardware RTL): the output channels `TMAJ_C0` .. `OUT_C - 1` are written token-major, position p of channel c at `OUT_ADDR + TMAJ_C0 x OH x OW + p x (OUT_C - TMAJ_C0) + c - TMAJ_C0`. A multiple of `TILE_COUT`; not with `HAS_SKIP`; ignored with the option off (`HW_RTL_ALIGNMENT.md`, section 8) |
 
 The ranges `0x40000318` to `0x4000031C` and `0x4000046C` to `0x40000500` are not used by any other part of the
-model.
+model. The register-file window of the DFC at `0x40000800` to `0x400009FF` is described in section 11.
 
 Convolution padding. When none of `PAD_T`, `PAD_L`, `PAD_B`, `PAD_R` is written, all four sides use `PAD`, as
 before. When any of them is written, the four registers replace `PAD` and the ones not written are 0; for example
@@ -281,7 +283,7 @@ The compatibility layer cannot hide these changes:
 4. **Extension registers and completion.** Convolutions need the geometry and tiling extensions (section 3.3).
    Completion is read from `STATUS` / `RETIRED` or the interrupt.
 5. **Single lane and reduced element-wise set.** There is no second lane and `SET_NSPLIT` has no effect.
-   ELEM_WISE supports ADD, MAX_POOL and AVG_POOL (mode 5, without padding). MUL, SUB and DIV are not
+   ELEM_WISE supports ADD, MAX_POOL and AVG_POOL (mode 5, without padding), and by default slice, concat, upsample and reshape by the DMA (modes 6 to 9, `INTERFACE_SPEC.md`, section 6.2). MUL, SUB and DIV are not
    supported.
 
 The numerical results of the previous decoder cannot be reproduced. That decoder evaluated a simplified
@@ -294,8 +296,8 @@ functional model rather than the hardware arithmetic.
 | Tile sizes per layer (`TILE_COUT/H/W`) | Offline planner (`tools/fe/fe_tile_plan.py`) | Must respect the SRAM limits in `HARDWARE_CONFIG.md` |
 | Weight blocks in SAURIA order | Compiler | See section 5. With `TILE_CIN` < `IN_C`, see section 6.1 |
 | Bias as int32 per channel | Compiler | Loaded as the partial-sum preload |
-| Slice and concat | Compiler, by address mapping | Concat outputs are written directly into sub-regions of the concatenated tensor; a channel slice is an address offset |
-| Upsample | Host, until hardware support is decided | See section 7 |
+| Slice and concat | Compiler, by address mapping (or, by default, ELEM_WISE modes 6 / 7 by the DMA: `DMA_SLICE_CONCAT.md`) | Concat outputs are written directly into sub-regions of the concatenated tensor; a channel slice is an address offset |
+| Upsample | Host, until hardware support is decided (the model also has it as a DMA operation, `COMPILER_GUIDE.md`, section 7.2) | See section 7 |
 
 ### 6.1 Weight layout with an input-channel split
 
@@ -334,7 +336,7 @@ listed in `KNOWN_LIMITATIONS.md`, section 7.1.
 
 | # | Question | Assumption used by the model |
 |---|---|---|
-| H15 | How is the nearest-neighbour x2 upsample performed (DMA replication, feeder addressing, or host)? | Host |
+| H15 | How is the nearest-neighbour x2 upsample performed (DMA replication, feeder addressing, or host)? | Host; the model also has it as a DMA operation, on by default (`HAS_DMA_RESHAPE`; `COMPILER_GUIDE.md`, section 7.2) |
 | H16 | Instruction granularity: one instruction per tile or per layer; can instructions be read from a descriptor ring in DRAM? | One per layer, hardware tile loop |
 | H17 | Bias preload: full `OH x OW x OC` int32 read, or a broadcast mode reading `OC` values? | Full read (broadcast evaluated as a proposal, `PERFORMANCE_REPORT.md`, section 5.5) |
 | H18 | Convolution padding: DMA zero fill, feeder generation, or pre-padded data in DRAM? | DMA 3-D descriptor that fills the padding (default); generation by the IFMAP feeder is modelled as an option (`HAS_FEEDER_PAD=1`, `HARDWARE_CONFIG.md`, section 6.5) |
@@ -414,7 +416,7 @@ behaviour is unchanged in both configurations.
    native model; it applies with LF and with CRLF working files. If a later wrapper revision changes the context
    lines, the same 28 lines are added at the same places: two register constants, two fields of the register bank
    with their read and write cases, a flag set by any write to `0x4000046C..0x400004FF`, and the window staging at
-   the start of the job preparation. It adds two
+   the start of the job preparation. It is a proposed change for system TLM wrappers. It adds two
    registers to the wrapper's parameter bank and stages a DRAM window for extended instructions:
 
 | Offset in the wrapper bank | Register | Meaning |
@@ -441,7 +443,8 @@ The reference is `tools/has/wrapper/test_npu_tlm_core_rtl.cpp` (a SystemC test, 
    `0x4E0`, `0x4E4`. The model converts the extension addresses back to image offsets (base `0x80000000` by default,
    `set_dram_base()`).
 3. After each push to `0x40000310`, wait for `STATUS.DONE` of the wrapper, read the performance counters, clear
-   `STATUS`.
+   `STATUS`. The wrapper reports DONE also for an instruction the model refused at the push: read the model's
+   `STATUS` (`0x40000318`, bit 2) and check that `RETIRED` (`0x4000031C`) grew.
 4. Host steps of the program (`H` lines; YOLOv8m has two `upsample2x`, nearest neighbour x2 on `[c][h][w]` int8) run on
    the CPU between the instructions, as in `tools/has/tb_has_npu_top.cpp`.
 
@@ -478,12 +481,15 @@ instruction (`VERIFICATION_REPORT.md`, V20).
 
 | Environment variable (read at construction) | Effect |
 |---|---|
-| `SAURIA_CORE_RTL_PROFILE` | `recommended` (default, configuration of the reference results), `proposals`, `legacy` |
+| `SAURIA_CORE_RTL_PROFILE` | `recommended` (default; the reference results also need the five vector-unit knobs at 0, `BUILD_AND_RUN.md`, section 6), `proposals`, `legacy` |
 | `SAURIA_CORE_RTL_C_BCAST=1` | Bias preload by broadcast descriptor (a proposed hardware option): changes the DMA timing only, not the data. Set it to reproduce the ViT-B/16 reference cycles (`PERFORMANCE_REPORT.md`, section 5.6); without it the program runs as drawn |
 | `SAURIA_CORE_RTL_TRACE=1` | One line per `HasNpuTop` instruction with its cycles |
 | `SAURIA_CORE_RTL_WARN=0` | Switches off the warning lines on stderr. By default the model root prints one line when `HasNpuTop` refuses an instruction at the push, when an instruction falls back to converted real-valued scales or to a default tiling, and when an instruction retires with an internal error counter raised (`SW_EVALUATION_GUIDE.md`, section 4) |
 | `SAURIA_CORE_RTL_RECORD=<directory>` | Records the program that reaches `HasNpuTop` as program directories that `tools/has/tb_has_npu_top` replays (`SW_EVALUATION_GUIDE.md`, section 4.2). Results and cycle counts do not change |
 | `SAURIA_CORE_RTL_REPORT=<file>` | Writes a CSV with one line per retired instruction (cycles, tiles, PE utilization, DMA wait, bus bytes) and `<file>.summary.txt` with the totals of the run; `SW_EVALUATION_GUIDE.md`, section 6.1 |
+| `HAS_PROFILE=neo` or `neo_as_rtl` | Runs the model with only what the hardware RTL revision 1 has (`COMPILER_GUIDE.md`, section 5). Must be set before the platform builds the model |
+| `HAS_HOST` | `neo` when not set: serves the register file of the `neo_lite` DFC at model address `0x40000800` (section 11); `neo_patched` also accepts the class-A codes of `HAS_HOST_NEO_PATCHES` (default `A-H1,A-H4`); `v45` switches it off |
+| `HAS_HW_CHECK=1` | One line per instruction on stderr: would the hardware run it as written, and why not (`COMPILER_GUIDE.md`, section 3) |
 
 - Lane A only, INT8 only (as `HasNpuTop`).
 - Simulation speed is that of the RTL-accurate core: a whole network is a long run (`RELEASE_NOTES.md`, section 4).
@@ -494,7 +500,7 @@ instruction (`VERIFICATION_REPORT.md`, V20).
 - `test_npu_tlm_core_rtl.cpp` checks the outputs of GEMM_FUSED, ELEM_WISE, FUSED_ATTN and LAYERNORM instructions and of
   host steps. Whole YOLOv8m and ViT-B/16 runs through the wrapper match the golden images and the reference cycles
   instruction by instruction (`VERIFICATION_REPORT.md`, V20).
-- Extended instructions support ELEM_WISE ADD (mode 0), MAX_POOL (1) and AVG_POOL (5) only; multiply, subtract and
+- Extended instructions support ELEM_WISE ADD (mode 0), MAX_POOL (1), AVG_POOL (5) and, by default, the DMA modes 6 to 9; multiply, subtract and
   divide (modes 2 to 4 of the functional decoder) are rejected (section 5). A wrapper document that lists the modes
   of the functional decoder needs this note, and the two window registers of section 10.1, for the `core_rtl/` root.
 
@@ -510,7 +516,7 @@ instruction (`VERIFICATION_REPORT.md`, V20).
 | `fw_main_example.c`, `linker_example.ld`, `Makefile` | Bare-metal example: hardware abstraction (five functions: 32-bit register access, RAM copy, idle, report), UART output, memory layout with the image at a fixed RAM address |
 | `test_fw_replay.cpp` | Host test: the same C engine driven through the wrapper with TLM transactions |
 
-Steps for a first run on a platform (a 14-instruction transformer check with a 1 MB image, 285,205 NPU cycles with the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN` at 0; 263,808 with the default of this package):
+Steps for a first run on a platform (a 14-instruction transformer check with a 1 MB image, 285,205 NPU cycles with the vector-unit knobs at 0 (the configuration of the package check: `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0`, the four operation knobs `HAS_GVU_AVG`, `HAS_GVU_SOFTMAX`, `HAS_GVU_FA`, `HAS_GVU_LN` at 0, and `HAS_DMA_TENSOR=0 HAS_DMA_ND=0`); 263,808 with the default of this package):
 
 ```bash
 cd tools/has/wrapper/fw
@@ -520,7 +526,7 @@ make PROGRAM=$FE_WORK/has/rce_gate FW_INC=<platform firmware include dir> STARTU
 
 The platform must be built with the model root `core_rtl/` and a wrapper with the DRAM window (section 10.1). Then
 `PROGRAM=$FE_WORK/has/insts_pe3 COUNT=2` runs the first two YOLOv8m instructions, and without `COUNT` the whole
-network (expected cycles in `PERFORMANCE_REPORT.md`, section 5.8). The environment variable `HAS_SPEC` is
+network (expected cycles in `PERFORMANCE_REPORT.md`, section 5.9 for the default; section 5.8 is the configuration with the vector-unit knobs at 0). The environment variable `HAS_SPEC` is
 read by the model inside the platform as well (`HAS_SPEC=v47ref`: 250,885 cycles on the transformer check).
 
 **Loading the DRAM image.** The image of a program must be in system RAM before the first instruction: 1 MB for
@@ -534,3 +540,17 @@ writes the image in place, so the region must not overlap the firmware, its stac
 transformer check passes, and on whole programs every host step and every output CRC agree with the golden images
 (`RELEASE_NOTES.md`, section 4). The example firmware is compiled for RV32 against a platform's firmware headers.
 It has not been run on a CPU model inside a full platform; that run is the integrator's first step.
+
+## 11. The neo_lite register file through the same wrapper
+
+By default (`HAS_HOST=neo`), the model also accepts the configuration image of the
+`neo_lite` data flow controller: 82 words, IEN and START at model address `0x40000800` (wrapper window offset
+`0x10800`), followed by a push of `0x17` to `PUSH_A` as the doorbell and preceded by a write of 0 to `0x400004E4` that
+makes the wrapper stage the DRAM window. No change to the wrapper is needed beyond section 10.1. Layers sent this way
+share the instruction queue, `STATUS`, `RETIRED` and the completion of sections 3.2 and 4.6, so a program may mix the
+two front ends. A layer that the hardware RTL revision 1 would not run as written is refused at the doorbell
+(`STATUS` bit 2, code 4) and never run another way.
+
+The sequence, the word layout and the refusal rules are in `NEO_REGISTER_FILE.md`; which layers can be expressed today
+and what a compiler changes for the others is in `COMPILER_GUIDE.md`. With `HAS_HOST=v45`, nothing in this section
+exists and a push of `0x17` is refused as an unknown opcode.

@@ -3,7 +3,6 @@
 **Project**: Sauria NPU Generic Vector Unit (GVU) Top-Level Model  
 **Module**: [`has/rtl_ref_gvu_top.h`](../has/rtl_ref_gvu_top.h)  
 **Micro-Architecture Specification Reference**: MAS §5.2.1, §5.2.2, §5.2.3, §5.2.6  
-**Verification Date**: October 2026  
 **Status**: **ALL TEST SUITES PASSING (100% Bit-Exact Functional & Timing Conformance)**
 
 ---
@@ -43,7 +42,7 @@ graph TD
     subgraph GVU_TOP ["rtl_ref_gvu::GvuTop"]
         CTRL["Pipeline Controller FSM<br/>(Multi-Tile Support, Beat Counters)"]
         VLSU["Vector LSU (GvuVlsu)<br/>(AGU_INCR, 3-Bank Muxing)"]
-        SP["Scratchpad SRAM (GvuScratchpad)<br/>vbank0 (25KB), vbank1 (4KB), vbank2 (32KB), sbank (512B)"]
+        SP["Scratchpad SRAM (GvuScratchpad)<br/>vbank0 (25KB), vbank1 (4KB), vbank2 (32KB), sbank (768 words)"]
         VRF["Stream VRF (StreamVrf)<br/>vint64, vint32, vint16, vint8"]
         LUT["LUT Unit (LutUnit)<br/>act (256B), exp (256B), recip (512B), rsqrt (1024B)"]
         

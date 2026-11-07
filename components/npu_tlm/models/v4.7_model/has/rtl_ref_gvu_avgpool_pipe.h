@@ -4,7 +4,7 @@
 // through Mul#1 (MA_32X16: Avg_Scale x sum), the v32int64 register #1 and Round-Shift#1 (Avg_Shift, round mode, narrow to int8).
 // Depth of the tail from the cycle of a lane's last window element to the cycle of the vbank2 write: kAvgTailDepth cycles
 //   sum register 1 + Mul#1 MA_32X16 2 + v32int64 register 1 + Round-Shift#1 1 (S2_PIPE = 0)  = 5.
-// This is the depth of the RTL patch for AVG_POOL (ModelSim, gvu_top.sv with AVG_TAIL_D = 5; the delivered RTL has no data path).
+// This is the depth of an AVG_POOL data path added to gvu_top.sv (ModelSim, AVG_TAIL_D = 5; the delivered RTL has no data path).
 //
 //  * GvuAvgTail   : the tail alone, used by GvuTop (has/rtl_ref_gvu_top.h, POOLING_AVG): push the sums of one row of 32 lanes with
 //                   their write request, get the int8 row and the request back kAvgTailDepth cycles later. Scale, shift, round mode

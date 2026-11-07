@@ -10,7 +10,7 @@
 //   4 SOFTMAX_0    [8:0] token length   [17:9] number of tiles
 //   5 SOFTMAX_1    [31:0] attention scale (int32)
 //   6 SOFTMAX_2    [7:0] attention shift   [15:8] attention zero point (int8)
-//   7 POOLING_0    [1:0] window mode  [4:2] stride  [15:8] number of W tiles  [23:16] C  [31:24] OH   (code; the RTL comment swaps C / OH, B11)
+//   7 POOLING_0    [1:0] window mode  [4:2] stride  [15:8] number of W tiles  [23:16] C  [31:24] OH   (code; the RTL comment swaps C / OH)
 //   8 POOLING_1    [9:0] H move   [19:10] C move  (VBANK0_AW = 10 bits each)
 // Registers 9..15 are plain storage in the RTL drop (no decode). The register proposal for the residual add (not RTL) decodes them:
 //   9 RES_SCALE_A [31:0] scale_a   10 RES_SCALE_B [31:0] scale_b   11 RES_SCALE_OUT [31:0] scale_out   (int32)
@@ -22,15 +22,15 @@
 // num_regs = 32 (GVU_REG_AW = 5, proposal): registers 16..31 are storage with no decode here (16..24 are claimed by the AGU_ND proposal).
 // Behaviour of the RTL that this port keeps, edge by edge (one tick() = one rising clock edge):
 //   * write: for i in {0, 8, 16, 24}: if wmask[i] then byte (i*8 +: 8) of the register gets wdata. As DELIVERED (b13_fixed = false)
-//     only i = 0 lands inside the 32-bit register (B13): only byte 0 can be written, with wmask bit 0. With the proposed B13 patch
-//     (b13_fixed = true, byte (i +: 8)) all four bytes work, mask = bit mask (gvu_core feeds it from AXI strb, one strb bit -> 8 mask bits).
+//     only i = 0 lands inside the 32-bit register: only byte 0 can be written, with wmask bit 0. With b13_fixed = true
+//     (byte (i +: 8)) all four bytes work, mask = bit mask (gvu_core feeds it from AXI strb, one strb bit -> 8 mask bits).
 //   * after the write, in this order, later wins: pipe_done clears CONTROL[0] (so pipe_done beats a host write of bit 0, K-19) and sets
 //     CONTROL[1]; the clear request (wren && addr == 0 && wdata[2], mask NOT looked at) clears CONTROL[1]; lut_init_done toggles
 //     SCRATCHPAD[2] (beats a host write of that bit, toggles the value from BEFORE the edge).
 //   * read: o_rdata <= reg[addr] when rden, registered (1 cycle), no reset (0 here before the first read; x in a 4-state simulator).
 //   * async reset (rstn low) clears all 16 registers at once; o_rdata is not reset and still loads while rstn is low.
-// Word index (gvu_core.sv:252): the AXI-Lite byte address goes to the registers as reg_addr[3:0] as delivered (B17: offset 4n hits
-// register 4n mod 16), as reg_addr[5:2] with the proposed B17 patch (word_addressed = true). With num_regs = 32 the index has 5 bits.
+// Word index (gvu_core.sv:252): the AXI-Lite byte address goes to the registers as reg_addr[3:0] as delivered (offset 4n hits
+// register 4n mod 16), as reg_addr[5:2] with word_addressed = true. With num_regs = 32 the index has 5 bits.
 #ifndef RTL_REF_GVU_CONFIG_REGS_H
 #define RTL_REF_GVU_CONFIG_REGS_H
 
@@ -50,8 +50,8 @@ namespace rtl_ref_gvu
 
     struct GvuConfigParams
     {
-        bool b13_fixed{false};        // false: RTL as delivered (only byte 0 writable); true: patch B13 (all four bytes)
-        bool word_addressed{false};   // false: index = byte address [3:0] (as delivered); true: [5:2] (patch B17)
+        bool b13_fixed{false};        // false: RTL as delivered (only byte 0 writable); true: all four bytes writable
+        bool word_addressed{false};   // false: index = byte address [3:0] (as delivered); true: [5:2] (word-addressed)
         // Simulator-dependent behaviour of the delivered RTL (b13_fixed = false), measured: ModelSim ignores the part-select [i*8 +: 8]
         // for i >= 8 (outside the 32-bit register); Verilator 5.052 treats it as a select on the flat 512-bit register vector, so the
         // write (data 0) lands in byte 0 of register a + 2 * (i / 8). flat_array_oob = true reproduces Verilator. Default: standard SV.
@@ -124,7 +124,7 @@ namespace rtl_ref_gvu
                     for (unsigned i = 0; i < 32; i += 8)
                         if ((in.wmask >> i) & 1u)
                         {
-                            const unsigned lo = P_.b13_fixed ? i : i * 8;      // [i +: 8] (patch) or [i*8 +: 8] (as delivered)
+                            const unsigned lo = P_.b13_fixed ? i : i * 8;      // [i +: 8] (b13_fixed) or [i*8 +: 8] (as delivered)
                             if (lo + 8 <= 32)                                  // outside the 32-bit register: no write
                                 n[a] = (n[a] & ~(0xFFu << lo)) | (((in.wdata >> lo) & 0xFFu) << lo);
                             else if (P_.flat_array_oob)                        // Verilator: flat vector, data read outside i_wdata = 0

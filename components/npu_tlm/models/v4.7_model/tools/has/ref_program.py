@@ -28,6 +28,11 @@ Arithmetic (default configuration of the model):
   AVG_POOL     sum of the window as int16 (wraps), out = clamp8(round(sum * S >> s)), no padding
   COPY         MODE_PACK 0: LEN bytes from A_ADDR to OUT_ADDR; refused when LEN is 0, a region passes 2^32 or the two
                regions overlap (the model runs it only with HAS_DMA_TENSOR=1)
+  UPSAMPLE / RESHAPE   DMA_TENSOR (0x16) MODE_PACK 2 / 3 (aliases 8 / 9) and ELEM_WISE (0x15) MODE_PACK 8 / 9: nearest-neighbour
+               [C][H][W] -> [C][H*sh][W*sw] (scale from OUT_H/OUT_W, else POOL_K/POOL_P, else STRIDE) and a C-order reshape to
+               [OUT_C][OUT_H][OUT_W] (one -1 axis, LEN when IN_C is not written; FLAGS bit 0 = corner turn [C][H*W] -> [H*W][C]).
+               The model runs them only with HAS_DMA_RESHAPE=1 (the corner turn also needs HAS_DMA_RESHAPE_T=1); this reference
+               does not look at the knobs, as for slice / concat.
 Tensors are int8 [C][H][W]; scales are signed 32-bit words.
 
 Usage:
@@ -448,18 +453,131 @@ def elem(st, img, notes):
             return [(dst, len_a * oh * ow)], "[%d][%d][%d]" % (len_a, oh, ow)
         img.put(r["out"], T, "output tensor")
         return [(r["out"], T.size)], "[%d][%d][%d]" % T.shape
+    if mode == 8:   # DMA_UPSAMPLE (HAS_DMA_ND=1)
+        return _dma_upsample_ref(r, x, img)
+    if mode == 9:   # DMA_RESHAPE (HAS_DMA_ND=1)
+        return _dma_reshape_ref(r, x, img)
     raise Refused("UNSUPPORTED_MODE")
 
 
-def dma_copy(st, img):
-    r = st.reg
-    if r["mode"] != 0:
-        raise Refused("UNSUPPORTED_MODE")
-    s, d, n = r["a"], r["out"], r["len"]
-    if n == 0 or s + n > 1 << 32 or d + n > 1 << 32 or (s < d + n and d < s + n):
+def _resolve_reshape_3d(in_elems, oc, oh, ow):
+    if in_elems <= 0:
+        return None
+    dims = [oc, oh, ow]
+    neg_idx = -1
+    prod = 1
+    for i, d in enumerate(dims):
+        if d == -1:
+            if neg_idx >= 0:
+                return None
+            neg_idx = i
+        elif d <= 0:
+            return None
+        else:
+            prod *= d
+    if neg_idx >= 0:
+        if prod == 0 or (in_elems % prod) != 0:
+            return None
+        inf = in_elems // prod
+        if inf <= 0 or inf > 0x7FFFFFFF:
+            return None
+        dims[neg_idx] = inf
+        prod *= inf
+    if prod != in_elems:
+        return None
+    return dims[0], dims[1], dims[2]
+
+
+def _dma_upsample_ref(r, x, img):
+    if "IN_C" not in x or "IN_H" not in x or "IN_W" not in x:
         raise Refused("BAD_GEOM")
-    img.put(d, img.i8(s, n, "copy source").copy(), "copy destination")
-    return [(d, n)], "[%d] B" % n
+    c, h, w = s32(x["IN_C"]), s32(x["IN_H"]), s32(x["IN_W"])
+    if min(c, h, w) <= 0 or ("OUT_C" in x and s32(x["OUT_C"]) != c):
+        raise Refused("BAD_GEOM")
+    if "OUT_H" in x or "OUT_W" in x:
+        if not ("OUT_H" in x and "OUT_W" in x):
+            raise Refused("BAD_GEOM")
+        oh, ow = s32(x["OUT_H"]), s32(x["OUT_W"])
+        if oh <= 0 or ow <= 0 or (oh % h) != 0 or (ow % w) != 0:
+            raise Refused("BAD_GEOM")
+        sh, sw = oh // h, ow // w
+        if "POOL_K" in x:
+            pk = s32(x["POOL_K"])
+            pp = s32(x["POOL_P"]) if ("POOL_P" in x and s32(x["POOL_P"]) > 0) else pk
+            if pk != sh or pp != sw:
+                raise Refused("BAD_GEOM")
+    elif "POOL_K" in x:
+        sh = s32(x["POOL_K"])
+        sw = s32(x["POOL_P"]) if ("POOL_P" in x and s32(x["POOL_P"]) > 0) else sh
+    else:
+        sh = sw = s32(r["stride"])
+    if sh <= 0 or sw <= 0:
+        raise Refused("BAD_GEOM")
+    in_bytes = c * h * w
+    out_bytes = in_bytes * sh * sw
+    s, d = r["a"], r["out"]
+    if out_bytes <= 0 or out_bytes > 0xFFFFFFFF or s + in_bytes > (1 << 32) or d + out_bytes > (1 << 32) or (s < d + out_bytes and d < s + in_bytes):
+        raise Refused("BAD_GEOM")
+    X = img.i8(s, in_bytes, "upsample source").reshape(c, h, w)
+    out = X.repeat(sh, axis=1).repeat(sw, axis=2)
+    img.put(d, out, "upsample destination")
+    return [(d, out_bytes)], "[%d][%d][%d]" % (c, h * sh, w * sw)
+
+
+def _dma_reshape_ref(r, x, img):
+    if "IN_C" in x:
+        ic = s32(x["IN_C"])
+        ih = s32(x["IN_H"]) if "IN_H" in x else 1
+        iw = s32(x["IN_W"]) if "IN_W" in x else 1
+        if min(ic, ih, iw) <= 0:
+            raise Refused("BAD_GEOM")
+        in_elems = ic * ih * iw
+    else:
+        ln = r["len"]
+        if ln <= 0 or ln > 0x7FFFFFFF:
+            raise Refused("BAD_GEOM")
+        ic, ih, iw, in_elems = ln, 1, 1, ln
+    if "OUT_C" not in x:
+        raise Refused("BAD_GEOM")
+    oc = s32(x["OUT_C"])
+    oh = s32(x["OUT_H"]) if "OUT_H" in x else 1
+    ow = s32(x["OUT_W"]) if "OUT_W" in x else 1
+    res = _resolve_reshape_3d(in_elems, oc, oh, ow)
+    if res is None:
+        raise Refused("BAD_GEOM")
+    oc, oh, ow = res
+    flags = x.get("FLAGS", 0)
+    if flags & ~1:
+        raise Refused("UNSUPPORTED_MODE")
+    if (flags & 1) and "IN_C" not in x:
+        raise Refused("BAD_GEOM")
+    s, d = r["a"], r["out"]
+    inplace = (s == d) and ((flags & 1) == 0)
+    if in_elems <= 0 or in_elems > 0xFFFFFFFF or s + in_elems > (1 << 32) or d + in_elems > (1 << 32) or (not inplace and s < d + in_elems and d < s + in_elems):
+        raise Refused("BAD_GEOM")
+    X = img.i8(s, in_elems, "reshape source").copy()
+    if flags & 1:
+        out = X.reshape(ic, ih * iw).T.reshape(oc, oh, ow)
+    else:
+        out = X.reshape(oc, oh, ow)
+    if not inplace:
+        img.put(d, out, "reshape destination")
+    return [(d, in_elems)], "[%d][%d][%d]" % (oc, oh, ow)
+
+
+def dma_copy(st, img):
+    r, x = st.reg, st.ext
+    if r["mode"] == 0:
+        s, d, n = r["a"], r["out"], r["len"]
+        if n == 0 or s + n > 1 << 32 or d + n > 1 << 32 or (s < d + n and d < s + n):
+            raise Refused("BAD_GEOM")
+        img.put(d, img.i8(s, n, "copy source").copy(), "copy destination")
+        return [(d, n)], "[%d] B" % n
+    if r["mode"] in (2, 8):
+        return _dma_upsample_ref(r, x, img)
+    if r["mode"] in (3, 9):
+        return _dma_reshape_ref(r, x, img)
+    raise Refused("UNSUPPORTED_MODE")
 
 
 def not_computed(st):
@@ -495,6 +613,29 @@ def host_step(st, img):
     return [(kv.get("out", 0), 4 * c * h * w)], "[%d][%d][%d]" % (c, 2 * h, 2 * w)
 
 
+def _upsample_out_len(r, x):
+    c, h, w = s32(x.get("IN_C", 0)), s32(x.get("IN_H", 0)), s32(x.get("IN_W", 0))
+    if min(c, h, w) <= 0:
+        return 0
+    if "OUT_H" in x and "OUT_W" in x:
+        return max(0, c * s32(x["OUT_H"]) * s32(x["OUT_W"]))
+    if "POOL_K" in x:
+        sh = s32(x["POOL_K"])
+        sw = s32(x["POOL_P"]) if ("POOL_P" in x and s32(x["POOL_P"]) > 0) else sh
+    else:
+        sh = sw = s32(r.get("stride", 1))
+    return max(0, c * h * w * sh * sw)
+
+
+def _reshape_out_len(r, x):
+    if "IN_C" in x:
+        ic = s32(x.get("IN_C", 0))
+        ih = s32(x["IN_H"]) if "IN_H" in x else 1
+        iw = s32(x["IN_W"]) if "IN_W" in x else 1
+        return max(0, ic * ih * iw)
+    return max(0, r.get("len", 0))
+
+
 def output_region(st):
     """Output region of a step without computing it (steps outside the checked window)."""
     r, x = st.reg, st.ext
@@ -526,12 +667,20 @@ def output_region(st):
             if r.get("b", 0) == 0 and s32(x.get("POOL_MODE", 0)) == 0:
                 return [(r["out"] + s32(x.get("POOL_P", 0)) * oh * ow, max(0, s32(x.get("POOL_K", 0)) * oh * ow))]
             return [(r["out"], max(0, oc * oh * ow))]
+        if r["mode"] == 8:
+            return [(r["out"], _upsample_out_len(r, x))]
+        if r["mode"] == 9:
+            return [(r["out"], _reshape_out_len(r, x))]
         k, p_, s_ = s32(x.get("POOL_K", 0)), s32(x.get("POOL_P", 0)), r["stride"]
         c, h, w = s32(x.get("IN_C", 0)), s32(x.get("IN_H", 0)), s32(x.get("IN_W", 0))
         if min(c, h, w, k, s_) <= 0 or h + 2 * p_ < k or w + 2 * p_ < k:
             return []
         return [(r["out"], c * ((h + 2 * p_ - k) // s_ + 1) * ((w + 2 * p_ - k) // s_ + 1))]
     if st.opcode == 0x16:
+        if r["mode"] in (2, 8):
+            return [(r["out"], _upsample_out_len(r, x))]
+        if r["mode"] in (3, 9):
+            return [(r["out"], _reshape_out_len(r, x))]
         return [(r["out"], r["len"])]
     if st.opcode in (0x13, 0x14):
         try:

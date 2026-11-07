@@ -9,11 +9,11 @@ Paths ending in `.sv` and paths under `neo_core/` name files of the RTL of the h
 > **Status summary**
 > - **Softmax (`GVU_OP_SOFTMAX`)**: verified in `tile` (4,096 elements, 432 cycles) and `vec` (64 elements, 223 cycles) modes, 0 mismatches (`tb_gvu_top`, measured).
 > - **GEMM_FUSED, tile mode (`GVU_OP_GEMM_FUSED`)**: `tile` (4,096 elements, 144 cycles) and `vec` (64 elements, 77 cycles), 0 mismatches (`tb_gvu_top_gemm_fused`, measured).
-> - **GEMM_FUSED, stream mode (`i_gemm_stream`)**: one beat per PSM write to the PSUM SRAM, nine stages, own address, lane mask, scale and shift per beat. Equal to the model's cycle-level epilogue on random data over the whole value ranges (`tb_gvu_top_vs_model`, measured) and on 3,392 beats of YOLOv8m (`tb_gvu_top_replay`, measured). Section 4.5.
+> - **GEMM_FUSED, stream mode (`i_gemm_stream`)**: one beat per PSM write to the PSUM SRAM, 11 stages by default (nine with `-DGVU_GEMM_STREAM_DEPTH=9`), own address, lane mask, scale and shift per beat. Equal to the model's cycle-level epilogue on random data over the whole value ranges (`tb_gvu_top_vs_model`, measured) and on 3,392 beats of YOLOv8m (`tb_gvu_top_replay`, measured). Section 4.5.
 > - **Residual add (`GVU_OP_RESIDUAL`)**: `tile` (4,096 elements, 274 cycles) and `vec` (64 elements, 140 cycles), 0 mismatches (`tb_gvu_top_residual_add`, measured); a last-row lane mask for tensors whose length is not a multiple of 32. The RTL of the hardware drop has no residual state; the unit follows the MAS (section 5).
 > - **Max pool (`GVU_OP_MAXPOOL`, state `POOLING_MAX`)**: port of the RTL, checked cycle by cycle against Verilator on 10 sets and against the hardware golden outputs; the three SPPF max pools of YOLOv8m run on it with 0 differences (section 6).
-> - **Softmax on ViT-B/16 data**: the rows of three heads run through `GvuTop` with the stage-3 shift `E + q - P` (`In::i_softmax_qp`, reset value 0; the instruction path sets it with `HAS_GVU_SOFTMAX`, on by default; fix B20; with it, an exponent E = 0 shifts left) give 0 differences against the functional model; with the shift `E` of the RTL, 326 / 3,443 / 2,033 of 6,304 outputs differ (`tb_gvu_top_softmax_vit`, measured; section 2.2).
-> - **Average pool (`GVU_OP_AVGPOOL`, state `POOLING_AVG`)**: the data path of the RTL patch (`GvuTopParams::avg_enable`, reset value 0; the instruction path sets it with `HAS_GVU_AVG`, on by default), 0 differences on the two datasets of the vector-unit owner, done 5 cycles after max pool as in the RTL simulation of the patch (`tb_gvu_top_avgpool`, measured; section 6.6).
+> - **Softmax on ViT-B/16 data**: the rows of three heads run through `GvuTop` with the stage-3 shift `E + q - P` (`In::i_softmax_qp`, reset value 0; the instruction path sets it with `HAS_GVU_SOFTMAX`, on by default; with it, an exponent E = 0 shifts left) give 0 differences against the functional model; with the shift `E` of the RTL, 326 / 3,443 / 2,033 of 6,304 outputs differ (`tb_gvu_top_softmax_vit`, measured; section 2.2).
+> - **Average pool (`GVU_OP_AVGPOOL`, state `POOLING_AVG`)**: the proposed data path (`GvuTopParams::avg_enable`, reset value 0; the instruction path sets it with `HAS_GVU_AVG`, on by default), 0 differences on the two datasets of the vector-unit owner, done 5 cycles after max pool as in the RTL simulation of the proposed data path (`tb_gvu_top_avgpool`, measured; section 6.6).
 > - **LayerNorm with statistics per lane**: a data path the model proposes (`has/rtl_ref_gvu_ln_lanes.h`, not part of `GvuTop`), equal to the functional model on 300 random groups (`tb_gvu_ln_lanes`, measured; `GVU_OPS_ON_GVUTOP.md`, section 5).
 > - **Connection to the SAURIA core**: the stream mode, the rounding-mode, table-reload and 16-bit zero-point inputs and the last-row lane mask were added as inputs whose reset values keep the dataset runs above unchanged (the instruction path drives them; in the default configuration it runs `GvuTop` on the core clock). `GVU_TOP_CORE_INTEGRATION.md` describes the two connections (call style, and on the clock of the core).
 
@@ -127,7 +127,7 @@ The RTL has two more inputs on this stream, `i_oc_last` and `i_oc_tile_last`, wh
 | `i_num_tile` | uint32, 1 | tiles per run | `i_num_tile[8:0]` |
 | `i_token_len` | uint32, 0 | beats per stage | `i_token_len[8:0]` |
 | `i_attn_z`, `i_attn_scale`, `i_attn_shift` | int8, int32, uint8; 0 | zero point, multiplier and shift of the Softmax requantization | `i_attn_z`, `i_attn_scale`, `i_attn_shift` |
-| `i_softmax_qp` | bool, 0 | stage 3 shifts by `E + q - P` (q = 14, P = 15) instead of `E`, with E of the current table lookup (a left shift when E = 0): the fix proposed as B20; 0 = the earlier rule (shift `E`) | none (patch B20) |
+| `i_softmax_qp` | bool, 0 | stage 3 shifts by `E + q - P` (q = 14, P = 15) instead of `E`, with E of the current table lookup (a left shift when E = 0): the proposed correction; 0 = the earlier rule (shift `E`) | none |
 
 **LayerNorm** (`i_ln_*`, the table in section 3.3): model only. The RTL drop has no LayerNorm configuration ports on `gvu_top.sv`.
 
@@ -167,7 +167,7 @@ The RTL has two more inputs on this stream, `i_oc_last` and `i_oc_tile_last`, wh
 | `i_pooling_num_w_tile` | uint, 1 | W tiles of 32 columns | `i_pooling_num_w_tile[7:0]` |
 | `i_pooling_c`, `i_pooling_oh` | uint, 1 | channels of the run, output rows | `i_pooling_c[7:0]`, `i_pooling_oh[7:0]` |
 | `i_pooling_c_move`, `i_pooling_h_move` | uint, 0 | row step between channels (`num_w_tile * H`) and between output rows (`num_w_tile * stride`) | `i_pooling_c_move`, `i_pooling_h_move` |
-| `i_avg_scale`, `i_avg_shift`, `i_avg_round`, `i_avg_narrow` | int32 1, uint8 0, round mode, narrowing | Avg_Scale, Avg_Shift, rounding and narrowing of the average pool (used only with `GvuTopParams::avg_enable`) | none (Reg 25 / 26 of the average pool patch) |
+| `i_avg_scale`, `i_avg_shift`, `i_avg_round`, `i_avg_narrow` | int32 1, uint8 0, round mode, narrowing | Avg_Scale, Avg_Shift, rounding and narrowing of the average pool (used only with `GvuTopParams::avg_enable`) | none (Reg 25 / 26 of the proposed average pool data path) |
 
 **Buffers and Scratchpad DMA**
 
@@ -205,7 +205,7 @@ The model numbers its states in `control_fsm_t` (`has/rtl_ref_gvu_top.h`); the R
 | `LAYERNORM_ST1` to `ST5` | 8 to 12 | 9 to 13 | |
 | `RESIDUAL_ST1`, `RESIDUAL_ST2` | 14, 15 | none | residual add is not in the RTL drop |
 | `POOLING_MAX` | 16 | 14 | |
-| `POOLING_AVG` | 17 (only with `GvuTopParams::avg_enable`) | 15 | RTL has the state and the adder / multiplier configuration, but the data path to `vbank#2` is not connected (finding B6, section 9.3); the model implements the data path of the RTL patch (section 6.6) |
+| `POOLING_AVG` | 17 (only with `GvuTopParams::avg_enable`) | 15 | RTL has the state and the adder / multiplier configuration, but the data path to `vbank#2` is not connected (section 9.3); the model implements the proposed data path (section 6.6) |
 
 The numbers in the model are not those of the RTL, so a trace from the RTL is compared by name, not by code.
 
@@ -254,7 +254,7 @@ Each beat reads one 32-lane row; `i_token_len` (256 in the tests) is the number 
 * **Inputs**: σ from `vbank#1` port 0 (the LUT_recip index), e_i from `vbank#2` port 1.
 * **LUT unit**: $(r, E_{\text{shift}}) = \text{LUT\_recip}(\sigma)$; E_shift is delayed 3 cycles to line up with the product.
 * **Mul#0**: `vmul48x40_lane(MB_3X16X8)`: $e_i \times r$.
-* **RoundShift#0**: `vroundshift72_lane` by E_shift (round-nearest-away, 32-bit wrap). The functional model (golden of ViT-B/16) shifts by `E + q - P` (q = 14, P = 15): the RTL keeps one bit less of the probability and gives half the value (finding B20, section 9.3); `i_softmax_qp = 1` applies the fix. The RTL has no left shift, so E = 0 (shift -1) cannot be expressed, also with the fix (B20b); with `i_softmax_qp = 1` the model uses the exponent of the current table lookup and shifts left.
+* **RoundShift#0**: `vroundshift72_lane` by E_shift (round-nearest-away, 32-bit wrap). The functional model (golden of ViT-B/16) shifts by `E + q - P` (q = 14, P = 15): the RTL keeps one bit less of the probability and gives half the value (section 9.3); `i_softmax_qp = 1` applies the corrected shift. The RTL has no left shift, so E = 0 (shift -1) cannot be expressed, also with the corrected shift; with `i_softmax_qp = 1` the model uses the exponent of the current table lookup and shifts left.
 * **Mul#1**: `vmul32x32_lane(MA_32X32)` by `i_attn_scale`.
 * **RoundShift#1**: `vroundshift64_lane` by `i_attn_shift` (narrow to 16 bits).
 * **Adder#2**: `adder32_lane(ADD_16)` adds `i_attn_z`.
@@ -439,13 +439,13 @@ Against the RTL of the hardware drop (read and measured, section 9.3 and `GVU_TO
 | Item | Model, stream mode | RTL `GEMM_FUSED_OBP` |
 |---|---|---|
 | Out_Scale / Out_Shift | with the beat | read from the sbank, scale at the first beat, shift when the scale is almost done; index runs on 1 per beat and resets on a state change |
-| Result | on the output ports | written to `vbank#2` port 1 (the controller raises `o_vbank2_rd` instead of `o_vbank2_wr`: finding B1) |
+| Result | on the output ports | written to `vbank#2` port 1 (the controller raises `o_vbank2_rd` instead of `o_vbank2_wr`) |
 | Latency psum to result | 9 cycles after the beat is latched | 11 beats from psum to the `vbank#2` write, 2 of them the sbank read (measured on the RTL by the hardware-review runs) |
 | Narrowing after round-shift | saturate to int16 | wrap to 16 bits (`NARROW_WRAP`, `NW_16`) |
-| End of run | `i_gemm_stream_stop` | `i_oc_tile_last & i_oc_last`, 9 beats later (finding B9) |
+| End of run | `i_gemm_stream_stop` | `i_oc_tile_last & i_oc_last`, 9 beats later |
 | Zero point | 16 bits | `i_gemm_fused_z`, 8 bits |
 
-The model's value path is equal to `has::requant` followed by the table (`has/gvu_quant.h`), which the hardware-review run of the GEMM vector shows equal to the RTL with the one-line change of B1 (0 of 20 lanes different, `GVU_TOP_CORE_INTEGRATION.md`, section 4.4).
+The model's value path is equal to `has::requant` followed by the table (`has/gvu_quant.h`), which the hardware-review run of the GEMM vector shows equal to the RTL with the result written (0 of 20 lanes different, `GVU_TOP_CORE_INTEGRATION.md`, section 4.4).
 
 ---
 
@@ -539,7 +539,7 @@ One run of the unit handles at most 128 rows of 32 elements (4,096 elements, the
 
 ## 6. Max Pool (`GVU_OP_MAXPOOL`, state `POOLING_MAX`)
 
-Port of the RTL of the hardware drop: `gvu_top.sv` (pooling data path to `vbank#2`), `vlsu/gvu_vlsu.sv` (address mode `AGU_POOLING`), `vlsu/gvu_pooling_feeder.sv` (window feeder) and `FUs/gvu_vcmp32.sv` (comparator in per-lane mode). The two library cells the feeder uses, `fifo_v3` (fall-through) and `shift_reg` (depth 2), were not delivered; their behaviour in the model is written from the `common_cells` library and is an assumption until the files arrive (finding B8).
+Port of the RTL of the hardware drop: `gvu_top.sv` (pooling data path to `vbank#2`), `vlsu/gvu_vlsu.sv` (address mode `AGU_POOLING`), `vlsu/gvu_pooling_feeder.sv` (window feeder) and `FUs/gvu_vcmp32.sv` (comparator in per-lane mode). The two library cells the feeder uses, `fifo_v3` (fall-through) and `shift_reg` (depth 2), were not delivered; their behaviour in the model is written from the `common_cells` library and is an assumption until the files arrive.
 
 ### 6.1 What it computes and the layout
 For each channel, the maximum over every k x k window at stride s, with no padding inside the unit (a caller that needs padding writes the pad value, -128 for int8, into the tensor before the run).
@@ -561,7 +561,7 @@ For each channel, the maximum over every k x k window at stride s, with no paddi
 ### 6.3 Timing
 About 32 cycles per output row of one W tile, almost independent of k: the lanes start one cycle apart and the next read is issued only when lane 30 has started. Measured with `tb_gvu_top_maxpool`: the SPPF max pool of YOLOv8m (288 channels of 20 x 20 padded to 24 x 24, 5 x 5, stride 1, one W tile) takes 184,536 cycles in 9 runs of up to 33 channels (the bench fills `vbank#0`); on the single-channel sets of the hardware vectors, 24,325 cycles for 760 output rows (k2) and 23,049 for 720 rows (k3).
 
-### 6.4 One run needs a reset (finding B12)
+### 6.4 One run needs a reset
 The pooling feeder keeps `first_load_cnt` between runs; only the reset clears it. A run started right after another without a reset reads extra rows and gives wrong values: on the RTL, a second `single/stride_1/k3` run of 40 channels differs from the golden in 4,221 of 12,960 values and finishes in 2,181 cycles instead of 23,049 (measured with Verilator; the port gives the same wrong result). The model therefore resets the unit before every run (`GvuTopBridge::maxpool`, `GvuTopStream::maxpool`). A reset also clears the flags "activation table loaded", so a GEMM_FUSED layer after a max pool loads its table again (the sockets handle this).
 
 ### 6.5 Checks (measured)
@@ -570,24 +570,24 @@ The pooling feeder keeps `first_load_cnt` between runs; only the reset clears it
 |---|---|
 | `tools/has/tb_gvu_top_maxpool.cpp <vector dir> 1` | 17 / 17 sets equal to the plain max pool, among them the nine golden sets of the hardware vectors (`single` 288 channels of 20 x 20, `multi` 40 channels of 80 x 80) and the SPPF case; the socket cases (8 / 8: several runs, several W tiles, an add in between, two shapes that must be refused: 3x3 s2 and 5x5 s2) |
 | Cycle-by-cycle against the RTL: `tools/has/gvu_oracle/run_verilator_maxpool.sh <rtl gvu dir> <work dir> <vector dir> <tb_gvu_top_maxpool binary>` | for each of the nine sets and a two-run case, one run of the model and of the RTL write the same `vbank#2` rows in the same cycles: 0 lines differ on 10 of 10. The RTL run uses stand-in files for the three undelivered cells (`tools/has/gvu_oracle/*_standin.sv`) |
-| A whole layer, runs back to back: `tools/has/gvu_oracle/tb_oracle_maxpool_runs.sv` against `tools/has/tb_gvu_top_maxpool_runs.cpp` | the three SPPF max pools of YOLOv8m and a random set in the format of the hardware vectors (input padded with -128), 21 runs of 14 channels without a reset on the RTL with patch B12: trace equal to the model's run with a reset before each run, 0 wrong; 9 runs of 33 channels: 184,536 unit cycles, as the bench of the row below; ModelSim and Verilator (`VERIFICATION_REPORT.md`, V39) |
+| A whole layer, runs back to back: `tools/has/gvu_oracle/tb_oracle_maxpool_runs.sv` against `tools/has/tb_gvu_top_maxpool_runs.cpp` | the three SPPF max pools of YOLOv8m and a random set in the format of the hardware vectors (input padded with -128), 21 runs of 14 channels without a reset on an RTL that clears the counter: trace equal to the model's run with a reset before each run, 0 wrong; 9 runs of 33 channels: 184,536 unit cycles, as the bench of the row below; ModelSim and Verilator (`VERIFICATION_REPORT.md`, V39) |
 | 3 SPPF max pools of YOLOv8m through the socket (`tools/has/tb_rtl_ref_gvu_replay.cpp <program dir> 0 --gvu-top`) | 345,600 elements, 0 differ, 63 groups, 554,472 `GvuTop` cycles (184,824 per instruction); in the instruction path the window of the three instructions takes 558,532 cycles. The 288 cycles between 184,536 (bench, 9 runs) and 184,824 (instruction path, 21 groups of 14 channels, the group size of the default Scratchpad) are the start-up and drain of the 12 extra runs, 24 cycles each (derived) |
 | `tools/has/tb_gvu_top_maxpool_vectors.cpp [tile\|vec]` (datasets `target/test/maxpool/{tile,vec}/`) | `tile`: 3 channels of 80 x 80, 5 x 5, stride 1, 17,328 values, 0 differ, `POOLING_MAX` ends after 21,911 cycles; `vec`: 40 channels of 20 x 20, 3 x 3, stride 1, 12,960 values, 0 differ, 23,049 cycles. The datasets are independent of the hardware vectors; a plain max pool written separately gives the same golden values |
 | Comparator vectors | the vectors written by `Vcmp32` for the lane mode are identical to the ones replayed on the RTL (0 differences) |
 
 
-### 6.6 Average pool (data path of the RTL patch)
+### 6.6 Average pool (proposed data path)
 
-The RTL has no average pool data path (B6). With `GvuTopParams::avg_enable` the unit runs `POOLING_AVG` as the RTL patch does:
+The RTL has no average pool data path. With `GvuTopParams::avg_enable` the unit runs `POOLING_AVG` as the proposed data path does:
 the window geometry and the run of max pool (section 6.1 to 6.4), a 16-bit wrapped window sum per lane, the product with the int32
 Avg_Scale, a round-shift by Avg_Shift with the rounding mode of the instruction and saturation to int8; the write to `vbank#2` is
 delayed by D = 5 cycles after the last element of a window (the round-shift output comes 5 edges later in the RTL simulation of the
-patch). The tail is the separate unit `has/rtl_ref_gvu_avgpool_pipe.h`.
+proposed data path). The tail is the separate unit `has/rtl_ref_gvu_avgpool_pipe.h`.
 
 | Check | Result (measured) |
 |---|---|
-| `tools/has/tb_gvu_top_avgpool.cpp vectors target/test` (datasets `target/test/avgpool/{tile,vec}/` of the vector-unit owner) | 0 of 17,328 and 0 of 12,960 values differ; done after 21,916 and 23,054 cycles, max pool + 5, equal to the RTL simulation of the patch |
-| `cases`, `runs` | 19 / 19 generated cases; runs back to back need the reset of max pool (B12) |
+| `tools/has/tb_gvu_top_avgpool.cpp vectors target/test` (datasets `target/test/avgpool/{tile,vec}/` of the vector-unit owner) | 0 of 17,328 and 0 of 12,960 values differ; done after 21,916 and 23,054 cycles, max pool + 5, equal to the RTL simulation of the proposed data path |
+| `cases`, `runs` | 19 / 19 generated cases; runs back to back need the reset of max pool |
 | `HAS_GVU_AVG_AS_RTL=1` (round half away, wrap) | 12 of 19 cases differ (negative control) |
 | Instruction path (`HAS_GVU_AVG=1`, `GVU_OPS_ON_GVUTOP.md`) | AVG_POOL check program 8 / 8, 1,104 lanes, 0 differ |
 
@@ -656,7 +656,7 @@ Frozen headers: `tools/has/gvu_oracle/frozen_headers.sha256` lists the hashes of
 ```bash
 bash tools/has/regress_gvu.sh [out dir] [--unit-only]
 ```
-Builds and runs the unit benches, then the instruction path; the output lists every check as PASS or FAIL and ends with `RESULT: <n> passed, <m> failed`. The regression has 182 items (the 14 newest are the verification by instruction flow, `FLOW_VERIFICATION.md`: the Softmax stages on three heads, the benches of the vector-unit owner, the state and tier modes of the average pool and LayerNorm benches, and `verify_flows.py`; before them the 6 items of `HAS_DMA_ND`; the 28 before them cover average pool, Softmax and LayerNorm on the unit, as jobs on the clock and in the call style, and the `DMA_TENSOR` COPY group; before them the 3 items of `tb_gvu_top_maxpool_vectors`; the 26 added before them cover the register file, the write sequences, the address generator for slice and concat and the check programs through the register file); it sets the five vector-unit knobs to 0 for its reference values. The checks of this unit are the 51 runs of `tb_gvu_top_vs_model`, the stream depth and narrowing runs of `tb_gvu_top_params` (depth 9 and 11), instructions 86-88 with `HAS_GVU_TOP` 1, 2 and 3, window D with 3, the 12 residual adds and the 3 max pools of YOLOv8m on `GvuTop`, `tb_gvu_top_maxpool` and `tb_gvu_top_maxpool_vectors`.
+Builds and runs the unit benches, then the instruction path; the output lists every check as PASS or FAIL and ends with `RESULT: <n> passed, <m> failed`. The regression has 242 items (the 14 newest are the verification by instruction flow, `FLOW_VERIFICATION.md`: the Softmax stages on three heads, the benches of the vector-unit owner, the state and tier modes of the average pool and LayerNorm benches, and `verify_flows.py`; before them the 6 items of `HAS_DMA_ND`; the 28 before them cover average pool, Softmax and LayerNorm on the unit, as jobs on the clock and in the call style, and the `DMA_TENSOR` COPY group; before them the 3 items of `tb_gvu_top_maxpool_vectors`; the 26 added before them cover the register file, the write sequences, the address generator for slice and concat and the check programs through the register file); it sets the five vector-unit knobs to 0 for its reference values. The checks of this unit are the 51 runs of `tb_gvu_top_vs_model`, the stream depth and narrowing runs of `tb_gvu_top_params` (depth 9 and 11), instructions 86-88 with `HAS_GVU_TOP` 1, 2 and 3, window D with 3, the 12 residual adds and the 3 max pools of YOLOv8m on `GvuTop`, `tb_gvu_top_maxpool` and `tb_gvu_top_maxpool_vectors`.
 
 ---
 
@@ -728,21 +728,21 @@ The updated RTL (`neo_new`) resolved several hardware bugs and refined the Softm
 
 ### 9.3 Findings in the RTL of the hardware drop that concern this unit
 
-Each finding names its evidence. B1, B9 and B12 are errors in the RTL, B6 and B8 are parts that are missing, M1 and M3 are open questions; the proposal column is for the hardware team.
+Each finding names its evidence. The result write, the end flag and the pooling loader are errors in the RTL, the average pool data path and three library files are missing, M1 and M3 are open questions.
 
-| Id | Finding | Evidence | Proposal |
+| Id | Finding | Evidence | What the RTL needs |
 |---|---|---|---|
-| B1 | in `GEMM_FUSED_OBP` the controller raises `o_vbank2_rd` instead of `o_vbank2_wr` (`gvu_pipe_controller.sv:496`, `vlsu/gvu_vlsu.sv:376-377`): the GEMM_FUSED result is not written to `vbank#2` | measured: RTL as delivered, 20 of 20 lanes different from the golden of the hardware GEMM vector, `vbank#2` written 0 times; with the one-line change, 0 of 20 | change to `o_vbank2_wr`; add a golden compare to the GEMM case of `tb_gvu_top.sv` (B7) |
-| B9 | `gemm_fused_last_read = i_oc_tile_last & i_oc_last` is not qualified with `i_psum_valid`; the end flag is that flag delayed by a fixed 9 beats | read (`gvu_pipe_controller.sv:250-266`) | qualify with `i_psum_valid` or count beats |
-| B12 | the pooling loader keeps `first_load_cnt` between runs; a second max pool without a reset reads extra rows | measured: 4,221 of 12,960 values differ on the RTL, finishes in 2,181 cycles instead of 23,049 | clear the counter on `o_pooling_last_wr` or define a reset between runs |
-| B6 | `POOLING_AVG`: state and adder / multiplier configuration exist, the data path to `vbank#2` takes the comparator output for both max and average pooling | read (`gvu_top.sv:1413`) | connect the average path: patch with Reg 25 / 26, opcode 8 and a write delay of 5 cycles, simulated on the RTL (section 6.6) |
-| B20 | Softmax stage 3 shifts the product by `E`; the MAS and the golden shift by `E + q - P` | measured: 326 / 3,443 / 2,033 of 6,304 outputs different on three ViT-B/16 heads, in the port and on the RTL; a smaller `ATTN_Shift` leaves differences of one LSB at rounding ties | shift by `E - 1` (one line; simulated on the RTL: 0 / 0 / 0); the case E = 0 is open |
-| B21 | the register file toggles the `vbank#1` buffer bit on the level of `o_lut_init_done` (`gvu_config_regs.sv:141`) | measured on the RTL through the register file: the bit flips 617 times during one Softmax and on every idle edge; every output differs | toggle on the rising edge (simulated: equal to the direct drive) |
-| B8 | `shift_reg`, `fifo_v3`, `spill_register_flushable` not delivered; the model and the oracle use stand-ins written from the behaviour of `common_cells` | read | deliver the files |
+| Result write | in `GEMM_FUSED_OBP` the controller raises `o_vbank2_rd` instead of `o_vbank2_wr` (`gvu_pipe_controller.sv:496`, `vlsu/gvu_vlsu.sv:376-377`): the GEMM_FUSED result is not written to `vbank#2` | measured: RTL as delivered, 20 of 20 lanes different from the golden of the hardware GEMM vector, `vbank#2` written 0 times; with the write strobe raised, 0 of 20 | write with `o_vbank2_wr`; add a golden compare to the GEMM case of `tb_gvu_top.sv` |
+| End flag | `gemm_fused_last_read = i_oc_tile_last & i_oc_last` is not qualified with `i_psum_valid`; the end flag is that flag delayed by a fixed 9 beats | read (`gvu_pipe_controller.sv:250-266`) | qualify with `i_psum_valid` or count beats |
+| Pooling loader | the pooling loader keeps `first_load_cnt` between runs; a second max pool without a reset reads extra rows | measured: 4,221 of 12,960 values differ on the RTL, finishes in 2,181 cycles instead of 23,049 | clear the counter on `o_pooling_last_wr` or define a reset between runs |
+| Average pool | `POOLING_AVG`: state and adder / multiplier configuration exist, the data path to `vbank#2` takes the comparator output for both max and average pooling | read (`gvu_top.sv:1413`) | connect the average path (Reg 25 / 26, opcode 8, a write delay of 5 cycles; simulated on the RTL, section 6.6) |
+| Softmax stage 3 | Softmax stage 3 shifts the product by `E`; the MAS and the golden shift by `E + q - P` | measured: 326 / 3,443 / 2,033 of 6,304 outputs different on three ViT-B/16 heads, in the port and on the RTL; a smaller `ATTN_Shift` leaves differences of one LSB at rounding ties | shift by `E - 1` (one line; simulated on the RTL: 0 / 0 / 0); the case E = 0 is open |
+| vbank#1 buffer bit | the register file toggles the `vbank#1` buffer bit on the level of `o_lut_init_done` (`gvu_config_regs.sv:141`) | measured on the RTL through the register file: the bit flips 617 times during one Softmax and on every idle edge; every output differs | toggle on the rising edge (simulated: equal to the direct drive) |
+| Library files | `shift_reg`, `fifo_v3`, `spill_register_flushable` not delivered; the model and the oracle use stand-ins written from the behaviour of `common_cells` | read | deliver the files |
 | M1 | after the round-shift the RTL narrows by wrapping to 16 bits (`NARROW_WRAP`, `NW_16`) and adds the 16-bit zero point with wrap; the model saturates | read; YOLOv8m has 48,326,400 requantizations with no value outside 16 bits (counted) | confirm wrap as intended |
 | M3 | sbank layout for GEMM_FUSED: scale (int32) in words 0 to 613, shift (int8) four per word from byte 2,456; 614 channels per run | read | confirm the layout |
 
-The remaining findings (B2, F1, F2, F8) concern the PSM-to-GVU stream and are in `GVU_TOP_CORE_INTEGRATION.md`, sections 3, 4 and 7.
+The remaining findings (the empty `psm_wdata_manager.sv`, the end flag of a layer, the scale index and the path from `vbank#2` to DRAM) concern the PSM-to-GVU stream and are in `GVU_TOP_CORE_INTEGRATION.md`, sections 3, 4 and 7.
 
 
 ---
@@ -768,6 +768,6 @@ The remaining findings (B2, F1, F2, F8) concern the PSM-to-GVU stream and are in
 | **GEMM_FUSED stream mode** | per-beat requant and table, nine register cuts (MAS Requant and GEMM_FUSED drawings) | `i_gemm_stream`: depth 11 (9 with `-DGVU_GEMM_STREAM_DEPTH=9`), own address / mask / scale / shift per beat | **Verified against the model's epilogue** (51 / 51 runs, 3,392 + 29,808 beats of YOLOv8m); RTL: 11 beats, scale from the sbank, wrap: section 4.5 |
 | **Residual last-row mask** | tensor length not a multiple of 32 | `i_res_last_lane_mask` | **Verified** (`tb_gvu_top_vs_model`) |
 | **Residual add vs RTL** | not in the RTL drop | follows the MAS | **No RTL oracle** |
-| **Max pool** | `POOLING_MAX`: 2x2 s1 / s2, 3x3 s1, 4x4 s1 / s2 / s4, 5x5 s1 | port of `gvu_pooling_feeder.sv`, `gvu_vcmp32.sv` per lane, `AGU_POOLING` | **Equal to the RTL cycle by cycle** on 10 sets (Verilator), golden of the hardware vectors on 9 sets; one run needs a reset (B12) |
-| Average pool | `POOLING_AVG` | not in the unit | **Not implemented** (RTL data path not connected, B6) |
-| GEMM_FUSED value path | RTL with the B1 change | equal to `has::requant` + table | **Equal on the hardware GEMM vector** (0 of 20 lanes different); wrap vs saturate (M1) not exercised |
+| **Max pool** | `POOLING_MAX`: 2x2 s1 / s2, 3x3 s1, 4x4 s1 / s2 / s4, 5x5 s1 | port of `gvu_pooling_feeder.sv`, `gvu_vcmp32.sv` per lane, `AGU_POOLING` | **Equal to the RTL cycle by cycle** on 10 sets (Verilator), golden of the hardware vectors on 9 sets; one run needs a reset |
+| Average pool | `POOLING_AVG` | not in the unit | **Not implemented** (RTL data path not connected) |
+| GEMM_FUSED value path | RTL with the result written | equal to `has::requant` + table | **Equal on the hardware GEMM vector** (0 of 20 lanes different); wrap vs saturate (M1) not exercised |

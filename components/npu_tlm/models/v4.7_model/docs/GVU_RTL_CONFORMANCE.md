@@ -3,11 +3,11 @@
 This document compares the vector-unit blocks of the model with the RTL of the hardware team (`neo_core/gvu`) and lists
 what has to change for the model to follow the RTL. It covers two sets of files:
 
-- the **functional model** `has/gvu_*.h`, which the instruction path (`has/has_npu_top.h`) runs today. It follows the
+- the **functional model** `has/gvu_*.h`, which the instruction path (`has/has_npu_top.h`) runs when the vector-unit knobs are 0. It follows the
   drawings and the micro-architecture specification; results are bit-exact against the Python reference and timing is a
   formula per pipeline;
 - the **RTL-ref blocks** `has/rtl_ref_gvu_*.h`. They are ported line by line from the RTL and were checked against an
-  RTL simulation. Nothing in the instruction path calls them yet.
+  RTL simulation. By default (`HAS_GVU_TOP=3`) the instruction path runs `GvuTop`, which is built on them.
 
 Labels used below: MEASURED = from a run; DERIVED = computed from measured values or read from the code; ESTIMATE = a
 formula.
@@ -255,8 +255,8 @@ clamp 0 = 8 cycles; with the int8 register and the direct activation table = 9 c
 model (`tools/has/tb_rtl_ref_gvu_requant.cpp`): 62,062 beats, every element equal, every beat leaves after exactly 8 / 9
 cycles. The depths are a consequence of the composition, not a measurement on an RTL pipeline: the RTL has none.
 
-By default the epilogue of the instruction path stays a function on the partial-sum write with a tail of 10 cycles per
-core pass. `HAS_OBP_RTL=1` (`has/gvu_rtl_obp.h`) sends every beat through the cycle-level epilogue as well: the
+With `HAS_GVU_TOP=0` the epilogue of the instruction path stays a function on the partial-sum write with a tail of 10 cycles per
+core pass; by default (`HAS_GVU_TOP=3`) it is `GvuTop` on the core clock behind the PSM stream, at the epilogue depth 11. `HAS_OBP_RTL=1` (`has/gvu_rtl_obp.h`) sends every beat through the cycle-level epilogue as well: the
 functional model computes the beat first, the pipeline then runs on the same 32 lanes with the scale, shift, zero point
 and activation table of the instruction, every masked lane is compared, the value written is the one of the pipeline,
 and the tail of a core pass is the depth of the pipeline (9 cycles). The write still lands in the cycle of the
@@ -271,7 +271,7 @@ lanes, none different, also with `HAS_SPEC=rtl`. MEASURED on the whole YOLOv8m w
 leaving after 9 cycles, 62,661,785 cycles (5,209 fewer than with `HAS_ELEM_RTL=1` alone, for 7,695 core passes).
 
 `HAS_GVU_TOP=1` or `2` (`has/gvu_top_bridge.h`; no longer the default, which is level 3, `GVU_TOP_CORE_INTEGRATION.md`) runs the GEMM epilogue and the residual add on the vector-unit top
-level `GvuTop` instead, through the nine-stage stream mode of its GEMM_FUSED state; it wins over `HAS_OBP_RTL` and
+level `GvuTop` instead, through the stream mode (11 stages by default) of its GEMM_FUSED state; it wins over `HAS_OBP_RTL` and
 `HAS_ELEM_RTL`, and max pool stays on the pipeline of `HAS_ELEM_RTL`. `HAS_OBP_DUMP=<file>` together with
 `HAS_OBP_RTL=1` writes every activation table and epilogue beat to a file for `tools/has/tb_gvu_top_replay.cpp`.
 MEASURED on the window above: bit-exact, 1,658,651 cycles as with `HAS_OBP_RTL=1`, and 1,650,477 with `HAS_GVU_TOP=2`,
@@ -303,27 +303,26 @@ transformer check). On that check no value is outside its container.
 
 ### 4.11 What the default flow assumes about the RTL
 
-The new default (`GVU_TOP_CORE_INTEGRATION.md`, `GVU_DFC_REFERENCE_FLOW.md`) assumes the RTL with the patches of the hardware
-feedback package at these points. The model is built so that each assumption is a parameter or a separate code path.
+The new default (`GVU_TOP_CORE_INTEGRATION.md`, `GVU_DFC_REFERENCE_FLOW.md`) assumes an RTL that behaves as in the middle column at these points. The model is built so that each assumption is a parameter or a separate code path.
 
-| Id | The model assumes | The RTL as delivered | Where in the model |
+| Point | The model assumes | The RTL as delivered | Where in the model |
 |---|---|---|---|
-| B13 | all four bytes of a GVU register can be written | only byte 0 | `GvuConfigParams::b13_fixed` (`has/rtl_ref_gvu_config_regs.h`) |
-| B17 | the register index comes from the word address (`addr[5:2]`) | from the byte address | `GvuConfigParams::word_addressed` |
-| B1 | the GEMM_FUSED result is written to `vbank#2` | the read strobe is raised instead | not modelled: the result goes back into SRAM-C (question F8) |
-| B9 | the end flag is the beat that carries `oc_last & oc_tile_last`, qualified with `i_psum_valid` | the first flag delayed by a fixed 9 beats | `GvuTop::stream_exit` (`has/rtl_ref_gvu_top.h`) |
-| B18 | the address generators hold their address on idle cycles of the stream | they return to the first address | not visible: scale and shift travel with the packet |
-| F1′ (version 3) | `oc_tile_last` sits on the packet that holds the last element of the last context | on the first `oc_last` packet of the call | `StreamPacket::call_last` (`has/gvu_top_stream.h`, `has/has_npu_top.h`) |
-| F2b | the OC index travels with the packet | the scale index is a counter that runs on across contexts | the model carries scale and shift with the packet and counts the beats where the RTL's index would be wrong |
-| B12 | the pooling feeder is reset between max pool runs | its counter keeps its value | `GvuTopStream::reset_unit` before each run; the patched RTL run back to back gives the same trace (`VERIFICATION_REPORT.md`, V39) |
-| B19 | the round-shift is arithmetic for negative inputs | logical (the packed element is unsigned) | the frozen port keeps the arithmetic shift |
+| Register byte writes | all four bytes of a GVU register can be written | only byte 0 | `GvuConfigParams::b13_fixed` (`has/rtl_ref_gvu_config_regs.h`) |
+| Register index | the register index comes from the word address (`addr[5:2]`) | from the byte address | `GvuConfigParams::word_addressed` |
+| GEMM_FUSED result | the GEMM_FUSED result is written to `vbank#2` | the read strobe is raised instead | not modelled: the result goes back into SRAM-C (open question) |
+| End flag | the end flag is the beat that carries `oc_last & oc_tile_last`, qualified with `i_psum_valid` | the first flag delayed by a fixed 9 beats | `GvuTop::stream_exit` (`has/rtl_ref_gvu_top.h`) |
+| Address hold | the address generators hold their address on idle cycles of the stream | they return to the first address | not visible: scale and shift travel with the packet |
+| `oc_tile_last` | `oc_tile_last` sits on the packet that holds the last element of the last context | on the first `oc_last` packet of the call | `StreamPacket::call_last` (`has/gvu_top_stream.h`, `has/has_npu_top.h`) |
+| Output-channel index | the OC index travels with the packet | the scale index is a counter that runs on across contexts | the model carries scale and shift with the packet and counts the beats where the RTL's index would be wrong |
+| Pooling feeder | the pooling feeder is reset between max pool runs | its counter keeps its value | `GvuTopStream::reset_unit` before each run; an RTL that resets it, run back to back, gives the same trace (`VERIFICATION_REPORT.md`, V39) |
+| Round-shift | the round-shift is arithmetic for negative inputs | logical (the packed element is unsigned) | the frozen port keeps the arithmetic shift |
 | R3 (proposal) | registers 9 to 15 and the residual add path | neither exists | `GvuTopStream::job_step_add_regs` |
 
-The other codes of the hardware feedback package named in these documents: B2 (`psm_wdata_manager.sv` delivered empty while
-`psm_top.sv` instantiates it), B4 (DMA row decode of the scratchpad: `vbank1` rows written 8 rows off, the `sbank` rows wrong
-or not written), B6 and B8 (`GVU_TOP_IMPLEMENTATION_AND_TEST.md`, section 9.3), B7 (the GEMM case of `tb_gvu_top.sv` has no
-golden compare), B11 (the comment of register 7, `POOLING_0`, swaps the C and OH fields), B14 (`gvu_core` does not drive the DMA port
-enables of the scratchpad), B16 (five RTL files use a package `sauria_addr_pkg` that the drop does not contain).
+Other findings in the delivered RTL that these documents mention: `psm_wdata_manager.sv` is delivered empty while `psm_top.sv`
+instantiates it; the DMA row decode of the scratchpad writes `vbank1` rows 8 rows off and the `sbank` rows wrong or not at all; the
+GEMM case of `tb_gvu_top.sv` has no golden compare; the comment of register 7 (`POOLING_0`) swaps the C and OH fields; `gvu_core`
+does not drive the DMA port enables of the scratchpad; five RTL files use a package `sauria_addr_pkg` that the drop does not contain
+(also `GVU_TOP_IMPLEMENTATION_AND_TEST.md`, section 9.3, for the average pool data path and the unit reset).
 
 ## 5. Pipeline depths
 

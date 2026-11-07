@@ -3,17 +3,17 @@ LAYERNORM, ELEM_WISE ADD, LUT direct), calibrated on coco128 images, evaluated a
 
 Quant points per block (every "q(...)" is an int8 tensor with a per-tensor scale; every GEMM is exact integer + requant
 HALF_UP with S int32 in [2^30, 2^31) as in has/HAS_IFACE.md §4):
-  x (residual stream, int8) --LN1--> q(ln1)                             LAYERNORM                  [float stand-in, R8-R10]
+  x (residual stream, int8) --LN1--> q(ln1)                             LAYERNORM                  [float stand-in]
   q(ln1) @ Wqkv + b -> requant -> q(q), q(k), q(v)                      GEMM_FUSED (per-channel W)
-  q(q) @ q(k)^T -> x 1/sqrt(d) folded into the requant -> q(s)          FUSED_ATTN phase 1 (H7: one rounding here)
-  softmax(q(s)) -> q(p), scale 1/127                                    SOFTMAX                    [float stand-in, R5-R7]
+  q(q) @ q(k)^T -> x 1/sqrt(d) folded into the requant -> q(s)          FUSED_ATTN phase 1 (one rounding here)
+  softmax(q(s)) -> q(p), scale 1/127                                    SOFTMAX                    [float stand-in]
   q(p) @ q(v) -> requant -> q(av)                                       FUSED_ATTN phase 3
   q(av) @ Wproj + b -> requant -> q(proj)                               GEMM_FUSED
   x = ELEM_WISE ADD(x, q(proj)) (dequant 2^14 grid, add, requant)        ELEM_WISE ADD (fe_ref_has.elem_add)
   LN2 -> q(ln2); q(ln2) @ W_fc1 + b -> requant -> q(h); GELU LUT int8->int8 -> q(g)      GEMM_FUSED + LUT direct (exact)
   q(g) @ W_fc2 + b -> requant -> q(mlp); x = ELEM_WISE ADD(x, q(mlp))
 Stand-ins: LN and softmax are computed in float on dequantised int8 input and requantised; they become bit-exact once
-HW answers R5-R10 (HAS_IFACE_RCE §3-§4). Patch embedding and head: int8 GEMMs; final LN: float stand-in.
+the hardware answers on the interface (HAS_IFACE_RCE §3-§4). Patch embedding and head: int8 GEMMs; final LN: float stand-in.
 Usage (repository root, FE_WORK set): python3 tools/fe/fe_vit_quant.py [--calib 16] [--eval 16]
 """
 import argparse

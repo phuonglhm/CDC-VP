@@ -5,7 +5,7 @@
 #   2. l2_size_bytes >= max(l2_footprint) and not smaller than the banks used by any tile.
 #   3. parameters.json mode=B => every metric in metric_provenance carries a |MODE-B label.
 # The original checks are unchanged.
-"""P2 -- physical / arithmetic SELF-CONSISTENCY audit of an --eval-out dir.
+"""Physical / arithmetic SELF-CONSISTENCY audit of an --eval-out dir.
 
 eval_integration_test.py checks STRUCTURE (files, headers, join key, ranges).
 This checks the numbers obey the identities and bounds they MUST obey by definition
@@ -40,7 +40,7 @@ import math
 import os
 import sys
 
-# B3 FIX: 'memory_wait.csv' was MISSING here, so none of its five columns
+# Fix: 'memory_wait.csv' was MISSING here, so none of its five columns
 # (ddr/l2/l1_wait, sram_conflict, memory_arbitration) had ever been audited -- a whole
 # emitted CSV sat outside the gate. Its column names are unique across the eval-out, so
 # merging it adds keys without shadowing any existing check.
@@ -103,7 +103,7 @@ def main():
 
     # Shapes: explicit --input wins, else the shapes.csv the VP wrote next to the
     # metrics. Both Makefile eval-integration and tools/run_eval.sh used to call this
-    # tool with NO --input, so every shape-joined check (the B2a R-A byte gate,
+    # tool with NO --input, so every shape-joined check (the R-A byte gate,
     # theory_min, ddr_write/weight bounds) was skipped while the tool still printed
     # PASS -- 6 of 30 checks running, green, with nothing saying so.
     shapes, shape_src = {}, None
@@ -174,7 +174,7 @@ def main():
                 chk(abs(ovh - (tot - proc)) <= a.tol, '%s: transfer_overhead %s != total-proc %s' % (lid, ovh, tot - proc))
         if dma_b is not None and xfer is not None:
             if dma_b > xfer + a.tol:
-                # --dma-sim (B1b): dma_busy is the PHYSICAL DDR-port busy time (per-transfer
+                # --dma-sim: dma_busy is the PHYSICAL DDR-port busy time (per-transfer
                 # first-latency + serialization), which exceeds the analytic byte/BW transfer
                 # floor. It must still be the sum of its directional split (R-B additivity).
                 if dma_r is not None and dma_w is not None:
@@ -186,7 +186,7 @@ def main():
         if engu is not None and tot and mac_e is not None:
             chk(abs(engu - 100.0 * mac_e / tot) <= 0.5, '%s: engine_util %.3f != 100*mac/total %.3f' % (lid, engu, 100.0 * mac_e / tot))
 
-        # ---- B3: structurally-zero memory effects ----
+        # ---- structurally-zero memory effects ----
         # SAURIA has no SRAM banks (ram_inferred.sv:52 = one flat single-port array)
         # and no host/accel arbiter (ram_intf_wrapper.sv:263-280 = hard i_select mux,
         # double-buffering keeps the two sides on different macros). These columns are
@@ -200,7 +200,7 @@ def main():
                               'in SAURIA RTL); if HW gained one, update the B3 RTL log '
                               'and provenance too' % (lid, _z, _zv))
 
-        # ================= F2: columns no gate asserted before =====================
+        # ================= columns no gate asserted before =====================
         # The coverage audit found 27 of the 60 handoff columns with NO value check at
         # all (spec_check only verifies that the column NAME exists). The checks below
         # differ in STRENGTH, and saying which is which matters more than the count:
@@ -210,7 +210,7 @@ def main():
         #          invariant -- it catches a core change that breaks the relation.
         #  [BOUND] inequality that must hold physically. Weaker but never vacuous.
         #  [POLICY] pinned to 0 because we decided it is 0 (host ops / not modelled),
-        #          same shape as the B3 pin: it stops a value appearing unannounced.
+        #          same shape as the structurally-zero pin: it stops a value appearing unannounced.
         #  [CONSIST] re-computes the SAME formula dse_sweep used. It canNOT prove the
         #          formula right -- only that the cell was not corrupted or dropped
         #          between producer and file. Labelled honestly, not sold as more.
@@ -274,9 +274,9 @@ def main():
             chk(_fp <= float(_l2sz) + a.tol, '%s: l2_footprint %s > l2_size_bytes %s [BOUND]' % (lid, _fp, _l2sz))
 
         # [POLICY] host-CPU ops and unmodelled multi-stream effects are 0 BY DECISION.
-        # Pinned like the B3 columns so a number cannot appear without also changing
+        # Pinned like the structurally-zero columns so a number cannot appear without also changing
         # this gate (and with it the provenance the SW app reads).
-        # 'bias_bytes' joins this list: F2 found it read 0 when the layer was emulated
+        # 'bias_bytes' joins this list: the coverage audit found it read 0 when the layer was emulated
         # but N*4*reps when it was not -- the same layer, two answers. SAURIA has NO bias
         # datapath (the RTL 'bias' hits are IEEE-754 exponent bias in fpnew_fma.sv), so
         # the derived value was DRAM traffic for a transfer that never happens. Now 0
@@ -305,10 +305,10 @@ def main():
                 wb = num(r, 'weight_bytes')
                 if wb is not None and wb > 0:
                     chk(wb >= K * N * eb - a.tol, '%s: weight_bytes %s < K*N*eb %d' % (lid, wb, K * N * eb))
-                # ---- B2 R-A gate: the shape-derived L2/mem byte model must reduce to the
+                # ---- R-A gate: the shape-derived L2/mem byte model must reduce to the
                 # MEASURED counters. EXACT for a no-pad layer (M%Y==0 & N%X==0); for a
                 # padded layer the derived counts padded tiles -> it is an UPPER BOUND on
-                # the valid-only measured count. Same formulas as dse_sweep pyval B2 block.
+                # the valid-only measured count. Same formulas as dse_sweep pyval byte block.
                 Mt, Nt = math.ceil(M / Y), math.ceil(N / X)
                 nopad = (M % Y == 0 and N % X == 0)
                 d = {'ddr_read_bytes':  (K * Np + Nt * Mp * K) * eb * reps,
@@ -327,7 +327,7 @@ def main():
                     else:
                         chk(mv <= dv + a.tol, '%s: %s measured %d > derived-padded %d (R-A upper bound)' % (lid, nm, mv, dv))
 
-    # F2 [CONFIG] peak internal BW is a pure function of geometry+dtype+clock:
+    # [CONFIG] peak internal BW is a pure function of geometry+dtype+clock:
     # (X+Y) operand bytes per cycle * f. A drift here means the advertised roofline
     # ceiling no longer matches the hardware the rest of the file describes.
     _pib = None

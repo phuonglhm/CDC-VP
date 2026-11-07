@@ -272,8 +272,9 @@ Written to `PUSH_A` (`0x40000310`), bits 7:0.
 | `0x12` | GEMM_FUSED | One convolution or matrix product layer; the hardware iterates the tiles |
 | `0x13` | FUSED_ATTN | One attention head; parameter block `ATN1` |
 | `0x14` | LAYERNORM | A block of rows; parameter block `LNP1` |
-| `0x15` | ELEM_WISE | ADD (mode 0), MAX_POOL (mode 1) or AVG_POOL (mode 5; Avg_Scale / Avg_Shift in `SO` / `SHO`); also slice (mode 6) and concat (mode 7) by 4-D DMA descriptors, registers in `DMA_SLICE_CONCAT.md`, section 3.1 (default; with `HAS_DMA_ND=0` `UNSUPPORTED_MODE`) |
-| `0x16` | DMA_TENSOR | Accepted by default (with `HAS_DMA_TENSOR=0` `UNSUPPORTED_OP`). COPY of `LEN` bytes from `A_ADDR` to `OUT_ADDR` in DRAM; `MODE_PACK` must be 0; length 0, a range past 2^32 or overlapping ranges set `BAD_GEOM` (`DMA_TENSOR_MODE.md`) |
+| `0x15` | ELEM_WISE | ADD (mode 0), MAX_POOL (mode 1) or AVG_POOL (mode 5; Avg_Scale / Avg_Shift in `SO` / `SHO`); also slice (mode 6) and concat (mode 7) by 4-D DMA descriptors, registers in `DMA_SLICE_CONCAT.md`, section 3.1 (default; with `HAS_DMA_ND=0` `UNSUPPORTED_MODE`), and upsample (mode 8) and reshape (mode 9), aliases of `DMA_TENSOR` modes 2 and 3 (`COMPILER_GUIDE.md`, section 7.2; default; with `HAS_DMA_RESHAPE=0` `UNSUPPORTED_MODE`) |
+| `0x16` | DMA_TENSOR | Accepted by default (with `HAS_DMA_TENSOR=0` `UNSUPPORTED_OP`). COPY of `LEN` bytes from `A_ADDR` to `OUT_ADDR` in DRAM with `MODE_PACK` 0; `MODE_PACK` 2 (upsample) and 3 (reshape), on by default, refused with `HAS_DMA_RESHAPE=0` (`COMPILER_GUIDE.md`, section 7.2), other values refused; length 0, a range past 2^32 or overlapping ranges set `BAD_GEOM` (`DMA_TENSOR_MODE.md`) |
+| `0x17` | doorbell of the `neo_lite` register file | On by default (`HAS_HOST=neo`, section 7); with `HAS_HOST=v45` `UNSUPPORTED_OP` |
 
 Any other opcode sets error `UNSUPPORTED_OP`.
 
@@ -294,7 +295,7 @@ dilation:
 | 31 | `0x400004E8` | `PAD_VALUE` | GEMM_FUSED: value of the padded positions, int8 in the low byte (not written: 0) |
 | 32 to 35 | `0x400004EC` to `0x400004F8` | `PAD_T`, `PAD_L`, `PAD_B`, `PAD_R` | GEMM_FUSED: padding rows above, columns left, rows below, columns right. Writing any of the four replaces `PAD`; the ones not written are 0 |
 | 36 | `0x400004FC` | `DILATION` | GEMM_FUSED: kernel taps `DILATION` positions apart (not written or 0: 1); `(KW - 1) x DILATION` at most 63 |
-| 37 | `0x40000500` | `TMAJ_C0` | GEMM_FUSED, option `HAS_OUT_TRANSPOSE=1` (off by default; proposal of the model): channels `TMAJ_C0` .. `OUT_C - 1` written token-major (a multiple of `TILE_COUT`; ignored with the option off; `HW_RTL_ALIGNMENT.md`, section 8) |
+| 37 | `0x40000500` | `TMAJ_C0` | GEMM_FUSED, option `HAS_OUT_TRANSPOSE` (on by default; proposal of the model): channels `TMAJ_C0` .. `OUT_C - 1` written token-major (a multiple of `TILE_COUT`; ignored with the option off; `HW_RTL_ALIGNMENT.md`, section 8) |
 
 `FLAGS` (index 13, `0x400004A0`):
 
@@ -337,10 +338,32 @@ H <host operation> <arguments>     host step between instructions, for example
 ```
 
 Tensors are `[C][H][W]` int8 (YOLOv8m) or channel-major `[C][tokens]` int8 (ViT-B/16). Slice and concat are
-address aliases: a concat output is written directly into sub-regions of the concatenated tensor. Weights of
+address aliases in `insts_pe3` and `vit_full` (`insts_pe3_nd` writes the concats as ELEM_WISE mode 7 instructions): a concat output is written directly into sub-regions of the concatenated tensor. Weights of
 each output-channel band are stored in SAURIA order at `W_ADDR + c0 x K` (`SW_INTEGRATION_GUIDE.md`,
 section 5 and 6.1).
 
 The testbench compares the output tensor of every retired instruction with `dram_golden.bin` and prints the
 log lines of section 2.1 (`[STEP]` per instruction, then `RESULT`). `FE_METRICS_CSV` and `FE_SNAPSHOT_DIR` work
 as in sections 2.2 and 2.3.
+
+## 7. neo_lite register-file front end and register traces
+
+By default (`HAS_HOST=neo`), the host port of `HasNpuTop` also serves the controller window of the `neo_lite` data flow
+controller at `0x40000800` to `0x400009FF` (`CONTROL` `+0x000`, `IEN` `+0x008`, `ISTATUS` `+0x00C`, word `i` at
+`+0x010 + 4 x i`, `i` = 0 to 81), and `PUSH_A` accepts opcode `0x17` as its doorbell. The word layout, the sequence and
+the refusal rules are in `NEO_REGISTER_FILE.md`. With `HAS_HOST=v45`, the window does not exist and `0x17` is refused
+as `UNSUPPORTED_OP`.
+
+A register trace (`neo_trace v1`, written by `tools/has/host_trace_gen.cpp`) is a text file:
+
+| Line | Content |
+|---|---|
+| `# neo_trace v1 neo_lite RTL revision 1 words=82 cfg_base=<hex> dram_base=<hex>` | header: format, RTL revision, base of the controller window and of DRAM used in the `W` lines |
+| `D in <file>`, `D golden <file>` | DRAM images of the program |
+| `I <n> <op> host_seq=<k> hw_runnable=<0|1> issues=<codes>` | start of layer `n`; `issues` = reason codes of `COMPILER_GUIDE.md`, section 4, or `-` |
+| `W <address> <value>` | one 32-bit register write (hex) |
+| `X <field> <value> <code>` | a field of the layer that the 82 words cannot carry, with its reason code |
+| `H <step>` | a host step run by the CPU (for example `upsample2x`) |
+
+Only the `W` lines of layers without `X` lines may be sent to the hardware; `host_trace_replay --hw` refuses a trace
+that has any.

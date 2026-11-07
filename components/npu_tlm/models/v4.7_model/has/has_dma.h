@@ -187,9 +187,83 @@ namespace has
             d.elem_bytes = 1;
             return d;
         }
+
+        // Nearest-neighbor spatial upsample source descriptor for [C][H][W] -> [C][H*scale_h][W*scale_w].
+        // Folds C and H into R = C*H contiguous input rows and uses zero-stride loops to replicate each
+        // element `scale_w` times horizontally and each upsampled row `scale_h` times vertically.
+        static DmaNdDesc upsample_chw(uint32_t base_addr, unsigned C, unsigned H, unsigned W,
+                                      unsigned scale_h = 2, unsigned scale_w = 2, uint32_t elem_b = 1)
+        {
+            const unsigned c = std::max(1u, C), h = std::max(1u, H), w = std::max(1u, W);
+            const unsigned sh = std::max(1u, scale_h), sw = std::max(1u, scale_w);
+            const uint32_t eb = std::max(1u, elem_b);
+            if (sh == 1u && sw == 1u)
+                return linear(base_addr, c * h * w, eb);
+            DmaNdDesc d;
+            d.base = base_addr;
+            d.elem_bytes = eb;
+            if (sw == 1u)
+            {
+                // Entire row of W elements stays contiguous (run_of == W) and repeats `sh` times
+                d.n = {{ w, sh, c * h, 1u }};
+                d.s = {{ 1, 0, int64_t(w), 0 }};
+            }
+            else
+            {
+                d.n = {{ sw, w, sh, c * h }};
+                d.s = {{ 0, 1, 0, int64_t(w) }};
+            }
+            return d;
+        }
+
+        // Resolves at most one inferred (-1) dimension in [out_c][out_h][out_w] and checks exact element conservation.
+        static bool resolve_reshape_dims(uint64_t in_elems, int &out_c, int &out_h, int &out_w)
+        {
+            if (in_elems == 0) return false;
+            int dims[3] = { out_c, out_h, out_w };
+            int neg_idx = -1;
+            uint64_t known_prod = 1;
+            for (int i = 0; i < 3; i++)
+            {
+                if (dims[i] == -1)
+                {
+                    if (neg_idx >= 0) return false; // at most one -1 axis allowed
+                    neg_idx = i;
+                }
+                else if (dims[i] <= 0)
+                {
+                    return false;
+                }
+                else
+                {
+                    const uint64_t d = static_cast<uint64_t>(dims[i]);
+                    if (d > 0xFFFFFFFFFFFFFFFFull / known_prod) return false;
+                    known_prod *= d;
+                }
+            }
+            if (neg_idx >= 0)
+            {
+                if (known_prod == 0 || (in_elems % known_prod) != 0) return false;
+                const uint64_t inferred = in_elems / known_prod;
+                if (inferred == 0 || inferred > 0x7FFFFFFFull) return false;
+                dims[neg_idx] = static_cast<int>(inferred);
+                known_prod *= inferred;
+            }
+            if (known_prod != in_elems) return false;
+            out_c = dims[0];
+            out_h = dims[1];
+            out_w = dims[2];
+            return true;
+        }
+
+        // Reshaped [out_C][out_H][out_W] tensor view descriptor at `base_addr`.
+        static DmaNdDesc reshape_chw(uint32_t base_addr, unsigned out_C, unsigned out_H, unsigned out_W, uint32_t elem_b = 1)
+        {
+            return tensor_chw(base_addr, out_C, out_H, out_W, elem_b);
+        }
     };
 
-    // Pure C++17 DMA 4-D strided / slice / concat transfer engine (usable with or without SystemC).
+    // Pure C++17 DMA 4-D strided / slice / concat / upsample / reshape transfer engine (usable with or without SystemC).
     struct DmaSliceConcat
     {
         static void move_nd(const uint8_t *src, size_t src_cap, const DmaNdDesc &src_desc,
@@ -234,6 +308,57 @@ namespace has
             const DmaNdDesc dd = DmaNdDesc::concat_chw(0, out_C, out_H, out_W, chw_axis, offset, part_len, elem_b);
             const DmaNdDesc sd = DmaNdDesc::linear(0, static_cast<uint32_t>(dd.length()), elem_b);
             move_nd(src, src_cap, sd, dst, dst_cap, dd);
+        }
+
+        // Nearest-neighbor spatial upsample [C][H][W] -> [C][H*scale_h][W*scale_w] into contiguous `dst`.
+        static void upsample_chw(const uint8_t *src, size_t src_cap, unsigned C, unsigned H, unsigned W,
+                                 unsigned scale_h, unsigned scale_w,
+                                 uint8_t *dst, size_t dst_cap, uint32_t elem_b = 1)
+        {
+            const DmaNdDesc sd = DmaNdDesc::upsample_chw(0, C, H, W, scale_h, scale_w, elem_b);
+            const DmaNdDesc dd = DmaNdDesc::linear(0, static_cast<uint32_t>(sd.length()), elem_b);
+            move_nd(src, src_cap, sd, dst, dst_cap, dd);
+        }
+
+        // Reshape a contiguous [in_C][in_H][in_W] tensor into [out_C][out_H][out_W] (allows one -1 axis; transpose_chw_hw
+        // optionally transposes [in_C][in_H*in_W] -> [in_H*in_W][in_C] while reshaping). Returns false if shapes mismatch.
+        static bool reshape_chw(const uint8_t *src, size_t src_cap,
+                                unsigned in_C, unsigned in_H, unsigned in_W,
+                                int out_C, int out_H, int out_W,
+                                uint8_t *dst, size_t dst_cap, uint32_t elem_b = 1, bool transpose_chw_hw = false)
+        {
+            const uint64_t in_elems = uint64_t(in_C) * in_H * in_W;
+            if (in_C == 0 || in_H == 0 || in_W == 0) return false;
+            if (!DmaNdDesc::resolve_reshape_dims(in_elems, out_C, out_H, out_W)) return false;
+            const uint32_t eb = std::max(1u, elem_b);
+            if (!transpose_chw_hw)
+            {
+                const size_t total_b = static_cast<size_t>(in_elems) * eb;
+                if (total_b <= src_cap && total_b <= dst_cap)
+                {
+                    if (dst != src) std::memmove(dst, src, total_b);
+                    return true;
+                }
+                const DmaNdDesc sd = DmaNdDesc::linear(0, static_cast<uint32_t>(in_elems), eb);
+                const DmaNdDesc dd = DmaNdDesc::linear(0, static_cast<uint32_t>(in_elems), eb);
+                move_nd(src, src_cap, sd, dst, dst_cap, dd);
+                return true;
+            }
+            const DmaNdDesc sd = DmaNdDesc::tensor_chw(0, in_C, 1u, in_H * in_W, eb).permuted({{ 2, 0, 1, 3 }});
+            const DmaNdDesc dd = DmaNdDesc::linear(0, static_cast<uint32_t>(in_elems), eb);
+            move_nd(src, src_cap, sd, dst, dst_cap, dd);
+            return true;
+        }
+
+        // Materialize / reshape any strided or sliced 4-D `src_desc` into a contiguous [out_C][out_H][out_W] buffer.
+        static bool reshape_nd(const uint8_t *src, size_t src_cap, const DmaNdDesc &src_desc,
+                               int out_C, int out_H, int out_W, uint8_t *dst, size_t dst_cap)
+        {
+            const uint64_t in_elems = src_desc.length();
+            if (!DmaNdDesc::resolve_reshape_dims(in_elems, out_C, out_H, out_W)) return false;
+            const DmaNdDesc dd = DmaNdDesc::linear(0, static_cast<uint32_t>(in_elems), std::max(1u, src_desc.elem_bytes));
+            move_nd(src, src_cap, src_desc, dst, dst_cap, dd);
+            return true;
         }
 
         // Gather `rows` of 32 int8 elements from `A` and `B` (using DMA ND descriptors) into GVU Scratchpad vbank0 (bank 0) and vbank1 (bank 1).
@@ -345,6 +470,7 @@ namespace has
     {
         uint64_t read_bytes{0}, write_bytes{0}, read_bursts{0}, write_bursts{0}, busy_cycles{0}, read_port_cycles{0}, write_port_cycles{0};
         uint64_t rd_nd_ops{0}, wr_nd_ops{0}, nd_bytes{0};
+        uint64_t upsample_ops{0}, reshape_ops{0};
     };
 } // namespace has
 #endif // HAS_DMA_DESC_H
@@ -375,12 +501,12 @@ namespace has
 
         // `timed` (3-D descriptors): bytes that cross the AXI bus when a 3-D descriptor moves only part of `size`
         // (padding filled by the DMA, int8 packed on write-back). 0 = size. The data copy is always `size` bytes.
-        void start_read(int ch, uint32_t dram_addr, int bank, uint32_t bank_offset, uint32_t size, uint32_t timed = 0)
+        void start_read(int ch, uint32_t dram_addr, int bank, uint32_t bank_offset, uint32_t size, uint32_t timed = 0, uint32_t extra = 0)
         {
             if (ch < 0 || ch > 3) return;
             Chan c;
             c.active = true; c.dram_addr = dram_addr; c.bank = bank; c.bank_offset = bank_offset;
-            c.size = size; c.timed = clamp_timed(size, timed);
+            c.size = size; c.timed = clamp_timed(size, timed); c.extra = extra;
             rd_[ch] = c;
             st.read_bytes += rd_[ch].timed;
         }
@@ -491,6 +617,36 @@ namespace has
             }
         }
 
+        // Nearest-neighbor spatial upsample [C][H][W] -> [C][H*scale_h][W*scale_w] within bound DRAM.
+        void upsample_dram(uint32_t src_addr, uint32_t dst_addr, unsigned C, unsigned H, unsigned W,
+                           unsigned scale_h = 2, unsigned scale_w = 2, uint32_t elem_b = 1)
+        {
+            if (!dram_) return;
+            const DmaNdDesc sd = DmaNdDesc::upsample_chw(src_addr, C, H, W, scale_h, scale_w, elem_b);
+            const DmaNdDesc dd = DmaNdDesc::linear(dst_addr, static_cast<uint32_t>(sd.length()), elem_b);
+            gather_dram_nd(sd, dd, true);
+            st.upsample_ops++;
+        }
+
+        // Reshape [in_C][in_H][in_W] -> [out_C][out_H][out_W] within bound DRAM (returns false on shape mismatch).
+        bool reshape_dram(uint32_t src_addr, uint32_t dst_addr,
+                          unsigned in_C, unsigned in_H, unsigned in_W,
+                          int out_C, int out_H, int out_W,
+                          uint32_t elem_b = 1, bool transpose_chw_hw = false)
+        {
+            if (!dram_ || in_C == 0 || in_H == 0 || in_W == 0) return false;
+            const uint64_t elems = uint64_t(in_C) * in_H * in_W;
+            if (!DmaNdDesc::resolve_reshape_dims(elems, out_C, out_H, out_W)) return false;
+            const uint32_t eb = std::max(1u, elem_b);
+            const DmaNdDesc sd = transpose_chw_hw
+                                     ? DmaNdDesc::tensor_chw(src_addr, in_C, 1u, in_H * in_W, eb).permuted({{ 2, 0, 1, 3 }})
+                                     : DmaNdDesc::linear(src_addr, static_cast<uint32_t>(elems), eb);
+            const DmaNdDesc dd = DmaNdDesc::linear(dst_addr, static_cast<uint32_t>(elems), eb);
+            gather_dram_nd(sd, dd, true);
+            st.reshape_ops++;
+            return true;
+        }
+
         bool is_read_active(int ch) const { return ch >= 0 && ch < 4 && rd_[ch].active; }
         bool is_write_active() const { return wr_.active; }
         bool is_any_read_active() const { return rd_[0].active || rd_[1].active || rd_[2].active || rd_[3].active; }
@@ -503,6 +659,7 @@ namespace has
             int bank{0};
             uint32_t bank_offset{0}, size{0}, done{0};
             bool first{true};   // first burst still to issue -> pays dram_latency
+            uint32_t extra{0};  // edges added to the first burst (HAS_DFC_CORE_DMA: the 1-D commands of the DFC), 0 = none
             uint32_t timed{0}, tdone{0};   // bus bytes (<= size) and bus bytes done
             bool is_nd{false};
             bool is_sramc_scatter{false};
@@ -641,7 +798,7 @@ namespace has
                 {
                     if (sel < n_hi) rr_ = (sel + 1) % 4;
                     cur_rd_ = sel;
-                    rd_left_ = prm.burst_beats + (rd_[sel].first ? prm.dram_latency : 0);
+                    rd_left_ = prm.burst_beats + (rd_[sel].first ? prm.dram_latency + rd_[sel].extra : 0);
                     rd_[sel].first = false;
                 }
             }

@@ -8,6 +8,8 @@
 // after the request, axi_lite_2ram drives the register write one edge later (gvu_core.sv: axi_lite_2ram, READ_LATENCY 1).
 // The request edge itself counts for nothing, whatever the order of the processes of that edge: the caller passes the time of the
 // edge, a request made "at" edge E is counted from the first edge strictly after E.
+// chain_lat C (HAS_GVU_REGS_NEO, MEASURED on the neo_top multiplexer and clock-domain crossing: about 4 core cycles once per chain, not per write):
+// every write of a sequence reaches the register file C edges later and the sequence is over C edges later. Default 0 = as before.
 #ifndef HAS_GVU_REG_MASTER_H
 #define HAS_GVU_REG_MASTER_H
 
@@ -25,6 +27,8 @@ namespace has
         explicit GvuRegMaster(unsigned lat = 4) { set_lat(lat); }
         void set_lat(unsigned lat) { lat_ = lat < 1 ? 1 : lat; }   // lat < kApply only with HAS_GVU_REGS_NEO (measured: 1 write per edge)
         unsigned lat() const { return lat_; }
+        void set_chain_lat(unsigned c) { chain_ = c; }
+        unsigned chain_lat() const { return chain_; }
 
         bool busy() const { return active_; }
         uint64_t writes() const { return writes_; }
@@ -50,14 +54,14 @@ namespace has
             ctr_++;
             busy_edges_++;
             const unsigned n = static_cast<unsigned>(seq_.size());
-            if (idx_ < n && ctr_ == idx_ * lat_ + kApply) { s.apply = true; s.w = seq_[idx_]; idx_++; writes_++; }
+            if (idx_ < n && ctr_ == idx_ * lat_ + kApply + chain_) { s.apply = true; s.w = seq_[idx_]; idx_++; writes_++; }
             const unsigned last_apply = (n - 1) * lat_ + kApply;
-            if (ctr_ == (n * lat_ > last_apply ? n * lat_ : last_apply)) { s.drained = true; active_ = false; }
+            if (ctr_ == (n * lat_ > last_apply ? n * lat_ : last_apply) + chain_) { s.drained = true; active_ = false; }
             return s;
         }
 
     private:
-        unsigned lat_{4};
+        unsigned lat_{4}, chain_{0};
         bool active_{false};
         uint64_t req_{0};
         unsigned ctr_{0}, idx_{0};

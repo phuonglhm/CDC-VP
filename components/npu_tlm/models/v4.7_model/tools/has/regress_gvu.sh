@@ -24,6 +24,10 @@ export HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_A
 export HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0
 # The DMA tensor operations (HAS_DMA_TENSOR, HAS_DMA_ND) default to on in the model; off here, the DMA entries set them to 1.
 export HAS_DMA_TENSOR=0 HAS_DMA_ND=0
+# Defaults of this release with their earlier values here: upsample / reshape on the DMA (HAS_DMA_RESHAPE), merging of contiguous slice / concat dimensions
+# (HAS_DMA_ND_MERGE), the corner turn after the epilogue (HAS_OUT_TRANSPOSE), the neo register window of the host port (HAS_HOST=neo; v45 = window off) and the
+# command costs of the 1-D DFC (core cycles 6 / 15 / 3; the reference values below use the single-clock 19 / 15 / 7). Not removed by NEOENV.
+export HAS_DMA_RESHAPE=0 HAS_DMA_ND_MERGE=0 HAS_OUT_TRANSPOSE=0 HAS_HOST=v45 HAS_DMA_DFC1D_FIRST=19 HAS_DMA_DFC1D_TAIL=7
 OUT=${1:-/var/tmp/npu_safe/regress_gvu}; MODE=${2:-all}
 export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}
 mkdir -p "$OUT"
@@ -216,7 +220,7 @@ echo "== register file: unit test"
 if [ -f tools/has/tb_gvu_regs_dfc.cpp ]; then
   nice -n 19 g++ -std=c++17 -O2 -Wall -Wno-unused-variable -I. -I/usr/include tools/has/tb_gvu_regs_dfc.cpp -lsystemc -lm -pthread -o "$OUT/tb_gvu_regs_dfc" 2> "$OUT/tb_gvu_regs_dfc.build.log"; res $? "build tb_gvu_regs_dfc"
   for L in 2 4 7; do
-    "$OUT/tb_gvu_regs_dfc" $L > "$OUT/regs_dfc_L$L.log" 2>&1; grep -q "RESULT: PASS (errors 0)" "$OUT/regs_dfc_L$L.log"; res $? "register file by the data flow controller, $L edges per write: values = call style, sequences, write counts and times, residual add, F1' flags"
+    "$OUT/tb_gvu_regs_dfc" $L > "$OUT/regs_dfc_L$L.log" 2>&1; grep -q "RESULT: PASS (errors 0)" "$OUT/regs_dfc_L$L.log"; res $? "register file by the data flow controller, $L edges per write: values = call style, sequences, write counts and times, residual add, exit flags"
   done
   grep -q "residual add by registers: runs [0-9]*, runs whose configuration read back from the register file differs from the call style 0," "$OUT/regs_dfc_L4.log"; res $? "register file unit test: the configuration of every residual add run read back from the registers equals the call style's"
 fi
@@ -315,7 +319,7 @@ python3 tools/has/make_avgpool_gate.py "$OUT/avgpool_gate" > /dev/null && "$OUT/
 grep -q "RESULT: PASS (steps 8" "$OUT/avg.log"; res $? "AVG_POOL instruction path 8/8"
 grep "sim cycles" "$OUT/avg.log" | tail -1
 # The vector-unit operations on GvuTop behind their knobs (default off), with the other vector-unit knobs at their model defaults (on):
-# average pool (HAS_GVU_AVG, POOLING_AVG of the RTL patch, by Reg 7 / 8 / 25 / 26), softmax rows of FUSED_ATTN (HAS_GVU_SOFTMAX, by
+# average pool (HAS_GVU_AVG, POOLING_AVG of the model, by Reg 7 / 8 / 25 / 26), softmax rows of FUSED_ATTN (HAS_GVU_SOFTMAX, by
 # Reg 4..6), requant of the attention products (HAS_GVU_FA), LayerNorm with lane statistics (HAS_GVU_LN, the model's proposal); each
 # value of GvuTop goes into the output, so the program checks it; the delivered RTL's rounding / shift fails (negative controls).
 GD="HAS_GVU_TOP=3 HAS_GVU_STALL=1 HAS_GVU_ELEM_CLK=1 HAS_GVU_REGS=1 HAS_GVU_AGU_ND=1"
@@ -436,6 +440,151 @@ for k in HAS_GVU_REGS_NEO HAS_DMA_DFC_1D HAS_GVU_OUT_VBANK2 HAS_BUS_STRICT; do
   env $k=1 "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_$k.log" 2>&1
   grep -q "RESULT: PASS" "$OUT/gate_$k.log"; res $? "reference gate with $k=1"
 done
+# Knobs default off: slice / concat pieces over merged dimensions (HAS_DMA_ND_MERGE) on the two slice / concat gates
+# against the independent reference and the cycles without merging; the neo register map with the hardware RESIDUAL (bias registers filled).
+mkdir -p "$OUT/snap_dsc_m"; HAS_DMA_ND=1 HAS_DMA_ND_MERGE=1 FE_SNAPSHOT_DIR="$OUT/snap_dsc_m" "$OUT/tb_has_npu_top" "$OUT/dsc_gate" > "$OUT/dsc_merge.log" 2>&1
+grep -q "RESULT: PASS (steps 27, tensors 27" "$OUT/dsc_merge.log"; res $? "slice / concat check program with HAS_DMA_ND_MERGE=1: 27 of 27"
+python3 tools/has/ref_program.py "$OUT/dsc_gate" --image "$OUT/snap_dsc_m/dram_snapshot.bin" > "$OUT/dsc_merge_ref.log" 2>&1; res $? "HAS_DMA_ND_MERGE=1: ref_program.py MATCH on the model's image"
+HAS_DMA_ND=1 HAS_DMA_ND_MERGE=1 "$OUT/tb_has_npu_top" "$OUT/big_sc" > "$OUT/big_sc_merge.log" 2>&1
+c0=$(grep -o "sim cycles [0-9]*" "$OUT/big_sc.log" | tail -1 | grep -o "[0-9]*$"); c1=$(grep -o "sim cycles [0-9]*" "$OUT/big_sc_merge.log" | tail -1 | grep -o "[0-9]*$")
+grep -q "RESULT: PASS (steps 10, tensors 10" "$OUT/big_sc_merge.log" && [ -n "$c0" ] && [ -n "$c1" ] && [ "$c1" -lt "$c0" ]; res $? "large slice / concat gate with HAS_DMA_ND_MERGE=1: 10 of 10, fewer cycles ($c0 -> $c1)"
+HAS_GVU_REGS_NEO=1 HAS_GVU_RESIDUAL_HW=1 "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_neo_res.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/gate_neo_res.log"; res $? "reference gate with HAS_GVU_REGS_NEO=1 HAS_GVU_RESIDUAL_HW=1"
+# Vector-unit operations: Softmax with exponent 0 on the instruction path (e0_heads, default PASS, the delivered-RTL shift
+# fails as the negative control); the attention requant overlapped with the core (HAS_GVU_FA_OVERLAP, default off) on 12 ViT-shaped heads.
+# Both need Softmax / the requant on GvuTop: the knobs of the default ($GD, HAS_GVU_SOFTMAX=1, HAS_GVU_FA=1), not the reference values exported above.
+rm -rf "$OUT/e0_heads" "$OUT/vit_heads"
+python3 tools/has/make_vit_heads_gate.py "$OUT/e0_heads" --exp-e0 --heads 2 --tokens 64 --seed 1841 > "$OUT/e0_heads.gen.log" 2>&1 && env $GD HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 "$OUT/tb_has_npu_top" "$OUT/e0_heads" > "$OUT/e0_heads.log" 2>&1
+grep -q "RESULT: PASS (steps 2, tensors 2" "$OUT/e0_heads.log"; res $? "Softmax rows with exponent 0 (e0_heads, 2 heads): PASS"
+env $GD HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 HAS_GVU_SOFTMAX_AS_RTL=1 "$OUT/tb_has_npu_top" "$OUT/e0_heads" > "$OUT/e0_heads_rtl.log" 2>&1; grep -q "RESULT: FAIL" "$OUT/e0_heads_rtl.log"; res $? "e0_heads with the delivered stage-3 shift (negative control): FAIL"
+python3 tools/has/make_vit_heads_gate.py "$OUT/vit_heads" > "$OUT/vit_heads.gen.log" 2>&1 && env $GD HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 "$OUT/tb_has_npu_top" "$OUT/vit_heads" > "$OUT/vit_heads.log" 2>&1 && env $GD HAS_GVU_SOFTMAX=1 HAS_GVU_FA=1 HAS_GVU_FA_OVERLAP=1 "$OUT/tb_has_npu_top" "$OUT/vit_heads" > "$OUT/vit_heads_ov.log" 2>&1
+c0=$(grep -o "sim cycles [0-9]*" "$OUT/vit_heads.log" | tail -1 | grep -o "[0-9]*$"); c1=$(grep -o "sim cycles [0-9]*" "$OUT/vit_heads_ov.log" | tail -1 | grep -o "[0-9]*$")
+grep -q "RESULT: PASS (steps 12, tensors 12" "$OUT/vit_heads.log" && grep -q "RESULT: PASS (steps 12, tensors 12" "$OUT/vit_heads_ov.log" && [ -n "$c0" ] && [ -n "$c1" ] && [ "$c1" -lt "$c0" ]
+res $? "12 ViT-shaped heads, HAS_GVU_FA_OVERLAP off and on: 12 of 12 both, fewer cycles with the overlap ($c0 -> $c1)"
+# neo_lite RTL revision 1 (HAS_NEO_REV=1, default 0 = revision 0): the RESIDUAL tile vectors of the hardware with the arithmetic shift, the GVU
+# register file of revision 1 on the reference gate, and the check program with max pools through the register file (pooling feeder no
+# longer reset between runs of one operation): values equal the knobs-off run.
+nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_residual_tile_hw.cpp -o "$OUT/tb_rtl_ref_gvu_residual_tile_hw" 2> "$OUT/tb_rtl_ref_gvu_residual_tile_hw.build.log" && "$OUT/tb_rtl_ref_gvu_residual_tile_hw" > "$OUT/tb_rtl_ref_gvu_residual_tile_hw.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/tb_rtl_ref_gvu_residual_tile_hw.log"; res $? "RESIDUAL of the hardware: residual/tile vectors of neo_lite RTL revision 1 (409 600, 0 differ; logical shift 154)"
+HAS_GVU_REGS_NEO=1 HAS_NEO_REV=1 "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_neo_rev1.log" 2>&1
+grep -q "RESULT: PASS" "$OUT/gate_neo_rev1.log"; res $? "reference gate with HAS_GVU_REGS_NEO=1 HAS_NEO_REV=1"
+mkdir -p "$OUT/snap_mp_rev1"; HAS_GVU_TOP=3 HAS_GVU_REGS=1 HAS_NEO_REV=1 FE_SNAPSHOT_DIR="$OUT/snap_mp_rev1" "$OUT/tb_has_npu_top" "$OUT/ref_gate_mp" > "$OUT/gate_mp_rev1.log" 2>&1
+grep -q "RESULT: PASS (steps 9" "$OUT/gate_mp_rev1.log" && cmp -s "$OUT/snap_mp0/dram_snapshot.bin" "$OUT/snap_mp_rev1/dram_snapshot.bin"; res $? "check program with max pools through the register file, HAS_NEO_REV=1: 9/9, DRAM image equals the knobs-off run"
+# Plain-shell knob values (the knobs this script exports at the top removed), for the entries whose numbers come from the model defaults.
+NEOENV="-u HAS_GVU_TOP -u HAS_GVU_STALL -u HAS_GVU_ELEM_CLK -u HAS_GVU_REGS -u HAS_GVU_AGU_ND -u HAS_GVU_AVG -u HAS_GVU_SOFTMAX -u HAS_GVU_FA -u HAS_GVU_LN -u HAS_DMA_TENSOR -u HAS_DMA_ND -u HAS_PROFILE"
+# DFC of neo_lite RTL revision 1 (HAS_NEO_REV=1): the DRAM side is one contiguous 2-D pointer, so every further non-contiguous DRAM run of a
+# tile is a new 1-D command (has/dma_dfc_1d.h); HAS_DFC_CORE_DMA charges the core's A / B / C loads as 1-D commands (has/dfc_core_dma.h);
+# the tile loop of the DFC pointer generator (has/rtl_ref_dfc_tile_loop_neo.h) against the model's tile iterator.
+for t in tb_dma_dfc_1d_neo tb_dfc_tile_loop_neo; do
+  nice -n 19 g++ -std=c++17 -O2 -Wall -I. -I/usr/include tools/has/$t.cpp -lsystemc -lm -pthread -o "$OUT/$t" 2> "$OUT/$t.build.log"; res $? "build $t"
+done
+"$OUT/tb_dma_dfc_1d_neo" > "$OUT/tb_dma_dfc_1d_neo.log" 2>&1; grep -q "ALL PASS" "$OUT/tb_dma_dfc_1d_neo.log"; res $? "1-D DFC commands, revision 0 and 1 (restart 0 and 5): hand-computed costs"
+"$OUT/tb_dfc_tile_loop_neo" "$OUT/ref_gate/mmio.txt" > "$OUT/tb_dfc_tile_loop_neo.log" 2>&1; grep -q "RESULT: PASS" "$OUT/tb_dfc_tile_loop_neo.log"; res $? "tile loop of the DFC pointer generator vs the model's tile iterator (reference gate, 3 tile orders)"
+env $NEOENV HAS_DMA_DFC_1D=1 HAS_GVU_OUT_VBANK2=1 HAS_NEO_REV=1 HAS_DMA_DFC1D_REPORT=1 "$OUT/tb_has_npu_top" "$OUT/big_sc" > "$OUT/big_sc_rev1.log" 2>&1
+grep -q "RESULT: PASS (steps 10, tensors 10" "$OUT/big_sc_rev1.log" && grep -q "restarts=94460" "$OUT/big_sc_rev1.log"; res $? "large slice / concat gate, 1-D DFC commands of revision 1: 10 of 10, 94 460 reopened commands"
+env $NEOENV HAS_DMA_DFC_1D=1 HAS_GVU_OUT_VBANK2=1 HAS_NEO_REV=1 HAS_DMA_DFC1D_REPORT=1 "$OUT/tb_has_npu_top" "$OUT/dsc_gate" > "$OUT/dsc_rev1.log" 2>&1
+grep -q "RESULT: PASS (steps 27, tensors 27" "$OUT/dsc_rev1.log" && grep -q "restarts=10290" "$OUT/dsc_rev1.log"; res $? "slice / concat gate, 1-D DFC commands of revision 1: 27 of 27, 10 290 reopened commands"
+HAS_NEO_REV=1 HAS_DFC_CORE_DMA=1 "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_core_dma.log" 2>&1
+c0=$(grep -o "sim cycles [0-9]*" "$OUT/gate0.log" | tail -1 | grep -o "[0-9]*$"); c1=$(grep -o "sim cycles [0-9]*" "$OUT/gate_core_dma.log" | tail -1 | grep -o "[0-9]*$")
+grep -q "RESULT: PASS" "$OUT/gate_core_dma.log" && [ -n "$c0" ] && [ "$c0" = "$c1" ]; res $? "reference gate, core loads as 1-D DFC commands (HAS_DFC_CORE_DMA=1 HAS_NEO_REV=1): PASS, cycles $c0 -> $c1 (one-command windows)"
+# Profiles neo / neo_as_rtl (has/has_profile_neo.h) and the hardware capability check (has/hw_capability.h, tools/has/hw_check_program.py).
+# The profiles set their own knob table, so the exported knobs are removed for these entries (env -u $NEOENV, defined above).
+nice -n 19 g++ $F -DFX1_NO_PERF tools/has/tb_has_profile.cpp -lsystemc -lm -pthread -o "$OUT/tb_has_profile" 2> "$OUT/tb_has_profile.build.log"; res $? "build tb_has_profile"
+r=0; for m in "" --neo --neo-as-rtl --neo-override; do env $NEOENV "$OUT/tb_has_profile" $m > "$OUT/tb_has_profile$m.log" 2>&1 || r=1; grep -q "RESULT: PASS" "$OUT/tb_has_profile$m.log" || r=1; done
+res $r "profile selection: none, neo, neo_as_rtl, neo with a caller override (4 modes)"
+python3 tools/has/hw_check_program.py $D/insts_pe3 --quiet > "$OUT/hw_check_pe3.log" 2>&1; grep -q "summary: 98 instructions, OK 12, TRANSFORM 3, PATCH 0, NO 83" "$OUT/hw_check_pe3.log"; res $? "hardware capability of YOLOv8m insts_pe3 on neo_lite RTL revision 1: OK 12, TRANSFORM 3, NO 83"
+HAS_HW_CHECK=1 "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_hwchk.log" 2>&1
+c0=$(grep -o "sim cycles [0-9]*" "$OUT/gate0.log" | tail -1 | grep -o "[0-9]*$"); c1=$(grep -o "sim cycles [0-9]*" "$OUT/gate_hwchk.log" | tail -1 | grep -o "[0-9]*$")
+grep -q "RESULT: PASS" "$OUT/gate_hwchk.log" && [ "$(grep -c '^\[hw-check\] i=' "$OUT/gate_hwchk.log")" -gt 0 ] && [ -n "$c0" ] && [ "$c0" = "$c1" ]; res $? "HAS_HW_CHECK=1 on the reference gate: verdict lines, cycles unchanged ($c0 -> $c1)"
+env $NEOENV HAS_PROFILE=neo "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_prof_neo.log" 2>&1; grep -q "RESULT: PASS" "$OUT/gate_prof_neo.log" && grep -q "sim cycles 39562" "$OUT/gate_prof_neo.log"; res $? "profile neo, reference gate: PASS, 39 562 cycles"
+env $NEOENV HAS_PROFILE=neo "$OUT/tb_has_npu_top" "$OUT/ref_gate_mp" > "$OUT/gate_mp_prof_neo.log" 2>&1; grep -q "RESULT: PASS" "$OUT/gate_mp_prof_neo.log" && grep -q "sim cycles 68459" "$OUT/gate_mp_prof_neo.log"; res $? "profile neo, check program with max pools: PASS, 68 459 cycles"
+env $NEOENV HAS_PROFILE=neo "$OUT/tb_has_npu_top" "$OUT/avgpool_gate" > "$OUT/avg_prof_neo.log" 2>&1; grep -q "RESULT: PASS" "$OUT/avg_prof_neo.log" && grep -q "sim cycles 3486" "$OUT/avg_prof_neo.log"; res $? "profile neo, average pool gate: PASS, 3 486 cycles"
+env $NEOENV HAS_PROFILE=neo "$OUT/tb_has_npu_top" "$OUT/dsc_gate" > "$OUT/dsc_prof_neo.log" 2>&1; grep -q "RESULT: FAIL" "$OUT/dsc_prof_neo.log" && grep -q "REFUSED" "$OUT/dsc_prof_neo.log"; res $? "profile neo, slice / concat gate (negative control): refused, the hardware has no DMA copy opcode"
+env $NEOENV HAS_PROFILE=neo_as_rtl "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_prof_asrtl.log" 2>&1; grep -q "bad elements 527" "$OUT/gate_prof_asrtl.log"; res $? "profile neo_as_rtl, reference gate: 527 elements differ from the exact golden (rounding of the RTL)"
+# HAS_HOST=neo (NEO_REGISTER_FILE.md): the 82-word register file of neo_lite RTL revision 1 in the host port of HasNpuTop. The window 0x40000800.. takes
+# the words, a push of opcode 0x17 is the doorbell; an instruction the hardware cannot run as given is refused, never run another way. A program is run twice
+# on the same bench, once through the v4.5 registers (mmio.txt) and once as a MIXED program (host_trace_replay --emit-neo-mmio: the instructions the hardware
+# runs as given go through the window, the others stay v4.5); the DRAM image and the instruction cycles must be equal. The model defaults are used
+# ($NEOENV removes the knobs this script exports at the top, HAS_DMA_ND among them: the trace tools decode the program with MmioCompat, which reads it).
+# tools/has/make_neo_window_gate.py generates the window program (3 max pools and an ADD).
+# Number of lines: 10 (4 builds, 2 generators, 4 items).
+for t in host_trace_gen host_trace_replay; do
+  nice -n 19 g++ -std=c++17 -O2 -Wall -I. -I/usr/include -Idriver tools/has/$t.cpp -o "$OUT/$t" 2> "$OUT/$t.build.log"; res $? "build $t (register trace of a program for neo_lite)"
+done
+nice -n 19 g++ $F tools/has/tb_has_neo_host.cpp -lsystemc -lm -pthread -o "$OUT/tb_has_neo_host" 2> "$OUT/tb_has_neo_host.build.log"; res $? "build tb_has_neo_host (bare HasNpuTop, v4.5 registers or neo window)"
+# the include path of the CDC wrapper: the core_rtl root only (not "-I."), so that npu_top.h is the drop-in top level
+nice -n 19 g++ -std=c++17 -O2 -DSAURIA_DEBUG=0 -DSAURIA_CORE_BACKEND_RTL_REF -DFX1_A3_SRAM_BACKDOOR_LOAD -Icore_rtl -Icore_rtl/driver -Icore_rtl/instrumentation -I/usr/include \
+  tools/has/tb_core_rtl_neo.cpp -lsystemc -lm -pthread -o "$OUT/tb_core_rtl_neo" 2> "$OUT/tb_core_rtl_neo.build.log"; res $? "build tb_core_rtl_neo (sauria::NpuTop of core_rtl driven like npu_tlm)"
+rm -rf "$OUT/neo_win" "$OUT/y8_gate"
+python3 tools/has/make_neo_window_gate.py "$OUT/neo_win" > /dev/null; res $? "window program for the neo window: 3 max pools and an ADD"
+python3 tools/has/make_yolov8m_full_gate.py "$OUT/y8_gate" > "$OUT/y8_gate.gen.log" 2>&1; res $? "YOLOv8m check program y8_gate (149 instructions, 2 host steps)"
+# neo_num <log> <field>: the number after <field> in the "[neo_host] retired ..." line of a bench log
+neo_num() { grep -h "neo_host\] retired" "$1" | tr -d '\r' | grep -o "$2 [0-9]*" | tail -1 | grep -o "[0-9]*$"; }
+# neo_pair <name> <program dir>: the trace of the program, the mixed program for the bare bench (names in $OUT: <name>_neo.txt) and for the wrapper-style bench
+# (<name>_neo_w.txt, DRAM addresses of the system map), then the bare bench on both forms. Sets nc0 / nc1 (instruction cycles), nacc / nref (window accepted /
+# refused), nret (retired), nins (instructions of the program); the DRAM images are $OUT/<name>_v45.bin and $OUT/<name>_neo.bin.
+neo_pair() {
+  local n=$1 d=$2
+  nc0=; nc1=; nacc=; nref=; nret=; nins=
+  env $NEOENV HAS_HOST_TRACE="$OUT/$n.trace" "$OUT/host_trace_gen" "$d" > "$OUT/$n.trace.log" 2>&1 || return 1
+  env $NEOENV "$OUT/host_trace_replay" --emit-neo-mmio "$OUT/${n}_neo.txt" "$OUT/$n.trace" > "$OUT/${n}_emit.log" 2>&1 || return 1
+  env $NEOENV "$OUT/host_trace_replay" --emit-neo-mmio "$OUT/${n}_neo_w.txt" --neo-dram-add 80000000 "$OUT/$n.trace" > "$OUT/${n}_emit_w.log" 2>&1 || return 1
+  env $NEOENV "$OUT/tb_has_neo_host" "$d" "$d/mmio.txt" --dram-out "$OUT/${n}_v45.bin" > "$OUT/${n}_v45.log" 2>&1 || return 1
+  env $NEOENV HAS_HOST=neo "$OUT/tb_has_neo_host" "$d" "$OUT/${n}_neo.txt" --dram-out "$OUT/${n}_neo.bin" > "$OUT/${n}_neo.log" 2>&1 || return 1
+  nc0=$(neo_num "$OUT/${n}_v45.log" st.cycles); nc1=$(neo_num "$OUT/${n}_neo.log" st.cycles)
+  nacc=$(neo_num "$OUT/${n}_neo.log" "accepted"); nref=$(neo_num "$OUT/${n}_neo.log" "refused"); nret=$(neo_num "$OUT/${n}_neo.log" "retired")
+  nins=$(grep -c "^I " "$OUT/$n.trace")
+}
+# (1) YOLOv8m check program: 10 ADD (RESIDUAL) go through the window, 139 instructions and the 2 host steps stay v4.5
+neo_pair y8 "$OUT/y8_gate"; nc=$?
+[ $nc = 0 ] && cmp -s "$OUT/y8_v45.bin" "$OUT/y8_neo.bin" && [ -n "$nc0" ] && [ "$nc0" = "$nc1" ] && [ "$nacc" = 10 ] && [ "$nref" = 0 ] && [ "$nret" = "$nins" ] && [ "$nins" = 149 ]; res $? "neo window, y8_gate mixed program: $nins instructions, $nacc through the window, 0 refused, DRAM image and $nc1 instruction cycles equal to the v4.5 registers"
+# (2) window program: 3 max pools and an ADD, every instruction through the window
+neo_pair win "$OUT/neo_win"; nc=$?
+[ $nc = 0 ] && cmp -s "$OUT/win_v45.bin" "$OUT/win_neo.bin" && [ -n "$nc0" ] && [ "$nc0" = "$nc1" ] && [ "$nacc" = 4 ] && [ "$nref" = 0 ] && [ "$nret" = 4 ]; res $? "neo window, window program (3 max pools + ADD): $nacc of $nins instructions through the window, DRAM image and $nc1 instruction cycles equal to the v4.5 registers"
+# (3) GEMM_FUSED through the window is refused (the hardware cannot run it as given: register-index decode, sbank never loaded); the ADDs of the same program still run
+env $NEOENV HAS_HOST_TRACE="$OUT/refuse.trace" "$OUT/host_trace_gen" "$OUT/ref_gate" > "$OUT/refuse.trace.log" 2>&1 && env $NEOENV "$OUT/host_trace_replay" --emit-neo-mmio "$OUT/refuse_neo.txt" --neo-force GEMM_FUSED "$OUT/refuse.trace" > "$OUT/refuse_emit.log" 2>&1 \
+  && env $NEOENV HAS_HOST=neo "$OUT/tb_has_neo_host" "$OUT/ref_gate" "$OUT/refuse_neo.txt" > "$OUT/refuse_neo.log" 2>&1
+nrf=$(grep -c "^\[neo\] push refused" "$OUT/refuse_neo.log" | tr -d '\r')
+grep -q "STATUS 0x00040004" "$OUT/refuse_neo.log" && [ "$nrf" = 4 ] && [ "$(neo_num "$OUT/refuse_neo.log" refused)" = 4 ] && [ "$(neo_num "$OUT/refuse_neo.log" retired)" = 3 ] && grep -q "A-H1, A-H4" "$OUT/refuse_neo.log"; res $? "neo window, the $nrf GEMM_FUSED of the reference gate refused with A-H1 / A-H4, STATUS error 4 (UNSUPPORTED_OP), the 3 ADDs still retire"
+# (4) the wrapper-style bench (sauria::NpuTop of core_rtl, host bus driven like npu_tlm, DRAM addresses of the system map): the same mixed programs against the bench's
+# own run of the v4.5 registers; the queue of DecoderView goes up and is empty at the end, CONTROL of the window reports DONE
+r=0; ncn=""
+for g in win:neo_win:4 y8:y8_gate:10; do
+  n=${g%%:*}; rest=${g#*:}; d="$OUT/${rest%%:*}"; want=${rest##*:}
+  env $NEOENV "$OUT/tb_core_rtl_neo" "$d" "$d/mmio.txt" --dram-out "$OUT/${n}_corev45.bin" > "$OUT/${n}_corev45.log" 2>&1 || r=1
+  env $NEOENV HAS_HOST=neo "$OUT/tb_core_rtl_neo" "$d" "$OUT/${n}_neo_w.txt" --dram-out "$OUT/${n}_core.bin" > "$OUT/${n}_core.log" 2>&1 || r=1
+  cmp -s "$OUT/${n}_corev45.bin" "$OUT/${n}_core.bin" || r=1
+  c0=$(neo_num "$OUT/${n}_corev45.log" st.cycles); c1=$(neo_num "$OUT/${n}_core.log" st.cycles)
+  [ -n "$c0" ] && [ "$c0" = "$c1" ] && [ "$(neo_num "$OUT/${n}_core.log" accepted)" = "$want" ] && [ "$(neo_num "$OUT/${n}_core.log" refused)" = 0 ] && grep -q "idle at the end 1, neo CONTROL 0xc0000002" "$OUT/${n}_core.log" || r=1
+  ncn="$ncn $n: $want through the window, $c1 cycles;"
+done
+res $r "wrapper-style bench (core_rtl::NpuTop, system DRAM addresses), mixed neo program = its own v4.5 run, DRAM image and cycles equal, CONTROL DONE:$ncn"
+# Register program of the hardware bench of neo_lite RTL revision 1 (RESIDUAL 16x160x160 and MAXPOOL 3x3 stride 1 40x80x80, the AXI-Lite writes of
+# tb_neo_top.sv) through a model of the data flow controller, output DRAM against the golden of the hardware team; two negative controls
+# (no forced buffer swap on the last tile, the revision 0 decode of POOLING_0) must differ.
+nice -n 19 g++ -std=c++17 -O2 -Wall -I. tools/has/tb_neo_top_program_hw.cpp -o "$OUT/tb_neo_top_program_hw" 2> "$OUT/tb_neo_top_program_hw.build.log"; res $? "build tb_neo_top_program_hw"
+"$OUT/tb_neo_top_program_hw" all --neg all > "$OUT/tb_neo_top_program_hw.log" 2>&1; grep -q "RESULT: PASS" "$OUT/tb_neo_top_program_hw.log"; res $? "register program of the neo_lite RTL revision 1 bench through the model: RESIDUAL 0 / 409 600 and MAXPOOL 0 / 243 360 bytes differ, 2 negative controls caught"
+# DMA upsample (nearest neighbour) and reshape (HAS_DMA_RESHAPE=1, the default of the model; 0 at the top of this script): DMA_TENSOR (0x16) modes 2 / 3 and ELEM_WISE (0x15) modes 8 / 9 run by 4-D DMA
+# descriptors; the corner-turn flag of the reshape (X_FLAGS bit 0) only with HAS_DMA_RESHAPE_T=1. The bench of the descriptors, the engine and the register decode
+# (refusals with the knobs off included) is plain C++; its register program (10 instructions, 12 with --with-transpose) runs on the model and on the reference tool.
+nice -n 19 g++ -std=c++17 -O2 -Wall -Wextra -I. tools/has/tb_dma_upsample_reshape.cpp -o "$OUT/tb_dma_upsample_reshape" 2> "$OUT/tb_dma_upsample_reshape.build.log"; res $? "build tb_dma_upsample_reshape"
+"$OUT/tb_dma_upsample_reshape" > "$OUT/tb_dma_upsample_reshape.log" 2>&1; grep -q " passed, 0 failed" "$OUT/tb_dma_upsample_reshape.log"; res $? "DMA upsample / reshape bench: descriptors, engine, decode, refusals with the knobs off: $(tail -1 "$OUT/tb_dma_upsample_reshape.log")"
+rm -rf "$OUT/ur_prog" "$OUT/ur_prog_t"; mkdir -p "$OUT/ur_prog" "$OUT/ur_prog_t"
+"$OUT/tb_dma_upsample_reshape" --emit-program "$OUT/ur_prog" > "$OUT/ur_emit.log" 2>&1; "$OUT/tb_dma_upsample_reshape" --emit-program "$OUT/ur_prog_t" --with-transpose >> "$OUT/ur_emit.log" 2>&1
+HAS_DMA_TENSOR=1 HAS_DMA_ND=1 HAS_DMA_RESHAPE=1 "$OUT/tb_has_npu_top" "$OUT/ur_prog" > "$OUT/ur_model.log" 2>&1; grep -q "RESULT: PASS (steps 10, tensors 10" "$OUT/ur_model.log"; res $? "DMA upsample / reshape register program on the model (HAS_DMA_RESHAPE=1): 10 of 10"
+python3 tools/has/ref_program.py "$OUT/ur_prog" > "$OUT/ur_ref.log" 2>&1; grep -q "RESULT: MATCH (checked 10: match 10" "$OUT/ur_ref.log"; res $? "DMA upsample / reshape register program on the reference tool: 10 of 10"
+HAS_DMA_TENSOR=1 HAS_DMA_ND=1 HAS_DMA_RESHAPE=0 "$OUT/tb_has_npu_top" "$OUT/ur_prog" > "$OUT/ur_off.log" 2>&1; grep -q "RESULT: FAIL" "$OUT/ur_off.log" && [ "$(grep -c "REFUSED at the push" "$OUT/ur_off.log")" = 10 ] && grep -q "HAS_DMA_RESHAPE=0" "$OUT/ur_off.log"; res $? "same program with HAS_DMA_RESHAPE=0: all 10 instructions refused with a message"
+HAS_DMA_TENSOR=1 HAS_DMA_ND=1 HAS_DMA_RESHAPE=1 HAS_DMA_RESHAPE_T=1 "$OUT/tb_has_npu_top" "$OUT/ur_prog_t" > "$OUT/ur_model_t.log" 2>&1; grep -q "RESULT: PASS (steps 12, tensors 12" "$OUT/ur_model_t.log"; res $? "program with two corner-turn reshapes, HAS_DMA_RESHAPE=1 HAS_DMA_RESHAPE_T=1: 12 of 12"
+python3 tools/has/ref_program.py "$OUT/ur_prog_t" > "$OUT/ur_ref_t.log" 2>&1; grep -q "RESULT: MATCH (checked 12: match 12" "$OUT/ur_ref_t.log"; res $? "program with two corner-turn reshapes on the reference tool: 12 of 12"
+HAS_DMA_TENSOR=1 HAS_DMA_ND=1 HAS_DMA_RESHAPE=1 HAS_DMA_RESHAPE_T=0 "$OUT/tb_has_npu_top" "$OUT/ur_prog_t" > "$OUT/ur_model_tn.log" 2>&1; [ "$(grep -c "REFUSED at the push" "$OUT/ur_model_tn.log")" = 2 ] && grep -q "HAS_OUT_TRANSPOSE" "$OUT/ur_model_tn.log"; res $? "same program with HAS_DMA_RESHAPE_T=0: exactly the two corner-turn reshapes refused, with a message"
+# Defaults of this release (the values exported at the top removed as well): merged slice / concat dimensions shorten the large gate (fewer, fuller DMA
+# pieces, same bytes), the corner turn after the epilogue reports no token-major tile on a program that does not ask for it, and the reference gate is unchanged.
+RELENV="-u HAS_DMA_RESHAPE -u HAS_DMA_ND_MERGE -u HAS_OUT_TRANSPOSE -u HAS_HOST -u HAS_DMA_DFC1D_FIRST -u HAS_DMA_DFC1D_TAIL"
+env $NEOENV $RELENV "$OUT/tb_has_npu_top" "$OUT/big_sc" > "$OUT/big_sc_rel.log" 2>&1; grep -q "RESULT: PASS (steps 10, tensors 10" "$OUT/big_sc_rel.log" && grep -q "sim cycles 120333" "$OUT/big_sc_rel.log"; res $? "release defaults, large slice / concat gate: 10 of 10, 120 333 cycles (127 636 without merging the dimensions)"
+env $NEOENV $RELENV "$OUT/tb_has_npu_top" "$OUT/ref_gate" > "$OUT/gate_rel.log" 2>&1; grep -q "RESULT: PASS" "$OUT/gate_rel.log" && grep -q "sim cycles 39562" "$OUT/gate_rel.log" && grep -q "HAS_OUT_TRANSPOSE: token-major tiles 0," "$OUT/gate_rel.log"; res $? "release defaults, reference gate: PASS, 39 562 cycles, no token-major tile"
+# Register map of neo_top and the fields of the 82 configuration words against the RTL of neo_lite RTL revision 1, read from the frozen table
+# (no RTL tree needed); with a newer RTL run tools/has/neo_regmap_check.py --rtl <tree> instead.
+python3 tools/has/neo_regmap_check.py --table tools/has/neo_regmap_rev1.txt > "$OUT/neo_regmap.log" 2>&1; res $? "register map of neo_top against the RTL of neo_lite RTL revision 1 (frozen table, 82 words): $(tail -1 "$OUT/neo_regmap.log" | sed 's/^RESULT: //')"
 # Verification by instruction flow: every numbered step of the drawn flows with its checks, references and results, read from
 # the logs above (one log per flow and a summary in $OUT/flows).
 python3 tools/has/verify_flows.py "$OUT" > "$OUT/flows.log" 2>&1; res $? "verification by instruction flow: $(tail -1 "$OUT/flows.log" | cut -d, -f1 | sed 's/^RESULT: //')"

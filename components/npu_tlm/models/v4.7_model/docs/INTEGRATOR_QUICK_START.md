@@ -25,7 +25,7 @@ Both give the same numbers. The file way needs no firmware change and is the qui
 
 ### 2.1 Platform files to update for this release
 
-This release adds one optional extension register, `TMAJ_C0` (`0x40000500`, used only with the option `HAS_OUT_TRANSPOSE=1`, off by default; `HW_RTL_ALIGNMENT.md`, section 8), and no error code. Firmware that does not use the option needs no change. The integrated model
+This release adds the register-file window of the DFC (model addresses `0x40000800` to `0x400009FF`, VP offset `0x10800`, doorbell `PUSH_A = 0x17`, marker `0x400004E4 = 0`; on by default, `HAS_HOST=v45` switches it off; `NEO_REGISTER_FILE.md`), and no extension register and no error code. The wrapper needs no change for it. A layer refused at the doorbell is still reported as done by the wrapper, so firmware that uses the window reads `RICH_STATUS` (`0x10318`) and `RICH_RETIRED` (`0x1031C`) after every layer; the model also prints `[neo] push refused: ...` on stderr. The extension register `TMAJ_C0` (`0x40000500`, used only by a program that writes it, with the option `HAS_OUT_TRANSPOSE`, on by default; `HW_RTL_ALIGNMENT.md`, section 8) was added by the previous release; firmware that does not use it needs no change. The integrated model
 already added six extension registers and one error code; if the platform files below do not list them yet, add them.
 Programs that do not use them run unchanged, so nothing below blocks the update of section 2. Firmware that
 uses padding per side or dilation, or that decodes the error codes of the model, needs the names; the wrapper's
@@ -81,7 +81,7 @@ export SAURIA_CORE_RTL_RECORD=/path/to/run1/record           # optional: the pro
 
 - The directory of the report file and the directory above the record directory must exist and be writable.
 - Keep stderr of the simulation process (do not send it to `/dev/null`): the warnings of section 5 are printed there.
-- Do not set any `HAS_*` variable: they change cycle counts.
+- Do not set any `HAS_*` variable that changes cycle counts. The exceptions that change no value and no cycle: `HAS_HOST=v45` (switches the register-file window off) and `HAS_HW_CHECK=1` (one hardware verdict per instruction on stderr). `HAS_PROFILE=neo` is for judging a program for the hardware and does change cycles.
 - None of the variables above changes a result or a cycle count.
 
 ## 4. What comes out
@@ -118,11 +118,13 @@ FUSED_ATTN                  9 instructions, 202197 cycles, 70.90 %
 LAYERNORM                   5 instructions, 83008 cycles, 29.10 %
 ```
 
+The figures above belong to the transformer check with the vector-unit knobs at 0; through the wrapper with the default configuration the same check takes 263,808 cycles.
+
 How to read it:
 
 - `cycles` is the NPU time of the run; `frames_per_second` uses the clock that drives the model in the platform. The
   work the CPU does between instructions and the copies the wrapper makes between RAM and the model are not included.
-- A line exists only for an instruction that wrote at least one extension register (`0x4000046C..0x400004E7`) before
+- A line exists only for an instruction that wrote at least one extension register (`0x4000046C..0x40000503` in the model; some wrapper revisions stop the range at `0x400004E7`, section 2.1, item 3) before
   its push. Other instructions run on the functional decoder and are not in the report.
 - `pushes_refused` above 0 or a line with `errors`: look at stderr (section 5).
 - The model does not know layer names: join the lines with the program by their order.

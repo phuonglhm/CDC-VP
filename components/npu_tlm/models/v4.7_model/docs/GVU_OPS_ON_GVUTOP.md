@@ -12,7 +12,7 @@ the hardware team for; not in the delivered RTL).
 
 | Knob | Default | Operation | Needs | Path in the model |
 |---|---|---|---|---|
-| `HAS_GVU_AVG` | 1 | ELEM_WISE AVG_POOL (mode 5) | `HAS_GVU_TOP=3` | `HasElemwise::avgpool` -> `GvuTopStream::start_avgpool` (POOLING_AVG of the RTL patch) |
+| `HAS_GVU_AVG` | 1 | ELEM_WISE AVG_POOL (mode 5) | `HAS_GVU_TOP=3` | `HasElemwise::avgpool` -> `GvuTopStream::start_avgpool` (POOLING_AVG of the proposed average pool data path) |
 | `HAS_GVU_SOFTMAX` | 1 | Softmax rows of FUSED_ATTN | `HAS_GVU_TOP=3` | `fused_attn` hook -> `GvuTopStream::start_softmax` (GVU_OP_SOFTMAX) |
 | `HAS_GVU_FA` | 1 | Requant of the attention products (phase 1 Q.K^T, phase 3 A.V) | `HAS_GVU_SOFTMAX` | `fused_attn` hook -> `GvuTopStream::start_requant` (GEMM_FUSED stream beats) |
 | `HAS_GVU_LN` | 1 | LAYERNORM | `HAS_GVU_TOP=3` | `exec_ln` -> `GvuTopStream::start_layernorm` (lane data path, `has/rtl_ref_gvu_ln_lanes.h`) |
@@ -40,10 +40,10 @@ simulated steps; the values are the same.
 
 Data layout as max pool: the input of a channel group in vbank0 buffer 0 as rows of 32 bytes (row `(c * H + y) * W_TILE + t`), no
 padding; the result in vbank2 at the plain addresses of the VLSU. Runs of at most `cmax` channels, each from a reset of the unit
-(bug B12 of max pool). Registers: POOLING_0 / POOLING_1 (Reg 7 / 8) for the window, **Reg 25 `AVG_SCALE`** (Avg_Scale, int32) and
+(the pooling feeder must be reset between runs). Registers: POOLING_0 / POOLING_1 (Reg 7 / 8) for the window, **Reg 25 `AVG_SCALE`** (Avg_Scale, int32) and
 **Reg 26 `AVG_CFG`** (`[5:0]` Avg_Shift, `[10:8]` round mode), start with opcode AVGPOOL (8) in Reg 0 `[6:3]`. Reg 25 / 26 and opcode 8
-are part of the RTL patch for average pooling (PROPOSAL; the delivered RTL has no average pool data path). The patch delays the write
-by D = 5 edges after the last element of a window (MEASURED in an RTL simulation of the patch). Saturation to int8.
+are part of the proposed average pool data path (PROPOSAL; the delivered RTL has none). It delays the write
+by D = 5 edges after the last element of a window (MEASURED in an RTL simulation). Saturation to int8.
 
 POOLING_0 encodes the window as `k - 2` in two bits (k = 2..5) and the stride in three bits, but the pooling data path of the unit
 handles only these (k, s): 2x2 s1 / s2, 3x3 s1, 4x4 s1 / s2 / s4, 5x5 s1 (READ, the window table of `GvuTopStream::pool_geom`). An
@@ -58,11 +58,11 @@ is written in place). Tables: reciprocal image in vbank1 buffer 1 words 0..3 (16
 of 768 bytes per instruction. Registers: SOFTMAX_0 (Reg 4, token length `[8:0]`, tiles `[17:9]`, written as 1), SOFTMAX_1 (Reg 5,
 ATTN_Scale, int32), SOFTMAX_2 (Reg 6, ATTN_Shift `[7:0]`, Z_ATTN `[15:8]`), start with opcode SOFTMAX (3).
 
-| Code | What | Evidence |
+| Finding | What | Evidence |
 |---|---|---|
-| B20 | Stage 3 shifts the product by `E + q - P` (q = 14, P = 15 in the functional model), not by `E`: the delivered RTL gives half the value; a smaller ATTN_Shift compensates only up to one LSB at the rounding ties | MEASURED: on three ViT-B heads the delivered shift differs at 326 / 3,443 / 2,033 of 6,304 outputs, the patch (shift `E - 1`) at 0 / 0 / 0, in the port and in an RTL simulation; on the transformer check program the negative control differs at 94,961 of 242,070 lanes |
-| B20b | Stage 3 has no left shift: with an exponent E = 0 (sum of the exponentials equal to 1) the shift `E + q - P` is -1 and cannot be expressed. The model uses the exponent of the current table lookup and shifts left | MEASURED in an RTL simulation on a constructed case with E = 0: the delivered RTL and the B20 patch both differ at 8 of 64 outputs; the model differs at 0. No RTL patch yet. Not reached on ViT-B/16 (smallest E is 7, because the exponential table gives 255 at 0) |
-| B21 | The vbank1 buffer bit flips once, on the rising edge of the table-init done output, not on its level | MEASURED in an RTL simulation through the register file: the delivered RTL flips the bit 617 times during one Softmax and on every idle edge after it, the row maximum of stage 2 is read wrong 99 / 197 times and every output differs; with the patch the register path equals the direct drive value for value |
+| Softmax stage-3 shift | Stage 3 shifts the product by `E + q - P` (q = 14, P = 15 in the functional model), not by `E`: the delivered RTL gives half the value; a smaller ATTN_Shift compensates only up to one LSB at the rounding ties | MEASURED: on three ViT-B heads the delivered shift differs at 326 / 3,443 / 2,033 of 6,304 outputs, the shift `E - 1` at 0 / 0 / 0, in the port and in an RTL simulation; on the transformer check program the negative control differs at 94,961 of 242,070 lanes |
+| Softmax exponent 0 | Stage 3 has no left shift: with an exponent E = 0 (sum of the exponentials equal to 1) the shift `E + q - P` is -1 and cannot be expressed. The model uses the exponent of the current table lookup and shifts left | MEASURED in an RTL simulation on a constructed case with E = 0: the delivered RTL differs at 8 of 64 outputs, also with the shift `E - 1`; the model differs at 0. Not reached on ViT-B/16 (smallest E is 7, because the exponential table gives 255 at 0) |
+| vbank1 buffer bit | The vbank1 buffer bit flips once, on the rising edge of the table-init done output, not on its level | MEASURED in an RTL simulation through the register file: the delivered RTL flips the bit 617 times during one Softmax and on every idle edge after it, the row maximum of stage 2 is read wrong 99 / 197 times and every output differs; with the bit flipping once on the rising edge the register path equals the direct drive value for value |
 | P-SMX3 | Token length is 9 bits: L <= 511 through the register file | ViT-B (L = 197) fits; longer sequences need a wider field. Without the register file the limit is the depth of vbank0 (800) |
 
 A row group stays on the model when the parameter block of the instruction asks for exponentials forced to zero at masked positions
@@ -82,6 +82,7 @@ of its register writes; it does not overlap with the core.
 | P-FA2 | Phase 3 correction `-Za * Vcol_n` (and the `Zv` terms when enabled) by the preload of the partial sums of the core (the core has the preload path) |
 | P-FA3 | Softmax stage 1 (row maximum) consumes the beats of phase 1 as they leave the epilogue (`softmax_inp_sel = 0` driven by the FUSED_ATTN opcode): its cycles would leave the softmax time. Not modelled: on the clock, stage 1 runs inside the Softmax job after phase 1, and nothing is subtracted |
 | P-FA4 | The mask sets a score to -128 after the requant; the epilogue has no mask input today (the model applies it after the run and counts the scores) |
+| P-FA5 | The requant of one core pass runs on the vector unit during the next pass; the zero-point corrections go into the preload of the partial sums. Option `HAS_GVU_FA_OVERLAP` (off by default; MEASURED, `HW_RTL_ALIGNMENT.md`, section 11) |
 
 ## 5. LayerNorm with lane statistics (proposal)
 
@@ -124,7 +125,7 @@ MEASURED:
 | AVG_POOL, default | 8 / 8 | 4 instructions on GvuTop, 1,104 lanes, 0 differ, 24 register writes; 4 with a window the RTL does not pool | 3,687 |
 | `HAS_GVU_AVG_AS_RTL=1` (negative control) | FAIL | 175 lanes differ | — |
 
-`tools/has/regress_gvu.sh` (182 of 182, MEASURED) has an item for each run above except the rows with the four operation knobs at
+`tools/has/regress_gvu.sh` (182 of 182 at the time of this table, MEASURED) has an item for each run above except the rows with the four operation knobs at
 0, which are the reference of this table (the regression runs the same check programs with every vector-unit knob at 0). It checks
 the result and the unit counts, and the cycles of the default run (263,883) and of the call style (242,711). The lane LayerNorm has its own unit test,
 `tools/has/tb_gvu_ln_lanes.cpp` (against `has::layernorm_row` on 300 random groups, H 1..768, 1..32 rows, every round mode:
@@ -139,7 +140,7 @@ Whole networks in the default configuration (YOLOv8m does not use these operatio
 
 ## 7. Not done
 
-- RTL patches and simulation oracles for P-LN1..P-LN6 and P-FA3 / P-FA4 (the patches for B20, B21 and the average pool exist).
-- The attention requant overlapped with the multiplication of the core (it runs after it, section 4), and P-FA3.
+- RTL descriptions and simulation oracles for P-LN1..P-LN6 and P-FA3 / P-FA4 / P-FA5 (the Softmax shift, the buffer bit and the average pool data path have them).
+- The attention requant overlapped with the multiplication of the core by default (it runs after it, section 4; the option `HAS_GVU_FA_OVERLAP`, P-FA5, overlaps it with the next pass), and P-FA3.
 - A DMA (COPY) program for ViT-B: none is needed. The heads read and write 64-channel blocks of channel-major [C][L] tensors, so
   every slice and every concat of the network is an address on the outermost axis.

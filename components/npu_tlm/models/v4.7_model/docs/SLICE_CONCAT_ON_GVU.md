@@ -68,8 +68,7 @@ GVU operations that touch a slice or a concat:
   - the Detect anchor concat;
   - a tensor that feeds two concats;
   - data that should stay in the Scratchpad between two GVU operations.
-- **Status.** This is the model's default for both networks, measured end to end in all whole-network runs; every published cycle
-  count uses it.
+- **Status.** The program `insts_pe3` uses it for YOLOv8m and `vit_full` for ViT-B/16, measured end to end; the default YOLOv8m number of this release (63,902,513 cycles) uses `insts_pe3_nd`, which writes the concats as 4-D DMA descriptors (`DMA_SLICE_CONCAT.md`, on by default, with merged pieces).
 
 ### 2.1 (A) AGU_ND on the ports of the residual add and max pool
 
@@ -115,7 +114,7 @@ GVU operations that touch a slice or a concat:
   - Programs must stay inside the real depth of the bank; vbank0 has 800 of its 1,024 rows (MEASURED in the model).
   - Rows of 32 lanes only.
   - The 32-register file is shared with the residual-add proposal (Reg 9..15).
-- **Status.** Model and RTL patch done and checked (sections 4 and 5).
+- **Status.** Model and RTL description done and checked (sections 4 and 5).
 
 ### 2.2 (B) SPPF chain kept in the Scratchpad
 
@@ -171,28 +170,42 @@ GVU operations that touch a slice or a concat:
   modelled behind `HAS_DMA_TENSOR` (on by default), checked on a 25-instruction program, on the 13 YOLOv8m concat windows and with the
   independent reference.
 
+### 2.4a (E) Slice and concat by 4-D DMA descriptors (default)
+
+- **How.** ELEM_WISE modes 6 (slice) and 7 (concat) take a 4-D descriptor (counts and strides per dimension) and the DMA moves the
+  pieces from DRAM to DRAM in chunks; with `HAS_DMA_ND_MERGE=1` (default) neighbouring contiguous dimensions are merged first, so each
+  piece is as large as the chunk allows. Registers, cycle model and checks: `DMA_SLICE_CONCAT.md`. The frontend writes the program with
+  `fe_emit_insts.py --slice-concat dma_nd` (`insts_pe3_nd`).
+- **Cost.** YOLOv8m `insts_pe3_nd`: 63,902,513 cycles with merged pieces, 64,135,381 with `HAS_DMA_ND_MERGE=0` (MEASURED, whole network, PASS 135 / 135);
+  the bus time is that of the bytes moved, a strided access costs nothing more than a linear one (an optimistic model).
+- **Limits.** The RTL DMA is one-dimensional: this mechanism is a proposal of the model team and the hardware has no opcode for it (reason
+  code `B-DMA`, `COMPILER_GUIDE.md`, section 4). With `HAS_DMA_DFC_1D=1` the model costs it as one-dimensional DFC commands instead
+  (`HW_RTL_ALIGNMENT.md`, section 5).
+- **Status.** On by default (`HAS_DMA_ND=1`); checked on the descriptor unit test, two check programs, the 13 YOLOv8m concat windows and
+  with the independent reference (`VERIFICATION_REPORT.md`, V44, V46).
+
 ### 2.5 Comparison and recommendation
 
-The three mechanisms answer different needs: the **alias** is the reference of every published cycle count and the default of the
-programs; **DMA COPY (D)** is what the company asked for and runs on the DMA the RTL already has; **AGU_ND (A)** is the proposal for
+The mechanisms answer different needs: the **alias** is the reference of the cycle counts of `insts_pe3` and `vit_full`; **DMA COPY (D)** is what the company asked for and runs on the DMA the RTL already has; **4-D DMA descriptors (E)** are the default of the model for programs with slice and concat instructions (`insts_pe3_nd`) and need a DMA with strides; **AGU_ND (A)** is the proposal for
 the vector unit, for blocks that stay in the Scratchpad.
 
-| | Alias (default, reference numbers) | (A) AGU_ND on ADD / max pool (GVU proposal) | (B) SPPF in Scratchpad | (C) MOVE | (D) DMA COPY (company request) |
-|---|---|---|---|---|---|
-| Cycles, YOLOv8m | 0 | ≤ ~600 register-write cycles (ESTIMATED) | −2…−4 × 10⁴ (ESTIMATED) | +2.3 … +6.2 % if used for every concat (ESTIMATED) | +1,479,496, +2.37 % (MEASURED, whole network) |
-| Memory | 0 | 0 | less DMA traffic | 0 (direct to cells) | +23,270,400 bytes of DRAM |
-| Covers | outermost axis, contiguous | as alias + strided blocks in the Scratchpad for ADD / max pool | SPPF chain | any block-of-rows permutation | contiguous blocks in DRAM |
-| New hardware | none | AGU mode + 9 registers + controller selection | AGU_ND + lane rotation | AGU_ND + MOVE state | none in the data path; an issuer of the DMA registers (DFC or firmware) |
-| Evidence | whole networks | model + RTL patch, simulated (sections 4, 5) | none | model only | model + independent reference (`VERIFICATION_REPORT.md`, V42) |
+| | Alias (`insts_pe3`, `vit_full`) | (A) AGU_ND on ADD / max pool (GVU proposal) | (B) SPPF in Scratchpad | (C) MOVE | (D) DMA COPY (company request) | (E) 4-D DMA descriptors (default for `insts_pe3_nd`) |
+|---|---|---|---|---|---|---|
+| Cycles, YOLOv8m | 0 | ≤ ~600 register-write cycles (ESTIMATED) | −2…−4 × 10⁴ (ESTIMATED) | +2.3 … +6.2 % if used for every concat (ESTIMATED) | +1,479,496, +2.37 % (MEASURED, whole network) | 63,902,513 whole network with merged pieces; 64,135,381 with `HAS_DMA_ND_MERGE=0` (MEASURED) |
+| Memory | 0 | 0 | less DMA traffic | 0 (direct to cells) | +23,270,400 bytes of DRAM | +23,270,400 bytes of DRAM traffic as (D) |
+| Covers | outermost axis, contiguous | as alias + strided blocks in the Scratchpad for ADD / max pool | SPPF chain | any block-of-rows permutation | contiguous blocks in DRAM | strided blocks in DRAM up to 4 dimensions |
+| New hardware | none | AGU mode + 9 registers + controller selection | AGU_ND + lane rotation | AGU_ND + MOVE state | none in the data path; an issuer of the DMA registers (DFC or firmware) | a 4-D descriptor DMA (the RTL DMA is one-dimensional) |
+| Evidence | whole networks | model + RTL description, simulated (sections 4, 5) | none | model only | model + independent reference (`VERIFICATION_REPORT.md`, V42) | model + independent reference (`DMA_SLICE_CONCAT.md`, section 4) |
 
 **Recommendations for the RTL:**
 1. **Adopt (A).** It is the address-only mechanism the MAS describes, and it costs one AGU unit per port plus nine registers. It keeps
-   the delivered behaviour when nothing is bound. The patch in section 5 implements it and has been simulated against the model.
-2. Keep the compiler alias for outermost-axis slices and concats; it is free, and it stays the reference of the published numbers.
+   the delivered behaviour when nothing is bound. The RTL description in section 5 implements it and has been simulated against the model.
+2. Keep the compiler alias for outermost-axis slices and concats; it is free, and it stays the reference of the alias programs.
 3. Where data movement in the instruction path is required, use (D): it needs no change of the DMA, only a decision on who writes its
    registers.
 4. Add MOVE (C) when a network needs inner-axis or NHWC concats, or tensors kept in the Scratchpad.
 5. Consider (B) together with the VLSU padding block.
+6. (E) is a model-side convenience: the hardware DMA is one-dimensional, so for the hardware use the alias, (D) or (A).
 
 Two rules come from the simulation and must be kept in any implementation:
 - A change of descriptor takes effect at the clock edge of `i_agu_addr_reset`. An access in that cycle still uses the old program.
@@ -244,36 +257,30 @@ With `HAS_GVU_REGS=1`, the DFC writes Reg 16..24 and the unit reads them from th
 The register-sequence bench `tb_gvu_regs_dfc` checks the absolute write counts of the sequences without Reg 16..24. Run it with
 `HAS_GVU_AGU_ND=0`, or extend its expected counts.
 
-## 5. RTL patch
+## 5. RTL description of the address generator (proposal)
 
-**Files**
-- `agu_nd_full.diff`. Applies on the RTL drop of the feedback package (archive SHA-256 `90694d8f06956c623fbdc29bb8db0266ec2339dbb1b7121c3e93aef95c19d67d`)
-  plus, in this order: B13, B4, B14, B17, B12, B16, B1, B9, B18, F1′ (v3), F2b (v2), B19 and the residual-add patch. 7 files, +251 / −3.
-  - `gvu_pkg.sv`: `AGU_ND`, `agu_nd_desc_t`, `agu_nd_ctrl_t`, Reg 16..24 names.
-  - `vlsu/gvu_agu_nd.sv`: new.
-  - `gvu_vlsu.sv`: 5 port units, pooling destination unit, 4 new inputs.
-  - `gvu_config_regs.sv`: Reg 16..24 decode.
-  - `gvu_core.sv`: wiring.
-  - `gvu_top.sv`: inputs, pick from the controller to the VLSU.
-  - `gvu_pipe_controller.sv`: AGU_ND selection in `RESIDUAL_ST1` / `ST2`.
-- `agu_nd_vlsu.diff`. The VLSU part alone, on the RTL drop plus all patches of the feedback package. For review only.
+The proposed change touches 7 files of the vector-unit RTL (+251 / -3 lines):
+- `gvu_pkg.sv`: `AGU_ND`, `agu_nd_desc_t`, `agu_nd_ctrl_t`, Reg 16..24 names.
+- `vlsu/gvu_agu_nd.sv`: new.
+- `gvu_vlsu.sv`: 5 port units, pooling destination unit, 4 new inputs.
+- `gvu_config_regs.sv`: Reg 16..24 decode.
+- `gvu_core.sv`: wiring.
+- `gvu_top.sv`: inputs, pick from the controller to the VLSU.
+- `gvu_pipe_controller.sv`: AGU_ND selection in `RESIDUAL_ST1` / `ST2`.
 
-**How to apply.** `git apply agu_nd_full.diff` from the root of the RTL tree, after the patches above. The CRLF line ends of the sources
-are kept in the diff.
-
-**Interaction with F2b.** The direct sbank addresses of F2b keep priority over the sbank address registers, and so over AGU_ND on the
-sbank ports. F2b is enabled only in GEMM_FUSED, and AGU_ND is selected only in the residual add and for the max-pool destination, so the
-two do not meet.
+**Interaction with GEMM_FUSED.** The direct sbank addresses used in GEMM_FUSED keep priority over the sbank address registers, and so
+over AGU_ND on the sbank ports. They are enabled only in GEMM_FUSED, and AGU_ND is selected only in the residual add and for the max-pool
+destination, so the two do not meet.
 
 **Simulation (MEASURED, ModelSim; expected values from the model):**
 
 | Check | Result |
 |---|---|
 | Compile `gvu/` (except `gvu_core.sv`, which needs the AXI library missing from the delivered tree) and benches | 0 errors, 0 warnings |
-| VLSU, nothing bound, vs the unpatched VLSU, random inputs | 200,000 cycles, every output, 0 differences |
+| VLSU, nothing bound, vs the VLSU without the address generator, random inputs | 200,000 cycles, every output, 0 differences |
 | VLSU AGU_ND programs vs the model | 600,000 cycles × 5 port addresses, 0 differences |
 | VLSU max-pool destination vs `addr_at(k)` | 189 runs, 88,371 cycles, 0 differences |
-| Residual add on `gvu_top`, nothing bound, vs the base | 50 cases: results, sums, cycle counts and a clock-by-clock trace (7,722 lines) identical; cycle counts equal to those of the residual-add patch alone |
+| Residual add on `gvu_top`, nothing bound, vs the base | 50 cases: results, sums, cycle counts and a clock-by-clock trace (7,722 lines) identical; cycle counts equal to those of the residual-add path alone |
 | Residual add with A at rows 37 + 2r (source s0 = 2) and the result at rows 400 + r | 27 cases, 1,473 rows: equal to the unshifted run and to the model, A not overwritten, cycle counts equal |
 | Reg 16..24 decode vs the model's register layout | 2,000 random register sets, 0 differences |
 | Max pool on `gvu_top` with destination programs (offset, permutation, stride 2, reversed) | unbound runs = model in rows and cycles; 1,848 result rows at `addr_at(k)` correct, other rows untouched; trace identical except the vbank2 address; cycle counts equal |

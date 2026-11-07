@@ -23,6 +23,7 @@
 #include "has/rtl_ref_gvu_lut.h"
 #include "has/rtl_ref_gvu_vlsu.h"
 #include "has/gvu_agu_nd_vlsu.h"
+#include "has/rtl_ref_gvu_vlsu_pool_dense.h"
 #include "has/rtl_ref_gvu_ctrl.h"
 #include "has/rtl_ref_gvu_avgpool_pipe.h"
 
@@ -58,9 +59,12 @@ namespace rtl_ref_gvu
         ScratchpadParams sp_params{};
         LutParams lut_params{false, true, true, 32 * GVU_LANES}; // LERP_MUL_PIPE=1, LERP_SHIFT_PIPE=1, INIT_DW=1024
         FuParams fu_params{};
-        // AVG_POOL (POOLING_AVG): the data path of the RTL patch for average pooling (the delivered RTL has none). Off (default) = the unit
+        // AVG_POOL (POOLING_AVG): an average pooling data path of the model (the delivered RTL has none). Off (default) = the unit
         // as before: an AVGPOOL opcode stays in IDLE.
         bool avg_enable{false};
+        // Revision of the neo_lite RTL (has::NeoRev, the caller reads HAS_NEO_REV): 0 = revision 0 (default, the unit as before), 1 = revision 1
+        // (max pool with stride 2 / 4 writes vbank2 dense, has/rtl_ref_gvu_vlsu_pool_dense.h).
+        int neo_rev{0};
     };
 
     // Opcode definitions from gvu_pkg.sv
@@ -98,7 +102,7 @@ namespace rtl_ref_gvu
         RESIDUAL_ST1    = 14,
         RESIDUAL_ST2    = 15,
         POOLING_MAX     = 16,    // latest hardware RTL drop (gvu_pkg.sv numbers its states differently; the names are the same)
-        POOLING_AVG     = 17     // average pool (the RTL patch numbers it 15): compare states by name in any trace against the RTL, not by number
+        POOLING_AVG     = 17     // average pool (the ModelSim version of this data path numbers it 15): compare states by name in any trace against the RTL, not by number
     };
 
     // ---- Cycle-accurate structural C++ core model of gvu_top.sv --------------------------------------------
@@ -232,7 +236,7 @@ namespace rtl_ref_gvu
             unsigned i_pooling_h_move{0};
 
             // Average pool (POOLING_AVG, GvuTopParams::avg_enable): the window geometry is that of max pool (i_pooling_*); Avg_Scale (int32),
-            // Avg_Shift (6 bits), round mode and narrowing of Round-Shift#1 (register 25 / 26 of the RTL patch). The RTL patch uses the
+            // Avg_Shift (6 bits), round mode and narrowing of Round-Shift#1 (register 25 / 26 of the model). The ModelSim version uses the
             // controller's NEAR_AWAY / wrap defaults only if no register is written; the model default is NEAR_UP + saturate (the instruction path).
             int32_t   i_avg_scale{1};
             uint8_t   i_avg_shift{0};
@@ -294,7 +298,7 @@ namespace rtl_ref_gvu
             : P_(p),
               mul_n_(kStreamMul + std::min(std::max(p.gemm_stream_depth, GEMM_STREAM_DEPTH_MAS), GEMM_STREAM_DEPTH_MAX) - GEMM_STREAM_DEPTH_MAS),
               scratchpad_(p.sp_params),
-              vlsu_(p.sp_params),
+              vlsu_(p.sp_params, p.neo_rev),
               stream_vrf_(),
               vlut_(p.lut_params),
               vcmp_(p.fu_params),
@@ -402,7 +406,7 @@ namespace rtl_ref_gvu
 
             scratchpad_.tick(w.sp_in);
             vlsu_.bind(in.i_agu_nd_ctrl, in.i_agu_src, in.i_agu_dst, w.agu_nd_sel);
-            vlsu_.tick(w.vlsu_in);
+            vlsu_.tick(w.vlsu_in, in.i_gvu_op == GVU_OP_MAXPOOL);
             stream_vrf_.tick(w.vrf_in, i_rstn);
             vcmp_.tick(w.cmp_in);
 
@@ -562,7 +566,7 @@ namespace rtl_ref_gvu
         GvuTopParams P_;
         int mul_n_;                                           // multiplier chain in use: kStreamMul + delay stages
         GvuScratchpad scratchpad_;
-        GvuVlsuNdPort vlsu_;   // the frozen GvuVlsu, plus AGU_ND when bound
+        GvuVlsuNeoPool vlsu_;  // the frozen GvuVlsu, plus AGU_ND when bound, plus the dense max pool write of revision 1 (neo_rev 1)
         StreamVrf stream_vrf_;
         LutUnit vlut_;
         Vcmp32 vcmp_;
@@ -968,7 +972,7 @@ namespace rtl_ref_gvu
             if (in.i_gvu_op == GVU_OP_MAXPOOL)
             {
                 w.vlsu_in.i_pooling_valid = w.cmp_out.out_lane_valid;
-                w.vlsu_out = vlsu_.eval(w.vlsu_in);
+                w.vlsu_out = vlsu_.eval_pool(w.vlsu_in, true);
                 w.sp_in.i_vbank0_en = w.vlsu_out.o_vbank0_en;
                 w.sp_in.i_vbank0_wen = w.vlsu_out.o_vbank0_wen;
                 w.sp_in.i_vbank0_addr = w.vlsu_out.o_vbank0_addr;
@@ -978,7 +982,9 @@ namespace rtl_ref_gvu
                 w.sp_in.i_vbank2_addr_1 = (in.i_agu_nd_ctrl.dst_on && in.i_agu_nd_ctrl.dst_port == AguNdCtrl::VBANK2)
                     ? in.i_agu_dst.addr_at(w.vlsu_out.o_vbank2_addr_1, P_.sp_params.VBANK2_AW() + 2) : w.vlsu_out.o_vbank2_addr_1;   // AGU_ND destination
                 for (int b = 0; b < P_.NUM_LANE / 8; b++) w.sp_in.i_vbank2_wmask_1[static_cast<size_t>(b)] = static_cast<uint8_t>(w.vlsu_out.o_vbank2_wmask_1 >> (8 * b));
-                for (int l = 0; l < GVU_LANES; l++) w.sp_in.i_vbank2_wdata_1[static_cast<size_t>(l)] = static_cast<uint8_t>(w.cmp_out.out_res[l] & 0xFFu);
+                // revision 1 dense write (stride 2 / 4): the data moves up by the lanes of the mask shift (gvu_top.sv:1701 vbank2_wdata_1 << 8 * shift)
+                const int sh = static_cast<int>(vlsu_.pool_wmask_shift(w.vlsu_in, true));
+                for (int l = 0; l + sh < GVU_LANES; l++) w.sp_in.i_vbank2_wdata_1[static_cast<size_t>(l + sh)] = static_cast<uint8_t>(w.cmp_out.out_res[l] & 0xFFu);
             }
 
             // AVG_POOL: per lane 16-bit sum of the window (Adder#1 ADD_16), the lane's last element completes it; the write request of the VLSU

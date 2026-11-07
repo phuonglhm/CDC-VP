@@ -47,15 +47,15 @@ reference results were measured with the first five set to 0, and the commands t
 
 | Network and configuration | Command | Expected result |
 |---|---|---|
-| YOLOv8m, default (concat by 4-D DMA descriptors) | `python3 tools/fe/fe_emit_insts.py --plan pe3 --slice-concat dma_nd`, then `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3_nd` | PASS, 135 instructions + 2 host steps, 0 mismatches, 64,135,381 cycles |
+| YOLOv8m, default (concat by 4-D DMA descriptors) | `python3 tools/fe/fe_emit_insts.py --plan pe3 --slice-concat dma_nd`, then `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3_nd` | PASS, 135 instructions + 2 host steps, 0 mismatches, 63,902,513 cycles |
 | ViT-B/16, default vector-unit flow | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,244,621 cycles (LayerNorm cycles estimated) |
-| YOLOv8m, concat by aliasing, default build (no DMA instruction: the closest program to the hardware RTL) | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles (equal to depth 9) |
+| YOLOv8m, concat by aliasing, default build (no DMA instruction: the closest program to the hardware RTL) | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches; the whole network has not been measured at the epilogue depth 11 (62,422,935 cycles at depth 9, below) |
 | ViT-B/16 closest to the hardware RTL (attention requant and LayerNorm on the functional model) | `HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,608,570 cycles (`HW_RTL_ALIGNMENT.md`, section 10) |
-| ViT-B/16 with V token-major (transpose after the epilogue, proposal) | `python3 tools/fe/fe_vit_full.py --v-token-major --out <dir>` (needs the trained weights), then `HAS_OUT_TRANSPOSE=1 tools/has/tb_has_npu_top <dir>` | PASS, 244 instructions, 0 mismatches, 41,245,003 cycles |
+| ViT-B/16 with V token-major (transpose after the epilogue, proposal) | `python3 tools/fe/fe_vit_full.py --v-token-major --out <dir>` (needs the trained weights), then `tools/has/tb_has_npu_top <dir>` (`HAS_OUT_TRANSPOSE` is on by default) | PASS, 244 instructions, 0 mismatches, 41,245,003 cycles |
 | YOLOv8m, concat by aliasing, epilogue depth 9 (build with `EXTRA_CXXFLAGS=-DGVU_GEMM_STREAM_DEPTH=9`, as the rows below) | `tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles |
 | ViT-B/16, epilogue depth 9 | `tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,244,030 cycles |
-| YOLOv8m, previous default (four operation knobs at 0) | `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles |
-| ViT-B/16, previous default (four operation knobs at 0) | `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,582,468 cycles |
+| YOLOv8m, default of an earlier release (four operation knobs at 0, epilogue depth 9) | `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,422,935 cycles |
+| ViT-B/16, default of an earlier release (four operation knobs at 0, epilogue depth 9) | `HAS_GVU_AVG=0 HAS_GVU_SOFTMAX=0 HAS_GVU_FA=0 HAS_GVU_LN=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,582,468 cycles |
 | YOLOv8m, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 98 instructions + 2 host steps, 0 mismatches, 62,666,123 cycles (12.77 FPS at 0.8 GHz) |
 | ViT-B/16, hardware as drawn (reference) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 tools/has/tb_has_npu_top $FE_WORK/has/vit_full` | PASS, 244 instructions, 0 mismatches, 41,680,289 cycles (19.19 FPS) |
 | YOLOv8m, vector-unit configuration before the micro-architecture specification (run C) | `HAS_GVU_TOP=0 HAS_GVU_STALL=0 HAS_GVU_ELEM_CLK=0 HAS_GVU_REGS=0 HAS_GVU_AGU_ND=0 HAS_SPEC=v47ref tools/has/tb_has_npu_top $FE_WORK/has/insts_pe3` | PASS, 62,681,721 cycles (12.76 FPS) |
@@ -158,7 +158,7 @@ With `GvuTop` on (the default), the run prints `[gvu-stream]` lines at exit. The
 | `[gvu-stream] packets pushed ... differ from the model` | `differ` 0 |
 | `FIFO max depth ..., STALL NEEDED ...` and `core stall cycles` | `STALL NEEDED` 0 and core stall cycles 0 on both networks |
 | `register file (HAS_GVU_REGS=1): ... register writes, edges the DFC waited on the write port, layer exits by oc_last & oc_tile_last N (model stop as fallback 0, timeouts 0) ...` | fallback 0 and timeouts 0; the waited edges equal the write latency times the writes |
-| `F1' in the tap: ... calls with the flag not on the one last packet` | the last number 0 (the "calls whose oc_last packets != contexts" count is information only) |
+| `end-flag check in the tap: ... calls with the flag not on the one last packet` | the last number 0 (the "calls whose oc_last packets != contexts" count is information only) |
 | `residual add and max pool on the clock: jobs (failed ...) ...` and `[gvu-stream] residual add / max pool \| ... differ ...` | failed 0, `differ` 0 |
 
 The address generator (`HAS_GVU_AGU_ND=1`) has no line of its own. Its register writes (Reg 16 to 24, `SLICE_CONCAT_ON_GVU.md`)
@@ -171,6 +171,8 @@ results.
 |---|---|---|
 | Drop-in replacement of the previous native model | Point the wrapper's model root at the repository root; nothing else changes | `SW_INTEGRATION_GUIDE.md`, section 9 |
 | Run programs on the RTL-accurate core through the wrapper | Model root `core_rtl/` and a wrapper with the DRAM window (current revisions have it; older ones: `tools/has/wrapper/npu_tlm_rich_window.patch`); platform files of `INTEGRATOR_QUICK_START.md`, section 2.1 | `SW_INTEGRATION_GUIDE.md`, sections 10.1 to 10.4 |
+| Program one layer through the register file of the `neo_lite` DFC (on by default; `HAS_HOST=v45` switches it off) | Write the 82 words, `IEN`, `START`, then the doorbell `0x17` | `NEO_REGISTER_FILE.md` |
+| Check whether a compiled program runs on the hardware as written | `python3 tools/has/hw_check_program.py <program dir>`, or `HAS_PROFILE=neo HAS_HW_CHECK=1 tools/has/tb_has_npu_top <program dir>` | `COMPILER_GUIDE.md` |
 | First firmware run | `tools/has/wrapper/fw/` with the 14-instruction transformer check | `SW_INTEGRATION_GUIDE.md`, section 10.5 |
 | Evaluate a network through the wrapper: outputs, error checks, comparison per instruction, PE utilization | Follow the checklist; read the model's status register after every push | `SW_EVALUATION_GUIDE.md` |
 | Find out why a program of another compiler gives wrong results | Read the warning lines on stderr; record the run with `SAURIA_CORE_RTL_RECORD` and replay it | `SW_EVALUATION_GUIDE.md`, sections 4 and 7 |
