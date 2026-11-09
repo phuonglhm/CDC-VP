@@ -6,6 +6,7 @@
 //           [--uart0-rx-file FILE [--uart0-rx-delay-us N]]
 //           [--ddr-boot preinit|firmware] [--ddr3-ecc on|off]
 //           [--ddr3-fault T_US:KIND[:ARG] ...] [--camera [--camera-raw FILE]]
+//           [--dump-isp-demosaic DIR]
 //
 // Time resolution is 1 fs (the detailed D-PHY model of the camera needs it;
 // set for every run so that a run with and without --camera is timed alike).
@@ -15,18 +16,23 @@
 // and --ddr3-fault times count from that CPU release.
 //
 // Exit status: 0 PASS, 1 FAIL (firmware reported a code), 2 timeout (no verdict
-// within the simulated-time budget), 3 simulator or integration error, 4 usage.
+// within the simulated-time budget), 3 simulator or integration error, 4 usage
+// (also a --dump-isp-demosaic DIR that cannot be used), 5 PASS but the
+// VP-only ISP Demosaic capture failed (host I/O).
 
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <systemc>
 #include <tlm>
+
+#include <fx1_isp/fx1_isp_debug.h>
 
 #include "fx1_soc_build_info.h"
 #include "fx1_soc_top.h"
@@ -58,7 +64,7 @@ void usage()
                  "              [--uart0-rx-byte-us N]\n"
                  "              [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...]\n"
                  "              [--camera [--camera-raw FILE]] [--eth-peer loopback|partner|none]\n"
-                 "              [--eth-unguarded-dma] [--eth-wb-delay-us N]\n"
+                 "              [--eth-unguarded-dma] [--eth-wb-delay-us N] [--dump-isp-demosaic DIR]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
                  "  --uart0-wait        with --uart0-socket: wait for the client before starting\n"
@@ -98,6 +104,12 @@ void usage()
                  "  --eth-wb-delay-us  fault injection: every DES0 write-back of the Ethernet DMA\n"
                  "                is held N us (0..100000) after its completion is signalled, so\n"
                  "                firmware sees DONE with OWN still 1 (MAS 9.3; default 0: off)\n"
+                 "  --dump-isp-demosaic  VP-only host debug, not an ISP output: every ISP frame's\n"
+                 "                RGB at the Demosaic output, before CCM (RGB12 in LE16), into\n"
+                 "                DIR/frames/<key>.rgb16/.png/.json, one line per frame in\n"
+                 "                DIR/index.jsonl; only frames retired with every output DONE\n"
+                 "                are published. DIR must be new or empty. No CSR, IRQ, DMA or\n"
+                 "                timing change\n"
               << cdc::platforms::fx1_soc::ddr3_fault_usage();
 }
 
@@ -189,6 +201,7 @@ int sc_main(int argc, char* argv[])
     double timeout_ms = 1000.0;
     unsigned long quantum_ns = 1000;
     std::vector<dump_request> dumps, loads;
+    std::string demosaic_dir;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -297,6 +310,7 @@ int sc_main(int argc, char* argv[])
         else if (arg == "--no-exclusive-monitor") options.exclusive_monitor = false;
         else if (arg == "--camera") options.camera = true;
         else if (arg == "--camera-raw") options.camera_raw = value();
+        else if (arg == "--dump-isp-demosaic") demosaic_dir = value();
         else if (arg == "--eth-peer") {
             const std::string mode = value();
             if (mode != "loopback" && mode != "partner" && mode != "none") {
@@ -326,6 +340,18 @@ int sc_main(int argc, char* argv[])
     if (options.camera && !fx1_soc_top::camera_built()) {
         std::cerr << "fx1_soc: --camera: this build has no camera (configure with -DFX1_BUILD_MIPI_CSI2=ON)\n";
         return 4;
+    }
+
+    // VP-only ISP Demosaic capture: the directory is checked before the run.
+    std::unique_ptr<cdc::components::fx1_isp::demosaic_dump> demosaic;
+    if (!demosaic_dir.empty()) {
+        try {
+            demosaic = std::make_unique<cdc::components::fx1_isp::demosaic_dump>(demosaic_dir);
+        } catch (const std::exception& error) {
+            std::cerr << "fx1_soc: --dump-isp-demosaic: " << error.what() << '\n';
+            return 4;
+        }
+        options.isp_demosaic = demosaic.get();
     }
 
     try {
@@ -362,11 +388,22 @@ int sc_main(int argc, char* argv[])
         std::cout << "[fx1_soc] atomics: " << top.atomics_report() << '\n';
         std::cout << "[fx1_soc] ddr3: " << top.ddr3_report() << '\n';
         std::cout << "[fx1_soc] ethernet: " << top.eth_report() << '\n';
+        bool demosaic_ok = true;
+        if (demosaic) {
+            demosaic->finish();  // frames without an end: incomplete
+            unsigned completed = 0;
+            for (const auto& c : demosaic->captures()) completed += c.status == "frame_completed";
+            for (const auto& e : demosaic->errors()) std::cout << "[fx1_soc] isp demosaic: " << e << '\n';
+            demosaic_ok = demosaic->ok();
+            std::cout << "[fx1_soc] isp demosaic (VP debug tap, pre-CCM): " << demosaic->captures().size()
+                      << " frame(s), " << completed << " completed, index " << demosaic_dir << "/index.jsonl"
+                      << (demosaic_ok ? "" : ", CAPTURE ERROR") << '\n';
+        }
 
         switch (top.outcome()) {
         case fx1_soc_top::result::pass:
             std::cout << "[fx1_soc] RESULT PASS\n";
-            return 0;
+            return demosaic_ok ? 0 : 5;
         case fx1_soc_top::result::fail:
             std::cout << "[fx1_soc] RESULT FAIL code=0x" << std::hex << top.fail_code() << std::dec
                       << '\n';

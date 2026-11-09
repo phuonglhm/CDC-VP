@@ -92,6 +92,7 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh smoke
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp            # D65 ColorChecker sample
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp outdoor1   # second sample (internal use only)
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw"   # your own frame (see "Your own RAW frame")
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp d65 --dump-demosaic        # also the image after Demosaic (VP debug)
 
 # 4. Ethernet: scripted CLI session, and the bare-metal example on each line peer
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh eth-cli
@@ -283,14 +284,57 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   When preparing a new sample, use `run_isp_demo.py --prepare-only --frames 2`
   with this shared profile, and generate its standalone golden with `--frames 2`.
 - **Output:** 1920×1080 NV12.
-- **Files:** each sample's `SAMPLE.txt` records the RAW SHA-256, the profile
-  and the expected NV12 SHA-256.
+- **Files:** each sample's `SAMPLE.txt` records the RAW SHA-256, the profile,
+  the expected NV12 SHA-256 and the expected post-Demosaic capture SHA-256
+  (`expected_demosaic.sha256`; `expected_auto_demosaic.sha256` for `auto`).
 
 **After a run:**
 
 - **`DMA_ERR 0x2`** (`IDMA_UNDERRUN`) is expected: no next frame was queued.
 - **The preview** uses the same inverse transform as the ISP team's tool. It
   is a visual check; the pass/fail criterion is the SHA-256.
+
+### The image after Demosaic (VP debug, `--dump-demosaic`)
+
+```bash
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp d65 --dump-demosaic
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp outdoor1 --dump-demosaic
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp d65 auto --dump-demosaic
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw" --dump-demosaic
+```
+
+The option may come anywhere after `isp`. Besides the NV12, the run writes
+the ISP image at the Demosaic output, **before CCM** (BLC, LSC, BPC, WB, DG and
+Demosaic applied; CCM, Gamma, CSC, GTM, 2DNR, EE, CNF not), of the **same
+frame** as `platform.png`: the job's final frame (for `auto`, the last render
+frame, with the WB the firmware applied, not the probe). Files in
+`sw/bootloader/build/VP_FX1_V3.0/isp/<sample>/`:
+
+| File | Content |
+|---|---|
+| `demosaic.rgb16` | R, G, B interleaved, unsigned 16-bit little-endian per component, **12 significant bits [11:0]** (values 0..4095, not scaled to 16 bits), no header, no row padding: width × height × 6 bytes. For the 2688×1520 BGGR samples the active image is **2686×1518** (Bayer phase trim): 24 464 088 bytes |
+| `demosaic.png` | RGB8 preview, `v8 = v12 >> 4`: no WB, gamma, tone mapping or auto-level, so it looks darker than `platform.png` by design. Check values with `demosaic.rgb16`, not the PNG |
+| `demosaic.json` | stage, frame key (ordinal, epoch, sequence), ingress frame ID, profile ID, geometry, layout, SHA-256 of `demosaic.rgb16`, the frame's BLC/LSC/BPC/WB/DG settings |
+| `demosaic.d/` | every frame's capture (`frames/<key>.*`) and `index.jsonl` |
+
+- **This is a host debug utility of the VP, not an ISP output.** The ISP has
+  no such port: no CSR, DMA, interrupt or DDR buffer, nothing the firmware can
+  see or use; the option changes neither the NV12 nor the simulated timing.
+- **Check:** a sample's capture must equal the stand-alone ISP model's
+  capture of the same frame (`DEMOSAIC PASS`); your own RAW is not compared
+  (`DEMOSAIC DONE`). A capture is published only for a frame that retired
+  with every output DONE; if the job's final frame did not, the run fails
+  (an earlier frame is never shown instead). `summary.txt` lists the capture.
+  `python3 sw/bootloader/test/VP_FX1_V3.0/demosaic_validate.py <dir>/demosaic`
+  re-checks a capture (size, 12-bit range, SHA-256, PNG).
+- **Interactive** (`... interactive [port] --dump-demosaic`): every frame of
+  the session is kept in `demosaic.d/frames/` with its key; no frame is
+  selected (the firmware gives no job ID, so ordinal/epoch/sequence identify
+  the frames).
+- **Cost:** about 36 MB per frame on disk (RGB16 + uncompressed PNG) and some
+  host time; a host write error makes the run fail (`ISP FAIL ... Demosaic
+  capture failed`). `fx1_soc --dump-isp-demosaic DIR` is the underlying VP
+  option (DIR must be new or empty).
 
 ### Your own RAW frame
 

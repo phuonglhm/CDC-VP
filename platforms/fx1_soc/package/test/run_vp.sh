@@ -24,6 +24,9 @@ Usage:
   ./run_vp.sh isp [SAMPLE]             # RAW frame through `isp run`, NV12 + PNG, golden check
   ./run_vp.sh isp [SAMPLE] interactive [port]   # same job, console in this terminal: isp run, poweroff
   ./run_vp.sh isp list                 # the samples (default d65)
+  ./run_vp.sh isp ... --dump-demosaic  # also the ISP image after Demosaic, before CCM (VP debug tap,
+                                       # not an ISP output): demosaic.rgb16 (RGB12 in LE16), .png, .json
+                                       # of the job's final frame, checked against its golden
   ./run_vp.sh isp FILE.raw [auto] [interactive [port]]
                                        # your own frame, same format as the samples (2688x1520 BGGR,
                                        # RAW10 in bits [15:6] of LE uint16, 8171520 bytes); d65's job
@@ -246,6 +249,14 @@ case "${mode}" in
     isp)
         need_fw
         command -v python3 >/dev/null 2>&1 || die "python3 is needed to pack the NV12 (dnf install -y python3)"
+        # --dump-demosaic may come anywhere after "isp": taken out before the
+        # positional words (sample, RAW path with spaces, auto, interactive [port]).
+        dump_demosaic=0
+        rest=()
+        for word in "$@"; do
+            if [[ "${word}" == "--dump-demosaic" ]]; then dump_demosaic=1; else rest+=("${word}"); fi
+        done
+        set -- "${rest[@]+"${rest[@]}"}"
         sample="d65"
         if [[ $# -gt 0 && "$1" == "list" ]]; then
             for d in "${samples}"/*/; do
@@ -329,6 +340,8 @@ PY
             --load "${PROFILE_ADDR}:${profile_bin}"
             --dump "${RESULT_ADDR}:${RESULT_LEN}:${isp_out}/result.bin"
             --dump "${Y_ADDR}:${Y_LEN}:${isp_out}/y.bin" --dump "${UV_ADDR}:${UV_LEN}:${isp_out}/uv.bin")
+        demosaic_dir="${isp_out}/demosaic.d"
+        [[ ${dump_demosaic} -eq 0 ]] || io+=(--dump-isp-demosaic "${demosaic_dir}")
         case "${sub}" in
             smoke)
                 if [[ -n "${raw_file}" ]]; then
@@ -342,6 +355,7 @@ PY
                 rc=$?
                 set -e
                 grep -a -E "isp run|ISP_AUTO|AEC|AWB|AF |poweroff:|RESULT" "${isp_out}/platform.log" | tr -d '\r' || true
+                [[ ${rc} -ne 5 ]] || { echo "ISP FAIL: the run passed but the Demosaic capture failed (host I/O), see ${isp_out}/platform.log"; exit 1; }
                 [[ ${rc} -eq 0 ]] || { echo "ISP FAIL: the VP run failed, exit ${rc} (${isp_out}/platform.log)"; exit 1; }
                 ;;
             interactive)
@@ -374,6 +388,7 @@ PY
                 set -e
                 trap - EXIT
                 echo
+                [[ ${rc} -ne 5 ]] || { echo "ISP FAIL: the run passed but the Demosaic capture failed (host I/O), see ${isp_out}/platform.log"; exit 1; }
                 [[ ${rc} -eq 0 ]] || { echo "ISP FAIL: the VP run failed, exit ${rc} (${isp_out}/platform.log)"; exit 1; }
                 ;;
             *)
@@ -409,6 +424,43 @@ PY
             1) echo "ISP FAIL: NV12 differs from the expected output" ;;
             *) echo "ISP FAIL: the dumps were rejected" ;;
         esac
+        if [[ ${dump_demosaic} -eq 1 && "${sub}" == "interactive" ]]; then
+            # No job boundary is known here: every frame of the session, keyed
+            # by ordinal/epoch/sequence (the firmware gives no job ID).
+            echo "DEMOSAIC: per-frame captures of the session in ${demosaic_dir}/frames, index ${demosaic_dir}/index.jsonl"
+            echo "          (interactive: no frame is selected; post-Demosaic, pre-CCM VP debug tap, RGB12 in LE16)"
+        elif [[ ${dump_demosaic} -eq 1 && ${rc} -eq 0 ]]; then
+            # The job's final frame: the last of its frames, all completed; for
+            # auto the last render frame, with the WB the policy applied.
+            # -B: no __pycache__ in the shipped tree (SHA256SUMS lists every file)
+            frames="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import isp_pack; print(isp_pack.read_job(sys.argv[2])["frames"])' "${here}" "${isp_out}/job.bin")"
+            select_args=(--frames "${frames}" --out "${isp_out}/demosaic" --summary "${isp_out}/summary.txt")
+            dgolden_file="${isp_in}/expected_demosaic.sha256"
+            if [[ ${adaptive} -eq 1 ]]; then
+                dgolden_file="${isp_in}/expected_auto_demosaic.sha256"
+                wb="$(python3 -B -c 'import json, sys; c = json.load(open(sys.argv[1]))["csr"]; print("%d,%d,%d" % (c["WB_GAIN_R"], c["WB_GAIN_G"], c["WB_GAIN_B"]))' "${isp_out}/auto.json")"
+                select_args+=(--expect-wb "${wb}")
+            fi
+            [[ -z "${raw_file}" ]] || dgolden_file=""
+            if [[ -n "${dgolden_file}" ]]; then
+                [[ -f "${dgolden_file}" ]] || die "Demosaic golden missing: ${dgolden_file}"
+                dgolden="$(tr -d ' \r\n' < "${dgolden_file}")"
+                [[ "${dgolden}" =~ ^[0-9a-fA-F]{64}$ ]] || die "golden ${dgolden_file} is not a SHA-256 (64 hex digits)"
+                select_args+=(--expect-sha256 "${dgolden}")
+            fi
+            set +e
+            python3 -B "${here}/demosaic_select.py" "${demosaic_dir}" "${select_args[@]}"
+            drc=$?
+            set -e
+            if [[ ${drc} -ne 0 ]]; then
+                echo "DEMOSAIC FAIL: no valid capture of the job's final frame (see above, ${demosaic_dir}/index.jsonl)"
+                rc=1
+            elif [[ -n "${dgolden_file}" ]]; then
+                echo "DEMOSAIC PASS: ${isp_out}/demosaic.rgb16 equals the stand-alone ISP model's capture; preview ${isp_out}/demosaic.png"
+            else
+                echo "DEMOSAIC DONE: ${isp_out}/demosaic.rgb16 (no golden, not compared); preview ${isp_out}/demosaic.png"
+            fi
+        fi
         exit ${rc}
         ;;
     *)

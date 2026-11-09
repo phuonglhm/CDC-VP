@@ -184,6 +184,9 @@ cp "${fw}/freertos/tests/cli_eth.txt" "${fw}/freertos/tests/cli_eth_load.txt" "$
 cp "${src}/platforms/fx1_soc/tools/fx1_console.sh" "${test}/"
 cp "${src}/platforms/fx1_soc/demo/isp_pack.py" "${test}/"
 cp "${here}/test/isp_auto.py" "${here}/test/csrw_to_bin.sh" "${test}/"
+# VP-only post-Demosaic capture (run_vp.sh isp ... --dump-demosaic): selection
+# and validation, Python standard library only.
+cp "${isp}/tools/demosaic_select.py" "${isp}/tools/demosaic_validate.py" "${test}/"
 chmod +x "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/fx1_package.XXXXXX")"
@@ -235,10 +238,16 @@ for spec in "${samples[@]}"; do
     # Golden: the stand-alone ISP model, same input and profile (not the VP run).
     mkdir -p "${w}/ref"
     "${ref_tool}" --input "${w}/job/input.isp16" --width 2688 --height 1520 --profile "${profile}" --frames 2 \
-        --out "${w}/ref/frame" > "${w}/ref.log" 2>&1 && [[ -s "${w}/ref/frame.nv12" ]] \
-        || { cat "${w}/ref.log" >&2; die "sample ${name}: the reference ISP model produced no NV12"; }
+        --out "${w}/ref/frame" --dump-demosaic > "${w}/ref.log" 2>&1 && [[ -s "${w}/ref/frame.nv12" ]] \
+        && [[ -s "${w}/ref/frame.demosaic.rgb16" ]] \
+        || { cat "${w}/ref.log" >&2; die "sample ${name}: the reference ISP model produced no NV12 / Demosaic capture"; }
     golden="$(sha256sum "${w}/ref/frame.nv12" | cut -d' ' -f1)"
     echo "${golden}" > "${d}/expected_nv12.sha256"
+    # The VP-only post-Demosaic capture of the same (final) frame.
+    python3 "${isp}/tools/demosaic_validate.py" "${w}/ref/frame.demosaic" > /dev/null \
+        || die "sample ${name}: the reference Demosaic capture is not valid"
+    dgolden="$(sha256sum "${w}/ref/frame.demosaic.rgb16" | cut -d' ' -f1)"
+    echo "${dgolden}" > "${d}/expected_demosaic.sha256"
     printf '%s, shared profile %s\n' "$(basename "${raw}")" "${profile_id}" > "${d}/SAMPLE.txt"
     auto_json=""
     if [[ "${profile_id}" == "shared_bggr_2688x1520_full" ]]; then
@@ -249,13 +258,17 @@ for spec in "${samples[@]}"; do
             || { cat "${w}/auto.log" >&2; die "sample ${name}: auto firmware failed"; }
         "${ref_tool}" --input "${d}/input.isp16" --width 2688 --height 1520 \
             --profile "${fwout}/isp/${name}/resolved_profile.csrw" --frames 2 \
-            --out "${w}/ref/auto" > "${w}/auto_ref.log" 2>&1 \
+            --out "${w}/ref/auto" --dump-demosaic > "${w}/auto_ref.log" 2>&1 \
             || { cat "${w}/auto_ref.log" >&2; die "sample ${name}: auto reference failed"; }
         auto_golden="$(sha256sum "${w}/ref/auto.nv12" | cut -d' ' -f1)"
         [[ "$(sha256sum "${fwout}/isp/${name}/platform.nv12" | cut -d' ' -f1)" == "${auto_golden}" ]] \
             || die "sample ${name}: auto output differs from the stand-alone ISP"
         echo "${auto_golden}" > "${d}/expected_auto_nv12.sha256"
-        auto_json=", \"auto_policy\": \"neutral-v1\", \"auto_frames\": 3, \"expected_auto_nv12_sha256\": \"${auto_golden}\""
+        python3 "${isp}/tools/demosaic_validate.py" "${w}/ref/auto.demosaic" > /dev/null \
+            || die "sample ${name}: the auto reference Demosaic capture is not valid"
+        auto_dgolden="$(sha256sum "${w}/ref/auto.demosaic.rgb16" | cut -d' ' -f1)"
+        echo "${auto_dgolden}" > "${d}/expected_auto_demosaic.sha256"
+        auto_json=", \"auto_policy\": \"neutral-v1\", \"auto_frames\": 3, \"expected_auto_nv12_sha256\": \"${auto_golden}\", \"expected_auto_demosaic_sha256\": \"${auto_dgolden}\""
     fi
     raw_sha="$(sha256sum "${raw}" | cut -d' ' -f1)"
     {
@@ -271,12 +284,15 @@ for spec in "${samples[@]}"; do
         echo "frames            2 (first frame warms up GTM auto; output is the second frame)"
         echo "expected NV12     ${golden}"
         echo "                  from the stand-alone ISP model (fx1_isp_run_raw), same input and profile"
+        echo "expected Demosaic ${dgolden}"
+        echo "                  demosaic.rgb16 of run_vp.sh isp ... --dump-demosaic (VP debug tap, post-Demosaic,"
+        echo "                  pre-CCM, RGB12 in LE16, 2686x1518), same frame, same stand-alone model"
     } > "${d}/SAMPLE.txt"
     [[ ${first} -eq 1 ]] || echo "," >> "${sample_json}"
     first=0
-    printf '{"name": "%s", "raw": "%s", "raw_sha256": "%s", "profile_id": "%s", "profile": "%s", "profile_sha256": "%s", "profile_bin_sha256": "%s", "expected_nv12_sha256": "%s", "frames": 2, "internal_only": %s%s}\n' \
+    printf '{"name": "%s", "raw": "%s", "raw_sha256": "%s", "profile_id": "%s", "profile": "%s", "profile_sha256": "%s", "profile_bin_sha256": "%s", "expected_nv12_sha256": "%s", "expected_demosaic_sha256": "%s", "frames": 2, "internal_only": %s%s}\n' \
         "${name}" "$(basename "${raw}")" "${raw_sha}" "${profile_id}" "profiles/${profile_id}/profile.csrw" \
-        "${profile_sha}" "${profile_bin_sha}" "${golden}" \
+        "${profile_sha}" "${profile_bin_sha}" "${golden}" "${dgolden}" \
         "$([[ ${internal} -eq 1 ]] && echo true || echo false)" "${auto_json}" >> "${sample_json}"
 done
 echo "]" >> "${sample_json}"

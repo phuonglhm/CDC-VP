@@ -9,6 +9,10 @@
 
 #include "ddr3_subsystem.h"
 
+namespace cdc::components::fx1_isp {
+class demosaic_observer;  // fx1_isp/fx1_isp_debug.h
+}
+
 namespace cdc::platforms::fx1_soc {
 
 struct fx1_soc_options {
@@ -58,6 +62,9 @@ struct fx1_soc_options {
     // Fault injection (Ethernet review F08/ER02): each DES0 write-back of the
     // MAC is held this long after its DONE; 0: off.
     unsigned eth_wb_delay_us = 0;
+    // VP-only host debug (--dump-isp-demosaic): observer of the ISP's
+    // post-Demosaic image, owned by the caller; null: off. Not an ISP output.
+    cdc::components::fx1_isp::demosaic_observer* isp_demosaic = nullptr;
 };
 
 // FX1 SoC for FW/SW bring-up: two VP++ RV32IMAFC harts, FX1 bus, BootROM,

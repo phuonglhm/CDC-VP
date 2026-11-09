@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Minimal SHA-256 (FIPS 180-4) for comparing large outputs against committed
-// checksums (4K vectors) without committing the data itself.
+// Minimal SHA-256 (FIPS 180-4): checksums of large outputs (4K vectors,
+// fx1_isp_run_raw, the post-Demosaic debug capture).
 #pragma once
 
 #include <algorithm>
@@ -10,7 +10,7 @@
 #include <cstdio>
 #include <string>
 
-namespace fx1_test {
+namespace cdc::components::fx1_isp::debug {
 
 class sha256 {
 public:
@@ -104,4 +104,4 @@ private:
    std::uint64_t total_ = 0;
 };
 
-}  // namespace fx1_test
+}  // namespace cdc::components::fx1_isp::debug

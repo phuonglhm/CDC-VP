@@ -23,6 +23,7 @@
 #include "control/control_unit.h"
 #include "dma/dma_rules.h"
 #include "pipeline/isp_pipeline.h"
+#include "fx1_isp/fx1_isp_debug.h"
 #include "fx1_isp/fx1_isp_tlm.h"
 
 namespace cdc::components::fx1_isp {
@@ -64,6 +65,9 @@ struct engine_context {
    std::uint64_t hard_reset_gen = 0;
    sc_core::sc_event retired;      // a frame retired: admission may resume
    std::vector<line_fifo *> fifos;  // cleared on every reset
+   // VP-only post-Demosaic observer (fx1_isp_debug.h), null when off. It is
+   // told how each frame of `consumers` ends; it has no effect on the model.
+   demosaic_observer *demosaic = nullptr;
 
    std::uint64_t cycle() const {
       return static_cast<std::uint64_t>(sc_core::sc_time_stamp() / params.core_period);
@@ -215,8 +219,12 @@ private:
    // abort marker on every incomplete plane; the others are done with it.
    void abort_downstream(std::uint64_t f, std::uint64_t my_epoch);
    sc_core::sc_time line_time(std::uint32_t width) const;
+   // VP-only: reports the frame to ctx_.demosaic and points the RGB tap at it.
+   void observe_frame(const pipe::pipeline_config &cfg, const line &l, std::uint64_t f, std::uint32_t ingress,
+                      std::uint32_t profile);
 
    pipe::isp_pipeline pipeline_;
+   std::vector<std::uint16_t> dms_row_;  // interleaved R, G, B of one tapped row
 
    engine_context &ctx_;
    line_fifo &in_;

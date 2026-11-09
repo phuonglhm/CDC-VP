@@ -6,7 +6,7 @@
 //   fx1_isp_run_raw (--input F.isp16 | --input-list LIST | --synthetic) --width W --height H
 //                   --profile p.csrw --out prefix [--frames N] [--queue Q] [--per-frame]
 //                   [--stats-script expected_stats.txt] [--stats-per-frame] [--check-stats]
-//                   [--expect-sha256 HEX] [--profile-mode]
+//                   [--expect-sha256 HEX] [--profile-mode] [--dump-demosaic]
 //
 // Inputs: --input is an ISP-contract container file (tools/raw_fixture.py
 // convert); --input-list names one such file per line, all of the same
@@ -39,6 +39,16 @@
 //                          done and its statistics are published (queue 1:
 //                          the next frame is submitted only after the reads)
 //   <prefix>.events.log    time-stamped interrupt and frame events
+//   with --dump-demosaic (VP-only debug tap, not an ISP output; decisions §12):
+//   <prefix>.demosaic.d/   every frame's post-Demosaic, pre-CCM capture
+//                          (frames/<key>.rgb16/.png/.json, index.jsonl); must be
+//                          new or empty, it is never cleaned
+//   <prefix>.demosaic.rgb16/.png/.json  the capture of the frame in <prefix>.nv12
+//   <prefix>.fNNN.demosaic.*            with --per-frame: frame NNN's capture
+//   The k-th completed NV12 is matched to the k-th completed capture and
+//   their ingress frame IDs (TUNE_CH0_BUFn_FRAME) must agree. The run waits
+//   for the last frame to retire (up to 1 s simulated, the budget of a
+//   frame's DONE) after every other output is written.
 // --check-stats fails the run if a read differs from the script's value;
 // --expect-sha256 fails it if the last frame's NV12 SHA-256 differs.
 //
@@ -47,7 +57,9 @@
 // (DMA_ERR bit 1, level-held; HAS §6.25.8.3, CSR-06). That is the specified
 // behaviour of a stream that has run out of input, not an error of the frame.
 // Any other DMA_ERR bit is a real failure. Exit status: 0 if every frame
-// completed in order, the checks pass and no bit other than IDMA_UNDERRUN is set.
+// completed in order, the checks pass and no bit other than IDMA_UNDERRUN is set;
+// 5 if so but the debug capture failed (host I/O, a missing or mismatched
+// capture); 2 for usage errors, also a --dump-demosaic directory in use.
 
 #include <cstdint>
 #include <cstdio>
@@ -55,6 +67,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -64,13 +77,15 @@
 #include <tlm_utils/simple_initiator_socket.h>
 
 #include "fx1_isp/fx1_isp_csr.h"
+#include "fx1_isp/fx1_isp_debug.h"
 #include "fx1_isp/fx1_isp_tlm.h"
 #include "registers/csr_desc.h"
-#include "sha256.h"
+#include "debug/sha256.h"
 #include "test_memory.h"
 #include "vector_io.h"
 
 using namespace sc_core;
+using cdc::components::fx1_isp::demosaic_dump;
 using cdc::components::fx1_isp::fx1_isp_params;
 using cdc::components::fx1_isp::fx1_isp_tlm;
 namespace csr = cdc::components::fx1_isp::csr;
@@ -92,6 +107,7 @@ struct options {
    std::string profile, out, stats_script, expect_sha256;
    std::uint32_t width = 0, height = 0, frames = 0, queue = 1;
    bool synthetic = false, check_stats = false, per_frame = false, stats_per_frame = false, profile_mode = false;
+   bool dump_demosaic = false;
 };
 
 // Deterministic test pattern, bit-identical to tools/gen_4k_vectors.py
@@ -133,6 +149,7 @@ struct runner : sc_module {
    sc_in<bool> irq;
    fx1_isp_tlm *dut = nullptr;
    fx1_test::test_memory *mem = nullptr;
+   demosaic_dump *dump = nullptr;  // --dump-demosaic
    options opt;
    int status = 1;
    std::vector<std::string> events;
@@ -286,6 +303,71 @@ struct runner : sc_module {
       return !(opt.check_stats && stats_mismatches);
    }
 
+   // --dump-demosaic, after everything else: the last frame retires, then
+   // the k-th completed capture becomes the capture of the k-th NV12.
+   std::vector<std::uint32_t> frame_ids;  // ingress frame ID of each completed NV12
+   bool select_demosaic(std::uint32_t completed) {
+      // A channel crop can finish long before the shared pipeline has the
+      // rest of the frame (e.g. the first rows of a 4K input): the same
+      // budget as for a frame's DONE, not a fixed short wait.
+      const sc_time limit = sc_time_stamp() + sc_time(1, SC_SEC);
+      while ((dut->debug_peek(FX1_ISP_COMMON_STATUS_OFFSET) & FX1_ISP_COMMON_STATUS_BUSY_MASK) &&
+             sc_time_stamp() < limit) {
+         wait(20, SC_US);
+      }
+      if (dut->debug_peek(FX1_ISP_COMMON_STATUS_OFFSET) & FX1_ISP_COMMON_STATUS_BUSY_MASK) {
+         std::cout << "  demosaic capture: the last frame did not retire within 1 s simulated\n";
+      }
+      dump->finish();
+      std::vector<const demosaic_dump::capture *> done;
+      unsigned other = 0;
+      for (const demosaic_dump::capture &c : dump->captures()) {
+         if (c.status == "frame_completed") {
+            done.push_back(&c);
+         } else {
+            ++other;
+         }
+      }
+      bool ok = dump->ok();
+      for (const std::string &e : dump->errors()) {
+         std::cout << "  " << e << "\n";
+      }
+      if (done.size() != completed) {
+         std::cout << "  demosaic capture: " << done.size() << " completed capture(s) for " << completed
+                   << " NV12 frame(s)\n";
+         ok = false;
+      }
+      for (std::size_t k = 0; ok && k < done.size(); ++k) {
+         if (done[k]->info.frame_id != frame_ids[k]) {
+            std::cout << "  demosaic capture " << done[k]->ordinal << ": frame ID " << done[k]->info.frame_id
+                      << ", NV12 frame " << k << " has " << frame_ids[k] << "\n";
+            ok = false;
+         }
+      }
+      try {
+         for (std::size_t k = 0; ok && opt.per_frame && k < done.size(); ++k) {
+            char suffix[24];
+            std::snprintf(suffix, sizeof suffix, ".f%03u.demosaic", static_cast<unsigned>(k));
+            demosaic_dump::copy_capture(done[k]->base, opt.out + suffix);
+         }
+         if (ok && !done.empty()) {
+            demosaic_dump::copy_capture(done.back()->base, opt.out + ".demosaic");
+         }
+      } catch (const std::exception &e) {
+         std::cout << "  " << e.what() << "\n";
+         ok = false;
+      }
+      if (ok && !done.empty()) {
+         const demosaic_dump::capture &c = *done.back();
+         std::cout << "  demosaic " << opt.out << ".demosaic.rgb16: " << c.info.width << "x" << c.info.height
+                   << " RGB12 in LE16 (post-Demosaic, pre-CCM; VP debug tap), frame ID " << c.info.frame_id
+                   << ", sha256 " << c.sha256 << "\n";
+      }
+      std::cout << "  demosaic capture " << (ok ? "OK" : "FAILED") << ": " << done.size() << " completed, " << other
+                << " not completed (" << opt.out << ".demosaic.d/index.jsonl)\n";
+      return ok;
+   }
+
    // Loads the input of frame k into input buffer `slot`.
    bool load(std::uint32_t k, unsigned slot, std::uint32_t in_stride) {
       std::vector<char> raw;
@@ -317,7 +399,7 @@ struct runner : sc_module {
 
    // Reads out the NV12 of output buffer `slot`; returns its SHA-256.
    std::string read_out(unsigned slot, std::uint32_t ow, std::uint32_t oh, std::uint32_t stride, const std::string &file) {
-      fx1_test::sha256 sha;
+      cdc::components::fx1_isp::debug::sha256 sha;
       std::ofstream f;
       if (!file.empty()) {
          f.open(file, std::ios::binary);
@@ -420,6 +502,9 @@ struct runner : sc_module {
          char suffix[16];
          std::snprintf(suffix, sizeof suffix, ".f%03u.nv12", completed);
          shas.push_back(read_out(slot, ow, oh, out_stride, opt.per_frame ? opt.out + suffix : std::string()));
+         if (dump) {  // backdoor: no read side effect
+            frame_ids.push_back(dut->debug_peek(FX1_ISP_TUNE_CH0_BUF0_FRAME_OFFSET + 4u * slot));
+         }
          // A driver's interrupt handler: read and acknowledge both groups, recycle the buffer.
          const std::uint32_t common = read32(FX1_ISP_COMMON_IRQ_STATUS_OFFSET);
          const std::uint32_t dma = read32(FX1_ISP_DMA_IRQ_STAT_OFFSET);
@@ -492,6 +577,9 @@ struct runner : sc_module {
          std::cout << "  statistics: " << stats_mismatches << " mismatching read(s)\n";
       }
       status = done && stats_ok && sha_ok && !(err & ~underrun) ? 0 : 1;
+      if (dump && !select_demosaic(completed) && status == 0) {
+         status = 5;
+      }
       sc_stop();
    }
 };
@@ -501,11 +589,12 @@ bool parse(int argc, char **argv, options &o) {
    for (int i = 1; i < argc; i += 2) {
       const std::string k = argv[i];
       if (k == "--synthetic" || k == "--check-stats" || k == "--per-frame" || k == "--stats-per-frame" ||
-          k == "--profile-mode") {
+          k == "--profile-mode" || k == "--dump-demosaic") {
          (k == "--synthetic"         ? o.synthetic
           : k == "--check-stats"     ? o.check_stats
           : k == "--stats-per-frame" ? o.stats_per_frame
           : k == "--profile-mode"    ? o.profile_mode
+          : k == "--dump-demosaic"   ? o.dump_demosaic
                                      : o.per_frame) = true;  // flags without a value
          --i;
          continue;
@@ -553,13 +642,25 @@ int sc_main(int argc, char *argv[]) {
       std::cerr << "usage: fx1_isp_run_raw (--input F.isp16 | --input-list LIST | --synthetic) --width W --height H\n"
                    "                      --profile P.csrw --out PREFIX [--frames N] [--queue 1-4] [--per-frame]\n"
                    "                      [--stats-script EXPECTED_STATS] [--stats-per-frame (queue 1)] [--check-stats]\n"
-                   "                      [--expect-sha256 HEX]\n";
+                   "                      [--expect-sha256 HEX] [--profile-mode] [--dump-demosaic]\n"
+                   "  --dump-demosaic: VP-only post-Demosaic, pre-CCM capture (RGB12 in LE16, not an ISP output)\n"
+                   "                   into PREFIX.demosaic.d/ (new or empty) and PREFIX.demosaic.rgb16/.png/.json\n";
       return 2;
    }
    sc_signal<bool> rst_n("rst_n");
    sc_signal<bool> irq("irq");
    fx1_isp_tlm dut("isp", fx1_isp_params{});
    fx1_test::test_memory mem("mem", mem_base, mem_size);
+   std::unique_ptr<demosaic_dump> dump;
+   if (opt.dump_demosaic) {
+      try {
+         dump = std::make_unique<demosaic_dump>(opt.out + ".demosaic.d");
+      } catch (const std::runtime_error &e) {
+         std::cerr << "fx1_isp_run_raw: " << e.what() << "\n";
+         return 2;
+      }
+      dut.debug_set_demosaic_observer(dump.get());
+   }
    runner r("runner");
    r.opt = opt;
    r.socket.bind(dut.csr_socket);
@@ -571,6 +672,7 @@ int sc_main(int argc, char *argv[]) {
    r.irq(irq);
    r.dut = &dut;
    r.mem = &mem;
+   r.dump = dump.get();
    sc_start();
    return r.status;
 }

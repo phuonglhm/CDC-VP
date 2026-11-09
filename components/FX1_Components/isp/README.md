@@ -97,6 +97,34 @@ not complete or another `DMA_ERR` bit is set. The NV12 is the project's own
 reading of the HAS, with a test profile from `make_profile.py`. It is not
 camera-tuned output and has no owner golden (DEC-05, DEC-10).
 
+### Post-Demosaic debug capture (VP only)
+
+`--dump-demosaic` adds the image at the Demosaic output, **before CCM**
+(BLC, LSC, BPC, WB, DG, Demosaic applied), of the same frames. It is a debug
+tap of the VP, not an ISP output, and changes no other output or timing
+(docs/ISP_DECISIONS_AND_DISCREPANCIES.md §12):
+
+```bash
+build/fx1_isp_run_raw --input f.isp16 --width 2688 --height 1520 \
+                      --profile f.csrw --out out/f --dump-demosaic [--per-frame]
+#   out/f.demosaic.rgb16  R, G, B interleaved, LE16 per component, 12 bits [11:0],
+#                         no header or padding: width x height x 6 bytes
+#                         (2686 x 1518 for a BGGR 2688 x 1520 frame)
+#   out/f.demosaic.png    RGB8 preview, v8 = v12 >> 4 (no WB/gamma/tone: darker
+#                         than the NV12 by design)
+#   out/f.demosaic.json   stage, frame key, geometry, layout, SHA-256, SOF snapshot
+#   out/f.demosaic.d/     every frame's capture and index.jsonl (new or empty
+#                         directory, never cleaned by the tool)
+#   --per-frame           also out/f.fNNN.demosaic.* next to out/f.fNNN.nv12
+python3 tools/demosaic_validate.py out/f.demosaic                # stdlib only
+python3 tools/demosaic_check.py --capture-dir out/f.demosaic.d --input f.isp16 \
+        --width 2688 --height 1520 --profile f.csrw --frames N  # vs the reference
+```
+
+`out/f.demosaic.*` is the capture of the frame in `out/f.nv12` (matched by
+ingress frame ID). Exit status 5: the frames completed but the capture failed
+(host I/O, missing capture); 2: the capture directory is in use.
+
 ### Real-RAW regression
 
 ```bash
@@ -127,10 +155,10 @@ cmake --install build --prefix /path/to/prefix
 
 | Part | Installed (`cmake --install`) | Needs the source checkout |
 |---|---|---|
-| Integration | libraries `fx1_isp_core`, `fx1_isp_tlm`, `fx1_isp_drv`; headers `fx1_isp_tlm.h`, `fx1_isp_csr.h`, `fx1_isp_drv.h`; CMake package | — |
+| Integration | libraries `fx1_isp_core`, `fx1_isp_tlm`, `fx1_isp_drv`; headers `fx1_isp_tlm.h`, `fx1_isp_debug.h` (VP-only post-Demosaic tap), `fx1_isp_csr.h`, `fx1_isp_drv.h`; CMake package | — |
 | Documents | `share/doc/fx1_isp`: guide, interface, contract, decisions, requirements, traceability, M4 report, manifest, schema | — |
 | Evidence | `share/doc/fx1_isp/evidence`: regression baseline (SHA-256 of 308 frames), CTest summary, mutation summary, environment | full re-run of every CTest test |
-| Tools | `bin/fx1_isp_run_raw`; `share/fx1_isp/tools`: `run_regression.py`, `raw_fixture.py`, `make_profile.py`, `nv12_preview.py`, with the Python reference and the schema | vector generators, CSR generator, traceability generator |
+| Tools | `bin/fx1_isp_run_raw`; `share/fx1_isp/tools`: `run_regression.py`, `raw_fixture.py`, `make_profile.py`, `nv12_preview.py`, `demosaic_validate.py`, `demosaic_check.py`, with the Python reference and the schema | vector generators, CSR generator, traceability generator |
 | Samples | `share/fx1_isp/samples`: the four test profiles, the 4K cases, `run_4k_check.sh` | — |
 | Tests and vectors | — | `tests/`, `tests/data/` (13 MB) |
 
@@ -147,6 +175,7 @@ Inside CDC-VP, `add_subdirectory` works as well (the parent provides
 
 ```text
 include/fx1_isp/fx1_isp_tlm.h     public SystemC module and parameters
+include/fx1_isp/fx1_isp_debug.h   VP-only post-Demosaic observer and capture writer (not a hardware output)
 include/fx1_isp/fx1_isp_csr.h     generated C register header (FW/SW)
 driver/                           C99 reference driver (fx1_isp_drv.h / .c)
 cmake/                            package configuration template
@@ -155,11 +184,13 @@ src/control/                      reset, soft reset, IRQ/error aggregation, LUT 
 src/dma/                          burst formation and start checks (no SystemC)
 src/engine/                       IDMA, pipeline, ODMA threads and line FIFOs
 src/pipeline/                     row-streaming image pipeline and statistics taps (no SystemC)
+src/debug/                        post-Demosaic capture writer, SHA-256 (no SystemC)
 reference/fx1_isp_ref/            independent numpy reference (pipeline, statistics)
 tools/gen_vectors.py, gen_block_vectors.py, gen_4k_vectors.py, gen_sequence.py
                                   vector generators (--check to verify)
 tools/run_regression.py           real-RAW regression (plan §10 artefacts)
 tools/run_raw.cpp, raw_fixture.py, make_profile.py, nv12_preview.py   real-RAW demo tools
+tools/demosaic_validate.py, demosaic_check.py                         post-Demosaic capture checks
 src/fx1_isp_tlm.cpp               TLM adapter, reset and IRQ processes
 tools/gen_csr.py                  CSR generator (pinned SHA-256, overrides with IDs)
 tools/check_csr_header.py         independent header cross-check

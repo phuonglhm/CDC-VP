@@ -780,3 +780,67 @@ by this override. No clock-accurate timing is claimed for LUT calculation.
 Evidence: `test_pipeline_vectors` staged-GTM ordering/history/abort checks;
 existing numerical/reference and recovery suites; workspace report
 `report/ISP_GTM_STAGED_EXECUTION_2026-11-02.md`.
+
+## 12. VP-only post-Demosaic debug tap (user request, 2026-11-04)
+
+Plan `ISP_POST_DEMOSAIC_OUTPUT_PLAN_2026-11-04` (workspace). A host debug
+extension of the VP, **not** an output of the CSR/MAS/HAS documents: no
+CSR, DMA, IRQ, DDR buffer or firmware change, CH0/CH1/CH2 untouched.
+
+- DMS-D1 Tap point: start of the pipeline's RGB row stage, before
+  `ccm_pixel` (both the streaming and the `finish()` flush rows of the
+  Demosaic). Data: BLC, LSC, BPC, WB, DG and Demosaic applied; CCM, Gamma,
+  CSC, GTM, 2DNR, EE, CNF not. Geometry: the active image after the Input
+  Formatter phase trim (`derive_active`), not the input or any channel's
+  output; e.g. the 2688x1520 BGGR samples give 2686x1518 (24 464 088 bytes
+  of RGB16). Read only (const row); the row is valid during the call.
+- DMS-D2 Frame key: (`epoch`, `sequence`) from the engines (`epoch` counts
+  soft and hard resets, `sequence` the pipeline's accepted SOFs since
+  construction, never reset) and the writer's capture ordinal; the ingress
+  frame ID (statistics FRAME_ID source, TUNE_CHn_BUFm_FRAME), profile ID and
+  IDMA tag/TS are recorded, never assumed equal to one another.
+- DMS-D3 Publication: a capture is `frame_completed` only when the frame
+  retires with every enabled output DONE (FRAME_DONE). Reset and recovery
+  end it `frame_reset`; with v1.07 IDMA/ODMA AXI errors always take the
+  automatic recovery (§9.9.8), so a frame whose rows all passed the tap but
+  whose ODMA failed is `frame_reset`. A retirement that is not complete is
+  `frame_failed` (from the TLM boundary only a pipeline that drops a frame
+  itself). Nothing but completed frames leaves files; temporary `.part`
+  files are removed.
+- DMS-D4 Effect: off by default; enabling it changes no pixel, register,
+  interrupt, ownership, recovery or simulated time (no `wait()`, no modelled
+  latency). Host I/O errors are recorded by the writer (`capture_error`,
+  `ok()`), never as a model status. The datapath stub refuses the observer.
+- DMS-D5 Formats: `.rgb16` = R, G, B interleaved, unsigned LE16 per
+  component, 12 significant bits [11:0] (not scaled to 16 bits), no header,
+  no row padding. `.png` = RGB8 preview `v8 = v12 >> 4`, no WB, gamma, tone
+  or auto-level (darker than the final image by design). `.json` = metadata
+  with the SHA-256 of `.rgb16`; it names no file (`<base>.*` siblings), so a
+  copy stays valid. `frame.outputs` is the OUTPUT_ENABLE mask of the SOF
+  (CH0..CH2 on: 7), not the number of consumers (review DMS-1 R1).
+- DMS-D6 Directory and selection (review DMS-1 R2/R3): a writer refuses a
+  directory that is not new or empty (one run per directory; it never
+  deletes user files). Selecting a frame (`copy_capture`) stages the three
+  files, withdraws the old JSON, moves the data and the JSON last: an I/O
+  error leaves the old set unchanged or no JSON, never a `frame_completed`
+  JSON next to data it does not describe.
+
+- DMS-D7 Standalone and reference (DMS-2): `fx1_isp_run_raw --dump-demosaic`
+  writes every frame into `PREFIX.demosaic.d/` (new or empty) and, once the
+  last frame has retired after every other output, copies the capture of the
+  NV12 in `PREFIX.nv12` to `PREFIX.demosaic.*` (with `--per-frame` also
+  `PREFIX.fNNN.demosaic.*`); the k-th completed NV12 and the k-th completed
+  capture must have one ingress frame ID (`TUNE_CH0_BUFn_FRAME`, backdoor
+  read). A run whose frames completed but whose capture failed exits 5. The
+  Python reference keeps its own tap (`stats["_tap_demosaic"]`, internal key:
+  not in any serialized vector); `tools/demosaic_check.py` compares each
+  component, `tools/demosaic_validate.py` (standard library only) checks a
+  capture's files on their own.
+
+Evidence: `test_demosaic_tlm` (pipeline position, flat-field hand vector for
+four patterns and an odd size, lifecycle incl. crops, output masks, resets,
+DMA errors, writer files and errors, directory reuse, set replacement), `test_dma_tlm` (stub refusal),
+`tools.demosaic_capture` (run_raw vs the reference on 14 vectors, frame
+selection over different inputs, off/on identity, validator negatives),
+`tools.demosaic_reference_self_test` (reference flat field); workspace reports
+`report/ISP_POST_DEMOSAIC_DMS_<N>_2026-11-04.md`.

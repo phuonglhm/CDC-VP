@@ -64,7 +64,8 @@ set_target_properties(fx1_isp_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ---- TLM model --------------------------------------------------------------
 add_library(fx1_isp_tlm STATIC
     src/fx1_isp_tlm.cpp
-    src/engine/engines.cpp)
+    src/engine/engines.cpp
+    src/debug/demosaic_dump.cpp)
 add_library(cdc::components::fx1_isp_tlm ALIAS fx1_isp_tlm)
 target_include_directories(fx1_isp_tlm
     PUBLIC
@@ -108,7 +109,7 @@ if(FX1_ISP_INSTALL)
         set_target_properties(fx1_isp_run_raw PROPERTIES INSTALL_RPATH "${_fx1_isp_sc_dir}")
     endif()
     install(TARGETS fx1_isp_run_raw RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(FILES include/fx1_isp/fx1_isp_tlm.h include/fx1_isp/fx1_isp_csr.h
+    install(FILES include/fx1_isp/fx1_isp_tlm.h include/fx1_isp/fx1_isp_debug.h include/fx1_isp/fx1_isp_csr.h
                   driver/include/fx1_isp/fx1_isp_drv.h
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/fx1_isp)
     install(FILES README.md docs/ISP_PROGRAMMING_GUIDE.md docs/ISP_MODEL_INTERFACE.md docs/ISP_CSR_CONTRACT.md
@@ -121,6 +122,7 @@ if(FX1_ISP_INSTALL)
     # the Python reference, sample profiles, and the 4K bit-exact check.
     set(_fx1_isp_share ${CMAKE_INSTALL_DATADIR}/fx1_isp)
     install(PROGRAMS tools/run_regression.py tools/raw_fixture.py tools/make_profile.py tools/nv12_preview.py
+                     tools/demosaic_validate.py tools/demosaic_check.py
             DESTINATION ${_fx1_isp_share}/tools)
     install(DIRECTORY reference/fx1_isp_ref DESTINATION ${_fx1_isp_share}/reference FILES_MATCHING PATTERN "*.py")
     install(FILES docs/csr/fx1_isp_csr_schema.json DESTINATION ${_fx1_isp_share}/docs/csr)

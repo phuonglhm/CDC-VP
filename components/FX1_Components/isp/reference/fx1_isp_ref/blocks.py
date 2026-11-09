@@ -619,7 +619,8 @@ def run(raw, regs, stats=None):
     p = dg(p, regs)
     stats["_tap_aec_dg"] = p                            # AEC DG source (TUNE_AEC_SOURCE = 1)
     rgb = demosaic(p, regs.ext("TUNE_DEMOSAIC_MARGIN", "GREEN"), regs.ext("TUNE_DEMOSAIC_MARGIN", "RB"))
-    rgb = ccm(rgb, regs)
+    stats["_tap_demosaic"] = rgb                        # VP-only debug tap: post-Demosaic, pre-CCM (decisions §12);
+    rgb = ccm(rgb, regs)                                # ccm returns a new array, the tap is not modified
     rgb = gamma(rgb, regs)
     yuv = csc(rgb, regs)
     stats["_tap_af"] = yuv[..., 0]

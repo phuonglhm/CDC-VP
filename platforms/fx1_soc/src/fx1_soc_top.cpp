@@ -307,6 +307,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         isp.odma_socket.bind(isp_odma_guard.target); // IDMA only reads
         isp_odma_guard.out.bind(fabric.initiator("ISP_ODMA"));
         isp.rst_n(isp_rst_n);
+        if (opts.isp_demosaic) isp.debug_set_demosaic_observer(opts.isp_demosaic);
         fabric.target("I2C0").bind(i2c_guard.target);
         i2c_guard.out.bind(i2c0.socket);
         fabric.target("ETH_CSR").bind(eth_csr_guard.target);

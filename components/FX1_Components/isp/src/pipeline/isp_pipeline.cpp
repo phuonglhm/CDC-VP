@@ -1543,6 +1543,8 @@ struct isp_pipeline::impl {
    demosaic_stage dms;
    std::array<channel_path, num_channels> paths;
    isp_pipeline::yuv_tap tap;
+   isp_pipeline::rgb_tap rgb_tap;
+   std::uint32_t y_rgb = 0;  // Demosaic output rows of the frame
    aec_stage aec;
    awb_stage awb;
    af_stage af;
@@ -1630,6 +1632,10 @@ struct isp_pipeline::impl {
       }
    }
    void rgb_row(row<rgb> &&r) {
+      if (rgb_tap) {
+         rgb_tap(y_rgb, r);  // before CCM
+      }
+      ++y_rgb;
       yuv_row o(r.size());
       for (std::size_t x = 0; x < r.size(); ++x) {
          rgb p = ccm_pixel(cfg, r[x]);
@@ -1688,6 +1694,10 @@ frame_geometry isp_pipeline::output(unsigned ch) const {
    return {c.out.width, c.out.height};
 }
 
+frame_geometry isp_pipeline::active() const { return {impl_->active.width, impl_->active.height}; }
+
+void isp_pipeline::set_rgb_tap(rgb_tap tap) { impl_->rgb_tap = std::move(tap); }
+
 frame_geometry isp_pipeline::begin(const pipeline_config &cfg, std::uint32_t in_width, std::uint32_t in_height,
                                    const std::array<channel_sinks, num_channels> &sinks, warning_sink warn,
                                    yuv_tap tap) {
@@ -1707,7 +1717,7 @@ frame_geometry isp_pipeline::begin(const pipeline_config &cfg, std::uint32_t in_
    }
    m.tap = std::move(tap);
    m.sinks = sinks;
-   m.y_in = m.y_bayer = m.y_post_bpc = 0;
+   m.y_in = m.y_bayer = m.y_post_bpc = m.y_rgb = 0;
    m.y_out = {};
    m.stats = frame_stats{};
    if (warn) {

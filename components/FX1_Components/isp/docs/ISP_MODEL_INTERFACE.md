@@ -154,7 +154,8 @@ another `DMA_ERR` bit is set (M3-A9).
 
 The `debug_*` methods let a testbench drive the hardware side of registers
 before the engines exist. They are **not** part of the FW-visible interface,
-and a platform must not depend on them.
+and a platform must not depend on them, except for the VP-only observation
+tap of §4.1.
 
 | Method | Purpose |
 |---|---|
@@ -167,6 +168,44 @@ and a platform must not depend on them.
 | `debug_pending_commands()` | Commands not consumed by a block model (0 in the integrated IP since M3) |
 | `debug_idma_head()`, `debug_odma_head()` | Current rotation positions (not software visible) |
 | `debug_set_frame_counter(v)` | Sets the statistics frame counter (FRAME_ID source) for wrap tests (M4-A1) |
+| `debug_set_demosaic_observer(o)` | VP-only post-Demosaic tap (§4.1); the one debug method a platform may use, as a host option |
+
+### 4.1 VP-only post-Demosaic tap
+
+`fx1_isp/fx1_isp_debug.h` observes the 12-bit RGB image at the Demosaic
+output, **before CCM**, of the frames the model processes. It is a host
+debug utility of the VP, not an ISP output: no CSR, DMA, IRQ or DDR buffer,
+nothing the firmware sees, and no claim of the CSR/MAS documents. Decisions
+and limits: ISP_DECISIONS_AND_DISCREPANCIES.md §12.
+
+- Set the observer before `sc_start()` (`std::logic_error` afterwards, and
+  with `test_datapath_stub`, which has no Demosaic). Null (default) is off:
+  no buffer, file or copy.
+- Calls, from the model's processes, never waiting: `frame_begin(info)` at
+  the accepted SOF (frame key `epoch` / `sequence`, ingress `frame_id`,
+  `profile_id`, input tag/TS, input and active geometry, the pre-tap SOF
+  configuration; `outputs` is the OUTPUT_ENABLE mask), `row(sequence, y, rgb)` once per active row in order (R, G,
+  B per pixel, 12 bits; valid during the call), `pipeline_done(sequence)`,
+  and exactly one `frame_end(sequence, how)`.
+- `how`: `completed` when the frame retires with every enabled output DONE
+  (the COMMON_STATUS.FRAME_DONE condition; neither the end of the pipeline
+  nor one channel's DONE is enough), `reset` when a soft/hard reset or a DMA
+  recovery discards it (IDMA and ODMA AXI errors start a recovery, MAS v1.07
+  §9.9.8: such frames end `reset`, even after every row has passed the tap),
+  `failed` when it retires otherwise (the pipeline dropped it).
+- `demosaic_dump` is the writer used by `fx1_isp_run_raw` and `fx1_soc`:
+  `<base>.rgb16` (R, G, B interleaved, LE16 per component, bits [11:0], no
+  header or padding; W x H x 6 bytes), `<base>.png` (RGB8, `v8 = v12 >> 4`,
+  no WB/gamma/tone/auto-level; stored deflate) and `<base>.json` (stage,
+  frame key, geometry, layout, SHA-256 of the data, SOF snapshot). Files
+  stream row by row into `.part` files and are renamed only for a completed
+  frame; every frame end is a line of `<dir>/index.jsonl`. A host I/O error
+  drops that frame (`capture_error`) and never reaches the model. One run per
+  directory: `<dir>` must be new or empty (frame keys restart with the
+  model, so files of an earlier run could otherwise sit under a new key).
+  `copy_capture` replaces a destination set as a whole, the JSON being the
+  set's commit marker: after an I/O error the destination is the old set or
+  has no JSON.
 
 ## 5. Internal structure
 

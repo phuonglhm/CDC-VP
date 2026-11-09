@@ -58,10 +58,10 @@ required=(
     "${sdk}/third_party/FreeRTOS-Kernel/portable/GCC/RISC-V/portASM.S"
     "${build}/freertos_cli.elf" "${build}/freertos_cli.dis" "${build}/freertos_cli.map"
     "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/isp_auto.py" "${test}/cli_smoke.txt" "${test}/isp_run.txt"
-    "${test}/csrw_to_bin.sh"
+    "${test}/csrw_to_bin.sh" "${test}/demosaic_select.py" "${test}/demosaic_validate.py"
 )
 for s in "${test}"/isp/*/; do
-    for f in SAMPLE.txt job.env job.bin input.isp16 expected_nv12.sha256; do
+    for f in SAMPLE.txt job.env job.bin input.isp16 expected_nv12.sha256 expected_demosaic.sha256; do
         required+=("${s}${f}")
     done
     profile_id="$(sed -n 's/^PROFILE_ID=\([a-z0-9_][a-z0-9_]*\)$/\1/p' "${s}job.env" 2>/dev/null)"
@@ -153,10 +153,19 @@ for s in m["isp_samples"]:
     d = os.path.join(root, "sw/bootloader/test/VP_FX1_V3.0/isp", s["name"])
     if open(os.path.join(d, "expected_nv12.sha256")).read().strip() != s["expected_nv12_sha256"]:
         errors.append("sample %s: expected_nv12.sha256 differs from the manifest" % s["name"])
+    # VP-only post-Demosaic capture goldens (run_vp.sh isp ... --dump-demosaic)
+    p = os.path.join(d, "expected_demosaic.sha256")
+    if not re.fullmatch(r"[0-9a-f]{64}", s.get("expected_demosaic_sha256", "")) or not os.path.isfile(p) \
+            or open(p).read().strip() != s["expected_demosaic_sha256"]:
+        errors.append("sample %s: expected_demosaic.sha256 missing or differs from the manifest" % s["name"])
     if "expected_auto_nv12_sha256" in s:
         p = os.path.join(d, "expected_auto_nv12.sha256")
         if not os.path.isfile(p) or open(p).read().strip() != s["expected_auto_nv12_sha256"]:
             errors.append("sample %s: adaptive golden differs from the manifest" % s["name"])
+        p = os.path.join(d, "expected_auto_demosaic.sha256")
+        if not re.fullmatch(r"[0-9a-f]{64}", s.get("expected_auto_demosaic_sha256", "")) or not os.path.isfile(p) \
+                or open(p).read().strip() != s["expected_auto_demosaic_sha256"]:
+            errors.append("sample %s: adaptive Demosaic golden missing or differs from the manifest" % s["name"])
         if s.get("auto_policy") != "neutral-v1" or s.get("auto_frames") != max(2,s.get("frames",1))+1:
             errors.append("sample %s: adaptive policy/frames differs from the contract" % s["name"])
     env = open(os.path.join(d, "job.env")).read()

@@ -24,6 +24,8 @@
 
 namespace cdc::components::fx1_isp {
 
+class demosaic_observer;  // fx1_isp/fx1_isp_debug.h
+
 struct fx1_isp_params {
    // Core clock period (i_clk). HAS Table 6-8: ASIC nominal 500 MHz.
    sc_core::sc_time core_period{2, sc_core::SC_NS};
@@ -76,6 +78,11 @@ public:
    // Sets the statistics frame counter (FRAME_ID source, not software visible)
    // so a fixture can test its 32-bit wrap without 2^32 frames.
    void debug_set_frame_counter(std::uint32_t value);
+   // VP-only post-Demosaic tap (fx1_isp/fx1_isp_debug.h); null: off (default).
+   // Set before the simulation starts; the observer must outlive it. Throws
+   // std::logic_error after start of simulation, or with test_datapath_stub
+   // (the stub has no Demosaic: no capture is made rather than a fake one).
+   void debug_set_demosaic_observer(demosaic_observer *observer);
 
 private:
    void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);

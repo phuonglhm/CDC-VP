@@ -436,6 +436,9 @@ if(CDC_BUILD_TESTS)
         set_tests_properties(fx1_demo_isp_raw PROPERTIES TIMEOUT 600 LABELS "fx1_demo"
             PASS_REGULAR_EXPRESSION "result +MATCH")
     endif()
+    # fx1_soc --dump-isp-demosaic refuses a directory in use before the run (exit 4).
+    fx1_expect_test(isp_demosaic_dir_refused IMAGE hello_2hart RC 4
+        ARGS --dump-isp-demosaic ${CMAKE_CURRENT_SOURCE_DIR} REGEX "is not empty")
     # G6: UART RX from the host (--uart0-rx-file), polled and interrupt-driven.
     fx1_firmware(uart_rx SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/uart_rx/main.c)
     foreach(quantum 1000 10000)
@@ -734,6 +737,16 @@ if(CDC_BUILD_TESTS)
                  COMMAND ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/tests/test_pack.py)
         set_tests_properties(fx1_regression_isp_demo_pack PROPERTIES
             TIMEOUT 120 LABELS "fx1;fx1_regression")
+        # VP-only post-Demosaic capture (fx1_soc --dump-isp-demosaic): the ISP
+        # demo on the repository's D65 frame, two frames; the final frame's
+        # capture and NV12 must equal the stand-alone model's (exit 1 otherwise).
+        add_test(NAME fx1_regression_isp_demosaic
+                 COMMAND ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/run_isp_demo.py
+                         --raw ${CMAKE_SOURCE_DIR}/components/isp_tlm/input/D65_raw_2688x1520_5376.raw
+                         --profile ${_isp}/samples/profiles/shared_bggr_2688x1520_full.csrw --frames 2
+                         --build-dir ${CMAKE_BINARY_DIR} --out ${CMAKE_CURRENT_BINARY_DIR}/isp_demosaic --dump-demosaic)
+        set_tests_properties(fx1_regression_isp_demosaic PROPERTIES
+            TIMEOUT 600 LABELS "fx1;fx1_regression" FAIL_REGULAR_EXPRESSION "MISMATCH|FAILED")
     endif()
     # Throughput probe under both quanta (plan C11); slower, so fx1_regression.
     fx1_firmware(perf_loop SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/perf_loop/main.c)

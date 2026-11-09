@@ -2,6 +2,7 @@
 #include "fx1_isp/fx1_isp_tlm.h"
 
 #include <cmath>
+#include <stdexcept>
 
 #include "control/control_unit.h"
 #include "engine/engines.h"
@@ -272,6 +273,16 @@ void fx1_isp_tlm::debug_set_frame_counter(std::uint32_t value) { impl_->control.
 void fx1_isp_tlm::debug_hw_set(std::uint32_t offset, std::uint32_t mask) {
    impl_->control.hw_set(offset, mask, cycle_at());
    state_changed(sc_core::SC_ZERO_TIME);
+}
+
+void fx1_isp_tlm::debug_set_demosaic_observer(demosaic_observer *observer) {
+   if (sc_core::sc_start_of_simulation_invoked()) {
+      throw std::logic_error("fx1_isp: the Demosaic observer must be set before the simulation starts");
+   }
+   if (observer && params_.test_datapath_stub) {
+      throw std::logic_error("fx1_isp: test_datapath_stub has no Demosaic; no capture is possible");
+   }
+   impl_->ctx.demosaic = observer;
 }
 
 void fx1_isp_tlm::debug_hw_hold(std::uint32_t offset, std::uint32_t mask, bool level) {

@@ -11,6 +11,10 @@
 #      golden SHA must FAIL and an empty golden be refused (the check is not a
 #      rubber stamp); `isp FILE.raw` with d65's frame under an unquoted path
 #      with spaces gives d65's golden, and a RAW of the wrong size is refused;
+#      the VP-only post-Demosaic capture (--dump-demosaic, flag anywhere):
+#      every sample and d65 auto equal their capture goldens, a wrong capture
+#      golden FAILs, an empty one is refused, a user RAW is not compared, and
+#      a host write error (file size limit) makes the run FAIL;
 #   5. the firmware rebuilt from the shipped sources with the shipped Makefile
 #      must equal the packaged ELF byte for byte, and pass smoke again; the
 #      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
@@ -19,7 +23,8 @@
 #   6. a copy without build/ (what a clone of the SDK repository holds) must
 #      pass `sha256sum -c SHA256SUMS`;
 #   7. the one-terminal `run_vp.sh isp d65 interactive` flow through a
-#      pseudo-terminal (when `script` and socat or nc exist).
+#      pseudo-terminal (when `script` and socat or nc exist), also with
+#      --dump-demosaic (per-frame captures only).
 #
 #   platforms/fx1_soc/package/run_packaging_regression.sh
 #   env: FX1_DEMO_RAW=<outdoor1 RAW> adds the internal sample, JOBS=N (default 1),
@@ -130,6 +135,61 @@ run "${test}/run_vp.sh" isp "${tmp}/elsewhere/short.raw" > "${tmp}/isp_short_raw
 rc=$?
 [[ ${rc} -eq 2 ]] && grep -q "expected 8171520" "${tmp}/isp_short_raw.log" \
     && pass "isp FILE.raw of the wrong size is refused (exit 2)" || bad "short RAW gave exit ${rc}"
+# VP-only post-Demosaic capture: the job's final frame against the capture
+# golden of the stand-alone model; NV12 golden unchanged by the option.
+for d in "${test}"/isp/*/; do
+    s="$(basename "${d}")"
+    o="${pkg}/sw/bootloader/build/${version}/isp/${s}"
+    if run "${test}/run_vp.sh" isp "${s}" --dump-demosaic > "${tmp}/dms_${s}.log" 2>&1 \
+            && grep -q "ISP PASS" "${tmp}/dms_${s}.log" && grep -q "DEMOSAIC PASS" "${tmp}/dms_${s}.log" \
+            && [[ "$(sha256sum "${o}/demosaic.rgb16" | cut -d' ' -f1)" == "$(cat "${d}expected_demosaic.sha256")" ]] \
+            && run python3 "${test}/demosaic_validate.py" "${o}/demosaic" > /dev/null \
+            && grep -q "VP debug tap: post-Demosaic, pre-CCM" "${o}/summary.txt"; then
+        pass "isp ${s} --dump-demosaic: capture = golden $(cut -c1-12 "${d}expected_demosaic.sha256")..., NV12 golden kept"
+    else
+        tail -n 15 "${tmp}/dms_${s}.log"
+        bad "isp ${s} --dump-demosaic"
+    fi
+done
+o="${pkg}/sw/bootloader/build/${version}/isp/d65"
+if run "${test}/run_vp.sh" isp --dump-demosaic d65 auto > "${tmp}/dms_auto.log" 2>&1 \
+        && grep -q "ISP PASS" "${tmp}/dms_auto.log" && grep -q "DEMOSAIC PASS" "${tmp}/dms_auto.log" \
+        && [[ "$(sha256sum "${o}/demosaic.rgb16" | cut -d' ' -f1)" == "$(cat "${test}/isp/d65/expected_auto_demosaic.sha256")" ]] \
+        && grep -q "frame 3 of the job's 3" "${o}/summary.txt"; then
+    pass "isp --dump-demosaic d65 auto: the last render frame (3 of 3, policy WB) = auto capture golden"
+else
+    tail -n 15 "${tmp}/dms_auto.log"
+    bad "isp d65 auto --dump-demosaic"
+fi
+cp -a "${test}/isp/d65" "${test}/isp/tampered"
+echo 0000000000000000000000000000000000000000000000000000000000000000 > "${test}/isp/tampered/expected_demosaic.sha256"
+run "${test}/run_vp.sh" isp tampered --dump-demosaic > "${tmp}/dms_tampered.log" 2>&1
+rc=$?
+[[ ${rc} -eq 1 ]] && grep -q "ISP PASS" "${tmp}/dms_tampered.log" && grep -q "DEMOSAIC FAIL" "${tmp}/dms_tampered.log" \
+    && pass "wrong capture golden is reported (exit 1, NV12 still PASS)" || bad "wrong capture golden gave exit ${rc}"
+: > "${test}/isp/tampered/expected_demosaic.sha256"
+run "${test}/run_vp.sh" isp tampered --dump-demosaic > "${tmp}/dms_empty_golden.log" 2>&1
+rc=$?
+[[ ${rc} -eq 2 ]] && grep -q "is not a SHA-256" "${tmp}/dms_empty_golden.log" \
+    && pass "empty capture golden is refused (exit 2)" || bad "empty capture golden gave exit ${rc}"
+rm -rf "${test}/isp/tampered" "${pkg}/sw/bootloader/build/${version}/isp/tampered"
+run "${test}/run_vp.sh" isp "${tmp}/elsewhere/my" "raw/d65" "frame.raw" --dump-demosaic > "${tmp}/dms_user_raw.log" 2>&1
+rc=$?
+user_dms="${pkg}/sw/bootloader/build/${version}/isp/raw_d65_frame/demosaic.rgb16"
+[[ ${rc} -eq 0 ]] && grep -q "DEMOSAIC DONE" "${tmp}/dms_user_raw.log" && [[ -s "${user_dms}" ]] \
+    && [[ "$(sha256sum "${user_dms}" | cut -d' ' -f1)" == "$(cat "${test}/isp/d65/expected_demosaic.sha256")" ]] \
+    && pass "isp FILE.raw --dump-demosaic: d65's frame gives d65's capture, not compared" \
+    || { tail -n 15 "${tmp}/dms_user_raw.log"; bad "isp FILE.raw --dump-demosaic gave exit ${rc}"; }
+# A host write error during the capture (8 MiB file size limit, SIGXFSZ
+# ignored: the 23 MiB RGB16 cannot be written, the 4 MiB NV12 dumps can).
+(trap '' XFSZ; ulimit -f 8192; run "${test}/run_vp.sh" isp d65 --dump-demosaic) > "${tmp}/dms_io.log" 2>&1
+rc=$?
+[[ ${rc} -eq 1 ]] && grep -q "Demosaic capture failed (host I/O)" "${tmp}/dms_io.log" \
+    && pass "a host write error of the capture makes the run FAIL (fx1_soc exit 5)" \
+    || { tail -n 15 "${tmp}/dms_io.log"; bad "capture write error gave exit ${rc}"; }
+# The launcher's Python helpers write no bytecode into the shipped tree.
+pyc="$(find "${pkg}/vp" "${pkg}/sw" -name __pycache__ ! -path "*/sw/bootloader/build/*" | head -n 3)"
+[[ -z "${pyc}" ]] && pass "no __pycache__ in the shipped tree after the ISP runs" || bad "__pycache__ in the package: ${pyc}"
 rm -rf "${tmp}/elsewhere/my raw" "${tmp}/elsewhere/short.raw" "${pkg}/sw/bootloader/build/${version}/isp/raw_"*
 
 step "4b. csrw_to_bin.sh rebuilds every shipped profile.bin from its profile.csrw"
@@ -223,6 +283,18 @@ if command -v script > /dev/null && { command -v socat > /dev/null || command -v
     rc=$?
     tr -d '\r' < "${tmp}/interactive.ts" | grep -q "ISP PASS" && [[ ${rc} -eq 0 ]] \
         && pass "isp d65 interactive: isp run, poweroff, ISP PASS" || bad "interactive flow (exit ${rc}, ${tmp}/interactive.ts)"
+    pgrep -f "[f]x1_soc .*--uart0-socket ${port}" > /dev/null && bad "a VP is still running on port ${port}"
+    port=$((20000 + RANDOM % 20000))
+    (sleep 4; printf 'isp run\r'; sleep 12; printf 'poweroff\r'; sleep 30) \
+        | timeout 120 script -q -e -c "env -i PATH=/usr/bin:/bin HOME=${tmp}/elsewhere ${test}/run_vp.sh isp d65 interactive ${port} --dump-demosaic" \
+            "${tmp}/interactive_dms.ts" > /dev/null 2>&1
+    rc=$?
+    idx="${pkg}/sw/bootloader/build/${version}/isp/d65/demosaic.d/index.jsonl"
+    tr -d '\r' < "${tmp}/interactive_dms.ts" | grep -q "DEMOSAIC: per-frame captures" && [[ ${rc} -eq 0 ]] \
+        && [[ "$(grep -c '"frame_completed"' "${idx}" 2>/dev/null)" -ge 2 ]] \
+        && [[ ! -e "${pkg}/sw/bootloader/build/${version}/isp/d65/demosaic.rgb16" ]] \
+        && pass "isp d65 interactive --dump-demosaic: per-frame captures, none selected" \
+        || bad "interactive --dump-demosaic flow (exit ${rc}, ${tmp}/interactive_dms.ts)"
     pgrep -f "[f]x1_soc .*--uart0-socket ${port}" > /dev/null && bad "a VP is still running on port ${port}"
 else
     bad "need script(1) and socat or nc for the interactive check"

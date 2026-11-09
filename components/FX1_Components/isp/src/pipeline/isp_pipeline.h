@@ -196,6 +196,10 @@ public:
    // The post-IQ YUV444 row of the active image, before the channel crops
    // (tests: input of run_channel for CH1/CH2 until V107-8 streams them).
    using yuv_tap = std::function<void(const std::vector<yuv> &)>;
+   // VP-only debug tap (not a hardware output): row `y` of the active image
+   // at the Demosaic output, before CCM, 12-bit RGB. Read only; the row is
+   // valid during the call.
+   using rgb_tap = std::function<void(std::uint32_t y, const std::vector<rgb> &)>;
    // The sinks of one output channel: NV12 luma / chroma rows (CH0, CH1) or
    // packed R, G, B rows in `y` (CH2). A channel without a `y` sink is off.
    struct channel_sinks {
@@ -217,6 +221,10 @@ public:
                         yuv_tap tap = nullptr);
    // Output geometry of channel `ch` for the frame begun.
    frame_geometry output(unsigned ch) const;
+   // Active image of the frame begun (after the Input Formatter phase trim).
+   frame_geometry active() const;
+   // Kept across frames; null (default) is off.
+   void set_rgb_tap(rgb_tap tap);
    // One input line of in_width 16-bit containers.
    void push(const std::uint16_t *samples);
    // After the last input line: flushes upstream borders, generates the

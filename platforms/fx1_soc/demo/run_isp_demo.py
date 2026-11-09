@@ -37,6 +37,7 @@ reference, 1 mismatch, 2 a step failed, 3 usage error.
 import argparse
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -175,6 +176,10 @@ def main():
     ap.add_argument("--job-env", metavar="FILE",
                     help="with --prepare-only: also write the --load/--dump addresses and lengths as shell "
                          "variables to FILE (the SDK's run_vp.sh reads them)")
+    ap.add_argument("--dump-demosaic", action="store_true",
+                    help="also the ISP image after Demosaic, before CCM (VP-only debug tap, not an ISP output): "
+                         "--out/demosaic.rgb16/.png/.json of the final frame, every frame in --out/demosaic.d, "
+                         "compared with the stand-alone model's capture")
     ap.add_argument("--pack-only", action="store_true",
                     help="only pack, preview and compare the result.bin, y.bin and uv.bin already dumped into "
                          "--out by the --prepare-only command")
@@ -189,6 +194,8 @@ def main():
         fail("--job-env needs --prepare-only", 3)
     if not a.pack_only and not a.raw:
         fail("--raw is required (except with --pack-only)", 3)
+    if a.dump_demosaic and (a.prepare_only or a.pack_only):
+        fail("--dump-demosaic needs a platform run (not --prepare-only / --pack-only)", 3)
 
     sim = os.path.join(a.build_dir, "platforms", "fx1_soc", "fx1_soc")
     elf = os.path.join(a.build_dir, "fw", "fx1_soc", "freertos_cli.elf" if a.prepare_only or a.interactive else "isp_demo.elf")
@@ -204,6 +211,13 @@ def main():
     for name in ("platform.nv12", "platform.png", "summary.txt"):  # a failed run leaves none of an earlier one
         if os.path.isfile(out(name)):
             os.remove(out(name))
+    # This tool's own capture outputs in --out (the capture directories must be new).
+    for name in ("demosaic.rgb16", "demosaic.png", "demosaic.json", "reference/frame.demosaic.rgb16",
+                 "reference/frame.demosaic.png", "reference/frame.demosaic.json"):
+        if os.path.isfile(out(name)):
+            os.remove(out(name))
+    for name in ("demosaic.d", "reference/frame.demosaic.d"):
+        shutil.rmtree(out(name), ignore_errors=True)
     for path, what in needed + [(a.profile, "profile")]:
         if not os.path.exists(path):
             fail("%s not found: %s (%s)" % (what, path, "run --prepare-only and the VP first" if a.pack_only
@@ -309,6 +323,8 @@ def main():
               "--dump", "0x%x:%d:%s" % (uv_addr, uv_len, out("uv.bin"))]
         for ad, ln, n in extra_dumps:
             io += ["--dump", "0x%x:%d:%s" % (ad, ln, out(n))]
+        if a.dump_demosaic:
+            io += ["--dump-isp-demosaic", out("demosaic.d")]
         if a.interactive:
             run_interactive([sim, "--fw", elf, "--uart0-socket", str(a.port), "--uart0-wait", "--timeout-ms", "0",
                              "--realtime"] + io, a.port, out("platform.log"))
@@ -348,12 +364,29 @@ def main():
             fail("reference tool not found: " + ref_tool)
         os.makedirs(out("reference"), exist_ok=True)
         rr = run([ref_tool, "--input", out("input.isp16"), "--width", str(a.width), "--height", str(a.height),
-                  "--profile", a.profile, "--frames", str(a.frames), "--out", out("reference/frame")],
+                  "--profile", a.profile, "--frames", str(a.frames), "--out", out("reference/frame")] +
+                 (["--dump-demosaic"] if a.dump_demosaic else []),
                  out("reference.log"))
         if rr.returncode or not os.path.exists(out("reference/frame.nv12")):
             fail("reference run failed, see " + out("reference.log"))
         ref_sha = sha256(out("reference/frame.nv12"))
         verdict = "MATCH" if ref_sha == platform_sha else "MISMATCH"
+
+    # 6. VP-only post-Demosaic capture: the final frame's, against the stand-alone model's
+    demosaic_lines, demosaic_verdict = [], None
+    if a.dump_demosaic and a.interactive:
+        demosaic_lines = ["demosaic       per-frame captures in %s (interactive: no frame selected)" % out("demosaic.d")]
+    elif a.dump_demosaic:
+        sel = [sys.executable, os.path.join(ISP, "tools", "demosaic_select.py"), out("demosaic.d"),
+               "--frames", str(a.frames), "--out", out("demosaic")]
+        if ref_sha:
+            sel += ["--expect-sha256", sha256(out("reference/frame.demosaic.rgb16"))]
+        r = subprocess.run(sel, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        demosaic_lines = [l for l in r.stdout.splitlines() if not l.startswith("demosaic_select: ")] + \
+            ["               " + l for l in r.stdout.splitlines() if l.startswith("demosaic_select: ")]
+        demosaic_verdict = "MATCH" if r.returncode == 0 and ref_sha else "FAILED" if r.returncode else "not compared"
+        demosaic_lines.append("demosaic result %s (against the stand-alone model's capture of the same frame)"
+                              % demosaic_verdict)
 
     lines = [
         "RAW            %s (%dx%d %s, %s)" % (a.raw or out("input.isp16"), a.width, a.height, a.bayer, a.format),
@@ -370,11 +403,11 @@ def main():
     ] + channel_lines + [
         "result         %s (CH0 against the stand-alone model's legacy run)" % verdict,
         "preview        %s" % out("platform.png"),
-    ]
+    ] + demosaic_lines
     with open(out("summary.txt"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
-    sys.exit(1 if verdict == "MISMATCH" else 0)
+    sys.exit(1 if verdict == "MISMATCH" or demosaic_verdict == "FAILED" else 0)
 
 
 if __name__ == "__main__":

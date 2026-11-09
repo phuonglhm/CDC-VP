@@ -12,6 +12,7 @@
 #include <tlm_utils/simple_target_socket.h>
 
 #include "fx1_isp/fx1_isp_csr.h"
+#include "fx1_isp/fx1_isp_debug.h"
 #include "fx1_isp/fx1_isp_drv.h"
 #include "fx1_isp/fx1_isp_tlm.h"
 
@@ -78,6 +79,12 @@ int sc_main(int, char *[]) {
    isp.rst_n(rst_n);
    isp.irq(irq);
    c.rst_n(rst_n);
+   // The installed VP-only debug header and its symbols (decisions §12).
+   isp.debug_set_demosaic_observer(nullptr);
+   if (std::strcmp(cdc::components::fx1_isp::to_string(cdc::components::fx1_isp::demosaic_frame_end::completed),
+                   "frame_completed") != 0) {
+      return 1;
+   }
    sc_start();
    return c.result;
 }

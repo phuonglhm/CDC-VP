@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,7 @@
 
 #include "fx1_check.h"
 #include "fx1_isp/fx1_isp_csr.h"
+#include "fx1_isp/fx1_isp_debug.h"
 #include "fx1_isp/fx1_isp_tlm.h"
 #include "test_memory.h"
 
@@ -1790,6 +1792,22 @@ int sc_main(int, char *[]) {
    tb_slow.irq(irq_slow);
    tb_slow.dut = &dut_slow;
    tb_slow.mem = &mem_slow;
+
+   // The datapath stub has no Demosaic: the VP-only tap refuses it rather
+   // than produce a fake capture (decisions §12).
+   struct null_observer : cdc::components::fx1_isp::demosaic_observer {
+      void frame_begin(const cdc::components::fx1_isp::demosaic_frame_info &) override {}
+      void row(std::uint64_t, std::uint32_t, const std::uint16_t *) override {}
+      void pipeline_done(std::uint64_t) override {}
+      void frame_end(std::uint64_t, cdc::components::fx1_isp::demosaic_frame_end) override {}
+   } observer;
+   bool refused = false;
+   try {
+      dut.debug_set_demosaic_observer(&observer);
+   } catch (const std::logic_error &) {
+      refused = true;
+   }
+   FX1_CHECK(refused);
 
    sc_start();
    FX1_CHECK(tb.finished);

@@ -118,6 +118,9 @@ void engine_context::consumer_done(std::uint64_t f, bool ok) {
       const bool completed = it->second.ok;
       consumers.erase(it);
       retire_frame(completed);
+      if (demosaic) {
+         demosaic->frame_end(f, completed ? demosaic_frame_end::completed : demosaic_frame_end::failed);
+      }
    }
 }
 
@@ -144,6 +147,11 @@ static_assert(FX1_ISP_CH1_ODMA_Y_ADDR_L1_OFFSET - FX1_ISP_CH1_ODMA_Y_ADDR_L0_OFF
               "buffer address registers are 16 bytes apart in every channel");
 
 void engine_context::reset_engines() {
+   if (demosaic) {
+      for (const auto &c : consumers) {
+         demosaic->frame_end(c.first, demosaic_frame_end::reset);
+      }
+   }
    ++epoch;
    idma_head = 0;
    odma_head = {};
@@ -484,6 +492,9 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
       }
    }
    ctx_.frame_begin(f, outputs);
+   if (ctx_.demosaic) {
+      observe_frame(cfg, l, f, ingress, profile);
+   }
    auto warn = [](const std::string &msg) { SC_REPORT_WARNING("fx1_isp/pipeline", msg.c_str()); };
    try {
       pipeline_.begin(cfg, l.width, l.height, sinks, warn);
@@ -506,6 +517,9 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
          pipeline_.push(l.samples.data());
       }
       pipeline_.finish();
+      if (ctx_.demosaic) {
+         ctx_.demosaic->pipeline_done(f);
+      }
       ctx_.ctl.advance_to(ctx_.cycle());  // publication edge (MAS §6.22.4.3)
       pipe::end_of_frame(ctx_.ctl, cfg, pipeline_.stats());
       ctx_.ctl.blocks_busy(false);  // the last row has left the pipeline
@@ -522,6 +536,51 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
       }
       abort_downstream(f, e);
    }
+}
+
+void pipeline_engine::observe_frame(const pipe::pipeline_config &cfg, const line &l, std::uint64_t f,
+                                    std::uint32_t ingress, std::uint32_t profile) {
+   const geometry a = control_unit::derive_active(l.width, l.height, cfg.bayer_pattern);  // as the pipeline
+   demosaic_frame_info i;
+   i.epoch = ctx_.epoch;
+   i.sequence = f;
+   i.frame_id = ingress;
+   i.profile_id = profile;
+   i.input_tag = l.tag;
+   i.input_ts = l.ts;
+   i.sof_time_ns = sc_core::sc_time_stamp().to_seconds() * 1e9;
+   i.input_width = l.width;
+   i.input_height = l.height;
+   i.width = a.width;
+   i.height = a.height;
+   i.trim_x = cfg.bayer_pattern & 1u;
+   i.trim_y = (cfg.bayer_pattern >> 1) & 1u;
+   i.outputs = cfg.outputs & ((1u << num_channels) - 1u);  // the mask, not the consumer count
+   i.bayer_pattern = cfg.bayer_pattern;
+   i.input_depth = cfg.input_depth;
+   i.blc_en = cfg.blc_en;
+   i.lsc_en = cfg.lsc_en;
+   i.bpc_en = cfg.bpc_en;
+   i.wb_en = cfg.wb_en;
+   i.dg_en = cfg.dg_en;
+   i.wb_gain_r = cfg.wb_gain[0];
+   i.wb_gain_gr = cfg.wb_gain[1];
+   i.wb_gain_gb = cfg.wb_gain_gb;
+   i.wb_gain_b = cfg.wb_gain[2];
+   i.dg_gain = cfg.dg_gain;
+   i.dms_margin_green = cfg.dms_margin_green;
+   i.dms_margin_rb = cfg.dms_margin_rb;
+   ctx_.demosaic->frame_begin(i);
+   // Explicit R, G, B components: no reliance on the layout of pipe::rgb.
+   pipeline_.set_rgb_tap([this, f](std::uint32_t y, const std::vector<pipe::rgb> &r) {
+      dms_row_.resize(3u * r.size());
+      for (std::size_t x = 0; x < r.size(); ++x) {
+         dms_row_[3u * x] = r[x].r;
+         dms_row_[3u * x + 1u] = r[x].g;
+         dms_row_[3u * x + 2u] = r[x].b;
+      }
+      ctx_.demosaic->row(f, y, dms_row_.data());
+   });
 }
 
 void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {

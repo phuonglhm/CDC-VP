@@ -75,6 +75,14 @@ target_include_directories(fx1_isp_test_outputs_tlm PRIVATE common)
 target_link_libraries(fx1_isp_test_outputs_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
 add_test(NAME fx1_isp.integration.outputs_tlm COMMAND fx1_isp_test_outputs_tlm)
 
+# VP-only post-Demosaic tap and writer (decisions §12).
+add_executable(fx1_isp_test_demosaic_tlm integration/test_demosaic_tlm.cpp)
+target_include_directories(fx1_isp_test_demosaic_tlm PRIVATE common)
+target_link_libraries(fx1_isp_test_demosaic_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
+target_compile_options(fx1_isp_test_demosaic_tlm PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.integration.demosaic_tlm
+         COMMAND fx1_isp_test_demosaic_tlm ${CMAKE_CURRENT_BINARY_DIR})
+
 add_executable(fx1_isp_test_csr_tlm integration/test_csr_tlm.cpp)
 target_include_directories(fx1_isp_test_csr_tlm PRIVATE common)
 target_link_libraries(fx1_isp_test_csr_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
@@ -170,6 +178,16 @@ if(Python3_Interpreter_FOUND)
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_sequence.py --check)
         add_test(NAME fx1_isp.tools.input_depth
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/check_input_depth.py)
+        # VP-only post-Demosaic capture of fx1_isp_run_raw against the reference (decisions §12).
+        add_test(NAME fx1_isp.tools.demosaic_capture
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_demosaic_capture.py
+                    $<TARGET_FILE:fx1_isp_run_raw> ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(fx1_isp.tools.demosaic_capture PROPERTIES TIMEOUT 900)
+        add_test(NAME fx1_isp.tools.demosaic_select
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_demosaic_select.py
+                    $<TARGET_FILE:fx1_isp_run_raw> ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors ${CMAKE_CURRENT_BINARY_DIR})
+        add_test(NAME fx1_isp.tools.demosaic_reference_self_test
+            COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/demosaic_check.py --self-test)
         add_test(NAME fx1_isp.reference.4k_vectors_up_to_date
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_4k_vectors.py --check)
         set_tests_properties(fx1_isp.reference.4k_vectors_up_to_date PROPERTIES TIMEOUT 600)
