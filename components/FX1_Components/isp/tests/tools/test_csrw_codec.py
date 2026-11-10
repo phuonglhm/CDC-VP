@@ -18,6 +18,11 @@
   - emit: every sample and vector profile re-emitted in field syntax keeps
     its stream write for write; the shipped samples are in field syntax and
     equal their v1.07-syntax streams (binary check in the SDK gate);
+  - emit names the fields of every write, also of a one-field register
+    (`CSC_CTRL std=0`), except a table/mesh data port (DATA_PORTS = every
+    one-field RW register *_DATA / *_WDATA of the header), a raw value
+    outside the writable fields and a register without a writable field; the
+    shipped samples follow it line by line;
   - bin: little-endian {offset, value}; an error leaves an existing .bin;
   - review B/C/P/D R3: lines and tokens as the C++ reader: a UTF-8 byte order
     mark opening the file (before a register, an alias, a group or a comment,
@@ -161,9 +166,27 @@ def main():
         check(py(e)[0] == a and cxx(e)[0] == a, "%s: emitted field syntax changes the stream" % p)
         emitted += py(e)[0] == a
     print("%d profiles: python = c++ %d, field emit identical %d" % (len(files), same, emitted))
+    # Emit: field names on every write but the table/mesh data ports.
+    ports = sorted(r.name for r in m.regs.values() if len(r.fields) == 1 and r.fields[0].access in codec.WRITABLE
+                   and (r.name.endswith("_DATA") or r.name.endswith("_WDATA")))
+    check(ports == sorted(codec.DATA_PORTS), "DATA_PORTS %r != header %r" % (sorted(codec.DATA_PORTS), ports))
+    for reg, value, want in (("CSC_CTRL", 1, "CSC_CTRL std=1"), ("BLC_CTRL", 0, "BLC_CTRL en=0"),
+                             ("WB_GAIN_R", 0x1F3, "WB_GAIN_R gain_r=0x1F3"), ("CCM_OFS_G", 0xFFD, "CCM_OFS_G offset_g=0xFFD"),
+                             ("CCM_OFS_R", 0, "CCM_OFS_R offset_r=0"), ("COMMON_BAYER", 3, "COMMON_BAYER pattern=3"),
+                             ("AEC_CONTEXT_ID", 0xFFFFFFFF, "AEC_CONTEXT_ID context_id=0xFFFFFFFF"),
+                             ("LSC_COEF_DATA", 0x40000, "LSC_COEF_DATA 0x40000"), ("GAMMA_LUT_DATA", 5, "GAMMA_LUT_DATA 0x5"),
+                             ("CSC_CTRL", 2, "CSC_CTRL 0x2"),            # outside the field: raw, nothing dropped
+                             ("AEC_HIST_DATA", 0, "AEC_HIST_DATA 0x0"),  # read-only register: raw
+                             ("AEC_CTRL", 3, "AEC_CTRL en=1 commit=1")):
+        got = codec.format_write(m.regs[reg], value)
+        check(got == want, "format_write(%s, %#x) = %r, expected %r" % (reg, value, got, want))
+        check(codec.format_write(m.regs[reg], value, "legacy") == "%s 0x%X" % (reg, value), "legacy " + reg)
     for p in glob.glob(os.path.join(ISP, "samples", "profiles", "*.csrw")):
-        text = open(p).read()
-        check(" range_scale_en=" in text and "BLC_GAIN_SEL 0x" not in text, "%s is not in field syntax" % p)
+        for n, line in enumerate(codec.lines(p), 1):
+            t = codec.tokens_of(line.split("#", 1)[0])
+            if t and not any("=" in x for x in t[1:]) and t[0] not in codec.DATA_PORTS:
+                check(False, "%s:%d: %r is not in field syntax" % (p, n, line))
+                break
 
     # bin: layout, and an error keeps an existing binary.
     src = os.path.join(out, "aec_group.csrw")

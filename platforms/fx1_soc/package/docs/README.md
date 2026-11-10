@@ -317,6 +317,10 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   conversion with file:line, and the old `profile.bin` is kept.
   `python3 csrw_codec.py explain profile.csrw` (in the same directory) lists
   every write with its fields. The sample profiles are written this way.
+  Every write names its fields, even on a one-field register
+  (`CSC_CTRL std=0`, `WB_GAIN_R gain_r=0x1F3`). The exception is the
+  table/mesh data, which keeps one `REGISTER VALUE` line per entry
+  (`LSC_COEF_DATA`, `GAMMA_LUT_DATA`, `EE_LUT_WDATA`, `GTM_LUT_DATA`).
 - **Frames:** each job processes the same RAW twice from reset. The first frame
   warms up GTM auto; the delivered image and golden are from the second frame.
   When preparing a new sample, use `run_isp_demo.py --prepare-only --frames 2`

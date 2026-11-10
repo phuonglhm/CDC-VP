@@ -1006,3 +1006,14 @@ Review B/C/P/D fixes (2026-11-10):
   and the stdlib converter on all 65536 (Cb, Cr) at 16 Y values, for both
   standards and both ranges. Exact ties exist only in BT.601 full range.
   NV12, golden files and the model are unchanged.
+
+After the release of `3698a80` (2026-11-10, user request): the tuning team
+reads profiles, so `emit` now names the field of a one-field register too
+(`CSC_CTRL std=0`, `CCM_CRR coefrr=0x266`). Only the table/mesh data ports
+keep `REGISTER VALUE`: `csrw_codec.DATA_PORTS`, which a test checks against
+the header (every one-field RW `*_DATA`/`*_WDATA` register).
+- The five samples were re-emitted; their binary streams are unchanged
+  (= the P-0 baseline).
+- `make_profile` reproduces the outdoor1 samples byte for byte.
+- `isp_auto.py capture` writes the six controls the same way
+  (`WB_GAIN_R gain_r=0x1F7`).

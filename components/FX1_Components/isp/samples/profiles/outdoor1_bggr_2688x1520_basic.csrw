@@ -1,19 +1,19 @@
 # sample: computed from RAW "outdoor1" of the project dataset (Image Source/outdoor_hightlight_raw/khoid_outdoor1_raw_2688x1520_5376.raw)
 # test profile 'basic' (not a calibration), tools/make_profile.py
 # grey world means after BLC: R 262.6 G 452.8 B 265.1
-COMMON_BAYER 0x3
-BLC_CTRL 0x1
+COMMON_BAYER pattern=3
+BLC_CTRL en=1
 BLC_GAIN_SEL gain_level=0 range_scale_en=1
-BLC_OFS_G0_DFT 0xC8
-BLC_SCALE_G0_R 0x10D25
-BLC_SCALE_G0_GR 0x10D25
-BLC_SCALE_G0_GB 0x10D25
-BLC_SCALE_G0_B 0x10D25
-WB_CTRL 0x1
-WB_GAIN_R 0x1B9
-WB_GAIN_G 0x100
-WB_GAIN_B 0x1B5
-GAMMA_LUT_ADDR 0x0
+BLC_OFS_G0_DFT ofs_g0_dft=0xC8
+BLC_SCALE_G0_R scale_g0_r=0x10D25
+BLC_SCALE_G0_GR scale_g0_gr=0x10D25
+BLC_SCALE_G0_GB scale_g0_gb=0x10D25
+BLC_SCALE_G0_B scale_g0_b=0x10D25
+WB_CTRL en=1
+WB_GAIN_R gain_r=0x1B9
+WB_GAIN_G gain_g=0x100
+WB_GAIN_B gain_b=0x1B5
+GAMMA_LUT_ADDR addr=0
 GAMMA_LUT_DATA 0x0
 GAMMA_LUT_DATA 0x48
 GAMMA_LUT_DATA 0x91
@@ -272,4 +272,4 @@ GAMMA_LUT_DATA 0xFF7
 GAMMA_LUT_DATA 0xFFF
 GAMMA_CTRL en=0 lut_load_confirm=1
 GAMMA_CTRL en=1
-CSC_CTRL 0x0
+CSC_CTRL std=0

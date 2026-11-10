@@ -79,6 +79,8 @@ def main():
     text = mp.format_profile(w)
     check("BLC_GAIN_SEL gain_level=0 range_scale_en=1\n" in text and "AEC_CTRL en=1 commit=1\n" in text and
           "GAMMA_CTRL en=0 lut_load_confirm=1\n" in text, "format_profile is not in field syntax")
+    check("CSC_CTRL std=0\n" in text and "BLC_CTRL en=1\n" in text and "LSC_COEF_DATA 0x" in text
+          and "\nCSC_CTRL 0x" not in text, "one-field registers named, data ports raw")
     with tempfile.NamedTemporaryFile("w", suffix=".csrw", delete=False) as f:
         f.write(text)
     try:

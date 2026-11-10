@@ -46,7 +46,8 @@ def main():
         raise PackError('firmware auto CSR outside supported range')
     # ISP-UPD-008: the profile may use register or field syntax; each line is one
     # write (csrw_codec). The writes of the six controls become the firmware's
-    # values as whole-register lines; every other line and the order are kept.
+    # values, written as csrw_codec emits them (WB_GAIN_R gain_r=0x1F7); every
+    # other line and the order are kept.
     here=Path(__file__).resolve().parent
     for p in (here, here.parents[3]/'components'/'FX1_Components'/'isp'/'tools' if len(here.parents)>3 else here):
         sys.path.insert(0,str(p))
@@ -60,7 +61,7 @@ def main():
         except csrw_codec.CsrwError as e:
             raise PackError(str(e))
         if r and r[0].name in values:
-            found.add(r[0].name);lines[i]='%s 0x%X'%(r[0].name,values[r[0].name])+('  #'+comment if sep else '')
+            found.add(r[0].name);lines[i]=csrw_codec.format_write(r[0],values[r[0].name])+('  #'+comment if sep else '')
     if found!=set(NAMES):raise PackError('base profile missing auto controls')
     (d/'resolved_profile.csrw').write_text('# Firmware-selected controls; reference/debug artifact.\n'+'\n'.join(lines)+'\n',encoding='utf-8',errors='surrogateescape')
     total=read_job(d/'job.bin')['frames']

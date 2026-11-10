@@ -79,6 +79,20 @@ AEC_CTRL en=1 commit=1                   # REGISTER f=V ...: fields of one regis
     are ASCII.
 - Field names, access types and masks come from `fx1_isp_csr.h`, including
   the CSR extension.
+- How `emit` (and `make_profile.py`, and the auto `resolved_profile.csrw`)
+  writes a profile:
+  - every write names its fields, also on a register with one field:
+    `CSC_CTRL std=0`, `BLC_CTRL en=1`, `WB_GAIN_R gain_r=0x1F3`;
+  - every RW field is listed, zeros included, because the write sets it;
+  - command fields (W1x) are listed when they are nonzero;
+  - fields of up to 8 bits are written in decimal, wider ones in hex.
+
+  `REGISTER VALUE` stays in three cases:
+  - the table/mesh data ports (`csrw_codec.DATA_PORTS`: `LSC_COEF_DATA`,
+    `GAMMA_LUT_DATA`, `GTM_LUT_DATA`, `EE_LUT_WDATA`, `AF_LUT_DATA` and
+    the `TUNE_*_DATA` ports), which take one line per entry;
+  - a raw value with bits outside the writable fields;
+  - a register without a writable field.
 - Readers:
   - `tools/csrw_codec.py`, Python standard library only. It has `check`,
     `explain` (decodes every write into fields), `emit --style fields|legacy`

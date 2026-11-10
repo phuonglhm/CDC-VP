@@ -24,7 +24,10 @@ The `basic` and `gtm_manual_qhd` profiles regenerate bit-identically.
 
 The sample profiles use the field syntax of ISP-UPD-008 (programming guide
 §1.1): `BLC_GAIN_SEL gain_level=0 range_scale_en=1`, `GAMMA_CTRL en=0
-lut_load_confirm=1`, and so on. The text was converted with `csrw_codec.py
+lut_load_confirm=1`, and so on. Every write names its fields, also on a
+one-field register (`CSC_CTRL std=0`, `WB_GAIN_R gain_r=0x1F3`). Only the
+table/mesh data ports (`LSC_COEF_DATA`, `GAMMA_LUT_DATA`, `EE_LUT_WDATA`,
+`GTM_LUT_DATA`) keep `REGISTER VALUE`, one line per entry. The text was converted with `csrw_codec.py
 emit`, and every file compiles to the same write stream, write for write, as
 its v1.07-syntax predecessor. `tools/csrw_codec.py explain FILE` decodes each
 write.

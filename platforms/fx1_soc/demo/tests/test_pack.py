@@ -153,8 +153,9 @@ def auto_cases():
         r = subprocess.run([sys.executable, AUTO, "capture", d, prof], stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, text=True, env=env)
         out = open(os.path.join(d, "resolved_profile.csrw")).read().splitlines() if r.returncode == 0 else []
-        ok = out[1:] == ["BLC_GAIN_SEL gain_level=0 range_scale_en=1", "WB_GAIN_R 0x1F7  # base", "WB_GAIN_G 0x100",
-                         "WB_GAIN_B 0x1B2", "GTM_KEY 0xA2", "GTM_LWHITE 0x22D", "EE_BETA 0x4320",
+        ok = out[1:] == ["BLC_GAIN_SEL gain_level=0 range_scale_en=1", "WB_GAIN_R gain_r=0x1F7  # base",
+                         "WB_GAIN_G gain_g=0x100", "WB_GAIN_B gain_b=0x1B2", "GTM_KEY key=162",
+                         "GTM_LWHITE lwhite=0x22D", "EE_BETA beta=0x4320",
                          "AEC_CTRL en=1 commit=1"]
         print("%-4s %-44s exit %d  %s" % ("ok" if ok else "FAIL", "isp_auto capture, field-syntax profile",
                                            r.returncode, out[1:3] if out else r.stdout.strip()[-80:]))
@@ -165,8 +166,8 @@ def auto_cases():
         r = subprocess.run([sys.executable, AUTO, "capture", d, prof], stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, text=True, env=env)
         out = open(os.path.join(d, "resolved_profile.csrw"), "rb").read().splitlines() if r.returncode == 0 else []
-        ok = out[1:] == [b"WB_GAIN_R 0x1F7", b"WB_GAIN_G 0x100", b"WB_GAIN_B 0x1B2", b"GTM_KEY 0xA2",
-                         b"GTM_LWHITE 0x22D  # gi\xe1", b"EE_BETA 0x4320"]
+        ok = out[1:] == [b"WB_GAIN_R gain_r=0x1F7", b"WB_GAIN_G gain_g=0x100", b"WB_GAIN_B gain_b=0x1B2",
+                         b"GTM_KEY key=162", b"GTM_LWHITE lwhite=0x22D  # gi\xe1", b"EE_BETA beta=0x4320"]
         print("%-4s %-44s exit %d  %s" % ("ok" if ok else "FAIL", "isp_auto capture, BOM + CRLF profile",
                                            r.returncode, out[1:3] if out else r.stdout.strip()[-80:]))
         ok_all.append(ok)

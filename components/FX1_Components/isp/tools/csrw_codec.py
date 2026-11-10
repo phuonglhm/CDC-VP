@@ -257,15 +257,29 @@ def _num(v, width):
     return str(v) if width <= 8 or v < 10 else "0x%X" % v
 
 
+# Table/mesh data ports: one RW field written many times in a row (one write per
+# entry). The field name adds nothing there, so `emit` keeps REGISTER VALUE.
+# test_csrw_codec checks this list against the header (every single-field RW
+# register named *_DATA / *_WDATA).
+DATA_PORTS = ("LSC_COEF_DATA", "GAMMA_LUT_DATA", "GTM_LUT_DATA", "EE_LUT_WDATA", "AF_LUT_DATA",
+              "TUNE_NR_LUT_DATA", "TUNE_GAMMA_DATA", "TUNE_LSC_SECTOR_DATA")
+
+
 def format_write(reg, value, style="fields"):
-    """One write as a profile line. 'fields': a register with one field keeps
-    REGISTER VALUE (it is the field); several fields -> REGISTER f=V ... with every
-    RW field (0 included: it is part of the write) and every nonzero command
-    (W1x) field; a value outside the writable fields stays REGISTER VALUE (raw:
-    nothing is dropped). 'legacy': REGISTER 0xVALUE. Fields of up to 8 bits in
-    decimal, wider ones in hex."""
-    if style == "legacy" or len(reg.fields) <= 1 or value & ~reg.writable_mask():
+    """One write as a profile line. 'fields': REGISTER f=V ... with the field
+    names, also for a register of one field (`CSC_CTRL std=0`), so a tuning
+    reader sees what each write sets: every RW field (0 included: it is part of
+    the write) and every nonzero command (W1x) field. REGISTER VALUE stays for a
+    table/mesh data port (DATA_PORTS), a value outside the writable fields (raw:
+    nothing is dropped) and a register without a writable field. 'legacy':
+    REGISTER 0xVALUE. Fields of up to 8 bits in decimal, wider ones in hex."""
+    if style == "legacy" or reg.name in DATA_PORTS or value & ~reg.writable_mask():
         return "%s 0x%X" % (reg.name, value)
+    if len(reg.fields) == 1:
+        f = reg.fields[0]
+        if f.access not in WRITABLE:
+            return "%s 0x%X" % (reg.name, value)
+        return "%s %s=%s" % (reg.name, f.name, _num((value & f.mask) >> f.lsb, f.width))
     parts = []
     for f in reg.fields:
         v = (value & f.mask) >> f.lsb
