@@ -90,7 +90,8 @@ target_compile_options(fx1_isp_drv PRIVATE -Wall -Wextra -Wpedantic -Wconversion
 # Tool: run RAW frames through the complete model (uses the test RAM model).
 add_executable(fx1_isp_run_raw tools/run_raw.cpp)
 target_include_directories(fx1_isp_run_raw PRIVATE tests/common)
-target_link_libraries(fx1_isp_run_raw PRIVATE fx1_isp_tlm SystemC::systemc)
+# fx1_isp_drv: --profile-mode replays with the driver's own rule (fx1_isp_profile_replays).
+target_link_libraries(fx1_isp_run_raw PRIVATE fx1_isp_drv fx1_isp_tlm SystemC::systemc)
 
 # ---- Install and CMake package (find_package(fx1_isp)) ---------------------------
 if(FX1_ISP_INSTALL)

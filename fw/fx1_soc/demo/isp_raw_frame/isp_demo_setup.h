@@ -4,7 +4,8 @@
  *
  * Profile mode (the default, CSR v1.07): the job's profile is applied in
  * legacy mode, then fx1_isp_profile_from_legacy builds it into bank 0
- * (INIT, payloads reloaded, SEAL, APPLY). A failure is reported (status 2,
+ * (INIT, payloads and the profile's TUNE extension scalars written into the
+ * bank -- ISP-UPD-009 --, SEAL, APPLY). A failure is reported (status 2,
  * the TUNE_ERROR bits), never replaced by a legacy run.
  */
 #ifndef ISP_DEMO_SETUP_H

@@ -276,7 +276,8 @@ frame.
 
 `FULL_RANGE` is an extension control: in legacy mode the datapath keeps its
 reset value (full range) whatever the bank storage holds, and only profile
-mode applies the bank's value. `fx1_isp_output_colorimetry(dev, bank, &std,
+mode applies the bank's value. A legacy profile's `TUNE_CSC_CTRL` write
+reaches the bank through `fx1_isp_profile_from_legacy` (§9.3, ISP-UPD-009). `fx1_isp_output_colorimetry(dev, bank, &std,
 &full)` returns what the datapath uses. Call it with the configuration
 committed for the frames to come, e.g. before `fx1_isp_start`.
 
@@ -546,7 +547,15 @@ writes in legacy mode it enters profile mode, INITs the bank from that
 configuration, reloads what INIT cleared (the confirmed legacy Gamma curve,
 read back through `GAMMA_LUT_RDATA`, through the banked port; the GTM manual
 curve and TUNE payload writes replayed in order through their own ports),
-seals with `id` and applies. An unconfirmed legacy curve with Gamma enabled
+seals with `id` and applies. In the same ordered replay it writes the
+profile's TUNE extension scalars (`TUNE_NR_*`, `TUNE_CSC_*`,
+`TUNE_DEMOSAIC_MARGIN`, `TUNE_CNF_BLEND`, `TUNE_BPC_CTRL`/`THRESH`, the
+AWB/AF/histogram TUNE controls, ...) into the bank: INIT loads their reset
+values, so without the replay they would never apply (ISP-UPD-009,
+2026-11-10). `fx1_isp_profile_replays(offset)` tells which writes are
+replayed; `fx1_isp_run_raw --profile-mode` uses it too. In legacy mode these
+scalars stay bank storage and the datapath keeps their reset (MAS v1.07
+§9.9.2). An unconfirmed legacy curve with Gamma enabled
 makes SEAL fail (`NOT_READY`): legacy mode would pass the pixels through,
 which a profile cannot express. On the VP this reproduces
 the legacy output and statistics of every test vector with a single profile

@@ -321,6 +321,24 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   (`CSC_CTRL std=0`, `WB_GAIN_R gain_r=0x1F3`). The exception is the
   table/mesh data, which keeps one `REGISTER VALUE` line per entry
   (`LSC_COEF_DATA`, `GAMMA_LUT_DATA`, `EE_LUT_WDATA`, `GTM_LUT_DATA`).
+- **TUNE block (tuning parameters):** the shared profile ends with the TUNE
+  extension controls the tuning team adjusts, at their CSR reset values
+  (the Tuning v1.07 startup values, so the goldens are those without them):
+  - `TUNE_DEMOSAIC_MARGIN` and `TUNE_CNF_BLEND`;
+  - `TUNE_CSC_*`, `TUNE_NR_*` and `TUNE_BPC_*`;
+  - the empty factory bad-pixel list (`TUNE_BPC_COUNT VALUE=0`, then
+    `TUNE_TABLE_CMD BPC_CONFIRM=1`).
+
+  The NR variance curve (MODE 2 only) is a commented template.
+
+  The firmware runs the ISP in profile mode and writes these values into
+  the profile bank after INIT, so a changed value takes effect. Earlier
+  firmware did not write them, and such values had no effect. A changed
+  value changes the output: regenerate the sample's golden.
+
+  Changing a value keeps the number of writes. Uncommenting the NR curve
+  template (35 lines) or adding bad-pixel points adds writes: the sample's
+  `job.bin` must be prepared again (`run_isp_demo.py --prepare-only`).
 - **Frames:** each job processes the same RAW twice from reset. The first frame
   warms up GTM auto; the delivered image and golden are from the second frame.
   When preparing a new sample, use `run_isp_demo.py --prepare-only --frames 2`

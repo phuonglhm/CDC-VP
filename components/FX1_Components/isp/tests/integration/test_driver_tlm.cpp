@@ -10,6 +10,7 @@
 // in the middle of a stream (DEC-14).
 // Usage: fx1_isp_test_driver_tlm <vectors dir>
 
+#include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <cstring>
@@ -30,6 +31,7 @@
 #include <tlm_utils/simple_initiator_socket.h>
 
 #include "dma/dma_rules.h"
+#include "control/profile_fields.h"
 #include "fx1_check.h"
 #include "fx1_isp/fx1_isp_csr.h"
 #include "fx1_isp/fx1_isp_drv.h"
@@ -605,14 +607,28 @@ struct bench : sc_module {
    // (V107-10, review A44): the legacy profile applied, then
    // fx1_isp_profile_from_legacy builds bank 0 from it (INIT, payloads
    // reloaded, SEAL, APPLY); every frame and statistic must equal legacy's.
-   void run_vector(const fs::path &dir, bool profile_mode = false) {
-      const std::string name = dir.filename().string() + (profile_mode ? " (profile mode)" : "");
+   // strip (with profile_mode, ISP-UPD-009): a vector that runs its own
+   // profile transaction (TUNE_MODE, INIT, ..., PROFILE_ID, SEAL, APPLY) with
+   // those lines removed, i.e. a legacy profile with TUNE extension writes:
+   // the bring-up must write them into the bank and give the vector's output.
+   void run_vector(const fs::path &dir, bool profile_mode = false, bool strip = false) {
+      const std::string name = dir.filename().string() +
+                               (strip ? " (transaction removed, profile mode)" : profile_mode ? " (profile mode)" : "");
       reset_and_init();
       std::ifstream meta(dir / "meta.txt");
       std::uint32_t in_w = 0, in_h = 0, out_w = 0, out_h = 0, frames = 1;
       meta >> in_w >> in_h >> out_w >> out_h >> frames;
       const std::vector<std::uint8_t> input = read_file(dir / "input.bin");
-      apply_profile(fx1_test::read_profile(dir / "profile.csrw"));
+      std::vector<fx1_test::csr_line> lines;
+      std::uint32_t profile_id = 0x5Au;
+      for (const fx1_test::csr_line &l : fx1_test::read_profile(dir / "profile.csrw")) {
+         if (strip && (l.reg == "TUNE_MODE" || l.reg == "TUNE_CMD" || l.reg == "TUNE_PROFILE_ID")) {
+            profile_id = l.reg == "TUNE_PROFILE_ID" ? l.value : profile_id;
+            continue;
+         }
+         lines.push_back(l);
+      }
+      apply_profile(lines);
       const std::uint32_t in_stride = align16(2 * in_w);
       // Below the 32 x 32 active minimum the channel geometry is invalid
       // (MAS v1.07 §8.3, ERROR 1): the driver refuses to start, no frame runs.
@@ -627,7 +643,7 @@ struct bench : sc_module {
       }
       if (profile_mode) {
          std::vector<fx1_isp_reg_write> writes;
-         for (const fx1_test::csr_line &l : fx1_test::read_profile(dir / "profile.csrw")) {
+         for (const fx1_test::csr_line &l : lines) {
             const csr::reg_desc *d = reg(l.reg);
             FX1_CHECK_EQ_CTX(d != nullptr ? 1 : 0, 1, name + " register " + l.reg);
             if (d) {
@@ -642,7 +658,7 @@ struct bench : sc_module {
             drops = drops || ((l.reg == "TUNE_AEC_DROPS" || l.reg == "AWB_DROP_COUNT") && !l.set && l.value != 0);
          }
          std::uint32_t err = 0;
-         const int rc = fx1_isp_profile_from_legacy(&dev, 0, writes.data(), writes.size(), 0x5Au, &err);
+         const int rc = fx1_isp_profile_from_legacy(&dev, 0, writes.data(), writes.size(), profile_id, &err);
          if (drops) {
             FX1_CHECK_EQ_CTX(rc == FX1_ISP_EIO && (err & FX1_ISP_TUNE_ERROR_INVALID_MASK) ? 1 : 0, 1,
                              name + " illegal statistics set refused at SEAL (TUNE_ERROR " + fx1_test::hex(err) + ")");
@@ -706,9 +722,9 @@ struct bench : sc_module {
       if (profile_mode && !done.empty()) {
          std::uint32_t prof = 0;
          fx1_isp_output_meta(&dev, 0, (frames - 1u) % FX1_ISP_NUM_BUFFERS, nullptr, nullptr, &prof);
-         FX1_CHECK_EQ_CTX(prof, 0x5Au, name + " output carries the profile ID");
+         FX1_CHECK_EQ_CTX(prof, profile_id, name + " output carries the profile ID");
       }
-      expect_profile_id = profile_mode ? 0x5Au : 0u;
+      expect_profile_id = profile_mode ? profile_id : 0u;
       check_stats(name, fx1_test::read_expected(dir / "expected_stats.txt"));
       expect_profile_id = 0;
       ++vectors;
@@ -3253,6 +3269,40 @@ struct bench : sc_module {
       FX1_CHECK_EQ(fx1_isp_apply(&dev, nullptr, 1), FX1_ISP_EINVAL);
    }
 
+   // ISP-UPD-009: the bring-up's replay rule is exactly the bank payload ports
+   // (MAS v1.07 Table 9-195) and the model's TUNE extension fields (Table
+   // 9-194, `extension`) except TUNE_PROFILE_ID, which SEAL sets.
+   void test_profile_replays() {
+      std::set<std::uint32_t> want = {
+         FX1_ISP_GTM_CTRL_OFFSET, FX1_ISP_GTM_LUT_ADDR_OFFSET, FX1_ISP_GTM_LUT_DATA_OFFSET,
+         FX1_ISP_TUNE_NR_LUT_ADDR_OFFSET, FX1_ISP_TUNE_NR_LUT_DATA_OFFSET, FX1_ISP_TUNE_BPC_COUNT_OFFSET,
+         FX1_ISP_TUNE_BPC_ADDR_OFFSET, FX1_ISP_TUNE_BPC_DATA_OFFSET, FX1_ISP_TUNE_LSC_SECTOR_ADDR_OFFSET,
+         FX1_ISP_TUNE_LSC_SECTOR_DATA_OFFSET, FX1_ISP_TUNE_TABLE_CMD_OFFSET};
+      std::size_t ext = 0;
+      for (std::size_t i = 0; i < num_profile_fields; ++i) {
+         if (profile_fields[i].extension && profile_fields[i].offset != FX1_ISP_TUNE_PROFILE_ID_OFFSET) {
+            want.insert(profile_fields[i].offset);
+            ++ext;
+         }
+      }
+      FX1_CHECK_EQ(ext, 135u);  // 136 extension fields of CSR v1.07, less TUNE_PROFILE_ID
+      std::uint32_t top = 0;
+      for (std::size_t i = 0; i < csr::num_registers; ++i) {
+         top = std::max(top, csr::registers[i].offset);
+      }
+      FX1_CHECK(top < 0x10000u);
+      std::size_t n = 0;
+      for (std::uint32_t off = 0; off < 0x10000u; ++off) {
+         const int r = fx1_isp_profile_replays(off);
+         n += r ? 1u : 0u;
+         if (r != (want.count(off) ? 1 : 0)) {
+            FX1_CHECK_EQ_CTX(r, want.count(off) ? 1 : 0, "replay rule at offset " + fx1_test::hex(off));
+         }
+      }
+      FX1_CHECK_EQ(n, want.size());
+      std::cout << "profile replay rule: " << n << " registers (" << ext << " TUNE extension scalars)\n";
+   }
+
    void run() {
       if (fast_csr) {
          // AWB ownership and every statistics readout with CSR accesses
@@ -3295,6 +3345,25 @@ struct bench : sc_module {
       FX1_CHECK_EQ(profile_refused, 2u);  // stats_illegal_grids, stats_reset_grids
       std::cout << "profile-mode bring-up: " << profile_vectors << " vectors equal to legacy, " << profile_refused
                 << " refused at SEAL\n";
+      // ISP-UPD-009: every vector with its own single profile transaction, run
+      // as a legacy profile through the bring-up, gives the vector's output.
+      std::size_t stripped = 0;
+      for (const auto &e : fs::directory_iterator(root)) {
+         if (!e.is_directory() || fs::exists(e.path() / "frames.csrw")) {
+            continue;
+         }
+         bool own = false;
+         for (const fx1_test::csr_line &l : fx1_test::read_profile(e.path() / "profile.csrw")) {
+            own = own || l.reg == "TUNE_MODE";
+         }
+         if (own) {
+            run_vector(e.path(), true, true);
+            ++stripped;
+         }
+      }
+      FX1_CHECK_EQ(stripped, 12u);
+      std::cout << "profile-mode bring-up: " << stripped << " vectors with their own transaction removed equal\n";
+      test_profile_replays();
       run_error_cases();
       test_driver_state_machine();
       test_stats_after_abort();

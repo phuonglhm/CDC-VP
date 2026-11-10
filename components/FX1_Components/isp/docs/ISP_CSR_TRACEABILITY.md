@@ -160,9 +160,9 @@ show that every member was written with a non-zero value.
 | 0x120C | `GAMMA_LUT_RDATA` | RO | model | control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_control_unit, test_driver_tlm | 0 |
 | 0x1210 | `GAMMA_STATUS` | RO | model | control_unit_stats.cpp, control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_profile, test_stats | 0 |
 | 0x1400 | `CSC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.15; SPEC-03 | test_driver_tlm, test_outputs_tlm | 13 |
-| 0x1600 | `GTM_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_pipeline_vectors, test_profile | 11 |
-| 0x1604 | `GTM_LUT_ADDR` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_profile | 2 |
-| 0x1608 | `GTM_LUT_DATA` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_profile | 2 |
+| 0x1600 | `GTM_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm, test_pipeline_vectors, test_profile | 11 |
+| 0x1604 | `GTM_LUT_ADDR` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm, test_profile | 2 |
+| 0x1608 | `GTM_LUT_DATA` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_driver_tlm, test_profile | 2 |
 | 0x160C | `GTM_KEY` | RW | model | control_unit.cpp, isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_pipeline_vectors | 10 |
 | 0x1610 | `GTM_LWHITE` | RW | model | control_unit.cpp, isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_control_unit, test_pipeline_vectors | 8 |
 | 0x1614 | `GTM_ROI_LOG2` | RW | model | isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | test_pipeline_vectors | 9 |
@@ -413,9 +413,9 @@ show that every member was written with a non-zero value.
 | 0x8000 | `TUNE_ID` | RO | constant | read-only identification value | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_register_engine | 0 |
 | 0x8004 | `TUNE_REV` | RO | constant | read-only identification value | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_register_engine | 0 |
 | 0x8008 | `TUNE_CAPS` | RO | model | control_unit.cpp, control_unit.h | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_control_unit, test_driver_tlm, test_register_engine | 0 |
-| 0x800C | `TUNE_MODE` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile, test_stats | 12 |
+| 0x800C | `TUNE_MODE` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_driver_tlm, test_profile, test_stats | 12 |
 | 0x8010 | `TUNE_BANK` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_driver_tlm, test_profile | 0 |
-| 0x8014 | `TUNE_PROFILE_ID` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile, test_stats | 12 |
+| 0x8014 | `TUNE_PROFILE_ID` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_driver_tlm, test_profile, test_stats | 12 |
 | 0x8018 | `TUNE_APPLY_FRAME` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 0 |
 | 0x801C | `TUNE_CMD` | W1P | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_profile, test_register_engine, test_stats | 12 |
 | 0x8020 | `TUNE_STATUS` | RO | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_dma_tlm, test_driver_tlm, test_profile | 0 |
@@ -444,8 +444,8 @@ show that every member was written with a non-zero value.
 | 0x8118 | `TUNE_NR_HL_SCALE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
 | 0x811C | `TUNE_NR_HH_SCALE` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
 | 0x8120 | `TUNE_NR_BLEND` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
-| 0x8124 | `TUNE_NR_LUT_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
-| 0x8128 | `TUNE_NR_LUT_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
+| 0x8124 | `TUNE_NR_LUT_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_profile | 2 |
+| 0x8128 | `TUNE_NR_LUT_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_profile | 2 |
 | 0x812C | `TUNE_NR_SEED` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 2 |
 | 0x8200 | `TUNE_WB_GB` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
 | 0x8204 | `TUNE_DEMOSAIC_MARGIN` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 2 |
@@ -591,12 +591,12 @@ show that every member was written with a non-zero value.
 | 0x8900 | `TUNE_BPC_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 1 |
 | 0x8904 | `TUNE_BPC_G_THRESH` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
 | 0x8908 | `TUNE_BPC_RB_THRESH` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 1 |
-| 0x8910 | `TUNE_BPC_COUNT` | RW | model | control_unit_profile.cpp, control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 1 |
-| 0x8914 | `TUNE_BPC_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 1 |
-| 0x8918 | `TUNE_BPC_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 1 |
+| 0x8910 | `TUNE_BPC_COUNT` | RW | model | control_unit_profile.cpp, control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_profile | 1 |
+| 0x8914 | `TUNE_BPC_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_profile | 1 |
+| 0x8918 | `TUNE_BPC_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_profile | 1 |
 | 0x8A00 | `TUNE_LSC_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
-| 0x8A04 | `TUNE_LSC_SECTOR_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
-| 0x8A08 | `TUNE_LSC_SECTOR_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
+| 0x8A04 | `TUNE_LSC_SECTOR_ADDR` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_profile | 2 |
+| 0x8A08 | `TUNE_LSC_SECTOR_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_profile | 2 |
 | 0x8B00 | `COMMON_INPUT_FORMAT` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_stats.cpp, engines.cpp, isp_pipeline.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_profile | 2 |
 | 0x8B08 | `TUNE_AEC_SOURCE` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
 | 0x8B0C | `TUNE_AEC_RESULT_META` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |

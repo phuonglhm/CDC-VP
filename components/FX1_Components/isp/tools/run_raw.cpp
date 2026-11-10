@@ -25,8 +25,11 @@
 // --profile-mode runs the firmware's default bring-up (CSR v1.07, V107-10):
 // after the profile, profile mode, INIT of bank 0, the confirmed legacy
 // Gamma curve (read back) through the banked port and its confirmation, the GTM manual
-// curve and TUNE payload writes replayed, PROFILE_ID 1, SEAL, APPLY (as
-// fx1_isp_profile_from_legacy). Any TUNE_ERROR fails the run.
+// curve, TUNE payload writes and TUNE extension scalars replayed in order
+// (fx1_isp_profile_replays, ISP-UPD-009), PROFILE_ID 1, SEAL, APPLY (as
+// fx1_isp_profile_from_legacy). Any TUNE_ERROR fails the run. In legacy mode
+// (the default) the TUNE extension scalars stay bank storage: the datapath
+// keeps their reset values (MAS v1.07 §9.9.2).
 //
 // Outputs:
 //   <prefix>.nv12          NV12 of the last frame, active bytes, Y then UV
@@ -80,6 +83,7 @@
 
 #include "fx1_isp/fx1_isp_csr.h"
 #include "fx1_isp/fx1_isp_debug.h"
+#include "fx1_isp/fx1_isp_drv.h"
 #include "fx1_isp/fx1_isp_tlm.h"
 #include "registers/csr_desc.h"
 #include "debug/sha256.h"
@@ -260,14 +264,11 @@ struct runner : sc_module {
          }
          cmd(FX1_ISP_TUNE_TABLE_CMD_OFFSET, FX1_ISP_TUNE_TABLE_CMD_GAMMA_CONFIRM_MASK, "GAMMA_CONFIRM");
       }
+      // The driver's own rule (one definition): payload ports and TUNE
+      // extension scalars, in the profile's order (ISP-UPD-009).
       for (const auto &w : writes) {
-         const std::uint32_t o = w.first;
-         if (o == FX1_ISP_GTM_CTRL_OFFSET || o == FX1_ISP_GTM_LUT_ADDR_OFFSET || o == FX1_ISP_GTM_LUT_DATA_OFFSET ||
-             o == FX1_ISP_TUNE_NR_LUT_ADDR_OFFSET || o == FX1_ISP_TUNE_NR_LUT_DATA_OFFSET ||
-             o == FX1_ISP_TUNE_BPC_COUNT_OFFSET || o == FX1_ISP_TUNE_BPC_ADDR_OFFSET ||
-             o == FX1_ISP_TUNE_BPC_DATA_OFFSET || o == FX1_ISP_TUNE_LSC_SECTOR_ADDR_OFFSET ||
-             o == FX1_ISP_TUNE_LSC_SECTOR_DATA_OFFSET || o == FX1_ISP_TUNE_TABLE_CMD_OFFSET) {
-            cmd(o, w.second, "payload replay");
+         if (fx1_isp_profile_replays(w.first)) {
+            cmd(w.first, w.second, "bank replay");
          }
       }
       cmd(FX1_ISP_TUNE_PROFILE_ID_OFFSET, 1, "PROFILE_ID");

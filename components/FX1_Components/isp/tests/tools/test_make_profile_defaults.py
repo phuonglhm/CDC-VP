@@ -37,6 +37,71 @@ def last(writes, name):
     return v[-1] if v else None
 
 
+# ISP-UPD-009: the tuning team's list (2026-11-10), as the Tuning v1.07 names them.
+TUNING_ITEMS = """TUNE_DEMOSAIC_MARGIN.GREEN TUNE_DEMOSAIC_MARGIN.RB CNF_CTRL.en CNF_CHROMA_TH.chroma_th
+CNF_LUMA_TH.luma_th TUNE_CNF_BLEND.VALUE TUNE_CSC_CTRL.LOOK_EN TUNE_CSC_CTRL.FULL_RANGE TUNE_CSC_CONTRAST.VALUE
+TUNE_CSC_BRIGHTNESS.VALUE TUNE_CSC_UU.VALUE TUNE_CSC_UV.VALUE TUNE_CSC_VU.VALUE TUNE_CSC_VV.VALUE TUNE_NR_CTRL.MODE
+TUNE_NR_CTRL.MEDIAN_EN TUNE_NR_VARIANCE.VALUE TUNE_NR_SCALE.VALUE TUNE_NR_LIMITS.MIN TUNE_NR_LIMITS.MAX
+TUNE_NR_LL_SCALE.VALUE TUNE_NR_LH_SCALE.VALUE TUNE_NR_HL_SCALE.VALUE TUNE_NR_HH_SCALE.VALUE TUNE_NR_BLEND.VALUE
+TUNE_NR_SEED.VALUE NR.variance_curve TUNE_BPC_CTRL.COLOR_THRESH_EN TUNE_BPC_CTRL.FACTORY_EN TUNE_BPC_G_THRESH.K
+TUNE_BPC_G_THRESH.FLOOR TUNE_BPC_RB_THRESH.K TUNE_BPC_RB_THRESH.FLOOR BPC.factory_coordinates""".split()
+
+
+def tune_block(raw, csrw_codec, tempfile):
+    """ISP-UPD-009: the TUNE block (tune=True) of every preset."""
+    import re
+    cmap = csrw_codec.CsrMap()
+    hdr = open(cmap.header, encoding="utf-8").read()
+    reset = lambda r: int(re.search(r"#define FX1_ISP_%s_RESET (0x[0-9A-F]+)u" % r, hdr).group(1), 16)
+    tw = mp.tune_writes(cnf=True)
+    for n, v in tw:
+        want = cmap.regs[n].field("BPC_CONFIRM").mask if n == "TUNE_TABLE_CMD" else reset(n)
+        check(v == want, "TUNE block %s = %#x, CSR reset %#x" % (n, v, want))
+    check(len(TUNING_ITEMS) == 34, "34 tuning items")
+    names = {n for n, _ in tw}
+    for item in TUNING_ITEMS:
+        r, f = item.split(".")
+        if r in ("NR", "BPC"):
+            continue
+        check(r in names and cmap.regs[r].field(f) is not None, "tuning item %s in the TUNE block" % item)
+    notes = mp.TUNE_NOTES
+    for n in notes:
+        check(n in names, "TUNE_NOTES anchor %s is a block register" % n)
+    # The commented templates: NR curve 17 x (index, data) + NR_CONFIRM, a BPC
+    # point; every template line is a valid profile line once uncommented.
+    tmpl = [c for n in notes for c in notes[n] if re.match(r"TUNE_[A-Z_]+ ", c)]
+    nr = [c for c in tmpl if c.startswith("TUNE_NR_LUT_")]
+    check(nr == sum((["TUNE_NR_LUT_ADDR VALUE=%d" % k, "TUNE_NR_LUT_DATA 0x0"] for k in range(17)), []),
+          "NR.variance_curve template: 17 knots with explicit index")
+    check("TUNE_TABLE_CMD NR_CONFIRM=1" in tmpl and "TUNE_BPC_DATA X=0 Y=0" in tmpl, "NR_CONFIRM / BPC point template")
+    for c in tmpl:
+        try:
+            csrw_codec.parse_line(cmap, c, "template")
+        except csrw_codec.CsrwError as e:
+            check(False, "template %r: %s" % (c, e))
+    # BPC.factory_coordinates: the empty list, confirmed after COUNT.
+    order = [n for n, _ in tw]
+    check(order[-2:] == ["TUNE_BPC_COUNT", "TUNE_TABLE_CMD"] and dict(tw)["TUNE_BPC_COUNT"] == 0,
+          "empty factory list: COUNT 0 then BPC_CONFIRM")
+    for preset in mp.PRESETS:
+        base, _ = mp.profile_writes(raw, 2688, 1520, "BGGR", preset)
+        full, _ = mp.profile_writes(raw, 2688, 1520, "BGGR", preset, tune=True)
+        has_cnf = any(n == "CNF_CTRL" for n, _ in base)
+        check(not any(n.startswith("TUNE_") for n, _ in base), "%s: no TUNE write by default" % preset)
+        check(full[:len(base)] == base and full[len(base):] == mp.tune_writes(cnf=not has_cnf),
+              "%s: the TUNE block appended (CNF controls only if the preset has none)" % preset)
+        text = mp.format_profile(full)
+        check(text.startswith(mp.format_profile(base)), "%s: text before the block unchanged" % preset)
+        check(text.count("# ---- TUNE extension controls") == 1 and text.count("\n# CNF thresholds") == (0 if has_cnf else 1),
+              "%s: block comments once" % preset)
+        with tempfile.NamedTemporaryFile("w", suffix=".csrw", delete=False) as f:
+            f.write(text)
+        try:
+            check(csrw_codec.writes(f.name, cmap) == list(full), "%s: TUNE block text changes the stream" % preset)
+        finally:
+            os.remove(f.name)
+
+
 def main():
     check(mp.aec_grid(2686, 1518) == (16, 16, 168, 95), "aec_grid 2686x1518 %r" % (mp.aec_grid(2686, 1518),))
     check(mp.aec_grid(34, 34) == (12, 12, 3, 3), "aec_grid 34x34 %r" % (mp.aec_grid(34, 34),))
@@ -89,6 +154,7 @@ def main():
         os.remove(f.name)
     legacy = mp.format_profile(w, "legacy")
     check(legacy.splitlines()[1] == "BLC_CTRL 0x1" and "=" not in legacy, "legacy syntax")
+    tune_block(raw, csrw_codec, tempfile)
     print("test_make_profile_defaults: %d failure(s)" % len(failures))
     return 1 if failures else 0
 

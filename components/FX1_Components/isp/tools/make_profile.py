@@ -28,6 +28,16 @@ from a stated formula so that runs are reproducible and explainable. Presets
                   illegal and reset grids are covered by the dedicated vectors
                   stats_illegal_grids_64x32 and stats_reset_grids_af_edges_130x90.)
 
+Every preset can end with the TUNE block (tune=True; the command line's
+default, --no-tune omits it; ISP-UPD-009): the TUNE extension controls the
+tuning team adjusts -- TUNE_DEMOSAIC_MARGIN, TUNE_CNF_BLEND (and the CNF
+controls where the preset has none), TUNE_CSC_*, TUNE_NR_*, TUNE_BPC_* and the
+empty factory bad-pixel list -- at their CSR reset values (the Tuning v1.07
+startup values), so the output is that of the preset without them, with a
+commented template for the NR variance curve. The library default is
+tune=False: the vectors, fixtures and the RAW regression built from presets
+stay as they were.
+
 Input: an ISP-contract container file from raw_fixture.py (bits [11:0]).
 """
 
@@ -138,8 +148,67 @@ def grey_world(raw12, width, height, bayer, pedestal):
     return gain(r), gain(b), (r, g, b)
 
 
-def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
-    """Returns (writes, note) for one preset. raw12: container samples, bits [11:0]."""
+# ISP-UPD-009 (2026-11-10): the TUNE extension controls, whole-register CSR
+# reset values (= Tuning v1.07 startup values; tests/tools/test_make_profile_defaults.py
+# checks them against the header's _RESET macros). The tuning team's order.
+TUNE_FIRST = "TUNE_DEMOSAIC_MARGIN"
+CNF_RESET = [("CNF_CHROMA_TH", 0), ("CNF_LUMA_TH", 0), ("CNF_CTRL", 0)]
+NR_KNOTS = 17
+
+
+def tune_writes(cnf=False):
+    """The TUNE block. cnf: also the CNF controls (for a preset that has none)."""
+    return ([(TUNE_FIRST, 0), ("TUNE_CNF_BLEND", 0x100)] + (CNF_RESET if cnf else [])
+            + [("TUNE_CSC_CTRL", 0x2), ("TUNE_CSC_CONTRAST", 0x100), ("TUNE_CSC_BRIGHTNESS", 0),
+               ("TUNE_CSC_UU", 0x4000), ("TUNE_CSC_UV", 0), ("TUNE_CSC_VU", 0), ("TUNE_CSC_VV", 0x4000)]
+            + [("TUNE_NR_CTRL", 0x4), ("TUNE_NR_VARIANCE", 0), ("TUNE_NR_SCALE", 0x100),
+               ("TUNE_NR_LIMITS", 0xFFFF0000)]
+            + [("TUNE_NR_%s_SCALE" % b, 0x100) for b in ("LL", "LH", "HL", "HH")]
+            + [("TUNE_NR_BLEND", 0x100), ("TUNE_NR_SEED", 0)]
+            + [("TUNE_BPC_CTRL", 0), ("TUNE_BPC_G_THRESH", 0x100), ("TUNE_BPC_RB_THRESH", 0x100),
+               ("TUNE_BPC_COUNT", 0), ("TUNE_TABLE_CMD", 1 << 2)])   # BPC_CONFIRM of the empty list
+
+
+# Comments format_profile writes before the first write of a register in the
+# TUNE block. The templates are valid profile lines once uncommented.
+TUNE_NOTES = {
+    TUNE_FIRST: [
+        "---- TUNE extension controls (CSR v1.07 TUNE page, ISP-UPD-009) ----",
+        "Values: the CSR reset, i.e. the Tuning v1.07 startup value. In profile",
+        "mode (the firmware's default bring-up; run_raw --profile-mode) they are",
+        "written into the bank after INIT; legacy mode keeps the reset values in",
+        "the datapath (MAS v1.07 9.9.2).",
+        "Demosaic: equal-gradient margins (0 keeps the exact-tie decision).",
+    ],
+    "TUNE_CNF_BLEND": ["CNF: weight of the filtered chroma, 0..256 (256 = the CNF result)."],
+    "CNF_CHROMA_TH": ["CNF thresholds and enable (legacy controls, also live in legacy mode)."],
+    "TUNE_CSC_CTRL": [
+        "CSC: LOOK_EN enables contrast, brightness and the chroma matrix (Q4.14);",
+        "FULL_RANGE 1 = full-range output, 0 = limited range (the colorimetry of the NV12).",
+    ],
+    "TUNE_NR_CTRL": [
+        "2DNR: MODE 0 automatic (prior-frame estimate; TUNE_NR_SEED until one is valid),",
+        "1 manual (TUNE_NR_VARIANCE), 2 variance curve (below); MEDIAN_EN prefilter.",
+    ],
+    "TUNE_BPC_CTRL": (
+        ["NR.variance_curve (MODE 2 only, calibration required): %d knots at luma" % NR_KNOTS,
+         "0, 16, ..., 240, 255, each with an explicit index (no auto-increment), then",
+         "NR_CONFIRM. Not loaded here: SEAL refuses MODE 2 (NOT_READY) until it is."]
+        + sum((["TUNE_NR_LUT_ADDR VALUE=%d" % k, "TUNE_NR_LUT_DATA 0x0"] for k in range(NR_KNOTS)), [])
+        + ["TUNE_TABLE_CMD NR_CONFIRM=1",
+           "BPC: COLOR_THRESH_EN selects the G and RB thresholds; FACTORY_EN the point list."]),
+    "TUNE_BPC_COUNT": [
+        "BPC.factory_coordinates: COUNT points (at most 1024), active Bayer coordinates,",
+        "sorted by y*W+x, unique. Point i: TUNE_BPC_ADDR VALUE=i, then TUNE_BPC_DATA",
+        "X=x Y=y. BPC_CONFIRM checks the list. Empty at startup:",
+    ],
+    "TUNE_TABLE_CMD": ["TUNE_BPC_ADDR VALUE=0", "TUNE_BPC_DATA X=0 Y=0"],
+}
+
+
+def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200, tune=False):
+    """Returns (writes, note) for one preset. raw12: container samples, bits [11:0].
+    tune: end with the TUNE block (tune_writes)."""
     if preset not in PRESETS:
         raise ValueError("unknown preset %r" % preset)
     gr, gb, means = grey_world(raw12, width, height, bayer, pedestal)
@@ -212,16 +281,27 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
         nx, ny = 8, 6
         zw, zh = -(-aw // nx), -(-ah // ny)
         w += aec(nx, ny, zw, zh, ue=256, oe=3840) + awb(16, 8, 16, 4000) + [("AF_CTRL", 1)] + ids
+    if tune:
+        w += tune_writes(cnf=not any(n == "CNF_CTRL" for n, _ in w))
     note = "grey world means after BLC: R %.1f G %.1f B %.1f" % means
     return w, note
 
 
 def format_profile(writes, syntax="fields"):
     """Profile text of a write list, one line per write (csrw_codec.format_write:
-    a register with several fields as REGISTER f=V ...; the stream is unchanged)."""
+    a register with several fields as REGISTER f=V ...; the stream is unchanged).
+    From TUNE_FIRST on, TUNE_NOTES comments precede a register's first write."""
     import csrw_codec
     cmap = csrw_codec.CsrMap()
-    return "".join(csrw_codec.format_write(cmap.regs[n], v, syntax) + "\n" for n, v in writes)
+    names = [n for n, _ in writes]
+    start = names.index(TUNE_FIRST) if TUNE_FIRST in names else len(names)
+    out, noted = [], set()
+    for i, (n, v) in enumerate(writes):
+        if i >= start and n in TUNE_NOTES and n not in noted:
+            noted.add(n)
+            out += ["# " + c for c in TUNE_NOTES[n]]
+        out.append(csrw_codec.format_write(cmap.regs[n], v, syntax))
+    return "".join(line + "\n" for line in out)
 
 
 def main():
@@ -236,13 +316,15 @@ def main():
     ap.add_argument("--syntax", default="fields", choices=("fields", "legacy"),
                     help="profile text: field names (ISP-UPD-008, csrw_codec) or whole-register values; the "
                          "writes are the same")
+    ap.add_argument("--no-tune", action="store_true",
+                    help="omit the TUNE block (TUNE extension controls at their reset values, ISP-UPD-009)")
     ap.add_argument("--depth", default="raw12", choices=("raw12", "raw10"),
                     help="native depth of the right-aligned container (COMMON_INPUT_FORMAT, MAS v1.07 §6.6.3.2)")
     a = ap.parse_args()
     words = np.fromfile(a.input, dtype="<u2").astype(np.int64)
     # The profile is computed in the internal RAW12 domain: normalize exactly once.
     raw = ((words & 0x3FF) << 2) if a.depth == "raw10" else words & 0xFFF
-    writes, note = profile_writes(raw, a.width, a.height, a.bayer, a.preset, a.pedestal)
+    writes, note = profile_writes(raw, a.width, a.height, a.bayer, a.preset, a.pedestal, tune=not a.no_tune)
     if a.depth == "raw10":
         writes = [("COMMON_INPUT_FORMAT", 1)] + writes  # RAW12 is the reset value
         note += "; input RAW10 right-aligned (DEPTH 1)"

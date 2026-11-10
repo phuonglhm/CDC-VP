@@ -273,3 +273,86 @@ GAMMA_LUT_DATA 0xFFF
 GAMMA_CTRL en=0 lut_load_confirm=1
 GAMMA_CTRL en=1
 CSC_CTRL std=0
+# ---- TUNE extension controls (CSR v1.07 TUNE page, ISP-UPD-009) ----
+# Values: the CSR reset, i.e. the Tuning v1.07 startup value. In profile
+# mode (the firmware's default bring-up; run_raw --profile-mode) they are
+# written into the bank after INIT; legacy mode keeps the reset values in
+# the datapath (MAS v1.07 9.9.2).
+# Demosaic: equal-gradient margins (0 keeps the exact-tie decision).
+TUNE_DEMOSAIC_MARGIN GREEN=0 RB=0
+# CNF: weight of the filtered chroma, 0..256 (256 = the CNF result).
+TUNE_CNF_BLEND VALUE=0x100
+# CNF thresholds and enable (legacy controls, also live in legacy mode).
+CNF_CHROMA_TH chroma_th=0
+CNF_LUMA_TH luma_th=0
+CNF_CTRL en=0
+# CSC: LOOK_EN enables contrast, brightness and the chroma matrix (Q4.14);
+# FULL_RANGE 1 = full-range output, 0 = limited range (the colorimetry of the NV12).
+TUNE_CSC_CTRL LOOK_EN=0 FULL_RANGE=1
+TUNE_CSC_CONTRAST VALUE=0x100
+TUNE_CSC_BRIGHTNESS VALUE=0
+TUNE_CSC_UU VALUE=0x4000
+TUNE_CSC_UV VALUE=0
+TUNE_CSC_VU VALUE=0
+TUNE_CSC_VV VALUE=0x4000
+# 2DNR: MODE 0 automatic (prior-frame estimate; TUNE_NR_SEED until one is valid),
+# 1 manual (TUNE_NR_VARIANCE), 2 variance curve (below); MEDIAN_EN prefilter.
+TUNE_NR_CTRL MODE=0 MEDIAN_EN=1
+TUNE_NR_VARIANCE VALUE=0
+TUNE_NR_SCALE VALUE=0x100
+TUNE_NR_LIMITS MIN=0 MAX=0xFFFF
+TUNE_NR_LL_SCALE VALUE=0x100
+TUNE_NR_LH_SCALE VALUE=0x100
+TUNE_NR_HL_SCALE VALUE=0x100
+TUNE_NR_HH_SCALE VALUE=0x100
+TUNE_NR_BLEND VALUE=0x100
+TUNE_NR_SEED VALUE=0
+# NR.variance_curve (MODE 2 only, calibration required): 17 knots at luma
+# 0, 16, ..., 240, 255, each with an explicit index (no auto-increment), then
+# NR_CONFIRM. Not loaded here: SEAL refuses MODE 2 (NOT_READY) until it is.
+# TUNE_NR_LUT_ADDR VALUE=0
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=1
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=2
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=3
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=4
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=5
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=6
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=7
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=8
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=9
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=10
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=11
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=12
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=13
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=14
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=15
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_NR_LUT_ADDR VALUE=16
+# TUNE_NR_LUT_DATA 0x0
+# TUNE_TABLE_CMD NR_CONFIRM=1
+# BPC: COLOR_THRESH_EN selects the G and RB thresholds; FACTORY_EN the point list.
+TUNE_BPC_CTRL COLOR_THRESH_EN=0 FACTORY_EN=0
+TUNE_BPC_G_THRESH K=0x100 FLOOR=0
+TUNE_BPC_RB_THRESH K=0x100 FLOOR=0
+# BPC.factory_coordinates: COUNT points (at most 1024), active Bayer coordinates,
+# sorted by y*W+x, unique. Point i: TUNE_BPC_ADDR VALUE=i, then TUNE_BPC_DATA
+# X=x Y=y. BPC_CONFIRM checks the list. Empty at startup:
+TUNE_BPC_COUNT VALUE=0
+# TUNE_BPC_ADDR VALUE=0
+# TUNE_BPC_DATA X=0 Y=0
+TUNE_TABLE_CMD BPC_CONFIRM=1

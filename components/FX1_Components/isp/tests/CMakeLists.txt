@@ -192,6 +192,10 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME fx1_isp.tools.run_raw_colorimetry
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_run_raw_colorimetry.py
                     $<TARGET_FILE:fx1_isp_run_raw> ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors ${CMAKE_CURRENT_BINARY_DIR})
+        # --profile-mode replays a legacy profile's TUNE extension scalars (ISP-UPD-009).
+        add_test(NAME fx1_isp.tools.run_raw_profile_replay
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_run_raw_profile_replay.py
+                    $<TARGET_FILE:fx1_isp_run_raw> ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors ${CMAKE_CURRENT_BINARY_DIR})
         # Field-syntax profiles (ISP-UPD-008): grammar, errors, Python codec = C++ reader, samples.
         add_test(NAME fx1_isp.tools.csrw_codec
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_csrw_codec.py

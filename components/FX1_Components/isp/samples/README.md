@@ -31,6 +31,25 @@ table/mesh data ports (`LSC_COEF_DATA`, `GAMMA_LUT_DATA`, `EE_LUT_WDATA`,
 emit`, and every file compiles to the same write stream, write for write, as
 its v1.07-syntax predecessor. `tools/csrw_codec.py explain FILE` decodes each
 write.
+
+TUNE block (ISP-UPD-009, 2026-11-10, tuning team request): every sample
+profile ends with the TUNE extension controls the tuning team adjusts:
+- `TUNE_DEMOSAIC_MARGIN` and `TUNE_CNF_BLEND`;
+- the CNF controls, where the preset has none of its own (`basic`,
+  `gtm_manual_qhd`);
+- `TUNE_CSC_*`, `TUNE_NR_*` and `TUNE_BPC_*`;
+- the empty factory bad-pixel list (`TUNE_BPC_COUNT VALUE=0`, then
+  `BPC_CONFIRM`).
+
+The values are the CSR reset values, which are the Tuning v1.07 startup
+values, so the outputs equal those of the profiles without the block. The
+NR variance curve (MODE 2 only) is a commented template of 17 explicit-index
+writes and `NR_CONFIRM`.
+
+The firmware's profile-mode bring-up and `fx1_isp_run_raw --profile-mode`
+write these values into the bank after INIT. In legacy mode they stay bank
+storage and the datapath keeps their reset. Use `make_profile.py
+--no-tune` to leave the block out.
 | `4k/<case>/` | The two 4K acceptance cases (DEC-37): profile, frame count, expected NV12 SHA-256 and statistics readout script. |
 | `run_4k_check.sh` | Runs both 4K cases through the installed `fx1_isp_run_raw`, compares each against the reference values, and prints PASS or FAIL. It needs neither Python nor the dataset. |
 

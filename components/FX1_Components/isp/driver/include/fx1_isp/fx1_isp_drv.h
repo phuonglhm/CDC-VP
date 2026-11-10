@@ -317,12 +317,19 @@ int fx1_isp_profile_seal(fx1_isp_dev *dev, unsigned bank, uint32_t profile_id, u
  * the payloads INIT cleared are loaded again (the confirmed legacy Gamma
  * curve, read back through GAMMA_LUT_RDATA, through the banked port; the
  * GTM manual curve and TUNE payload writes replayed in order through their
- * own ports), then SEAL with `profile_id` and APPLY from the next
- * frame. CONFIG state only. Any failure is returned with its TUNE_ERROR
- * bits (no silent fallback to legacy mode); leave profile mode with
- * fx1_isp_profile_mode(dev, 0). */
+ * own ports, and in the same ordered replay the profile's TUNE extension
+ * scalars -- TUNE_NR_*, TUNE_CSC_*, TUNE_BPC_CTRL/THRESH, ... -- written
+ * into the bank, as INIT loads their reset values; ISP-UPD-009), then SEAL
+ * with `profile_id` and APPLY from the next frame. CONFIG state only. Any
+ * failure is returned with its TUNE_ERROR bits (no silent fallback to
+ * legacy mode); leave profile mode with fx1_isp_profile_mode(dev, 0). */
 int fx1_isp_profile_from_legacy(fx1_isp_dev *dev, unsigned bank, const fx1_isp_reg_write *writes, size_t n,
                                 uint32_t profile_id, uint32_t *err);
+/* 1 if fx1_isp_profile_from_legacy replays a profile write to `offset` into
+ * the bank after INIT: a bank payload port (GTM manual curve, TUNE NR/BPC/
+ * LSC-sector ports, TUNE_BPC_COUNT, TUNE_TABLE_CMD) or a TUNE extension
+ * scalar other than TUNE_PROFILE_ID. Pure: no device access. */
+int fx1_isp_profile_replays(uint32_t offset);
 int fx1_isp_profile_apply(fx1_isp_dev *dev, unsigned bank, int exact, uint32_t frame, uint32_t *err);
 int fx1_isp_profile_cancel(fx1_isp_dev *dev, uint32_t *err);
 int fx1_isp_profile_unseal(fx1_isp_dev *dev, unsigned bank, uint32_t *err);

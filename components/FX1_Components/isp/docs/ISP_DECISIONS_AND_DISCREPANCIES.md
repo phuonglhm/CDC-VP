@@ -1017,3 +1017,82 @@ the header (every one-field RW `*_DATA`/`*_WDATA` register).
 - `make_profile` reproduces the outdoor1 samples byte for byte.
 - `isp_auto.py capture` writes the six controls the same way
   (`WB_GAIN_R gain_r=0x1F7`).
+
+## 14. TUNE block in the profiles, ISP-UPD-009 (tuning team request, 2026-11-10)
+
+The tuning team asked for 34 parameters of Tuning v1.07 in the profiles:
+`TUNE_DEMOSAIC_MARGIN`, the CNF controls and `TUNE_CNF_BLEND`,
+`TUNE_CSC_*`, `TUNE_NR_*` with `NR.variance_curve`, `TUNE_BPC_*` with
+`BPC.factory_coordinates`. Every field exists in CSR v1.07 as named (RW).
+The Tuning startup value of each one is its CSR reset.
+
+**Root cause found first.** Before this change, writing these TUNE
+extension scalars in a `.csrw` had no effect in either mode:
+- In legacy mode they are bank storage; the datapath keeps the field reset
+  (MAS v1.07 §9.9.2, the vector `tune_ignored_in_legacy_64x48`).
+- In profile mode, the firmware's default bring-up
+  (`fx1_isp_profile_from_legacy`) runs INIT. INIT loads the extension
+  fields from their reset (§9.7, `control_unit_profile.cpp`). The bring-up
+  then replayed only the bank payload ports (GTM manual curve, TUNE
+  NR/BPC/LSC-sector ports, `TUNE_TABLE_CMD`), so the profile's values were
+  lost.
+
+The `tune_*` vectors worked only because each runs its own transaction in
+the `.csrw` (`TUNE_MODE`, INIT, writes, `PROFILE_ID`, SEAL, APPLY). The
+firmware bring-up cannot do that after the fact: INIT of a sealed bank is
+LOCKED.
+
+**Decision (user):** the bring-up writes the extension scalars into the
+bank.
+- `fx1_isp_profile_from_legacy` replays, after INIT and in the profile's
+  order, every write for which the new pure helper
+  `fx1_isp_profile_replays(offset)` is true:
+  - the payload ports, as before;
+  - the 134 TUNE extension scalars (the `extension` fields of
+    `profile_fields.cpp`, without `TUNE_PROFILE_ID`, which SEAL sets, and
+    `TUNE_BPC_COUNT`, already a payload port).
+- `fx1_isp_run_raw --profile-mode` uses the same helper, so the model tool
+  and the firmware cannot differ.
+- Legacy mode is unchanged: the TUNE scalars still do not reach the
+  datapath there, as MAS specifies.
+
+A profile with no TUNE scalar write gives the same bank as before, so every
+existing output is unchanged. `test_driver_tlm` still skips vectors with
+`TUNE_` writes in its legacy-equals-profile pass.
+
+**Profiles (user):**
+- All five samples end with the TUNE block, at the CSR reset values.
+  - `make_profile.tune_writes()`; `profile_writes(..., tune=True)`; the
+    command line adds it by default (`--no-tune` omits it).
+  - Library callers keep `tune=False`: the test vectors, the 4K cases,
+    the firmware fixtures and the RAW regression are not regenerated.
+  - `basic` and `gtm_manual_qhd` have no CNF controls, so the block adds
+    them at reset (CNF off).
+- `BPC.factory_coordinates`: `TUNE_BPC_COUNT VALUE=0`, then `TUNE_TABLE_CMD
+  BPC_CONFIRM=1`, the empty list of the Tuning startup. A commented point
+  template comes with it.
+- `NR.variance_curve`: commented only, as 17 explicit-index ADDR/DATA pairs
+  and `NR_CONFIRM`. It is calibration data needed only for MODE 2. With the
+  curve left out, MODE 2 fails SEAL with NOT_READY instead of running on a
+  made-up curve of zeros.
+- The streams before the block are those of `5a2ab64`, write for write.
+
+**Verification:**
+- `test_driver_tlm`:
+  - the replay rule equals the payload ports plus the model's extension
+    fields, over the whole 64 KiB offset space (145 registers);
+  - all 12 vectors with their own transaction, run with that transaction
+    removed through the driver bring-up, give their expected outputs and
+    statistics.
+- `test_run_raw_profile_replay`:
+  - the 10 CH0-only such vectors give their expected NV12 through
+    `run_raw --profile-mode`;
+  - `tune_ignored_in_legacy` keeps the reset in legacy mode, and in
+    profile mode applies the profile's limited range.
+- `test_make_profile_defaults`: each block value equals the header's
+  `_RESET`; all 34 items are present; the templates parse; the block is
+  appended to each preset without changing what comes before.
+- Old against new sample, same RAW, `run_raw`: the NV12 and colorimetry are
+  identical. Cases run:
+  - the shared profile on D65, in legacy and profile mode;
+  - the four outdoor1 presets, in profile mode.
