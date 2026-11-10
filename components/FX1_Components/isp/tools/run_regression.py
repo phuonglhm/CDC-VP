@@ -140,6 +140,17 @@ def load_raw(entry, a, decl):
     return src, sha, samples
 
 
+def read_status(path):
+    """fx1_isp_run_raw's PREFIX.txt: the `key value` lines; the per-SOF
+    frame_colorimetry_<k> lines carry several fields and are skipped (ISP-UPD-005)."""
+    status = {}
+    for ln in open(path):
+        f = ln.split()
+        if len(f) == 2:
+            status[f[0]] = f[1]
+    return status
+
+
 def run_case(job):
     """One image run or one sequence run."""
     a, decl, preset = job["args"], job["declared"], job["preset"]
@@ -224,11 +235,7 @@ def run_case(job):
     t_dut = time.time()
     p = subprocess.run(cmd, capture_output=True, text=True)
     t_dut = time.time() - t_dut
-    status = {}
-    if os.path.exists(prefix + ".txt"):
-        for ln in open(prefix + ".txt"):
-            k, v = ln.split()
-            status[k] = v
+    status = read_status(prefix + ".txt") if os.path.exists(prefix + ".txt") else {}
     if os.path.exists(prefix + ".events.log"):
         os.replace(prefix + ".events.log", os.path.join(d, "events.log"))
 
@@ -283,18 +290,21 @@ def run_case(job):
                     "sha256": sha256_bytes(prof_text.encode()), "luts": luts, "note": note},
         "output": {"width": ow, "height": oh, "y_stride": align16(ow), "uv_stride": align16(ow),
                    "format": "NV12, active bytes, Y plane then interleaved UV",
-                   "csc_std": int(status.get("csc_std", 0))},
+                   # ISP-UPD-005: the last frame's SOF colorimetry (absent: no frame ran)
+                   "csc_std": int(status["csc_std"]) if "csc_std" in status else None,
+                   "csc_full_range": int(status["csc_full_range"]) if "csc_full_range" in status else None},
         "versions": {"git": git_state(), "python": platform.python_version(), "numpy": np.__version__,
                      "run_raw_sha256": raw_fixture.sha256_file(a["run_raw"])},
     }
     json.dump(manifest, open(os.path.join(d, "run_manifest.json"), "w"), indent=1)
     if os.path.exists(prefix + ".nv12"):
         os.replace(prefix + ".nv12", os.path.join(d, "output.nv12"))
-        if not a["no_preview"] and frames[-1]["size_ok"]:
+        if not a["no_preview"] and frames[-1]["size_ok"] and manifest["output"]["csc_full_range"] is not None:
             from PIL import Image
             from nv12_preview import nv12_to_rgb
             Image.fromarray(nv12_to_rgb(open(os.path.join(d, "output.nv12"), "rb").read(), ow, oh,
-                                        manifest["output"]["csc_std"])).save(os.path.join(d, "output_preview.png"))
+                                        manifest["output"]["csc_std"],
+                                        bool(manifest["output"]["csc_full_range"]))).save(os.path.join(d, "output_preview.png"))
     if not a["keep_intermediate"]:
         for f in inputs + [lst, exp_stats, prefix + ".stats.txt", prefix + ".txt"] + \
                 ["%s.f%03d.nv12" % (prefix, k) for k in range(len(order))]:

@@ -59,7 +59,18 @@ typedef struct isp_demo_result {
     uint32_t profile_id;    /* profile mode: the active profile ID of the outputs (0 legacy) */
     uint32_t tune_error;    /* profile build failure: the TUNE_ERROR bits (status 2) */
     uint32_t ch1_width, ch1_height, ch2_width, ch2_height;
-    uint32_t reserved[3];
-} isp_demo_result;          /* status 0 done, 1 frames failed, 2 profile not built */
+    /* ISP-UPD-004: AEC global UE/OE percentages of the job's last AEC result
+     * (fx1_isp_read_aec_percent), basis points 0..10000 of the active image:
+     * bits [13:0] UE, [29:16] OE, bit 31 valid (0: no result, or saturated). */
+    uint32_t aec_percent;
+    /* ISP-UPD-005: colorimetry of the NV12 outputs (fx1_isp_output_colorimetry,
+     * the configuration committed before fx1_isp_start): bit 0 full range,
+     * bits [2:1] CSC_CTRL.std (0 BT.601, 1 BT.709), bit 31 valid. */
+    uint32_t colorimetry;
+    uint32_t reserved;      /* written 0 */
+} isp_demo_result;          /* status 0 done, 1 frames failed, 2 profile not built; 96 bytes */
+
+#define ISP_DEMO_AEC_PERCENT_VALID 0x80000000u
+#define ISP_DEMO_COLORIMETRY_VALID 0x80000000u
 
 #endif /* ISP_DEMO_JOB_H */

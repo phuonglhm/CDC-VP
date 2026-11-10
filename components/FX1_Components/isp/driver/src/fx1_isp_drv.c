@@ -14,6 +14,7 @@
 #define MAX_ACTIVE_H 2160u
 #define MIN_ACTIVE 32u
 #define LSC_MESH_MAX 32u     /* nodes per axis (MAS v1.07 §6.8.4, V107-A2) */
+#define LSC_GAIN_MAX 0x200000u /* node gain 8.0 in UQ4.18 (ISP-UPD-001) */
 /* The Resizer derives its configuration from a stable key in 35 core clocks
  * (MAS §6.20.4.3, Table 123) and only then publishes RESIZER_OUT_W/H; a frame
  * started earlier uses the previous set. A key changed while a derivation runs
@@ -864,6 +865,30 @@ int fx1_isp_profile_from_legacy(fx1_isp_dev *dev, unsigned bank, const fx1_isp_r
     return rc;
 }
 
+int fx1_isp_output_colorimetry(fx1_isp_dev *dev, unsigned bank, unsigned *std, int *full_range) {
+    if (!initialised(dev)) {
+        return FX1_ISP_ESTATE;
+    }
+    if (bank > 1u || !std || !full_range) {
+        return FX1_ISP_EINVAL;
+    }
+    if (!(RD(dev, FX1_ISP_TUNE_MODE_OFFSET) & FX1_ISP_TUNE_MODE_ENABLE_MASK)) {
+        /* Legacy mode: CSC_CTRL is a plain register; TUNE_CSC_CTRL is bank
+         * storage only and the datapath keeps the field reset (MAS v1.07
+         * §9.9.2): reading it back would report the bank, not the output. */
+        *std = (RD(dev, FX1_ISP_CSC_CTRL_OFFSET) & FX1_ISP_CSC_CTRL_STD_MASK) >> FX1_ISP_CSC_CTRL_STD_SHIFT;
+        *full_range = FX1_ISP_TUNE_CSC_CTRL_FULL_RANGE_RESET != 0u;
+        return FX1_ISP_OK;
+    }
+    /* Profile mode: both are bank-owned; read `bank` through TUNE_BANK. */
+    const uint32_t sel = RD(dev, FX1_ISP_TUNE_BANK_OFFSET);
+    WR(dev, FX1_ISP_TUNE_BANK_OFFSET, bank);
+    *std = (RD(dev, FX1_ISP_CSC_CTRL_OFFSET) & FX1_ISP_CSC_CTRL_STD_MASK) >> FX1_ISP_CSC_CTRL_STD_SHIFT;
+    *full_range = (RD(dev, FX1_ISP_TUNE_CSC_CTRL_OFFSET) & FX1_ISP_TUNE_CSC_CTRL_FULL_RANGE_MASK) != 0u;
+    WR(dev, FX1_ISP_TUNE_BANK_OFFSET, sel & FX1_ISP_TUNE_BANK_VALUE_MASK);
+    return FX1_ISP_OK;
+}
+
 int fx1_isp_profile_seal(fx1_isp_dev *dev, unsigned bank, uint32_t profile_id, uint32_t *err) {
     int rc = select_bank(dev, bank, err);
     if (rc) {
@@ -1116,15 +1141,30 @@ int fx1_isp_ee_select(fx1_isp_dev *dev, unsigned profile, int enable) {
     return FX1_ISP_OK;
 }
 
-int fx1_isp_lsc_load(fx1_isp_dev *dev, unsigned profile, unsigned nx, unsigned ny, const uint32_t *coef,
-                     uint32_t *lsc_error) {
+/* Coefficient i of a load: from a plain array or from the values of
+ * LSC_COEF_DATA writes (fx1_isp_lsc_load_writes). */
+static uint32_t lsc_coef_at(const uint32_t *coef, const fx1_isp_reg_write *writes, unsigned i) {
+    return coef ? coef[i] : writes[i].value;
+}
+
+static int lsc_load_run(fx1_isp_dev *dev, unsigned profile, unsigned nx, unsigned ny, const uint32_t *coef,
+                        const fx1_isp_reg_write *writes, uint32_t *lsc_error) {
     unsigned i;
     uint32_t err;
     if (!initialised(dev)) {
         return FX1_ISP_ESTATE;
     }
-    if (profile > 2u || nx < 2u || nx > LSC_MESH_MAX || ny < 2u || ny > LSC_MESH_MAX || !coef) {
+    if (profile > 2u || nx < 2u || nx > LSC_MESH_MAX || ny < 2u || ny > LSC_MESH_MAX || (!coef && !writes)) {
         return FX1_ISP_EINVAL;
+    }
+    /* ISP-UPD-001: node gains UQ4.18, 0..8.0 (0x200000) inclusive. A code
+     * above 8.0 is refused before any register is written; the hardware
+     * would flag COEF_RANGE but still store and use it. */
+    for (i = 0; i < 4u * nx * ny; ++i) {
+        if (lsc_coef_at(coef, writes, i) > LSC_GAIN_MAX ||
+            (writes && writes[i].offset != FX1_ISP_LSC_COEF_DATA_OFFSET)) {
+            return FX1_ISP_EINVAL;
+        }
     }
     const uint32_t nodes = nx | (ny << 8);
     /* Any change of the mesh size invalidates every profile (HAS p62), so it is
@@ -1142,7 +1182,7 @@ int fx1_isp_lsc_load(fx1_isp_dev *dev, unsigned profile, unsigned nx, unsigned n
         return FX1_ISP_EIO;
     }
     for (i = 0; i < 4u * nx * ny; ++i) {
-        WR(dev, FX1_ISP_LSC_COEF_DATA_OFFSET, coef[i]);
+        WR(dev, FX1_ISP_LSC_COEF_DATA_OFFSET, lsc_coef_at(coef, writes, i));
     }
     WR(dev, FX1_ISP_LSC_LOAD_CTRL_OFFSET, profile | FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK);
     err = RD(dev, FX1_ISP_LSC_ERROR_OFFSET);
@@ -1155,6 +1195,25 @@ int fx1_isp_lsc_load(fx1_isp_dev *dev, unsigned profile, unsigned nx, unsigned n
     return (RD(dev, FX1_ISP_LSC_PROFILE_STATUS_OFFSET) & (1u << profile)) ? FX1_ISP_OK : FX1_ISP_EIO;
 }
 
+int fx1_isp_lsc_load(fx1_isp_dev *dev, unsigned profile, unsigned nx, unsigned ny, const uint32_t *coef,
+                     uint32_t *lsc_error) {
+    return coef ? lsc_load_run(dev, profile, nx, ny, coef, NULL, lsc_error) : FX1_ISP_EINVAL;
+}
+
+int fx1_isp_lsc_load_writes(fx1_isp_dev *dev, unsigned profile, const fx1_isp_reg_write *writes, size_t n,
+                            uint32_t *lsc_error) {
+    if (!initialised(dev)) {
+        return FX1_ISP_ESTATE;
+    }
+    const uint32_t nodes = RD(dev, FX1_ISP_LSC_MESH_NODES_OFFSET);
+    const unsigned nx = nodes & FX1_ISP_LSC_MESH_NODES_MESH_NX_MASK;
+    const unsigned ny = (nodes & FX1_ISP_LSC_MESH_NODES_MESH_NY_MASK) >> FX1_ISP_LSC_MESH_NODES_MESH_NY_SHIFT;
+    if (!writes || n != 4u * (size_t)nx * ny) { /* the mesh in place: its size is not rewritten */
+        return FX1_ISP_EINVAL;
+    }
+    return lsc_load_run(dev, profile, nx, ny, NULL, writes, lsc_error);
+}
+
 int fx1_isp_lsc_select(fx1_isp_dev *dev, unsigned profile) {
     if (!initialised(dev)) {
         return FX1_ISP_ESTATE;
@@ -1165,6 +1224,54 @@ int fx1_isp_lsc_select(fx1_isp_dev *dev, unsigned profile) {
     WR(dev, FX1_ISP_LSC_ERROR_OFFSET, FX1_ISP_LSC_ERROR_PROFILE_SEL_REJECT_MASK);
     WR(dev, FX1_ISP_LSC_PROFILE_SEL_OFFSET, profile);
     return (RD(dev, FX1_ISP_LSC_ERROR_OFFSET) & FX1_ISP_LSC_ERROR_PROFILE_SEL_REJECT_MASK) ? FX1_ISP_EIO : FX1_ISP_OK;
+}
+
+/* BLC gain profile g (ISP-UPD-002): G0..G3 at the v1.07 offsets, G4..G7 in
+ * the extension block, so the profiles are not one uniform stride apart. */
+#define BLC_PROFILE(g)                                                                                    \
+    {{FX1_ISP_BLC_OFS_G##g##_DFT_OFFSET, FX1_ISP_BLC_OFS_G##g##_R_OFFSET, FX1_ISP_BLC_OFS_G##g##_GR_OFFSET,    \
+      FX1_ISP_BLC_OFS_G##g##_GB_OFFSET, FX1_ISP_BLC_OFS_G##g##_B_OFFSET},                                       \
+     {FX1_ISP_BLC_SCALE_G##g##_R_OFFSET, FX1_ISP_BLC_SCALE_G##g##_GR_OFFSET,                                    \
+      FX1_ISP_BLC_SCALE_G##g##_GB_OFFSET, FX1_ISP_BLC_SCALE_G##g##_B_OFFSET}}
+static const struct {
+    uint32_t ofs[5];   /* DFT, R, Gr, Gb, B */
+    uint32_t scale[4]; /* R, Gr, Gb, B */
+} blc_map[8] = {BLC_PROFILE(0), BLC_PROFILE(1), BLC_PROFILE(2), BLC_PROFILE(3),
+                BLC_PROFILE(4), BLC_PROFILE(5), BLC_PROFILE(6), BLC_PROFILE(7)};
+#undef BLC_PROFILE
+
+int fx1_isp_blc_set_profile(fx1_isp_dev *dev, unsigned g, uint32_t dft, const uint32_t trim[4],
+                            const uint32_t scale[4]) {
+    unsigned c;
+    if (!initialised(dev)) {
+        return FX1_ISP_ESTATE;
+    }
+    if (g > 7u || !trim || !scale || dft > 0xFFFu) {
+        return FX1_ISP_EINVAL;
+    }
+    for (c = 0; c < 4u; ++c) {
+        if (trim[c] > 0xFFFu || scale[c] > FX1_ISP_BLC_SCALE_G0_R_SCALE_G0_R_MASK) {
+            return FX1_ISP_EINVAL;
+        }
+    }
+    WR(dev, blc_map[g].ofs[0], dft);
+    for (c = 0; c < 4u; ++c) {
+        WR(dev, blc_map[g].ofs[c + 1u], trim[c]);
+        WR(dev, blc_map[g].scale[c], scale[c]);
+    }
+    return FX1_ISP_OK;
+}
+
+int fx1_isp_blc_select(fx1_isp_dev *dev, unsigned g, int scale_en) {
+    if (!initialised(dev)) {
+        return FX1_ISP_ESTATE;
+    }
+    if (g > 7u) {
+        return FX1_ISP_EINVAL;
+    }
+    WR(dev, FX1_ISP_BLC_GAIN_SEL_OFFSET,
+       (g << FX1_ISP_BLC_GAIN_SEL_GAIN_LEVEL_SHIFT) | (scale_en ? FX1_ISP_BLC_GAIN_SEL_RANGE_SCALE_EN_MASK : 0u));
+    return FX1_ISP_OK;
 }
 
 void fx1_isp_ccm_set(fx1_isp_dev *dev, const int16_t m[9], const int16_t ofs[3], int enable) {
@@ -1737,6 +1844,70 @@ int fx1_isp_aec_release(fx1_isp_dev *dev) { return stat_release(dev, &aec_engine
 
 int fx1_isp_aec_drops(fx1_isp_dev *dev, uint32_t *drops, int clear) { return stat_drops(dev, &aec_engine, drops, clear); }
 
+/* round(100 * count / samples) in basis points (0..10000), round half up,
+ * without a 64-bit division (RV32 firmware links no libgcc division). */
+static uint32_t aec_bp(uint64_t count, uint64_t samples) {
+    uint64_t num = (count > samples ? samples : count) * 10000u + samples / 2u, q = 0, r = 0;
+    int b;
+    for (b = 63; b >= 0; --b) {
+        r = (r << 1) | ((num >> b) & 1u);
+        if (r >= samples) {
+            r -= samples;
+            q |= (uint64_t)1 << b;
+        }
+    }
+    return (uint32_t)q;
+}
+
+int fx1_isp_aec_percent_of(const fx1_isp_stat_lease *lease, int zone, uint64_t ue, uint64_t oe,
+                           fx1_isp_aec_percent *out) {
+    uint64_t samples;
+    if (!lease || !out) {
+        return FX1_ISP_EINVAL;
+    }
+    if (zone < 0) {
+        samples = (uint64_t)lease->width * lease->height;
+    } else {
+        /* Zone k of the measured grid, row-major; the last column and row
+         * take what remains of the active image (MAS v1.07 §6.21.3.1). */
+        const unsigned k = (unsigned)zone, x = lease->nx ? k % lease->nx : 0u, y = lease->nx ? k / lease->nx : 0u;
+        if (!lease->nx || !lease->ny || y >= lease->ny || !lease->zone_w || !lease->zone_h) {
+            return FX1_ISP_EINVAL;
+        }
+        const uint64_t x0 = (uint64_t)x * lease->zone_w, y0 = (uint64_t)y * lease->zone_h;
+        const uint64_t w = x + 1u == lease->nx ? (lease->width > x0 ? lease->width - x0 : 0u) : lease->zone_w;
+        const uint64_t h = y + 1u == lease->ny ? (lease->height > y0 ? lease->height - y0 : 0u) : lease->zone_h;
+        samples = w * h;
+    }
+    out->ue = ue;
+    out->oe = oe;
+    out->samples = samples;
+    out->frame_id = lease->frame_id;
+    if (!samples) {
+        out->ue_bp = out->oe_bp = 0;
+        return FX1_ISP_ENODATA; /* no samples: no percentage, not 0 % */
+    }
+    out->ue_bp = aec_bp(ue, samples);
+    out->oe_bp = aec_bp(oe, samples);
+    return FX1_ISP_OK;
+}
+
+int fx1_isp_read_aec_percent(fx1_isp_dev *dev, fx1_isp_aec_percent *out) {
+    if (!initialised(dev)) {
+        return FX1_ISP_ESTATE;
+    }
+    if (!out) {
+        return FX1_ISP_EINVAL;
+    }
+    if (!dev->aec_last_valid) {
+        return FX1_ISP_ENODATA;
+    }
+    if (dev->aec_last.overflow) {
+        return FX1_ISP_EIO; /* a saturated count: no exact percentage */
+    }
+    return fx1_isp_aec_percent_of(&dev->aec_last_lease, -1, dev->aec_last.ue, dev->aec_last.oe, out);
+}
+
 int fx1_isp_read_aec_global(fx1_isp_dev *dev, fx1_isp_aec_global *o) {
     fx1_isp_aec_global g;
     unsigned guard;
@@ -1749,6 +1920,7 @@ int fx1_isp_read_aec_global(fx1_isp_dev *dev, fx1_isp_aec_global *o) {
     for (guard = 0; guard < 4u && fx1_isp_aec_acquire(dev, NULL) == FX1_ISP_OK; ++guard) {  /* two banks */
         if (fx1_isp_aec_read_global(dev, &g) == FX1_ISP_OK) {
             dev->aec_last = g;
+            dev->aec_last_lease = dev->aec_lease; /* its geometry, for fx1_isp_read_aec_percent */
             dev->aec_last_valid = 1;
         }
         if (dev->aec_leased) {

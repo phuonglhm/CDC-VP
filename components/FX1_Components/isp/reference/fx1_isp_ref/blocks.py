@@ -43,14 +43,16 @@ def blc(p, regs, en_isp=True):
         return p.copy()
     g = regs.f("BLC_GAIN_SEL", "gain_level")
     rse = regs.f("BLC_GAIN_SEL", "range_scale_en")
+    # ISP-UPD-002: gain profiles G0..G7, a DFT, four trims and four scales each.
     dft = regs.f("BLC_OFS_G%d_DFT" % g, "ofs_g%d_dft" % g)
     trims = [regs.f("BLC_OFS_G%d_%s" % (g, c), "ofs_g%d_%s" % (g, c.lower())) for c in ("R", "GR", "GB", "B")]
-    k = regs.f("BLC_SCALE_G%d" % g, "scale_g%d" % g)
+    scales = [regs.f("BLC_SCALE_G%d_%s" % (g, c), "scale_g%d_%s" % (g, c.lower())) for c in ("R", "GR", "GB", "B")]
     ch = _bayer_channel(p.shape)
     ofs = np.minimum(dft + np.array(trims, dtype=I64)[ch], 4095)   # CSR #38 saturated sum
     d = np.maximum(p - ofs, 0)
     if not rse:
         return d
+    k = np.array(scales, dtype=I64)[ch]                            # the scale of each sample's channel
     return np.minimum((d * k + (1 << 15)) >> 16, 4095)             # ALG-BLC-01: round half up
 
 
@@ -234,14 +236,15 @@ def _s12(v):
 
 
 def ccm(rgb, regs, en_isp=True):
-    """3x3 signed Q3.9 matrix + Q3.9 offset at the accumulator scale, floor, clamp (ALG-CCM-02).
+    """3x3 signed Q3.9 matrix + signed offset in output pixel levels (ISP-UPD-007: code 1 = one
+    level, i.e. 512 at the Q3.9 accumulator; was Q3.9), floor, clamp (ALG-CCM-02).
     Coefficients sampled at the accepted SOF; `updated` has no effect (U1, DEC-24 superseded)."""
     if not (en_isp and regs.f("CCM_CTRL", "en")):
         return rgb.copy()
     names = [["CRR", "CRG", "CRB"], ["CGR", "CGG", "CGB"], ["CBR", "CBG", "CBB"]]
     m = np.array([[_s12(regs.fc("CCM_" + n, "coef" + n[1:].lower())) for n in rowv] for rowv in names], dtype=I64)
     off = np.array([_s12(regs.fc("CCM_OFS_" + c, "offset_" + c.lower())) for c in "RGB"], dtype=I64)
-    acc = np.einsum("hwk,ck->hwc", rgb.astype(I64), m) + off
+    acc = np.einsum("hwk,ck->hwc", rgb.astype(I64), m) + off * 512
     return np.clip(acc >> 9, 0, 4095)
 
 

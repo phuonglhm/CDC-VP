@@ -122,7 +122,7 @@ if(FX1_ISP_INSTALL)
     # the Python reference, sample profiles, and the 4K bit-exact check.
     set(_fx1_isp_share ${CMAKE_INSTALL_DATADIR}/fx1_isp)
     install(PROGRAMS tools/run_regression.py tools/raw_fixture.py tools/make_profile.py tools/nv12_preview.py
-                     tools/demosaic_validate.py tools/demosaic_check.py
+                     tools/demosaic_validate.py tools/demosaic_check.py tools/csrw_codec.py tools/migrate_profile_upd.py
             DESTINATION ${_fx1_isp_share}/tools)
     install(DIRECTORY reference/fx1_isp_ref DESTINATION ${_fx1_isp_share}/reference FILES_MATCHING PATTERN "*.py")
     install(FILES docs/csr/fx1_isp_csr_schema.json DESTINATION ${_fx1_isp_share}/docs/csr)

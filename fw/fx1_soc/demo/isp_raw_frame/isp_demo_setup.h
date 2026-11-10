@@ -70,6 +70,118 @@ static inline int isp_demo_configure(fx1_isp_dev* dev, const volatile isp_demo_j
     return rc;
 }
 
+/* ISP-UPD-001: one LSC mesh in the three residents. The job profile loads
+ * the mesh into residents 1 and 2 and selects one of them: resident 0 is
+ * active at reset and is never a load destination (MAS Table 31, owner Q5).
+ * Once the first SOF has made the selected resident active, the firmware
+ * loads the same validated coefficients -- the profile's own LSC_COEF_DATA
+ * writes -- into every resident that is still invalid and not active
+ * (fx1_isp_lsc_load_writes: the mesh size in place is kept). */
+typedef struct {
+    uint32_t first, count; /* the selected resident's coefficient writes in the profile */
+    unsigned selected;
+} isp_demo_lsc_mesh;
+
+/* 1 if the profile validates a mesh for the resident it selects. The scan
+ * follows the loader (control_unit::lsc_load_ctrl, MAS Table 31): the
+ * destination is the one latched by LOAD_BEGIN (a VALIDATE or ABORT needs no
+ * profile bits, review Stop B R2); abort > validate > begin within a write; a
+ * BEGIN while a load is open, or of profile 3, is refused and the open load
+ * goes on; BEGIN invalidates its destination; VALIDATE commits only an exact
+ * 4 * nx * ny coefficient count, otherwise the destination stays invalid; an
+ * LSC_MESH_NODES write invalidates every resident. The coefficient writes of
+ * the selected resident must also form one contiguous block (other writes
+ * around them do not matter) so that the firmware can replay them. */
+static inline int isp_demo_lsc_mesh_of(const fx1_isp_reg_write* p, uint32_t n, isp_demo_lsc_mesh* m)
+{
+    uint32_t first[3] = {0}, count[3] = {0}, start = 0, got = 0, valid = 0, nodes = 0;
+    int dest = -1, plain = 0, sel = -1;
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t off = p[i].offset, v = p[i].value;
+        if (off == FX1_ISP_LSC_MESH_NODES_OFFSET) {
+            nodes = v;
+            valid = 0;
+        } else if (off == FX1_ISP_LSC_LOAD_CTRL_OFFSET) {
+            if (v & FX1_ISP_LSC_LOAD_CTRL_LOAD_ABORT_MASK) {
+                dest = -1; /* the destination stays invalid */
+            } else if (v & FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK) {
+                if (dest >= 0) {
+                    const uint32_t nx = nodes & FX1_ISP_LSC_MESH_NODES_MESH_NX_MASK;
+                    const uint32_t ny = (nodes & FX1_ISP_LSC_MESH_NODES_MESH_NY_MASK) >> FX1_ISP_LSC_MESH_NODES_MESH_NY_SHIFT;
+                    if (got && got == 4u * nx * ny) {
+                        valid |= 1u << dest;
+                        first[dest] = start;
+                        count[dest] = plain ? got : 0u; /* 0: valid, but not replayable as one block */
+                    }
+                }
+                dest = -1;
+            } else if ((v & FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK) && dest < 0) {
+                const uint32_t d = v & FX1_ISP_LSC_LOAD_CTRL_LOAD_PROFILE_MASK;
+                if (d < 3u) {
+                    dest = (int)d;
+                    got = 0;
+                    plain = 1;
+                    valid &= ~(1u << d); /* begin invalidates its destination */
+                }
+            }
+        } else if (off == FX1_ISP_LSC_COEF_DATA_OFFSET && dest >= 0) {
+            if (!got) start = i;
+            if (i == start + got) ++got; else { ++got; plain = 0; } /* counted, but a split block */
+        }
+        if (off == FX1_ISP_LSC_PROFILE_SEL_OFFSET) sel = (int)(v & FX1_ISP_LSC_PROFILE_SEL_PROFILE_SEL_MASK);
+    }
+    if (sel < 0 || sel > 2 || !(valid & (1u << sel)) || !count[sel]) return 0;
+    m->first = first[sel];
+    m->count = count[sel];
+    m->selected = (unsigned)sel;
+    return 1;
+}
+
+/* After the first SOF: fills the invalid, non-active residents with the
+ * selected mesh. Returns the LSC_PROFILE_STATUS valid mask (bits 0..2) after
+ * the fill, *filled the residents loaded; *rc the first driver error. A
+ * profile without a selected mesh is left alone. */
+static inline uint32_t isp_demo_lsc_fill(fx1_isp_dev* dev, const fx1_isp_reg_write* p, uint32_t n,
+                                         uint32_t* filled, int* rc)
+{
+    isp_demo_lsc_mesh m;
+    *filled = 0;
+    *rc = FX1_ISP_OK;
+    uint32_t st = dev->hal.read32(dev->hal.ctx, FX1_ISP_LSC_PROFILE_STATUS_OFFSET);
+    if (!isp_demo_lsc_mesh_of(p, n, &m)) return st & 7u;
+    const unsigned active = (st & FX1_ISP_LSC_PROFILE_STATUS_ACTIVE_PROFILE_MASK) >>
+                            FX1_ISP_LSC_PROFILE_STATUS_ACTIVE_PROFILE_SHIFT;
+    for (unsigned d = 0; d < 3u; ++d) {
+        if ((st & (1u << d)) || d == active) continue;
+        uint32_t err = 0;
+        const int r = fx1_isp_lsc_load_writes(dev, d, &p[m.first], m.count, &err);
+        if (r == FX1_ISP_OK) *filled |= 1u << d;
+        else if (*rc == FX1_ISP_OK) *rc = r;
+    }
+    st = dev->hal.read32(dev->hal.ctx, FX1_ISP_LSC_PROFILE_STATUS_OFFSET);
+    return st & 7u;
+}
+
+/* ISP-UPD-004: the result word of the AEC global UE/OE percentages of the
+ * newest AEC result fx1_isp_read_aec_global returned (0 if none). */
+static inline uint32_t isp_demo_aec_word(fx1_isp_dev* dev)
+{
+    fx1_isp_aec_percent pc;
+    if (fx1_isp_read_aec_percent(dev, &pc) != FX1_ISP_OK) return 0;
+    return ISP_DEMO_AEC_PERCENT_VALID | (pc.oe_bp << 16) | pc.ue_bp;
+}
+
+/* ISP-UPD-005: the result word of the outputs' colorimetry for the job's
+ * mode (bank 0 in profile mode, as isp_demo_configure builds it); 0 if the
+ * driver cannot tell. Call after isp_demo_configure, before fx1_isp_start. */
+static inline uint32_t isp_demo_colorimetry_word(fx1_isp_dev* dev)
+{
+    unsigned std = 0;
+    int full = 0;
+    if (fx1_isp_output_colorimetry(dev, 0, &std, &full) != FX1_ISP_OK) return 0;
+    return ISP_DEMO_COLORIMETRY_VALID | ((uint32_t)(std & 3u) << 1) | (full ? 1u : 0u);
+}
+
 /* Output geometry of channel ch (after start). */
 static inline void isp_demo_channel_size(fx1_isp_dev* dev, unsigned ch, uint32_t* w, uint32_t* h)
 {

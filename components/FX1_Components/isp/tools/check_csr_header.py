@@ -7,8 +7,9 @@ offset, register reset value, field mask/shift/reset and field access type
 (the header's per-field comment) with the generated header. The only knowledge
 it duplicates is the list of reserved tied-zero bits (CSR-DMA-ERR-5, and since
 v1.07 the buffer-ownership bits at or above the build buffer count of 4,
-CSR107-BUFCOUNT) and the register count of the pinned revision, restated here
-on purpose.
+CSR107-BUFCOUNT), the register count of the pinned revision and the VP CSR
+extension of the consolidated update (ISP-UPD-001/002/007,
+docs/ISP_CSR_EXTENSION_UPD.md), restated here on purpose.
 """
 
 import argparse
@@ -21,6 +22,27 @@ TIED_ZERO = {"DMA_ERR": 0x20, "IDMA_BUF_VALID": 0xF0, "ODMA_BUF_FREE": 0xF0, "OD
              "CH1_ODMA_BUF_FREE": 0xF0, "CH1_ODMA_BUF_DONE": 0xF0, "CH2_ODMA_BUF_FREE": 0xF0,
              "CH2_ODMA_BUF_DONE": 0xF0}
 NUM_REGISTERS = 573  # CSR revision v1.07
+
+# VP CSR extension 0x20261109, restated from the design table (not from gen_csr.py).
+EXTENSION_ID = 0x20261109
+EXT_REMOVED = {"BLC_SCALE_G%d" % g for g in range(4)}            # ISP-UPD-002
+EXT_WIDENED = {("LSC_COEF_DATA", "coef_data"): 21,                # ISP-UPD-001: UQ4.18
+               ("BLC_GAIN_SEL", "gain_level"): 2}                 # ISP-UPD-002: G0..G7
+
+
+def extension_added():
+    """ISP-UPD-002: G4..G7 DFT/trims after BLC_SCALE_G3's old slot, then the
+    per-channel scales of G0..G7; one RW field per register at bit 0."""
+    added = {}
+    for g in range(4, 8):
+        for i, c in enumerate(("DFT", "R", "GR", "GB", "B")):
+            added["BLC_OFS_G%d_%s" % (g, c)] = (0x268 + 20 * (g - 4) + 4 * i, "ofs_g%d_%s" % (g, c.lower()), 12,
+                                                200 if c == "DFT" else 0)
+    for g in range(8):
+        for i, c in enumerate(("R", "GR", "GB", "B")):
+            added["BLC_SCALE_G%d_%s" % (g, c)] = (0x2B8 + 16 * g + 4 * i, "scale_g%d_%s" % (g, c.lower()), 18,
+                                                  0x10000)
+    return added
 
 
 def parse_xlsx(path):
@@ -47,7 +69,7 @@ def parse_header(path):
         m = re.match(r"#define (FX1_ISP_\w+) (?:\(1u << )?(0x[0-9A-Fa-f]+|\d+)u", line)
         if m:
             macros[m.group(1)] = int(m.group(2), 0)
-        m = re.match(r"/\* 0x[0-9A-F]{4} (\w+) \(CSR row", line)
+        m = re.match(r"/\* 0x[0-9A-F]{4} (\w+) \((?:CSR row|extension)", line)
         if m:
             reg = m.group(1)
         m = re.match(r"/\*   (\w+) \[(\d+):(\d+)\] (\w+)", line)
@@ -64,6 +86,24 @@ def main():
     regs = parse_xlsx(a.xlsx)
     macros, access = parse_header(a.header)
     errors, compared = [], 0
+    if len(regs) != NUM_REGISTERS:
+        errors.append("expected %d registers in the workbook, found %d" % (NUM_REGISTERS, len(regs)))
+    # Apply the extension to the workbook view.
+    for rname in EXT_REMOVED:
+        if rname not in regs:
+            errors.append("extension: %s not in the workbook" % rname)
+        regs.pop(rname, None)
+        p = "FX1_ISP_" + rname
+        if p + "_OFFSET" in macros or p + "_RESET" in macros or any(
+                k.startswith("%s_SCALE_G%s_" % (p, rname[-1])) for k in macros):
+            errors.append("extension: removed register %s still has macros in the header" % rname)
+    for (rname, fname), hi in EXT_WIDENED.items():
+        lo, _mask, rst, acc, _hi = regs[rname]["fields"][fname]
+        regs[rname]["fields"][fname] = (lo, ((1 << (hi - lo + 1)) - 1) << lo, rst, acc, hi)
+    for rname, (off, fname, width, rst) in extension_added().items():
+        if rname in regs:
+            errors.append("extension: %s already in the workbook" % rname)
+        regs[rname] = {"offset": off, "fields": {fname: (0, (1 << width) - 1, rst, "RW", width - 1)}}
 
     def expect(name, value):
         nonlocal compared
@@ -86,8 +126,15 @@ def main():
             expect(f + "_RESET", rst)
             reset |= (rst << lo) & mask
         expect(p + "_RESET", reset)
-    if len(regs) != NUM_REGISTERS:
-        errors.append("expected %d registers, found %d" % (NUM_REGISTERS, len(regs)))
+    if macros.get("FX1_ISP_CSR_NUM_REGISTERS") != len(regs):
+        errors.append("FX1_ISP_CSR_NUM_REGISTERS %r, expected %d" % (macros.get("FX1_ISP_CSR_NUM_REGISTERS"),
+                                                                     len(regs)))
+    if macros.get("FX1_ISP_CSR_EXTENSION") != EXTENSION_ID:
+        errors.append("FX1_ISP_CSR_EXTENSION %r, expected 0x%08X" % (macros.get("FX1_ISP_CSR_EXTENSION"),
+                                                                     EXTENSION_ID))
+    offsets = sorted(r["offset"] for r in regs.values())
+    if len(set(offsets)) != len(offsets):
+        errors.append("duplicate register offsets after the extension")
     for e in errors:
         print("MISMATCH", e)
     print("check_csr_header: %d registers, %d values compared, %d mismatches"

@@ -285,6 +285,13 @@ void fx1_isp_tlm::debug_set_demosaic_observer(demosaic_observer *observer) {
    impl_->ctx.demosaic = observer;
 }
 
+void fx1_isp_tlm::debug_set_frame_output_hook(std::function<void(const frame_output_info &)> hook) {
+   if (sc_core::sc_start_of_simulation_invoked()) {
+      throw std::logic_error("fx1_isp: the frame output hook must be set before the simulation starts");
+   }
+   impl_->ctx.frame_output = std::move(hook);
+}
+
 void fx1_isp_tlm::debug_hw_hold(std::uint32_t offset, std::uint32_t mask, bool level) {
    impl_->control.hw_hold(offset, mask, level, cycle_at());
    state_changed(sc_core::SC_ZERO_TIME);

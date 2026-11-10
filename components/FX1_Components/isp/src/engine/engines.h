@@ -68,6 +68,7 @@ struct engine_context {
    // VP-only post-Demosaic observer (fx1_isp_debug.h), null when off. It is
    // told how each frame of `consumers` ends; it has no effect on the model.
    demosaic_observer *demosaic = nullptr;
+   frame_output_hook frame_output;  // VP-only output colorimetry per SOF (ISP-UPD-005), empty when off
 
    std::uint64_t cycle() const {
       return static_cast<std::uint64_t>(sc_core::sc_time_stamp() / params.core_period);

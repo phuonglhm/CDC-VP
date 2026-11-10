@@ -41,6 +41,10 @@ STATS_COMMANDS = ("AWB_RESULT_CTRL", "TUNE_AEC_CMD", "TUNE_AF_CMD", "TUNE_AEC_IN
 
 INPUT_DOMAIN = ("COMMON_FRAME_WIDTH", "COMMON_FRAME_HEIGHT", "COMMON_BAYER", "COMMON_INPUT_FORMAT")
 
+# LSC node gain UQ4.18 in [21:0], 0..8.0 inclusive (ISP-UPD-001); restated, and
+# checked against the schema below so that the two cannot drift apart.
+LSC_COEF_MASK = 0x3FFFFF
+
 SCHEMA = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "csr", "fx1_isp_csr_schema.json")
 
 
@@ -62,6 +66,8 @@ class Registers:
             self.by_name[name] = {"offset": int(r["offset"], 16), "fields": fields, "rw": rw}
             self.value[name] = int(r["reset"], 16)
         self.reset = dict(self.value)
+        if self.by_name["LSC_COEF_DATA"]["fields"]["coef_data"][1] != LSC_COEF_MASK:
+            raise ValueError("schema LSC_COEF_DATA.coef_data mask differs from the reference (ISP-UPD-001)")
         # LUT contents after i_rst_n: undefined (MAS §6.5.2, CSR-16 superseded),
         # filled with the poison pattern so that a block enabled without its
         # table gives a visibly wrong picture.
@@ -142,7 +148,7 @@ class Registers:
         if name == "LSC_LOAD_CTRL":
             self._lsc_command(value)
         elif name == "LSC_COEF_DATA" and self._lsc_stage is not None:
-            self._lsc_stage.append(value & 0x1FFFFF)
+            self._lsc_stage.append(value & LSC_COEF_MASK)
         elif name == "LSC_MESH_NODES":
             self.lsc_mesh = [None, None, None]   # geometry change invalidates every profile
         elif name == "LSC_PROFILE_SEL":
@@ -279,14 +285,19 @@ class Registers:
             self.write(name, value)
 
 
+_CSRW_MAP = None
+
+
 def read_profile(path):
-    writes = []
-    for lineno, line in enumerate(open(path, encoding="utf-8"), 1):
-        line = line.split("#", 1)[0].strip()
-        if not line:
-            continue
-        parts = line.split()
-        if len(parts) != 2:
-            raise ValueError("%s:%d: expected '<REGISTER> <value>'" % (path, lineno))
-        writes.append((parts[0], int(parts[1], 0)))
-    return writes
+    """Canonical (register, value) writes of a profile in register or field
+    syntax (ISP-UPD-008, tools/csrw_codec.py: one line = one full-word write).
+    The syntax is shared with the model's reader; the algorithms are not."""
+    global _CSRW_MAP
+    import sys
+    tools = os.path.join(os.path.dirname(__file__), "..", "..", "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import csrw_codec
+    if _CSRW_MAP is None:
+        _CSRW_MAP = csrw_codec.CsrMap()
+    return csrw_codec.writes(path, _CSRW_MAP)

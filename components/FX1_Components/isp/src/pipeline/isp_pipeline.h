@@ -33,12 +33,12 @@ struct pipeline_config {
    // COMMON_INPUT_FORMAT.DEPTH captured with the ingress frame: 0 RAW12, 1 RAW10
    // (MAS v1.07 §6.6.3.2). 2/3 never reach the pipeline (IDMA refuses, V107-A10).
    std::uint32_t input_depth = 0;
-   // BLC (HAS §6.7) for the selected profile.
+   // BLC (HAS §6.7) for the selected gain profile G0..G7 (ISP-UPD-002).
    bool blc_en = false;
    bool blc_range_scale = true;
    std::uint32_t blc_pedestal = 0;
-   std::array<std::uint32_t, 4> blc_trim{};  // R, Gr, Gb, B
-   std::uint32_t blc_scale = 0x10000;
+   std::array<std::uint32_t, 4> blc_trim{};                                  // R, Gr, Gb, B
+   std::array<std::uint32_t, 4> blc_scale{0x10000, 0x10000, 0x10000, 0x10000};  // R, Gr, Gb, B, UQ2.16
    // LSC (HAS §6.8): effective enable = EN && active profile valid && geometry
    // valid (CSR #86, #109, ALG-LSC-09); mesh over the Input Formatter output
    // (ALG-LSC-01); a copy of the active profile for the frame.

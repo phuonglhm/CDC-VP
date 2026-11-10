@@ -157,6 +157,7 @@ typedef struct fx1_isp_dev {
     fx1_isp_stat_lease aec_lease, af_lease;
     int aec_last_valid, af_last_valid;
     fx1_isp_aec_global aec_last;
+    fx1_isp_stat_lease aec_last_lease;  /* geometry of aec_last (ISP-UPD-004) */
     fx1_isp_af_scores af_last;
     /* AWB ownership (MAS §6.22.4): the lease taken by fx1_isp_awb_acquire,
      * and the newest result read by fx1_isp_read_awb_global. Both are
@@ -385,16 +386,40 @@ int fx1_isp_ee_load_profile(fx1_isp_dev *dev, unsigned profile, const fx1_isp_ee
 int fx1_isp_ee_confirm(fx1_isp_dev *dev, unsigned profile);
 /* Selects profile 0..2 and the enable; both take effect at the next SOF. */
 int fx1_isp_ee_select(fx1_isp_dev *dev, unsigned profile, int enable);
-/* Loads 4 * nx * ny UQ3.18 coefficients (R, Gr, Gb, B per node, x then y)
- * into a non-active LSC profile and validates it; returns FX1_ISP_EIO with
- * *lsc_error set if the loader rejected it. */
+/* Loads 4 * nx * ny UQ4.18 coefficients (R, Gr, Gb, B per node, x then y;
+ * 0 <= gain <= 8.0 = 0x200000, ISP-UPD-001) into a non-active LSC profile and
+ * validates it. FX1_ISP_EINVAL, before any write, for a coefficient above
+ * 8.0 or an illegal mesh; FX1_ISP_EIO with *lsc_error set if the loader
+ * rejected it. */
 int fx1_isp_lsc_load(fx1_isp_dev *dev, unsigned profile, unsigned nx, unsigned ny, const uint32_t *coef,
                      uint32_t *lsc_error);
+/* The same load with the coefficients taken from LSC_COEF_DATA writes of a
+ * profile list (ISP-UPD-001: firmware duplicates the mesh the profile
+ * validated into another resident). The mesh size is the one in place
+ * (LSC_MESH_NODES is not written, so no resident is invalidated): `n` must be
+ * 4 * nx * ny of it and every write must address LSC_COEF_DATA, otherwise
+ * FX1_ISP_EINVAL before any write. */
+int fx1_isp_lsc_load_writes(fx1_isp_dev *dev, unsigned profile, const fx1_isp_reg_write *writes, size_t n,
+                            uint32_t *lsc_error);
 /* Selects a valid profile; it becomes active at the next frame start if it is
  * still valid then. A load into it begun before that SOF keeps the previous
  * profile active and raises LSC_ERROR.PROFILE_SEL_REJECT. */
 int fx1_isp_lsc_select(fx1_isp_dev *dev, unsigned profile);
-/* CCM coefficients (Q3.9, row major) and offsets. The block captures them at
+/* BLC gain profile g = 0..7 (ISP-UPD-002): the DFT pedestal and the R, Gr,
+ * Gb, B trims (unsigned 12 bit) and per-channel scales (UQ2.16, 18 bit).
+ * FX1_ISP_EINVAL for g > 7 or a value outside its field (nothing written).
+ * Like fx1_isp_ccm_set, the set is captured at every accepted SOF and is not
+ * protected as a whole: update it while no frame starts. In profile mode the
+ * writes go to the TUNE_BANK-selected bank. */
+int fx1_isp_blc_set_profile(fx1_isp_dev *dev, unsigned g, uint32_t dft, const uint32_t trim[4],
+                            const uint32_t scale[4]);
+/* Selects gain profile g = 0..7 and BLC_GAIN_SEL.range_scale_en (BLC_CTRL.en
+ * is not changed); takes effect at the next SOF. */
+int fx1_isp_blc_select(fx1_isp_dev *dev, unsigned g, int scale_en);
+/* CCM coefficients (Q3.9, row major) and offsets in output pixel levels
+ * (signed 12 bit, -2048..2047: 1 adds one level; ISP-UPD-007,
+ * FX1_ISP_CCM_OFFSET_PIXEL_UNITS -- before the extension they were Q3.9 at
+ * the accumulator scale, 512 per level). The block captures them at
  * every accepted SOF; CCM_CTRL.updated has no effect (CSR/MAS 07/10). The set
  * is not protected as a whole: call it while no frame starts (idle, or
  * between frames), or a frame may use a mix of the old and new values. */
@@ -569,6 +594,38 @@ int fx1_isp_aec_drops(fx1_isp_dev *dev, uint32_t *drops, int clear);
  * returns the one it read last. FX1_ISP_ENODATA before any result (or after
  * a soft reset); FX1_ISP_EBUSY while the caller holds a lease. */
 int fx1_isp_read_aec_global(fx1_isp_dev *dev, fx1_isp_aec_global *out);
+
+/* AEC OE/UE percentages (ISP-UPD-004): 100 x OE_COUNT (UE_COUNT) / the number
+ * of Bayer samples of the area, in basis points (0..10000 = 0..100 %, round
+ * half up). The denominator is geometric -- every sample of the area of the
+ * measured frame, from the lease (width x height, or zone k of the nx x ny
+ * grid, row-major, the last column/row the remainder) -- not the
+ * clip-qualified `count`: UE (< TH_UE) and OE (> TH_OE) count every sample.
+ * The counts and the denominator are returned with the percentages. */
+typedef struct fx1_isp_aec_percent {
+    uint64_t ue, oe;        /* the counts used */
+    uint64_t samples;       /* Bayer samples of the area */
+    uint32_t ue_bp, oe_bp;  /* 0..10000 */
+    uint32_t frame_id;      /* of the measured frame */
+} fx1_isp_aec_percent;
+/* zone < 0: the whole active image (global counts), otherwise zone `zone`
+ * (zone counts). FX1_ISP_EINVAL for a zone outside the lease's grid,
+ * FX1_ISP_ENODATA for an area without samples (never reported as 0 %). */
+int fx1_isp_aec_percent_of(const fx1_isp_stat_lease *lease, int zone, uint64_t ue, uint64_t oe,
+                           fx1_isp_aec_percent *out);
+/* Global percentages of the result fx1_isp_read_aec_global returned last:
+ * FX1_ISP_ENODATA before any result, FX1_ISP_EIO if its counts saturated. */
+int fx1_isp_read_aec_percent(fx1_isp_dev *dev, fx1_isp_aec_percent *out);
+
+/* ISP-UPD-005: the colorimetry of the NV12 (and RGB888) outputs the datapath
+ * produces with the configuration in place: CSC_CTRL.std (0 BT.601, 1 BT.709)
+ * and TUNE_CSC_CTRL.FULL_RANGE. Legacy mode: the CSC_CTRL register and the
+ * FULL_RANGE field reset (TUNE_CSC_CTRL is bank storage in legacy mode, MAS
+ * v1.07 §9.9.2: its readback is not the datapath value). Profile mode: the
+ * values of `bank` (the bank sealed/applied for the frames), read through
+ * TUNE_BANK, which is restored. Call it with the configuration committed for
+ * the frames to come (e.g. before fx1_isp_start), not after a later change. */
+int fx1_isp_output_colorimetry(fx1_isp_dev *dev, unsigned bank, unsigned *std, int *full_range);
 
 /* AWB results live in two banks owned through acquire/release (MAS §6.22.4).
  * Explicit use:

@@ -54,12 +54,16 @@ bool triggers_soft_reset(std::uint32_t off) {
 }
 
 void test_table_shape() {
-   FX1_CHECK_EQ(csr::num_registers, 573);  // CSR revision v1.07
+   // CSR revision v1.07 (573 registers, 819 fields) with the VP CSR extension
+   // 0x20261109: BLC_SCALE_G0..G3 removed, G4..G7 offsets (20) and the per-channel
+   // scales of G0..G7 (32) added (ISP-UPD-002).
+   FX1_CHECK_EQ(FX1_ISP_CSR_EXTENSION, 0x20261109u);
+   FX1_CHECK_EQ(csr::num_registers, 573 - 4 + 20 + 32);
    std::size_t fields = 0;
    for (std::size_t i = 0; i < csr::num_registers; ++i) {
       fields += csr::registers[i].num_fields;
    }
-   FX1_CHECK_EQ(fields, 819);
+   FX1_CHECK_EQ(fields, 819 - 4 + 20 + 32);
 }
 
 void test_literal_resets() {
@@ -73,7 +77,8 @@ void test_literal_resets() {
    const lit literal_resets[] = {
       {0x0000, 0x18102026}, {0x0004, 0x00010007}, {0x0008, 0x00000000}, {0x0018, 0x00000780},
       {0x001C, 0x00000438}, {0x0020, 0x00000000}, {0x0028, 0x00000000}, {0x0204, 0x00000100},
-      {0x0208, 0x000000C8}, {0x021C, 0x000000C8}, {0x0258, 0x00010000}, {0x0264, 0x00010000},
+      {0x0208, 0x000000C8}, {0x021C, 0x000000C8}, {0x0268, 0x000000C8}, {0x02A4, 0x000000C8},
+      {0x026C, 0x00000000}, {0x02B8, 0x00010000}, {0x0334, 0x00010000},
       {0x0404, 0x00000000}, {0x0604, 0x00000001}, {0x0608, 0x00000100}, {0x060C, 0x004D0192},
       {0x0610, 0x000004B0}, {0x0804, 0x00000100}, {0x0808, 0x00000100}, {0x080C, 0x00000100},
       {0x0A04, 0x00000100}, {0x1004, 0x00000200}, {0x1008, 0x00000000}, {0x1014, 0x00000200},
@@ -127,14 +132,20 @@ void test_unmapped_and_reserved() {
       wr(cu, off, 0xFFFFFFFFu);
       FX1_CHECK_EQ_CTX(rd(cu, off), 0, "unmapped @" + fx1_test::hex(off));
    }
-   FX1_CHECK_EQ(unmapped, 16384 - 573);
+   FX1_CHECK_EQ(unmapped, 16384 - (573 - 4 + 20 + 32));
    for (std::size_t i = 0; i < csr::num_registers; ++i) {
       FX1_CHECK_EQ_CTX(cu.regs().peek(csr::registers[i].offset), before[i],
                        std::string("unmapped writes changed ") + csr::registers[i].name);
    }
-   // Reserved bits read zero after an all-ones write (BLC_GAIN_SEL: [1:0], [8]).
+   // Reserved bits read zero after an all-ones write (BLC_GAIN_SEL: [2:0] since
+   // ISP-UPD-002, [8]).
    wr(cu, FX1_ISP_BLC_GAIN_SEL_OFFSET, 0xFFFFFFFFu);
-   FX1_CHECK_EQ(rd(cu, FX1_ISP_BLC_GAIN_SEL_OFFSET), 0x103);
+   FX1_CHECK_EQ(rd(cu, FX1_ISP_BLC_GAIN_SEL_OFFSET), 0x107);
+   // The removed BLC_SCALE_G0..G3 words (ISP-UPD-002) are unmapped: read zero.
+   for (std::uint32_t off = 0x0258; off <= 0x0264; off += 4) {
+      wr(cu, off, 0xFFFFFFFFu);
+      FX1_CHECK_EQ_CTX(rd(cu, off), 0, "removed BLC scale @" + fx1_test::hex(off));
+   }
    // Read-only word ignores writes.
    wr(cu, FX1_ISP_COMMON_VER_ID_OFFSET, 0);
    FX1_CHECK_EQ(rd(cu, FX1_ISP_COMMON_VER_ID_OFFSET), 0x00010007);
@@ -1207,8 +1218,9 @@ void test_lsc_loader() {
    wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK, cyc++);
    FX1_CHECK_EQ(rd(cu, err), FX1_ISP_LSC_ERROR_LOAD_PROTOCOL_MASK);
    wr(cu, err, 0x3F, cyc++);
-   // Coefficient above 4.0 flags coef_range but is stored.
-   lsc_load(cu, 2, 24, 0x100001, cyc);
+   // Coefficient above 8.0 flags coef_range but is stored (ISP-UPD-001;
+   // test_lsc_gain_range has the boundaries).
+   lsc_load(cu, 2, 24, 0x200001, cyc);
    FX1_CHECK_EQ(rd(cu, err), FX1_ISP_LSC_ERROR_COEF_RANGE_MASK);
    FX1_CHECK(cu.lsc_profile_valid(2));
    wr(cu, err, 0x3F, cyc++);
@@ -1250,6 +1262,95 @@ void test_lsc_loader() {
 // whose profile a later begin, abort or count mismatch invalidated, leaves the
 // previous profile active and reports PROFILE_SEL_REJECT at every SOF while it
 // differs from the active one. A later successful validate lets it take effect.
+// ISP-UPD-001: node gains UQ4.18 in [21:0], 0 <= gain <= 8.0 (0x200000)
+// inclusive. Above 8.0, a field code or a code with bits above the field, the
+// loader flags COEF_RANGE and stores the value masked to the field; the
+// profile still validates (flag-and-store, ALG-LSC-03). 4.0 < gain <= 8.0
+// is no longer an error.
+void test_lsc_gain_range() {
+   struct point {
+      std::uint32_t write, stored;
+      bool range;
+   };
+   const point pts[] = {
+       {0x000000, 0x000000, false},  // 0
+       {0x040000, 0x040000, false},  // 1.0
+       {0x100000, 0x100000, false},  // 4.0
+       {0x100001, 0x100001, false},  // 4 + 2^-18 (flagged before the extension)
+       {0x140000, 0x140000, false},  // 5.0
+       {0x1FFFFF, 0x1FFFFF, false},  // 8 - 2^-18
+       {0x200000, 0x200000, false},  // exact 8.0: no wrap to 0
+       {0x200001, 0x200001, true},   // 8 + 2^-18
+       {0x3FFFFF, 0x3FFFFF, true},   // field maximum
+       {0x400000, 0x000000, true},   // bit 22 (reserved): masked, flagged
+       {0xFFFFFFFF, 0x3FFFFF, true},
+   };
+   for (const point &p : pts) {
+      control_unit cu;
+      std::uint64_t cyc = 1;
+      const std::string what = "code " + fx1_test::hex(p.write);
+      wr(cu, FX1_ISP_LSC_MESH_NODES_OFFSET, 0x0202, cyc++);
+      wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, 2u | FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK, cyc++);
+      for (unsigned i = 0; i < 16; ++i) {
+         wr(cu, FX1_ISP_LSC_COEF_DATA_OFFSET, i == 5 ? p.write : 0x40000, cyc++);
+      }
+      wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, 2u | FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK, cyc++);
+      FX1_CHECK_EQ_CTX(rd(cu, FX1_ISP_LSC_ERROR_OFFSET), p.range ? FX1_ISP_LSC_ERROR_COEF_RANGE_MASK : 0u, what);
+      FX1_CHECK_EQ_CTX(cu.lsc_profile_valid(2), true, what + " valid");
+      FX1_CHECK_EQ_CTX(cu.lsc_profile(2).at(5), p.stored, what + " stored");
+      FX1_CHECK_EQ_CTX(cu.lsc_profile(2).at(4), 0x40000u, what + " neighbour");
+   }
+   // Byte lanes: a write of the top lane only stores bits [23:16] masked to [21:16].
+   control_unit cu;
+   std::uint64_t cyc = 1;
+   wr(cu, FX1_ISP_LSC_MESH_NODES_OFFSET, 0x0202, cyc++);
+   wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, 1u | FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK, cyc++);
+   wr(cu, FX1_ISP_LSC_COEF_DATA_OFFSET, 0x20FFFF, cyc++, 0x00FF0000u);  // 0x200000: exact 8.0
+   for (unsigned i = 1; i < 16; ++i) {
+      wr(cu, FX1_ISP_LSC_COEF_DATA_OFFSET, 0x40000, cyc++);
+   }
+   wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, 1u | FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK, cyc++);
+   FX1_CHECK_EQ(rd(cu, FX1_ISP_LSC_ERROR_OFFSET), 0);
+   FX1_CHECK_EQ(cu.lsc_profile(1).at(0), 0x200000u);
+}
+
+// ISP-UPD-001 data decision: one mesh duplicated into the three residents,
+// each its own storage. The protocol is unchanged: the active profile (0
+// after reset) is never a destination, so 1 and 2 are loaded first, 1 is
+// selected, and 0 is loaded after the SOF that makes 1 active.
+void test_lsc_three_profiles() {
+   control_unit cu;
+   std::uint64_t cyc = 1;
+   const std::uint32_t st = FX1_ISP_LSC_PROFILE_STATUS_OFFSET;
+   const auto load = [&](unsigned dest, std::uint32_t base) {
+      wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, dest | FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK, cyc++);
+      for (unsigned i = 0; i < 16; ++i) {
+         wr(cu, FX1_ISP_LSC_COEF_DATA_OFFSET, base + 0x1000 * i, cyc++);
+      }
+      wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, dest | FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK, cyc++);
+   };
+   wr(cu, FX1_ISP_LSC_MESH_NODES_OFFSET, 0x0202, cyc++);
+   wr(cu, FX1_ISP_LSC_LOAD_CTRL_OFFSET, FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK, cyc++);  // profile 0
+   FX1_CHECK_EQ(rd(cu, FX1_ISP_LSC_ERROR_OFFSET), FX1_ISP_LSC_ERROR_ACTIVE_LOAD_REJECT_MASK);  // boot: 0 active
+   wr(cu, FX1_ISP_LSC_ERROR_OFFSET, 0x3F, cyc++);
+   load(1, 0x50000);
+   load(2, 0x50000);
+   wr(cu, FX1_ISP_LSC_PROFILE_SEL_OFFSET, 1, cyc++);
+   FX1_CHECK_EQ(rd(cu, st) & 7u, 6u);
+   cu.accepted_sof(cyc++);
+   FX1_CHECK_EQ(cu.lsc_active_profile(), 1u);
+   load(0, 0x50000);
+   FX1_CHECK_EQ(rd(cu, FX1_ISP_LSC_ERROR_OFFSET), 0);
+   FX1_CHECK_EQ(rd(cu, st) & 7u, 7u);  // three valid residents after the first SOF
+   FX1_CHECK(cu.lsc_profile(0) == cu.lsc_profile(1) && cu.lsc_profile(1) == cu.lsc_profile(2));
+   // Independent storage: reloading 2 with another mesh leaves 0 and 1 alone.
+   const std::vector<std::uint32_t> before = cu.lsc_profile(1);
+   load(2, 0x60000);
+   FX1_CHECK(cu.lsc_profile(0) == before && cu.lsc_profile(1) == before);
+   FX1_CHECK(cu.lsc_profile(2) != before && cu.lsc_profile(2).at(0) == 0x60000u);
+   FX1_CHECK_EQ(rd(cu, st) & 7u, 7u);
+}
+
 void test_lsc_selection_at_sof() {
    control_unit cu;
    std::uint64_t cyc = 1;
@@ -1742,6 +1843,8 @@ int main() {
    test_lsc_resize_during_load();
    test_lsc_loader();
    test_lsc_selection_at_sof();
+   test_lsc_gain_range();
+   test_lsc_three_profiles();
    test_external_reset();
    return fx1_test::summary("fx1_isp_test_control");
 }

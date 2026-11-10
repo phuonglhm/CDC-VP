@@ -43,6 +43,52 @@ each marked behaviour easy to change.
   read-modify-write; the driver does this where it matters, for example
   for `EE_LUT_CTRL` and `GTM_CTRL`.
 
+### 1.1 Profile files (`.csrw`, ISP-UPD-008)
+
+A profile is an ordered list of CSR writes. Each non-blank line (after `#`
+comments) is **one full 32-bit write**, and the writes are applied in file
+order. They are never merged, sorted or read-modify-written. There are three
+forms:
+
+```text
+GAMMA_CTRL 0x100                         # REGISTER VALUE: the whole register
+GAMMA_CTRL_lut_load_confirm 1            # REGISTER_field VALUE: one field, every other field 0
+AEC_CTRL en=1 commit=1                   # REGISTER f=V ...: fields of one register, the others 0
+```
+
+- A field value is the field's code before the shift: decimal without a
+  leading zero, or `0x` hex. It must not be negative and must fit the field.
+  Signed fields take their two's-complement code (CCM −3 is `0xFFD`); gains
+  take their UQ code.
+- `AEC_CTRL_en 1` followed by `AEC_CTRL_commit 1` is two writes, and the
+  second clears `en`. To set both in one write, use one line:
+  `AEC_CTRL en=1 commit=1`.
+- These are errors, reported as file:line before anything is applied:
+  - an unknown name;
+  - a read-only field;
+  - a value wider than its field, or a bit set on a tied-zero position;
+  - a field given twice;
+  - a malformed literal.
+- Lines and tokens follow the C++ reader:
+  - A line ends at `\n`. CRLF works; a lone `\r` does not end a line.
+  - Tokens are separated by ASCII white space only: space, tab, `\v`, `\f`
+    and `\r`. NBSP and other Unicode spaces are not separators.
+  - A UTF-8 byte order mark at the start of the file is ignored. Anywhere
+    else it is part of a token, which makes that line an error.
+  - Comments may hold any bytes, including non-UTF-8 ones. Names and values
+    are ASCII.
+- Field names, access types and masks come from `fx1_isp_csr.h`, including
+  the CSR extension.
+- Readers:
+  - `tools/csrw_codec.py`, Python standard library only. It has `check`,
+    `explain` (decodes every write into fields), `emit --style fields|legacy`
+    and `bin`.
+  - The model's reader (`fx1_isp_run_raw`, test benches).
+  - The SDK's `csrw_to_bin.sh`.
+
+  All of them apply the same rules, and the binary stays
+  `{u32 offset, u32 value}` per write. Firmware never parses text.
+
 ## 2. Bring-up (HAS §9.1 order)
 
 | Step | What | Driver |
@@ -147,14 +193,15 @@ geometry changes require the pipeline to be idle.
 | Item | Rule | Driver |
 |---|---|---|
 | Scalar parameters (enables, gains, thresholds) | Sampled at SOF. | `fx1_isp_apply` |
-| CCM set, CNF thresholds | Sampled at the accepted SOF and held for the frame. `updated` is a compatibility field with no effect (owner answer Q1, CSR/MAS 07/10). Write the whole set between frames; a write during a frame applies to the next one. | `fx1_isp_ccm_set` |
+| CCM set, CNF thresholds | Sampled at the accepted SOF and held for the frame. `updated` is a compatibility field with no effect (owner answer Q1, CSR/MAS 07/10). Write the whole set between frames; a write during a frame applies to the next one. CCM offsets `CCM_OFS_R/G/B` are signed 12-bit **output pixel levels** (code 1 adds one level, −2048..2047, default 0), added to the Q3.9 matrix product before the floor and the saturation (ISP-UPD-007, CSR extension `FX1_ISP_CSR_EXTENSION`; in v1.07 they were Q3.9 at the accumulator, 512 per level). Write all 12 values explicitly. | `fx1_isp_ccm_set` |
+| BLC gain profiles | Eight profiles G0..G7 (`BLC_GAIN_SEL.gain_level` [2:0]), each with a DFT pedestal, R/Gr/Gb/B trims and **four per-channel scales** `BLC_SCALE_Gg_{R,GR,GB,B}` (UQ2.16), applied when `range_scale_en` is set (ISP-UPD-002). `BLC_SCALE_G0..G3` (one scale per profile) are removed: write the old value to the four channels (`tools/migrate_profile_upd.py`). G4..G7 are not one stride after G3 (docs/ISP_CSR_EXTENSION_UPD.md): address them by name. Sampled at SOF; bank-owned in profile mode. | `fx1_isp_blc_set_profile`, `fx1_isp_blc_select` |
 | Output channels | OUTPUT_ENABLE (IDLE class) selects CH0/CH1 (NV12) and CH2 (RGB888, one plane, stride ≥ 3W); each channel has four buffers (`CHc_ODMA_*`), its own rotation, DONE, FRAME_COUNT and metadata (`CHc_ODMA_BUF_TAG/TS/SOF_TS/EOF_TS`, `TUNE_CHc_BUFn_FRAME/PROFILE`), and `OUTPUT_IRQ_STATUS.DONE[c]`. An enabled channel without a free buffer stalls every channel (no frame lost); FRAME_DONE rises when a frame has retired at every enabled output. The driver arms CH0; its CH1/CH2 buffer API is V107-10. | — |
 | Channel geometry | IDLE class (v1.07): `RESIZER_CTRL` (three channels) and the crop words are written only with the input stopped and every frame retired, else the write is rejected with `TUNE_ERROR.MODE` and nothing changes. `updated` has no effect. Presets (Table 6-122): 1..14, 16..21 (AI 640×640 .. 320×320); 15 and 22..31 reserved; CH2 accepts 0, 8, 14, 16..21. No FullRes fallback: a target larger than the crop or the channel limit (CH0/CH1 3840×2160, CH2 640×640) is invalid. Each stage decimates vertically, then horizontally. A frame uses the sets published before its SOF. Frames below 32×32 active are never admitted (ERROR 1). After a COMMON soft reset the readback is zero until the live key publishes, from the end of the 15-clock pulse. | `fx1_isp_set_crop`, `fx1_isp_set_resize`, `fx1_isp_start` |
 | Gamma table | **Live**: takes effect as written (DEC-25). Change it between frames, or accept a frame that mixes old and new values. | `fx1_isp_load_gamma` |
 | EE profiles | **Three resident profiles** (MAS §6.18.4.1). Each owns `EE_ALPHA` … `EE_RADIAL_GAIN_23` and the four tables. `EE_CTRL.profile_wr_sel` names the profile that register and table-port writes go to (code 3: ignored); `EE_LUT_RDATA` reads that profile; a scalar register reads back the last value written through it. `EE_CTRL.en` and `profile_sel` (code 3 = profile 0) and the selected profile's scalars are sampled at the SOF, so a frame never mixes profiles. Its tables stay **live**: a write to the in-use profile's table reaches the rows processed after it. Load a profile no frame in flight uses, with full 32-bit writes (a partial write merges the bytes last written, possibly another profile's), then select it. | `fx1_isp_ee_load_profile` (refuses, while EE is busy, every profile selected since EE was last seen idle), `fx1_isp_ee_select`; `fx1_isp_load_ee_table` (profile `profile_wr_sel`) |
 | Gamma / EE / GTM table ports | Write the address register, then the data port. The address increments after each data write (Gamma modulo 256, EE 64, GTM 128). | as above |
 | GTM | Auto mode keeps the preceding frame's curve. This VP uses the user-requested staged schedule (2026-11-02): buffer the complete pre-GTM YUV888 frame, measure its ROI, prepare the next frame's curve, then replay the buffered pixels with a frozen copy of the old curve. Commit the prepared curve only on successful pipeline completion; swap at the next SOF. This changes output-start/backpressure timing relative to the MAS streaming implementation; see decisions §11. Disabled GTM and manual mode remain streaming. With no valid curve after reset or a new profile epoch, the VP applies a fixed identity LUT (65 UQ8.8 ratios of `0x0100`) through the GTM interpolation path. This preserves every Y/Cb/Cr sample exactly, implementing the MAS first-frame pass-through without declaring automatic history valid. The curve measured on that frame applies from the next accepted SOF. An EN-only change does not itself invalidate existing automatic history. Manual mode (MAS §9.2): clear `EN` and set `MANUAL`; wait for one frame to complete, because a curve built at the end of an earlier frame still waits for its SOF; then write the 65 entries, verify them and set `EN`. A table write while `EN` = 1 is discarded, whatever `MANUAL` says (MAS p146). | `fx1_isp_gtm_manual_begin`, `fx1_isp_load_gtm_lut` (`FX1_ISP_EAGAIN` until the pipeline has taken a frame queued after the begin; its output may fail) |
-| LSC profiles | Three resident profiles. The load protocol:<br>1. `LSC_LOAD_CTRL.begin(profile)`;<br>2. 4·nx·ny writes to `LSC_COEF_DATA` (R, Gr, Gb, B per node, x then y);<br>3. `validate`.<br>A load into the **active** profile is refused, valid or not (MAS Table 31, owner Q5). Profile 0 is active after reset, so boot by loading profile 1 (or 2), validating it and selecting it. `begin` invalidates its destination; it stays invalid after `abort` or a wrong count (`coef_count`). Changing `LSC_MESH_NODES` invalidates every profile; mesh sizes are 2..128 nodes per axis and not above the active width/height (MAS §6.8.4). `LSC_PROFILE_SEL` takes effect at the next SOF; selecting an invalid profile is refused, when written and again at that SOF. Do not begin a load into a selected profile before its SOF: the previous profile then stays active and `PROFILE_SEL_REJECT` is set at every SOF until the profile is validated again. | `fx1_isp_lsc_load`, `fx1_isp_lsc_select` |
+| LSC profiles | Three resident profiles. The load protocol:<br>1. `LSC_LOAD_CTRL.begin(profile)`;<br>2. 4·nx·ny writes to `LSC_COEF_DATA` (R, Gr, Gb, B per node, x then y);<br>3. `validate`.<br>Node gains are UQ4.18, 0 ≤ gain ≤ **8.0 inclusive** (`0x200000`, ISP-UPD-001); a code above 8.0 sets `LSC_ERROR.coef_range` and is still stored and used (flag-and-store), and `fx1_isp_lsc_load` refuses it before writing. A load into the **active** profile is refused, valid or not (MAS Table 31, owner Q5). **Three residents with one mesh** (ISP-UPD-001, SDK samples: 17×13 nodes × 4 channels = 884 coefficients each): the profile loads residents 1 and 2 and selects 1; after the first SOF has made 1 active, the firmware loads the same coefficients into 0 with `fx1_isp_lsc_load_writes` (the coefficient writes of the profile, the mesh size in place), so all three are valid from then on. The three copies are one mesh, not three calibrations. Profile 0 is active after reset, so boot by loading profile 1 (or 2), validating it and selecting it. `begin` invalidates its destination; it stays invalid after `abort` or a wrong count (`coef_count`). Changing `LSC_MESH_NODES` invalidates every profile; mesh sizes are 2..128 nodes per axis and not above the active width/height (MAS §6.8.4). `LSC_PROFILE_SEL` takes effect at the next SOF; selecting an invalid profile is refused, when written and again at that SOF. Do not begin a load into a selected profile before its SOF: the previous profile then stays active and `PROFILE_SEL_REJECT` is set at every SOF until the profile is validated again. | `fx1_isp_lsc_load`, `fx1_isp_lsc_select` |
 | AEC | Shadow set (`en`, zone grid, clip, thresholds), transferred at the next SOF after `AEC_CTRL.commit` (W1S, reads 1 while pending). Writing `en` alone has no effect. A pending commit survives a soft reset and is consumed at the next accepted SOF; a hard reset clears it (owner answer Q4). | `fx1_isp_aec_configure` |
 | AWB | Limits, grid and enable sampled at the accepted SOF. An enabled frame needs a legal grid (1 ≤ nx ≤ min(64, W), 1 ≤ ny ≤ min(32, H); a 0×0 "global only" grid is illegal) and a free result bank, otherwise it is skipped and counted (§5). | `fx1_isp_apply` |
 | AF | EN is sampled once per frame at the SOF (MAS §6.23.2): a frame that started enabled is measured and published even if EN is cleared during it; a frame that started disabled is ignored. `score_valid` is set with every publication. | `fx1_isp_apply` |
@@ -178,7 +225,7 @@ the measured frame's ID: one counter, +1 per accepted SOF since reset.
 
 | Data | How to read it | Driver |
 |---|---|---|
-| AEC (aggregate Bayer sum/count, OE/UE, min/max, 64-bin histogram, zones, weighted histogram) | `TUNE_AEC_CMD.ACQUIRE`, wait one core clock, confirm `TUNE_AEC_STATUS.LEASE_VALID`, read the identity words and the 64-bit results through `TUNE_AEC_INDEX` / `DATA_LO` (snapshots the high word) / `DATA_HI`, then `RELEASE`. The 07/10 narrow windows (`AEC_GLOBAL_*`, `AEC_ZONE_*`, `AEC_HIST_DATA`) are modulo projections of the lease; `AEC_CHANNEL_SEL` 1..3 read 0. | `fx1_isp_aec_acquire`, `fx1_isp_aec_read_global`, `fx1_isp_aec_read_zones`, `fx1_isp_aec_read_hist`, `fx1_isp_aec_result`, `fx1_isp_aec_release`, `fx1_isp_aec_drops`; `fx1_isp_read_aec_global` (compatibility: drains the READY banks, returns the newest) |
+| AEC (aggregate Bayer sum/count, OE/UE, min/max, 64-bin histogram, zones, weighted histogram) | `TUNE_AEC_CMD.ACQUIRE`, wait one core clock, confirm `TUNE_AEC_STATUS.LEASE_VALID`, read the identity words and the 64-bit results through `TUNE_AEC_INDEX` / `DATA_LO` (snapshots the high word) / `DATA_HI`, then `RELEASE`. The 07/10 narrow windows (`AEC_GLOBAL_*`, `AEC_ZONE_*`, `AEC_HIST_DATA`) are modulo projections of the lease; `AEC_CHANNEL_SEL` 1..3 read 0. | `fx1_isp_aec_acquire`, `fx1_isp_aec_read_global`, `fx1_isp_aec_read_zones`, `fx1_isp_aec_read_hist`, `fx1_isp_aec_result`, `fx1_isp_aec_release`, `fx1_isp_aec_drops`; `fx1_isp_read_aec_global` (compatibility: drains the READY banks, returns the newest); `fx1_isp_aec_percent_of`, `fx1_isp_read_aec_percent` (UE/OE percentages, below) |
 | AF (16 windows: focus, luma, count; effective rectangles) | As AEC with `TUNE_AF_*`. `AF_STATUS.score_valid` is 1 while a readable lease is held. | `fx1_isp_af_acquire`, `fx1_isp_af_read`, `fx1_isp_af_release`, `fx1_isp_af_drops`; `fx1_isp_read_af` (compatibility: newest) |
 | AWB globals, zones, FRAME_ID, CONTEXT_ID | `AWB_RESULT_CTRL.acquire`, wait one core clock, confirm `AWB_RESULT_STATUS.read_valid`, read FRAME_ID, CONTEXT_ID, globals and zones of the captured grid (`read_num_zone_x/y`; one core clock between an `AWB_ZONE_ADDR` write and the data read), then release. Without a lease every AWB word reads 0, without error. | `fx1_isp_awb_acquire`, `fx1_isp_awb_read_global`, `fx1_isp_awb_read_zones`, `fx1_isp_awb_release`, `fx1_isp_awb_report`; `fx1_isp_read_awb_global` (compatibility: newest) |
 
@@ -203,6 +250,64 @@ Rules common to the three engines:
   the measurement in flight, which publishes nothing.
 - An aborted frame publishes nothing, so the 07/10 "discard zone data after
   an abort" rule and its driver tracking are no longer needed.
+
+### 5.0 Output colorimetry (ISP-UPD-005)
+
+NV12 does not tell its own range: decode it with the colorimetry of the
+frame.
+
+- `CSC_CTRL.std` selects 0 BT.601 or 1 BT.709.
+- `TUNE_CSC_CTRL.FULL_RANGE` selects full range (Y and C 0..255; reset 1)
+  or limited range (Y 16..235, C 16..240).
+
+`FULL_RANGE` is an extension control: in legacy mode the datapath keeps its
+reset value (full range) whatever the bank storage holds, and only profile
+mode applies the bank's value. `fx1_isp_output_colorimetry(dev, bank, &std,
+&full)` returns what the datapath uses. Call it with the configuration
+committed for the frames to come, e.g. before `fx1_isp_start`.
+
+Inverse transform, as used by the host previews:
+- limited range: Y' = (Y − 16)/219 and P = (C − 128)/224;
+- full range: Y' = Y/255 and P = (C − 128)/255;
+- then the standard's Kr and Kb, round half up, clip to 0..255.
+
+Kr and Kb are the exact decimals of the standard: 0.299 and 0.114 for
+BT.601, 0.2126 and 0.0722 for BT.709. Both previews (`tools/nv12_preview.py`
+and the SDK's `isp_pack.py`) compute in exact integer arithmetic, so an
+exact .5 rounds up and both produce the same pixels. Such ties occur only in
+BT.601 full range, e.g. Y 128, Cb 178, Cr 78 gives G = 146.5, which becomes
+147.
+
+Without a valid colorimetry, the SDK packer keeps the NV12 and writes no PNG.
+
+### 5.1 AEC OE/UE percentages (ISP-UPD-004)
+
+`UE_percent = 100 × UE_COUNT / N` and `OE_percent = 100 × OE_COUNT / N`,
+where N is the number of Bayer samples of the area of the **measured frame**.
+This is a geometric count, taken from the lease geometry. It is not the
+clip-qualified `count`, because UE (`< TH_UE`) and OE (`> TH_OE`) count every
+sample regardless of the clip.
+
+- Global percentages: N = width × height of the active image.
+- Zone percentages: zone k of the nx × ny grid is row-major. The zone is
+  zone_w × zone_h, except the last column and row, which take the remainder
+  of the active image.
+
+`fx1_isp_aec_percent_of(lease, zone, ue, oe, &p)` returns basis points
+(0..10000, round half up) together with the counts and N. An area without
+samples gives `FX1_ISP_ENODATA`, never 0 %. `fx1_isp_read_aec_percent` gives
+the global values of the result `fx1_isp_read_aec_global` returned last; it
+returns `FX1_ISP_EIO` if that result's counts saturated. No register is
+involved: this is driver arithmetic on the leased result. AWB has no UE/OE
+counts and no percentage.
+
+Defaults of the SDK profiles and of `make_profile.py` preset `full`
+(ISP-UPD-003/004; the CSR reset values are unchanged):
+- AWB grid: 16 × 16.
+- AEC zone grid: 16 × 16, with zone size ceil(W/16) × ceil(H/16) on the
+  active image. Where 16 zones cannot satisfy (N−1)·Z < D ≤ N·Z, the count
+  is ceil(D/Z) (for example D = 34 gives Z = 3, N = 12).
+- AEC clip 0..4095; TH_UE 272, TH_OE 3744.
 
 ## 6. Interrupt-driven streaming (example)
 

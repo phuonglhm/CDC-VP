@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include <memory>
 
 #include <systemc>
@@ -25,6 +26,7 @@
 namespace cdc::components::fx1_isp {
 
 class demosaic_observer;  // fx1_isp/fx1_isp_debug.h
+struct frame_output_info;
 
 struct fx1_isp_params {
    // Core clock period (i_clk). HAS Table 6-8: ASIC nominal 500 MHz.
@@ -83,6 +85,10 @@ public:
    // std::logic_error after start of simulation, or with test_datapath_stub
    // (the stub has no Demosaic: no capture is made rather than a fake one).
    void debug_set_demosaic_observer(demosaic_observer *observer);
+   // VP-only output colorimetry of every frame at its SOF (fx1_isp_debug.h,
+   // ISP-UPD-005); an empty function: off (default). Same timing rule as the
+   // Demosaic observer (std::logic_error after start of simulation).
+   void debug_set_frame_output_hook(std::function<void(const frame_output_info &)> hook);
 
 private:
    void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);

@@ -31,6 +31,8 @@ Expected output (release build, about 4 s of host time):
 output         1920x1080 NV12, stride 2688
 ISP counters   IDMA 1, ODMA 1 frames; DMA_ERR 0x2
 FRAME_ID       AEC 1, AWB 1, AF 1
+AEC UE/OE      UE <u.uu> %, OE <o.oo> % of the active image (AEC FRAME_ID 1)
+colorimetry    BT.601, full range (firmware)
 simulated time 8.214 ms first queue to last completion
 platform NV12  /tmp/isp_demo/platform.nv12  sha256 871f0f88bb69dcd4...
 reference NV12 sha256 871f0f88bb69dcd4...
@@ -124,15 +126,25 @@ halves around the session.
 
    The pack step checks the inputs before it writes anything:
 
-   - the result block's size, magic and status, and that every frame
-     completed;
+   - the result block's size (96 bytes; an 84-byte dump of an older
+     firmware is accepted, without the AEC percent word), magic and
+     status, and that every frame completed;
    - an even output size within the input, and the job's stride;
    - the exact dump lengths;
    - the preview's exit status.
 
    On any failure it exits 2 and leaves no `platform.nv12`, `platform.png`
-   or `summary.txt`, also with `--no-reference`. `demo/tests/test_pack.py`
-   (`fx1_regression_isp_demo_pack`) covers these cases.
+   or `summary.txt`, also with `--no-reference`.
+
+   A result block without a valid output colorimetry (an older firmware) is
+   not a damaged frame. In that case:
+   - `platform.nv12` is kept, compared with the reference, and summarised;
+   - `platform.png` is not written; the range is never guessed;
+   - the run FAILs (exit 1) unless `--std` and `--range` are given;
+   - `isp_pack.py` exits 3 in the same case.
+
+   `demo/tests/test_pack.py` (`fx1_regression_isp_demo_pack`) covers these
+   cases.
 
 The FreeRTOS run gives the same NV12 SHA-256 as the bare-metal demo.
 
@@ -160,7 +172,8 @@ frame, generate a test profile with `isp/tools/make_profile.py`. These are
 test profiles, not sensor calibrations.
 
 Exit status: 0 the run passed and matched (or `--no-reference`), 1 NV12
-mismatch, 2 a step failed, 3 usage error.
+mismatch or a failed check (firmware report, colorimetry, no preview), 2 a
+step failed, 3 usage error.
 
 ## What lands in `--out`
 

@@ -40,8 +40,10 @@ OUT = os.path.join(ROOT, "docs", "ISP_CSR_TRACEABILITY.md")
 # The third element names the base registers; a test that addresses
 # `FX1_ISP_<base>_OFFSET + ...` exercises every member of the group.
 INDEXED = [
-    (r"BLC_OFS_G[0-3]_(DFT|R|GR|GB|B)$", "BLC profile g at BLC_OFS_G0_DFT + g * profile stride", ()),
-    (r"BLC_SCALE_G[0-3]$", "BLC_SCALE_G0 + 4 * g", ()),
+    (r"BLC_OFS_G[0-7]_(DFT|R|GR|GB|B)$",
+     "BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002)", ()),
+    (r"BLC_SCALE_G[0-7]_(R|GR|GB|B)$",
+     "BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002)", ()),
     (r"CCM_C[RGB][RGB]$", "CCM_CRR + 4 * index", ("CCM_CRR",)),
     (r"CCM_OFS_[RGB]$", "CCM_OFS_R + 4 * index", ("CCM_OFS_R",)),
     (r"EE_(ALPHA|BETA|CLAMP|FEATURE_EN|RADIAL_CENTER|RADIAL_R2_TH[0-2]|RADIAL_GAIN_01|RADIAL_GAIN_23)$",

@@ -31,12 +31,8 @@ def run(cmd):
 
 
 def profile(path):
-    writes = []
-    for line in open(path, encoding="utf-8"):
-        if line.strip() and not line.startswith("#"):
-            n, v = line.split()
-            writes.append((n, int(v, 16)))
-    return writes
+    """Canonical writes of a make_profile output (register or field syntax, ISP-UPD-008)."""
+    return regs_mod.read_profile(path)
 
 
 def process(container, writes):

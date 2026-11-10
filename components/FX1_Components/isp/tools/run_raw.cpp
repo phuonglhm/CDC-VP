@@ -31,7 +31,9 @@
 // Outputs:
 //   <prefix>.nv12          NV12 of the last frame, active bytes, Y then UV
 //   <prefix>.fNNN.nv12     with --per-frame: NV12 of every frame
-//   <prefix>.txt           geometry, status and the SHA-256 of every frame
+//   <prefix>.txt           geometry, status and the SHA-256 of every frame; the
+//                          output colorimetry (csc_std, csc_full_range) of the
+//                          last frame's SOF and frame_colorimetry_<k> of every SOF
 //   <prefix>.stats.txt     with --stats-script: the script's reads after the
 //                          last frame ("SET" lines are executed and echoed);
 //                          with --stats-per-frame the script has one section
@@ -151,6 +153,9 @@ struct runner : sc_module {
    fx1_test::test_memory *mem = nullptr;
    demosaic_dump *dump = nullptr;  // --dump-demosaic
    options opt;
+   // ISP-UPD-005: the output colorimetry of every frame at its SOF, in SOF
+   // order (fx1_isp_tlm::debug_set_frame_output_hook).
+   std::vector<cdc::components::fx1_isp::frame_output_info> sof_colorimetry;
    int status = 1;
    std::vector<std::string> events;
    unsigned stats_mismatches = 0;
@@ -202,7 +207,14 @@ struct runner : sc_module {
          return false;
       }
       std::vector<std::pair<std::uint32_t, std::uint32_t>> writes;
-      for (const fx1_test::csr_line &l : fx1_test::read_profile(opt.profile)) {
+      std::vector<fx1_test::csr_line> lines;
+      try {
+         lines = fx1_test::read_profile(opt.profile);  // register or field syntax (ISP-UPD-008)
+      } catch (const std::exception &e) {
+         std::cerr << "profile: " << e.what() << "\n";
+         return false;
+      }
+      for (const fx1_test::csr_line &l : lines) {
          const csr::reg_desc *d = find_register(l.reg);
          if (!d) {
             std::cerr << "profile: unknown register " << l.reg << "\n";
@@ -553,12 +565,23 @@ struct runner : sc_module {
          ev << e << "\n";
       }
       std::ofstream txt(opt.out + ".txt");
-      txt << "width " << ow << "\nheight " << oh << "\ncsc_std " << (read32(FX1_ISP_CSC_CTRL_OFFSET) & 1u)
-          << "\nframes " << opt.frames << "\ncompleted " << completed << "\nframe_done " << done << "\ndma_err 0x"
+      txt << "width " << ow << "\nheight " << oh;
+      // ISP-UPD-005: std and range of the last frame's SOF snapshot (not a live
+      // CSR read: in legacy mode TUNE_CSC_CTRL reads back its bank storage while
+      // the datapath uses the field reset). No line at all without a frame.
+      if (!sof_colorimetry.empty()) {
+         txt << "\ncsc_std " << sof_colorimetry.back().csc_std << "\ncsc_full_range "
+             << (sof_colorimetry.back().csc_full_range ? 1 : 0);
+      }
+      txt << "\nframes " << opt.frames << "\ncompleted " << completed << "\nframe_done " << done << "\ndma_err 0x"
           << std::hex << err << std::dec << "\nsimulated_ns " << elapsed.to_seconds() * 1e9 << "\nnv12_sha256 "
           << digest << "\n";
       for (std::size_t k = 0; k < shas.size(); ++k) {
          txt << "frame_sha256_" << k << " " << shas[k] << "\n";
+      }
+      for (std::size_t k = 0; k < sof_colorimetry.size(); ++k) {  // SOF k: frame ID, std, range
+         txt << "frame_colorimetry_" << k << " frame_id " << sof_colorimetry[k].frame_id << " csc_std "
+             << sof_colorimetry[k].csc_std << " csc_full_range " << (sof_colorimetry[k].csc_full_range ? 1 : 0) << "\n";
       }
       std::cout << "NV12 " << ow << "x" << oh << ", " << completed << "/" << opt.frames << " frame(s) "
                 << (done ? "done" : "NOT DONE") << " (queue " << opt.queue << "), DMA_ERR=0x" << std::hex << err
@@ -638,6 +661,14 @@ bool parse(int argc, char **argv, options &o) {
 
 int sc_main(int argc, char *argv[]) {
    options opt;
+   if (options pre; parse(argc, argv, pre) && !pre.profile.empty()) {
+      try {  // a malformed profile is a usage error, found before the simulation starts
+         (void)fx1_test::read_profile(pre.profile);
+      } catch (const std::exception &e) {
+         std::cerr << "fx1_isp_run_raw: profile: " << e.what() << "\n";
+         return 2;
+      }
+   }
    if (!parse(argc, argv, opt)) {
       std::cerr << "usage: fx1_isp_run_raw (--input F.isp16 | --input-list LIST | --synthetic) --width W --height H\n"
                    "                      --profile P.csrw --out PREFIX [--frames N] [--queue 1-4] [--per-frame]\n"
@@ -663,6 +694,7 @@ int sc_main(int argc, char *argv[]) {
    }
    runner r("runner");
    r.opt = opt;
+   dut.debug_set_frame_output_hook([&r](const cdc::components::fx1_isp::frame_output_info &f) { r.sof_colorimetry.push_back(f); });
    r.socket.bind(dut.csr_socket);
    dut.idma_socket.bind(mem.idma);
    dut.odma_socket.bind(mem.odma);

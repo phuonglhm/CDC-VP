@@ -8,6 +8,23 @@
 #define ISP_AUTO_POLICY_H
 #include <stdint.h>
 #define ISP_AUTO_POLICY_ID "neutral-v1"
+/* AWB grid of the probe frame (ISP-UPD-003): the policy's thresholds assume
+ * this grid, whatever grid the profile sets for the rendered frames. */
+#define ISP_AUTO_PROBE_NX 32u
+#define ISP_AUTO_PROBE_NY 16u
+/* The probe grid on the active image of a W x H frame with Bayer code `bayer`
+ * (COMMON_BAYER: RGGB 0, GRBG 1, GBRG 2, BGGR 3): the Input Formatter trims one
+ * column for an odd horizontal phase (bit 0) and one row for an odd vertical
+ * phase (bit 1), then rounds down to even (MAS v1.07 §6.6.3.5); the AWB grid
+ * must stay within min(64, W_active/2) x min(32, H_active/2). Review Stop B R1:
+ * not (W-1)/2 x (H-1)/2, which loses a cell on an axis without trim. */
+static inline void isp_auto_probe_grid(uint32_t width, uint32_t height, uint32_t bayer, uint32_t *nx, uint32_t *ny)
+{
+    const uint32_t sh = bayer & 1u, sv = (bayer >> 1) & 1u;
+    const uint32_t aw = width > sh ? (width - sh) & ~1u : 0u, ah = height > sv ? (height - sv) & ~1u : 0u;
+    *nx = aw / 2u < ISP_AUTO_PROBE_NX ? aw / 2u : ISP_AUTO_PROBE_NX;
+    *ny = ah / 2u < ISP_AUTO_PROBE_NY ? ah / 2u : ISP_AUTO_PROBE_NY;
+}
 typedef struct {
     uint64_t r[8], g[8], b[8];
     unsigned zones[8];

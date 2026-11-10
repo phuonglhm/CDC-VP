@@ -10,13 +10,17 @@ from a stated formula so that runs are reproducible and explainable. Presets
                   WB grey world on the central 50 % of the frame after BLC:
                   gain_c = round(256 * mean(G) / mean(c)), c in {R, B}, gain_g = 256;
                   Gamma preset 0 (BT.709 OETF, CSR #192 / HAS p94); CSC BT.601.
-  full            every block: basic + LSC (synthetic radial 17x9 mesh, gain
-                  1.0 -> 1.6), BPC static, DG (gain 1.0625), CCM (mild saturation,
-                  committed), GTM auto, 2DNR, EE, CNF (committed), Resizer FHD,
-                  AEC 32x24 zones of 84x64, AWB 32x16, AF.
+  full            every block: basic + LSC (synthetic radial 17x13 mesh, gain
+                  1.0 -> 1.6, loaded into residents 1 and 2, profile 1 selected;
+                  the firmware fills resident 0, ISP-UPD-001), BPC static, DG
+                  (gain 1.0625), CCM (mild saturation, offsets 0 explicit), GTM
+                  auto, 2DNR, EE, CNF (committed), Resizer FHD, AEC 16x16 zones
+                  covering the active image (aec_grid; UE 272, OE 3744), AWB
+                  16x16 (ISP-UPD-003/004), AF.
   full_vga_709    full with Resizer VGA (decimation path), CSC BT.709, Gamma 2.2,
                   LSC profile 1 at strength 0.75, DG gain 0.9375 (attenuation),
-                  AEC 16x12 of 168x128 with clipping, AWB at the maximum 64x32 grid.
+                  AEC 16x12 of 168x128 with clipping (UE 400, OE 3600), AWB at
+                  the maximum 64x32 grid.
   gtm_manual_qhd  basic + GTM manual LUT (software S-curve), Resizer qHD, 2DNR,
                   EE with radial gains and non-unity tables, BPC static, AEC 8x6
                   zones sized to cover the active image, AWB 16x8, AF. (Before
@@ -51,26 +55,58 @@ def q39(v):
     return int(round(v * 512)) & 0xFFF
 
 
-def lsc_load(nx, ny, dest, peak):
-    """Synthetic radial mesh, UQ3.18, 1.0 at the centre to `peak` at the corners."""
-    w = [("LSC_MESH_NODES", nx | (ny << 8)), ("LSC_LOAD_CTRL", dest | 0x100)]
+def lsc_mesh(nx, ny, peak):
+    """Synthetic radial mesh, UQ4.18 (ISP-UPD-001), 1.0 at the centre to `peak` at the
+    corners, +0.02 per channel R, Gr, Gb, B; nodes x then y. A function of the
+    normalised node position, so a 17x13 mesh samples the same surface as 17x9."""
+    m = []
     for j in range(ny):
         for i in range(nx):
             r2 = ((i / (nx - 1) - 0.5) ** 2 + (j / (ny - 1) - 0.5) ** 2) * 2
             for c in range(4):
-                w.append(("LSC_COEF_DATA", int(round((1.0 + (peak - 1.0) * r2 + 0.02 * c) * (1 << 18)))))
-    w.append(("LSC_LOAD_CTRL", dest | 0x200))
+                m.append(int(round((1.0 + (peak - 1.0) * r2 + 0.02 * c) * (1 << 18))))
+    return m
+
+
+def lsc_load(nx, ny, dests, peak):
+    """One mesh loaded into each resident of `dests` (ISP-UPD-001: the same mesh
+    duplicated, each resident its own storage). LSC_MESH_NODES is written once:
+    any write of it invalidates every resident."""
+    mesh = lsc_mesh(nx, ny, peak)
+    w = [("LSC_MESH_NODES", nx | (ny << 8))]
+    for dest in dests:
+        w += [("LSC_LOAD_CTRL", dest | 0x100)] + [("LSC_COEF_DATA", v) for v in mesh] + [("LSC_LOAD_CTRL", dest | 0x200)]
     return w
 
 
-def ccm_writes(m):
+def ccm_writes(m, offsets=(0, 0, 0)):
+    """The 12 CCM parameters explicitly: 9 coefficients (Q3.9) and the R, G, B
+    offsets in output pixel levels (signed 12 bit, ISP-UPD-007; default 0, owner
+    2026-11-09), then the enable."""
     names = ["CRR", "CRG", "CRB", "CGR", "CGG", "CGB", "CBR", "CBG", "CBB"]
-    return [("CCM_" + n, q39(m[i // 3][i % 3])) for i, n in enumerate(names)] + [("CCM_CTRL", 0x5)]
+    return ([("CCM_" + n, q39(m[i // 3][i % 3])) for i, n in enumerate(names)] +
+            [("CCM_OFS_" + c, offsets[i] & 0xFFF) for i, c in enumerate("RGB")] + [("CCM_CTRL", 0x5)])
 
 
-def aec(nx, ny, zw, zh, mn=0, mx=4095, ue=256, oe=3840):
+def aec(nx, ny, zw, zh, mn=0, mx=4095, ue=272, oe=3744):
+    """AEC zone grid, clip [mn, mx] inclusive, UE/OE thresholds (RAW12, strict).
+    Default thresholds UE 272 / OE 3744 (ISP-UPD-004; the CSR reset values)."""
     return [("AEC_ZONE_CFG", nx | (ny << 8)), ("AEC_ZONE_SIZE", zw | (zh << 16)),
             ("AEC_SAMPLE_CLIP", mn | (mx << 16)), ("AEC_THRESH", ue | (oe << 16)), ("AEC_CTRL", 3)]
+
+
+def aec_grid(aw, ah, n=16):
+    """Default AEC zone grid on the active image (ISP-UPD-004): n x n zones when
+    legal; the zone size is ceil(D / n) and the zone count ceil(D / size), so
+    (N - 1) * Z < D <= N * Z always holds (MAS v1.07 §6.21.3.1) and N < n only
+    where n zones cannot cover D (e.g. D = 34: Z = 3, N = 12)."""
+    zw, zh = -(-aw // n), -(-ah // n)
+    return -(-aw // zw), -(-ah // zh), zw, zh
+
+
+def awb_grid(aw, ah, n=16):
+    """Default AWB grid (ISP-UPD-003): n x n zones, at most min(64, W/2) x min(32, H/2)."""
+    return min(n, 64, aw // 2), min(n, 32, ah // 2)
 
 
 def awb(nx, ny, under, sat):
@@ -107,11 +143,12 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
     if preset not in PRESETS:
         raise ValueError("unknown preset %r" % preset)
     gr, gb, means = grey_world(raw12, width, height, bayer, pedestal)
-    w = [("COMMON_BAYER", BAYER[bayer]),
-         ("BLC_CTRL", 1), ("BLC_GAIN_SEL", 0x100),        # profile 0, range scale on
-         ("BLC_OFS_G0_DFT", pedestal),
-         ("BLC_SCALE_G0", round(4095 / (4095 - pedestal) * 65536)),
-         ("WB_CTRL", 1), ("WB_GAIN_R", gr), ("WB_GAIN_G", 0x100), ("WB_GAIN_B", gb)]
+    scale = round(4095 / (4095 - pedestal) * 65536)
+    w = ([("COMMON_BAYER", BAYER[bayer]),
+          ("BLC_CTRL", 1), ("BLC_GAIN_SEL", 0x100),       # profile 0, range scale on
+          ("BLC_OFS_G0_DFT", pedestal)]
+         + [("BLC_SCALE_G0_" + c, scale) for c in ("R", "GR", "GB", "B")]   # ISP-UPD-002: per channel, equal
+         + [("WB_CTRL", 1), ("WB_GAIN_R", gr), ("WB_GAIN_G", 0x100), ("WB_GAIN_B", gb)])
     ids = [("AEC_CONTEXT_ID", 0xA1), ("AWB_CONTEXT_ID", 0xA2), ("AF_CONTEXT_ID", 0xA3)]
     if preset == "basic":
         w += gamma(0) + [("CSC_CTRL", 0)]
@@ -123,7 +160,10 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
         # either axis (MAS §6.8.4, CSR 07/10); clamp it on small frames.
         sh, sv = BAYER[bayer] & 1, (BAYER[bayer] >> 1) & 1
         aw, ah = (width - sh) // 2 * 2, (height - sv) // 2 * 2
-        w += lsc_load(min(17, aw), min(9, ah), 1, 1.6)
+        # ISP-UPD-001: target mesh 17x13 (user, 2026-11-09), the same radial
+        # formula; duplicated into residents 1 and 2 here, the firmware copies it
+        # into 0 after the first SOF (0 is active at reset and never a destination).
+        w += lsc_load(min(17, aw), min(13, ah), (1, 2), 1.6)
         w += [("LSC_PROFILE_SEL", 1), ("LSC_STRENGTH", 0xC000 if vga else 0x10000), ("LSC_CTRL", 1)]
         w += [("BPC_MODE", 0), ("BPC_THRESH", (77 << 16) | 402), ("BPC_CTRL", 1)]
         w += [("DG_CTRL", 1), ("DG_GAIN", 0x0F0 if vga else 0x110)]   # UQ4.8
@@ -143,7 +183,9 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
         if vga:
             w += aec(16, 12, 168, 128, mn=64, mx=3968, ue=400, oe=3600) + awb(64, 32, 32, 3900)
         else:
-            w += aec(32, 24, 84, 64) + awb(32, 16, 16, 4000)
+            # ISP-UPD-003/004: default 16x16 AWB and AEC grids on the active
+            # image, AEC thresholds UE 272 / OE 3744, clip 0..4095.
+            w += aec(*aec_grid(aw, ah)) + awb(*awb_grid(aw, ah), 16, 4000)
         w += [("AF_CTRL", 1)] + ids
     else:  # gtm_manual_qhd
         w += gamma(0) + [("CSC_CTRL", 0)]
@@ -169,9 +211,17 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200):
         # v1.07 §6.21.3.1); AWB NX <= min(64, W/2), NY <= min(32, H/2).
         nx, ny = 8, 6
         zw, zh = -(-aw // nx), -(-ah // ny)
-        w += aec(nx, ny, zw, zh) + awb(16, 8, 16, 4000) + [("AF_CTRL", 1)] + ids
+        w += aec(nx, ny, zw, zh, ue=256, oe=3840) + awb(16, 8, 16, 4000) + [("AF_CTRL", 1)] + ids
     note = "grey world means after BLC: R %.1f G %.1f B %.1f" % means
     return w, note
+
+
+def format_profile(writes, syntax="fields"):
+    """Profile text of a write list, one line per write (csrw_codec.format_write:
+    a register with several fields as REGISTER f=V ...; the stream is unchanged)."""
+    import csrw_codec
+    cmap = csrw_codec.CsrMap()
+    return "".join(csrw_codec.format_write(cmap.regs[n], v, syntax) + "\n" for n, v in writes)
 
 
 def main():
@@ -183,6 +233,9 @@ def main():
     ap.add_argument("--preset", default="basic", choices=PRESETS)
     ap.add_argument("--pedestal", type=int, default=200)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--syntax", default="fields", choices=("fields", "legacy"),
+                    help="profile text: field names (ISP-UPD-008, csrw_codec) or whole-register values; the "
+                         "writes are the same")
     ap.add_argument("--depth", default="raw12", choices=("raw12", "raw10"),
                     help="native depth of the right-aligned container (COMMON_INPUT_FORMAT, MAS v1.07 §6.6.3.2)")
     a = ap.parse_args()
@@ -195,8 +248,7 @@ def main():
         note += "; input RAW10 right-aligned (DEPTH 1)"
     with open(a.out, "w", encoding="utf-8") as f:
         f.write("# test profile '%s' (not a calibration), tools/make_profile.py\n# %s\n" % (a.preset, note))
-        for n, v in writes:
-            f.write("%s 0x%X\n" % (n, v))
+        f.write(format_profile(writes, a.syntax))
     print("wrote %s (%s, %d writes): %s" % (a.out, a.preset, len(writes), note))
 
 

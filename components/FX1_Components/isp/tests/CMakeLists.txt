@@ -41,6 +41,12 @@ target_link_libraries(fx1_isp_test_register_engine PRIVATE fx1_isp_core)
 target_compile_options(fx1_isp_test_register_engine PRIVATE ${FX1_ISP_WARNINGS})
 add_test(NAME fx1_isp.unit.register_engine COMMAND fx1_isp_test_register_engine)
 
+# Profile reader of the model (ISP-UPD-008), compared with tools/csrw_codec.py.
+add_executable(fx1_isp_csrw_dump tools/csrw_dump.cpp)
+target_include_directories(fx1_isp_csrw_dump PRIVATE common)
+target_link_libraries(fx1_isp_csrw_dump PRIVATE fx1_isp_core)
+target_compile_options(fx1_isp_csrw_dump PRIVATE ${FX1_ISP_WARNINGS})
+
 add_executable(fx1_isp_test_profile unit/test_profile.cpp)
 target_include_directories(fx1_isp_test_profile PRIVATE common)
 target_link_libraries(fx1_isp_test_profile PRIVATE fx1_isp_core)
@@ -167,6 +173,9 @@ if(Python3_Interpreter_FOUND)
     # Per-register traceability report up to date, with its coverage gate.
     add_test(NAME fx1_isp.reference.traceability_up_to_date
         COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_traceability.py --check)
+    # v1.07 profile migration to the CSR extension 0x20261109 (docs/ISP_CSR_EXTENSION_UPD.md).
+    add_test(NAME fx1_isp.tools.migrate_profile
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_migrate_profile.py ${CMAKE_CURRENT_BINARY_DIR})
     execute_process(COMMAND ${Python3_EXECUTABLE} -c "import numpy"
                     RESULT_VARIABLE _fx1_isp_numpy OUTPUT_QUIET ERROR_QUIET)
     if(_fx1_isp_numpy EQUAL 0)
@@ -176,6 +185,19 @@ if(Python3_Interpreter_FOUND)
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_block_vectors.py --check)
         add_test(NAME fx1_isp.reference.sequence_up_to_date
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/gen_sequence.py --check)
+        # make_profile defaults of the consolidated update (ISP-UPD-001/003/004/007).
+        # NV12 -> PNG preview range/standard (ISP-UPD-005), numpy and SDK stdlib converters.
+        add_test(NAME fx1_isp.tools.nv12_preview
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_nv12_preview.py ${CMAKE_CURRENT_BINARY_DIR})
+        add_test(NAME fx1_isp.tools.run_raw_colorimetry
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_run_raw_colorimetry.py
+                    $<TARGET_FILE:fx1_isp_run_raw> ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors ${CMAKE_CURRENT_BINARY_DIR})
+        # Field-syntax profiles (ISP-UPD-008): grammar, errors, Python codec = C++ reader, samples.
+        add_test(NAME fx1_isp.tools.csrw_codec
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_csrw_codec.py
+                    $<TARGET_FILE:fx1_isp_csrw_dump> ${CMAKE_CURRENT_BINARY_DIR})
+        add_test(NAME fx1_isp.tools.make_profile_defaults
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_make_profile_defaults.py)
         add_test(NAME fx1_isp.tools.input_depth
             COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tools/check_input_depth.py)
         # VP-only post-Demosaic capture of fx1_isp_run_raw against the reference (decisions §12).

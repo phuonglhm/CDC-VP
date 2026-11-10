@@ -120,11 +120,17 @@ Python reference, run at unit level (V) and through the whole IP (E).
 |---|---|---|---|
 | Input Formatter phase crop and 12-bit mask, all four Bayer orders | HAS §6.6, DEC-11, CSR-10 | V/E (RGGB, GRBG, GBRG, BGGR vectors) | PASS |
 | BLC pedestal, per-channel trim, range scale | HAS §6.7 | V/E `full_bggr_66x34`, `full_chain_*` | PASS |
-| LSC load sequencer, 3 profiles, bilinear mesh, strength > 1, overflow counters; mesh 2..128 nodes per axis and not above the active size; begin into the active profile rejected; begin invalidates the destination, abort or count mismatch leaves it invalid; geometry change invalidates all; boot via profile 1; selection re-checked at the accepted SOF (invalid → previous profile kept, `PROFILE_SEL_REJECT`) | HAS §6.8, MAS §6.8.3–6.8.4 Table 31, Figure 29, DEC-31 → §9, U1-R2 | V/E `lsc_*` (3), `edge_*`, U `test_lsc_loader`, `test_lsc_resize_during_load`, `test_lsc_selection_at_sof` | PASS |
+| LSC load sequencer, 3 profiles, bilinear mesh, strength > 1, overflow counters; mesh 2..128 nodes per axis and not above the active size; begin into the active profile rejected; begin invalidates the destination, abort or count mismatch leaves it invalid; geometry change invalidates all; boot via profile 1; selection re-checked at the accepted SOF (invalid → previous profile kept, `PROFILE_SEL_REJECT`) | HAS §6.8, MAS §6.8.3–6.8.4 Table 31, Figure 29, DEC-31 → §9, U1-R2 | V/E `lsc_*` (4, `lsc_gain8_64x32`: gains 5/7/8/8−2^-18), `edge_*`, U `test_lsc_loader`, `test_lsc_resize_during_load`, `test_lsc_selection_at_sof`, `test_lsc_gain_range` (UQ4.18 0..8.0 inclusive, ISP-UPD-001), `test_lsc_three_profiles` | PASS |
 | BPC spatial detection and correction; counters cleared at every SOF, counted in an enabled frame, 14-bit saturating, 0 after a disabled frame; `dynamic_det_en` no effect | MAS §6.9, DEC-28 → §9 | V/E `bpc_*` (incl. `bpc_dynamic_requested_64x32`), S `test_bpc_counters` | PASS |
 | WB, DG | HAS §6.10–6.11 | V/E | PASS |
 | Demosaic, reflect-101 borders | HAS §6.12 | V/E (all vectors), W | PASS |
 | CCM sampled at SOF, `updated` without effect | Owner Q1, CSR/MAS 07/10 | V/E `gbrg_ccm_gate_64x36`, `full_bggr_66x34`; U `test_commit_gates` | PASS |
+| CCM offsets in output pixel levels (code 1 = one level, before floor and saturation) | ISP-UPD-007 (owner 2026-11-09), CSR extension | V/E `full_bggr_66x34`, `input_raw10/12_full_bggr_66x34` (offsets +5/−3); U `test_ccm_offset_pixels`; driver `fx1_isp_ccm_set` | PASS |
+| LSC three residents with one mesh: profile loads 1+2, firmware duplicates into 0 after the first SOF (17×13 SDK mesh) | ISP-UPD-001, decisions UPD-D6/D7 | driver `fx1_isp_lsc_load_writes`, `test_fw_lsc_fill` (884 coefficients, negative profiles), U `test_lsc_three_profiles`; VP demo (valid mask 0x7 on the UART) | PASS |
+| AEC OE/UE percentages, geometric denominator, basis points | ISP-UPD-004, UPD-D9 | driver `test_aec_percent_math`, `test_compat_aec_newest`; `demo/tests/test_pack.py` (summary, 84/96-byte result) | PASS |
+| Default AWB/AEC 16×16 grids and thresholds 272/3744 (profiles/tools, CSR resets unchanged) | ISP-UPD-003/004, UPD-D8 | V/E `edge_*_full_*`, 4K vectors, RAW regression baseline | PASS |
+| NV12 → PNG preview decodes the frame's range and standard (no default); colorimetry from the SOF snapshot / firmware result word | ISP-UPD-005, UPD-D14/D15 | `tools.nv12_preview` (ramp, landmarks, CSC round trip ×4, numpy = stdlib), driver `test_output_colorimetry`, `demo/tests/test_pack.py` (colorimetry cases), demo runner cross-check | PASS |
+| Profile field syntax: one line = one full-word write, field values before the shift, errors with file:line; Python codec = C++ reader | ISP-UPD-008, UPD-D16 | `tools.csrw_codec` (grammar, errors, 64 profiles Python = C++, emit keeps streams); SDK `csrw_to_bin.sh` binary = pre-P baseline; auto `resolved_profile` replay | PASS |
 | Gamma, live table | HAS §6.14 | V/E | PASS |
 | CSC BT.601 / BT.709 | HAS §6.15, SPEC-03 | V/E | PASS |
 | GTM auto (bank swap at SOF, curve built at EOF) and manual LUT; table writes only while `EN` = 0 | HAS §6.16, MAS p146, ALG-GTM-* | V/E `gtm_*` (3-frame vector), U `test_gtm_lut_gate`, D GTM load while enabled | PASS |
@@ -220,7 +226,7 @@ equivalent:
 | Per-register traceability with a coverage gate (no unclassified register; every modelled register has a test or a vector use) | Plan G-CSR | CTest `fx1_isp.reference.traceability_up_to_date` | PASS |
 | Per-block `STATUS.busy` | CSR, DEC-38 | E (mid-frame / after), C (stall vs idle), S `test_block_busy_and_warnings` | PASS |
 | Registers without modelled hardware warn when enabled (OFMT padding, WDR, TNR) | DEC-39, M5-A1 | S `test_block_busy_and_warnings` | PASS |
-| BLC profiles 0..3 with per-channel trims | HAS §6.7, M5-R3 | V, E, driver (`blc_profile*`) | PASS |
+| BLC profiles 0..3 with per-channel trims; since the CSR extension ISP-UPD-002 profiles 0..7 with per-channel trims and per-channel scales (G4..G7 not aliasing G0..G3, bank-owned in profile mode) | HAS §6.7, M5-R3, ISP-UPD-002 | V, E, driver (`blc_profile*`), U `test_blc_per_channel`, `test_blc_eight_profiles`, driver `fx1_isp_blc_*` | PASS |
 | Acceptance evidence with full SHA-256 kept in the repository; the regression compares with it | Review of M4 | `docs/evidence/`, CTest `fx1_isp.regression.raw --baseline` | PASS |
 
 ## CSR/MAS 07/10 — platform and handover (U6)

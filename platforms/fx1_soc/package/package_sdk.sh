@@ -187,6 +187,9 @@ cp "${here}/test/isp_auto.py" "${here}/test/csrw_to_bin.sh" "${test}/"
 # VP-only post-Demosaic capture (run_vp.sh isp ... --dump-demosaic): selection
 # and validation, Python standard library only.
 cp "${isp}/tools/demosaic_select.py" "${isp}/tools/demosaic_validate.py" "${test}/"
+# Profile codec (ISP-UPD-008): register or field syntax -> ordered CSR writes;
+# csrw_to_bin.sh and isp_auto.py import it, with the shipped CSR header.
+cp "${isp}/tools/csrw_codec.py" "${test}/"
 chmod +x "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/fx1_package.XXXXXX")"

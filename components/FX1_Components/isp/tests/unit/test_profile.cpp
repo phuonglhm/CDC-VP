@@ -14,6 +14,7 @@
 #include "control/ee_types.h"
 #include "fx1_check.h"
 #include "fx1_isp/fx1_isp_csr.h"
+#include "pipeline/isp_pipeline.h"
 
 using namespace cdc::components::fx1_isp;
 
@@ -910,7 +911,93 @@ void test_history_per_epoch() {
    FX1_CHECK(r.cu.nr_estimate_valid());
 }
 
+// ISP-UPD-002 (CSR extension 0x20261109): eight BLC gain profiles, each with
+// a DFT, four trims and four per-channel scales, selected by
+// BLC_GAIN_SEL.gain_level [2:0]. Every profile holds distinct values; each
+// selector value must snapshot its own set (G4..G7 must not alias G0..G3,
+// as the 2-bit selector did). In profile mode the set is bank-owned: it
+// reaches the datapath at the activating SOF only.
+const std::uint32_t blc_dft[8] = {FX1_ISP_BLC_OFS_G0_DFT_OFFSET, FX1_ISP_BLC_OFS_G1_DFT_OFFSET, FX1_ISP_BLC_OFS_G2_DFT_OFFSET, FX1_ISP_BLC_OFS_G3_DFT_OFFSET, FX1_ISP_BLC_OFS_G4_DFT_OFFSET, FX1_ISP_BLC_OFS_G5_DFT_OFFSET, FX1_ISP_BLC_OFS_G6_DFT_OFFSET, FX1_ISP_BLC_OFS_G7_DFT_OFFSET};
+const std::uint32_t blc_trim[8][4] = {{FX1_ISP_BLC_OFS_G0_R_OFFSET, FX1_ISP_BLC_OFS_G0_GR_OFFSET, FX1_ISP_BLC_OFS_G0_GB_OFFSET, FX1_ISP_BLC_OFS_G0_B_OFFSET}, {FX1_ISP_BLC_OFS_G1_R_OFFSET, FX1_ISP_BLC_OFS_G1_GR_OFFSET, FX1_ISP_BLC_OFS_G1_GB_OFFSET, FX1_ISP_BLC_OFS_G1_B_OFFSET}, {FX1_ISP_BLC_OFS_G2_R_OFFSET, FX1_ISP_BLC_OFS_G2_GR_OFFSET, FX1_ISP_BLC_OFS_G2_GB_OFFSET, FX1_ISP_BLC_OFS_G2_B_OFFSET}, {FX1_ISP_BLC_OFS_G3_R_OFFSET, FX1_ISP_BLC_OFS_G3_GR_OFFSET, FX1_ISP_BLC_OFS_G3_GB_OFFSET, FX1_ISP_BLC_OFS_G3_B_OFFSET}, {FX1_ISP_BLC_OFS_G4_R_OFFSET, FX1_ISP_BLC_OFS_G4_GR_OFFSET, FX1_ISP_BLC_OFS_G4_GB_OFFSET, FX1_ISP_BLC_OFS_G4_B_OFFSET}, {FX1_ISP_BLC_OFS_G5_R_OFFSET, FX1_ISP_BLC_OFS_G5_GR_OFFSET, FX1_ISP_BLC_OFS_G5_GB_OFFSET, FX1_ISP_BLC_OFS_G5_B_OFFSET}, {FX1_ISP_BLC_OFS_G6_R_OFFSET, FX1_ISP_BLC_OFS_G6_GR_OFFSET, FX1_ISP_BLC_OFS_G6_GB_OFFSET, FX1_ISP_BLC_OFS_G6_B_OFFSET}, {FX1_ISP_BLC_OFS_G7_R_OFFSET, FX1_ISP_BLC_OFS_G7_GR_OFFSET, FX1_ISP_BLC_OFS_G7_GB_OFFSET, FX1_ISP_BLC_OFS_G7_B_OFFSET}};
+const std::uint32_t blc_scale[8][4] = {{FX1_ISP_BLC_SCALE_G0_R_OFFSET, FX1_ISP_BLC_SCALE_G0_GR_OFFSET, FX1_ISP_BLC_SCALE_G0_GB_OFFSET, FX1_ISP_BLC_SCALE_G0_B_OFFSET}, {FX1_ISP_BLC_SCALE_G1_R_OFFSET, FX1_ISP_BLC_SCALE_G1_GR_OFFSET, FX1_ISP_BLC_SCALE_G1_GB_OFFSET, FX1_ISP_BLC_SCALE_G1_B_OFFSET}, {FX1_ISP_BLC_SCALE_G2_R_OFFSET, FX1_ISP_BLC_SCALE_G2_GR_OFFSET, FX1_ISP_BLC_SCALE_G2_GB_OFFSET, FX1_ISP_BLC_SCALE_G2_B_OFFSET}, {FX1_ISP_BLC_SCALE_G3_R_OFFSET, FX1_ISP_BLC_SCALE_G3_GR_OFFSET, FX1_ISP_BLC_SCALE_G3_GB_OFFSET, FX1_ISP_BLC_SCALE_G3_B_OFFSET}, {FX1_ISP_BLC_SCALE_G4_R_OFFSET, FX1_ISP_BLC_SCALE_G4_GR_OFFSET, FX1_ISP_BLC_SCALE_G4_GB_OFFSET, FX1_ISP_BLC_SCALE_G4_B_OFFSET}, {FX1_ISP_BLC_SCALE_G5_R_OFFSET, FX1_ISP_BLC_SCALE_G5_GR_OFFSET, FX1_ISP_BLC_SCALE_G5_GB_OFFSET, FX1_ISP_BLC_SCALE_G5_B_OFFSET}, {FX1_ISP_BLC_SCALE_G6_R_OFFSET, FX1_ISP_BLC_SCALE_G6_GR_OFFSET, FX1_ISP_BLC_SCALE_G6_GB_OFFSET, FX1_ISP_BLC_SCALE_G6_B_OFFSET}, {FX1_ISP_BLC_SCALE_G7_R_OFFSET, FX1_ISP_BLC_SCALE_G7_GR_OFFSET, FX1_ISP_BLC_SCALE_G7_GB_OFFSET, FX1_ISP_BLC_SCALE_G7_B_OFFSET}};
+
+void write_blc_profiles(rig &r) {
+   for (unsigned g = 0; g < 8; ++g) {
+      r.wr(blc_dft[g], 100 + 10 * g);
+      for (unsigned c = 0; c < 4; ++c) {
+         r.wr(blc_trim[g][c], 16 * g + c + 1);
+         r.wr(blc_scale[g][c], 0x10000 + 0x1000 * g + 0x100 * c);
+      }
+   }
+}
+
+void check_blc_snapshot(rig &r, unsigned g, const std::string &what) {
+   const pipe::pipeline_config c = pipe::snapshot_config(r.cu);
+   FX1_CHECK_EQ_CTX(c.blc_pedestal, 100 + 10 * g, what + " DFT");
+   for (unsigned ch = 0; ch < 4; ++ch) {
+      FX1_CHECK_EQ_CTX(c.blc_trim[ch], 16 * g + ch + 1, what + " trim " + std::to_string(ch));
+      FX1_CHECK_EQ_CTX(c.blc_scale[ch], 0x10000 + 0x1000 * g + 0x100 * ch, what + " scale " + std::to_string(ch));
+   }
+}
+
+void test_blc_eight_profiles() {
+   {
+      rig r;
+      write_blc_profiles(r);
+      for (unsigned g = 0; g < 8; ++g) {
+         r.wr(FX1_ISP_BLC_GAIN_SEL_OFFSET, g | FX1_ISP_BLC_GAIN_SEL_RANGE_SCALE_EN_MASK);
+         FX1_CHECK_EQ(r.rd(FX1_ISP_BLC_GAIN_SEL_OFFSET), g | 0x100u);
+         check_blc_snapshot(r, g, "legacy G" + std::to_string(g));
+      }
+      r.wr(FX1_ISP_BLC_GAIN_SEL_OFFSET, 0xF);  // bit 3 reserved: G7
+      FX1_CHECK_EQ(r.rd(FX1_ISP_BLC_GAIN_SEL_OFFSET), 7u);
+      check_blc_snapshot(r, 7, "legacy selector 0xF");
+   }
+   rig r;
+   write_blc_profiles(r);
+   r.wr(FX1_ISP_BLC_GAIN_SEL_OFFSET, 0x101);
+   r.enter_profile_mode();
+   r.cmd(c_init);  // bank 0: copies the 72 BLC values and the selector
+   FX1_CHECK_EQ(r.rd(blc_scale[6][2]), 0x10000u + 0x6000 + 0x200);
+   r.wr(FX1_ISP_BLC_GAIN_SEL_OFFSET, 0x106);
+   r.wr(blc_scale[6][2], 0x2ABCD);
+   FX1_CHECK_EQ(r.rd(blc_scale[6][2]), 0x2ABCDu);
+   FX1_CHECK_EQ(r.cu.regs().peek(blc_scale[6][2]), 0x10000u + 0x6000 + 0x200);  // datapath unchanged
+   FX1_CHECK_EQ(r.cu.regs().peek(FX1_ISP_BLC_GAIN_SEL_OFFSET), 0x101u);
+   // Every one of the 72 values is bank-owned: a profile-mode write reaches
+   // the bank (read back) and leaves the datapath value alone.
+   for (unsigned g = 0; g < 8; ++g) {
+      std::uint32_t offs[9] = {blc_dft[g]};
+      for (unsigned ch = 0; ch < 4; ++ch) {
+         offs[1 + ch] = blc_trim[g][ch];
+         offs[5 + ch] = blc_scale[g][ch];
+      }
+      for (std::uint32_t off : offs) {
+         if (off == blc_scale[6][2]) {
+            continue;
+         }
+         const std::uint32_t live = r.cu.regs().peek(off);
+         r.wr(off, live ^ 0x5u);
+         FX1_CHECK_EQ_CTX(r.rd(off), live ^ 0x5u, "bank value @" + fx1_test::hex(off));
+         FX1_CHECK_EQ_CTX(r.cu.regs().peek(off), live, "datapath value @" + fx1_test::hex(off));
+         r.wr(off, live);
+      }
+   }
+   r.wr(FX1_ISP_TUNE_PROFILE_ID_OFFSET, 0x66);
+   r.cmd(c_seal);
+   FX1_CHECK_EQ(r.err(), 0u);
+   r.cmd(c_apply);
+   FX1_CHECK_EQ(r.err(), 0u);
+   FX1_CHECK(r.admit());
+   const pipe::pipeline_config c = pipe::snapshot_config(r.cu);
+   FX1_CHECK_EQ(c.blc_pedestal, 160u);
+   FX1_CHECK_EQ(c.blc_scale[2], 0x2ABCDu);
+   FX1_CHECK_EQ(c.blc_scale[1], 0x10000u + 0x6000 + 0x100);
+   FX1_CHECK_EQ(c.blc_trim[3], 16u * 6 + 4);
+}
+
 int main() {
+   test_blc_eight_profiles();
    test_legacy_mode();
    test_init_edit_seal_apply();
    test_command_rules();

@@ -35,6 +35,9 @@ this component can be traced to an exact revision.
   unless `--allow-new-revision` is given, checks that the `Registers` and
   `Flat Registers` sheets agree, and asserts the expected counts
   (573 registers, 819 fields; 464 RW, 288 RO, 35 W1C, 11 W1S, 2 W1SC, 19 W1P).
+  It then applies the VP CSR extension 0x20261109 (owner decisions of
+  2026-11-09, not part of the workbook; [ISP_CSR_EXTENSION_UPD.md](ISP_CSR_EXTENSION_UPD.md))
+  and asserts the extended counts (621 registers, 867 fields, 512 RW).
 - HAS: text extracted from the PDF with `pdftotext -layout`. Figures and
   diagrams are not machine-readable; where a figure carries information that
   is not in the text, the relevant block review (M3) must consult the PDF

@@ -56,7 +56,8 @@ GTM_AUTO = [("GTM_KEY", 0xBB), ("GTM_LWHITE", 0x0180), ("GTM_ROI_LOG2", 11), ("G
 # Statistics on, small and legal: AEC 4x3 zones of 16x16 covering the frame,
 # AWB one 1x1 zone (a 0x0 grid is illegal since CSR/MAS 07/10, MAS §6.22.3.7),
 # AF; distinct context IDs so the tags are checked too.
-STATS = (make_profile.aec(4, 3, 16, 16) + make_profile.awb(1, 1, 16, 4000) + [("AF_CTRL", 1)] +
+STATS = (make_profile.aec(4, 3, 16, 16, ue=256, oe=3840) +  # v1.07 thresholds kept (ISP-UPD-004 changes the default)
+         make_profile.awb(1, 1, 16, 4000) + [("AF_CTRL", 1)] +
          [("AEC_CONTEXT_ID", 0xA1), ("AWB_CONTEXT_ID", 0xA2), ("AF_CONTEXT_ID", 0xA3)])
 
 

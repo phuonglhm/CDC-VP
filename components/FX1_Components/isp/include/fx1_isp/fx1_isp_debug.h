@@ -68,6 +68,22 @@ public:
 
 const char *to_string(demosaic_frame_end how);
 
+// VP-only (ISP-UPD-005): the colorimetry of a frame's NV12/RGB888 outputs as
+// the pipeline snapshots it at the frame's SOF -- CSC_CTRL.std and the
+// datapath value of TUNE_CSC_CTRL.FULL_RANGE (the field reset in legacy mode,
+// the active bank in profile mode). A host tool needs it to decode the
+// output; it is not a CSR readback (a live readback can be the bank storage
+// of legacy mode, or a later frame's set). Called once per frame entering
+// the pipeline, in SOF order, from a simulation process; must not call wait().
+struct frame_output_info {
+   std::uint64_t epoch = 0, sequence = 0;  // the frame key of demosaic_frame_info
+   std::uint32_t frame_id = 0;             // ingress FRAME_ID (TUNE_CHn_BUFm_FRAME)
+   unsigned outputs = 0;                   // OUTPUT_ENABLE mask of this SOF
+   unsigned csc_std = 0;                   // 0 BT.601, 1 BT.709
+   bool csc_full_range = false;            // Y/C 0..255 (true) or 16..235/16..240
+};
+using frame_output_hook = std::function<void(const frame_output_info &)>;
+
 // Writer used by fx1_isp_run_raw and fx1_soc. Each frame streams into
 // temporary files (<base>.rgb16.part / .png.part); a completed frame is
 // published by rename as

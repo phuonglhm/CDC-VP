@@ -733,6 +733,14 @@ if(CDC_BUILD_TESTS)
         # The ISP demo's pack step (isp_pack.py, stdlib only) on synthetic
         # dumps: damaged results, dumps, jobs and a failing preview must all
         # be rejected (review G6a R2).
+        # The `isp run auto` policy and probe grid (fw/fx1_soc/freertos/isp_auto_policy.h) on the host,
+        # as the SDK Makefile builds it (review Stop B R1: probe grid per Bayer phase).
+        add_executable(fx1_isp_auto_policy_test ${CMAKE_CURRENT_SOURCE_DIR}/freertos/tests/isp_auto_policy_test.c)
+        target_include_directories(fx1_isp_auto_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/freertos)
+        # -UNDEBUG: the test is assert-based (the SDK Makefile builds it without NDEBUG).
+        target_compile_options(fx1_isp_auto_policy_test PRIVATE -std=c99 -Wall -Wextra -Werror -UNDEBUG)
+        add_test(NAME fx1_regression_isp_auto_policy COMMAND fx1_isp_auto_policy_test)
+        set_tests_properties(fx1_regression_isp_auto_policy PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_regression")
         add_test(NAME fx1_regression_isp_demo_pack
                  COMMAND ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/tests/test_pack.py)
         set_tests_properties(fx1_regression_isp_demo_pack PROPERTIES

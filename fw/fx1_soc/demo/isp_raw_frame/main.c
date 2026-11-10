@@ -83,6 +83,7 @@ int main(void)
     if (isp_demo_configure(&dev, job, profile, mode, &tune_error) != FX1_ISP_OK) {
         fx1_log_hex("ISP profile / geometry refused, TUNE_ERROR", tune_error);
         res->status = 2;
+        res->aec_percent = res->colorimetry = res->reserved = 0;
         res->mode = mode;
         res->tune_error = tune_error;
         res->magic = ISP_DEMO_RESULT_MAGIC;
@@ -109,6 +110,9 @@ int main(void)
     const uint32_t y_bytes = job->out_stride * job->height, uv_bytes = job->out_stride * (job->height / 2u);
     fx1_dma_prepare((const volatile void*)(uintptr_t)job->y_addr, y_bytes, FX1_DMA_FROM_DEVICE);
     fx1_dma_prepare((const volatile void*)(uintptr_t)job->uv_addr, uv_bytes, FX1_DMA_FROM_DEVICE);
+    /* ISP-UPD-005: the outputs' colorimetry, from the committed configuration */
+    const uint32_t colorimetry = isp_demo_colorimetry_word(&dev);
+    fx1_log_hex("output colorimetry (bit 31 valid, std << 1 | full range)", colorimetry);
     fx1_check(fx1_isp_start(&dev, &bufs) == FX1_ISP_OK, 0x12, "stream start (output stride fits)");
     fx1_log_hex("ISP output width", dev.out_width);
     fx1_log_hex("           height", dev.out_height);
@@ -139,6 +143,14 @@ int main(void)
         fx1_dma_complete((const volatile void*)(uintptr_t)job->y_addr, y_bytes, FX1_DMA_FROM_DEVICE);
         fx1_dma_complete((const volatile void*)(uintptr_t)job->uv_addr, uv_bytes, FX1_DMA_FROM_DEVICE);
         fx1_log_hex("frame done", k);
+        if (k == 0u) { /* ISP-UPD-001: after the first SOF, the mesh into the other LSC residents */
+            uint32_t filled;
+            int rc;
+            const uint32_t mask = isp_demo_lsc_fill(&dev, profile, job->profile_count, &filled, &rc);
+            fx1_log_hex("LSC residents loaded after the first SOF", filled);
+            fx1_log_hex("LSC residents valid", mask);
+            fx1_check(rc == FX1_ISP_OK, 0x23, "LSC mesh duplicated into the free residents");
+        }
         if (k + 1u < job->frames) { /* the next frame writes the same output again */
             fx1_dma_prepare((const volatile void*)(uintptr_t)job->y_addr, y_bytes, FX1_DMA_FROM_DEVICE);
             fx1_dma_prepare((const volatile void*)(uintptr_t)job->uv_addr, uv_bytes, FX1_DMA_FROM_DEVICE);
@@ -152,6 +164,7 @@ int main(void)
     fx1_isp_awb_global awb;
     fx1_isp_af_scores af;
     const int aec_ok = fx1_isp_read_aec_global(&dev, &aec) == FX1_ISP_OK;
+    const uint32_t aec_percent = aec_ok ? isp_demo_aec_word(&dev) : 0u; /* ISP-UPD-004 */
     const int awb_ok = fx1_isp_read_awb_global(&dev, &awb) == FX1_ISP_OK;
     const int af_ok = fx1_isp_read_af(&dev, &af) == FX1_ISP_OK;
 
@@ -181,6 +194,9 @@ int main(void)
     res->ch1_height = h1;
     res->ch2_width = w2;
     res->ch2_height = h2;
+    res->aec_percent = aec_percent;
+    res->colorimetry = colorimetry;
+    res->reserved = 0;
     fx1_release();
     res->magic = ISP_DEMO_RESULT_MAGIC;
     fx1_mb();
@@ -188,6 +204,7 @@ int main(void)
     fx1_log_hex("frames processed", job->frames);
     fx1_log_hex("simulated us, first queue to last completion", ticks / 20u);
     fx1_log_hex("AEC/AWB/AF FRAME_ID", (res->aec_frame_id << 16) | (res->awb_frame_id << 8) | res->af_frame_id);
+    fx1_log_hex("AEC UE/OE basis points (bit 31 valid, OE << 16 | UE)", aec_percent);
     fx1_log_hex("DMA_ERR (non-fatal bits only)", p.dma_err);
     fx1_check(fx1_isp_stop(&dev) >= 0, 0x31, "stream stopped");
     fx1_log("ISP demo done: NV12 in DDR, result block written");

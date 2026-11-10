@@ -844,3 +844,165 @@ DMA errors, writer files and errors, directory reuse, set replacement), `test_dm
 selection over different inputs, off/on identity, validator negatives),
 `tools.demosaic_reference_self_test` (reference flat field); workspace reports
 `report/ISP_POST_DEMOSAIC_DMS_<N>_2026-11-04.md`.
+
+## 13. Consolidated update, CSR extension 0x20261109 (plan ISP_CONSOLIDATED_UPDATE_PLAN_2026-11-09)
+
+Owner decisions of 2026-11-09 relayed by the user; the design of the
+register map is the VP's (docs/ISP_CSR_EXTENSION_UPD.md), pending a CSR
+revision. Stop A: CSR extension and numeric core.
+
+- UPD-D1 (ISP-UPD-001) LSC node gains UQ4.18 [21:0], 0 ≤ gain ≤ 8.0
+  inclusive (`0x200000`); exact 8.0 no longer wraps to 0. Above 8.0:
+  `COEF_RANGE`, value stored masked to the field (flag-and-store, unchanged
+  policy); the driver refuses such a coefficient (`FX1_ISP_EINVAL`) before
+  writing. Strength, rounding and the final saturation are unchanged.
+- UPD-D2 (ISP-UPD-001 data) The current mesh is duplicated into the three
+  residents, each its own storage. The active-profile protection is kept:
+  the profile loads 1 and 2 and selects 1; firmware loads 0 after the first
+  SOF (Stop B). Three equal copies are not three calibrations.
+- UPD-D3 (ISP-UPD-002) BLC gain profiles G0..G7 (selector [2:0]) with
+  per-channel scales; `BLC_SCALE_G0..G3` removed (no alias). Migration:
+  the old scale on the four channels, bit-identical output (checked on
+  every vector, sample, 4K vector and firmware fixture: expected outputs
+  and CRCs unchanged). G4..G7 resets as G0..G3 (DFT 200, trims 0,
+  scales 1.0). All values bank-owned; independent of the two TUNE banks.
+- UPD-D4 (ISP-UPD-007) CCM offsets in output pixel levels: `acc = dot +
+  512·offset`, floor, one saturation; default (0, 0, 0). Vectors
+  `full_bggr_66x34`, `input_raw10_full_bggr_66x34`,
+  `input_raw12_full_bggr_66x34` keep their codes (+5, −3, 0) with the new
+  meaning; their expected NV12 was regenerated. Every changed component
+  was attributed to the offset, to saturation or to the carry of the old
+  fractional offset; the statistics did not change (workspace report
+  `ISP_UPD_STOP_A`).
+- UPD-D5 `COMMON_VER_ID` unchanged (`0x00010007`); `FX1_ISP_CSR_EXTENSION`
+  identifies the map, `FX1_ISP_CCM_OFFSET_PIXEL_UNITS` the offset units.
+
+Stop B: data, firmware and defaults.
+
+- UPD-D6 (ISP-UPD-001) LSC target mesh 17×13 nodes × 4 channels (884
+  coefficients per resident, 2652 for three; `LSC_MESH_NODES 0x0D11`; user
+  clarification of 2026-11-09). The SDK/sample mesh is the synthetic radial
+  formula of `make_profile.lsc_mesh` (peak 1.6, +0.02 per channel); the 17×9
+  table of v1.07 was exactly that formula (612/612 coefficients), so the
+  17×13 mesh is the same formula sampled on the denser grid, not a
+  resampled table and not a calibration. Its interpolated gain follows the
+  formula closer (max relative error 0.33 % instead of 0.59 %; the two
+  meshes differ by at most 0.40 %).
+- UPD-D7 (ISP-UPD-001) Boot sequence of the three residents: the profile
+  loads 1 and 2 (1768 coefficient writes) and selects 1; the firmware
+  (`isp_demo_setup.h`, both the bare-metal demo and `isp run`) loads the
+  same validated coefficient writes into every invalid, non-active resident
+  after the job's first completed frame (`fx1_isp_lsc_load_writes`, mesh
+  size untouched). Valid mask 0x7 from the first frame on; profile 0 is
+  never selected by the samples, so the output does not depend on it.
+- UPD-D8 (ISP-UPD-003/004) Defaults of `make_profile` preset `full`, the
+  outdoor1 `full` sample and the shared SDK profile: AWB 16×16, AEC 16×16
+  zones (`aec_grid`: Z = ceil(D/16), N = ceil(D/Z)), clip 0..4095, TH_UE 272,
+  TH_OE 3744. CSR resets unchanged; `full_vga_709`, `gtm_manual_qhd` and the
+  dedicated statistics vectors keep their grids and thresholds.
+- UPD-D9 (ISP-UPD-004) OE/UE percentages are driver arithmetic on the
+  leased result (`fx1_isp_aec_percent_of`, `fx1_isp_read_aec_percent`):
+  basis points, geometric denominator, ENODATA for no samples, EIO for
+  saturated counts; no CSR. The firmware result block carries the global
+  values (`aec_percent`, bit 31 valid; block still 96 bytes, now dumped
+  whole) and the SDK summary prints them. AWB percentages: out of scope.
+- UPD-D10 (ISP-UPD-007) `make_profile.ccm_writes` and the shared profile
+  write the three offsets explicitly (0, 0, 0): 12 CCM parameters.
+- UPD-D11 Golden updates (decided by the user: regenerate in Stop B with a
+  staged attribution, reviewed at the stop). On d65 and outdoor1 the mesh
+  alone changes NV12 and Demosaic (the AWB/AEC sums by about −0.1 %); the
+  explicit zero offsets change nothing; the grids/thresholds change only the
+  statistics (UE/OE counts, grid). C++ equals the Python reference on the
+  final profile's Demosaic capture (both frames, both images).
+- UPD-D12 (ISP-UPD-003, user decision) The demo `isp run auto` policy
+  (`neutral-v1`, at least 8 neutral zones) was designed on the 32×16 AWB
+  grid; on the new 16×16 default, d65 has 4 neutral zones and the policy
+  would keep the base gains. The probe frame alone is therefore measured on
+  32×16 (`ISP_AUTO_PROBE_NX/NY`, clamped to W/2 × H/2); the profile's grid
+  is restored for the render frames. `auto.json` records both grids. With
+  this, the d65 decision is unchanged (9 zones, blend 25, the same six CSR
+  values); outdoor1 stays invalid (0 zones) as before.
+- UPD-D13 The real-RAW acceptance baseline (`docs/evidence/
+  raw_regression_baseline.json`) was written on 2026-10-12 at e51b325,
+  before the v1.07 update, and already differed in all 116 runs at 75675cb
+  (rerun from `git archive 75675cb`). The baseline is rewritten from the
+  Stop B tree. Against 75675cb: `basic` and `gtm_manual_qhd` bit-identical
+  (frames and statistics, 58 runs), `full` and `full_vga_709` changed (LSC
+  17×13, AWB/AEC grids and thresholds); 308/308 frames bit-exact with the
+  reference in both trees.
+
+Stop B review fixes (2026-11-09): R1 the `isp run auto` probe grid is
+computed on the active image per Bayer phase (`isp_auto_probe_grid`), not
+`(W−1)/2 × (H−1)/2`; R2 the firmware's LSC duplication helper and the demo
+runner's check follow the loader (destination latched by LOAD_BEGIN, abort >
+validate > begin, BEGIN refused while a load is open, exact coefficient
+count). Workspace report `ISP_UPD_STOP_B` §9.
+
+Stop C: NV12 → PNG colorimetry (ISP-UPD-005).
+
+- UPD-D14 The preview decodes the range and standard of the frame: limited
+  `(Y−16)/219`, `(C−128)/224`; full `Y/255`, `(C−128)/255`; Kr/Kb of the
+  standard; round half up; one formula in the numpy tool
+  (`nv12_preview.py`) and the SDK's stdlib packer (`isp_pack.py`), checked
+  pixel-identical. No default range in either: a missing colorimetry is an
+  error unless `--std`/`--range` are given.
+- UPD-D15 Source of the colorimetry: the frame's SOF snapshot in the model
+  (`debug_set_frame_output_hook`, recorded by `fx1_isp_run_raw`) and, on the
+  platform, the firmware's result word (`colorimetry`: bit 0 full range,
+  bits [2:1] std, bit 31 valid) from `fx1_isp_output_colorimetry` on the
+  committed configuration before `fx1_isp_start` — the datapath value, not a
+  live CSR readback (in legacy mode `TUNE_CSC_CTRL` reads its bank storage).
+  The demo runner cross-checks the firmware word against the stand-alone
+  model's snapshot. NV12, RGB16 and statistics are unchanged by this stop.
+
+Milestone P: field syntax for tuning profiles (ISP-UPD-008).
+
+- UPD-D16 A `.csrw` line is one full-word write in order: `REGISTER VALUE`,
+  `REGISTER_field VALUE` (other fields 0) or `REGISTER f=V ...` (other fields
+  0); no merging, sorting or read-modify-write. Field values are codes before
+  the shift; literals are decimal without a leading zero or `0x` hex (stricter
+  than before: `010` was octal for the C++ reader and an error for Python).
+  The map is the generated header (no separate metadata file); the 867
+  `REGISTER_field` aliases are checked for collisions. One contract in
+  `tools/csrw_codec.py` (Python, SDK) and `tests/common/vector_io.h` (C++),
+  cross-checked on every committed profile and on grammar/error cases. The
+  five sample profiles are in field syntax with write-for-write identical
+  streams; test vectors stay in register syntax (raw and negative writes).
+
+Stop D candidate: `tools/run_regression.py` read `fx1_isp_run_raw`'s
+`PREFIX.txt` as two-token lines only and broke on the per-SOF
+`frame_colorimetry_<k>` lines of Stop C; `read_status()` now skips them and
+`tools.run_raw_colorimetry` exercises it on a real run, so the default CTest
+covers what only the optional real-RAW regression found.
+
+
+Review B/C/P/D fixes (2026-11-10):
+- R1: a missing or invalid output colorimetry no longer discards the frame.
+  `isp_pack.py` and `run_isp_demo.py` write `platform.nv12` (the active
+  bytes), compare it with the golden or the reference, and summarise it.
+  They write no `platform.png` and never guess the range. `isp_pack.py`
+  exits 3 (`run_vp.sh`: `ISP FAIL: no preview`), unless the NV12 mismatches
+  (exit 1); `run_isp_demo.py` FAILs with exit 1. A rejected input is still
+  exit 2 with nothing written.
+- R2: `migrate_profile_upd.py` decodes CCM offsets with `csrw_codec`: legacy,
+  alias and group syntax. A malformed line is exit 2 with `file:line`; it
+  prints no traceback and leaves the file unchanged. The removed
+  `BLC_SCALE_Gg` takes `REGISTER VALUE` only. A UTF-8 byte order mark and
+  CRLF line ends are kept.
+- R3: one line and token contract, the C++ reader's:
+  - lines end at `\n` only;
+  - tokens are separated by ASCII white space only;
+  - a UTF-8 byte order mark opening the file is ignored, by both readers
+    (profile and `frames.csrw`) and by `isp_auto.py capture`;
+  - comments may hold non-UTF-8 bytes.
+
+  Before this fix, Python split lines on a lone `\r`, treated NBSP and
+  U+001C as separators, and failed with a traceback on a non-UTF-8 comment;
+  the C++ reader did not do any of these. Cross-language cases cover each one.
+- R4: both previews compute in exact integer arithmetic (Kr/Kb as the
+  standards' decimals, one floor division by 2D). An exact .5 rounds up
+  (BT.601 full Y 128, Cb 178, Cr 78 gives G 147); float64 gave 146 in numpy.
+  An independent cross-multiplied oracle checks numpy on every (Y, Cb, Cr),
+  and the stdlib converter on all 65536 (Cb, Cr) at 16 Y values, for both
+  standards and both ranges. Exact ties exist only in BT.601 full range.
+  NV12, golden files and the model are unchanged.

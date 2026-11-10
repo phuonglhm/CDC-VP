@@ -1,6 +1,6 @@
 {
   "generator": "tools/gen_csr.py",
-  "generator_version": "2.0",
+  "generator_version": "2.1",
   "source": {
     "file": "FTEL_IP_ISP_CSR_v1.07.xlsm",
     "sha256": "444e72f8d7fd3f35d83a7ce47d455b87dc6df6cda833b11302c6a45fb8b721fa",
@@ -9,6 +9,16 @@
     "module": "ftel_isp_csr"
   },
   "counts": {
+    "RW": 512,
+    "RO": 288,
+    "W1C": 35,
+    "W1S": 11,
+    "W1SC": 2,
+    "W1P": 19,
+    "registers": 621,
+    "fields": 867
+  },
+  "workbook_counts": {
     "RW": 464,
     "RO": 288,
     "W1C": 35,
@@ -17,6 +27,863 @@
     "W1P": 19,
     "registers": 573,
     "fields": 819
+  },
+  "extension": {
+    "id": "0x20261109",
+    "design": "docs/ISP_CSR_EXTENSION_UPD.md",
+    "official": false,
+    "entries": [
+      {
+        "id": "ISP-UPD-001",
+        "kind": "widen_field",
+        "register": "LSC_COEF_DATA",
+        "field": "coef_data",
+        "expect_bits": "[20:0]",
+        "bits": "[21:0]",
+        "reason": "Node gain UQ4.18, 0 <= gain <= 8.0 inclusive (owner, 2026-11-09): exact 8.0 is 0x200000, which needs 22 bits; 2^-18 steps and the meaning of the old codes are kept."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "widen_field",
+        "register": "BLC_GAIN_SEL",
+        "field": "gain_level",
+        "expect_bits": "[1:0]",
+        "bits": "[2:0]",
+        "reason": "Eight BLC gain profiles G0..G7 (owner, 2026-11-09)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "remove_register",
+        "register": "BLC_SCALE_G0",
+        "expect_offset": 600,
+        "reason": "The scale shared by the four colours is replaced by BLC_SCALE_G0_{R,GR,GB,B}; the offset is reserved. Profiles migrate to four equal scales."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "remove_register",
+        "register": "BLC_SCALE_G1",
+        "expect_offset": 604,
+        "reason": "The scale shared by the four colours is replaced by BLC_SCALE_G1_{R,GR,GB,B}; the offset is reserved. Profiles migrate to four equal scales."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "remove_register",
+        "register": "BLC_SCALE_G2",
+        "expect_offset": 608,
+        "reason": "The scale shared by the four colours is replaced by BLC_SCALE_G2_{R,GR,GB,B}; the offset is reserved. Profiles migrate to four equal scales."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "remove_register",
+        "register": "BLC_SCALE_G3",
+        "expect_offset": 612,
+        "reason": "The scale shared by the four colours is replaced by BLC_SCALE_G3_{R,GR,GB,B}; the offset is reserved. Profiles migrate to four equal scales."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G4_DFT",
+        "offset": 616,
+        "fields": [
+          {
+            "name": "ofs_g4_dft",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 200
+          }
+        ],
+        "reason": "BLC gain profile G4: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G4_R",
+        "offset": 620,
+        "fields": [
+          {
+            "name": "ofs_g4_r",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G4: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G4_GR",
+        "offset": 624,
+        "fields": [
+          {
+            "name": "ofs_g4_gr",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G4: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G4_GB",
+        "offset": 628,
+        "fields": [
+          {
+            "name": "ofs_g4_gb",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G4: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G4_B",
+        "offset": 632,
+        "fields": [
+          {
+            "name": "ofs_g4_b",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G4: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G5_DFT",
+        "offset": 636,
+        "fields": [
+          {
+            "name": "ofs_g5_dft",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 200
+          }
+        ],
+        "reason": "BLC gain profile G5: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G5_R",
+        "offset": 640,
+        "fields": [
+          {
+            "name": "ofs_g5_r",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G5: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G5_GR",
+        "offset": 644,
+        "fields": [
+          {
+            "name": "ofs_g5_gr",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G5: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G5_GB",
+        "offset": 648,
+        "fields": [
+          {
+            "name": "ofs_g5_gb",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G5: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G5_B",
+        "offset": 652,
+        "fields": [
+          {
+            "name": "ofs_g5_b",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G5: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G6_DFT",
+        "offset": 656,
+        "fields": [
+          {
+            "name": "ofs_g6_dft",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 200
+          }
+        ],
+        "reason": "BLC gain profile G6: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G6_R",
+        "offset": 660,
+        "fields": [
+          {
+            "name": "ofs_g6_r",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G6: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G6_GR",
+        "offset": 664,
+        "fields": [
+          {
+            "name": "ofs_g6_gr",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G6: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G6_GB",
+        "offset": 668,
+        "fields": [
+          {
+            "name": "ofs_g6_gb",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G6: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G6_B",
+        "offset": 672,
+        "fields": [
+          {
+            "name": "ofs_g6_b",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G6: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G7_DFT",
+        "offset": 676,
+        "fields": [
+          {
+            "name": "ofs_g7_dft",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 200
+          }
+        ],
+        "reason": "BLC gain profile G7: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G7_R",
+        "offset": 680,
+        "fields": [
+          {
+            "name": "ofs_g7_r",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G7: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G7_GR",
+        "offset": 684,
+        "fields": [
+          {
+            "name": "ofs_g7_gr",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G7: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G7_GB",
+        "offset": 688,
+        "fields": [
+          {
+            "name": "ofs_g7_gb",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G7: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_OFS_G7_B",
+        "offset": 692,
+        "fields": [
+          {
+            "name": "ofs_g7_b",
+            "bits": "[11:0]",
+            "access": "RW",
+            "reset": 0
+          }
+        ],
+        "reason": "BLC gain profile G7: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G0_R",
+        "offset": 696,
+        "fields": [
+          {
+            "name": "scale_g0_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G0: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G0_GR",
+        "offset": 700,
+        "fields": [
+          {
+            "name": "scale_g0_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G0: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G0_GB",
+        "offset": 704,
+        "fields": [
+          {
+            "name": "scale_g0_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G0: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G0_B",
+        "offset": 708,
+        "fields": [
+          {
+            "name": "scale_g0_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G0: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G1_R",
+        "offset": 712,
+        "fields": [
+          {
+            "name": "scale_g1_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G1: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G1_GR",
+        "offset": 716,
+        "fields": [
+          {
+            "name": "scale_g1_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G1: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G1_GB",
+        "offset": 720,
+        "fields": [
+          {
+            "name": "scale_g1_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G1: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G1_B",
+        "offset": 724,
+        "fields": [
+          {
+            "name": "scale_g1_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G1: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G2_R",
+        "offset": 728,
+        "fields": [
+          {
+            "name": "scale_g2_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G2: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G2_GR",
+        "offset": 732,
+        "fields": [
+          {
+            "name": "scale_g2_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G2: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G2_GB",
+        "offset": 736,
+        "fields": [
+          {
+            "name": "scale_g2_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G2: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G2_B",
+        "offset": 740,
+        "fields": [
+          {
+            "name": "scale_g2_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G2: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G3_R",
+        "offset": 744,
+        "fields": [
+          {
+            "name": "scale_g3_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G3: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G3_GR",
+        "offset": 748,
+        "fields": [
+          {
+            "name": "scale_g3_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G3: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G3_GB",
+        "offset": 752,
+        "fields": [
+          {
+            "name": "scale_g3_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G3: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G3_B",
+        "offset": 756,
+        "fields": [
+          {
+            "name": "scale_g3_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G3: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G4_R",
+        "offset": 760,
+        "fields": [
+          {
+            "name": "scale_g4_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G4: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G4_GR",
+        "offset": 764,
+        "fields": [
+          {
+            "name": "scale_g4_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G4: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G4_GB",
+        "offset": 768,
+        "fields": [
+          {
+            "name": "scale_g4_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G4: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G4_B",
+        "offset": 772,
+        "fields": [
+          {
+            "name": "scale_g4_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G4: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G5_R",
+        "offset": 776,
+        "fields": [
+          {
+            "name": "scale_g5_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G5: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G5_GR",
+        "offset": 780,
+        "fields": [
+          {
+            "name": "scale_g5_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G5: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G5_GB",
+        "offset": 784,
+        "fields": [
+          {
+            "name": "scale_g5_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G5: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G5_B",
+        "offset": 788,
+        "fields": [
+          {
+            "name": "scale_g5_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G5: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G6_R",
+        "offset": 792,
+        "fields": [
+          {
+            "name": "scale_g6_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G6: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G6_GR",
+        "offset": 796,
+        "fields": [
+          {
+            "name": "scale_g6_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G6: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G6_GB",
+        "offset": 800,
+        "fields": [
+          {
+            "name": "scale_g6_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G6: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G6_B",
+        "offset": 804,
+        "fields": [
+          {
+            "name": "scale_g6_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G6: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G7_R",
+        "offset": 808,
+        "fields": [
+          {
+            "name": "scale_g7_r",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G7: the R scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G7_GR",
+        "offset": 812,
+        "fields": [
+          {
+            "name": "scale_g7_gr",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G7: the GR scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G7_GB",
+        "offset": 816,
+        "fields": [
+          {
+            "name": "scale_g7_gb",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G7: the GB scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-002",
+        "kind": "add_register",
+        "register": "BLC_SCALE_G7_B",
+        "offset": 820,
+        "fields": [
+          {
+            "name": "scale_g7_b",
+            "bits": "[17:0]",
+            "access": "RW",
+            "reset": 65536
+          }
+        ],
+        "reason": "BLC gain profile G7: the B scale (UQ2.16, reset 1.0), applied when BLC_GAIN_SEL.range_scale_en is set."
+      },
+      {
+        "id": "ISP-UPD-007",
+        "kind": "redefine",
+        "register": "CCM_OFS_R",
+        "field": "offset_r",
+        "expect_bits": "[11:0]",
+        "reason": "Signed 12-bit offset in output pixel levels: code 1 adds one level (owner, 2026-11-09); it was a Q3.9 value at the accumulator scale. Reset 0 unchanged."
+      },
+      {
+        "id": "ISP-UPD-007",
+        "kind": "redefine",
+        "register": "CCM_OFS_G",
+        "field": "offset_g",
+        "expect_bits": "[11:0]",
+        "reason": "Signed 12-bit offset in output pixel levels: code 1 adds one level (owner, 2026-11-09); it was a Q3.9 value at the accumulator scale. Reset 0 unchanged."
+      },
+      {
+        "id": "ISP-UPD-007",
+        "kind": "redefine",
+        "register": "CCM_OFS_B",
+        "field": "offset_b",
+        "expect_bits": "[11:0]",
+        "reason": "Signed 12-bit offset in output pixel levels: code 1 adds one level (owner, 2026-11-09); it was a Q3.9 value at the accumulator scale. Reset 0 unchanged."
+      }
+    ]
   },
   "overrides": [
     {
@@ -749,7 +1616,7 @@
       "row": 34,
       "reset": "0x00000100",
       "masks": {
-        "RW": "0x00000103",
+        "RW": "0x00000107",
         "RO": "0x00000000",
         "W1C": "0x00000000",
         "W1S": "0x00000000",
@@ -759,7 +1626,7 @@
       "fields": [
         {
           "name": "gain_level",
-          "bits": "[1:0]",
+          "bits": "[2:0]",
           "access": "RW",
           "reset": "0x0",
           "row": 35,
@@ -771,7 +1638,8 @@
             "2": "G2",
             "3": "G3"
           },
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
         },
         {
           "name": "range_scale_en",
@@ -1327,12 +2195,12 @@
       ]
     },
     {
-      "offset": "0x0258",
-      "name": "BLC_SCALE_G0",
-      "row": 77,
-      "reset": "0x00010000",
+      "offset": "0x0268",
+      "name": "BLC_OFS_G4_DFT",
+      "row": 0,
+      "reset": "0x000000C8",
       "masks": {
-        "RW": "0x0003FFFF",
+        "RW": "0x00000FFF",
         "RO": "0x00000000",
         "W1C": "0x00000000",
         "W1S": "0x00000000",
@@ -1341,25 +2209,27 @@
       },
       "fields": [
         {
-          "name": "scale_g0",
-          "bits": "[17:0]",
+          "name": "ofs_g4_dft",
+          "bits": "[11:0]",
           "access": "RW",
-          "reset": "0x10000",
-          "row": 78,
+          "reset": "0xC8",
+          "row": 0,
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
         }
-      ]
+      ],
+      "extension": "ISP-UPD-002"
     },
     {
-      "offset": "0x025C",
-      "name": "BLC_SCALE_G1",
-      "row": 79,
-      "reset": "0x00010000",
+      "offset": "0x026C",
+      "name": "BLC_OFS_G4_R",
+      "row": 0,
+      "reset": "0x00000000",
       "masks": {
-        "RW": "0x0003FFFF",
+        "RW": "0x00000FFF",
         "RO": "0x00000000",
         "W1C": "0x00000000",
         "W1S": "0x00000000",
@@ -1368,25 +2238,27 @@
       },
       "fields": [
         {
-          "name": "scale_g1",
-          "bits": "[17:0]",
+          "name": "ofs_g4_r",
+          "bits": "[11:0]",
           "access": "RW",
-          "reset": "0x10000",
-          "row": 80,
+          "reset": "0x0",
+          "row": 0,
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
         }
-      ]
+      ],
+      "extension": "ISP-UPD-002"
     },
     {
-      "offset": "0x0260",
-      "name": "BLC_SCALE_G2",
-      "row": 81,
-      "reset": "0x00010000",
+      "offset": "0x0270",
+      "name": "BLC_OFS_G4_GR",
+      "row": 0,
+      "reset": "0x00000000",
       "masks": {
-        "RW": "0x0003FFFF",
+        "RW": "0x00000FFF",
         "RO": "0x00000000",
         "W1C": "0x00000000",
         "W1S": "0x00000000",
@@ -1395,22 +2267,517 @@
       },
       "fields": [
         {
-          "name": "scale_g2",
-          "bits": "[17:0]",
+          "name": "ofs_g4_gr",
+          "bits": "[11:0]",
           "access": "RW",
-          "reset": "0x10000",
-          "row": 82,
+          "reset": "0x0",
+          "row": 0,
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
         }
-      ]
+      ],
+      "extension": "ISP-UPD-002"
     },
     {
-      "offset": "0x0264",
-      "name": "BLC_SCALE_G3",
-      "row": 83,
+      "offset": "0x0274",
+      "name": "BLC_OFS_G4_GB",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g4_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0278",
+      "name": "BLC_OFS_G4_B",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g4_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x027C",
+      "name": "BLC_OFS_G5_DFT",
+      "row": 0,
+      "reset": "0x000000C8",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g5_dft",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xC8",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0280",
+      "name": "BLC_OFS_G5_R",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g5_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0284",
+      "name": "BLC_OFS_G5_GR",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g5_gr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0288",
+      "name": "BLC_OFS_G5_GB",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g5_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x028C",
+      "name": "BLC_OFS_G5_B",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g5_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0290",
+      "name": "BLC_OFS_G6_DFT",
+      "row": 0,
+      "reset": "0x000000C8",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g6_dft",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xC8",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0294",
+      "name": "BLC_OFS_G6_R",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g6_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0298",
+      "name": "BLC_OFS_G6_GR",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g6_gr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x029C",
+      "name": "BLC_OFS_G6_GB",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g6_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02A0",
+      "name": "BLC_OFS_G6_B",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g6_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02A4",
+      "name": "BLC_OFS_G7_DFT",
+      "row": 0,
+      "reset": "0x000000C8",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g7_dft",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0xC8",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02A8",
+      "name": "BLC_OFS_G7_R",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g7_r",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02AC",
+      "name": "BLC_OFS_G7_GR",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g7_gr",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02B0",
+      "name": "BLC_OFS_G7_GB",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g7_gb",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02B4",
+      "name": "BLC_OFS_G7_B",
+      "row": 0,
+      "reset": "0x00000000",
+      "masks": {
+        "RW": "0x00000FFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "ofs_g7_b",
+          "bits": "[11:0]",
+          "access": "RW",
+          "reset": "0x0",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02B8",
+      "name": "BLC_SCALE_G0_R",
+      "row": 0,
       "reset": "0x00010000",
       "masks": {
         "RW": "0x0003FFFF",
@@ -1422,17 +2789,918 @@
       },
       "fields": [
         {
-          "name": "scale_g3",
+          "name": "scale_g0_r",
           "bits": "[17:0]",
           "access": "RW",
           "reset": "0x10000",
-          "row": 84,
+          "row": 0,
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
         }
-      ]
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02BC",
+      "name": "BLC_SCALE_G0_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g0_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02C0",
+      "name": "BLC_SCALE_G0_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g0_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02C4",
+      "name": "BLC_SCALE_G0_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g0_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02C8",
+      "name": "BLC_SCALE_G1_R",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g1_r",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02CC",
+      "name": "BLC_SCALE_G1_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g1_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02D0",
+      "name": "BLC_SCALE_G1_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g1_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02D4",
+      "name": "BLC_SCALE_G1_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g1_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02D8",
+      "name": "BLC_SCALE_G2_R",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g2_r",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02DC",
+      "name": "BLC_SCALE_G2_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g2_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02E0",
+      "name": "BLC_SCALE_G2_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g2_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02E4",
+      "name": "BLC_SCALE_G2_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g2_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02E8",
+      "name": "BLC_SCALE_G3_R",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g3_r",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02EC",
+      "name": "BLC_SCALE_G3_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g3_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02F0",
+      "name": "BLC_SCALE_G3_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g3_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02F4",
+      "name": "BLC_SCALE_G3_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g3_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02F8",
+      "name": "BLC_SCALE_G4_R",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g4_r",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x02FC",
+      "name": "BLC_SCALE_G4_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g4_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0300",
+      "name": "BLC_SCALE_G4_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g4_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0304",
+      "name": "BLC_SCALE_G4_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g4_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0308",
+      "name": "BLC_SCALE_G5_R",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g5_r",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x030C",
+      "name": "BLC_SCALE_G5_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g5_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0310",
+      "name": "BLC_SCALE_G5_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g5_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0314",
+      "name": "BLC_SCALE_G5_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g5_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0318",
+      "name": "BLC_SCALE_G6_R",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g6_r",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x031C",
+      "name": "BLC_SCALE_G6_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g6_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0320",
+      "name": "BLC_SCALE_G6_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g6_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0324",
+      "name": "BLC_SCALE_G6_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g6_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0328",
+      "name": "BLC_SCALE_G7_R",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g7_r",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x032C",
+      "name": "BLC_SCALE_G7_GR",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g7_gr",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0330",
+      "name": "BLC_SCALE_G7_GB",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g7_gb",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
+    },
+    {
+      "offset": "0x0334",
+      "name": "BLC_SCALE_G7_B",
+      "row": 0,
+      "reset": "0x00010000",
+      "masks": {
+        "RW": "0x0003FFFF",
+        "RO": "0x00000000",
+        "W1C": "0x00000000",
+        "W1S": "0x00000000",
+        "W1SC": "0x00000000",
+        "W1P": "0x00000000"
+      },
+      "fields": [
+        {
+          "name": "scale_g7_b",
+          "bits": "[17:0]",
+          "access": "RW",
+          "reset": "0x10000",
+          "row": 0,
+          "implemented": true,
+          "tied_zero_bits": [],
+          "enums": {},
+          "bit_names": {},
+          "extension": "ISP-UPD-002"
+        }
+      ],
+      "extension": "ISP-UPD-002"
     },
     {
       "offset": "0x0400",
@@ -1619,7 +3887,7 @@
       "row": 99,
       "reset": "0x00000000",
       "masks": {
-        "RW": "0x001FFFFF",
+        "RW": "0x003FFFFF",
         "RO": "0x00000000",
         "W1C": "0x00000000",
         "W1S": "0x00000000",
@@ -1629,14 +3897,15 @@
       "fields": [
         {
           "name": "coef_data",
-          "bits": "[20:0]",
+          "bits": "[21:0]",
           "access": "RW",
           "reset": "0x0",
           "row": 100,
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-001"
         }
       ]
     },
@@ -2728,7 +4997,8 @@
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-007"
         }
       ]
     },
@@ -2755,7 +5025,8 @@
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-007"
         }
       ]
     },
@@ -2782,7 +5053,8 @@
           "implemented": true,
           "tied_zero_bits": [],
           "enums": {},
-          "bit_names": {}
+          "bit_names": {},
+          "extension": "ISP-UPD-007"
         }
       ]
     },

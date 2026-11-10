@@ -16,7 +16,9 @@ build never needs Python or the spreadsheet:
 Every deviation from the literal spreadsheet content is an explicit entry in
 OVERRIDES below, carries a decision/issue ID, and is asserted against the
 spreadsheet text so that a new revision of the map fails loudly instead of
-silently inheriting a stale override.
+silently inheriting a stale override. The VP CSR extension of the
+consolidated update (EXTENSIONS: ISP-UPD-001/002/007) is applied after the
+workbook's own counts are checked; docs/ISP_CSR_EXTENSION_UPD.md documents it.
 
 Usage:
   gen_csr.py --xlsx <path/to/FTEL_IP_ISP_CSR_v1.07.xlsm> [--out <isp dir>] [--check]
@@ -35,7 +37,7 @@ try:
 except ImportError:  # pragma: no cover - environment problem, not a bug
     sys.exit("gen_csr.py: openpyxl is required (pip install openpyxl)")
 
-GENERATOR_VERSION = "2.0"
+GENERATOR_VERSION = "2.1"  # 2.1: CSR extension (EXTENSIONS)
 # CSR revision v1.07 (ABI 0x00010007, MAS v1.07 of 2026-10-18). Previous pins:
 # bda077b6... (07/10, 254 registers, 336 fields; docs/ISP_CSR_REVISION_0710.md)
 # and 0980b61d... (226 registers). See docs/ISP_CSR_REVISION_V107.md.
@@ -141,6 +143,59 @@ OVERRIDES = [
      "expect_text": text, "bits": [4, 5, 6, 7]}
     for reg, fld, text in BUFFER_FIELDS
 ]
+
+# CSR extension of the consolidated update (workspace plan
+# ISP_CONSOLIDATED_UPDATE_PLAN_2026-11-09): owner decisions on top of the
+# pinned v1.07 workbook, which stays the baseline (its counts are still
+# asserted before the extension is applied). These deltas are NOT part of the
+# official CSR; docs/ISP_CSR_EXTENSION_UPD.md is the design table (names,
+# offsets, fields, resets, compatibility). COMMON_VER_ID is not changed: the
+# header publishes FX1_ISP_CSR_EXTENSION instead. Each entry is asserted
+# against the workbook item it changes, like an override.
+#
+# Kinds:
+#   widen_field      the field's MSB moves up (same LSB, access and reset)
+#   remove_register  the register is withdrawn (its offset becomes reserved)
+#   add_register     a new register in reserved space of its block
+#   redefine         no layout change; the field's numeric meaning changes
+CSR_EXTENSION = 0x20261109
+BLC_CHANNELS = ("R", "GR", "GB", "B")
+EXTENSIONS = [
+    {"id": "ISP-UPD-001", "kind": "widen_field", "register": "LSC_COEF_DATA", "field": "coef_data",
+     "expect_bits": "[20:0]", "bits": "[21:0]",
+     "reason": "Node gain UQ4.18, 0 <= gain <= 8.0 inclusive (owner, 2026-11-09): exact 8.0 is 0x200000, "
+               "which needs 22 bits; 2^-18 steps and the meaning of the old codes are kept."},
+    {"id": "ISP-UPD-002", "kind": "widen_field", "register": "BLC_GAIN_SEL", "field": "gain_level",
+     "expect_bits": "[1:0]", "bits": "[2:0]",
+     "reason": "Eight BLC gain profiles G0..G7 (owner, 2026-11-09)."},
+] + [
+    {"id": "ISP-UPD-002", "kind": "remove_register", "register": "BLC_SCALE_G%d" % g, "expect_offset": 0x0258 + 4 * g,
+     "reason": "The scale shared by the four colours is replaced by BLC_SCALE_G%d_{R,GR,GB,B}; "
+               "the offset is reserved. Profiles migrate to four equal scales." % g}
+    for g in range(4)
+] + [
+    {"id": "ISP-UPD-002", "kind": "add_register", "register": "BLC_OFS_G%d_%s" % (g, c),
+     "offset": 0x0268 + 0x14 * (g - 4) + 4 * i,
+     "fields": [{"name": "ofs_g%d_%s" % (g, c.lower()), "bits": "[11:0]", "access": "RW",
+                 "reset": 0xC8 if c == "DFT" else 0}],
+     "reason": "BLC gain profile G%d: the DFT and four trims as G0..G3 (unsigned 12 bit, same resets)." % g}
+    for g in range(4, 8) for i, c in enumerate(("DFT",) + BLC_CHANNELS)
+] + [
+    {"id": "ISP-UPD-002", "kind": "add_register", "register": "BLC_SCALE_G%d_%s" % (g, c),
+     "offset": 0x02B8 + 0x10 * g + 4 * i,
+     "fields": [{"name": "scale_g%d_%s" % (g, c.lower()), "bits": "[17:0]", "access": "RW", "reset": 0x10000}],
+     "reason": "BLC gain profile G%d: the %s scale (UQ2.16, reset 1.0), applied when "
+               "BLC_GAIN_SEL.range_scale_en is set." % (g, c)}
+    for g in range(8) for i, c in enumerate(BLC_CHANNELS)
+] + [
+    {"id": "ISP-UPD-007", "kind": "redefine", "register": "CCM_OFS_" + c, "field": "offset_" + c.lower(),
+     "expect_bits": "[11:0]",
+     "reason": "Signed 12-bit offset in output pixel levels: code 1 adds one level (owner, 2026-11-09); "
+               "it was a Q3.9 value at the accumulator scale. Reset 0 unchanged."}
+    for c in "RGB"
+]
+# Workbook counts after the extension (EXPECTED_COUNTS still checks the workbook).
+EXTENDED_COUNTS = dict(EXPECTED_COUNTS, registers=573 - 4 + 20 + 32, fields=819 - 4 + 20 + 32, RW=464 - 4 + 52)
 
 # Header names that a revision renamed. The old macro stays as an alias of the
 # new one so that code written against the previous map keeps compiling; each
@@ -292,6 +347,58 @@ def apply_overrides(regs):
     return applied
 
 
+def apply_extensions(regs):
+    """Apply EXTENSIONS in place (the list stays sorted by offset); return the record."""
+    by_name = {r["name"]: r for r in regs}
+    applied = []
+    for ex in EXTENSIONS:
+        what = "extension %s (%s)" % (ex["id"], ex["register"])
+        reg = by_name.get(ex["register"])
+        if ex["kind"] == "add_register":
+            if reg is not None:
+                fail("%s: register already exists -- re-review the extension" % what)
+            used = {r["offset"] for r in regs}
+            if ex["offset"] in used:
+                fail("%s: offset 0x%04X is not reserved" % (what, ex["offset"]))
+            fields = []
+            for f in ex["fields"]:
+                msb, lsb = parse_bits(f["bits"], what)
+                fields.append({"name": f["name"], "msb": msb, "lsb": lsb, "width": msb - lsb + 1,
+                               "access": f["access"], "reset": f["reset"], "description": "", "row": 0,
+                               "enums": {}, "bits": {}, "implemented": True, "tied_zero_bits": [],
+                               "extension": ex["id"]})
+            reg = {"offset": ex["offset"], "name": ex["register"], "description": "", "row": 0,
+                   "fields": fields, "extension": ex["id"]}
+            regs.append(reg)
+            by_name[reg["name"]] = reg
+        elif reg is None:
+            fail("%s: register missing -- re-review the extension" % what)
+        elif ex["kind"] == "remove_register":
+            if reg["offset"] != ex["expect_offset"]:
+                fail("%s: at 0x%04X, expected 0x%04X" % (what, reg["offset"], ex["expect_offset"]))
+            regs.remove(reg)
+            del by_name[reg["name"]]
+        elif ex["kind"] in ("widen_field", "redefine"):
+            fld = next((f for f in reg["fields"] if f["name"] == ex["field"]), None)
+            if fld is None:
+                fail("%s: field %s missing" % (what, ex["field"]))
+            have = "[%d:%d]" % (fld["msb"], fld["lsb"])
+            if have != ex["expect_bits"]:
+                fail("%s: %s.%s is %s, expected %s -- re-review" % (what, reg["name"], fld["name"], have,
+                                                                   ex["expect_bits"]))
+            if ex["kind"] == "widen_field":
+                msb, lsb = parse_bits(ex["bits"], what)
+                if lsb != fld["lsb"] or msb <= fld["msb"]:
+                    fail("%s: %s does not widen %s" % (what, ex["bits"], have))
+                fld["msb"], fld["width"] = msb, msb - lsb + 1
+            fld["extension"] = ex["id"]
+        else:
+            fail("unknown extension kind %r" % ex["kind"])
+        applied.append(ex)
+    regs.sort(key=lambda r: r["offset"])
+    return applied
+
+
 def field_mask(f):
     mask = ((1 << f["width"]) - 1) << f["lsb"]
     for b in f["tied_zero_bits"]:
@@ -299,7 +406,7 @@ def field_mask(f):
     return mask
 
 
-def validate(regs):
+def validate(regs, expected):
     names, offsets = set(), set()
     counts = {a: 0 for a in ACCESS_TYPES}
     prev = -1
@@ -331,7 +438,7 @@ def validate(regs):
                 fail("reset 0x%X does not fit %s.%s" % (f["reset"], r["name"], f["name"]))
             counts[f["access"]] += 1
     got = dict(counts, registers=len(regs), fields=sum(len(r["fields"]) for r in regs))
-    for k, v in EXPECTED_COUNTS.items():
+    for k, v in expected.items():
         if got[k] != v:
             fail("count %s = %d, expected %d" % (k, got[k], v))
     return got
@@ -366,24 +473,38 @@ def gen_header(regs, src):
     w(" * platform assigns. All registers are 32-bit; address bits [1:0] are ignored.")
     w(" * Deviations from the literal spreadsheet are listed in")
     w(" * docs/csr/fx1_isp_csr_schema.json (\"overrides\").")
+    w(" *")
+    w(" * The map carries the VP CSR extension FX1_ISP_CSR_EXTENSION (ISP-UPD-001,")
+    w(" * -002, -007; docs/ISP_CSR_EXTENSION_UPD.md): LSC node gains UQ4.18 [21:0],")
+    w(" * BLC gain profiles G0..G7 with per-channel scales (BLC_SCALE_G0..G3 removed),")
+    w(" * CCM offsets in output pixel levels. It is not part of the official CSR")
+    w(" * v1.07; COMMON_VER_ID keeps the workbook reset value.")
     w(" */")
     w("#ifndef FX1_ISP_CSR_H")
     w("#define FX1_ISP_CSR_H")
     w("")
     w("#define FX1_ISP_CSR_APERTURE_BYTES 0x%05Xu" % APERTURE_BYTES)
     w("#define FX1_ISP_CSR_NUM_REGISTERS %du" % len(regs))
+    w("#define FX1_ISP_CSR_EXTENSION 0x%08Xu" % CSR_EXTENSION)
+    w("/* ISP-UPD-007: CCM_OFS_R/G/B code 1 adds one output pixel level (was Q3.9). */")
+    w("#define FX1_ISP_CCM_OFFSET_PIXEL_UNITS 1u")
     w("")
     for r in regs:
         rn = "FX1_ISP_" + c_ident(r["name"])
         masks, reset = register_summary(r)
         # No spreadsheet prose here: the source is confidential (see the module
         # docstring); the worksheet row is the pointer back to the description.
-        w("/* 0x%04X %s (CSR row %d) */" % (r["offset"], r["name"], r["row"]))
+        if "extension" in r:
+            w("/* 0x%04X %s (extension %s) */" % (r["offset"], r["name"], r["extension"]))
+        else:
+            w("/* 0x%04X %s (CSR row %d) */" % (r["offset"], r["name"], r["row"]))
         w("#define %s_OFFSET 0x%04Xu" % (rn, r["offset"]))
         w("#define %s_RESET 0x%08Xu" % (rn, reset))
         for f in r["fields"]:
             fn = rn + "_" + c_ident(f["name"])
             note = "" if f["implemented"] else " (no hardware behind this field)"
+            if "extension" in f and "extension" not in r:
+                note += " (extension %s)" % f["extension"]
             w("/*   %s [%d:%d] %s%s */" % (f["name"], f["msb"], f["lsb"], f["access"], note))
             w("#define %s_SHIFT %du" % (fn, f["lsb"]))
             w("#define %s_WIDTH %du" % (fn, f["width"]))
@@ -444,27 +565,38 @@ def gen_table(regs, src):
     return "\n".join(out) + "\n"
 
 
-def gen_schema(regs, src, applied, counts):
+def gen_schema(regs, src, applied, counts, workbook_counts, extended):
     doc = {
         "generator": "tools/gen_csr.py", "generator_version": GENERATOR_VERSION,
-        "source": src, "counts": counts, "overrides": applied, "compat_aliases": COMPAT_ALIASES,
+        "source": src, "counts": counts, "workbook_counts": workbook_counts,
+        "extension": {"id": "0x%08X" % CSR_EXTENSION, "design": "docs/ISP_CSR_EXTENSION_UPD.md",
+                      "official": False, "entries": extended},
+        "overrides": applied, "compat_aliases": COMPAT_ALIASES,
         "access_semantics": "MAS v1.07 Table 8-178 / Table 8-180; see docs/ISP_CSR_CONTRACT.md",
         "registers": [],
     }
     for r in regs:
         masks, reset = register_summary(r)
-        doc["registers"].append({
+        entry = {
             "offset": "0x%04X" % r["offset"], "name": r["name"], "row": r["row"],
             "reset": "0x%08X" % reset,
             "masks": {a: "0x%08X" % m for a, m in masks.items()},
-            "fields": [{
+            "fields": [],
+        }
+        if "extension" in r:
+            entry["extension"] = r["extension"]
+        for f in r["fields"]:
+            fe = {
                 "name": f["name"], "bits": "[%d:%d]" % (f["msb"], f["lsb"]),
                 "access": f["access"], "reset": "0x%X" % f["reset"], "row": f["row"],
                 "implemented": f["implemented"], "tied_zero_bits": f["tied_zero_bits"],
                 "enums": {str(k): v for k, v in sorted(f["enums"].items())},
                 "bit_names": {str(k): v for k, v in sorted(f["bits"].items())},
-            } for f in r["fields"]],
-        })
+            }
+            if "extension" in f:
+                fe["extension"] = f["extension"]
+            entry["fields"].append(fe)
+        doc["registers"].append(entry)
     return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -491,13 +623,16 @@ def main():
     if normalise(regs) != normalise(read_sheet(wb["Flat Registers"])):
         fail("sheets 'Registers' and 'Flat Registers' disagree")
     applied = apply_overrides(regs)
-    counts = validate(regs)
+    workbook_counts = validate(regs, EXPECTED_COUNTS)
+    extended = apply_extensions(regs)
+    counts = validate(regs, EXTENDED_COUNTS)
     src = {"file": os.path.basename(args.xlsx), "sha256": digest, "sheet": "Registers",
            "generated_at": str(summary.get("Generated At", "")),
            "module": str(summary.get("Module Name", ""))}
 
     outputs = {
-        os.path.join("docs", "csr", "fx1_isp_csr_schema.json"): gen_schema(regs, src, applied, counts),
+        os.path.join("docs", "csr", "fx1_isp_csr_schema.json"): gen_schema(regs, src, applied, counts,
+                                                                           workbook_counts, extended),
         os.path.join("include", "fx1_isp", "fx1_isp_csr.h"): gen_header(regs, src),
         os.path.join("src", "registers", "csr_table_gen.cpp"): gen_table(regs, src),
     }

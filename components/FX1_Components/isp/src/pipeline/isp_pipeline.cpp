@@ -26,6 +26,25 @@ std::uint16_t sat12(std::int64_t v) { return static_cast<std::uint16_t>(std::cla
 
 std::int64_t mirror(std::int64_t i, std::int64_t n) { return border_index(i, n, border::mirror); }
 
+// BLC gain profile g (CSR extension ISP-UPD-002): DFT then R, Gr, Gb, B trims,
+// and the four per-channel scales. G0..G3 keep the v1.07 offsets, G4..G7 sit
+// in the extension block: the profiles are not one uniform stride apart.
+struct blc_profile_map {
+   std::uint32_t ofs[5];    // DFT, R, Gr, Gb, B
+   std::uint32_t scale[4];  // R, Gr, Gb, B
+};
+#define FX1_BLC_PROFILE(g)                                                                                   \
+   {{FX1_ISP_BLC_OFS_G##g##_DFT_OFFSET, FX1_ISP_BLC_OFS_G##g##_R_OFFSET, FX1_ISP_BLC_OFS_G##g##_GR_OFFSET,       \
+     FX1_ISP_BLC_OFS_G##g##_GB_OFFSET, FX1_ISP_BLC_OFS_G##g##_B_OFFSET},                                          \
+    {FX1_ISP_BLC_SCALE_G##g##_R_OFFSET, FX1_ISP_BLC_SCALE_G##g##_GR_OFFSET, FX1_ISP_BLC_SCALE_G##g##_GB_OFFSET,  \
+     FX1_ISP_BLC_SCALE_G##g##_B_OFFSET}}
+constexpr blc_profile_map blc_map[8] = {FX1_BLC_PROFILE(0), FX1_BLC_PROFILE(1), FX1_BLC_PROFILE(2),
+                                        FX1_BLC_PROFILE(3), FX1_BLC_PROFILE(4), FX1_BLC_PROFILE(5),
+                                        FX1_BLC_PROFILE(6), FX1_BLC_PROFILE(7)};
+#undef FX1_BLC_PROFILE
+static_assert((FX1_ISP_BLC_GAIN_SEL_GAIN_LEVEL_MASK >> FX1_ISP_BLC_GAIN_SEL_GAIN_LEVEL_SHIFT) == 7u,
+              "eight BLC gain profiles (ISP-UPD-002)");
+
 }  // namespace
 
 // ---- configuration ----------------------------------------------------------
@@ -41,12 +60,12 @@ pipeline_config snapshot_config(control_unit &ctl) {
    const std::uint32_t sel = reg(FX1_ISP_BLC_GAIN_SEL_OFFSET);
    const std::uint32_t g = fld(sel, FX1_ISP_BLC_GAIN_SEL_GAIN_LEVEL_MASK, FX1_ISP_BLC_GAIN_SEL_GAIN_LEVEL_SHIFT);
    c.blc_range_scale = sel & FX1_ISP_BLC_GAIN_SEL_RANGE_SCALE_EN_MASK;
-   const std::uint32_t base = FX1_ISP_BLC_OFS_G0_DFT_OFFSET + g * (FX1_ISP_BLC_OFS_G1_DFT_OFFSET - FX1_ISP_BLC_OFS_G0_DFT_OFFSET);
-   c.blc_pedestal = reg(base) & 0xFFFu;
+   const blc_profile_map &bm = blc_map[g];
+   c.blc_pedestal = reg(bm.ofs[0]) & 0xFFFu;
    for (unsigned ch = 0; ch < 4; ++ch) {
-      c.blc_trim[ch] = reg(base + 4u * (ch + 1u)) & 0xFFFu;
+      c.blc_trim[ch] = reg(bm.ofs[ch + 1u]) & 0xFFFu;
+      c.blc_scale[ch] = reg(bm.scale[ch]) & FX1_ISP_BLC_SCALE_G0_R_SCALE_G0_R_MASK;
    }
-   c.blc_scale = reg(FX1_ISP_BLC_SCALE_G0_OFFSET + 4u * g) & FX1_ISP_BLC_SCALE_G0_SCALE_G0_MASK;
 
    const std::uint32_t nodes = reg(FX1_ISP_LSC_MESH_NODES_OFFSET);
    c.lsc_nx = nodes & FX1_ISP_LSC_MESH_NODES_MESH_NX_MASK;
@@ -184,7 +203,7 @@ std::uint16_t blc_pixel(const pipeline_config &c, std::uint16_t p, unsigned ch) 
    if (!c.blc_range_scale) {
       return static_cast<std::uint16_t>(d);
    }
-   return sat12((d * c.blc_scale + (std::int64_t{1} << 15)) >> 16);  // ALG-BLC-01: round half up
+   return sat12((d * c.blc_scale[ch] + (std::int64_t{1} << 15)) >> 16);  // ALG-BLC-01: round half up, per channel
 }
 
 std::uint16_t wb_pixel(const pipeline_config &c, std::uint16_t p, unsigned ch) {
@@ -206,7 +225,10 @@ rgb ccm_pixel(const pipeline_config &c, const rgb &p) {
    const std::int64_t in[3] = {p.r, p.g, p.b};
    std::uint16_t out[3];
    for (unsigned row = 0; row < 3; ++row) {
-      std::int64_t acc = c.ccm_offset[row];  // Q3.9 at the accumulator scale (ALG-CCM-02)
+      // ISP-UPD-007: the offset is in output pixel levels, added to the Q3.9
+      // dot product at its scale (x512, no shift of a negative value), before
+      // the floor and the single saturation (was Q3.9 at the accumulator).
+      std::int64_t acc = std::int64_t{c.ccm_offset[row]} * 512;
       for (unsigned col = 0; col < 3; ++col) {
          acc += c.ccm[row][col] * in[col];
       }

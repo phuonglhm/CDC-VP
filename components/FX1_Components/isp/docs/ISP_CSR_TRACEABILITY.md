@@ -17,12 +17,12 @@ show that every member was written with a non-zero value.
 
 | Class | Registers |
 |---|---|
-| model | 319 |
-| model (indexed) | 218 |
+| model | 317 |
+| model (indexed) | 268 |
 | constant | 4 |
 | storage | 32 |
 | deferred | 0 |
-| total | 573 |
+| total | 621 |
 
 | Offset | Register | Access | Class | Model / reason | Specification, decisions | Dedicated tests | Vector uses |
 |---|---|---|---|---|---|---|---|
@@ -32,56 +32,104 @@ show that every member was written with a non-zero value.
 | 0x000C | `COMMON_STATUS` | RO | model | control_unit.cpp, control_unit_recovery.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_demosaic_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_outputs_tlm | 0 |
 | 0x0010 | `COMMON_IRQ_STATUS` | W1C | model | control_unit.cpp, control_unit_recovery.cpp, control_unit_stats.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_stats | 0 |
 | 0x0014 | `COMMON_IRQ_EN` | RW | model | control_unit.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_csr_tlm, test_stats | 0 |
-| 0x0018 | `COMMON_FRAME_WIDTH` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_demosaic_tlm, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_outputs_tlm, test_pipeline_vectors, test_profile, test_stats | 54 |
-| 0x001C | `COMMON_FRAME_HEIGHT` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_demosaic_tlm, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_outputs_tlm, test_pipeline_vectors, test_profile, test_stats | 54 |
-| 0x0020 | `COMMON_BAYER` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp, isp_pipeline.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_cont_tlm, test_control_unit, test_demosaic_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_profile | 23 |
+| 0x0018 | `COMMON_FRAME_WIDTH` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_demosaic_tlm, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_outputs_tlm, test_pipeline_vectors, test_profile, test_stats | 58 |
+| 0x001C | `COMMON_FRAME_HEIGHT` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | run_raw, test_cont_tlm, test_control_unit, test_demosaic_tlm, test_dma_tlm, test_driver_tlm, test_ee_profiles, test_outputs_tlm, test_pipeline_vectors, test_profile, test_stats | 58 |
+| 0x0020 | `COMMON_BAYER` | RW | model | control_unit.cpp, control_unit_profile.cpp, engines.cpp, isp_pipeline.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_cont_tlm, test_control_unit, test_demosaic_tlm, test_dma_tlm, test_driver_tlm, test_e2e_tlm, test_profile | 25 |
 | 0x0028 | `COMMON_SCRATCH` | RW | storage | software scratch register by definition | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_control_unit, test_csr_tlm, test_register_engine | 0 |
-| 0x0200 | `BLC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 15 |
-| 0x0204 | `BLC_GAIN_SEL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | test_control_unit | 12 |
-| 0x0208 | `BLC_OFS_G0_DFT` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | test_control_unit | 10 |
-| 0x020C | `BLC_OFS_G0_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0210 | `BLC_OFS_G0_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0214 | `BLC_OFS_G0_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0218 | `BLC_OFS_G0_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x021C | `BLC_OFS_G1_DFT` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 6 |
-| 0x0220 | `BLC_OFS_G1_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
-| 0x0224 | `BLC_OFS_G1_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
-| 0x0228 | `BLC_OFS_G1_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
-| 0x022C | `BLC_OFS_G1_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 6 |
-| 0x0230 | `BLC_OFS_G2_DFT` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0234 | `BLC_OFS_G2_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0238 | `BLC_OFS_G2_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x023C | `BLC_OFS_G2_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0240 | `BLC_OFS_G2_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0244 | `BLC_OFS_G3_DFT` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0248 | `BLC_OFS_G3_R` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x024C | `BLC_OFS_G3_GR` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0250 | `BLC_OFS_G3_GB` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0254 | `BLC_OFS_G3_B` | RW | model (indexed) | BLC profile g at BLC_OFS_G0_DFT + g * profile stride | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0258 | `BLC_SCALE_G0` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 10 |
-| 0x025C | `BLC_SCALE_G1` | RW | model (indexed) | BLC_SCALE_G0 + 4 * g | HAS §6.7; ALG-BLC | — | 6 |
-| 0x0260 | `BLC_SCALE_G2` | RW | model (indexed) | BLC_SCALE_G0 + 4 * g | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0264 | `BLC_SCALE_G3` | RW | model (indexed) | BLC_SCALE_G0 + 4 * g | HAS §6.7; ALG-BLC | — | 3 |
-| 0x0400 | `LSC_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_profile | 13 |
-| 0x0404 | `LSC_MESH_NODES` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_cont_tlm, test_control_unit, test_driver_tlm, test_profile | 13 |
-| 0x0408 | `LSC_STRENGTH` | RW | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 13 |
-| 0x040C | `LSC_PROFILE_SEL` | RW | model | control_unit.cpp, control_unit_profile.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 13 |
-| 0x0410 | `LSC_LOAD_CTRL` | RW, W1S | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 13 |
-| 0x0414 | `LSC_COEF_DATA` | RW | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 13 |
-| 0x0418 | `LSC_LOAD_STATUS` | RO | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit | 0 |
-| 0x041C | `LSC_PROFILE_STATUS` | RO | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit | 0 |
+| 0x0200 | `BLC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | — | 18 |
+| 0x0204 | `BLC_GAIN_SEL` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | test_control_unit, test_driver_tlm, test_profile | 15 |
+| 0x0208 | `BLC_OFS_G0_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_control_unit, test_profile | 13 |
+| 0x020C | `BLC_OFS_G0_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0210 | `BLC_OFS_G0_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0214 | `BLC_OFS_G0_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0218 | `BLC_OFS_G0_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x021C | `BLC_OFS_G1_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 9 |
+| 0x0220 | `BLC_OFS_G1_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 9 |
+| 0x0224 | `BLC_OFS_G1_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 9 |
+| 0x0228 | `BLC_OFS_G1_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 9 |
+| 0x022C | `BLC_OFS_G1_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 9 |
+| 0x0230 | `BLC_OFS_G2_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0234 | `BLC_OFS_G2_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0238 | `BLC_OFS_G2_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x023C | `BLC_OFS_G2_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0240 | `BLC_OFS_G2_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0244 | `BLC_OFS_G3_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0248 | `BLC_OFS_G3_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x024C | `BLC_OFS_G3_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0250 | `BLC_OFS_G3_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0254 | `BLC_OFS_G3_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x0268 | `BLC_OFS_G4_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x026C | `BLC_OFS_G4_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x0270 | `BLC_OFS_G4_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0274 | `BLC_OFS_G4_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0278 | `BLC_OFS_G4_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x027C | `BLC_OFS_G5_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x0280 | `BLC_OFS_G5_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0284 | `BLC_OFS_G5_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0288 | `BLC_OFS_G5_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x028C | `BLC_OFS_G5_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0290 | `BLC_OFS_G6_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0294 | `BLC_OFS_G6_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0298 | `BLC_OFS_G6_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x029C | `BLC_OFS_G6_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x02A0 | `BLC_OFS_G6_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x02A4 | `BLC_OFS_G7_DFT` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x02A8 | `BLC_OFS_G7_R` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x02AC | `BLC_OFS_G7_GR` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x02B0 | `BLC_OFS_G7_GB` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x02B4 | `BLC_OFS_G7_B` | RW | model (indexed) | BLC gain profile g = 0..7, table blc_map of token-pasted macros (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x02B8 | `BLC_SCALE_G0_R` | RW | model | isp_pipeline.cpp | HAS §6.7; ALG-BLC | test_profile | 13 |
+| 0x02BC | `BLC_SCALE_G0_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 13 |
+| 0x02C0 | `BLC_SCALE_G0_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 13 |
+| 0x02C4 | `BLC_SCALE_G0_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 13 |
+| 0x02C8 | `BLC_SCALE_G1_R` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 9 |
+| 0x02CC | `BLC_SCALE_G1_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 9 |
+| 0x02D0 | `BLC_SCALE_G1_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 9 |
+| 0x02D4 | `BLC_SCALE_G1_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 9 |
+| 0x02D8 | `BLC_SCALE_G2_R` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02DC | `BLC_SCALE_G2_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02E0 | `BLC_SCALE_G2_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02E4 | `BLC_SCALE_G2_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02E8 | `BLC_SCALE_G3_R` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02EC | `BLC_SCALE_G3_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02F0 | `BLC_SCALE_G3_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02F4 | `BLC_SCALE_G3_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 6 |
+| 0x02F8 | `BLC_SCALE_G4_R` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x02FC | `BLC_SCALE_G4_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0300 | `BLC_SCALE_G4_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0304 | `BLC_SCALE_G4_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0308 | `BLC_SCALE_G5_R` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x030C | `BLC_SCALE_G5_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x0310 | `BLC_SCALE_G5_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0314 | `BLC_SCALE_G5_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_driver_tlm, test_profile | 3 |
+| 0x0318 | `BLC_SCALE_G6_R` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x031C | `BLC_SCALE_G6_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0320 | `BLC_SCALE_G6_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0324 | `BLC_SCALE_G6_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0328 | `BLC_SCALE_G7_R` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x032C | `BLC_SCALE_G7_GR` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0330 | `BLC_SCALE_G7_GB` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0334 | `BLC_SCALE_G7_B` | RW | model (indexed) | BLC per-channel scale of profile g = 0..7, table blc_map (ISP-UPD-002) | HAS §6.7; ALG-BLC | test_profile | 3 |
+| 0x0400 | `LSC_CTRL` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_driver_tlm, test_profile | 14 |
+| 0x0404 | `LSC_MESH_NODES` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_cont_tlm, test_control_unit, test_driver_tlm, test_profile | 14 |
+| 0x0408 | `LSC_STRENGTH` | RW | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_driver_tlm | 14 |
+| 0x040C | `LSC_PROFILE_SEL` | RW | model | control_unit.cpp, control_unit_profile.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 14 |
+| 0x0410 | `LSC_LOAD_CTRL` | RW, W1S | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 14 |
+| 0x0414 | `LSC_COEF_DATA` | RW | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 14 |
+| 0x0418 | `LSC_LOAD_STATUS` | RO | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm | 0 |
+| 0x041C | `LSC_PROFILE_STATUS` | RO | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm | 0 |
 | 0x0420 | `LSC_ERROR` | W1C | model | control_unit.cpp | HAS §6.8; ALG-LSC, DEC-31 | test_control_unit, test_driver_tlm, test_profile | 0 |
-| 0x0424 | `LSC_STAT_OVF_CNT_R` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
-| 0x0428 | `LSC_STAT_OVF_CNT_GR` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
-| 0x042C | `LSC_STAT_OVF_CNT_GB` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
-| 0x0430 | `LSC_STAT_OVF_CNT_B` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 53 |
+| 0x0424 | `LSC_STAT_OVF_CNT_R` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 57 |
+| 0x0428 | `LSC_STAT_OVF_CNT_GR` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 57 |
+| 0x042C | `LSC_STAT_OVF_CNT_GB` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 57 |
+| 0x0430 | `LSC_STAT_OVF_CNT_B` | RO | model | isp_pipeline.cpp | HAS §6.8; ALG-LSC, DEC-31 | — | 57 |
 | 0x0600 | `BPC_CTRL` | RW | model | isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 12 |
 | 0x0604 | `BPC_MODE` | RW | storage | DYNAMIC_DET_EN has no effect: spatial BPC only (MAS §6.9; DEC-28 superseded) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 11 |
 | 0x0608 | `BPC_TEMPORAL_VAR` | RW | storage | no effect: spatial BPC only (MAS §6.9; DEC-28 superseded) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | — | 0 |
 | 0x060C | `BPC_THRESH` | RW | model | isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 10 |
 | 0x0610 | `BPC_PIXEL_AGE` | RW | storage | no effect: spatial BPC only (MAS §6.9; DEC-28 superseded) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | — | 0 |
-| 0x0614 | `BPC_NUM_CANDIDATES` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 53 |
-| 0x0618 | `BPC_NUM_DEFECTIVE` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 53 |
+| 0x0614 | `BPC_NUM_CANDIDATES` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 57 |
+| 0x0618 | `BPC_NUM_DEFECTIVE` | RO | model | control_unit.cpp, isp_pipeline.cpp | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_stats | 57 |
 | 0x061C | `BPC_STATUS` | W1C | storage | W1C status with no source in the VP (the candidate list never overflows in this model); not an ERROR_IRQ source (MAS v1.07 Table 9-188, review V107-7..10 R7) | MAS §6.9; ALG-BPC, DEC-28 superseded (U2) | test_control_unit | 0 |
 | 0x0800 | `WB_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | test_demosaic_tlm, test_stats | 15 |
 | 0x0804 | `WB_GAIN_R` | RW | model | isp_pipeline.cpp | HAS §6.10; ALG-WB | test_demosaic_tlm, test_driver_tlm, test_profile, test_stats | 15 |
@@ -102,16 +150,16 @@ show that every member was written with a non-zero value.
 | 0x101C | `CCM_CBR` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
 | 0x1020 | `CCM_CBG` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
 | 0x1024 | `CCM_CBB` | RW | model (indexed) | CCM_CRR + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 11 |
-| 0x1028 | `CCM_OFS_R` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 4 |
-| 0x102C | `CCM_OFS_G` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 4 |
-| 0x1030 | `CCM_OFS_B` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 4 |
+| 0x1028 | `CCM_OFS_R` | RW | model | isp_pipeline.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 10 |
+| 0x102C | `CCM_OFS_G` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 10 |
+| 0x1030 | `CCM_OFS_B` | RW | model (indexed) | CCM_OFS_R + 4 * index | HAS §6.13; DEC-24/26, DEC-38 | test_driver_tlm | 10 |
 | 0x1034 | `CCM_STATUS` | RO | model | control_unit_stats.cpp | HAS §6.13; DEC-24/26, DEC-38 | test_cont_tlm, test_control_unit, test_e2e_tlm, test_stats | 0 |
 | 0x1200 | `GAMMA_CTRL` | RW, W1P | model | control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_cont_tlm, test_control_unit, test_driver_tlm, test_profile, test_register_engine | 12 |
 | 0x1204 | `GAMMA_LUT_ADDR` | RW | model | control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_control_unit, test_driver_tlm | 12 |
 | 0x1208 | `GAMMA_LUT_DATA` | RW | model | control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | test_control_unit, test_driver_tlm | 12 |
 | 0x120C | `GAMMA_LUT_RDATA` | RO | model | control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_control_unit, test_driver_tlm | 0 |
 | 0x1210 | `GAMMA_STATUS` | RO | model | control_unit_stats.cpp, control_unit_tables.cpp | HAS §6.14; DEC-25, CSR-16/21, DEC-38 | run_raw, test_cont_tlm, test_control_unit, test_driver_tlm, test_e2e_tlm, test_profile, test_stats | 0 |
-| 0x1400 | `CSC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.15; SPEC-03 | run_raw, test_outputs_tlm | 13 |
+| 0x1400 | `CSC_CTRL` | RW | model | isp_pipeline.cpp | HAS §6.15; SPEC-03 | test_driver_tlm, test_outputs_tlm | 13 |
 | 0x1600 | `GTM_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_tables.cpp, isp_pipeline.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_pipeline_vectors, test_profile | 11 |
 | 0x1604 | `GTM_LUT_ADDR` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_profile | 2 |
 | 0x1608 | `GTM_LUT_DATA` | RW | model | control_unit_tables.cpp | HAS §6.16, MAS p146 (LUT writes only while EN = 0, U3); ALG-GTM, DEC-38 | run_raw, test_control_unit, test_driver_tlm, test_profile | 2 |
@@ -164,18 +212,18 @@ show that every member was written with a non-zero value.
 | 0x2214 | `AEC_THRESH` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_register_engine, test_stats | 12 |
 | 0x2218 | `AEC_STATUS` | RO, W1C | model | control_unit.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | run_raw, test_cont_tlm, test_control_unit, test_driver_tlm, test_stats | 13 |
 | 0x221C | `AEC_FRAME_ID` | RO | model | control_unit.cpp, control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_e2e_tlm, test_stats | 13 |
-| 0x2220 | `AEC_RESULT_CONTEXT_ID` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 5 |
-| 0x2224 | `AEC_CHANNEL_SEL` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 5 |
+| 0x2220 | `AEC_RESULT_CONTEXT_ID` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_stats | 11 |
+| 0x2224 | `AEC_CHANNEL_SEL` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_driver_tlm, test_e2e_tlm, test_stats | 11 |
 | 0x2228 | `AEC_GLOBAL_SUM_LO` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_driver_tlm, test_stats | 13 |
-| 0x222C | `AEC_GLOBAL_SUM_HI` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 5 |
-| 0x2230 | `AEC_GLOBAL_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
-| 0x2234 | `AEC_ZONE_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
-| 0x2238 | `AEC_ZONE_SUM` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
-| 0x223C | `AEC_ZONE_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 5 |
-| 0x2240 | `AEC_ZONE_GREEN_OE_UE` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 5 |
-| 0x2244 | `AEC_ZONE_GREEN_MIN_MAX` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_stats | 5 |
-| 0x2248 | `AEC_HIST_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
-| 0x224C | `AEC_HIST_DATA` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 5 |
+| 0x222C | `AEC_GLOBAL_SUM_HI` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 11 |
+| 0x2230 | `AEC_GLOBAL_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 11 |
+| 0x2234 | `AEC_ZONE_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 11 |
+| 0x2238 | `AEC_ZONE_SUM` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 11 |
+| 0x223C | `AEC_ZONE_COUNT` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 11 |
+| 0x2240 | `AEC_ZONE_GREEN_OE_UE` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_stats | 11 |
+| 0x2244 | `AEC_ZONE_GREEN_MIN_MAX` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_control_unit, test_stats | 11 |
+| 0x2248 | `AEC_HIST_ADDR` | RW | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 11 |
+| 0x224C | `AEC_HIST_DATA` | RO | model | control_unit_stats.cpp | HAS §6.21, §9.5, MAS §6.21.4; ALG-AEC, DEC-29/30, DEC-32 superseded | test_e2e_tlm, test_stats | 11 |
 | 0x2400 | `AWB_CTRL` | RW | model | control_unit_profile.cpp, control_unit_stats.cpp | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | test_profile, test_stats | 13 |
 | 0x2404 | `AWB_X_BOUND_ADDR` | RW | storage | no hardware: equal zones only (CSR, ALG-AWB-05) | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 0 |
 | 0x2408 | `AWB_Y_BOUND_ADDR` | RW | storage | no hardware: equal zones only (CSR, ALG-AWB-05) | MAS §6.22.4-6.22.5 (result banks, U2); ALG-AWB, DEC-29, DEC-30 superseded for AWB | — | 0 |
@@ -366,7 +414,7 @@ show that every member was written with a non-zero value.
 | 0x8004 | `TUNE_REV` | RO | constant | read-only identification value | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_register_engine | 0 |
 | 0x8008 | `TUNE_CAPS` | RO | model | control_unit.cpp, control_unit.h | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_control_unit, test_driver_tlm, test_register_engine | 0 |
 | 0x800C | `TUNE_MODE` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile, test_stats | 12 |
-| 0x8010 | `TUNE_BANK` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile | 0 |
+| 0x8010 | `TUNE_BANK` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_driver_tlm, test_profile | 0 |
 | 0x8014 | `TUNE_PROFILE_ID` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_dma_tlm, test_profile, test_stats | 12 |
 | 0x8018 | `TUNE_APPLY_FRAME` | RW | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 0 |
 | 0x801C | `TUNE_CMD` | W1P | model | control_unit_profile.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_control_unit, test_csr_tlm, test_dma_tlm, test_driver_tlm, test_profile, test_register_engine, test_stats | 12 |
@@ -402,7 +450,7 @@ show that every member was written with a non-zero value.
 | 0x8200 | `TUNE_WB_GB` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
 | 0x8204 | `TUNE_DEMOSAIC_MARGIN` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 2 |
 | 0x8208 | `TUNE_CNF_BLEND` | RW | model | control_unit_profile.cpp, isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_profile | 2 |
-| 0x8210 | `TUNE_CSC_CTRL` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 5 |
+| 0x8210 | `TUNE_CSC_CTRL` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm | 5 |
 | 0x8214 | `TUNE_CSC_CONTRAST` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
 | 0x8218 | `TUNE_CSC_BRIGHTNESS` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
 | 0x8220 | `TUNE_CSC_UU` | RW | model | isp_pipeline.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | — | 3 |
@@ -519,14 +567,14 @@ show that every member was written with a non-zero value.
 | 0x8698 | `TUNE_HIST_WEIGHT22` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
 | 0x869C | `TUNE_HIST_WEIGHT23` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
 | 0x86A0 | `TUNE_HIST_WEIGHT24` | RW | model (indexed) | weighted-histogram cell weight k at TUNE_HIST_WEIGHT0 + 4 * k (MAS v1.07 §6.21.3.4) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
-| 0x8700 | `TUNE_AEC_CMD` | W1P | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8700 | `TUNE_AEC_CMD` | W1P | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
 | 0x8704 | `TUNE_AEC_STATUS` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_driver_tlm, test_e2e_tlm, test_stats | 13 |
 | 0x8708 | `TUNE_AEC_DROPS` | W1C | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 13 |
-| 0x870C | `TUNE_AEC_FRAME` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
-| 0x8710 | `TUNE_AEC_PROFILE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
-| 0x8714 | `TUNE_AEC_INDEX` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 5 |
-| 0x8718 | `TUNE_AEC_DATA_LO` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 5 |
-| 0x871C | `TUNE_AEC_DATA_HI` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 5 |
+| 0x870C | `TUNE_AEC_FRAME` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
+| 0x8710 | `TUNE_AEC_PROFILE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
+| 0x8714 | `TUNE_AEC_INDEX` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 11 |
+| 0x8718 | `TUNE_AEC_DATA_LO` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 11 |
+| 0x871C | `TUNE_AEC_DATA_HI` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 11 |
 | 0x8740 | `TUNE_AF_CMD` | W1P | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
 | 0x8744 | `TUNE_AF_STATUS` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_stats | 13 |
 | 0x8748 | `TUNE_AF_DROPS` | W1C | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 13 |
@@ -551,7 +599,7 @@ show that every member was written with a non-zero value.
 | 0x8A08 | `TUNE_LSC_SECTOR_DATA` | RW | model | control_unit_tables.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_profile | 2 |
 | 0x8B00 | `COMMON_INPUT_FORMAT` | RW | model | control_unit.cpp, control_unit_profile.cpp, control_unit_stats.cpp, engines.cpp, isp_pipeline.cpp | HAS §9.1-9.2, §6.5-6.6; DEC-14..17, DEC-20, DEC-38, CSR-01..10 | test_cont_tlm, test_control_unit, test_dma_tlm, test_driver_tlm, test_profile | 2 |
 | 0x8B08 | `TUNE_AEC_SOURCE` | RW | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 0 |
-| 0x8B0C | `TUNE_AEC_RESULT_META` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8B0C | `TUNE_AEC_RESULT_META` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
 | 0x8B40 | `CH0_CROP_CTRL` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_cont_tlm, test_control_unit | 3 |
 | 0x8B44 | `CH0_CROP_ORIGIN` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit | 3 |
 | 0x8B48 | `CH0_CROP_SIZE` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.20 (CH0 crop and geometry, CSR v1.07) | test_control_unit | 3 |
@@ -595,7 +643,7 @@ show that every member was written with a non-zero value.
 | 0x8C64 | `TUNE_CH2_BUF1_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_e2e_tlm, test_outputs_tlm | 0 |
 | 0x8C68 | `TUNE_CH2_BUF2_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_e2e_tlm, test_outputs_tlm | 0 |
 | 0x8C6C | `TUNE_CH2_BUF3_FRAME` | RO | model (indexed) | ingress frame ID / profile ID of channel c buffer k, + 4 * k, published at DONE (MAS v1.07 §9.9.9) | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | run_raw, test_e2e_tlm, test_outputs_tlm | 0 |
-| 0x8C80 | `TUNE_AE_FRAME_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
-| 0x8C84 | `TUNE_AE_GRID` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
-| 0x8C88 | `TUNE_AE_ZONE_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 5 |
+| 0x8C80 | `TUNE_AE_FRAME_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
+| 0x8C84 | `TUNE_AE_GRID` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
+| 0x8C88 | `TUNE_AE_ZONE_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_driver_tlm, test_stats | 11 |
 | 0x8C90 | `TUNE_AWB_FRAME_SIZE` | RO | model | control_unit_stats.cpp | MAS §8.2 (discovery, V107-1; TUNE_CAPS V107-A1), §9.7-9.8; CSR v1.07 TUNE page | test_stats | 7 |

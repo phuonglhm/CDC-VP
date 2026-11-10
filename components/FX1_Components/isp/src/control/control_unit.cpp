@@ -693,8 +693,11 @@ void control_unit::lsc_coef_data(const register_file::write_effect &fx) {
       return;
    }
    const std::uint32_t data = fx.data & fx.lane_mask;
-   if (data > 0x100000u) {
-      lsc_error(FX1_ISP_LSC_ERROR_COEF_RANGE_MASK);              // above 4.0 (ALG-LSC-03)
+   // ISP-UPD-001: node gains UQ4.18, 0 <= gain <= 8.0 (0x200000) inclusive.
+   // A code above 8.0 (field bits, or a reserved bit above them) is flagged
+   // and stored masked to the field, as before for 4.0 (ALG-LSC-03).
+   if (data > 0x200000u) {
+      lsc_error(FX1_ISP_LSC_ERROR_COEF_RANGE_MASK);
    }
    if (lsc_.count < lsc_.staging.size()) {
       lsc_.staging[lsc_.count] = data & FX1_ISP_LSC_COEF_DATA_COEF_DATA_MASK;

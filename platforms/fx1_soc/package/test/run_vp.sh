@@ -422,6 +422,7 @@ PY
                    echo "ISP AUTO COMPLETE: output valid, no adaptive golden; preview ${isp_out}/platform.png"
                fi ;;
             1) echo "ISP FAIL: NV12 differs from the expected output" ;;
+            3) echo "ISP FAIL: no preview, the result block has no output colorimetry (give --std and --range to isp_pack.py); NV12 kept: ${isp_out}/platform.nv12" ;;
             *) echo "ISP FAIL: the dumps were rejected" ;;
         esac
         if [[ ${dump_demosaic} -eq 1 && "${sub}" == "interactive" ]]; then

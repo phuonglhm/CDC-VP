@@ -612,7 +612,10 @@ write EE_CTRL 0x0
 write EE_CTRL 0x0
 write BLC_CTRL 0x1
 write BLC_OFS_G0_DFT 0x68
-write BLC_SCALE_G0 0x106AC
+write BLC_SCALE_G0_R 0x106AC
+write BLC_SCALE_G0_GR 0x106AC
+write BLC_SCALE_G0_GB 0x106AC
+write BLC_SCALE_G0_B 0x106AC
 write WB_CTRL 0x1
 write WB_GAIN_R 0x15A
 write WB_GAIN_B 0x1D8
@@ -947,7 +950,10 @@ expect exp_001.bin 64 48
 end stats_000.txt 2 2
 write BLC_CTRL 0x0
 write BLC_OFS_G0_DFT 0xB4
-write BLC_SCALE_G0 0x10BC5
+write BLC_SCALE_G0_R 0x10BC5
+write BLC_SCALE_G0_GR 0x10BC5
+write BLC_SCALE_G0_GB 0x10BC5
+write BLC_SCALE_G0_B 0x10BC5
 write LSC_MESH_NODES 0x302
 write LSC_LOAD_CTRL 0x102
 write LSC_COEF_DATA 0x6CB87
@@ -3787,7 +3793,10 @@ expect exp_032.bin 130 72
 end stats_016.txt 33 33
 write BLC_CTRL 0x0
 write BLC_OFS_G0_DFT 0x99
-write BLC_SCALE_G0 0x109F0
+write BLC_SCALE_G0_R 0x109F0
+write BLC_SCALE_G0_GR 0x109F0
+write BLC_SCALE_G0_GB 0x109F0
+write BLC_SCALE_G0_B 0x109F0
 write CCM_CRR 0x169
 write CCM_CRG 0xF93
 write CCM_CRB 0xFFC
@@ -8908,7 +8917,10 @@ write GTM_LUT_DATA 0x132
 write GTM_CTRL 0x3
 write BLC_CTRL 0x0
 write BLC_OFS_G0_DFT 0x6C
-write BLC_SCALE_G0 0x106EF
+write BLC_SCALE_G0_R 0x106EF
+write BLC_SCALE_G0_GR 0x106EF
+write BLC_SCALE_G0_GB 0x106EF
+write BLC_SCALE_G0_B 0x106EF
 burst 2 none 130 74
 input in_083.bin
 input in_084.bin
@@ -9004,7 +9016,10 @@ write CCM_CBB 0x281
 write CCM_CTRL 0x5
 write BLC_CTRL 0x0
 write BLC_OFS_G0_DFT 0xE5
-write BLC_SCALE_G0 0x10F2A
+write BLC_SCALE_G0_R 0x10F2A
+write BLC_SCALE_G0_GR 0x10F2A
+write BLC_SCALE_G0_GB 0x10F2A
+write BLC_SCALE_G0_B 0x10F2A
 burst 2 none 130 74
 input in_097.bin
 input in_098.bin

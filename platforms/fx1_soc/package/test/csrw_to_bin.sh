@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# Convert symbolic CSR writes into little-endian {offset, value} uint32 pairs.
+# Convert a profile (register or field syntax, csrw_codec.py) into
+# little-endian {offset, value} uint32 pairs, one per line, in order.
 set -euo pipefail
 
 if [[ $# -eq 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
@@ -16,7 +17,7 @@ fi
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 header="${here}/../../sources/VP_FX1_V3.0/include/fx1_isp/fx1_isp_csr.h"
 unset PYTHONHOME PYTHONPATH
-exec /usr/bin/python3 - "$1" "${header}" <<'PY'
+exec /usr/bin/python3 -B - "$1" "${header}" "${here}" <<'PY'
 import os
 from pathlib import Path
 import re
@@ -31,33 +32,12 @@ def convert():
     header = Path(sys.argv[2])
     if source.suffix.lower() != ".csrw":
         raise ValueError("input must have the .csrw extension")
-    offsets = {
-        name: int(value, 16)
-        for name, value in re.findall(
-            r"^#define\s+FX1_ISP_(\w+)_OFFSET\s+(0x[0-9A-Fa-f]+)u\b",
-            header.read_text(encoding="utf-8"), re.MULTILINE
-        )
-    }
-    if not offsets:
-        raise ValueError(f"no CSR offsets found in {header}")
-    data = bytearray()
-    for number, line in enumerate(source.read_text(encoding="utf-8-sig").splitlines(), 1):
-        fields = line.split("#", 1)[0].split()
-        if not fields:
-            continue
-        location = f"{source}:{number}"
-        if len(fields) != 2:
-            raise ValueError(f"{location}: expected <REGISTER> <VALUE>")
-        name, text = fields
-        if name not in offsets:
-            raise ValueError(f"{location}: unknown CSR {name}")
-        try:
-            value = int(text, 0)
-        except ValueError:
-            raise ValueError(f"{location}: invalid integer {text!r}") from None
-        if not 0 <= value <= 0xFFFFFFFF:
-            raise ValueError(f"{location}: value must fit uint32")
-        data.extend(struct.pack("<II", offsets[name], value))
+    # ISP-UPD-008: register or field syntax, one line = one full-word write,
+    # through the ISP's codec shipped next to this script (csrw_codec.py).
+    sys.path.insert(0, sys.argv[3])
+    import csrw_codec
+    data = csrw_codec.to_bin([(reg, value) for _, reg, value in
+                              csrw_codec.read(str(source), csrw_codec.CsrMap(str(header)))])
     if not data:
         raise ValueError(f"{source}: no CSR writes")
 

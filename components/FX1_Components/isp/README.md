@@ -192,7 +192,9 @@ tools/run_regression.py           real-RAW regression (plan §10 artefacts)
 tools/run_raw.cpp, raw_fixture.py, make_profile.py, nv12_preview.py   real-RAW demo tools
 tools/demosaic_validate.py, demosaic_check.py                         post-Demosaic capture checks
 src/fx1_isp_tlm.cpp               TLM adapter, reset and IRQ processes
-tools/gen_csr.py                  CSR generator (pinned SHA-256, overrides with IDs)
+tools/gen_csr.py                  CSR generator (pinned SHA-256, overrides with IDs, CSR extension)
+tools/migrate_profile_upd.py      v1.07 .csrw -> CSR extension 0x20261109 (BLC per-channel scales)
+tools/csrw_codec.py               profile syntax (register / field), check, explain, emit, bin (ISP-UPD-008)
 tools/check_csr_header.py         independent header cross-check
 tools/gen_traceability.py         per-register traceability report (--check)
 tests/unit, tests/integration     CTest suites; tests/package: installed-package consumer
@@ -205,6 +207,7 @@ docs/evidence/                    acceptance evidence (regression baseline, CTes
 - [docs/ISP_SOURCE_MANIFEST.md](docs/ISP_SOURCE_MANIFEST.md): pinned spec revisions
 - [docs/ISP_DECISIONS_AND_DISCREPANCIES.md](docs/ISP_DECISIONS_AND_DISCREPANCIES.md): DEC / SPEC / CSR log
 - [docs/ISP_CSR_CONTRACT.md](docs/ISP_CSR_CONTRACT.md): register behaviour the model implements
+- [docs/ISP_CSR_EXTENSION_UPD.md](docs/ISP_CSR_EXTENSION_UPD.md): VP CSR extension 0x20261109 on top of v1.07 (LSC gain 0..8, BLC G0..G7 per-channel scales, CCM offsets in pixel levels)
 - [docs/ISP_MODEL_INTERFACE.md](docs/ISP_MODEL_INTERFACE.md): ports, parameters, timing, backdoor
 - [docs/ISP_REQUIREMENTS_MATRIX.md](docs/ISP_REQUIREMENTS_MATRIX.md): requirement → test → status
 - [docs/ISP_M4_QUALIFICATION.md](docs/ISP_M4_QUALIFICATION.md): M4 results, regression baseline, benchmark

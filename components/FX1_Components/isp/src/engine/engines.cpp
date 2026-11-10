@@ -492,6 +492,16 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
       }
    }
    ctx_.frame_begin(f, outputs);
+   if (ctx_.frame_output) {
+      frame_output_info fo;
+      fo.epoch = ctx_.epoch;
+      fo.sequence = f;
+      fo.frame_id = ingress;
+      fo.outputs = cfg.outputs & ((1u << num_channels) - 1u);
+      fo.csc_std = cfg.csc_std & 1u;
+      fo.csc_full_range = cfg.csc_full_range;
+      ctx_.frame_output(fo);
+   }
    if (ctx_.demosaic) {
       observe_frame(cfg, l, f, ingress, profile);
    }

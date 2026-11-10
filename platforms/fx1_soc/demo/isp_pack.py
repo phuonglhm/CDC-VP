@@ -13,7 +13,9 @@ or Pillow can be assumed. As a command:
   isp_pack.py DIR [--expect-sha256 HEX]
 
 Exit status: 0 packed (and equal to HEX when given), 1 NV12 differs from HEX,
-2 the inputs were rejected.
+2 the inputs were rejected, 3 NV12 packed (and equal to HEX when given) but
+no preview: the output colorimetry is missing or invalid (ISP-UPD-005: never
+guessed; give --std and --range).
 """
 import argparse
 import hashlib
@@ -33,10 +35,14 @@ JOB_FIELDS = ("magic version width height bayer in_addr in_stride y_addr uv_addr
               "mode outputs profile_id ch1_y_addr ch1_uv_addr ch1_stride ch2_addr ch2_stride r0 r1 r2 r3").split()
 RESULT_FIELDS = ("magic status out_width out_height out_stride frames_done idma_frames odma_frames "
                  "dma_err aec_frame_id awb_frame_id af_frame_id frame_ticks "
-                 "mode outputs profile_id tune_error ch1_width ch1_height ch2_width ch2_height").split()
-RESULT_SIZE = 4 * len(RESULT_FIELDS)
+                 "mode outputs profile_id tune_error ch1_width ch1_height ch2_width ch2_height "
+                 "aec_percent colorimetry r2").split()
+RESULT_SIZE = 4 * len(RESULT_FIELDS)    # the whole firmware block (96 bytes)
+RESULT_SIZE_V2 = RESULT_SIZE - 12       # dumps of firmware before ISP-UPD-004: no AEC percent word
+AEC_PERCENT_VALID = 1 << 31
+COLORIMETRY_VALID = 1 << 31             # ISP-UPD-005: bit 0 full range, bits [2:1] CSC_CTRL.std
 BAYER = {"RGGB": 0, "GRBG": 1, "GBRG": 2, "BGGR": 3}  # COMMON_BAYER codes (DEC-11)
-KR_KB = {0: (0.299, 0.114), 1: (0.2126, 0.0722)}       # BT.601, BT.709 (CSC_CTRL.std)
+KR_KB = {0: (299, 114, 1000), 1: (2126, 722, 10000)}  # Kr, Kb over K: BT.601, BT.709 (CSC_CTRL.std)
 
 
 class PackError(Exception):
@@ -78,6 +84,8 @@ def read_job(path):
 def read_result(path):
     """result.bin: the block the firmware writes once the frames are done."""
     data = open(path, "rb").read()
+    if len(data) == RESULT_SIZE_V2:
+        data += bytes(RESULT_SIZE - RESULT_SIZE_V2)   # older dump: the AEC percent word reads invalid
     if len(data) != RESULT_SIZE:
         raise PackError("result.bin: %d bytes, the result block has %d" % (len(data), RESULT_SIZE))
     res = dict(zip(RESULT_FIELDS, struct.unpack("<%dI" % len(RESULT_FIELDS), data)))
@@ -87,6 +95,38 @@ def read_result(path):
     if res["magic"] != RESULT_MAGIC or res["status"] != 0:
         raise PackError("no valid result block from the firmware (was `isp run` PASS before poweroff?)")
     return res
+
+
+def aec_percent_line(res):
+    """ISP-UPD-004: the firmware's AEC global UE/OE percentages (basis points of
+    every Bayer sample of the active image, the job's last AEC result)."""
+    w = res.get("aec_percent", 0)
+    if not w & AEC_PERCENT_VALID:
+        return "AEC UE/OE      - (no AEC result, saturated counts or an older firmware)"
+    ue, oe = w & 0x3FFF, (w >> 16) & 0x3FFF
+    return "AEC UE/OE      UE %d.%02d %%, OE %d.%02d %% of the active image (AEC FRAME_ID %d)" % (
+        ue // 100, ue % 100, oe // 100, oe % 100, res["aec_frame_id"])
+
+
+def colorimetry(res, std=None, full_range=None):
+    """(std, full_range, source) of the outputs (ISP-UPD-005): the firmware's
+    result word, unless overridden; PackError when neither gives a value (an
+    older firmware): the range is never guessed."""
+    w = res.get("colorimetry", 0)
+    fw = (w >> 1) & 3, bool(w & 1)
+    if w & COLORIMETRY_VALID and fw[0] > 1:
+        raise PackError("result colorimetry word 0x%x: CSC_CTRL.std %d is not BT.601/709" % (w, fw[0]))
+    s = std if std is not None else (fw[0] if w & COLORIMETRY_VALID else None)
+    f = full_range if full_range is not None else (fw[1] if w & COLORIMETRY_VALID else None)
+    if s is None or f is None:
+        raise PackError("the result block has no output colorimetry (an older firmware): give --std and --range")
+    src = "firmware" if (std is None and full_range is None) else "given" if not w & COLORIMETRY_VALID else \
+        "given (firmware: %s, %s range)" % (("BT.601", "BT.709")[fw[0]], "full" if fw[1] else "limited")
+    return s, f, src
+
+
+def colorimetry_line(std, full_range, source):
+    return "colorimetry    %s, %s range (%s)" % (("BT.601", "BT.709")[std], "full" if full_range else "limited", source)
 
 
 def check_output(res, width, height, frames, out_stride, y, uv):
@@ -195,22 +235,36 @@ def _clip_table(values):
     return bytes(0 if v < 0 else 255 if v > 255 else v for v in values)
 
 
-def nv12_to_png(nv12, width, height, path, std=0):
-    """Write an RGB PNG. Same inverse transform as isp/tools/nv12_preview.py:
-    limited-range YCbCr (Y 16..235, C 16..240), BT.601 or BT.709, chroma by
-    nearest neighbour. A preview is a visual check, not a pass/fail criterion."""
+def rgb_tables(std, full_range):
+    """Exact integer LUTs (same as isp/tools/nv12_preview.rgb_tables): 2 x 255 x
+    value x D (+ D + 2048 D on the Y table, so one floor division by 2D gives
+    the half-up rounded level + 1024) for Y, R(Cr), B(Cb), G(Cr), G(Cb);
+    returns (D2 = 2D, tables)."""
+    krn, kbn, k = KR_KB[std]
+    kgn = k - krn - kbn
+    yoff, yspan, cspan = (0, 255, 255) if full_range else (16, 219, 224)
+    d = yspan * cspan * k * kgn
+    y = [2 * 255 * (v - yoff) * cspan * k * kgn + d + 2048 * d for v in range(256)]
+    r_v = [2 * 255 * 2 * (k - krn) * (v - 128) * yspan * kgn for v in range(256)]
+    b_u = [2 * 255 * 2 * (k - kbn) * (u - 128) * yspan * kgn for u in range(256)]
+    g_v = [-2 * 255 * 2 * krn * (k - krn) * (v - 128) * yspan for v in range(256)]
+    g_u = [-2 * 255 * 2 * kbn * (k - kbn) * (u - 128) * yspan for u in range(256)]
+    return 2 * d, (y, r_v, b_u, g_v, g_u)
+
+
+def nv12_to_png(nv12, width, height, path, std, full_range):
+    """Write an RGB PNG. Same inverse transform and rounding as
+    isp/tools/nv12_preview.py (ISP-UPD-005): std 0 BT.601 / 1 BT.709; full
+    range Y/C 0..255 (Y' = Y/255, P = (C-128)/255) or limited Y 16..235, C
+    16..240 (Y' = (Y-16)/219, P = (C-128)/224); chroma by nearest neighbour;
+    no defaults. Kr/Kb are the standards' exact decimals and the arithmetic is
+    exact (rgb_tables): an exact .5 rounds up, the same pixels as the numpy
+    converter (review B/C/P/D R4). A preview is a visual check, not a
+    pass/fail criterion."""
     if len(nv12) != width * height * 3 // 2:
         raise PackError("NV12 holds %d bytes, %dx%d needs %d" % (len(nv12), width, height, width * height * 3 // 2))
-    kr, kb = KR_KB[std]
-    kg = 1 - kr - kb
-    # R = Y' + a*Pr, B = Y' + b*Pb, G = Y' - c*Pr - d*Pb, all in 255 units; one
-    # rounding at the end, offset by 1024 so the tables index non-negative sums.
-    ylut = [(v - 16) / 219.0 * 255 for v in range(256)]
-    r_v = [2 * (1 - kr) * (v - 128) / 224.0 * 255 for v in range(256)]
-    b_u = [2 * (1 - kb) * (u - 128) / 224.0 * 255 for u in range(256)]
-    g_v = [-kr * 2 * (1 - kr) * (v - 128) / 224.0 * 255 / kg for v in range(256)]
-    g_u = [-kb * 2 * (1 - kb) * (u - 128) / 224.0 * 255 / kg for u in range(256)]
-    clip = _clip_table(range(-1024, 1280))
+    d2, (ylut, r_v, b_u, g_v, g_u) = rgb_tables(std, full_range)
+    clip = _clip_table(range(-1024, 1280))  # index: the rounded level + 1024
     raw = bytearray()
     ysize = width * height
     for row in range(height):
@@ -223,9 +277,9 @@ def nv12_to_png(nv12, width, height, path, std=0):
             for k in (x, x + 1):
                 yy = ylut[yrow[k]]
                 o = 1 + 3 * k
-                out[o] = clip[int(yy + rv + 1024.5)]
-                out[o + 1] = clip[int(yy + gc + 1024.5)]
-                out[o + 2] = clip[int(yy + bu + 1024.5)]
+                out[o] = clip[(yy + rv) // d2]
+                out[o + 1] = clip[(yy + gc) // d2]
+                out[o + 2] = clip[(yy + bu) // d2]
         raw += out
 
     def chunk(tag, data):
@@ -238,10 +292,36 @@ def nv12_to_png(nv12, width, height, path, std=0):
         f.write(chunk(b"IEND", b""))
 
 
-def pack_dir(d, expect_sha=None, expect_mode=None):
+def preview(nv12, width, height, path, res, std=None, full_range=None):
+    """platform.png in the output colorimetry (ISP-UPD-005). Returns (std,
+    full_range, source, None), or (None, None, None, why) when the colorimetry
+    is missing or invalid: no PNG then, the range is never guessed, and the
+    NV12 stays (review B/C/P/D R1: the frame itself is valid). Raises
+    PackError when the PNG cannot be written."""
+    try:
+        cstd, cfull, csrc = colorimetry(res, std, full_range)
+    except PackError as e:
+        return None, None, None, str(e)
+    try:
+        nv12_to_png(nv12, width, height, path, cstd, cfull)
+    except OSError as e:
+        raise PackError("preview failed: cannot write %s: %s" % (path, e))
+    return cstd, cfull, csrc, None
+
+
+def preview_lines(path, cstd, cfull, csrc, why):
+    """The summary's colorimetry and preview lines."""
+    if why:
+        return ["colorimetry    - (%s)" % why, "preview        NOT WRITTEN: no output colorimetry; NV12 kept"]
+    return [colorimetry_line(cstd, cfull, csrc), "preview        %s" % path]
+
+
+def pack_dir(d, expect_sha=None, expect_mode=None, std=None, full_range=None):
     """job.bin + result.bin + y.bin + uv.bin (+ the CH1/CH2 dumps of the job) in d ->
     platform.nv12, platform.png, platform_ch*, summary.txt. Returns (result, sha,
-    verdict); raises PackError. Nothing named platform* survives a failure."""
+    verdict, preview problem or None); raises PackError. Nothing named
+    platform* survives a rejected input; a missing colorimetry only drops the
+    PNG (preview())."""
     out = lambda name: os.path.join(d, name)
     for name in ("platform.nv12", "platform.png", "summary.txt", "platform_ch1.nv12", "platform_ch2.rgb"):
         if os.path.isfile(out(name)):
@@ -260,10 +340,10 @@ def pack_dir(d, expect_sha=None, expect_mode=None):
     with open(out("platform.nv12"), "wb") as f:
         f.write(nv12)
     try:
-        nv12_to_png(nv12, ow, oh, out("platform.png"))
-    except OSError as e:
+        cstd, cfull, csrc, why = preview(nv12, ow, oh, out("platform.png"), res, std, full_range)
+    except PackError:
         os.remove(out("platform.nv12"))
-        raise PackError("cannot write %s: %s" % (out("platform.png"), e))
+        raise
     sha = hashlib.sha256(nv12).hexdigest()
     verdict = "-" if not expect_sha else ("MATCH" if sha == expect_sha.lower() else "MISMATCH")
     lines = [
@@ -276,15 +356,16 @@ def pack_dir(d, expect_sha=None, expect_mode=None):
     ] + channel_lines + [
         "ISP counters   IDMA %d, ODMA %d frames; DMA_ERR 0x%x" % (res["idma_frames"], res["odma_frames"], res["dma_err"]),
         "FRAME_ID       AEC %d, AWB %d, AF %d" % (res["aec_frame_id"], res["awb_frame_id"], res["af_frame_id"]),
+        aec_percent_line(res),
+    ] + preview_lines(out("platform.png"), cstd, cfull, csrc, why)[:1] + [
         "platform NV12  %s  sha256 %s" % (out("platform.nv12"), sha),
         "expected       %s" % (expect_sha or "-"),
         "result         %s" % verdict,
-        "preview        %s" % out("platform.png"),
-    ]
+    ] + preview_lines(out("platform.png"), cstd, cfull, csrc, why)[1:]
     with open(out("summary.txt"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
-    return res, sha, verdict
+    return res, sha, verdict, why
 
 
 def main():
@@ -293,14 +374,22 @@ def main():
     ap.add_argument("--expect-sha256", help="NV12 SHA-256 the run must reproduce")
     ap.add_argument("--expect-mode", choices=("profile", "legacy"),
                     help="the mode the console ran (`isp run legacy`): default the job's")
+    ap.add_argument("--std", type=int, choices=(0, 1), help="preview colorimetry override: 0 BT.601, 1 BT.709")
+    ap.add_argument("--range", choices=("full", "limited"), help="preview colorimetry override")
     a = ap.parse_args()
     mode = None if a.expect_mode is None else (MODE_LEGACY if a.expect_mode == "legacy" else MODE_PROFILE)
     try:
-        _, _, verdict = pack_dir(a.dir, a.expect_sha256, mode)
+        _, _, verdict, why = pack_dir(a.dir, a.expect_sha256, mode, a.std,
+                                      None if a.range is None else a.range == "full")
     except PackError as e:
         print("isp_pack: " + str(e), file=sys.stderr)
         return 2
-    return 1 if verdict == "MISMATCH" else 0
+    if verdict == "MISMATCH":
+        return 1
+    if why:
+        print("isp_pack: preview not written: " + why, file=sys.stderr)
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

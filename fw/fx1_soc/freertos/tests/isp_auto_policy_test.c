@@ -32,6 +32,25 @@ int main(void)
         assert(c.g==256 && c.key>=160 && c.key<=176 && c.white>=384 && c.white<=576);
         if (!r || !g || !b) assert(!c.valid);
     }
-    puts("ISP auto policy: PASS (fallback, neutral/LED, 4096 colour cases)");
+    /* Probe grid on the active image (review Stop B R1): the four Bayer codes
+     * with raw sizes that all give a 64x32 active image, each trimming only
+     * its own axes; a large frame; the clamp to W/2 x H/2 on a small one. */
+    {
+        static const struct { uint32_t w, h, bayer, nx, ny; } g[] = {
+            {64, 32, 0, 32, 16}, {65, 32, 1, 32, 16}, {64, 33, 2, 32, 16}, {65, 33, 3, 32, 16},
+            {66, 34, 0, 32, 16}, {66, 34, 1, 32, 16}, {66, 34, 2, 32, 16}, {66, 34, 3, 32, 16},
+            {2688, 1520, 3, 32, 16}, {40, 20, 0, 20, 10}, {40, 20, 1, 19, 10}, {40, 20, 2, 20, 9},
+            {40, 20, 3, 19, 9}};
+        for (unsigned i = 0; i < sizeof g / sizeof g[0]; ++i) {
+            uint32_t nx, ny;
+            isp_auto_probe_grid(g[i].w, g[i].h, g[i].bayer, &nx, &ny);
+            if (nx != g[i].nx || ny != g[i].ny) {
+                printf("probe grid %ux%u bayer %u: %ux%u, expected %ux%u\n", g[i].w, g[i].h, g[i].bayer, nx, ny,
+                       g[i].nx, g[i].ny);
+                return 1;
+            }
+        }
+    }
+    puts("ISP auto policy: PASS (fallback, neutral/LED, 4096 colour cases, probe grid of 13 geometries)");
     return 0;
 }

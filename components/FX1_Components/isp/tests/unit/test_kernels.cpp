@@ -314,6 +314,78 @@ void test_rgb888() {
    }
 }
 
+// ISP-UPD-002: per-channel BLC scales of the selected profile. Hand-computed:
+// offset = min(DFT + trim[c], 4095); d = max(p - offset, 0);
+// out = sat12((d * scale[c] + 2^15) >> 16), or d with range_scale_en = 0.
+void test_blc_per_channel() {
+   pipeline_config c;
+   c.blc_en = true;
+   c.blc_pedestal = 100;
+   c.blc_trim = {0, 4, 8, 12};
+   c.blc_scale = {0x10000, 0x18000, 0x8000, 0x20000};  // 1.0, 1.5, 0.5, 2.0
+   const unsigned want[4] = {1000, 1494, 496, 1976};    // d = 1000, 996, 992, 988
+   for (unsigned ch = 0; ch < 4; ++ch) {
+      FX1_CHECK_EQ_CTX(blc_pixel(c, 1100, ch), want[ch], "channel " + std::to_string(ch));
+   }
+   // Changing one channel's scale changes that channel only.
+   pipeline_config d = c;
+   d.blc_scale[2] = 0x10000;
+   FX1_CHECK_EQ(blc_pixel(d, 1100, 2), 992);
+   for (unsigned ch : {0u, 1u, 3u}) {
+      FX1_CHECK_EQ_CTX(blc_pixel(d, 1100, ch), want[ch], "untouched channel " + std::to_string(ch));
+   }
+   // Half-LSB rounds up; 0.5 of 1 -> 1, of 0 -> 0; saturation after the scale.
+   FX1_CHECK_EQ(blc_pixel(c, 109, 2), 1);   // d = 1 at 0.5
+   FX1_CHECK_EQ(blc_pixel(c, 108, 2), 0);   // d = 0
+   FX1_CHECK_EQ(blc_pixel(c, 3000, 3), 4095);  // 2888 * 2 saturates
+   c.blc_scale[1] = 0x3FFFF;                   // field maximum (just under 4.0)
+   FX1_CHECK_EQ(blc_pixel(c, 105, 1), 4);      // d = 1: (0x3FFFF + 0x8000) >> 16 = 4
+   c.blc_scale[1] = 0;
+   FX1_CHECK_EQ(blc_pixel(c, 4000, 1), 0);
+   // range_scale_en = 0: the four scales are ignored, the offsets are not.
+   c.blc_range_scale = false;
+   for (unsigned ch = 0; ch < 4; ++ch) {
+      FX1_CHECK_EQ_CTX(blc_pixel(c, 1100, ch), 1000 - 4 * ch, "no scale, channel " + std::to_string(ch));
+   }
+   // DFT + trim saturates at 4095; BLC off is a bypass.
+   c.blc_pedestal = 4090;
+   FX1_CHECK_EQ(blc_pixel(c, 4095, 3), 0);
+   c.blc_en = false;
+   FX1_CHECK_EQ(blc_pixel(c, 1234, 3), 1234);
+}
+
+// ISP-UPD-007: CCM offsets in output pixel levels, added to the Q3.9 dot
+// product before the floor and the saturation.
+void test_ccm_offset_pixels() {
+   pipeline_config c;
+   c.ccm_en = true;
+   c.ccm = {{{512, 0, 0}, {0, 512, 0}, {0, 0, 512}}};
+   const auto px = [&](std::uint16_t r, std::uint16_t g, std::uint16_t b) { return ccm_pixel(c, rgb{r, g, b}); };
+   c.ccm_offset = {1, -1, 2};
+   rgb o = px(1000, 1000, 1000);
+   FX1_CHECK_EQ(o.r, 1001);
+   FX1_CHECK_EQ(o.g, 999);
+   FX1_CHECK_EQ(o.b, 1002);
+   c.ccm_offset = {512, 0, 0};  // the old Q3.9 code of one level is now 512 levels
+   FX1_CHECK_EQ(px(1000, 0, 0).r, 1512);
+   c.ccm_offset = {-2048, 2047, 0};  // signed 12-bit ends, saturation after the addition
+   o = px(1000, 3000, 7);
+   FX1_CHECK_EQ(o.r, 0);
+   FX1_CHECK_EQ(o.g, 4095);
+   FX1_CHECK_EQ(o.b, 7);
+   c.ccm_offset = {-1000, 0, 0};
+   FX1_CHECK_EQ(px(1000, 0, 0).r, 0);  // exactly zero, not below
+   // Fractional coefficients: the offset is not scaled by the matrix; floor.
+   c.ccm = {{{256, 0, 0}, {-256, 0, 0}, {0, 0, 512}}};  // 0.5, -0.5
+   c.ccm_offset = {3, 600, 0};
+   o = px(1001, 0, 0);
+   FX1_CHECK_EQ(o.r, 503);  // 500.5 + 3 = 503.5 -> 503
+   FX1_CHECK_EQ(o.g, 99);   // -500.5 + 600 = 99.5 -> 99
+   c.ccm_en = false;
+   o = px(10, 20, 30);
+   FX1_CHECK(o.r == 10 && o.g == 20 && o.b == 30);
+}
+
 int main() {
    test_rgb888();
    test_csc_range();
@@ -321,5 +393,7 @@ int main() {
    test_wb_gb();
    test_nr_models();
    test_cnf_blend();
+   test_blc_per_channel();
+   test_ccm_offset_pixels();
    return fx1_test::summary("fx1_isp_test_kernels");
 }

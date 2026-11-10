@@ -111,6 +111,35 @@ stand-alone ISP model run on the same input and profile. Results go to
 `sw/bootloader/build/VP_FX1_V3.0/isp/<sample>/` (`platform.png`,
 `platform.nv12`, `summary.txt`).
 
+`summary.txt` also gives the AEC under- and over-exposure of the job's last
+AEC result:
+
+    AEC UE/OE      UE 49.98 %, OE 1.44 % of the active image (AEC FRAME_ID 2)
+
+These are 100 × UE_COUNT (OE_COUNT) / the number of Bayer samples of the
+active image, where UE means below TH_UE = 272 and OE means above
+TH_OE = 3744. The firmware computes the values (`fx1_isp_read_aec_percent`)
+and returns them in the result block. The sample profiles use a 16 × 16 AWB
+grid and a 16 × 16 AEC zone grid.
+
+`platform.png` is decoded with the colorimetry of the output that the
+firmware returns in the result block: the CSC standard (BT.601 or BT.709) and
+the range (full 0..255, or limited 16..235/16..240). The summary prints it
+on a `colorimetry` line. When the result lacks this information (an older
+firmware) or holds an invalid value, the range is never guessed:
+- `platform.nv12` is still written (and compared with the golden);
+- no `platform.png` is written;
+- `isp_pack.py` exits 3 and `run_vp.sh isp` reports `ISP FAIL: no preview`.
+
+To get the preview in that case, give `--std` and `--range` to
+`isp_pack.py`. NV12 files are never converted. The decoding is exact
+(integer arithmetic, an exact .5 rounds up): it gives the same pixels as the
+component's `nv12_preview.py`.
+
+LSC uses three resident tables with one 17 × 13 mesh. The profile loads
+residents 1 and 2. After the first frame, the firmware copies the mesh into
+resident 0. The console prints the resulting valid mask of the LSC residents, which should be 7.
+
 ### Interactive console
 
 ```bash
@@ -276,9 +305,18 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   update the WB gains; firmware needs an AWB algorithm for that.
   Changing a profile requires regenerating the golden for each affected sample.
   After editing a `profile.csrw`, rebuild its `profile.bin` with
-  `sw/bootloader/test/VP_FX1_V3.0/csrw_to_bin.sh PATH/profile.csrw`; the
-  sample's `job.bin` must declare the same number of CSR writes (the script
-  warns when it changes, and does not update `job.bin`).
+  `sw/bootloader/test/VP_FX1_V3.0/csrw_to_bin.sh PATH/profile.csrw`. The
+  sample's `job.bin` must declare the same number of CSR writes; the script
+  warns when the number changes, but does not update `job.bin`.
+- **Profile syntax:** each line is one full 32-bit CSR write, in order. A line
+  can name the whole register (`GAMMA_CTRL 0x100`), one field
+  (`GAMMA_CTRL_en 1`, every other field 0), or several fields of one
+  register (`AEC_CTRL en=1 commit=1`, the others 0). Field values are the
+  field's code before the shift. Two lines are two writes: `AEC_CTRL_en 1`
+  followed by `AEC_CTRL_commit 1` clears `en` again. Errors stop the
+  conversion with file:line, and the old `profile.bin` is kept.
+  `python3 csrw_codec.py explain profile.csrw` (in the same directory) lists
+  every write with its fields. The sample profiles are written this way.
 - **Frames:** each job processes the same RAW twice from reset. The first frame
   warms up GTM auto; the delivered image and golden are from the second frame.
   When preparing a new sample, use `run_isp_demo.py --prepare-only --frames 2`
@@ -432,6 +470,11 @@ then enables GTM auto. This isolates GTM/NR history for reference comparison.
 The result counters include all physical frames of this job; FRAME_ID also
 includes earlier jobs in an interactive boot. Input sample/profile files stay
 fixed. Auto currently requires WB enabled, GTM auto and EE profile 0.
+
+The probe frame is measured on a 32 × 16 AWB grid, the grid for which the
+demo policy (`neutral-v1`, at least 8 neutral zones) was designed. The
+render frames use the profile's 16 × 16 grid again. `auto.json` records both
+grids (`probe_awb_grid`, `render_awb_grid`).
 
 Outputs include `auto.json`, the exact applied CSR values in
 `resolved_profile.csrw`, and the usual `platform.png`/NV12/log. A delivered

@@ -163,7 +163,8 @@ class Generator:
             ped = r(64, 300)
             self.write("BLC_CTRL", r(0, 1))
             self.write("BLC_OFS_G0_DFT", ped)
-            self.write("BLC_SCALE_G0", round(4095 / (4095 - ped) * 65536))
+            for c in ("R", "GR", "GB", "B"):      # ISP-UPD-002: per-channel scales, equal here
+                self.write("BLC_SCALE_G0_" + c, round(4095 / (4095 - ped) * 65536))
         elif kind == "ccm":
             if r(0, 2) == 0:                      # coefficients without `updated` (no effect since 07/10)
                 self.write("CCM_CTRL", 1)

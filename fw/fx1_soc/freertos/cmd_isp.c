@@ -43,6 +43,7 @@ static int dev_ready;
 
 static struct {
     int valid, aec_ok, awb_ok, af_ok;
+    uint32_t aec_percent; /* ISP-UPD-004: isp_demo_aec_word of the AEC result */
     fx1_isp_aec_global aec;
     fx1_isp_awb_global awb;
     fx1_isp_af_scores af;
@@ -106,6 +107,7 @@ static int one_frame(TickType_t timeout)
 static void stop(void)
 {
     last_stats.aec_ok = fx1_isp_read_aec_global(&dev, &last_stats.aec) == FX1_ISP_OK;
+    last_stats.aec_percent = last_stats.aec_ok ? isp_demo_aec_word(&dev) : 0u;
     last_stats.awb_ok = fx1_isp_read_awb_global(&dev, &last_stats.awb) == FX1_ISP_OK;
     last_stats.af_ok = fx1_isp_read_af(&dev, &last_stats.af) == FX1_ISP_OK;
     last_stats.valid = 1;
@@ -232,6 +234,23 @@ static isp_auto_choice auto_meter(void)
     return c;
 }
 
+/* ISP-UPD-001: after the job's first SOF (its first completed frame, the
+ * probe of `isp run auto` included), the mesh the profile validated goes
+ * into the LSC residents that are still invalid (isp_demo_lsc_fill). */
+static int lsc_fill(const fx1_isp_reg_write* profile, uint32_t n)
+{
+    uint32_t filled;
+    int rc;
+    const uint32_t mask = isp_demo_lsc_fill(&dev, profile, n, &filled, &rc);
+    out("isp run: LSC residents loaded after the first SOF ");
+    out_hex(filled);
+    out_line(rc == FX1_ISP_OK ? "" : " (duplication FAILED)");
+    out("isp run: LSC residents valid ");
+    out_hex(mask);
+    out_line("");
+    return rc == FX1_ISP_OK;
+}
+
 static int run_job(int adaptive, int force_legacy)
 {
     const volatile isp_demo_job* job = (const volatile isp_demo_job*)(FX1_FW_SHARED_BASE + ISP_DEMO_JOB_OFFSET);
@@ -264,17 +283,19 @@ static int run_job(int adaptive, int force_legacy)
     res->magic = 0;
     uint32_t tune_error = 0;
     int ok = fx1_isp_init(&dev, &isp_hal) == FX1_ISP_OK;
-    if (ok && isp_demo_configure(&dev, job, (const fx1_isp_reg_write*)(FX1_FW_SHARED_BASE + ISP_DEMO_PROFILE_OFFSET),
-                                 mode, &tune_error) != FX1_ISP_OK) {
+    const fx1_isp_reg_write* profile = (const fx1_isp_reg_write*)(FX1_FW_SHARED_BASE + ISP_DEMO_PROFILE_OFFSET);
+    if (ok && isp_demo_configure(&dev, job, profile, mode, &tune_error) != FX1_ISP_OK) {
         out("isp run: ISP profile / geometry refused, TUNE_ERROR ");
         out_hex(tune_error);
         out_line(" (no fallback to legacy mode)");
         res->status = 2;
+        res->aec_percent = res->colorimetry = res->reserved = 0;
         res->mode = mode;
         res->tune_error = tune_error;
         res->magic = ISP_DEMO_RESULT_MAGIC;
         return report("isp run", 0);
     }
+    uint32_t awb_ctrl = 0, colorimetry = 0;
     if (ok) {
         if (adaptive) {
             const uint32_t ctrl=dev.hal.read32(dev.hal.ctx,FX1_ISP_GTM_CTRL_OFFSET);
@@ -286,6 +307,18 @@ static int run_job(int adaptive, int force_legacy)
                 out_line("isp run auto: requires WB, GTM auto, EE profile 0 (shared base)");
                 return report("isp run auto",0);
             }
+            /* ISP-UPD-003: the profile's default AWB grid is 16x16; the policy
+             * (neutral-v1: at least 8 neutral zones) was designed on the 32x16
+             * grid, so the probe frame alone is measured on 32x16 (clamped to
+             * W/2 x H/2); the render frames use the profile's grid again. */
+            awb_ctrl = dev.hal.read32(dev.hal.ctx, FX1_ISP_AWB_CTRL_OFFSET);
+            uint32_t pnx, pny;
+            isp_auto_probe_grid(job->width, job->height, job->bayer, &pnx, &pny);
+            const fx1_isp_reg_write probe_grid = {FX1_ISP_AWB_CTRL_OFFSET,
+                (awb_ctrl & ~(FX1_ISP_AWB_CTRL_NUM_ZONE_X_MASK | FX1_ISP_AWB_CTRL_NUM_ZONE_Y_MASK)) |
+                (pnx << FX1_ISP_AWB_CTRL_NUM_ZONE_X_SHIFT) | (pny << FX1_ISP_AWB_CTRL_NUM_ZONE_Y_SHIFT)};
+            fx1_isp_apply(&dev, &probe_grid, 1);
+            out("ISP_AUTO_PROBE_GRID "); out_dec(pnx); out("x"); out_dec(pny); out_line("");
         }
         fx1_dma_prepare((const volatile void*)(uintptr_t)job->y_addr, job->out_stride * job->height,
                         FX1_DMA_FROM_DEVICE);
@@ -300,6 +333,7 @@ static int run_job(int adaptive, int force_legacy)
         if (outputs & 4u)
             fx1_dma_prepare((const volatile void*)(uintptr_t)job->ch2_addr, job->ch2_stride * job->height,
                             FX1_DMA_FROM_DEVICE);
+        colorimetry = isp_demo_colorimetry_word(&dev); /* ISP-UPD-005: the committed configuration */
         ok = fx1_isp_start(&dev, &bufs) == FX1_ISP_OK;
     }
     dev_ready = ok;
@@ -310,6 +344,7 @@ static int run_job(int adaptive, int force_legacy)
     if (ok && adaptive) {
         fx1_dma_prepare((const volatile void*)(uintptr_t)job->in_addr, job->in_stride*job->height, FX1_DMA_TO_DEVICE);
         ok = one_frame(pdMS_TO_TICKS(1000)) >= 0;
+        if (ok) ok = lsc_fill(profile, job->profile_count);
         if (ok) {
             const isp_auto_choice c=auto_meter();
             const uint32_t ctrl=dev.hal.read32(dev.hal.ctx, FX1_ISP_GTM_CTRL_OFFSET);
@@ -326,9 +361,18 @@ static int run_job(int adaptive, int force_legacy)
                 {FX1_ISP_GTM_KEY_OFFSET,c.key},{FX1_ISP_GTM_LWHITE_OFFSET,c.white},{FX1_ISP_EE_BETA_OFFSET,c.beta},
                 {FX1_ISP_EE_LUT_CTRL_OFFSET,FX1_ISP_EE_LUT_CTRL_PROFILE_LOAD_CONFIRM_MASK},
                 {FX1_ISP_EE_CTRL_OFFSET,ee_ctrl},
+                {FX1_ISP_AWB_CTRL_OFFSET,awb_ctrl}, /* the profile's grid for the render frames */
                 {FX1_ISP_GTM_CTRL_OFFSET,ctrl & ~FX1_ISP_GTM_CTRL_EN_MASK}};
             if (fx1_isp_apply(&dev,writes,sizeof(writes)/sizeof(writes[0])) != FX1_ISP_OK) ok=0;
             gtm_enable=ctrl;
+            {   /* the grid the render frames use (the profile's, restored above) */
+                const uint32_t g = dev.hal.read32(dev.hal.ctx, FX1_ISP_AWB_CTRL_OFFSET);
+                out("ISP_AUTO_RENDER_GRID ");
+                out_dec((g & FX1_ISP_AWB_CTRL_NUM_ZONE_X_MASK) >> FX1_ISP_AWB_CTRL_NUM_ZONE_X_SHIFT);
+                out("x");
+                out_dec((g & FX1_ISP_AWB_CTRL_NUM_ZONE_Y_MASK) >> FX1_ISP_AWB_CTRL_NUM_ZONE_Y_SHIFT);
+                out_line("");
+            }
             if (ok) ok=fx1_isp_start(&dev,&bufs)==FX1_ISP_OK;
             taskEXIT_CRITICAL();
             xSemaphoreTake(done,0);
@@ -345,6 +389,7 @@ static int run_job(int adaptive, int force_legacy)
         fx1_dma_prepare((const volatile void*)(uintptr_t)job->in_addr, job->in_stride * job->height,
                         FX1_DMA_TO_DEVICE);
         ok = one_frame(pdMS_TO_TICKS(1000)) >= 0;
+        if (ok && k == 0u && !adaptive) ok = lsc_fill(profile, job->profile_count);
     }
     fx1_dma_complete((const volatile void*)(uintptr_t)job->y_addr, job->out_stride * job->height,
                      FX1_DMA_FROM_DEVICE);
@@ -388,6 +433,9 @@ static int run_job(int adaptive, int force_legacy)
     res->aec_frame_id = dev_ready && last_stats.aec_ok ? last_stats.aec.frame_id : 0u;
     res->awb_frame_id = dev_ready && last_stats.awb_ok ? last_stats.awb.frame_id : 0u;
     res->af_frame_id = dev_ready && last_stats.af_ok ? last_stats.af.frame_id : 0u;
+    res->aec_percent = dev_ready ? last_stats.aec_percent : 0u;
+    res->colorimetry = dev_ready ? colorimetry : 0u;
+    res->reserved = 0;
     fx1_release();
     res->magic = ISP_DEMO_RESULT_MAGIC;
     out("isp run: ");
@@ -443,6 +491,16 @@ static void stats(void)
         out(", max ");
         out_dec(aec.max);
         out_line("");
+        /* ISP-UPD-004: of every Bayer sample of the active image, basis points. */
+        if (last_stats.aec_percent & ISP_DEMO_AEC_PERCENT_VALID) {
+            out("AEC UE ");
+            out_dec(last_stats.aec_percent & 0x3FFFu);
+            out(" bp, OE ");
+            out_dec((last_stats.aec_percent >> 16) & 0x3FFFu);
+            out_line(" bp (1/100 %)");
+        } else {
+            out_line("AEC UE/OE percentages unavailable (saturated counts)");
+        }
     }
     if (last_stats.awb_ok) {
         out("AWB FRAME_ID ");

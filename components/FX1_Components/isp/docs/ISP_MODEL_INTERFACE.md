@@ -144,7 +144,9 @@ Host tools:
   - checks: `--stats-script` runs a statistics readout script, and
     `--check-stats` and `--expect-sha256` turn the run into a
     self-checking test.
-- `tools/nv12_preview.py` turns the NV12 into a PNG.
+- `tools/nv12_preview.py` turns the NV12 into a PNG. The colorimetry comes
+  from `PREFIX.txt` (`--meta`) or from `--std`/`--range`; there is no default
+  range (ISP-UPD-005, §4.2).
 - `tools/run_regression.py` runs the real-RAW regression. The tool queues one buffer
 and leaves `IDMA_EN` set, so `DMA_ERR.IDMA_UNDERRUN` (0x2) is expected at the
 end. Its exit status is non-zero only if the frame did not complete or
@@ -206,6 +208,31 @@ and limits: ISP_DECISIONS_AND_DISCREPANCIES.md §12.
   `copy_capture` replaces a destination set as a whole, the JSON being the
   set's commit marker: after an I/O error the destination is the old set or
   has no JSON.
+
+### 4.2 Output colorimetry per frame (ISP-UPD-005)
+
+`fx1_isp_tlm::debug_set_frame_output_hook(fn)` sets a hook, before the
+simulation starts. It is called once for every frame that enters the
+pipeline, at its SOF and in SOF order, with a `frame_output_info`
+(`fx1_isp_debug.h`):
+
+- the frame key, the ingress frame ID and the `OUTPUT_ENABLE` mask;
+- `csc_std` and `csc_full_range` as the pipeline snapshots them for the
+  frame.
+
+`FULL_RANGE` is the datapath value: in legacy mode the field reset, in
+profile mode the active bank. It is not a CSR readback. In legacy mode
+`TUNE_CSC_CTRL` reads back its bank storage, so a profile that writes a
+limited range there in legacy mode still gets full-range output, and the
+readback would mislead.
+
+`fx1_isp_run_raw` records the hook's values in `PREFIX.txt`:
+- `csc_std` and `csc_full_range` of the last frame;
+- `frame_colorimetry_<k>` for every SOF.
+
+`nv12_preview.py --meta` and `run_regression.py` read them. The firmware
+derives the same values with `fx1_isp_output_colorimetry` (programming
+guide) for the SDK's result block.
 
 ## 5. Internal structure
 

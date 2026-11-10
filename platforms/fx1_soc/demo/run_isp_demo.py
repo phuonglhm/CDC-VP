@@ -32,7 +32,9 @@ Interactive variant, the frame processed by `isp run` in the FreeRTOS CLI:
                   from its job.bin, --profile must be the same file
 
 Exit status: 0 the platform ran and (unless --no-reference) matches the
-reference, 1 mismatch, 2 a step failed, 3 usage error.
+reference, 1 mismatch or a failed check (firmware report, colorimetry, or no
+preview because the result has no output colorimetry: the NV12 is kept), 2 a
+step failed, 3 usage error.
 """
 import argparse
 import os
@@ -79,16 +81,59 @@ def csr_offsets():
 
 
 def load_profile(path):
-    """Same rules as the ISP's read_profile(): '#' comments, '<REG> <value>'."""
-    offsets, writes = csr_offsets(), []
-    for n, line in enumerate(open(path), 1):
-        tokens = line.split("#", 1)[0].split()
-        if len(tokens) < 2:
-            continue
-        if tokens[0] not in offsets:
-            fail("%s:%d: unknown register %s" % (path, n, tokens[0]))
-        writes.append((offsets[tokens[0]], int(tokens[1], 0) & 0xFFFFFFFF))
-    return writes
+    """[(offset, value)]: the canonical write stream of a profile in register or
+    field syntax (ISP-UPD-008), the ISP's own codec (tools/csrw_codec.py, the
+    same contract as the model's read_profile)."""
+    sys.path.insert(0, os.path.join(ISP, "tools"))
+    import csrw_codec
+    try:
+        return [(reg.offset, v) for _, reg, v in csrw_codec.read(path, csrw_codec.CsrMap(CSR_H))]
+    except (csrw_codec.CsrwError, OSError) as e:
+        fail(str(e))
+
+
+def firmware_checks(writes, res, uart):
+    """ISP-UPD-001/004: what the firmware must have done for this profile.
+    (lines, ok): the LSC residents all valid once the profile selects a mesh it
+    validated (the firmware duplicates it after the first SOF), and a valid
+    AEC percentage word when the profile enables AEC."""
+    o = csr_offsets()
+    last = {}
+    # The LSC loader's rules (review Stop B R2): the destination is latched by
+    # LOAD_BEGIN, abort > validate > begin, a BEGIN while a load is open (or of
+    # profile 3) is refused, VALIDATE commits an exact 4*nx*ny count only, a
+    # mesh size write invalidates every resident.
+    validated, dest, got, nodes = set(), None, 0, 0
+    for off, v in writes:
+        last[off] = v
+        if off == o["LSC_MESH_NODES"]:
+            validated, nodes = set(), v
+        elif off == o["LSC_LOAD_CTRL"]:
+            if v & 0x400:
+                dest = None
+            elif v & 0x200:
+                if dest is not None and got and got == 4 * (nodes & 0xFF) * ((nodes >> 8) & 0xFF):
+                    validated.add(dest)
+                dest = None
+            elif v & 0x100 and dest is None and (v & 3) < 3:
+                dest, got = v & 3, 0
+                validated.discard(dest)
+        elif off == o["LSC_COEF_DATA"] and dest is not None:
+            got += 1
+    lines, ok = [], True
+    sel = last.get(o["LSC_PROFILE_SEL"])
+    if last.get(o["LSC_CTRL"], 0) & 1 and sel in validated:
+        m = re.findall(r"LSC residents valid 0x([0-9A-Fa-f]+)", uart)
+        good = bool(m) and int(m[-1], 16) == 7
+        lines.append("LSC residents %s" % ("valid 0x7 (the mesh duplicated by the firmware)" if good else
+                                          "NOT all valid: %s" % (("0x" + m[-1]) if m else "no firmware report")))
+        ok &= good
+    if last.get(o["AEC_CTRL"], 0) & 1:
+        good = bool(res.get("aec_percent", 0) & isp_pack.AEC_PERCENT_VALID)
+        if not good:
+            lines.append("AEC percent    FAILED: the firmware returned no valid AEC percentage word")
+        ok &= good
+    return lines, ok
 
 
 def run(cmd, log=None):
@@ -176,6 +221,9 @@ def main():
     ap.add_argument("--job-env", metavar="FILE",
                     help="with --prepare-only: also write the --load/--dump addresses and lengths as shell "
                          "variables to FILE (the SDK's run_vp.sh reads them)")
+    ap.add_argument("--std", type=int, choices=(0, 1),
+                    help="preview colorimetry override (default: the firmware's result word, ISP-UPD-005)")
+    ap.add_argument("--range", choices=("full", "limited"), help="preview colorimetry override")
     ap.add_argument("--dump-demosaic", action="store_true",
                     help="also the ISP image after Demosaic, before CCM (VP-only debug tap, not an ISP output): "
                          "--out/demosaic.rgb16/.png/.json of the final frame, every frame in --out/demosaic.d, "
@@ -347,18 +395,21 @@ def main():
         nv12 = isp_pack.pack_nv12(y, uv, ow, oh, stride)
         with open(out("platform.nv12"), "wb") as f:
             f.write(nv12)
+        # Review B/C/P/D R1: a missing or invalid colorimetry drops the PNG only;
+        # the NV12 is kept, compared, and the run FAILs below (preview_problem).
         try:
-            isp_pack.nv12_to_png(nv12, ow, oh, out("platform.png"))
-        except OSError as e:
+            cstd, cfull, csrc, preview_problem = isp_pack.preview(
+                nv12, ow, oh, out("platform.png"), res, a.std, None if a.range is None else a.range == "full")
+        except PackError:
             os.remove(out("platform.nv12"))
-            raise PackError("preview failed: cannot write %s: %s" % (out("platform.png"), e))
+            raise
     except PackError as e:
         fail(str(e))
     platform_sha = sha256(out("platform.nv12"))
 
 
     # 5. the stand-alone ISP model, same input and profile
-    verdict, ref_sha = "not compared (--no-reference)", None
+    verdict, ref_sha, colorimetry_problem = "not compared (--no-reference)", None, None
     if not a.no_reference:
         if not os.path.exists(ref_tool):
             fail("reference tool not found: " + ref_tool)
@@ -371,6 +422,14 @@ def main():
             fail("reference run failed, see " + out("reference.log"))
         ref_sha = sha256(out("reference/frame.nv12"))
         verdict = "MATCH" if ref_sha == platform_sha else "MISMATCH"
+        # ISP-UPD-005: the firmware's colorimetry word against the stand-alone
+        # model's SOF snapshot of the same (last) frame.
+        ref_meta = dict(l.split(None, 1) for l in open(out("reference/frame.txt")) if " " in l.strip())
+        if res["colorimetry"] & isp_pack.COLORIMETRY_VALID and "csc_full_range" in ref_meta:
+            ref_c = int(ref_meta["csc_std"]), bool(int(ref_meta["csc_full_range"]))
+            fw_c = (res["colorimetry"] >> 1) & 3, bool(res["colorimetry"] & 1)
+            if ref_c != fw_c:
+                colorimetry_problem = "firmware %s, stand-alone model %s" % (fw_c, ref_c)
 
     # 6. VP-only post-Demosaic capture: the final frame's, against the stand-alone model's
     demosaic_lines, demosaic_verdict = [], None
@@ -388,6 +447,9 @@ def main():
         demosaic_lines.append("demosaic result %s (against the stand-alone model's capture of the same frame)"
                               % demosaic_verdict)
 
+    console = "".join(open(out(n), errors="replace").read() for n in ("uart.log", "platform.log")
+                      if os.path.exists(out(n)))   # bare-metal UART log, or the interactive console's
+    fw_lines, fw_ok = firmware_checks(writes, res, console)
     lines = [
         "RAW            %s (%dx%d %s, %s)" % (a.raw or out("input.isp16"), a.width, a.height, a.bayer, a.format),
         "profile        %s (%d CSR writes)" % (a.profile, len(writes)),
@@ -397,17 +459,19 @@ def main():
         "output         %dx%d NV12, stride %d" % (ow, oh, stride),
         "ISP counters   IDMA %d, ODMA %d frames; DMA_ERR 0x%x" % (res["idma_frames"], res["odma_frames"], res["dma_err"]),
         "FRAME_ID       AEC %d, AWB %d, AF %d" % (res["aec_frame_id"], res["awb_frame_id"], res["af_frame_id"]),
+        isp_pack.aec_percent_line(res),
+    ] + isp_pack.preview_lines(out("platform.png"), cstd, cfull, csrc, preview_problem)[:1] + [
         "simulated time %.3f ms first queue to last completion" % (res["frame_ticks"] * 50e-6),
         "platform NV12  %s  sha256 %s" % (out("platform.nv12"), platform_sha),
         "reference NV12 %s" % ("sha256 " + ref_sha if ref_sha else "-"),
     ] + channel_lines + [
         "result         %s (CH0 against the stand-alone model's legacy run)" % verdict,
-        "preview        %s" % out("platform.png"),
-    ] + demosaic_lines
+    ] + isp_pack.preview_lines(out("platform.png"), cstd, cfull, csrc, preview_problem)[1:] + fw_lines + (["colorimetry    MISMATCH: " + colorimetry_problem] if colorimetry_problem else []) + demosaic_lines
     with open(out("summary.txt"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
-    sys.exit(1 if verdict == "MISMATCH" or demosaic_verdict == "FAILED" else 0)
+    sys.exit(1 if verdict == "MISMATCH" or demosaic_verdict == "FAILED" or not fw_ok or colorimetry_problem
+             or preview_problem else 0)
 
 
 if __name__ == "__main__":

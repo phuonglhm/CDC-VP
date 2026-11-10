@@ -58,7 +58,7 @@ required=(
     "${sdk}/third_party/FreeRTOS-Kernel/portable/GCC/RISC-V/portASM.S"
     "${build}/freertos_cli.elf" "${build}/freertos_cli.dis" "${build}/freertos_cli.map"
     "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/isp_auto.py" "${test}/cli_smoke.txt" "${test}/isp_run.txt"
-    "${test}/csrw_to_bin.sh" "${test}/demosaic_select.py" "${test}/demosaic_validate.py"
+    "${test}/csrw_to_bin.sh" "${test}/demosaic_select.py" "${test}/demosaic_validate.py" "${test}/csrw_codec.py"
 )
 for s in "${test}"/isp/*/; do
     for f in SAMPLE.txt job.env job.bin input.isp16 expected_nv12.sha256 expected_demosaic.sha256; do

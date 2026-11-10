@@ -178,15 +178,27 @@ def af_scene(w, h, rng):
     return np.clip(img + rng.integers(-20, 21, size=(h, w)), 0, 4095)
 
 
-def blc_profiles(sel, scale=True):
-    """All four BLC gain profiles programmed with distinct pedestals, trims and scales; `sel` selected."""
+def blc_scales(g, k):
+    """The four per-channel scales of gain profile g, all equal to k (ISP-UPD-002 migration of a v1.07 scale)."""
+    return [("BLC_SCALE_G%d_%s" % (g, c), k) for c in ("R", "GR", "GB", "B")]
+
+
+def blc_profiles(sel, scale=True, profiles=4, unequal=False):
+    """BLC gain profiles G0..G(profiles-1) programmed with distinct pedestals, trims and scales; `sel`
+    selected. unequal: the four channels of a profile get distinct scales (ISP-UPD-002); otherwise one
+    scale per profile, written to its four channels (the v1.07 vectors)."""
     w = []
-    for g in range(4):
+    for g in range(profiles):
         ped = 120 + 60 * g
         w.append(("BLC_OFS_G%d_DFT" % g, ped))
         for i, c in enumerate(("R", "GR", "GB", "B")):
             w.append(("BLC_OFS_G%d_%s" % (g, c), 3 * g + 7 * i + 1))
-        w.append(("BLC_SCALE_G%d" % g, round(4095 / (4095 - ped) * 65536) + 97 * g))
+        k = round(4095 / (4095 - ped) * 65536) + 97 * g
+        if unequal:
+            w += [("BLC_SCALE_G%d_%s" % (g, c), k + (0x1800, -0x0900, 0x2A00, 0x0400)[i] + 13 * g)
+                  for i, c in enumerate(("R", "GR", "GB", "B"))]
+        else:
+            w += blc_scales(g, k)
     return w + [("BLC_GAIN_SEL", sel | (0x100 if scale else 0)), ("BLC_CTRL", 1)]
 
 
@@ -200,7 +212,7 @@ def full_chain(bayer):
 # give the same expected outputs and statistics (a double shift would not).
 FULL_BGGR_WRITES = ([("COMMON_BAYER", 3), ("BLC_CTRL", 1), ("BLC_GAIN_SEL", 0x101),
       ("BLC_OFS_G1_DFT", 200), ("BLC_OFS_G1_R", 3), ("BLC_OFS_G1_GR", 1), ("BLC_OFS_G1_GB", 2), ("BLC_OFS_G1_B", 4),
-      ("BLC_SCALE_G1", round(4095 / (4095 - 200) * 65536)),
+     ] + blc_scales(1, round(4095 / (4095 - 200) * 65536)) + [
       ("WB_CTRL", 1), ("WB_GAIN_R", 0x1C0), ("WB_GAIN_G", 0x100), ("WB_GAIN_B", 0x160),
       ("DG_CTRL", 1), ("DG_GAIN", 0x120)]
      + ccm_writes([[1.6, -0.4, -0.2], [-0.3, 1.5, -0.2], [-0.1, -0.5, 1.6]], (5, -3, 0))
@@ -284,7 +296,7 @@ VECTORS = [
     ("full_bggr_66x34", 66, 34, pattern_edges,
      [("COMMON_BAYER", 3), ("BLC_CTRL", 1), ("BLC_GAIN_SEL", 0x101),
       ("BLC_OFS_G1_DFT", 200), ("BLC_OFS_G1_R", 3), ("BLC_OFS_G1_GR", 1), ("BLC_OFS_G1_GB", 2), ("BLC_OFS_G1_B", 4),
-      ("BLC_SCALE_G1", round(4095 / (4095 - 200) * 65536)),
+     ] + blc_scales(1, round(4095 / (4095 - 200) * 65536)) + [
       ("WB_CTRL", 1), ("WB_GAIN_R", 0x1C0), ("WB_GAIN_G", 0x100), ("WB_GAIN_B", 0x160),
       ("DG_CTRL", 1), ("DG_GAIN", 0x120)]
      + ccm_writes([[1.6, -0.4, -0.2], [-0.3, 1.5, -0.2], [-0.1, -0.5, 1.6]], (5, -3, 0))
@@ -303,6 +315,11 @@ VECTORS = [
     ("lsc_saturate_64x32", 64, 32, lambda w, h, rng: np.full((h, w), 3000) + rng.integers(0, 50, size=(h, w)),
      lsc_load(2, 2, 1, lambda i, j, c: 0x80000 + (c << 12)) +   # profile 0 is active at boot (MAS Table 31)
      [("LSC_PROFILE_SEL", 1), ("LSC_STRENGTH", 0x10000), ("LSC_CTRL", 1)]),
+    # ISP-UPD-001: node gains above 4.0 up to exactly 8.0 (UQ4.18 0x200000) on a low input
+    # (no saturation): 5.0, 7.0, 8.0 and 8 - 2^-18 at the four corners, per channel.
+    ("lsc_gain8_64x32", 64, 32, lambda w, h, rng: np.full((h, w), 100) + rng.integers(0, 40, size=(h, w)),
+     lsc_load(2, 2, 2, lambda i, j, c: (0x140000, 0x1C0000, 0x200000, 0x1FFFFF)[2 * j + i] - 0x8000 * (c & 1)) +
+     [("LSC_PROFILE_SEL", 2), ("LSC_STRENGTH", 0x10000), ("LSC_CTRL", 1)]),
     ("lsc_strength_over_unity_64x32", 64, 32, pattern_edges,   # ALG-LSC-02: negative Ge possible
      lsc_load(3, 3, 2, lambda i, j, c: (i * 3 + j) << 15) + [("LSC_PROFILE_SEL", 2), ("LSC_STRENGTH", 0x1FFFF),
                                                              ("LSC_CTRL", 1)]),
@@ -399,6 +416,12 @@ VECTORS = [
     ("blc_profile0_trims_noscale_64x32", 64, 32, pattern_edges, blc_profiles(0, scale=False)),
     ("blc_profile2_bggr_64x32", 64, 32, pattern_edges, [("COMMON_BAYER", 3)] + blc_profiles(2)),
     ("blc_profile3_grbg_64x32", 64, 32, pattern_edges, [("COMMON_BAYER", 1)] + blc_profiles(3)),
+    # ISP-UPD-002: eight gain profiles, distinct per-channel scales; G4..G7 must not alias G0..G3.
+    ("blc_profile6_unequal_scales_rggb_64x32", 64, 32, pattern_edges, blc_profiles(6, profiles=8, unequal=True)),
+    ("blc_profile4_unequal_scales_gbrg_64x34", 64, 34, pattern_edges,   # active 64x32 after the trim
+     [("COMMON_BAYER", 2)] + blc_profiles(4, profiles=8, unequal=True)),
+    ("blc_profile7_unequal_noscale_bggr_66x34", 66, 34, pattern_edges,  # active 64x32 after the trim
+     [("COMMON_BAYER", 3)] + blc_profiles(7, scale=False, profiles=8, unequal=True)),
     # ---- boundary geometry, every block enabled (G-E2E; 3840x2160 itself: tools/gen_4k_vectors.py) ----
     # Smallest frame the pipeline supports (ALG-DMS-03: 4x4); the 17x9 LSC mesh, 32x24 AEC and 32x16
     # AWB grids and the FHD Resizer mode are all larger than the frame.

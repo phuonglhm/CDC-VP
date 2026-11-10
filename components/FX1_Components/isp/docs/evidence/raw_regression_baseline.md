@@ -1,437 +1,437 @@
 # FX1 ISP real-RAW regression baseline
 
-FX1 ISP real-RAW regression baseline: SHA-256 of every frame's NV12 (active bytes) and of the statistics readout after the last frame, model and Python reference bit-exact (DEC-05: project reference, not an owner golden).
+FX1 ISP real-RAW regression baseline: SHA-256 of every frame's NV12 (active bytes) and of the statistics readout (after every frame unless --stats-at-end), model and Python reference bit-exact (DEC-05: project reference, not an owner golden).
 
-Generated 2026-10-12T15:52:55 from git e51b32550156 (dirty tree) by `tools/run_regression.py --write-baseline`. 116 runs, 308 frames; all bit-exact with the reference.
+Generated 2026-11-09T17:09:24 from git 75675cb3c2d1 (dirty tree) by `tools/run_regression.py --write-baseline`. 116 runs, 308 frames; all bit-exact with the reference.
 
 | kind | RAW | preset | output | frame | NV12 SHA-256 |
 |---|---|---|---|---|---|
-| image | khoid_ground_1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `272ff227ae010a6cd2c90b972265f4f4f7f987805a2a49d8820deda64040709e` |
-| image | khoid_ground_1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `cedc06b77cab5ee22e873856926cddb5d273f17bfcd468a7bab23d80b2a16efb` |
-| image | khoid_ground_1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `a9cc194fe67e8be1b9ad1d45a9f86a5ea7144036e785a93b89249585cd123cf3` |
-| image | khoid_ground_1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `d2817e9686a4c429c75907634c01f8ab8681434ed9ef1afcd561ad3ea9d6ce41` |
-| image | khoid_ground_1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `922f9b4d643c554a26cfffe6940a8b86459e97018499e64bc8fc78bf5584c12f` |
-| image | khoid_ground_1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `e9d18e84b7559fa09e73e80e51e80a9ee8a46b976434e432672375de85aed55d` |
-| image | khoid_ground_1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `e9d18e84b7559fa09e73e80e51e80a9ee8a46b976434e432672375de85aed55d` |
-| image | khoid_ground_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `fe02aaeff883beb42638e16aa825c784bf23dbba46e01c67c78e310389560255` |
-| image | khoid_ground_raw_2688x1520_5376 | full | 1920x1080 | 0 | `8bddad98388946f612f579111897dd326816eb7c20355f0f037ef7f318eebb85` |
-| image | khoid_ground_raw_2688x1520_5376 | full | 1920x1080 | 1 | `20efd004610ff5b0b6d83009b999a3648dee4bd8c76add08a7929ce7f8e52a4f` |
-| image | khoid_ground_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `39a0006368502af7cbdc02a69e3f552907bfaa1102243d4721ddbe7c395bfa1b` |
-| image | khoid_ground_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `ff2cd731cf2e942e5790cb563cb83ce7b4d03172cff7ba273333684b8c8c1de6` |
-| image | khoid_ground_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `a12932a842597f1917fcf8a163156eaf007bde462e871f5043372d0babd0e7cd` |
-| image | khoid_ground_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `a12932a842597f1917fcf8a163156eaf007bde462e871f5043372d0babd0e7cd` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `5baf97df8dea4ab30b8cc14d053f9c6bd057149a552b15304f1ed03ab26345b4` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | full | 1920x1080 | 0 | `3666004d3497ff50439eee782897af1a781fe35b16c101ad05690ec5c8eef2f8` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | full | 1920x1080 | 1 | `de3fa726dc695150d5606d3e8971de6d461fc87be1c619db38ecf95cdf20bf29` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `97e2de53edfbf0babf55cbd6a728022212466c45ea0bb72ae58e995c25f28718` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `c707e1fd8f1b0bdeaf9db516c6cf0e93fe65b32046b411cd38bfcc870f98ec08` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `04997bc867403d0559c538e5399855983cb4561bdf5268ca219b465e43789226` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `04997bc867403d0559c538e5399855983cb4561bdf5268ca219b465e43789226` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `a785773b7fabbe0c8166929b2db5b984a4afef7d83b4524c32696a054ceba472` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `871f0f88bb69dcd45b926eda8386cf5c461fefb8bd0f269d7056cee37d4b02d2` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `b277e5cebb9125020d2c568c4df2fb7575f12d5a099d85613624dc8f1fcddac2` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `f8bb290e54f54ec8515d30a65333810437baf27be9e1d293a1b79aeed489a254` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `9bd90c571c1a0aedcaabc6e6e34ce728d944dc2a1a153fc4464f2f15a7302c82` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `ce95f8582d06a75e347bae534e7796233f8b6c5623981340ea03e89b28b925a5` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `d3198e88a278ea1d3d08457fa44cfd04e4556f5ad4d42fa5994d9720aba36735` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `959832490cbe5796164649108bc410616a7bc87752c646f8a5319b6f6f820bae` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `6f7d758791fbdc970bf02efb1b88c0fe8f16e47dba45d22b28ca8a2b4fda7deb` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `c2faf7ce8ed8000f2a11abd3031b51ad0389c67b554956131ff3cb818e2cf7d4` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `4aad9a2328855d45291ef96ddae2b96710a18759026fbb50b31fa3b072412cf5` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `7156e5c5d216c161e5237633f6504db62bd8a5078fef2d4e2e30dc73c4c7b580` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `68ae6f8ca87d1f0067bd9ae81fdbefc86ccbf3e0358566b2e63b2c273ac5d3ac` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `6def6b8f050fefd4397abd164ff2e089cf7691692b7a72b4eddb4d0972d8f1a7` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `e352621cfebab37a4f972dd13dcd269c8ba2e46c203fb493cef79f31f200fce8` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | full | 1920x1080 | 0 | `06be225358bb5bbbe3f3aefd1dc53eee4de41dfa649810363bbafed12c66ae02` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | full | 1920x1080 | 1 | `5ae70875cc4df576e71dae437df8f212578c1a896fe04d49d5d4489f734a0e77` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `48545fcb3dbced1a1b1a34a1dc65634e4cd6c2b4cb98b53ef13226893a81b67e` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `416dbdf4b28eaf3c4376dc9b65a9710327ffbec4054dfcd6bb218a361b20cc22` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `9d5f4e4fee0423b2e5ca8002c041eef6c5295e40c9571b97782accfc98a5a694` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `9d5f4e4fee0423b2e5ca8002c041eef6c5295e40c9571b97782accfc98a5a694` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `ae2ac05821b62eb1b6efff90411ca9f91cdb8631acc067df8d723bf0793e9fd5` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | full | 1920x1080 | 0 | `99255a42a63c51eca56476c18d457e258fcc7faed7576a618888c992946dc343` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | full | 1920x1080 | 1 | `ba4ecce5509d5dc0c0587e2a6460f8302823efc326038d97ed8f698ed335bb25` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `9f1cb3d8ba206ad55c1a0ccdf3b13a5117b5b9d894c9f0cbb6f2cf43cc6bb95d` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `bead857ad165f279e023034fa8c8c6d7379b7b437208c32ddc84bb5b4654992e` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `6799b30c650edcbae88317c179b05cfcb266194a2cc81f9b1f808eddb44bc499` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `b4ce11db5c030fb0ceb448f4d4467b7f0f16bc36e5fccddb314d63cccfabef5f` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `54f98da5d3eb5021fbc6ca165e84c8c28e24fcac2ce43e037c79950f937c6586` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | full | 1920x1080 | 0 | `84dd54d43722edc6918c683dcc314828897596c3433fea53d65d40274f060364` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | full | 1920x1080 | 1 | `a5123279aa4361cdf6bbd5418ea8383fcf06c9dc983d4de08f8e557a31eb8046` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `77a5cd4facdc81de18ba2c37d57b0ee07bd9f0861105ca50bf5642a0fad661ae` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `1fd3f00acbd1c90a4487cd7f2246f3a08a8dbbc30e1600b80dd8fcac69242217` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `c6ee6219d5ffca02efc786538abd5427d7f0f598c6a922fa8197ecfe7a437585` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `22bed7a0b9611e7aa7f7cd6701ba984b3317ae09a0046e5f5b0c8ac0d1ec4126` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `dd8d0d5833f19deeaa4c01d9c942dbba51a207371d26ccf8e64fadde75854b46` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | full | 1920x1080 | 0 | `892fe1f1b5be76aa6e591ca5baed0174bb096e7e868c7c298483bd154e23d5e7` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | full | 1920x1080 | 1 | `7e12b8fee972cd134e7fea794baac67a5f44ac07d1f999ea459fc6547cc3ea21` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `476c812023c0cc89b6eb9d96157bb7857da9306732b442fd21f6929951457948` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `44b9a0d4d362ee8b25672c162f435f029e235784b1a5afe7b41dbf7d5a312a77` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `b4445b3fe36cc15185523a42194806e4dd0ac372c0b154934a23632146172b35` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `13b70f5f3cf537e63d10f59d755eba584f385ac206e94c7ea2e1ed4ec0918382` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `5c15c889f091c6694698c724454da1c8ad7d455b934bbf32b8df4ef3024316eb` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | full | 1920x1080 | 0 | `7ef6f7a4e88fad9b589ae80f7f2a260308820bf352012c616186a531691b3616` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | full | 1920x1080 | 1 | `39180863ccbba5c96f11f5906872e13fa9d1e2c6e48f067d3af43ab326c9a610` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `10bd1a37ce81979f1dcef31575a74260de9328b30634b8a45e5fce0f14556b05` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `365814e4f9b50bfbb5896351fb1c731a85b76ee5818a63a2d76ca36434cd7817` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `3ed1ee2c54107364c8caeedf31682127daa971862e9f93cd9cefb33c3a163cac` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `3d963656cdf7e120050e60c033f779fb32c645fa177f951565837993bc66dfdd` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `1c05d2fce725faa9fdcbdfc692804845473131ae039b6ea9fdeb6a80c27f56a2` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | full | 1920x1080 | 0 | `1ae50c58bc548b658efa0b8e22c6fabb6fc7545aafffabdccb6ea8604c34ef9d` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | full | 1920x1080 | 1 | `0f88b5d02e29530b61a8e9ad402f4361419a7d34e244fbcbdcbdc74c318db21c` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `6bd29083c5a1b38021fc3a6520bb45a860f7484c9878ca035215dbc5e495aa0d` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `87567f3b5734ea477ada2c03ea9836bfe26433188c18aef9623ff8b35b13a1e6` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `f5ef42aad0ec94f7cf416c89e04dc69effbb94f7438bf4ae05f05358a9d7a3c5` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `f5ef42aad0ec94f7cf416c89e04dc69effbb94f7438bf4ae05f05358a9d7a3c5` |
-| image | khoid_outdoor_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `c4f8b214dda77b4c124d3164f162eaaeb128906006cd8fb41123fcca1019be78` |
-| image | khoid_outdoor_raw_2688x1520_5376 | full | 1920x1080 | 0 | `5006d3e71219e73b2f2802a12c01ddee81083886525ed369162fb44314eef3aa` |
-| image | khoid_outdoor_raw_2688x1520_5376 | full | 1920x1080 | 1 | `64716f209e4549a6aa366274cf9398ddc0ab2fea249ae8217bdc021933b7c803` |
-| image | khoid_outdoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `d092635dbbbe402cf4af92e14f175645d8e64b13ff3fcbee3b0266c814a19636` |
-| image | khoid_outdoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `c4e3aab9f3c13982538f7c059ea6002056979112b1c2883e056945d15b2bbada` |
-| image | khoid_outdoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `34913385f0c2242af23521b86e8d94c6708a7d461ce60480405601498ed51bb9` |
-| image | khoid_outdoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `34913385f0c2242af23521b86e8d94c6708a7d461ce60480405601498ed51bb9` |
-| image | khoipd_basement1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `f1cdc84f9b73b1f0ea500a43bb29cbf053250728d7a85eb9f021a2c2f8ae031f` |
-| image | khoipd_basement1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `0cdf1258539ea2047761551f12cbb4148bae28b1c1043f57df9928761199ac36` |
-| image | khoipd_basement1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `c5218b9b2cc556d957395c91173b5fa2f51a0bca6c92297ed3405d3de38b2dc2` |
-| image | khoipd_basement1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `d95807b504e8d0e201f9f478fa5a6779118f831a5eb2e1fc61b685bd2d643369` |
-| image | khoipd_basement1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `e1f26a27604a5706bbed6dbf3a68b5e760cfa03f7720dab2c19c61a04e867b62` |
-| image | khoipd_basement1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `5dfd67cc1e672a011c64b3106c8b2df7f6e98e10dc7ca770785705abfd430620` |
-| image | khoipd_basement1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `a7cc64cfcd48e0f2e61ce5f080db162d523abae7b3fe491e859062770b00af86` |
-| image | khoipd_basement2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `96bfef1e046c9b97b501a73de3d2db9eab8755441d9074bda72fe5c97d6c558c` |
-| image | khoipd_basement2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `fee19afb53109d08f228a110ba2574e52281c8b4df7daa625f2c672de9902891` |
-| image | khoipd_basement2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `e72da10a8a611299fee3a05d162bba9c4cbef08e3f86f5c2672b2b661a650a22` |
-| image | khoipd_basement2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `f7392429fb210b871aba9a7d821aa5509a6c39803f1f4a38e0741e5e2673fff9` |
-| image | khoipd_basement2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `7385d9be63ab01581fc4e67026316124c86da97f796555b143552fe00d9d80da` |
-| image | khoipd_basement2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `d1c5238bbbbf2003e0ed7b2f623bc67fcc651ed800a70d1d6ebceefdd73aad48` |
-| image | khoipd_basement2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `83bc51a67dcdf8626d486a8ec07a5cc18cef0d78beb7dc398295ecb26d082da3` |
-| image | khoipd_basement_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `6fdf354a46b385be0abbf64b77627334d3ede3907e33609e89500d2be7621696` |
-| image | khoipd_basement_raw_2688x1520_5376 | full | 1920x1080 | 0 | `1314006ae17af512980f92f03a3a02b8385d934e0a58dcf6d9085e12fa310fba` |
-| image | khoipd_basement_raw_2688x1520_5376 | full | 1920x1080 | 1 | `a4d35efbbaf4683c3510dcbaf02841cbbce5038f64cf15f0d2b304d189f667e9` |
-| image | khoipd_basement_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `3c1e16a805b8d328f7246168ed8b94324a2d9ad470791eb7a53c53543da51265` |
-| image | khoipd_basement_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `0af5170df4c137168f9c953ddf4b1b26fb1f3ba6e3302dd2ef5db05d0bb026ab` |
-| image | khoipd_basement_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `353d9d0a9ff53be1769b0d8c13e667209ebae7768fef82ba71af6a9185008542` |
-| image | khoipd_basement_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `f6af5b621ddb54d3815ccf1926450a59e302cc5b85d5a3bdea7b587037714ff5` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `b9e2d98ee6bc282bfd3df832d96a4d8b7d714c7d9a5c73c457be5925b86d0302` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `daf8eeb4e7bb4cc689e1182c4ec5cacf30a6bc67482b7841919c936c55fbbaef` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `f3852bbb9c224f962360ab2b381b80dcb88106e9f23335fa0d8535b91d42d773` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `277972ad99b7a92282b958577ecf94be74561700ca8f9625776ebf03c36f2292` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `62849b891e9bcefbd847db0a010c29ac7168557fc92d7660658fb242e2cf03c9` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `4a9128163e584acf6b6dd52ac7a5cb10ed5768a1e0217caf8d8ca0d705facc92` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `48e90815bd0f5b242460d914e378b2b4b8c6a9249fb215d4178f251cc4dd7e96` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `c1367dd92963066a71bd49853a55025e536ee6b685516d685f98a464a33e27d1` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `d6ddbeb988f1b8f503b8ce47ce29937570f0889b1ec111ca0ddcbdcb37b16526` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `12b271c12ace3fe64e747bbf9b613c4a11ec59e4a6491c3a0d0b9ad1e5ac469e` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `ca070b11291404c2064c3f19787cf6aa971e6e49a6bce4095633675230f0c884` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `015b554168ee4a056ed5ef8261617b46bcc921267a5f7c96d0a215f80385ccd5` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `8531c3dd51e934c2d0e3d8541facb5f5238db179648c31e35b7c6c03c482e5f5` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `8531c3dd51e934c2d0e3d8541facb5f5238db179648c31e35b7c6c03c482e5f5` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `f256e44c2c9f8e95ea333da2417bd3b50a59a123ee86e42c05f3ee7a511aa51d` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `fe6e4bb455e5aeef87862b02f80f9018cfbf5cb5356a047219425e773309b15a` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `e5cc1eb222bbc99fd53079a3ade69447a0de5ef8afdc4b5986d39e7de363226e` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `be89111d6e2273c87da6e2d72c71bcc0e33f3bef05a81e647b4735ca727a52ce` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `d0d76ea23041f409be89b688d2e632ee5ea09771eb6f6396f3ba6032c965202c` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `c7d4e45de935f7aa5854fc40df776b38e60f20cd304dfc794ac17f6067771a11` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `42cf890300cab25d9b0ee22e9323581fc4d478541ea23b706e8d202279524798` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `29b6b1664b46b910f95bfab1e53068b07b0f15eb70d8b34dfc0f38fdd0c425f7` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `812a49f402690de686899fbc4369d7c51f69639b4bf0b4911ab1da6aaa2c04d1` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `1089f4b9ad8ecac2fc1d81c3e87c2dfea0daa588ffe12176ffe65b52649b4d19` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `59fae90bd50d11fdc0b29673d3fc5a78d70c87faedbe62ed20e8525f711babef` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `1e0af1d3dd537e2f598c950be8900cfa7d07f49307d0748b4734c5b16bb4746a` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `0baaa16eb70e81fad4168a625c650f5e12b469e372b178d9776985ca75ce50ff` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `c5e78fbe4b651a90f963f0992e117f9b561efb2eb1b3f066cfb885e77a101831` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `93845d0bc26776ee29d2bc0edb01c4c7ef09de3c0fad80efe04b60f802c9060d` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | full | 1920x1080 | 0 | `40341c6f305b203e1cd225e6550b460d4c8d93ff2f1364a1deb973899aeda632` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | full | 1920x1080 | 1 | `3efb26ecf9a3625433af3fc1c62ecf5f5296c4c4adbe49479b1a9ae9ae2e5e29` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `0bc4eca676787ce68d29f99d9ce7704c42237b5ae2715c266f2c700c5b32b793` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `0441f9514a3272e361f2607462a5f405f8615f0cbf42fe14c491588ec04133fc` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `0f30023c24aceffb52402dd5fb77e64611c3061f0eb241405ea2195d88cfd519` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `1cd2f9bc9eeee44fc6e1607d65c98c20164ccf27ee8b091bca4c573d353df387` |
-| image | khoipd_indoor_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `a8e19ddb66ff4a393008fd46dea5bf67a3c1d39f7879e4aebfd96054c6444a8f` |
-| image | khoipd_indoor_raw_2688x1520_5376 | full | 1920x1080 | 0 | `e624f0a29fae13637caa1566b230bb2c719a792950046d80957d500094a6b7b9` |
-| image | khoipd_indoor_raw_2688x1520_5376 | full | 1920x1080 | 1 | `52edc062557b3526d582ed9ccd095b09bc553d02c13ad2990a20528024f7b771` |
-| image | khoipd_indoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `27cc5a98740bf55325e0ff493e0c346a82c79dca67f5648cd0c384f2a3403b52` |
-| image | khoipd_indoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `df01da6f5f95e4d3209d7412f2bdd2cb1ede40ad0c76aa20a4def05fdf4fc6d7` |
-| image | khoipd_indoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `db3bee92e0704054b4bf9a0970044bb14e3d03468f85421ee56fcf4148046ac0` |
-| image | khoipd_indoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `1044ba331f6d19ad3d2f7abcfa6bc8c7aba67d817c3342ee22be81b5e6fcd3bd` |
-| image | khoipd_night1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `06492195856ea3953862ede0c596c661a4341acdf92f949a5b78bb163cc87746` |
-| image | khoipd_night1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `18064bd3e6c6dc8e933561906121a5601cbb6e836c3bde2097605c0ae7e2e998` |
-| image | khoipd_night1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `6fd1603154ffd2a9e67737356bd057a669401ec90c069483907774a38c10cc9f` |
-| image | khoipd_night1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `5d472db108b9df4e29b531271b5d7415268f709107d5c9efacccc98a435b10e1` |
-| image | khoipd_night1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `17247c860622707029bec1530215132b4afd0e2fbd72877845f4d92d9e686e37` |
-| image | khoipd_night1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `8c1d4a7b43d6f0d1d856ef63a2306673c60ca653008b3da740206083644a7aab` |
-| image | khoipd_night1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `e6401c475b539f693c7f5f8927c25c3633e73713cc7e2f3716935c83f10d5ef9` |
-| image | khoipd_night2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `c0e015255d563c3f976d5cfb466a430300756fa7469d8d57fcc8dae98cb8e3af` |
-| image | khoipd_night2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `9aa113b89c33e87b2a5baf7153d9a83d87da46a872a14ba77509c36cb53ff68e` |
-| image | khoipd_night2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `60a553133300b7a9082d899fa9c4ef47950ffc0b1060e22eaabf7295bbf69d56` |
-| image | khoipd_night2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `03526a6b4ffc26e982a7445b7710d695f65a5ec50dea166f3dcb312216720b4c` |
-| image | khoipd_night2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `04613c3143216295e749562d750259c2b8862db08fe3de035241a4fe320e4145` |
-| image | khoipd_night2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `4cf622e2a919d34d4b5165ff3c6e9e17eba12eeb01461e2201e82354d7d67f3a` |
-| image | khoipd_night2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `664d9347c39bdec8af760725239ae4103cf47b47240a3f2b748e5bf17259bac6` |
-| image | khoipd_night3_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `7bafac4395d12bb69559bf10b83be6b1863a03436dc9cda8bedf2aac1fe73c3b` |
-| image | khoipd_night3_raw_2688x1520_5376 | full | 1920x1080 | 0 | `54bad710e40f6e42a8afb67dda0aee81d4aed45ef16688424ebb1e956a94f5a4` |
-| image | khoipd_night3_raw_2688x1520_5376 | full | 1920x1080 | 1 | `cc5d1276f1134c2cfefbd990d9024b20ec4b889573facb3c7ba50b93f1b5ec20` |
-| image | khoipd_night3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `060b5590bb2a9d4755c53edc246ec4f5b57ce49c300d0b4f0a01873c07cc9085` |
-| image | khoipd_night3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `bea3ebfcda2feb6ed76d665cafb88d5f7b447a1b777d1502401a702a613a3bab` |
-| image | khoipd_night3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `70aff0bb4971f58d5ff830e96335116a941c28067bf91d23f70f6d3661131ee4` |
-| image | khoipd_night3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `97c10bdc97b6e70817591de100c74ac6beee4e67d8682eca7fa116d0df04fcbe` |
-| image | khoipd_night4_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `aaa9d8696fa35c888cc70d5ab9e2927b5ee049c93d5ff0f9cb919b14885fb3d7` |
-| image | khoipd_night4_raw_2688x1520_5376 | full | 1920x1080 | 0 | `e7e59effaff9dd82b85f0b6c7b20c8e99e7e40363be24adc7da3683b6a741bab` |
-| image | khoipd_night4_raw_2688x1520_5376 | full | 1920x1080 | 1 | `3e28e45e4a56d11b2ac515b765975d93e4df9d4e5ebbeaa7767b9453a5c49e8e` |
-| image | khoipd_night4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `b8bee6dc26c9edc6a9b9e8a88a0c06a5183aeb70574cacfa8c2ecb9538fa1b4c` |
-| image | khoipd_night4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `c8a28efd22ce8fac5dd4ca94ccde08e7b9163083cdfa9cafa2e4688248eafdbd` |
-| image | khoipd_night4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `82db938593f6bfcdc2a6e4319958cda1fa344978680eef10adfb670fa9c24b21` |
-| image | khoipd_night4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `25cd35957b899bc0a2967dc6a19767679dd3a7a0e700f63c59fd440878cbbcd6` |
-| image | khoipd_night5_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `edbc52e63597dabb5935b4b040b7a2b4ddff86d55d18177d5b7bdd701e4be1bb` |
-| image | khoipd_night5_raw_2688x1520_5376 | full | 1920x1080 | 0 | `9f87d9918e97aab454101e4b0830f5f650073298e1f011b5f688a422f4be8c07` |
-| image | khoipd_night5_raw_2688x1520_5376 | full | 1920x1080 | 1 | `257dc6bc884975739d967aa50210342631d291f0d93bbf5916ef6a7d901b0c2f` |
-| image | khoipd_night5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `f5f31fb9503dd9a3b58755311936e9b8071defbd245d5c3ecbcf0c38146cb7fc` |
-| image | khoipd_night5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `c0ba24be744008bf1928da6566f2d761bfe14d0a017d9f6b0a3c52dce51bf754` |
-| image | khoipd_night5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `a05a09c6c0d01a06156a582a4eceff67e072ac00b7e3352a74ffffa42654a930` |
-| image | khoipd_night5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `1164530a2b8c3b96257b6e36413d9566793bf72b2509c1162534d2b56bc9e00d` |
-| image | khoipd_night6_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `ffcd389e1bdf93945951bb5ac31b37c131017fbb73c2f816c5d5e88baaa1a241` |
-| image | khoipd_night6_raw_2688x1520_5376 | full | 1920x1080 | 0 | `458893517fd98f34c82ff858bb4e9502ac65c1cf4fbe03072bffd3d796eb2a6f` |
-| image | khoipd_night6_raw_2688x1520_5376 | full | 1920x1080 | 1 | `bb8c39a1d1613c99de441dec3960b4bf42e06c5d526e1de09510482bf722257a` |
-| image | khoipd_night6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `6ad9692e769456b28ba70f92e937aa6470772384bf4ee515be602a7d2d5c8a69` |
-| image | khoipd_night6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `a955426ef19c62b3ba4cb63eaf6aba517fe74cf4ee934846f41a21a7c2142468` |
-| image | khoipd_night6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `d58671745be609e53691b9f1be738743bacf7fcc50de4171469f20708f53da14` |
-| image | khoipd_night6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `b6e4badcc40f4292db014f5d3b76acefe962b357cbe3ae7d59b181acb78a7b5e` |
-| image | khoipd_night_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `4a68adda77fd93f37465e54eae89c0759302ee1963926eb53cb0130790757863` |
-| image | khoipd_night_raw_2688x1520_5376 | full | 1920x1080 | 0 | `b97d326e9dd794ad3b9e74950b5ee05f7b38d2632bb9505ffc7a80e9987c5bc5` |
-| image | khoipd_night_raw_2688x1520_5376 | full | 1920x1080 | 1 | `0f3177fe3e1781172fbd7b90b4ff437ec5f9edc6888d7f50086b00c46a18f092` |
-| image | khoipd_night_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `3ed77d9eb55e726bb789e905c5cf35f13a123ab12a972b57f1455c740ed4c617` |
-| image | khoipd_night_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `627c7a1035eabd24c7a7ade33b0ac63e8b39ecfb4f11fcbffbb5e7578ff56c8f` |
-| image | khoipd_night_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `1eca81f3be32b4a5467ff59654f2c4c39b888b88f709f6d6e6b867dce92c01fc` |
-| image | khoipd_night_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `a14c56b64ec7808ac5573def419a1c62a4e5123e985d75a4c57c7e8015b63441` |
-| sequence | sequence of 28 | basic | 2686x1518 | 0 | `f1cdc84f9b73b1f0ea500a43bb29cbf053250728d7a85eb9f021a2c2f8ae031f` |
-| sequence | sequence of 28 | basic | 2686x1518 | 1 | `9c54ee8a37755e499c9376b4a0b7125ecf7b66a1005a3816f3ef401730b5fa7a` |
-| sequence | sequence of 28 | basic | 2686x1518 | 2 | `acf5a5116c6bf217ecb31e424432ecaf08afe0e6da4023c579481ff0882bed3f` |
-| sequence | sequence of 28 | basic | 2686x1518 | 3 | `dfa49ddb38857c5f74a6f5388888bc6522d37182147dd151fb0a8de2fc55c75a` |
-| sequence | sequence of 28 | basic | 2686x1518 | 4 | `0ce336373fd8d5fdb7697d5d75ed730bd4b04f79aaf22dc682a1cfbea3e614af` |
-| sequence | sequence of 28 | basic | 2686x1518 | 5 | `41270027c6aee0e63a71f8f1f51249c41fad93f7f80343d1243322c95adfcca3` |
-| sequence | sequence of 28 | basic | 2686x1518 | 6 | `e8f5332e63062c9e395d4edb40f65d8fadb3329af899a70839a354cce73302ad` |
-| sequence | sequence of 28 | basic | 2686x1518 | 7 | `19048cf19926e494942019fb3e3dd51d356ba7901469c3012af0d903858e02f4` |
-| sequence | sequence of 28 | basic | 2686x1518 | 8 | `5501a46539d12c7be4ccb59071e0929607ac3805b63260bb997ea3e101287134` |
-| sequence | sequence of 28 | basic | 2686x1518 | 9 | `f2de8d8d0c0aabd117d86b527a7a4c7bfc2ec29e10a9db56c203b43c28a389f5` |
-| sequence | sequence of 28 | basic | 2686x1518 | 10 | `c0e61a79e9f357d3d07f0c2a76660b2fd8bbf63ae0fe1752dca73a63816999c3` |
-| sequence | sequence of 28 | basic | 2686x1518 | 11 | `e546b94621bb2d55f8fad08bb6b95316fd1d509a7d75b35580fc55d461c51c0f` |
-| sequence | sequence of 28 | basic | 2686x1518 | 12 | `d7eb4b88ed3a5378d1009b37e39d07a24a0c05792882b90f154c763fab05801f` |
-| sequence | sequence of 28 | basic | 2686x1518 | 13 | `b9be84dee37fa43fe3eb16a5c05d2cbf42c4d3fd0990048710553c5829783152` |
-| sequence | sequence of 28 | basic | 2686x1518 | 14 | `247aa9b73a61fe54aa17f98ae64b2b60b1b8ae7d38882cb133f0a8c28d3faf1e` |
-| sequence | sequence of 28 | basic | 2686x1518 | 15 | `82565d896873bf28c77f2b93fcfd71612ee92912dce70876f6c4513d27ba2f6c` |
-| sequence | sequence of 28 | basic | 2686x1518 | 16 | `1fd6da1adc87012d2566ce7b9442902cda3fb3b1b17da3e59ce37cac784fd089` |
-| sequence | sequence of 28 | basic | 2686x1518 | 17 | `cf6e15a8ef38daa0c291999346fb8b5374c8fbb3d3af4cabd538c98b7a60e46e` |
-| sequence | sequence of 28 | basic | 2686x1518 | 18 | `7aa8e2fd6a878b72efe93deb114b1e78ed605bfa9e7f137ca03da81dcd25f3df` |
-| sequence | sequence of 28 | basic | 2686x1518 | 19 | `9159ba9c32920cb3a77ec6d85b68c440e877a3c5a3684d8cd52e8ce8ee295f3f` |
-| sequence | sequence of 28 | basic | 2686x1518 | 20 | `dcd19240d5ea38582007dc48deb9ea8d349bd5a54c9ef0046ba0a06199dc19c5` |
-| sequence | sequence of 28 | basic | 2686x1518 | 21 | `bc7abde66ea044e1c6ba9c996320b3a466a1060c207604f679f942bf4a5f5838` |
-| sequence | sequence of 28 | basic | 2686x1518 | 22 | `d609c00ef75c6aea25d05b1e49e3c2cf1eed977d43c66a18fd938832cd3f230b` |
-| sequence | sequence of 28 | basic | 2686x1518 | 23 | `9b1b2dda45198a414309a1bf197145f24e85323626be53468008d1c36e28ab94` |
-| sequence | sequence of 28 | basic | 2686x1518 | 24 | `442378be4a1e0bfe62458e2df7e3392a7e2025860b00f96abd05239f78b3afd4` |
-| sequence | sequence of 28 | basic | 2686x1518 | 25 | `69e057cb139ae03a0e6f7a1c46b90db95efd3833cb46f352ad011f93487a5de2` |
-| sequence | sequence of 28 | basic | 2686x1518 | 26 | `635e4cccff8f2dd5ee61317c1ebe92868a9043cf414e151ad96e7857751ab211` |
-| sequence | sequence of 28 | basic | 2686x1518 | 27 | `ca18efa337d01d41e96893e1848edcfbec7728738f326f7ed8b429cb0c415f89` |
-| sequence | sequence of 28 | full | 1920x1080 | 0 | `0cdf1258539ea2047761551f12cbb4148bae28b1c1043f57df9928761199ac36` |
-| sequence | sequence of 28 | full | 1920x1080 | 1 | `82a26db0f236b98beb1f606be73ecfe2eddd43fb5fe04a19f0adbe182202fcc3` |
-| sequence | sequence of 28 | full | 1920x1080 | 2 | `780503dfdd09f4140b838ddc1ab8bac9afbdaf496607b572f5060b154ffed67b` |
-| sequence | sequence of 28 | full | 1920x1080 | 3 | `e29b7b6bbb345ae05a374d9f07a95d8c21bfaf87d5233ba52672ec46bfe3d33e` |
-| sequence | sequence of 28 | full | 1920x1080 | 4 | `32a24c2671972161bdf705902ea6764d4105aa0a82e67784faf0371d8e694d14` |
-| sequence | sequence of 28 | full | 1920x1080 | 5 | `aa828a4b2ad3b8d9228cff34dc970a7d37993f317a0bbdb17ad63b9b9fc0a93e` |
-| sequence | sequence of 28 | full | 1920x1080 | 6 | `b1a9954f3d65c100289aa9b15ca06ef2c247c8874f3d1437ebf35e4826965863` |
-| sequence | sequence of 28 | full | 1920x1080 | 7 | `bdf2b0cd455792512542e82fcf9b40dae5a31222e4e43df92bc8eff2bb4329fa` |
-| sequence | sequence of 28 | full | 1920x1080 | 8 | `57cb64b00bea22264a7fd6d6b2c50936ee8c740b68cbdb3591b3b9418ed0df56` |
-| sequence | sequence of 28 | full | 1920x1080 | 9 | `26c88926432c423197438b825e2856f11aa4f94fed5538f0095cfa87b3338c59` |
-| sequence | sequence of 28 | full | 1920x1080 | 10 | `e51523d8a337bd9e690471f4fa431f95d23ddfbd7215a0b0c39a2d70c8121503` |
-| sequence | sequence of 28 | full | 1920x1080 | 11 | `76c94113db2ff039e36820eb660f1d8eda6871d8206431393b23a434af1f10dc` |
-| sequence | sequence of 28 | full | 1920x1080 | 12 | `3cecdafe7d29621b36e35ca20b5bc4b8b6ea63f2fcc48fd055dbe48d3b60a537` |
-| sequence | sequence of 28 | full | 1920x1080 | 13 | `255cd0ef208f52b051d2316a32eb8452b1f33aabf2fda1a5893c1299b4515a4c` |
-| sequence | sequence of 28 | full | 1920x1080 | 14 | `520cb06f04cd4e9fe25ab4989466096332d7e78e5740a06a689b7a9079173878` |
-| sequence | sequence of 28 | full | 1920x1080 | 15 | `e720336060402741f8d5fbbe491d4343df3d8afc533854426fe164e652e52184` |
-| sequence | sequence of 28 | full | 1920x1080 | 16 | `c40a32c96971837c9782075bae031e2846f9499d76e8f18d2c50461a3dcf5ce4` |
-| sequence | sequence of 28 | full | 1920x1080 | 17 | `97bbfc92592e244520548d96dfe47ff78d960ae9a32b42099bb1c943ff590b28` |
-| sequence | sequence of 28 | full | 1920x1080 | 18 | `3a49ef4e0650d32506e7d563762889923eda5dc20588be60168df3060a89bdc5` |
-| sequence | sequence of 28 | full | 1920x1080 | 19 | `cb1a67e6126a30e6046a5352cf437ab03bf2aea1cacb95e474c1d6752b16d8dc` |
-| sequence | sequence of 28 | full | 1920x1080 | 20 | `574934e5b1a027faa9809319627ac7e63d93c272e6836d47b971dbac7345c81c` |
-| sequence | sequence of 28 | full | 1920x1080 | 21 | `71621c1c4e7a8519a33ecf8dbf14f0e1ac30c45cdaf5292f16a08ec73ccada55` |
-| sequence | sequence of 28 | full | 1920x1080 | 22 | `e9ed3a227de1cc2e8f28d983910c2408fbcdb60cb36c4ef58fb92dbf889ada1b` |
-| sequence | sequence of 28 | full | 1920x1080 | 23 | `530d2bfb0d4698ab6d29652d008674a86dc4f9af5e997cef1b68cc4bc8eb5ad7` |
-| sequence | sequence of 28 | full | 1920x1080 | 24 | `24394c312210dd66989fd64b68538f1b90a2f427593e33bb7dea5311d4c6addd` |
-| sequence | sequence of 28 | full | 1920x1080 | 25 | `9e59d1ab7b5dfd5abe7db8f7bb346e64b5ddcfa45260bbdf590bc57b5f4fc537` |
-| sequence | sequence of 28 | full | 1920x1080 | 26 | `9a51aa24c2763efd8cd0cd8c47f421426e0408d2b52c294056bdd9c2a3d20db1` |
-| sequence | sequence of 28 | full | 1920x1080 | 27 | `07087cdddb69f3a22485b0b8ea1a53cfb947ce353c2ae280573b87e81c145799` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 0 | `d95807b504e8d0e201f9f478fa5a6779118f831a5eb2e1fc61b685bd2d643369` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 1 | `4c2b1d4da07e7005adbce34da2f40f570470af1535b0308c30fff694ed296572` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 2 | `517135f757d9ff7edd0499a787df73873c85d85d1b91c3ba62cfe3112e999978` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 3 | `bd3cb1377421a5a8d3b20394280e44855f19d0de7c50e60dc0acd04533d28aa4` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 4 | `fae9613140b3e67fad21268f3baf4ebf58ca84e7e2cfb05554c270bf9a5e59ae` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 5 | `a9d83638951c0b54cb1d06e7c1752e43a08c1eb79555461df2d78cff49f99b42` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 6 | `c7f1dd795484afea07f54d8e67c025c195bc2fcff785a074345c508e961bce23` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 7 | `dceb6386f20070391b662be92e8c7703ce7bfb229f2286995159c717c73c43e1` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 8 | `4084fa03f56a27178c7646eca5f294d8e2d7c98cfce37b68f1fa573e5e0e5d78` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 9 | `87ab737825972f11742bef4a8369292b435cfc3ceda59940c9e861d3ea5f49bc` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 10 | `1976ba720456aa48ba60ba55c334dbf658a8848756d92d65bcc4c7579b3ea1b2` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 11 | `ab7ef3108e8fbedfc33ae111e3a7a0a0e4cbacc11fb27fc8e5bb1c378dde97ab` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 12 | `80a039536560aa742afc4704154df480fb2dcca4af48a33d958f603bad0163ad` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 13 | `a31d1070359485a154724d5a055df177dce1edaf8c96da04028e35a66d0610aa` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 14 | `fe734b7af2dc5f03f0938426e4f477651d07fd701950069d1b6833f1a1f849cf` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 15 | `ad44d9e72c9a4413d2ec036298024b043cc04c621fd1ed1b12451aa670c1dea5` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 16 | `7dacc5e45c7af993bda988a259d167067f4a4889005c938de0db5671cb11456f` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 17 | `33f213e4106d8ad517f4b5a81189f75471f569c1b7a4bde7f6d2541eaa0463b6` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 18 | `073bcca2fae9dc1eb241f068d4d78c338bdf4c8edf545ccc53a1ba3ded1d2de3` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 19 | `9d5d6b11b4970c122f90e3f85456be111cd2f3d8ecad61bae3d61d91121ff8e7` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 20 | `2b85e299e81b3d27e3cd4b49ac767e0f50ffc8f7d54dd29bbf0714f8c739547a` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 21 | `19aeb17ef3e18dc64e97dd21424f7bf3b8712bfc8f0f459221f2f0650a2efa7a` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 22 | `cf36b4df7526521e069bd5686b4a9c3b62638f0c226488e55e1427dc71606dfd` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 23 | `67cf0b5506a301025d6040be7e6c3774ff0de5bfba5817f2fd2493d67d9c70bb` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 24 | `18483a1ae07057f534d7f0679cbb4801a0ebd56dfefb20074f6bec1177144858` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 25 | `192a66e445c89d7bddb65c30fe2da9338276feb1be04c1349dd6a771c7d6ad44` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 26 | `2580f702ae2dc267bbc8ab68850f3b96be3b6e57a50485fde15df753d8987e74` |
-| sequence | sequence of 28 | full_vga_709 | 640x480 | 27 | `30c09313746a5b26d18dfda05427bc1db7c71e47cb2ff9e7a15803801f2ff7aa` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 0 | `5dfd67cc1e672a011c64b3106c8b2df7f6e98e10dc7ca770785705abfd430620` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 1 | `121ca586fd27b105043a55bd04c299f11619cef50025c0b71390991b6d40848f` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 2 | `628cfbcaf4cd0a90c87d3f4c18a212a4d10876ca89162e0d4f6810c4519047eb` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 3 | `6e850754caaf8e33b008d1c94520dccfd4383ea400b427c448df9b24854eadfa` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 4 | `7510a750303e965f27e8357210f04636ce80c7a7696ce195f541b6b4b3ee0d44` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 5 | `7d5dc745a9b017c82ccc6646015f72f3661034d85d02d3dbec4c6f16fb8bbcb9` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 6 | `e45e251d6cf6c157fb6d98cd0f71a9902d75d6a257b6754babc6f1a1a10cb1fb` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 7 | `cd62d86bb43ec4df53e69b70809947f0251b60c50fe1d3a6ec29f25d3debc780` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 8 | `02779db21e08d689b3ae142d4ea3062d0ef8988400dcdde2a2d9b0a7464181c9` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 9 | `5a391318ad94292e36fa438f95a8992059cb8956280ae612355a485b8194cb77` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 10 | `6ff27d9ed406ed3b1f70f41f0c5d0d2f01b4b4e993789f787d244da99a817278` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 11 | `6e3c41a5551e89f25452aac84a3736b933d30abc655250100ea4fe02b5006f1e` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 12 | `ee425517668360b8e3a2af515dd2aee354fff20a3faa789e35bfe00bad68383a` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 13 | `7864c505680b2ce5f8fa134a209391b48b13061b5f025744e8904b0055001722` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 14 | `b5f0d59ccc990fb15337384f77096dc68691be499c87d8d18ab55a5ae29ef2f6` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 15 | `00b17de5685c52a15e2b63093c286d69942094f28fe20a2d20a67bfc13119644` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 16 | `afb183c43624b65ba726498ca3737952cf47f7c9757e9dea02cd5dd6f2e66ea8` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 17 | `952aec6f3409d623822afbec6ddeec39d2490598c891bc5dd8d78eb25310697a` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 18 | `532d20817b8ec016ec1a198195c98fc9ba0b25f965da3c963e3f6c37c0413664` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 19 | `ddf8ef3f94724cea229a4f54c51d29afcbbc5bd59dd52991aa20a036a80f1625` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 20 | `91e777e6db782483909b5cd314504989c558b1dcad28fcddc7d1d8020d400a37` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 21 | `6f7e57a1fd946f5e57886c2fff21a6b16db4d2531c1441f5437b1316e90bcd1a` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 22 | `572724ae7d713a57297cf27b2eec4f26e1c10d58e324b4e31135b836eb90a74c` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 23 | `b57f5c40a3f1964d762e2c37b040db2b4e608cef2343efab28f28585df469681` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 24 | `b0088257623c25341cbe405d5673fd18627674db41f063660cb318ad8faf74ff` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 25 | `05e82a4fe160fc0216674125bbedf4e3a66d27af9e23151d65ceb03fbf923879` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 26 | `4c30a79a9cdbed77f53fdc6cf9783725f05f21bb52af064b8ec3a27fdd7ac74b` |
-| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 27 | `5e63039c57aaa3d6635524ac412d6f9d31df44f65faf2a1a8dcae0f051c0f8ab` |
+| image | khoid_ground_1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `05ab4ffdfe7f57f4bb9d6f152aa9cb580c474324eece09b134f57686f949f465` |
+| image | khoid_ground_1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `4f4a787bb9ef4732b1e6d32aab20e1c3dcedfe55eeea2a7cd3bfa7cae29df583` |
+| image | khoid_ground_1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `bc71c547856ace133a62b6b90e83cc5cd0cb616dc8433ba1b32f7911214a4ec0` |
+| image | khoid_ground_1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `8c15462ff816c46d1c4d8bad0451f9f2b434b6b2f8d6e0650d6d3bc19775a627` |
+| image | khoid_ground_1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `7118b9c741de042cb564451922a810b14b772902db6fed5d0f36fcd9729f1380` |
+| image | khoid_ground_1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `f8870581809293aec3c02c27a7ca7247d495dbf8f209962e8e5c614735f1d231` |
+| image | khoid_ground_1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `f8870581809293aec3c02c27a7ca7247d495dbf8f209962e8e5c614735f1d231` |
+| image | khoid_ground_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `8d7922731245c83d99656470651976d22bbd1c22b997830aa8bc05ef1de096d5` |
+| image | khoid_ground_raw_2688x1520_5376 | full | 1920x1080 | 0 | `500529ce6e20925465b65a265ee62af9ed18c44f4e9166c5224eac0d00803117` |
+| image | khoid_ground_raw_2688x1520_5376 | full | 1920x1080 | 1 | `5deced51a40fed1d79808fb4a44d72865f2856b570f026c52635da29c0dc796a` |
+| image | khoid_ground_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `44df579ea003085935d75bbac3d6715a09f0887dde54d966e9fc97ea76d37759` |
+| image | khoid_ground_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `546e770a9007341922b0bbef1db1d5d60ab5bed725dd420f7dbb59d9e6654440` |
+| image | khoid_ground_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `01cc0f4eb1a5779535741ce0e910c521edba409509a38c580900f300de1e11ee` |
+| image | khoid_ground_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `dbb676c0aa7b13c31532cb315275382ac39052bef5d8137c577c40ad6f6a65c1` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `f16ab29df8e929c278ad0f7fda4dbacb16bf6508cccd09cf6b9f8e6af2eb6a7d` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | full | 1920x1080 | 0 | `cdaf3cfd76c56507bf5104c09e3330047120aecbcdf22832ec53c343bd1a118a` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | full | 1920x1080 | 1 | `6f67995539998885769feb85284134a1a70b2018073b6f7a9a47511f3392fe76` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `9dec74c7dbfd0f9cba15f5e77aa570b77202ff0146a570fc2a204673975980cc` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `1c7b8f7ebc7c9eebf368e18a39e94aa4cd3f47eb2d0673b99a8e528cf7a3196e` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `f51b3f9e6ff2ac03f890d1ab44f96b69109f6c76a7fa716a051d0ff1e3b0b491` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `f51b3f9e6ff2ac03f890d1ab44f96b69109f6c76a7fa716a051d0ff1e3b0b491` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `417d0b9bf2c50f46957bf40788a2f9e5e5a8f34ca774888f68f03bce85a753cb` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `854b3a3d1ef93add530515531d0da7cfd0fb072916e4798167ec8ac66471f8b9` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `9ef055775e1a8191f994282352542aa9212c302f08cf7e04f05619f281ccfe80` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `04a1bb05c91262f89fb6fb300698b3220a9abd218a3f34f75e872c268b4dc3b6` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `58e972564d7da391aafb509c660f30b80b0def34c894adaeec3bfa3e3a942a63` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `7cdf082c22506f95c853746d2bd79ff9b53a85d85f5d843804611deee596778b` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `d48c266b7ae91b5bfdb1ec08e86076c757db98363b9df5182e5d21918cf2251d` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `59040c733c7982356a901cd7a15e8b6b96ddbdae948a227c0fe7599225bb491e` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `e05921cadb5917008c38ba843e4d6cdd51e695401ce3cf3842096fc579246e36` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `9f743bf460afd8c52abb035c735abd8ac1911dadc589b0115c89a8de3a32a868` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `6a6ec83956982dcceb3a9f763421516eaa777c11ae12d4d8a275efaa468f48d1` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `b83762313773fe18662a75cc7af0f06167f158ca04a6d213aa6f974a413daf37` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `a00a1fc81b49c7eab209a5e74e2002618f67bfa31023b93be6d55269bc999d8c` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `85034ea756191b7586298d5f576c5bab8c5bf7a1fe2148ed581f408989c2f18a` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `20c8cee8c6edd41d602d7892d40e624b4486965bb1fd56c74b093b2a888beae0` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | full | 1920x1080 | 0 | `70e50b03b11ff9b70e90fcbcf95a01c885613036b9d54f021403cf52f677943c` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | full | 1920x1080 | 1 | `8984c65dc5549bccd4dbf75d2f22b69c248b2f30d90ee7fd5ff688b8f7718ce0` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `aa5eb63a5ba32b9b741c56985f5f10b6888d66c1250b07bc8e5ce462f1ac069c` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `1e4ac8a0ea11bde63d525fe03861d17e09a2e48f1a66579641ea2be92cf94146` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `3df3e2a68813a0fc55eedec560a209251a4ae9de561c4605e705753a3232a31c` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `3df3e2a68813a0fc55eedec560a209251a4ae9de561c4605e705753a3232a31c` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `a170f25fe9bf20cba429885ddcd15980dff69fe87b8e92275e54aff9ee581758` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | full | 1920x1080 | 0 | `09691f8bfb471412a34a59bd2d3f8a0fad9ca0f2e668d1c84dfb14ab8ffabe77` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | full | 1920x1080 | 1 | `6b1fcdd34388a19a255b7c1d6a6f935cf6a35161a1235c104eaf2c722a278fb3` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `ff90eae2e44e8853c1deab45ae6b678bc84ba05f0c1fa74432c52a027434bf36` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `803c1e19d2c8a28f2375dd5310c71dddedfde8431266537a11d6a08cf1311988` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `80cd8c7bf2ed169396c3db60b30c7fc7d0899a3741248d6675248de4ad519736` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `b3a8b7dff9ba25678f7f2c6a77eb3293d368cba99971e1e38f7e3d3b9faf7601` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `f50c5ffdcb47ab8107f9ab9bf3f138235a4bbc29bf6ee5bec90f46b65347507a` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | full | 1920x1080 | 0 | `daeedf010350d67454124e3889a5e6ce6dc189835b6819a1919774bfb66a06ea` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | full | 1920x1080 | 1 | `4d40c0d6e24f30936105622097e585f759e05c1144c8929738abb305f4e4b418` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `3eeb7fb52719e7fce54a31969d6fc5a243373ff2030fdd172bf34957a96f2370` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `73ad6a56de87b551e62bec58b26a49ead45c608cb11f18bcc8db6b046537a20f` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `71580c52b6b9a9bd3d6b16e84dc6f8a59dc2dd91c2e9d90d9984a4fdb0050d80` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `2071ddc9bd75fbfdb2c1f0299fd4f053cf6bf3669b4622c526a5bd18f5420e9d` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `8bb381135590160f458542537073debf06f407d31d159b3d0b8d440429052838` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | full | 1920x1080 | 0 | `180253290db25cb6df313c6be87a382950df89a86fa84c204b5ab2d65e8210ea` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | full | 1920x1080 | 1 | `a49e77e28f4df32c5a160d9b880181d125ee6677de06ce3ac92d52eed7bda46e` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `0035910b8a65afd9648e687652f85e02fe7a5c27e1c4129bf04186958026993f` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `967cf724e63731d3044ce171fbc0bb88e690ea05b5ae0d1e2ecb742e7e4a4e0a` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `5ad251c1a70246cd3a201d454acb04c6d75f6bcfe5ec1f5ecfc2a9a776a64016` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `eb45bf24de11a0fe9d6e90765c20da313ff95c3391e16d8b55e8b832edf0c45e` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `d91132c0de92e8ffe2aae2a3e12e029c1b7e2db0d4efbaacf72f152cfbaaaefa` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | full | 1920x1080 | 0 | `8c8a433f29b2a93715140bd58983994b09b8f61d645df38ac89ae74ba9a5e407` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | full | 1920x1080 | 1 | `8de1c69e5755f043054969871b6dcba9d66060463a9a0798e02d27464cc0883d` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `e9b4a95a13cd0281e66b4ef67621d6c73ee1a5da6910d358b9c6f6a8d028cba7` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `8bc57918d5ad53409e22c9b0b1b998a1c8dd9aab1a64ec4df92ec37c5617fa21` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `41f1dfb13c6ef143b689f6a455621ca58006aa99d350ee14d37720e3473b2f14` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `9a2ab64654a1d7a554a9507b41a706dccdb68ac42e6863c795d7d8f3ca86814c` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `55241ab0909b793e74ae10a40aab3d424967f434fdb41d003c229409031c894d` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | full | 1920x1080 | 0 | `6b2b703626f695aa480790b348c8513f815b7d754ba0b0a51fd8d9c2db12d75f` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | full | 1920x1080 | 1 | `de8963b2228199a45177eebf39ac0cf1a6c3b1450180a036c71ae9a53e974fbe` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `3eff6b30a7ce9d5fd3cd55d1aeb71585e3c5c80142a99f3fedbce9db09331351` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `9a965265d4f3b0e8de45567e2538496234f843c22813676467365ae40d85df31` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `8422aaf5c76a10f1bae437386d727a83b7b9a7b1111e50384da47836865c0b8a` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `8422aaf5c76a10f1bae437386d727a83b7b9a7b1111e50384da47836865c0b8a` |
+| image | khoid_outdoor_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `85d0ea88404f3a57063e109d2cec2e31e3285339d03e4c0069da55eed63c32da` |
+| image | khoid_outdoor_raw_2688x1520_5376 | full | 1920x1080 | 0 | `a8323efeef1f288eb641a4577aa3c885a6a70e7bf74919d914d312c78fb8d5ff` |
+| image | khoid_outdoor_raw_2688x1520_5376 | full | 1920x1080 | 1 | `f33b0e934667c8e8eb0eabfe9e4ccf688f913c920a3b309b8ed6892b98b3d81c` |
+| image | khoid_outdoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `0c84c206de1c6ddc104ccd1c71e564d8d09774303c066c1fc861270014bdbf76` |
+| image | khoid_outdoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `26229735c696c72fe96dd856ec42a7484c865047df552c97aab0b7071b3bc5bb` |
+| image | khoid_outdoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `67aa780c38dff998c96e19dfff2499e603faf2d34063a424f9d1030ed2fba40e` |
+| image | khoid_outdoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `67aa780c38dff998c96e19dfff2499e603faf2d34063a424f9d1030ed2fba40e` |
+| image | khoipd_basement1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `b2bebfad875b64a2f6a84fafd15b91349c1bc4c60fb4f0b6c9c01426d6190445` |
+| image | khoipd_basement1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `53c32a2f80bcf8904272561a70354772464e258ca0902b01d73a0cecac19d80e` |
+| image | khoipd_basement1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `1d53c6ccee2d266f79dd1c07a3a0b168826fcf4d17a2001b37ca9fb443c38939` |
+| image | khoipd_basement1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `af1ba07cf7b35798abc2e977f70c0942707d080aad586161f7c9c14e3734a50d` |
+| image | khoipd_basement1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `0e8c7c5159175e35e588d5677d485687eebe8f874bc7c4f44418683c4a86ad87` |
+| image | khoipd_basement1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `40c00c03f8d1512112541d5997d592edb2b3c098244a5ebf5131ffe62cc58771` |
+| image | khoipd_basement1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `34605c95c8a2021621f1be3c82afe9f9a606989412a61ec50b53e93a9c90a090` |
+| image | khoipd_basement2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `11506272f1d2e28c596595b9ce55b3139822296b6fc12632e0635eb7d5880b75` |
+| image | khoipd_basement2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `25bf416dabead3684a06191fa8e7871425e9b3f31bab772f21b456232022b1af` |
+| image | khoipd_basement2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `ab27f907d387578551afe8024c94af4d1befcdf94c059fe9f113c9e661cfa6c7` |
+| image | khoipd_basement2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `75fb02054ad0d2dfe4392499f32e38d66b77fa188772256220a1eb4d35acb24b` |
+| image | khoipd_basement2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `6a616373e037308a8245c5067fd54894942b24314104ce9ded74c2a86c36923a` |
+| image | khoipd_basement2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `a269ef24f1d0e8a80d47f545d083e329c0efbb00bf655d2365a91fd2f7d3fc20` |
+| image | khoipd_basement2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `89db1cee9ecdc494f95072fb57f4e0e60ccb7e3b01981ec2494603f056b78a88` |
+| image | khoipd_basement_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `2695b8875f6b7cdd4c25d14171e129019e45fd03c7378fc0209a053a103c4a31` |
+| image | khoipd_basement_raw_2688x1520_5376 | full | 1920x1080 | 0 | `42de73455853c21a7f783dfb21de55b091de864c09d65ae927b122747448d07a` |
+| image | khoipd_basement_raw_2688x1520_5376 | full | 1920x1080 | 1 | `fe95a8a4a7cf6dac54bb18b0c99fe050fed107d06f8b93c9ba39217ba1be1539` |
+| image | khoipd_basement_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `fb7bef22a00271e6cad965794d78df7c2280b357ba32b9400e41faec2fad5e37` |
+| image | khoipd_basement_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `d96ac8bbe214c61fd0c84318782db568a65158974a34f7f3b8bd4bb38cde9885` |
+| image | khoipd_basement_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `f4fce6374a6e0292e04f707958dd49bdecece1a38c66f4cd6279efe485239d56` |
+| image | khoipd_basement_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `757439941c3f6aa695cfb128cb6b821be8e76996fcf3d0a133bcd1ce8873cf2c` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `9b04c37c8eb3dbda545a8f6b3f8bb3501d41dfc1f89824eceae656c0a5c900d4` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `1a6606c6fbb5868852bde011e5d699d74fd8a7edff2ac4a4921ed2b007128542` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `4e8da19f06d609f9b63a8ec975f3918e4e25431935d32fcfad87baed498fd943` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `ea25a90d8c21df3348fd4e40ee83f8f3bc94d09bf61a1599504d0900020a9ddb` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `6f1243e19605cc79696e5815469fbaf89b35539c2aa583e29eda5ad3cfbf39ea` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `93f64d707876b21dca23a7dde1afcd528871826c6ce6365482ff40a63f468309` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `175ce52c31daab39c04f33f1d07e16f9f85736bc4c3faf697c3803a7979f2842` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `08085571c5be7663d7e1c1dae9201f276ed7a46e62e10e2525bfad7c4ed319c5` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `e3b91ba44eabf6c5bf03457e68d68f805cccbf8dbdbe0eeae207401164f64cfb` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `4e788bda1ded827b9698124fd970912170f8d69840c0c174ae5296addb40f47b` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `372421d92461a5368ed040fc2f8ee41d947bb678d1e373ace32db0bfac0682ef` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `39da9c6b6f49dd43bc3a657c1c90a562752f057f69fa12e35620f9060bd8fc23` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `d4f7f0266fbb6f435b408f706771cb0609f5c7de38cebab09b03ad48ad1d1501` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `d4f7f0266fbb6f435b408f706771cb0609f5c7de38cebab09b03ad48ad1d1501` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `d2ea3308819f125373d479003ba7e9e644e9e6b8b677e0e4e1aa3fa7e21c5edc` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `3382e196429b332f3e732a365f87508616d45473ffeceea443c42edb873edf7a` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `7238eb538d2cf3d4877448ceaa0b78ddd734cabb6417c8722290c27a06fc5719` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `448baf9bbefd876bbc2139246e56eb743240116a3feb424efa6745e64632c561` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `608a1ae3b09a05edcd7bc688d93294ed7644768050da9b7c24bb5acf638ed579` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `c8abf01c42dc9574bfbf87acc78542b74aa372b0f58e5c3c5066d9efbbcfa5b0` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `e4c5ca6d7170bab04f2b71f40350e06e43abf53761b050f289e3f47663e2136c` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `07e410c51b8fa639e2c096048b6711be2f47e2d59ff1e6f9f3129a92ef397cb5` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `c4717b846371a595cede053b8116ae0b5459fa5a5dc622d7f027eaa5159c4da2` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `8805baf9087719679b083cf2f34de1c435fd9b466fabb31c189def9ed25cd6c5` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `03790671f3650f74d7685fc4170357db7f3dfb1b1d8216331e9c757a328e4054` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `dc4f90b0c4d17ae71c06783c1ed05ca9757013be73d16c89dd83672eaebac35f` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `bdccbbb328122bc98d92760ea22bef6e19d06c78ef52706cf23d32eeea4ef785` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `1397727c055bcb57ada5b953767dc4ddc8df7c85c25590c6bbc7eb20d6a396ec` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `9fe8ffc00c97262886e3c68545dfd9a89d90f1b86aa4f642b344e587292c89ef` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | full | 1920x1080 | 0 | `e85febec7433614d89001d6831032643416c1d2d918a4308c8fdfcd450be5067` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | full | 1920x1080 | 1 | `fe072ef0a8bbfe408e7950309b315ab66082ebad71c3d86f0e42cb1ef45382ee` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `de1290c41656eb5d12bf49a5bf06e02bbd88135206ec0d970c21783979ec9a76` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `00fbe4b5cada7cd847b33ce132da6da2b446b37afeb2a49be334d3bdd58ae24e` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `e7dd152f6bbb9f7e3078ecaa4bc67c7478176cb9551e70a04055f73eb1f5bdbb` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `ef9a91f105bf3d53804a333f2e3d7e7b49e318f7c53f55d13da53ba7ecabf750` |
+| image | khoipd_indoor_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `8e756e6ede87a4c873da10fd4b2f6085ad8b29af8b096eff6e4ec4c8fa8e48ce` |
+| image | khoipd_indoor_raw_2688x1520_5376 | full | 1920x1080 | 0 | `925dbd2dc07ad4cdaa63ed62c3cdeae7c8f1920e00f2a2e3af3700b86c9e3a01` |
+| image | khoipd_indoor_raw_2688x1520_5376 | full | 1920x1080 | 1 | `e87ad637a146263402c9e20e08431a212cd5b2e1e9dd7c5bc59ec6b45422ceda` |
+| image | khoipd_indoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `4f73951a0386fb26fb3f93a3156db60ec9beb184d7358e67b4a4d282eb9dbe54` |
+| image | khoipd_indoor_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `0d35c3994bfe1174c575f065c0f604d3a5dd25c8b49dd47b9e635f99f447aaea` |
+| image | khoipd_indoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `bcf7a494b56d604d13eb29f5dc3a6c5624031a0b8db21de3368d12cdfe70d285` |
+| image | khoipd_indoor_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `5e50c34d9296935c66486a61b471d220c627bd7be16e151e853a76ce1965e17f` |
+| image | khoipd_night1_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `8288faa0b1f69df988caa098a2f8e2f18670c88ed50d32037a38429e70f88288` |
+| image | khoipd_night1_raw_2688x1520_5376 | full | 1920x1080 | 0 | `aea1ba20fe3632efcbb78f25bf3ac921cfbc11f4fe15c2ad4d6ddeeebf32c96d` |
+| image | khoipd_night1_raw_2688x1520_5376 | full | 1920x1080 | 1 | `8882f008be2e81768308da2552496b741a5f4559caca4f87175109a6f6c39651` |
+| image | khoipd_night1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `6aca8e7f5aea4028ab6a1f8009e9ee4c93458b4af96850fb2069de391e761e88` |
+| image | khoipd_night1_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `f220735a147a8154575b5ba65036e1c5b3e7751eeb3702df46f2023626fd3822` |
+| image | khoipd_night1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `cfc2ceeca337914a8984d7a029484310f6d72046cb74a5c27c5533508a0311a3` |
+| image | khoipd_night1_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `4703457bc39f41958af867e5da5835eae410eefe41ce7936dd6084bdfdf50e24` |
+| image | khoipd_night2_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `5dcef3a3597f625767a2026525673d8f994f36f83ae8085ad3f8c09ce73d1f55` |
+| image | khoipd_night2_raw_2688x1520_5376 | full | 1920x1080 | 0 | `46b14e8b1ad220527d2ce8cdc7ae04cc9ca36daaed5b969bfe580b2b773cf38e` |
+| image | khoipd_night2_raw_2688x1520_5376 | full | 1920x1080 | 1 | `b70449e35d7128cbeeeb654799acc2c3f785d40be312402d378add69df261632` |
+| image | khoipd_night2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `b51fbd440e66a6f501b5c42f4767012983c5e45d5f92472d82bc778770225c5e` |
+| image | khoipd_night2_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `5e7da25bd17e55dbc029f9cd683a4d643bde456d77c8c27fe1332884422079cc` |
+| image | khoipd_night2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `71851129d7dcb15d17b53bcb0481fb993d509cac8bcd9505711f8a641c01762f` |
+| image | khoipd_night2_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `8d823132e7670ef57fc63952e9a8e056aa395e5688bc8db438310f00e124486f` |
+| image | khoipd_night3_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `6823a620a7cc219c9746f312be8ea29ba1e5d7913581cf138a45044d4dee7a22` |
+| image | khoipd_night3_raw_2688x1520_5376 | full | 1920x1080 | 0 | `70489805035c296552c76f02712919025f8408df6c09a2c6a82bae6902301b44` |
+| image | khoipd_night3_raw_2688x1520_5376 | full | 1920x1080 | 1 | `685b4c31a03ac86361adae6aaa3181c10021f1e8eaca2bbe75fea98d25f20250` |
+| image | khoipd_night3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `59b4b80c2fdedb77937344c582b36329456529c6c0a39a734de4df0ab2dd30fe` |
+| image | khoipd_night3_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `129ef3129f5e270c508fe98f3ac9a6b150a7fe90c9d0ed8fabdf93a15425455a` |
+| image | khoipd_night3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `7c53c7673e91a092a149458959cf1880f6117089d6203e33648c56bb68a0d52e` |
+| image | khoipd_night3_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `35d758752fb303274307f906e7d7490ecd81419d301fe982720dd55078950351` |
+| image | khoipd_night4_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `0cda834f7607451c182895f707fc4c055a985122de9dc1687ec17ea86ad87714` |
+| image | khoipd_night4_raw_2688x1520_5376 | full | 1920x1080 | 0 | `6e21572cab8762c928440f1c7a1bd978a427bd2d10abef72fd86d57632f1b540` |
+| image | khoipd_night4_raw_2688x1520_5376 | full | 1920x1080 | 1 | `f1fc076d935165ad83603abb4ce35c643e304bbb8542124d84e3715282e9e55a` |
+| image | khoipd_night4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `0333c1d538bd61f0369c254b1ee3c83cb07fec5c51d58c111e64d19e7d2214fe` |
+| image | khoipd_night4_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `c01e24aa6dd2f4c4d61644942b1c06ad2e246f8a1a00c7eafc6130949bf654eb` |
+| image | khoipd_night4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `6e95bfdf1b3dc6b020a527a6ed0a3ff9792353a810bc700298f96a107385776e` |
+| image | khoipd_night4_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `ab4335983274cda1dcd3b75fd26977b111f739f2a442d7df2e43faf8f7315c32` |
+| image | khoipd_night5_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `86e0599cebcdc7e2d86bbffaccad220c04ec006a9c46c21a69ba8ffdaabb536c` |
+| image | khoipd_night5_raw_2688x1520_5376 | full | 1920x1080 | 0 | `c291ef80517b04e8c88f3165a1fd1646e2b32bd727b786eab4cdd87c8fc2c911` |
+| image | khoipd_night5_raw_2688x1520_5376 | full | 1920x1080 | 1 | `4ce9bd9a5c9d8eb8f2c7a75263b02f79910316bb9b23e3977b3db9f9f55b0d33` |
+| image | khoipd_night5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `ad34ed0f55a702bb8881e9750f06d77b6ad425f1cc2906513f60dbe415919fd5` |
+| image | khoipd_night5_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `5900ed94184c049cf47d7fb2d1e07a1179a0e06a10d00e4ce62787c68faae594` |
+| image | khoipd_night5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `ad1abd6ffaf7f98d013f6c461e50634499b5a2fbab48b63c2b222241e68c5b6c` |
+| image | khoipd_night5_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `528a92619d7bddb255ced2fa17b64cd25cbc0c14db1ba529024453b08035ce66` |
+| image | khoipd_night6_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `d086df2947b1730bf94aec64c1215079206e07e6fbb2d486beb52ffa56835b83` |
+| image | khoipd_night6_raw_2688x1520_5376 | full | 1920x1080 | 0 | `5926349243cc698d847fb2a931dea15113e2cd41d42a9a0badf5127eceb6540f` |
+| image | khoipd_night6_raw_2688x1520_5376 | full | 1920x1080 | 1 | `3711cb12ec96430b6b6a5fa8baba2cc7be8e0a9edca9c573c3d5e8c214e66f1a` |
+| image | khoipd_night6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `a5229f2d8b83a8ffaac33b31934fe299f421a4b7cce57b6544bca50f46e843b0` |
+| image | khoipd_night6_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `8a50d0fa73169db776376caa79875e47ec86902575da8d7124747e344b85174e` |
+| image | khoipd_night6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `066d374e8f3ca053aa4055ec4df876093165fb638b926981fc573f380308adee` |
+| image | khoipd_night6_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `cf94ae63d9b5a9cbd2e2a6a64b8d044f5cb782ac54a3fb63a481ec33942d74b3` |
+| image | khoipd_night_raw_2688x1520_5376 | basic | 2686x1518 | 0 | `30e9f7f12b9a59078ba51cd5e071623a82f2937032323e628f14f99787d74f91` |
+| image | khoipd_night_raw_2688x1520_5376 | full | 1920x1080 | 0 | `0fa03c778ab5e0220f87d79e21d6033fed79ea87170a14e1df6482c266c88ee6` |
+| image | khoipd_night_raw_2688x1520_5376 | full | 1920x1080 | 1 | `395fc251d991e977d3c5cee4fd8295b4c1d7deffbcde00eca1c6683b654bdec4` |
+| image | khoipd_night_raw_2688x1520_5376 | full_vga_709 | 640x480 | 0 | `c973f06ce988d8a26c011210562918c2e1bd457ac1317b5c82a9e2bf8291d267` |
+| image | khoipd_night_raw_2688x1520_5376 | full_vga_709 | 640x480 | 1 | `87e07eb096c0863ba6d04d6ae3074390dbcee6f1a85d5c76106169a92325d23a` |
+| image | khoipd_night_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 0 | `ffcb71ad6c0d2ae3649e13582980e40138ddd14b55bab9e450fb58b00d19f69f` |
+| image | khoipd_night_raw_2688x1520_5376 | gtm_manual_qhd | 960x540 | 1 | `ca344545a3fbdd8db64ab19c83341cce6f1d9ef20769d8c3cdb3234353b4e72a` |
+| sequence | sequence of 28 | basic | 2686x1518 | 0 | `b2bebfad875b64a2f6a84fafd15b91349c1bc4c60fb4f0b6c9c01426d6190445` |
+| sequence | sequence of 28 | basic | 2686x1518 | 1 | `53c92003fde0ac3f0c6dd11b233a93c63d436baef34d3093b7fc5244840c605f` |
+| sequence | sequence of 28 | basic | 2686x1518 | 2 | `cf9b51baa1c9bc2f08a227030879453e205b0a58671fac7177ee25d3189d134a` |
+| sequence | sequence of 28 | basic | 2686x1518 | 3 | `3a83b0da070ff19e9bee6782e36f6ed4644a3dbfde1af832d154f64f94b08435` |
+| sequence | sequence of 28 | basic | 2686x1518 | 4 | `9a5f04a44f64e4bd09d851fd91d3d2016e94f071695b68f1ab5a319f17120438` |
+| sequence | sequence of 28 | basic | 2686x1518 | 5 | `d5f260e4f6beac619eb3d99665bf01ade0d3ec9e787fa518dbd32e2ef24363fb` |
+| sequence | sequence of 28 | basic | 2686x1518 | 6 | `fb835ac51f8a07b2bf8cdf381b0acba11e09943a19a1310bd8a0df71ad8b8971` |
+| sequence | sequence of 28 | basic | 2686x1518 | 7 | `ba7649140f66e976b6244303843f7a6abe264066c4cf8344d0a9149090580b03` |
+| sequence | sequence of 28 | basic | 2686x1518 | 8 | `0194d9f513145fac2b3a840988d4a0bd8969b0c5fd8e1390ae5545f3c0cfdcc0` |
+| sequence | sequence of 28 | basic | 2686x1518 | 9 | `0817a5f5b1d2f20ad3a3b49ca55f13d3eef476023492bffbac2d974696137beb` |
+| sequence | sequence of 28 | basic | 2686x1518 | 10 | `657efe2f07e36567aa5d6ecf079093f3347164ea47a4451472d65d0572e180c7` |
+| sequence | sequence of 28 | basic | 2686x1518 | 11 | `89840b12bd3a32267ac7b649eda51b0812fe27feafb105592106a085c414478e` |
+| sequence | sequence of 28 | basic | 2686x1518 | 12 | `0fd0faf4fc26c771642fbc19f3d3bfcd78cf01403dff3819198bd3264c2a0c1b` |
+| sequence | sequence of 28 | basic | 2686x1518 | 13 | `9bce23bb6ced1966f5c8b225e56d7d2fe40ca2ef28b94872500beb21f5661e55` |
+| sequence | sequence of 28 | basic | 2686x1518 | 14 | `bc466f93e5f72e24527a0a267caa318bda34e53e040f0c3b97967bc9b996c5c2` |
+| sequence | sequence of 28 | basic | 2686x1518 | 15 | `09f0a9895c4d89c3b2c169da129c61be2e2d484132483e294251defbd8f58fd3` |
+| sequence | sequence of 28 | basic | 2686x1518 | 16 | `620b0ed4ebc68d1ac1dc51a45c112c9e9d82dd8cfd1865abddd12f1352900723` |
+| sequence | sequence of 28 | basic | 2686x1518 | 17 | `dc42aa8f21ac4cad3b6b3ad324d8c2b4a86bf82742be65aff6bec1af8cd89fa1` |
+| sequence | sequence of 28 | basic | 2686x1518 | 18 | `f92269d3fee61785e8b5a83cc2e32ffdc2aa070493a530f70102cb6d68ed9170` |
+| sequence | sequence of 28 | basic | 2686x1518 | 19 | `9d5c1ece6ea095f16a386dd601f0c4f468bb0bc756345188f12c7b731d12f373` |
+| sequence | sequence of 28 | basic | 2686x1518 | 20 | `21c0f462b1c11fd0b602b54ec9b1544575baf611a50b6e094bc143cad19366de` |
+| sequence | sequence of 28 | basic | 2686x1518 | 21 | `2b10975963d51e28538c1956c972af3a18006244bded87eff2e0b904a29ba78d` |
+| sequence | sequence of 28 | basic | 2686x1518 | 22 | `0a38368a1641434afe390645640056d059652ac8897d9d75ba5be352fee15970` |
+| sequence | sequence of 28 | basic | 2686x1518 | 23 | `0ea06d4a44e0355f3e97fbc5353a3a07d45e79581085f990e3ae355e32deb5bb` |
+| sequence | sequence of 28 | basic | 2686x1518 | 24 | `760579791192cc19c86ceda40684cbe2e09ddbd8b909f08c9c0d6c6d659e7c90` |
+| sequence | sequence of 28 | basic | 2686x1518 | 25 | `2922c8f06331963f8bb4a710deeae168ddba41898c7d39254261db7cf38343e8` |
+| sequence | sequence of 28 | basic | 2686x1518 | 26 | `63e78c3d0e999bcef9697565d9f25a418f199a44f8415cfddf88dda78724dcac` |
+| sequence | sequence of 28 | basic | 2686x1518 | 27 | `0ed889ae6054164e14d38f923e2e34df69f71e9c7fef60e77f38eeadfa36839b` |
+| sequence | sequence of 28 | full | 1920x1080 | 0 | `53c32a2f80bcf8904272561a70354772464e258ca0902b01d73a0cecac19d80e` |
+| sequence | sequence of 28 | full | 1920x1080 | 1 | `cedac20fd338ec8690330029d11ec69888f488d6c8eef90a8ee09a1e80df1c54` |
+| sequence | sequence of 28 | full | 1920x1080 | 2 | `f8b10e8c900a556e3e985bda0546680b6b140321b7ca316e0855f35242c743e8` |
+| sequence | sequence of 28 | full | 1920x1080 | 3 | `f6d26f93fe88d726b35e8eaef2673373c4a3bb081c5635da808dd342cc580bfe` |
+| sequence | sequence of 28 | full | 1920x1080 | 4 | `afd509b995ecceb5e1046ba85116fe0bd00581acb71bf4aaa73465a00273e8c0` |
+| sequence | sequence of 28 | full | 1920x1080 | 5 | `fdcb51478653611622894707174b0161fc289f97e75681644e20795a8aee5036` |
+| sequence | sequence of 28 | full | 1920x1080 | 6 | `f73c4da2be6b28eda8949177336a592d61645423b0efd83bf02640e055a02138` |
+| sequence | sequence of 28 | full | 1920x1080 | 7 | `8ee4531771e6c46bbd7110039e5ca42d475db9fb9c52173d90e2f99b9b5be891` |
+| sequence | sequence of 28 | full | 1920x1080 | 8 | `34c9bc5989275e019210ee67fc289952becebc9474e3f2f9b472374e418dcf96` |
+| sequence | sequence of 28 | full | 1920x1080 | 9 | `09e0b3f31598f13b020ae403cea3a4f599ac8e20c82ca3a9a221e71738481984` |
+| sequence | sequence of 28 | full | 1920x1080 | 10 | `6787b43d0e690b86afe1412b9b6e5692c2ca62a87c0d27a2d3a707998d6d13cb` |
+| sequence | sequence of 28 | full | 1920x1080 | 11 | `5f4952ef89b076b5d46c1dc7d91d2446301548fc6ee62c4327e6590fb17e2eed` |
+| sequence | sequence of 28 | full | 1920x1080 | 12 | `ae081fa0fcc26ca1084ac056ddc5bfa445d44c304b88c2650225bcdcc555b4b4` |
+| sequence | sequence of 28 | full | 1920x1080 | 13 | `32bb7f944536e6970f3470a22b53a6b2e1b97299230fd8f7f1b19446f06d0d3a` |
+| sequence | sequence of 28 | full | 1920x1080 | 14 | `4a61af1414e3e6e6c2b01cda054b7d4fbae2c694e719e8781b9d36cee7eb9985` |
+| sequence | sequence of 28 | full | 1920x1080 | 15 | `cffaeb79e0180f84ae3654a2ae67aec5d1fdd4d97da19b02218909bdccdbbb96` |
+| sequence | sequence of 28 | full | 1920x1080 | 16 | `94331048cef12bbc58cf3c5e510635e6cce9891623addac365edf184b4ece2a1` |
+| sequence | sequence of 28 | full | 1920x1080 | 17 | `a517c7491a3c000bdce04b9d3792e479f420e9783d30eda23ec79e7db6304657` |
+| sequence | sequence of 28 | full | 1920x1080 | 18 | `94fcac1845f2c84c4c21c4201b81789bea870a0cbc17230c0b1a4ca843e46cd3` |
+| sequence | sequence of 28 | full | 1920x1080 | 19 | `16535b60468ae0be24d94bf1e95fcbf6576d80a1b4ca0b0ce7a1b53df97d7121` |
+| sequence | sequence of 28 | full | 1920x1080 | 20 | `19123cccae1550d1424d163e80d614058e7380282f65d4cba3c8d137fd3edda0` |
+| sequence | sequence of 28 | full | 1920x1080 | 21 | `ecc472089b2af54077f00a0690cc48e0aecfc3f57e86e5eac7fc68320185bdee` |
+| sequence | sequence of 28 | full | 1920x1080 | 22 | `cce67e9ce5595a65569fd385bbe3e49c101ef2adc2e50e4417e8ee8f4b9424ab` |
+| sequence | sequence of 28 | full | 1920x1080 | 23 | `33d1600b0b4a66e5d30a41fef7f3f57336006d65c19b97fcc7c92ef5788918b0` |
+| sequence | sequence of 28 | full | 1920x1080 | 24 | `3a8e5825374a017816a4ef1f9cd4c124855116caa94c176a70a5d947fc2386c5` |
+| sequence | sequence of 28 | full | 1920x1080 | 25 | `b64fcfca7083d21e872ea5872008c9148a6ce3e727bf16348630506e3726cabf` |
+| sequence | sequence of 28 | full | 1920x1080 | 26 | `6345456a17f2ee03e771faecbc802332c644010de82a39584ebe2b5cfd9a934b` |
+| sequence | sequence of 28 | full | 1920x1080 | 27 | `3035ad32a26bb670cbb4b30a451b9ab811158d3f37aefd79a0ffc8bc021b3702` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 0 | `af1ba07cf7b35798abc2e977f70c0942707d080aad586161f7c9c14e3734a50d` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 1 | `061e43382953589141c6257a1839c8a4f4644be0eccf18e93b8b11716961ff5f` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 2 | `50063e3594123c618405a633b030375f7d8a8acd72fa5ac90532caeac60b45a6` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 3 | `25ea27e4749157b7ac363d421c222d01d6923970c4a0a1c03be3dd1b8027c77a` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 4 | `66a857b5f0b536475404337fb3e07d566e04af1a20aa8c784ae061c1dd560977` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 5 | `39bf0d9464a12fb235a0294204890f3183469db528cc51e4697d058684114752` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 6 | `df261e2f40c0d462a6ea8ff69e74a4cb73a0d548fd0c624897805043efc8ff6b` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 7 | `aac1433e13261c0fa5bb73c861518ee8e64c69cfbd7d6f2340de05dc9efe4a2e` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 8 | `4c22956c7361591fe4459c0cfe36167684dcd8e0e26d131d484fd4e089d1e892` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 9 | `1e46ea44b4fa9bf2ef2ed20f4d8004c4e1d5ef3f2fa6319e45dbc8d37a010f1b` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 10 | `feefaedc018ea39b50f53f70066fa4b1ddd07a7fb02ec7d539ea116ca265210d` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 11 | `162d7aae6101b8e12944fa4c36d2373942b48c9bf7d286dd8aff31db6892516d` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 12 | `606104b90686ac5ce44311eea8176025036512f2cada8bb4e07473c43a5620f0` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 13 | `d70480e326422154f1f3d7d792d21a43c83eac8526d9649aaf398e3cb7b70e7a` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 14 | `65f9a0a3621cb728c1fc5835fab521c113cee1863f54bf5f8999dcfdfeb5cea3` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 15 | `0617d5934aa0b130a535fc9ff31679705d80c846269c891b1e80298e9953c8c6` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 16 | `c9d74c891fb8c08b9c7c107e2d5353cf0eb72bb7066bb8d07bb9a648e93ffd0b` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 17 | `32b2c2a06b635b639650c7f02cc0509e22c728ffdb3021b054740ed8a3d89638` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 18 | `21759c9c0c964121d2c7fbbef84ec1eb720b1784900c89ab16b74bcc2c1776c4` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 19 | `2419f41a7259b5cd18a8a57b79e8b1eb1e3cdcd7028f2743e163ee6f6459abd8` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 20 | `fad32a1a48df429ce9266f326244f6f2495332b0d87539dc5d783a562be2f82d` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 21 | `7472ebd552b1441a0fe477e1811c48a60eeb63bc4a80f76407cf17350d84497f` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 22 | `cd468361546df817ef11b05bc1ec6b2f5c60ff88ee734d269d7db33cccfc271e` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 23 | `0c30d40e83686667157bfd4ec9ca223b237caec506f05777c0310340296b2967` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 24 | `4ce226b69f060753186bb9f5c1b1eec3582c41658f95efbaabce90471372232f` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 25 | `a20772b0ad070b0a921ca2323034b9bc8722870a0074ce34212a40004c1ced20` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 26 | `3c504472b11348c7dc403083623c955ce13f84155d8928446843c0b428fec29c` |
+| sequence | sequence of 28 | full_vga_709 | 640x480 | 27 | `cbecfcf49874f55c1a8f273060bd43d0c63f5c399df17a8ca64da3492e52a09a` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 0 | `40c00c03f8d1512112541d5997d592edb2b3c098244a5ebf5131ffe62cc58771` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 1 | `f53caf502dcf97e79ef1b1dc40a75ceecab1666c0afe7a06662054242c4d0370` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 2 | `03e81429ec4d9dec27619626e595e415d2ee77e3c325222dd6ad81b96213ad9a` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 3 | `e74fce6c2ac15eced0905be5b86367b27eaddca69541b625691bd39571d9380d` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 4 | `94ac1353c50ecf1a495c20559ad91504e6ed865c51a8adea1914ef3d09a7ea32` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 5 | `0477f346dbdacaf763c54421db3c612e74e351a4317882d8d7938d5f7e74bbce` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 6 | `7e26a4c612fcee9893a74e31320537f25efcedce5685c6a376b7e3267a428c96` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 7 | `a258ba462a4158cc14c9882b4294e2a83a94626574cfc221bd88d000edfc52b9` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 8 | `6509f0624b20a32cbc81187fba2d3b59ee78b755fe9d10ffed9754763546928d` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 9 | `e754d421192a23a8225a609d46b7dc95ac252739d5f13df22699565219700f6e` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 10 | `bc534c5c939c6f205857c2ba10d751e29afdf20b18e1040b36e780b967721953` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 11 | `31327f4bf6e60b65b828c63477661ff19ca966cd147b809997d5acd8fc17a09f` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 12 | `42ca98c8e45c52783d7e45923dc5929bea0ae75cb3729f94cb74ca800f40e1fb` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 13 | `f8156d0e2f0f26c805323f74572e44211570ffb4a50969e92cf6aad9ef828611` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 14 | `a3e9d2ea7bcd1198bc1093a359a90f485626876c84d3b94f7d5dce00f33126f4` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 15 | `17c2e3ad6f8f02bde40723685ded49ae4bffafa39c4c3af2f22e6949648ff073` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 16 | `33f2dc27ce9f08f869785205c25f11679171793df18c7472e5d4041a04a89ef1` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 17 | `b4fecd75d7bdd3e78ed326cdb4e74033d1c721a51a37cb5c688c98ff3d17b2a1` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 18 | `c4330524228d5c0f3621e4a8d9c84dd6e7ccf944882604b1b2c9c021fbfc5b2d` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 19 | `861867f05c3df747d652ddc124bbcb6f5e9d1121698e9cf18581a203925a61e6` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 20 | `4193be3c8d9a13297704cc1f149808b69c34669ff1bf213f2ee0754100ba55bf` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 21 | `58137c334b7b858e0367b2ee43baffa42e9ea9d9e73cd413411ddcf1ad6fc063` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 22 | `54094fe34eb86265561e49ceaacafe03fd7ebb662eafa58d01e55f741abb41ea` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 23 | `5bd5863e2df9a83a9c6a0b8a6b2af5610e8e40988e251b0a4cfaed2aaabe9b34` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 24 | `ea9f5cadf8853fc3177960328e9eabb0c6241adf6f542978492b07a0d6294fd4` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 25 | `afee1b8b6ae886e56bb485ad823325dec6a5b5e1732b702c6e00a58081850e43` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 26 | `9a9060ffca9a75829a89af792b0e68a3420ffc32be118250192dec2d913071b0` |
+| sequence | sequence of 28 | gtm_manual_qhd | 960x540 | 27 | `a3f8afb476ef8d06a52fb1b880fcfbcc3265fc5982e14c1bbf2dbde5907b0dc9` |
 
-Statistics readout SHA-256 (after the last frame):
+Statistics readout SHA-256 (after every frame):
 
 | kind | RAW | preset | SHA-256 |
 |---|---|---|---|
-| image | khoid_ground_1_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_ground_1_raw_2688x1520_5376 | full | `7aed515445e7d2610bdb629cac31e9d2d23e8f0820483b45d459f55f32ecf4f7` |
-| image | khoid_ground_1_raw_2688x1520_5376 | full_vga_709 | `9f842397bb41b666364f857a89d13e9f4ee024bb0b88f9411fd38af1c7a28b4d` |
-| image | khoid_ground_1_raw_2688x1520_5376 | gtm_manual_qhd | `67afd9287b23b8e632152586263abce7c8a1b4161f73f8e060023953f574074b` |
-| image | khoid_ground_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_ground_raw_2688x1520_5376 | full | `6ed5d03b154d6eebdf6c77e331142af810c0504dc71fa26112fd12f57aef1145` |
-| image | khoid_ground_raw_2688x1520_5376 | full_vga_709 | `2f2597191b13dfd1e973c186299afb3cfc8862a3a4656c15835ab50b58771a3f` |
-| image | khoid_ground_raw_2688x1520_5376 | gtm_manual_qhd | `d7dd8e497148697e0a42e27a0ae1852949524492b165c97d612e22a9bfeabbb6` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | full | `1d87706e933ccfe27dd29340d6f852a367e2620763ffa1c0ce0c4458e2a5343d` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | full_vga_709 | `2c2b54f3f233e329c4e2c91d31b54acf71cc7aa1964b4b11065ab3fa12239bb7` |
-| image | khoid_indoor_led_raw_2688x1520_5376 | gtm_manual_qhd | `46f4c904701eaee2f5c6d0cbad7c6f72da7e5407ce97147b27ed212d510d442c` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | full | `f4007b40bbf9826736808c7136a2a2d685340c0e55339505d5d5ed012725a490` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | full_vga_709 | `4c6e3486006eae5a0c629d96adbba18e227e86940ad31df9d37d9f9a14f32554` |
-| image | khoid_outdoor1_raw_2688x1520_5376 | gtm_manual_qhd | `2eddd00f19434b788a224e3f49246e52f0096c78576b0385a7b9e068a4f6459d` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | full | `dfe42eec59bc3bc7b4df3695488f1695fa233ad6e9ec63dad686a1f162388da7` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | full_vga_709 | `25e9f8a4810824666d3316eb7dd06f9ea1487d11f7297d2f799e6a0824c4e213` |
-| image | khoid_outdoor2_raw_2688x1520_5376 | gtm_manual_qhd | `0e954a22e5681d25f2b094b92d26b8be119c776328f9d234e3263cafbdabcb29` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | full | `90fbe95bf73f9cc34289369a94a39cf9c46faf4091edd8af29f23d3f86049da7` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | full_vga_709 | `57faec8b2e047a37cc35c933dc0e4a07eafe3a98a27450a8b39a927782332d5e` |
-| image | khoid_outdoor3_raw_2688x1520_5376 | gtm_manual_qhd | `12194ba4ec7fde6645ec6f7caff3785de51931abd6b8fea6c44f817e54becf21` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | full | `98ff0669fc5343ea0e2dcf45651aab8e17f9a1c9c7f47f084bbe0326f72e5370` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | full_vga_709 | `bf02d17da0ada004107af6df9039bdda12651ca2dfadf3b030e766ec2ec89623` |
-| image | khoid_outdoor4_raw_2688x1520_5376 | gtm_manual_qhd | `e73768b5202e2818dd5b636fa3dc83a517bec53c58c812de42dc39a2fa10820b` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | full | `812f389e10c15b37289da37c4c2e4d29e2cf348314d57aadb3f6003338e25261` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | full_vga_709 | `7b6d68663731b39a5d809d337743fca498c09892acf9f85c0e4f7c6394bd0b37` |
-| image | khoid_outdoor5_raw_2688x1520_5376 | gtm_manual_qhd | `ca9d4d2181da006657fcf182c653583632079a5ca916deb024d2e58325294d57` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | full | `d248ff6c0c099bfed2d7afed50b50fb1719f457d487c1efba634fe6d8b9fd31e` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | full_vga_709 | `f771ee89e76572c9fd1bf5eec837312fd97fd1cb764ce285af0ee90314551d56` |
-| image | khoid_outdoor6_raw_2688x1520_5376 | gtm_manual_qhd | `525fa3bfde3b45b90f9bcc92352fa0e25aa7123db1f3f76b14f7a914ddf7ecf7` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | full | `db3ff15d7e32f27859e08942c1043c5356a0ad482d012f922b82d99fe18cc724` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | full_vga_709 | `c18897f79a7c450f7fc8373f74ca267e4606c39e4253b6d9861f7b96b5a9d72f` |
-| image | khoid_outdoor7_raw_2688x1520_5376 | gtm_manual_qhd | `a95549f4317efed211fddfce107b9f1fa356572e668c95331c147acfa11b7106` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | full | `6efbda964c126a02360b08f5a85bf47f5fefe752d5ee6aa1cac3192d5503ab33` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | full_vga_709 | `7750f6315dac0499bf6bbe7902b80562aceafbde8f3047a147607433ce00f750` |
-| image | khoid_outdoor8_raw_2688x1520_5376 | gtm_manual_qhd | `f7445e090efe3e232b074eb0b0bd8facb1c79c0cb430c67603324efe374cde15` |
-| image | khoid_outdoor_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoid_outdoor_raw_2688x1520_5376 | full | `c2fe3f6f533dec3415c8915df881824d96b507c0d03b481422269fa7de85b5e1` |
-| image | khoid_outdoor_raw_2688x1520_5376 | full_vga_709 | `78a24937e134297d37162fcb79d02d47714a2aa938c916d96aa531061fbf8436` |
-| image | khoid_outdoor_raw_2688x1520_5376 | gtm_manual_qhd | `8c593ae05d01c4bd0e59ad7e1ae86a304629478ba30a7f9a4d28d54a5f1c2eb2` |
-| image | khoipd_basement1_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_basement1_raw_2688x1520_5376 | full | `83f73294c6bede0794a5b66f1dc605e6b8efe9f66ad29b99bec816a0cda0f70c` |
-| image | khoipd_basement1_raw_2688x1520_5376 | full_vga_709 | `44ec8dcb1b8ca711de6d682b3924a66208c0f90486bab82d90165ce528ffac04` |
-| image | khoipd_basement1_raw_2688x1520_5376 | gtm_manual_qhd | `32d4bb8302e18a2a6484ee9671cacae748b8e2b53984f6a16046f9bdfc5b3bfa` |
-| image | khoipd_basement2_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_basement2_raw_2688x1520_5376 | full | `77d02ed110b3a5f62db94c32eb4e3c98de210c90636ffeefbd4c6268cfd52e63` |
-| image | khoipd_basement2_raw_2688x1520_5376 | full_vga_709 | `6e4044f11c8cffc229f77b5ab3f3fd18480d388706ac4fa93063ea6cc55117c1` |
-| image | khoipd_basement2_raw_2688x1520_5376 | gtm_manual_qhd | `39981cc5703ca209f6a138a7dc97d68ad935a66ab0d056cfafd9455b7e2c2410` |
-| image | khoipd_basement_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_basement_raw_2688x1520_5376 | full | `5a3d3f013737cb789a01b388027935e9c95e4fe6acbfa867c6e397b6745f9672` |
-| image | khoipd_basement_raw_2688x1520_5376 | full_vga_709 | `95caa43eb24de67f41a311569e34d320b20491e686c6dab77e37d24eca78d0be` |
-| image | khoipd_basement_raw_2688x1520_5376 | gtm_manual_qhd | `5637edb329557fff22904a19e785fcee015171c3991b87ead239ae54778cb3da` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | full | `49851de6d43a44b3c02285fbb23f0d8a86583faa91f96835fa209df57b6a2bae` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | full_vga_709 | `74e013569da01fb57d2c77616d6b7736eb376546abf8596456e80a7315799de4` |
-| image | khoipd_indoor1_raw_2688x1520_5376 | gtm_manual_qhd | `f88448208fb2e252bdd928cd077784b2c8b6053a025f1016a4b2aa2077f20e18` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | full | `f08c12a3cbf9160601c165a49042b8f14be06cc475b44746a88d871162a4465c` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | full_vga_709 | `f6ef10dc8e65bdf40a03063c1c3386a792262a80052b5027fac87336c6620c01` |
-| image | khoipd_indoor2_raw_2688x1520_5376 | gtm_manual_qhd | `666802aff9aa6b054f522b9b62f6bd8540ab79de1038fb0150539d8bc4f6b5eb` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full | `3703f500921ed2b8b5ac313784c06c636f1dea142c04de017c58509f6b66a469` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full_vga_709 | `ffc99304c20a6fa8ce6508b53c8d2539bd06c982627fe0fafd6ada08c0c14e40` |
-| image | khoipd_indoor_figure1_raw_2688x1520_5376 | gtm_manual_qhd | `b68f9ece7b892103bec9bdc7a904fd216156364f04a3798d14f8ab9e78b87418` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full | `248b2519641b6c6b3de594e0984c9dce4ccd67c569fcc560179f040968910a01` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full_vga_709 | `d12a59ec06b811d2a4091401b31076501f94093b68cddc440201ca68df0b030e` |
-| image | khoipd_indoor_figure2_raw_2688x1520_5376 | gtm_manual_qhd | `b8445d8fb713d5d7f73d6f9a813f6586aca368a57caa7cfd3c54d1a005ed5d85` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | full | `9f6f558a0fb41f3531d57630468a63e2b117ac30ddb8f20f3893384a69aefc07` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | full_vga_709 | `c4242d3aa1bfe28f0a7a3803e9ad3dd5478914436b7a3ddc50b90e00db68e62b` |
-| image | khoipd_indoor_figure_raw_2688x1520_5376 | gtm_manual_qhd | `241b5a958cb9bcce299de8b1dadc4f4e9fc62baa8f69983ef432bea7a36f0ac0` |
-| image | khoipd_indoor_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_indoor_raw_2688x1520_5376 | full | `34b81ce85601b991a6fbc305739582afade2028975c14d9655d2eaa7203642f3` |
-| image | khoipd_indoor_raw_2688x1520_5376 | full_vga_709 | `1de84cc3a9fd2a3ac60cffa844d8460737237dfc84d92ab542ca17ec9db1919d` |
-| image | khoipd_indoor_raw_2688x1520_5376 | gtm_manual_qhd | `c7818784fe6f26f344f7228ea832d1349b33d5e8db3cc6372210b43b4244e336` |
-| image | khoipd_night1_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_night1_raw_2688x1520_5376 | full | `405f706ec64524400f5f113e7a7e3deea7f9fb426de3d5ca6b546b1acb9964a9` |
-| image | khoipd_night1_raw_2688x1520_5376 | full_vga_709 | `199864770c9b3eb32df828a18050170ba92df976a6b1af67db8135d685700b49` |
-| image | khoipd_night1_raw_2688x1520_5376 | gtm_manual_qhd | `2783738c649ed568b4d8502ae9102ffb142c2431a21e4428478efc2581c0740f` |
-| image | khoipd_night2_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_night2_raw_2688x1520_5376 | full | `3c33210bbc746f871819890e058c48ae8870354bf8df02af53d7fffbdbee93bc` |
-| image | khoipd_night2_raw_2688x1520_5376 | full_vga_709 | `9724982721bce3c3642e9437ae844fdf8377b681d167dc9f73534d5d93249990` |
-| image | khoipd_night2_raw_2688x1520_5376 | gtm_manual_qhd | `510c2ec6d97749459c23a69b2bcc5c4465448a19a0510af03c278f20bb80de19` |
-| image | khoipd_night3_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_night3_raw_2688x1520_5376 | full | `f9a16d617e7848e832c10214da9fed4cd4d3bdb342f7fc303ce2c7f437cddc1e` |
-| image | khoipd_night3_raw_2688x1520_5376 | full_vga_709 | `9528a6fcd3c17841132df6adb2c6f58ee7ab0f741642180cb00ef43988dbe336` |
-| image | khoipd_night3_raw_2688x1520_5376 | gtm_manual_qhd | `49b108ed480d8fd68420c70b302a006ed108178fa8f995420622f5c1f024d4be` |
-| image | khoipd_night4_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_night4_raw_2688x1520_5376 | full | `33ffbc9224fe78d14f5a744e4ead46ec34488b9a7f6c3a0deaffed09e816ee6a` |
-| image | khoipd_night4_raw_2688x1520_5376 | full_vga_709 | `170653072b5ef94cf469be7fe5ea4f5e7aafa976b538b1e1bb8f181eee0d1529` |
-| image | khoipd_night4_raw_2688x1520_5376 | gtm_manual_qhd | `fa14297b571d70562e879f004ee64800a139fa03c4f2d5644a331a4bd6667e9a` |
-| image | khoipd_night5_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_night5_raw_2688x1520_5376 | full | `d77001dd01920a9d8ed607db073c0edeaceda0c79fce65efda37e4f903cb7a46` |
-| image | khoipd_night5_raw_2688x1520_5376 | full_vga_709 | `268fbc09c1197fa3a1994787cfb4e853de9a29cf853d72a12f5d5a22e95a7cde` |
-| image | khoipd_night5_raw_2688x1520_5376 | gtm_manual_qhd | `1a17a881121a0e88117ea044210e474f50a1e020f7adc63e8354132e5f7f1af6` |
-| image | khoipd_night6_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_night6_raw_2688x1520_5376 | full | `3c09f9353da4a14790f34324a2fb6fb20d9811b39e0ed84061cf9c5897930f44` |
-| image | khoipd_night6_raw_2688x1520_5376 | full_vga_709 | `69ade7051a4f71e3e4035c7afa11c9a7061c4e6ee4c0a2492c04bcb8c4f3ec8d` |
-| image | khoipd_night6_raw_2688x1520_5376 | gtm_manual_qhd | `5641170beb788b96b5ee41bffb1ccc2a5b87e2361ba637cbfd21b1d6108a287f` |
-| image | khoipd_night_raw_2688x1520_5376 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| image | khoipd_night_raw_2688x1520_5376 | full | `251494ac8747c84acb418ab973ef31a209eb9b3b14e579d48e58f38b37bb6d80` |
-| image | khoipd_night_raw_2688x1520_5376 | full_vga_709 | `03d5cc289695d1dbcd7bb7c218b7671f15688e8d5223068337071e66722e9e20` |
-| image | khoipd_night_raw_2688x1520_5376 | gtm_manual_qhd | `6c84062d8eb7874377e7cda98d82d23a98de04756be88fd719cc6bd143decd63` |
-| sequence | sequence of 28 | basic | `ed5852644b6cbd638167c831a7c1d4539031f6823f5e111f0b85edeaf91294d4` |
-| sequence | sequence of 28 | full | `6b0e3c738f7cd93fea9fb1bfe1c19b7c33efa9ef9a5f330fd5f4afdb41689d29` |
-| sequence | sequence of 28 | full_vga_709 | `9ccfa6b374472046926bf9bd7c2779ece3acd7e4cb5243623f0fb87ae4cc7ea1` |
-| sequence | sequence of 28 | gtm_manual_qhd | `e2ea89ce587307b1b2b2d28ecd038d3f0e93dba5e9778447f9405c0021b780ce` |
+| image | khoid_ground_1_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_ground_1_raw_2688x1520_5376 | full | `9d59c7615efdfa7fb12566850da419960ce936883530b2a7c7fe7caf53caf850` |
+| image | khoid_ground_1_raw_2688x1520_5376 | full_vga_709 | `26afadc17ab524d07a6067302c40f371f16ec3c5f2c8a6de1bbd25ad54015130` |
+| image | khoid_ground_1_raw_2688x1520_5376 | gtm_manual_qhd | `ba1381b1b928eb9f3a0fed41915b7815349921b0545a1d36e8665ee9fda2287f` |
+| image | khoid_ground_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_ground_raw_2688x1520_5376 | full | `36c7191a73cd46e58dda3b89a580e7bf65245d575b870a18b3059d75d6eea680` |
+| image | khoid_ground_raw_2688x1520_5376 | full_vga_709 | `24cf698a716659d0789cdb2a596fab7b10ad2d6db9015a0d86993282d4e38ea1` |
+| image | khoid_ground_raw_2688x1520_5376 | gtm_manual_qhd | `8b4d15f0f95eb1806a65fd31667bf3f59a55520045220dda2cf0852d08399262` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | full | `b507dd6bfb1ceefb9c161cb9335c7e6201fb6c239c9d5a9bf8ba1bc5a4a9d69a` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | full_vga_709 | `35bbddfa32779182b49a0408f37b38eec61eddb2ccb1d85245a50018acd143e1` |
+| image | khoid_indoor_led_raw_2688x1520_5376 | gtm_manual_qhd | `f5f6bd821ec8e21c1e4a722247ee6dce2c3ca907202bfe536592b10a3fb06e73` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | full | `62ef2b453760f62503a1eac97db4826f4f7c4dfaad9740308647701ece23062d` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | full_vga_709 | `e1c8a342b04c3e8770f78914fd9788b410fe20d163ddcf98db1289b5935e0751` |
+| image | khoid_outdoor1_raw_2688x1520_5376 | gtm_manual_qhd | `c8a69706816aa82bcb90536d73980176357bd7bc4b0049ddbdf4e1f147dc4efc` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | full | `ebfd2c86330cbaf6bcd71c72209ab56e7a6dc80f533f84f7e4f5602ad27a5df7` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | full_vga_709 | `5832aff6b5a2dd39da065de8228c64f354089dfe013c1a55fd0b7db605d0ab2b` |
+| image | khoid_outdoor2_raw_2688x1520_5376 | gtm_manual_qhd | `319e8cb93d8d2dc22f3003977ab46f37ce8ebb06df08b0415a6d456bb17edd15` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | full | `f66e3c4cc757335a32645a56fea9fe701c4cc91b20a3b48bcf9825011d96132d` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | full_vga_709 | `caee308345b88d264cf8de7f6fded06a101d2d0c666d0211dd1396e3a5f13b35` |
+| image | khoid_outdoor3_raw_2688x1520_5376 | gtm_manual_qhd | `5f4ce288f945503e63145226bf4bb83b46bceccc30094df0969bf8ef734eebfd` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | full | `eb73859f6ebfb6d1c7924966b4e159e039e38b6b2645d03002beab82686c5e23` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | full_vga_709 | `54e49f76731a57e31f0e111636563b24f903033d845d1ac7f938dbe134368a26` |
+| image | khoid_outdoor4_raw_2688x1520_5376 | gtm_manual_qhd | `ab02efac4a47629b2f21981a94ebe4778a8ca9064d94e92709fa4c294480d842` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | full | `63ff14289ca529df2ac88ea01eab86433a002bc324f5a376e2269ab2ca1bff00` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | full_vga_709 | `ea971e90acd1ad27401fff96ceae465b615c9f5a00bc5a49a5306e8cfe42e9ae` |
+| image | khoid_outdoor5_raw_2688x1520_5376 | gtm_manual_qhd | `8e82209330b38dc05d526154765d6e01a36757bc2db6751726c8d1086587563a` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | full | `3354a6b68864ccc13be58eb2d8e38777f5dcdc73a18a9e565b1aea20f929866f` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | full_vga_709 | `79b3f33ae2f1c6ce68565fba13b84e76df8ab40642fa55e865df4d4a61f517a9` |
+| image | khoid_outdoor6_raw_2688x1520_5376 | gtm_manual_qhd | `beb19c9be02175268112e56845da7e010b72948c637d22293749ac52b899cc8d` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | full | `24d18d9c353e536a647eabe5915ccdb0d50237021d6f5a8fe3be5e8b17e5aa7a` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | full_vga_709 | `d46d0c7c36c5bc1f3da0812193c74fbf98120af2fd42849140f78125f7a2a12e` |
+| image | khoid_outdoor7_raw_2688x1520_5376 | gtm_manual_qhd | `bc0971b59f2c7dafbe3d4706e639a6e496de65e17f849ac583bb17b1c18c1334` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | full | `4f7020beb406ec6393ca5f65cac0c6a2eb1a3e22906d80c1e4680cc2f3e91a47` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | full_vga_709 | `7e65d1d5b131dc1ce0f4d6cb94520a549f7279c452869342aaaaaa1ad466826c` |
+| image | khoid_outdoor8_raw_2688x1520_5376 | gtm_manual_qhd | `f78ce1d18ee4c2917253ea9ec45a324ea5036fb5592032bdde7b0bf62b48ebdc` |
+| image | khoid_outdoor_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoid_outdoor_raw_2688x1520_5376 | full | `22d54ba65e1d1f6f3581a91569f877266f4ba2bc63c6ccde1c71d946a05cc271` |
+| image | khoid_outdoor_raw_2688x1520_5376 | full_vga_709 | `24965194b1e79da9d0b422ead9480f71660ed0c15fb3448fa259a22cf66db218` |
+| image | khoid_outdoor_raw_2688x1520_5376 | gtm_manual_qhd | `6d2e94f51a60eaa84d066455a5e1e41366f07cbdf6c2f9916dced3a997b0a873` |
+| image | khoipd_basement1_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_basement1_raw_2688x1520_5376 | full | `e0844005f3b6c7ca5fc8a28357f7820cd79e72a79953a46df8d2e7a8ad427cdc` |
+| image | khoipd_basement1_raw_2688x1520_5376 | full_vga_709 | `5467de0230b98b2fa5b64e4ecdbeaec0b369876dd30df38d091270a56378b5bd` |
+| image | khoipd_basement1_raw_2688x1520_5376 | gtm_manual_qhd | `e70c8c0cee15fa6df89de5776a68448ba72171397e895b797edb03375f11b2a8` |
+| image | khoipd_basement2_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_basement2_raw_2688x1520_5376 | full | `1f7a1caa69a52bcbf441ad8a5925d22363d9eee4abe48682e5783567df2f8f23` |
+| image | khoipd_basement2_raw_2688x1520_5376 | full_vga_709 | `6faa8524705420027df75a7a4613756056715036f229abbd81dab54b56bf9918` |
+| image | khoipd_basement2_raw_2688x1520_5376 | gtm_manual_qhd | `259f17dfd4e69664020eccf84eda2c3a79f677e98a7323227d913891e6743211` |
+| image | khoipd_basement_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_basement_raw_2688x1520_5376 | full | `2b0d8870c3ffd30561de46d4def1b097a541dc8b1d385edf08c22ff4bb4fac31` |
+| image | khoipd_basement_raw_2688x1520_5376 | full_vga_709 | `b176b1b4033ed692e42e0537e8c1df5d3ca060c161885632eb95fd53301ad9e8` |
+| image | khoipd_basement_raw_2688x1520_5376 | gtm_manual_qhd | `141b9addbf7c299b490e1f7e17a2ba6e11b2d5cac71e0c0ff8cf13eae0d203a6` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | full | `b41688147ad9646cd2c9c06885a2d7bc99643c3af0247728958ff10ab02fc269` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | full_vga_709 | `553a42b6efaa0a1392ad589cd5a3e68728bcd676ae092c305cfd86d40061248d` |
+| image | khoipd_indoor1_raw_2688x1520_5376 | gtm_manual_qhd | `03dd8e3de15840e9797326a6b3baad45c7d9752c972fde17eaf4e76333714e3a` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | full | `32708b35e7a4f1774d9b11ad95ff82aee5e0b8c9f056ab336aade611d3a7272d` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | full_vga_709 | `d504b5aa3428ad43c65a6ed898322075aad4fad79c7052f449cde100e68b09e6` |
+| image | khoipd_indoor2_raw_2688x1520_5376 | gtm_manual_qhd | `f816194d92bf16a945dfde65c950ed815daa7ec149600d9851168535f6c609b2` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full | `00b4d1bca008f49d05aaa29fa40839d9445bbbfb41e723169837dddc3f639bb1` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | full_vga_709 | `e9c1d08398f55277eafb52cae7fd098dcc8cf1731399663756ee8c618a89bbe6` |
+| image | khoipd_indoor_figure1_raw_2688x1520_5376 | gtm_manual_qhd | `c1968ecce4dd6afbb7fb3a75cbe63569365f00b678daa6cd57b11e441e262c30` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full | `a4f96f825a83378d3529de06aae1ac6f79d0413828ff7f4c26a50cfa2ddb7f66` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | full_vga_709 | `9cadccad3645900ac70e520afb422a23a548e433f73f108afeaaca329ca8ebd2` |
+| image | khoipd_indoor_figure2_raw_2688x1520_5376 | gtm_manual_qhd | `3e4aeead296fe5b31a00d4178d6fd1749b42cf2faab6557f2b27e11803a68db8` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | full | `936d8a74a31d23073df0a19a3ac9e42be9829f9ee944c59a4958dc598dc1c9d2` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | full_vga_709 | `a25a498c1cd270838bbab0612b3bea953eae5dd4a2093828ff8445cc7eb469e0` |
+| image | khoipd_indoor_figure_raw_2688x1520_5376 | gtm_manual_qhd | `658b2efaf799481bec840a22d831ff8a5cef835a906837414068f76d6ccfdc1d` |
+| image | khoipd_indoor_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_indoor_raw_2688x1520_5376 | full | `fc12037e31bd8cb403b4b517bdd530b9060df0a07c477c79f85cfd0a41153f46` |
+| image | khoipd_indoor_raw_2688x1520_5376 | full_vga_709 | `3d2c3385982895ec63a2c225ac95db593baaac1992abd683288d54648da9b8cb` |
+| image | khoipd_indoor_raw_2688x1520_5376 | gtm_manual_qhd | `e4f75fa82bc53f7522905120f86d74e2475383ac2329cf4dde32a0ff1512060d` |
+| image | khoipd_night1_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_night1_raw_2688x1520_5376 | full | `4ea004b0e6b7362112b4b69e62374133c1fb698caed7aa348e0c0f810b6bfb06` |
+| image | khoipd_night1_raw_2688x1520_5376 | full_vga_709 | `ca0c59c44cbd625be545d643c12e8d8047343533e0c1c93b5a1058c4ad6213d8` |
+| image | khoipd_night1_raw_2688x1520_5376 | gtm_manual_qhd | `5587df0b194527930a3080c1556fe649c1f8e174c3cd0ddaaeca1ad18fa65680` |
+| image | khoipd_night2_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_night2_raw_2688x1520_5376 | full | `9ff258b024ba535d66d954027b8573da1c978da75372cb2b985fed1f012607ed` |
+| image | khoipd_night2_raw_2688x1520_5376 | full_vga_709 | `3fc2cfc2d5dcdd6055d917f3aa939bac9d96983d90c70408b0a795d0281f8a5e` |
+| image | khoipd_night2_raw_2688x1520_5376 | gtm_manual_qhd | `423d480a1b23b59d39e39471cfa4e4f330fbb14a81b05dd45fd218d225a2d759` |
+| image | khoipd_night3_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_night3_raw_2688x1520_5376 | full | `1f1638d67e896e4e62de47423891551e3a9c648d153e7316874956cfc0b196c7` |
+| image | khoipd_night3_raw_2688x1520_5376 | full_vga_709 | `7548106e1ffc50c8c367d6b32846e1a424d03194b16ddaaaf7c09d984b4befb1` |
+| image | khoipd_night3_raw_2688x1520_5376 | gtm_manual_qhd | `37e8b6b6a08759c52f03005530ab1c19e3b2946234a25e474006d32482a44efb` |
+| image | khoipd_night4_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_night4_raw_2688x1520_5376 | full | `2f611e08aef176edbfd69af5e5cfb4aa9909e23dc36057e3c040c2ef94326fed` |
+| image | khoipd_night4_raw_2688x1520_5376 | full_vga_709 | `8add107ec311981415597cfadac1cd424ac38724a9cf4daf0fc6694fbe1cba61` |
+| image | khoipd_night4_raw_2688x1520_5376 | gtm_manual_qhd | `6846b0a5b4d584fd3aac0b1162bae00ce1598ac0007c434d6f4779e7a5e7c6a3` |
+| image | khoipd_night5_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_night5_raw_2688x1520_5376 | full | `a3391291ec1a7a0a27557988c1af0fc513207b61a6019f385d22f6a5c7015337` |
+| image | khoipd_night5_raw_2688x1520_5376 | full_vga_709 | `b0a990556f203a7ef3c82b7604daf1c057b8301ff0196c1d0f2fb6b89d3f1c32` |
+| image | khoipd_night5_raw_2688x1520_5376 | gtm_manual_qhd | `73e61b87606d0252156ef532d066264a435b6dafbfb9cc42c76bb19372bb1d8c` |
+| image | khoipd_night6_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_night6_raw_2688x1520_5376 | full | `0f3f3b103129485a57400e477d1afdcb887c2926619cb9ef7ee59a217c6a4f37` |
+| image | khoipd_night6_raw_2688x1520_5376 | full_vga_709 | `c04830a2d34267f69bf8d20862e2fc2f67ff03400a247f890c7ae0342a59dbec` |
+| image | khoipd_night6_raw_2688x1520_5376 | gtm_manual_qhd | `4aae08420e3f185bec79c2a738676301ef0a7d74a0fef6e92ab866b57470c53e` |
+| image | khoipd_night_raw_2688x1520_5376 | basic | `1c1ddfc9985085c3169a5701ecd6c47d8f52b2346e7e53cca377b924e41a6271` |
+| image | khoipd_night_raw_2688x1520_5376 | full | `12d297ca1bfb90584cbe9bf2a12886012dead02b74af33d16925308a65099184` |
+| image | khoipd_night_raw_2688x1520_5376 | full_vga_709 | `59cf06f0ade604965cdcd7dc1108ea50e2c2ec22fba7c49cb6b5dca139b63521` |
+| image | khoipd_night_raw_2688x1520_5376 | gtm_manual_qhd | `89aecb7abb37f8f0b244c46785621509d3746b432d99d715166d0bf54a879d10` |
+| sequence | sequence of 28 | basic | `edbb477deed9d8eb648c28bb0fb62f0c58ce4cea90cc945e64242f29c90e3da8` |
+| sequence | sequence of 28 | full | `6b29208d7e3751615e1aeb1006161d65d6e6fcbbe7bc917ea0f811e10febb7a1` |
+| sequence | sequence of 28 | full_vga_709 | `3b17edd95d182c4a34b9bfb674e241c9d04409f6ca6e086089299898efbcae59` |
+| sequence | sequence of 28 | gtm_manual_qhd | `e37f2c667c83877cd654b4a0daf74889d9f0f324a02ee0d08d37f264636c6232` |

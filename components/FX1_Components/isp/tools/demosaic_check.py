@@ -38,13 +38,8 @@ import demosaic_validate  # noqa: E402
 
 
 def profile_writes(path):
-    writes = []
-    for line in open(path, encoding="utf-8"):
-        line = line.split("#")[0].strip()
-        if line:
-            n, v = line.split()
-            writes.append((n, int(v, 0)))
-    return writes
+    """Canonical writes of a profile in register or field syntax (ISP-UPD-008)."""
+    return regs_mod.read_profile(path)
 
 
 def reference_taps(inputs, w, h, writes, frames):

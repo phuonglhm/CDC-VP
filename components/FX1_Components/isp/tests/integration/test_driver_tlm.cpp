@@ -44,6 +44,11 @@
 #include "../../../../../fw/fx1_soc/tests/isp_stream/isp_fixture.h"
 #define FX1_HAVE_FW_FIXTURE 1
 #endif
+// The ISP demo firmware's setup helpers (ISP-UPD-001 LSC duplication).
+#if __has_include("../../../../../fw/fx1_soc/demo/isp_raw_frame/isp_demo_setup.h")
+#include "../../../../../fw/fx1_soc/demo/isp_raw_frame/isp_demo_setup.h"
+#define FX1_HAVE_FW_DEMO_SETUP 1
+#endif
 
 using namespace sc_core;
 using namespace cdc::components::fx1_isp;
@@ -1003,6 +1008,79 @@ struct bench : sc_module {
       FX1_CHECK_EQ(err & FX1_ISP_LSC_ERROR_ACTIVE_LOAD_REJECT_MASK, FX1_ISP_LSC_ERROR_ACTIVE_LOAD_REJECT_MASK);
       FX1_CHECK_EQ(fx1_isp_lsc_select(&dev, 2), FX1_ISP_EIO);  // not loaded
       FX1_CHECK_EQ(fx1_isp_lsc_load(&dev, 2, 33, 2, coef.data(), &err), FX1_ISP_EINVAL);  // 2..32 nodes (MAS v1.07)
+      // ISP-UPD-001: UQ4.18 gains up to exactly 8.0 load without COEF_RANGE;
+      // above 8.0 the driver refuses before writing: no load starts and
+      // profile 2 stays valid (the stored values: unit test_lsc_gain_range).
+      std::vector<std::uint32_t> gain8(4 * 2 * 2, 0x200000);
+      gain8[3] = 0x1FFFFF;
+      FX1_CHECK_EQ(fx1_isp_lsc_load(&dev, 2, 2, 2, gain8.data(), &err), FX1_ISP_OK);
+      FX1_CHECK_EQ(err, 0u);
+      std::vector<std::uint32_t> over(gain8);
+      over[9] = 0x200001;
+      hal_write(this, FX1_ISP_LSC_ERROR_OFFSET, 0xFFFFFFFFu);
+      FX1_CHECK_EQ(fx1_isp_lsc_load(&dev, 2, 2, 2, over.data(), &err), FX1_ISP_EINVAL);
+      FX1_CHECK_EQ(rd(FX1_ISP_LSC_LOAD_STATUS_OFFSET) & FX1_ISP_LSC_LOAD_STATUS_LOAD_BUSY_MASK, 0u);
+      FX1_CHECK_EQ(rd(FX1_ISP_LSC_PROFILE_STATUS_OFFSET) & 4u, 4u);
+      FX1_CHECK_EQ(rd(FX1_ISP_LSC_ERROR_OFFSET), 0u);
+      // With profile 1 active, profile 0 is a legal destination: three residents.
+      FX1_CHECK_EQ(fx1_isp_lsc_load(&dev, 0, 2, 2, coef.data(), &err), FX1_ISP_OK);
+      FX1_CHECK_EQ(rd(FX1_ISP_LSC_PROFILE_STATUS_OFFSET) & 7u, 7u);
+      // The same load from a profile's LSC_COEF_DATA writes (firmware duplication).
+      {
+         std::vector<fx1_isp_reg_write> w;
+         for (std::uint32_t v : gain8) {
+            w.push_back({FX1_ISP_LSC_COEF_DATA_OFFSET, v});
+         }
+         const std::uint32_t nodes = rd(FX1_ISP_LSC_MESH_NODES_OFFSET);
+         FX1_CHECK_EQ(fx1_isp_lsc_load_writes(&dev, 0, w.data(), w.size(), &err), FX1_ISP_OK);
+         FX1_CHECK_EQ(rd(FX1_ISP_LSC_MESH_NODES_OFFSET), nodes);  // size not rewritten
+         FX1_CHECK_EQ(rd(FX1_ISP_LSC_PROFILE_STATUS_OFFSET) & 7u, 7u);
+         FX1_CHECK_EQ(fx1_isp_lsc_load_writes(&dev, 0, w.data(), w.size() - 1, &err), FX1_ISP_EINVAL);  // count
+         std::vector<fx1_isp_reg_write> bad(w);
+         bad[4].offset = FX1_ISP_LSC_STRENGTH_OFFSET;
+         FX1_CHECK_EQ(fx1_isp_lsc_load_writes(&dev, 0, bad.data(), bad.size(), &err), FX1_ISP_EINVAL);
+         bad = w;
+         bad[4].value = 0x200001;
+         FX1_CHECK_EQ(fx1_isp_lsc_load_writes(&dev, 0, bad.data(), bad.size(), &err), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(rd(FX1_ISP_LSC_PROFILE_STATUS_OFFSET) & 7u, 7u);  // refusals write nothing
+         FX1_CHECK_EQ(fx1_isp_lsc_load_writes(&dev, 1, w.data(), w.size(), &err), FX1_ISP_EIO);  // 1 is active
+         FX1_CHECK_EQ(err & FX1_ISP_LSC_ERROR_ACTIVE_LOAD_REJECT_MASK, FX1_ISP_LSC_ERROR_ACTIVE_LOAD_REJECT_MASK);
+         FX1_CHECK_EQ(fx1_isp_lsc_load_writes(&dev, 0, nullptr, 16, &err), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(fx1_isp_lsc_load(&dev, 0, 2, 2, nullptr, &err), FX1_ISP_EINVAL);
+      }
+      // ISP-UPD-002: BLC gain profile helpers; G4..G7 live in the extension block.
+      {
+         const std::uint32_t trim[4] = {1, 2, 3, 4}, scale[4] = {0x10001, 0x18000, 0x8000, 0x3FFFF};
+         FX1_CHECK_EQ(fx1_isp_blc_set_profile(&dev, 5, 0x123, trim, scale), FX1_ISP_OK);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_OFS_G5_DFT_OFFSET), 0x123u);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_OFS_G5_GB_OFFSET), 3u);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_SCALE_G5_R_OFFSET), 0x10001u);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_SCALE_G5_GR_OFFSET), 0x18000u);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_SCALE_G5_B_OFFSET), 0x3FFFFu);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_SCALE_G1_GR_OFFSET), 0x10000u);  // other profiles untouched
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_OFS_G1_DFT_OFFSET), 0xC8u);
+         FX1_CHECK_EQ(fx1_isp_blc_select(&dev, 5, 1), FX1_ISP_OK);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_GAIN_SEL_OFFSET), 0x105u);
+         FX1_CHECK_EQ(fx1_isp_blc_select(&dev, 7, 0), FX1_ISP_OK);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_GAIN_SEL_OFFSET), 0x007u);
+         FX1_CHECK_EQ(fx1_isp_blc_select(&dev, 8, 1), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_GAIN_SEL_OFFSET), 0x007u);
+         const std::uint32_t bad_trim[4] = {1, 2, 0x1000, 4}, bad_scale[4] = {0x10000, 0x40000, 0x10000, 0x10000};
+         FX1_CHECK_EQ(fx1_isp_blc_set_profile(&dev, 8, 1, trim, scale), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(fx1_isp_blc_set_profile(&dev, 4, 0x1000, trim, scale), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(fx1_isp_blc_set_profile(&dev, 4, 1, bad_trim, scale), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(fx1_isp_blc_set_profile(&dev, 4, 1, trim, bad_scale), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(fx1_isp_blc_set_profile(&dev, 4, 1, nullptr, scale), FX1_ISP_EINVAL);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_OFS_G4_DFT_OFFSET), 0xC8u);  // nothing written by a refusal
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_OFS_G4_R_OFFSET), 0u);
+         FX1_CHECK_EQ(rd(FX1_ISP_BLC_SCALE_G4_R_OFFSET), 0x10000u);
+         // ISP-UPD-007: offsets in pixel levels, signed 12-bit two's complement.
+         const std::int16_t m[9] = {512, 0, 0, 0, 512, 0, 0, 0, 512}, ofs[3] = {1, -1, -2048};
+         fx1_isp_ccm_set(&dev, m, ofs, 0);
+         FX1_CHECK_EQ(rd(FX1_ISP_CCM_OFS_R_OFFSET), 1u);
+         FX1_CHECK_EQ(rd(FX1_ISP_CCM_OFS_G_OFFSET), 0xFFFu);
+         FX1_CHECK_EQ(rd(FX1_ISP_CCM_OFS_B_OFFSET), 0x800u);
+      }
       FX1_CHECK_EQ(fx1_isp_set_geometry(&dev, 3, 4, 0), FX1_ISP_EINVAL);
       // MAS v1.07 §6.6.3.4-6.6.3.5: external even up to 3842x2162, derived
       // active 32x32..3840x2160, validated by software (the DMA does not).
@@ -1271,6 +1349,105 @@ struct bench : sc_module {
       fx1_isp_aec_global again{};
       FX1_CHECK_EQ_CTX(fx1_isp_read_aec_global(&dev, &again), FX1_ISP_OK, ctx + " read with none READY");
       FX1_CHECK_EQ_CTX(again.frame_id, 2u, ctx + " the result read last");
+      // ISP-UPD-004: the global percentages of that result; RGGB 64x48 has a
+      // 64x48 active image. Expected: round-half-up of 10000 * count / 3072.
+      fx1_isp_aec_percent pc{};
+      FX1_CHECK_EQ_CTX(fx1_isp_read_aec_percent(&dev, &pc), FX1_ISP_OK, ctx + " percent");
+      FX1_CHECK_EQ_CTX(pc.samples, 64u * 48u, ctx + " percent denominator");
+      FX1_CHECK_EQ_CTX(pc.ue, g.ue, ctx + " percent UE count");
+      FX1_CHECK_EQ_CTX(pc.oe, g.oe, ctx + " percent OE count");
+      FX1_CHECK_EQ_CTX(pc.ue_bp, static_cast<std::uint32_t>((g.ue * 10000 + 1536) / 3072), ctx + " UE bp");
+      FX1_CHECK_EQ_CTX(pc.oe_bp, static_cast<std::uint32_t>((g.oe * 10000 + 1536) / 3072), ctx + " OE bp");
+      FX1_CHECK_EQ_CTX(pc.frame_id, 2u, ctx + " percent frame");
+      FX1_CHECK_EQ_CTX(g.ue + g.oe > 0 ? 1 : 0, 1, ctx + " the vector has UE or OE samples");
+      fx1_isp_dev z{};
+      FX1_CHECK_EQ_CTX(fx1_isp_read_aec_percent(&z, &pc), FX1_ISP_ESTATE, ctx + " percent uninitialised");
+      dev.aec_last.overflow = 1;  // a saturated result: no exact percentage
+      FX1_CHECK_EQ_CTX(fx1_isp_read_aec_percent(&dev, &pc), FX1_ISP_EIO, ctx + " percent of saturated counts");
+      reset_and_init();
+      FX1_CHECK_EQ_CTX(fx1_isp_read_aec_percent(&dev, &pc), FX1_ISP_ENODATA, ctx + " percent before a result");
+   }
+
+   // ISP-UPD-005: the outputs' colorimetry the datapath uses. Legacy mode:
+   // CSC_CTRL.std, and FULL_RANGE stays the field reset whatever the bank
+   // storage of TUNE_CSC_CTRL holds; profile mode: the bank's values, read
+   // through TUNE_BANK, which is restored.
+   void test_output_colorimetry() {
+      const std::string ctx = "output colorimetry";
+      reset_and_init();
+      unsigned std = 9;
+      int full = 9;
+      FX1_CHECK_EQ_CTX(fx1_isp_output_colorimetry(&dev, 0, &std, &full), FX1_ISP_OK, ctx);
+      FX1_CHECK_EQ_CTX(std, 0u, ctx + " reset std");
+      FX1_CHECK_EQ_CTX(full, 1, ctx + " reset: full range");
+      hal_write(this, FX1_ISP_CSC_CTRL_OFFSET, 1);
+      hal_write(this, FX1_ISP_TUNE_CSC_CTRL_OFFSET, 0);  // legacy: bank storage only
+      FX1_CHECK_EQ_CTX(rd(FX1_ISP_TUNE_CSC_CTRL_OFFSET) & FX1_ISP_TUNE_CSC_CTRL_FULL_RANGE_MASK, 0u,
+                       ctx + " the readback is the bank storage");
+      FX1_CHECK_EQ_CTX(fx1_isp_output_colorimetry(&dev, 0, &std, &full), FX1_ISP_OK, ctx);
+      FX1_CHECK_EQ_CTX(std, 1u, ctx + " legacy std");
+      FX1_CHECK_EQ_CTX(full, 1, ctx + " legacy: the datapath keeps full range");
+      std::uint32_t err = 0;
+      FX1_CHECK_EQ_CTX(fx1_isp_profile_mode(&dev, 1), FX1_ISP_OK, ctx);
+      FX1_CHECK_EQ_CTX(fx1_isp_profile_begin(&dev, 0, &err), FX1_ISP_OK, ctx + " INIT bank 0");
+      hal_write(this, FX1_ISP_TUNE_CSC_CTRL_OFFSET, 0);  // bank 0: limited
+      hal_write(this, FX1_ISP_CSC_CTRL_OFFSET, 1);       // bank 0: BT.709
+      hal_write(this, FX1_ISP_TUNE_BANK_OFFSET, 1);
+      FX1_CHECK_EQ_CTX(fx1_isp_output_colorimetry(&dev, 0, &std, &full), FX1_ISP_OK, ctx);
+      FX1_CHECK_EQ_CTX(std, 1u, ctx + " profile std of bank 0");
+      FX1_CHECK_EQ_CTX(full, 0, ctx + " profile: bank 0 limited");
+      FX1_CHECK_EQ_CTX(rd(FX1_ISP_TUNE_BANK_OFFSET), 1u, ctx + " TUNE_BANK restored");
+      FX1_CHECK_EQ_CTX(fx1_isp_output_colorimetry(&dev, 2, &std, &full), FX1_ISP_EINVAL, ctx + " bank 2");
+      FX1_CHECK_EQ_CTX(fx1_isp_output_colorimetry(&dev, 0, nullptr, &full), FX1_ISP_EINVAL, ctx + " null");
+      fx1_isp_dev z{};
+      FX1_CHECK_EQ_CTX(fx1_isp_output_colorimetry(&z, 0, &std, &full), FX1_ISP_ESTATE, ctx + " uninitialised");
+      (void)fx1_isp_profile_mode(&dev, 0);
+   }
+
+   // ISP-UPD-004 percent arithmetic on a hand-made lease: 10x7 active image,
+   // 3x2 zones of 4x4 (the last column 2 wide, the last row 3 high).
+   void test_aec_percent_math() {
+      fx1_isp_stat_lease l{};
+      l.width = 10;
+      l.height = 7;
+      l.nx = 3;
+      l.ny = 2;
+      l.zone_w = 4;
+      l.zone_h = 4;
+      l.frame_id = 9;
+      fx1_isp_aec_percent p{};
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, -1, 35, 7, &p), FX1_ISP_OK);
+      FX1_CHECK(p.samples == 70 && p.ue_bp == 5000 && p.oe_bp == 1000 && p.frame_id == 9);
+      const unsigned zone_samples[6] = {16, 16, 8, 12, 12, 6};
+      for (int k = 0; k < 6; ++k) {
+         FX1_CHECK_EQ_CTX(fx1_isp_aec_percent_of(&l, k, 1, 0, &p), FX1_ISP_OK, "zone " + std::to_string(k));
+         FX1_CHECK_EQ_CTX(p.samples, zone_samples[k], "zone samples " + std::to_string(k));
+      }
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, 2, 1, 0, &p), FX1_ISP_OK);
+      FX1_CHECK_EQ(p.ue_bp, 1250u);  // 1/8 exactly
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, 5, 2, 4, &p), FX1_ISP_OK);
+      FX1_CHECK_EQ(p.ue_bp, 3333u);  // 33.33 % rounds down
+      FX1_CHECK_EQ(p.oe_bp, 6667u);  // 66.67 % rounds up
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, 5, 6, 0, &p), FX1_ISP_OK);
+      FX1_CHECK_EQ(p.ue_bp, 10000u);
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, 5, 9, 0, &p), FX1_ISP_OK);
+      FX1_CHECK_EQ(p.ue_bp, 10000u);  // never above 100 %
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, 6, 0, 0, &p), FX1_ISP_EINVAL);  // outside the grid
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, -1, 0, 0, nullptr), FX1_ISP_EINVAL);
+      // Half a basis point rounds up: 1 of 16000 samples = 0.625 bp -> 1.
+      l.width = 160;
+      l.height = 100;
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, -1, 1, 0, &p), FX1_ISP_OK);
+      FX1_CHECK_EQ(p.ue_bp, 1u);
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, -1, 0, 0, &p), FX1_ISP_OK);
+      FX1_CHECK_EQ(p.ue_bp, 0u);
+      // 4K, every sample: 10000 exactly, no overflow in the 64-bit arithmetic.
+      l.width = 3840;
+      l.height = 2160;
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, -1, 3840ull * 2160, 3840ull * 2160 / 3, &p), FX1_ISP_OK);
+      FX1_CHECK(p.ue_bp == 10000 && p.oe_bp == 3333);
+      l.width = 0;  // no samples: ENODATA, not 0 %
+      FX1_CHECK_EQ(fx1_isp_aec_percent_of(&l, -1, 0, 0, &p), FX1_ISP_ENODATA);
    }
 
    // AWB ownership through the driver (MAS §6.22.4; plan U2 item 5): the
@@ -2784,6 +2961,133 @@ struct bench : sc_module {
       if ((x * 7u + y * 13u + frame) % 211u == 0u) v = 4095u;
       return v > 4095u ? 4095u : v;
    }
+#ifdef FX1_HAVE_FW_DEMO_SETUP
+   // ISP-UPD-001: the firmware finds the mesh the profile validated for the
+   // selected resident (17x13 x 4 = 884 coefficients, loaded into 1 and 2)
+   // and, once the SOF has made 1 active, loads it into 0.
+   void test_fw_lsc_fill() {
+      const std::string ctx = "fw lsc fill";
+      reset_and_init();
+      FX1_CHECK_EQ_CTX(fx1_isp_set_geometry(&dev, 64, 48, 0), FX1_ISP_OK, ctx);
+      const auto load = [](std::vector<fx1_isp_reg_write> &w, unsigned dest, std::uint32_t base) {
+         w.push_back({FX1_ISP_LSC_LOAD_CTRL_OFFSET, dest | FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK});
+         for (std::uint32_t i = 0; i < 884; ++i) {
+            w.push_back({FX1_ISP_LSC_COEF_DATA_OFFSET, base + i});
+         }
+         w.push_back({FX1_ISP_LSC_LOAD_CTRL_OFFSET, dest | FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK});
+      };
+      std::vector<fx1_isp_reg_write> p{{FX1_ISP_LSC_MESH_NODES_OFFSET, 17u | (13u << 8)}};
+      load(p, 1, 0x40000);
+      load(p, 2, 0x40000);
+      p.push_back({FX1_ISP_LSC_PROFILE_SEL_OFFSET, 1});
+      p.push_back({FX1_ISP_LSC_STRENGTH_OFFSET, 0x10000});
+      p.push_back({FX1_ISP_LSC_CTRL_OFFSET, 1});
+      FX1_CHECK_EQ_CTX(fx1_isp_apply(&dev, p.data(), p.size()), FX1_ISP_OK, ctx);
+      isp_demo_lsc_mesh m{};
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_mesh_of(p.data(), static_cast<uint32_t>(p.size()), &m), 1, ctx + " mesh found");
+      FX1_CHECK_EQ_CTX(m.count, 884u, ctx + " 884 coefficients");
+      FX1_CHECK_EQ_CTX(m.first, 2u, ctx + " the selected resident's (1) block");  // after nodes and begin 1
+      FX1_CHECK_EQ_CTX(m.selected, 1u, ctx + " selected");
+      std::uint32_t filled = 9;
+      int rc = -1;
+      // Before the SOF resident 0 is active: nothing to fill.
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_fill(&dev, p.data(), static_cast<uint32_t>(p.size()), &filled, &rc), 6u,
+                       ctx + " before the SOF");
+      FX1_CHECK_EQ_CTX(filled, 0u, ctx + " nothing loaded before the SOF");
+      FX1_CHECK_EQ_CTX(rc, FX1_ISP_OK, ctx);
+      dut->debug_accepted_sof();  // resident 1 becomes active
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_fill(&dev, p.data(), static_cast<uint32_t>(p.size()), &filled, &rc), 7u,
+                       ctx + " after the SOF");
+      FX1_CHECK_EQ_CTX(filled, 1u, ctx + " resident 0 loaded");
+      FX1_CHECK_EQ_CTX(rc, FX1_ISP_OK, ctx);
+      FX1_CHECK_EQ_CTX(rd(FX1_ISP_LSC_ERROR_OFFSET), 0u, ctx + " no loader error");
+      FX1_CHECK_EQ_CTX(rd(FX1_ISP_LSC_MESH_NODES_OFFSET), 17u | (13u << 8), ctx + " mesh size kept");
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_fill(&dev, p.data(), static_cast<uint32_t>(p.size()), &filled, &rc), 7u,
+                       ctx + " again");
+      FX1_CHECK_EQ_CTX(filled, 0u, ctx + " nothing left to fill");
+      // Profiles without a usable mesh for the selected resident.
+      const auto none = [&](std::vector<fx1_isp_reg_write> q, const std::string &what) {
+         isp_demo_lsc_mesh mm{};
+         FX1_CHECK_EQ_CTX(isp_demo_lsc_mesh_of(q.data(), static_cast<uint32_t>(q.size()), &mm), 0, ctx + " " + what);
+      };
+      std::vector<fx1_isp_reg_write> q(p);
+      q.insert(q.begin() + 2 + 100, fx1_isp_reg_write{FX1_ISP_LSC_STRENGTH_OFFSET, 0x10000});  // between coefficients
+      none(q, "another write between the selected load's coefficients");
+      // Other writes before the first or after the last coefficient leave one
+      // contiguous block (the loader counts coefficients only): still found.
+      for (const std::size_t at : {std::size_t{2}, std::size_t{2 + 884}}) {
+         q = p;
+         q.insert(q.begin() + static_cast<std::ptrdiff_t>(at), fx1_isp_reg_write{FX1_ISP_LSC_STRENGTH_OFFSET, 0x10000});
+         isp_demo_lsc_mesh mo{};
+         FX1_CHECK_EQ_CTX(isp_demo_lsc_mesh_of(q.data(), static_cast<uint32_t>(q.size()), &mo), 1,
+                          ctx + " another write around the block, at " + std::to_string(at));
+         FX1_CHECK_EQ_CTX(mo.first, at == 2 ? 3u : 2u, ctx + " block start");
+         FX1_CHECK_EQ_CTX(mo.count, 884u, ctx + " block length");
+      }
+      q = p;
+      q[1 + 885] = {FX1_ISP_LSC_LOAD_CTRL_OFFSET, 1u | FX1_ISP_LSC_LOAD_CTRL_LOAD_ABORT_MASK};
+      none(q, "the selected load aborted");
+      q = p;  // abort, then validate: the validate has no load (the loader keeps 1 invalid)
+      q.insert(q.begin() + 1 + 885, fx1_isp_reg_write{FX1_ISP_LSC_LOAD_CTRL_OFFSET, 1u | FX1_ISP_LSC_LOAD_CTRL_LOAD_ABORT_MASK});
+      none(q, "aborted then validated");
+      q = p;  // 1 validated, then begun again and aborted: invalid at the end
+      q.insert(q.begin() + 2 * 886 + 1, fx1_isp_reg_write{FX1_ISP_LSC_LOAD_CTRL_OFFSET, 1u | FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK});
+      q.insert(q.begin() + 2 * 886 + 2, fx1_isp_reg_write{FX1_ISP_LSC_LOAD_CTRL_OFFSET, 1u | FX1_ISP_LSC_LOAD_CTRL_LOAD_ABORT_MASK});
+      none(q, "validated, then begun again and aborted");
+      q = p;
+      q.insert(q.begin() + 2 * 886 + 1, fx1_isp_reg_write{FX1_ISP_LSC_MESH_NODES_OFFSET, 17u | (13u << 8)});
+      none(q, "a mesh size write after the loads");
+      q = p;
+      q.erase(q.end() - 3);  // no LSC_PROFILE_SEL
+      none(q, "no selection");
+      q = p;
+      q[q.size() - 3].value = 0;  // selects 0, never loaded
+      none(q, "the selected resident not loaded");
+      q = p;
+      q.erase(q.begin() + 1 + 1, q.begin() + 1 + 2);  // load 1 one coefficient short: COEF_COUNT, stays invalid
+      none(q, "one coefficient short");
+      // Review Stop B R2: the destination is latched by BEGIN; a VALIDATE with
+      // no profile bits (0x200) commits the open load, as the loader does.
+      q = p;
+      q[1 + 885].value = FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK;              // load 1: 0x200
+      q[1 + 886 + 885].value = FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK;        // load 2: 0x200
+      isp_demo_lsc_mesh mm{};
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_mesh_of(q.data(), static_cast<uint32_t>(q.size()), &mm), 1, ctx + " validate 0x200");
+      FX1_CHECK_EQ_CTX(mm.first, 2u, ctx + " validate 0x200 block");
+      FX1_CHECK_EQ_CTX(mm.count, 884u, ctx + " validate 0x200 count");
+      q[1 + 885].value = 2u | FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK;         // other profile bits: still load 1
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_mesh_of(q.data(), static_cast<uint32_t>(q.size()), &mm), 1, ctx + " validate 0x202");
+      FX1_CHECK_EQ_CTX(mm.first, 2u, ctx + " validate 0x202 commits load 1");
+      // An ABORT without profile bits ends the open load (1 stays invalid).
+      q = p;
+      q[1 + 885].value = FX1_ISP_LSC_LOAD_CTRL_LOAD_ABORT_MASK;
+      none(q, "abort 0x400 of the open load");
+      // A BEGIN while a load is open is refused: the open load (1) goes on.
+      q = p;
+      q.insert(q.begin() + 2 + 10, fx1_isp_reg_write{FX1_ISP_LSC_LOAD_CTRL_OFFSET, 2u | FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK});
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_mesh_of(q.data(), static_cast<uint32_t>(q.size()), &mm), 0,
+                       ctx + " begin inside a load (split block: valid, not replayable)");
+      // A BEGIN after the last coefficient of the open load is refused too: the
+      // following VALIDATE still commits load 1 (contiguous, 884).
+      q = p;
+      q.insert(q.begin() + 2 + 884, fx1_isp_reg_write{FX1_ISP_LSC_LOAD_CTRL_OFFSET, 2u | FX1_ISP_LSC_LOAD_CTRL_LOAD_BEGIN_MASK});
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_mesh_of(q.data(), static_cast<uint32_t>(q.size()), &mm), 1, ctx + " begin before validate");
+      FX1_CHECK_EQ_CTX(mm.count, 884u, ctx + " begin before validate: load 1 kept");
+      // The same stream through the loader: the model agrees on validity.
+      reset_and_init();
+      FX1_CHECK_EQ_CTX(fx1_isp_set_geometry(&dev, 64, 48, 0), FX1_ISP_OK, ctx);
+      q = p;
+      q[1 + 885].value = FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK;
+      q[1 + 886 + 885].value = FX1_ISP_LSC_LOAD_CTRL_LOAD_VALIDATE_MASK;
+      FX1_CHECK_EQ_CTX(fx1_isp_apply(&dev, q.data(), q.size()), FX1_ISP_OK, ctx + " validate 0x200 applied");
+      FX1_CHECK_EQ_CTX(rd(FX1_ISP_LSC_PROFILE_STATUS_OFFSET) & 7u, 6u, ctx + " the loader validated 1 and 2");
+      dut->debug_accepted_sof();
+      FX1_CHECK_EQ_CTX(isp_demo_lsc_fill(&dev, q.data(), static_cast<uint32_t>(q.size()), &filled, &rc), 7u,
+                       ctx + " validate 0x200: resident 0 filled");
+      FX1_CHECK_EQ_CTX(filled, 1u, ctx + " validate 0x200: 0 loaded");
+   }
+#endif
+
    void test_fw_profile_selftest_replay() {
       const std::string ctx = "fw isp selftest profile replay";
       reset_and_init();
@@ -2995,6 +3299,11 @@ struct bench : sc_module {
       test_driver_state_machine();
       test_stats_after_abort();
       test_compat_aec_newest();
+      test_aec_percent_math();
+      test_output_colorimetry();
+#ifdef FX1_HAVE_FW_DEMO_SETUP
+      test_fw_lsc_fill();
+#endif
       test_first_frame_abort_stats();
       test_awb_driver();
       test_ee_driver();
