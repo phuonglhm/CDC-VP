@@ -156,8 +156,18 @@ CNF_RESET = [("CNF_CHROMA_TH", 0), ("CNF_LUMA_TH", 0), ("CNF_CTRL", 0)]
 NR_KNOTS = 17
 
 
-def tune_writes(cnf=False):
-    """The TUNE block. cnf: also the CNF controls (for a preset that has none)."""
+def nr_curve_writes(curve):
+    """NR.variance_curve: knot i (luma 16 i; knot 16 = luma 255) by explicit
+    index (no auto-increment), then NR_CONFIRM (ISP-UPD-010)."""
+    if len(curve) != NR_KNOTS or not all(isinstance(v, int) and 0 <= v <= 0xFFFF for v in curve):
+        raise ValueError("NR.variance_curve: %d integers 0..65535 expected" % NR_KNOTS)
+    return sum(([("TUNE_NR_LUT_ADDR", k), ("TUNE_NR_LUT_DATA", v)] for k, v in enumerate(curve)), []) + \
+        [("TUNE_TABLE_CMD", 1 << 1)]
+
+
+def tune_writes(cnf=False, nr_curve=None):
+    """The TUNE block. cnf: also the CNF controls (for a preset that has none).
+    nr_curve: 17 variance knots loaded and confirmed (used with MODE 2 only)."""
     return ([(TUNE_FIRST, 0), ("TUNE_CNF_BLEND", 0x100)] + (CNF_RESET if cnf else [])
             + [("TUNE_CSC_CTRL", 0x2), ("TUNE_CSC_CONTRAST", 0x100), ("TUNE_CSC_BRIGHTNESS", 0),
                ("TUNE_CSC_UU", 0x4000), ("TUNE_CSC_UV", 0), ("TUNE_CSC_VU", 0), ("TUNE_CSC_VV", 0x4000)]
@@ -165,12 +175,20 @@ def tune_writes(cnf=False):
                ("TUNE_NR_LIMITS", 0xFFFF0000)]
             + [("TUNE_NR_%s_SCALE" % b, 0x100) for b in ("LL", "LH", "HL", "HH")]
             + [("TUNE_NR_BLEND", 0x100), ("TUNE_NR_SEED", 0)]
+            + (nr_curve_writes(nr_curve) if nr_curve is not None else [])
             + [("TUNE_BPC_CTRL", 0), ("TUNE_BPC_G_THRESH", 0x100), ("TUNE_BPC_RB_THRESH", 0x100),
                ("TUNE_BPC_COUNT", 0), ("TUNE_TABLE_CMD", 1 << 2)])   # BPC_CONFIRM of the empty list
 
 
-# Comments format_profile writes before the first write of a register in the
-# TUNE block. The templates are valid profile lines once uncommented.
+# Comments format_profile writes before the first write of a register -- or of
+# a (register, value) pair -- in the TUNE block. The templates are valid
+# profile lines once uncommented.
+NR_TEMPLATE = (
+    ["NR.variance_curve (MODE 2 only, calibration required): %d knots at luma" % NR_KNOTS,
+     "0, 16, ..., 240, 255, each with an explicit index (no auto-increment), then",
+     "NR_CONFIRM. Not loaded here: SEAL refuses MODE 2 (NOT_READY) until it is."]
+    + sum((["TUNE_NR_LUT_ADDR VALUE=%d" % k, "TUNE_NR_LUT_DATA 0x0"] for k in range(NR_KNOTS)), [])
+    + ["TUNE_TABLE_CMD NR_CONFIRM=1"])
 TUNE_NOTES = {
     TUNE_FIRST: [
         "---- TUNE extension controls (CSR v1.07 TUNE page, ISP-UPD-009) ----",
@@ -190,19 +208,18 @@ TUNE_NOTES = {
         "2DNR: MODE 0 automatic (prior-frame estimate; TUNE_NR_SEED until one is valid),",
         "1 manual (TUNE_NR_VARIANCE), 2 variance curve (below); MEDIAN_EN prefilter.",
     ],
-    "TUNE_BPC_CTRL": (
-        ["NR.variance_curve (MODE 2 only, calibration required): %d knots at luma" % NR_KNOTS,
-         "0, 16, ..., 240, 255, each with an explicit index (no auto-increment), then",
-         "NR_CONFIRM. Not loaded here: SEAL refuses MODE 2 (NOT_READY) until it is."]
-        + sum((["TUNE_NR_LUT_ADDR VALUE=%d" % k, "TUNE_NR_LUT_DATA 0x0"] for k in range(NR_KNOTS)), [])
-        + ["TUNE_TABLE_CMD NR_CONFIRM=1",
-           "BPC: COLOR_THRESH_EN selects the G and RB thresholds; FACTORY_EN the point list."]),
+    "TUNE_NR_LUT_ADDR": [
+        "NR.variance_curve: the variance at luma 16*i for knot i (knot 16: luma 255),",
+        "0..65535 in Haar squared-code units; explicit index, then NR_CONFIRM.",
+        "Loaded and confirmed; used with TUNE_NR_CTRL MODE=2 only.",
+    ],
+    "TUNE_BPC_CTRL": ["BPC: COLOR_THRESH_EN selects the G and RB thresholds; FACTORY_EN the point list."],
     "TUNE_BPC_COUNT": [
         "BPC.factory_coordinates: COUNT points (at most 1024), active Bayer coordinates,",
         "sorted by y*W+x, unique. Point i: TUNE_BPC_ADDR VALUE=i, then TUNE_BPC_DATA",
         "X=x Y=y. BPC_CONFIRM checks the list. Empty at startup:",
     ],
-    "TUNE_TABLE_CMD": ["TUNE_BPC_ADDR VALUE=0", "TUNE_BPC_DATA X=0 Y=0"],
+    ("TUNE_TABLE_CMD", 1 << 2): ["TUNE_BPC_ADDR VALUE=0", "TUNE_BPC_DATA X=0 Y=0"],
 }
 
 
@@ -295,11 +312,15 @@ def format_profile(writes, syntax="fields"):
     cmap = csrw_codec.CsrMap()
     names = [n for n, _ in writes]
     start = names.index(TUNE_FIRST) if TUNE_FIRST in names else len(names)
+    curve = any(n == "TUNE_NR_LUT_DATA" for n, _ in writes[start:])
     out, noted = [], set()
     for i, (n, v) in enumerate(writes):
-        if i >= start and n in TUNE_NOTES and n not in noted:
-            noted.add(n)
-            out += ["# " + c for c in TUNE_NOTES[n]]
+        key = (n, v) if (n, v) in TUNE_NOTES else n
+        if i >= start and key in TUNE_NOTES and key not in noted:
+            noted.add(key)
+            if n == "TUNE_BPC_CTRL" and not curve:
+                out += ["# " + c for c in NR_TEMPLATE]
+            out += ["# " + c for c in TUNE_NOTES[key]]
         out.append(csrw_codec.format_write(cmap.regs[n], v, syntax))
     return "".join(line + "\n" for line in out)
 

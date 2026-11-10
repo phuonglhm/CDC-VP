@@ -305,9 +305,10 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   update the WB gains; firmware needs an AWB algorithm for that.
   Changing a profile requires regenerating the golden for each affected sample.
   After editing a `profile.csrw`, rebuild its `profile.bin` with
-  `sw/bootloader/test/VP_FX1_V3.0/csrw_to_bin.sh PATH/profile.csrw`. The
-  sample's `job.bin` must declare the same number of CSR writes; the script
-  warns when the number changes, but does not update `job.bin`.
+  `sw/bootloader/test/VP_FX1_V3.0/csrw_to_bin.sh PATH/profile.csrw`. Lines
+  may be added or removed: `run_vp.sh isp` gives the job the profile's own
+  number of CSR writes and prints a note when it differs from the one the
+  sample was prepared with.
 - **Profile syntax:** each line is one full 32-bit CSR write, in order. A line
   can name the whole register (`GAMMA_CTRL 0x100`), one field
   (`GAMMA_CTRL_en 1`, every other field 0), or several fields of one
@@ -326,19 +327,42 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   (the Tuning v1.07 startup values, so the goldens are those without them):
   - `TUNE_DEMOSAIC_MARGIN` and `TUNE_CNF_BLEND`;
   - `TUNE_CSC_*`, `TUNE_NR_*` and `TUNE_BPC_*`;
+  - the NR variance curve of the tuning team (17 knots, loaded and
+    confirmed; it is used only with `TUNE_NR_CTRL MODE=2`, and `MODE` is 0);
   - the empty factory bad-pixel list (`TUNE_BPC_COUNT VALUE=0`, then
     `TUNE_TABLE_CMD BPC_CONFIRM=1`).
 
-  The NR variance curve (MODE 2 only) is a commented template.
-
   The firmware runs the ISP in profile mode and writes these values into
   the profile bank after INIT, so a changed value takes effect. Earlier
-  firmware did not write them, and such values had no effect. A changed
-  value changes the output: regenerate the sample's golden.
-
-  Changing a value keeps the number of writes. Uncommenting the NR curve
-  template (35 lines) or adding bad-pixel points adds writes: the sample's
-  `job.bin` must be prepared again (`run_isp_demo.py --prepare-only`).
+  firmware did not write them, and such values had no effect.
+  `isp ... auto` runs in legacy mode, where the TUNE values keep their reset.
+- **Tuning the shared profile:** edit
+  `profiles/shared_bggr_2688x1520_full/profile.csrw`, then run
+  `./csrw_to_bin.sh profiles/shared_bggr_2688x1520_full/profile.csrw` and
+  `./run_vp.sh isp d65`. The run reports `ISP FAIL: NV12 differs from the
+  expected output`: the golden is that of the shipped profile. The image is
+  `sw/bootloader/build/VP_FX1_V3.0/isp/d65/platform.png`.
+  - **One value:** edit the field on its line, e.g. `TUNE_CSC_CONTRAST
+    VALUE=0x140`. Some fields act only with their switch:
+    - `TUNE_CSC_CONTRAST`, `BRIGHTNESS` and `UU`/`UV`/`VU`/`VV` with
+      `TUNE_CSC_CTRL LOOK_EN=1`;
+    - `TUNE_BPC_G_THRESH`/`RB_THRESH` with `TUNE_BPC_CTRL COLOR_THRESH_EN=1`;
+    - `TUNE_NR_VARIANCE` with `TUNE_NR_CTRL MODE=1`;
+    - `CNF_CHROMA_TH`/`LUMA_TH` with `CNF_CTRL en=1`.
+  - **NR variance curve:** 17 numbers, the noise variance at luma 0, 16,
+    ..., 240, 255 (0..65535, Haar squared-code units). Knot `i` is the
+    `TUNE_NR_LUT_DATA` line after `TUNE_NR_LUT_ADDR VALUE=i`; keep the 17
+    pairs and the `TUNE_TABLE_CMD NR_CONFIRM=1` line after them. Decimal
+    values are accepted. Set `TUNE_NR_CTRL MODE=2` to use the curve.
+  - **Factory bad pixels:** set `TUNE_BPC_CTRL ... FACTORY_EN=1` and
+    `TUNE_BPC_COUNT VALUE=n`, then, before `TUNE_TABLE_CMD BPC_CONFIRM=1`,
+    two lines per point `i` = 0..n-1: `TUNE_BPC_ADDR VALUE=i` and
+    `TUNE_BPC_DATA X=x Y=y`. The points are active-image Bayer coordinates
+    (d65: x < 2686, y < 1518), sorted by y*2686+x, unique, at most 1024.
+  - A list that breaks a rule, or `MODE=2` without the 17 knots and
+    `NR_CONFIRM`, is refused when the firmware seals the profile: the run
+    reports the `TUNE_ERROR` bits and fails, it does not run on a partial
+    table.
 - **Frames:** each job processes the same RAW twice from reset. The first frame
   warms up GTM auto; the delivered image and golden are from the second frame.
   When preparing a new sample, use `run_isp_demo.py --prepare-only --frames 2`

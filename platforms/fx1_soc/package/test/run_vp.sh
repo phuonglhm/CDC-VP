@@ -303,6 +303,26 @@ case "${mode}" in
         rm -rf "${isp_out}"
         mkdir -p "${isp_out}"
         cp "${isp_in}/job.bin" "${isp_out}/job.bin"
+        # The firmware applies job.profile_count writes of profile.bin. A
+        # profile edited to more or fewer lines than the sample was prepared
+        # with (an NR curve, factory bad pixels) would be cut, or read past its
+        # end: the job copy takes the profile's own count (ISP-UPD-010).
+        python3 -B - "${here}" "${isp_out}/job.bin" "${profile_bin}" <<'PY' || die "cannot use ${profile_bin} (see above)"
+import os, struct, sys
+here, job, prof = sys.argv[1:4]
+sys.path.insert(0, here)
+import isp_pack
+size = os.path.getsize(prof)
+if size % 8:
+    sys.exit("%s: %d bytes, not whole 8-byte CSR writes: rebuild it with csrw_to_bin.sh" % (prof, size))
+k = 4 * isp_pack.JOB_FIELDS.index("profile_count")
+data = bytearray(open(job, "rb").read())
+old, n = struct.unpack_from("<I", data, k)[0], size // 8
+if old != n:
+    struct.pack_into("<I", data, k, n)
+    open(job, "wb").write(bytes(data))
+    print("note: %s has %d CSR writes, the sample was prepared with %d: the job uses %d" % (prof, n, old, n))
+PY
         if [[ -n "${raw_file}" ]]; then
             # The samples' conversion (le16_raw10_msb): RAW10 in bits [15:6] to
             # the ISP's 12-bit scale, i.e. >> 4; the 6 low bits must be zero.

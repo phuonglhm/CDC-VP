@@ -58,10 +58,9 @@ def convert():
             os.unlink(temporary)
     print(f"OK: {source} -> {target} ({len(data) // 8} CSR writes, {len(data)} bytes)")
     if old_size is not None and old_size != len(data):
-        print("WARNING: CSR count changed; regenerate job.bin for every sample using this profile.",
-              file=sys.stderr)
-    else:
-        print("Sample job.bin must declare the same CSR write count; this script does not update it.")
+        # ISP-UPD-010: run_vp.sh gives each job the profile's own write count.
+        print(f"note: the CSR count changed ({old_size // 8} -> {len(data) // 8}); run_vp.sh uses the "
+              "profile's count, and the samples' goldens are those of the shipped profile.")
 
 
 try:

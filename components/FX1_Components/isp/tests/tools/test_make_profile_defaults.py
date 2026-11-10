@@ -65,11 +65,12 @@ def tune_block(raw, csrw_codec, tempfile):
             continue
         check(r in names and cmap.regs[r].field(f) is not None, "tuning item %s in the TUNE block" % item)
     notes = mp.TUNE_NOTES
+    curve_names = {n for n, _ in mp.nr_curve_writes([0] * 17)}
     for n in notes:
-        check(n in names, "TUNE_NOTES anchor %s is a block register" % n)
+        check((n[0] if isinstance(n, tuple) else n) in names | curve_names, "TUNE_NOTES anchor %s is a block register" % (n,))
     # The commented templates: NR curve 17 x (index, data) + NR_CONFIRM, a BPC
     # point; every template line is a valid profile line once uncommented.
-    tmpl = [c for n in notes for c in notes[n] if re.match(r"TUNE_[A-Z_]+ ", c)]
+    tmpl = [c for c in mp.NR_TEMPLATE + sum(notes.values(), []) if re.match(r"TUNE_[A-Z_]+ ", c)]
     nr = [c for c in tmpl if c.startswith("TUNE_NR_LUT_")]
     check(nr == sum((["TUNE_NR_LUT_ADDR VALUE=%d" % k, "TUNE_NR_LUT_DATA 0x0"] for k in range(17)), []),
           "NR.variance_curve template: 17 knots with explicit index")
@@ -83,6 +84,31 @@ def tune_block(raw, csrw_codec, tempfile):
     order = [n for n, _ in tw]
     check(order[-2:] == ["TUNE_BPC_COUNT", "TUNE_TABLE_CMD"] and dict(tw)["TUNE_BPC_COUNT"] == 0,
           "empty factory list: COUNT 0 then BPC_CONFIRM")
+    # ISP-UPD-010: a loaded NR curve: 17 explicit-index pairs and NR_CONFIRM after
+    # TUNE_NR_SEED, its note instead of the template; the BPC template stays
+    # before BPC_CONFIRM; values outside 0..65535 or not 17 are refused.
+    curve = [16 * k for k in range(17)]
+    cw = mp.tune_writes(nr_curve=curve)
+    i = [n for n, _ in cw].index("TUNE_NR_SEED") + 1
+    check(cw[i:i + 35] == sum(([("TUNE_NR_LUT_ADDR", k), ("TUNE_NR_LUT_DATA", v)] for k, v in enumerate(curve)), [])
+          + [("TUNE_TABLE_CMD", 2)] and dict(cw)["TUNE_NR_CTRL"] == 0x4, "NR curve loaded after the seed, MODE 0")
+    ct = mp.format_profile(cw)
+    check("# TUNE_NR_LUT_ADDR VALUE=0\n" not in ct and "# Loaded and confirmed; used with TUNE_NR_CTRL MODE=2 only.\n" in ct
+          and "\nTUNE_NR_LUT_DATA 0x100\nTUNE_TABLE_CMD NR_CONFIRM=1\n" in ct, "loaded curve: note, no template")
+    check(ct.index("# TUNE_BPC_DATA X=0 Y=0") < ct.index("TUNE_TABLE_CMD BPC_CONFIRM=1")
+          and ct.index("TUNE_BPC_COUNT VALUE=0") < ct.index("# TUNE_BPC_DATA X=0 Y=0"), "BPC template before BPC_CONFIRM")
+    for bad in ([0] * 16, [0] * 16 + [65536], [0] * 16 + [-1]):
+        try:
+            mp.nr_curve_writes(bad)
+            check(False, "NR curve %r accepted" % (bad[-2:],))
+        except ValueError:
+            pass
+    shared = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "samples", "profiles",
+                          "shared_bggr_2688x1520_full.csrw")
+    sw = csrw_codec.writes(shared, cmap)
+    data = [v for n, v in sw if n == "TUNE_NR_LUT_DATA"]
+    check(len(data) == 17 and ("TUNE_TABLE_CMD", 2) in sw and dict(sw)["TUNE_NR_CTRL"] == 0x4,
+          "shared profile: the tuning NR curve loaded, MODE 0")
     for preset in mp.PRESETS:
         base, _ = mp.profile_writes(raw, 2688, 1520, "BGGR", preset)
         full, _ = mp.profile_writes(raw, 2688, 1520, "BGGR", preset, tune=True)

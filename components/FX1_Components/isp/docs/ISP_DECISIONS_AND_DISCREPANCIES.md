@@ -1096,3 +1096,50 @@ existing output is unchanged. `test_driver_tlm` still skips vectors with
   identical. Cases run:
   - the shared profile on D65, in legacy and profile mode;
   - the four outdoor1 presets, in profile mode.
+
+## 15. Editable tables in the SDK profile, ISP-UPD-010 (user request, 2026-11-10)
+
+The tuning team edits the SDK's shared `profile.csrw`, runs `csrw_to_bin.sh`
+and then `run_vp.sh isp d65`. The two table parameters `NR.variance_curve`
+and `BPC.factory_coordinates` need added lines. The firmware applies exactly
+`job.profile_count` writes of `profile.bin`, and that count came from the
+sample's prepared `job.bin`.
+- With more lines, the end of the profile, where the TUNE block sits, was cut
+  without a message.
+- With fewer lines, the firmware read past the end of the profile.
+- `csrw_to_bin.sh` only warned, and the SDK has no tool to prepare a job.
+
+**Decisions (user):**
+- `run_vp.sh isp` sets `profile_count` of the job copy under `build/` to the
+  profile's own count, `size(profile.bin) / 8`. It prints a note when that
+  count differs from the sample's, and refuses a size that is not a multiple
+  of 8. `isp_auto.py prepare` already rewrites the job copy the same way.
+  The shipped `job.bin` is unchanged. `csrw_to_bin.sh` says the count follows
+  the profile.
+- The shared profile loads the tuning team's NR curve (0, 16, ..., 240, 256)
+  with explicit indexes and `NR_CONFIRM`.
+  - `TUNE_NR_CTRL` stays `MODE=0`, so the output and every golden are
+    unchanged.
+  - The tuning team sets `MODE=2` to use the curve.
+  - The curve is not a calibration of this project.
+  - The four outdoor1 samples keep the commented template.
+- `make_profile.tune_writes(nr_curve=...)` writes a loaded curve. A curve
+  that is not 17 values in 0..65535 is refused.
+
+**Verification:**
+- The packaging gate has a new step 4c:
+  - a tuned shared profile with four more writes (MODE 2, two factory
+    pixels) gives, through `run_vp.sh isp d65`, the stand-alone model's NV12
+    for that profile (`run_raw --profile-mode`), not the golden;
+  - the profile without its TUNE block, so with fewer writes, gives the
+    golden again.
+- Without the count rule (a mutant of `run_vp.sh`), the case with more
+  writes fails: the cut end loses `BPC_CONFIRM`, and SEAL refuses with
+  NOT_READY.
+- The case with fewer writes still passes without the rule. On the VP the
+  memory after the profile is zero, so the 59 extra writes are writes of 0
+  to offset 0 and are harmless. This case shows that the rule gives the
+  golden; it does not tell the rule from its absence. A board does not
+  guarantee zero memory there.
+- `MODE=2` with the curve's `NR_CONFIRM` removed: the firmware refuses the
+  profile (`TUNE_ERROR` 0x4, NOT_READY) and `run_vp.sh` fails.

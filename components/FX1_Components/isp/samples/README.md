@@ -46,6 +46,10 @@ values, so the outputs equal those of the profiles without the block. The
 NR variance curve (MODE 2 only) is a commented template of 17 explicit-index
 writes and `NR_CONFIRM`.
 
+In the shared profile the NR variance curve of the tuning team is loaded
+and confirmed instead (ISP-UPD-010): 17 knots, with `TUNE_NR_CTRL MODE=0`, so
+it is unused until MODE is set to 2 and the output is unchanged.
+
 The firmware's profile-mode bring-up and `fx1_isp_run_raw --profile-mode`
 write these values into the bank after INIT. In legacy mode they stay bank
 storage and the datapath keeps their reset. Use `make_profile.py

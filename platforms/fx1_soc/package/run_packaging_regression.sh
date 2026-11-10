@@ -20,6 +20,11 @@
 #      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
 #      camera -> ISP: camera_isp_raw12), and the Ethernet example on every line
 #      peer and the scripted Ethernet CLI session pass;
+#   4c. a tuned shared profile with another write count (ISP-UPD-010): with
+#      four more writes (NR curve used, two factory bad pixels) run_vp.sh isp
+#      d65 gives the stand-alone model's NV12 for that profile (not the
+#      golden); without the TUNE block (fewer writes, reset values) it gives
+#      the golden again;
 #   6. a copy without build/ (what a clone of the SDK repository holds) must
 #      pass `sha256sum -c SHA256SUMS`;
 #   7. the one-terminal `run_vp.sh isp d65 interactive` flow through a
@@ -80,6 +85,9 @@ step "2. move the package; make the build tree unreadable"
 pkg="${tmp}/elsewhere/sdk"
 mkdir -p "${tmp}/elsewhere"
 cp -a "${tmp}/out/${version}" "${pkg}"
+# The stand-alone model, kept for step 4c's reference outputs.
+cp "${tmp}/build/components/FX1_Components/isp/fx1_isp_run_raw" "${tmp}/ref_run_raw" 2>/dev/null \
+    || bad "no fx1_isp_run_raw in the build (step 4c reference)"
 chmod -R a-rwx "${tmp}/build"
 pass "package at ${pkg}"
 test="${pkg}/sw/bootloader/test/${version}"
@@ -205,6 +213,50 @@ for csrw in "${test}"/profiles/*/profile.csrw; do
         bad "csrw_to_bin: $(basename "$(dirname "${csrw}")") profile.bin differs or the script failed"
     fi
 done
+
+step "4c. a tuned shared profile with another write count: the job follows profile.bin (ISP-UPD-010)"
+sp="${test}/profiles/shared_bggr_2688x1520_full"
+d65_out="${pkg}/sw/bootloader/build/${version}/isp/d65"
+cp -a "${sp}" "${tmp}/shared_shipped"
+python3 - "${sp}/profile.csrw" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p).read()
+for a, b in (("TUNE_NR_CTRL MODE=0 MEDIAN_EN=1\n", "TUNE_NR_CTRL MODE=2 MEDIAN_EN=1\n"),
+             ("TUNE_BPC_CTRL COLOR_THRESH_EN=0 FACTORY_EN=0\n", "TUNE_BPC_CTRL COLOR_THRESH_EN=0 FACTORY_EN=1\n"),
+             ("TUNE_BPC_COUNT VALUE=0\n", "TUNE_BPC_COUNT VALUE=2\nTUNE_BPC_ADDR VALUE=0\nTUNE_BPC_DATA X=100 Y=20\n"
+              "TUNE_BPC_ADDR VALUE=1\nTUNE_BPC_DATA X=7 Y=21\n")):
+    assert t.count(a) == 1, a
+    t = t.replace(a, b)
+open(p, "w").write(t)
+PY
+run "${test}/csrw_to_bin.sh" "${sp}/profile.csrw" > "${tmp}/tuned_c2b.log" 2>&1
+n=$(( $(stat -c %s "${sp}/profile.bin") / 8 ))
+run "${test}/run_vp.sh" isp d65 > "${tmp}/isp_tuned.log" 2>&1
+rc=$?
+"${tmp}/ref_run_raw" --input "${test}/isp/d65/input.isp16" --width 2688 --height 1520 --frames 2 --profile-mode \
+    --profile "${sp}/profile.csrw" --out "${tmp}/tuned_ref" > "${tmp}/tuned_ref.log" 2>&1
+ref="$(sha256sum "${tmp}/tuned_ref.nv12" 2>/dev/null | cut -d' ' -f1)"
+got="$(sha256sum "${d65_out}/platform.nv12" 2>/dev/null | cut -d' ' -f1)"
+[[ ${rc} -eq 1 ]] && grep -q "ISP FAIL: NV12 differs" "${tmp}/isp_tuned.log" && grep -q "the job uses ${n}" "${tmp}/isp_tuned.log" \
+    && [[ -n "${ref}" && "${got}" == "${ref}" && "${ref}" != "$(cat "${test}/isp/d65/expected_nv12.sha256")" ]] \
+    && [[ -s "${d65_out}/platform.png" ]] \
+    && pass "tuned profile, 4 more writes (NR curve MODE 2, 2 factory pixels): job uses ${n}, NV12 = the model's ${ref:0:12}... (not the golden), PNG written" \
+    || { tail -n 15 "${tmp}/isp_tuned.log" "${tmp}/tuned_ref.log"; bad "tuned profile with more writes: exit ${rc}, NV12 ${got:0:12} vs model ${ref:0:12}"; }
+python3 - "${tmp}/shared_shipped/profile.csrw" "${sp}/profile.csrw" <<'PY'
+import sys
+t = open(sys.argv[1]).read()
+open(sys.argv[2], "w").write(t[:t.index("# ---- TUNE extension controls")])
+PY
+run "${test}/csrw_to_bin.sh" "${sp}/profile.csrw" > "${tmp}/untuned_c2b.log" 2>&1
+m=$(( $(stat -c %s "${sp}/profile.bin") / 8 ))
+run "${test}/run_vp.sh" isp d65 > "${tmp}/isp_untuned.log" 2>&1 && grep -q "ISP PASS" "${tmp}/isp_untuned.log" \
+    && grep -q "the job uses ${m}" "${tmp}/isp_untuned.log" \
+    && pass "profile without the TUNE block (${m} writes, fewer): job uses ${m}, NV12 = golden" \
+    || { tail -n 15 "${tmp}/isp_untuned.log"; bad "profile with fewer writes"; }
+rm -rf "${sp}" "${d65_out}"
+cp -a "${tmp}/shared_shipped" "${sp}"
+cmp -s "${sp}/profile.bin" "${tmp}/shared_shipped/profile.bin" || bad "the shipped shared profile was not restored"
 
 step "5. firmware rebuilt from the shipped sources"
 want="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artefacts"]["sw/bootloader/build/VP_FX1_V3.0/freertos_cli.elf"]["sha256"])' \
