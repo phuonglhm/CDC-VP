@@ -1193,3 +1193,50 @@ profile and the `full` presets did not, so a tuner had nothing to edit.
 - The vectors built from the `full` preset (`edge_*_full_*`, the two 4K
   cases) gain the same seven writes in their `profile.csrw`; their expected
   outputs are unchanged. The traceability report counts those vectors.
+
+## 17. Shared profile by block, BLC/GTM/EE additions, enum names, ISP-UPD-012 (tuning team request, 2026-11-11)
+
+Requests:
+1. add `GTM_LUT_ADDR`/`GTM_LUT_DATA` and the BLC trims `BLC_OFS_G0..G3_{R,GR,GB,B}`;
+2. order the profile by block, with a note before each;
+3. name the four EE tables (LUMA, ACTIVITY, CONTRAST_POS, CONTRAST_NEG);
+4. `LSC_LOAD_CTRL` loads two residents, "one is missing".
+
+**Decisions (user), the shared profile only:**
+- BLC G0..G3 in full: DFT, four trims and four scales each; G1..G3 are
+  copies of G0 with trims 0, so changing `gain_level` alone keeps the image.
+  G4..G7 stay at reset.
+- GTM: the manual curve, 65 x 0x0100 (identity), before the enabling
+  `GTM_CTRL`; `manual=0` stays, so it is unused.
+- Blocks in datapath order (docs/ISP_MODEL_INTERFACE.md 3.2), a header each;
+  the `TUNE_*` controls in their stage's block, `TUNE_TABLE_CMD` with its
+  table; the relative order of the writes inside a block unchanged.
+- EE tables: a comment before each table and the enum name in the line
+  (`EE_LUT_CTRL lut_sel=ACTIVITY`). The profile readers accept the CSR enum
+  name of any field in the field forms: `csrw_codec.py` (the SDK's
+  `csrw_to_bin.sh`, `run_isp_demo.py`, `isp_auto.py`) from the header's value
+  macros, the C++ reader (`vector_io.h`: `run_raw`, the tests) from a new
+  generated table `csr::enums` (`gen_csr.py` v2.2; `csr_desc.h` gains
+  `enum_desc`). Numbers stay accepted; the codec's `emit` still writes
+  numbers.
+- LSC: not a defect. Resident 0 is active after reset and a load into the
+  active resident is refused (MAS Table 31, owner Q5); the firmware copies the
+  validated mesh into 0 after the first frame (UPD-D7). A comment in the LSC
+  block says so.
+
+**Found while verifying:** the GTM curve written after `GTM_CTRL en=1`
+(the first layout) was refused in profile mode once `manual=1`:
+`TUNE_ERROR` 0x4 (NOT_READY). INIT copies the legacy `GTM_CTRL` (EN = 1)
+into the bank, and the replayed curve writes are discarded while the bank's
+GTM is enabled (MAS: a curve is written only while GTM is disabled). The
+model is right; the profile writes `GTM_CTRL en=0 manual=0` before the curve,
+as `gtm_manual_qhd` and the `gtm_manual_lut` vector do.
+
+**Verification (model, D65, shared profile, 2 frames, legacy and profile mode):**
+- The restructured profile (2456 writes) gives the NV12 and the status file
+  of the previous one (the golden `8da0af67`), in both modes; with numbers
+  instead of the EE table names too.
+- `gain_level` 1, 2, 3: the same; G1 trim R 40 with `gain_level=1`, or a G0
+  GB trim of 40: another image, legacy = profile mode.
+- GTM `manual=1` with the identity curve and with an S-curve: two other
+  images, legacy = profile mode.

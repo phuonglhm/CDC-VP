@@ -178,6 +178,64 @@ def ee_features(raw, csrw_codec):
           and text.count("# " + mp.EE_NOTES["EE_FEATURE_EN"][0] + "\n") == 1, "shared: EE notes and field syntax")
 
 
+# ISP-UPD-012: the shared SDK profile by block, in datapath order.
+SHARED_BLOCKS = [("COMMON", ("COMMON_",)), ("BLC", ("BLC_",)), ("LSC", ("LSC_",)), ("BPC", ("BPC_", "TUNE_BPC_")),
+                 ("WB", ("WB_",)), ("DG", ("DG_",)), ("DEMOSAIC", ("TUNE_DEMOSAIC_",)), ("CCM", ("CCM_",)),
+                 ("GAMMA", ("GAMMA_",)), ("CSC", ("CSC_", "TUNE_CSC_")), ("GTM", ("GTM_",)),
+                 ("2DNR", ("NR_", "TUNE_NR_")), ("EE", ("EE_",)), ("CNF", ("CNF_", "TUNE_CNF_")),
+                 ("RESIZER", ("RESIZER_",)), ("AEC", ("AEC_",)), ("AWB", ("AWB_",)), ("AF", ("AF_",))]
+
+
+def shared_layout(csrw_codec):
+    """ISP-UPD-012: every write of the shared profile under the header of its
+    block, blocks in datapath order (TUNE_TABLE_CMD with its table); BLC G0..G3
+    in full, G1..G3 = G0 with trims 0; the GTM curve (65 identity entries) after
+    GTM_CTRL en=0 and before the enabling GTM_CTRL; the EE tables by enum name
+    with a comment each; the LSC note on resident 0."""
+    cmap = csrw_codec.CsrMap()
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "samples", "profiles",
+                        "shared_bggr_2688x1520_full.csrw")
+    lines = open(path).read().splitlines()
+    heads = [(k, l[len("# ==== "):].split(":")[0]) for k, l in enumerate(lines) if l.startswith("# ==== ")]
+    check([h for _, h in heads] == [b for b, _ in SHARED_BLOCKS], "shared: block headers %r" % [h for _, h in heads])
+    pref = dict(SHARED_BLOCKS)
+    block, bad = None, []
+    for k, l in enumerate(lines):
+        if l.startswith("# ==== "):
+            block = l[len("# ==== "):].split(":")[0]
+        elif l.strip() and not l.startswith("#"):
+            r = l.split()[0]
+            if r == "TUNE_TABLE_CMD":
+                ok = (block, l) in (("2DNR", "TUNE_TABLE_CMD NR_CONFIRM=1"), ("BPC", "TUNE_TABLE_CMD BPC_CONFIRM=1"))
+            else:
+                ok = block in pref and r.startswith(pref[block])
+            if not ok:
+                bad.append((k + 1, block, r))
+    check(not bad, "shared: writes outside their block %r" % bad[:5])
+    w = csrw_codec.writes(path, cmap)
+    d = {}
+    for n, v in w:
+        d.setdefault(n, []).append(v)
+    for g in range(4):
+        check(d.get("BLC_OFS_G%d_DFT" % g) == d["BLC_OFS_G0_DFT"] and all(
+            d.get("BLC_OFS_G%d_%s" % (g, c)) == [0] and d.get("BLC_SCALE_G%d_%s" % (g, c)) == d["BLC_SCALE_G0_%s" % c]
+            for c in ("R", "GR", "GB", "B")), "shared: BLC G%d = G0, trims 0" % g)
+    n = [x for x, _ in w]
+    i = n.index("GTM_LUT_ADDR")
+    check(w[i - 1] == ("GTM_CTRL", 0) and w[i] == ("GTM_LUT_ADDR", 0) and w[i + 1:i + 66] == [("GTM_LUT_DATA", 0x100)] * 65
+          and n.count("GTM_LUT_DATA") == 65 and w[n.index("GTM_CTRL", i)] == ("GTM_CTRL", 1),
+          "shared: GTM_CTRL 0, identity curve, then GTM_CTRL en=1 manual=0")
+    ee = [l for l in lines if l.startswith("EE_LUT_CTRL")]
+    check(ee == ["EE_LUT_CTRL lut_sel=%s" % t for t in ("LUMA", "ACTIVITY", "CONTRAST_POS", "CONTRAST_NEG")]
+          + ["EE_LUT_CTRL lut_sel=LUMA profile_load_confirm=1"], "shared: EE tables by name %r" % ee)
+    for t in ("LUMA", "ACTIVITY", "CONTRAST_POS", "CONTRAST_NEG"):
+        k = lines.index("EE_LUT_CTRL lut_sel=%s" % t)
+        check(lines[k - 1].startswith("# EE table %s " % t), "shared: comment before EE table %s" % t)
+    check(any("no load_profile=0 here by design" in l for l in lines) and
+          [v & 3 for v in d["LSC_LOAD_CTRL"]] == [1, 1, 2, 2], "shared: LSC loads 1 and 2, the note on resident 0")
+    check(len(w) == 2456, "shared: %d writes" % len(w))
+
+
 def main():
     check(mp.aec_grid(2686, 1518) == (16, 16, 168, 95), "aec_grid 2686x1518 %r" % (mp.aec_grid(2686, 1518),))
     check(mp.aec_grid(34, 34) == (12, 12, 3, 3), "aec_grid 34x34 %r" % (mp.aec_grid(34, 34),))
@@ -233,6 +291,7 @@ def main():
           and not any("=" in l for l in legacy.splitlines() if not l.startswith("#")), "legacy syntax")
     tune_block(raw, csrw_codec, tempfile)
     ee_features(raw, csrw_codec)
+    shared_layout(csrw_codec)
     print("test_make_profile_defaults: %d failure(s)" % len(failures))
     return 1 if failures else 0
 

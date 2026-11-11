@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // FX1 ISP register table -- GENERATED FILE, DO NOT EDIT.
-// Generator: tools/gen_csr.py v2.1, source SHA-256 444e72f8d7fd3f35d83a7ce47d455b87dc6df6cda833b11302c6a45fb8b721fa
+// Generator: tools/gen_csr.py v2.2, source SHA-256 444e72f8d7fd3f35d83a7ce47d455b87dc6df6cda833b11302c6a45fb8b721fa
 
 #include "registers/csr_desc.h"
 
@@ -2744,5 +2744,79 @@ const reg_desc registers[] = {
 };
 
 const std::size_t num_registers = sizeof(registers) / sizeof(registers[0]);
+
+// Named field values (the header's FX1_ISP_<REG>_<FIELD>_<NAME> macros),
+// accepted by name in profile text (ISP-UPD-012).
+const enum_desc enums[] = {
+   {"COMMON_BAYER", "pattern", "RGGB", 0x0u},
+   {"COMMON_BAYER", "pattern", "GRBG", 0x1u},
+   {"COMMON_BAYER", "pattern", "GBRG", 0x2u},
+   {"COMMON_BAYER", "pattern", "BGGR", 0x3u},
+   {"BLC_GAIN_SEL", "gain_level", "G0", 0x0u},
+   {"BLC_GAIN_SEL", "gain_level", "G1", 0x1u},
+   {"BLC_GAIN_SEL", "gain_level", "G2", 0x2u},
+   {"BLC_GAIN_SEL", "gain_level", "G3", 0x3u},
+   {"CSC_CTRL", "std", "BT601", 0x0u},
+   {"CSC_CTRL", "std", "BT709", 0x1u},
+   {"EE_LUT_CTRL", "lut_sel", "LUMA", 0x0u},
+   {"EE_LUT_CTRL", "lut_sel", "ACTIVITY", 0x1u},
+   {"EE_LUT_CTRL", "lut_sel", "CONTRAST_POS", 0x2u},
+   {"EE_LUT_CTRL", "lut_sel", "CONTRAST_NEG", 0x3u},
+   {"RESIZER_CTRL", "scale", "FULLRES", 0x0u},
+   {"RESIZER_CTRL", "scale", "RES_3840X2160", 0x1u},
+   {"RESIZER_CTRL", "scale", "RES_2560X1440", 0x2u},
+   {"RESIZER_CTRL", "scale", "RES_2880X1620", 0x3u},
+   {"RESIZER_CTRL", "scale", "RES_2304X1296", 0x4u},
+   {"RESIZER_CTRL", "scale", "RES_1920X1080", 0x5u},
+   {"RESIZER_CTRL", "scale", "RES_1280X720", 0x6u},
+   {"RESIZER_CTRL", "scale", "RES_960X540", 0x7u},
+   {"RESIZER_CTRL", "scale", "RES_640X360", 0x8u},
+   {"RESIZER_CTRL", "scale", "RES_2592X1944", 0x9u},
+   {"RESIZER_CTRL", "scale", "RES_2048X1536", 0xAu},
+   {"RESIZER_CTRL", "scale", "RES_1600X1200", 0xBu},
+   {"RESIZER_CTRL", "scale", "RES_1280X960", 0xCu},
+   {"RESIZER_CTRL", "scale", "RES_800X600", 0xDu},
+   {"RESIZER_CTRL", "scale", "RES_640X480", 0xEu},
+   {"RESIZER_CTRL", "scale", "RES_640X640", 0x10u},
+   {"RESIZER_CTRL", "scale", "RES_640X384", 0x11u},
+   {"RESIZER_CTRL", "scale", "RES_640X352", 0x12u},
+   {"RESIZER_CTRL", "scale", "RES_512X512", 0x13u},
+   {"RESIZER_CTRL", "scale", "RES_416X416", 0x14u},
+   {"RESIZER_CTRL", "scale", "RES_320X320", 0x15u},
+   {"CH1_RESIZER_CTRL", "scale", "FULLRES", 0x0u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_3840X2160", 0x1u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_2560X1440", 0x2u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_2880X1620", 0x3u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_2304X1296", 0x4u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_1920X1080", 0x5u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_1280X720", 0x6u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_960X540", 0x7u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_640X360", 0x8u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_2592X1944", 0x9u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_2048X1536", 0xAu},
+   {"CH1_RESIZER_CTRL", "scale", "RES_1600X1200", 0xBu},
+   {"CH1_RESIZER_CTRL", "scale", "RES_1280X960", 0xCu},
+   {"CH1_RESIZER_CTRL", "scale", "RES_800X600", 0xDu},
+   {"CH1_RESIZER_CTRL", "scale", "RES_640X480", 0xEu},
+   {"CH1_RESIZER_CTRL", "scale", "RES_640X640", 0x10u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_640X384", 0x11u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_640X352", 0x12u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_512X512", 0x13u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_416X416", 0x14u},
+   {"CH1_RESIZER_CTRL", "scale", "RES_320X320", 0x15u},
+   {"CH2_RESIZER_CTRL", "scale", "FULLRES", 0x0u},
+   {"CH2_RESIZER_CTRL", "scale", "RES_640X360", 0x8u},
+   {"CH2_RESIZER_CTRL", "scale", "RES_640X480", 0xEu},
+   {"CH2_RESIZER_CTRL", "scale", "RES_640X640", 0x10u},
+   {"CH2_RESIZER_CTRL", "scale", "RES_640X384", 0x11u},
+   {"CH2_RESIZER_CTRL", "scale", "RES_640X352", 0x12u},
+   {"CH2_RESIZER_CTRL", "scale", "RES_512X512", 0x13u},
+   {"CH2_RESIZER_CTRL", "scale", "RES_416X416", 0x14u},
+   {"CH2_RESIZER_CTRL", "scale", "RES_320X320", 0x15u},
+   {"COMMON_INPUT_FORMAT", "DEPTH", "RAW12", 0x0u},
+   {"COMMON_INPUT_FORMAT", "DEPTH", "RAW10", 0x1u},
+};
+
+const std::size_t num_enums = sizeof(enums) / sizeof(enums[0]);
 
 }  // namespace cdc::components::fx1_isp::csr

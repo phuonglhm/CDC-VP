@@ -23,6 +23,10 @@
     one-field RW register *_DATA / *_WDATA of the header), a raw value
     outside the writable fields and a register without a writable field; the
     shipped samples follow it line by line;
+  - ISP-UPD-012: a field value may be one of the field's CSR enum names
+    (EE_LUT_CTRL lut_sel=ACTIVITY, the alias form too; case-sensitive); an
+    unknown name, a field without names or a name for a whole register is an
+    error in both readers; every field's names equal the generated schema;
   - bin: little-endian {offset, value}; an error leaves an existing .bin;
   - review B/C/P/D R3: lines and tokens as the C++ reader: a UTF-8 byte order
     mark opening the file (before a register, an alias, a group or a comment,
@@ -105,6 +109,28 @@ def main():
     case("field_32bit", "AEC_CONTEXT_ID_context_id 0xFFFFFFFF\n", [("AEC_CONTEXT_ID", 0xFFFFFFFF)])
     case("comments_blank_crlf", "# head\r\n\r\nGAMMA_CTRL en=1  # on\r\n   \r\n", [("GAMMA_CTRL", 1)])
     case("zero_group", "AEC_CTRL en=0\n", [("AEC_CTRL", 0)])
+    # ISP-UPD-012: enum names.
+    rs = m.regs["RESIZER_CTRL"]
+    case("enum_ee_lut", "EE_LUT_CTRL lut_sel=ACTIVITY\nEE_LUT_CTRL lut_sel=CONTRAST_NEG profile_load_confirm=1\n"
+         "EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_CTRL lut_sel=CONTRAST_POS\n",
+         [("EE_LUT_CTRL", 2), ("EE_LUT_CTRL", 0x106), ("EE_LUT_CTRL", 0), ("EE_LUT_CTRL", 4)])
+    case("enum_other_fields", "EE_LUT_CTRL_lut_sel CONTRAST_POS\nCOMMON_BAYER pattern=BGGR\nCSC_CTRL std=BT709\n"
+         "RESIZER_CTRL en=1 scale=RES_1920X1080\nBLC_GAIN_SEL gain_level=G3 range_scale_en=1\n",
+         [("EE_LUT_CTRL", 4), ("COMMON_BAYER", 3), ("CSC_CTRL", 1),
+          ("RESIZER_CTRL", rs.field("en").mask | (5 << rs.field("scale").lsb)), ("BLC_GAIN_SEL", 0x103)])
+    case("err_enum_unknown", "EE_LUT_CTRL lut_sel=FOO\n", error="unknown value")
+    case("err_enum_case", "EE_LUT_CTRL lut_sel=activity\n", error="unknown value")
+    case("err_enum_no_names", "EE_LUT_ADDR lut_addr=ZERO\n", error="unknown value")
+    case("err_enum_alias_unknown", "EE_LUT_CTRL_lut_sel FOO\n", error="unknown value")
+    case("err_enum_whole_register", "EE_LUT_CTRL ACTIVITY\n", error="invalid integer")
+    case("err_enum_unknown_field", "EE_LUT_CTRL bogus=LUMA\n", error="has no field")
+    case("err_enum_other_field", "EE_LUT_CTRL profile_load_confirm=ACTIVITY\n", error="unknown value")
+    import json
+    schema = json.load(open(os.path.join(ISP, "docs", "csr", "fx1_isp_csr_schema.json")))
+    want = {(r["name"], f["name"]): {v: int(k) for k, v in f["enums"].items()}
+            for r in schema["registers"] for f in r["fields"] if f["enums"]}
+    got = {(r.name, f.name): f.enums for r in m.regs.values() for f in r.fields if f.enums}
+    check(got == want and sum(map(len, got.values())) == 67, "enum names of the header = the schema's (%d fields)" % len(got))
     # Errors.
     case("err_unknown", "FOO_BAR 1\n", error="unknown register or field FOO_BAR")
     case("err_unknown_field", "AEC_CTRL en=1 bogus=1\n", error="has no field")

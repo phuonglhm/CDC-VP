@@ -37,7 +37,7 @@ try:
 except ImportError:  # pragma: no cover - environment problem, not a bug
     sys.exit("gen_csr.py: openpyxl is required (pip install openpyxl)")
 
-GENERATOR_VERSION = "2.1"  # 2.1: CSR extension (EXTENSIONS)
+GENERATOR_VERSION = "2.2"  # 2.1: CSR extension (EXTENSIONS); 2.2: enum table (ISP-UPD-012)
 # CSR revision v1.07 (ABI 0x00010007, MAS v1.07 of 2026-10-18). Previous pins:
 # bda077b6... (07/10, 254 registers, 336 fields; docs/ISP_CSR_REVISION_0710.md)
 # and 0980b61d... (226 registers). See docs/ISP_CSR_REVISION_V107.md.
@@ -560,6 +560,17 @@ def gen_table(regs, src):
     w("};")
     w("")
     w("const std::size_t num_registers = sizeof(registers) / sizeof(registers[0]);")
+    w("")
+    w("// Named field values (the header's FX1_ISP_<REG>_<FIELD>_<NAME> macros),")
+    w("// accepted by name in profile text (ISP-UPD-012).")
+    w("const enum_desc enums[] = {")
+    for r in regs:
+        for f in r["fields"]:
+            for k, v in sorted(f["enums"].items()):
+                w("   {%s, %s, %s, 0x%Xu}," % (c_str(r["name"]), c_str(f["name"]), c_str(v), k))
+    w("};")
+    w("")
+    w("const std::size_t num_enums = sizeof(enums) / sizeof(enums[0]);")
     w("")
     w("}  // namespace cdc::components::fx1_isp::csr")
     return "\n".join(out) + "\n"

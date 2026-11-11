@@ -33,7 +33,8 @@ its v1.07-syntax predecessor. `tools/csrw_codec.py explain FILE` decodes each
 write.
 
 TUNE block (ISP-UPD-009, 2026-11-10, tuning team request): every sample
-profile ends with the TUNE extension controls the tuning team adjusts:
+profile has the TUNE extension controls the tuning team adjusts (the outdoor1
+samples at the end; the shared profile in its blocks since ISP-UPD-012):
 - `TUNE_DEMOSAIC_MARGIN` and `TUNE_CNF_BLEND`;
 - the CNF controls, where the preset has none of its own (`basic`,
   `gtm_manual_qhd`);
@@ -63,6 +64,16 @@ CSR reset), the radial centre at the image centre (`CENTER_X2=W-1`,
 radius squared and unity gains, so the outputs are unchanged. `gtm_manual_qhd`
 already enabled all three with its own gains; `basic` has no EE. These are
 legacy EE controls, live in legacy and in profile mode.
+
+Shared profile layout (ISP-UPD-012, 2026-11-11, tuning team request; the
+outdoor1 samples are unchanged): one block per stage in datapath order, each
+under a `# ==== NAME: ...` header, the stage's `TUNE_*` controls in its block,
+the relative order of the writes inside a block kept. Added: the BLC trims
+`BLC_OFS_G0..G3_{R,GR,GB,B}` (0) and G1..G3 DFT and scales equal to G0's; the
+GTM manual curve (65 x `0x0100`, the identity) after `GTM_CTRL en=0 manual=0`,
+unused while the last `GTM_CTRL` keeps `manual=0`. The EE tables are named
+(`EE_LUT_CTRL lut_sel=LUMA`, `ACTIVITY`, `CONTRAST_POS`, `CONTRAST_NEG`), a
+comment before each. 2456 writes; the output is that of the previous profile.
 | `4k/<case>/` | The two 4K acceptance cases (DEC-37): profile, frame count, expected NV12 SHA-256 and statistics readout script. |
 | `run_4k_check.sh` | Runs both 4K cases through the installed `fx1_isp_run_raw`, compares each against the reference values, and prints PASS or FAIL. It needs neither Python nor the dataset. |
 

@@ -3,21 +3,68 @@
 # GTM auto needs two frames from reset: first warms up, second is the output.
 # Not a sensor calibration and not an automatic white-balance algorithm.
 # ISP-UPD-001/003/004/007 (2026-11-09): LSC 17x13 (same radial formula) in residents 1+2, CCM offsets 0 explicit, AWB/AEC 16x16, AEC UE 272 / OE 3744.
-# ISP-UPD-009 (2026-11-10): TUNE extension controls appended at their CSR reset values (the block at the end).
+# ISP-UPD-009 (2026-11-10): TUNE extension controls at their CSR reset values (in their blocks since ISP-UPD-012).
 # ISP-UPD-010 (2026-11-10): the tuning team's NR.variance_curve loaded and confirmed; TUNE_NR_CTRL MODE=0 keeps it unused.
 # ISP-UPD-011 (2026-11-11): EE gain features (EE_FEATURE_EN, EE_RADIAL_*) written before the EE confirm, all off; radial geometry for 2686x1518, unity gains.
+# ISP-UPD-012 (2026-11-11): by block in datapath order with a header each, TUNE_* in their block; BLC G0..G3 in full; GTM manual curve (identity, unused with manual=0); EE tables by name.
+# TUNE_* registers (in each block): profile mode (the firmware's default bring-up,
+# run_vp.sh isp SAMPLE; run_raw --profile-mode) writes them into the bank after INIT; legacy
+# mode (isp ... auto; run_raw without --profile-mode) keeps their reset values (MAS v1.07 9.9.2).
+
+# ==== COMMON: input Bayer pattern.
 COMMON_BAYER pattern=3
+
+# ==== BLC: black level. Offset = DFT + trim of the channel (R, GR, GB, B; saturated at
+# 4095); with range_scale_en=1 the result is scaled per channel (UQ2.16, 0x10000 = 1.0).
+# BLC_GAIN_SEL.gain_level selects the profile G0..G7; G0..G3 written here, G4..G7 at reset.
 BLC_CTRL en=1
 BLC_GAIN_SEL gain_level=0 range_scale_en=1
+# BLC G0: the gain profile BLC_GAIN_SEL selects (gain_level=0).
 BLC_OFS_G0_DFT ofs_g0_dft=0x100
+BLC_OFS_G0_R ofs_g0_r=0
+BLC_OFS_G0_GR ofs_g0_gr=0
+BLC_OFS_G0_GB ofs_g0_gb=0
+BLC_OFS_G0_B ofs_g0_b=0
 BLC_SCALE_G0_R scale_g0_r=0x11112
 BLC_SCALE_G0_GR scale_g0_gr=0x11112
 BLC_SCALE_G0_GB scale_g0_gb=0x11112
 BLC_SCALE_G0_B scale_g0_b=0x11112
-WB_CTRL en=1
-WB_GAIN_R gain_r=0x1F3
-WB_GAIN_G gain_g=0x100
-WB_GAIN_B gain_b=0x1A6
+# BLC G1: a copy of G0 (trims 0), used with gain_level=1.
+BLC_OFS_G1_DFT ofs_g1_dft=0x100
+BLC_OFS_G1_R ofs_g1_r=0
+BLC_OFS_G1_GR ofs_g1_gr=0
+BLC_OFS_G1_GB ofs_g1_gb=0
+BLC_OFS_G1_B ofs_g1_b=0
+BLC_SCALE_G1_R scale_g1_r=0x11112
+BLC_SCALE_G1_GR scale_g1_gr=0x11112
+BLC_SCALE_G1_GB scale_g1_gb=0x11112
+BLC_SCALE_G1_B scale_g1_b=0x11112
+# BLC G2: a copy of G0 (trims 0), used with gain_level=2.
+BLC_OFS_G2_DFT ofs_g2_dft=0x100
+BLC_OFS_G2_R ofs_g2_r=0
+BLC_OFS_G2_GR ofs_g2_gr=0
+BLC_OFS_G2_GB ofs_g2_gb=0
+BLC_OFS_G2_B ofs_g2_b=0
+BLC_SCALE_G2_R scale_g2_r=0x11112
+BLC_SCALE_G2_GR scale_g2_gr=0x11112
+BLC_SCALE_G2_GB scale_g2_gb=0x11112
+BLC_SCALE_G2_B scale_g2_b=0x11112
+# BLC G3: a copy of G0 (trims 0), used with gain_level=3.
+BLC_OFS_G3_DFT ofs_g3_dft=0x100
+BLC_OFS_G3_R ofs_g3_r=0
+BLC_OFS_G3_GR ofs_g3_gr=0
+BLC_OFS_G3_GB ofs_g3_gb=0
+BLC_OFS_G3_B ofs_g3_b=0
+BLC_SCALE_G3_R scale_g3_r=0x11112
+BLC_SCALE_G3_GR scale_g3_gr=0x11112
+BLC_SCALE_G3_GB scale_g3_gb=0x11112
+BLC_SCALE_G3_B scale_g3_b=0x11112
+
+# ==== LSC: lens shading, 17x13 nodes x 4 channels per resident, UQ4.18 (0x40000 = 1.0).
+# Three residents 0..2. Resident 0 is the active one after reset and a load into the
+# active resident is refused (MAS Table 31), so the profile loads 1 and 2 and selects 1;
+# the firmware copies the same mesh into 0 after the first frame (ISP-UPD-001): all three
+# are valid. There is no load_profile=0 here by design.
 LSC_MESH_NODES mesh_nx=17 mesh_ny=13
 LSC_LOAD_CTRL load_profile=1 load_begin=1
 LSC_COEF_DATA 0x66666
@@ -1794,11 +1841,38 @@ LSC_LOAD_CTRL load_profile=2 load_validate=1
 LSC_PROFILE_SEL profile_sel=1
 LSC_STRENGTH strength=0x10000
 LSC_CTRL en=1
+
+# ==== BPC: bad pixel correction (dynamic detection; TUNE_BPC_* thresholds and the factory list).
 BPC_MODE dynamic_det_en=0
 BPC_THRESH thresh_k=0x4D thresh_floor=0x192
 BPC_CTRL en=1
+# BPC: COLOR_THRESH_EN selects the G and RB thresholds; FACTORY_EN the point list.
+TUNE_BPC_CTRL COLOR_THRESH_EN=0 FACTORY_EN=0
+TUNE_BPC_G_THRESH K=0x100 FLOOR=0
+TUNE_BPC_RB_THRESH K=0x100 FLOOR=0
+# BPC.factory_coordinates: COUNT points (at most 1024), active Bayer coordinates,
+# sorted by y*W+x, unique. Point i: TUNE_BPC_ADDR VALUE=i, then TUNE_BPC_DATA
+# X=x Y=y. BPC_CONFIRM checks the list. Empty at startup:
+TUNE_BPC_COUNT VALUE=0
+# TUNE_BPC_ADDR VALUE=0
+# TUNE_BPC_DATA X=0 Y=0
+TUNE_TABLE_CMD BPC_CONFIRM=1
+
+# ==== WB: white balance gains (0x100 = 1.0).
+WB_CTRL en=1
+WB_GAIN_R gain_r=0x1F3
+WB_GAIN_G gain_g=0x100
+WB_GAIN_B gain_b=0x1A6
+
+# ==== DG: digital gain (UQ4.8, 0x100 = 1.0).
 DG_CTRL en=1
 DG_GAIN gain=0x110
+
+# ==== DEMOSAIC: always on; TUNE_DEMOSAIC_MARGIN only.
+# Demosaic: equal-gradient margins (0 keeps the exact-tie decision).
+TUNE_DEMOSAIC_MARGIN GREEN=0 RB=0
+
+# ==== CCM: colour matrix and output offsets.
 CCM_CRR coefrr=0x266
 CCM_CRG coefrg=0xFB3
 CCM_CRB coefrb=0xFE6
@@ -1812,6 +1886,8 @@ CCM_OFS_R offset_r=0
 CCM_OFS_G offset_g=0
 CCM_OFS_B offset_b=0
 CCM_CTRL en=1 updated=1
+
+# ==== GAMMA: 256-entry curve, then confirm and enable.
 GAMMA_LUT_ADDR addr=0
 GAMMA_LUT_DATA 0x0
 GAMMA_LUT_DATA 0x48
@@ -2071,13 +2147,154 @@ GAMMA_LUT_DATA 0xFF7
 GAMMA_LUT_DATA 0xFFF
 GAMMA_CTRL en=0 lut_load_confirm=1
 GAMMA_CTRL en=1
+
+# ==== CSC: RGB -> YUV standard; TUNE_CSC_* look controls and output range.
 CSC_CTRL std=0
+# CSC: LOOK_EN enables contrast, brightness and the chroma matrix (Q4.14);
+# FULL_RANGE 1 = full-range output, 0 = limited range (the colorimetry of the NV12).
+TUNE_CSC_CTRL LOOK_EN=0 FULL_RANGE=1
+TUNE_CSC_CONTRAST VALUE=0x100
+TUNE_CSC_BRIGHTNESS VALUE=0
+TUNE_CSC_UU VALUE=0x4000
+TUNE_CSC_UV VALUE=0
+TUNE_CSC_VU VALUE=0
+TUNE_CSC_VV VALUE=0x4000
+
+# ==== GTM: global tone mapping (automatic: KEY, LWHITE, ROI; or the manual curve).
+# GTM manual curve (ISP-UPD-012): 65 entries, UQ8.8 gain ratios (0x0100 = 1.0;
+# here the identity), written while GTM is disabled; used only with GTM_CTRL
+# manual=1. In automatic mode (manual=0) the curve is computed per frame.
+# GTM_CTRL en=0 first: in profile mode INIT copies GTM_CTRL into the bank and a
+# curve write while that bank's EN = 1 is discarded (SEAL: NOT_READY with manual=1).
+GTM_CTRL en=0 manual=0
+GTM_LUT_ADDR addr=0
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
+GTM_LUT_DATA 0x100
 GTM_KEY key=160
 GTM_LWHITE lwhite=0x240
 GTM_ROI_LOG2 roi_log2=11
 GTM_CTRL en=1 manual=0
+
+# ==== 2DNR: noise reduction; TUNE_NR_* controls and the variance curve.
 NR_2D_CTRL en=1
-EE_LUT_CTRL lut_sel=0
+# 2DNR: MODE 0 automatic (prior-frame estimate; TUNE_NR_SEED until one is valid),
+# 1 manual (TUNE_NR_VARIANCE), 2 variance curve (below); MEDIAN_EN prefilter.
+TUNE_NR_CTRL MODE=0 MEDIAN_EN=1
+TUNE_NR_VARIANCE VALUE=0
+TUNE_NR_SCALE VALUE=0x100
+TUNE_NR_LIMITS MIN=0 MAX=0xFFFF
+TUNE_NR_LL_SCALE VALUE=0x100
+TUNE_NR_LH_SCALE VALUE=0x100
+TUNE_NR_HL_SCALE VALUE=0x100
+TUNE_NR_HH_SCALE VALUE=0x100
+TUNE_NR_BLEND VALUE=0x100
+TUNE_NR_SEED VALUE=0
+# NR.variance_curve: the variance at luma 16*i for knot i (knot 16: luma 255),
+# 0..65535 in Haar squared-code units; explicit index, then NR_CONFIRM.
+# Loaded and confirmed; used with TUNE_NR_CTRL MODE=2 only.
+TUNE_NR_LUT_ADDR VALUE=0
+TUNE_NR_LUT_DATA 0x0
+TUNE_NR_LUT_ADDR VALUE=1
+TUNE_NR_LUT_DATA 0x10
+TUNE_NR_LUT_ADDR VALUE=2
+TUNE_NR_LUT_DATA 0x20
+TUNE_NR_LUT_ADDR VALUE=3
+TUNE_NR_LUT_DATA 0x30
+TUNE_NR_LUT_ADDR VALUE=4
+TUNE_NR_LUT_DATA 0x40
+TUNE_NR_LUT_ADDR VALUE=5
+TUNE_NR_LUT_DATA 0x50
+TUNE_NR_LUT_ADDR VALUE=6
+TUNE_NR_LUT_DATA 0x60
+TUNE_NR_LUT_ADDR VALUE=7
+TUNE_NR_LUT_DATA 0x70
+TUNE_NR_LUT_ADDR VALUE=8
+TUNE_NR_LUT_DATA 0x80
+TUNE_NR_LUT_ADDR VALUE=9
+TUNE_NR_LUT_DATA 0x90
+TUNE_NR_LUT_ADDR VALUE=10
+TUNE_NR_LUT_DATA 0xA0
+TUNE_NR_LUT_ADDR VALUE=11
+TUNE_NR_LUT_DATA 0xB0
+TUNE_NR_LUT_ADDR VALUE=12
+TUNE_NR_LUT_DATA 0xC0
+TUNE_NR_LUT_ADDR VALUE=13
+TUNE_NR_LUT_DATA 0xD0
+TUNE_NR_LUT_ADDR VALUE=14
+TUNE_NR_LUT_DATA 0xE0
+TUNE_NR_LUT_ADDR VALUE=15
+TUNE_NR_LUT_DATA 0xF0
+TUNE_NR_LUT_ADDR VALUE=16
+TUNE_NR_LUT_DATA 0x100
+TUNE_TABLE_CMD NR_CONFIRM=1
+
+# ==== EE: edge enhancement, resident 0: four tables, scalars and gain features, then
+# PROFILE_LOAD_CONFIRM and EE_CTRL.
+# EE table LUMA (lut_sel=0): luma gain, 64 entries by Y >> 2; UQ1.15, 0x8000 = 1.0, used up to 1.0.
+EE_LUT_CTRL lut_sel=LUMA
 EE_LUT_ADDR lut_addr=0
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
@@ -2143,7 +2360,8 @@ EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
-EE_LUT_CTRL lut_sel=1
+# EE table ACTIVITY (lut_sel=1): activity gain (ACTIVITY_EN), 64 entries by max(|fine|, |coarse| edge) >> 2; UQ1.15, 0x8000 = 1.0, used up to 1.0.
+EE_LUT_CTRL lut_sel=ACTIVITY
 EE_LUT_ADDR lut_addr=0
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
@@ -2209,7 +2427,8 @@ EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
-EE_LUT_CTRL lut_sel=2
+# EE table CONTRAST_POS (lut_sel=2): contrast gain (CONTRAST_EN) of a positive edge, 32 entries by the 5x5 range >> 3; UQ1.15, 0x8000 = 1.0, used up to 1.0.
+EE_LUT_CTRL lut_sel=CONTRAST_POS
 EE_LUT_ADDR lut_addr=0
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
@@ -2243,7 +2462,8 @@ EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
-EE_LUT_CTRL lut_sel=3
+# EE table CONTRAST_NEG (lut_sel=3): contrast gain (CONTRAST_EN) of a negative edge, 32 entries by the 5x5 range >> 3; UQ1.15, 0x8000 = 1.0, used up to 1.0.
+EE_LUT_CTRL lut_sel=CONTRAST_NEG
 EE_LUT_ADDR lut_addr=0
 EE_LUT_WDATA 0x8000
 EE_LUT_WDATA 0x8000
@@ -2299,100 +2519,33 @@ EE_RADIAL_R2_TH1 r2_th1=0x32CAA7
 EE_RADIAL_R2_TH2 r2_th2=0x65954F
 EE_RADIAL_GAIN_01 gain0=0x8000 gain1=0x8000
 EE_RADIAL_GAIN_23 gain2=0x8000 gain3=0x8000
-EE_LUT_CTRL lut_sel=0 profile_load_confirm=1
+EE_LUT_CTRL lut_sel=LUMA profile_load_confirm=1
 EE_CTRL en=1 profile_sel=0 profile_wr_sel=0
+
+# ==== CNF: chroma noise filter; TUNE_CNF_BLEND.
 CNF_CHROMA_TH chroma_th=0x1E
 CNF_LUMA_TH luma_th=20
 CNF_CTRL en=1 updated=1
+# CNF: weight of the filtered chroma, 0..256 (256 = the CNF result).
+TUNE_CNF_BLEND VALUE=0x100
+
+# ==== RESIZER: output size.
 RESIZER_CTRL en=1 updated=1 scale=5
+
+# ==== AEC: exposure statistics (shadow set, transferred at the SOF after commit).
 AEC_ZONE_CFG num_zone_x=16 num_zone_y=16
 AEC_ZONE_SIZE zone_width=0xA8 zone_height=0x5F
 AEC_SAMPLE_CLIP sample_min_clip=0 sample_max_clip=0xFFF
 AEC_THRESH th_ue=0x110 th_oe=0xEA0
 AEC_CTRL en=1 commit=1
+AEC_CONTEXT_ID context_id=0xA1
+
+# ==== AWB: white balance statistics.
 AWB_UNDEREXPOSED_LIMIT underexposed_limit=0x10
 AWB_SATURATION_LIMIT saturation_limit=0xFA0
 AWB_CTRL en=1 num_zone_x=16 num_zone_y=16
-AF_CTRL en=1
-AEC_CONTEXT_ID context_id=0xA1
 AWB_CONTEXT_ID context_id=0xA2
+
+# ==== AF: focus statistics.
+AF_CTRL en=1
 AF_CONTEXT_ID context_id=0xA3
-# ---- TUNE extension controls (CSR v1.07 TUNE page, ISP-UPD-009) ----
-# Values: the CSR reset, i.e. the Tuning v1.07 startup value. In profile
-# mode (the firmware's default bring-up; run_raw --profile-mode) they are
-# written into the bank after INIT; legacy mode keeps the reset values in
-# the datapath (MAS v1.07 9.9.2).
-# Demosaic: equal-gradient margins (0 keeps the exact-tie decision).
-TUNE_DEMOSAIC_MARGIN GREEN=0 RB=0
-# CNF: weight of the filtered chroma, 0..256 (256 = the CNF result).
-TUNE_CNF_BLEND VALUE=0x100
-# CSC: LOOK_EN enables contrast, brightness and the chroma matrix (Q4.14);
-# FULL_RANGE 1 = full-range output, 0 = limited range (the colorimetry of the NV12).
-TUNE_CSC_CTRL LOOK_EN=0 FULL_RANGE=1
-TUNE_CSC_CONTRAST VALUE=0x100
-TUNE_CSC_BRIGHTNESS VALUE=0
-TUNE_CSC_UU VALUE=0x4000
-TUNE_CSC_UV VALUE=0
-TUNE_CSC_VU VALUE=0
-TUNE_CSC_VV VALUE=0x4000
-# 2DNR: MODE 0 automatic (prior-frame estimate; TUNE_NR_SEED until one is valid),
-# 1 manual (TUNE_NR_VARIANCE), 2 variance curve (below); MEDIAN_EN prefilter.
-TUNE_NR_CTRL MODE=0 MEDIAN_EN=1
-TUNE_NR_VARIANCE VALUE=0
-TUNE_NR_SCALE VALUE=0x100
-TUNE_NR_LIMITS MIN=0 MAX=0xFFFF
-TUNE_NR_LL_SCALE VALUE=0x100
-TUNE_NR_LH_SCALE VALUE=0x100
-TUNE_NR_HL_SCALE VALUE=0x100
-TUNE_NR_HH_SCALE VALUE=0x100
-TUNE_NR_BLEND VALUE=0x100
-TUNE_NR_SEED VALUE=0
-# NR.variance_curve: the variance at luma 16*i for knot i (knot 16: luma 255),
-# 0..65535 in Haar squared-code units; explicit index, then NR_CONFIRM.
-# Loaded and confirmed; used with TUNE_NR_CTRL MODE=2 only.
-TUNE_NR_LUT_ADDR VALUE=0
-TUNE_NR_LUT_DATA 0x0
-TUNE_NR_LUT_ADDR VALUE=1
-TUNE_NR_LUT_DATA 0x10
-TUNE_NR_LUT_ADDR VALUE=2
-TUNE_NR_LUT_DATA 0x20
-TUNE_NR_LUT_ADDR VALUE=3
-TUNE_NR_LUT_DATA 0x30
-TUNE_NR_LUT_ADDR VALUE=4
-TUNE_NR_LUT_DATA 0x40
-TUNE_NR_LUT_ADDR VALUE=5
-TUNE_NR_LUT_DATA 0x50
-TUNE_NR_LUT_ADDR VALUE=6
-TUNE_NR_LUT_DATA 0x60
-TUNE_NR_LUT_ADDR VALUE=7
-TUNE_NR_LUT_DATA 0x70
-TUNE_NR_LUT_ADDR VALUE=8
-TUNE_NR_LUT_DATA 0x80
-TUNE_NR_LUT_ADDR VALUE=9
-TUNE_NR_LUT_DATA 0x90
-TUNE_NR_LUT_ADDR VALUE=10
-TUNE_NR_LUT_DATA 0xA0
-TUNE_NR_LUT_ADDR VALUE=11
-TUNE_NR_LUT_DATA 0xB0
-TUNE_NR_LUT_ADDR VALUE=12
-TUNE_NR_LUT_DATA 0xC0
-TUNE_NR_LUT_ADDR VALUE=13
-TUNE_NR_LUT_DATA 0xD0
-TUNE_NR_LUT_ADDR VALUE=14
-TUNE_NR_LUT_DATA 0xE0
-TUNE_NR_LUT_ADDR VALUE=15
-TUNE_NR_LUT_DATA 0xF0
-TUNE_NR_LUT_ADDR VALUE=16
-TUNE_NR_LUT_DATA 0x100
-TUNE_TABLE_CMD NR_CONFIRM=1
-# BPC: COLOR_THRESH_EN selects the G and RB thresholds; FACTORY_EN the point list.
-TUNE_BPC_CTRL COLOR_THRESH_EN=0 FACTORY_EN=0
-TUNE_BPC_G_THRESH K=0x100 FLOOR=0
-TUNE_BPC_RB_THRESH K=0x100 FLOOR=0
-# BPC.factory_coordinates: COUNT points (at most 1024), active Bayer coordinates,
-# sorted by y*W+x, unique. Point i: TUNE_BPC_ADDR VALUE=i, then TUNE_BPC_DATA
-# X=x Y=y. BPC_CONFIRM checks the list. Empty at startup:
-TUNE_BPC_COUNT VALUE=0
-# TUNE_BPC_ADDR VALUE=0
-# TUNE_BPC_DATA X=0 Y=0
-TUNE_TABLE_CMD BPC_CONFIRM=1

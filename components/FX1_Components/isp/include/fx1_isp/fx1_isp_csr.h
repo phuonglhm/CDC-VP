@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /*
  * FX1 ISP register map -- GENERATED FILE, DO NOT EDIT.
- * Generator : tools/gen_csr.py v2.1
+ * Generator : tools/gen_csr.py v2.2
  * Source    : FTEL_IP_ISP_CSR_v1.07.xlsm
  * SHA-256   : 444e72f8d7fd3f35d83a7ce47d455b87dc6df6cda833b11302c6a45fb8b721fa
  * Map stamp : 2026-10-18 00:00:00

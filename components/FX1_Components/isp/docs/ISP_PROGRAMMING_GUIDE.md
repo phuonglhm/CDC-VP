@@ -60,6 +60,12 @@ AEC_CTRL en=1 commit=1                   # REGISTER f=V ...: fields of one regis
   leading zero, or `0x` hex. It must not be negative and must fit the field.
   Signed fields take their two's-complement code (CCM −3 is `0xFFD`); gains
   take their UQ code.
+- A field with CSR enum values also takes the value's name, in the field
+  forms only (ISP-UPD-012): `EE_LUT_CTRL lut_sel=ACTIVITY`,
+  `EE_LUT_CTRL_lut_sel CONTRAST_NEG`, `COMMON_BAYER pattern=BGGR`. The names
+  are those of the header (`FX1_ISP_<REG>_<FIELD>_<NAME>`); they are
+  case-sensitive. A name the field does not have, a name for a field without
+  enum values, or a name as a whole-register value is an error.
 - `AEC_CTRL_en 1` followed by `AEC_CTRL_commit 1` is two writes, and the
   second clears `en`. To set both in one write, use one line:
   `AEC_CTRL en=1 commit=1`.

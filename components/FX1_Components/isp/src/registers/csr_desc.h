@@ -46,4 +46,15 @@ struct reg_desc {
 extern const reg_desc registers[];
 extern const std::size_t num_registers;
 
+// A named value of a field (the CSR's enum, e.g. EE_LUT_CTRL.lut_sel ACTIVITY = 1).
+struct enum_desc {
+   const char *reg;
+   const char *field;
+   const char *name;
+   std::uint32_t value;  // field-relative code
+};
+
+extern const enum_desc enums[];
+extern const std::size_t num_enums;
+
 }  // namespace cdc::components::fx1_isp::csr

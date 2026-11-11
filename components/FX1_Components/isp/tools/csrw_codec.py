@@ -16,7 +16,10 @@ non-blank line (after '#' comments) is ONE full 32-bit write:
   REGISTER f1=V1 f2=V2 ...    several fields of one register; the others 0
 
 VALUE is the field's code before the shift (decimal without a leading zero or
-0x hex, non-negative, at most the field width); a field write encodes (VALUE << lsb) & mask. Fields
+0x hex, non-negative, at most the field width), or in a field assignment the
+name of one of the field's CSR enum values (`EE_LUT_CTRL lut_sel=ACTIVITY`,
+`COMMON_BAYER pattern=BGGR`; ISP-UPD-012, the header's FX1_ISP_<REG>_<FIELD>_<NAME>
+macros); a field write encodes (VALUE << lsb) & mask. Fields
 that are not named are written 0 -- there is no read-modify-write: e.g.
 `AEC_CTRL_en 1` then `AEC_CTRL_commit 1` is NOT `AEC_CTRL 3` (the second
 write clears en); write `AEC_CTRL en=1 commit=1`. Values are register codes
@@ -65,10 +68,11 @@ class CsrwError(ValueError):
 
 
 class Field:
-    __slots__ = ("name", "lsb", "msb", "mask", "access", "implemented")
+    __slots__ = ("name", "lsb", "msb", "mask", "access", "implemented", "enums")
 
     def __init__(self, name, lsb, msb, access, implemented):
         self.name, self.lsb, self.msb, self.access, self.implemented = name, lsb, msb, access, implemented
+        self.enums = {}  # name -> code (the header's value macros of this field)
         self.mask = ((1 << (msb - lsb + 1)) - 1) << lsb  # replaced by the header's _MASK (tied-zero bits removed)
 
     @property
@@ -108,22 +112,32 @@ class CsrMap:
             raise CsrwError("CSR header not found (give --header .../fx1_isp/fx1_isp_csr.h)")
         self.header = os.path.abspath(path)
         self.regs, self.by_offset, macros = {}, {}, {}
-        reg = None
+        reg = field = None
         for line in open(path, encoding="utf-8"):
             m = re.match(r"/\* 0x([0-9A-F]{4}) (\w+) \((?:CSR row|extension)", line)
             if m:
                 reg = Register(m.group(2), int(m.group(1), 16))
                 self.regs[reg.name] = reg
                 self.by_offset[reg.offset] = reg
+                field = None
                 continue
             m = re.match(r"/\*   (\w+) \[(\d+):(\d+)\] (\w+)(.*)\*/", line)
             if m and reg:
-                reg.fields.append(Field(m.group(1), int(m.group(3)), int(m.group(2)), m.group(4),
-                                        "no hardware" not in m.group(5)))
+                field = Field(m.group(1), int(m.group(3)), int(m.group(2)), m.group(4),
+                              "no hardware" not in m.group(5))
+                reg.fields.append(field)
                 continue
             m = re.match(r"#define (FX1_ISP_\w+_MASK) (0x[0-9A-Fa-f]+)u", line)
             if m:
                 macros[m.group(1)] = int(m.group(2), 16)
+            # The field's named values follow its SHIFT/WIDTH/MASK/RESET macros.
+            m = re.match(r"#define (FX1_ISP_\w+) (0x[0-9A-Fa-f]+)u\s*$", line)
+            if m and field is not None:
+                prefix = "FX1_ISP_%s_%s_" % (reg.name, re.sub(r"\W", "_", field.name).upper())
+                if m.group(1).startswith(prefix):
+                    name = m.group(1)[len(prefix):]
+                    if name not in ("SHIFT", "WIDTH", "MASK", "RESET"):
+                        field.enums[name] = int(m.group(2), 16)
         if not self.regs:
             raise CsrwError("%s: no register found" % path)
         self.extension = None
@@ -173,6 +187,21 @@ def parse_value(text, where):
     return int(text, 0)
 
 
+def field_value(reg, name, text, where):
+    """A field value: an integer literal, or one of the field's enum names."""
+    if not text or not (text[0].isalpha() or text[0] == "_") or not text.isascii():
+        return parse_value(text, where)
+    f = reg.field(name)
+    if f is None:
+        raise CsrwError("%s: %s has no field %r (fields: %s)" % (where, reg.name, name,
+                                                                ", ".join(x.name for x in reg.fields)))
+    if text not in f.enums:
+        raise CsrwError("%s: %s.%s: unknown value %r (%s)" % (
+            where, reg.name, name, text,
+            "one of " + ", ".join(f.enums) if f.enums else "the field has no named values"))
+    return f.enums[text]
+
+
 def encode_fields(reg, assigns, where):
     """{field: value} -> register word; every field not named is 0."""
     word, seen = 0, set()
@@ -210,10 +239,13 @@ def parse_line(cmap, text, where):
             n, _, v = t.partition("=")
             if not n or not v:
                 raise CsrwError("%s: malformed field assignment %r" % (where, t))
-            assigns.append((n, parse_value(v, where)))
+            assigns.append((n, field_value(reg, n, v, where)))
         return reg, encode_fields(reg, assigns, where)
     if len(rest) != 1 or "=" in rest[0]:
         raise CsrwError("%s: expected 'REGISTER VALUE', 'REGISTER_field VALUE' or 'REGISTER f=V ...'" % where)
+    if head not in cmap.regs and head in cmap.aliases:   # REGISTER_field VALUE (a name too)
+        reg, f = cmap.aliases[head]
+        return reg, encode_fields(reg, [(f.name, field_value(reg, f.name, rest[0], where))], where)
     value = parse_value(rest[0], where)
     if head in cmap.regs:
         reg = cmap.regs[head]

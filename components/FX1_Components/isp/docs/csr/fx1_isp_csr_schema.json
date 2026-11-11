@@ -1,6 +1,6 @@
 {
   "generator": "tools/gen_csr.py",
-  "generator_version": "2.1",
+  "generator_version": "2.2",
   "source": {
     "file": "FTEL_IP_ISP_CSR_v1.07.xlsm",
     "sha256": "444e72f8d7fd3f35d83a7ce47d455b87dc6df6cda833b11302c6a45fb8b721fa",

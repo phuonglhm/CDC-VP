@@ -342,6 +342,14 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   `./run_vp.sh isp d65`. The run reports `ISP FAIL: NV12 differs from the
   expected output`: the golden is that of the shipped profile. The image is
   `sw/bootloader/build/VP_FX1_V3.0/isp/d65/platform.png`.
+  - **Layout:** one block per ISP stage in datapath order, each under a
+    `# ==== NAME: ...` header (COMMON, BLC, LSC, BPC, WB, DG, DEMOSAIC, CCM,
+    GAMMA, CSC, GTM, 2DNR, EE, CNF, RESIZER, AEC, AWB, AF); a stage's
+    `TUNE_*` controls are in its block. Keep the order of the lines inside a
+    block: tables are written before their confirm and enable.
+  - **Field values** are numbers (decimal or `0x` hex) or, for a field with
+    CSR names, the name: `EE_LUT_CTRL lut_sel=ACTIVITY`,
+    `COMMON_BAYER pattern=BGGR`, `CSC_CTRL std=BT709`.
   - **One value:** edit the field on its line, e.g. `TUNE_CSC_CONTRAST
     VALUE=0x140`. Some fields act only with their switch:
     - `TUNE_CSC_CONTRAST`, `BRIGHTNESS` and `UU`/`UV`/`VU`/`VV` with
@@ -349,6 +357,19 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
     - `TUNE_BPC_G_THRESH`/`RB_THRESH` with `TUNE_BPC_CTRL COLOR_THRESH_EN=1`;
     - `TUNE_NR_VARIANCE` with `TUNE_NR_CTRL MODE=1`;
     - `CNF_CHROMA_TH`/`LUMA_TH` with `CNF_CTRL en=1`.
+  - **BLC:** offset = `DFT` + the channel's trim (`R`, `GR`, `GB`, `B`),
+    then the per-channel scale (UQ2.16) with `range_scale_en=1`.
+    `BLC_GAIN_SEL gain_level` selects G0..G3; G1..G3 ship as copies of G0
+    with trims 0, so changing `gain_level` alone does not change the image.
+  - **GTM manual curve:** 65 `GTM_LUT_DATA` entries (UQ8.8 gain ratios,
+    `0x100` = 1.0; shipped as the identity) after `GTM_CTRL en=0 manual=0`
+    and `GTM_LUT_ADDR addr=0`. Set the last `GTM_CTRL` line to
+    `en=1 manual=1` to use it; keep the `GTM_CTRL en=0` line before the
+    curve (in profile mode a curve written while GTM is enabled is lost and
+    the profile is refused). `isp ... auto` requires `manual=0`.
+  - **LSC:** the profile loads residents 1 and 2 and selects 1. Resident 0
+    is active after reset and cannot be loaded (MAS Table 31); the
+    firmware copies the same mesh into it after the first frame.
   - **NR variance curve:** 17 numbers, the noise variance at luma 0, 16,
     ..., 240, 255 (0..65535, Haar squared-code units). Knot `i` is the
     `TUNE_NR_LUT_DATA` line after `TUNE_NR_LUT_ADDR VALUE=i`; keep the 17
@@ -367,9 +388,11 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
     larger values are clamped and raise `EE_STATUS.error`): `GAIN0` inside
     `R2_TH0`, then `GAIN1`, `GAIN2`, and `GAIN3` beyond `R2_TH2`, with
     r² = (2x-CENTER_X2)² + (2y-CENTER_Y2)². `activity_en` uses the
-    `EE_LUT_WDATA` table after `EE_LUT_CTRL lut_sel=1`, `contrast_en` the
-    tables after `lut_sel=2` (positive edges) and `lut_sel=3` (negative). The
-    shipped tables are unity (`0x8000`), so these two switches change nothing
+    `EE_LUT_WDATA` table after `EE_LUT_CTRL lut_sel=ACTIVITY` (64 entries),
+    `contrast_en` the tables after `lut_sel=CONTRAST_POS` (positive edges)
+    and `lut_sel=CONTRAST_NEG` (negative; 32 entries each); `lut_sel=LUMA` is
+    the luma gain (64). Table gains are UQ1.15 and act up to 1.0 (`0x8000`).
+    The shipped tables are unity, so these two switches change nothing
     until those tables are edited. Keep the lines before `EE_LUT_CTRL ...
     profile_load_confirm=1`. These are legacy EE controls: unlike the TUNE
     controls they also apply in `isp ... auto`.

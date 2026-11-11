@@ -31,7 +31,8 @@ struct csr_line {
 //   REGISTER_field VALUE      one field, every other field 0
 //   REGISTER f1=V1 f2=V2 ...  several fields of one register, the others 0
 // VALUE: decimal without a leading zero or 0x hex, non-negative; a field value
-// is its code before the shift and must fit the field. A read-only field, a
+// is its code before the shift and must fit the field, or the name of one of
+// the field's CSR enum values (EE_LUT_CTRL lut_sel=ACTIVITY; ISP-UPD-012). A read-only field, a
 // tied-zero bit, a field named twice or an unknown name throws
 // std::runtime_error("<file>:<line>: ..."). The result is canonical
 // (register name, word) writes; the readers never merge or reorder lines.
@@ -80,6 +81,34 @@ inline std::uint64_t value_of(const std::string &t, const std::string &where) {
       throw std::runtime_error(where + ": invalid integer '" + t + "' (decimal or 0x hex, non-negative)");
    }
    return std::stoull(t, nullptr, 0);
+}
+
+// A field value: an integer literal, or one of the field's enum names
+// (csr::enums, generated from the CSR); an unknown name throws.
+inline std::uint64_t field_value(const csr::reg_desc &r, const std::string &field, const std::string &t,
+                                 const std::string &where) {
+   if (t.empty() || !(std::isalpha(static_cast<unsigned char>(t[0])) || t[0] == '_')) {
+      return value_of(t, where);
+   }
+   bool known = false;
+   for (std::size_t k = 0; k < r.num_fields; ++k) {
+      known = known || field == r.fields[k].name;
+   }
+   if (!known) {
+      throw std::runtime_error(where + ": " + r.name + " has no field '" + field + "'");
+   }
+   std::string names;
+   for (std::size_t i = 0; i < csr::num_enums; ++i) {
+      const csr::enum_desc &e = csr::enums[i];
+      if (field == e.field && std::string(r.name) == e.reg) {
+         if (t == e.name) {
+            return e.value;
+         }
+         names += std::string(names.empty() ? "" : ", ") + e.name;
+      }
+   }
+   throw std::runtime_error(where + ": " + r.name + "." + field + ": unknown value '" + t + "'" +
+                            (names.empty() ? std::string(" (the field has no named values)") : " (one of " + names + ")"));
 }
 
 inline std::uint32_t encode(const csr::reg_desc &r, const std::vector<std::pair<std::string, std::uint64_t>> &fields,
@@ -144,7 +173,8 @@ inline bool parse(const std::string &text, const std::string &where, csr_line &l
          if (eq == 0 || eq + 1 == tok[i].size()) {
             throw std::runtime_error(where + ": malformed field assignment '" + tok[i] + "'");
          }
-         fv.emplace_back(tok[i].substr(0, eq), value_of(tok[i].substr(eq + 1), where));
+         fv.emplace_back(tok[i].substr(0, eq),
+                         field_value(*reg->second, tok[i].substr(0, eq), tok[i].substr(eq + 1), where));
       }
       l.reg = reg->second->name;
       l.value = encode(*reg->second, fv, where);
@@ -152,6 +182,14 @@ inline bool parse(const std::string &text, const std::string &where, csr_line &l
    }
    if (tok.size() != 2 || tok[1].find('=') != std::string::npos) {
       throw std::runtime_error(where + ": expected 'REGISTER VALUE', 'REGISTER_field VALUE' or 'REGISTER f=V ...'");
+   }
+   const auto a = m.aliases.find(tok[0]);
+   if (reg == m.regs.end() && a != m.aliases.end()) {  // REGISTER_field VALUE (a name too)
+      l.reg = a->second.first->name;
+      l.value = encode(*a->second.first,
+                       {{a->second.second->name, field_value(*a->second.first, a->second.second->name, tok[1], where)}},
+                       where);
+      return true;
    }
    const std::uint64_t v = value_of(tok[1], where);
    if (reg != m.regs.end()) {
@@ -162,13 +200,7 @@ inline bool parse(const std::string &text, const std::string &where, csr_line &l
       l.value = static_cast<std::uint32_t>(v);
       return true;
    }
-   const auto a = m.aliases.find(tok[0]);
-   if (a == m.aliases.end()) {
-      throw std::runtime_error(where + ": unknown register or field " + tok[0]);
-   }
-   l.reg = a->second.first->name;
-   l.value = encode(*a->second.first, {{a->second.second->name, v}}, where);
-   return true;
+   throw std::runtime_error(where + ": unknown register or field " + tok[0]);
 }
 
 // A UTF-8 byte order mark opening the file is not part of line 1 (review
