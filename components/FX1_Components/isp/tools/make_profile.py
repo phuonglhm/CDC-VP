@@ -222,6 +222,41 @@ TUNE_NOTES = {
     ("TUNE_TABLE_CMD", 1 << 2): ["TUNE_BPC_ADDR VALUE=0", "TUNE_BPC_DATA X=0 Y=0"],
 }
 
+# ISP-UPD-011 (2026-11-11): the EE per-pixel gain features of the resident being
+# written (EE_CTRL PROFILE_WR_SEL), before its PROFILE_LOAD_CONFIRM. Legacy EE
+# controls: live in legacy and in profile mode.
+EE_UNITY = 0x8000
+
+
+def ee_feature_writes(aw, ah, feat=0, gains=(EE_UNITY,) * 4):
+    """EE_FEATURE_EN .. EE_RADIAL_GAIN_23 for an active image aw x ah: the radial
+    centre at the image centre in doubled coordinates (aw-1, ah-1), thresholds
+    at 10 / 35 / 70 % of the corner radius squared, gains UQ1.15."""
+    r2max = (aw - 1) ** 2 + (ah - 1) ** 2
+    return [("EE_FEATURE_EN", feat), ("EE_RADIAL_CENTER", ((ah - 1) << 16) | (aw - 1)),
+            ("EE_RADIAL_R2_TH0", r2max // 10), ("EE_RADIAL_R2_TH1", r2max * 35 // 100),
+            ("EE_RADIAL_R2_TH2", r2max * 70 // 100),
+            ("EE_RADIAL_GAIN_01", (gains[1] << 16) | gains[0]), ("EE_RADIAL_GAIN_23", (gains[3] << 16) | gains[2])]
+
+
+# Comments before the first write of a register anywhere in the profile.
+EE_NOTES = {
+    "EE_FEATURE_EN": [
+        "EE gain features (ISP-UPD-011), each a gain on the edge term (MAS 6.18.4.1):",
+        "ACTIVITY_EN: EE_LUT bank 1 (64 entries, by edge activity); CONTRAST_EN:",
+        "bank 2 (positive edge) / bank 3 (negative), by the 5x5 local range. With",
+        "those banks at unity (0x8000) the switch changes nothing: edit them too.",
+        "RADIAL_EN: gain by ring around EE_RADIAL_CENTER (doubled active-image",
+        "coordinates; W-1, H-1 = the centre): r2 < R2_TH0 GAIN0, < TH1 GAIN1,",
+        "< TH2 GAIN2, else GAIN3; r2 = (2x-CENTER_X2)^2 + (2y-CENTER_Y2)^2.",
+        "Thresholds here: 10/35/70 % of the corner r2. Gains UQ1.15, 0x8000 = 1.0,",
+        "at most 0xC000 = 1.5 (above: clamped and EE_STATUS ERROR). Profile mode,",
+        "RADIAL_EN=1: a centre outside the image or thresholds not ordered",
+        "TH0 <= TH1 <= TH2 are refused at SEAL (TUNE_ERROR INVALID).",
+        "Written before the PROFILE_LOAD_CONFIRM below.",
+    ],
+}
+
 
 def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200, tune=False):
     """Returns (writes, note) for one preset. raw12: container samples, bits [11:0].
@@ -262,8 +297,10 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200, tu
         for bank, n in ((0, 64), (1, 64), (2, 32), (3, 32)):
             w += [("EE_LUT_CTRL", bank << 1), ("EE_LUT_ADDR", 0)] + [("EE_LUT_WDATA", 0x8000)] * n
         # v1.07: confirm the resident (tables and scalars) with EE disabled (MAS §9.9.1).
-        w += [("EE_ALPHA", 0x6000), ("EE_BETA", 0x4000), ("EE_CLAMP", (40 << 8) | 30), ("EE_LUT_CTRL", 1 << 8),
-              ("EE_CTRL", 1)]
+        # ISP-UPD-011: the gain features written, all off (the reset), radial
+        # geometry ready for the image and unity gains.
+        w += [("EE_ALPHA", 0x6000), ("EE_BETA", 0x4000), ("EE_CLAMP", (40 << 8) | 30)] + ee_feature_writes(aw, ah)
+        w += [("EE_LUT_CTRL", 1 << 8), ("EE_CTRL", 1)]
         w += [("CNF_CHROMA_TH", 30), ("CNF_LUMA_TH", 20), ("CNF_CTRL", 0x5)]
         w += resizer(14 if vga else 5)
         if vga:
@@ -286,12 +323,9 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200, tu
         # thresholds at 10 / 35 / 70 % of the corner radius squared.
         sh, sv = BAYER[bayer] & 1, BAYER[bayer] >> 1
         aw, ah = (width - sh) // 2 * 2, (height - sv) // 2 * 2
-        r2max = (aw - 1) ** 2 + (ah - 1) ** 2
-        w += [("EE_ALPHA", 0x7000), ("EE_BETA", 0x5000), ("EE_CLAMP", (40 << 8) | 30), ("EE_FEATURE_EN", 7),
-              ("EE_RADIAL_CENTER", ((ah - 1) << 16) | (aw - 1)), ("EE_RADIAL_R2_TH0", r2max // 10),
-              ("EE_RADIAL_R2_TH1", r2max * 35 // 100), ("EE_RADIAL_R2_TH2", r2max * 70 // 100),
-              ("EE_RADIAL_GAIN_01", (0x9000 << 16) | 0x8000), ("EE_RADIAL_GAIN_23", (0xC000 << 16) | 0xA000),
-              ("EE_LUT_CTRL", 1 << 8), ("EE_CTRL", 1)]
+        w += [("EE_ALPHA", 0x7000), ("EE_BETA", 0x5000), ("EE_CLAMP", (40 << 8) | 30)]
+        w += ee_feature_writes(aw, ah, 7, (0x8000, 0x9000, 0xA000, 0xC000))
+        w += [("EE_LUT_CTRL", 1 << 8), ("EE_CTRL", 1)]
         w += resizer(7)
         # A legal v1.07 grid: (NX - 1) * ZW < W <= NX * ZW on both axes (MAS
         # v1.07 §6.21.3.1); AWB NX <= min(64, W/2), NY <= min(32, H/2).
@@ -307,7 +341,8 @@ def profile_writes(raw12, width, height, bayer, preset="basic", pedestal=200, tu
 def format_profile(writes, syntax="fields"):
     """Profile text of a write list, one line per write (csrw_codec.format_write:
     a register with several fields as REGISTER f=V ...; the stream is unchanged).
-    From TUNE_FIRST on, TUNE_NOTES comments precede a register's first write."""
+    From TUNE_FIRST on, TUNE_NOTES comments precede a register's first write;
+    EE_NOTES precede it anywhere (ISP-UPD-011)."""
     import csrw_codec
     cmap = csrw_codec.CsrMap()
     names = [n for n, _ in writes]
@@ -321,6 +356,9 @@ def format_profile(writes, syntax="fields"):
             if n == "TUNE_BPC_CTRL" and not curve:
                 out += ["# " + c for c in NR_TEMPLATE]
             out += ["# " + c for c in TUNE_NOTES[key]]
+        elif n in EE_NOTES and n not in noted:
+            noted.add(n)
+            out += ["# " + c for c in EE_NOTES[n]]
         out.append(csrw_codec.format_write(cmap.regs[n], v, syntax))
     return "".join(line + "\n" for line in out)
 

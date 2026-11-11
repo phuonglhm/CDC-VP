@@ -21,10 +21,10 @@
 #      camera -> ISP: camera_isp_raw12), and the Ethernet example on every line
 #      peer and the scripted Ethernet CLI session pass;
 #   4c. a tuned shared profile with another write count (ISP-UPD-010): with
-#      four more writes (NR curve used, two factory bad pixels) run_vp.sh isp
-#      d65 gives the stand-alone model's NV12 for that profile (not the
-#      golden); without the TUNE block (fewer writes, reset values) it gives
-#      the golden again;
+#      four more writes (NR curve used, two factory bad pixels; ISP-UPD-011:
+#      and radial EE on) run_vp.sh isp d65 gives the stand-alone model's NV12
+#      for that profile (not the golden); without the TUNE block (fewer
+#      writes, reset values) it gives the golden again;
 #   6. a copy without build/ (what a clone of the SDK repository holds) must
 #      pass `sha256sum -c SHA256SUMS`;
 #   7. the one-terminal `run_vp.sh isp d65 interactive` flow through a
@@ -225,7 +225,10 @@ t = open(p).read()
 for a, b in (("TUNE_NR_CTRL MODE=0 MEDIAN_EN=1\n", "TUNE_NR_CTRL MODE=2 MEDIAN_EN=1\n"),
              ("TUNE_BPC_CTRL COLOR_THRESH_EN=0 FACTORY_EN=0\n", "TUNE_BPC_CTRL COLOR_THRESH_EN=0 FACTORY_EN=1\n"),
              ("TUNE_BPC_COUNT VALUE=0\n", "TUNE_BPC_COUNT VALUE=2\nTUNE_BPC_ADDR VALUE=0\nTUNE_BPC_DATA X=100 Y=20\n"
-              "TUNE_BPC_ADDR VALUE=1\nTUNE_BPC_DATA X=7 Y=21\n")):
+              "TUNE_BPC_ADDR VALUE=1\nTUNE_BPC_DATA X=7 Y=21\n"),
+             ("EE_FEATURE_EN activity_en=0 contrast_en=0 radial_en=0\n",
+              "EE_FEATURE_EN activity_en=0 contrast_en=0 radial_en=1\n"),
+             ("EE_RADIAL_GAIN_23 gain2=0x8000 gain3=0x8000\n", "EE_RADIAL_GAIN_23 gain2=0xA000 gain3=0xC000\n")):
     assert t.count(a) == 1, a
     t = t.replace(a, b)
 open(p, "w").write(t)
@@ -241,7 +244,7 @@ got="$(sha256sum "${d65_out}/platform.nv12" 2>/dev/null | cut -d' ' -f1)"
 [[ ${rc} -eq 1 ]] && grep -q "ISP FAIL: NV12 differs" "${tmp}/isp_tuned.log" && grep -q "the job uses ${n}" "${tmp}/isp_tuned.log" \
     && [[ -n "${ref}" && "${got}" == "${ref}" && "${ref}" != "$(cat "${test}/isp/d65/expected_nv12.sha256")" ]] \
     && [[ -s "${d65_out}/platform.png" ]] \
-    && pass "tuned profile, 4 more writes (NR curve MODE 2, 2 factory pixels): job uses ${n}, NV12 = the model's ${ref:0:12}... (not the golden), PNG written" \
+    && pass "tuned profile, 4 more writes (NR curve MODE 2, 2 factory pixels, radial EE): job uses ${n}, NV12 = the model's ${ref:0:12}... (not the golden), PNG written" \
     || { tail -n 15 "${tmp}/isp_tuned.log" "${tmp}/tuned_ref.log"; bad "tuned profile with more writes: exit ${rc}, NV12 ${got:0:12} vs model ${ref:0:12}"; }
 python3 - "${tmp}/shared_shipped/profile.csrw" "${sp}/profile.csrw" <<'PY'
 import sys

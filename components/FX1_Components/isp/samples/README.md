@@ -54,6 +54,15 @@ The firmware's profile-mode bring-up and `fx1_isp_run_raw --profile-mode`
 write these values into the bank after INIT. In legacy mode they stay bank
 storage and the datapath keeps their reset. Use `make_profile.py
 --no-tune` to leave the block out.
+
+EE gain features (ISP-UPD-011, 2026-11-11, tuning team request): the shared
+profile and the two `full` presets write `EE_FEATURE_EN` and `EE_RADIAL_*`
+after `EE_CLAMP`, before the EE `PROFILE_LOAD_CONFIRM`: features off (the
+CSR reset), the radial centre at the image centre (`CENTER_X2=W-1`,
+`CENTER_Y2=H-1`, doubled coordinates), thresholds at 10/35/70 % of the corner
+radius squared and unity gains, so the outputs are unchanged. `gtm_manual_qhd`
+already enabled all three with its own gains; `basic` has no EE. These are
+legacy EE controls, live in legacy and in profile mode.
 | `4k/<case>/` | The two 4K acceptance cases (DEC-37): profile, frame count, expected NV12 SHA-256 and statistics readout script. |
 | `run_4k_check.sh` | Runs both 4K cases through the installed `fx1_isp_run_raw`, compares each against the reference values, and prints PASS or FAIL. It needs neither Python nor the dataset. |
 

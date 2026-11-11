@@ -5,6 +5,7 @@
 # ISP-UPD-001/003/004/007 (2026-11-09): LSC 17x13 (same radial formula) in residents 1+2, CCM offsets 0 explicit, AWB/AEC 16x16, AEC UE 272 / OE 3744.
 # ISP-UPD-009 (2026-11-10): TUNE extension controls appended at their CSR reset values (the block at the end).
 # ISP-UPD-010 (2026-11-10): the tuning team's NR.variance_curve loaded and confirmed; TUNE_NR_CTRL MODE=0 keeps it unused.
+# ISP-UPD-011 (2026-11-11): EE gain features (EE_FEATURE_EN, EE_RADIAL_*) written before the EE confirm, all off; radial geometry for 2686x1518, unity gains.
 COMMON_BAYER pattern=3
 BLC_CTRL en=1
 BLC_GAIN_SEL gain_level=0 range_scale_en=1
@@ -2279,6 +2280,25 @@ EE_LUT_WDATA 0x8000
 EE_ALPHA alpha=0x8000
 EE_BETA beta=0x4000
 EE_CLAMP clamp_pos=30 clamp_neg=40
+# EE gain features (ISP-UPD-011), each a gain on the edge term (MAS 6.18.4.1):
+# ACTIVITY_EN: EE_LUT bank 1 (64 entries, by edge activity); CONTRAST_EN:
+# bank 2 (positive edge) / bank 3 (negative), by the 5x5 local range. With
+# those banks at unity (0x8000) the switch changes nothing: edit them too.
+# RADIAL_EN: gain by ring around EE_RADIAL_CENTER (doubled active-image
+# coordinates; W-1, H-1 = the centre): r2 < R2_TH0 GAIN0, < TH1 GAIN1,
+# < TH2 GAIN2, else GAIN3; r2 = (2x-CENTER_X2)^2 + (2y-CENTER_Y2)^2.
+# Thresholds here: 10/35/70 % of the corner r2. Gains UQ1.15, 0x8000 = 1.0,
+# at most 0xC000 = 1.5 (above: clamped and EE_STATUS ERROR). Profile mode,
+# RADIAL_EN=1: a centre outside the image or thresholds not ordered
+# TH0 <= TH1 <= TH2 are refused at SEAL (TUNE_ERROR INVALID).
+# Written before the PROFILE_LOAD_CONFIRM below.
+EE_FEATURE_EN activity_en=0 contrast_en=0 radial_en=0
+EE_RADIAL_CENTER center_x2=0xA7D center_y2=0x5ED
+EE_RADIAL_R2_TH0 r2_th0=0xE830B
+EE_RADIAL_R2_TH1 r2_th1=0x32CAA7
+EE_RADIAL_R2_TH2 r2_th2=0x65954F
+EE_RADIAL_GAIN_01 gain0=0x8000 gain1=0x8000
+EE_RADIAL_GAIN_23 gain2=0x8000 gain3=0x8000
 EE_LUT_CTRL lut_sel=0 profile_load_confirm=1
 EE_CTRL en=1 profile_sel=0 profile_wr_sel=0
 CNF_CHROMA_TH chroma_th=0x1E

@@ -128,6 +128,56 @@ def tune_block(raw, csrw_codec, tempfile):
             os.remove(f.name)
 
 
+# ISP-UPD-011: the tuning team's EE list (2026-11-11).
+EE_ITEMS = """EE_FEATURE_EN.activity_en EE_FEATURE_EN.contrast_en EE_FEATURE_EN.radial_en
+EE_RADIAL_CENTER.center_x2 EE_RADIAL_CENTER.center_y2 EE_RADIAL_R2_TH0.r2_th0 EE_RADIAL_R2_TH1.r2_th1
+EE_RADIAL_R2_TH2.r2_th2 EE_RADIAL_GAIN_01.gain0 EE_RADIAL_GAIN_01.gain1 EE_RADIAL_GAIN_23.gain2
+EE_RADIAL_GAIN_23.gain3""".split()
+
+
+def ee_features(raw, csrw_codec):
+    """ISP-UPD-011: EE_FEATURE_EN .. EE_RADIAL_GAIN_23 in the full presets and the
+    shared profile: once, between EE_CLAMP and the EE PROFILE_LOAD_CONFIRM,
+    features off (the CSR reset), unity gains (the reset), centre and
+    thresholds of 2686 x 1518 that SEAL accepts once RADIAL_EN is set."""
+    import re
+    cmap = csrw_codec.CsrMap()
+    hdr = open(cmap.header, encoding="utf-8").read()
+    reset = lambda r: int(re.search(r"#define FX1_ISP_%s_RESET (0x[0-9A-F]+)u" % r, hdr).group(1), 16)
+    check(len(EE_ITEMS) == 12, "12 EE items")
+    regs = []
+    for item in EE_ITEMS:
+        r, f = item.split(".")
+        check(cmap.regs[r].field(f) is not None, "EE item %s in the CSR" % item)
+        regs += [r] if r not in regs else []
+    ew = mp.ee_feature_writes(2686, 1518)
+    check([n for n, _ in ew] == regs, "ee_feature_writes registers %r" % [n for n, _ in ew])
+    d = dict(ew)
+    for r in ("EE_FEATURE_EN", "EE_RADIAL_GAIN_01", "EE_RADIAL_GAIN_23"):
+        check(d[r] == reset(r), "%s = %#x, CSR reset %#x" % (r, d[r], reset(r)))
+    cx2, cy2 = d["EE_RADIAL_CENTER"] & 0x1FFF, d["EE_RADIAL_CENTER"] >> 16
+    t = [d["EE_RADIAL_R2_TH%d" % k] for k in range(3)]
+    check((cx2, cy2) == (2685, 1517) and cx2 <= 2 * 2685 and cy2 <= 2 * 1517, "radial centre (W-1, H-1)")
+    check(0 < t[0] <= t[1] <= t[2] < 2685 ** 2 + 1517 ** 2 and all(v < 1 << 27 for v in t), "radial thresholds %r" % t)
+    profiles = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "samples", "profiles")
+    streams = {p: mp.profile_writes(raw, 2688, 1520, "BGGR", p, tune=True)[0] for p in mp.PRESETS}
+    streams["shared"] = csrw_codec.writes(os.path.join(profiles, "shared_bggr_2688x1520_full.csrw"), cmap)
+    for name, w in streams.items():
+        n = [x for x, _ in w]
+        if name == "basic":
+            check(not any(x.startswith("EE_") for x in n), "basic: no EE write")
+            continue
+        k = n.index("EE_CLAMP")
+        want = mp.ee_feature_writes(2686, 1518, 7, (0x8000, 0x9000, 0xA000, 0xC000)) if name == "gtm_manual_qhd" else ew
+        check(w[k + 1:k + 8] == want and w[k + 8] == ("EE_LUT_CTRL", 1 << 8)
+              and sum(x in regs for x in n) == 7, "%s: EE features between EE_CLAMP and the EE confirm" % name)
+        if name != "shared":
+            check(mp.format_profile(w).count("# " + mp.EE_NOTES["EE_FEATURE_EN"][0] + "\n") == 1, "%s: EE notes once" % name)
+    text = open(os.path.join(profiles, "shared_bggr_2688x1520_full.csrw")).read()
+    check("EE_FEATURE_EN activity_en=0 contrast_en=0 radial_en=0\n" in text
+          and text.count("# " + mp.EE_NOTES["EE_FEATURE_EN"][0] + "\n") == 1, "shared: EE notes and field syntax")
+
+
 def main():
     check(mp.aec_grid(2686, 1518) == (16, 16, 168, 95), "aec_grid 2686x1518 %r" % (mp.aec_grid(2686, 1518),))
     check(mp.aec_grid(34, 34) == (12, 12, 3, 3), "aec_grid 34x34 %r" % (mp.aec_grid(34, 34),))
@@ -179,8 +229,10 @@ def main():
     finally:
         os.remove(f.name)
     legacy = mp.format_profile(w, "legacy")
-    check(legacy.splitlines()[1] == "BLC_CTRL 0x1" and "=" not in legacy, "legacy syntax")
+    check(legacy.splitlines()[1] == "BLC_CTRL 0x1"
+          and not any("=" in l for l in legacy.splitlines() if not l.startswith("#")), "legacy syntax")
     tune_block(raw, csrw_codec, tempfile)
+    ee_features(raw, csrw_codec)
     print("test_make_profile_defaults: %d failure(s)" % len(failures))
     return 1 if failures else 0
 

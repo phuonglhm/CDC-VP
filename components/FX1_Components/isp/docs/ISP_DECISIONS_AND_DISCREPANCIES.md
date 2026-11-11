@@ -1143,3 +1143,53 @@ sample's prepared `job.bin`.
   guarantee zero memory there.
 - `MODE=2` with the curve's `NR_CONFIRM` removed: the firmware refuses the
   profile (`TUNE_ERROR` 0x4, NOT_READY) and `run_vp.sh` fails.
+
+## 16. EE gain features in the profiles, ISP-UPD-011 (tuning team request, 2026-11-11)
+
+The tuning team asked for the 12 fields of `EE_FEATURE_EN` (`activity_en`,
+`contrast_en`, `radial_en`), `EE_RADIAL_CENTER` (`center_x2`, `center_y2`),
+`EE_RADIAL_R2_TH0..2` and `EE_RADIAL_GAIN_01/23` (`gain0..3`) in the profile.
+All of them were already implemented: CSR, control unit (per-resident
+scalars, SEAL range check), datapath and reference. Vector
+`ee_features_96x64` checks the three features against the reference in
+legacy and in profile mode. Only `gtm_manual_qhd` wrote them; the shared
+profile and the `full` presets did not, so a tuner had nothing to edit.
+
+**Decisions:**
+- The shared profile and the `full`/`full_vga_709` presets write the seven
+  registers after `EE_CLAMP`, before the EE `PROFILE_LOAD_CONFIRM` of the
+  resident they configure (resident 0).
+- `EE_FEATURE_EN` 0 and the gains 0x8000 (the CSR reset), so every output and
+  golden is unchanged. The centre and thresholds are not the reset (0): the
+  image centre in doubled coordinates (`W-1`, `H-1`; 2686 x 1518: 0xA7D,
+  0x5ED) and 10/35/70 % of the corner radius squared, the geometry
+  `gtm_manual_qhd` uses. With the reset, `radial_en=1` alone would centre the
+  rings on the top-left corner.
+- `basic` has no EE and gets nothing; `gtm_manual_qhd` keeps its writes.
+- `make_profile.ee_feature_writes()` builds the block for all of them; a
+  comment (`EE_NOTES`) before `EE_FEATURE_EN` says which tables the features
+  use and the rules SEAL checks.
+
+**Verification (model, D65 frame, shared profile, 2 frames; legacy = profile mode in every case that runs):**
+- As shipped: the golden `8da0af67`.
+- `radial_en=1`, gains 1.0/1.125/1.25/1.5: another image (`b8fd1488`). The
+  same with `GAIN3` 0xFFFF: the same image (clamped at 1.5).
+- `activity_en=1 contrast_en=1` with the shipped unity tables: the golden.
+  With bank 1 at 0x4000 (activity) or banks 2 and 3 at 0x4000 (contrast):
+  another image, the same for both (a uniform gain of 0.5 either way); bank 2
+  alone: a third image.
+- Profile mode refuses `radial_en=1` with `R2_TH0 > R2_TH1` or
+  `CENTER_X2 > 2(W-1)`: `TUNE_ERROR` 0x2 (INVALID). Legacy mode has no SEAL
+  and runs those settings.
+- Through the SDK (`run_vp.sh isp d65`, firmware in profile mode):
+  `radial_en=1` gives the model's NV12 for that profile (`b8fd1488`, not the
+  golden); `isp d65 auto` keeps `radial_en=1` (in `resolved_profile.csrw`)
+  and gives the model's NV12 for the resolved profile; `R2_TH0 > R2_TH1` is
+  refused (`TUNE_ERROR` 0x2, `ISP FAIL`); `activity_en=1 contrast_en=1` with
+  the unity tables gives `ISP PASS`.
+- Packaging gate step 4c: the tuned shared profile also sets `radial_en=1`
+  with `GAIN2/3` 1.25/1.5, so the firmware's run is compared with the model on
+  the EE path too.
+- The vectors built from the `full` preset (`edge_*_full_*`, the two 4K
+  cases) gain the same seven writes in their `profile.csrw`; their expected
+  outputs are unchanged. The traceability report counts those vectors.

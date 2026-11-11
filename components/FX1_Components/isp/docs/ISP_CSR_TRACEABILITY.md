@@ -178,13 +178,13 @@ show that every member was written with a non-zero value.
 | 0x1C04 | `EE_ALPHA` | RW | model | control_unit.cpp, control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 9 |
 | 0x1C08 | `EE_BETA` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles | 9 |
 | 0x1C0C | `EE_CLAMP` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles | 9 |
-| 0x1C10 | `EE_FEATURE_EN` | RW | model | control_unit.cpp, control_unit_profile.cpp, isp_pipeline.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles, test_profile | 2 |
-| 0x1C14 | `EE_RADIAL_CENTER` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
-| 0x1C18 | `EE_RADIAL_R2_TH0` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
-| 0x1C1C | `EE_RADIAL_R2_TH1` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
-| 0x1C20 | `EE_RADIAL_R2_TH2` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 2 |
-| 0x1C24 | `EE_RADIAL_GAIN_01` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit | 2 |
-| 0x1C28 | `EE_RADIAL_GAIN_23` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm | 2 |
+| 0x1C10 | `EE_FEATURE_EN` | RW | model | control_unit.cpp, control_unit_profile.cpp, isp_pipeline.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_ee_profiles, test_profile | 8 |
+| 0x1C14 | `EE_RADIAL_CENTER` | RW | model | control_unit.cpp, control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 8 |
+| 0x1C18 | `EE_RADIAL_R2_TH0` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 8 |
+| 0x1C1C | `EE_RADIAL_R2_TH1` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 8 |
+| 0x1C20 | `EE_RADIAL_R2_TH2` | RW | model | control_unit_profile.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_profile | 8 |
+| 0x1C24 | `EE_RADIAL_GAIN_01` | RW | model (indexed) | EE profile scalar k at EE_ALPHA + 4 * k, banked per profile (MAS §6.18.4.1) | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit | 8 |
+| 0x1C28 | `EE_RADIAL_GAIN_23` | RW | model | control_unit.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm | 8 |
 | 0x1C2C | `EE_LUT_CTRL` | RW, W1P | model | control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_cont_tlm, test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 10 |
 | 0x1C30 | `EE_LUT_ADDR` | RW | model | control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 10 |
 | 0x1C34 | `EE_LUT_WDATA` | RW | model | control_unit_tables.cpp | MAS §6.18.4.1 (three resident profiles, U3); DEC-25 superseded, M3-A2, DEC-38 | test_control_unit, test_driver_tlm, test_ee_profiles, test_profile | 10 |

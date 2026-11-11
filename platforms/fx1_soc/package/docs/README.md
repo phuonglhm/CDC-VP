@@ -359,10 +359,25 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
     two lines per point `i` = 0..n-1: `TUNE_BPC_ADDR VALUE=i` and
     `TUNE_BPC_DATA X=x Y=y`. The points are active-image Bayer coordinates
     (d65: x < 2686, y < 1518), sorted by y*2686+x, unique, at most 1024.
+  - **EE gain features** (`EE_FEATURE_EN`, `EE_RADIAL_*`, after `EE_CLAMP`):
+    shipped off, with the radial centre at the image centre
+    (`CENTER_X2=0xA7D CENTER_Y2=0x5ED`: doubled coordinates, W-1 and H-1),
+    thresholds at 10/35/70 % of the corner radius squared and unity gains.
+    Set `radial_en=1` and the gains (`0x8000` = 1.0, at most `0xC000` = 1.5;
+    larger values are clamped and raise `EE_STATUS.error`): `GAIN0` inside
+    `R2_TH0`, then `GAIN1`, `GAIN2`, and `GAIN3` beyond `R2_TH2`, with
+    r² = (2x-CENTER_X2)² + (2y-CENTER_Y2)². `activity_en` uses the
+    `EE_LUT_WDATA` table after `EE_LUT_CTRL lut_sel=1`, `contrast_en` the
+    tables after `lut_sel=2` (positive edges) and `lut_sel=3` (negative). The
+    shipped tables are unity (`0x8000`), so these two switches change nothing
+    until those tables are edited. Keep the lines before `EE_LUT_CTRL ...
+    profile_load_confirm=1`. These are legacy EE controls: unlike the TUNE
+    controls they also apply in `isp ... auto`.
   - A list that breaks a rule, or `MODE=2` without the 17 knots and
-    `NR_CONFIRM`, is refused when the firmware seals the profile: the run
-    reports the `TUNE_ERROR` bits and fails, it does not run on a partial
-    table.
+    `NR_CONFIRM`, or `radial_en=1` with a centre outside the image or
+    thresholds not ordered `R2_TH0 <= R2_TH1 <= R2_TH2`, is refused when the
+    firmware seals the profile: the run reports the `TUNE_ERROR` bits and
+    fails, it does not run on a partial table.
 - **Frames:** each job processes the same RAW twice from reset. The first frame
   warms up GTM auto; the delivered image and golden are from the second frame.
   When preparing a new sample, use `run_isp_demo.py --prepare-only --frames 2`

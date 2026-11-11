@@ -548,6 +548,18 @@ EE_LUT_WDATA 0x79F4
 EE_ALPHA alpha=0x7000
 EE_BETA beta=0x5000
 EE_CLAMP clamp_pos=30 clamp_neg=40
+# EE gain features (ISP-UPD-011), each a gain on the edge term (MAS 6.18.4.1):
+# ACTIVITY_EN: EE_LUT bank 1 (64 entries, by edge activity); CONTRAST_EN:
+# bank 2 (positive edge) / bank 3 (negative), by the 5x5 local range. With
+# those banks at unity (0x8000) the switch changes nothing: edit them too.
+# RADIAL_EN: gain by ring around EE_RADIAL_CENTER (doubled active-image
+# coordinates; W-1, H-1 = the centre): r2 < R2_TH0 GAIN0, < TH1 GAIN1,
+# < TH2 GAIN2, else GAIN3; r2 = (2x-CENTER_X2)^2 + (2y-CENTER_Y2)^2.
+# Thresholds here: 10/35/70 % of the corner r2. Gains UQ1.15, 0x8000 = 1.0,
+# at most 0xC000 = 1.5 (above: clamped and EE_STATUS ERROR). Profile mode,
+# RADIAL_EN=1: a centre outside the image or thresholds not ordered
+# TH0 <= TH1 <= TH2 are refused at SEAL (TUNE_ERROR INVALID).
+# Written before the PROFILE_LOAD_CONFIRM below.
 EE_FEATURE_EN activity_en=1 contrast_en=1 radial_en=1
 EE_RADIAL_CENTER center_x2=0xA7D center_y2=0x5ED
 EE_RADIAL_R2_TH0 r2_th0=0xE830B
