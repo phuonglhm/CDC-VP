@@ -30,6 +30,12 @@ struct csr_line {
 //   REGISTER VALUE            the whole register
 //   REGISTER_field VALUE      one field, every other field 0
 //   REGISTER f1=V1 f2=V2 ...  several fields of one register, the others 0
+//   PORT_TABLE VALUE          ISP-UPD-013: a table data port named with the
+//                             table it writes (EE_LUT_WDATA_ACTIVITY 0x8000 is
+//                             EE_LUT_WDATA 0x8000; tagged_ports). The name is
+//                             checked against the last write of the port's
+//                             selector register earlier in the same file
+//                             (EE_LUT_CTRL lut_sel=ACTIVITY); not a CSR register.
 // VALUE: decimal without a leading zero or 0x hex, non-negative; a field value
 // is its code before the shift and must fit the field, or the name of one of
 // the field's CSR enum values (EE_LUT_CTRL lut_sel=ACTIVITY; ISP-UPD-012). A read-only field, a
@@ -40,9 +46,31 @@ namespace csrw {
 
 namespace csr = cdc::components::fx1_isp::csr;
 
+// ISP-UPD-013: {port, selector register, selector field}; the same list as
+// TAGGED_PORTS in tools/csrw_codec.py.
+struct tagged_port {
+   const char *port, *selector, *field;
+};
+inline constexpr tagged_port tagged_ports[] = {{"EE_LUT_WDATA", "EE_LUT_CTRL", "lut_sel"}};
+
+struct table_tag {
+   const csr::reg_desc *port, *selector;
+   const csr::field_desc *field;
+   std::string name;
+   std::uint32_t code;
+};
+
+// The state of one file read so far: the last word written to each selector
+// register (for the PORT_TABLE check).
+struct context {
+   std::map<std::string, std::uint32_t> last;
+};
+
 struct field_map {
    std::map<std::string, const csr::reg_desc *> regs;
    std::map<std::string, std::pair<const csr::reg_desc *, const csr::field_desc *>> aliases;
+   std::map<std::string, table_tag> tags;
+   std::vector<std::string> selectors;
    field_map() {
       for (std::size_t i = 0; i < csr::num_registers; ++i) {
          regs[csr::registers[i].name] = &csr::registers[i];
@@ -55,6 +83,27 @@ struct field_map {
                throw std::logic_error("csrw: alias " + a + " is ambiguous");
             }
             aliases[a] = {&r, &r.fields[k]};
+         }
+      }
+      for (const tagged_port &tp : tagged_ports) {
+         const auto port = regs.find(tp.port), sel = regs.find(tp.selector);
+         const csr::field_desc *f = nullptr;
+         for (std::size_t k = 0; sel != regs.end() && k < sel->second->num_fields; ++k) {
+            f = std::string(sel->second->fields[k].name) == tp.field ? &sel->second->fields[k] : f;
+         }
+         if (port == regs.end() || !f) {
+            continue;
+         }
+         selectors.push_back(tp.selector);
+         for (std::size_t i = 0; i < csr::num_enums; ++i) {
+            const csr::enum_desc &e = csr::enums[i];
+            if (std::string(e.reg) == tp.selector && std::string(e.field) == tp.field) {
+               const std::string t = std::string(tp.port) + "_" + e.name;
+               if (regs.count(t) || aliases.count(t) || tags.count(t)) {
+                  throw std::logic_error("csrw: table name " + t + " is ambiguous");
+               }
+               tags[t] = {port->second, sel->second, f, e.name, e.value};
+            }
          }
       }
    }
@@ -148,7 +197,7 @@ inline std::uint32_t encode(const csr::reg_desc &r, const std::vector<std::pair<
 }
 
 // One line (comment stripped) -> l.reg / l.value; false for a blank line.
-inline bool parse(const std::string &text, const std::string &where, csr_line &l) {
+inline bool parse_one(const std::string &text, const std::string &where, csr_line &l, const context &ctx) {
    std::istringstream is(text);
    std::vector<std::string> tok;
    for (std::string t; is >> t;) {
@@ -191,6 +240,34 @@ inline bool parse(const std::string &text, const std::string &where, csr_line &l
                        where);
       return true;
    }
+   const auto t = m.tags.find(tok[0]);
+   if (reg == m.regs.end() && t != m.tags.end()) {  // PORT_TABLE VALUE (ISP-UPD-013)
+      const table_tag &g = t->second;
+      const std::uint64_t v = value_of(tok[1], where);
+      if (v >> 32) {
+         throw std::runtime_error(where + ": value does not fit 32 bits");
+      }
+      const auto last = ctx.last.find(g.selector->name);
+      if (last == ctx.last.end()) {
+         throw std::runtime_error(where + ": " + tok[0] + " needs an earlier " + g.selector->name + " " +
+                                  g.field->name + "=" + g.name + " in the file");
+      }
+      const std::uint32_t cur = (last->second & g.field->mask) >> g.field->lsb;
+      if (cur != g.code) {
+         std::string now = std::to_string(cur);
+         for (std::size_t i = 0; i < csr::num_enums; ++i) {
+            const csr::enum_desc &e = csr::enums[i];
+            if (std::string(e.reg) == g.selector->name && std::string(e.field) == g.field->name && e.value == cur) {
+               now = e.name;
+            }
+         }
+         throw std::runtime_error(where + ": " + tok[0] + " but the last " + g.selector->name + " write has " +
+                                  g.field->name + "=" + now);
+      }
+      l.reg = g.port->name;
+      l.value = static_cast<std::uint32_t>(v);
+      return true;
+   }
    const std::uint64_t v = value_of(tok[1], where);
    if (reg != m.regs.end()) {
       if (v >> 32) {
@@ -201,6 +278,23 @@ inline bool parse(const std::string &text, const std::string &where, csr_line &l
       return true;
    }
    throw std::runtime_error(where + ": unknown register or field " + tok[0]);
+}
+
+// parse_one, keeping ctx (one per file; none: the line is read as the first of
+// its file) up to date with the selector writes.
+inline bool parse(const std::string &text, const std::string &where, csr_line &l, context *ctx = nullptr) {
+   const context none;
+   if (!parse_one(text, where, l, ctx ? *ctx : none)) {
+      return false;
+   }
+   if (ctx) {
+      for (const std::string &s : map().selectors) {
+         if (l.reg == s) {
+            ctx->last[s] = l.value;
+         }
+      }
+   }
+   return true;
 }
 
 // A UTF-8 byte order mark opening the file is not part of line 1 (review
@@ -219,10 +313,11 @@ inline std::vector<csr_line> read_profile(const std::filesystem::path &p) {
    std::vector<csr_line> out;
    std::ifstream f(p);
    std::string line;
+   csrw::context ctx;
    for (unsigned n = 1; std::getline(f, line); ++n) {
       csrw::strip_bom(line, n);
       csr_line l;
-      if (csrw::parse(line.substr(0, line.find('#')), p.string() + ":" + std::to_string(n), l)) {
+      if (csrw::parse(line.substr(0, line.find('#')), p.string() + ":" + std::to_string(n), l, &ctx)) {
          out.push_back(l);
       }
    }
@@ -234,13 +329,14 @@ inline std::vector<csr_line> read_frame_writes(const std::filesystem::path &p) {
    std::vector<csr_line> out;
    std::ifstream f(p);
    std::string line;
+   csrw::context ctx;
    for (unsigned n = 1; std::getline(f, line); ++n) {
       csrw::strip_bom(line, n);
       std::istringstream is(line.substr(0, line.find('#')));
       csr_line l;
       std::string rest;
       if (is >> l.frame && std::getline(is, rest) &&
-          csrw::parse(rest, p.string() + ":" + std::to_string(n), l)) {
+          csrw::parse(rest, p.string() + ":" + std::to_string(n), l, &ctx)) {
          out.push_back(l);
       }
    }

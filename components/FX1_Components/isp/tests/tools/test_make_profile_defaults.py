@@ -191,7 +191,9 @@ def shared_layout(csrw_codec):
     block, blocks in datapath order (TUNE_TABLE_CMD with its table); BLC G0..G3
     in full, G1..G3 = G0 with trims 0; the GTM curve (65 identity entries) after
     GTM_CTRL en=0 and before the enabling GTM_CTRL; the EE tables by enum name
-    with a comment each; the LSC note on resident 0."""
+    with a comment each; the LSC note on resident 0. ISP-UPD-013: every EE
+    table data line is EE_LUT_WDATA_<TABLE> (64/64/32/32 entries), <TABLE> the
+    lut_sel of its table, and the stream is that of EE_LUT_WDATA."""
     cmap = csrw_codec.CsrMap()
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "samples", "profiles",
                         "shared_bggr_2688x1520_full.csrw")
@@ -231,6 +233,16 @@ def shared_layout(csrw_codec):
     for t in ("LUMA", "ACTIVITY", "CONTRAST_POS", "CONTRAST_NEG"):
         k = lines.index("EE_LUT_CTRL lut_sel=%s" % t)
         check(lines[k - 1].startswith("# EE table %s " % t), "shared: comment before EE table %s" % t)
+    sel, tags = None, []
+    for l in lines:
+        r = l.split("#", 1)[0].split()
+        if r and r[0] == "EE_LUT_CTRL":
+            sel = r[1].split("=")[1]
+        elif r and r[0].startswith("EE_LUT_WDATA"):
+            tags.append((sel, r[0]))
+    check([(s_, t) for s_, t in tags if t != "EE_LUT_WDATA_" + s_] == [] and
+          [sum(1 for _, t in tags if t == "EE_LUT_WDATA_" + x) for x in ("LUMA", "ACTIVITY", "CONTRAST_POS", "CONTRAST_NEG")]
+          == [64, 64, 32, 32] and n.count("EE_LUT_WDATA") == 192, "shared: EE data lines named with their table")
     check(any("no load_profile=0 here by design" in l for l in lines) and
           [v & 3 for v in d["LSC_LOAD_CTRL"]] == [1, 1, 2, 2], "shared: LSC loads 1 and 2, the note on resident 0")
     check(len(w) == 2456, "shared: %d writes" % len(w))

@@ -53,11 +53,11 @@ def main():
         sys.path.insert(0,str(p))
     import csrw_codec
     cmap=csrw_codec.CsrMap()
-    lines=csrw_codec.lines(a.profile);found=set()  # the lines the readers see (BOM, '\n' only)
+    lines=csrw_codec.lines(a.profile);found=set();ctx={}  # the lines the readers see (BOM, '\n' only); ctx: EE_LUT_WDATA_<TABLE> check (ISP-UPD-013)
     for i,l in enumerate(lines):
         body,sep,comment=l.partition('#')
         try:
-            r=csrw_codec.parse_line(cmap,body,'%s:%d'%(a.profile,i+1))
+            r=csrw_codec.parse_line(cmap,body,'%s:%d'%(a.profile,i+1),ctx)
         except csrw_codec.CsrwError as e:
             raise PackError(str(e))
         if r and r[0].name in values:

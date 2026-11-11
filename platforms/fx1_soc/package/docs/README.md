@@ -321,7 +321,8 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
   Every write names its fields, even on a one-field register
   (`CSC_CTRL std=0`, `WB_GAIN_R gain_r=0x1F3`). The exception is the
   table/mesh data, which keeps one `REGISTER VALUE` line per entry
-  (`LSC_COEF_DATA`, `GAMMA_LUT_DATA`, `EE_LUT_WDATA`, `GTM_LUT_DATA`).
+  (`LSC_COEF_DATA`, `GAMMA_LUT_DATA`, `GTM_LUT_DATA`, and the EE tables as
+  `EE_LUT_WDATA_<TABLE>`, below).
 - **TUNE block (tuning parameters):** the shared profile ends with the TUNE
   extension controls the tuning team adjusts, at their CSR reset values
   (the Tuning v1.07 startup values, so the goldens are those without them):
@@ -392,6 +393,13 @@ device: `fx1_pass()` or `fx1_fail(code)` in the BSP.
     `contrast_en` the tables after `lut_sel=CONTRAST_POS` (positive edges)
     and `lut_sel=CONTRAST_NEG` (negative; 32 entries each); `lut_sel=LUMA` is
     the luma gain (64). Table gains are UQ1.15 and act up to 1.0 (`0x8000`).
+    Each table data line names its table: `EE_LUT_WDATA_LUMA`,
+    `EE_LUT_WDATA_ACTIVITY`, `EE_LUT_WDATA_CONTRAST_POS`,
+    `EE_LUT_WDATA_CONTRAST_NEG`. These are not CSR registers: each is a
+    write of the one EE data port `EE_LUT_WDATA`, to the table the
+    `EE_LUT_CTRL lut_sel` line above selects. `csrw_to_bin.sh` refuses a
+    name that is not that table (file:line), so a block of entries moved
+    under another table is caught; plain `EE_LUT_WDATA` is accepted too.
     The shipped tables are unity, so these two switches change nothing
     until those tables are edited. Keep the lines before `EE_LUT_CTRL ...
     profile_load_confirm=1`. These are legacy EE controls: unlike the TUNE

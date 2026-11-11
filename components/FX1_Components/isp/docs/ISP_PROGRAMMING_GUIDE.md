@@ -66,6 +66,17 @@ AEC_CTRL en=1 commit=1                   # REGISTER f=V ...: fields of one regis
   are those of the header (`FX1_ISP_<REG>_<FIELD>_<NAME>`); they are
   case-sensitive. A name the field does not have, a name for a field without
   enum values, or a name as a whole-register value is an error.
+- An EE table data line may name its table (ISP-UPD-013):
+  `EE_LUT_WDATA_LUMA`, `EE_LUT_WDATA_ACTIVITY`, `EE_LUT_WDATA_CONTRAST_POS`
+  and `EE_LUT_WDATA_CONTRAST_NEG VALUE` are the write `EE_LUT_WDATA VALUE`
+  (the CSR has one data port, `EE_LUT_WDATA`; these names are profile syntax,
+  not registers, and have no header macro). The name is checked: the last
+  `EE_LUT_CTRL` write earlier in the same file, in any form, must select that
+  table (`lut_sel`), otherwise the line is an error, as is a tagged line with
+  no `EE_LUT_CTRL` write before it. `EE_LUT_WDATA VALUE` stays accepted. The
+  list is `TAGGED_PORTS` in `tools/csrw_codec.py` and `csrw::tagged_ports` in
+  `tests/common/vector_io.h`; `emit` keeps the name, `emit --style legacy`
+  drops it.
 - `AEC_CTRL_en 1` followed by `AEC_CTRL_commit 1` is two writes, and the
   second clears `en`. To set both in one write, use one line:
   `AEC_CTRL en=1 commit=1`.

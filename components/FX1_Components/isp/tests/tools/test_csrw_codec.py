@@ -27,6 +27,12 @@
     (EE_LUT_CTRL lut_sel=ACTIVITY, the alias form too; case-sensitive); an
     unknown name, a field without names or a name for a whole register is an
     error in both readers; every field's names equal the generated schema;
+  - ISP-UPD-013: EE_LUT_WDATA_<TABLE> VALUE is EE_LUT_WDATA VALUE when the last
+    EE_LUT_CTRL write earlier in the same file selects <TABLE> (any form of that
+    write); another table, no earlier selector write, a lower-case or unknown
+    table name, a field form, a name as value: an error in both readers, the
+    frames.csrw reader too; emit keeps the name (legacy emit drops it); the
+    tags are the four lut_sel names;
   - bin: little-endian {offset, value}; an error leaves an existing .bin;
   - review B/C/P/D R3: lines and tokens as the C++ reader: a UTF-8 byte order
     mark opening the file (before a register, an alias, a group or a comment,
@@ -125,6 +131,46 @@ def main():
     case("err_enum_whole_register", "EE_LUT_CTRL ACTIVITY\n", error="invalid integer")
     case("err_enum_unknown_field", "EE_LUT_CTRL bogus=LUMA\n", error="has no field")
     case("err_enum_other_field", "EE_LUT_CTRL profile_load_confirm=ACTIVITY\n", error="unknown value")
+    # ISP-UPD-013: EE table data lines named with their table.
+    W = "EE_LUT_WDATA"
+    tagged = ("EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_ADDR lut_addr=0\nEE_LUT_WDATA_LUMA 0x8000\nEE_LUT_WDATA 0x7000\n"
+              "EE_LUT_CTRL lut_sel=ACTIVITY\nEE_LUT_WDATA_ACTIVITY 0x1\n"
+              "EE_LUT_CTRL lut_sel=CONTRAST_POS\nEE_LUT_ADDR lut_addr=3\nEE_LUT_WDATA_CONTRAST_POS 0x2  # c\n"
+              "EE_LUT_CTRL lut_sel=CONTRAST_NEG\nEE_LUT_WDATA_CONTRAST_NEG 0xFFFFFFFF\n")
+    case("tag_ee_tables", tagged,
+         [("EE_LUT_CTRL", 0), ("EE_LUT_ADDR", 0), (W, 0x8000), (W, 0x7000), ("EE_LUT_CTRL", 2), (W, 1),
+          ("EE_LUT_CTRL", 4), ("EE_LUT_ADDR", 3), (W, 2), ("EE_LUT_CTRL", 6), (W, 0xFFFFFFFF)])
+    case("tag_after_confirm", "EE_LUT_CTRL lut_sel=CONTRAST_NEG profile_load_confirm=1\nEE_LUT_WDATA_CONTRAST_NEG 5\n",
+         [("EE_LUT_CTRL", 0x106), (W, 5)])
+    case("tag_alias_selector", "EE_LUT_CTRL_lut_sel ACTIVITY\nEE_LUT_WDATA_ACTIVITY 1\n", [("EE_LUT_CTRL", 2), (W, 1)])
+    case("tag_raw_selector", "EE_LUT_CTRL 0x6\nEE_LUT_WDATA_CONTRAST_NEG 1\n", [("EE_LUT_CTRL", 6), (W, 1)])
+    case("tag_other_writes_between", "EE_LUT_CTRL lut_sel=ACTIVITY\nEE_CTRL en=1\nEE_LUT_WDATA_ACTIVITY 1\n",
+         [("EE_LUT_CTRL", 2), ("EE_CTRL", 1), (W, 1)])
+    case("err_tag_mismatch", "EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_WDATA_ACTIVITY 1\n",
+         error=":2: EE_LUT_WDATA_ACTIVITY but the last EE_LUT_CTRL write has lut_sel=LUMA")
+    case("err_tag_reselect", "EE_LUT_CTRL lut_sel=ACTIVITY\nEE_LUT_WDATA_ACTIVITY 1\nEE_LUT_CTRL lut_sel=CONTRAST_POS\n"
+         "EE_LUT_WDATA_ACTIVITY 2\n", error=":4: EE_LUT_WDATA_ACTIVITY but the last EE_LUT_CTRL write has lut_sel=CONTRAST_POS")
+    case("err_tag_no_selector", "EE_LUT_ADDR lut_addr=0\nEE_LUT_WDATA_LUMA 1\n",
+         error=":2: EE_LUT_WDATA_LUMA needs an earlier EE_LUT_CTRL lut_sel=LUMA in the file")
+    case("err_tag_unknown_table", "EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_WDATA_LUMAX 1\n", error=":2: unknown register or field")
+    case("err_tag_case", "EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_WDATA_luma 1\n", error=":2: unknown register or field")
+    case("err_tag_other_port", "GTM_LUT_DATA_LUMA 1\n", error="unknown register or field")
+    case("err_tag_fields", "EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_WDATA_LUMA lut_wdata=1\n", error=":2: expected")
+    case("err_tag_33bit", "EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_WDATA_LUMA 0x100000000\n", error=":2: value")
+    case("err_tag_name_value", "EE_LUT_CTRL lut_sel=LUMA\nEE_LUT_WDATA_LUMA LUMA\n", error=":2: invalid integer")
+    check(sorted(m.tags) == sorted(W + "_" + n for n in m.regs["EE_LUT_CTRL"].field("lut_sel").enums) and len(m.tags) == 4
+          and m.selectors == {"EE_LUT_CTRL"}, "tags %r" % sorted(m.tags))
+    try:
+        codec.parse_line(m, "EE_LUT_WDATA_LUMA 1", "x:1")
+        check(False, "parse_line without a context accepts a tagged line")
+    except codec.CsrwError as e:
+        check("needs an earlier" in str(e), "parse_line without a context: %s" % e)
+    em = codec._emit(os.path.join(out, "tag_ee_tables.csrw"), m, "fields").split("\n")
+    check([l for l in em if l.startswith(W)] == ["EE_LUT_WDATA_LUMA 0x8000", "EE_LUT_WDATA 0x7000", "EE_LUT_WDATA_ACTIVITY 0x1",
+                                                "EE_LUT_WDATA_CONTRAST_POS 0x2  # c", "EE_LUT_WDATA_CONTRAST_NEG 0xFFFFFFFF"],
+          "emit keeps the table names: %r" % em)
+    em = codec._emit(os.path.join(out, "tag_ee_tables.csrw"), m, "legacy").split("\n")
+    check(not any(l.startswith(W + "_") for l in em), "legacy emit drops the table names")
     import json
     schema = json.load(open(os.path.join(ISP, "docs", "csr", "fx1_isp_csr_schema.json")))
     want = {(r["name"], f["name"]): {v: int(k) for k, v in f["enums"].items()}
@@ -176,6 +222,14 @@ def main():
     r = subprocess.run([dump, "--frames", fr], capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout == "2 GAMMA_CTRL 0x00000001\n3 AEC_CTRL 0x00000003\n",
           "frames.csrw reader with a byte order mark: %r %r" % (r.stdout, r.stderr))
+    open(fr, "w").write("1 EE_LUT_CTRL lut_sel=ACTIVITY\n2 EE_LUT_WDATA_ACTIVITY 0x7\n")
+    r = subprocess.run([dump, "--frames", fr], capture_output=True, text=True)
+    check(r.returncode == 0 and r.stdout == "1 EE_LUT_CTRL 0x00000002\n2 EE_LUT_WDATA 0x00000007\n",
+          "frames.csrw reader, table name: %r %r" % (r.stdout, r.stderr))
+    open(fr, "w").write("1 EE_LUT_CTRL lut_sel=ACTIVITY\n2 EE_LUT_WDATA_LUMA 0x7\n")
+    r = subprocess.run([dump, "--frames", fr], capture_output=True, text=True)
+    check(r.returncode == 1 and ":2: EE_LUT_WDATA_LUMA but the last EE_LUT_CTRL write has lut_sel=ACTIVITY" in r.stderr,
+          "frames.csrw reader, wrong table name: %r" % r.stderr)
 
     # Every committed profile: Python = C++, and the field emit keeps the stream.
     files = sorted(glob.glob(os.path.join(ISP, "samples", "profiles", "*.csrw")) +
@@ -210,7 +264,8 @@ def main():
     for p in glob.glob(os.path.join(ISP, "samples", "profiles", "*.csrw")):
         for n, line in enumerate(codec.lines(p), 1):
             t = codec.tokens_of(line.split("#", 1)[0])
-            if t and not any("=" in x for x in t[1:]) and t[0] not in codec.DATA_PORTS:
+            port = m.tags[t[0]][0].name if t and t[0] in m.tags else t[0] if t else None
+            if t and not any("=" in x for x in t[1:]) and port not in codec.DATA_PORTS:
                 check(False, "%s:%d: %r is not in field syntax" % (p, n, line))
                 break
 

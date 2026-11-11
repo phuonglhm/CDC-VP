@@ -74,6 +74,9 @@ GTM manual curve (65 x `0x0100`, the identity) after `GTM_CTRL en=0 manual=0`,
 unused while the last `GTM_CTRL` keeps `manual=0`. The EE tables are named
 (`EE_LUT_CTRL lut_sel=LUMA`, `ACTIVITY`, `CONTRAST_POS`, `CONTRAST_NEG`), a
 comment before each. 2456 writes; the output is that of the previous profile.
+Since ISP-UPD-013 every EE table data line names its table
+(`EE_LUT_WDATA_LUMA 0x8000`, ... `EE_LUT_WDATA_CONTRAST_NEG`): the same write
+as `EE_LUT_WDATA`, checked against the `lut_sel` above it.
 | `4k/<case>/` | The two 4K acceptance cases (DEC-37): profile, frame count, expected NV12 SHA-256 and statistics readout script. |
 | `run_4k_check.sh` | Runs both 4K cases through the installed `fx1_isp_run_raw`, compares each against the reference values, and prints PASS or FAIL. It needs neither Python nor the dataset. |
 

@@ -14,6 +14,13 @@ non-blank line (after '#' comments) is ONE full 32-bit write:
   REGISTER VALUE              the whole register (the v1.07 form)
   REGISTER_field VALUE        one field; every other field of the register 0
   REGISTER f1=V1 f2=V2 ...    several fields of one register; the others 0
+  PORT_TABLE VALUE            ISP-UPD-013: a table data port named with the table
+                              it writes (EE_LUT_WDATA_ACTIVITY 0x8000 is
+                              EE_LUT_WDATA 0x8000; TAGGED_PORTS). The name is
+                              checked, not used: the last write of the port's
+                              selector register earlier in the same file
+                              (EE_LUT_CTRL) must select that table (lut_sel=
+                              ACTIVITY), else an error. Not a CSR register.
 
 VALUE is the field's code before the shift (decimal without a leading zero or
 0x hex, non-negative, at most the field width), or in a field assignment the
@@ -26,7 +33,7 @@ write clears en); write `AEC_CTRL en=1 commit=1`. Values are register codes
 (two's complement for signed fields, UQ for gains), not physical units.
 
 Errors (file:line): unknown register/field/alias, a read-only field, a value
-wider than its field, a bit set outside the writable fields or on a
+wider than its field, a table name that is not the selected table, a bit set outside the writable fields or on a
 tied-zero bit, a field named twice, a malformed token. A `REGISTER VALUE`
 line may set any bit the register defines (raw writes for tests); fields
 the map marks as having no hardware are accepted with a note in `explain`.
@@ -61,6 +68,12 @@ DEFAULT_HEADERS = [os.path.join(HERE, "..", "include", "fx1_isp", "fx1_isp_csr.h
                    os.path.join(HERE, "..", "..", "..", "include", "fx1_isp", "fx1_isp_csr.h")] + \
     sorted(glob.glob(os.path.join(HERE, "..", "..", "sources", "*", "include", "fx1_isp", "fx1_isp_csr.h")))
 WRITABLE = ("RW", "W1C", "W1S", "W1SC", "W1P")
+
+# ISP-UPD-013: data ports that a profile may name with the table they write,
+# (port, selector register, selector field): PORT_<ENUM NAME> for each named
+# value of the selector field. The C++ reader has the same list
+# (tests/common/vector_io.h, csrw::tagged_ports).
+TAGGED_PORTS = (("EE_LUT_WDATA", "EE_LUT_CTRL", "lut_sel"),)
 
 
 class CsrwError(ValueError):
@@ -156,6 +169,17 @@ class CsrMap:
                 if a in self.regs or a in self.aliases:
                     raise CsrwError("alias %s is ambiguous (a register or another alias)" % a)
                 self.aliases[a] = (r, f)
+        self.tags, self.selectors = {}, set()  # PORT_TABLE -> (port, selector, field, name, code)
+        for port, sel, fname in TAGGED_PORTS:
+            f = self.regs[sel].field(fname) if port in self.regs and sel in self.regs else None
+            if f is None:
+                continue  # a header without the port: no tagged form
+            self.selectors.add(sel)
+            for name, code in f.enums.items():
+                t = "%s_%s" % (port, name)
+                if t in self.regs or t in self.aliases or t in self.tags:
+                    raise CsrwError("table name %s is ambiguous (a register or an alias)" % t)
+                self.tags[t] = (self.regs[port], self.regs[sel], f, name, code)
 
 
 SPACE = re.compile(r"[ \t\n\v\f\r]+")  # C isspace: what the C++ reader's operator>> skips
@@ -224,8 +248,18 @@ def encode_fields(reg, assigns, where):
     return word
 
 
-def parse_line(cmap, text, where):
-    """One profile line (comment stripped) -> (Register, value), or None for a blank line."""
+def parse_line(cmap, text, where, ctx=None):
+    """One profile line (comment stripped) -> (Register, value), or None for a blank line.
+    ctx: the state of the file read so far ({selector register: last word});
+    give the same dict for every line of one file. Without it the line is read
+    as if it were the first of its file (a tagged port line is then an error)."""
+    r = _parse_line(cmap, text, where, {} if ctx is None else ctx)
+    if r and ctx is not None and r[0].name in cmap.selectors:
+        ctx[r[0].name] = r[1]
+    return r
+
+
+def _parse_line(cmap, text, where, ctx):
     tokens = tokens_of(text)
     if not tokens:
         return None
@@ -246,6 +280,18 @@ def parse_line(cmap, text, where):
     if head not in cmap.regs and head in cmap.aliases:   # REGISTER_field VALUE (a name too)
         reg, f = cmap.aliases[head]
         return reg, encode_fields(reg, [(f.name, field_value(reg, f.name, rest[0], where))], where)
+    if head not in cmap.regs and head in cmap.tags:   # PORT_TABLE VALUE (ISP-UPD-013)
+        port, sel, f, name, code = cmap.tags[head]
+        value = parse_value(rest[0], where)
+        if value >> 32:
+            raise CsrwError("%s: value %#x does not fit 32 bits" % (where, value))
+        if sel.name not in ctx:
+            raise CsrwError("%s: %s needs an earlier %s %s=%s in the file" % (where, head, sel.name, f.name, name))
+        cur = (ctx[sel.name] & f.mask) >> f.lsb
+        if cur != code:
+            now = next((k for k, v in f.enums.items() if v == cur), str(cur))
+            raise CsrwError("%s: %s but the last %s write has %s=%s" % (where, head, sel.name, f.name, now))
+        return port, value
     value = parse_value(rest[0], where)
     if head in cmap.regs:
         reg = cmap.regs[head]
@@ -260,9 +306,9 @@ def parse_line(cmap, text, where):
 
 def read(path, cmap):
     """[(line number, Register, value)] in file order."""
-    out = []
+    out, ctx = [], {}
     for n, line in enumerate(lines(path), 1):
-        r = parse_line(cmap, line.split("#", 1)[0], "%s:%d" % (path, n))
+        r = parse_line(cmap, line.split("#", 1)[0], "%s:%d" % (path, n), ctx)
         if r:
             out.append((n,) + r)
     return out
@@ -382,14 +428,17 @@ def main():
 def _emit(path, cmap, style):
     """Rewrite a profile in `style`, keeping comments, blank lines and the order:
     the stream is the same, write for write."""
-    out = []
+    out, ctx = [], {}
     for n, line in enumerate(lines(path), 1):
         body, sep, comment = line.partition("#")
-        r = parse_line(cmap, body, "%s:%d" % (path, n))
+        r = parse_line(cmap, body, "%s:%d" % (path, n), ctx)
         if not r:
             out.append(line)
             continue
         text = format_write(r[0], r[1], style)
+        head = tokens_of(body)[0]
+        if head in cmap.tags and style != "legacy":  # keep the table name (ISP-UPD-013)
+            text = head + text[len(r[0].name):]
         out.append(text + ("  #" + comment if sep else ""))
     return "\n".join(out) + "\n"
 

@@ -1240,3 +1240,33 @@ as `gtm_manual_qhd` and the `gtm_manual_lut` vector do.
   GB trim of 40: another image, legacy = profile mode.
 - GTM `manual=1` with the identity curve and with an S-curve: two other
   images, legacy = profile mode.
+
+## 18. EE table data lines named with their table, ISP-UPD-013 (tuning team request, 2026-11-11)
+
+Request: each EE table data line carries its table, `EE_LUT_WDATA_LUMA`,
+`EE_LUT_WDATA_ACTIVITY`, `EE_LUT_WDATA_CONTRAST_POS`,
+`EE_LUT_WDATA_CONTRAST_NEG`, instead of `EE_LUT_WDATA`.
+
+The CSR has one EE data port, `EE_LUT_WDATA` (0x1C34, `lut_wdata` [15:0]);
+the table is the `lut_sel` of `EE_LUT_CTRL`. The CSR and the header are not
+changed: the names are profile syntax only.
+
+**Decisions (user):**
+- Form `PORT_TABLE VALUE` (`TAGGED_PORTS` / `csrw::tagged_ports`: only
+  `EE_LUT_WDATA` with `EE_LUT_CTRL.lut_sel`; the table names are that
+  field's CSR enum names). It is the write `PORT VALUE`, the same 32-bit
+  rules as `REGISTER VALUE`; no field form, no name as value.
+- The name is checked, in both readers and in the frames.csrw reader: the
+  last write of `EE_LUT_CTRL` earlier in the same file (any form) must select
+  that table, and there must be one. The state is per file: a frames.csrw
+  line does not see the selector of profile.csrw.
+- `EE_LUT_WDATA VALUE` stays accepted; the other data ports are unchanged;
+  only the shared profile uses the names (192 lines; same stream, same
+  `profile.bin`, same goldens).
+- `emit` keeps a table name; `emit --style legacy` (the v1.07 form) drops it.
+  `csrw_codec.parse_line` takes the file's state as `ctx`; without it a tagged
+  line is read as the first of its file (an error). `isp_auto.py` passes it.
+
+**Trade-off:** the names are not in the CSR, the header or the register
+documentation; driver code and register dumps still say `EE_LUT_WDATA`. A
+tool outside the SDK that reads `.csrw` text needs the same rule.
