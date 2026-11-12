@@ -1,6 +1,6 @@
 # FX1 ISP VP — Source manifest (P00)
 
-The specification documents are FPT Telecom confidential and are **not** stored
+The specification documents are FTEL confidential and are **not** stored
 in this repository. They are pinned by path and SHA-256 so every artefact in
 this component can be traced to an exact revision.
 
