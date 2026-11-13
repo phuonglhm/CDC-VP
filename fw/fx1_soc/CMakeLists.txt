@@ -745,6 +745,18 @@ if(CDC_BUILD_TESTS)
                  COMMAND ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/tests/test_pack.py)
         set_tests_properties(fx1_regression_isp_demo_pack PROPERTIES
             TIMEOUT 120 LABELS "fx1;fx1_regression")
+        # ISP stream (isp-stream) S1: the session ABI of fx1/fx1_isp_stream.h against its Python
+        # mirror, the DDR layout, RAW conversion, manifest/profile checks and refusals
+        # (isp_stream_prep.py, stdlib only), and the stand-alone reference of a fixture sequence.
+        set(_fx1_stream_ref)
+        if(TARGET fx1_isp_run_raw)
+            set(_fx1_stream_ref --run-raw $<TARGET_FILE:fx1_isp_run_raw>)
+        endif()
+        add_test(NAME fx1_regression_isp_stream_prep
+                 COMMAND ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/tests/test_stream_prep.py
+                         --cc ${CMAKE_C_COMPILER} ${_fx1_stream_ref})
+        set_tests_properties(fx1_regression_isp_stream_prep PROPERTIES
+            TIMEOUT 300 LABELS "fx1;fx1_regression")
         # VP-only post-Demosaic capture (fx1_soc --dump-isp-demosaic): the ISP
         # demo on the repository's D65 frame, two frames; the final frame's
         # capture and NV12 must equal the stand-alone model's (exit 1 otherwise).
