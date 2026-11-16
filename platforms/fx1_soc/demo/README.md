@@ -1,5 +1,10 @@
 # ISP RAW-frame demo on the FX1 platform
 
+> **A RAW sequence to a video** (several frames, one boot, one ISP session, `output.mp4`):
+> `isp_stream.py run`, packaged as `run_vp.sh isp-stream`. See
+> [docs/ISP_STREAM_CONTRACT.md](../docs/ISP_STREAM_CONTRACT.md) §6.1; its session
+> preparation is `isp_stream_prep.py`, its tests `tests/test_stream_launcher.py`.
+
 This demo runs one real RAW frame through the whole FX1 SoC VP, the way
 firmware will drive it on the chip:
 

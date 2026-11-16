@@ -1,6 +1,6 @@
 # FX1 VP — ISP RAW-sequence stream contract (`isp-stream`)
 
-Status: **S1 contract** (2026-11-12; review S1 fixes and S2 decisions 2026-11-13), **S2 implemented** (2026-11-13: firmware, doorbell, bridge; 2026-11-16 review S2 fixes: the spool budget is a firmware admission limit, Ctrl+C forwarded during a drain, ACK checked against the firmware's own seq and the session). This page fixes the session contract that
+Status: **S1 contract** (2026-11-12; review S1 fixes and S2 decisions 2026-11-13), **S3 implemented** (2026-11-16: launcher, video, `run_vp.sh isp-stream`; S3 review fixes: verify checks Y, U and V, CRF 0 refused before the boot), **S2 implemented** (2026-11-13: firmware, doorbell, bridge; 2026-11-16 review S2 fixes: the spool budget is a firmware admission limit, Ctrl+C forwarded during a drain, ACK checked against the firmware's own seq and the session). This page fixes the session contract that
 S2 (firmware and host bridge) and S3 (launcher and video) implement. It is a
 **VP-only** mechanism: nothing here is an ISP CSR, an ISP interrupt or a SoC
 interface. The machine-readable parts are:
@@ -21,8 +21,10 @@ FW     isp stream start: claim the ISP and SYS_DMA channel 1, configure once, ap
 FW     per frame: SYS_DMA pool -> input slot, queue, completion -> publish record -> doorbell
 bridge on the doorbell: drain records by seq, append NV12 + metadata to SPOOL, ACK
 FW     isp stream wait: until STOPPED or ERROR; status block final -> doorbell
-host   encode SPOOL -> output.mp4, verify, summary            (S3)
+host   encode SPOOL -> output.mp4, verify, summary
 ```
+
+`run_vp.sh isp-stream` (launcher `isp_stream.py run`, §6.1) runs all of it as one command.
 
 One boot and one ISP session for the whole sequence. The ISP is configured
 and started once; the profile is applied once (profile mode: built into bank
@@ -328,12 +330,67 @@ ffmpeg -f rawvideo -pix_fmt nv12 -color_range pc -colorspace smpte170m -s 1920x1
 - **Range declaration:** without the input `-color_range`, FFmpeg treats the NV12 as limited range and stretches it to full: (Y − 16) × 255/219. The probe measured Y PSNR of only 28–32 dB and a Y mean shifted by up to 5 levels. With the input declared, CRF 10 gives 43–50 dB and equal means.
 - **Flags:** `limited` maps to `tv`, and BT.709 maps to `bt709`. Primaries and transfer stay unspecified rather than being guessed.
 - **Labels:** one `mov_text` cue per frame, `#ordinal name r=k/K`.
-- **Verification:** `ffprobe` must report the frame count, geometry, fps/duration, `color_range` and `color_space`, and the number of subtitle cues. Only then is `output.tmp.mp4` renamed to `output.mp4`.
+- **Verification:** `ffprobe` must report H.264, the geometry, the fps, a duration of N/fps, `color_range` and `color_space`, N video packets and N subtitle cues. The video is then decoded against the spool with FFmpeg's `psnr` filter (`shortest=1:repeatlast=0`, both inputs at the same fps, so frames pair by index). Exactly N frames must compare, and every frame's Y, U and V PSNR must each be ≥ `--min-psnr` (default 40 dB). Each plane is checked on its own: Y alone, or a mean of the three planes, would accept a video with broken chroma, since swapped or shifted U/V keep Y, the flags and the count right. Only then is `output.tmp.mp4` renamed to `output.mp4`. The minimum of each plane is in `summary.json` (`psnr_y_min`, `psnr_u_min`, `psnr_v_min`) and in `summary.txt`. An identical plane gives an infinite PSNR, written as the string `"inf"` so that `summary.json` stays strict JSON.
+  - **Measured:** CRF 10 gives 49–57 dB on the fixtures and on D65/A. A range declared wrongly on either side gives 31–35 dB. A dropped frame changes the count. The reversed order gives 8 dB on distinct frames. U and V swapped gives 11 dB on the fixture and 6 dB on a synthetic U=64/V=192 frame. Halving one chroma plane gives 8–11 dB on that plane only.
+  - **What the threshold means:** 40 dB checks the error added by the encoder. It does not judge the quality of the ISP tuning, and it is not bit-exact.
+  - **CRF:** `--crf` accepts 1..51. CRF 0 is lossless, which the High profile cannot encode, so `run` refuses it before the boot and `encode` refuses it before anything is changed. A high CRF is still accepted, but it can fall below `--min-psnr`: CRF 51 measured 30 dB Y on the synthetic frame. No CRF value is refused or warned about for this, because whether a CRF passes depends on the content. The run then ends in `VERIFY_FAILED` (exit 10): `output.mp4` is not published, and `rejected.mp4` and the spool are kept.
+  - **After a PSNR failure:** re-encode the kept spool with a **lower CRF and the same `--min-psnr`** (`isp_stream.py encode --out DIR --crf 10`, or `run_vp.sh isp-stream-encode`), without the VP. When only the PSNR failed at a CRF above 10, the message says so (`video_hint` in `summary.json`). Lowering `--min-psnr` is a trade-off the user chooses on purpose, accepting more encode loss. It is never the default way to make verify pass, and the launcher never relaxes it by itself. At the default CRF 10, a PSNR failure points to a wrong frame, order, colorimetry or chroma plane rather than to the encode loss.
+  - **Limit:** two frames that are visually equal, such as the two repeats of a still scene, are not told apart by PSNR. Their order is then only as good as the encoder's frame count.
 - **What is bit-exact:** the bit-exact oracle is the NV12 spool, never the decoded H.264.
 
 FFmpeg is **not shipped** (RPM Fusion build, GPLv3 with x264). The launcher
-checks for `ffmpeg`/`ffprobe` with `libx264` before the boot and prints the
-AlmaLinux 9 install steps when they are missing.
+checks for `ffmpeg`/`ffprobe` with `libx264`, `mov_text` and the `mp4` muxer
+before the boot and prints the AlmaLinux 9 install steps when they are missing.
+
+### 6.1 Launcher (`run_vp.sh isp-stream`, `isp_stream.py`)
+
+```bash
+run_vp.sh isp-stream (--manifest M.json | --raw A.raw [B.raw ...]) --profile P.csrw --out DIR \
+    [--repeat K] [--frames N | --loop --max-spool-mib N] [--queue 1|2|4] [--fps F] [--crf N] \
+    [--keep-nv12] [--max-spool-mib N] [--min-psnr DB] [--legacy] [--drain-timeout-s S]
+run_vp.sh isp-stream-encode --out DIR [--fps F] [--crf N]      # the kept spool again, no VP run
+```
+
+Defaults: `--queue 2` (S2 review: overlap of copy and ISP, bit-exact; 1 and 4 stay for comparison and stress), `--fps 30`, `--crf 10` (1..51), `--min-psnr 40` (Y, U and V), `--drain-timeout-s 300`. `--loop` requires `--max-spool-mib`; with a finite schedule it is optional. In both cases it maps onto `fx1_soc --isp-stream-max-mib`, the firmware's admission limit (§5.4).
+
+**Steps.** `DIR` must be new or empty. Nothing of the user's is removed or overwritten.
+
+1. **Preflight**, before anything is prepared or booted:
+   - FFmpeg (as above), the simulator, the firmware and `DIR`;
+   - the free space of `DIR`'s filesystem against the spool's upper bound, plus 1/8 for the video and 64 MiB. The bound is frames × active width × active height × 3/2 (the resizer only reduces), or the budget.
+2. **Prepare:** `DIR/session` by `isp_stream_prep.py prepare`. The input errors of §2 come out here.
+3. **Boot** `fx1_soc` once:
+   - console in `DIR/platform.log`, spool in `DIR/spool`, progress on stdout;
+   - `fx1_soc` runs in its own session (process group). Ctrl+C reaches the launcher only, and the launcher forwards one SIGINT. It forwards only once the simulator has printed, which is after it installed its handler.
+4. **Spool check:**
+   - every frame's SHA-256 against `frames.jsonl`, consecutive ordinals and offsets, one geometry, one colorimetry;
+   - captured = the firmware's `completed`, and `DONE` with the whole schedule;
+   - a torn tail (an incomplete last line, NV12 bytes past the last whole frame) is cut and noted.
+
+   `--run-raw fx1_isp_run_raw` also checks every frame against the stand-alone model (§7). The SDK does not ship that tool; CI uses it.
+5. **Encode and verify** (§6). A colorimetry word without the valid bit, or with a reserved matrix, gets no video and no guess.
+6. **Summary:** `DIR/summary.json` and `summary.txt` hold the status, counts, session, geometry, colorimetry, fps, CRF, PSNR, the reference result, the commands and the versions. `frames.nv12` is removed only after a verified video, unless `--keep-nv12`; `frames.jsonl` and `status.json` stay.
+
+**Exit status** (`summary.json` `status`):
+
+| Exit | Status | Video | Meaning |
+|---|---|---|---|
+| 0 | `COMPLETE` | yes | the whole schedule, verified |
+| 2 | `INPUT_ERROR` | no | manifest, RAW, profile or option refused before the boot |
+| 3 | `USER_STOPPED` | yes (prefix) | Ctrl+C: the frames captured, verified, with their real count |
+| 4 | `LIMIT_REACHED` | yes (prefix) | the spool budget stopped the session: the frames that fit |
+| 5 | `PREFLIGHT_FAILED` | no | FFmpeg, simulator/firmware, `DIR` or disk space; nothing booted |
+| 6 | `NO_FRAMES` | no | the session ended before a frame (never an empty MP4) |
+| 7 | `FW_ERROR` | no | the firmware or ISP ended in ERROR, or the session has no clean end |
+| 8 | `CAPTURE_ERROR` | no | the bridge or the spool failed (lost, inconsistent frames) |
+| 9 | `ENCODE_FAILED` | no | ffmpeg failed or crashed, or no usable colorimetry; spool kept |
+| 10 | `VERIFY_FAILED` | no | the video does not match the spool: `rejected.mp4`, spool kept |
+| 11 | `REFERENCE_MISMATCH` | no | `--run-raw`: a frame differs from the model; spool kept |
+| 12 | `HARD_STOP` | no | a second Ctrl+C, the drain timeout, SIGTERM, or the simulator killed; spool kept, the last seq named |
+| 13 | `SIM_ERROR` | no | the simulator failed (exit 3/4, no status) |
+| 130 | — | no | Ctrl+C outside the VP run (preparing, checking, encoding) |
+
+Prefix videos (3, 4) are made only of whole, verified frames, never of a session that ended in an error. After 9 or 10, `isp-stream-encode` retries from the kept spool without the VP. It refuses a `DIR` that already has `output.mp4`.
 
 ## 7. Oracle
 
@@ -355,7 +412,8 @@ The S1 baselines are in the workspace evidence and are not committed. CI recompu
 | S2 | `platforms/fx1_soc/src`: `isp_stream_bridge.{h,cpp}`; `Ddr3Subsystem::poke` (run-time debug write); `fx1_soc --isp-stream-spool DIR [--isp-stream-max-mib N] [--isp-stream-hold-us N] [--isp-stream-fault foreign-ack]`, SIGINT, exit 6. Off by default: existing runs only gain the doorbell register (read 0) |
 | S2 | `fw/fx1_soc/freertos/cmd_isp_stream.c`: `isp stream start / status / stop / wait [MS]`, the stream task, `ISP_OWNER_STREAM`, SYS_DMA channel 1 chains; `cmd_isp.c` ISR routing and dispatch; `cmd_dma.c` ISR dispatch per channel (`CORE_STATUS`) |
 | S2 | CTest `fx1_regression_isp_stream_platform` (`platforms/fx1_soc/demo/tests/test_stream_platform.py`), required by the gate; see the file's header for its cases |
-| S3 | `isp_stream.py` launcher + `run_vp.sh isp-stream`, encode/verify, `--keep-nv12`, re-encode helper, Ctrl+C, exit codes |
+| S3 | `platforms/fx1_soc/demo/isp_stream.py` (`run`, `encode`; §6.1); `run_vp.sh isp-stream` / `isp-stream-encode`; the package ships `isp_stream.py` and `isp_stream_prep.py` (`package_sdk.sh`, `check_package.sh`) |
+| S3 | CTest `fx1_regression_isp_stream_launcher` (`platforms/fx1_soc/demo/tests/test_stream_launcher.py`; needs the system ffmpeg/ffprobe, else it is not registered and the gate reports it missing), required by the gate; see the file's header for its cases |
 
 **Measured in S2.** D65 → A → D65 × 2 at 2688×1520 with the shared profile, queue 2, 1920×1080 output:
 

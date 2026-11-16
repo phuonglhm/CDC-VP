@@ -31,6 +31,15 @@ Usage:
                                        # your own frame, same format as the samples (2688x1520 BGGR,
                                        # RAW10 in bits [15:6] of LE uint16, 8171520 bytes); d65's job
                                        # and profile; NV12 + PNG, no golden (nothing to compare with)
+  ./run_vp.sh isp-stream (--manifest M.json | --raw A.raw [B.raw ...]) --profile P.csrw --out DIR
+                [--repeat K] [--frames N | --loop --max-spool-mib N] [--queue 1|2|4] [--fps F]
+                [--crf N] [--keep-nv12] [--max-spool-mib N]
+                                       # RAW sequence through one ISP session (one boot) -> DIR/output.mp4
+                                       # (H.264, one subtitle cue per frame) + summary; Ctrl+C: stop and
+                                       # keep the video of what was processed. Needs the system ffmpeg
+                                       # with libx264 (checked first). ./run_vp.sh isp-stream --help
+  ./run_vp.sh isp-stream-encode --out DIR [--fps F] [--crf N]
+                                       # encode a run's kept spool again (no VP run)
   ./run_vp.sh version                  # VP build identity
   ./run_vp.sh ddr3                     # DDR3 firmware-init examples (BootROM/SRAM, --ddr-boot firmware)
   ./run_vp.sh camera [NAME...]         # camera examples (fx1_soc --camera; minutes each: detailed D-PHY)
@@ -245,6 +254,18 @@ case "${mode}" in
         echo "VP waits for the UART console on 127.0.0.1:${port}"
         echo "Open another terminal: ${here}/fx1_console.sh ${port}   (end with 'poweroff')"
         exec "${vp}" --fw "${fw}" --uart0-socket "${port}" --uart0-wait --timeout-ms 0 --realtime
+        ;;
+    isp-stream|isp-stream-encode)
+        command -v python3 >/dev/null 2>&1 || die "python3 is needed (dnf install -y python3)"
+        if [[ "${mode}" == "isp-stream-encode" ]]; then
+            exec python3 -B "${here}/isp_stream.py" encode "$@"
+        fi
+        case " $* " in
+            *" -h "*|*" --help "*) exec python3 -B "${here}/isp_stream.py" run --help ;;
+        esac
+        need_fw
+        # The exit status is the run's (isp_stream.py: 0 COMPLETE, 3 USER_STOPPED, 4 LIMIT_REACHED, ...).
+        exec python3 -B "${here}/isp_stream.py" run --fx1-soc "${vp}" --elf "${fw}" "$@"
         ;;
     isp)
         need_fw

@@ -93,6 +93,8 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp            # D65 ColorChecker sampl
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp outdoor1   # second sample (internal use only)
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw"   # your own frame (see "Your own RAW frame")
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp d65 --dump-demosaic        # also the image after Demosaic (VP debug)
+# 3b. A RAW sequence through one ISP session, as a video (needs the system ffmpeg, see below)
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream --raw a.raw b.raw --profile my.csrw --out /path/to/run
 
 # 4. Ethernet: scripted CLI session, and the bare-metal example on each line peer
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh eth-cli
@@ -168,7 +170,8 @@ echoes locally as well, so every command would appear twice.
 |---|---|
 | Linux x86-64 (AlmaLinux/RHEL 9 validated) | the VP; `libsystemc` ships beside it (`$ORIGIN`), no SystemC install needed |
 | `riscv-none-elf-gcc` 15.2 (xPack), GNU Make | building the firmware |
-| `python3` (standard library only) | `run_vp.sh isp` (packing NV12, PNG preview) |
+| `python3` (standard library only) | `run_vp.sh isp` (packing NV12, PNG preview), `run_vp.sh isp-stream` |
+| `ffmpeg` and `ffprobe` with `libx264` (not shipped: GPLv3 + x264) | `run_vp.sh isp-stream` only; checked before the boot, with the install steps printed when missing |
 | nothing extra; `socat` optional | the interactive console (`fx1_console.sh` falls back to bash's `/dev/tcp`) |
 
 On Windows or macOS, use the AlmaLinux 9 container described in the SDK
@@ -487,6 +490,43 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw" interactive
   extension, in lower case, other characters than `a-z0-9_` replaced by `_`.
 - **Paths with spaces:** quote them. An unquoted one is accepted as long as
   its words, joined with single spaces, name the file.
+
+## A RAW sequence to a video (`run_vp.sh isp-stream`)
+
+Several RAW frames go through **one** FX1 boot and **one** ISP session: the
+profile is applied once and the temporal state (GTM curve, 2DNR, statistics)
+carries from frame to frame, also across repeats and when the list wraps. The
+result is `DIR/output.mp4`. Edit the `.csrw`, then run:
+
+```bash
+# Quick form: the files in the order given; geometry, Bayer and depth from the profile;
+# the samples' format (LE16, RAW10 in bits [15:6], stride 2 x width).
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream \
+    --raw "/path/a.raw" "/path/b.raw" --profile my.csrw --repeat 2 --fps 5 --out /path/to/run
+
+# A manifest (JSON: width, height, bayer, source_format, source_stride, input_depth, frames)
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream \
+    --manifest seq.json --profile my.csrw --frames 24 --keep-nv12 --out /path/to/run2
+
+# Until Ctrl+C, within a spool budget
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream \
+    --manifest seq.json --profile my.csrw --loop --max-spool-mib 2048 --out /path/to/run3
+
+./run_vp.sh isp-stream --help            # every option
+```
+
+- **`--out DIR`** must be new or empty. Nothing is overwritten.
+- **Defaults:** `--queue 2` (frames in flight), `--fps 30` (the playback rate only: N frames last N/fps seconds, however long the VP took), `--crf 10` (H.264 near lossless, 8-bit 4:2:0; 1..51, since 0, lossless, is not possible with the High profile and is refused before the boot), `--min-psnr 40` (the verify floor, checked on each of Y, U and V). If verify fails on PSNR after a higher `--crf`, re-encode the kept spool with a lower CRF and the same floor (`run_vp.sh isp-stream-encode --out DIR --crf 10`). Lower `--min-psnr` only to accept more loss on purpose.
+- **Colour:** the video's range and matrix (full/limited, BT.601/BT.709) are the ISP output's, declared in the MP4. Use a player that honours them (mpv, VLC, ffplay).
+- **Labels:** each frame carries a soft subtitle `#ordinal file r=k/K`.
+- **Fixed profile:** WB, CCM and the GTM key do not change during the session. A scene far from the profile's illuminant shows a colour cast.
+- **Exact data:** the bit-exact output is the NV12 of every frame. `--keep-nv12` keeps it in `DIR/spool/frames.nv12`, with `frames.jsonl` (identity, offset, SHA-256 per frame). The H.264 is lossy. Before `output.mp4` is published, the video is checked against that NV12: frame count, order, geometry, duration, colour flags, and a PSNR floor on each of Y, U and V.
+- **Ctrl+C:**
+  - once: the frames already started are finished, and the video of what was processed is made (exit 3, `USER_STOPPED`);
+  - twice: a hard stop. The frames are kept, no video.
+- **`DIR/summary.txt`** says what happened. The exit status is `0` for a complete run; see the contract for the others: 3 user stop, 4 budget reached, 5 preflight, 7 firmware error, 9 encoder failed, 10 video rejected, and more.
+- **After an encoder problem:** `run_vp.sh isp-stream-encode --out DIR` encodes the kept frames again, without the VP.
+- **The full contract** (session, protocol, video and every exit status): `vp/doc/VP_FX1_V3.0/ISP_STREAM_CONTRACT.md`.
 
 ## Integrity and provenance
 

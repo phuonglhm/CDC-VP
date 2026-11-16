@@ -65,7 +65,7 @@ LDFLAGS := -nostdlib -nostartfiles -Wl,--gc-sections -Wl,--no-warn-rwx-segments
 
 SOURCES := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c \
            $(addprefix $(HERE)/app/,main.c rtos_bsp.c rtos_libc.c cli.c hwcheck.c cmd_fpu.c cmd_dma.c \
-                                    cmd_isp.c cmd_camera.c cmd_eth.c probe.S) \
+                                    cmd_isp.c cmd_isp_stream.c cmd_camera.c cmd_eth.c probe.S) \
            $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/portable/MemMang/heap_4.c \
            $(KERNEL)/portable/GCC/RISC-V/port.c $(KERNEL)/portable/GCC/RISC-V/portASM.S \
            $(HERE)/isp_selftest/isp_common.c $(HERE)/drivers/isp/fx1_isp_drv.c \

@@ -796,6 +796,21 @@ if(CDC_BUILD_TESTS)
                              --run-raw $<TARGET_FILE:fx1_isp_run_raw> --real)
             set_tests_properties(fx1_regression_isp_stream_platform PROPERTIES
                 TIMEOUT 900 LABELS "fx1;fx1_regression")
+            # ISP stream S3: the launcher (isp_stream.py run / encode): video against the spool and
+            # the spool against the model, the four colorimetries, Ctrl+C / limit / hard stop /
+            # drain timeout, preflight, encoder failures and bad videos (fake ffmpeg), FW and
+            # capture errors, re-encode. Needs the system ffmpeg/ffprobe with libx264 (not shipped):
+            # without them the test is not registered and the gate reports it missing.
+            find_program(FX1_FFMPEG ffmpeg)
+            find_program(FX1_FFPROBE ffprobe)
+            if(FX1_FFMPEG AND FX1_FFPROBE)
+                add_test(NAME fx1_regression_isp_stream_launcher
+                         COMMAND ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/tests/test_stream_launcher.py
+                                 --fx1-soc $<TARGET_FILE:fx1_soc> --elf ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli.elf
+                                 --run-raw $<TARGET_FILE:fx1_isp_run_raw> --real)
+                set_tests_properties(fx1_regression_isp_stream_launcher PROPERTIES
+                    TIMEOUT 900 LABELS "fx1;fx1_regression")
+            endif()
         endif()
         # VP-only post-Demosaic capture (fx1_soc --dump-isp-demosaic): the ISP
         # demo on the repository's D65 frame, two frames; the final frame's

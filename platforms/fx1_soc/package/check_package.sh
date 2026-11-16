@@ -35,6 +35,7 @@ required=(
     "${sdk}/Makefile" "${sdk}/README.md" "${sdk}/app/main.c" "${sdk}/app/cli.c" "${sdk}/app/probe.S"
     "${sdk}/app/FreeRTOSConfig.h" "${sdk}/app/freertos_risc_v_chip_specific_extensions.h"
     "${sdk}/bsp/crt0.S" "${sdk}/bsp/fx1_fw.c" "${sdk}/bsp/fx1.ld.S" "${sdk}/include/fx1/fx1_memory_map.h"
+    "${sdk}/include/fx1/fx1_isp_stream.h" "${sdk}/app/cmd_isp_stream.c"
     "${sdk}/include/dma/fx1_dma_regs.h" "${sdk}/include/fx1_isp/fx1_isp_csr.h" "${sdk}/include/fx1_isp/fx1_isp_drv.h"
     "${sdk}/include/fx1/fx1_ddr_sysctrl.h" "${sdk}/include/fx1_ddr3/fx1_ddr3_regs.h" "${sdk}/include/fx1_ddr3/provisional_encodings.h"
     "${sdk}/bsp/crt0_rom.S" "${sdk}/bsp/fx1_rom.ld.S" "${sdk}/ddr3/README.md" "${sdk}/ddr3/ddr3_fw.c" "${sdk}/ddr3/ddr3_fw.h"
@@ -59,6 +60,7 @@ required=(
     "${build}/freertos_cli.elf" "${build}/freertos_cli.dis" "${build}/freertos_cli.map"
     "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/isp_auto.py" "${test}/cli_smoke.txt" "${test}/isp_run.txt"
     "${test}/csrw_to_bin.sh" "${test}/demosaic_select.py" "${test}/demosaic_validate.py" "${test}/csrw_codec.py"
+    "${test}/isp_stream.py" "${test}/isp_stream_prep.py" "${doc}/ISP_STREAM_CONTRACT.md"
 )
 for s in "${test}"/isp/*/; do
     for f in SAMPLE.txt job.env job.bin input.isp16 expected_nv12.sha256 expected_demosaic.sha256; do

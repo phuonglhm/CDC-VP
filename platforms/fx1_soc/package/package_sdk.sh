@@ -119,6 +119,8 @@ cp "${here}/sdk/ddr3_README.md" "${sdk}/ddr3/README.md"
 cp "${fw}"/tests/ddr3/fw_init.c "${fw}"/tests/ddr3/fault_recovery.c "${fw}"/tests/ddr3/power_recovery.c \
    "${fw}"/boot/boot_loader.c "${sdk}/ddr3/examples/"
 cp "${src}/components/FX1_Components/fx1_map/include/fx1/fx1_memory_map.h" "${sdk}/include/fx1/"
+# ISP RAW-sequence stream session ABI (`isp stream`, run_vp.sh isp-stream; VP-only host contract).
+cp "${src}/components/FX1_Components/fx1_map/include/fx1/fx1_isp_stream.h" "${sdk}/include/fx1/"
 # DDR3 controller register map (provisional encodings included) and the VP DDR_SYSCTRL glue.
 cp "${src}/components/FX1_Components/fx1_map/include/fx1/fx1_ddr_sysctrl.h" "${sdk}/include/fx1/"
 cp "${src}/components/FX1_Components/ddr3/include/fx1_ddr3/fx1_ddr3_regs.h" \
@@ -190,6 +192,9 @@ cp "${isp}/tools/demosaic_select.py" "${isp}/tools/demosaic_validate.py" "${test
 # Profile codec (ISP-UPD-008): register or field syntax -> ordered CSR writes;
 # csrw_to_bin.sh and isp_auto.py import it, with the shipped CSR header.
 cp "${isp}/tools/csrw_codec.py" "${test}/"
+# ISP RAW sequence -> video (run_vp.sh isp-stream): the launcher and the session preparation
+# (Python standard library only; FFmpeg is the system's, not shipped).
+cp "${src}/platforms/fx1_soc/demo/isp_stream.py" "${src}/platforms/fx1_soc/demo/isp_stream_prep.py" "${test}/"
 chmod +x "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/fx1_package.XXXXXX")"
@@ -304,6 +309,7 @@ echo "]" >> "${sample_json}"
 # ── documentation and licences ───────────────────────────────────────────────
 log "documentation and licences"
 cp "${here}/docs/README.md" "${here}/docs/MEMORY_MAP.md" "${doc}/"
+cp "${src}/platforms/fx1_soc/docs/ISP_STREAM_CONTRACT.md" "${doc}/"   # run_vp.sh isp-stream
 mkdir -p "${doc}/camera"
 cp "${here}/docs/CAMERA_FW_GUIDE.md" "${doc}/camera/README.md"
 mkdir -p "${doc}/eth"
