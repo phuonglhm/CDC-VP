@@ -82,7 +82,10 @@ def abi(cc, tmp):
               "FX1_ISP_STREAM_FLAG_LOOP": prep.FLAG_LOOP, "FX1_ISP_STREAM_MODE_LEGACY": prep.MODE_LEGACY,
               "FX1_ISP_STREAM_ERROR": prep.STATES.index("ERROR"), "FX1_ISP_STREAM_STOP_ERROR": prep.STOP_REASONS.index("ERROR"),
               "FX1_ISP_STREAM_ERR_HOST": prep.ERRORS.index("HOST"), "FX1_ISP_STREAM_REQ_STOP": prep.REQ_STOP,
-              "FX1_ISP_STREAM_REASON_LIMIT": prep.REASON_LIMIT, "FX1_ISP_STREAM_REC_PUBLISHED": prep.REC_PUBLISHED,
+              "FX1_ISP_STREAM_REASON_LIMIT": prep.REASON_LIMIT, "FX1_ISP_STREAM_REASON_HOST": prep.REASON_HOST, "FX1_ISP_STREAM_REC_PUBLISHED": prep.REC_PUBLISHED,
+              "FX1_ISP_STREAM_HOST_STOP": prep.HOST_STOP, "FX1_ISP_STREAM_HOST_NO_ACK": prep.HOST_NO_ACK,
+              "FX1_ISP_STREAM_HOST_FINAL": prep.HOST_FINAL, "FX1_ISP_STREAM_HOST_DETACHED": prep.HOST_DETACHED,
+              "FX1_ISP_STREAM_HOST_BUDGET": prep.HOST_BUDGET,
               "FX1_ISP_STREAM_COLORIMETRY_VALID": prep.COLORIMETRY_VALID,
               "FX1_ISP_STREAM_UV_OFFSET(1920u * 1080u)": prep.align(1920 * 1080, 0x100000)}
     src = ["#include <stddef.h>", "#include <stdio.h>", '#include "fx1/fx1_isp_stream.h"', "int main(void) {"]

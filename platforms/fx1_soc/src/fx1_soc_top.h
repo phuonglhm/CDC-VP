@@ -65,6 +65,13 @@ struct fx1_soc_options {
     // VP-only host debug (--dump-isp-demosaic): observer of the ISP's
     // post-Demosaic image, owned by the caller; null: off. Not an ISP output.
     cdc::components::fx1_isp::demosaic_observer* isp_demosaic = nullptr;
+    // VP-only ISP stream host bridge (--isp-stream-spool DIR, isp_stream_bridge.h):
+    // empty for none. The sim-control doorbell register always exists; it reports
+    // a bridge attached only with this option. 0: no spool budget.
+    std::string isp_stream_spool;
+    std::uint64_t isp_stream_max_bytes = 0;
+    unsigned isp_stream_hold_us = 0;  // --isp-stream-hold-us (fault injection)
+    bool isp_stream_foreign_ack = false;  // --isp-stream-fault foreign-ack (fault injection)
 };
 
 // FX1 SoC for FW/SW bring-up: two VP++ RV32IMAFC harts, FX1 bus, BootROM,
@@ -109,6 +116,13 @@ public:
     // One line describing the Ethernet MAC wiring (start of run) and its counters (end).
     std::string eth_banner() const;
     std::string eth_report() const;
+    // --isp-stream-spool: after the run, write DIR/status.json; true when the bridge
+    // captured every published frame without a protocol or host I/O error.
+    bool isp_stream_enabled() const noexcept;
+    void isp_stream_finish();
+    bool isp_stream_ok() const;
+    std::string isp_stream_report() const;
+    std::vector<std::string> isp_stream_errors() const;
 
 private:
     struct impl;

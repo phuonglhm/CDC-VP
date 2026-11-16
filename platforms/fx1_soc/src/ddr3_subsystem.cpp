@@ -232,6 +232,15 @@ void Ddr3Subsystem::dump(std::uint64_t address, std::uint8_t* data, std::size_t 
                                  " failed: the controller has no committed topology covering it");
 }
 
+void Ddr3Subsystem::poke(std::uint64_t address, const std::uint8_t* data, std::size_t length)
+{
+    if (address < FX1_DDR_BASE || length > FX1_DDR_SIZE || address - FX1_DDR_BASE > FX1_DDR_SIZE - length)
+        throw std::out_of_range("fx1_soc: debug write range is outside DDR");
+    if (!ctrl_->debug_write(address - FX1_DDR_BASE, data, length))
+        throw std::runtime_error("fx1_soc: DDR debug write at " + hex(address) +
+                                 " failed: the controller has no committed topology covering it");
+}
+
 bool Ddr3Subsystem::host_csr_write(std::uint32_t offset, std::uint32_t value)
 {
     unsigned char buf[4];

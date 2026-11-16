@@ -66,7 +66,8 @@ STATES = ("IDLE", "PREPARED", "RUNNING", "DRAINING", "STOPPED", "ERROR")
 STOP_REASONS = ("NONE", "DONE", "USER", "LIMIT", "ERROR")
 ERRORS = ("NONE", "DESC", "BUSY", "PROFILE", "CONFIG", "COPY", "ISP", "TIMEOUT", "HOST")
 REQ_NONE, REQ_STOP = 0, 1
-REASON_USER, REASON_LIMIT = 1, 2
+REASON_USER, REASON_LIMIT, REASON_HOST = 1, 2, 3
+HOST_STOP, HOST_NO_ACK, HOST_FINAL, HOST_DETACHED, HOST_BUDGET = 1, 2, 3, 4, 5   # status.detail of ERROR HOST
 REC_FREE, REC_PUBLISHED = 0, 1
 COLORIMETRY_VALID = 1 << 31
 
@@ -76,10 +77,11 @@ DESC_FIELDS = ("magic version size flags session_lo session_hi width height baye
 STATUS_FIELDS = ("magic version state stop_reason error detail session_lo session_hi submitted_lo submitted_hi "
                  "completed_lo completed_hi cancelled failed out_width out_height out_stride colorimetry dma_err "
                  "idma_frames odma_frames publish_seq elapsed_ticks").split() + ["reserved%d" % i for i in range(9)]
-CONTROL_FIELDS = "magic version request reason session_lo session_hi".split() + ["reserved%d" % i for i in range(10)]
+CONTROL_FIELDS = ("magic version request reason session_lo session_hi max_bytes_lo max_bytes_hi".split()
+                  + ["reserved%d" % i for i in range(8)])
 RECORD_FIELDS = ("magic state seq ack_seq session_lo session_hi ordinal_lo ordinal_hi source_index repeat_index "
                  "driver_seq tag frame_id profile_id ts sof_ts eof_ts slot y_addr uv_addr width height stride "
-                 "colorimetry status").split() + ["reserved%d" % i for i in range(7)]
+                 "colorimetry status copy_ts").split() + ["reserved%d" % i for i in range(6)]
 SIZES = {"desc": 128, "status": 128, "control": 64, "record": RECORD_BYTES}
 
 # ---- sources (tools/raw_fixture.py formats, stdlib) ---------------------------------

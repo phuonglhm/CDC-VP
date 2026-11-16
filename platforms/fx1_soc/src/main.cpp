@@ -6,7 +6,8 @@
 //           [--uart0-rx-file FILE [--uart0-rx-delay-us N]]
 //           [--ddr-boot preinit|firmware] [--ddr3-ecc on|off]
 //           [--ddr3-fault T_US:KIND[:ARG] ...] [--camera [--camera-raw FILE]]
-//           [--dump-isp-demosaic DIR]
+//           [--dump-isp-demosaic DIR] [--isp-stream-spool DIR [--isp-stream-max-mib N]
+//           [--isp-stream-hold-us N] [--isp-stream-fault foreign-ack]]
 //
 // Time resolution is 1 fs (the detailed D-PHY model of the camera needs it;
 // set for every run so that a run with and without --camera is timed alike).
@@ -18,10 +19,16 @@
 // Exit status: 0 PASS, 1 FAIL (firmware reported a code), 2 timeout (no verdict
 // within the simulated-time budget), 3 simulator or integration error, 4 usage
 // (also a --dump-isp-demosaic DIR that cannot be used), 5 PASS but the
-// VP-only ISP Demosaic capture failed (host I/O).
+// VP-only ISP Demosaic capture failed (host I/O), 6 PASS but the VP-only ISP stream
+// bridge failed (a published frame not captured, a protocol violation, host I/O).
+//
+// --isp-stream-spool: Ctrl+C once forwards a stop request to the firmware (it drains
+// and stops; the run ends with the firmware's verdict), twice is a hard stop.
 
 #include <chrono>
+#include <csignal>
 #include <cmath>
+#include <filesystem>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -36,6 +43,7 @@
 
 #include "fx1_soc_build_info.h"
 #include "fx1_soc_top.h"
+#include "isp_stream_bridge.h"
 
 namespace {
 
@@ -65,6 +73,8 @@ void usage()
                  "              [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...]\n"
                  "              [--camera [--camera-raw FILE]] [--eth-peer loopback|partner|none]\n"
                  "              [--eth-unguarded-dma] [--eth-wb-delay-us N] [--dump-isp-demosaic DIR]\n"
+                 "              [--isp-stream-spool DIR [--isp-stream-max-mib N] [--isp-stream-hold-us N]\n"
+                 "              [--isp-stream-fault foreign-ack]]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
                  "  --uart0-wait        with --uart0-socket: wait for the client before starting\n"
@@ -110,6 +120,19 @@ void usage()
                  "                DIR/index.jsonl; only frames retired with every output DONE\n"
                  "                are published. DIR must be new or empty. No CSR, IRQ, DMA or\n"
                  "                timing change\n"
+                 "  --isp-stream-spool  VP-only host bridge of the ISP RAW-sequence stream (FreeRTOS\n"
+                 "                `isp stream`, docs/ISP_STREAM_CONTRACT.md): every frame the firmware\n"
+                 "                publishes is copied (DDR debug read) into DIR/frames.nv12 + frames.jsonl\n"
+                 "                and acknowledged; DIR/status.json at the end. DIR must be new or empty.\n"
+                 "                Ctrl+C: stop request (drain), twice: hard stop\n"
+                 "  --isp-stream-max-mib  with --isp-stream-spool: spool budget, handed to the firmware\n"
+                 "                with the session: it submits only the frames that fit, then stops\n"
+                 "                (LIMIT); a budget below one frame is refused at start (default: none)\n"
+                 "  --isp-stream-hold-us  fault injection: the bridge holds every frame N us of\n"
+                 "                simulated time (1..1000000) before it copies and acknowledges it,\n"
+                 "                as a slow host (default 0: off)\n"
+                 "  --isp-stream-fault  fault injection: foreign-ack: the first ACK is written into a\n"
+                 "                record whose session the bridge altered (the firmware must refuse it)\n"
               << cdc::platforms::fx1_soc::ddr3_fault_usage();
 }
 
@@ -171,6 +194,17 @@ bool parse_uint(const std::string& text, unsigned long max, unsigned long& value
         return used == text.size() && value <= max;
     } catch (const std::exception&) {
         return false;
+    }
+}
+
+// Ctrl+C with the ISP stream bridge: the first forwards a stop request (the bridge
+// thread writes it at its next wake), a second one is a hard stop.
+extern "C" void on_sigint(int)
+{
+    cdc::platforms::fx1_soc::IspStreamBridge::request_user_stop();
+    if (cdc::platforms::fx1_soc::IspStreamBridge::user_stop_requests() >= 2) {
+        std::signal(SIGINT, SIG_DFL);
+        std::raise(SIGINT);
     }
 }
 
@@ -311,6 +345,30 @@ int sc_main(int argc, char* argv[])
         else if (arg == "--camera") options.camera = true;
         else if (arg == "--camera-raw") options.camera_raw = value();
         else if (arg == "--dump-isp-demosaic") demosaic_dir = value();
+        else if (arg == "--isp-stream-spool") options.isp_stream_spool = value();
+        else if (arg == "--isp-stream-max-mib") {
+            unsigned long mib = 0;
+            if (!parse_uint(value(), 1ul << 20, mib) || mib == 0) {
+                usage();
+                return 4;
+            }
+            options.isp_stream_max_bytes = static_cast<std::uint64_t>(mib) << 20;
+        }
+        else if (arg == "--isp-stream-fault") {
+            if (value() != "foreign-ack") {
+                usage();
+                return 4;
+            }
+            options.isp_stream_foreign_ack = true;
+        }
+        else if (arg == "--isp-stream-hold-us") {
+            unsigned long us = 0;
+            if (!parse_uint(value(), 1000000ul, us) || us == 0) {
+                usage();
+                return 4;
+            }
+            options.isp_stream_hold_us = static_cast<unsigned>(us);
+        }
         else if (arg == "--eth-peer") {
             const std::string mode = value();
             if (mode != "loopback" && mode != "partner" && mode != "none") {
@@ -333,7 +391,9 @@ int sc_main(int argc, char* argv[])
             return 4;
         }
     }
-    if (options.firmware.empty() || (!options.camera_raw.empty() && !options.camera)) {
+    if (options.firmware.empty() || (!options.camera_raw.empty() && !options.camera) ||
+        ((options.isp_stream_max_bytes || options.isp_stream_hold_us || options.isp_stream_foreign_ack) &&
+         options.isp_stream_spool.empty())) {
         usage();
         return 4;
     }
@@ -352,6 +412,19 @@ int sc_main(int argc, char* argv[])
             return 4;
         }
         options.isp_demosaic = demosaic.get();
+    }
+
+    // VP-only ISP stream spool: the directory is checked before the run.
+    if (!options.isp_stream_spool.empty()) {
+        std::error_code ec;
+        const std::filesystem::path dir(options.isp_stream_spool);
+        if (std::filesystem::exists(dir, ec) &&
+            (!std::filesystem::is_directory(dir, ec) || !std::filesystem::is_empty(dir, ec))) {
+            std::cerr << "fx1_soc: --isp-stream-spool: " << options.isp_stream_spool
+                      << " is not empty (nothing is removed: give a new or empty directory)\n";
+            return 4;
+        }
+        std::signal(SIGINT, on_sigint);
     }
 
     try {
@@ -388,6 +461,13 @@ int sc_main(int argc, char* argv[])
         std::cout << "[fx1_soc] atomics: " << top.atomics_report() << '\n';
         std::cout << "[fx1_soc] ddr3: " << top.ddr3_report() << '\n';
         std::cout << "[fx1_soc] ethernet: " << top.eth_report() << '\n';
+        bool stream_ok = true;
+        if (top.isp_stream_enabled()) {
+            top.isp_stream_finish();
+            for (const auto& e : top.isp_stream_errors()) std::cout << "[fx1_soc] isp stream: " << e << '\n';
+            stream_ok = top.isp_stream_ok();
+            std::cout << "[fx1_soc] isp stream (VP host bridge): " << top.isp_stream_report() << '\n';
+        }
         bool demosaic_ok = true;
         if (demosaic) {
             demosaic->finish();  // frames without an end: incomplete
@@ -403,7 +483,7 @@ int sc_main(int argc, char* argv[])
         switch (top.outcome()) {
         case fx1_soc_top::result::pass:
             std::cout << "[fx1_soc] RESULT PASS\n";
-            return demosaic_ok ? 0 : 5;
+            return !demosaic_ok ? 5 : stream_ok ? 0 : 6;
         case fx1_soc_top::result::fail:
             std::cout << "[fx1_soc] RESULT FAIL code=0x" << std::hex << top.fail_code() << std::dec
                       << '\n';

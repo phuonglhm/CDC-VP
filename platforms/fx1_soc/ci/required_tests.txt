@@ -226,6 +226,8 @@ fx1_i2c_bsp_preempt
 fx1_smoke_freertos_cli_camera
 fx1_smoke_freertos_cli_camera_fault
 fx1_smoke_freertos_cli_camera_absent
+# Host check of the fx1_stress_freertos_cli_eth_camera log (self test: broken logs fail)
+fx1_unit_check_cli_eth_camera
 # CSI-2 RX component tests without PHY traffic (label fx1_csi2_unit, M5b)
 fx1_csi2_packet_ecc
 fx1_csi2_packet_crc
@@ -432,6 +434,8 @@ fx1_regression_freertos_cli_camera_mixed_crc
 fx1_regression_isp_demo_pack
 fx1_regression_isp_demosaic
 fx1_regression_isp_fixture_check
+fx1_regression_isp_stream_platform
+fx1_regression_isp_stream_prep
 fx1_regression_perf_loop_q10000ns
 fx1_regression_perf_loop_q1000ns
 fx1_regression_spinlock_2hart_q10000ns

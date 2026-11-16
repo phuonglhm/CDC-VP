@@ -15,7 +15,8 @@ target_link_libraries(fx1_soc_ddr3 PUBLIC
 
 add_executable(fx1_soc
     src/main.cpp
-    src/fx1_soc_top.cpp)
+    src/fx1_soc_top.cpp
+    src/isp_stream_bridge.cpp)
 
 # `fx1_soc --version`: the package name, the CDC-VP revision and tree state at
 # configure time, the build type and compilers (cmake/build_info.h.in).

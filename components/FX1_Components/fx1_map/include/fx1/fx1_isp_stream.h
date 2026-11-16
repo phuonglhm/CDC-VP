@@ -14,10 +14,14 @@
  * Ownership of the shared blocks (FX1_FW_SHARED_BASE + 0x100000 ...):
  *   desc     host writes it before boot; read-only afterwards
  *   status   firmware writes; the bridge reads it on every doorbell
- *   control  the bridge writes (stop request); the firmware reads
+ *   control  the bridge writes it when the DDR is released, before the CPUs run
+ *            (attach: this session, the spool budget), and again for a stop
+ *            request; the firmware reads it (start refuses a session the bridge
+ *            has not attached)
  *   record i firmware publishes output slot i's frame; the bridge reads it and
  *            writes only `ack_seq`; the firmware reuses output slot i only
- *            once ack_seq == seq
+ *            once ack_seq equals the seq the firmware published there and the
+ *            record still carries this session
  * Publication order: the firmware writes every field of a record, fences,
  * writes `seq`, then `state` = PUBLISHED, fences, then rings the doorbell
  * (FX1_SIM_CTRL_DOORBELL_OFF, any value). Doorbells may coalesce: the bridge
@@ -97,11 +101,19 @@
 #define FX1_ISP_STREAM_ERR_TIMEOUT   7u /* no completion within the frame budget    */
 #define FX1_ISP_STREAM_ERR_HOST      8u /* bridge absent or ACK protocol violated   */
 
+/* status.detail of ERR_HOST */
+#define FX1_ISP_STREAM_HOST_STOP     1u /* the bridge requested STOP, HOST          */
+#define FX1_ISP_STREAM_HOST_NO_ACK   2u /* no ACK and nothing in flight             */
+#define FX1_ISP_STREAM_HOST_FINAL    3u /* the final ACKs missing                   */
+#define FX1_ISP_STREAM_HOST_DETACHED 4u /* start: the bridge did not attach this session */
+#define FX1_ISP_STREAM_HOST_BUDGET   5u /* start: the spool budget holds no frame   */
+
 /* control.request / control.reason */
 #define FX1_ISP_STREAM_REQ_NONE      0u
 #define FX1_ISP_STREAM_REQ_STOP      1u
 #define FX1_ISP_STREAM_REASON_USER   1u
 #define FX1_ISP_STREAM_REASON_LIMIT  2u
+#define FX1_ISP_STREAM_REASON_HOST   3u /* the bridge failed (protocol / host I/O) */
 
 /* record.state */
 #define FX1_ISP_STREAM_REC_FREE      0u
@@ -151,7 +163,10 @@ typedef struct fx1_isp_stream_control {       /* host bridge -> firmware */
     uint32_t magic, version;
     uint32_t request, reason;                 /* FX1_ISP_STREAM_REQ_*, FX1_ISP_STREAM_REASON_* */
     uint32_t session_lo, session_hi;          /* must match the descriptor's */
-    uint32_t reserved[10];
+    uint32_t max_bytes_lo, max_bytes_hi;      /* spool budget (NV12 bytes), 0: none. The
+                                                 firmware submits at most
+                                                 max_bytes / (out_w * out_h * 3 / 2) frames */
+    uint32_t reserved[8];
 } fx1_isp_stream_control;                     /* 64 bytes */
 
 typedef struct fx1_isp_stream_record {        /* firmware -> host, one per output slot */
@@ -167,7 +182,8 @@ typedef struct fx1_isp_stream_record {        /* firmware -> host, one per outpu
     uint32_t width, height, stride;           /* CH0 active geometry and stride */
     uint32_t colorimetry;
     uint32_t status;                          /* 0: a completed, valid frame */
-    uint32_t reserved[7];
+    uint32_t copy_ts;                         /* FRAME_COUNTER when its SYS_DMA copy started */
+    uint32_t reserved[6];
 } fx1_isp_stream_record;                      /* 128 bytes */
 
 #if defined(__cplusplus)

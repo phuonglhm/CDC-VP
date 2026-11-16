@@ -171,7 +171,7 @@ endfunction()
 # positive tests that must also print a specific line. Without IMAGE it builds
 # tests/<name>/main.c; with IMAGE it runs an image another rule builds.
 function(fx1_expect_test name)
-    cmake_parse_arguments(T "" "RC;REGEX;TIMEOUT_MS;IMAGE;LABEL" "ARGS" ${ARGN})
+    cmake_parse_arguments(T "" "RC;REGEX;TIMEOUT_MS;IMAGE;LABEL" "ARGS;CHECK" ${ARGN})
     if(NOT T_TIMEOUT_MS)
         set(T_TIMEOUT_MS 200)
     endif()
@@ -183,6 +183,11 @@ function(fx1_expect_test name)
         set(T_IMAGE ${name})
     endif()
     string(REPLACE ";" "\\;" _sim_args "${T_ARGS}")
+    set(_check)
+    if(T_CHECK)
+        string(REPLACE ";" "\\;" _check_cmd "${T_CHECK}")
+        set(_check "-DCHECK=${_check_cmd}")
+    endif()
     add_test(NAME ${T_LABEL}_${name}
              COMMAND ${CMAKE_COMMAND}
                      -DSIM=$<TARGET_FILE:fx1_soc>
@@ -192,6 +197,7 @@ function(fx1_expect_test name)
                      -DEXPECT_RC=${T_RC}
                      "-DEXPECT_REGEX=${T_REGEX}"
                      -DLOG=${CMAKE_CURRENT_BINARY_DIR}/${name}.uart.log
+                     ${_check}
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_expect.cmake)
     set_tests_properties(${T_LABEL}_${name} PROPERTIES TIMEOUT 300 LABELS "fx1;${T_LABEL}")
 endfunction()
@@ -467,6 +473,7 @@ if(CDC_BUILD_TESTS)
     set(_rtos_sources
         ${_rtos_dir}/main.c ${_rtos_dir}/rtos_bsp.c ${_rtos_dir}/rtos_libc.c ${_rtos_dir}/cli.c
         ${_rtos_dir}/hwcheck.c ${_rtos_dir}/cmd_fpu.c ${_rtos_dir}/cmd_dma.c ${_rtos_dir}/cmd_isp.c
+        ${_rtos_dir}/cmd_isp_stream.c
         ${_rtos_dir}/cmd_eth.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_eth.c ${_eth_drv}/src/eth_drv.c
         ${_rtos_dir}/probe.S
         ${_kernel}/tasks.c ${_kernel}/queue.c ${_kernel}/list.c
@@ -477,7 +484,7 @@ if(CDC_BUILD_TESTS)
         ${_isp_includes} ${_demo_dir} ${CMAKE_CURRENT_SOURCE_DIR}/drivers ${_eth_drv}/include)
     file(GLOB _rtos_headers ${_rtos_dir}/*.h)
     set(_rtos_depends ${_rtos_headers} ${_isp_depends} ${_demo_dir}/isp_demo_job.h ${_demo_dir}/isp_demo_setup.h
-        ${_eth_fw_depends})
+        ${_eth_fw_depends} ${FX1_FW_MAP_INCLUDE}/fx1/fx1_isp_stream.h)
     # The upstream RV32 port casts the uint64_t mtimecmp base to a pointer
     # (port.c, vPortSetupTimerInterrupt); harmless below 4 GiB, but -Werror.
     set(_rtos_cflags -Wno-int-to-pointer-cast)
@@ -623,9 +630,26 @@ if(CDC_BUILD_TESTS)
         # while `eth load` runs background traffic with a payload check. Found
         # the I2C false timeout after a preemption (drivers/fx1_i2c.c finish).
         # 90..340 s host: label fx1_stress (not required; the gate's 120 s).
+        # Under the load the receiver may drop sensor frames, and which ones
+        # depends on code layout (ISP stream S2 review: a never-run 0x800-byte
+        # padding of the baseline drops frame 4): the host check requires every
+        # frame of both sessions (4/4, 2/2) RAW ok, FRAME_ID = RAW frame = golden
+        # frame with the golden header's CRC, strictly increasing, no start
+        # failure (EDEV fails), not a fixed frame number.
+        find_program(FX1_PYTHON3 python3)
+        set(_eth_cam_check)
+        if(FX1_PYTHON3)
+            set(_eth_cam_check CHECK ${FX1_PYTHON3} ${_rtos_dir}/tests/check_cli_eth_camera.py
+                --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_isp/camera_isp_golden.h)
+            add_test(NAME fx1_unit_check_cli_eth_camera
+                     COMMAND ${FX1_PYTHON3} ${_rtos_dir}/tests/check_cli_eth_camera.py
+                             --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_isp/camera_isp_golden.h --selftest)
+            set_tests_properties(fx1_unit_check_cli_eth_camera PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit")
+        endif()
         fx1_expect_test(freertos_cli_eth_camera IMAGE freertos_cli RC 0 TIMEOUT_MS 3000 LABEL fx1_stress
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_eth_camera.txt ${_cam_rx}
-            REGEX "eth load: started.*camera start: PASS.*= golden frame 4.*camera capture: 4/4 frames.*camera capture: PASS.*camera start: PASS.*camera capture: 2/2 frames.*camera capture: PASS.*eth load: sent [1-9][0-9]*, received [1-9][0-9]*, payload errors 0.*eth load: PASS.*eth cycle: 5/5.*poweroff: 0 failed.*RESULT PASS")
+            REGEX "eth load: started.*camera start: PASS.*camera capture: 4/4 frames.*camera capture: PASS.*camera start: PASS.*camera capture: 2/2 frames.*camera capture: PASS.*eth load: sent [1-9][0-9]*, received [1-9][0-9]*, payload errors 0.*eth load: PASS.*eth cycle: 5/5.*poweroff: 0 failed.*RESULT PASS"
+            ${_eth_cam_check})
         set_tests_properties(fx1_stress_freertos_cli_eth_camera PROPERTIES TIMEOUT 1800)
         fx1_expect_test(freertos_cli_camera_fault IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_fault.txt ${_cam_rx}
@@ -757,6 +781,22 @@ if(CDC_BUILD_TESTS)
                          --cc ${CMAKE_C_COMPILER} ${_fx1_stream_ref})
         set_tests_properties(fx1_regression_isp_stream_prep PROPERTIES
             TIMEOUT 300 LABELS "fx1;fx1_regression")
+        # ISP stream S2: FreeRTOS `isp stream`, the sim-control doorbell and the fx1_soc
+        # --isp-stream-spool host bridge. Every captured frame against the stand-alone model
+        # (queue 1/2/4, each Bayer phase at its smallest geometry, legacy mode, a slow host),
+        # the stop paths (LIMIT, `isp stream stop`, SIGINT, SIGINT while a held host drains), the
+        # spool budget (firmware admission at its boundaries, the bridge's byte guard), negative
+        # probes (no bridge, a session not attached, bad descriptor, a session run twice, a stale
+        # record, a foreign ACK, a spool write failure, ISP owned)
+        # and D65 -> A -> D65 x 2 at 2688x1520 against the shipped golden.
+        if(TARGET fx1_isp_run_raw)
+            add_test(NAME fx1_regression_isp_stream_platform
+                     COMMAND ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/tests/test_stream_platform.py
+                             --fx1-soc $<TARGET_FILE:fx1_soc> --elf ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli.elf
+                             --run-raw $<TARGET_FILE:fx1_isp_run_raw> --real)
+            set_tests_properties(fx1_regression_isp_stream_platform PROPERTIES
+                TIMEOUT 900 LABELS "fx1;fx1_regression")
+        endif()
         # VP-only post-Demosaic capture (fx1_soc --dump-isp-demosaic): the ISP
         # demo on the repository's D65 frame, two frames; the final frame's
         # capture and NV12 must equal the stand-alone model's (exit 1 otherwise).

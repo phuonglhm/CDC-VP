@@ -16,6 +16,7 @@
  *   isp run auto  one AWB probe + at least two render frames, using a shared
  *                 base profile and a bounded demo neutral-zone policy; in
  *                 legacy mode (the policy rewrites WB/GTM between frames)
+ *   isp stream ...  the RAW-sequence stream (cmd_isp_stream.c)
  *   isp stats     AEC/AWB/AF publications of the last frame, captured before
  *                 the stream is stopped (fx1_isp_stop soft-resets the ISP,
  *                 which clears the statistics results; FRAME_IDs survive)
@@ -72,6 +73,7 @@ static BaseType_t isp_isr(void)
 #ifdef FX1_FW_HAS_CAMERA
     if (isp_owner == ISP_OWNER_CAMERA) return camera_isp_isr();
 #endif
+    if (isp_owner == ISP_OWNER_STREAM) return isp_stream_isp_isr();
     BaseType_t woken = pdFALSE;
     fx1_isp_events ev;
     fx1_isp_irq(&dev, &ev); /* reads and acknowledges at the ISP: the line drops */
@@ -85,6 +87,7 @@ void isp_service_init(void)
     done = xSemaphoreCreateBinary();
     configASSERT(done);
     bsp_irq_register(FX1_IRQ_ISP, isp_isr);
+    isp_stream_service_init();
 }
 
 /* Queue one frame and wait for its output; returns the buffer index or -1. */
@@ -523,12 +526,13 @@ static int claim_for(const char* what)
 {
     if (isp_claim(ISP_OWNER_ISP)) return 1;
     out(what);
-    out_line(": the ISP is in use by the camera (camera stop first)");
+    out_line(": the ISP is in use by the camera or the stream (camera stop / isp stream wait first)");
     return 0;
 }
 
 int cmd_isp(int argc, char** argv)
 {
+    if (argc >= 2 && !strcmp(argv[1], "stream")) return cmd_isp_stream(argc - 1, argv + 1);
     if (argc == 3 && !strcmp(argv[1], "run") && !strcmp(argv[2], "auto")) {
         if (claim_for("isp run auto")) {
             run_job(1, 1);

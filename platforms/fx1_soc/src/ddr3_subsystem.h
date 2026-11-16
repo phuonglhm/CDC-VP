@@ -86,6 +86,11 @@ public:
     // Host dump of the DDR aperture (global address), stored bytes, no ECC correction.
     // Throws when the range is outside the aperture or no topology is committed.
     void dump(std::uint64_t address, std::uint8_t* data, std::size_t length) const;
+    // Host debug write into the DDR aperture at run time (global address): the stored
+    // bytes with consistent ECC, no bus transaction, interrupt or exclusive-state change
+    // (VP-only host agents such as the ISP stream bridge; never on the firmware path).
+    // Throws like dump().
+    void poke(std::uint64_t address, const std::uint8_t* data, std::size_t length);
 
     // CPU release (preinit: after the preload; firmware: at time 0).
     bool released() const noexcept { return released_; }

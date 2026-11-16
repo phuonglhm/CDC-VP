@@ -100,6 +100,11 @@
 #define FX1_SIM_CTRL_IRQ_OFF    FX1_U32(0x4)    /* bit i drives test line i       */
 #define FX1_SIM_CTRL_IRQ_LINES  FX1_U32(2)      /* lines -> PLIC sources 4..5     */
 #define FX1_SIM_CTRL_IRQ_FIRST_SOURCE FX1_U32(4)
+/* VP-only doorbell of the ISP RAW-sequence stream (fx1_isp_stream.h): a
+ * 32-bit write wakes the host bridge (fx1_soc --isp-stream-spool); a read
+ * returns ATTACHED (bit 0) when a bridge is attached, bits 31..1 zero. */
+#define FX1_SIM_CTRL_DOORBELL_OFF FX1_U32(0x8)
+#define FX1_SIM_CTRL_DOORBELL_ATTACHED FX1_U32(0x1)
 
 /* ---- Default firmware DDR layout ------------------------------------------- */
 #define FX1_FW_IMAGE_BASE       FX1_U32(0x80000000) /* code + data, one ELF           */

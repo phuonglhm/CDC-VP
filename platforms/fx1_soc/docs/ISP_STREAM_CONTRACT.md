@@ -1,6 +1,6 @@
 # FX1 VP — ISP RAW-sequence stream contract (`isp-stream`)
 
-Status: **S1 contract** (2026-11-12; review S1 fixes and S2 decisions 2026-11-13). This page fixes the session contract that
+Status: **S1 contract** (2026-11-12; review S1 fixes and S2 decisions 2026-11-13), **S2 implemented** (2026-11-13: firmware, doorbell, bridge; 2026-11-16 review S2 fixes: the spool budget is a firmware admission limit, Ctrl+C forwarded during a drain, ACK checked against the firmware's own seq and the session). This page fixes the session contract that
 S2 (firmware and host bridge) and S3 (launcher and video) implement. It is a
 **VP-only** mechanism: nothing here is an ISP CSR, an ISP interrupt or a SoC
 interface. The machine-readable parts are:
@@ -127,7 +127,7 @@ two overlap.
 | demo job / result / profile | `SHARED + 0x000000` | 1 MiB | `isp run` (unchanged) |
 | desc | `SHARED + 0x100000` | 128 B | host → FW, loaded before boot |
 | status | `SHARED + 0x100100` | 128 B | FW → host |
-| control | `SHARED + 0x100200` | 64 B | host → FW (stop request) |
+| control | `SHARED + 0x100200` | 64 B | host → FW (attach with the spool budget, stop request) |
 | records 0..3 | `SHARED + 0x100400` | 4 × 128 B | FW ↔ host, one per output slot |
 | profile | `SHARED + 0x110000` | 256 KiB | {offset, value} pairs, ≤ 32768 |
 | SYS_DMA chains 0..3 | `SHARED + 0x200000` | 4 × 320 KiB | 16-byte descriptors, one chain per input slot |
@@ -157,15 +157,20 @@ The field lists are in `fx1_isp_stream.h`. All words are LE `uint32`; 64-bit cou
   - `error` and `detail` say what failed.
   - `submitted`, `completed`, `cancelled` and `failed` count the frames.
   - The block also gives the output geometry, the colorimetry (committed before start, fixed for the session), `dma_err`, the ISP counter deltas, `publish_seq` and the elapsed mtime ticks.
-- **control** (bridge): `request = STOP` with `reason = USER` (Ctrl+C) or `LIMIT` (spool budget). The session ID must match.
-- **record i** (FW publishes, bridge reads): the full identity, the slot's Y/UV addresses, geometry, stride, colorimetry and `status = 0`. The bridge writes `ack_seq` only.
+- **control** (bridge): written twice at most.
+  - **Attach:** when the DDR is released, before the CPUs run, the bridge reads the descriptor and writes the control block: magic, version, this session's ID, `request = NONE` and `max_bytes` (the spool budget in NV12 bytes, `--isp-stream-max-mib`; 0 for none). `isp stream start` refuses a session the control block does not name (`ERROR / ERR_HOST`, detail 4).
+  - **Stop:** `request = STOP` with `reason = USER` (Ctrl+C) or `HOST` (the bridge failed: the firmware ends in `ERROR / ERR_HOST`, detail 1), the budget unchanged. `reason = LIMIT` is still accepted from a host, but the bridge no longer sends it: the budget is enforced by the firmware (§5.4). The session ID must match.
+- **record i** (FW publishes, bridge reads): the full identity, the slot's Y/UV addresses, geometry, stride, colorimetry, `status = 0` and `copy_ts` (FRAME_COUNTER when the frame's SYS_DMA copy started; with `ts`, the queue time, and `eof_ts` it shows the copy/processing overlap). The bridge writes `ack_seq` only.
+- **UV address:** `UV = Y + FX1_ISP_STREAM_UV_OFFSET(out_stride × active height)`. This is the first 1 MiB boundary after the largest Y the session can write, programmed before the output geometry is known; the bridge checks the same value. For example, 2688×1520 BGGR gives 4 MiB, while the 1920×1080 output's Y only needs 2 MiB.
 
 ## 5. Protocol
 
 ### 5.1 Doorbell
 
 sim-control (`0x1002_0000`, VP-only) gains `FX1_SIM_CTRL_DOORBELL_OFF = 0x8`
-(S2: `fx1_memory_map.h`, `sim_control`):
+(`fx1_memory_map.h`). The register exists once the platform calls
+`SimControl::enable_doorbell(attached)`. `fx1_soc` always enables it, and reports
+attached only with `--isp-stream-spool`. Other platforms keep offset 8 as a slave error.
 
 - **write:** any 32-bit value rings the doorbell. The value is only logged.
 - **read:** bit 0 is 1 when a host bridge is attached (`--isp-stream-spool`). Bits 31..1 read 0.
@@ -175,7 +180,10 @@ This is a VP-only register, not an ISP CSR. `isp stream start` refuses with
 `ERR_HOST` when no bridge is attached: frames nobody captures would be lost
 silently.
 
-The records and their `seq` are the source of truth. A doorbell is only a wake-up, and does not correspond to exactly one frame. The S2 tests cover two cases: several notifies coalesced into one wake, and a notify that arrives before the bridge waits.
+The records and their `seq` are the source of truth. A doorbell is only a wake-up, and does not correspond to exactly one frame. Coverage:
+
+- **Unit test:** three rings in one delta give one wake.
+- **Platform `held_host`:** while the bridge holds a frame it is not waiting on the doorbell, so the rings of later frames arrive before it waits. The bridge finds up to three frames published at once (`max_batch` 3 in `status.json`) and drains them by `seq`.
 
 ### 5.2 Publish and ACK
 
@@ -188,26 +196,40 @@ The records and their `seq` are the source of truth. A doorbell is only a wake-u
 3. Fence, then write `state = PUBLISHED` and update `status.publish_seq`.
 4. Ring the doorbell.
 
-**Bridge**, an `SC_THREAD` woken by the doorbell event, with a periodic 1 ms simulated poll as a fallback:
+**Bridge**, an `SC_THREAD` that attaches the session at DDR release (§4), then wakes on the doorbell event, with a periodic 1 ms simulated poll as a fallback:
 
-1. Loop: find the record whose `state == PUBLISHED` and `seq == next`.
-2. Check its magic, session, `ordinal == next - 1`, slot, address range and geometry.
-3. Copy the active Y and UV rows with the DDR debug read (stored bytes, after ECC; not a bus transaction).
-4. Append them to the spool and write one `frames.jsonl` line, both written and fsync'd.
-5. Only then write `ack_seq = seq` and set `next += 1`. If the spool or metadata write fails, the bridge never ACKs. It requests `STOP` and the run fails as a host error, so a lost frame is never ACKed as captured.
+1. Forward a pending Ctrl+C (`STOP, USER`). This is repeated before every frame of a drain and after a held frame, because a held host can keep draining without returning to its wake loop while the firmware publishes more.
+2. Loop: find the record whose `state == PUBLISHED` and `seq == next`.
+3. Check its magic, session, `ordinal == next - 1`, slot, address range and geometry.
+4. Copy the active Y and UV rows with the DDR debug read (stored bytes, after ECC; not a bus transaction).
+5. Check that the frame fits the spool budget (a guard: the firmware admits only what fits, so this never fires unless the firmware is wrong; it is then a host error and nothing is written). Append the rows to the spool and write one `frames.jsonl` line, both written and fsync'd.
+6. Only then write `ack_seq = seq` and set `next += 1`. If the spool or metadata write fails, the bridge never ACKs. It requests `STOP` and the run fails as a host error, so a lost frame is never ACKed as captured.
 
-Doorbells may coalesce or arrive before the bridge waits. The bridge never assumes one frame per event: it drains by `seq` until no record matches. Any of the following is a host protocol error, and the run fails: a `seq` that skips, a record that repeats, an identity mismatch, a wrong session ID, or a published record outside its slot.
+Doorbells may coalesce or arrive before the bridge waits. The bridge never assumes one frame per event: it drains by `seq` until no record matches.
+
+Any of the following is a host protocol error, and the run fails:
+
+- **A gap:** a later `seq` is published while `seq == next` is not. Later frames published together with `next` are normal at queue > 1.
+- **A repeat:** a record is published again after the bridge took it.
+- **A mismatch:** an identity or `status != 0`, a geometry or address outside the slot.
+
+A PUBLISHED record of **another session**, or one without the record magic, is stale: it is never taken, and only counted (`stale_records_ignored`, in observations).
+
+**Host side.** The bridge's protocol is in `platforms/fx1_soc/src/isp_stream_bridge.{h,cpp}`; it reads and writes DDR through `Ddr3Subsystem::dump` / `poke`. Fault injection:
+
+- `--isp-stream-hold-us N` holds every frame N µs of simulated time before the copy and the ACK, as a slow host would.
+- `--isp-stream-fault foreign-ack` writes the first frame's ACK after altering its record's session ID, as a host confusing sessions would. The firmware must not take it.
 
 **Slot reuse (firmware):** output slot `i` is queued again only when both conditions hold:
 
 - the ISP has completed the frame;
-- the record still carries this session's ID and `record[i].ack_seq == record[i].seq` for the `seq` it published.
+- `record[i].ack_seq` equals the `seq` the firmware published in record `i` (its own copy, not the record's `seq` word), and the record still carries the record magic and this session's ID. A record that was never published in this session needs no ACK. The firmware rewrites magic and session on every publish.
 
 The firmware then sets the record FREE first. "The driver popped DONE" never implies "the host has read it".
 
 **Ordering:** a fence separates the record fields from `seq` and from `state` on publish. On the host side, the bridge reads `state`/`seq` first and the fields after (acquire). On ACK, it finishes the spool write before writing `ack_seq` (release). The firmware reads `ack_seq` before reusing the slot.
 
-**No wrap:** `seq` is 32-bit, while `ordinal` is 64-bit; `ordinal == seq − 1` holds only while `seq` does not wrap. A session therefore never wraps `seq`. Before `seq` would pass `UINT32_MAX` (about 4.29 × 10⁹ frames), the firmware stops with the normal drain and `stop_reason = LIMIT`, and `detail` names the sequence limit.
+**No wrap:** `seq` is 32-bit, while `ordinal` is 64-bit; `ordinal == seq − 1` holds only while `seq` does not wrap. A session therefore never wraps `seq`. Once `publish_seq` reaches `0xFFFFFFF0`, the firmware stops with the normal drain and `stop_reason = LIMIT`, `detail = 2`. The spool budget's LIMIT has `detail = 1`.
 
 ### 5.3 Copy (SYS_DMA)
 
@@ -230,13 +252,33 @@ The firmware then sets the record FREE first. "The driver popped DONE" never imp
 **Ending the session.** Every end follows the same drain: no new submit, then wait for the queued frames, then capture and ACK them, then `fx1_isp_stop`, then `status` final (`STOPPED`), then the doorbell. The end can come from:
 
 - **End of schedule:** `stop_reason = DONE`.
-- **Stop request** in `control`, polled once per scheduling round: the same drain. `cancelled` is the scheduled frames never submitted. `stop_reason` is `USER` or `LIMIT`.
+- **Stop request** in `control`, polled once per scheduling round: the same drain. `cancelled` is the scheduled frames never submitted. `stop_reason` is `USER` (or `LIMIT` from a host that sends it).
+- **Spool budget:** at start, once the output geometry is committed, the firmware computes `admit = max_bytes / (out_w × out_h × 3/2)`, the frames the spool holds. It submits at most `admit` frames. When all are submitted and the schedule wants more, it stops submitting and drains: `stop_reason = LIMIT`, `detail = 1`, the frames in flight still fit. The spool therefore never exceeds the budget, whatever the host speed or queue depth, and ends exactly at it when the budget is a multiple of the frame. A schedule that fits ends `DONE`. A budget below one frame is refused at start (`ERROR / ERR_HOST`, detail 5), nothing submitted.
 
-**Fatal errors.** A copy error, a DMA_ERR other than the end-of-input `IDMA_UNDERRUN`, a missing completion within `frame_budget_us` (simulated time, mtime), or a profile/geometry/start refusal ends the session:
+**Fatal errors.** Each of the following ends the session in ERROR:
+
+| Cause | `error` / `detail` |
+|---|---|
+| a copy error or timeout | `COPY`, the interrupt status (`0xFFFFFFFF`: timeout) |
+| a DMA_ERR other than the end-of-input `IDMA_UNDERRUN` | `ISP`, the bits |
+| no progress (a queue or a completion) within `frame_budget_us` of simulated time while frames are in flight | `TIMEOUT`, the frames completed |
+| a profile refusal | `PROFILE`, TUNE_ERROR or the driver code |
+| a geometry or start refusal | `CONFIG`, the driver code |
+| the host's `STOP, HOST` | `HOST`, 1 |
+| no ACK within the budget with nothing in flight (also an ACK that does not name this session) | `HOST`, 2 |
+| no ACK at the end | `HOST`, 3 |
+| `isp stream start` without a bridge | `HOST`, the doorbell read |
+| `isp stream start`: the control block does not name this session (not attached) | `HOST`, 4 |
+| `isp stream start`: the spool budget holds no frame of the output | `HOST`, 5 |
+
+In each case:
 
 - `state = ERROR`, with `error`/`detail`.
 - The frames already published stay valid; `failed` counts the lost ones.
 - There is no automatic reset or replay.
+- `isp stream wait` counts the session as a failed check.
+
+**Refused before start** (the status block is not touched): an invalid descriptor (`descriptor word N invalid`, N the 32-bit word), a session that already ran in this boot, and a running session.
 
 **Underrun.** `IDMA_UNDERRUN` at the end of the input (and while the queue runs dry) is reported in `dma_err` but is not an error, as in `fx1_isp_run_raw`.
 
@@ -254,11 +296,26 @@ The firmware then sets the record FREE first. "The driver popped DONE" never imp
 - **Second press:** a hard stop. The spool and the evidence are kept, but no playable video is promised.
 - **One request per press:** the launcher runs `fx1_soc` in its own process group and delivers SIGINT itself. One Ctrl+C at the terminal therefore reaches `fx1_soc` once, not once through the launcher and again through the shared process group.
 
-**Spool budget (loop):** the bridge reserves room for the frames in flight. It requests `STOP, LIMIT` before a capture would exceed `--max-spool-mib`.
+**Spool budget:** `fx1_soc --isp-stream-max-mib N` is an admission limit enforced by the firmware (§5.4, stop paths), not a stop the host sends after the fact. An earlier design had the bridge request `STOP, LIMIT` from the average frame size so far. Review found that it overshoots: the frames already submitted or being copied when the request lands must still be drained. The S3 launcher maps its `--max-spool-mib` onto it.
+
+**Platform side, as built:**
+
+- **Ctrl+C:** `fx1_soc` installs a SIGINT handler only with `--isp-stream-spool`. The first SIGINT sets a flag (async-signal-safe). The bridge writes `STOP, USER` at its next wake, or between two frames of a drain, whichever comes first. The second SIGINT restores the default action and re-raises it, so the process dies by signal while the spool stays.
+- **Exit codes:** `fx1_soc` exits with the firmware's verdict. Status `6` means PASS but the bridge failed: a published frame not captured, a protocol violation, or host I/O.
 
 ## 6. Spool and video
 
-**Spool.** `frames.nv12` holds the active bytes of every frame in completion order, Y rows then UV rows, with no row padding. `frames.jsonl` has one line per frame: the identity, byte offset, geometry, colorimetry and SHA-256. Records are appended and fsync'd before the ACK. A torn tail is truncated to the last whole frame.
+**Spool.** The spool directory holds three files:
+
+- **`frames.nv12`:** the active bytes of every frame in completion order, Y rows then UV rows, with no row padding.
+- **`frames.jsonl`:** one line per frame with:
+  - the identity: `ordinal`, `seq`, `source_index`, `repeat_index`, `driver_seq`, `tag`, `frame_id`, `profile_id`;
+  - the timestamps: `ts`, `sof_ts`, `eof_ts`, `copy_ts`;
+  - the frame: `slot`, geometry, `stride`, `colorimetry`;
+  - the data: `offset`, `bytes`, `sha256`, `sim_time_ns`.
+- **`status.json`** (written at the end): the firmware's final status block, plus the bridge's counts (`captured`, `spooled_bytes`, `doorbells`, `wakes`, `max_batch`, `stale_records_ignored`, `stop_requested`, `user_stops`, `hold_us`, `max_spool_bytes`, `attached`, `fault`) and its `errors`.
+
+Both data files are appended and fsync'd before the ACK. A torn tail, a `frames.nv12` longer than its last line accounts for, is truncated to the last whole frame (S3).
 
 **Encoding.** The S1 FFmpeg probe (system FFmpeg 7.1.5, libx264) settled the mapping. The input range and matrix **must be declared on the rawvideo input**:
 
@@ -290,15 +347,21 @@ with the padding cut; the image bytes are the same.
 
 The S1 baselines are in the workspace evidence and are not committed. CI recomputes the reference from the model each run instead of storing goldens.
 
-## 8. To be added (S2, S3)
+## 8. Implementation (S2) and what S3 adds
 
 | Stage | Change |
 |---|---|
-| S2 | `fx1_memory_map.h`: `FX1_SIM_CTRL_DOORBELL_OFF`; `sim_control`: optional doorbell (constructor flag, event and presence bit), unit test |
-| S2 | `platforms/fx1_soc/src`: `--isp-stream-spool DIR` (bridge `SC_THREAD`, DDR debug read/write helpers on `Ddr3Subsystem`, SIGINT → control), off by default: existing runs unchanged |
-| S2 | `fw/fx1_soc/freertos/cmd_isp_stream.c`: `isp stream start / status / stop / wait`, the stream task, `ISP_OWNER_STREAM`, SYS_DMA channel 1 chains; `cmd_dma.c` ISR dispatch per channel |
-| S2 | CTest: fixture sessions at queue 1/2/4 (≥ 12 frames), D65→A→D65, every frame equal to the reference; the smallest geometry of each Bayer phase; stop at each state; coalesced doorbells and a doorbell before the bridge waits; records initialized per session (a stale record of the previous session is never taken); a failed spool write is never ACKed; negative probes from the plan |
+| S2 | `fx1_memory_map.h`: `FX1_SIM_CTRL_DOORBELL_OFF`, `FX1_SIM_CTRL_DOORBELL_ATTACHED`; `sim_control`: `enable_doorbell`, event, ring count; unit test `fx1_sim_control` |
+| S2 | `platforms/fx1_soc/src`: `isp_stream_bridge.{h,cpp}`; `Ddr3Subsystem::poke` (run-time debug write); `fx1_soc --isp-stream-spool DIR [--isp-stream-max-mib N] [--isp-stream-hold-us N] [--isp-stream-fault foreign-ack]`, SIGINT, exit 6. Off by default: existing runs only gain the doorbell register (read 0) |
+| S2 | `fw/fx1_soc/freertos/cmd_isp_stream.c`: `isp stream start / status / stop / wait [MS]`, the stream task, `ISP_OWNER_STREAM`, SYS_DMA channel 1 chains; `cmd_isp.c` ISR routing and dispatch; `cmd_dma.c` ISR dispatch per channel (`CORE_STATUS`) |
+| S2 | CTest `fx1_regression_isp_stream_platform` (`platforms/fx1_soc/demo/tests/test_stream_platform.py`), required by the gate; see the file's header for its cases |
 | S3 | `isp_stream.py` launcher + `run_vp.sh isp-stream`, encode/verify, `--keep-nv12`, re-encode helper, Ctrl+C, exit codes |
+
+**Measured in S2.** D65 → A → D65 × 2 at 2688×1520 with the shared profile, queue 2, 1920×1080 output:
+
+- **Results:** every frame equals the model, and D65's second frame equals the golden `8da0af67`.
+- **Time:** 367 ms simulated for the 6 frames, about 21 s wall for the whole run, boot included.
+- **Bottleneck:** the copy. Per frame, the ISP takes about 7.6 M FRAME_COUNTER clocks from queue to EOF, against about 32 M from one queue to the next, which is mostly the SYS_DMA copy.
 
 ## 9. Limits
 
@@ -306,3 +369,6 @@ The S1 baselines are in the workspace evidence and are not committed. CI recompu
 - **Fixed profile:** WB, CCM and GTM key are fixed by the profile for the whole session; there is no auto-WB, so scenes far from the profile's illuminant show a colour cast. There is no geometry or profile change while running.
 - **Output geometry:** it comes from the ISP, never from the input. Without the resizer, the Demosaic trim depends on the Bayer phase: the 256×144 fixture gives 256×144, 254×144, 256×142 and 254×142 for RGGB, GRBG, GBRG and BGGR.
 - **Finite pool:** 254 MiB. A host refill for unbounded sequences is a later extension.
+- **Copy-bound queue:** the SYS_DMA copy is about four times slower than the ISP on a frame. At queue ≥ 2 the copy of frame n+1 overlaps the processing of frame n, which the test checks on `copy_ts` against `eof_ts`. No earlier frame is ever still in the ISP when a frame is queued, so queue 4 runs like queue 2. Queue 4 is accepted and its slot rotation is tested.
+- **Recovery `EAGAIN`:** the copy-again path is implemented. It is not exercised, because the DMA errors that start a recovery end the session (fatal by contract).
+- **Publication ordering:** the fences are written as on silicon. In this VP the bridge runs only between CPU quanta, which in practice makes a publication look atomic to the host, so a missing fence is not detectable here.

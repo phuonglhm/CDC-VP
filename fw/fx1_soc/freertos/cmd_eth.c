@@ -630,7 +630,13 @@ static void cmd_eth_load(int start)
     }
     load_run = 0;
     while (load_task) vTaskDelay(1);
-    vTaskDelay(pdMS_TO_TICKS(5));                    /* the last frames come back */
+    /* The last frames come back: at least 5 ms, then until every frame sent is
+     * back, at most 50 ms in all. A delayed write-back (--eth-wb-delay-us) can
+     * hold the last frame past 5 ms, depending only on where it was sent in
+     * the 1 ms send rhythm, which code layout moves; a frame that never comes
+     * back is still counted lost. */
+    vTaskDelay(pdMS_TO_TICKS(5));
+    for (TickType_t t = 0; load_rx != load_sent && t < pdMS_TO_TICKS(45); ++t) vTaskDelay(1);
     if (lock()) {
         eth.rx_cb = NULL;
         unlock();

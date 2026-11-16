@@ -50,6 +50,17 @@ void SimControl::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& del
         tx.set_response_status(tlm::TLM_OK_RESPONSE);
         return;
     }
+    if (tx.get_address() == FX1_SIM_CTRL_DOORBELL_OFF && doorbell_) {
+        if (tx.is_write()) {
+            ++doorbells_;
+            doorbell_event_.notify(sc_core::SC_ZERO_TIME);
+        } else {
+            store32(tx.get_data_ptr(), attached_ ? FX1_SIM_CTRL_DOORBELL_ATTACHED : 0u);
+        }
+        delay += latency_;
+        tx.set_response_status(tlm::TLM_OK_RESPONSE);
+        return;
+    }
     if (tx.get_address() != FX1_SIM_CTRL_FINISH_OFF) {
         tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
         return;

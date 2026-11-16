@@ -14,6 +14,11 @@ namespace fx1 {
 // drives test_irq[i] (read back as written). The platform wires them to spare
 // interrupt-controller inputs so firmware can raise and lower interrupts at
 // will (PLIC bring-up before the real IPs exist).
+// Optional VP-only doorbell, offset 8 (FX1_SIM_CTRL_DOORBELL_OFF), present
+// once enable_doorbell() was called: a write (any value) counts one ring and
+// notifies doorbell_event(); a read returns FX1_SIM_CTRL_DOORBELL_ATTACHED
+// while a host consumer is attached (fx1_soc --isp-stream-spool), else 0.
+// The firmware's records are the source of truth: rings may coalesce.
 // Any other value, offset or size is a slave error. The platform turns the
 // result into the simulator exit status.
 class SimControl : public sc_core::sc_module {
@@ -32,6 +37,16 @@ public:
     std::uint32_t fail_code() const noexcept { return fail_code_; }
     sc_core::sc_time finish_time() const noexcept { return finish_time_; }
 
+    // Doorbell (elaboration or run time): makes offset 8 a register; `attached`
+    // is what a read reports.
+    void enable_doorbell(bool attached) noexcept {
+        doorbell_ = true;
+        attached_ = attached;
+    }
+    bool doorbell_enabled() const noexcept { return doorbell_; }
+    const sc_core::sc_event& doorbell_event() const noexcept { return doorbell_event_; }
+    std::uint64_t doorbells() const noexcept { return doorbells_; }
+
 private:
     void b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& delay);
     unsigned transport_dbg(tlm::tlm_generic_payload& tx);
@@ -45,5 +60,8 @@ private:
     Result result_ = Result::running;
     std::uint32_t fail_code_ = 0;
     sc_core::sc_time finish_time_;
+    bool doorbell_ = false, attached_ = false;
+    std::uint64_t doorbells_ = 0;
+    sc_core::sc_event doorbell_event_;
 };
 } // namespace fx1

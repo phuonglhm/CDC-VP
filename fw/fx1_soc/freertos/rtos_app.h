@@ -49,9 +49,15 @@ void eth_service_init(void); /* Ethernet: service task (owner) + PLIC source 6 *
 /* ISP ownership between the `isp` commands and the camera (CSI-2 M6b): one
  * owner at a time; the ISP interrupt goes to the owner's handler. Claims are
  * made from the CLI task. */
-enum { ISP_OWNER_NONE = 0, ISP_OWNER_ISP = 1, ISP_OWNER_CAMERA = 2 };
+enum { ISP_OWNER_NONE = 0, ISP_OWNER_ISP = 1, ISP_OWNER_CAMERA = 2, ISP_OWNER_STREAM = 3 };
 int isp_claim(int owner); /* 1: claimed (or already owned by `owner`), 0: busy */
 void isp_release(int owner);
+/* `isp stream` (cmd_isp_stream.c): argv[0] is "stream". The ISP interrupt
+ * while the stream owns the ISP, and SYS_DMA channel 1 (the stream's). */
+int cmd_isp_stream(int argc, char** argv);
+void isp_stream_service_init(void);
+BaseType_t isp_stream_isp_isr(void);
+BaseType_t isp_stream_dma_isr(void);
 #ifdef FX1_FW_HAS_CAMERA
 void camera_service_init(void);
 BaseType_t camera_isp_isr(void); /* ISP interrupt while the camera owns the ISP */

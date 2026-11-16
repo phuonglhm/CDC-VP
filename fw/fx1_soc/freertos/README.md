@@ -75,6 +75,8 @@ computed without any task switch.
 | `isp run` | Process the RAW job that the host loaded into DDR (see `platforms/fx1_soc/demo/`); the NV12 stays in DDR for `--dump`. In the job's mode: CSR v1.07 profile mode by default (the profile built into bank 0, sealed and applied; a refused profile is reported, never run in legacy mode instead), legacy for a version-1 job; the job's output channels (CH0, CH1 NV12, CH2 RGB888) |
 | `isp run legacy` | The same job in legacy mode, for comparison |
 | `isp stats` | AEC/AWB/AF publications of the last frame |
+| `isp stream start` | VP-only RAW-sequence stream (`platforms/fx1_soc/docs/ISP_STREAM_CONTRACT.md`): runs the session the host prepared (`isp_stream_prep.py`, `fx1_soc --load`) in one ISP session, every frame copied from the source pool by SYS_DMA channel 1 and published to the host bridge (`fx1_soc --isp-stream-spool`). Refused without an attached bridge (or one that did not attach this session), with an invalid descriptor (the word is named), when the ISP is owned (camera, `isp run`), when the session already ran or when the bridge's spool budget holds no frame. Submits only the frames the spool budget holds, then stops (LIMIT). Returns at once; the stream task runs it |
+| `isp stream status`, `isp stream stop`, `isp stream wait [MS]` | The status block; a stop request (the frames in flight complete); wait until STOPPED or ERROR (MS: simulated-time limit), then the summary as a check (ERROR fails) |
 | `eth ...` | Ethernet MAC, see "Ethernet" below |
 | `camera ...` | Camera build only (CSI-2 M6b), see "Camera" below |
 | `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` + `eth selftest` |

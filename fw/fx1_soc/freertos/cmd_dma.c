@@ -2,6 +2,8 @@
  * `dma test [BYTES]`: one SYS_DMA channel-0 M2M copy driven from a task.
  * Completion through PLIC source 2: the ISR clears at the DMA and gives a
  * semaphore the task waits on; buffers handed over with the plan C12 calls.
+ * Source 2 is shared by every channel: CORE_STATUS tells which channel
+ * interrupts; channel 1 belongs to the ISP stream (cmd_isp_stream.c).
  */
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -18,10 +20,22 @@
 #define CFG_M2M     (FX1_DMA_ADDRESS_INCREMENT | FX1_DMA_CFG_TOKENS(1) | FX1_DMA_CFG_BURST_BYTES(32))
 
 static SemaphoreHandle_t done;
+static BaseType_t ch0_isr(void);
 static volatile uint32_t last_status;
 static uint32_t seed;
 
 static BaseType_t dma_isr(void)
+{
+    BaseType_t woken = pdFALSE;
+    const uint32_t core = fx1_read32(DMA(FX1_DMA_CORE_STATUS));
+    if (core & (1u << 1)) woken = isp_stream_dma_isr();
+    if (!(core & ~1u) || (core & 1u)) { /* channel 0, as before (also a source-2 call naming no channel) */
+        woken |= ch0_isr();
+    }
+    return woken;
+}
+
+static BaseType_t ch0_isr(void)
 {
     BaseType_t woken = pdFALSE;
     last_status = fx1_read32(CH0(FX1_DMA_CH_INTERRUPT_STATUS));

@@ -27,6 +27,7 @@
 #include <icsl_eth/eth_phy_tlm.h>
 #include "eth_line_peer.h"
 #include "eth_wb_delay.h"
+#include "isp_stream_bridge.h"
 #include <riscv_vp_plusplus_wrapper.h>
 #include <uart.h>
 #include <uart_host_bridge.h>
@@ -226,6 +227,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
 #ifdef FX1_SOC_HAS_CAMERA
     std::unique_ptr<camera> cam;  // --camera only
 #endif
+    std::unique_ptr<IspStreamBridge> isp_stream;  // --isp-stream-spool only
 
     sc_core::sc_buffer<unsigned char> uart_tx{"uart_tx"};
     // PLIC source lines, index = source ID - 1.
@@ -328,6 +330,17 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         eth_phy.set_link(eth_peer.mode() != EthLinePeer::Mode::none);
         eth.rst_n(eth_rst_n);
         eth.rmii_rst_n(eth_rmii_rst_n);
+        // VP-only doorbell of the ISP stream (sim-control offset 8): present in every
+        // run, ATTACHED only with the host bridge (which also enables it).
+        sim.enable_doorbell(false);
+        if (!options.isp_stream_spool.empty())
+            isp_stream = std::make_unique<IspStreamBridge>(
+                "isp_stream_bridge", ddr3, sim,
+                IspStreamBridge::Options{options.isp_stream_spool, options.isp_stream_max_bytes,
+                                         options.isp_stream_hold_us,
+                                         options.isp_stream_foreign_ack
+                                             ? IspStreamBridge::Options::Fault::foreign_ack
+                                             : IspStreamBridge::Options::Fault::none});
         if (options.camera) {
 #ifdef FX1_SOC_HAS_CAMERA
             // CSR on PERIBUS_1 (local offsets), DMA as MIPI_DMA, csi2_irq on
@@ -601,6 +614,21 @@ std::string fx1_soc_top::eth_report() const
         << ", PHY dropped " << impl_->eth_phy.dropped() << ", CSR accesses refused " << impl_->eth_csr_guard.rejected();
     if (impl_->options.eth_wb_delay_us) out << ", DES0 write-backs held " << impl_->eth_wb_delay.held();
     return out.str();
+}
+
+bool fx1_soc_top::isp_stream_enabled() const noexcept { return impl_->isp_stream != nullptr; }
+void fx1_soc_top::isp_stream_finish()
+{
+    if (impl_->isp_stream) impl_->isp_stream->finish();
+}
+bool fx1_soc_top::isp_stream_ok() const { return !impl_->isp_stream || impl_->isp_stream->ok(); }
+std::string fx1_soc_top::isp_stream_report() const
+{
+    return impl_->isp_stream ? impl_->isp_stream->report() : std::string();
+}
+std::vector<std::string> fx1_soc_top::isp_stream_errors() const
+{
+    return impl_->isp_stream ? impl_->isp_stream->errors() : std::vector<std::string>();
 }
 
 std::string fx1_soc_top::camera_banner() const
