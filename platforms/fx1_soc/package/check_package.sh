@@ -61,6 +61,7 @@ required=(
     "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/isp_auto.py" "${test}/cli_smoke.txt" "${test}/isp_run.txt"
     "${test}/csrw_to_bin.sh" "${test}/demosaic_select.py" "${test}/demosaic_validate.py" "${test}/csrw_codec.py"
     "${test}/isp_stream.py" "${test}/isp_stream_prep.py" "${doc}/ISP_STREAM_CONTRACT.md"
+    "${test}/isp_stream/sequence.json" "${test}/isp_stream/SEQUENCE.txt" "${test}/isp_stream/expected_frames.txt" "${test}/isp_stream/profile.sha256"
 )
 for s in "${test}"/isp/*/; do
     for f in SAMPLE.txt job.env job.bin input.isp16 expected_nv12.sha256 expected_demosaic.sha256; do

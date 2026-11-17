@@ -76,7 +76,7 @@ DESC_FIELDS = ("magic version size flags session_lo session_hi width height baye
                "profile_count profile_id out_stride frame_budget_us").split() + ["reserved%d" % i for i in range(8)]
 STATUS_FIELDS = ("magic version state stop_reason error detail session_lo session_hi submitted_lo submitted_hi "
                  "completed_lo completed_hi cancelled failed out_width out_height out_stride colorimetry dma_err "
-                 "idma_frames odma_frames publish_seq elapsed_ticks").split() + ["reserved%d" % i for i in range(9)]
+                 "idma_frames odma_frames publish_seq elapsed_ticks isp_drain").split() + ["reserved%d" % i for i in range(8)]
 CONTROL_FIELDS = ("magic version request reason session_lo session_hi max_bytes_lo max_bytes_hi".split()
                   + ["reserved%d" % i for i in range(8)])
 RECORD_FIELDS = ("magic state seq ack_seq session_lo session_hi ordinal_lo ordinal_hi source_index repeat_index "

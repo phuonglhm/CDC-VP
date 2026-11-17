@@ -72,6 +72,12 @@ struct fx1_soc_options {
     std::uint64_t isp_stream_max_bytes = 0;
     unsigned isp_stream_hold_us = 0;  // --isp-stream-hold-us (fault injection)
     bool isp_stream_foreign_ack = false;  // --isp-stream-fault foreign-ack (fault injection)
+    // Fault injection (--isp-dma-fault KIND:N, isp_dma_fault.h): the N-th ISP IDMA read
+    // (kind 1 idma-error, 3 idma-stall) or ODMA write (kind 2 odma-error) is answered by
+    // the VP. 0: off, and the ISP's DMA sockets are bound to the fabric directly.
+    unsigned isp_dma_fault_kind = 0;
+    std::uint64_t isp_dma_fault_nth = 0;
+    std::uint64_t isp_dma_fault_hold_us = 1000000;  // idma-stall:N:US
 };
 
 // FX1 SoC for FW/SW bring-up: two VP++ RV32IMAFC harts, FX1 bus, BootROM,
@@ -122,6 +128,8 @@ public:
     void isp_stream_finish();
     bool isp_stream_ok() const;
     std::string isp_stream_report() const;
+    // --isp-dma-fault: what it saw and whether it fired; empty when off.
+    std::string isp_dma_fault_report() const;
     std::vector<std::string> isp_stream_errors() const;
 
 private:

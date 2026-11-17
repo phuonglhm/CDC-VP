@@ -94,6 +94,7 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp outdoor1   # second sample (interna
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp "/path/to/my_frame.raw"   # your own frame (see "Your own RAW frame")
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp d65 --dump-demosaic        # also the image after Demosaic (VP debug)
 # 3b. A RAW sequence through one ISP session, as a video (needs the system ffmpeg, see below)
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream-sample --out /path/to/sample_run   # shipped sequence, checked
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream --raw a.raw b.raw --profile my.csrw --out /path/to/run
 
 # 4. Ethernet: scripted CLI session, and the bare-metal example on each line peer
@@ -515,6 +516,28 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream \
 ./run_vp.sh isp-stream --help            # every option
 ```
 
+**The shipped sequence** (`isp_stream/`, see `isp_stream/SEQUENCE.txt`): d65 ->
+outdoor1 -> d65 (d65 -> d65 when the internal outdoor1 is not in the package),
+built from the samples' own ISP containers (`isp/<sample>/input.isp16`; no other
+RAW is shipped), repeat 2, the shared profile:
+
+```bash
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream-sample --out /path/to/sample_run
+#   SEQUENCE PASS: 6 frame(s), every NV12 = isp_stream/expected_frames.txt (the stand-alone ISP model)
+# The tuning flow: edit the shared profile (in place, or a copy given with --profile), run again
+#   SEQUENCE NOT COMPARED: the session's profile ... is not the shipped one: the video is made and verified
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream-sample --out /path/to/tuned_run
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream-sample --profile my.csrw --out /path/to/tuned_run2
+```
+
+Every frame is compared with `isp_stream/expected_frames.txt` (the stand-alone
+ISP model on the same session; each source's second frame is also that sample's
+golden) only when the session's profile is the shipped one. That is decided by
+its SHA-256 against `isp_stream/profile.sha256`, recorded at packaging, in
+profile mode. An edited profile, in place or a copy, is not compared: its video
+is made and verified as usual. outdoor1 is **internal use only**, as in
+`isp/outdoor1/SAMPLE.txt`.
+
 - **`--out DIR`** must be new or empty. Nothing is overwritten.
 - **Defaults:** `--queue 2` (frames in flight), `--fps 30` (the playback rate only: N frames last N/fps seconds, however long the VP took), `--crf 10` (H.264 near lossless, 8-bit 4:2:0; 1..51, since 0, lossless, is not possible with the High profile and is refused before the boot), `--min-psnr 40` (the verify floor, checked on each of Y, U and V). If verify fails on PSNR after a higher `--crf`, re-encode the kept spool with a lower CRF and the same floor (`run_vp.sh isp-stream-encode --out DIR --crf 10`). Lower `--min-psnr` only to accept more loss on purpose.
 - **Colour:** the video's range and matrix (full/limited, BT.601/BT.709) are the ISP output's, declared in the MP4. Use a player that honours them (mpv, VLC, ffplay).
@@ -526,6 +549,13 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream \
   - twice: a hard stop. The frames are kept, no video.
 - **`DIR/summary.txt`** says what happened. The exit status is `0` for a complete run; see the contract for the others: 3 user stop, 4 budget reached, 5 preflight, 7 firmware error, 9 encoder failed, 10 video rejected, and more.
 - **After an encoder problem:** `run_vp.sh isp-stream-encode --out DIR` encodes the kept frames again, without the VP.
+- **A failed run (debug only):** a run that ended in error (firmware or ISP error, capture error, hard stop, ...) makes no video. `run_vp.sh isp-stream-encode --out DIR --debug-prefix` encodes the longest prefix of whole, checked frames into `DIR/debug_prefix.mp4`, verified like a video. The spool is not changed, and the run's status and exit stay as they were (`summary.json` records the debug video under `debug_prefix`). It is not the run's result and not for acceptance. Without a valid prefix it is refused (exit 6), as it is for a run whose capture succeeded (exit 2: use `isp-stream-encode` without the option).
+- **Limits and cost** (measured on the development host, AlmaLinux 9, one core per run):
+  - **Dataset:** the sources are preloaded into a 254 MiB pool, about 32 frames of 2688x1520. Longer sequences repeat or loop over them.
+  - **Disk:** the spool holds every output frame's NV12 until the video is verified: 3.1 MB per 1920x1080 frame. `--max-spool-mib` bounds it.
+  - **Speed:** about 3.6 s of host time per 2688x1520 frame (56 frames: 201 s), and 22 s for the shipped 6-frame sequence. This is VP time, not the SoC's frame rate; `--fps` only sets the playback rate.
+  - **Video check margin:** at CRF 10, the noisiest internal scenes (night, low light) gave a lowest Y PSNR of 42.0 dB against the 40 dB floor. CRF 8 gives 44.1 dB with a 18% larger file; CRF 12 gives 40.3 dB.
+- **No FFmpeg in a container image:** `almalinux:9` has none. Without it, `isp-stream` is refused before the boot (exit 5) and the install steps are printed. Those four steps (EPEL, CRB, RPM Fusion, `ffmpeg`) were checked as root in a clean `almalinux:9` container. They need the network: behind a proxy, pass it in (`docker run -e http_proxy -e https_proxy -e no_proxy ...`).
 - **The full contract** (session, protocol, video and every exit status): `vp/doc/VP_FX1_V3.0/ISP_STREAM_CONTRACT.md`.
 
 ## Integrity and provenance

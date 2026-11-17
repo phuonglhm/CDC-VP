@@ -408,7 +408,12 @@ void IspStreamBridge::finish()
           << ", \"out_stride\": " << s.out_stride << ", \"colorimetry\": " << s.colorimetry
           << ", \"dma_err\": " << s.dma_err << ", \"idma_frames\": " << s.idma_frames
           << ", \"odma_frames\": " << s.odma_frames << ", \"publish_seq\": " << s.publish_seq
-          << ", \"elapsed_ticks\": " << s.elapsed_ticks << "}";
+          << ", \"elapsed_ticks\": " << s.elapsed_ticks << ", \"isp_drain\": "
+          << json_string(s.isp_drain == FX1_ISP_STREAM_DRAIN_NONE      ? "NONE"
+                         : s.isp_drain == FX1_ISP_STREAM_DRAIN_PENDING ? "PENDING"
+                         : s.isp_drain == FX1_ISP_STREAM_DRAIN_DONE    ? "DONE"
+                                                                       : "?")
+          << "}";
     } else {
         j << "null";
     }

@@ -35,6 +35,23 @@ last one. Cases (stdlib only, synthetic fixtures unless --real):
   stale_record    a PUBLISHED record of another session preloaded: never taken
   spool_failure   the spool cannot grow (RLIMIT_FSIZE): never ACKed, ERROR HOST
   exclusive       `isp selftest` while the stream owns the ISP: refused
+  copy_error      an uncorrectable DDR error (--ddr3-fault ue) in the last SYS_DMA segment of
+                  source 1: frame 2's copy fails after the earlier segments landed; the
+                  session ends ERROR COPY, the partly copied input is never queued
+                  (submitted 2), the frames before stay published and equal the model,
+                  failed = submitted - completed, and the ISP counters are reported
+  isp_dma_fault   fx1_soc --isp-dma-fault (VP-only, opt-in): armed past the run it changes
+                  nothing (every frame = the model); the IDMA read / ODMA write of frame 2
+                  answered with a bus error: ERROR ISP (DMA_ERR.AXI_RD / AXI_WR), the
+                  frame never published, frames 0..1 kept = the model, failed = submitted -
+                  completed; an IDMA read of frame 2 held past the frame budget: ERROR
+                  TIMEOUT (detail = completed), no fatal DMA_ERR, its stop drains past the
+                  budget: the terminal state is published with the ISP held (isp_drain
+                  PENDING), released once the read returns (DONE). After each, `isp stream
+                  idle` then `isp run` configures the ISP from scratch: its NV12 equals the
+                  model frame (the reuse oracle). A read held 5 s (past the run): the CLI
+                  runs (status, `isp selftest` and a new start refused while the ISP is
+                  held), `poweroff` ends the run (not the timeout)
   real            (--real) D65 -> A -> D65 x 2 at 2688x1520 with the shared profile;
                   D65's second frame equals the shipped golden
 Exit 0 when every case passes.
@@ -496,6 +513,193 @@ def case_exclusive(c):
           "exclusive: `isp selftest` and a second start refused while the stream runs; the stream completes")
 
 
+def case_copy_error(c):
+    man, prof = fixture(c, "abc", "rggb_raw12")
+    s = prepare(c, "copy_error", man, prof, args=["--repeat", "2", "--queue", "2"])
+    info = json.load(open(os.path.join(s, "session.json")))
+    src1 = int(info["sources"][1]["address"], 16)
+    size = 64 * 48 * 2                                     # one source container (RAW16)
+    ue = src1 + size - 64                                  # in the last 1008-byte SYS_DMA segment
+    check(size > 1008, "copy_error: the source spans several SYS_DMA segments (%d B)" % size)
+    rc, log, sp = run(c, "copy_error", s, "isp stream start\nisp stream wait\npoweroff\n",
+                      ["--ddr3-fault", "0:ue:0x%08X" % ue])
+    st = status(sp)
+    fw = st.get("firmware") or {}
+    frames, ok = spool_frames(sp)
+    check(rc == 1 and "ddr3 fault at" in log and "UE 1" in log and fw.get("state") == "ERROR"
+          and fw.get("error") == "COPY" and fw.get("detail", 0) != 0 and fw.get("submitted") == 2
+          and fw.get("completed") == len(frames) == st.get("captured") and 1 <= len(frames) <= 2
+          and fw.get("failed") == fw.get("submitted") - fw.get("completed") and fw.get("cancelled") == 0
+          and ok and not st.get("errors") and all(f["source_index"] == 0 for f in frames),
+          "copy_error: UE in source 1 -> ERROR COPY (status 0x%X), the partial copy never queued (submitted %s of 6), "
+          "%d published frame(s) of source 0 kept, failed %s (rc %s)"
+          % (fw.get("detail", 0), fw.get("submitted"), len(frames), fw.get("failed"), rc))
+    check(fw.get("idma_frames") == fw.get("odma_frames") == fw.get("completed"),
+          "copy_error: the ISP counters of an ERROR session are reported (in %s, out %s, completed %s)"
+          % (fw.get("idma_frames"), fw.get("odma_frames"), fw.get("completed")))
+    compare("copy_error", reference(c, s, len(frames)), frames)
+
+
+def fault_count(log, what):
+    """N of `[fx1_soc] isp dma fault (injection): ..., N IDMA read(s) seen` (what: IDMA read / ODMA write)."""
+    for line in log.splitlines():
+        if line.startswith("[fx1_soc] isp dma fault (injection):") and (what + "(s) seen") in line:
+            return int(line.split(", ")[1].split()[0])
+    return None
+
+
+def budget_copy(c, s, name, budget_us):
+    """A copy of session s whose frame budget is budget_us (desc.bin and loads.txt rewritten)."""
+    sess = c.path(name)
+    if os.path.isdir(sess):
+        shutil.rmtree(sess)
+    shutil.copytree(s, sess)
+    d = bytearray(open(os.path.join(sess, "desc.bin"), "rb").read())
+    struct.pack_into("<I", d, 4 * prep.DESC_FIELDS.index("frame_budget_us"), budget_us)
+    open(os.path.join(sess, "desc.bin"), "wb").write(bytes(d))
+    with open(os.path.join(sess, "loads.txt")) as f:
+        lines = f.read().replace(s + os.sep, sess + os.sep)
+    open(os.path.join(sess, "loads.txt"), "w").write(lines)
+    return sess
+
+
+def reuse_job(c, s, name, frames=2):
+    """An `isp run` job after the session (the oracle of the ISP's reuse): the whole configuration again
+    (the session's profile, geometry and mode), its input source 0 of the pool, its output output slot 0.
+    Returns (fx1_soc --load/--dump arguments, result.bin, nv12 parts)."""
+    info = json.load(open(os.path.join(s, "session.json")))
+    lay, inp = info["layout"], info["input"]
+    aw, ah = inp["active_width"], inp["active_height"]
+    y = prep.FW_YUV_BUF_BASE
+    uv = y + lay["uv_offset"]
+    job = struct.pack("<24I", 0x4A315846, 2, inp["width"], inp["height"], prep.BAYER[inp["bayer"]],
+                      int(info["sources"][0]["address"], 16), lay["in_stride"], y, uv, lay["out_stride"],
+                      info["profile"]["writes"], frames, 1 if info["mode"] == "legacy" else 0, 1, 1,
+                      *([0] * 9))
+    jp = c.path(name + ".job.bin")
+    open(jp, "wb").write(job)
+    res, yp, uvp = c.path(name + ".result.bin"), c.path(name + ".y.bin"), c.path(name + ".uv.bin")
+    for f in (res, yp, uvp):
+        if os.path.exists(f):
+            os.remove(f)
+    args = ["--load", "0x%08X:%s" % (prep.FW_SHARED_BASE, jp),
+            "--load", "0x%08X:%s" % (prep.FW_SHARED_BASE + 0x1000, os.path.join(s, "profile.bin")),
+            "--dump", "0x%08X:96:%s" % (prep.FW_SHARED_BASE + 0x100, res),
+            "--dump", "0x%08X:%d:%s" % (y, lay["out_stride"] * ah, yp),
+            "--dump", "0x%08X:%d:%s" % (uv, lay["out_stride"] * ah // 2, uvp)]
+    return args, (res, yp, uvp, lay["out_stride"], aw, ah)
+
+
+def reuse_ok(what, parts, want_sha, frames=2):
+    """The `isp run` after the session completed and its NV12 equals the model frame."""
+    import hashlib
+    res, yp, uvp, stride, w, h = parts
+    if not all(os.path.exists(f) for f in (res, yp, uvp)):
+        return check(False, "%s: the `isp run` dumps exist" % what)
+    r = struct.unpack("<24I", open(res, "rb").read())
+    y, uv = open(yp, "rb").read(), open(uvp, "rb").read()
+    nv12 = b"".join(y[k * stride:k * stride + w] for k in range(h)) + \
+        b"".join(uv[k * stride:k * stride + w] for k in range(h // 2))
+    got = hashlib.sha256(nv12).hexdigest()
+    return check(r[0] == 0x52315846 and r[1] == 0 and r[5] == frames and got == want_sha,
+                 "%s: the ISP reused after the session: `isp run` (the whole configuration again) completed %d "
+                 "frame(s) (status %d), its NV12 = the model frame (%s)" % (what, r[5], r[1], got[:12]))
+
+
+ISP_PRIORITY = 0x0C000000 + 4 * 3   # PLIC priority of source 3 (FX1_IRQ_ISP): the stream masks with 0
+
+
+def priorities(log):
+    """The values `md ISP_PRIORITY 1` printed, in order."""
+    import re
+    return [int(v, 16) for v in re.findall(r"0x%08x: (0x[0-9a-f]+)" % ISP_PRIORITY, log, re.I)]
+
+
+def case_isp_dma_fault(c):
+    man, prof = fixture(c, "abc", "rggb_raw12")
+    s = prepare(c, "dma_fault", man, prof, args=["--repeat", "2", "--queue", "2"])
+    ref = reference(c, s)
+    # Armed beyond the run: the transactions of the 6 frames are counted, nothing changes.
+    per = {}
+    for kind, what in (("idma-error", "IDMA read"), ("odma-error", "ODMA write")):
+        frames, st, log, _ = nominal(c, "dma_fault_idle_" + kind, s, extra=["--isp-dma-fault", "%s:4000000000" % kind])
+        n = fault_count(log, what)
+        per[kind] = n // 6 if n and n % 6 == 0 else None
+        check(per[kind] and "not reached" in log and [f["sha256"] for f in frames] == [f["sha256"] for f in ref["frames"]]
+              and (st.get("firmware") or {}).get("isp_drain") == "NONE",
+              "isp_dma_fault: %s armed past the run: %s %s(s) (%s per frame), every frame = the model (no change), "
+              "the ISP stopped before the end (isp_drain NONE)" % (kind, n, what, per[kind]))
+    if not all(per.values()):
+        return
+    # After the session, `isp stream idle` waits for the ISP, then `isp run` reconfigures it from scratch:
+    # frame 1 of the model (source 0, its second frame: the same RAW twice) is the oracle of its reuse.
+    # `md` reads the ISP source's PLIC priority before the session and once the ISP is free: restored (the
+    # 64x48 `isp run` itself completes without its interrupt, so it cannot show a missing unmask).
+    md = "md 0x%08X 1\n" % ISP_PRIORITY
+    script = md + "isp stream start\nisp stream wait\nisp stream status\nisp stream idle 5000\n" + md + "isp run\npoweroff\n"
+    # Frame 2 (0-based), a few transactions in: frames 0 and 1 are whole before it. The stall holds one
+    # IDMA read 200 ms against a 20 ms frame budget: TIMEOUT, then its stop (the soft reset's recovery)
+    # cannot retire within the next budget: the terminal state is published with the ISP held, the
+    # stop finishes when the read returns (isp_drain DONE). (The default 2 s budget would take minutes.)
+    cases = (("axi_rd", "idma-error:%d" % (2 * per["idma-error"] + 5), "ISP", 0x08, None, "NONE"),
+             ("axi_wr", "odma-error:%d" % (2 * per["odma-error"] + 10), "ISP", 0x10, None, "NONE"),
+             ("timeout", "idma-stall:%d:200000" % (2 * per["idma-error"] + 5), "TIMEOUT", None, 20000, "DONE"))
+    for name, spec, error, bit, budget, drain in cases:
+        sess = budget_copy(c, s, "dma_fault_" + name, budget) if budget else s
+        job, parts = reuse_job(c, sess, "dma_fault_" + name)
+        rc, log, sp = run(c, "dma_fault_" + name, sess, script, ["--isp-dma-fault", spec] + job, wall=120)
+        st = status(sp) if os.path.exists(os.path.join(sp, "status.json")) else {}
+        fw = st.get("firmware") or {}
+        frames, ok = spool_frames(sp)
+        fatal = fw.get("dma_err", 0) & 0x19   # ALIGN | AXI_RD | AXI_WR
+        detail_ok = (fw.get("detail") == bit and fatal == bit) if bit else (fw.get("detail") == fw.get("completed") and not fatal)
+        check(rc == 1 and ("fired at #%s" % spec.split(":")[1]) in log and fw.get("state") == "ERROR"
+              and fw.get("error") == error and detail_ok and len(frames) == 2 == fw.get("completed") == st.get("captured")
+              and fw.get("submitted", 0) >= 3 and fw.get("failed") == fw.get("submitted") - fw.get("completed")
+              and ok and not st.get("errors") and fw.get("odma_frames") == 2 and fw.get("isp_drain") == drain,
+              "isp_dma_fault %s (%s): ERROR %s detail 0x%X, DMA_ERR 0x%X; frame 2 never published, frames 0..1 kept; "
+              "submitted %s, failed %s; ISP in %s out %s; isp_drain %s (rc %s)"
+              % (name, spec, fw.get("error"), fw.get("detail", 0), fw.get("dma_err", 0), fw.get("submitted"),
+                 fw.get("failed"), fw.get("idma_frames"), fw.get("odma_frames"), fw.get("isp_drain"), rc))
+        compare("isp_dma_fault " + name, ref, frames, 2)
+        after = log.split("isp stream wait")[-1]
+        if budget:
+            check("ISP stop draining" in after.split("isp stream idle")[0] and "(held, completed at" in log
+                  and "ISP stopped after the end (released)" in after and "isp stream idle: PASS" in log,
+                  "isp_dma_fault %s: the session ended while its stop drained (status: ISP held), the held read "
+                  "returned, the stop finished and released the ISP (`isp stream idle` passes)" % name)
+        pr = priorities(log)
+        check(len(pr) == 2 and pr[0] > 0 and pr[1] == pr[0],
+              "isp_dma_fault %s: the ISP interrupt is unmasked once the ISP is free (PLIC priority %s)" % (name, pr))
+        reuse_ok("isp_dma_fault " + name, parts, ref["frames"][1]["sha256"])
+
+    # A held read that outlasts the run (5 s against a 20 ms budget): the CLI keeps running, the ISP
+    # stays held (never handed to another command) and `poweroff` ends the run, not the timeout.
+    spec = "idma-stall:%d:5000000" % (2 * per["idma-error"] + 5)
+    sess = budget_copy(c, s, "dma_fault_long", 20000)
+    rc, log, sp = run(c, "dma_fault_long", sess,
+                      "isp stream start\nisp stream wait\nisp stream status\nisp selftest\nisp stream start\n"
+                      "isp stream idle 100\nmd 0x%08X 1\npoweroff\n" % ISP_PRIORITY,
+                      ["--isp-dma-fault", spec], timeout_ms=3000, wall=180)
+    st = status(sp) if os.path.exists(os.path.join(sp, "status.json")) else {}
+    fw = st.get("firmware") or {}
+    frames, ok = spool_frames(sp)
+    after = log.split("isp stream wait")[-1]
+    check(rc == 1 and "RESULT TIMEOUT" not in log
+          and fw.get("state") == "ERROR" and fw.get("error") == "TIMEOUT" and fw.get("isp_drain") == "PENDING"
+          and len(frames) == 2 == fw.get("completed") and ok and not st.get("errors")
+          and fw.get("failed") == fw.get("submitted") - fw.get("completed") and "(held, pending" in log,
+          "isp_dma_fault long stall (%s): ERROR TIMEOUT with the read still held at the end (isp_drain %s), "
+          "frames 0..1 kept, failed %s; `poweroff` ended the run (rc %s)" % (spec, fw.get("isp_drain"), fw.get("failed"), rc))
+    compare("isp_dma_fault long stall", ref, frames, 2)
+    check("ISP stop draining" in after and "isp selftest: the ISP is in use" in after
+          and "the last session's ISP stop still drains" in after
+          and "isp stream idle: the ISP stop still drains at the limit" in after and priorities(log) == [0],
+          "isp_dma_fault long stall: the CLI runs while the stop drains: status (ISP held), `isp selftest` and a new "
+          "start refused, `isp stream idle 100` reports the drain at its limit, the ISP source masked (priority %s)"
+          % priorities(log))
+
+
 def case_real(c):
     s_dir = os.path.join(ROOT, "components", "isp_tlm", "input")
     d65, a_ = os.path.join(s_dir, "D65_raw_2688x1520_5376.raw"), os.path.join(s_dir, "A_raw_2688x1520_5376.raw")
@@ -513,7 +717,8 @@ CASES = [("queue", case_queue), ("phases", case_phases), ("legacy", case_legacy)
          ("sigint", case_sigint), ("held_sigint", case_held_sigint), ("foreign_ack", case_foreign_ack),
          ("detached", case_detached),
          ("no_bridge", case_no_bridge), ("bad_desc", case_bad_desc), ("twice", case_twice),
-         ("stale_record", case_stale), ("spool_failure", case_spool_failure), ("exclusive", case_exclusive)]
+         ("stale_record", case_stale), ("spool_failure", case_spool_failure), ("exclusive", case_exclusive),
+         ("copy_error", case_copy_error), ("isp_dma_fault", case_isp_dma_fault)]
 
 
 def main():

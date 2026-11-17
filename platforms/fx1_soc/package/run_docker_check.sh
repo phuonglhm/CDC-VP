@@ -12,6 +12,13 @@
 # sample runs. With --toolchain (a riscv-none-elf install, mounted read-only),
 # the firmware is also rebuilt in the container and must equal the packaged ELF
 # (GNU make comes from the host when the image has none).
+# The RAW sequence -> video flow (run_vp.sh isp-stream-sample): with no FFmpeg in
+# the image it must be refused before the boot (PREFLIGHT_FAILED, exit 5, the
+# install steps printed). FFmpeg is then installed with exactly the steps the
+# launcher printed (EPEL, CRB, RPM Fusion; network: http_proxy / https_proxy /
+# no_proxy of the caller are passed into the container). Then the sample must PASS
+# (every frame = expected_frames.txt, the video verified) and a tuned copy of the
+# profile (CSC_CTRL std=1) must make a BT.709 video.
 # Then the console flows the README documents, in a named container: the VP in
 # `run_vp.sh interactive` and the client through `docker exec` (the console
 # listens on the container's 127.0.0.1 only, so a published port cannot reach
@@ -44,6 +51,8 @@ mounts=(-v "${work}/sdk:/workspace" -w /workspace)
 if [[ -n "${toolchain}" ]]; then
     mounts+=(-v "${toolchain}:/toolchain:ro" -v "$(command -v make):/opt/host/make:ro")
 fi
+# A proxy of the caller's (dnf in the container needs the network for python3 and FFmpeg).
+for v in http_proxy https_proxy no_proxy; do [[ -n "${!v:-}" ]] && mounts+=(-e "${v}"); done
 # The container runs as root (dnf needs it); the files it writes are handed
 # back to the caller before it exits, so the temporary copy can be removed.
 docker run --rm --platform linux/amd64 -e HOST_IDS="$(id -u):$(id -g)" "${mounts[@]}" "${image}" bash -c '
@@ -61,6 +70,38 @@ fi
 for d in ${t}/isp/*/; do
     "${t}/run_vp.sh" isp "$(basename "${d}")" | tail -n 1 || fail=1
 done
+if [[ -d "${t}/isp_stream" ]]; then
+    rc=0
+    command -v ffmpeg > /dev/null && { echo "the image already has ffmpeg: the no-FFmpeg check needs a clean image"; fail=1; }
+    "${t}/run_vp.sh" isp-stream-sample --out /tmp/noff > /tmp/noff.log 2>&1 || rc=$?
+    if [[ ${rc} -eq 5 ]] && grep -q "PREFLIGHT_FAILED" /tmp/noff.log && grep -q "dnf install -y ffmpeg" /tmp/noff.log \
+            && [[ ! -e /tmp/noff ]]; then
+        echo "isp-stream without FFmpeg: PREFLIGHT_FAILED (exit 5) before the boot, install steps printed"
+    else
+        echo "isp-stream without FFmpeg: exit ${rc} (expected 5 before the boot)"; tail -n 8 /tmp/noff.log; fail=1
+    fi
+    # The install steps exactly as the launcher printed them (sudo dropped: root here).
+    steps="$(sed -n "s/^  sudo //p" /tmp/noff.log)"
+    if [[ -n "${steps}" ]] && bash -c "set -e; ${steps}" > /tmp/dnf_ffmpeg.log 2>&1; then
+        echo "FFmpeg installed with the $(grep -c . <<< "${steps}") steps the launcher printed"
+    else
+        tail -n 8 /tmp/dnf_ffmpeg.log; echo "FFmpeg install with the printed steps failed (network or proxy?)"; fail=1
+    fi
+    if command -v ffmpeg > /dev/null; then
+        echo "FFmpeg: $(ffmpeg -hide_banner -version | head -n 1)"
+        "${t}/run_vp.sh" isp-stream-sample --out /tmp/sample > /tmp/sample.log 2>&1 && grep -q "SEQUENCE PASS" /tmp/sample.log \
+            && echo "isp-stream-sample: $(grep -o "SEQUENCE PASS: [0-9]* frame(s)" /tmp/sample.log), $(grep "min PSNR" /tmp/sample/summary.txt)" \
+            || { tail -n 8 /tmp/sample.log; echo "isp-stream-sample FAILED"; fail=1; }
+        cp "${t}/profiles/shared_bggr_2688x1520_full/profile.csrw" /tmp/tuned.csrw
+        echo "CSC_CTRL std=1" >> /tmp/tuned.csrw
+        "${t}/run_vp.sh" isp-stream-sample --out /tmp/tuned --profile /tmp/tuned.csrw > /tmp/tuned.log 2>&1 \
+            && grep -q "colorimetry *full range, BT.709" /tmp/tuned/summary.txt && [[ -s /tmp/tuned/output.mp4 ]] \
+            && echo "isp-stream-sample with a tuned profile (CSC_CTRL std=1): BT.709 video" \
+            || { tail -n 8 /tmp/tuned.log; echo "tuned-profile run FAILED"; fail=1; }
+    else
+        echo "no FFmpeg in the container: the video path is not checked"; fail=1
+    fi
+fi
 if [[ -d /toolchain ]]; then
     want="$(sha256sum sw/bootloader/build/VP_FX1_V3.0/freertos_cli.elf | cut -d" " -f1)"
     command -v make > /dev/null || export PATH="${PATH}:/opt/host"

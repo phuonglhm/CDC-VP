@@ -7,7 +7,7 @@
                 [--fps F] [--crf N] [--keep-nv12] [--max-spool-mib N] [--min-psnr DB]
                 [--width W --height H --source-format F --source-stride S]   (--raw form)
                 [--fx1-soc PATH --elf PATH] [--run-raw PATH] [--drain-timeout-s S]
-  isp_stream.py encode --out DIR [--fps F] [--crf N] [--min-psnr DB]
+  isp_stream.py encode --out DIR [--fps F] [--crf N] [--min-psnr DB] [--debug-prefix]
 
 Contract: platforms/fx1_soc/docs/ISP_STREAM_CONTRACT.md (section 6 and "Launcher").
 
@@ -36,6 +36,14 @@ or empty):
 
 encode re-runs steps 5-6 on DIR's kept spool (after an encode or verify failure, or with
 another --fps/--crf), without the VP. It refuses a DIR that already has output.mp4.
+
+encode --debug-prefix (opt-in, a failed run: FW_ERROR, CAPTURE_ERROR, HARD_STOP, SIM_ERROR,
+REFERENCE_MISMATCH, NO_FRAMES): the longest prefix of whole, consecutive frames that pass
+every spool check (read only: the spool stays as the run left it) is encoded and verified
+like a video, into DIR/debug_prefix.mp4 (its files in DIR/debug_prefix/). The run's status,
+message and exit in summary.json are unchanged; summary.json "debug_prefix" records the
+result. It is never output.mp4, never COMPLETE, not for acceptance. Exit: 0 the debug video
+verified, 6 no valid prefix, 2 refused (a run whose capture succeeded: use encode), 9/10.
 
 Exit status (summary.json "status"):
   0  COMPLETE          the whole schedule, video verified
@@ -75,6 +83,8 @@ EXIT = {"COMPLETE": 0, "INPUT_ERROR": 2, "USER_STOPPED": 3, "LIMIT_REACHED": 4, 
         "NO_FRAMES": 6, "FW_ERROR": 7, "CAPTURE_ERROR": 8, "ENCODE_FAILED": 9, "VERIFY_FAILED": 10,
         "REFERENCE_MISMATCH": 11, "HARD_STOP": 12, "SIM_ERROR": 13}
 VIDEO_OK = ("COMPLETE", "USER_STOPPED", "LIMIT_REACHED")   # outcomes of the capture that get a video
+# Failed runs whose spool may hold a checked prefix for `encode --debug-prefix` (never a result).
+DEBUG_OK = ("FW_ERROR", "CAPTURE_ERROR", "HARD_STOP", "SIM_ERROR", "REFERENCE_MISMATCH", "NO_FRAMES")
 SCRIPT = "isp stream start\nisp stream wait\npoweroff\n"
 RX_PACING = ["--uart0-rx-delay-us", "60000", "--uart0-rx-byte-us", "87"]
 INSTALL_HINT = """FFmpeg with libx264 is not shipped (GPLv3 + x264). On AlmaLinux 9:
@@ -176,10 +186,55 @@ def disk_budget(out, frames, frame_bytes, max_spool, free=None):
 
 
 # ---- spool ------------------------------------------------------------------------------------
-def read_spool(spool, fix=True):
+RECORD_INTS = ("ordinal", "offset", "bytes", "width", "height", "colorimetry", "source_index", "repeat_index")
+
+
+def frame_problem(fr, n, off, first, sources, repeat):
+    """None when the frames.jsonl record fr is frame n of this session at NV12 offset off
+    (first: frame 0's record, or None for frame 0), else what is wrong. Every field used
+    downstream is checked: types, the geometry, the NV12 size and the identity, which must be
+    the schedule's ((n // repeat) mod sources, n mod repeat)."""
+    if not isinstance(fr, dict):
+        return "not a frame record"
+    for k in RECORD_INTS:
+        if not isinstance(fr.get(k), int) or isinstance(fr.get(k), bool):
+            return "%s missing or not an integer" % k
+    sha = fr.get("sha256")
+    if not isinstance(sha, str) or len(sha) != 64 or any(ch not in "0123456789abcdef" for ch in sha):
+        return "sha256 missing or not 64 hex digits"
+    if fr["ordinal"] != n or fr["offset"] != off:
+        return "ordinal %s offset %s (expected %d, %d)" % (fr["ordinal"], fr["offset"], n, off)
+    if fr["width"] < 2 or fr["height"] < 2:
+        return "geometry %sx%s" % (fr["width"], fr["height"])
+    if first is not None and (fr["width"], fr["height"], fr["colorimetry"]) != (first["width"], first["height"],
+                                                                              first["colorimetry"]):
+        return "geometry/colorimetry differs from frame 0"
+    if fr["bytes"] != fr["width"] * fr["height"] * 3 // 2:
+        return "%d bytes for %dx%d NV12" % (fr["bytes"], fr["width"], fr["height"])
+    want = ((n // repeat) % sources, n % repeat)
+    if (fr["source_index"], fr["repeat_index"]) != want:
+        return "identity source %s repeat %s, the session's schedule (%d source(s), repeat %d) gives %d, %d" % (
+            fr["source_index"], fr["repeat_index"], sources, repeat, want[0], want[1])
+    return None
+
+
+def sha_problem(f, fr):
+    """None when the NV12 bytes at f's position hash to fr's SHA-256, else what is wrong."""
+    h, left = hashlib.sha256(), fr["bytes"]
+    while left:
+        chunk = f.read(min(left, 1 << 22))
+        if not chunk:
+            return "NV12 short (torn tail)"
+        h.update(chunk)
+        left -= len(chunk)
+    return None if h.hexdigest() == fr["sha256"] else "NV12 SHA-256 differs from frames.jsonl"
+
+
+def read_spool(spool, sources, repeat, fix=True):
     """frames (list of frames.jsonl records), notes. Cuts a torn tail (an incomplete last line,
-    or NV12 bytes past the last whole frame) when fix; checks every frame's SHA-256, the
-    ordinals 0..n-1, offsets, one geometry and one colorimetry. Raises Fail(CAPTURE_ERROR)."""
+    or NV12 bytes past the last whole frame) when fix; checks every record (frame_problem:
+    fields, ordinals 0..n-1, offsets, one geometry and colorimetry, the schedule's identity)
+    and every frame's SHA-256. Raises Fail(CAPTURE_ERROR)."""
     jl, nv = os.path.join(spool, "frames.jsonl"), os.path.join(spool, "frames.nv12")
     if not os.path.isfile(jl) or not os.path.isfile(nv):
         raise Fail("CAPTURE_ERROR", "%s: no frames.jsonl / frames.nv12" % spool)
@@ -201,39 +256,56 @@ def read_spool(spool, fix=True):
         with open(jl, "r+b") as f:
             f.truncate(good)
         notes.append("frames.jsonl: an incomplete last line (%d bytes) cut" % (len(raw) - good))
-    end = sum(f["bytes"] for f in frames)
-    size = os.path.getsize(nv)
-    if size < end:
-        raise Fail("CAPTURE_ERROR", "%s: %d bytes, frames.jsonl accounts for %d (frames missing)" % (nv, size, end))
-    if size > end:
-        if not fix:
-            raise Fail("CAPTURE_ERROR", "%s: %d bytes past the last whole frame" % (nv, size - end))
-        with open(nv, "r+b") as f:
-            f.truncate(end)
-        notes.append("frames.nv12: %d bytes past the last whole frame cut (torn tail)" % (size - end))
     off = 0
+    for n, fr in enumerate(frames):
+        bad = frame_problem(fr, n, off, frames[0] if n else None, sources, repeat)
+        if bad:
+            raise Fail("CAPTURE_ERROR", "frame %d: %s" % (n, bad))
+        off += fr["bytes"]
+    size = os.path.getsize(nv)
+    if size < off:
+        raise Fail("CAPTURE_ERROR", "%s: %d bytes, frames.jsonl accounts for %d (frames missing)" % (nv, size, off))
+    if size > off:
+        if not fix:
+            raise Fail("CAPTURE_ERROR", "%s: %d bytes past the last whole frame" % (nv, size - off))
+        with open(nv, "r+b") as f:
+            f.truncate(off)
+        notes.append("frames.nv12: %d bytes past the last whole frame cut (torn tail)" % (size - off))
     with open(nv, "rb") as f:
         for n, fr in enumerate(frames):
-            if fr["ordinal"] != n or fr["offset"] != off:
-                raise Fail("CAPTURE_ERROR", "frame %d: ordinal %s offset %s (expected %d, %d)"
-                           % (n, fr["ordinal"], fr["offset"], n, off))
-            if (fr["width"], fr["height"], fr["colorimetry"]) != (frames[0]["width"], frames[0]["height"],
-                                                                  frames[0]["colorimetry"]):
-                raise Fail("CAPTURE_ERROR", "frame %d: geometry/colorimetry differs from frame 0" % n)
-            if fr["bytes"] != fr["width"] * fr["height"] * 3 // 2:
-                raise Fail("CAPTURE_ERROR", "frame %d: %d bytes for %dx%d NV12" % (n, fr["bytes"], fr["width"], fr["height"]))
-            h = hashlib.sha256()
-            left = fr["bytes"]
-            while left:
-                chunk = f.read(min(left, 1 << 22))
-                if not chunk:
-                    raise Fail("CAPTURE_ERROR", "frame %d: NV12 short" % n)
-                h.update(chunk)
-                left -= len(chunk)
-            if h.hexdigest() != fr["sha256"]:
-                raise Fail("CAPTURE_ERROR", "frame %d: NV12 SHA-256 differs from frames.jsonl" % n)
-            off += fr["bytes"]
+            bad = sha_problem(f, fr)
+            if bad:
+                raise Fail("CAPTURE_ERROR", "frame %d: %s" % (n, bad))
     return frames, notes
+
+
+def read_prefix(spool, sources, repeat):
+    """For `encode --debug-prefix`: the longest prefix of whole, consecutive frames that pass
+    every check of read_spool (frame_problem, then the NV12 SHA-256). Read only: the spool
+    stays as the failed run left it. Returns (frames, records in frames.jsonl, the reason the
+    prefix ends or None)."""
+    jl, nv = os.path.join(spool, "frames.jsonl"), os.path.join(spool, "frames.nv12")
+    if not os.path.isfile(jl) or not os.path.isfile(nv):
+        return [], 0, "%s: no frames.jsonl / frames.nv12" % spool
+    lines = open(jl, "rb").read().splitlines(keepends=True)
+    frames, off = [], 0
+    with open(nv, "rb") as f:
+        for n, line in enumerate(lines):
+            if not line.endswith(b"\n"):
+                return frames, len(lines), "record %d: torn (no end of line)" % n
+            try:
+                fr = json.loads(line)
+            except ValueError:
+                return frames, len(lines), "record %d: not JSON" % n
+            bad = frame_problem(fr, n, off, frames[0] if frames else None, sources, repeat)
+            if not bad:
+                f.seek(off)
+                bad = sha_problem(f, fr)
+            if bad:
+                return frames, len(lines), "frame %d: %s" % (n, bad)
+            frames.append(fr)
+            off += fr["bytes"]
+    return frames, len(lines), None
 
 
 # ---- encode and verify ------------------------------------------------------------------------
@@ -272,18 +344,45 @@ def fps_text(fps):
     return ("%.6f" % fps).rstrip("0").rstrip(".")
 
 
-def encode(ff, spool_nv12, labels, out_mp4, w, h, fps, crf, col, log):
+def encode(ff, spool_nv12, labels, out_mp4, w, h, fps, crf, col, log, frames=None):
+    """frames (--debug-prefix): only the spool's first `frames` NV12 frames, fed on stdin, so
+    the input itself ends there (an output frame limit would also cut the last cues)."""
     rng, space = col
-    cmd = [ff, "-hide_banner", "-nostdin", "-v", "error", "-f", "rawvideo", "-pix_fmt", "nv12", "-color_range", rng,
-           "-colorspace", space, "-s", "%dx%d" % (w, h), "-framerate", fps_text(fps), "-i", spool_nv12,
+    cmd = [ff, "-hide_banner", "-v", "error", "-f", "rawvideo", "-pix_fmt", "nv12", "-color_range", rng,
+           "-colorspace", space, "-s", "%dx%d" % (w, h), "-framerate", fps_text(fps),
+           "-i", spool_nv12 if frames is None else "pipe:0",
            "-i", labels, "-map", "0:v", "-map", "1:s", "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
            "-profile:v", "high", "-pix_fmt", "nv12", "-color_range", rng, "-colorspace", space,
            "-c:s", "mov_text", "-movflags", "+faststart", "-f", "mp4", out_mp4]
+    if frames is None:
+        cmd.insert(2, "-nostdin")
     with open(log, "w") as lf:
-        lf.write(" ".join(cmd) + "\n")
+        lf.write(" ".join(cmd) + ("" if frames is None else "   < the first %d frame(s) of %s" % (frames, spool_nv12))
+                 + "\n")
         lf.flush()
         try:
-            rc = subprocess.call(cmd, stdout=lf, stderr=subprocess.STDOUT)
+            if frames is None:
+                rc = subprocess.call(cmd, stdout=lf, stderr=subprocess.STDOUT)
+            else:
+                p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=lf, stderr=subprocess.STDOUT)
+                left = frames * w * h * 3 // 2
+                try:
+                    with open(spool_nv12, "rb") as f:
+                        while left:
+                            chunk = f.read(min(left, 1 << 22))
+                            if not chunk:
+                                break
+                            p.stdin.write(chunk)
+                            left -= len(chunk)
+                except BrokenPipeError:
+                    pass
+                try:
+                    p.stdin.close()
+                except BrokenPipeError:
+                    pass
+                rc = p.wait()
+                if rc == 0 and left:
+                    rc = "the spool ended %d byte(s) short of the prefix" % left
         except OSError as e:
             rc = "%s" % e
     return cmd, rc
@@ -401,6 +500,11 @@ def write_summary(out, s):
                      ("wall_s", "wall (s)")):
         if s.get(k) is not None:
             lines.append("%-17s %s" % (label, s[k]))
+    d = s.get("debug_prefix")
+    if d:
+        lines.append("debug prefix      %s: %s of %s record(s)%s -> %s (debug only; the run stays %s)"
+                     % (d.get("status"), d.get("frames"), d.get("records"), (", cut at " + d["cut"]) if d.get("cut") else "",
+                        d.get("video", "no video"), s.get("status")))
     for note in s.get("notes", []):
         lines.append("note              %s" % note)
     with open(os.path.join(out, "summary.txt"), "w") as f:
@@ -502,7 +606,9 @@ def classify(rc, st, hard, presses):
         return "SIM_ERROR", "the simulator failed (exit %s%s)" % (rc, ", no status.json" if st is None else "")
     state, reason = fw.get("state"), fw.get("stop_reason")
     if state == "ERROR":
-        return "FW_ERROR", "firmware ERROR %s detail 0x%x" % (fw.get("error"), fw.get("detail", 0))
+        held = "; the ISP stop still drained at the end (the ISP held by the stream)" \
+            if fw.get("isp_drain") == "PENDING" else ""
+        return "FW_ERROR", "firmware ERROR %s detail 0x%x%s" % (fw.get("error"), fw.get("detail", 0), held)
     if state != "STOPPED" or rc not in (0,):
         return "FW_ERROR", "no clean end of the session (simulator exit %s, firmware %s)" % (rc, state or "no status")
     if reason == "DONE":
@@ -526,62 +632,70 @@ def sim_time_ns(log):
     return None
 
 
-def make_video(out, s, ff, fp, fps, crf, min_psnr):
-    """Steps 5-6 on DIR/spool; returns the final status."""
+def make_video(out, s, ff, fp, fps, crf, min_psnr, debug=None):
+    """Steps 5-6 on DIR/spool; returns the final status. debug (the summary's debug_prefix
+    record): the checked prefix of a failed run into DIR/debug_prefix.mp4, its files in
+    DIR/debug_prefix/, the facts in that record; never output.mp4."""
     spool = os.path.join(out, "spool")
     nv12 = os.path.join(spool, "frames.nv12")
     frames = s["_frames"]
     n = len(frames)
     w, h, word = frames[0]["width"], frames[0]["height"], frames[0]["colorimetry"]
     col = colorimetry(word)
-    s.update({"fps": fps, "crf": crf, "min_psnr": min_psnr, "geometry": "%dx%d NV12" % (w, h),
-              "colorimetry": colorimetry_text(word)})
+    rec = s if debug is None else debug
+    work = out if debug is None else os.path.join(out, "debug_prefix")
+    os.makedirs(work, exist_ok=True)
+    if debug is None:
+        labels, tmp, rej = (os.path.join(out, x) for x in ("labels.srt", "output.tmp.mp4", "rejected.mp4"))
+        final, log, again = os.path.join(out, "output.mp4"), os.path.join(out, "encode.log"), ""
+    else:
+        labels, tmp, rej = (os.path.join(work, x) for x in ("labels.srt", "video.tmp.mp4", "rejected.mp4"))
+        final, log, again = os.path.join(out, "debug_prefix.mp4"), os.path.join(work, "encode.log"), " --debug-prefix"
+    rec.update({"fps": fps, "crf": crf, "min_psnr": min_psnr, "geometry": "%dx%d NV12" % (w, h),
+                "colorimetry": colorimetry_text(word)})
     if not col:
         return "ENCODE_FAILED", ("the frames carry no usable colorimetry (0x%08X): no guess is made; spool kept in %s"
                                  % (word, spool))
     if w % 2 or h % 2:
         return "ENCODE_FAILED", "%dx%d: odd geometry for 4:2:0 (never cropped or padded); spool kept" % (w, h)
-    labels = os.path.join(out, "labels.srt")
     write_labels(labels, frames, s["_names"], s["_repeat"], fps)
-    tmp = os.path.join(out, "output.tmp.mp4")
-    for p in (tmp, os.path.join(out, "rejected.mp4")):
+    for p in (tmp, rej):
         if os.path.exists(p):
             os.remove(p)   # our own leftovers of an earlier encode of this DIR (never output.mp4)
-    say("encoding %d frame(s) %dx%d at %s fps, CRF %d, %s" % (n, w, h, fps_text(fps), crf, colorimetry_text(word)))
-    cmd, rc = encode(ff, nv12, labels, tmp, w, h, fps, crf, col, os.path.join(out, "encode.log"))
-    s["encode_command"] = cmd
+    say("encoding %d frame(s) %dx%d at %s fps, CRF %d, %s%s" % (n, w, h, fps_text(fps), crf, colorimetry_text(word),
+                                                              "" if debug is None else " (debug prefix)"))
+    cmd, rc = encode(ff, nv12, labels, tmp, w, h, fps, crf, col, log, None if debug is None else n)
+    rec["encode_command"] = cmd
     if rc != 0 or not os.path.isfile(tmp):
         if os.path.exists(tmp):
             os.remove(tmp)
-        return "ENCODE_FAILED", "ffmpeg exit %s (see %s); spool kept: `isp_stream.py encode --out %s` retries" % (
-            rc, os.path.join(out, "encode.log"), out)
+        return "ENCODE_FAILED", "ffmpeg exit %s (see %s); spool kept: `isp_stream.py encode --out %s%s` retries" % (
+            rc, log, out, again)
     say("verifying the video against the spool")
-    bad, facts = verify(ff, fp, tmp, nv12, n, w, h, fps, col, min_psnr, out)
-    s["video_check"] = facts
+    bad, facts = verify(ff, fp, tmp, nv12, n, w, h, fps, col, min_psnr, work)
+    rec["video_check"] = facts
     for p in PLANES:
-        s["psnr_%s_min" % p] = facts.get("psnr_%s_min" % p)
-    if all(s["psnr_%s_min" % p] is not None for p in PLANES):
-        s["psnr_min_yuv"] = "/".join("%.2f" % s["psnr_%s_min" % p] for p in PLANES)
+        rec["psnr_%s_min" % p] = facts.get("psnr_%s_min" % p)
+    if all(rec["psnr_%s_min" % p] is not None for p in PLANES):
+        rec["psnr_min_yuv"] = "/".join("%.2f" % rec["psnr_%s_min" % p] for p in PLANES)
     if bad:
-        rej = os.path.join(out, "rejected.mp4")
         os.replace(tmp, rej)
-        s["video_problems"] = bad
+        rec["video_problems"] = bad
         hint = ""
         if crf > DEFAULT_CRF and all(PSNR_LOW in x for x in bad):
             # Only the encode loss failed, at a CRF above the default: a lower CRF, the floor
             # kept. Never a lower --min-psnr as the way to pass (that accepts more loss).
-            hint = ("; at CRF %d the encode loses more than --min-psnr %s allows: `isp_stream.py encode --out %s "
+            hint = ("; at CRF %d the encode loses more than --min-psnr %s allows: `isp_stream.py encode --out %s%s "
                     "--crf %d` re-encodes the kept spool without the VP (keep --min-psnr; lower it only to accept "
-                    "more loss on purpose)" % (crf, fps_text(min_psnr), out, DEFAULT_CRF))
-            s["video_hint"] = "lower --crf, keep --min-psnr"
+                    "more loss on purpose)" % (crf, fps_text(min_psnr), out, again, DEFAULT_CRF))
+            rec["video_hint"] = "lower --crf, keep --min-psnr"
         return "VERIFY_FAILED", "%s; video kept as %s, spool kept%s" % ("; ".join(bad), rej, hint)
-    final = os.path.join(out, "output.mp4")
     if os.path.exists(final):
         return "VERIFY_FAILED", "%s appeared meanwhile: not overwritten (%s kept)" % (final, tmp)
     os.replace(tmp, final)
-    s["video"] = final
-    s["video_sha256"] = prep.sha256_file(final)
-    s["duration_s"] = facts["duration_s"]
+    rec["video"] = final
+    rec["video_sha256"] = prep.sha256_file(final)
+    rec["duration_s"] = facts["duration_s"]
     return None, None
 
 
@@ -591,6 +705,7 @@ def cmd_run(a):
     s = {"tool": "isp_stream.py", "command": sys.argv, "out": out, "notes": [WB_NOTE]}
     try:
         check_video_options(a.fps, a.crf, a.min_psnr)
+        s.update({"fps": a.fps, "crf": a.crf, "min_psnr": a.min_psnr})   # also for a failed run's --debug-prefix
         if a.loop and not a.max_spool_mib:
             raise Fail("INPUT_ERROR", "--loop needs --max-spool-mib N (the spool budget)")
         if a.max_spool_mib is not None and a.max_spool_mib < 1:
@@ -662,7 +777,7 @@ def cmd_run(a):
     status, msg = classify(rc, st, r.hard, r.presses)
     # 4. the spool (always checked: also what an error leaves behind)
     try:
-        frames, notes = read_spool(spool)
+        frames, notes = read_spool(spool, sch["sources"], sch["repeat"])
         s["notes"] += notes
     except Fail as e:
         frames = []
@@ -678,7 +793,11 @@ def cmd_run(a):
         msg = "%s; last frame captured: seq %s, firmware %s" % (msg, frames[-1]["seq"] if frames else "none",
                                                                   fw.get("state", "state unknown (no final status)"))
     if status not in VIDEO_OK:
-        return finish(out, s, status, "%s; %d frame(s) kept in %s, no video" % (msg, len(frames), spool))
+        hint = ""
+        if status in DEBUG_OK and os.path.isdir(spool):
+            hint = ("; `isp_stream.py encode --out %s --debug-prefix` makes a debug video of the checked prefix "
+                    "(never the run's result)" % out)
+        return finish(out, s, status, "%s; %d frame(s) kept in %s, no video%s" % (msg, len(frames), spool, hint))
     fw = st.get("firmware") or {}
     if fw.get("completed") != len(frames):
         return finish(out, s, "CAPTURE_ERROR", "the firmware published %s frame(s), the spool holds %d"
@@ -728,7 +847,7 @@ def cmd_encode(a):
     except (OSError, ValueError) as e:
         print("isp-stream: %s: no summary.json of a run (%s)" % (out, e), file=sys.stderr)
         return EXIT["INPUT_ERROR"]
-    if os.path.exists(os.path.join(out, "output.mp4")):
+    if not a.debug_prefix and os.path.exists(os.path.join(out, "output.mp4")):
         print("isp-stream: %s already has output.mp4: not overwritten (give a copy of the run directory)" % out,
               file=sys.stderr)
         return EXIT["INPUT_ERROR"]
@@ -741,18 +860,26 @@ def cmd_encode(a):
         print("isp-stream: %s" % e, file=sys.stderr)
         return EXIT["INPUT_ERROR"]
     capture = s.get("capture_status") or s.get("status")
+    if a.debug_prefix:
+        return debug_prefix(out, s, capture, fps, crf, min_psnr)
     if capture not in VIDEO_OK:
-        print("isp-stream: the run ended %s: no video is made of it" % capture, file=sys.stderr)
+        print("isp-stream: the run ended %s: no video is made of it%s" % (
+            capture, " (--debug-prefix: a debug video of the checked prefix)" if capture in DEBUG_OK else ""),
+            file=sys.stderr)
+        return EXIT["INPUT_ERROR"]
+    try:
+        info = json.load(open(os.path.join(out, "session", "session.json")))
+    except (OSError, ValueError) as e:
+        print("isp-stream: %s: no session of the run (%s)" % (out, e), file=sys.stderr)
         return EXIT["INPUT_ERROR"]
     try:
         ff, fp, ffv = find_ffmpeg()
         s["ffmpeg"] = ffv
-        frames, notes = read_spool(os.path.join(out, "spool"))
+        frames, notes = read_spool(os.path.join(out, "spool"), info["schedule"]["sources"], info["schedule"]["repeat"])
     except Fail as e:
         return finish(out, s, e.status, str(e))
     if len(frames) != s.get("captured"):
         return finish(out, s, "CAPTURE_ERROR", "the spool holds %d frame(s), the run captured %s" % (len(frames), s.get("captured")))
-    info = json.load(open(os.path.join(out, "session", "session.json")))
     s["notes"] = s.get("notes", []) + notes + ["re-encoded by `isp_stream.py encode` (no VP run)"]
     s["_frames"], s["_names"], s["_repeat"] = frames, [x["name"] for x in info["sources"]], info["schedule"]["repeat"]
     for k in ("video_problems", "video", "video_sha256", "message", "video_check", "psnr_y_min", "psnr_u_min",
@@ -765,6 +892,52 @@ def cmd_encode(a):
     if vstatus:
         return finish(out, s, vstatus, vmsg)
     return finish(out, s, capture, "%s, %d frame(s) (re-encoded; the spool NV12 kept)" % (s["video"], len(frames)))
+
+
+def debug_prefix(out, s, capture, fps, crf, min_psnr):
+    """`encode --debug-prefix`: a debug video of a failed run's checked prefix. The run's status,
+    message and spool stay as they are; the result is the summary's debug_prefix record and
+    DIR/debug_prefix.mp4, never output.mp4 and never COMPLETE."""
+    status = s.get("status")
+    if capture in VIDEO_OK:
+        print("isp-stream: the run's capture ended %s: its frames make the run's video: `isp_stream.py encode --out %s` "
+              "(no --debug-prefix)" % (capture, out), file=sys.stderr)
+        return EXIT["INPUT_ERROR"]
+    if status not in DEBUG_OK:
+        print("isp-stream: the run ended %s: nothing was captured, no prefix to encode" % status, file=sys.stderr)
+        return EXIT["INPUT_ERROR"]
+    final = os.path.join(out, "debug_prefix.mp4")
+    if os.path.exists(final):
+        print("isp-stream: %s exists: not overwritten (give a copy of the run directory)" % final, file=sys.stderr)
+        return EXIT["INPUT_ERROR"]
+    try:
+        info = json.load(open(os.path.join(out, "session", "session.json")))
+        ff, fp, ffv = find_ffmpeg()
+    except (OSError, ValueError) as e:
+        print("isp-stream: %s: no session of the run (%s)" % (out, e), file=sys.stderr)
+        return EXIT["INPUT_ERROR"]
+    except Fail as e:
+        print("isp-stream: %s: %s" % (e.status, e), file=sys.stderr)
+        return EXIT[e.status]
+    frames, records, cut = read_prefix(os.path.join(out, "spool"), info["schedule"]["sources"], info["schedule"]["repeat"])
+    if not frames:
+        print("isp-stream: no valid prefix in %s (%s): no debug video" % (os.path.join(out, "spool"), cut or "no frame"),
+              file=sys.stderr)
+        return EXIT["NO_FRAMES"]
+    rec = {"frames": len(frames), "records": records, "cut": cut, "ffmpeg": ffv,
+           "note": "debug only: the run stays %s; this video is not the run's result and not for acceptance" % status}
+    s["debug_prefix"] = rec
+    s["_frames"], s["_names"], s["_repeat"] = frames, [x["name"] for x in info["sources"]], info["schedule"]["repeat"]
+    say("debug prefix: frames 0..%d of %d record(s)%s; the run stays %s"
+        % (len(frames) - 1, records, (", cut at " + cut) if cut else "", status))
+    vstatus, vmsg = make_video(out, s, ff, fp, fps, crf, min_psnr, debug=rec)
+    for k in ("_frames", "_names", "_repeat"):
+        s.pop(k)
+    rec["status"] = vstatus or "VERIFIED"
+    rec["message"] = vmsg or "%s, %d frame(s), checked against the spool" % (rec["video"], len(frames))
+    write_summary(out, s)   # status, exit and message of the run unchanged
+    say("debug prefix %s: %s (the run stays %s)" % (rec["status"], rec["message"], status))
+    return EXIT[vstatus] if vstatus else 0
 
 
 def main(argv=None):
@@ -805,6 +978,8 @@ def main(argv=None):
     e.add_argument("--fps", type=float)
     e.add_argument("--crf", type=int)
     e.add_argument("--min-psnr", type=float)
+    e.add_argument("--debug-prefix", action="store_true",
+                   help="a failed run: a debug video (debug_prefix.mp4) of the checked prefix; the run stays failed")
     e.set_defaults(func=cmd_encode)
     a = ap.parse_args(argv)
     try:

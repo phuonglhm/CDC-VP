@@ -13,6 +13,9 @@
  *   stop   a local stop request (as the host's STOP, USER)
  *   wait   until the session is STOPPED or ERROR (MS: simulated-time limit),
  *          then the summary; counted as a check (ERROR fails)
+ *   idle   until no session runs and the stream holds the ISP no more (an
+ *          ended session's stop may still drain, below; MS: limit), then the
+ *          summary; counted as a check (passes once the ISP is free)
  *
  * Stream task, per physical frame n (source (n / K) mod S, repeat n mod K):
  * SYS_DMA channel 1 copies the pool container into the input slot the driver
@@ -31,6 +34,20 @@
  * acknowledged, then the ISP is stopped. A copy error, a fatal DMA_ERR, a
  * completion or ACK missing for frame_budget_us of simulated time, or a host
  * protocol stop ends the session in ERROR (no reset, no replay).
+ *
+ * The stop (S4 review R3): fx1_isp_stop's soft reset is a recovery that
+ * drains the AXI transactions the bus still holds (a read the DDR answers
+ * late); until it has retired the ISP ignores W1C writes and its level
+ * interrupt stays high (COMMON_IRQ_STATUS.ERROR). The ISP source is masked
+ * at the PLIC from the stop (or from the first fatal DMA_ERR, whose automatic
+ * recovery does the same) until the stop has finished, and the stop is
+ * retried from the task (EBUSY: still STREAMING, the buffers not back), one
+ * frame budget long. Past it the terminal state is published with the ISP
+ * still held (status.isp_drain PENDING: claimed by the stream, masked, no
+ * session starts; the CLI and the timers run), and the task keeps retrying;
+ * once the stop has finished the ISP is acknowledged, unmasked and released
+ * (isp_drain DONE). A clean end (STOPPED) whose stop does not finish within
+ * the budget is reported ERROR TIMEOUT.
  */
 #include <stddef.h>
 #include <string.h>
@@ -68,6 +85,7 @@ static SemaphoreHandle_t isp_done, dma_done, start_req;
 static volatile uint32_t isr_fatal, dma_status;
 static volatile int local_stop; /* `isp stream stop` */
 static volatile int active;     /* a session is running (start .. STOPPED / ERROR) */
+static volatile int isp_held;   /* an ended session's stop still drains: the ISP stays the stream's */
 
 static struct {
     fx1_isp_stream_desc d; /* the descriptor, copied once at start */
@@ -85,12 +103,41 @@ static struct {
 } s;
 
 /* ---- interrupts ------------------------------------------------------------ */
+/* The ISP source is masked with priority 0 (never notifies, never claimed): a
+ * register of its own, no read-modify-write of the enable word the other
+ * sources share. Called with interrupts disabled (the ISR, or a critical
+ * section). */
+#define ISP_PRIORITY (FX1_PLIC_BASE + FX1_PLIC_PRIORITY_OFF + 4u * FX1_IRQ_ISP)
+static uint32_t isp_priority; /* the priority to restore */
+static volatile int isp_masked;
+
+static void mask_isp_irq(void)
+{
+    if (isp_masked) return;
+    isp_priority = fx1_read32(ISP_PRIORITY);
+    fx1_write32(ISP_PRIORITY, 0);
+    isp_masked = 1;
+}
+
+static void unmask_isp_irq(void)
+{
+    taskENTER_CRITICAL();
+    if (isp_masked) {
+        fx1_write32(ISP_PRIORITY, isp_priority);
+        isp_masked = 0;
+    }
+    taskEXIT_CRITICAL();
+}
+
 BaseType_t isp_stream_isp_isr(void)
 {
     BaseType_t woken = pdFALSE;
     fx1_isp_events ev;
     fx1_isp_irq(&dev, &ev); /* reads and acknowledges at the ISP: the line drops */
     isr_fatal |= ev.dma_err & ISP_DMA_ERR_FATAL;
+    /* An AXI error starts a recovery: the acknowledge is ignored until it has
+     * retired, the line stays high. The session ends in ERROR; its stop unmasks. */
+    if (ev.dma_err & ISP_DMA_ERR_FATAL) mask_isp_irq();
     if (ev.frames_done || (ev.dma_err & ISP_DMA_ERR_FATAL)) xSemaphoreGiveFromISR(isp_done, &woken);
     return woken;
 }
@@ -333,10 +380,60 @@ static uint32_t stop_request(void)
     return local_stop ? FX1_ISP_STREAM_REASON_USER : 0u;
 }
 
+/* The ISP's frame counters when the session's ISP work began (run_session). */
+static fx1_isp_progress initial;
+
+/* fx1_isp_stop, retried from the task while its recovery drains: 1 once
+ * stopped (the buffers back, CONFIG state), 0 if not within `limit` ticks
+ * (portMAX_DELAY: no limit). The ISP interrupt is masked from the first
+ * attempt on and stays masked. Each attempt polls BUSY only for the driver's
+ * bounded wait; between attempts the task yields. */
+static int stop_isp(TickType_t limit)
+{
+    const TickType_t t0 = xTaskGetTickCount();
+    for (;;) {
+        taskENTER_CRITICAL();
+        mask_isp_irq();
+        const int rc = fx1_isp_stop(&dev);
+        taskEXIT_CRITICAL();
+        if (rc >= 0 || rc == FX1_ISP_ESTATE) return 1; /* the frames dropped, or not streaming */
+        if (limit != portMAX_DELAY && xTaskGetTickCount() - t0 >= limit) return 0;
+        vTaskDelay(1);
+    }
+}
+
+/* After the stop: the interrupt state acknowledged, legacy mode for the other
+ * commands, the source unmasked, then the ISP released. A request the PLIC
+ * latched while masked is taken at the unmask by this owner's handler (it
+ * finds nothing), before another owner's. */
+static void release_isp(void)
+{
+    fx1_isp_events ev;
+    taskENTER_CRITICAL();
+    fx1_isp_irq(&dev, &ev);
+    taskEXIT_CRITICAL();
+    (void)fx1_isp_profile_mode(&dev, 0);
+    unmask_isp_irq();
+    vTaskDelay(1);
+    isp_release(ISP_OWNER_STREAM);
+}
+
 static void end_session(uint32_t state, uint32_t reason, uint32_t error, uint32_t detail)
 {
     fx1_isp_progress p = {0};
     fx1_isp_get_progress(&dev, &p);
+    /* One frame budget for the stop; a clean end needs a stopped ISP. */
+    const int stopped = stop_isp(us_ticks(s.d.frame_budget_us));
+    if (!stopped && state == FX1_ISP_STREAM_STOPPED) {
+        state = FX1_ISP_STREAM_ERROR;
+        reason = FX1_ISP_STREAM_STOP_ERROR;
+        error = FX1_ISP_STREAM_ERR_TIMEOUT;
+        detail = (uint32_t)s.completed;
+    }
+    /* Every end (DONE, USER, LIMIT and each ERROR) reports what the ISP took in and
+     * wrote out in this session, read before the ISP was stopped. */
+    STATUS->idma_frames = p.idma_frames - initial.idma_frames;
+    STATUS->odma_frames = p.odma_frames - initial.odma_frames;
     STATUS->dma_err = p.dma_err;
     STATUS->stop_reason = reason;
     STATUS->error = error;
@@ -344,16 +441,26 @@ static void end_session(uint32_t state, uint32_t reason, uint32_t error, uint32_
     STATUS->failed = (uint32_t)(s.submitted - s.completed);
     if (!(s.d.flags & FX1_ISP_STREAM_FLAG_LOOP) && s.frames > s.submitted && state == FX1_ISP_STREAM_STOPPED)
         STATUS->cancelled = (uint32_t)(s.frames - s.submitted);
-    taskENTER_CRITICAL();
-    (void)fx1_isp_stop(&dev);
-    taskEXIT_CRITICAL();
-    (void)fx1_isp_profile_mode(&dev, 0); /* back to legacy for the other commands */
+    STATUS->isp_drain = stopped ? FX1_ISP_STREAM_DRAIN_NONE : FX1_ISP_STREAM_DRAIN_PENDING;
+    if (!stopped) isp_held = 1; /* before the terminal state: no start in between */
     fx1_write32(CH(FX1_DMA_CH_ENABLE), 0);
     fx1_release();
     set_state(state);
     ring(0xFFFFFFFFu);
-    isp_release(ISP_OWNER_STREAM);
+    if (stopped) {
+        release_isp();
+        active = 0;
+        return;
+    }
+    /* The stop still drains: the session has ended (the CLI and the timers
+     * run), the ISP, its buffers and its masked interrupt stay the stream's
+     * until the stop has finished. */
     active = 0;
+    (void)stop_isp(portMAX_DELAY);
+    release_isp();
+    STATUS->isp_drain = FX1_ISP_STREAM_DRAIN_DONE;
+    fx1_release();
+    isp_held = 0;
 }
 
 static void fail(uint32_t error, uint32_t detail)
@@ -366,7 +473,7 @@ static void run_session(void)
 {
     const int loop = (s.d.flags & FX1_ISP_STREAM_FLAG_LOOP) != 0;
     const TickType_t budget = us_ticks(s.d.frame_budget_us);
-    fx1_isp_progress initial = {0};
+    memset(&initial, 0, sizeof(initial));
     fx1_isp_get_progress(&dev, &initial);
     uint32_t reason = 0;
     TickType_t last = xTaskGetTickCount(); /* last progress (a queue, a completion, an ACK) */
@@ -439,10 +546,6 @@ static void run_session(void)
             if (xTaskGetTickCount() - last > budget) return fail(FX1_ISP_STREAM_ERR_HOST, FX1_ISP_STREAM_HOST_FINAL);
             vTaskDelay(1);
         }
-    fx1_isp_progress p = {0};
-    fx1_isp_get_progress(&dev, &p);
-    STATUS->idma_frames = p.idma_frames - initial.idma_frames;
-    STATUS->odma_frames = p.odma_frames - initial.odma_frames;
     const uint32_t stop = !reason                                ? FX1_ISP_STREAM_STOP_DONE
                           : reason == FX1_ISP_STREAM_REASON_USER ? FX1_ISP_STREAM_STOP_USER
                                                                  : FX1_ISP_STREAM_STOP_LIMIT;
@@ -487,6 +590,11 @@ static void start(void)
 {
     if (active) {
         out_line("isp stream start: a session is running (isp stream stop / wait first)");
+        return;
+    }
+    if (isp_held) { /* the status block is still the last session's */
+        out_line("isp stream start: the last session's ISP stop still drains (isp stream idle first)");
+        report("isp stream start", 0);
         return;
     }
     memcpy(&s.d, (const void*)DESC, sizeof(s.d));
@@ -712,7 +820,12 @@ static void status(void)
     out_dec(st->odma_frames);
     out(", ");
     out_dec(st->elapsed_ticks / (FX1_MTIME_HZ / 1000u));
-    out_line(" ms");
+    out(" ms");
+    if (st->isp_drain == FX1_ISP_STREAM_DRAIN_PENDING)
+        out(", ISP stop draining (the ISP held by the stream)");
+    else if (st->isp_drain == FX1_ISP_STREAM_DRAIN_DONE)
+        out(", ISP stopped after the end (released)");
+    out_line("");
 }
 
 static void wait_done(uint32_t limit_ms)
@@ -727,6 +840,17 @@ static void wait_done(uint32_t limit_ms)
         return;
     }
     report("isp stream", STATUS->magic == FX1_ISP_STREAM_STATUS_MAGIC && state == FX1_ISP_STREAM_STOPPED);
+}
+
+static void wait_idle(uint32_t limit_ms)
+{
+    const TickType_t t0 = xTaskGetTickCount();
+    while ((active || isp_held) && (!limit_ms || xTaskGetTickCount() - t0 < pdMS_TO_TICKS(limit_ms)))
+        vTaskDelay(pdMS_TO_TICKS(1));
+    status();
+    if (active || isp_held) out_line(active ? "isp stream idle: a session still runs at the limit"
+                                            : "isp stream idle: the ISP stop still drains at the limit");
+    report("isp stream idle", !active && !isp_held);
 }
 
 int cmd_isp_stream(int argc, char** argv)
@@ -746,6 +870,10 @@ int cmd_isp_stream(int argc, char** argv)
         uint32_t ms = 0;
         if (argc == 3 && !parse_u32(argv[2], &ms)) return 1;
         wait_done(ms);
+    } else if ((argc == 2 || argc == 3) && !strcmp(argv[1], "idle")) {
+        uint32_t ms = 0;
+        if (argc == 3 && !parse_u32(argv[2], &ms)) return 1;
+        wait_idle(ms);
     } else {
         return 1;
     }

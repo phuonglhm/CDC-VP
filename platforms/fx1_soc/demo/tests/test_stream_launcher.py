@@ -31,6 +31,15 @@ PATH that delegates to the real one) give the encoder failure paths. Cases:
   high_crf        --crf 51: VERIFY_FAILED on the PSNR only, the message says to re-encode with a
                   lower CRF and the same --min-psnr (video_hint); `encode --crf 10` then makes
                   the video without the VP (platform.log unchanged); no hint at the default CRF
+  debug_prefix    `encode --debug-prefix` (opt-in) of failed runs: a firmware ERROR COPY (an
+                  uncorrectable DDR error in source 2's pool area, --vp-arg --ddr3-fault):
+                  debug_prefix.mp4 of the 4 frames, verified, the run stays FW_ERROR (status,
+                  exit, message), the spool byte-equal, never output.mp4, no overwrite; a
+                  spool corrupted at frame 2 / missing frame 2 / record 2 without source_index, with
+                  source_index 99, a string repeat_index or an identity off the schedule / torn at
+                  its last record: the prefix ends there, no crash
+                  (named); frame 0 corrupted: no valid prefix (exit 6); a COMPLETE run and a
+                  NO_FRAMES run are refused (exit 2 / 6)
   fw_error        a firmware ERROR (foreign ACK fault): FW_ERROR, spool kept, no video
   capture_error   the spool cannot grow (RLIMIT_FSIZE): CAPTURE_ERROR, no video
   reference_mismatch  --run-raw disagrees on one frame: REFERENCE_MISMATCH, no video, spool kept
@@ -40,6 +49,8 @@ PATH that delegates to the real one) give the encoder failure paths. Cases:
                   strict JSON; summary.txt shows Y/U/V
   spool_tail      a torn tail (partial line, NV12 past the last frame) is cut; a bad SHA-256
                   is refused; the disk-space preflight refuses a run that cannot fit
+  isp_drain       (no VP) a firmware ERROR whose ISP stop still drained at the end
+                  (status isp_drain PENDING): the FW_ERROR message says the ISP was held
   real            (--real) D65 -> A -> D65 x 2 at 2688x1520: COMPLETE, the shipped golden at
                   frames 1 and 5, 1920x1080 video
 Exit 0 when every case passes.
@@ -188,6 +199,22 @@ def video_ok(name, out, n, fps, rng="pc", space="smpte170m", w=64, h=48, labels=
 
 def no_video(out):
     return not os.path.exists(os.path.join(out, "output.mp4")) and not os.path.exists(os.path.join(out, "output.tmp.mp4"))
+
+
+def encode_cli(out, *opts, env=None):
+    r = subprocess.run([sys.executable, "-B", LAUNCHER, "encode", "--out", out] + list(opts), stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, env=None if env is None else dict(os.environ, **env))
+    return r.returncode, r.stdout
+
+
+def tree_bytes(d):
+    """Every file under d (relative path -> bytes): the run directory as it was."""
+    got = {}
+    for root, _, files in os.walk(d):
+        for f in files:
+            p = os.path.join(root, f)
+            got[os.path.relpath(p, d)] = open(p, "rb").read()
+    return got
 
 
 def fake_ffmpeg(c, mode):
@@ -396,6 +423,22 @@ def case_encoder(c):
               and os.path.getsize(os.path.join(out, "spool", "frames.nv12")) == 6 * 64 * 48 * 3 // 2
               and "encode --out" in s.get("message", ""),
               "encoder %s: ENCODE_FAILED (exit 9), the 6 frames kept in the spool, no video (rc %s)" % (mode, rc))
+    # A record without its identity (source_index): encode refuses the spool (CAPTURE_ERROR),
+    # never a crash in the labels.
+    bad_id = c.path("enc_bad_id run")
+    shutil.copytree(out, bad_id)
+    jl = os.path.join(bad_id, "spool", "frames.jsonl")
+    lines = open(jl).read().splitlines(True)
+    rec = json.loads(lines[2])
+    rec.pop("source_index")
+    lines[2] = json.dumps(rec) + "\n"
+    open(jl, "w").write("".join(lines))
+    r = subprocess.run([sys.executable, "-B", LAUNCHER, "encode", "--out", bad_id], stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True)
+    s2 = summary(bad_id)
+    check(r.returncode == 8 and s2.get("status") == "CAPTURE_ERROR" and "frame 2: source_index missing" in s2.get("message", "")
+          and "Traceback" not in r.stdout and no_video(bad_id),
+          "encode: a record without source_index: CAPTURE_ERROR (exit 8), no crash, no video (rc %s)" % r.returncode)
     # The same checks in `encode`: refused, the run directory untouched.
     before = {f: open(os.path.join(out, f), "rb").read() for f in ("summary.json", "summary.txt")}
     listing = sorted(os.listdir(out))
@@ -478,6 +521,129 @@ def case_high_crf(c):
           "high_crf: `encode --crf 10` with the floor kept at 40: COMPLETE without the VP (platform.log unchanged), "
           "hint cleared (rc %s, Y/U/V %s)" % (r.returncode, s.get("psnr_min_yuv")))
     video_ok("high_crf encode", out, 6, 30.0)
+
+
+def case_debug_prefix(c):
+    man, prof = fixture(c, "rggb_raw12")
+    # The pool layout of this fixture (the launcher prepares the same session): source 2's
+    # area, an uncorrectable DDR error at its end -> frame 4's copy fails (ERROR COPY).
+    lay = c.path("debug_prefix_layout")
+    if not os.path.isdir(lay):
+        assert launcher.prep.main(["prepare", "--out", lay, "--profile", prof, "--manifest", man, "--repeat", "2"]) == 0
+    src2 = int(json.load(open(os.path.join(lay, "session.json")))["sources"][2]["address"], 16)
+    rc, log, out = launch(c, "dbg_fw", ["--manifest", man, "--profile", prof, "--repeat", "2",
+                                        "--vp-arg=--ddr3-fault", "--vp-arg=0:ue:0x%08X" % (src2 + 64 * 48 * 2 - 64)])
+    s0 = summary(out)
+    check(rc == 7 and s0.get("status") == "FW_ERROR" and s0.get("captured") == 4 and no_video(out)
+          and "--debug-prefix` makes a debug video" in s0.get("message", "") and s0.get("fps") == 30.0,
+          "debug_prefix: a firmware ERROR COPY run: FW_ERROR (exit 7), 4 frames kept, the message names "
+          "--debug-prefix, the requested fps recorded (rc %s)" % rc)
+    rc2, txt = encode_cli(out)
+    check(rc2 == 2 and "--debug-prefix: a debug video" in txt, "debug_prefix: plain `encode` of a failed run is refused, "
+          "naming --debug-prefix (rc %s)" % rc2)
+    spool = tree_bytes(os.path.join(out, "spool"))
+    rc2, txt = encode_cli(out, "--debug-prefix")
+    s = summary(out)
+    d = s.get("debug_prefix") or {}
+    check(rc2 == 0 and s.get("status") == "FW_ERROR" and s.get("exit") == 7 and s.get("message") == s0.get("message")
+          and d.get("status") == "VERIFIED" and d.get("frames") == 4 and d.get("records") == 4 and d.get("cut") is None
+          and "not for acceptance" in d.get("note", "") and psnr_ok(d) and no_video(out)
+          and os.path.isfile(os.path.join(out, "debug_prefix.mp4")) and tree_bytes(os.path.join(out, "spool")) == spool
+          and "debug only; the run stays FW_ERROR" in open(os.path.join(out, "summary.txt")).read(),
+          "debug_prefix: `encode --debug-prefix`: debug_prefix.mp4 of the 4 frames VERIFIED (Y/U/V %s); the run stays "
+          "FW_ERROR (status, exit, message); spool byte-equal; no output.mp4 (rc %s)" % (d.get("psnr_min_yuv"), rc2))
+    p = probe(os.path.join(out, "debug_prefix.mp4"))
+    names = ["frame A.raw", "frame B.raw", "frame C.raw"]
+    check(p is not None and p["frames"] == 4 and p["cues"] == 4 and abs(p["duration"] - 4 / 30.0) < 1e-3
+          and p["cue_text"] == ["#%d %s r=%d/2" % (n, names[n // 2], n % 2 + 1) for n in range(4)],
+          "debug_prefix: debug_prefix.mp4 decodes to 4 frames, 4 cues #0..#3 in order (%s)"
+          % (p and {k: p[k] for k in ("frames", "cues", "duration")}))
+    rc2, txt = encode_cli(out, "--debug-prefix")
+    check(rc2 == 2 and "not overwritten" in txt, "debug_prefix: a second --debug-prefix refuses to overwrite it")
+
+    def variant(name, damage):
+        d2 = c.path(name + " run")
+        shutil.copytree(out, d2)
+        for f in ("debug_prefix.mp4",):
+            os.remove(os.path.join(d2, f))
+        shutil.rmtree(os.path.join(d2, "debug_prefix"))
+        sj = json.load(open(os.path.join(d2, "summary.json")))
+        sj.pop("debug_prefix")
+        json.dump(sj, open(os.path.join(d2, "summary.json"), "w"), indent=2)
+        damage(os.path.join(d2, "spool"))
+        before = tree_bytes(os.path.join(d2, "spool"))
+        sbefore = open(os.path.join(d2, "summary.json"), "rb").read()
+        rc3, txt3 = encode_cli(d2, "--debug-prefix")
+        return d2, rc3, txt3, before == tree_bytes(os.path.join(d2, "spool")), sbefore
+
+    def flip(sp, k):
+        fr = [json.loads(l) for l in open(os.path.join(sp, "frames.jsonl"))][k]
+        with open(os.path.join(sp, "frames.nv12"), "r+b") as f:
+            f.seek(fr["offset"] + 100)
+            b = f.read(1)
+            f.seek(fr["offset"] + 100)
+            f.write(bytes([b[0] ^ 0xFF]))
+    d2, rc3, txt3, same, _ = variant("dbg_sha", lambda sp: flip(sp, 2))
+    s = summary(d2)
+    d = s.get("debug_prefix") or {}
+    check(rc3 == 0 and same and d.get("frames") == 2 and d.get("records") == 4
+          and d.get("cut") == "frame 2: NV12 SHA-256 differs from frames.jsonl" and s.get("status") == "FW_ERROR",
+          "debug_prefix: frame 2 corrupted: the prefix is frames 0..1, cut named (%s), spool untouched (rc %s)"
+          % (d.get("cut"), rc3))
+    d2, rc3, txt3, same, _ = variant("dbg_torn", lambda sp: open(os.path.join(sp, "frames.jsonl"), "ab").write(b'{"ordinal": 4'))
+    d = summary(d2).get("debug_prefix") or {}
+    check(rc3 == 0 and same and d.get("frames") == 4 and d.get("records") == 5 and d.get("cut") == "record 4: torn (no end of line)",
+          "debug_prefix: a torn last record: the 4 whole frames, cut named, spool untouched (not cut) (rc %s, %s)"
+          % (rc3, d.get("cut")))
+    def drop(sp, k):
+        """Frame k lost from the middle: its record and its NV12 bytes (the rest intact)."""
+        lines = open(os.path.join(sp, "frames.jsonl"), "rb").read().splitlines(keepends=True)
+        fr = json.loads(lines[k])
+        data = open(os.path.join(sp, "frames.nv12"), "rb").read()
+        open(os.path.join(sp, "frames.jsonl"), "wb").write(b"".join(lines[:k] + lines[k + 1:]))
+        open(os.path.join(sp, "frames.nv12"), "wb").write(data[:fr["offset"]] + data[fr["offset"] + fr["bytes"]:])
+    d2, rc3, txt3, same, _ = variant("dbg_gap", lambda sp: drop(sp, 2))
+    d = summary(d2).get("debug_prefix") or {}
+    check(rc3 == 0 and same and d.get("frames") == 2 and (d.get("cut") or "").startswith("frame 2: ordinal 3"),
+          "debug_prefix: frame 2 lost (record and bytes): the prefix ends at 2, frame 3 is not taken as 2 (%s)" % d.get("cut"))
+    def edit(sp, k, change):
+        """Record k rewritten (its NV12 bytes untouched): change(record) edits it in place."""
+        lines = open(os.path.join(sp, "frames.jsonl"), "rb").read().splitlines(keepends=True)
+        fr = json.loads(lines[k])
+        change(fr)
+        lines[k] = (json.dumps(fr) + "\n").encode()
+        open(os.path.join(sp, "frames.jsonl"), "wb").write(b"".join(lines))
+    for name, change, why in (
+            ("dbg_nosrc", lambda fr: fr.pop("source_index"), "frame 2: source_index missing or not an integer"),
+            ("dbg_src99", lambda fr: fr.update(source_index=99), "frame 2: identity source 99 repeat 0, the session's schedule"),
+            ("dbg_repstr", lambda fr: fr.update(repeat_index="0"), "frame 2: repeat_index missing or not an integer"),
+            ("dbg_wrongsrc", lambda fr: fr.update(source_index=0), "frame 2: identity source 0 repeat 0, the session's schedule"),
+            ("dbg_nosha", lambda fr: fr.pop("sha256"), "frame 2: sha256 missing or not 64 hex digits")):
+        d2, rc3, txt3, same, _ = variant(name, lambda sp, ch=change: edit(sp, 2, ch))
+        s2 = summary(d2)
+        d = s2.get("debug_prefix") or {}
+        check(rc3 == 0 and same and d.get("frames") == 2 and d.get("status") == "VERIFIED"
+              and (d.get("cut") or "").startswith(why) and s2.get("status") == "FW_ERROR" and "Traceback" not in txt3,
+              "debug_prefix: record 2 %s: no crash, frames 0..1 encoded and verified, cut named (%s), spool untouched (rc %s)"
+              % (name[4:], d.get("cut"), rc3))
+    d2, rc3, txt3, same, _ = variant("dbg_nosrc0", lambda sp: edit(sp, 0, lambda fr: fr.pop("source_index")))
+    check(rc3 == 6 and "no valid prefix" in txt3 and "Traceback" not in txt3 and same,
+          "debug_prefix: record 0 without source_index: no valid prefix, exit 6, no crash (rc %s)" % rc3)
+    d2, rc3, txt3, same, sbefore = variant("dbg_none", lambda sp: flip(sp, 0))
+    check(rc3 == 6 and "no valid prefix" in txt3 and same and open(os.path.join(d2, "summary.json"), "rb").read() == sbefore
+          and not os.path.exists(os.path.join(d2, "debug_prefix.mp4")),
+          "debug_prefix: frame 0 corrupted: no valid prefix, exit 6, nothing written (rc %s)" % rc3)
+    # A run whose capture succeeded: its frames make the run's video, never a debug one.
+    rc, log, out = launch(c, "dbg_complete", ["--manifest", man, "--profile", prof])
+    rc2, txt = encode_cli(out, "--debug-prefix")
+    check(rc == 0 and rc2 == 2 and "(no --debug-prefix)" in txt and "debug_prefix" not in summary(out)
+          and not os.path.exists(os.path.join(out, "debug_prefix.mp4")),
+          "debug_prefix: refused for a COMPLETE run (exit 2), nothing written (rc %s)" % rc2)
+    rc, log, out = launch(c, "dbg_none_run", ["--manifest", man, "--profile", prof, "--loop", "--max-spool-mib", "8"],
+                          sigint_at=0)
+    rc2, txt = encode_cli(out, "--debug-prefix")
+    check(rc == 6 and rc2 == 6 and "no valid prefix" in txt, "debug_prefix: a NO_FRAMES run: no valid prefix, exit 6 "
+          "(rc %s / %s)" % (rc, rc2))
 
 
 def case_fw_error(c):
@@ -582,20 +748,21 @@ def case_spool_tail(c):
     for n in range(2):
         px = bytes([n + 1]) * (4 * 2 * 3 // 2)
         frames.append({"ordinal": n, "offset": len(data), "bytes": len(px), "width": 4, "height": 2,
-                       "colorimetry": 0x80000001, "sha256": hashlib.sha256(px).hexdigest(), "seq": n + 1})
+                       "colorimetry": 0x80000001, "sha256": hashlib.sha256(px).hexdigest(), "seq": n + 1,
+                       "source_index": 0, "repeat_index": n})
         data += px
     with open(os.path.join(sp, "frames.nv12"), "wb") as f:
         f.write(data + b"\x07" * 5)
     with open(os.path.join(sp, "frames.jsonl"), "w") as f:
         f.write("".join(json.dumps(x) + "\n" for x in frames) + '{"ordinal": 2, "off')
-    got, notes = launcher.read_spool(sp)
+    got, notes = launcher.read_spool(sp, 1, 2)
     check(len(got) == 2 and os.path.getsize(os.path.join(sp, "frames.nv12")) == len(data) and len(notes) == 2,
           "spool_tail: a partial last line and 5 bytes past the last frame are cut: 2 whole frames (%s)" % notes)
     with open(os.path.join(sp, "frames.nv12"), "r+b") as f:
         f.seek(0)
         f.write(b"\x09")
     try:
-        launcher.read_spool(sp)
+        launcher.read_spool(sp, 1, 2)
         ok = False
     except launcher.Fail as e:
         ok = e.status == "CAPTURE_ERROR" and "SHA-256" in str(e)
@@ -646,13 +813,25 @@ def case_real(c):
     video_ok("real", out, 6, 2.0, w=1920, h=1080, labels=["#%d %s r=%d/2" % (n, names[n // 2], n % 2 + 1) for n in range(6)])
 
 
+def case_isp_drain(c):
+    """A firmware ERROR whose ISP stop still drained at the end (status isp_drain PENDING) says so."""
+    st = {"errors": [], "firmware": {"state": "ERROR", "stop_reason": "ERROR", "error": "TIMEOUT", "detail": 2,
+                                     "isp_drain": "PENDING"}}
+    held = launcher.classify(1, st, None, 0)
+    st["firmware"]["isp_drain"] = "DONE"
+    done = launcher.classify(1, st, None, 0)
+    check(held[0] == done[0] == "FW_ERROR" and "the ISP held" in held[1] and "held" not in done[1],
+          "isp_drain: ERROR TIMEOUT with the ISP stop still draining at the end: FW_ERROR names it (%s)" % held[1])
+
+
 CASES = [("complete", case_complete), ("colorimetry", case_colorimetry), ("user_stop", case_user_stop),
          ("limit", case_limit), ("no_frames", case_no_frames), ("hard_stop", case_hard_stop),
          ("drain_timeout", case_drain_timeout), ("preflight", case_preflight), ("input", case_input),
-         ("encoder", case_encoder), ("bad_video", case_bad_video), ("high_crf", case_high_crf),
+         ("encoder", case_encoder), ("bad_video", case_bad_video), ("high_crf", case_high_crf), ("debug_prefix", case_debug_prefix),
          ("fw_error", case_fw_error),
          ("capture_error", case_capture_error), ("reference_mismatch", case_reference_mismatch), ("bridge_lies", case_bridge_lies),
-         ("spool_tail", case_spool_tail), ("summary_json", case_summary_json)]
+         ("spool_tail", case_spool_tail), ("summary_json", case_summary_json),
+         ("isp_drain", case_isp_drain)]
 
 
 def main():

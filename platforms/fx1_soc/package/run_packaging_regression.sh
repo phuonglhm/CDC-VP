@@ -15,6 +15,13 @@
 #      every sample and d65 auto equal their capture goldens, a wrong capture
 #      golden FAILs, an empty one is refused, a user RAW is not compared, and
 #      a host write error (file size limit) makes the run FAIL;
+#   4d. the ISP RAW sequence sample (run_vp.sh isp-stream-sample, the system
+#      FFmpeg): COMPLETE, every frame = isp_stream/expected_frames.txt, the
+#      video checked; a wrong expected frame FAILs; a tuned copy of the profile
+#      (BT.709), and the shared profile edited in place, make a BT.709 video
+#      without the comparison; an unchanged copy elsewhere is still compared;
+#      with no ffmpeg on
+#      PATH the run is refused before the boot (PREFLIGHT_FAILED, install steps);
 #   5. the firmware rebuilt from the shipped sources with the shipped Makefile
 #      must equal the packaged ELF byte for byte, and pass smoke again; the
 #      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
@@ -263,6 +270,74 @@ run "${test}/run_vp.sh" isp d65 > "${tmp}/isp_untuned.log" 2>&1 && grep -q "ISP 
 rm -rf "${sp}" "${d65_out}"
 cp -a "${tmp}/shared_shipped" "${sp}"
 cmp -s "${sp}/profile.bin" "${tmp}/shared_shipped/profile.bin" || bad "the shipped shared profile was not restored"
+
+step "4d. ISP RAW sequence sample (run_vp.sh isp-stream-sample)"
+if command -v ffmpeg > /dev/null && command -v ffprobe > /dev/null; then
+    sdir="${tmp}/elsewhere/stream out"
+    mkdir -p "${sdir}"
+    nseq=$(grep -c -v '^#' "${test}/isp_stream/expected_frames.txt")
+    run "${test}/run_vp.sh" isp-stream-sample --out "${sdir}/sample" > "${tmp}/stream_sample.log" 2>&1
+    rc=$?
+    st="$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["status"], s["captured"], s.get("psnr_min_yuv"))' \
+        "${sdir}/sample/summary.json" 2>/dev/null)"
+    [[ ${rc} -eq 0 ]] && grep -q "SEQUENCE PASS: ${nseq} frame(s)" "${tmp}/stream_sample.log" \
+        && [[ "${st}" == "COMPLETE ${nseq} "* && -s "${sdir}/sample/output.mp4" ]] \
+        && pass "isp-stream-sample: COMPLETE, ${nseq} frames = expected_frames.txt, video verified (Y/U/V ${st##* })" \
+        || { tail -n 15 "${tmp}/stream_sample.log"; bad "isp-stream-sample (exit ${rc}, ${st})"; }
+    cp "${test}/isp_stream/expected_frames.txt" "${tmp}/expected_frames.txt"
+    sed -i '0,/^1 /s/^\(1 [a-z0-9_]* [0-9]\) ..../\1 0000/' "${test}/isp_stream/expected_frames.txt"
+    run "${test}/run_vp.sh" isp-stream-sample --out "${sdir}/wrong" > "${tmp}/stream_wrong.log" 2>&1
+    rc=$?
+    [[ ${rc} -eq 1 ]] && grep -q "SEQUENCE FAIL: frame(s) \[1\]" "${tmp}/stream_wrong.log" \
+        && pass "a wrong expected frame (1) FAILs (not a rubber stamp)" \
+        || { tail -n 5 "${tmp}/stream_wrong.log"; bad "a wrong expected frame was not caught (exit ${rc})"; }
+    cp "${tmp}/expected_frames.txt" "${test}/isp_stream/expected_frames.txt"
+    cp "${test}/profiles/shared_bggr_2688x1520_full/profile.csrw" "${sdir}/tuned profile.csrw"
+    echo "CSC_CTRL std=1" >> "${sdir}/tuned profile.csrw"
+    run "${test}/run_vp.sh" isp-stream-sample --out "${sdir}/tuned" --profile "${sdir}/tuned profile.csrw" \
+        > "${tmp}/stream_tuned.log" 2>&1
+    rc=$?
+    [[ ${rc} -eq 0 ]] && grep -q "SEQUENCE NOT COMPARED: the session's profile" "${tmp}/stream_tuned.log" \
+        && grep -q "colorimetry *full range, BT.709" "${sdir}/tuned/summary.txt" && [[ -s "${sdir}/tuned/output.mp4" ]] \
+        && pass "a tuned copy of the profile (CSC_CTRL std=1): BT.709 video, no golden comparison" \
+        || { tail -n 5 "${tmp}/stream_tuned.log"; bad "tuned profile run (exit ${rc})"; }
+    # The tuning flow in place: the shipped shared profile itself edited (S4 review R1).
+    shp="${test}/profiles/shared_bggr_2688x1520_full/profile.csrw"
+    cp "${shp}" "${tmp}/shared_profile.csrw"
+    echo "CSC_CTRL std=1" >> "${shp}"
+    run "${test}/run_vp.sh" isp-stream-sample --out "${sdir}/inplace" --frames 2 > "${tmp}/stream_inplace.log" 2>&1
+    rc=$?
+    cp "${tmp}/shared_profile.csrw" "${shp}"
+    [[ ${rc} -eq 0 ]] && grep -q "SEQUENCE NOT COMPARED: the session's profile" "${tmp}/stream_inplace.log" \
+        && grep -q "colorimetry *full range, BT.709" "${sdir}/inplace/summary.txt" && [[ -s "${sdir}/inplace/output.mp4" ]] \
+        && pass "the shared profile edited in place: BT.709 video, exit 0, not compared with the shipped frames" \
+        || { tail -n 5 "${tmp}/stream_inplace.log"; bad "in-place tuned profile (exit ${rc})"; }
+    (cd "${test}" && sha256sum -c --quiet isp_stream/profile.sha256) || bad "the shared profile was not restored"
+    # An unchanged copy elsewhere (--profile=FILE form) is still the shipped profile: compared.
+    cp "${shp}" "${sdir}/same profile.csrw"
+    run "${test}/run_vp.sh" isp-stream-sample --out "${sdir}/same" --frames 2 --profile="${sdir}/same profile.csrw" \
+        > "${tmp}/stream_same.log" 2>&1
+    rc=$?
+    [[ ${rc} -eq 0 ]] && grep -q "SEQUENCE PASS: 2 frame(s)" "${tmp}/stream_same.log" \
+        && pass "an unchanged copy of the profile at another path (--profile=FILE): compared, SEQUENCE PASS" \
+        || { tail -n 5 "${tmp}/stream_same.log"; bad "unchanged profile copy (exit ${rc})"; }
+    # No FFmpeg on PATH: every other tool of /usr/bin, ffmpeg and ffprobe left out.
+    nob="${tmp}/no_ffmpeg_bin"
+    mkdir -p "${nob}"
+    for f in /usr/bin/*; do
+        case "$(basename "${f}")" in ffmpeg|ffprobe) ;; *) ln -s "${f}" "${nob}/" ;; esac
+    done
+    env -i PATH="${nob}" HOME="${tmp}/elsewhere" "${test}/run_vp.sh" isp-stream-sample --out "${sdir}/noff" \
+        > "${tmp}/stream_noff.log" 2>&1
+    rc=$?
+    [[ ${rc} -eq 5 ]] && grep -q "PREFLIGHT_FAILED" "${tmp}/stream_noff.log" && grep -q "dnf install -y ffmpeg" "${tmp}/stream_noff.log" \
+        && [[ ! -e "${sdir}/noff" ]] \
+        && pass "no ffmpeg on PATH: PREFLIGHT_FAILED (exit 5) before the boot, install steps printed, DIR not made" \
+        || { tail -n 8 "${tmp}/stream_noff.log"; bad "the run without ffmpeg (exit ${rc})"; }
+    rm -rf "${sdir}"
+else
+    bad "ffmpeg/ffprobe (with libx264) are needed for the isp-stream checks (package/docs/README.md)"
+fi
 
 step "5. firmware rebuilt from the shipped sources"
 want="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artefacts"]["sw/bootloader/build/VP_FX1_V3.0/freertos_cli.elf"]["sha256"])' \

@@ -1,6 +1,6 @@
 # FX1 VP — ISP RAW-sequence stream contract (`isp-stream`)
 
-Status: **S1 contract** (2026-11-12; review S1 fixes and S2 decisions 2026-11-13), **S3 implemented** (2026-11-16: launcher, video, `run_vp.sh isp-stream`; S3 review fixes: verify checks Y, U and V, CRF 0 refused before the boot), **S2 implemented** (2026-11-13: firmware, doorbell, bridge; 2026-11-16 review S2 fixes: the spool budget is a firmware admission limit, Ctrl+C forwarded during a drain, ACK checked against the firmware's own seq and the session). This page fixes the session contract that
+Status: **S1 contract** (2026-11-12; review S1 fixes and S2 decisions 2026-11-13), **S3 implemented** (2026-11-16: launcher, video, `run_vp.sh isp-stream`; S3 review fixes: verify checks Y, U and V, CRF 0 refused before the boot), **S4** (2026-11-16: `--debug-prefix`, the shipped sequence, packaging and container checks; 2026-11-17 S4 re-review: the ISP stop is retried from the task with the ISP interrupt masked, `status.isp_drain`, `isp stream idle`), **S2 implemented** (2026-11-13: firmware, doorbell, bridge; 2026-11-16 review S2 fixes: the spool budget is a firmware admission limit, Ctrl+C forwarded during a drain, ACK checked against the firmware's own seq and the session). This page fixes the session contract that
 S2 (firmware and host bridge) and S3 (launcher and video) implement. It is a
 **VP-only** mechanism: nothing here is an ISP CSR, an ISP interrupt or a SoC
 interface. The machine-readable parts are:
@@ -159,6 +159,7 @@ The field lists are in `fx1_isp_stream.h`. All words are LE `uint32`; 64-bit cou
   - `error` and `detail` say what failed.
   - `submitted`, `completed`, `cancelled` and `failed` count the frames.
   - The block also gives the output geometry, the colorimetry (committed before start, fixed for the session), `dma_err`, the ISP counter deltas, `publish_seq` and the elapsed mtime ticks.
+  - `isp_drain` (a reserved word until the S4 re-review, so 0 from older firmware): `NONE` (0) the ISP stopped before the terminal state; `PENDING` (1) its stop had not finished within one frame budget and the terminal state was published with the ISP still held; `DONE` (2) the held stop finished later and the ISP was released (§5.4). `status.json` gives the name.
 - **control** (bridge): written twice at most.
   - **Attach:** when the DDR is released, before the CPUs run, the bridge reads the descriptor and writes the control block: magic, version, this session's ID, `request = NONE` and `max_bytes` (the spool budget in NV12 bytes, `--isp-stream-max-mib`; 0 for none). `isp stream start` refuses a session the control block does not name (`ERROR / ERR_HOST`, detail 4).
   - **Stop:** `request = STOP` with `reason = USER` (Ctrl+C) or `HOST` (the bridge failed: the firmware ends in `ERROR / ERR_HOST`, detail 1), the budget unchanged. `reason = LIMIT` is still accepted from a host, but the bridge no longer sends it: the budget is enforced by the firmware (§5.4). The session ID must match.
@@ -277,8 +278,34 @@ In each case:
 
 - `state = ERROR`, with `error`/`detail`.
 - The frames already published stay valid; `failed` counts the lost ones.
-- There is no automatic reset or replay.
+- The failed session is not replayed or retried. The ISP is still cleaned up: its stop (a soft reset that drains the bus) runs at every end, below.
 - `isp stream wait` counts the session as a failed check.
+
+**The ISP stop** (every end; S4 re-review R3). `fx1_isp_stop` is a soft reset, which is a common-scope recovery: it drains the AXI transactions the bus still holds (a read the DDR answers late), then retires. Until then the ISP ignores W1C writes, `COMMON_IRQ_STATUS.ERROR` stays set and its level interrupt stays high; an ISR that acknowledges and returns would run back to back and starve every task (found in S4 with a held read). The firmware therefore:
+
+1. Masks the ISP source at the PLIC (priority 0, a per-source register: no read-modify-write of the enable word other sources share) from the stop on, and already in the ISR at the first fatal `DMA_ERR` (its automatic recovery does the same).
+2. Retries `fx1_isp_stop` from the stream task: `EBUSY` means still `STREAMING`, the buffers not back. Each attempt polls only the driver's bounded wait; between attempts the task yields one tick.
+3. Gives the stop one `frame_budget_us`. If it finishes: the ISP's interrupt state is acknowledged, legacy mode restored, the source unmasked (a request the PLIC latched meanwhile is taken by the stream's own handler, which finds nothing), the ISP released, then `isp_drain = NONE`.
+4. If not: the terminal state is published anyway (`isp_drain = PENDING`, the doorbell rung), the CLI and the timers keep running, and the ISP, its buffers and its masked interrupt stay the stream's: other ISP commands and the camera are refused (`in use`), and `isp stream start` is refused without touching the status block. The task keeps retrying without a limit; once the stop finishes it releases the ISP as in step 3 (`isp_drain = DONE`). `isp stream idle [MS]` waits for that.
+   - `isp stream wait` reports the session's result, possibly with the cleanup still pending; `isp stream idle` reports that the stream has released the ISP for reuse. An `idle` PASS does not clear the previous session's error, and checks no image or CRC.
+   - Without MS, `idle` waits for as long as the stop drains (the rest of the boot if a read never returns): scripts give it a deadline.
+   - `idle` is the stream's state only: another owner (the camera) may still hold the ISP, and the next command claims it as usual.
+5. A clean end (`STOPPED`) whose stop does not finish within the budget is reported `ERROR TIMEOUT` (detail = frames completed): the session never ends clean with the ISP not quiescent.
+
+`isp_stream.py` names a `PENDING` drain in its `FW_ERROR` message. The error paths of `isp stream start` (refused before any frame is queued) still call `fx1_isp_stop` once.
+
+**ISP DMA faults, tested** (`fx1_soc --isp-dma-fault`, a VP-only module in front of one ISP DMA master, counted by transaction; without the option the ISP is bound to the fabric directly):
+
+| Injection | Firmware end |
+|---|---|
+| an IDMA read answered with a bus error | `ERROR ISP`, detail `DMA_ERR.AXI_RD` (0x8) |
+| an ODMA write answered with a bus error | `ERROR ISP`, detail `DMA_ERR.AXI_WR` (0x10) |
+| an IDMA read held 200 ms (budget 20 ms), then completed | `ERROR TIMEOUT`, detail = frames completed; the stop outlasts its budget: `isp_drain` `PENDING` at the end, `DONE` once the read returns |
+| an IDMA read held 5 s (past the run) | `ERROR TIMEOUT`; the CLI runs (status, `isp selftest` and a new start refused, `isp stream idle 100` reports the drain), `poweroff` ends the run; `isp_drain` `PENDING` |
+
+In every case the frame in flight is never published, the frames before it stay published and equal the model, and `failed` = submitted − completed. After each of the first three, `isp stream idle` then `isp run` configures the ISP from scratch (the session's profile, geometry and mode; input source 0 of the pool, output slot 0): its NV12 equals the model frame, the oracle of the ISP's reuse. (`isp selftest` is not one: its fixture CRC assumes tuning registers at reset, which no session that loaded a profile leaves, V3.0 `isp run` included; reported to the owner.)
+
+**A read that never returns** is not modelled (the DDR3 controller ends a lost read with an error, `READ_TIMEOUT`). With the mitigation above it would leave the ISP held by the stream for the rest of the boot, the CLI running. The recovery timing itself is the driver's and the hardware's: the driver's own callers (`isp run`, the camera) are outside the stream and keep their S4 behaviour; reported to the driver/firmware owners.
 
 **Refused before start** (the status block is not touched): an invalid descriptor (`descriptor word N invalid`, N the 32-bit word), a session that already ran in this boot, and a running session.
 
@@ -348,7 +375,10 @@ before the boot and prints the AlmaLinux 9 install steps when they are missing.
 run_vp.sh isp-stream (--manifest M.json | --raw A.raw [B.raw ...]) --profile P.csrw --out DIR \
     [--repeat K] [--frames N | --loop --max-spool-mib N] [--queue 1|2|4] [--fps F] [--crf N] \
     [--keep-nv12] [--max-spool-mib N] [--min-psnr DB] [--legacy] [--drain-timeout-s S]
-run_vp.sh isp-stream-encode --out DIR [--fps F] [--crf N]      # the kept spool again, no VP run
+run_vp.sh isp-stream-encode --out DIR [--fps F] [--crf N] [--min-psnr DB] [--debug-prefix]
+                                                               # the kept spool again, no VP run
+run_vp.sh isp-stream-sample --out DIR [--profile P.csrw] [isp-stream options]
+                                                               # the shipped sequence (§6.2)
 ```
 
 Defaults: `--queue 2` (S2 review: overlap of copy and ISP, bit-exact; 1 and 4 stay for comparison and stress), `--fps 30`, `--crf 10` (1..51), `--min-psnr 40` (Y, U and V), `--drain-timeout-s 300`. `--loop` requires `--max-spool-mib`; with a finite schedule it is optional. In both cases it maps onto `fx1_soc --isp-stream-max-mib`, the firmware's admission limit (§5.4).
@@ -363,7 +393,8 @@ Defaults: `--queue 2` (S2 review: overlap of copy and ISP, bit-exact; 1 and 4 st
    - console in `DIR/platform.log`, spool in `DIR/spool`, progress on stdout;
    - `fx1_soc` runs in its own session (process group). Ctrl+C reaches the launcher only, and the launcher forwards one SIGINT. It forwards only once the simulator has printed, which is after it installed its handler.
 4. **Spool check:**
-   - every frame's SHA-256 against `frames.jsonl`, consecutive ordinals and offsets, one geometry, one colorimetry;
+   - every record checked before it is used: every integer field present and an integer, a 64-digit SHA-256, consecutive ordinals and offsets, one geometry and colorimetry, the NV12 size, and the identity, which must be the schedule's (`source_index`, `repeat_index`) = ((n // K) mod S, n mod K). A record that fails is a `CAPTURE_ERROR` naming the frame and the field, never a crash later (labels) (S4 review R2);
+   - every frame's SHA-256 against `frames.jsonl`;
    - captured = the firmware's `completed`, and `DONE` with the whole schedule;
    - a torn tail (an incomplete last line, NV12 bytes past the last whole frame) is cut and noted.
 
@@ -390,7 +421,32 @@ Defaults: `--queue 2` (S2 review: overlap of copy and ISP, bit-exact; 1 and 4 st
 | 13 | `SIM_ERROR` | no | the simulator failed (exit 3/4, no status) |
 | 130 | — | no | Ctrl+C outside the VP run (preparing, checking, encoding) |
 
-Prefix videos (3, 4) are made only of whole, verified frames, never of a session that ended in an error. After 9 or 10, `isp-stream-encode` retries from the kept spool without the VP. It refuses a `DIR` that already has `output.mp4`.
+Prefix videos (3, 4) are made only of whole, verified frames, never of a session that ended in an error. After 9 or 10, `isp-stream-encode` retries from the kept spool without the VP. It refuses a `DIR` that already has `output.mp4`. A run's requested `--fps`, `--crf` and `--min-psnr` are in `summary.json` from the start, also for a run that fails.
+
+**Debug prefix** (`isp-stream-encode --out DIR --debug-prefix`, opt-in; S3 review decision). It applies only to a failed run with a spool: `FW_ERROR`, `CAPTURE_ERROR`, `HARD_STOP`, `SIM_ERROR`, `REFERENCE_MISMATCH` or `NO_FRAMES`. A failed run's message names the command.
+
+- **The prefix** is the longest run of whole, consecutive frames from ordinal 0 that pass every spool check (step 4: the record's fields, types and schedule identity, then the SHA-256). It ends at the first frame that fails, and that reason is recorded (`cut`). The spool is only read: nothing is cut or repaired.
+- **The video** is encoded from the spool's first N frames, fed on the encoder's stdin so that the input ends there. It is verified like `output.mp4` (§6) and written to `DIR/debug_prefix.mp4`, with its files in `DIR/debug_prefix/`. It is never `output.mp4`, and an existing `debug_prefix.mp4` is never overwritten.
+- **The run is unchanged:** its `status`, `exit` and `message` in `summary.json` stay as they were. The result is recorded under `debug_prefix` (`status` `VERIFIED`, `ENCODE_FAILED` or `VERIFY_FAILED`; frames, records, cut, PSNR, and the note "debug only ... not for acceptance").
+- **Exit status of the command:** 0 the debug video was verified; 6 no valid prefix (nothing written); 2 refused (a run whose capture succeeded: use `isp-stream-encode` without the option; a run with nothing captured; an existing `debug_prefix.mp4`); 9 or 10 the encoder failed or the debug video was rejected.
+
+### 6.2 The shipped sequence (`isp_stream/`, `run_vp.sh isp-stream-sample`)
+
+`package_sdk.sh` writes `test/VP_FX1_V3.0/isp_stream/`:
+
+- **`sequence.json`:** d65 -> outdoor1 -> d65 (d65 -> d65 without the internal outdoor1). It uses the samples' own ISP containers (`../isp/<sample>/input.isp16`, `le16_raw12_has` / `raw12`, as `run_vp.sh isp NAME` feeds them; the shared profile keeps `COMMON_INPUT_FORMAT` at RAW12). No RAW is added.
+- **`profile.sha256`:** the shipped shared profile's SHA-256, taken at packaging.
+- **`expected_frames.txt`:** the SHA-256 of every frame at repeat 2 with the shipped profile, from the stand-alone model on the same session (`isp_stream_prep.py reference`). Packaging fails unless each source's second frame equals that sample's golden (`isp/<sample>/expected_nv12.sha256`). That check is the proof that the GTM history reaches exactly one frame back.
+- **`SEQUENCE.txt`:** the description, with the internal-use note for outdoor1.
+
+`run_vp.sh isp-stream-sample --out DIR` runs the sequence with repeat 2:
+
+- **When the oracle applies:** it is decided from the session itself. The SHA-256 of the session's profile snapshot (`session.json`) must equal `isp_stream/profile.sha256`, the shipped profile hashed at packaging, and the mode must be profile mode. Comparing against the profile file on disk would not work: a shared profile edited in place would still be compared with frames it was never made for (S4 review R1).
+- **Then:** every captured frame with an ordinal in `expected_frames.txt` is compared (`SEQUENCE PASS` / `SEQUENCE FAIL`, exit 1). Later frames of a `--loop` have no oracle and are reported as not compared.
+- **Otherwise** (another `--profile` in either form, the shared one edited in place, or `--legacy`): the video is made and verified as usual, and `SEQUENCE NOT COMPARED` names the reason. The exit status is the run's.
+- **Precedence:** the wrapper passes the shared profile first and the user's options after it, so a `--profile` of the user's wins. The wrapper refuses `--manifest`, `--raw` and `--repeat`.
+
+`run_packaging_regression.sh` step 4d and `run_docker_check.sh` run it, together with the no-FFmpeg preflight.
 
 ## 7. Oracle
 
@@ -404,7 +460,7 @@ with the padding cut; the image bytes are the same.
 
 The S1 baselines are in the workspace evidence and are not committed. CI recomputes the reference from the model each run instead of storing goldens.
 
-## 8. Implementation (S2) and what S3 adds
+## 8. Implementation (S2) and what S3 and S4 add
 
 | Stage | Change |
 |---|---|
@@ -414,6 +470,10 @@ The S1 baselines are in the workspace evidence and are not committed. CI recompu
 | S2 | CTest `fx1_regression_isp_stream_platform` (`platforms/fx1_soc/demo/tests/test_stream_platform.py`), required by the gate; see the file's header for its cases |
 | S3 | `platforms/fx1_soc/demo/isp_stream.py` (`run`, `encode`; §6.1); `run_vp.sh isp-stream` / `isp-stream-encode`; the package ships `isp_stream.py` and `isp_stream_prep.py` (`package_sdk.sh`, `check_package.sh`) |
 | S3 | CTest `fx1_regression_isp_stream_launcher` (`platforms/fx1_soc/demo/tests/test_stream_launcher.py`; needs the system ffmpeg/ffprobe, else it is not registered and the gate reports it missing), required by the gate; see the file's header for its cases |
+| S4 | `isp_stream.py encode --debug-prefix` (§6.1); `fw/fx1_soc/freertos/cmd_isp_stream.c`: the ISP frame counters are reported at every end, also ERROR (they were 0 after an error); `test_stream_platform.py` `copy_error` (an uncorrectable DDR error in the pool: ERROR COPY, the partial copy never queued); `test_stream_launcher.py` `debug_prefix` |
+| S4 review | `isp_stream.py`: one record check (`frame_problem`) for the spool and the debug prefix (R2). `run_vp.sh isp-stream-sample`: the oracle applies by the session's profile hash (`isp_stream/profile.sha256`, R1). `fx1_soc --isp-dma-fault idma-error:N / odma-error:N / idma-stall:N[:US]` (`platforms/fx1_soc/src/isp_dma_fault.h`, VP-only, opt-in, absent without the option); `test_stream_platform.py` `isp_dma_fault` |
+| S4 re-review | `cmd_isp_stream.c`: the ISP source masked at the PLIC during a recovery, `fx1_isp_stop` retried from the task with a deadline, the ISP held past it (`status.isp_drain`, §5.4), `isp stream idle [MS]`; `fx1_isp_stream.h` `isp_drain` (a reserved word); the bridge's `status.json` `isp_drain`; `isp_dma_fault.h` reports a held read as pending or completed; `test_stream_platform.py` `isp_dma_fault`: the reuse oracle (`isp run`) and a 5 s hold |
+| S4 | The shipped sequence (§6.2): `package_sdk.sh` (`isp_stream/`), `run_vp.sh isp-stream-sample`, `check_package.sh`; `run_packaging_regression.sh` step 4d; `run_docker_check.sh` (no FFmpeg: refused before the boot; FFmpeg from `--ffmpeg-rpms` or the dnf steps: the sample and a tuned profile) |
 
 **Measured in S2.** D65 → A → D65 × 2 at 2688×1520 with the shared profile, queue 2, 1920×1080 output:
 

@@ -306,6 +306,71 @@ done
 echo "]" >> "${sample_json}"
 [[ -d "${test}/isp/d65" ]] || die "the default sample d65 is missing (run_vp.sh isp uses it)"
 
+# ── ISP RAW sequence sample (run_vp.sh isp-stream-sample) ────────────────────
+# d65 -> outdoor1 -> d65 from the samples' own ISP containers (no RAW is added);
+# without the internal outdoor1, d65 -> d65. The oracle of every frame (repeat 2,
+# the shipped profile) is the stand-alone ISP model over the same session; the
+# second frame of each source must also equal that sample's golden (the GTM
+# history reaches one frame back).
+log "ISP RAW sequence sample (isp_stream/)"
+seq_names=()
+for n in d65 outdoor1 d65; do [[ -d "${test}/isp/${n}" ]] && seq_names+=("${n}"); done
+seqd="${test}/isp_stream"
+mkdir -p "${seqd}"
+for n in "${seq_names[@]}"; do
+    grep -qx "PROFILE_ID=shared_bggr_2688x1520_full" "${test}/isp/${n}/job.env" \
+        || die "sequence sample ${n} does not use the shared profile"
+done
+python3 - "${seqd}/sequence.json" "${seq_names[@]}" <<'PYEOF'
+import json, sys
+# input.isp16 is already the ISP's 12-bit container (RAW10 in bits [11:2]) and the
+# shared profile keeps COMMON_INPUT_FORMAT at RAW12, as `run_vp.sh isp NAME` runs it.
+m = {"version": 1, "width": 2688, "height": 1520, "bayer": "BGGR", "source_format": "le16_raw12_has",
+     "input_depth": "raw12", "frames": ["../isp/%s/input.isp16" % n for n in sys.argv[2:]]}
+open(sys.argv[1], "w").write(json.dumps(m, indent=2) + "\n")
+PYEOF
+python3 "${src}/platforms/fx1_soc/demo/isp_stream_prep.py" prepare --out "${scratch}/sequence" \
+    --manifest "${seqd}/sequence.json" --profile "${test}/profiles/shared_bggr_2688x1520_full/profile.csrw" \
+    --repeat 2 > "${scratch}/sequence.log" 2>&1 \
+    && python3 "${src}/platforms/fx1_soc/demo/isp_stream_prep.py" reference --session "${scratch}/sequence" \
+        --run-raw "${ref_tool}" >> "${scratch}/sequence.log" 2>&1 \
+    || { cat "${scratch}/sequence.log" >&2; die "the sequence sample: prepare/reference failed"; }
+python3 - "${scratch}/sequence/reference.json" "${seqd}/expected_frames.txt" "${test}/isp" "${seq_names[@]}" <<'PYEOF' \
+    || die "the sequence sample: the model's frames do not give the samples' goldens"
+import json, os, sys
+ref, out, isp, names = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3], sys.argv[4:]
+frames = ref["frames"]
+assert len(frames) == 2 * len(names), "reference: %d frames for %d sources x 2" % (len(frames), len(names))
+with open(out, "w") as f:
+    f.write("# ordinal source repeat sha256 (NV12, run_vp.sh isp-stream-sample: repeat 2, the shipped profile)\n")
+    for fr in frames:
+        n = names[fr["source_index"]]
+        if fr["repeat_index"] == 1:
+            golden = open(os.path.join(isp, n, "expected_nv12.sha256")).read().strip()
+            if fr["sha256"] != golden:
+                sys.exit("sequence frame %d (%s, second): %s, the sample's golden is %s" % (fr["ordinal"], n, fr["sha256"], golden))
+        f.write("%d %s %d %s\n" % (fr["ordinal"], n, fr["repeat_index"] + 1, fr["sha256"]))
+PYEOF
+# The profile the oracle was made with, as shipped: run_vp.sh isp-stream-sample applies the
+# oracle only when the session's profile snapshot has this hash (a profile edited in place
+# is then not compared with frames it was never made for).
+(cd "${test}" && sha256sum profiles/shared_bggr_2688x1520_full/profile.csrw) > "${seqd}/profile.sha256"
+{
+    echo "ISP RAW sequence sample: $(printf '%s -> ' "${seq_names[@]}" | sed 's/ -> $//'), repeat 2 ($(( 2 * ${#seq_names[@]} )) ISP frames, one session)"
+    echo "sources           ../isp/<sample>/input.isp16 (the samples' ISP containers; no other RAW)"
+    if [[ " ${seq_names[*]} " == *" outdoor1 "* ]]; then
+        echo "                  outdoor1 is INTERNAL USE ONLY, not cleared for public release (isp/outdoor1/SAMPLE.txt)"
+    fi
+    echo "profile           profiles/shared_bggr_2688x1520_full/profile.csrw, applied once for the whole session"
+    echo "run               ./run_vp.sh isp-stream-sample --out DIR      (DIR/output.mp4, DIR/summary.txt)"
+    echo "expected frames   expected_frames.txt: every frame's NV12 SHA-256 from the stand-alone ISP model"
+    echo "                  (same session); each source's second frame equals its sample's golden"
+    echo "                  (isp/<sample>/expected_nv12.sha256). They hold for the profile as shipped"
+    echo "                  (profile.sha256) in profile mode: a run whose profile differs (another"
+    echo "                  --profile, or the shared one edited in place) makes its video without the"
+    echo "                  comparison."
+} > "${seqd}/SEQUENCE.txt"
+
 # ── documentation and licences ───────────────────────────────────────────────
 log "documentation and licences"
 cp "${here}/docs/README.md" "${here}/docs/MEMORY_MAP.md" "${doc}/"

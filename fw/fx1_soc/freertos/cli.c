@@ -336,7 +336,7 @@ static const command commands[] = {
     {"md", cmd_md, "md ADDR [WORDS]      read 32-bit words (mapped regions only)"},
     {"mw", cmd_mw, "mw ADDR VALUE        write one 32-bit word"},
     {"regdump", cmd_regdump, "regdump isp|dma|plic|clint|uart|eth"},
-    {"isp", cmd_isp, "isp selftest [profile]|run [legacy|auto]|stats|stream start|status|stop|wait [MS]  fixture (legacy or profile mode); RAW job (profile mode by default) with optional adaptive WB/tone; statistics; RAW-sequence stream (fx1_soc --isp-stream-spool)"},
+    {"isp", cmd_isp, "isp selftest [profile]|run [legacy|auto]|stats|stream start|status|stop|wait [MS]|idle [MS]  fixture (legacy or profile mode); RAW job (profile mode by default) with optional adaptive WB/tone; statistics; RAW-sequence stream (fx1_soc --isp-stream-spool)"},
     {"dma", cmd_dma, "dma test [BYTES]     SYS_DMA M2M copy with IRQ, verified"},
     {"fpu", cmd_fpu, "fpu test             two tasks interleaving FP work (context switch check)"},
     {"eth", cmd_eth,

@@ -526,7 +526,7 @@ static int claim_for(const char* what)
 {
     if (isp_claim(ISP_OWNER_ISP)) return 1;
     out(what);
-    out_line(": the ISP is in use by the camera or the stream (camera stop / isp stream wait first)");
+    out_line(": the ISP is in use by the camera or the stream (camera stop / isp stream idle first)");
     return 0;
 }
 

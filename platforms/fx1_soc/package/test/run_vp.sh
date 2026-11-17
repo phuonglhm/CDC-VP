@@ -38,8 +38,13 @@ Usage:
                                        # (H.264, one subtitle cue per frame) + summary; Ctrl+C: stop and
                                        # keep the video of what was processed. Needs the system ffmpeg
                                        # with libx264 (checked first). ./run_vp.sh isp-stream --help
-  ./run_vp.sh isp-stream-encode --out DIR [--fps F] [--crf N]
-                                       # encode a run's kept spool again (no VP run)
+  ./run_vp.sh isp-stream-sample --out DIR [--profile P.csrw] [isp-stream options]
+                                       # the shipped sequence (isp_stream/SEQUENCE.txt: d65 -> outdoor1
+                                       # -> d65, repeat 2) -> DIR/output.mp4; with the shipped profile
+                                       # every frame is compared with isp_stream/expected_frames.txt
+  ./run_vp.sh isp-stream-encode --out DIR [--fps F] [--crf N] [--min-psnr DB] [--debug-prefix]
+                                       # encode a run's kept spool again (no VP run); --debug-prefix:
+                                       # a failed run's checked prefix -> DIR/debug_prefix.mp4 (debug only)
   ./run_vp.sh version                  # VP build identity
   ./run_vp.sh ddr3                     # DDR3 firmware-init examples (BootROM/SRAM, --ddr-boot firmware)
   ./run_vp.sh camera [NAME...]         # camera examples (fx1_soc --camera; minutes each: detailed D-PHY)
@@ -266,6 +271,58 @@ case "${mode}" in
         need_fw
         # The exit status is the run's (isp_stream.py: 0 COMPLETE, 3 USER_STOPPED, 4 LIMIT_REACHED, ...).
         exec python3 -B "${here}/isp_stream.py" run --fx1-soc "${vp}" --elf "${fw}" "$@"
+        ;;
+    isp-stream-sample)
+        command -v python3 >/dev/null 2>&1 || die "python3 is needed (dnf install -y python3)"
+        need_fw
+        seq="${here}/isp_stream"
+        for f in sequence.json expected_frames.txt profile.sha256; do
+            [[ -f "${seq}/${f}" ]] || die "no isp_stream/${f} in this package"
+        done
+        # The shared profile goes first: a --profile of the user's (either form) comes later and
+        # wins. Whether the oracle applies is decided from the session's own profile snapshot.
+        out=""
+        prev=""
+        for a in "$@"; do
+            case "${a}" in
+                --manifest|--manifest=*|--raw|--raw=*|--repeat|--repeat=*)
+                    die "${a%%=*}: the sample's sequence is fixed (run_vp.sh isp-stream takes your own)" ;;
+                --out=*) out="${a#--out=}" ;;
+            esac
+            [[ "${prev}" == "--out" ]] && out="${a}"
+            prev="${a}"
+        done
+        [[ -n "${out}" ]] || die "usage: run_vp.sh isp-stream-sample --out DIR [--profile P.csrw] [isp-stream options]"
+        echo "sequence: $(head -n 1 "${seq}/SEQUENCE.txt")"
+        rc=0
+        python3 -B "${here}/isp_stream.py" run --fx1-soc "${vp}" --elf "${fw}" --manifest "${seq}/sequence.json" \
+            --profile "${here}/profiles/shared_bggr_2688x1520_full/profile.csrw" --repeat 2 "$@" || rc=$?
+        if [[ ${rc} -eq 0 || ${rc} -eq 3 || ${rc} -eq 4 ]]; then
+            python3 - "${out}/session/session.json" "${out}/spool/frames.jsonl" "${seq}/expected_frames.txt" \
+                "${seq}/profile.sha256" <<'PYEOF' || rc=1
+import json, sys
+info = json.load(open(sys.argv[1]))
+shipped = open(sys.argv[4]).read().split()[0]
+used = info["profile"]["sha256"]
+if used != shipped or info["mode"] != "profile":
+    why = ("the session's profile (%s, SHA-256 %s...) is not the shipped one (%s...)"
+           % (info["profile"]["path"], used[:12], shipped[:12]) if used != shipped else "legacy mode")
+    print("SEQUENCE NOT COMPARED: %s: the video is made and verified; isp_stream/expected_frames.txt holds the "
+          "frames of the shipped profile in profile mode" % why)
+    sys.exit(0)
+want = {int(l.split()[0]): l.split()[3] for l in open(sys.argv[3]) if l.strip() and not l.startswith("#")}
+got = [json.loads(l) for l in open(sys.argv[2])]
+mine = [f for f in got if f["ordinal"] in want]
+bad = [f["ordinal"] for f in mine if want[f["ordinal"]] != f["sha256"]]
+if bad or not mine:
+    print("SEQUENCE FAIL: frame(s) %s differ from isp_stream/expected_frames.txt" % (bad[:6] or "none captured"))
+    sys.exit(1)
+later = len(got) - len(mine)
+print("SEQUENCE PASS: %d frame(s), every NV12 = isp_stream/expected_frames.txt (the stand-alone ISP model)%s"
+      % (len(mine), "; %d later frame(s) of the loop not compared (no oracle)" % later if later else ""))
+PYEOF
+        fi
+        exit "${rc}"
         ;;
     isp)
         need_fw

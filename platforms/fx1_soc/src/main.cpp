@@ -8,6 +8,7 @@
 //           [--ddr3-fault T_US:KIND[:ARG] ...] [--camera [--camera-raw FILE]]
 //           [--dump-isp-demosaic DIR] [--isp-stream-spool DIR [--isp-stream-max-mib N]
 //           [--isp-stream-hold-us N] [--isp-stream-fault foreign-ack]]
+//           [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]
 //
 // Time resolution is 1 fs (the detailed D-PHY model of the camera needs it;
 // set for every run so that a run with and without --camera is timed alike).
@@ -75,6 +76,7 @@ void usage()
                  "              [--eth-unguarded-dma] [--eth-wb-delay-us N] [--dump-isp-demosaic DIR]\n"
                  "              [--isp-stream-spool DIR [--isp-stream-max-mib N] [--isp-stream-hold-us N]\n"
                  "              [--isp-stream-fault foreign-ack]]\n"
+                 "              [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
                  "  --uart0-wait        with --uart0-socket: wait for the client before starting\n"
@@ -133,6 +135,13 @@ void usage()
                  "                as a slow host (default 0: off)\n"
                  "  --isp-stream-fault  fault injection: foreign-ack: the first ACK is written into a\n"
                  "                record whose session the bridge altered (the firmware must refuse it)\n"
+                 "  --isp-dma-fault  VP-only fault injection (absent unless given; not a SoC model)\n"
+                 "                on one ISP DMA master, counted from boot:\n"
+                 "                idma-error:N  the N-th IDMA read gets a bus error (DMA_ERR.AXI_RD)\n"
+                 "                odma-error:N  the N-th ODMA write gets a bus error (DMA_ERR.AXI_WR)\n"
+                 "                idma-stall:N[:US]  the N-th IDMA read is held US us (default 1000000),\n"
+                 "                then completes: the frame misses the firmware's budget, no error\n"
+                 "                (reported \"pending\" if the run ends first)\n"
               << cdc::platforms::fx1_soc::ddr3_fault_usage();
 }
 
@@ -361,6 +370,24 @@ int sc_main(int argc, char* argv[])
             }
             options.isp_stream_foreign_ack = true;
         }
+        else if (arg == "--isp-dma-fault") {
+            const std::string spec = value();
+            const std::size_t colon = spec.find(':');
+            const std::string kind = spec.substr(0, colon);
+            const std::string rest = colon == std::string::npos ? std::string() : spec.substr(colon + 1);
+            const std::size_t colon2 = rest.find(':');
+            unsigned long nth = 0, hold = 1000000;
+            const unsigned k = kind == "idma-error" ? 1u : kind == "odma-error" ? 2u : kind == "idma-stall" ? 3u : 0u;
+            if (!k || colon == std::string::npos || !parse_uint(rest.substr(0, colon2), 4000000000ul, nth) || nth == 0 ||
+                (colon2 != std::string::npos &&
+                 (k != 3u || !parse_uint(rest.substr(colon2 + 1), 100000000ul, hold) || hold == 0))) {
+                usage();
+                return 4;
+            }
+            options.isp_dma_fault_kind = k;
+            options.isp_dma_fault_nth = nth;
+            options.isp_dma_fault_hold_us = hold;
+        }
         else if (arg == "--isp-stream-hold-us") {
             unsigned long us = 0;
             if (!parse_uint(value(), 1000000ul, us) || us == 0) {
@@ -468,6 +495,8 @@ int sc_main(int argc, char* argv[])
             stream_ok = top.isp_stream_ok();
             std::cout << "[fx1_soc] isp stream (VP host bridge): " << top.isp_stream_report() << '\n';
         }
+        if (options.isp_dma_fault_kind)
+            std::cout << "[fx1_soc] isp dma fault (injection): " << top.isp_dma_fault_report() << '\n';
         bool demosaic_ok = true;
         if (demosaic) {
             demosaic->finish();  // frames without an end: incomplete

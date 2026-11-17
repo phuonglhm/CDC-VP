@@ -108,6 +108,16 @@
 #define FX1_ISP_STREAM_HOST_DETACHED 4u /* start: the bridge did not attach this session */
 #define FX1_ISP_STREAM_HOST_BUDGET   5u /* start: the spool budget holds no frame   */
 
+/* status.isp_drain: the ISP stop at the end of a session (S4 review R3). The
+ * stop's recovery drains the AXI transactions the bus still holds; the
+ * firmware gives it one frame budget before it publishes the terminal state. */
+#define FX1_ISP_STREAM_DRAIN_NONE    0u /* stopped before the terminal state, released */
+#define FX1_ISP_STREAM_DRAIN_PENDING 1u /* not stopped within the budget: the terminal
+                                           state was published with the ISP still held
+                                           (claimed by the stream, its interrupt masked,
+                                           no session starts) */
+#define FX1_ISP_STREAM_DRAIN_DONE    2u /* the held stop finished later: ISP released */
+
 /* control.request / control.reason */
 #define FX1_ISP_STREAM_REQ_NONE      0u
 #define FX1_ISP_STREAM_REQ_STOP      1u
@@ -156,7 +166,8 @@ typedef struct fx1_isp_stream_status {        /* firmware -> host */
     uint32_t idma_frames, odma_frames;        /* ISP counter deltas of the session */
     uint32_t publish_seq;                     /* seq of the last published record */
     uint32_t elapsed_ticks;                   /* mtime ticks from start to the last completion */
-    uint32_t reserved[9];
+    uint32_t isp_drain;                       /* FX1_ISP_STREAM_DRAIN_* */
+    uint32_t reserved[8];
 } fx1_isp_stream_status;                      /* 128 bytes */
 
 typedef struct fx1_isp_stream_control {       /* host bridge -> firmware */

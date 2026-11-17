@@ -27,6 +27,7 @@
 #include <icsl_eth/eth_phy_tlm.h>
 #include "eth_line_peer.h"
 #include "eth_wb_delay.h"
+#include "isp_dma_fault.h"
 #include "isp_stream_bridge.h"
 #include <riscv_vp_plusplus_wrapper.h>
 #include <uart.h>
@@ -228,6 +229,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     std::unique_ptr<camera> cam;  // --camera only
 #endif
     std::unique_ptr<IspStreamBridge> isp_stream;  // --isp-stream-spool only
+    std::unique_ptr<IspDmaFault> isp_dma_fault;   // --isp-dma-fault only
 
     sc_core::sc_buffer<unsigned char> uart_tx{"uart_tx"};
     // PLIC source lines, index = source ID - 1.
@@ -305,8 +307,27 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         sys_dma.tx_clear(dma_tx_clear);
         // ISP: CSR on PERIBUS_1 (local offsets), two DMA masters, level IRQ.
         fabric.target("ISP_CSR").bind(isp.csr_socket);
-        isp.idma_socket.bind(fabric.initiator("ISP_IDMA"));
-        isp.odma_socket.bind(isp_odma_guard.target); // IDMA only reads
+        // --isp-dma-fault puts its module in front of one master; without it the
+        // sockets are bound as they always were.
+        if (opts.isp_dma_fault_kind) {
+            const IspDmaFault::Kind kind = opts.isp_dma_fault_kind == 1   ? IspDmaFault::Kind::idma_error
+                                           : opts.isp_dma_fault_kind == 2 ? IspDmaFault::Kind::odma_error
+                                                                          : IspDmaFault::Kind::idma_stall;
+            isp_dma_fault = std::make_unique<IspDmaFault>("isp_dma_fault", kind, opts.isp_dma_fault_nth,
+                                                          opts.isp_dma_fault_hold_us);
+        }
+        if (isp_dma_fault && isp_dma_fault->idma()) {
+            isp.idma_socket.bind(isp_dma_fault->target);
+            isp_dma_fault->out.bind(fabric.initiator("ISP_IDMA"));
+        } else {
+            isp.idma_socket.bind(fabric.initiator("ISP_IDMA"));
+        }
+        if (isp_dma_fault && !isp_dma_fault->idma()) {
+            isp.odma_socket.bind(isp_dma_fault->target);
+            isp_dma_fault->out.bind(isp_odma_guard.target);
+        } else {
+            isp.odma_socket.bind(isp_odma_guard.target); // IDMA only reads
+        }
         isp_odma_guard.out.bind(fabric.initiator("ISP_ODMA"));
         isp.rst_n(isp_rst_n);
         if (opts.isp_demosaic) isp.debug_set_demosaic_observer(opts.isp_demosaic);
@@ -625,6 +646,10 @@ bool fx1_soc_top::isp_stream_ok() const { return !impl_->isp_stream || impl_->is
 std::string fx1_soc_top::isp_stream_report() const
 {
     return impl_->isp_stream ? impl_->isp_stream->report() : std::string();
+}
+std::string fx1_soc_top::isp_dma_fault_report() const
+{
+    return impl_->isp_dma_fault ? impl_->isp_dma_fault->report() : std::string();
 }
 std::vector<std::string> fx1_soc_top::isp_stream_errors() const
 {
