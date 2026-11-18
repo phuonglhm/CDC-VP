@@ -415,6 +415,7 @@ vp_eth_burst_line_rate
 vp_eth_echo_100m
 vp_eth_echo_10m
 fx1_npu_regs
+fx1_npu_regs_header
 fx1_npu_dbg
 fx1_npu_gemm
 fx1_npu_maxpool
@@ -428,6 +429,7 @@ fx1_npu_native_abort
 fx1_npu_reset
 fx1_npu_reset_inflight
 fx1_npu_dma_error
+fx1_npu_irq_writers
 fx1_npu_memory
 fx1_npu_fabric_maxpool
 fx1_npu_fabric_gemm
@@ -436,6 +438,24 @@ fx1_npu_fabric_s0_timeout_contrast
 fx1_smoke_npu_probe
 fx1_smoke_npu_probe_absent
 fx1_smoke_npu_bus_isolation
+fx1_smoke_npu_gemm
+fx1_smoke_npu_gemm_q10us
+fx1_smoke_npu_rich
+fx1_smoke_npu_rich_q10us
+fx1_smoke_npu_dfc
+fx1_smoke_npu_dfc_q10us
+fx1_smoke_npu_errors
+fx1_smoke_npu_errors_q10us
+fx1_unit_npu_neo_encoder
+fx1_unit_npu_driver_race_rich
+fx1_unit_npu_driver_race_rich_irq
+fx1_unit_npu_driver_race_rich_fail
+fx1_unit_npu_driver_race_rich_fail_irq
+fx1_unit_npu_driver_gemm_gate
+fx1_unit_npu_driver_gemm_gate_irq
+fx1_unit_npu_driver_window
+fx1_unit_npu_driver_reinit
+fx1_unit_npu_driver_poll
 [components]
 bus_arbitration
 bus_behavior
@@ -475,3 +495,4 @@ fx1_npu_gate_neo_high_fabric
 fx1_npu_gate_neo_window_low_direct
 fx1_npu_gate_neo_window_high_fabric
 fx1_npu_gate_neo_window_reset_low_direct
+fx1_regression_npu_oracle_xcheck

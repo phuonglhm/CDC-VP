@@ -8,8 +8,15 @@ target_link_libraries(test_fx1_npu PRIVATE
     cdc::components::fx1_exclusive_monitor
     SystemC::systemc)
 
+# The C firmware header against the C++ register map (static_asserts only).
+add_executable(test_fx1_npu_regs_header test_regs_header.cpp)
+target_include_directories(test_fx1_npu_regs_header PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+target_compile_features(test_fx1_npu_regs_header PRIVATE cxx_std_17)
+add_test(NAME fx1_npu_regs_header COMMAND test_fx1_npu_regs_header)
+set_tests_properties(fx1_npu_regs_header PROPERTIES TIMEOUT 10 LABELS "fx1;fx1_unit;npu")
+
 # Unit and fabric cases: an independent C++ oracle (MAX_POOL, GEMM bank), no model data.
-foreach(_case regs dbg gemm maxpool window unsupported refuse_model queue abort abort_running native_abort reset reset_inflight dma_error memory
+foreach(_case regs dbg gemm maxpool window unsupported refuse_model queue abort abort_running native_abort reset reset_inflight dma_error irq_writers memory
               fabric_maxpool fabric_gemm fabric_timeout_abort fabric_s0_timeout_contrast)
     add_test(NAME fx1_npu_${_case} COMMAND test_fx1_npu ${_case})
     set_tests_properties(fx1_npu_${_case} PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_unit;npu")

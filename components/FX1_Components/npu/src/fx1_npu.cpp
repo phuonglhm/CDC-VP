@@ -346,8 +346,14 @@ struct Fx1Npu::impl : public sc_core::sc_module {
     sc_core::sc_event dma_free_event;
 
     NpuStats st;
-    // Written by the transport callers and both workers; drive_irq() copies it to irq_out.
-    sc_core::sc_signal<bool, sc_core::SC_MANY_WRITERS> irq_level{"irq_level"};
+    // The interrupt level, computed by update_irq() in whichever process changed
+    // the registers (transport callers: one per CPU; both workers). Only
+    // drive_irq() (one method) writes irq_out: a signal written by two
+    // processes in one delta cycle stops the simulation (E115), even with
+    // SC_MANY_WRITERS (review N2: two initiators acknowledging while a worker
+    // completes).
+    bool irq_level = false;
+    sc_core::sc_event irq_event;
 
     // ---- host wall-time watchdog -----------------------------------------
     std::atomic<std::uint64_t> heartbeat{0};
@@ -552,7 +558,8 @@ struct Fx1Npu::impl : public sc_core::sc_module {
     void update_irq()
     {
         const bool level = (regs.ctrl & CTRL_IRQ_EN) != 0u && (regs.irq_enable & regs.irq_status) != 0u;
-        irq_level.write(level);
+        irq_level = level;
+        irq_event.notify(sc_core::SC_ZERO_TIME);
     }
     void finish_success()
     {
@@ -2073,14 +2080,14 @@ Fx1Npu::Fx1Npu(sc_core::sc_module_name name, const NpuOptions& options)
     target_socket.register_b_transport(this, &Fx1Npu::b_transport);
     target_socket.register_transport_dbg(this, &Fx1Npu::transport_dbg);
     SC_METHOD(drive_irq);
-    sensitive << impl_->irq_level;
+    sensitive << impl_->irq_event;
     sc_core::sc_spawn(sc_bind(&impl::native_thread, impl_.get()), "native_worker");
     sc_core::sc_spawn(sc_bind(&impl::rich_thread, impl_.get()), "rich_worker");
 }
 
 Fx1Npu::~Fx1Npu() = default;
 
-void Fx1Npu::drive_irq() { irq_out.write(impl_->irq_level.read()); }
+void Fx1Npu::drive_irq() { irq_out.write(impl_->irq_level); }
 
 void Fx1Npu::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
 {

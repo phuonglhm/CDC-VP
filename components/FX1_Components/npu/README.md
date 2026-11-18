@@ -119,9 +119,18 @@ clears the one-shot extension bank. The doorbell does not.
   recovery path, not flow control. This bounded wait is VP-only and not a
   MAS or silicon behaviour.
 - Completion: when the queue drains, STATUS gets DONE and IRQ_STATUS DONE,
-  unless an error was latched in the batch. `RETIRED` counts entries whose
-  copy-back finished. The driver checks `RICH_STATUS`, `VP_ERROR` and the
-  `RETIRED` delta of its own job. DONE alone is not success.
+  unless an error was latched in the batch. A refused push while the batch
+  runs counts as such an error: that batch ends without DONE (and without a
+  DONE interrupt). `RETIRED` counts entries whose copy-back finished; an entry
+  that fails, is refused by the model or is aborted never retires. DONE alone
+  is not success: the reference driver decides by the `RETIRED` delta of the
+  instructions it had accepted.
+- The error latches (STATUS.ERROR, IRQ_STATUS, LAST_ERROR, RICH_STATUS.ERROR
+  and code, VP_ERROR and info) are shared by the GEMM bank, the queue and the
+  refusals. `VP_ERROR` bits accumulate; `LAST_ERROR`, the RICH_STATUS code and
+  `VP_ERROR_INFO` hold the latest error. Clearing them while work is in flight
+  can drop the completion or the error of that work: clear them only when
+  nothing is outstanding and every engine is idle.
 - Copy-back writes only the output regions of the decoded instruction, not the
   whole window: bytes of the window that are not an output of the instruction
   are never written. The firmware keeps ownership of every input and output
@@ -243,6 +252,25 @@ Debug transport (`transport_dbg`) reads the wrapper bank and the rich
 status/shadow registers only. It never waits and never changes state. Other
 regions and every debug write return 0 bytes.
 
+## Firmware register ABI and driver
+
+`include/fx1_npu/fx1_npu_regs.h` is the C99 register header of this page
+(register ABI 1.x: offsets and bits are frozen; a change of behaviour behind
+them is managed as an ABI change too). `tests/test_regs_header.cpp` checks
+every value against `fx1_npu_regmap.h` at compile time. The reference
+bare-metal driver is `fw/fx1_soc/drivers/fx1_npu.h`; it checks `VP_ID`, the
+ABI major and the features it needs first, uses `VP_QUEUE_FREE` before every
+push (never the bounded push wait), reads back every refusal, and recovers
+with ABORT followed by `QUIESCENT` and `ENGINE_BUSY` = `NATIVE_BUSY` = 0 under
+its own timeout (or reports the device unavailable). Raw native START is not
+part of the driver; after an ABORT the native configuration counts as lost
+until a GEMM-bank job programs it again. The driver consumes each completion
+once: it clears the shared error latches only when the NPU is quiet (nothing
+outstanding, every engine idle), refuses rich and configuration calls while a
+GEMM-bank job is outstanding, decides a rich batch by `RETIRED` and a
+GEMM-bank job by STATUS.DONE, and opens (`fx1_npu_init`) only an idle NPU
+(review N2).
+
 ## Access classes
 
 Aligned 32-bit accesses only. Byte enables, other lengths, misaligned
@@ -267,14 +295,20 @@ CPU port turns into access faults.
 
 ## Tests
 
-`tests/test_fx1_npu.cpp` (ctest `fx1_npu_*`):
+`tests/test_regs_header.cpp` (ctest `fx1_npu_regs_header`): the C header.
+
+`tests/test_fx1_npu.cpp` (ctest `fx1_npu_*`), on the bench of
+`tests/npu_bench.h` (also used by the driver's host test,
+`fw/fx1_soc/host/test_npu_driver_host.cpp`):
 
 - **Unit cases:** an independent C++ oracle for MAX_POOL and the GEMM bank.
   They cover registers, debug access, window and pointer checks, unsupported
   and model refusals, the queue, push timeout, ABORT (queued, staging,
   running, raw native run with the ABORT/completion race), reset (queued work,
   and in flight: last staging read, single and multi-transaction copy-back),
-  DMA errors, and host memory.
+  DMA errors, and host memory. `irq_writers`: two initiators write the IRQ
+  registers in the same delta cycle while jobs complete (the interrupt output
+  has a single writer).
 - **Fabric cases:** the real `bus::BusSystem` with NPU on SYSBUS_1 as in
   `fx1_soc`, and DMA through `WriteGuard`. While a push waits for a slot,
   CPU2 reaches CLINT, PLIC and UART at once. The contrast case puts the NPU on
@@ -293,7 +327,15 @@ CPU port turns into access faults.
   resets the platform while the first doorbell's last copy-back transaction is
   in flight and checks that the new epoch shows no completion.
 
-Firmware:
+Firmware (see the test table of `platforms/fx1_soc/README.md`):
+- `fw/fx1_soc/host/test_npu_driver_host.cpp` (ctest `fx1_unit_npu_driver_*`):
+  the reference driver compiled for the host against this clone. A held DDR
+  write is released at every MMIO access of a driver call, so completions and
+  failures land inside the call; outputs against the C oracle;
+- `fw/fx1_soc/tests/npu_gemm`, `npu_rich`, `npu_dfc`, `npu_errors`: the
+  reference driver on a hart, outputs against the C oracle of
+  `fw/fx1_soc/tests/npu_common`, which the host tests cross-check with the
+  drop's `ref_program.py` and encoder;
 - `fw/fx1_soc/tests/npu_probe` (ctest `fx1_smoke_npu_probe`,
   `fx1_smoke_npu_probe_absent`);
 - `fw/fx1_soc/tests/npu_bus_isolation` (ctest `fx1_smoke_npu_bus_isolation`),

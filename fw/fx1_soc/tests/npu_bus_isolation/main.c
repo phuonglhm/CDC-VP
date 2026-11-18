@@ -14,36 +14,38 @@
  *      stalled store did not hold the SYSBUS_0 / PERIBUS_0 path;
  *   C. clean-up per N1-C: ABORT, then wait for QUIESCENT and ENGINE_BUSY = 0
  *      with a timeout (QUIESCENT alone is not recovery), check ABORTED.
- * Offsets: components/FX1_Components/npu/include/fx1_npu/fx1_npu_regmap.h
- * (the firmware driver headers come with N2).
+ * Registers: components/FX1_Components/npu/include/fx1_npu/fx1_npu_regs.h
+ * (plain accesses on purpose: the timed-out push must be a bare store).
  */
 #include "fx1_fw.h"
+#include "fx1_npu/fx1_npu_regs.h"
 
 #define NPU(off) (FX1_NPU_VP_BASE + (off))
-#define BANK(off) NPU(0x30000u + (off))
-#define RICH(model) NPU(0x10000u + ((model) - 0x40000000u))
-#define NPU_CTRL BANK(0x0000u)
-#define NPU_STATUS BANK(0x0004u)
-#define NPU_IRQ_ENABLE BANK(0x0008u)
-#define NPU_IRQ_STATUS BANK(0x000Cu)
-#define NPU_WIN_BASE BANK(0x1130u)
-#define NPU_WIN_SIZE BANK(0x1134u)
-#define NPU_VP_ID BANK(0x1800u)
-#define NPU_VP_QUEUE_FREE BANK(0x1814u)
-#define NPU_VP_CMD BANK(0x1818u)
-#define NPU_VP_STATUS BANK(0x181Cu)
-#define NPU_VP_ERROR BANK(0x1820u)
-#define NPU_VP_PUSH_WAIT_NS BANK(0x1828u)
-#define NPU_VP_ACCEPTED BANK(0x182Cu)
-#define NPU_RICH_PUSH_A RICH(0x40000310u)
-#define NPU_RICH_STATUS RICH(0x40000318u)
+#define BANK(local) NPU(FX1_NPU_BANK(local))
+#define RICH(model) NPU(FX1_NPU_RICH_OF_MODEL(model))
+#define NPU_CTRL BANK(FX1_NPU_CTRL)
+#define NPU_STATUS BANK(FX1_NPU_STATUS)
+#define NPU_IRQ_ENABLE BANK(FX1_NPU_IRQ_ENABLE)
+#define NPU_IRQ_STATUS BANK(FX1_NPU_IRQ_STATUS)
+#define NPU_WIN_BASE BANK(FX1_NPU_RICH_WINDOW_BASE)
+#define NPU_WIN_SIZE BANK(FX1_NPU_RICH_WINDOW_SIZE)
+#define NPU_VP_ID BANK(FX1_NPU_VP_ID)
+#define NPU_VP_QUEUE_FREE BANK(FX1_NPU_VP_QUEUE_FREE)
+#define NPU_VP_CMD BANK(FX1_NPU_VP_CMD)
+#define NPU_VP_STATUS BANK(FX1_NPU_VP_STATUS)
+#define NPU_VP_ERROR BANK(FX1_NPU_VP_ERROR)
+#define NPU_VP_PUSH_WAIT_NS BANK(FX1_NPU_VP_PUSH_WAIT_NS)
+#define NPU_VP_ACCEPTED BANK(FX1_NPU_VP_ACCEPTED)
+#define NPU_VP_ABORT_DROPPED BANK(FX1_NPU_VP_ABORT_DROPPED)
+#define NPU_RICH_PUSH_A RICH(FX1_NPU_M_PUSH_A)
+#define NPU_RICH_STATUS RICH(FX1_NPU_M_STATUS)
 
-#define VP_STATUS_QUIESCENT 0x1u
-#define VP_STATUS_ENGINE_BUSY 0x2u
-#define VP_ERROR_PUSH_TIMEOUT 0x1u
-#define VP_ERROR_ABORTED 0x4u
-#define OPCODE_ELEM_WISE 0x15u
-#define ELEM_MAX_POOL 1u
+#define VP_STATUS_QUIESCENT FX1_NPU_VP_STATUS_QUIESCENT
+#define VP_STATUS_ENGINE_BUSY FX1_NPU_VP_STATUS_ENGINE_BUSY
+#define VP_ERROR_PUSH_TIMEOUT FX1_NPU_VP_ERROR_PUSH_TIMEOUT
+#define VP_ERROR_ABORTED FX1_NPU_VP_ERROR_ABORTED
+#define OPCODE_ELEM_WISE FX1_NPU_OP_ELEM_WISE
+#define ELEM_MAX_POOL FX1_NPU_ELEM_MAX_POOL
 
 #define WIN FX1_NPU_ARENA_SMALL_BASE
 #define WIN_SIZE 0x00200000u
@@ -95,15 +97,15 @@ static void rich_write(uint32_t model, uint32_t value) { fx1_write32(RICH(model)
  * component tests program them); returns without pushing. */
 static void pool_setup(uint32_t in_off, uint32_t out_off, uint32_t c, uint32_t h, uint32_t w, uint32_t k, uint32_t p)
 {
-    rich_write(0x40000444u, WIN + in_off);
-    rich_write(0x40000408u, WIN + out_off);
-    rich_write(0x40000454u, ELEM_MAX_POOL);
-    rich_write(0x40000424u, 1u);
-    rich_write(0x4000046Cu, c);
-    rich_write(0x40000470u, h);
-    rich_write(0x40000474u, w);
-    rich_write(0x400004C8u, k);
-    rich_write(0x400004CCu, p);
+    rich_write(FX1_NPU_M_A_ADDR, WIN + in_off);
+    rich_write(FX1_NPU_M_OUT_ADDR, WIN + out_off);
+    rich_write(FX1_NPU_M_MODE, ELEM_MAX_POOL);
+    rich_write(FX1_NPU_M_STRIDE, 1u);
+    rich_write(FX1_NPU_M_IN_C, c);
+    rich_write(FX1_NPU_M_IN_H, h);
+    rich_write(FX1_NPU_M_IN_W, w);
+    rich_write(FX1_NPU_M_POOL_K, k);
+    rich_write(FX1_NPU_M_POOL_P, p);
 }
 static void small_setup(unsigned i) { pool_setup(0x00100000u + 0x2000u * i, 0x00101000u + 0x2000u * i, 4, 8, 8, 3, 1); }
 static void push_small(unsigned i)
@@ -113,10 +115,10 @@ static void push_small(unsigned i)
 }
 static void clear_errors(void)
 {
-    fx1_write32(NPU_VP_CMD, 2u); /* CLEAR_ERROR */
+    fx1_write32(NPU_VP_CMD, FX1_NPU_VP_CMD_CLEAR_ERROR);
     fx1_write32(NPU_RICH_STATUS, 0);
-    fx1_write32(NPU_STATUS, 0x6u);
-    fx1_write32(NPU_IRQ_STATUS, 0x3u);
+    fx1_write32(NPU_STATUS, FX1_NPU_STATUS_DONE | FX1_NPU_STATUS_ERROR);
+    fx1_write32(NPU_IRQ_STATUS, FX1_NPU_IRQ_DONE | FX1_NPU_IRQ_ERROR);
 }
 
 /* Entry 0 running, 16 queued: QUEUE_FREE = 0. */
@@ -134,9 +136,9 @@ static void fill_queue(void)
 int main(void)
 {
     fx1_set_trap_handler(handler);
-    fx1_check(fx1_read32(NPU_VP_ID) == 0x46584E50u, 0x01, "NPU present (VP_ID FXNP)");
+    fx1_check(fx1_read32(NPU_VP_ID) == FX1_NPU_VP_ID_VALUE, 0x01, "NPU present (VP_ID FXNP)");
     fx1_write32(NPU_IRQ_ENABLE, 0);
-    fx1_write32(NPU_CTRL, 1u); /* ENABLE */
+    fx1_write32(NPU_CTRL, FX1_NPU_CTRL_ENABLE);
     fx1_write32(NPU_WIN_BASE, WIN);
     fx1_write32(NPU_WIN_SIZE, WIN_SIZE);
     fx1_release_secondaries();
@@ -214,21 +216,21 @@ int main(void)
      * until the model finished entry 0, so the driver waits for both, with a
      * timeout. */
     const uint64_t drain = fx1_mtime();
-    while (fx1_read32(NPU_RICH_STATUS) & 1u)
+    while (fx1_read32(NPU_RICH_STATUS) & FX1_NPU_RICH_STATUS_BUSY)
         fx1_check(fx1_mtime() - drain < FX1_MTIME_HZ / 50, 0x34, "queue drained within 20 ms");
     clear_errors();
     fill_queue();
-    fx1_write32(NPU_VP_CMD, 1u);
+    fx1_write32(NPU_VP_CMD, FX1_NPU_VP_CMD_ABORT);
     const uint32_t vs0 = fx1_read32(NPU_VP_STATUS);
     fx1_log_hex("npu: VP_STATUS right after ABORT", vs0);
-    fx1_check((vs0 & VP_STATUS_ENGINE_BUSY) && fx1_read32(NPU_VP_QUEUE_FREE) == 16u && fx1_read32(BANK(0x1830u)) == 16u, 0x43,
+    fx1_check((vs0 & VP_STATUS_ENGINE_BUSY) && fx1_read32(NPU_VP_QUEUE_FREE) == 16u && fx1_read32(NPU_VP_ABORT_DROPPED) == 16u, 0x43,
               "ABORT dropped 16 queued entries; the model still runs entry 0 (ENGINE_BUSY)");
     const uint64_t ab = fx1_mtime();
     uint32_t vs;
     while (((vs = fx1_read32(NPU_VP_STATUS)) & (VP_STATUS_QUIESCENT | VP_STATUS_ENGINE_BUSY)) != VP_STATUS_QUIESCENT)
         fx1_check(fx1_mtime() - ab < FX1_MTIME_HZ / 50, 0x40, "QUIESCENT and ENGINE_BUSY 0 within 20 ms after ABORT");
     const uint64_t idle_at = fx1_mtime();
-    fx1_check((fx1_read32(NPU_VP_ERROR) & VP_ERROR_ABORTED) && (fx1_read32(NPU_STATUS) & 0x4u), 0x41,
+    fx1_check((fx1_read32(NPU_VP_ERROR) & VP_ERROR_ABORTED) && (fx1_read32(NPU_STATUS) & FX1_NPU_STATUS_ERROR), 0x41,
               "VP_ERROR.ABORTED, STATUS ERROR");
     clear_errors();
     fx1_check(fx1_read32(NPU_VP_ERROR) == 0 && fx1_read32(NPU_VP_QUEUE_FREE) == 16, 0x42, "errors cleared, queue empty");

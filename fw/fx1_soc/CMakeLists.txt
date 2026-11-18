@@ -7,6 +7,8 @@ set(FX1_FW_MAP_INCLUDE "${CMAKE_SOURCE_DIR}/components/FX1_Components/fx1_map/in
 set(FX1_FW_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/common")
 # C register headers of FX1 IPs (dma/fx1_dma_regs.h, ...).
 set(FX1_FW_IP_INCLUDES "${CMAKE_SOURCE_DIR}/components/FX1_Components/dma/include")
+# C register ABI of the NPU (fx1_npu/fx1_npu_regs.h, plan FX1_NPU_V47 N2).
+set(FX1_FW_NPU_INCLUDE "${CMAKE_SOURCE_DIR}/components/FX1_Components/npu/include")
 set(FX1_FW_CC "${FX1_RISCV_PREFIX}gcc")
 # Portable Ethernet driver (compiled per image with the cross compiler, never
 # the host-built eth_drv library).
@@ -20,7 +22,7 @@ set(FX1_FW_ARCH_FLAGS -march=rv32imafc_zicsr_zifencei -mabi=ilp32f -mcmodel=meda
 set(FX1_FW_CFLAGS ${FX1_FW_ARCH_FLAGS} -O2 -g -std=c11 -ffreestanding -fno-builtin
     --param=min-pagesize=0
     -ffunction-sections -fdata-sections -Wall -Wextra -Werror
-    -I${FX1_FW_COMMON} -I${FX1_FW_MAP_INCLUDE} -I${FX1_FW_IP_INCLUDES})
+    -I${FX1_FW_COMMON} -I${FX1_FW_MAP_INCLUDE} -I${FX1_FW_IP_INCLUDES} -I${FX1_FW_NPU_INCLUDE})
 
 set(FX1_FW_LDS "${CMAKE_CURRENT_BINARY_DIR}/fx1.ld")
 add_custom_command(
@@ -33,7 +35,8 @@ add_custom_command(
 
 set(FX1_FW_COMMON_SOURCES ${FX1_FW_COMMON}/crt0.S ${FX1_FW_COMMON}/fx1_fw.c)
 set(FX1_FW_COMMON_DEPENDS ${FX1_FW_COMMON_SOURCES} ${FX1_FW_COMMON}/fx1_fw.h
-    ${FX1_FW_MAP_INCLUDE}/fx1/fx1_memory_map.h ${FX1_FW_IP_INCLUDES}/dma/fx1_dma_regs.h ${FX1_FW_LDS})
+    ${FX1_FW_MAP_INCLUDE}/fx1/fx1_memory_map.h ${FX1_FW_IP_INCLUDES}/dma/fx1_dma_regs.h
+    ${FX1_FW_NPU_INCLUDE}/fx1_npu/fx1_npu_regs.h ${FX1_FW_LDS})
 
 # fx1_firmware(<name> SOURCES <files...> [DEFINES d...] [INCLUDES dir...] [DEPENDS f...]
 #              [CFLAGS flag...])
@@ -292,6 +295,75 @@ if(CDC_BUILD_TESTS)
         # (a stalled push on SYSBUS_1 does not hold CLINT/PLIC/UART for hart 1).
         fx1_expect_test(npu_bus_isolation RC 0 TIMEOUT_MS 200
             REGEX "npu: N1-E push timeout = store access fault.*npu: N1-B stalled push does not hold CLINT/PLIC/UART.*npu: ABORT, quiescent and engine idle.*RESULT PASS")
+        # FX1 NPU N2: the reference driver (drivers/fx1_npu*.c, register ABI
+        # components/FX1_Components/npu/include/fx1_npu/fx1_npu_regs.h) on the
+        # harts: GEMM bank (polling, PLIC interrupt, mask, error), the lane-A
+        # rich chain, DFC acceptance and strict refusals, refusals / busy /
+        # timeout / recovery / soft reset. Outputs against the C oracle of
+        # tests/npu_common (cross-checked on the host below).
+        set(_npu_fw_inc ${FX1_FW_NPU_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/drivers ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common)
+        set(_npu_fw_src ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.c ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_cases.c)
+        set(_npu_fw_dep ${CMAKE_SOURCE_DIR}/components/FX1_Components/npu/include/fx1_npu/fx1_npu_regs.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu.h ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_cases.h ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_test.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_neo_gemm_words.h)
+        foreach(_npu_t npu_gemm npu_rich npu_dfc npu_errors)
+            # 1 s of simulated time: npu_errors needs about 0.52 s (hart-side oracles).
+            fx1_smoke_test(${_npu_t} TIMEOUT_MS 1000 EXTRA_SOURCES ${_npu_fw_src} INCLUDES ${_npu_fw_inc} DEPENDS ${_npu_fw_dep})
+        endforeach()
+        # Host: the firmware's neo_lite encoder against the drop's C++ encoder
+        # (has/has_host_neo.h, read in place), word for word.
+        add_executable(fx1_fw_npu_neo_encoder ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_neo_encoder.cpp
+                       ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c)
+        target_include_directories(fx1_fw_npu_neo_encoder PRIVATE ${_npu_fw_inc})
+        target_include_directories(fx1_fw_npu_neo_encoder SYSTEM PRIVATE ${FX1_NPU_MODEL_ROOT})
+        target_compile_features(fx1_fw_npu_neo_encoder PRIVATE cxx_std_17)
+        target_compile_options(fx1_fw_npu_neo_encoder PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c11> -Wall -Wextra)
+        add_test(NAME fx1_unit_npu_neo_encoder COMMAND fx1_fw_npu_neo_encoder)
+        set_tests_properties(fx1_unit_npu_neo_encoder PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit;npu")
+        # Host: the driver (drivers/fx1_npu.c as C) against the SystemC clone
+        # through the clone's test bench, with completions released at chosen
+        # MMIO accesses (review N2 R1-R3). host/npu_shim/fx1_fw.h stands in for
+        # the firmware's MMIO accessors.
+        add_executable(fx1_fw_npu_driver_host ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_driver_host.cpp
+                       ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.c)
+        target_include_directories(fx1_fw_npu_driver_host BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/host/npu_shim)
+        target_include_directories(fx1_fw_npu_driver_host PRIVATE ${_npu_fw_inc}
+                                   ${CMAKE_SOURCE_DIR}/components/FX1_Components/npu/tests)
+        target_compile_features(fx1_fw_npu_driver_host PRIVATE cxx_std_17)
+        target_compile_options(fx1_fw_npu_driver_host PRIVATE "$<$<COMPILE_LANGUAGE:C>:-std=c11;-Werror>" -Wall -Wextra
+                               $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-function>)
+        target_link_libraries(fx1_fw_npu_driver_host PRIVATE cdc::components::fx1_npu cdc::components::bus_system
+                              cdc::components::fx1_map cdc::components::fx1_exclusive_monitor SystemC::systemc)
+        foreach(_case race_rich race_rich_irq race_rich_fail race_rich_fail_irq gemm_gate gemm_gate_irq window reinit poll)
+            add_test(NAME fx1_unit_npu_driver_${_case} COMMAND fx1_fw_npu_driver_host ${_case})
+            set_tests_properties(fx1_unit_npu_driver_${_case} PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_unit;npu")
+        endforeach()
+        # Host: the firmware's builders + C oracle against the drop's numpy
+        # reference (tools/has/ref_program.py), byte for byte. Needs numpy.
+        # (no MMIO: drivers/fx1_npu.c is left out)
+        add_executable(fx1_fw_npu_case_gen ${CMAKE_CURRENT_SOURCE_DIR}/host/npu_case_gen.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_cases.c)
+        target_include_directories(fx1_fw_npu_case_gen PRIVATE ${_npu_fw_inc})
+        target_compile_options(fx1_fw_npu_case_gen PRIVATE -std=c11 -Wall -Wextra -Werror)
+        find_program(FX1_PYTHON3 python3)
+        set(_npu_fw_numpy 1)
+        if(FX1_PYTHON3)
+            execute_process(COMMAND ${FX1_PYTHON3} -c "import numpy" RESULT_VARIABLE _npu_fw_numpy OUTPUT_QUIET ERROR_QUIET)
+        endif()
+        if(_npu_fw_numpy EQUAL 0)
+            add_test(NAME fx1_regression_npu_oracle_xcheck
+                     COMMAND ${FX1_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/host/npu_oracle_xcheck.py
+                             $<TARGET_FILE:fx1_fw_npu_case_gen> ${FX1_NPU_MODEL_ROOT}/tools/has/ref_program.py
+                             ${CMAKE_CURRENT_BINARY_DIR}/npu_oracle_xcheck)
+            set_tests_properties(fx1_regression_npu_oracle_xcheck PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_regression;npu")
+        else()
+            message(STATUS "FX1 NPU: python3 with numpy not found, fx1_regression_npu_oracle_xcheck not registered")
+        endif()
     else()
         fx1_expect_test(npu_probe RC 0 TIMEOUT_MS 20 REGEX "npu: not built.*npu: absent \\(the aperture.*RESULT PASS")
     endif()

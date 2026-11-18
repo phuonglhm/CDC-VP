@@ -6,26 +6,29 @@
  *     register, and the access classes: byte / halfword accesses, an unmapped
  *     offset and a write to a read-only register are access faults (the NPU
  *     answers a TLM error, the CPU port maps it), PLIC source 4 low at idle
- * Offsets: components/FX1_Components/npu/include/fx1_npu/fx1_npu_regmap.h
- * (wrapper bank at +0x30000; the firmware driver headers come with N2).
+ * Registers: components/FX1_Components/npu/include/fx1_npu/fx1_npu_regs.h
+ * (the C register ABI the driver uses; plain accesses here on purpose: this
+ * image probes the aperture below the driver).
  */
 #include "fx1_fw.h"
+#include "fx1_npu/fx1_npu_regs.h"
 
 #define NPU(off) (FX1_NPU_VP_BASE + (off))
-#define BANK(off) NPU(0x30000u + (off))
-#define NPU_STATUS BANK(0x0004u)
-#define NPU_CORE_ID BANK(0x1020u)
-#define NPU_VP_ID BANK(0x1800u)
-#define NPU_VP_ABI BANK(0x1804u)
-#define NPU_VP_MODEL_HASH BANK(0x1808u)
-#define NPU_VP_FEATURE BANK(0x180Cu)
-#define NPU_VP_QUEUE_DEPTH BANK(0x1810u)
-#define NPU_VP_QUEUE_FREE BANK(0x1814u)
-#define NPU_VP_STATUS BANK(0x181Cu)
-#define NPU_VP_ERROR BANK(0x1820u)
-#define NPU_VP_PUSH_WAIT_NS BANK(0x1828u)
-#define NPU_RICH_STATUS NPU(0x10318u)
-#define NPU_RICH_RETIRED NPU(0x1031Cu)
+#define BANK(local) NPU(FX1_NPU_BANK(local))
+#define NPU_STATUS BANK(FX1_NPU_STATUS)
+#define NPU_CORE_ID BANK(FX1_NPU_CORE_ID)
+#define NPU_VP_ID BANK(FX1_NPU_VP_ID)
+#define NPU_VP_ABI BANK(FX1_NPU_VP_ABI)
+#define NPU_VP_MODEL_HASH BANK(FX1_NPU_VP_MODEL_HASH)
+#define NPU_VP_FEATURE BANK(FX1_NPU_VP_FEATURE)
+#define NPU_VP_QUEUE_DEPTH BANK(FX1_NPU_VP_QUEUE_DEPTH)
+#define NPU_VP_QUEUE_FREE BANK(FX1_NPU_VP_QUEUE_FREE)
+#define NPU_VP_STATUS BANK(FX1_NPU_VP_STATUS)
+#define NPU_VP_ERROR BANK(FX1_NPU_VP_ERROR)
+#define NPU_VP_PUSH_WAIT_NS BANK(FX1_NPU_VP_PUSH_WAIT_NS)
+#define NPU_RICH_STATUS NPU(FX1_NPU_RICH_OF_MODEL(FX1_NPU_M_STATUS))
+#define NPU_RICH_RETIRED NPU(FX1_NPU_RICH_OF_MODEL(FX1_NPU_M_RETIRED))
+#define NPU_UNMAPPED_BANK BANK(0x1F00u) /* a hole of the wrapper bank */
 
 static volatile uint32_t got_cause, got_tval, traps;
 static volatile uint32_t resume_at;
@@ -76,8 +79,8 @@ int main(void)
         return 0;
     }
     fx1_log_hex("npu: present, VP_ID", id);
-    fx1_check(id == 0x46584E50u, 0x10, "VP_ID = FXNP");
-    fx1_check(fx1_read32(NPU_VP_ABI) == 0x00010000u, 0x11, "VP_ABI 1.0");
+    fx1_check(id == FX1_NPU_VP_ID_VALUE, 0x10, "VP_ID = FXNP");
+    fx1_check(fx1_read32(NPU_VP_ABI) == FX1_NPU_VP_ABI_VALUE, 0x11, "VP_ABI 1.0");
     const uint32_t hash = fx1_read32(NPU_VP_MODEL_HASH);
     fx1_log_hex("npu: model manifest hash", hash);
     fx1_check(hash != 0, 0x12, "VP_MODEL_HASH set");
@@ -87,7 +90,7 @@ int main(void)
               "FEATURE: native GEMM, rich HasNpuTop, abort, bounded push, queue; no DMA_TENSOR/ATTN");
     fx1_check(fx1_read32(NPU_VP_QUEUE_DEPTH) == 16 && fx1_read32(NPU_VP_QUEUE_FREE) == 16, 0x14, "queue 16, all free");
     fx1_check(fx1_read32(NPU_VP_STATUS) == 1u && fx1_read32(NPU_VP_ERROR) == 0, 0x15, "VP_STATUS quiescent, no error");
-    fx1_check(fx1_read32(NPU_CORE_ID) == 0x53413432u, 0x16, "CORE_ID SA42");
+    fx1_check(fx1_read32(NPU_CORE_ID) == FX1_NPU_CORE_ID_VALUE, 0x16, "CORE_ID SA42");
     fx1_check(fx1_read32(NPU_STATUS) == 0x8u, 0x17, "STATUS idle");
     fx1_check(fx1_read32(NPU_RICH_STATUS) == 0 && fx1_read32(NPU_RICH_RETIRED) == 0, 0x18, "RICH_STATUS / RETIRED 0");
     fx1_write32(NPU_VP_PUSH_WAIT_NS, 2500);
@@ -105,12 +108,12 @@ int main(void)
     fx1_check(fx1_read32(NPU_VP_PUSH_WAIT_NS) == 100000, 0x22, "the faulting store changed nothing");
     t = traps;
     uint32_t v = 0;
-    try_lw(BANK(0x1F00u), &v);
-    expect_fault(t, 5, BANK(0x1F00u), 0x23, "unmapped bank offset: load access fault");
+    try_lw(NPU_UNMAPPED_BANK, &v);
+    expect_fault(t, 5, NPU_UNMAPPED_BANK, 0x23, "unmapped bank offset: load access fault");
     t = traps;
     __asm__ volatile("la t0, 1f\n sw t0, 0(%0)\n sw %2, 0(%1)\n1:\n" : : "r"(&resume_at), "r"(NPU_VP_ID), "r"(1u) : "t0", "memory");
     expect_fault(t, 7, NPU_VP_ID, 0x24, "store to read-only VP_ID: store access fault");
-    fx1_check(fx1_read32(NPU_VP_ID) == 0x46584E50u, 0x25, "VP_ID unchanged");
+    fx1_check(fx1_read32(NPU_VP_ID) == FX1_NPU_VP_ID_VALUE, 0x25, "VP_ID unchanged");
     fx1_check((fx1_plic_pending() & (1u << FX1_IRQ_NPU)) == 0, 0x26, "PLIC source 4 low at idle");
     fx1_log("npu: access classes fault as on every FX1 MMIO target");
     return 0;
