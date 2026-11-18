@@ -1,0 +1,9 @@
+version
+npu info
+npu status
+npu selftest
+npu run
+npu wait 10
+npu reset
+npu status
+poweroff

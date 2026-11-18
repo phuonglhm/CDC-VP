@@ -135,6 +135,14 @@
 #define FX1_NPU_ARENA_SMALL_SIZE FX1_U32(0x00400000) /* 4 MiB  */
 #define FX1_NPU_ARENA_LARGE_BASE FX1_U32(0x8E000000)
 #define FX1_NPU_ARENA_LARGE_SIZE FX1_U32(0x02000000) /* 32 MiB */
+/* NPU job contract (plan FX1_NPU_V47 N3, fw/fx1_soc/drivers/fx1_npu_job.h): the
+ * host loads a job image (descriptors only) at FX1_NPU_JOB_BASE and the job's
+ * tensors into its window inside an arena; the NPU owner task writes the result
+ * block. FW_SHARED +0x150000..+0x161000, unused by the ISP job and stream. */
+#define FX1_NPU_JOB_BASE        FX1_U32(0x80650000)
+#define FX1_NPU_JOB_SIZE        FX1_U32(0x00010000) /* 64 KiB */
+#define FX1_NPU_RESULT_BASE     FX1_U32(0x80660000)
+#define FX1_NPU_RESULT_SIZE     FX1_U32(0x00001000) /* 4 KiB  */
 
 /* ---- Map consistency (C and C++ only) ------------------------------------- */
 #if !defined(__ASSEMBLER__) && !defined(FX1_LINKER_SCRIPT)
@@ -177,8 +185,8 @@ FX1_MAP_ASSERT(FX1_NPU_ARENA_SMALL_BASE >= FX1_FW_SHARED_BASE &&
                    FX1_MAP_END(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SIZE) <=
                        FX1_MAP_END(FX1_FW_SHARED_BASE, FX1_FW_SHARED_SIZE),
                "small NPU arena outside FW_SHARED");
-/* FW_SHARED users (firmware constants): +0..+0x150000 ISP job / stream, +0x200000..+0x340000
- * chains, +0x800000 tpg4k record. The small arena sits between them. */
+/* FW_SHARED users (firmware constants): +0..+0x150000 ISP job / stream, +0x150000..+0x161000 NPU
+ * job / result, +0x200000..+0x340000 chains, +0x800000 tpg4k record. The small arena sits between them. */
 FX1_MAP_ASSERT(FX1_NPU_ARENA_SMALL_BASE >= FX1_FW_SHARED_BASE + 0x00340000u &&
                    FX1_MAP_END(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SIZE) <= FX1_FW_SHARED_BASE + 0x00800000u,
                "small NPU arena overlaps a FW_SHARED area");
@@ -194,6 +202,10 @@ FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SI
                "NPU arenas overlap");
 FX1_MAP_ASSERT(FX1_MAP_END(FX1_NPU_ARENA_LARGE_BASE, FX1_NPU_ARENA_LARGE_SIZE) <= FX1_MAP_END(FX1_DDR_BASE, FX1_DDR_SIZE),
                "large NPU arena outside DDR");
+FX1_MAP_ASSERT(FX1_NPU_JOB_BASE >= FX1_FW_SHARED_BASE + 0x00150000u &&
+                   FX1_MAP_END(FX1_NPU_JOB_BASE, FX1_NPU_JOB_SIZE) <= FX1_NPU_RESULT_BASE &&
+                   FX1_MAP_END(FX1_NPU_RESULT_BASE, FX1_NPU_RESULT_SIZE) <= FX1_FW_SHARED_BASE + 0x00200000u,
+               "NPU job / result block outside the free FW_SHARED range +0x150000..+0x200000");
 FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_ETH_CSR_BASE, FX1_APB_SLOT_SIZE, FX1_MIPI_CSR_BASE, FX1_APB_SLOT_SIZE),
                "ETH_CSR/MIPI_CSR overlap");
 FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE, FX1_I2C0_BASE, FX1_APB_SLOT_SIZE),

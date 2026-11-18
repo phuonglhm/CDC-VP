@@ -456,6 +456,26 @@ fx1_unit_npu_driver_gemm_gate_irq
 fx1_unit_npu_driver_window
 fx1_unit_npu_driver_reinit
 fx1_unit_npu_driver_poll
+# NPU N3: the job format (executor on the clone), the `npu` CLI commands
+fx1_unit_npu_job_check
+fx1_unit_npu_job_chain
+fx1_unit_npu_job_gemm
+fx1_unit_npu_job_dfc
+fx1_unit_npu_job_mixed
+fx1_unit_npu_job_large
+fx1_unit_npu_job_long
+fx1_unit_npu_job_bad_bounds
+fx1_unit_npu_job_bad_input
+fx1_unit_npu_job_abort
+fx1_unit_npu_job_timeout
+fx1_unit_npu_job_dma_error
+fx1_unit_npu_job_unsupported
+fx1_unit_npu_job_deadline0
+fx1_unit_npu_job_deadline1
+fx1_smoke_freertos_cli_npu
+fx1_smoke_freertos_cli_npu_absent
+fx1_smoke_freertos_cli_npu_job
+fx1_smoke_freertos_cli_npu_reset
 [components]
 bus_arbitration
 bus_behavior
@@ -496,3 +516,18 @@ fx1_npu_gate_neo_window_low_direct
 fx1_npu_gate_neo_window_high_fabric
 fx1_npu_gate_neo_window_reset_low_direct
 fx1_regression_npu_oracle_xcheck
+# NPU N3: job fixtures through ref_program.py (rich / DFC part), and the launcher
+fx1_regression_npu_job_xcheck_chain
+fx1_regression_npu_job_xcheck_dfc
+fx1_regression_npu_job_xcheck_mixed
+fx1_regression_npu_job_xcheck_large
+fx1_regression_npu_job_xcheck_long
+fx1_regression_npu_run_chain
+fx1_regression_npu_run_gemm
+fx1_regression_npu_run_dfc
+fx1_regression_npu_run_mixed
+fx1_regression_npu_run_large
+fx1_regression_npu_run_long
+fx1_regression_npu_run_bad_bounds
+fx1_regression_npu_run_bad_input
+fx1_regression_npu_run_launcher

@@ -28,11 +28,24 @@
 //                     its diagnostics; garbage context fails closed; init after
 //                     idle reopens, jobs pass
 //     poll            PENDING / ARG / TIMEOUT semantics, credit timeout
+//   test_npu_driver_host job <fixture dir>          (N3: drivers/fx1_npu_job*.c)
+//                     the fixture's job through the executor: its declared
+//                     outcome; OK: every output equals its golden; BAD_JOB:
+//                     not one NPU access
+//   test_npu_driver_host job_abort|job_timeout|job_dma_error <fixture dir>
+//                     stopped by the abort hook / by a 1 ms job timeout /
+//                     a DMA read error on the first input: ABORTED / TIMEOUT
+//                     (recovered) / FAILED; then the job again passes
 #define SC_INCLUDE_DYNAMIC_PROCESSES
 #include "npu_bench.h"
 
+#include <fstream>
+#include <regex>
+#include <sstream>
+
 extern "C" {
 #include "fx1_npu.h"
+#include "fx1_npu_job.h"
 #include "npu_oracle.h"
 }
 
@@ -56,8 +69,19 @@ void count_access()
 
 } // namespace
 
+// DDR addresses (the job window) go to the DDR stand-in (zero time); in the
+// direct topology the bench CPU reaches only the NPU.
+static bool in_ddr(uintptr_t a) { return a >= kDdrBase && a - kDdrBase < kDdrSize; }
+
 extern "C" uint32_t fx1_read32(uintptr_t a)
 {
+    if (in_ddr(a)) {
+        std::uint32_t v = 0;
+        g_bench->mem->peek(a, &v, 4);
+        if (sc_get_current_process_handle() == g_owner) ++g_reads;
+        count_access();
+        return v;
+    }
     tlm::tlm_response_status s;
     const std::uint32_t v = g_bench->cpu0->rd(static_cast<std::uint32_t>(a), &s);
     if (sc_get_current_process_handle() == g_owner) ++g_reads;
@@ -70,6 +94,12 @@ extern "C" uint32_t fx1_read32(uintptr_t a)
 }
 extern "C" void fx1_write32(uintptr_t a, uint32_t v)
 {
+    if (in_ddr(a)) {
+        g_bench->mem->poke(a, &v, 4);
+        if (sc_get_current_process_handle() == g_owner) ++g_writes;
+        count_access();
+        return;
+    }
     const auto s = g_bench->cpu0->wr(static_cast<std::uint32_t>(a), v);
     if (sc_get_current_process_handle() == g_owner) ++g_writes;
     if (s != tlm::TLM_OK_RESPONSE) {
@@ -466,6 +496,258 @@ void poll(Bench& b)
     check(latches_clear(b) && g_bus_errors == 0, "latches clear, no bus error");
 }
 
+
+// ---- N3: the job executor on the fixtures ----------------------------------------------
+std::string read_text(const std::string& p)
+{
+    std::ifstream f(p);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+std::vector<std::uint8_t> read_bin(const std::string& p)
+{
+    std::ifstream f(p, std::ios::binary);
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+std::uint32_t json_u32(const std::string& j, const std::string& key)
+{
+    std::smatch m;
+    if (!std::regex_search(j, m, std::regex("\"" + key + "\": ([0-9]+)"))) return 0;
+    return static_cast<std::uint32_t>(std::stoul(m[1]));
+}
+
+struct Fixture {
+    std::string dir, json, expect;
+    std::vector<std::uint8_t> job, window;
+    std::uint32_t window_addr = 0;
+    struct Out {
+        std::uint32_t addr;
+        std::vector<std::uint8_t> golden;
+    };
+    std::vector<Out> outs;
+    bool load(const std::string& d)
+    {
+        dir = d;
+        json = read_text(d + "/fixture.json");
+        job = read_bin(d + "/job.bin");
+        window = read_bin(d + "/window.bin");
+        window_addr = json_u32(json, "window_addr");
+        std::smatch m;
+        if (std::regex_search(json, m, std::regex("\"expect\": \\{\"status\": \"([A-Z_]+)\""))) expect = m[1];
+        const std::regex out_re("\"addr\": ([0-9]+), \"bytes\": [0-9]+, \"crc32\": [0-9]+, \"golden\": \"(golden_[0-9]+\\.bin)\"");
+        for (auto it = std::sregex_iterator(json.begin(), json.end(), out_re); it != std::sregex_iterator(); ++it)
+            outs.push_back({static_cast<std::uint32_t>(std::stoul((*it)[1])), read_bin(d + "/" + (*it)[2].str())});
+        job.resize(FX1_NPU_JOB_SIZE, 0);
+        return !json.empty() && !window.empty() && window_addr && !expect.empty();
+    }
+    void preload(Bench& b) const { b.mem->poke(window_addr, window.data(), window.size()); }
+    unsigned outputs_matching(Bench& b) const
+    {
+        unsigned n = 0;
+        for (const auto& o : outs) {
+            std::vector<std::uint8_t> got(o.golden.size());
+            b.mem->peek(o.addr, got.data(), got.size());
+            n += got == o.golden;
+        }
+        return n;
+    }
+    // Patches the header's timeout and the image CRC (the image stays valid).
+    void set_timeout(std::uint32_t ms)
+    {
+        auto* h = reinterpret_cast<fx1_npu_job_header*>(job.data());
+        h->timeout_ms = ms;
+        h->job_crc = 0;
+        h->job_crc = fx1_npu_job_crc32(0, job.data(), h->total_bytes);
+    }
+};
+
+struct JobCtl {
+    sc_time abort_at = SC_ZERO_TIME;
+    unsigned waits = 0, last_op = 0;
+    const Fixture* fx = nullptr; // when set: at op 0, every OUTPUT must hold the canary
+    int canary_checked = 0, canary_ok = 0;
+    int delay_op = -1;           // the owner task is held this long before that op (preemption)
+    sc_time delay = SC_ZERO_TIME;
+};
+void job_wait(void* c)
+{
+    ++static_cast<JobCtl*>(c)->waits;
+    wait(1, SC_US);
+}
+int job_abort(void* c)
+{
+    const auto* x = static_cast<JobCtl*>(c);
+    return x->abort_at != SC_ZERO_TIME && sc_time_stamp() >= x->abort_at;
+}
+void job_progress(void* c, std::uint32_t i)
+{
+    auto* x = static_cast<JobCtl*>(c);
+    x->last_op = i;
+    if (x->delay_op == static_cast<int>(i)) wait(x->delay);
+    if (i == 0 && x->fx && !x->canary_checked) { // before anything is pushed
+        x->canary_checked = 1;
+        x->canary_ok = 1;
+        for (const auto& o : x->fx->outs) {
+            std::vector<std::uint8_t> got(o.golden.size());
+            g_bench->mem->peek(o.addr, got.data(), got.size());
+            for (auto v : got) x->canary_ok &= v == FX1_NPU_JOB_CANARY;
+        }
+    }
+}
+
+std::string job_line(const fx1_npu_job_result& r)
+{
+    char b[320];
+    std::snprintf(b, sizeof b,
+                  "%s detail 0x%x op %d ops %u (rich %u neo %u gemm %u) acc +%u ret +%u outputs %u/%u exec %u mac %u "
+                  "ticks %u driver %s",
+                  fx1_npu_job_status_name(r.status), r.detail, static_cast<int>(r.op_index), r.ops_done, r.rich_instr,
+                  r.neo_instr, r.gemm_jobs, r.accepted_delta, r.retired_delta, r.outputs_ok, r.n_outputs, r.exec_cycles,
+                  r.mac_ops_lo, r.ticks, fx1_npu_status_name(static_cast<fx1_npu_status_t>(r.driver_status)));
+    return b;
+}
+
+void job_case(Bench& b, const std::string& dir)
+{
+    Fixture f;
+    check(f.load(dir), "fixture " + dir);
+    fx1_npu_t npu{};
+    check(npu_open(&npu, 0, 0) == FX1_NPU_OK, "init");
+    f.preload(b);
+    // A previous run's result in the output regions: the canary must replace it.
+    for (const auto& o : f.outs) b.mem->poke(o.addr, o.golden.data(), o.golden.size());
+    JobCtl ctl;
+    ctl.fx = &f;
+    const fx1_npu_job_hooks hooks{&ctl, job_wait, job_abort, job_progress};
+    fx1_npu_job_result r{};
+    const unsigned a0 = accesses();
+    fx1_npu_job_run(&npu, f.job.data(), &hooks, &r);
+    const unsigned used = accesses() - a0;
+    std::printf("  %s\n", job_line(r).c_str());
+    check(r.magic == FX1_NPU_JOB_RESULT_MAGIC && f.expect == fx1_npu_job_status_name(r.status),
+          "outcome " + std::string(fx1_npu_job_status_name(r.status)) + " (declared " + f.expect + ")");
+    if (r.status == FX1_NPU_JOB_OK) {
+        const fx1_npu_job_header* h = reinterpret_cast<const fx1_npu_job_header*>(f.job.data());
+        check(r.n_outputs == f.outs.size() && r.outputs_ok == r.n_outputs && f.outputs_matching(b) == f.outs.size(),
+              "every output equals its golden: " + std::to_string(f.outputs_matching(b)) + "/" + std::to_string(f.outs.size()));
+        check(ctl.canary_checked && ctl.canary_ok, "before op 0 every OUTPUT held the canary (a stale golden replaced)");
+        check(r.ops_done == h->n_ops && r.accepted_delta == r.rich_instr + r.neo_instr &&
+                  r.retired_delta == r.rich_instr + r.neo_instr,
+              "every op done; ACCEPTED / RETIRED advanced by the rich + neo instructions");
+    }
+    if (r.status == FX1_NPU_JOB_BAD_JOB) check(used == 0, "rejected before any NPU or window access (" + std::to_string(used) + ")");
+    if (r.status == FX1_NPU_JOB_INPUT_CRC) check(r.accepted_delta == 0 && r.ops_done == 0, "the NPU was not started");
+    check(!npu.unavailable && !npu.gemm_active && npu.rich_inflight == 0 && latches_clear(b), "the NPU is quiet afterwards");
+    check(g_bus_errors == 0, "no bus error");
+}
+
+// A model hash and a feature this NPU does not have: UNSUPPORTED, no NPU access.
+void job_unsupported_case(Bench& b, const std::string& dir)
+{
+    Fixture f;
+    check(f.load(dir), "fixture " + dir);
+    fx1_npu_t npu{};
+    check(npu_open(&npu, 0, 0) == FX1_NPU_OK, "init");
+    f.preload(b);
+    auto* h = reinterpret_cast<fx1_npu_job_header*>(f.job.data());
+    for (int k = 0; k < 2; ++k) {
+        std::vector<std::uint8_t> saved = f.job;
+        h = reinterpret_cast<fx1_npu_job_header*>(f.job.data());
+        if (k == 0) h->model_hash = npu.model_hash ^ 1u;
+        else h->features |= FX1_NPU_FEATURE_ATTN_LN; /* not offered by this NPU */
+        h->job_crc = 0;
+        h->job_crc = fx1_npu_job_crc32(0, f.job.data(), h->total_bytes);
+        fx1_npu_job_result r{};
+        const unsigned a0 = accesses();
+        fx1_npu_job_run(&npu, f.job.data(), nullptr, &r);
+        std::printf("  %s\n", job_line(r).c_str());
+        check(r.status == FX1_NPU_JOB_UNSUPPORTED &&
+                  r.detail == (k == 0 ? 0x80000000u : static_cast<std::uint32_t>(FX1_NPU_FEATURE_ATTN_LN)) && accesses() == a0,
+              k == 0 ? "model hash differs: UNSUPPORTED, no NPU access" : "missing feature: UNSUPPORTED (the bit named), no NPU access");
+        f.job = saved;
+    }
+    // An OUTPUT's expected CRC changed (as a wrong golden would): MISMATCH names it.
+    {
+        std::vector<std::uint8_t> saved = f.job;
+        h = reinterpret_cast<fx1_npu_job_header*>(f.job.data());
+        auto* t = reinterpret_cast<fx1_npu_job_tensor*>(f.job.data() + h->tensor_offset);
+        unsigned out = 0;
+        while (t[out].role != FX1_NPU_JOB_OUTPUT) ++out;
+        t[out].crc ^= 1u;
+        h->job_crc = 0;
+        h->job_crc = fx1_npu_job_crc32(0, f.job.data(), h->total_bytes);
+        fx1_npu_job_result r{};
+        fx1_npu_job_run(&npu, f.job.data(), nullptr, &r);
+        std::printf("  %s\n", job_line(r).c_str());
+        check(r.status == FX1_NPU_JOB_MISMATCH && r.detail == out && r.outputs_ok + 1 == r.n_outputs &&
+                  r.out_crc[out] == (t[out].crc ^ 1u),
+              "an expected CRC differs: MISMATCH, tensor " + std::to_string(out) + " named with the CRC found");
+        f.job = saved;
+    }
+    h = reinterpret_cast<fx1_npu_job_header*>(f.job.data());
+    h->model_hash = npu.model_hash; /* the right hash is accepted */
+    h->job_crc = 0;
+    h->job_crc = fx1_npu_job_crc32(0, f.job.data(), h->total_bytes);
+    fx1_npu_job_result r{};
+    fx1_npu_job_run(&npu, f.job.data(), nullptr, &r);
+    check(r.status == FX1_NPU_JOB_OK && f.outputs_matching(b) == f.outs.size(), "this NPU's model hash: OK");
+}
+
+void job_stop_case(Bench& b, const std::string& dir, const std::string& how)
+{
+    Fixture f;
+    check(f.load(dir), "fixture " + dir);
+    fx1_npu_t npu{};
+    check(npu_open(&npu, 0, 0) == FX1_NPU_OK, "init");
+    f.preload(b);
+    JobCtl ctl;
+    const fx1_npu_job_hooks hooks{&ctl, job_wait, job_abort, job_progress};
+    fx1_npu_job_result r{};
+    std::uint32_t want = FX1_NPU_JOB_ABORTED;
+    std::vector<std::uint8_t> saved = f.job;
+    if (how == "job_abort") ctl.abort_at = sc_time_stamp() + sc_time(200, SC_US);
+    if (how == "job_timeout") {
+        f.set_timeout(1);
+        want = FX1_NPU_JOB_TIMEOUT;
+    }
+    if (how == "job_deadline0" || how == "job_deadline1") { // review N3 R2
+        f.set_timeout(1);
+        ctl.delay_op = how == "job_deadline0" ? 0 : 1;
+        ctl.delay = sc_time(2, SC_MS);
+        want = FX1_NPU_JOB_TIMEOUT;
+    }
+    if (how == "job_dma_error") {
+        b.mem->error_lo = f.window_addr;
+        b.mem->error_hi = f.window_addr + 0x100u + 64u; /* the first tensor's first bytes */
+        want = FX1_NPU_JOB_FAILED;
+    }
+    fx1_npu_job_run(&npu, f.job.data(), &hooks, &r);
+    std::printf("  %s\n", job_line(r).c_str());
+    check(r.status == want, std::string("stopped: ") + fx1_npu_job_status_name(r.status));
+    if (how == "job_deadline0" || how == "job_deadline1") {
+        const std::uint32_t k = static_cast<std::uint32_t>(ctl.delay_op);
+        check(r.op_index == k && r.accepted_delta == k && r.retired_delta == k && r.ops_done == k,
+              "deadline passed while held before op " + std::to_string(k) + ": that op was not pushed (accepted +" +
+                  std::to_string(r.accepted_delta) + ", retired +" + std::to_string(r.retired_delta) + ")");
+    } else if (how != "job_dma_error")
+        check(r.op_index > 0 && r.op_index < 8, "stopped inside the job, at op " + std::to_string(r.op_index));
+    else
+        check(r.op_index == 0 && (r.err[4] & FX1_NPU_VP_ERROR_DMA) && r.retired_delta == 0 && r.accepted_delta == 1,
+              "op 0 failed with VP_ERROR.DMA, nothing after it was pushed (op " + std::to_string(r.op_index) + ")");
+    check(!npu.unavailable && npu.rich_inflight == 0 && latches_clear(b), "recovered: quiet, latches clear");
+    // The same job again (the buffers are the caller's again).
+    b.mem->error_lo = b.mem->error_hi = 0;
+    f.job = saved;
+    ctl.abort_at = SC_ZERO_TIME;
+    ctl.delay_op = -1;
+    f.preload(b);
+    fx1_npu_job_run(&npu, f.job.data(), &hooks, &r);
+    std::printf("  again: %s\n", job_line(r).c_str());
+    check(r.status == FX1_NPU_JOB_OK && f.outputs_matching(b) == f.outs.size(), "the job again: OK, outputs equal the goldens");
+    check(g_bus_errors == 0 || how == "job_dma_error", "no bus error from the CPU");
+}
+
 } // namespace
 
 int sc_main(int argc, char* argv[])
@@ -482,6 +764,17 @@ int sc_main(int argc, char* argv[])
         {"reinit", reinit},
         {"poll", poll},
     };
+    if ((c == "job" || c == "job_abort" || c == "job_timeout" || c == "job_dma_error" || c == "job_unsupported" ||
+         c == "job_deadline0" || c == "job_deadline1") && argc > 2) {
+        const std::string dir = argv[2];
+        return run_bench("direct", fx1::npu::NpuOptions{}, [&](Bench& b) {
+            g_bench = &b;
+            g_owner = sc_get_current_process_handle();
+            if (c == "job") job_case(b, dir);
+            else if (c == "job_unsupported") job_unsupported_case(b, dir);
+            else job_stop_case(b, dir, c);
+        });
+    }
     const auto it = cases.find(c);
     if (it == cases.end()) {
         std::printf("usage: test_npu_driver_host <case>\n");

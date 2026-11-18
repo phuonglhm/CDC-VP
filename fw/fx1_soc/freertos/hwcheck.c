@@ -3,6 +3,7 @@
 #include "fx1_fw.h"
 #include "dma/fx1_dma_regs.h"
 #include "fx1_isp/fx1_isp_csr.h"
+#include "fx1_npu/fx1_npu_regs.h"
 #include "eth_drv.h"
 #include "eth_regs.h"
 #ifdef FX1_FW_HAS_CAMERA
@@ -241,6 +242,33 @@ static void check_eth(void)
 #undef ER
 }
 
+/* NPU (plan FX1_NPU_V47 N3): identity, ABI 1.x, the features the CLI uses, idle
+ * at boot, VP_PUSH_WAIT_NS read/write, a byte access faults. Without an NPU
+ * (fx1_soc --no-npu, or not built) the aperture faults: absent, skipped. */
+static void check_npu(void)
+{
+    begin("NPU");
+#define NB(local) (FX1_NPU_VP_BASE + FX1_NPU_BANK(local))
+    const uint32_t before = faults;
+    const uint32_t id = fx1_read32(NB(FX1_NPU_VP_ID));
+    if (faults != before) {
+        cur->skipped = "absent (fx1_soc --no-npu, or not built)";
+        return;
+    }
+    expect_eq("VP_ID", NB(FX1_NPU_VP_ID), id, FX1_NPU_VP_ID_VALUE);
+    const uint32_t abi = fx1_read32(NB(FX1_NPU_VP_ABI));
+    expect_eq("VP_ABI major", NB(FX1_NPU_VP_ABI), FX1_NPU_VP_ABI_MAJOR(abi), FX1_NPU_VP_ABI_MAJOR(FX1_NPU_VP_ABI_VALUE));
+    const uint32_t need = FX1_NPU_FEATURE_NATIVE_GEMM | FX1_NPU_FEATURE_RICH_HAS | FX1_NPU_FEATURE_ABORT | FX1_NPU_FEATURE_QUEUE;
+    const uint32_t feat = fx1_read32(NB(FX1_NPU_VP_FEATURE));
+    expect_eq("VP_FEATURE GEMM-bank, rich, ABORT, queue", NB(FX1_NPU_VP_FEATURE), feat & need, need);
+    expect_eq("VP_STATUS quiescent, nothing queued", NB(FX1_NPU_VP_STATUS), fx1_read32(NB(FX1_NPU_VP_STATUS)),
+              FX1_NPU_VP_STATUS_QUIESCENT);
+    expect_eq("VP_ACCEPTED 0", NB(FX1_NPU_VP_ACCEPTED), fx1_read32(NB(FX1_NPU_VP_ACCEPTED)), 0u);
+    rw("VP_PUSH_WAIT_NS", NB(FX1_NPU_VP_PUSH_WAIT_NS), 0x00012345u, 0xFFFFFFFFu);
+    byte_load_faults("byte load faults", NB(FX1_NPU_VP_ID));
+#undef NB
+}
+
 #ifdef FX1_FW_HAS_CAMERA
 #define I2C_CTRL   0x10u
 #define I2C_STATUS 0x14u
@@ -295,6 +323,7 @@ void hwcheck_run(void)
     check_dma();
     check_isp();
     check_eth();
+    check_npu();
 #ifdef FX1_FW_HAS_CAMERA
     check_camera();
 #endif

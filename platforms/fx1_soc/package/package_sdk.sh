@@ -107,7 +107,7 @@ log "firmware sources"
 mkdir -p "${sdk}/app" "${sdk}/bsp" "${sdk}/include/fx1" "${sdk}/include/dma" "${sdk}/include/fx1_isp" "${sdk}/include/fx1_ddr3" \
          "${sdk}/drivers/isp" "${sdk}/isp_selftest" "${sdk}/demo" "${sdk}/tests" "${sdk}/ddr3/examples" \
          "${sdk}/include/fx1_csi2" "${sdk}/drivers/csi2" "${sdk}/drivers/camera" "${sdk}/camera" "${sdk}/camera_isp" \
-         "${sdk}/drivers/eth" "${sdk}/eth"
+         "${sdk}/drivers/eth" "${sdk}/eth" "${sdk}/include/fx1_npu" "${sdk}/drivers/npu" "${sdk}/npu_selftest"
 cp "${here}/sdk/Makefile" "${here}/sdk/README.md" "${sdk}/"
 cp "${fw}"/freertos/*.c "${fw}"/freertos/*.h "${fw}"/freertos/*.S "${sdk}/app/"
 cp "${fw}/freertos/tests/isp_auto_policy_test.c" "${sdk}/tests/"
@@ -126,6 +126,13 @@ cp "${src}/components/FX1_Components/fx1_map/include/fx1/fx1_ddr_sysctrl.h" "${s
 cp "${src}/components/FX1_Components/ddr3/include/fx1_ddr3/fx1_ddr3_regs.h" \
    "${src}/components/FX1_Components/ddr3/include/fx1_ddr3/provisional_encodings.h" "${sdk}/include/fx1_ddr3/"
 cp "${src}/components/FX1_Components/dma/include/dma/fx1_dma_regs.h" "${sdk}/include/dma/"
+# NPU (plan FX1_NPU_V47 N3): register ABI header, reference driver, job format,
+# and the `npu selftest` cases + C oracle the CLI links (launcher, fixtures and
+# docs of the package: N5).
+cp "${src}/components/FX1_Components/npu/include/fx1_npu/fx1_npu_regs.h" "${sdk}/include/fx1_npu/"
+cp "${fw}"/drivers/fx1_npu.[ch] "${fw}"/drivers/fx1_npu_build.c "${fw}"/drivers/fx1_npu_job.[ch] \
+   "${fw}"/drivers/fx1_npu_job_run.c "${sdk}/drivers/npu/"
+cp "${fw}"/tests/npu_common/npu_oracle.[ch] "${fw}"/tests/npu_common/npu_cases.[ch] "${sdk}/npu_selftest/"
 cp "${isp}/include/fx1_isp/fx1_isp_csr.h" "${isp}/driver/include/fx1_isp/fx1_isp_drv.h" "${sdk}/include/fx1_isp/"
 cp "${isp}/driver/src/fx1_isp_drv.c" "${sdk}/drivers/isp/"
 cp "${fw}"/tests/isp_stream/isp_common.c "${fw}"/tests/isp_stream/isp_common.h "${fw}"/tests/isp_stream/isp_fixture.h \

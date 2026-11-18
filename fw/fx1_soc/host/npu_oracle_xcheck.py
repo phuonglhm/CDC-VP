@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """fx1_fw_npu_oracle_xcheck: the firmware's C oracle against the drop's numpy reference.
 
-  npu_oracle_xcheck.py <npu_case_gen> <ref_program.py> <work dir>
+  npu_oracle_xcheck.py <generator> <ref_program.py> <work dir> [generator args...]
 
-Runs npu_case_gen (firmware builders + C oracle, compiled for the host), then
+Runs the generator as `<generator> [args...] <work dir>` (npu_case_gen: the
+firmware test cases; npu_job_gen --xcheck <fixture>: a job fixture; both are
+the firmware builders + C oracle compiled for the host), then
 tools/has/ref_program.py of the SAURIA v4.7 drop on the same program with the C
 oracle's image as the image under test: every instruction must match (exit 0),
 and the whole reference image must equal the C oracle's byte for byte.
@@ -14,12 +16,12 @@ import sys
 
 
 def main():
-    if len(sys.argv) != 4:
+    if len(sys.argv) < 4:
         print(__doc__)
         return 2
-    gen, ref, work = sys.argv[1:]
+    gen, ref, work = sys.argv[1:4]
     os.makedirs(work, exist_ok=True)
-    subprocess.run([gen, work], check=True)
+    subprocess.run([gen, *sys.argv[4:], work], check=True)
     oracle = os.path.join(work, "c_oracle.bin")
     out = os.path.join(work, "ref_image.bin")
     r = subprocess.run([sys.executable, ref, work, "--image", oracle, "--write-ref", out])

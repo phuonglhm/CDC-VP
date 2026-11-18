@@ -21,7 +21,7 @@ one does not run on the other.
 | CPU | 1 hart, Bremen riscv-vp, `rv32imac` / `ilp32` | **2 harts, RISC-V VP++, `rv32imafc` / `ilp32f`** (hardware FP) |
 | Interconnect | generic bus | FX1 bus model with an exclusive monitor (LR/SC and AMOs are correct against DMA) |
 | Peripherals | about 25 IPs (UART×2, I2C, SPI, timers, WDT, PWM, GPIO, …) | **UART, CLINT, PLIC, SYS_DMA, ISP, DDR3 controller, I2C0, Ethernet MAC + PHY** ([eth/README.md](eth/README.md)), and with `--camera` the **CSI-2 RX camera path** ([camera/README.md](camera/README.md)) |
-| Accelerators | NPU (functional) | **ISP** (functional, bit-exact to the stand-alone ISP model); NPU (SAURIA v4.7 model, VP aperture): reference bare-metal driver (`drivers/fx1_npu.h`); CLI commands not delivered yet |
+| Accelerators | NPU (functional) | **ISP** (functional, bit-exact to the stand-alone ISP model); NPU (SAURIA v4.7 model, VP aperture): reference bare-metal driver (`drivers/fx1_npu.h`); FreeRTOS `npu` commands (`npu info/status/selftest/run/wait/reset`) in the CLI image; job fixtures and launcher not packaged yet |
 | Memory map | V2.0 map | FX1 placeholder map ([MEMORY_MAP.md](MEMORY_MAP.md)), pending the HAS |
 
 What is not modelled in V3.0:

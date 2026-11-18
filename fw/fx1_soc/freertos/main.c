@@ -3,7 +3,7 @@
  *
  * Hart 0: boot banner -> release hart 1 -> wait for hart 1's IP check ->
  *   print the report; any failure halts the boot (FAIL 0x50) -> FreeRTOS:
- *   trap entry, device services (ISP, SYS_DMA, Ethernet), UART console -> CLI task ->
+ *   trap entry, device services (ISP, SYS_DMA, Ethernet, NPU), UART console -> CLI task ->
  *   scheduler.
  * Hart 1: bare-metal hwcheck of every IP, then WFI forever.
  *
@@ -47,6 +47,7 @@ int main(void)
     isp_service_init();
     dma_service_init();
     eth_service_init();
+    npu_service_init();
 #ifdef FX1_FW_HAS_CAMERA
     camera_service_init();
 #endif

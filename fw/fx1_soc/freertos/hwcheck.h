@@ -12,6 +12,8 @@
  * Per IP: identity / reset values, write-readback-restore on registers without
  * side effects, and the bus-error contract (bad access -> access fault). DDR:
  * pattern, address-in-address and sub-word tests on a 4 KiB window.
+ * NPU: VP_ID, ABI 1.x, features, idle at boot, VP_PUSH_WAIT_NS read/write, a byte
+ * load faults; absent (--no-npu or not built) is reported as skipped.
  * Camera build (FX1_FW_HAS_CAMERA, CSI-2 M6b): CSI-2 RX identity, reset values
  * and read/write registers; I2C0 status and CTRL; the sensor's model_id over
  * I2C0. Without --camera the CSI-2 RX faults on the bus: reported as absent
@@ -22,7 +24,7 @@
 
 #include <stdint.h>
 
-#define HWCHECK_MAX_IPS 12u
+#define HWCHECK_MAX_IPS 14u
 
 typedef struct {
     const char* name;

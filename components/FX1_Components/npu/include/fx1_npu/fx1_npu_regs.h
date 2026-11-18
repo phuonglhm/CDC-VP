@@ -55,6 +55,10 @@
 #define FX1_NPU_PERF_EXEC_CYCLES    0x1200u
 #define FX1_NPU_PERF_MAC_OPS        0x1208u
 #define FX1_NPU_PERF_TOTAL_CYCLES   0x1214u
+/* High words of the 64-bit counters above (RO, as their low words). */
+#define FX1_NPU_PERF_EXEC_CYCLES_HI 0x1240u
+#define FX1_NPU_PERF_MAC_OPS_HI     0x1248u
+#define FX1_NPU_PERF_TOTAL_CYCLES_HI 0x1254u
 #define FX1_NPU_PERF_DDR_READ_BYTES  0x129Cu
 #define FX1_NPU_PERF_DDR_WRITE_BYTES 0x12A0u
 

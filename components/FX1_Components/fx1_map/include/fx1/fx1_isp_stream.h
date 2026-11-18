@@ -211,7 +211,8 @@ typedef char fx1_isp_stream_record_size[sizeof(fx1_isp_stream_record) == FX1_ISP
 
 /* The stream areas stay out of the NPU arenas (fx1_memory_map.h, plan FX1_NPU_V47). */
 #define FX1_ISP_STREAM_NPU_APART                                                                                     \
-    (FX1_ISP_STREAM_PROFILE_ADDR + 8u * FX1_ISP_STREAM_PROFILE_MAX <= FX1_NPU_ARENA_SMALL_BASE &&                   \
+    (FX1_ISP_STREAM_PROFILE_ADDR + 8u * FX1_ISP_STREAM_PROFILE_MAX <= FX1_NPU_JOB_BASE &&                           \
+     FX1_ISP_STREAM_PROFILE_ADDR + 8u * FX1_ISP_STREAM_PROFILE_MAX <= FX1_NPU_ARENA_SMALL_BASE &&                   \
      FX1_ISP_STREAM_IN_ADDR(FX1_ISP_STREAM_SLOTS) <= FX1_FW_YUV_BUF_BASE &&                                         \
      FX1_ISP_STREAM_OUT_ADDR(FX1_ISP_STREAM_SLOTS) <= FX1_NPU_ARENA_LARGE_BASE &&                                   \
      FX1_ISP_STREAM_POOL_BASE >= FX1_NPU_ARENA_LARGE_BASE + FX1_NPU_ARENA_LARGE_SIZE)

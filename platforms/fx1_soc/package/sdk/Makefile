@@ -45,7 +45,7 @@ CFLAGS  := $(ARCH) -O2 -g -std=c11 -ffreestanding -fno-builtin --param=min-pages
            -ffunction-sections -fdata-sections -Wall -Wextra -Werror \
            -I$(HERE)/bsp -I$(HERE)/include \
            -I$(HERE)/app -I$(KERNEL)/include -I$(KERNEL)/portable/GCC/RISC-V \
-           -I$(HERE)/isp_selftest -I$(HERE)/demo -I$(HERE)/drivers/eth \
+           -I$(HERE)/isp_selftest -I$(HERE)/demo -I$(HERE)/drivers/eth -I$(HERE)/drivers/npu -I$(HERE)/npu_selftest \
            -Wno-int-to-pointer-cast
 # The CLI with the camera (CSI-2 M6b): `camera` commands, boot check of the
 # CSI-2 RX / I2C0 / sensor; without fx1_soc --camera they report it absent.
@@ -65,16 +65,19 @@ LDFLAGS := -nostdlib -nostartfiles -Wl,--gc-sections -Wl,--no-warn-rwx-segments
 
 SOURCES := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c \
            $(addprefix $(HERE)/app/,main.c rtos_bsp.c rtos_libc.c cli.c hwcheck.c cmd_fpu.c cmd_dma.c \
-                                    cmd_isp.c cmd_isp_stream.c cmd_camera.c cmd_eth.c probe.S) \
+                                    cmd_isp.c cmd_isp_stream.c cmd_camera.c cmd_eth.c cmd_npu.c probe.S) \
            $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/portable/MemMang/heap_4.c \
            $(KERNEL)/portable/GCC/RISC-V/port.c $(KERNEL)/portable/GCC/RISC-V/portASM.S \
            $(HERE)/isp_selftest/isp_common.c $(HERE)/drivers/isp/fx1_isp_drv.c \
            $(addprefix $(HERE)/drivers/camera/,fx1_camera.c fx1_isp_hal_mmio.c fx1_i2c.c fx1_ccs_sensor.c \
                                                fx1_csi2_hal_mmio.c) \
-           $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/eth/fx1_eth.c $(HERE)/drivers/eth/eth_drv.c
+           $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/eth/fx1_eth.c $(HERE)/drivers/eth/eth_drv.c \
+           $(addprefix $(HERE)/drivers/npu/,fx1_npu.c fx1_npu_build.c fx1_npu_job.c fx1_npu_job_run.c) \
+           $(addprefix $(HERE)/npu_selftest/,npu_oracle.c npu_cases.c)
 HEADERS := $(wildcard $(HERE)/bsp/*.h $(HERE)/app/*.h $(HERE)/include/*/*.h $(HERE)/isp_selftest/*.h \
                       $(HERE)/demo/*.h $(KERNEL)/include/*.h $(KERNEL)/portable/GCC/RISC-V/*.h \
-                      $(HERE)/drivers/camera/*.h $(HERE)/camera_isp/*.h $(HERE)/drivers/eth/*.h)
+                      $(HERE)/drivers/camera/*.h $(HERE)/camera_isp/*.h $(HERE)/drivers/eth/*.h \
+                      $(HERE)/drivers/npu/*.h $(HERE)/npu_selftest/*.h)
 
 ELF  := $(OUT)/freertos_cli.elf
 LDS  := $(OUT)/fx1.ld

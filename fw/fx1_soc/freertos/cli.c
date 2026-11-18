@@ -11,6 +11,7 @@
 #include "fx1_fw.h"
 #include "dma/fx1_dma_regs.h"
 #include "fx1_isp/fx1_isp_csr.h"
+#include "fx1_npu/fx1_npu_regs.h"
 #include "hwcheck.h"
 #include "rtos_app.h"
 #include "rtos_bsp.h"
@@ -119,6 +120,17 @@ static int cmd_version(int argc, char** argv)
     out(", SYS_DMA capability ");
     out_hex(fx1_read32(FX1_SYS_DMA_CSR_BASE + FX1_DMA_CORE_CAPABILITY_STATUS0));
     out_line("");
+    uint32_t id = 0, abi = 0;
+    if (fx1_probe_read32(FX1_NPU_VP_BASE + FX1_NPU_BANK(FX1_NPU_VP_ID), &id) || id != FX1_NPU_VP_ID_VALUE ||
+        fx1_probe_read32(FX1_NPU_VP_BASE + FX1_NPU_BANK(FX1_NPU_VP_ABI), &abi)) {
+        out_line("npu: absent (fx1_soc --no-npu, or a platform built without it)");
+    } else {
+        out("npu: VP_ID ");
+        out_hex(id);
+        out(", ABI ");
+        out_hex(abi);
+        out_line(" (`npu info`)");
+    }
     return 0;
 }
 
@@ -303,13 +315,15 @@ static int cmd_selftest(int argc, char** argv)
     static char* dma[] = {"dma", "test"};
     static char* isp[] = {"isp", "selftest"};
     static char* eth[] = {"eth", "selftest"};
+    static char* npu[] = {"npu", "selftest"};
     const uint32_t before = app_failures;
-    out_line("selftest: hwcheck report, FPU context, SYS_DMA, ISP, Ethernet");
+    out_line("selftest: hwcheck report, FPU context, SYS_DMA, ISP, Ethernet, NPU");
     report("hwcheck (hart 1 at boot)", hwcheck_report.done && hwcheck_report.total_failures == 0);
     cmd_fpu(2, fpu);
     cmd_dma(2, dma);
     cmd_isp(2, isp);
     cmd_eth(2, eth);
+    cmd_npu(2, npu); /* without an NPU: reported as such, not a failure */
     out("selftest: ");
     out_line(app_failures == before ? "PASS" : "FAIL");
     return 0;
@@ -339,6 +353,7 @@ static const command commands[] = {
     {"isp", cmd_isp, "isp selftest [profile]|run [legacy|auto]|stats|stream start|status|stop|wait [MS]|idle [MS]  fixture (legacy or profile mode); RAW job (profile mode by default) with optional adaptive WB/tone; statistics; RAW-sequence stream (fx1_soc --isp-stream-spool)"},
     {"dma", cmd_dma, "dma test [BYTES]     SYS_DMA M2M copy with IRQ, verified"},
     {"fpu", cmd_fpu, "fpu test             two tasks interleaving FP work (context switch check)"},
+    {"npu", cmd_npu, "npu info|status|selftest|run|wait [MS]|reset  NPU (SAURIA v4.7): identity; state; GEMM/rich/DFC against the C oracle; the host-loaded job (returns at once); its end and summary; stop + recover + soft reset"},
     {"eth", cmd_eth,
      "eth probe|status|stats [clear]|start|stop [DRAIN_US]|recover|selftest|mdio read P R|mdio write P R V|"
      "send N [LEN] [PATTERN]|dump rx|tx|cycle N|load start|stop|mdiopoll start|stop|wait MS"},
@@ -346,7 +361,7 @@ static const command commands[] = {
     {"camera", cmd_camera,
      "camera probe|mode [W H BITS LANES]|source [sensor|tpg]|start|capture N [crc]|status|stop [US]|recover"},
 #endif
-    {"selftest", cmd_selftest, "selftest             hwcheck + fpu + dma + isp + eth"},
+    {"selftest", cmd_selftest, "selftest             hwcheck + fpu + dma + isp + eth + npu"},
     {"poweroff", cmd_poweroff, "poweroff             end the simulation: PASS if no check failed"},
 };
 

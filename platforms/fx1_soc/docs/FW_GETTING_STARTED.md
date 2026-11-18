@@ -179,6 +179,7 @@ What the build gives every image:
 | `fx1_isp/fx1_isp_drv.h` | Reference ISP driver (compile `isp/driver/src/fx1_isp_drv.c` into the image) |
 | `fx1_npu/fx1_npu_regs.h` | NPU register ABI 1.x (`components/FX1_Components/npu/include`, checked against the model's C++ map at build time) |
 | `fx1_npu.h` | Reference bare-metal NPU driver (compile `drivers/fx1_npu.c` and `drivers/fx1_npu_build.c` into the image) |
+| `fx1_npu_job.h` | NPU job format: checks, descriptors, executor (`drivers/fx1_npu_job.c`, `drivers/fx1_npu_job_run.c`); guide `platforms/fx1_soc/docs/NPU_JOB_GUIDE.md` |
 
 ### Memory map and interrupts (placeholders)
 
@@ -271,7 +272,7 @@ interrupts reach tasks.
 |---|---|
 | SYS_DMA programming | [`components/FX1_Components/dma/docs/PROGRAMMING_GUIDE.md`](../../../components/FX1_Components/dma/docs/PROGRAMMING_GUIDE.md); examples `tests/dma_m2m`, `tests/recovery/dma_recovery.c` (errors, chains, pause/resume) |
 | ISP programming | [`components/FX1_Components/isp/docs/ISP_PROGRAMMING_GUIDE.md`](../../../components/FX1_Components/isp/docs/ISP_PROGRAMMING_GUIDE.md); MMIO HAL `tests/isp_stream/isp_common.c`; streaming `tests/isp_stream/main.c`; statistics `frame_id.c`; error and reset recovery `tests/recovery/isp_recovery.c`; frame metadata, AWB result ownership, DMA reset and Resizer `tests/isp_stream/isp_mas0710.c` |
-| NPU programming | Contract [`components/FX1_Components/npu/README.md`](../../../components/FX1_Components/npu/README.md); driver `drivers/fx1_npu.h`. GEMM bank, polling and PLIC interrupt `tests/npu_gemm`; lane-A rich chain (conv, residual, pooling, ADD) `tests/npu_rich`; DFC register file and strict refusals `tests/npu_dfc`; refusals, busy, timeout, recovery and soft reset `tests/npu_errors`; C oracle `tests/npu_common` |
+| NPU programming | Contract [`components/FX1_Components/npu/README.md`](../../../components/FX1_Components/npu/README.md); driver `drivers/fx1_npu.h`. GEMM bank, polling and PLIC interrupt `tests/npu_gemm`; lane-A rich chain (conv, residual, pooling, ADD) `tests/npu_rich`; DFC register file and strict refusals `tests/npu_dfc`; refusals, busy, timeout, recovery and soft reset `tests/npu_errors`; C oracle `tests/npu_common`. FreeRTOS: `npu info/status/selftest/run/wait/reset` (`freertos/cmd_npu.c`), host-loaded jobs and the launcher `platforms/fx1_soc/demo/npu_run.py` ([`NPU_JOB_GUIDE.md`](NPU_JOB_GUIDE.md)) |
 | Interrupts | `tests/plic_irq`, `tests/clint_irq` |
 | Two harts, atomics | `tests/hello_2hart`, `tests/atomic/*` |
 | Two harts and two devices at once | `tests/shared_mem/hart1_dma.c` with `isp_stream/main.c` |

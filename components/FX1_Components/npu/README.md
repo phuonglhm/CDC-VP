@@ -269,7 +269,10 @@ once: it clears the shared error latches only when the NPU is quiet (nothing
 outstanding, every engine idle), refuses rich and configuration calls while a
 GEMM-bank job is outstanding, decides a rich batch by `RETIRED` and a
 GEMM-bank job by STATUS.DONE, and opens (`fx1_npu_init`) only an idle NPU
-(review N2).
+(review N2). On top of it (plan N3), the job format `fw/fx1_soc/drivers/fx1_npu_job.h`
+(structured operations on tensors of one window; the firmware builds every
+instruction itself) and the FreeRTOS `npu` commands run host-loaded jobs:
+`platforms/fx1_soc/docs/NPU_JOB_GUIDE.md`.
 
 ## Access classes
 

@@ -30,6 +30,10 @@ and SYS_DMA from tasks. It is the starting point for RTOS drivers on FX1.
      read/write, a byte access faults.
    - ISP: `COMMON_VER_ID`, `DMA_ERR` clear, buffer address registers are
      read/write.
+   - NPU: `VP_ID`, ABI major 1, the features the CLI uses, quiescent with
+     nothing accepted, `VP_PUSH_WAIT_NS` read/write, a byte access faults.
+     Without an NPU the aperture faults: `NPU: absent (fx1_soc --no-npu, or
+     not built), skipped`, not a failure.
    - Camera build only (`-DFX1_BUILD_MIPI_CSI2=ON`, CSI-2 M6b): CSI-2 RX
      `IP_VERSION`, `CORE_CONFIG` and `DMA_CONTROL` reset values, three
      read/write registers; I2C0 host idle and `CTRL` read/write; the sensor's
@@ -43,8 +47,10 @@ and SYS_DMA from tasks. It is the starting point for RTOS drivers on FX1.
    `boot halted: hwcheck FAIL` and ends with FAIL code `0x50`. The scheduler
    does not start.
 4. **Hart 0 starts FreeRTOS.** `mtvec` is set to the kernel trap entry (hart 0
-   only; hart 1 keeps crt0's). Then it installs the ISP, SYS_DMA and UART
-   interrupt services, creates the CLI task, and starts the scheduler.
+   only; hart 1 keeps crt0's). Then it installs the ISP, SYS_DMA, Ethernet and
+   UART interrupt services, creates the NPU task (which probes the NPU and
+   installs its interrupt once the scheduler runs) and the CLI task, and starts
+   the scheduler.
 
 ## FP registers in task context
 
@@ -80,7 +86,8 @@ computed without any task switch.
 | `isp stream idle [MS]` | Wait until no session runs and the stream no longer holds the ISP, then the summary as a check (passes once the ISP is free). An ended session whose ISP stop still drains (a recovery waiting for a transaction the bus holds: status `ISP stop draining`) keeps the ISP claimed, its interrupt masked at the PLIC, and refuses a new start, until the stop has finished; use it before another ISP command after an ERROR session. A PASS does not clear that session's error; without MS it waits as long as the stop drains (give scripts a deadline); it says nothing about other owners (the next command still claims the ISP) |
 | `eth ...` | Ethernet MAC, see "Ethernet" below |
 | `camera ...` | Camera build only (CSI-2 M6b), see "Camera" below |
-| `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` + `eth selftest` |
+| `npu ...` | NPU (SAURIA v4.7), see "NPU" below |
+| `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` + `eth selftest` + `npu selftest` |
 | `poweroff` | End the simulation: PASS when no check failed so far, otherwise FAIL `0x400 + failures` |
 
 A command that checks something prints `name: PASS|FAIL`. Failures are counted
@@ -131,6 +138,32 @@ byte/hole faults, the PHY ID over MDIO) and restores what it changed.
 `fx1_soc --eth-peer` chooses the line: `loopback` (default), `partner` (an
 echo station) or `none` (link down). Tests: `fx1_smoke_freertos_cli_eth_*`
 (see `platforms/fx1_soc/README.md`).
+
+## NPU (plan FX1_NPU_V47 N3)
+
+The NPU (`FX1_NPU_VP_BASE` 0x1300_0000, PLIC source 4) through the reference
+driver `fw/fx1_soc/drivers/fx1_npu.h` and the job format
+`fw/fx1_soc/drivers/fx1_npu_job.h` (guide:
+`platforms/fx1_soc/docs/NPU_JOB_GUIDE.md`). One owner: the task `npu`
+(priority 1, below the CLI, so the console is not held while it checks or
+runs a job; completion handling in the task can wait behind CLI work) is the only caller of the driver; the commands post it one request. The
+interrupt handler acknowledges `IRQ_STATUS` and notifies the task, nothing
+else; a claim that finds `IRQ_STATUS` 0 is counted as stale. The task never
+sleeps until a DONE interrupt: it polls with a deadline and blocks at most one
+tick between polls, because a batch that latched an error ends without DONE
+(review N2). Hart 1's boot check covers the NPU (VP_ID, ABI 1.x, features, idle
+at boot, a read/write register, a byte access faults); without an NPU
+(`fx1_soc --no-npu`, or a platform built without it) it is reported as absent
+and every `npu` command says so without a failure.
+
+| Command | Behaviour |
+|---|---|
+| `npu info` | Identity (VP_ID, ABI, model hash), features, queue depth, window limit, arenas, job and result addresses, whether a job image is loaded |
+| `npu status` | The task's state (idle, running with the job, operation and time, closed), VP_STATUS, ACCEPTED, RETIRED, QUEUE_FREE, interrupts (stale), the last job's outcome. Answers while a job runs (register reads without side effects) |
+| `npu selftest` | GEMM bank K=32, the rich chain (conv 3x3, conv 1x1 + residual, MAX_POOL, AVG_POOL, ADD) and the DFC cases (neo MAX_POOL, RESIDUAL) against the C oracle, in the small arena from +3 MiB; a check |
+| `npu run` | The job the host loaded at `FX1_NPU_JOB_BASE` (`fx1_soc --load`, `platforms/fx1_soc/demo/npu_run.py`): copied, checked (nothing reaches the NPU from an invalid job), its input CRCs, then its operations one at a time; the result block at `FX1_NPU_RESULT_BASE`. Returns at once |
+| `npu wait [MS]` | Until the job has ended (its execution budget plus the firmware's CRC time), then its summary (outcome, operations, ACCEPTED / RETIRED, outputs matching, model cycles, MAC operations, interrupts, NPU time) as a check (OK passes). With MS it returns after MS ms if the job still runs: not a failure, the job goes on, so a script must wait for (or check) the outcome before `poweroff` |
+| `npu reset` | Idle: recovery (ABORT, every engine idle) + soft reset + reopen; after an UNAVAILABLE recovery only the reopen, once the NPU is idle. While a job runs: the job is stopped first (ABORTED, recovered), then the same. A check; the command waits at most 2 s |
 
 ## Camera (CSI-2 M6b)
 
@@ -236,6 +269,9 @@ of 64×48, each CRC compared with the reference.
 | `fx1_regression_freertos_cli_camera_startfault` | Test image `freertos_cli_camfault` (I2C host lost once between configure and stream-on): `camera start` EDEV, cleanup stop ESENSOR, ISP free again (`isp selftest` PASS); I2C back → stop OK; start and capture against the golden |
 | `fx1_regression_freertos_cli_camera_nv12_fault` | TPG 4K, CRC skipped: a good frame (Y and UV spot ok), then the ODMA Y address of slot 0 moved to scratch DDR (Y spot BAD), then UV (UV spot BAD) |
 | `fx1_regression_freertos_cli_camera_tpg` | `tests/cli_camera_tpg.txt`: TPG 640x480 RAW12 (2 frames = golden) and 3840x2160 RAW12 (metadata, RAW spot check, CRC skipped by size); about one minute of host time |
+| `fx1_smoke_freertos_cli_npu` (+ `_absent`) | `tests/cli_npu.txt`: hwcheck covers the NPU, `version` names it, `npu info/status/selftest/run/wait/reset` (no job loaded); with `--no-npu` every command reports the NPU absent, no failure |
+| `fx1_smoke_freertos_cli_npu_job` | The `chain` fixture loaded with `--load`: `npu run` twice (buffers reused), every output CRC as expected, ACCEPTED / RETIRED +5 each time |
+| `fx1_smoke_freertos_cli_npu_reset` | The `long` fixture: `npu status` while it runs, `npu wait 1` returns, `npu reset` stops it (ABORTED, recovered, soft reset), then the job again passes |
 | `fx1_smoke_freertos_cli_bad_input` | `tests/cli_bad_input.txt`: out-of-range numbers, wrapping ranges and faulting register holes are reported, and the CLI keeps working through `poweroff` PASS |
 | `fx1_smoke_freertos_cli_hwcheck_fail` | An image built with `HWCHECK_INJECT_FAILURE` must halt the boot with `FAIL ISP` and code 0x50 |
 | `fx1_smoke_uart_rx_q*ns` | UART RX from the host, polled and interrupt-driven (bare metal) |

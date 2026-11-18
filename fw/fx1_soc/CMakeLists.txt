@@ -322,12 +322,37 @@ if(CDC_BUILD_TESTS)
         target_compile_options(fx1_fw_npu_neo_encoder PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c11> -Wall -Wextra)
         add_test(NAME fx1_unit_npu_neo_encoder COMMAND fx1_fw_npu_neo_encoder)
         set_tests_properties(fx1_unit_npu_neo_encoder PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit;npu")
+        # N3: the job fixtures (host/npu_job_gen.c: the firmware's job checks,
+        # builders and C oracle compiled for the host) in npu_jobs/<name>/, built
+        # with fx1_all (target fx1_npu_jobs).
+        add_executable(fx1_fw_npu_job_gen ${CMAKE_CURRENT_SOURCE_DIR}/host/npu_job_gen.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.c)
+        target_include_directories(fx1_fw_npu_job_gen PRIVATE ${_npu_fw_inc} ${FX1_FW_MAP_INCLUDE})
+        target_compile_options(fx1_fw_npu_job_gen PRIVATE -std=c11 -Wall -Wextra -Werror)
+        set(FX1_NPU_JOBS_DIR ${CMAKE_CURRENT_BINARY_DIR}/npu_jobs)
+        add_custom_command(OUTPUT ${FX1_NPU_JOBS_DIR}/.stamp
+            COMMAND ${CMAKE_COMMAND} -E rm -rf ${FX1_NPU_JOBS_DIR}
+            COMMAND fx1_fw_npu_job_gen ${FX1_NPU_JOBS_DIR}
+            COMMAND ${CMAKE_COMMAND} -E touch ${FX1_NPU_JOBS_DIR}/.stamp
+            DEPENDS fx1_fw_npu_job_gen
+            COMMENT "FX1 NPU job fixtures in ${FX1_NPU_JOBS_DIR}")
+        add_custom_target(fx1_npu_jobs DEPENDS ${FX1_NPU_JOBS_DIR}/.stamp)
+        # The firmware's job checks against corruptions of valid fixture images.
+        add_executable(fx1_fw_npu_job_check ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_job_check.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c)
+        target_include_directories(fx1_fw_npu_job_check PRIVATE ${_npu_fw_inc} ${FX1_FW_MAP_INCLUDE})
+        target_compile_options(fx1_fw_npu_job_check PRIVATE -std=c11 -Wall -Wextra -Werror)
+        add_test(NAME fx1_unit_npu_job_check COMMAND fx1_fw_npu_job_check ${FX1_NPU_JOBS_DIR})
+        set_tests_properties(fx1_unit_npu_job_check PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit;npu")
+        set(_npu_jobs chain gemm dfc mixed large long bad_bounds bad_input)
         # Host: the driver (drivers/fx1_npu.c as C) against the SystemC clone
         # through the clone's test bench, with completions released at chosen
         # MMIO accesses (review N2 R1-R3). host/npu_shim/fx1_fw.h stands in for
         # the firmware's MMIO accessors.
         add_executable(fx1_fw_npu_driver_host ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_driver_host.cpp
                        ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c
+                       ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job_run.c
                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.c)
         target_include_directories(fx1_fw_npu_driver_host BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/host/npu_shim)
         target_include_directories(fx1_fw_npu_driver_host PRIVATE ${_npu_fw_inc}
@@ -340,6 +365,20 @@ if(CDC_BUILD_TESTS)
         foreach(_case race_rich race_rich_irq race_rich_fail race_rich_fail_irq gemm_gate gemm_gate_irq window reinit poll)
             add_test(NAME fx1_unit_npu_driver_${_case} COMMAND fx1_fw_npu_driver_host ${_case})
             set_tests_properties(fx1_unit_npu_driver_${_case} PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_unit;npu")
+        endforeach()
+        # N3: every job fixture through the executor on the clone (declared
+        # outcome, outputs = goldens), and stopped jobs (abort, timeout, DMA
+        # error) followed by a passing run of the same job.
+        foreach(_job ${_npu_jobs})
+            add_test(NAME fx1_unit_npu_job_${_job} COMMAND fx1_fw_npu_driver_host job ${FX1_NPU_JOBS_DIR}/${_job})
+            set_tests_properties(fx1_unit_npu_job_${_job} PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_unit;npu")
+        endforeach()
+        foreach(_stop job_abort:long job_timeout:long job_dma_error:chain job_unsupported:gemm job_deadline0:chain job_deadline1:chain)
+            string(REPLACE ":" ";" _p ${_stop})
+            list(GET _p 0 _how)
+            list(GET _p 1 _job)
+            add_test(NAME fx1_unit_npu_${_how} COMMAND fx1_fw_npu_driver_host ${_how} ${FX1_NPU_JOBS_DIR}/${_job})
+            set_tests_properties(fx1_unit_npu_${_how} PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_unit;npu")
         endforeach()
         # Host: the firmware's builders + C oracle against the drop's numpy
         # reference (tools/has/ref_program.py), byte for byte. Needs numpy.
@@ -361,6 +400,15 @@ if(CDC_BUILD_TESTS)
                              $<TARGET_FILE:fx1_fw_npu_case_gen> ${FX1_NPU_MODEL_ROOT}/tools/has/ref_program.py
                              ${CMAKE_CURRENT_BINARY_DIR}/npu_oracle_xcheck)
             set_tests_properties(fx1_regression_npu_oracle_xcheck PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_regression;npu")
+            # N3: the rich / DFC part of each valid job fixture through ref_program.py.
+            foreach(_job chain dfc mixed large long)
+                add_test(NAME fx1_regression_npu_job_xcheck_${_job}
+                         COMMAND ${FX1_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/host/npu_oracle_xcheck.py
+                                 $<TARGET_FILE:fx1_fw_npu_job_gen> ${FX1_NPU_MODEL_ROOT}/tools/has/ref_program.py
+                                 ${CMAKE_CURRENT_BINARY_DIR}/npu_job_xcheck/${_job} --xcheck ${_job})
+                set_tests_properties(fx1_regression_npu_job_xcheck_${_job} PROPERTIES TIMEOUT 600
+                                     LABELS "fx1;fx1_regression;npu")
+            endforeach()
         else()
             message(STATUS "FX1 NPU: python3 with numpy not found, fx1_regression_npu_oracle_xcheck not registered")
         endif()
@@ -564,12 +612,23 @@ if(CDC_BUILD_TESTS)
         ${_kernel}/tasks.c ${_kernel}/queue.c ${_kernel}/list.c
         ${_kernel}/portable/MemMang/heap_4.c
         ${_kernel}/portable/GCC/RISC-V/port.c ${_kernel}/portable/GCC/RISC-V/portASM.S
-        ${_isp_dir}/isp_common.c ${_isp}/driver/src/fx1_isp_drv.c)
+        ${_isp_dir}/isp_common.c ${_isp}/driver/src/fx1_isp_drv.c
+        # NPU (plan FX1_NPU_V47 N3): the `npu` commands, the driver, the job
+        # format and executor, the selftest cases and C oracle. Built always: at
+        # run time the NPU task finds the NPU absent (--no-npu, not built).
+        ${_rtos_dir}/cmd_npu.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job_run.c ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_cases.c)
     set(_rtos_includes ${_rtos_dir} ${_kernel}/include ${_kernel}/portable/GCC/RISC-V
-        ${_isp_includes} ${_demo_dir} ${CMAKE_CURRENT_SOURCE_DIR}/drivers ${_eth_drv}/include)
+        ${_isp_includes} ${_demo_dir} ${CMAKE_CURRENT_SOURCE_DIR}/drivers ${_eth_drv}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common)
     file(GLOB _rtos_headers ${_rtos_dir}/*.h)
     set(_rtos_depends ${_rtos_headers} ${_isp_depends} ${_demo_dir}/isp_demo_job.h ${_demo_dir}/isp_demo_setup.h
-        ${_eth_fw_depends} ${FX1_FW_MAP_INCLUDE}/fx1/fx1_isp_stream.h)
+        ${_eth_fw_depends} ${FX1_FW_MAP_INCLUDE}/fx1/fx1_isp_stream.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu.h ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job.h
+        ${FX1_FW_NPU_INCLUDE}/fx1_npu/fx1_npu_regs.h ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_cases.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.h)
     # The upstream RV32 port casts the uint64_t mtimecmp base to a pointer
     # (port.c, vPortSetupTimerInterrupt); harmless below 4 GiB, but -Werror.
     set(_rtos_cflags -Wno-int-to-pointer-cast)
@@ -697,6 +756,50 @@ if(CDC_BUILD_TESTS)
         ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_bad_input.txt --uart0-rx-delay-us 60000 ${_rtos_rx}
         REGEX "md 0xfffffffc 1[\r\n]+md: address range not mapped.*md 0xfffffff0 4[\r\n]+md: address range not mapped.*md 0x100000000 1[\r\n]+usage: md.*md 99999999999 1[\r\n]+usage: md.*0x100000000[\r\n]+usage: mw.*md 0x001ffffc 2[\r\n]+md: address range not mapped.*md: bus error at 0x02008000.*md: bus error at 0x0200fffc.*md: bus error at 0x0c3ffffc.*mw: bus error at 0x02008000.*0x80000000: 0x.*0x90000000 <- 0xa5a5a5a5, reads back 0xa5a5a5a5.*0x90000000: 0xa5a5a5a5.*MTIME_LO.*poweroff: 0 failed.*RESULT PASS")
     # The boot gate: a failing IP check must stop the boot before the scheduler.
+    # NPU N3: the `npu` commands (freertos/cmd_npu.c) and the job launcher
+    # (platforms/fx1_soc/demo/npu_run.py) on the fixtures of fx1_npu_jobs. The
+    # window addresses of chain / long are fixed by npu_job_gen (fixture.json).
+    set(_npu_rx --uart0-rx-delay-us 60000 ${_rtos_rx})
+    if(TARGET cdc::components::fx1_npu)
+        fx1_expect_test(freertos_cli_npu IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_npu.txt ${_npu_rx}
+            REGEX "ok   NPU, checks 8.*npu: VP_ID 0x46584e50, ABI 0x00010000.*npu: features 0x[0-9a-f]+ GEMM-bank rich DFC ABORT.*npu: idle.*npu selftest: GEMM bank K=32, INT32 outputs differing from the oracle 0 of 1024.*npu selftest: rich chain R1..R5, window bytes differing 0 of 8192.*D2 RESIDUAL, window bytes differing 0 of 8192.*npu selftest: PASS.*npu run: no job image.*npu wait: no job has run.*npu reset: recovery OK, soft reset OK, open OK.*npu reset: PASS.*poweroff: 0 failed.*RESULT PASS")
+        fx1_expect_test(freertos_cli_npu_absent IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --no-npu --uart0-rx-file ${_rtos_dir}/tests/cli_npu.txt ${_npu_rx}
+            REGEX "--   NPU: absent \\(fx1_soc --no-npu, or not built\\), skipped.*npu: absent \\(fx1_soc --no-npu.*npu info: no NPU.*npu status: no NPU.*npu selftest: no NPU.*npu run: no NPU.*npu wait: no NPU.*npu reset: no NPU.*poweroff: 0 failed.*RESULT PASS")
+        # The same job twice (buffers released and reused), status between.
+        fx1_expect_test(freertos_cli_npu_job IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --load 0x80650000:${FX1_NPU_JOBS_DIR}/chain/job.bin --load 0x80900000:${FX1_NPU_JOBS_DIR}/chain/window.bin
+                 --uart0-rx-file ${_rtos_dir}/tests/cli_npu_job.txt ${_npu_rx}
+            REGEX "npu run: started.*npu run: chain: OK, 5/5 ops \\(rich 5, neo 0, GEMM bank 0\\), accepted \\+5 retired \\+5, outputs 4/4 match.*npu run: model exec cycles [1-9][0-9]*, MAC ops 360448.*npu run: PASS.*npu run: started.*npu run: chain: OK, 5/5 ops.*outputs 4/4 match.*npu run: PASS.*npu: idle.*ACCEPTED 0x0000000a RETIRED 0x0000000a.*npu: last job chain: OK.*poweroff: 0 failed.*RESULT PASS")
+        # A job stopped by `npu reset` while it runs, a short `npu wait` that
+        # returns while it runs (the console answers), then the job again.
+        fx1_expect_test(freertos_cli_npu_reset IMAGE freertos_cli RC 0 TIMEOUT_MS 5000
+            ARGS --load 0x80650000:${FX1_NPU_JOBS_DIR}/long/job.bin --load 0x80A00000:${FX1_NPU_JOBS_DIR}/long/window.bin
+                 --uart0-rx-file ${_rtos_dir}/tests/cli_npu_reset.txt ${_npu_rx}
+            REGEX "npu run: started.*npu: running, job long op [0-9]+/8, [0-9] ms.*npu wait: still running after 1 ms.*npu reset: job long stopped: ABORTED at op [0-7].*npu reset: recovery OK, soft reset OK, open OK.*npu reset: PASS.*npu: idle.*npu: last job long: ABORTED.*npu run: started.*npu run: long: OK, 8/8 ops.*outputs 1/1 match.*npu run: PASS.*poweroff: 0 failed.*RESULT PASS")
+        set_tests_properties(fx1_smoke_freertos_cli_npu_reset PROPERTIES TIMEOUT 300)
+        if(FX1_PYTHON3)
+            foreach(_job ${_npu_jobs})
+                add_test(NAME fx1_regression_npu_run_${_job}
+                         COMMAND ${FX1_PYTHON3} -B ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/npu_run.py
+                                 --fx1-soc $<TARGET_FILE:fx1_soc> --elf ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli.elf
+                                 --out ${CMAKE_CURRENT_BINARY_DIR}/npu_run/${_job} ${FX1_NPU_JOBS_DIR}/${_job})
+                set_tests_properties(fx1_regression_npu_run_${_job} PROPERTIES TIMEOUT 600 LABELS "fx1;fx1_regression;npu")
+            endforeach()
+            # Review N3 R1/R3: output-directory safety, clean environment.
+            add_test(NAME fx1_regression_npu_run_launcher
+                     COMMAND ${FX1_PYTHON3} -B ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/tests/test_npu_run_launcher.py
+                             ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/demo/npu_run.py $<TARGET_FILE:fx1_soc>
+                             ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli.elf ${FX1_NPU_JOBS_DIR}/chain
+                             ${CMAKE_CURRENT_BINARY_DIR}/npu_run_launcher_test)
+            set_tests_properties(fx1_regression_npu_run_launcher PROPERTIES TIMEOUT 600 LABELS "fx1;fx1_regression;npu")
+        endif()
+    else()
+        fx1_expect_test(freertos_cli_npu_absent IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --uart0-rx-file ${_rtos_dir}/tests/cli_npu.txt ${_npu_rx}
+            REGEX "--   NPU: absent \\(fx1_soc --no-npu, or not built\\), skipped.*npu: absent.*npu info: no NPU.*npu run: no NPU.*npu reset: no NPU.*poweroff: 0 failed.*RESULT PASS")
+    endif()
     fx1_expect_test(freertos_cli_hwcheck_fail IMAGE freertos_cli_hwfail RC 1 TIMEOUT_MS 300
         REGEX "FAIL ISP.*boot halted: hwcheck FAIL.*RESULT FAIL code=0x50")
     # CSI-2 M6b: the `camera` commands. With --camera: nominal session (probe,
