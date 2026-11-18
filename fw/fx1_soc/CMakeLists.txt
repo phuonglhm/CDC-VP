@@ -282,6 +282,19 @@ if(CDC_BUILD_TESTS)
     # -DFX1_BUILD_MIPI_CSI2=ON): CSR probe, I2C0 to the sensor on source 9,
     # TPG frame through MIPI_DMA on source 7, via the reference C99 driver.
     fx1_smoke_test(camera_absent TIMEOUT_MS 20)
+    # FX1 NPU N1: the aperture from the CPU, present (default) and --no-npu.
+    if(TARGET cdc::components::fx1_npu)
+        fx1_expect_test(npu_probe RC 0 TIMEOUT_MS 20
+            REGEX "npu: present, VP_ID 0x46584e50.*npu: access classes fault.*RESULT PASS")
+        fx1_expect_test(npu_probe_absent IMAGE npu_probe RC 0 TIMEOUT_MS 20 ARGS --no-npu
+            REGEX "npu: absent \\(--no-npu\\).*npu: absent \\(the aperture answers DECERR.*RESULT PASS")
+        # Review N1: N1-E (push timeout = store access fault on a hart) and N1-B
+        # (a stalled push on SYSBUS_1 does not hold CLINT/PLIC/UART for hart 1).
+        fx1_expect_test(npu_bus_isolation RC 0 TIMEOUT_MS 200
+            REGEX "npu: N1-E push timeout = store access fault.*npu: N1-B stalled push does not hold CLINT/PLIC/UART.*npu: ABORT, quiescent and engine idle.*RESULT PASS")
+    else()
+        fx1_expect_test(npu_probe RC 0 TIMEOUT_MS 20 REGEX "npu: not built.*npu: absent \\(the aperture.*RESULT PASS")
+    endif()
     if(TARGET cdc::components::fx1_csi2_controller)
         set(_csi2_drv "${CMAKE_SOURCE_DIR}/components/FX1_Components/mipi-csi2/driver")
         fx1_firmware(camera_wiring SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_wiring/main.c

@@ -21,11 +21,12 @@ rebuild. `BUILD_MANIFEST.json` lists the values this binary was built with.
 | sim-control | `0x1002_0000` | 64 KiB slot | `FX1_SIM_CTRL_BASE` | **VP only, not on silicon**: PASS/FAIL verdict ends the simulation (`fx1_pass`, `fx1_fail`) |
 | I2C0 | `0x1003_0000` | 64 KiB slot | `FX1_I2C0_BASE` | I2C host (driver `drivers/camera/fx1_i2c.h`); the camera sensor at address 0x10 with `--camera`, no device otherwise |
 | ISP CSR | `0x1100_0000` | 64 KiB | `FX1_ISP_CSR_BASE` | register map in `include/fx1_isp/fx1_isp_csr.h` (generated from the ISP CSR specification) |
-| NPU, H.264/H.265 CSR | `0x1101_0000`, `0x1102_0000` | 64 KiB each | `FX1_*_CSR_BASE` | reserved: not modelled, an access faults |
+| NPU, H.264/H.265 CSR | `0x1101_0000`, `0x1102_0000` | 64 KiB each | `FX1_*_CSR_BASE` | reserved: not modelled, an access faults (the VP NPU is at `FX1_NPU_VP_BASE`) |
 | Ethernet MAC CSR | `0x1103_0000` | 64 KiB | `FX1_ETH_CSR_BASE` | aligned 32-bit accesses only (others fault); register map `drivers/eth/eth_regs.h`, driver `drivers/eth` (portable `eth_drv` + FX1 manager `fx1_eth`); DMA buffers in the linker section `.eth_dma`; guide `eth/README.md` |
 | MIPI CSI-2 RX CSR | `0x1104_0000` | 64 KiB | `FX1_MIPI_CSR_BASE` | with `--camera`: register map `include/fx1_csi2/fx1_csi2_regs.h`, driver `drivers/csi2`; without it an access faults |
 | DDR3 controller CSR | `0x1200_0000` | 64 KiB | `FX1_DDR3_CSR_BASE` | AXI4-Lite, 32-bit accesses. The VP initializes the controller before the harts start, so firmware need not touch it |
 | DDR_SYSCTRL | `0x1201_0000` | 64 KiB | `FX1_DDR_SYSCTRL_BASE` | **VP only**: DDR3 readiness, power requests, QoS sideband, resets |
+| NPU (SAURIA v4.7) | `0x1300_0000` | 1 MiB | `FX1_NPU_VP_BASE` | **VP integration aperture, not the silicon address**: native configuration and SRAM windows, rich instructions at +0x1_0000, wrapper and VP bank at +0x3_0000; aligned 32-bit accesses only (others fault). Absent with `--no-npu` (an access faults) |
 | DDR | `0x8000_0000` | 512 MiB | `FX1_DDR_BASE` | DDR3 controller model (ECC on). Initialized and scrubbed before the harts start; then normal memory |
 
 The CPU sees an access fault (load mcause 5, store mcause 7) on:
@@ -46,11 +47,13 @@ contract.
 | 1 | `FX1_IRQ_UART` | UART (RX, RX timeout, TX, errors; enabled in `IMSC`) |
 | 2 | `FX1_IRQ_SYS_DMA` | SYS_DMA channel completion/error |
 | 3 | `FX1_IRQ_ISP` | ISP (frame done, DMA events, statistics) |
-| 4–5 | `FX1_IRQ_NPU`, `_H264_H265` | reserved (VP test lines of sim-control) |
+| 4 | `FX1_IRQ_NPU` | NPU, level (low with `--no-npu`) |
+| 5 | `FX1_IRQ_H264_H265` | reserved, never raised |
 | 6 | `FX1_IRQ_ETH` | Ethernet MAC, level |
 | 7 | `FX1_IRQ_MIPI` | CSI-2 RX (`--camera`; never raised otherwise) |
 | 8 | `FX1_IRQ_DDR` | DDR3 controller (ECC, quarantine, fatal; masked at reset) |
 | 9 | `FX1_IRQ_I2C0` | I2C0 (command complete, NACK) |
+| 10–11 | `FX1_SIM_CTRL_IRQ_FIRST_SOURCE` + i | **VP only**: test lines of sim-control (`FX1_SIM_CTRL_IRQ_OFF`, bit i) |
 
 Interrupt delivery:
 

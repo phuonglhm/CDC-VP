@@ -15,6 +15,9 @@ class demosaic_observer;  // fx1_isp/fx1_isp_debug.h
 
 namespace cdc::platforms::fx1_soc {
 
+// True when this binary contains the NPU (configured with FX1_SOC_ENABLE_NPU).
+bool fx1_soc_top_npu_default() noexcept;
+
 struct fx1_soc_options {
     // ELF image. The platform writes its PT_LOAD segments before the harts run
     // (BootROM/SRAM at once; DDR after the DDR3 preinit, never in firmware
@@ -78,6 +81,12 @@ struct fx1_soc_options {
     unsigned isp_dma_fault_kind = 0;
     std::uint64_t isp_dma_fault_nth = 0;
     std::uint64_t isp_dma_fault_hold_us = 1000000;  // idma-stall:N:US
+    // SAURIA v4.7 NPU (components/FX1_Components/npu) at FX1_NPU_VP_BASE, IRQ
+    // source 4, DMA as NPU_DMA through a write guard. Present by default in a
+    // build that has it (npu_built()); --no-npu removes it (DECERR, source 4 low).
+    bool npu = fx1_soc_top_npu_default();
+    // Host wall-time watchdog of the NPU model, seconds; 0 = off.
+    unsigned npu_host_watchdog_s = 600;
 };
 
 // FX1 SoC for FW/SW bring-up: two VP++ RV32IMAFC harts, FX1 bus, BootROM,
@@ -131,6 +140,12 @@ public:
     // --isp-dma-fault: what it saw and whether it fired; empty when off.
     std::string isp_dma_fault_report() const;
     std::vector<std::string> isp_stream_errors() const;
+    // NPU: built into this binary; present in this run; one-line banner (model,
+    // knobs, queue) and end-of-run counters ("absent" without it).
+    static bool npu_built() noexcept;
+    bool npu_present() const noexcept;
+    std::string npu_banner() const;
+    std::string npu_report() const;
 
 private:
     struct impl;

@@ -77,6 +77,7 @@ def main():
     rel = lambda p: os.path.relpath(p, a.out)
     binp = os.path.join(a.out, "vp", "bin", VERSION, "fx1_soc")
     ver = sh([binp, "--version"])
+    npu_built = "SAURIA v4.7" in ver
     m = re.search(r"CDC-VP revision (\S+) \((\w+) at configure\)", ver)
     bt = re.search(r"build type +([^,]+), (.*)", ver)
     revision = sh(["git", "-C", a.source, "rev-parse", "HEAD"]).strip()
@@ -103,7 +104,8 @@ def main():
         "generated_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "summary": "FX1 SoC VP: 2 x RV32IMAFC (VP++) harts, FX1 bus, CLINT, PLIC, PL011-style UART, SYS_DMA, "
                    "FX1 ISP, DDR3 controller (ECC, preinitialized by the VP before the harts start), I2C0, "
-                   "Ethernet MAC + PHY (no host network), CSI-2 RX camera path with --camera. "
+                   "Ethernet MAC + PHY (no host network), CSI-2 RX camera path with --camera"
+                   + (", SAURIA v4.7 NPU model (MMIO, IRQ, DMA; --no-npu removes it)" if npu_built else "") + ". "
                    "FreeRTOS V11.2.0 CLI on hart 0, boot IP check on hart 1. "
                    "Not a superset of VP_FX1_V2.0: different CPU, ABI and memory map; see README.md.",
         "source": {
@@ -142,8 +144,10 @@ def main():
                     "Ethernet MAC (FTEL, MAS v1.0.7; functional LT) with descriptor DMA through the write guard, "
                     "RMII PHY on MDIO, scripted line peer (loopback, partner, none)",
                     "camera with --camera: CSI-2 RX controller + DMA (MIPI_DMA), detailed D-PHY RX model, "
-                    "CCS-subset camera sensor model on I2C0"],
-        "absent": ["NPU", "H.264/H.265", "host network (TAP)", "SPI/QSPI", "timers/WDT/PWM", "GPIO", "RTC",
+                    "CCS-subset camera sensor model on I2C0"]
+                   + (["NPU: SAURIA v4.7 model drop (native top + HasNpuTop) at the VP aperture, DMA through the "
+                       "write guard; firmware driver and CLI not delivered yet"] if npu_built else []),
+        "absent": ([] if npu_built else ["NPU"]) + ["H.264/H.265", "host network (TAP)", "SPI/QSPI", "timers/WDT/PWM", "GPIO", "RTC",
                    "ADC", "TRNG", "OTP", "PMU/CMU/clock-reset", "caches", "MMU"],
         "camera": {
             "built": "CSI-2 RX" in ver,

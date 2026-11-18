@@ -19,6 +19,12 @@ add_subdirectory(ddr3)
 # 10/100 Ethernet MAC + PHY (FTEL VP v1.0.6 import, plan M1-M5). Its tests join
 # the gate with the labels fx1;fx1_unit (ethernet/tests/CMakeLists.txt).
 add_subdirectory(ethernet)
+# SAURIA v4.7 NPU (plan FX1_NPU_V47, clone of components/npu_tlm). ON by
+# default; OFF builds fx1_soc without the NPU (no aperture, source 4 tied low).
+option(FX1_SOC_ENABLE_NPU "Build the SAURIA v4.7 NPU into fx1_soc (components/FX1_Components/npu)" ON)
+if(FX1_SOC_ENABLE_NPU)
+  add_subdirectory(npu)
+endif()
 
 # MIPI CSI-2 RX (detailed D-PHY model + BFM). Off by default: the D-PHY
 # netlist is ~180 large translation units. Even when ON it is EXCLUDE_FROM_ALL,

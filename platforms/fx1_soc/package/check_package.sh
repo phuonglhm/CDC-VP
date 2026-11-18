@@ -213,7 +213,7 @@ if m["memory_map"]["plic_sources"] != irqs:
 modeled = " ".join(m["modeled"]).lower()
 absent = [a.lower() for a in m["absent"]]
 for region, word in (("UART", "uart"), ("SYS_DMA_CSR", "sys_dma"), ("I2C0", "i2c0"), ("ISP_CSR", "isp"),
-                     ("ETH_CSR", "ethernet"), ("MIPI_CSR", "csi-2"), ("DDR3_CSR", "ddr3")):
+                     ("ETH_CSR", "ethernet"), ("MIPI_CSR", "csi-2"), ("DDR3_CSR", "ddr3"), ("NPU_VP", "npu")):
     if any(n == region and "reserved" not in c for n, _, c in decl):
         if word not in modeled or word not in m["summary"].lower():
             errors.append("%s is decoded but '%s' is not in the manifest modeled list and summary" % (region, word))

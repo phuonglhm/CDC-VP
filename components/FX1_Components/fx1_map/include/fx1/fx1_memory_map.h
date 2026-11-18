@@ -48,10 +48,20 @@
 #define FX1_DDR3_CSR_APERTURE_SIZE FX1_U32(0x00010000) /* == FX1_DDR3_CSR_SIZE (IP) */
 #define FX1_DDR_SYSCTRL_BASE    FX1_U32(0x12010000)
 #define FX1_DDR_SYSCTRL_SIZE    FX1_U32(0x00010000)
-#define FX1_NPU_CSR_BASE        FX1_U32(0x11010000) /* reserved                       */
+#define FX1_NPU_CSR_BASE        FX1_U32(0x11010000) /* reserved, not implemented: the
+                                                       VP NPU is at FX1_NPU_VP_BASE   */
 #define FX1_H264_H265_CSR_BASE  FX1_U32(0x11020000) /* reserved                       */
 #define FX1_ETH_CSR_BASE        FX1_U32(0x11030000) /* Ethernet MAC CSR (local offsets) */
 #define FX1_MIPI_CSR_BASE       FX1_U32(0x11040000) /* CSI-2 RX; fx1_soc --camera only */
+
+/* SAURIA v4.7 NPU, VP integration aperture (plan FX1_NPU_V47, decision D1):
+ * 1 MiB, a leaf of SYSBUS_1 (review N1: a stalled push must not hold the
+ * SYSBUS_0 link to CLINT/PLIC/UART), holding the model's native/SRAM/rich/
+ * OBP/RCE windows and the wrapper bank at their components/FX1_Components/npu
+ * offsets. A VP choice, not the silicon address or bus; absent (DECERR) with
+ * --no-npu. */
+#define FX1_NPU_VP_BASE         FX1_U32(0x13000000)
+#define FX1_NPU_VP_SIZE         FX1_U32(0x00100000)
 
 #define FX1_DDR_BASE            FX1_U32(0x80000000)
 #define FX1_DDR_SIZE            FX1_U32(0x20000000) /* 512 MiB                        */
@@ -77,7 +87,7 @@
 #define FX1_PLIC_ENABLE_STRIDE  FX1_U32(0x80)
 #define FX1_PLIC_CONTEXT_OFF    FX1_U32(0x200000) /* + 0x1000 * context               */
 #define FX1_PLIC_CONTEXT_STRIDE FX1_U32(0x1000)   /* +0 threshold, +4 claim/complete  */
-#define FX1_PLIC_NUM_SOURCES    FX1_U32(10)       /* IDs 1..9 used/reserved; 0 = none */
+#define FX1_PLIC_NUM_SOURCES    FX1_U32(12)       /* IDs 1..11 used/reserved; 0 = none */
 #define FX1_PLIC_PRIORITY_MAX   FX1_U32(7)
 /* Context n is hart n in M-mode. */
 #define FX1_PLIC_CONTEXT_HART_M(hart) (hart)
@@ -86,7 +96,7 @@
 #define FX1_IRQ_UART            FX1_U32(1)
 #define FX1_IRQ_SYS_DMA         FX1_U32(2)
 #define FX1_IRQ_ISP             FX1_U32(3)
-#define FX1_IRQ_NPU             FX1_U32(4) /* reserved */
+#define FX1_IRQ_NPU             FX1_U32(4) /* NPU level interrupt; tied low with --no-npu */
 #define FX1_IRQ_H264_H265       FX1_U32(5) /* reserved */
 #define FX1_IRQ_ETH             FX1_U32(6) /* Ethernet MAC level interrupt */
 #define FX1_IRQ_MIPI            FX1_U32(7) /* CSI-2 RX csi2_irq; undriven without --camera */
@@ -98,8 +108,9 @@
 #define FX1_SIM_CTRL_PASS       FX1_U32(0x5555)
 #define FX1_SIM_CTRL_FAIL       FX1_U32(0x3333) /* written as (code << 16) | FAIL     */
 #define FX1_SIM_CTRL_IRQ_OFF    FX1_U32(0x4)    /* bit i drives test line i       */
-#define FX1_SIM_CTRL_IRQ_LINES  FX1_U32(2)      /* lines -> PLIC sources 4..5     */
-#define FX1_SIM_CTRL_IRQ_FIRST_SOURCE FX1_U32(4)
+#define FX1_SIM_CTRL_IRQ_LINES  FX1_U32(2)      /* lines -> PLIC sources 10..11   */
+/* VP-only, above every IP source (moved from 4..5, which are NPU and H.264). */
+#define FX1_SIM_CTRL_IRQ_FIRST_SOURCE FX1_U32(10)
 /* VP-only doorbell of the ISP RAW-sequence stream (fx1_isp_stream.h): a
  * 32-bit write wakes the host bridge (fx1_soc --isp-stream-spool); a read
  * returns ATTACHED (bit 0) when a bridge is attached, bits 31..1 zero. */
@@ -116,6 +127,14 @@
 #define FX1_FW_RAW_BUF_BASE     FX1_U32(0x81000000)
 #define FX1_FW_YUV_BUF_BASE     FX1_U32(0x88000000)
 #define FX1_FW_TEST_AREA_BASE   FX1_U32(0x90000000)
+/* NPU DRAM arenas (plan FX1_NPU_V47, decision D4): RICH windows of firmware
+ * NPU jobs. Small: inside FW_SHARED between the chain and tpg4k record areas; large:
+ * the 32 MiB below the test area, above the camera Y slots (ends 0x8E000000).
+ * Only the NPU owner task uses them, one job at a time. */
+#define FX1_NPU_ARENA_SMALL_BASE FX1_U32(0x80900000)
+#define FX1_NPU_ARENA_SMALL_SIZE FX1_U32(0x00400000) /* 4 MiB  */
+#define FX1_NPU_ARENA_LARGE_BASE FX1_U32(0x8E000000)
+#define FX1_NPU_ARENA_LARGE_SIZE FX1_U32(0x02000000) /* 32 MiB */
 
 /* ---- Map consistency (C and C++ only) ------------------------------------- */
 #if !defined(__ASSEMBLER__) && !defined(FX1_LINKER_SCRIPT)
@@ -137,10 +156,44 @@ FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_DDR_SYSCTRL_BASE, FX1_DDR_SYSCTRL_SIZE, FX1_
                "DDR_SYSCTRL overlaps DDR");
 FX1_MAP_ASSERT(FX1_IRQ_DDR < FX1_PLIC_NUM_SOURCES, "DDR IRQ source outside the PLIC");
 FX1_MAP_ASSERT(FX1_IRQ_I2C0 < FX1_PLIC_NUM_SOURCES, "I2C0 IRQ source outside the PLIC");
-FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE + FX1_SIM_CTRL_IRQ_LINES <= FX1_IRQ_MIPI,
-               "sim-control test lines overlap the CSI-2 RX IRQ source");
-FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE + FX1_SIM_CTRL_IRQ_LINES <= FX1_IRQ_ETH,
-               "sim-control test lines overlap the Ethernet IRQ source");
+FX1_MAP_ASSERT(FX1_IRQ_NPU < FX1_PLIC_NUM_SOURCES, "NPU IRQ source outside the PLIC");
+FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE > FX1_IRQ_I2C0 && FX1_SIM_CTRL_IRQ_FIRST_SOURCE > FX1_IRQ_NPU &&
+                   FX1_SIM_CTRL_IRQ_FIRST_SOURCE > FX1_IRQ_H264_H265 && FX1_SIM_CTRL_IRQ_FIRST_SOURCE > FX1_IRQ_ETH &&
+                   FX1_SIM_CTRL_IRQ_FIRST_SOURCE > FX1_IRQ_MIPI && FX1_SIM_CTRL_IRQ_FIRST_SOURCE > FX1_IRQ_DDR,
+               "sim-control test lines overlap an IP IRQ source");
+FX1_MAP_ASSERT(FX1_SIM_CTRL_IRQ_FIRST_SOURCE + FX1_SIM_CTRL_IRQ_LINES <= FX1_PLIC_NUM_SOURCES,
+               "sim-control test lines outside the PLIC");
+/* NPU aperture against every other target. */
+FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, FX1_DDR3_CSR_BASE, FX1_DDR3_CSR_APERTURE_SIZE) &&
+                   FX1_MAP_DISJOINT(FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, FX1_DDR_SYSCTRL_BASE, FX1_DDR_SYSCTRL_SIZE) &&
+                   FX1_MAP_DISJOINT(FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, FX1_ISP_CSR_BASE, 0x00050000u) &&
+                   FX1_MAP_DISJOINT(FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, FX1_UART_BASE, 0x00040000u) &&
+                   FX1_MAP_DISJOINT(FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, FX1_PLIC_BASE, FX1_PLIC_SIZE) &&
+                   FX1_MAP_DISJOINT(FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, FX1_DDR_BASE, FX1_DDR_SIZE) &&
+                   FX1_MAP_DISJOINT(FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, FX1_NPU_CSR_BASE, FX1_APB_SLOT_SIZE),
+               "NPU VP aperture overlaps another target");
+/* NPU arenas: in DDR, apart from the firmware image/stacks, each other and the test area. */
+FX1_MAP_ASSERT(FX1_NPU_ARENA_SMALL_BASE >= FX1_FW_SHARED_BASE &&
+                   FX1_MAP_END(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SIZE) <=
+                       FX1_MAP_END(FX1_FW_SHARED_BASE, FX1_FW_SHARED_SIZE),
+               "small NPU arena outside FW_SHARED");
+/* FW_SHARED users (firmware constants): +0..+0x150000 ISP job / stream, +0x200000..+0x340000
+ * chains, +0x800000 tpg4k record. The small arena sits between them. */
+FX1_MAP_ASSERT(FX1_NPU_ARENA_SMALL_BASE >= FX1_FW_SHARED_BASE + 0x00340000u &&
+                   FX1_MAP_END(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SIZE) <= FX1_FW_SHARED_BASE + 0x00800000u,
+               "small NPU arena overlaps a FW_SHARED area");
+FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SIZE, FX1_FW_IMAGE_BASE, FX1_FW_IMAGE_SIZE) &&
+                   FX1_MAP_DISJOINT(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SIZE, FX1_FW_STACK_BASE,
+                                    FX1_FW_STACK_SIZE * FX1_NUM_HARTS),
+               "small NPU arena overlaps the firmware image or stacks");
+FX1_MAP_ASSERT(FX1_NPU_ARENA_LARGE_BASE >= FX1_FW_YUV_BUF_BASE &&
+                   FX1_MAP_END(FX1_NPU_ARENA_LARGE_BASE, FX1_NPU_ARENA_LARGE_SIZE) <= FX1_FW_TEST_AREA_BASE,
+               "large NPU arena outside [YUV buffers, test area)");
+FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_NPU_ARENA_SMALL_BASE, FX1_NPU_ARENA_SMALL_SIZE, FX1_NPU_ARENA_LARGE_BASE,
+                                FX1_NPU_ARENA_LARGE_SIZE),
+               "NPU arenas overlap");
+FX1_MAP_ASSERT(FX1_MAP_END(FX1_NPU_ARENA_LARGE_BASE, FX1_NPU_ARENA_LARGE_SIZE) <= FX1_MAP_END(FX1_DDR_BASE, FX1_DDR_SIZE),
+               "large NPU arena outside DDR");
 FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_ETH_CSR_BASE, FX1_APB_SLOT_SIZE, FX1_MIPI_CSR_BASE, FX1_APB_SLOT_SIZE),
                "ETH_CSR/MIPI_CSR overlap");
 FX1_MAP_ASSERT(FX1_MAP_DISJOINT(FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE, FX1_I2C0_BASE, FX1_APB_SLOT_SIZE),

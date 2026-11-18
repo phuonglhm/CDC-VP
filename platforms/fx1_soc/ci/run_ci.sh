@@ -20,7 +20,10 @@
 #   4. smoke      ctest -L "fx1_unit|fx1_smoke|fx1_csi2_unit", plus the components stage:
 #                 the FX1 bus tests and the UART models FX1 uses (by name)
 #   5. regression ctest -L fx1_regression (skipped with --smoke-only); needs
-#                 python3 with numpy (fx1_regression_isp_fixture_check)
+#                 python3 with numpy (fx1_regression_isp_fixture_check, the NPU gates)
+#   6. npu_off    the same tree configured with FX1_SOC_ENABLE_NPU=OFF (host
+#                 only, <build-dir>-npu-off): fx1_soc builds, --version reports
+#                 "NPU not built", and hello_2hart (from stage 3) passes on it
 #
 # Every ctest stage runs with --no-tests=error and writes JUnit XML. Artifacts
 # go to <build-dir>/fx1-ci-artifacts: junit-*.xml, ctest logs, every firmware
@@ -85,7 +88,7 @@ stage configure cmake -S "${ROOT}" -B "${BUILD}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCDC_BUILD_FX1_SOC=ON -DFX1_SOC_BUILD_FIRMWARE=ON -DCDC_BUILD_TESTS=ON \
     -DFX1_DMA_BUILD_TESTS=ON -DFX1_DMA_BUILD_BUS_TESTS=ON -DBUS_SYSTEM_BUILD_TESTS=ON \
-    -DFX1_BUILD_MIPI_CSI2=ON -DFX1_MIPI_CSI2_BUILD_TESTS=ON \
+    -DFX1_BUILD_MIPI_CSI2=ON -DFX1_MIPI_CSI2_BUILD_TESTS=ON -DFX1_SOC_ENABLE_NPU=ON \
     || { log "configure failed: no build, no tests"; exit 1; }
 
 SMOKE_SEL=(-L "fx1_unit|fx1_smoke|fx1_csi2_unit") # fx1_csi2_unit: CSI-2 RX tests without PHY traffic (M5b)
@@ -163,6 +166,21 @@ if [ ${SMOKE_ONLY} -eq 0 ]; then
 else
     log "stage regression: skipped (--smoke-only)"
 fi
+
+# NPU OFF: a separate host-only build of fx1_soc without the NPU component.
+npu_off() {
+    local off="${BUILD}-npu-off" elf="${BUILD}/fw/fx1_soc/hello_2hart.elf"
+    cmake -S "${ROOT}" -B "${off}" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DCDC_BUILD_FX1_SOC=ON -DFX1_SOC_BUILD_FIRMWARE=OFF -DCDC_BUILD_TESTS=OFF \
+        -DFX1_SOC_ENABLE_NPU=OFF -DFX1_BUILD_MIPI_CSI2=OFF || return 1
+    cmake --build "${off}" --target fx1_soc -j "${JOBS}" || return 1
+    "${off}/platforms/fx1_soc/fx1_soc" --version | tee "${ART}/npu_off_version.txt"
+    grep -q "NPU             not built" "${ART}/npu_off_version.txt" || { echo "--version does not report the NPU absent"; return 1; }
+    [ -f "${elf}" ] || { echo "no ${elf} (stage build)"; return 1; }
+    "${off}/platforms/fx1_soc/fx1_soc" --fw "${elf}" --timeout-ms 200 > "${ART}/npu_off_hello.log" 2>&1 || return 1
+    grep -q "npu: not built" "${ART}/npu_off_hello.log" && grep -q "RESULT PASS" "${ART}/npu_off_hello.log"
+}
+stage npu_off npu_off
 
 # Artifacts: ctest's own logs and every firmware UART log (small text files).
 cp -f "${BUILD}"/Testing/Temporary/LastTest*.log "${ART}/" 2>/dev/null

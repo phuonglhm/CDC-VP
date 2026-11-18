@@ -20,8 +20,9 @@ Plan and decisions: `VP_BK/ISP/plan/FX1_PLATFORM_FIX_PLAN.md` section 7 (outside
 | SRAM | 1 MiB boot SRAM (sparse RAM): data and stacks of firmware-init images | in (DDR3 subtask 5) |
 | CLINT | N-hart SiFive layout (`FX1_Components/clint`), `mtime` 20 MHz | in |
 | UART | `components/uart2_tlm` (PL011-style), TX to stdout / log | in |
-| sim-control | VP-only PASS/FAIL finisher plus 2 test interrupt lines, PLIC sources 4–5 (`FX1_Components/sim_control`) | in |
-| PLIC | `FX1_Components/plic`: 8 sources, one M-mode context per hart, MEIP per hart | in (G2; source 8 DDR3) |
+| sim-control | VP-only PASS/FAIL finisher plus 2 test interrupt lines, PLIC sources 10–11 (`FX1_Components/sim_control`) | in |
+| PLIC | `FX1_Components/plic`: sources 1–11 (`FX1_PLIC_NUM_SOURCES` = 12), one M-mode context per hart, MEIP per hart | in (G2; source 8 DDR3; NPU N1: 12) |
+| NPU | `FX1_Components/npu` (SAURIA v4.7 model drop `components/npu_tlm/models/v4.7_model`, read in place): 1 MiB VP aperture at `FX1_NPU_VP_BASE`, a leaf of SYSBUS_1, DMA master `NPU_DMA` behind a `WriteGuard` (master 0x104), level IRQ = PLIC source 4, 20 ns power-on reset; present by default, `--no-npu` removes it, `-DFX1_SOC_ENABLE_NPU=OFF` builds without it. Firmware driver and CLI: plan FX1_NPU_V47 N2/N3 | in (NPU N1: MMIO, IRQ, DMA) |
 | CPU port | `FX1_Components/cpu_port`: CPU payload contract check, completion, and bus-error → access-fault mapping; integration errors are kept loud | in (G2) |
 | SYS_DMA | `FX1_Components/dma` (8 channels): CSR at `SYS_DMA_CSR`, master port `SYS_DMA`, IRQ = PLIC source 2, 20 ns power-on reset; request inputs tied to 0 (M2M only on the platform) | in (G3) |
 | ISP | `FX1_Components/isp` TLM model: CSR at `ISP_CSR` (PERIBUS_1), masters `ISP_IDMA`/`ISP_ODMA`, IRQ = PLIC source 3, 20 ns power-on reset; driven by the reference C99 driver from firmware | in (G4a) |
@@ -53,15 +54,23 @@ differs from `platforms/VP_FX1_Full_SoC`, where 0x1001_0000 is I2C0 and
 | MIPI_CSR | 0x1104_0000 | 64 KiB | PERIBUS_1 (APB); with `--camera` only, DECERR otherwise |
 | DDR3_CSR | 0x1200_0000 | 64 KiB | SYSBUS_0 (AXI4-Lite) |
 | DDR_SYSCTRL (VP only) | 0x1201_0000 | 64 KiB | SYSBUS_0 |
+| NPU (VP aperture) | 0x1300_0000 | 1 MiB | SYSBUS_1 leaf; absent with `--no-npu` |
 | DDR | 0x8000_0000 | 512 MiB | SYSBUS_1 → DDR3 controller port 0 |
 
-PLIC source IDs (`FX1_PLIC_NUM_SOURCES` = 10):
-- UART = 1, SYS_DMA = 2, ISP = 3, Ethernet = 6, CSI-2 RX = 7 (`--camera`; low otherwise),
-  DDR3 = 8, I2C0 = 9.
-- IDs 4–5 are reserved for NPU/H.264. Until those IPs exist, they are
-  driven by the two **VP-only test lines** of sim-control (`FX1_SIM_CTRL_IRQ_OFF`,
-  bit i → source 4 + i). Source 6 was the third test line until the Ethernet
-  MAC took it (plan I02).
+PLIC source IDs (`FX1_PLIC_NUM_SOURCES` = 12):
+- UART = 1, SYS_DMA = 2, ISP = 3, NPU = 4 (low with `--no-npu`), Ethernet = 6,
+  CSI-2 RX = 7 (`--camera`; low otherwise), DDR3 = 8, I2C0 = 9.
+- ID 5 is reserved for H.264 (never raised).
+- IDs 10–11 are the two **VP-only test lines** of sim-control (`FX1_SIM_CTRL_IRQ_OFF`,
+  bit i → source 10 + i). They were sources 4–5 until the NPU took source 4
+  (plan FX1_NPU_V47 N1); source 6 was a third test line until the Ethernet MAC
+  took it (plan I02).
+
+NPU DRAM arenas (`fx1_memory_map.h`): `FX1_NPU_ARENA_SMALL` 0x8090_0000 + 4 MiB
+(inside FW_SHARED, between the chain and tpg4k record areas) and
+`FX1_NPU_ARENA_LARGE` 0x8E00_0000 + 32 MiB (below the test area). RICH windows of
+firmware NPU jobs; the map asserts keep them apart from the firmware image,
+stacks and each other.
 
 Ethernet DMA memory: the linker section `.eth_dma` (NOLOAD, 4 KiB aligned at
 both ends, inside the image region) holds the rings and buffers of

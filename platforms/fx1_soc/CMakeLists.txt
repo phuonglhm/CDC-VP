@@ -73,6 +73,12 @@ if(TARGET cdc::components::fx1_csi2_controller)
         cdc::components::fx1_csi2_sensor)
     target_compile_definitions(fx1_soc PRIVATE FX1_SOC_HAS_CAMERA=1)
 endif()
+# NPU: present when components/FX1_Components/npu is configured
+# (FX1_SOC_ENABLE_NPU=ON, the default); `fx1_soc --no-npu` removes it at run time.
+if(TARGET cdc::components::fx1_npu)
+    target_link_libraries(fx1_soc PRIVATE cdc::components::fx1_npu)
+    target_compile_definitions(fx1_soc PRIVATE FX1_SOC_HAS_NPU=1)
+endif()
 # Self-contained like the other packaged platforms (cmake/modules/CdcPortable.cmake):
 # RPATH=$ORIGIN, and the SystemC runtime copied beside the binary. The SDK
 # package (package/package_sdk.sh, target fx1_soc_package) ships exactly that.

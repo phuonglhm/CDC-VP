@@ -9,6 +9,7 @@
 //           [--dump-isp-demosaic DIR] [--isp-stream-spool DIR [--isp-stream-max-mib N]
 //           [--isp-stream-hold-us N] [--isp-stream-fault foreign-ack]]
 //           [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]
+//           [--no-npu] [--npu-host-watchdog-s N]
 //
 // Time resolution is 1 fs (the detailed D-PHY model of the camera needs it;
 // set for every run so that a run with and without --camera is timed alike).
@@ -21,7 +22,9 @@
 // within the simulated-time budget), 3 simulator or integration error, 4 usage
 // (also a --dump-isp-demosaic DIR that cannot be used), 5 PASS but the
 // VP-only ISP Demosaic capture failed (host I/O), 6 PASS but the VP-only ISP stream
-// bridge failed (a published frame not captured, a protocol violation, host I/O).
+// bridge failed (a published frame not captured, a protocol violation, host I/O),
+// 7 the NPU host watchdog fired (the model did not let simulated time advance
+// for --npu-host-watchdog-s seconds of wall time while it had work).
 //
 // --isp-stream-spool: Ctrl+C once forwards a stop request to the firmware (it drains
 // and stops; the run ends with the firmware's verdict), twice is a hard stop.
@@ -61,6 +64,11 @@ void version()
               << (cdc::platforms::fx1_soc::fx1_soc_top::camera_built()
                       ? "CSI-2 RX + D-PHY + CCS sensor model (--camera)"
                       : "not built (configure with -DFX1_BUILD_MIPI_CSI2=ON)")
+              << "\n"
+              << "  NPU             "
+              << (cdc::platforms::fx1_soc::fx1_soc_top::npu_built()
+                      ? "SAURIA v4.7 at 0x13000000 (present by default; --no-npu removes it)"
+                      : "not built (configure with -DFX1_SOC_ENABLE_NPU=ON)")
               << "\n";
 }
 
@@ -77,6 +85,7 @@ void usage()
                  "              [--isp-stream-spool DIR [--isp-stream-max-mib N] [--isp-stream-hold-us N]\n"
                  "              [--isp-stream-fault foreign-ack]]\n"
                  "              [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]\n"
+                 "              [--no-npu] [--npu-host-watchdog-s N]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
                  "  --uart0-wait        with --uart0-socket: wait for the client before starting\n"
@@ -142,6 +151,10 @@ void usage()
                  "                idma-stall:N[:US]  the N-th IDMA read is held US us (default 1000000),\n"
                  "                then completes: the frame misses the firmware's budget, no error\n"
                  "                (reported \"pending\" if the run ends first)\n"
+                 "  --no-npu      no NPU in this run: its aperture (0x1300_0000) answers DECERR and\n"
+                 "                PLIC source 4 stays low (default: present when the binary has it)\n"
+                 "  --npu-host-watchdog-s  exit with status 7 when the NPU has work but simulated\n"
+                 "                time does not advance for N s of wall time (default 600; 0 = off)\n"
               << cdc::platforms::fx1_soc::ddr3_fault_usage();
 }
 
@@ -413,6 +426,15 @@ int sc_main(int argc, char* argv[])
             }
             options.eth_wb_delay_us = static_cast<unsigned>(us);
         }
+        else if (arg == "--no-npu") options.npu = false;
+        else if (arg == "--npu-host-watchdog-s") {
+            unsigned long s = 0;
+            if (!parse_uint(value(), 86400ul, s)) {
+                usage();
+                return 4;
+            }
+            options.npu_host_watchdog_s = static_cast<unsigned>(s);
+        }
         else {
             usage();
             return 4;
@@ -462,6 +484,7 @@ int sc_main(int argc, char* argv[])
         std::cout << top.ddr3_banner() << '\n';
         if (!top.camera_banner().empty()) std::cout << "[fx1_soc] camera: " << top.camera_banner() << '\n';
         std::cout << "[fx1_soc] ethernet: " << top.eth_banner() << '\n';
+        std::cout << "[fx1_soc] npu: " << top.npu_banner() << '\n';
         for (const auto& l : loads) top.load_ddr(l.address, l.path);
         const auto wall_start = std::chrono::steady_clock::now();
         top.run_until_cpu_release();
@@ -488,6 +511,7 @@ int sc_main(int argc, char* argv[])
         std::cout << "[fx1_soc] atomics: " << top.atomics_report() << '\n';
         std::cout << "[fx1_soc] ddr3: " << top.ddr3_report() << '\n';
         std::cout << "[fx1_soc] ethernet: " << top.eth_report() << '\n';
+        if (top.npu_present()) std::cout << "[fx1_soc] npu: " << top.npu_report() << '\n';
         bool stream_ok = true;
         if (top.isp_stream_enabled()) {
             top.isp_stream_finish();

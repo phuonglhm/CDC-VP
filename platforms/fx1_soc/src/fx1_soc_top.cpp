@@ -32,6 +32,9 @@
 #include <riscv_vp_plusplus_wrapper.h>
 #include <uart.h>
 #include <uart_host_bridge.h>
+#ifdef FX1_SOC_HAS_NPU
+#include <fx1_npu/fx1_npu.h>
+#endif
 #ifdef FX1_SOC_HAS_CAMERA
 #include <fx1_csi2/csi2_rx_controller.h>
 #include <fx1_csi2_bfm/dphy_tx_bfm.h>
@@ -56,6 +59,10 @@ constexpr unsigned kMasterSysDma = 0x100;
 constexpr unsigned kMasterIspOdma = 0x101;
 constexpr unsigned kMasterMipiDma = 0x102;
 constexpr unsigned kMasterEthDma = 0x103;
+constexpr unsigned kMasterNpuDma = 0x104;
+// Bus target of the NPU VP aperture (added by the platform; BusConfig::fx1()
+// keeps its reserved NPU_CSR entry disabled).
+constexpr const char* kNpuTarget = "NPU_VP";
 
 // Ethernet MAC instance parameters: the defaults of MAS Table 5-1 (32-bit AXI,
 // the only width the FX1 fabric takes) and the DDR base added to every DMA
@@ -128,7 +135,7 @@ bool in_window(std::uint64_t address, std::uint64_t length, std::uint64_t base, 
     return address >= base && length <= size && address - base <= size - length;
 }
 
-bus::BusConfig make_bus_config(bool camera)
+bus::BusConfig make_bus_config(bool camera, bool npu)
 {
     auto cfg = bus::BusConfig::fx1();
     for (auto& target : cfg.targets)
@@ -138,6 +145,11 @@ bus::BusConfig make_bus_config(bool camera)
             target.enabled = true;  // instantiated below (G3, G4, DDR3 subtask 5, CSI-2 M5, Ethernet M2)
     cfg.targets.push_back({kSimCtrlTarget, FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE,
                            bus::TargetPath::Peribus0Apb, true});
+    // NPU_VP is a leaf of its own on SYSBUS_1 (review N1, N1-B): a push that
+    // waits for a queue slot holds only the NPU port, not the SYSBUS_0 link to
+    // CLINT, PLIC and UART.
+    if (npu)
+        cfg.targets.push_back({kNpuTarget, FX1_NPU_VP_BASE, FX1_NPU_VP_SIZE, bus::TargetPath::SysBus1Axi, true});
     return cfg;
 }
 
@@ -182,7 +194,34 @@ struct camera : sc_core::sc_module {
 };
 #endif
 
+#ifdef FX1_SOC_HAS_NPU
+// NPU (plan FX1_NPU_V47 N1): the SAURIA v4.7 clone; DMA through a write guard
+// like the other non-CPU writers (plan C7); RAM = the CPU DDR aperture.
+struct npu_block {
+    fx1::WriteGuard dma_guard;
+    fx1::npu::Fx1Npu npu;
+    static fx1::npu::NpuOptions options(unsigned watchdog_s)
+    {
+        fx1::npu::NpuOptions o;
+        o.ram_base = FX1_DDR_BASE;
+        o.ram_size = FX1_DDR_SIZE;
+        o.max_window = FX1_NPU_ARENA_LARGE_SIZE;
+        o.host_watchdog_s = watchdog_s;
+        return o;
+    }
+    npu_block(fx1::ExclusiveMonitor& monitor, unsigned watchdog_s)
+        : dma_guard("npu_dma_guard", monitor, kMasterNpuDma), npu("npu", options(watchdog_s))
+    {
+        npu.master_socket.bind(dma_guard.target);
+    }
+};
+#else
+struct npu_block {};
+#endif
+
 } // namespace
+
+bool fx1_soc_top_npu_default() noexcept { return fx1_soc_top::npu_built(); }
 
 struct fx1_soc_top::impl : sc_core::sc_module {
     fx1_soc_options options;
@@ -230,6 +269,8 @@ struct fx1_soc_top::impl : sc_core::sc_module {
 #endif
     std::unique_ptr<IspStreamBridge> isp_stream;  // --isp-stream-spool only
     std::unique_ptr<IspDmaFault> isp_dma_fault;   // --isp-dma-fault only
+    std::unique_ptr<npu_block> npu;               // null with --no-npu or without FX1_SOC_HAS_NPU
+    sc_core::sc_signal<bool> npu_rst_n{"npu_rst_n"};
 
     sc_core::sc_buffer<unsigned char> uart_tx{"uart_tx"};
     // PLIC source lines, index = source ID - 1.
@@ -255,7 +296,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     impl(sc_core::sc_module_name name, const fx1_soc_options& opts)
         : sc_module(name)
         , options(opts)
-        , fabric("fabric", make_bus_config(opts.camera), opts.bus_trace)
+        , fabric("fabric", make_bus_config(opts.camera, opts.npu), opts.bus_trace)
         , bootrom("bootrom", FX1_BOOTROM_SIZE, sc_core::sc_time(10, sc_core::SC_NS), true)
         , sram("sram", FX1_SRAM_SIZE, sc_core::sc_time(10, sc_core::SC_NS))
         , ddr3("ddr3_subsystem", Ddr3Subsystem::Options{opts.ddr_boot, opts.ddr3_ecc, opts.ddr3_faults})
@@ -377,6 +418,18 @@ struct fx1_soc_top::impl : sc_core::sc_module {
                                         "(configure with -DFX1_BUILD_MIPI_CSI2=ON)");
 #endif
         }
+        if (options.npu) {
+#ifdef FX1_SOC_HAS_NPU
+            // 1 MiB aperture on SYSBUS_1 (FX1_NPU_VP_BASE), NPU_DMA through its
+            // write guard, level IRQ on source 4, 20 ns power-on reset.
+            npu = std::make_unique<npu_block>(monitor, options.npu_host_watchdog_s);
+            fabric.target(kNpuTarget).bind(npu->npu.target_socket);
+            npu->dma_guard.out.bind(fabric.initiator("NPU_DMA"));
+            npu->npu.reset_n(npu_rst_n);
+#else
+            throw std::invalid_argument("fx1_soc: this build has no NPU (configure with -DFX1_SOC_ENABLE_NPU=ON)");
+#endif
+        }
         uart.tx(uart_tx);
         uart_host.rx_out(uart.rx);
         uart_host.tx_in(uart_tx);
@@ -389,8 +442,8 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         if (!ddr3.released()) uart_host.hold_until(ddr3.release_event());
 
         // Interrupt sources (fx1_memory_map.h): 1 UART, 2 SYS_DMA, 3 ISP;
-        // 4..5 are the VP-only test lines; 6 Ethernet; 7 CSI-2 RX (--camera);
-        // 8 DDR3; 9 I2C0.
+        // 4 NPU (low with --no-npu); 5 H.264 (reserved, low); 6 Ethernet;
+        // 7 CSI-2 RX (--camera); 8 DDR3; 9 I2C0; 10..11 the VP-only test lines.
         for (unsigned id = 1; id < FX1_PLIC_NUM_SOURCES; ++id) plic.irq_in[id - 1](irq_line[id - 1]);
         uart.irq(irq_line[FX1_IRQ_UART - 1]);
         sys_dma.irq(irq_line[FX1_IRQ_SYS_DMA - 1]);
@@ -402,6 +455,9 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         eth.irq(irq_line[FX1_IRQ_ETH - 1]);
 #ifdef FX1_SOC_HAS_CAMERA
         if (cam) cam->ctl.irq(irq_line[FX1_IRQ_MIPI - 1]);
+#endif
+#ifdef FX1_SOC_HAS_NPU
+        if (npu) npu->npu.irq_out(irq_line[FX1_IRQ_NPU - 1]);
 #endif
 
         // The platform loads the firmware image itself (not the hart's own
@@ -471,12 +527,14 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     void power_on_reset()
     {
         dma_reset_n.write(false);
+        npu_rst_n.write(false);
         isp_rst_n.write(false);
         csi_rst_n.write(false);
         eth_rst_n.write(false);
         eth_rmii_rst_n.write(false);
         wait(sc_core::sc_time(kResetPulseNs, sc_core::SC_NS));
         dma_reset_n.write(true);
+        npu_rst_n.write(true);
         isp_rst_n.write(true);
         csi_rst_n.write(true);
         eth_rst_n.write(true);
@@ -534,6 +592,14 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         auto forward = std::make_unique<irq_forward>(sc_core::sc_gen_unique_name("irq_fwd"), cpu, cause);
         forward->in(line);
         forwards.push_back(std::move(forward));
+    }
+
+    std::uint64_t npu_writes_held() const
+    {
+#ifdef FX1_SOC_HAS_NPU
+        if (npu) return npu->dma_guard.writes_held();
+#endif
+        return 0;
     }
 
     std::uint64_t camera_writes_held() const
@@ -680,6 +746,39 @@ bool fx1_soc_top::camera_built() noexcept
 #endif
 }
 
+bool fx1_soc_top::npu_built() noexcept
+{
+#ifdef FX1_SOC_HAS_NPU
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool fx1_soc_top::npu_present() const noexcept { return impl_->npu != nullptr; }
+
+std::string fx1_soc_top::npu_banner() const
+{
+#ifdef FX1_SOC_HAS_NPU
+    if (impl_->npu) {
+        std::ostringstream out;
+        out << "at 0x" << std::hex << FX1_NPU_VP_BASE << std::dec << " (1 MiB, SYSBUS_1, IRQ " << FX1_IRQ_NPU
+            << ", DMA via NPU_DMA), " << impl_->npu->npu.banner() << ", host watchdog "
+            << impl_->options.npu_host_watchdog_s << " s";
+        return out.str();
+    }
+#endif
+    return npu_built() ? "absent (--no-npu): aperture DECERR, source 4 low" : "not built";
+}
+
+std::string fx1_soc_top::npu_report() const
+{
+#ifdef FX1_SOC_HAS_NPU
+    if (impl_->npu) return impl_->npu->npu.report();
+#endif
+    return "absent";
+}
+
 std::string fx1_soc_top::atomics_report() const
 {
     if (!impl_->options.exclusive_monitor) return "off (upstream VP++ bus-lock model)";
@@ -690,7 +789,8 @@ std::string fx1_soc_top::atomics_report() const
         << " by device " << s.cancelled_by_device << " by DDR3 reset/remap " << s.cancelled_by_platform
         << ", device writes held "
         << impl_->sys_dma_guard.writes_held() + impl_->isp_odma_guard.writes_held() +
-               impl_->camera_writes_held() + (impl_->eth_dma_guard ? impl_->eth_dma_guard->writes_held() : 0)
+               impl_->camera_writes_held() + impl_->npu_writes_held() +
+               (impl_->eth_dma_guard ? impl_->eth_dma_guard->writes_held() : 0)
         << ", atomics drained " << s.brackets_waited;
     return out.str();
 }

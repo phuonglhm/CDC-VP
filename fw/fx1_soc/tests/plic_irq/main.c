@@ -1,7 +1,8 @@
 /*
  * G2: PLIC with two M-mode contexts (hart 0 / hart 1).
  *
- * Sources: 1 = UART (real device), 4..5 = VP-only test lines (sim-control);
+ * Sources: 1 = UART (real device), 10..11 = VP-only test lines (sim-control,
+ * FX1_SIM_CTRL_IRQ_FIRST_SOURCE; called A and B below; 4 is the NPU, 5 H.264);
  * source 6 belongs to the Ethernet MAC (idle here: never enabled).
  * Source 7 (CSI-2 RX) is driven only with fx1_soc --camera: never raised here.
  *   A  interrupt delivery on hart 0: one claim per request, line lowered in the
@@ -18,8 +19,10 @@
 #define UART_IMSC (FX1_UART_BASE + 0x038u)
 #define UART_TXIM 0x20u
 #define MIP_MEIP  (1u << FX1_IRQ_M_EXT)
-#define SRC_TEST0 FX1_SIM_CTRL_IRQ_FIRST_SOURCE /* source 4 = test line bit 0 */
+#define SRC_TEST0 FX1_SIM_CTRL_IRQ_FIRST_SOURCE /* test line bit 0 */
 #define SRC_TEST_END (SRC_TEST0 + FX1_SIM_CTRL_IRQ_LINES) /* one past the last test line */
+#define SRC_A SRC_TEST0       /* priority 3 */
+#define SRC_B (SRC_TEST0 + 1) /* priority 5 */
 
 static volatile uint32_t claimed[FX1_PLIC_NUM_SOURCES]; /* successful claims per source */
 static volatile uint32_t hart_claims[FX1_NUM_HARTS];
@@ -90,18 +93,18 @@ int main(void)
     fx1_release_secondaries();
     fx1_check(wait_for(&hart1_ready, 1), 0x01, "hart 1 ready");
     fx1_plic_set_priority(FX1_IRQ_UART, 4);
-    fx1_plic_set_priority(4, 3);
-    fx1_plic_set_priority(5, 5);
+    fx1_plic_set_priority(SRC_A, 3);
+    fx1_plic_set_priority(SRC_B, 5);
 
     /* A: delivery on hart 0 */
     fx1_set_trap_handler(handler);
     fx1_irq_enable(FX1_MIE_MEIE);
     fx1_global_irq_enable();
-    fx1_plic_enable(c0, 4, 1);
-    line(4, 1);
-    fx1_check(wait_for(&claimed[4], 1), 0x10, "A: source 4 delivered to hart 0");
+    fx1_plic_enable(c0, SRC_A, 1);
+    line(SRC_A, 1);
+    fx1_check(wait_for(&claimed[SRC_A], 1), 0x10, "A: source A delivered to hart 0");
     settle();
-    fx1_check(claimed[4] == 1 && hart_claims[0] == 1 && hart_claims[1] == 0, 0x11,
+    fx1_check(claimed[SRC_A] == 1 && hart_claims[0] == 1 && hart_claims[1] == 0, 0x11,
               "A: exactly one claim, on hart 0");
     fx1_check(fx1_plic_pending() == 0 && !(fx1_read_mip() & MIP_MEIP), 0x12,
               "A: nothing pending, MEIP low after complete");
@@ -109,65 +112,65 @@ int main(void)
 
     /* B: priority/threshold/mask/re-pend, polled */
     fx1_global_irq_disable();
-    fx1_plic_enable(c0, 5, 1);
-    line(4, 1);
-    line(5, 1);
+    fx1_plic_enable(c0, SRC_B, 1);
+    line(SRC_A, 1);
+    line(SRC_B, 1);
     fx1_check(fx1_read_mip() & MIP_MEIP, 0x20, "B: MEIP pending with MIE off");
     const uint32_t first = fx1_plic_claim(c0), second = fx1_plic_claim(c0), none = fx1_plic_claim(c0);
-    fx1_check(first == 5 && second == 4 && none == 0, 0x21, "B: claims in priority order 5 (5), 4 (3)");
-    line(4, 0);
-    line(5, 0);
-    fx1_plic_complete(c0, 5);
-    fx1_plic_complete(c0, 4);
+    fx1_check(first == SRC_B && second == SRC_A && none == 0, 0x21, "B: claims in priority order B (5), A (3)");
+    line(SRC_A, 0);
+    line(SRC_B, 0);
+    fx1_plic_complete(c0, SRC_B);
+    fx1_plic_complete(c0, SRC_A);
     fx1_check(fx1_plic_pending() == 0 && !(fx1_read_mip() & MIP_MEIP), 0x22, "B: drained");
 
     /* The threshold gates notification (MEIP) only; claim ignores it. */
-    line(5, 1);
+    line(SRC_B, 1);
     fx1_plic_set_threshold(c0, 5);
     fx1_check(!(fx1_read_mip() & MIP_MEIP), 0x23, "B: threshold 5 masks notification of priority 5");
     fx1_plic_set_threshold(c0, 4);
     fx1_check(fx1_read_mip() & MIP_MEIP, 0x24, "B: threshold 4 notifies priority 5");
     fx1_plic_set_threshold(c0, 7);
-    fx1_check(!(fx1_read_mip() & MIP_MEIP) && fx1_plic_claim(c0) == 5, 0x29,
+    fx1_check(!(fx1_read_mip() & MIP_MEIP) && fx1_plic_claim(c0) == SRC_B, 0x29,
               "B: polled claim at threshold 7 still returns the request");
-    line(5, 0);
-    fx1_plic_complete(c0, 5);
+    line(SRC_B, 0);
+    fx1_plic_complete(c0, SRC_B);
     fx1_plic_set_threshold(c0, 0);
 
-    fx1_plic_enable(c0, 4, 0);
-    line(4, 1);
-    fx1_check(!(fx1_read_mip() & MIP_MEIP) && (fx1_plic_pending() & (1u << 4)), 0x25,
+    fx1_plic_enable(c0, SRC_A, 0);
+    line(SRC_A, 1);
+    fx1_check(!(fx1_read_mip() & MIP_MEIP) && (fx1_plic_pending() & (1u << SRC_A)), 0x25,
               "B: disabled source pends without MEIP");
-    fx1_plic_enable(c0, 4, 1);
-    fx1_check((fx1_read_mip() & MIP_MEIP) && fx1_plic_claim(c0) == 4, 0x26,
+    fx1_plic_enable(c0, SRC_A, 1);
+    fx1_check((fx1_read_mip() & MIP_MEIP) && fx1_plic_claim(c0) == SRC_A, 0x26,
               "B: enabling it raises MEIP");
-    fx1_plic_complete(c0, 4); /* line still high */
-    fx1_check((fx1_plic_pending() & (1u << 4)) && fx1_plic_claim(c0) == 4, 0x27,
+    fx1_plic_complete(c0, SRC_A); /* line still high */
+    fx1_check((fx1_plic_pending() & (1u << SRC_A)) && fx1_plic_claim(c0) == SRC_A, 0x27,
               "B: level source still high pends again after complete");
-    line(4, 0);
-    fx1_plic_complete(c0, 4);
+    line(SRC_A, 0);
+    fx1_plic_complete(c0, SRC_A);
     fx1_check(fx1_plic_pending() == 0 && !(fx1_read_mip() & MIP_MEIP), 0x28,
               "B: lowered source does not pend again");
-    fx1_plic_enable(c0, 4, 0);
-    fx1_plic_enable(c0, 5, 0);
+    fx1_plic_enable(c0, SRC_A, 0);
+    fx1_plic_enable(c0, SRC_B, 0);
     fx1_log("B: priority, threshold, mask and level re-pend");
 
     /* C: hart 1 routing from WFI, and a shared source claimed once */
     fx1_global_irq_enable();
-    fx1_plic_enable(c1, 4, 1);
-    line(4, 1);
-    fx1_check(wait_for(&claimed[4], 2), 0x30, "C: source 4 woke hart 1");
+    fx1_plic_enable(c1, SRC_A, 1);
+    line(SRC_A, 1);
+    fx1_check(wait_for(&claimed[SRC_A], 2), 0x30, "C: source A woke hart 1");
     fx1_check(hart_claims[1] == 1 && hart_claims[0] == 1, 0x31, "C: taken by hart 1 only");
-    fx1_plic_enable(c0, 5, 1);
-    fx1_plic_enable(c1, 5, 1);
-    line(5, 1);
-    fx1_check(wait_for(&claimed[5], 1), 0x32, "C: shared source 5 claimed");
+    fx1_plic_enable(c0, SRC_B, 1);
+    fx1_plic_enable(c1, SRC_B, 1);
+    line(SRC_B, 1);
+    fx1_check(wait_for(&claimed[SRC_B], 1), 0x32, "C: shared source B claimed");
     settle();
-    fx1_check(claimed[5] == 1, 0x33, "C: shared source claimed exactly once");
+    fx1_check(claimed[SRC_B] == 1, 0x33, "C: shared source claimed exactly once");
     fx1_log_hex("C: spurious claims (hart0 << 16 | hart1)", (spurious[0] << 16) | spurious[1]);
-    fx1_plic_enable(c0, 5, 0);
-    fx1_plic_enable(c1, 5, 0);
-    fx1_plic_enable(c1, 4, 0);
+    fx1_plic_enable(c0, SRC_B, 0);
+    fx1_plic_enable(c1, SRC_B, 0);
+    fx1_plic_enable(c1, SRC_A, 0);
     fx1_log("C: hart 1 woken from WFI; shared source claimed once");
 
     /* D: UART TX interrupt (TX FIFO empty) through the PLIC */

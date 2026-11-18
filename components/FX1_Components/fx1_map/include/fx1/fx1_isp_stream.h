@@ -209,4 +209,16 @@ typedef char fx1_isp_stream_control_size[sizeof(fx1_isp_stream_control) == 64 ? 
 typedef char fx1_isp_stream_record_size[sizeof(fx1_isp_stream_record) == FX1_ISP_STREAM_RECORD_BYTES ? 1 : -1];
 #endif
 
+/* The stream areas stay out of the NPU arenas (fx1_memory_map.h, plan FX1_NPU_V47). */
+#define FX1_ISP_STREAM_NPU_APART                                                                                     \
+    (FX1_ISP_STREAM_PROFILE_ADDR + 8u * FX1_ISP_STREAM_PROFILE_MAX <= FX1_NPU_ARENA_SMALL_BASE &&                   \
+     FX1_ISP_STREAM_IN_ADDR(FX1_ISP_STREAM_SLOTS) <= FX1_FW_YUV_BUF_BASE &&                                         \
+     FX1_ISP_STREAM_OUT_ADDR(FX1_ISP_STREAM_SLOTS) <= FX1_NPU_ARENA_LARGE_BASE &&                                   \
+     FX1_ISP_STREAM_POOL_BASE >= FX1_NPU_ARENA_LARGE_BASE + FX1_NPU_ARENA_LARGE_SIZE)
+#if defined(__cplusplus)
+static_assert(FX1_ISP_STREAM_NPU_APART, "ISP stream areas overlap an NPU arena");
+#else
+typedef char fx1_isp_stream_npu_apart[FX1_ISP_STREAM_NPU_APART ? 1 : -1];
+#endif
+
 #endif /* FX1_ISP_STREAM_H */
