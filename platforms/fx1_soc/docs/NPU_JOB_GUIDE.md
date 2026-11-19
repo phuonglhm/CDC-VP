@@ -166,6 +166,7 @@ from the C oracle, into `build/fw/fx1_soc/npu_jobs/<name>/`:
 | `mixed` | conv, GEMM bank, MAX_POOL, neo RESIDUAL | OK |
 | `large` | large arena, window 1 MiB above its base: conv 3x3 [16][32][32] -> [32][32][32], MAX_POOL | OK |
 | `long` | 8 chained MAX_POOL 5 on [16][64][64] (for reset and timeout tests) | OK |
+| `busy` | 8 x MAX_POOL 31 p15 on [16][64][64], large arena (long NPU work: coexistence, reset while executing) | OK |
 | `bad_bounds` | a tensor past the window | BAD_JOB, tensor bounds |
 | `bad_input` | one loaded byte that differs from its CRC | INPUT_CRC |
 
@@ -181,6 +182,13 @@ oracle's.
 To make a job of your own, add a fixture function to `npu_job_gen.c`. It
 offers tensor allocation, random data, `conv`/`pool`/`add`/`gemm` and the
 oracle. Rebuild `fx1_npu_jobs`.
+
+In the SDK package (VP_FX1_V3.0) the fixtures are in
+`sw/bootloader/test/VP_FX1_V3.0/npu/`, the generator in
+`sw/bootloader/sources/VP_FX1_V3.0/npu_jobs/` (`make npu-jobs`, host
+compiler), and `run_vp.sh npu [NAME|DIR|all]` runs them; the package's own
+guide is `vp/doc/VP_FX1_V3.0/npu/README.md`
+(`platforms/fx1_soc/package/docs/NPU_FW_GUIDE.md`).
 
 ## Running a job
 
@@ -216,7 +224,10 @@ launcher's own files. Those are exactly `cli.txt`, `result.bin`,
 `out_<n>.bin`, `uart.log`, `platform.log` and `summary.*`; a name such as
 `out_camera_capture.raw` is not one of them. In such a directory the launcher
 replaces only its own files (a stale `result.bin` is removed before the run),
-and anything else is kept.
+and anything else is kept. It never writes through a link: a link at one of
+its file names is removed, never its target, and a marker `.npu_run` that is a
+link is refused (exit 2). `fw/fx1_soc/host/npu_job_gen.c` follows the same rule
+for its own output directory (see its header).
 
 The CLI script waits with `npu wait` without a limit, so `poweroff` comes only
 once the job's outcome is known.

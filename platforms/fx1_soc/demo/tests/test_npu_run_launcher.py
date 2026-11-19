@@ -9,13 +9,21 @@ Every case works on a copy of the fixture. Paths: an output directory that is
 the fixture, its parent, a symlink to it, inside it, or a foreign non-empty
 directory is refused (exit 2) with every input and user file untouched;
 --print-command writes only cli.txt and the marker; in an npu_run directory a
-stale result is removed, user files kept. Environment: inherited HAS_*,
+stale result is removed, user files kept. Links (review N5 R3): a marker that
+is a symbolic link is refused (exit 2), its target untouched; a hard-linked
+marker and links at the launcher's file names are replaced by new files, their
+targets untouched. Environment: inherited HAS_*,
 SAURIA_CORE_RTL_* and NPU_* knobs are removed (named in the summary) and the run
 equals a clean one (banner env=none, model counters, output bytes).
+Name tables: the launcher's STATUS, REASONS and DRIVER lists equal the enums of
+fw/fx1_soc/drivers/fx1_npu_job.h and fx1_npu.h, in order (a status added there
+is never printed as a number).
 """
 import hashlib
+import importlib.util
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -114,6 +122,56 @@ def main():
           all(after_l.get(k) == v for k, v in before_l.items()),
           "with the marker: out_7.bin (the launcher's) removed, every look-alike kept")
 
+    # Review N5 R3: never written through a link to a file outside the output directory.
+    outside = os.path.join(work, "outside")
+    os.makedirs(outside)
+
+    def target(n):
+        t = os.path.join(outside, n)
+        with open(t, "w") as f:
+            f.write("user-owned %s\n" % n)
+        return t
+
+    def unchanged(t):
+        with open(t) as f:
+            return f.read() == "user-owned %s\n" % os.path.basename(t)
+
+    lm = os.path.join(work, "link_marker")
+    os.makedirs(lm)
+    t = target("marker_notes.txt")
+    os.symlink(t, os.path.join(lm, ".npu_run"))
+    for extra in ((), ("--print-command",)):
+        p = run(lm, *extra)
+        check(p.returncode == 2 and "not write through links" in p.stdout and unchanged(t) and
+              os.listdir(lm) == [".npu_run"] and os.path.islink(os.path.join(lm, ".npu_run")),
+              "the marker a symbolic link outside%s: refused (exit %d), link and target unchanged" %
+              (" with --print-command" if extra else "", p.returncode))
+    hm = os.path.join(work, "hard_marker")
+    os.makedirs(hm)
+    t = target("hard_marker.txt")
+    os.link(t, os.path.join(hm, ".npu_run"))
+    p = run(hm, "--print-command")
+    check(p.returncode == 0 and unchanged(t) and os.stat(t).st_nlink == 1,
+          "the marker a hard link: exit 0, a new marker, the other name unchanged")
+    ln = os.path.join(work, "link_files")
+    os.makedirs(ln)
+    open(os.path.join(ln, ".npu_run"), "w").close()
+    links = {n: target("backup_" + n) for n in ("cli.txt", "result.bin", "out_3.bin", "summary.txt")}
+    for n, t in links.items():
+        os.symlink(t, os.path.join(ln, n))
+    p = run(ln, "--print-command")
+    check(p.returncode == 0 and all(unchanged(t) for t in links.values()) and
+          not any(os.path.islink(os.path.join(ln, n)) for n in links) and os.path.isfile(os.path.join(ln, "cli.txt")),
+          "links at the launcher's names (cli.txt, result.bin, out_3.bin, summary.txt): links removed, targets unchanged")
+    links = {n: target("run_" + n) for n in ("platform.log", "summary.json", "summary.txt", "summary.json.tmp")}
+    for n, t in links.items():
+        os.symlink(t, os.path.join(ln, n))
+    p = subprocess.run([sys.executable, "-B", launcher, "--fx1-soc", fake, "--elf", elf, fx, "--out", ln],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    check(p.returncode == 3 and all(unchanged(t) for t in links.values()) and
+          os.path.isfile(os.path.join(ln, "summary.json")) and not os.path.islink(os.path.join(ln, "summary.json")),
+          "a run with links at platform.log / summary.*: exit %d, new files, targets unchanged" % p.returncode)
+
     # A directory holding only the launcher's files (an older run, no marker) is accepted.
     older = os.path.join(work, "older")
     os.makedirs(older)
@@ -143,6 +201,25 @@ def main():
     p = run(os.path.join(work, "printed2"), "--print-command", env=env)
     check(p.returncode == 0 and "SAURIA_CORE_RTL_PROFILE" in p.stdout and "SAURIA_CORE_RTL_PROFILE=legacy" not in p.stdout,
           "--print-command names the removed knobs and does not pass them")
+    # Name tables against the firmware headers (the source tree of the launcher).
+    drivers = os.path.join(os.path.dirname(os.path.abspath(launcher)), "..", "..", "..", "fw", "fx1_soc", "drivers")
+    spec = importlib.util.spec_from_file_location("npu_run_tables", launcher)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    job_h = open(os.path.join(drivers, "fx1_npu_job.h")).read()
+    drv_h = open(os.path.join(drivers, "fx1_npu.h")).read()
+
+    def enum_after(text, first):
+        body = text[text.index(first):]
+        body = body[:body.index("}")]
+        body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+        return [n for n in re.findall(r"\b(FX1_NPU_\w+)", body) if not n.endswith("_COUNT")]  # not the sentinels
+    status = [n[len("FX1_NPU_JOB_"):] for n in enum_after(job_h, "FX1_NPU_JOB_OK = 0")]
+    reasons = [n[len("FX1_NPU_JOB_E_"):].lower().replace("_", " ") for n in enum_after(job_h, "FX1_NPU_JOB_E_NONE = 0")]
+    driver = [re.sub(r"^FX1_NPU_(E_)?", "", n) for n in enum_after(drv_h, "FX1_NPU_OK = 0")]
+    check(mod.STATUS == status, "STATUS = fx1_npu_job_status (%d names)" % len(status))
+    check(mod.REASONS == reasons, "REASONS = FX1_NPU_JOB_E_* (%d names)" % len(reasons))
+    check(mod.DRIVER == driver, "DRIVER = fx1_npu_status_t (%d names: %s)" % (len(driver), " ".join(driver[-3:])))
     print("RESULT %s (%d failure%s)" % ("FAIL" if failures else "PASS", failures, "" if failures == 1 else "s"))
     return 1 if failures else 0
 

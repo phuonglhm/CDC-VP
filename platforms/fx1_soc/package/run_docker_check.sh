@@ -9,7 +9,8 @@
 #
 # In the container, with nothing installed: run_vp.sh version and smoke. Then
 # python3 is installed if the image lacks it (dnf, needs network) and every ISP
-# sample runs. With --toolchain (a riscv-none-elf install, mounted read-only),
+# sample runs; the NPU self-test and every NPU fixture (run_vp.sh npu-selftest,
+# npu all) must pass with only the image's python3 (standard library). With --toolchain (a riscv-none-elf install, mounted read-only),
 # the firmware is also rebuilt in the container and must equal the packaged ELF
 # (GNU make comes from the host when the image has none).
 # The RAW sequence -> video flow (run_vp.sh isp-stream-sample): with no FFmpeg in
@@ -70,6 +71,8 @@ fi
 for d in ${t}/isp/*/; do
     "${t}/run_vp.sh" isp "$(basename "${d}")" | tail -n 1 || fail=1
 done
+"${t}/run_vp.sh" npu-selftest | tail -n 1 || fail=1
+"${t}/run_vp.sh" npu all --out /tmp/npu | tail -n 1 || fail=1
 if [[ -d "${t}/isp_stream" ]]; then
     rc=0
     command -v ffmpeg > /dev/null && { echo "the image already has ffmpeg: the no-FFmpeg check needs a clean image"; fail=1; }

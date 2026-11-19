@@ -69,9 +69,14 @@ Interrupt delivery:
 |---|---|---|
 | `0x8000_0000` + 4 MiB | `FX1_FW_IMAGE_BASE` | ELF code and data (both harts) |
 | `0x8040_0000` + 64 KiB per hart | `FX1_FW_STACK_BASE` | hart *n* stack at base + *n* × 64 KiB |
-| `0x8050_0000` + 11 MiB | `FX1_FW_SHARED_BASE` | shared data. For the ISP job: job at +0x0000, result block at +0x0100, profile at +0x1000 (`demo/isp_demo_job.h`) |
+| `0x8050_0000` + 11 MiB | `FX1_FW_SHARED_BASE` | shared data. For the ISP job: job at +0x0000, result block at +0x0100, profile at +0x1000 (`demo/isp_demo_job.h`); the NPU areas below lie in it |
+| `0x8065_0000` + 64 KiB | `FX1_NPU_JOB_BASE` | NPU job image, loaded by the host (`npu run`) |
+| `0x8066_0000` + 4 KiB | `FX1_NPU_RESULT_BASE` | NPU job result block (256 bytes used, magic written last) |
+| `0x8066_1000` + 4 KiB | `FX1_NPU_LOCK_BASE` | NPU ownership lock word between the harts (`fx1_npu_claim`) |
+| `0x8090_0000` + 4 MiB | `FX1_NPU_ARENA_SMALL_BASE` | NPU small arena (job windows; `npu selftest` from +3 MiB) |
 | `0x8100_0000` | `FX1_FW_RAW_BUF_BASE` | ISP RAW input |
 | `0x8800_0000` | `FX1_FW_YUV_BUF_BASE` | ISP NV12 output: Y, then UV at the next 1 MiB boundary |
+| `0x8E00_0000` + 32 MiB | `FX1_NPU_ARENA_LARGE_BASE` | NPU large arena (job windows), above every ISP and camera output area |
 | `0x9000_0000` | `FX1_FW_TEST_AREA_BASE` | free test area (safe for `mw` experiments) |
 
 ## Harts

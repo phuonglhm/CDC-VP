@@ -146,6 +146,8 @@ public:
     // NPU: built into this binary; present in this run; one-line banner (model,
     // knobs, queue) and end-of-run counters ("absent" without it).
     static bool npu_built() noexcept;
+    // The NPU's VP_ABI register value (major << 16 | minor); 0 when not built.
+    static std::uint32_t npu_abi() noexcept;
     bool npu_present() const noexcept;
     std::string npu_banner() const;
     std::string npu_report() const;

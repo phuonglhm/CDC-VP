@@ -21,6 +21,10 @@
 #   make camera camera examples (CSI-2 RX, I2C0, sensor; camera -> ISP through
 #               the camera manager; doc camera/README.md) in $(OUT)/camera; run
 #               them with test/VP_FX1_V3.0/run_vp.sh camera / camera-isp
+#   make npu-jobs   the NPU job fixtures (npu_jobs/npu_job_gen.c, the host
+#               compiler: the firmware's job checks, builders and C oracle) in
+#               $(OUT)/npu_jobs/<name>/; the shipped test/VP_FX1_V3.0/npu/ are
+#               these, byte for byte. Run one: run_vp.sh npu $(OUT)/npu_jobs/<name>
 # Same compiler flags, include order and sources as the CDC-VP build that the
 # package was tested with (fw/fx1_soc/CMakeLists.txt). Do not change -march /
 # -mabi: the VP harts are RV32IMAFC and the BSP, the kernel port and every
@@ -209,11 +213,32 @@ $(CAMOUT)/camera_i2c_timeout.elf: $(HERE)/camera/i2c_timeout.c $(CAMHDRS) $(LDS)
 	                    $(HERE)/drivers/camera/fx1_ccs_sensor.c $<,)
 
 clean:
-	rm -rf $(OUT)/obj $(D3OUT) $(CAMOUT)
+	rm -rf $(OUT)/obj $(D3OUT) $(CAMOUT) $(OUT)/host
 	rm -f $(ELF) $(LDS) $(OUT)/freertos_cli.dis $(OUT)/freertos_cli.map $(OUT)/freertos_cli.sections.txt
 
 # Portable policy checks with the host compiler, no VP or cross compiler needed.
 HOST_CC ?= /usr/bin/gcc
+
+# NPU job fixtures, host compiler: npu_job_gen writes every fixture into
+# $(NPUJOBS)/<name>/ (job.bin, window.bin, golden_<i>.bin, fixture.json).
+# Add your own job as a fixture function in npu_jobs/npu_job_gen.c.
+# Nothing is deleted here: the generator refuses (exit 2, nothing written) a
+# $(NPUJOBS) that is not new, empty or its own (marker .npu_job_gen), and in its
+# own directory replaces only those files; your notes and your own fixture
+# directories there are kept. It never writes through a link: a symbolic link
+# at the marker, a managed file or a fixture directory is refused (exit 2).
+NPUJOBS ?= $(OUT)/npu_jobs
+NPUGEN  := $(OUT)/host/npu_job_gen
+NPUGEN_SRC := $(HERE)/npu_jobs/npu_job_gen.c $(HERE)/drivers/npu/fx1_npu_job.c $(HERE)/drivers/npu/fx1_npu_build.c \
+              $(HERE)/npu_selftest/npu_oracle.c
+.PHONY: npu-jobs
+npu-jobs: $(NPUGEN)
+	$(if $(strip $(NPUJOBS)),,$(error NPUJOBS is empty))
+	$(NPUGEN) "$(NPUJOBS)"
+$(NPUGEN): $(NPUGEN_SRC) $(wildcard $(HERE)/drivers/npu/*.h $(HERE)/npu_selftest/*.h $(HERE)/include/fx1_npu/*.h)
+	@mkdir -p $(dir $@)
+	$(HOST_CC) -std=c11 -O2 -Wall -Wextra -Werror -I$(HERE)/include -I$(HERE)/drivers/npu -I$(HERE)/npu_selftest \
+	    $(NPUGEN_SRC) -o $@
 .PHONY: check-isp-auto
 check-isp-auto:
 	@mkdir -p $(OUT)

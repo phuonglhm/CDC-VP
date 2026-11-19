@@ -1,0 +1,4 @@
+npu info
+npu selftest
+npu status
+poweroff

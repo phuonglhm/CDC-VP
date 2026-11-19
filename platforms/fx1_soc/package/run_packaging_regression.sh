@@ -22,11 +22,24 @@
 #      without the comparison; an unchanged copy elsewhere is still compared;
 #      with no ffmpeg on
 #      PATH the run is refused before the boot (PREFLIGHT_FAILED, install steps);
+#   4e. the NPU (plan FX1_NPU_V47 N5): run_vp.sh npu-selftest; every shipped
+#      fixture (run_vp.sh npu all, negative ones as declared); inherited model
+#      knobs are removed and named, the result unchanged; a wrong golden FAILs
+#      (exit 1), an unknown fixture is refused (exit 2); --print-command (one
+#      fixture: the command, nothing run; `npu all --print-command` refused with
+#      exit 2, no verdict, nothing run); the
+#      fixture console flow (run_vp.sh npu long interactive + fx1_console.sh):
+#      npu run, npu reset (recovery, soft reset, reopen), the job again: PASS;
 #   5. the firmware rebuilt from the shipped sources with the shipped Makefile
 #      must equal the packaged ELF byte for byte, and pass smoke again; the
 #      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
 #      camera -> ISP: camera_isp_raw12), and the Ethernet example on every line
-#      peer and the scripted Ethernet CLI session pass;
+#      peer and the scripted Ethernet CLI session pass; `make npu-jobs` (host
+#      compiler) gives the shipped NPU fixtures byte for byte, and one of them
+#      runs from the generated directory; a second run keeps a user note and a
+#      user fixture there; an NPUJOBS directory it did not make is refused
+#      (exit status nonzero) with its files untouched, and so is a managed file
+#      that is a link to a file outside NPUJOBS, with the link target untouched;
 #   4c. a tuned shared profile with another write count (ISP-UPD-010): with
 #      four more writes (NR curve used, two factory bad pixels; ISP-UPD-011:
 #      and radial EE on; ISP-UPD-012: and the GTM manual curve) run_vp.sh isp
@@ -339,6 +352,62 @@ else
     bad "ffmpeg/ffprobe (with libx264) are needed for the isp-stream checks (package/docs/README.md)"
 fi
 
+step "4e. NPU: self-test, every fixture, knobs, negative controls, console"
+run "${test}/run_vp.sh" npu-selftest > "${tmp}/npu_selftest.log" 2>&1 && grep -q "NPU SELFTEST PASS" "${tmp}/npu_selftest.log" \
+    && pass "npu-selftest: $(grep -c 'npu selftest: .* 0 of' "${tmp}/npu_selftest.log") cases equal the C oracle, PASS" \
+    || { tail -n 15 "${tmp}/npu_selftest.log"; bad "run_vp.sh npu-selftest"; }
+nfx="$(ls -d "${test}"/npu/*/ | wc -l)"
+run "${test}/run_vp.sh" npu all > "${tmp}/npu_all.log" 2>&1 && grep -q "NPU FIXTURES PASS (${nfx}/${nfx}" "${tmp}/npu_all.log" \
+    && pass "npu all: ${nfx}/${nfx} fixtures as declared ($(grep -c 'PASS: as declared (OK)' "${tmp}/npu_all.log") OK, $(grep -c 'PASS: as declared ([A-Z_]*)' "${tmp}/npu_all.log") total)" \
+    || { cat "${tmp}/npu_all.log"; bad "run_vp.sh npu all"; }
+run HAS_DUMMY_KNOB=1 SAURIA_CORE_RTL_PROFILE=legacy NPU_AXI_DRAM_LAT=500 "${test}/run_vp.sh" npu chain --out "${tmp}/npu_knobs" \
+    > "${tmp}/npu_knobs.log" 2>&1
+rc=$?
+[[ ${rc} -eq 0 ]] && grep -q "NPU model knobs removed from the environment: .*SAURIA_CORE_RTL_PROFILE" "${tmp}/npu_knobs.log" \
+    && python3 -c 'import json,sys;a=json.load(open(sys.argv[1]));b=json.load(open(sys.argv[2]));sys.exit(0 if a["model_config"]["env"]=="none" and [o["sha256"] for o in a["outputs"]]==[o["sha256"] for o in b["outputs"]] else 1)' \
+        "${tmp}/npu_knobs/summary.json" "${pkg}/sw/bootloader/build/${version}/npu/chain/summary.json" \
+    && pass "inherited model knobs removed and named; outputs as the clean run (env=none)" \
+    || { tail -n 8 "${tmp}/npu_knobs.log"; bad "npu chain with inherited knobs (exit ${rc})"; }
+cp -a "${test}/npu/chain" "${tmp}/npu_tampered"
+python3 -c 'import sys;p=sys.argv[1];b=bytearray(open(p,"rb").read());b[0]^=1;open(p,"wb").write(b)' "${tmp}/npu_tampered/golden_10.bin"
+run "${test}/run_vp.sh" npu "${tmp}/npu_tampered" --out "${tmp}/npu_tampered_out" > "${tmp}/npu_tampered.log" 2>&1
+rc=$?
+[[ ${rc} -eq 1 ]] && grep -q "NPU chain FAIL" "${tmp}/npu_tampered.log" && grep -q "1 differ from the golden" "${tmp}/npu_tampered.log" \
+    && pass "a wrong NPU golden FAILs (exit 1, 1 byte differs)" || { tail -n 8 "${tmp}/npu_tampered.log"; bad "tampered NPU golden gave exit ${rc}"; }
+run "${test}/run_vp.sh" npu no_such_job > "${tmp}/npu_unknown.log" 2>&1
+rc=$?
+[[ ${rc} -eq 2 ]] && grep -q "no fixture 'no_such_job'" "${tmp}/npu_unknown.log" && pass "an unknown fixture is refused (exit 2)" \
+    || bad "unknown fixture gave exit ${rc}"
+run "${test}/run_vp.sh" npu chain --out "${tmp}/npu_print" --print-command > "${tmp}/npu_print.log" 2>&1 \
+    && grep -q "^env -i .*fx1_soc --fw .*--load 0x80650000:" "${tmp}/npu_print.log" && [[ ! -e "${tmp}/npu_print/uart.log" ]] \
+    && pass "--print-command: the clean fx1_soc command, nothing run" || bad "npu --print-command"
+run "${test}/run_vp.sh" npu all --print-command --out "${tmp}/npu_print_all" > "${tmp}/npu_print_all.log" 2>&1
+rc=$?
+[[ ${rc} -eq 2 ]] && ! grep -q "FIXTURES PASS" "${tmp}/npu_print_all.log" && grep -q "no verdict" "${tmp}/npu_print_all.log" \
+    && [[ -z "$(find "${tmp}/npu_print_all" -name result.bin 2>/dev/null)" ]] \
+    && pass "npu all --print-command: refused (exit 2), no verdict, nothing run" \
+    || { cat "${tmp}/npu_print_all.log"; bad "npu all --print-command gave exit ${rc}"; }
+# The console flow with the client that needs nothing installed (bash /dev/tcp).
+port=$((20000 + RANDOM % 20000))
+run "${test}/run_vp.sh" npu long interactive "${port}" > "${tmp}/npu_console_vp.log" 2>&1 &
+vp_pid=$!
+for _ in $(seq 50); do grep -q "waits for the UART console" "${tmp}/npu_console_vp.log" 2>/dev/null && break; sleep 0.2; done
+sleep 1
+(sleep 3; printf 'npu run\r'; sleep 1; printf 'npu reset\r'; sleep 4; printf 'npu run\r'; sleep 2; printf 'npu wait\r'; sleep 8
+ printf 'poweroff\r'; sleep 6) \
+    | timeout 90 env -i PATH=/usr/bin:/bin FX1_CONSOLE_CLIENT=bash "${test}/fx1_console.sh" "${port}" > "${tmp}/npu_console.log" 2>&1
+# The VP ends with poweroff; one that does not (a failed console) is stopped by its PID.
+for _ in $(seq 150); do kill -0 "${vp_pid}" 2>/dev/null || break; sleep 0.2; done
+kill "${vp_pid}" 2>/dev/null && bad "the interactive NPU VP did not end with poweroff (stopped)"
+wait "${vp_pid}"
+rc=$?
+tr -d '\r' < "${tmp}/npu_console.log" | grep -q "npu reset: recovery OK, soft reset OK, open OK" \
+    && tr -d '\r' < "${tmp}/npu_console.log" | grep -q "npu run: long: OK, 8/8 ops" \
+    && tr -d '\r' < "${tmp}/npu_console.log" | grep -q "npu run: PASS" && [[ ${rc} -eq 0 ]] \
+    && pass "npu long interactive: npu run, npu reset ($(tr -d '\r' < "${tmp}/npu_console.log" | grep -o 'job long stopped: ABORTED at op [0-9]*' || echo 'idle')), the job again PASS, poweroff (bash client)" \
+    || { tr -d '\r' < "${tmp}/npu_console.log" | tail -n 8; bad "npu interactive flow (VP exit ${rc})"; }
+rm -rf "${pkg}/sw/bootloader/build/${version}/npu"
+
 step "5. firmware rebuilt from the shipped sources"
 want="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artefacts"]["sw/bootloader/build/VP_FX1_V3.0/freertos_cli.elf"]["sha256"])' \
     "${pkg}/vp/doc/${version}/BUILD_MANIFEST.json")"
@@ -399,6 +468,50 @@ fi
 run "${test}/run_vp.sh" eth-cli > "${tmp}/eth_cli.log" 2>&1 && grep -q "ETH CLI PASS" "${tmp}/eth_cli.log" \
     && pass "run_vp.sh eth-cli PASS" || { cat "${tmp}/eth_cli.log"; bad "run_vp.sh eth-cli"; }
 rm -f "${pkg}/sw/bootloader/build/${version}/eth-cli.log"
+
+step "5e. NPU job fixtures regenerated from the shipped sources (make npu-jobs, host compiler)"
+gen="${pkg}/sw/bootloader/build/${version}/npu_jobs"
+if run make -s -C "${pkg}/sw/bootloader/sources/${version}" npu-jobs > "${tmp}/make_npu_jobs.log" 2>&1; then
+    diff -r "${gen}" "${test}/npu" -x FIXTURE.txt -x .npu_job_gen > "${tmp}/npu_jobs_diff.log" 2>&1 \
+        && pass "make npu-jobs: $(ls -d "${gen}"/*/ | wc -l) fixtures, byte for byte the shipped ones" \
+        || { head -n 10 "${tmp}/npu_jobs_diff.log"; bad "make npu-jobs differs from test/npu/"; }
+    # Review N5 R1: a second run keeps what is not the generator's.
+    echo "my notes" > "${gen}/my_notes.txt"
+    echo "my tuning" > "${gen}/chain/tuning_notes.txt"
+    mkdir -p "${gen}/my_job" && echo "my job" > "${gen}/my_job/job.bin"
+    run make -s -C "${pkg}/sw/bootloader/sources/${version}" npu-jobs > "${tmp}/make_npu_jobs2.log" 2>&1 \
+        && [[ "$(cat "${gen}/my_notes.txt" "${gen}/chain/tuning_notes.txt" "${gen}/my_job/job.bin")" == "my notes"$'\n'"my tuning"$'\n'"my job" ]] \
+        && diff -r "${gen}" "${test}/npu" -x FIXTURE.txt -x .npu_job_gen -x my_notes.txt -x tuning_notes.txt -x my_job > /dev/null 2>&1 \
+        && pass "make npu-jobs again: user notes and a user fixture kept, the fixtures byte for byte" \
+        || { cat "${tmp}/make_npu_jobs2.log"; bad "make npu-jobs into its own directory with user files"; }
+    foreign="${tmp}/npu_foreign"
+    mkdir -p "${foreign}/chain" && echo "user's" > "${foreign}/user_notes.txt" && echo "user's" > "${foreign}/chain/job.bin"
+    run make -s -C "${pkg}/sw/bootloader/sources/${version}" npu-jobs NPUJOBS="${foreign}" > "${tmp}/make_npu_foreign.log" 2>&1
+    rc=$?
+    [[ ${rc} -ne 0 ]] && grep -q "not made by npu_job_gen" "${tmp}/make_npu_foreign.log" \
+        && [[ "$(cat "${foreign}/user_notes.txt" "${foreign}/chain/job.bin")" == "user's"$'\n'"user's" ]] \
+        && [[ "$(find "${foreign}" -type f | wc -l)" -eq 2 ]] \
+        && pass "make npu-jobs NPUJOBS=<a directory it did not make>: refused (make exit ${rc}), its files untouched" \
+        || { cat "${tmp}/make_npu_foreign.log"; bad "make npu-jobs into a foreign directory (exit ${rc})"; }
+    # Review N5 R3: never written through a link to a file outside NPUJOBS.
+    echo "user backup" > "${tmp}/npu_outside_job.bin"
+    cp "${gen}/chain/job.bin" "${tmp}/npu_chain_job.keep"
+    ln -sf "${tmp}/npu_outside_job.bin" "${gen}/chain/job.bin"
+    run make -s -C "${pkg}/sw/bootloader/sources/${version}" npu-jobs > "${tmp}/make_npu_link.log" 2>&1
+    rc=$?
+    [[ ${rc} -ne 0 ]] && grep -q "not write through links" "${tmp}/make_npu_link.log" \
+        && [[ "$(cat "${tmp}/npu_outside_job.bin")" == "user backup" && -L "${gen}/chain/job.bin" ]] \
+        && pass "make npu-jobs with chain/job.bin a link outside NPUJOBS: refused (make exit ${rc}), the link target untouched" \
+        || { cat "${tmp}/make_npu_link.log"; bad "make npu-jobs wrote through a link (exit ${rc})"; }
+    rm -f "${gen}/chain/job.bin" && cp "${tmp}/npu_chain_job.keep" "${gen}/chain/job.bin"
+    run "${test}/run_vp.sh" npu "${gen}/mixed" --out "${tmp}/npu_gen_mixed" > "${tmp}/npu_gen_mixed.log" 2>&1 \
+        && grep -q "NPU mixed PASS" "${tmp}/npu_gen_mixed.log" && pass "a generated fixture runs (mixed PASS)" \
+        || { tail -n 8 "${tmp}/npu_gen_mixed.log"; bad "run_vp.sh npu on a generated fixture"; }
+else
+    cat "${tmp}/make_npu_jobs.log"
+    bad "make npu-jobs with the shipped Makefile failed"
+fi
+rm -rf "${gen}" "${pkg}/sw/bootloader/build/${version}/host"
 
 step "6. SHA256SUMS on a copy without build/ (an SDK repository clone)"
 clone="${tmp}/clone"

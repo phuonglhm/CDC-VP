@@ -6,7 +6,9 @@ and debug firmware on before silicon. It contains:
 - the VP binary `fx1_soc`;
 - a FreeRTOS V11.2.0 command-line firmware with its full source and a
   stand-alone Makefile;
-- ISP sample frames, which a RAW image goes through on the virtual chip.
+- ISP sample frames, which a RAW image goes through on the virtual chip;
+- NPU job fixtures with their goldens and a launcher, for the SAURIA v4.7 NPU
+  model ([npu/README.md](npu/README.md)).
 
 Treat the VP as the chip: build against `include/fx1/fx1_memory_map.h` and run
 the firmware ELF on `fx1_soc`.
@@ -21,15 +23,13 @@ one does not run on the other.
 | CPU | 1 hart, Bremen riscv-vp, `rv32imac` / `ilp32` | **2 harts, RISC-V VP++, `rv32imafc` / `ilp32f`** (hardware FP) |
 | Interconnect | generic bus | FX1 bus model with an exclusive monitor (LR/SC and AMOs are correct against DMA) |
 | Peripherals | about 25 IPs (UART×2, I2C, SPI, timers, WDT, PWM, GPIO, …) | **UART, CLINT, PLIC, SYS_DMA, ISP, DDR3 controller, I2C0, Ethernet MAC + PHY** ([eth/README.md](eth/README.md)), and with `--camera` the **CSI-2 RX camera path** ([camera/README.md](camera/README.md)) |
-| Accelerators | NPU (functional) | **ISP** (functional, bit-exact to the stand-alone ISP model); NPU (SAURIA v4.7 model, VP aperture): reference bare-metal driver (`drivers/fx1_npu.h`); FreeRTOS `npu` commands (`npu info/status/selftest/run/wait/reset`) in the CLI image; job fixtures and launcher not packaged yet |
+| Accelerators | NPU (functional) | **ISP** (functional, bit-exact to the stand-alone ISP model); **NPU** (SAURIA v4.7 model, VP aperture): reference bare-metal driver (`drivers/npu/fx1_npu.h`), job format, FreeRTOS `npu` commands, job launcher and fixtures ([npu/README.md](npu/README.md)) |
 | Memory map | V2.0 map | FX1 placeholder map ([MEMORY_MAP.md](MEMORY_MAP.md)), pending the HAS |
 
 What is not modelled in V3.0:
 
-- H.264/H.265: its address and IRQ ID are reserved only; the NPU model is
-  present (MMIO, IRQ, DMA) but the delivered firmware does not drive it yet
-  (MIPI CSI-2 RX is modelled with `--camera`, see
-  [camera/README.md](camera/README.md));
+- H.264/H.265: its address and IRQ ID are reserved only (MIPI CSI-2 RX is
+  modelled with `--camera`, see [camera/README.md](camera/README.md));
 - a host network: the Ethernet MAC is modelled, but its line ends in a
   loopback plug, an echo station or no cable (no TAP, no TCP/IP stack);
 - SPI/QSPI, timers, WDT, PWM, GPIO, RTC, ADC, TRNG, OTP (I2C0 is modelled);
@@ -78,6 +78,24 @@ a bare-metal example (`make eth`, `run_vp.sh eth`). Start with
 [eth/README.md](eth/README.md): API, ownership rules, error handling, options
 and limits.
 
+## NPU
+
+The SAURIA v4.7 NPU model sits at the VP aperture `0x1300_0000` (1 MiB, not the
+silicon address), PLIC source 4, with its DMA through the bus write guard; `fx1_soc
+--no-npu` removes it. The firmware ships the reference bare-metal driver
+(`drivers/npu/fx1_npu.h`: probe, GEMM bank, rich instructions, the neo_lite
+register file, ABORT and recovery, an ownership lock between the harts), a job
+format (`drivers/npu/fx1_npu_job.h`: tensors and operations, the firmware builds
+every instruction), the CLI's `npu` commands and a C oracle (`npu_selftest/`).
+
+A job is loaded by the host and run by `npu run`; `run_vp.sh npu` does it for a
+fixture and compares every output with its golden byte for byte. The fixtures
+are synthetic (no network, weights or images) and their goldens come from the
+firmware's C oracle; `make npu-jobs` regenerates them from the shipped
+generator, where you add your own. Start with [npu/README.md](npu/README.md):
+job format, checks, result block, fixtures, the driver and the limits (not a
+network runtime; operations of VP ABI 1.0 only).
+
 ## Quick start
 
 Run everything from the SDK repository root.
@@ -101,6 +119,11 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp-stream --raw a.raw b.raw --profile 
 # 4. Ethernet: scripted CLI session, and the bare-metal example on each line peer
 sw/bootloader/test/VP_FX1_V3.0/run_vp.sh eth-cli
 make -C sw/bootloader/sources/VP_FX1_V3.0 eth && sw/bootloader/test/VP_FX1_V3.0/run_vp.sh eth
+
+# 5. NPU: self-test against the C oracle, one job fixture, every fixture
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh npu-selftest
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh npu chain      # NPU chain PASS: as declared (OK)
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh npu all        # NPU FIXTURES PASS (9/9, ...)
 ```
 
 `run_vp.sh smoke` passes when hart 1's boot IP check reports 0 failures and
@@ -206,7 +229,8 @@ vp/bin/VP_FX1_V3.0/                 fx1_soc + libsystemc.so.2.3
 vp/doc/VP_FX1_V3.0/                 this README, MEMORY_MAP.md, BUILD_MANIFEST.json, SHA256SUMS, licenses/
 sw/bootloader/sources/VP_FX1_V3.0/  FreeRTOS CLI firmware: app/, bsp/, include/, drivers/, kernel subset, Makefile
 sw/bootloader/build/VP_FX1_V3.0/    make outputs (freertos_cli.elf/.dis/.map); not tracked
-sw/bootloader/test/VP_FX1_V3.0/     run_vp.sh, fx1_console.sh, isp_pack.py, csrw_to_bin.sh, cli_*.txt, isp/<sample>/, profiles/<id>/
+sw/bootloader/test/VP_FX1_V3.0/     run_vp.sh, fx1_console.sh, isp_pack.py, csrw_to_bin.sh, cli_*.txt, isp/<sample>/, profiles/<id>/,
+                                    npu_run.py, npu/<fixture>/
 ```
 
 The firmware sources, their structure and how to add a command are described
@@ -250,6 +274,7 @@ in `sw/bootloader/sources/VP_FX1_V3.0/README.md`.
 | `isp run legacy` | the same job in legacy mode, for comparison |
 | `isp stats` | AEC/AWB/AF statistics of the last frame |
 | `eth probe\|start\|stop\|send\|stats\|status\|recover\|selftest\|…` | the Ethernet MAC through the FX1 manager; full list in [eth/README.md](eth/README.md) |
+| `npu info\|status\|selftest\|run\|wait [MS]\|wait start [MS]\|reset` | the NPU through its owner task: identity and features, state, the C-oracle self-test, the host-loaded job; full list in [npu/README.md](npu/README.md) |
 | `selftest` | hwcheck report + `fpu test` + `dma test` + `isp selftest` |
 | `poweroff` | end the simulation: PASS if no check failed so far, otherwise FAIL `0x400 + failures` |
 
@@ -576,6 +601,10 @@ vp/bin/VP_FX1_V3.0/fx1_soc --version
   - the memory and IRQ map (generated from `fx1_memory_map.h`; `check_package.sh`
     checks it against the shipped header), the modelled and absent blocks, the
     samples and their expected hashes;
+  - the NPU: the model drop's manifest SHA-256 (also in `fx1_soc --version`),
+    VP ABI, features, the model's configuration (the drop's defaults), every
+    fixture with its file hashes, provenance and the outcome of its run at
+    packaging time;
   - the SHA-256 of every binary, including the packaged firmware ELF.
 
 ## Limits
@@ -605,6 +634,23 @@ It was converted to SystemC from RTL, gate-level netlists and analog
 behavioural models; its supplier, owner and original licence are not
 confirmed, and no licence is asserted for it (provenance pending,
 `licenses/THIRD_PARTY.md`).
+
+`fx1_soc` links the SAURIA v4.7 NPU model drop, a SystemC port of the SAURIA
+design (Barcelona Supercomputing Center, Apache-2.0 WITH SHL-2.1:
+`licenses/SAURIA.SHL-2.1.txt`, `licenses/SAURIA.PROVENANCE.md`). The drop's own
+notice is `licenses/SAURIA-V4.7-DROP.THIRD_PARTY_NOTICES.md`, unchanged; its
+"Shipped" column is the drop's own scope. Beside it,
+`licenses/SAURIA-V4.7-DROP.SDK_SCOPE.md` maps every item of it to this delivery:
+
+| Drop notice item | In VP_FX1_V3.0 |
+|---|---|
+| SAURIA design, ported to SystemC | compiled into `fx1_soc` only; no drop source file |
+| YOLOv8m, ViT-B/16 weights, programs, network structure | not delivered |
+| COCO input images (inside the drop's programs) | not delivered |
+| `sample_vit_block.onnx`, frontend tools | not delivered |
+| NPU job fixtures (`test/.../npu/`) | not from the drop: synthetic, C-oracle goldens | Per
+`SAURIA.PROVENANCE.md`, publishing an NPU-enabled binary needs the separate
+approval of the rights owner of the SystemC implementation.
 
 Keep `licenses/` with the tree whenever it is passed on.
 

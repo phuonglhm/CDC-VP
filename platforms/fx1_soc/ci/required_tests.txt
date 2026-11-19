@@ -465,6 +465,8 @@ fx1_unit_npu_driver_poll
 fx1_unit_npu_driver_lock
 # NPU N3: the job format (executor on the clone), the `npu` CLI commands
 fx1_unit_npu_map
+fx1_unit_npu_job_gen_ownership
+fx1_unit_npu_abi_doc_sync
 fx1_unit_npu_job_check
 fx1_unit_npu_job_chain
 fx1_unit_npu_job_gemm

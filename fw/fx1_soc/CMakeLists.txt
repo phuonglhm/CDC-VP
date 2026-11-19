@@ -414,6 +414,20 @@ if(CDC_BUILD_TESTS)
         target_include_directories(fx1_fw_npu_case_gen PRIVATE ${_npu_fw_inc})
         target_compile_options(fx1_fw_npu_case_gen PRIVATE -std=c11 -Wall -Wextra -Werror)
         find_program(FX1_PYTHON3 python3)
+        if(FX1_PYTHON3)
+            # Review N5 R1: the generator replaces only the files it owns.
+            add_test(NAME fx1_unit_npu_job_gen_ownership
+                     COMMAND ${FX1_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_job_gen_ownership.py
+                             $<TARGET_FILE:fx1_fw_npu_job_gen> ${FX1_NPU_JOBS_DIR}
+                             ${CMAKE_CURRENT_BINARY_DIR}/npu_job_gen_ownership)
+            set_tests_properties(fx1_unit_npu_job_gen_ownership PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit;npu")
+            # The SDK's register ABI page (package/docs/NPU_REGISTER_ABI.md) against the component's.
+            add_test(NAME fx1_unit_npu_abi_doc_sync
+                     COMMAND ${FX1_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_abi_doc_sync.py
+                             ${CMAKE_SOURCE_DIR}/components/FX1_Components/npu/README.md
+                             ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/package/docs/NPU_REGISTER_ABI.md)
+            set_tests_properties(fx1_unit_npu_abi_doc_sync PROPERTIES TIMEOUT 30 LABELS "fx1;fx1_unit;npu")
+        endif()
         set(_npu_fw_numpy 1)
         if(FX1_PYTHON3)
             execute_process(COMMAND ${FX1_PYTHON3} -c "import numpy" RESULT_VARIABLE _npu_fw_numpy OUTPUT_QUIET ERROR_QUIET)

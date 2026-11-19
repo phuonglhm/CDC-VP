@@ -70,6 +70,11 @@ void version()
                       ? "SAURIA v4.7 at 0x13000000 (present by default; --no-npu removes it)"
                       : "not built (configure with -DFX1_SOC_ENABLE_NPU=ON)")
               << "\n";
+    if (cdc::platforms::fx1_soc::fx1_soc_top::npu_built()) {
+        const std::uint32_t abi = cdc::platforms::fx1_soc::fx1_soc_top::npu_abi();
+        std::cout << "  NPU model       manifest sha256 " << fx1_soc_build::npu_model_manifest_sha256 << ", VP ABI "
+                  << (abi >> 16) << "." << (abi & 0xFFFFu) << "\n";
+    }
 }
 
 void usage()

@@ -17,10 +17,29 @@
  *   fixture.json   addresses, sizes, outputs (CRC-32), the expected outcome
  * Every valid fixture passes fx1_npu_job_check (the firmware's own code); the
  * negative ones are made from a valid fixture and fail it as declared.
+ *
+ * Ownership of <out> (review N5 R1): it must be new, empty, or one this tool
+ * made (marker file .npu_job_gen). Anything else is refused (exit 2) before a
+ * file is written. In its own directory the tool replaces only what it manages:
+ * <out>/.npu_job_gen and, in <out>/<fixture>/, job.bin, window.bin,
+ * fixture.json and golden_<n>.bin (a stale golden of an earlier run goes).
+ * Every other file, and every other directory (your own fixtures), is kept.
+ * Links (review N5 R3): the tool never writes through a link. A symbolic link,
+ * or anything but a regular file, at the marker or at a managed name of a
+ * fixture directory is refused (exit 2) before a file is written; each file is
+ * created anew (unlink, then O_CREAT | O_EXCL | O_NOFOLLOW), so a hard link's
+ * other names keep their content. <out> itself may be a link to a directory:
+ * the rules then apply to that directory.
  */
+#define _POSIX_C_SOURCE 200809L /* lstat, opendir: a host tool (Linux) */
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "fx1/fx1_memory_map.h"
 #include "fx1_npu_job.h"
@@ -278,26 +297,98 @@ static uint32_t load_bytes(const fixture* f)
     return (end + 3u) & ~3u;
 }
 
+/* A new file at p, never through a link (review N5 R3): a regular file there
+ * is unlinked first (a hard link's other names keep their content), anything
+ * else (a symbolic link, dangling or not) stops the tool. O_EXCL | O_NOFOLLOW
+ * also refuse a link made after that check. */
+static FILE* create_new(const char* p)
+{
+    struct stat st;
+    if (lstat(p, &st) == 0) {
+        if (!S_ISREG(st.st_mode)) {
+            fprintf(stderr, "npu_job_gen: %s: a symbolic link or not a regular file; not written through\n", p);
+            exit(2);
+        }
+        if (unlink(p) != 0) die(p);
+    } else if (errno != ENOENT) {
+        die(p);
+    }
+    const int fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0666);
+    if (fd < 0) die(p);
+    FILE* fp = fdopen(fd, "wb");
+    if (!fp) die(p);
+    return fp;
+}
+
 static void write_file(const char* dir, const char* name, const void* d, size_t n)
 {
     if (strlen(dir) + strlen(name) + 2 > 1024) die("path too long");
     char p[1100];
     snprintf(p, sizeof p, "%.600s/%.400s", dir, name);
-    FILE* fp = fopen(p, "wb");
-    if (!fp || fwrite(d, 1, n, fp) != n || fclose(fp)) die(p);
+    FILE* fp = create_new(p);
+    if (fwrite(d, 1, n, fp) != n || fclose(fp)) die(p);
 }
 
 static const char* const role_names[] = {"?", "INPUT", "CONST", "OUTPUT", "SCRATCH"};
 static const char* const kind_names[] = {"?", "GEMM_BANK", "CONV", "MAX_POOL", "AVG_POOL", "ADD", "NEO_MAX_POOL", "NEO_RESIDUAL"};
+
+#define MARKER ".npu_job_gen"
+
+static void refuse(const char* path, const char* why)
+{
+    fprintf(stderr, "npu_job_gen: %s: %s; nothing written\n", path, why);
+    exit(2);
+}
+
+/* mkdir -p, without a shell. */
+static void make_dirs(const char* path)
+{
+    char p[512];
+    if (strlen(path) >= sizeof p) die("output path too long");
+    strcpy(p, path);
+    for (char* c = p + 1; *c; ++c) {
+        if (*c != '/') continue;
+        *c = 0;
+        if (mkdir(p, 0777) != 0 && errno != EEXIST) die(p);
+        *c = '/';
+    }
+    if (mkdir(p, 0777) != 0 && errno != EEXIST) die(p);
+}
+
+/* A file name this tool writes in a fixture directory. */
+static int managed(const char* n)
+{
+    if (!strcmp(n, "job.bin") || !strcmp(n, "window.bin") || !strcmp(n, "fixture.json")) return 1;
+    const size_t len = strlen(n);
+    if (len <= strlen("golden_.bin") || strncmp(n, "golden_", 7) || strcmp(n + len - 4, ".bin")) return 0;
+    for (size_t i = 7; i < len - 4; ++i)
+        if (n[i] < '0' || n[i] > '9') return 0;
+    return 1;
+}
+
+/* The tool's files of an earlier run in a fixture directory (a stale golden
+ * must not survive); everything else stays. */
+static void clear_managed(const char* dir)
+{
+    DIR* d = opendir(dir);
+    if (!d) return;
+    for (struct dirent* e; (e = readdir(d));) {
+        if (!managed(e->d_name)) continue;
+        char p[1100];
+        snprintf(p, sizeof p, "%.600s/%.400s", dir, e->d_name);
+        struct stat st;
+        if (lstat(p, &st) == 0 && S_ISREG(st.st_mode) && unlink(p) != 0) die(p);
+    }
+    closedir(d);
+}
 
 static void emit(fixture* f, const char* root)
 {
     if (strlen(root) > 400) die("output path too long");
     char dir[512];
     snprintf(dir, sizeof dir, "%.400s/%.40s", root, f->name);
-    char cmd[600];
-    snprintf(cmd, sizeof cmd, "mkdir -p '%.500s'", dir);
-    if (system(cmd) != 0) die("mkdir");
+    make_dirs(dir);
+    clear_managed(dir);
     uint8_t* ref = prepare(f, 1);
     if (f->expect_status == FX1_NPU_JOB_BAD_JOB && f->expect_detail >> 16 == FX1_NPU_JOB_E_TENSOR_BOUNDS) {
         f->t[f->expect_detail & 0xFFFFu].offset = f->h.window_size; /* past the window, the CRC still right */
@@ -317,8 +408,7 @@ static void emit(fixture* f, const char* root)
     const uint32_t wbase = fx1_npu_job_window_base(&f->h);
     char p[600];
     snprintf(p, sizeof p, "%.500s/fixture.json", dir);
-    FILE* j = fopen(p, "w");
-    if (!j) die(p);
+    FILE* j = create_new(p);
     fprintf(j, "{\n  \"name\": \"%s\",\n  \"description\": \"%s\",\n  \"format_version\": %u,\n", f->name, f->desc,
             FX1_NPU_JOB_VERSION);
     fprintf(j, "  \"job_file\": \"job.bin\",\n  \"job_addr\": %u,\n  \"job_bytes\": %u,\n  \"job_crc\": %u,\n",
@@ -546,8 +636,7 @@ static int xcheck(const char* name, const char* dir)
     if (strlen(dir) > 400) die("output path too long");
     char p[512];
     snprintf(p, sizeof p, "%.400s/mmio.txt", dir);
-    FILE* m = fopen(p, "w");
-    if (!m) die(p);
+    FILE* m = create_new(p);
     fprintf(m, "# npu_job_gen --xcheck %s: window base 0 (GEMM-bank ops left out)\n", name);
     unsigned n = 0;
     for (uint32_t k = 0; k < f.h.n_ops; ++k) {
@@ -575,6 +664,61 @@ static int xcheck(const char* name, const char* dir)
     return 0;
 }
 
+/* Every check before the first write: <out> new, empty or marked; the marker
+ * a regular file; every fixture path absent or a directory (not a link), and in
+ * it every managed name a regular file (not a link). */
+static void claim_root(const char* root)
+{
+    if (strlen(root) > 400) die("output path too long");
+    struct stat st;
+    if (stat(root, &st) != 0) {
+        if (errno != ENOENT) refuse(root, strerror(errno));
+    } else {
+        if (!S_ISDIR(st.st_mode)) refuse(root, "exists and is not a directory");
+        DIR* d = opendir(root);
+        if (!d) refuse(root, strerror(errno));
+        int entries = 0, marked = 0;
+        for (struct dirent* e; (e = readdir(d));) {
+            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+            ++entries;
+            if (!strcmp(e->d_name, MARKER)) marked = 1;
+        }
+        closedir(d);
+        if (entries && !marked)
+            refuse(root, "not empty and not made by npu_job_gen (no " MARKER "); choose another directory");
+        char m[512];
+        snprintf(m, sizeof m, "%.400s/" MARKER, root);
+        if (marked && (lstat(m, &st) != 0 || !S_ISREG(st.st_mode)))
+            refuse(m, "a symbolic link or not a regular file; npu_job_gen does not write through links");
+        for (unsigned i = 0; i < NFIX; ++i) {
+            char p[512];
+            snprintf(p, sizeof p, "%.400s/%.40s", root, fixtures[i].name);
+            if (lstat(p, &st) != 0) continue;
+            if (!S_ISDIR(st.st_mode)) refuse(p, "exists and is not a directory (a symbolic link is not followed)");
+            DIR* fx = opendir(p);
+            if (!fx) refuse(p, strerror(errno));
+            for (struct dirent* e; (e = readdir(fx));) {
+                if (!managed(e->d_name)) continue;
+                char q[1100];
+                snprintf(q, sizeof q, "%.500s/%.400s", p, e->d_name);
+                if (lstat(q, &st) != 0 || !S_ISREG(st.st_mode)) {
+                    closedir(fx);
+                    refuse(q, "a symbolic link or not a regular file; npu_job_gen does not write through links");
+                }
+            }
+            closedir(fx);
+        }
+    }
+    make_dirs(root);
+    char m[512];
+    snprintf(m, sizeof m, "%.400s/" MARKER, root);
+    FILE* fp = create_new(m);
+    if (fputs("npu_job_gen output directory. Replaced by each run: this file and, in every fixture\n"
+              "directory it names, job.bin, window.bin, fixture.json, golden_<n>.bin. Nothing else.\n",
+              fp) < 0 || fclose(fp))
+        die(m);
+}
+
 int main(int argc, char** argv)
 {
     if (argc == 2 && !strcmp(argv[1], "--list")) {
@@ -587,6 +731,7 @@ int main(int argc, char** argv)
         return 2;
     }
     static fixture f;
+    claim_root(argv[1]);
     for (unsigned i = 0; i < NFIX; ++i) {
         fixtures[i].fn(&f);
         emit(&f, argv[1]);

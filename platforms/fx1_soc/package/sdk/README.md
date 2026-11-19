@@ -24,7 +24,7 @@ Outputs go to `sw/bootloader/build/VP_FX1_V3.0/`: `freertos_cli.elf`, `.dis`,
 
 | Directory | Content |
 |---|---|
-| `app/` | the application: `main.c` (boot, hart roles), `cli.c` (console, commands), `cmd_isp.c`, `cmd_dma.c`, `cmd_fpu.c`, `cmd_eth.c` (Ethernet owner task and `eth` commands), `hwcheck.c` (hart 1 boot IP check), `rtos_bsp.c` (trap/IRQ glue, UART RX), `probe.S` (fault-tolerant `md`/`mw`), `FreeRTOSConfig.h`, the FP context extension |
+| `app/` | the application: `main.c` (boot, hart roles), `cli.c` (console, commands), `cmd_isp.c`, `cmd_dma.c`, `cmd_fpu.c`, `cmd_eth.c` (Ethernet owner task and `eth` commands), `cmd_npu.c` (NPU owner task and `npu` commands), `hwcheck.c` (hart 1 boot IP check), `rtos_bsp.c` (trap/IRQ glue, UART RX), `probe.S` (fault-tolerant `md`/`mw`), `FreeRTOSConfig.h`, the FP context extension |
 | `bsp/` | bare-metal support: `crt0.S` (both harts), `fx1_fw.c/.h` (MMIO, console, CLINT, PLIC, hart release, locks, traps, sim-control verdict), `fx1.ld.S` (linker script, preprocessed with the map) |
 | `include/fx1/fx1_memory_map.h` | **the** address/IRQ/clock map (VP placeholders pending the HAS) |
 | `include/dma/fx1_dma_regs.h` | SYS_DMA register map |
@@ -35,6 +35,10 @@ Outputs go to `sw/bootloader/build/VP_FX1_V3.0/`: `freertos_cli.elf`, `.dis`,
 | `drivers/isp/fx1_isp_drv.c` | the reference ISP driver (C99, HAL-based, no OS dependency) |
 | `drivers/eth/` | Ethernet: register map `eth_regs.h`, portable driver `eth_drv.[ch]`, FX1 manager `fx1_eth.[ch]` (start here); guide in `vp/doc/VP_FX1_V3.0/eth/README.md` |
 | `eth/` | bare-metal Ethernet example `eth_wiring.c` (`make eth`, then `run_vp.sh eth`) |
+| `include/fx1_npu/fx1_npu_regs.h` | NPU register map (VP ABI 1.0: native, rich, wrapper, VP bank) |
+| `drivers/npu/` | NPU: reference driver `fx1_npu.[ch]` + instruction builders `fx1_npu_build.c` (start here), job format `fx1_npu_job.[ch]` and its executor `fx1_npu_job_run.c`; guide in `vp/doc/VP_FX1_V3.0/npu/README.md` |
+| `npu_selftest/` | the C oracle (`npu_oracle.[ch]`) and the cases behind `npu selftest` |
+| `npu_jobs/npu_job_gen.c` | host tool: the NPU job fixtures with their oracle goldens (`make npu-jobs`; add your own job there) |
 | `isp_selftest/` | the 8-frame synthetic fixture behind `isp selftest`, with its reference CRCs |
 | `demo/isp_demo_job.h` | the host ↔ firmware job contract of `isp run` (job, result block, profile in shared DDR) |
 | `third_party/FreeRTOS-Kernel/` | the subset of FreeRTOS-Kernel V11.2.0 (`0adc196`) this build compiles, MIT |

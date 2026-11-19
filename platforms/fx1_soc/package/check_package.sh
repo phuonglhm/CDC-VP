@@ -62,7 +62,18 @@ required=(
     "${test}/csrw_to_bin.sh" "${test}/demosaic_select.py" "${test}/demosaic_validate.py" "${test}/csrw_codec.py"
     "${test}/isp_stream.py" "${test}/isp_stream_prep.py" "${doc}/ISP_STREAM_CONTRACT.md"
     "${test}/isp_stream/sequence.json" "${test}/isp_stream/SEQUENCE.txt" "${test}/isp_stream/expected_frames.txt" "${test}/isp_stream/profile.sha256"
+    "${sdk}/include/fx1_npu/fx1_npu_regs.h" "${sdk}/drivers/npu/fx1_npu.c" "${sdk}/drivers/npu/fx1_npu.h"
+    "${sdk}/drivers/npu/fx1_npu_build.c" "${sdk}/drivers/npu/fx1_npu_job.c" "${sdk}/drivers/npu/fx1_npu_job.h"
+    "${sdk}/drivers/npu/fx1_npu_job_run.c" "${sdk}/app/cmd_npu.c" "${sdk}/npu_selftest/npu_oracle.c"
+    "${sdk}/npu_selftest/npu_oracle.h" "${sdk}/npu_selftest/npu_cases.c" "${sdk}/npu_selftest/npu_cases.h"
+    "${sdk}/npu_jobs/npu_job_gen.c" "${test}/npu_run.py" "${test}/cli_npu_selftest.txt" "${doc}/npu/README.md" "${doc}/npu/register_abi.md"
+    "${doc}/licenses/SAURIA.SHL-2.1.txt" "${doc}/licenses/SAURIA.PROVENANCE.md"
+    "${doc}/licenses/SAURIA-V4.7-DROP.THIRD_PARTY_NOTICES.md" "${doc}/licenses/SAURIA-V4.7-DROP.SDK_SCOPE.md"
+    "${test}/npu/chain/fixture.json"
 )
+for s in "${test}"/npu/*/; do
+    for f in fixture.json job.bin window.bin FIXTURE.txt; do required+=("${s}${f}"); done
+done
 for s in "${test}"/isp/*/; do
     for f in SAMPLE.txt job.env job.bin input.isp16 expected_nv12.sha256 expected_demosaic.sha256; do
         required+=("${s}${f}")
@@ -80,7 +91,7 @@ for f in "${required[@]}"; do
 done
 [[ -d "${test}/isp/d65" ]] || bad "default ISP sample d65 missing"
 [[ ${missing} -eq 0 ]] && ok "${#required[@]} required files present"
-for f in "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh" "${bin}/fx1_soc"; do
+for f in "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh" "${test}/npu_run.py" "${bin}/fx1_soc"; do
     [[ -x "${f}" ]] || bad "not executable: ${f}"
 done
 
@@ -105,6 +116,14 @@ grep -q "Permission is hereby granted" "${lic}/RISCV-VP-PLUSPLUS.MIT.txt" || bad
 grep -q "Permission is hereby granted" "${lic}/FREERTOS-KERNEL.MIT.txt" || bad "FreeRTOS licence is not the MIT text"
 grep -q "Regents of the University of" "${lic}/BERKELEY-SOFTFLOAT-3d.BSD-3-Clause.txt" \
     || bad "SoftFloat notice lacks its copyright line"
+grep -q "SOLDERPAD HARDWARE LICENSE" "${lic}/SAURIA.SHL-2.1.txt" || bad "SAURIA.SHL-2.1.txt is not the Solderpad licence text"
+grep -q "Jordi Fornt Mas" "${lic}/SAURIA.PROVENANCE.md" || bad "SAURIA.PROVENANCE.md lacks the upstream rights notice"
+grep -q "Not delivered" "${lic}/SAURIA-V4.7-DROP.SDK_SCOPE.md" && grep -q "YOLOv8m" "${lic}/SAURIA-V4.7-DROP.SDK_SCOPE.md" \
+    || bad "SAURIA-V4.7-DROP.SDK_SCOPE.md does not state what of the drop notice is not delivered"
+# The NPU guides are for the SDK: no CDC-VP source tree reference (a relative
+# path such as fw/fx1_soc/... names a file the SDK does not have).
+npu_doc_refs="$(grep -nE 'fw/fx1_soc|components/(FX1_Components|npu_tlm)|platforms/fx1_soc' "${doc}"/npu/*.md || true)"
+[[ -z "${npu_doc_refs}" ]] && ok "NPU guides name SDK paths only" || bad "NPU guides name CDC-VP sources: ${npu_doc_refs}"
 ok "licence texts checked"
 # The D-PHY RX model in the camera build: its record must be there; its
 # provenance is open and reported, not a failure (user decision, CSI-2 M5b).
@@ -115,6 +134,8 @@ else
 fi
 "${bin}/fx1_soc" --version 2>/dev/null | grep -q '^  camera *CSI-2 RX' && ok "fx1_soc contains the camera (--camera)" \
     || bad "fx1_soc --version does not report the camera"
+"${bin}/fx1_soc" --version 2>/dev/null | grep -q '^  NPU model *manifest sha256 [0-9a-f]\{64\}, VP ABI 1\.' \
+    && ok "fx1_soc contains the NPU (model manifest, VP ABI 1.x)" || bad "fx1_soc --version does not report the NPU model"
 
 # ── checksums: every tracked file, nothing from build/ ───────────────────────
 if sha256sum --quiet -c "${doc}/SHA256SUMS" > /dev/null 2>&1; then
@@ -196,6 +217,45 @@ for s in m["isp_samples"]:
         errors.append("sample %s: job profile_count differs from the shared profile" % s["name"])
     if "frames" in s and (not words or s["frames"] != words[11]):
         errors.append("sample %s: job frames differs from the manifest" % s["name"])
+# NPU: the model the binary reports, the fixtures against their fixture.json and
+# the manifest (files, declared outcome, the package-time run), the goldens'
+# CRC-32 against fixture.json.
+import zlib
+n = m.get("npu") or {}
+sha = re.search(r"NPU model +manifest sha256 ([0-9a-f]{64})", ver)
+if not n.get("built") or not sha or n.get("model_manifest_sha256") != sha.group(1):
+    errors.append("manifest npu.model_manifest_sha256 is not what fx1_soc --version reports")
+elif n.get("vp_model_hash") != "0x" + sha.group(1)[:8]:
+    errors.append("manifest npu.vp_model_hash (firmware's VP_MODEL_HASH) is not the manifest SHA-256's first 32 bits")
+if (n.get("model_config") or {}).get("env") != "none":
+    errors.append("manifest npu.model_config: the package-time runs did not use the drop's defaults (env=none)")
+fxroot = os.path.join(root, "sw/bootloader/test/VP_FX1_V3.0/npu")
+shipped = sorted(os.listdir(fxroot)) if os.path.isdir(fxroot) else []
+listed = {f["name"]: f for f in n.get("fixtures", [])}
+if shipped != sorted(listed) or "chain" not in listed:
+    errors.append("NPU fixtures shipped %s, in the manifest %s" % (shipped, sorted(listed)))
+for name in shipped:
+    d, f = os.path.join(fxroot, name), listed.get(name, {})
+    try:
+        spec = json.load(open(os.path.join(d, "fixture.json")))
+        files = {x: hashlib.sha256(open(os.path.join(d, x), "rb").read()).hexdigest()
+                 for x in sorted(os.listdir(d)) if x.endswith((".bin", ".json"))}
+        if files != f.get("files_sha256"):
+            errors.append("NPU fixture %s: files differ from the manifest" % name)
+        if spec["name"] != name or spec["expect"]["status"] != f.get("expected"):
+            errors.append("NPU fixture %s: name or declared outcome differs from the manifest" % name)
+        if os.path.getsize(os.path.join(d, spec["job_file"])) != spec["job_bytes"] or \
+                os.path.getsize(os.path.join(d, spec["window_file"])) != spec["load_bytes"]:
+            errors.append("NPU fixture %s: job.bin / window.bin size differs from fixture.json" % name)
+        for t in spec["tensors"]:
+            if t["role"] == "OUTPUT" and t["golden"]:
+                g = open(os.path.join(d, t["golden"]), "rb").read()
+                if len(g) != t["bytes"] or zlib.crc32(g) != t["crc32"]:
+                    errors.append("NPU fixture %s: %s differs from its size or CRC-32" % (name, t["golden"]))
+        if (f.get("package_run") or {}).get("outcome") != "PASS":
+            errors.append("NPU fixture %s: the package-time run did not pass" % name)
+    except (OSError, ValueError, KeyError) as e:
+        errors.append("NPU fixture %s unreadable: %s" % (name, e))
 # The map and the device lists against the shipped fx1_memory_map.h: every block
 # decoded there is in regions (or reserved_regions), with its base, and a
 # modelled block is described as modelled, not absent.
@@ -222,9 +282,10 @@ for region, word in (("UART", "uart"), ("SYS_DMA_CSR", "sys_dma"), ("I2C0", "i2c
 for e in errors:
     print("  FAIL " + e)
 if not errors:
-    print("  ok   manifest: %d artefacts, revision %s (%s), %d sample(s), map = fx1_memory_map.h"
+    print("  ok   manifest: %d artefacts, revision %s (%s), %d sample(s), %d NPU fixture(s) (model %s), map = fx1_memory_map.h"
           % (len(m["artefacts"]), m["source"]["package_revision"][:12],
-             "dirty" if m["source"]["dirty_at_package_time"] else "clean", len(m["isp_samples"])))
+             "dirty" if m["source"]["dirty_at_package_time"] else "clean", len(m["isp_samples"]), len(shipped),
+             n["vp_model_hash"]))
 sys.exit(1 if errors else 0)
 EOF
 

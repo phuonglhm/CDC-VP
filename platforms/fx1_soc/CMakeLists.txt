@@ -39,6 +39,13 @@ if(CMAKE_BUILD_TYPE)
 else()
     set(FX1_SOC_BUILD_TYPE "none (developer build, not for packaging)")
 endif()
+# The NPU model drop the binary carries: SHA-256 of its package_manifest.txt
+# (components/FX1_Components/npu), empty when the NPU is not built.
+if(FX1_SOC_ENABLE_NPU AND FX1_NPU_MODEL_MANIFEST_SHA256)
+    set(FX1_SOC_NPU_MODEL_SHA256 "${FX1_NPU_MODEL_MANIFEST_SHA256}")
+else()
+    set(FX1_SOC_NPU_MODEL_SHA256 "")
+endif()
 configure_file(cmake/build_info.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/fx1_soc_build_info.h @ONLY)
 
 target_include_directories(fx1_soc PRIVATE src ${CMAKE_CURRENT_BINARY_DIR}/generated)

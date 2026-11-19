@@ -18,5 +18,7 @@ inline constexpr const char* build_type = "@FX1_SOC_BUILD_TYPE@";
 inline constexpr const char* cxx_compiler = "@CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@";
 inline constexpr const char* vpp_revision = "@RISCV_VP_PLUSPLUS_REVISION@";
 inline constexpr const char* firmware_abi = "rv32imafc_zicsr_zifencei / ilp32f";
+// SHA-256 of the NPU model drop's package_manifest.txt (VP_MODEL_HASH = its first 32 bits); "" without NPU.
+inline constexpr const char* npu_model_manifest_sha256 = "@FX1_SOC_NPU_MODEL_SHA256@";
 
 } // namespace fx1_soc_build

@@ -1,0 +1,316 @@
+# FX1 NPU (SAURIA v4.7): register ABI of the VP
+
+The register-level contract of the NPU in `vp/bin/VP_FX1_V3.0/fx1_soc`: what
+the firmware sees at `FX1_NPU_VP_BASE`, register by register, and how the model
+behind it accepts, runs, refuses and aborts work. The C header of this page is
+`sw/bootloader/sources/VP_FX1_V3.0/include/fx1_npu/fx1_npu_regs.h` (VP ABI 1.x).
+For running jobs and the driver's rules, start with [README.md](README.md).
+
+Provenance only (none of it is delivered as source): the model is the SAURIA
+v4.7 SystemC drop, compiled into `fx1_soc` through an FX1 integration layer;
+the names of the drop's own files and classes below say which part of the model
+does what. `VP_MODEL_HASH` carries the first 32 bits of the SHA-256 of the
+drop's `package_manifest.txt` (also printed by `fx1_soc --version`). The
+offsets of the native, GEMM-bank and rich registers are those of the drop's
+wrapper ABI; this page lists what FX1 adds and changes.
+
+## Platform wiring
+
+| Item | FX1 value |
+|---|---|
+| Aperture | `FX1_NPU_VP_BASE` = 0x1300_0000, 1 MiB, a leaf of its own on SYSBUS_1: a push that waits for a queue slot holds only the NPU port, not the SYSBUS_0 link to CLINT, PLIC and UART. A VP integration choice, not the silicon address or topology. `FX1_NPU_CSR_BASE` (0x1101_0000) stays reserved |
+| DMA | master `NPU_DMA` through `fx1::WriteGuard` (exclusive-monitor master 0x104), so NPU writes cancel LR reservations like every other DMA |
+| IRQ | level, PLIC source `FX1_IRQ_NPU` = 4 |
+| RAM | `FX1_DDR_BASE` + `FX1_DDR_SIZE` (512 MiB); every buffer and RICH window must lie inside |
+| Clock | 1.25 ns (800 MHz), gated: no edge while an engine has nothing to do |
+| Presence | built with `-DFX1_SOC_ENABLE_NPU=ON` (default); `fx1_soc --no-npu` removes it (aperture DECERR, source 4 low) |
+
+## Engines and routing
+
+The FX1 integration instantiates two engines of the drop directly:
+
+- the native top level (`npu_top.h`): native configuration registers, SRAM
+  windows, OBP/RCE tables, the native start, and the 32x32 GEMM bank;
+- `has::HasNpuTop` (`has/has_npu_top.h`): **every** lane-A rich push and the
+  neo_lite register-file doorbell.
+
+The drop's `core_rtl/npu_top.h` is not used. That file sends a rich push
+without extension registers to the native functional decoder; in FX1 such a
+push runs on HasNpuTop, as the drop's own testbench and reference assume.
+HasNpuTop reads its configuration from the environment
+(`SAURIA_CORE_RTL_PROFILE`, `HAS_*`, `SAURIA_CORE_RTL_*`). The `fx1_soc`
+banner (`[fx1_soc] npu: ...`) lists the profile and every such variable seen
+at start; `env=none` means the drop's defaults. Every `run_vp.sh npu*` mode
+removes these variables, and the delivered fixtures and goldens assume them
+absent.
+
+## Rich instructions
+
+### Acceptance
+
+The rich registers (aperture +0x1_0300..+0x1_0503, model 0x4000_0300..) are
+shadowed by the FX1 integration. A push to `RICH_PUSH_A` (+0x1_0310) is accepted or
+refused at once:
+
+1. The window is checked: `RICH_WINDOW_SIZE` must be 1..`VP_WINDOW_MAX`
+   (32 MiB), and the whole window must lie in RAM.
+2. Every address register is rebased against the window:
+   - parameters IN, W, OUT, BIAS, SKIP, Q/GAMMA/A, K/B and V/BETA;
+   - extensions SCALE, SHIFT, LUT, PARAM and MASK;
+   - neo words 18, 19, 20 and 34..37.
+
+   An address inside the window becomes its offset there. Null and outside
+   addresses become an invalid offset.
+3. The instruction is decoded by a copy of the model's own decoder
+   (`has::MmioCompat`, `has::NeoPort`), which applies the same refusal rules
+   and builds the same geometry as the model.
+4. The regions the instruction reads and writes come from that decode. They
+   follow the rules of the drop's `core_rtl` bounds check, plus GEMM without
+   extension registers (M positions x K -> N). Each region must end inside the
+   window. A used pointer that was null or outside the window is refused.
+5. Only GEMM_FUSED (0x12) and ELEM_WISE (0x15) ADD (mode 0), MAX_POOL (mode 1)
+   and AVG_POOL (mode 5) are accepted, plus the neo doorbell (0x17) when
+   `HAS_HOST=neo`, which is the model default. The following are refused as
+   unsupported (`VP_FEATURE` bits clear): SET_NSPLIT (0x05), FUSED_ATTN (0x13),
+   LAYERNORM (0x14), DMA_TENSOR (0x16), the other element-wise modes, and
+   unknown opcodes. **This is a limit of the FX1 wrapper, not of the v4.7
+   model**: the wrapper cannot bounds-check those parameter blocks yet. The
+   firmware reads `VP_FEATURE` and uses only what it advertises.
+
+A refused push is never queued. It returns TLM OK (no store fault), and the
+refusal is latched in all of these. A store that did not fault therefore does
+not mean the push was queued: the driver checks `VP_ACCEPTED` (or the error
+registers below) after its pushes. A push timeout (below) is the one case that
+faults.
+
+- `RICH_STATUS` ERROR, with the code in bits 31..16: the model's codes 1..11,
+  or the VP codes 0x100 BAD_ADDR, 0x101 UNSUPPORTED, 0x102 BUSY, 0x103 MODEL,
+  0x104 DMA and 0x105 ABORTED;
+- `VP_ERROR`;
+- the bank's STATUS ERROR, LAST_ERROR and IRQ_STATUS ERROR.
+
+`RETIRED` does not change. As in the model, any lane-A push (accepted or not)
+clears the one-shot extension bank. The doorbell does not.
+
+### Queue and execution
+
+- An accepted push is a snapshot of every register, the extension "written"
+  flags and the window. Later register writes do not change it. The queue
+  holds `VP_QUEUE_DEPTH` = 16 entries (the MAS instruction queue).
+- Entries run one at a time, in order:
+  1. the regions are staged from DDR into a private image whose offset 0 is
+     the window base;
+  2. the registers are replayed into HasNpuTop;
+  3. the wrapper waits until the model retires the instruction;
+  4. the output regions are copied back to DDR.
+- An entry is staged only after the previous one is copied back, so an output
+  becomes the next instruction's input exactly as in DDR.
+- DMA is split into transactions of at most 4 KiB, aligned to 4 KiB, so the
+  DDR port is never held for a whole tensor.
+- `VP_QUEUE_FREE` = 16 − entries accepted and not started. A credit returns
+  when its entry starts staging. **Single producer**: the owner task checks
+  `VP_QUEUE_FREE` and pushes under one lock. Hart 1 never pushes.
+- A push into a full queue waits for a slot for at most `VP_PUSH_WAIT_NS` of
+  simulated time (reset value 100 µs; 0 means no wait). The wait does not
+  depend on anything the CPU does. When the limit expires, the push returns
+  `TLM_GENERIC_ERROR_RESPONSE` (store access fault on the CPU), latches
+  `VP_ERROR.PUSH_TIMEOUT` and the Q_OVF code (1), and is **never** enqueued
+  later. While a push waits it holds the NPU port of SYSBUS_1 and the
+  pushing hart: the other hart keeps reaching DDR, CLINT, PLIC and UART, but
+  an ABORT or any other NPU access reaches the NPU only after the push
+  returns. Keep the limit short and check `VP_QUEUE_FREE`; the timeout is a
+  recovery path, not flow control. This bounded wait is VP-only and not a
+  MAS or silicon behaviour.
+- Completion: when the queue drains, STATUS gets DONE and IRQ_STATUS DONE,
+  unless an error was latched in the batch. A refused push while the batch
+  runs counts as such an error: that batch ends without DONE (and without a
+  DONE interrupt). `RETIRED` counts entries whose copy-back finished; an entry
+  that fails, is refused by the model or is aborted never retires. DONE alone
+  is not success: the reference driver decides by the `RETIRED` delta of the
+  instructions it had accepted.
+- The error latches (STATUS.ERROR, IRQ_STATUS, LAST_ERROR, RICH_STATUS.ERROR
+  and code, VP_ERROR and info) are shared by the GEMM bank, the queue and the
+  refusals. `VP_ERROR` bits accumulate; `LAST_ERROR`, the RICH_STATUS code and
+  `VP_ERROR_INFO` hold the latest error. Clearing them while work is in flight
+  can drop the completion or the error of that work: clear them only when
+  nothing is outstanding and every engine is idle.
+- Copy-back writes only the output regions of the decoded instruction, not the
+  whole window: bytes of the window that are not an output of the instruction
+  are never written. The firmware keeps ownership of every input and output
+  region of a job until its completion, or until `QUIESCENT` after an ABORT.
+- The private image grows to the largest window seen (window + 512 KiB of
+  model staging) and is reused. Its size follows the window, not the
+  address.
+
+### Rich status registers
+
+| Offset | Register | Meaning |
+|---|---|---|
+| +0x1_0318 | `RICH_STATUS` | BUSY[0] (queued, staging, running or copying back), QUEUE_FULL[1], ERROR[2] sticky, queued[15:8], code[31:16]; any write clears ERROR and the code |
+| +0x1_031C | `RETIRED` | entries completed (copy-back done) since reset |
+| +0x1_0800.. | neo window | CONTROL (START, DONE), IEN, ISTATUS, 82 words: shadowed; DONE/ISTATUS follow the doorbells the wrapper completed |
+
+Parameter and extension registers read as 0. `RICH_PUSH_B` is refused with
+LANE_B and the legacy 64-bit interface with LEGACY64, as in the model.
+
+## VP bank (wrapper window, aperture +0x3_1800)
+
+Local offsets are relative to the wrapper base +0x3_0000, so `VP_ID` is at
+aperture offset 0x3_1800. These registers are FX1 VP only: they are not in
+SAURIA, the MAS or the HAS.
+
+| Local | Register | Access | Reset | Meaning |
+|---|---|---|---|---|
+| 0x1800 | `VP_ID` | RO | 0x4658_4E50 | "FXNP" |
+| 0x1804 | `VP_ABI` | RO | 0x0001_0000 | ABI 1.0 (major << 16 \| minor) |
+| 0x1808 | `VP_MODEL_HASH` | RO | build | first 32 bits of the drop manifest SHA-256 |
+| 0x180C | `VP_FEATURE` | RO | 0x77 with `HAS_HOST=neo` | bit 0 GEMM bank, 1 rich on HasNpuTop, 2 neo window, 3 DMA_TENSOR (0), 4 ABORT, 5 bounded push, 6 queue, 7 ATTN/LAYERNORM (0) |
+| 0x1810 | `VP_QUEUE_DEPTH` | RO | 16 | |
+| 0x1814 | `VP_QUEUE_FREE` | RO | 16 | free credits |
+| 0x1818 | `VP_CMD` | WO, reads 0 | — | bit 0 ABORT, bit 1 CLEAR_ERROR (`VP_ERROR` and `VP_ERROR_INFO`) |
+| 0x181C | `VP_STATUS` | RO | 0x1 | QUIESCENT[0], ENGINE_BUSY[1], ABORT_ACTIVE[2], COPYBACK_ACTIVE[3], NATIVE_BUSY[4], queued[15:8] |
+| 0x1820 | `VP_ERROR` | RO / W1C | 0 | PUSH_TIMEOUT[0], BAD_ADDR[1], ABORTED[2], DMA[3], REFUSED[4], UNSUPPORTED[5], MODEL[6], BUSY[7] |
+| 0x1824 | `VP_ERROR_INFO` | RO | 0 | detail of the last error: the opcode, the region offset, the entry sequence, the entries dropped by ABORT, or the bytes an aborted copy-back had written |
+| 0x1828 | `VP_PUSH_WAIT_NS` | RW | 100000 | bounded push wait, ns of simulated time |
+| 0x182C | `VP_ACCEPTED` | RO | 0 | pushes accepted since reset (low 32 bits) |
+| 0x1830 | `VP_ABORT_DROPPED` | RO | 0 | queued entries dropped by ABORT |
+| 0x1834 | `VP_WINDOW_MAX` | RO | 0x0200_0000 | largest RICH window |
+
+Writes to read-only registers return a command error (store access fault).
+Every register returns to its reset value on platform reset and on
+`CTRL.SOFT_RESET`. A soft reset is refused while rich work is queued or
+running; use ABORT first.
+
+### ABORT and QUIESCENT
+
+ABORT (`VP_CMD` bit 0) does the following:
+
+- drops every queued entry (`VP_ABORT_DROPPED`);
+- marks the entry in progress as aborted. If it is being staged, staging
+  stops at the next 4 KiB transaction and the model never sees it. If it is
+  running, it runs to completion on the private image, because the model
+  cannot stop an instruction, and it is not copied back. If it is being copied
+  back, the copy-back stops at the next transaction boundary, and
+  `VP_ERROR_INFO` gives the bytes already written.
+- stops a GEMM-bank job between its steps;
+- stops a raw native run (a START written at native offset 0): the native
+  core gets a soft reset, then STATUS gets ERROR, LAST_ERROR RESET_ABORTED and
+  IRQ_STATUS ERROR, and `NATIVE_BUSY` clears. An ABORT that reaches the NPU
+  while `NATIVE_BUSY` = 1 wins over a completion or a core timeout the wrapper
+  has not reported yet. After this soft reset the core's native configuration
+  must be programmed again before the next raw START (a raw START without that
+  ends in CORE_DEADLOCK); a GEMM-bank job programs it itself.
+
+`QUIESCENT` = 1 means no NPU DMA is in flight and none will be issued for
+the aborted work. From then on the firmware may reuse every buffer of those
+jobs; the model never touches DDR directly. **`QUIESCENT` is buffer safety
+only, not recovery**: `ENGINE_BUSY` may stay 1 while the model finishes an
+aborted instruction (hundreds of microseconds for a large one). The driver
+waits for `ENGINE_BUSY` = 0 and `NATIVE_BUSY` = 0 with a timeout of its own;
+if they do not clear, it marks the engine unavailable and reports an error
+instead of queueing new work. New pushes are accepted meanwhile and start
+once the model has finished. When the aborted work stops, STATUS gets ERROR
+with LAST_ERROR = RESET_ABORTED (12), and IRQ_STATUS ERROR.
+
+### Platform reset
+
+A platform reset (or `CTRL.SOFT_RESET`) returns every register to its reset
+value and starts a new epoch. An NPU DMA transaction issued before the reset
+still completes (it is drained, not recalled), and `QUIESCENT` stays 0 until
+it has. Nothing of the old work is published in the new epoch: no `RETIRED`
+increment, no neo CONTROL.DONE / ISTATUS, no error, error info, STATUS or IRQ
+change, no further copy-back transaction, and an entry whose staging was cut
+by the reset is never dispatched to the model.
+
+### Host watchdog
+
+A host thread watches simulated time while an engine has work. If simulated
+time does not advance for `fx1_soc --npu-host-watchdog-s N` seconds of wall
+time (default 600, 0 = off), the process exits with status 7 and a
+diagnostic. This catches a model step that never yields;
+a simulated-time limit cannot catch that.
+
+## GEMM bank, native interface, counters
+
+These follow the drop's wrapper ABI, unchanged by FX1:
+
+- the 32x32 GEMM bank (+0x3_0000);
+- native configuration and SRAM windows;
+- the OBP/RCE aliases;
+- the raw counters at +0x1200 and +0x3_1200.
+
+The rules are:
+
+- The bank's buffers must lie in RAM (512 MiB in FX1).
+- A native start, or `CTRL.START`, while rich work is queued or running is
+  refused with a command error (store access fault) and LAST_ERROR BUSY.
+- A rich push while a GEMM-bank job or native run is active is refused with
+  VP code BUSY.
+
+Counters cover the current batch. They reset at a native start, at
+`CTRL.START`, and at the first push into an idle rich side. HasNpuTop
+counters are added per retired instruction, as in `core_rtl`.
+
+Debug transport (`transport_dbg`) reads the wrapper bank and the rich
+status/shadow registers only. It never waits and never changes state. Other
+regions and every debug write return 0 bytes.
+
+## Firmware register ABI and driver
+
+`sources/include/fx1_npu/fx1_npu_regs.h` is the C99 register header of this
+page (register ABI 1.x: offsets and bits are frozen; a change of behaviour
+behind them is managed as an ABI change too). Every value in it was checked at
+compile time against the model's own register map before delivery.
+
+The reference bare-metal driver is `sources/drivers/npu/fx1_npu.h`
+(`sources` = `sw/bootloader/sources/VP_FX1_V3.0`). It:
+
+- checks `VP_ID`, the ABI major and the features it needs first;
+- uses `VP_QUEUE_FREE` before every push, never the bounded push wait;
+- reads back every refusal;
+- recovers with ABORT followed by `QUIESCENT` and `ENGINE_BUSY` =
+  `NATIVE_BUSY` = 0 under its own timeout, or reports the device unavailable.
+
+Raw native START is not part of the driver. After an ABORT the native
+configuration counts as lost until a GEMM-bank job programs it again.
+
+The driver consumes each completion once:
+
+- it clears the shared error latches only when the NPU is quiet (nothing
+  outstanding, every engine idle);
+- it refuses rich and configuration calls while a GEMM-bank job is
+  outstanding;
+- it decides a rich batch by `RETIRED` and a GEMM-bank job by STATUS.DONE;
+- it opens (`fx1_npu_init`) only an idle NPU.
+
+On top of the driver, the job format `sources/drivers/npu/fx1_npu_job.h`
+(structured operations on tensors of one window; the firmware builds every
+instruction itself) and the FreeRTOS `npu` commands run host-loaded jobs:
+[README.md](README.md).
+
+Between the harts, the owner is the holder of a lock word
+(`FX1_NPU_LOCK_BASE`, `fx1_npu_claim` / `fx1_npu_init_shared` /
+`fx1_npu_release`). `fx1_soc --npu-unguarded-dma` removes the NPU's write
+guard; it exists only as a negative control for atomics tests.
+
+## Access classes
+
+Aligned 32-bit accesses only. Byte enables, other lengths, misaligned
+addresses, offsets beyond 1 MiB and unmapped offsets are TLM errors, which the
+CPU port turns into access faults.
+
+## Limits
+
+- The model has no way to stop an instruction. An instruction that never
+  retires keeps `ENGINE_BUSY` set forever, although ABORT still makes the side
+  quiescent. Only a model fix helps.
+- When the process exits, the model prints `[gvu-top]` / `[gvu-stream]`
+  statistics to stdout from `atexit` handlers of its own. They appear after
+  the platform's `RESULT` line, and the drop has no switch to turn them off;
+  a script must take the verdict from the exit status or the `RESULT` line,
+  not from the last line of output.
+- DMA_TENSOR, FUSED_ATTN and LAYERNORM are outside this ABI: their parameter
+  blocks are not bounds-checked yet.
+- Neo doorbells are bounds-checked from the model's decode of the register
+  file. Through the doorbell, the strict neo host accepts RESIDUAL and
+  MAX_POOL and refuses GEMM_FUSED.

@@ -15,7 +15,7 @@ bits of the SHA-256 of its `package_manifest.txt`.
 
 | Item | FX1 value |
 |---|---|
-| Aperture | `FX1_NPU_VP_BASE` = 0x1300_0000, 1 MiB, a leaf of its own on SYSBUS_1 (review N1): a push that waits for a queue slot holds only the NPU port, not the SYSBUS_0 link to CLINT, PLIC and UART. A VP integration choice, not the silicon address or topology. `FX1_NPU_CSR_BASE` (0x1101_0000) stays reserved |
+| Aperture | `FX1_NPU_VP_BASE` = 0x1300_0000, 1 MiB, a leaf of its own on SYSBUS_1: a push that waits for a queue slot holds only the NPU port, not the SYSBUS_0 link to CLINT, PLIC and UART. A VP integration choice, not the silicon address or topology. `FX1_NPU_CSR_BASE` (0x1101_0000) stays reserved |
 | DMA | master `NPU_DMA` through `fx1::WriteGuard` (exclusive-monitor master 0x104), so NPU writes cancel LR reservations like every other DMA |
 | IRQ | level, PLIC source `FX1_IRQ_NPU` = 4 |
 | RAM | `FX1_DDR_BASE` + `FX1_DDR_SIZE` (512 MiB); every buffer and RICH window must lie inside |
@@ -139,13 +139,13 @@ clears the one-shot extension bank. The doorbell does not.
   model staging) and is reused. Its size follows the window, not the
   address.
 
-### Rich status registers (clone)
+### Rich status registers
 
 | Offset | Register | Meaning |
 |---|---|---|
 | +0x1_0318 | `RICH_STATUS` | BUSY[0] (queued, staging, running or copying back), QUEUE_FULL[1], ERROR[2] sticky, queued[15:8], code[31:16]; any write clears ERROR and the code |
 | +0x1_031C | `RETIRED` | entries completed (copy-back done) since reset |
-| +0x1_0800.. | neo window | CONTROL (START, DONE), IEN, ISTATUS, 82 words: shadowed; DONE/ISTATUS follow the doorbells the clone completed |
+| +0x1_0800.. | neo window | CONTROL (START, DONE), IEN, ISTATUS, 82 words: shadowed; DONE/ISTATUS follow the doorbells the wrapper completed |
 
 Parameter and extension registers read as 0. `RICH_PUSH_B` is refused with
 LANE_B and the legacy 64-bit interface with LEGACY64, as in the model.

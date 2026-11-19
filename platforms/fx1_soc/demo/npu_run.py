@@ -53,8 +53,9 @@ REASONS = ["none", "magic", "version", "size", "crc", "abi", "arena", "window", 
            "reserved", "tensor role", "tensor type", "tensor shape", "tensor align", "tensor bounds",
            "tensor overlap", "tensor crc", "op kind", "op tensor", "op role", "op shape", "op param", "op order",
            "op build", "unwritten"]
+# fx1_npu_status_t (fw/fx1_soc/drivers/fx1_npu.h), in enum order.
 DRIVER = ["OK", "ABSENT", "ABI", "FEATURE", "ARG", "TIMEOUT", "REFUSED", "JOB", "UNAVAILABLE", "NOT_IDLE",
-          "PENDING"]
+          "PENDING", "BUSY", "NOT_OWNER"]
 # fx1_npu_job_result, 64 little-endian words (fw/fx1_soc/drivers/fx1_npu_job.h).
 RESULT_FIELDS = (["magic", "version", "status", "detail", "op_index", "driver_status"] +
                  ["err_status", "err_last_error", "err_irq_status", "err_rich_status", "err_vp_error",
@@ -94,9 +95,21 @@ def inside(child, parent):
         return False
 
 
+def create_new(path, mode="w"):
+    """A new file at path, never written through a link (review N5 R3): a regular
+    file there is removed first (a hard link's other names keep their content);
+    O_EXCL | O_NOFOLLOW refuse anything at path after that."""
+    if os.path.lexists(path):
+        if os.path.islink(path) or not os.path.isfile(path):
+            raise OSError("%s is a symbolic link or not a regular file; not written through" % path)
+        os.remove(path)
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666), mode)
+
+
 def prepare_out(out, protected):
     """Refuses an output directory that is, holds or lies in an input; claims a
-    new or empty one; in one made earlier removes only the launcher's files.
+    new or empty one; in one made earlier removes only the launcher's files (a
+    link there: the link, never its target). A marker that is a link is refused.
     Returns an error text, or None."""
     real = os.path.realpath(out)
     for p in protected:
@@ -108,6 +121,9 @@ def prepare_out(out, protected):
         entries = os.listdir(real)
         if entries and MARKER not in entries and not all(managed(e) for e in entries):
             return "output directory %s is not empty and was not made by npu_run (no %s); choose another" % (out, MARKER)
+        marker = os.path.join(real, MARKER)
+        if os.path.lexists(marker) and (os.path.islink(marker) or not os.path.isfile(marker)):
+            return "%s is a symbolic link or not a regular file; npu_run does not write through links" % marker
         for e in entries:
             if managed(e):
                 path = os.path.join(real, e)
@@ -115,7 +131,7 @@ def prepare_out(out, protected):
                     os.remove(path)  # a stale result never passes for this run's
     else:
         os.makedirs(real)
-    with open(os.path.join(real, MARKER), "w") as f:
+    with create_new(os.path.join(real, MARKER)) as f:
         f.write("npu_run output directory\n")
     return None
 
@@ -192,7 +208,7 @@ def main():
     # ended (the job's own deadline and the firmware's CRCs bound it), so
     # poweroff never comes before the job's outcome is known.
     script = os.path.join(out, "cli.txt")
-    with open(script, "w") as f:
+    with create_new(script) as f:
         f.write("npu info\nnpu run\nnpu wait\nnpu status\npoweroff\n")
     # Simulated time: boot, console input, the firmware's checks (hart-side CRCs), the job.
     limit = a.timeout_ms or 4000 + 2 * job_ms
@@ -218,7 +234,7 @@ def main():
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     wall = time.monotonic() - t0
     log = p.stdout.decode("utf-8", "replace")
-    with open(os.path.join(out, "platform.log"), "w") as f:
+    with create_new(os.path.join(out, "platform.log")) as f:
         f.write(log)
 
     s = {"fixture": name, "description": spec.get("description", ""), "fixture_dir": fx,
@@ -284,7 +300,7 @@ def main():
 def finish(out, s, rc):
     s["exit_code"] = rc
     tmp = os.path.join(out, "summary.json.tmp")
-    with open(tmp, "w") as f:
+    with create_new(tmp) as f:
         json.dump(s, f, indent=2, allow_nan=False)
         f.write("\n")
     os.replace(tmp, os.path.join(out, "summary.json"))
@@ -310,7 +326,7 @@ def finish(out, s, rc):
                   (", removed from the environment: " + " ".join(s["env_removed"])) if s["env_removed"] else ""))
     lines.append("  files: %s" % out)
     text = "\n".join(lines) + "\n"
-    with open(os.path.join(out, "summary.txt"), "w") as f:
+    with create_new(os.path.join(out, "summary.txt")) as f:
         f.write(text)
     sys.stdout.write(text)
     return rc

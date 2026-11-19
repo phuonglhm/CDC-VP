@@ -45,6 +45,20 @@ Usage:
   ./run_vp.sh isp-stream-encode --out DIR [--fps F] [--crf N] [--min-psnr DB] [--debug-prefix]
                                        # encode a run's kept spool again (no VP run); --debug-prefix:
                                        # a failed run's checked prefix -> DIR/debug_prefix.mp4 (debug only)
+  ./run_vp.sh npu-selftest             # FreeRTOS CLI: npu info, npu selftest (GEMM bank, rich chain, DFC
+                                       # against the C oracle), npu status; exit status = verdict
+  ./run_vp.sh npu list                 # the shipped NPU job fixtures (npu/<name>/FIXTURE.txt)
+  ./run_vp.sh npu [FIXTURE|DIR] [--out DIR]
+                                       # one job (default chain) through `npu run`: loaded, checked by the
+                                       # firmware, run, every output compared with its golden byte for byte
+                                       # (npu_run.py); DIR/summary.txt; exit 0 = the fixture's declared outcome
+  ./run_vp.sh npu all [--out DIR]      # every shipped fixture (negative ones must give their declared error)
+  ./run_vp.sh npu FIXTURE --print-command
+                                       # the fx1_soc command line only (clean environment): nothing runs,
+                                       # no verdict; `npu all --print-command` is refused (exit 2)
+  ./run_vp.sh npu [FIXTURE|DIR] interactive [port]
+                                       # the job loaded, console over TCP (./fx1_console.sh [port]):
+                                       # npu info / run / status / wait / reset, poweroff
   ./run_vp.sh version                  # VP build identity
   ./run_vp.sh ddr3                     # DDR3 firmware-init examples (BootROM/SRAM, --ddr-boot firmware)
   ./run_vp.sh camera [NAME...]         # camera examples (fx1_soc --camera; minutes each: detailed D-PHY)
@@ -59,6 +73,8 @@ Build the firmware first: make -C sw/bootloader/sources/VP_FX1_V3.0
 DDR3 examples: make -C sw/bootloader/sources/VP_FX1_V3.0 ddr3 (see ddr3/README.md there)
 Camera examples: make -C sw/bootloader/sources/VP_FX1_V3.0 camera (see vp/doc/VP_FX1_V3.0/camera/README.md)
 Ethernet example: make -C sw/bootloader/sources/VP_FX1_V3.0 eth (see vp/doc/VP_FX1_V3.0/eth/README.md)
+NPU: vp/doc/VP_FX1_V3.0/npu/README.md (driver, job format, fixtures, limits). The NPU modes remove the
+model's configuration knobs (HAS_*, SAURIA_*, NPU_*, ...) from the environment: the drop's defaults.
 EOF
 }
 
@@ -74,6 +90,20 @@ listening() {
     hex="$(printf '%04X' "$1")"
     awk -v p=":${hex}" 'NR > 1 && $4 == "0A" && substr($2, length($2) - 4) == p { found = 1 } END { exit !found }' \
         /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+# The NPU model drop reads configuration knobs from the environment; the NPU
+# modes run it with the drop's defaults (npu_run.py does the same and requires
+# the banner's env=none). npu_unset: `env` arguments that remove them.
+npu_unset=()
+npu_scrub() {
+    local v removed=()
+    for v in $(compgen -e); do
+        case "${v}" in
+            HAS_*|SAURIA_*|NPU_*|OBP_*|GVU_*|FE_*|S1_*) npu_unset+=(-u "${v}"); removed+=("${v}") ;;
+        esac
+    done
+    [[ ${#removed[@]} -eq 0 ]] || echo "NPU model knobs removed from the environment: ${removed[*]}"
 }
 
 mode="${1:-smoke}"
@@ -259,6 +289,129 @@ case "${mode}" in
         echo "VP waits for the UART console on 127.0.0.1:${port}"
         echo "Open another terminal: ${here}/fx1_console.sh ${port}   (end with 'poweroff')"
         exec "${vp}" --fw "${fw}" --uart0-socket "${port}" --uart0-wait --timeout-ms 0 --realtime
+        ;;
+    npu-selftest)
+        need_fw
+        mkdir -p "${build}/npu"
+        npu_scrub
+        echo "VP_FX1_V3.0 NPU self-test: scripted CLI session (${here}/cli_npu_selftest.txt)"
+        set +e
+        env "${npu_unset[@]}" "${vp}" --fw "${fw}" --uart0-rx-file "${here}/cli_npu_selftest.txt" "${rx_pacing[@]}" \
+            --timeout-ms 4000 --uart-log "${build}/npu/selftest_uart.log" > "${build}/npu/selftest.log" 2>&1
+        rc=$?
+        set -e
+        grep -a -E "\[fx1_soc\] npu:|npu: (SAURIA|features)|npu selftest:|poweroff:|RESULT" "${build}/npu/selftest.log" \
+            | tr -d '\r' || true
+        if [[ ${rc} -eq 0 ]] && grep -aq "npu selftest: PASS" "${build}/npu/selftest.log" \
+                && grep -aq "env=none" "${build}/npu/selftest.log"; then
+            echo "NPU SELFTEST PASS (log ${build}/npu/selftest.log)"
+        else
+            [[ ${rc} -ne 0 ]] || rc=1
+            echo "NPU SELFTEST FAIL, exit ${rc} (log ${build}/npu/selftest.log)"
+        fi
+        exit ${rc}
+        ;;
+    npu)
+        need_fw
+        command -v python3 >/dev/null 2>&1 || die "python3 is needed (dnf install -y python3)"
+        fixtures="${here}/npu"
+        [[ -d "${fixtures}" ]] || die "no npu/ fixtures in this package"
+        target="chain"
+        if [[ $# -gt 0 && "$1" != -* && "$1" != interactive ]]; then
+            target="$1"
+            shift
+        fi
+        if [[ "${target}" == list ]]; then
+            for d in "${fixtures}"/*/; do
+                printf '  %-12s %s\n' "$(basename "${d}")" "$(head -n 1 "${d}FIXTURE.txt")"
+            done
+            exit 0
+        fi
+        out=""
+        extra=()
+        interactive=0 port=5000
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --out) out="${2:?--out DIR}"; shift 2 ;;
+                --out=*) out="${1#--out=}"; shift ;;
+                interactive)
+                    interactive=1
+                    shift
+                    if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then port="$1"; shift; fi ;;
+                --timeout-ms|--quantum-ns) extra+=("$1" "${2:?$1 N}"); shift 2 ;;
+                --print-command) extra+=("$1"); shift ;;
+                *) die "npu: unknown argument '$1' (./run_vp.sh help)" ;;
+            esac
+        done
+        fixture_dir() {
+            if [[ -f "$1/fixture.json" ]]; then
+                (cd "$1" && pwd)
+            elif [[ "$1" =~ ^[a-z0-9_]+$ && -f "${fixtures}/$1/fixture.json" ]]; then
+                echo "${fixtures}/$1"
+            else
+                die "npu: no fixture '$1' (./run_vp.sh npu list, or a directory with fixture.json)"
+            fi
+        }
+        npu_scrub
+        if [[ "${target}" == all ]]; then
+            [[ ${interactive} -eq 0 ]] || die "npu all: interactive takes one fixture"
+            # A dry run has no verdict (review N5 R2): refused, nothing run or written.
+            for x in "${extra[@]}"; do
+                [[ "${x}" != --print-command ]] \
+                    || die "npu all --print-command: nothing would run, so there is no verdict; print one fixture's command with ./run_vp.sh npu NAME --print-command"
+            done
+            base="${out:-${build}/npu}"
+            mkdir -p "${base}"
+            total=0 passed=0
+            for d in "${fixtures}"/*/; do
+                n="$(basename "${d}")"
+                total=$((total + 1))
+                rc=0
+                env "${npu_unset[@]}" python3 -B "${here}/npu_run.py" --fx1-soc "${vp}" --elf "${fw}" "${d%/}" \
+                    --out "${base}/${n}" "${extra[@]}" > "${base}/${n}.log" 2>&1 || rc=$?
+                # Counted only from this run's own summary (npu_run.py removes a stale one first):
+                # exit 0 and a summary.json whose outcome is PASS with a simulator run behind it.
+                if [[ ${rc} -eq 0 ]] && python3 - "${base}/${n}/summary.json" <<'PYEOF'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(1)
+sys.exit(0 if s.get("outcome") == "PASS" and s.get("exit_code") == 0 and s.get("simulator_rc") is not None else 1)
+PYEOF
+                then
+                    passed=$((passed + 1))
+                fi
+                head -n 1 "${base}/${n}/summary.txt" 2>/dev/null || { echo "NPU ${n} FAIL: no summary"; tail -n 5 "${base}/${n}.log"; }
+            done 2>&1
+            if [[ ${passed} -eq ${total} && ${total} -gt 0 ]]; then
+                echo "NPU FIXTURES PASS (${passed}/${total}, summaries in ${base})"
+                exit 0
+            fi
+            echo "NPU FIXTURES FAIL (${passed}/${total} as declared, summaries in ${base})"
+            exit 1
+        fi
+        dir="$(fixture_dir "${target}")"
+        if [[ ${interactive} -eq 1 ]]; then
+            listening "${port}" && die "TCP port ${port} is already in use (another fx1_soc running?)"
+            mapfile -t loads < <(python3 - "${dir}" <<'PYEOF'
+import json, os, sys
+d = sys.argv[1]
+s = json.load(open(os.path.join(d, "fixture.json")))
+print("0x%08X:%s" % (s["job_addr"], os.path.join(d, s["job_file"])))
+print("0x%08X:%s" % (s["window_addr"], os.path.join(d, s["window_file"])))
+PYEOF
+            )
+            [[ ${#loads[@]} -eq 2 ]] || die "npu: ${dir}/fixture.json unreadable"
+            echo "NPU job $(basename "${dir}") loaded; the VP waits for the UART console on 127.0.0.1:${port}"
+            echo "Open another terminal: ${here}/fx1_console.sh ${port}"
+            echo "  npu info, npu run, npu status, npu wait, npu reset; end with 'poweroff'"
+            exec env "${npu_unset[@]}" "${vp}" --fw "${fw}" --load "${loads[0]}" --load "${loads[1]}" \
+                --uart0-socket "${port}" --uart0-wait --timeout-ms 0 --realtime
+        fi
+        mkdir -p "${build}/npu"
+        exec env "${npu_unset[@]}" python3 -B "${here}/npu_run.py" --fx1-soc "${vp}" --elf "${fw}" "${dir}" \
+            --out "${out:-${build}/npu/$(basename "${dir}")}" "${extra[@]}"
         ;;
     isp-stream|isp-stream-encode)
         command -v python3 >/dev/null 2>&1 || die "python3 is needed (dnf install -y python3)"

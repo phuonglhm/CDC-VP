@@ -34,6 +34,7 @@
 #include <uart_host_bridge.h>
 #ifdef FX1_SOC_HAS_NPU
 #include <fx1_npu/fx1_npu.h>
+#include <fx1_npu/fx1_npu_regmap.h>
 #endif
 #ifdef FX1_SOC_HAS_CAMERA
 #include <fx1_csi2/csi2_rx_controller.h>
@@ -755,6 +756,15 @@ bool fx1_soc_top::npu_built() noexcept
     return true;
 #else
     return false;
+#endif
+}
+
+std::uint32_t fx1_soc_top::npu_abi() noexcept
+{
+#ifdef FX1_SOC_HAS_NPU
+    return fx1::npu::reg::VP_ABI_VALUE;
+#else
+    return 0;
 #endif
 }
 

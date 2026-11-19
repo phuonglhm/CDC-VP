@@ -24,7 +24,8 @@
 #                            (the SDK repository does not track build/)
 #   sw/bootloader/test/      run_vp.sh, console client, replay scripts, the ISP
 #                            samples (job files + golden NV12 SHA-256 from the
-#                            stand-alone ISP model)
+#                            stand-alone ISP model), the NPU launcher and job
+#                            fixtures (goldens from the firmware's C oracle)
 #
 # Default sample: d65, components/isp_tlm/input/D65_raw_2688x1520_5376.raw
 # (cleared, ASSET_PROVENANCE.md). All samples use the checked-in shared full
@@ -81,6 +82,8 @@ if [[ "${build_type}" != "Release" && ${allow_dev} -eq 0 ]]; then
 fi
 "${sim}" --version 2>/dev/null | grep -q '^  camera *CSI-2 RX' \
     || die "the simulator has no camera: configure ${build_dir} with -DFX1_BUILD_MIPI_CSI2=ON"
+"${sim}" --version 2>/dev/null | grep -q '^  NPU *SAURIA v4.7' \
+    || die "the simulator has no NPU: configure ${build_dir} with -DFX1_SOC_ENABLE_NPU=ON (the default)"
 csi2="${src}/components/FX1_Components/mipi-csi2/driver"
 
 rm -rf "${out}"
@@ -107,7 +110,7 @@ log "firmware sources"
 mkdir -p "${sdk}/app" "${sdk}/bsp" "${sdk}/include/fx1" "${sdk}/include/dma" "${sdk}/include/fx1_isp" "${sdk}/include/fx1_ddr3" \
          "${sdk}/drivers/isp" "${sdk}/isp_selftest" "${sdk}/demo" "${sdk}/tests" "${sdk}/ddr3/examples" \
          "${sdk}/include/fx1_csi2" "${sdk}/drivers/csi2" "${sdk}/drivers/camera" "${sdk}/camera" "${sdk}/camera_isp" \
-         "${sdk}/drivers/eth" "${sdk}/eth" "${sdk}/include/fx1_npu" "${sdk}/drivers/npu" "${sdk}/npu_selftest"
+         "${sdk}/drivers/eth" "${sdk}/eth" "${sdk}/include/fx1_npu" "${sdk}/drivers/npu" "${sdk}/npu_selftest" "${sdk}/npu_jobs"
 cp "${here}/sdk/Makefile" "${here}/sdk/README.md" "${sdk}/"
 cp "${fw}"/freertos/*.c "${fw}"/freertos/*.h "${fw}"/freertos/*.S "${sdk}/app/"
 cp "${fw}/freertos/tests/isp_auto_policy_test.c" "${sdk}/tests/"
@@ -127,12 +130,13 @@ cp "${src}/components/FX1_Components/ddr3/include/fx1_ddr3/fx1_ddr3_regs.h" \
    "${src}/components/FX1_Components/ddr3/include/fx1_ddr3/provisional_encodings.h" "${sdk}/include/fx1_ddr3/"
 cp "${src}/components/FX1_Components/dma/include/dma/fx1_dma_regs.h" "${sdk}/include/dma/"
 # NPU (plan FX1_NPU_V47 N3): register ABI header, reference driver, job format,
-# and the `npu selftest` cases + C oracle the CLI links (launcher, fixtures and
-# docs of the package: N5).
+# and the `npu selftest` cases + C oracle the CLI links. Launcher, fixtures and
+# guide: below (N5).
 cp "${src}/components/FX1_Components/npu/include/fx1_npu/fx1_npu_regs.h" "${sdk}/include/fx1_npu/"
 cp "${fw}"/drivers/fx1_npu.[ch] "${fw}"/drivers/fx1_npu_build.c "${fw}"/drivers/fx1_npu_job.[ch] \
    "${fw}"/drivers/fx1_npu_job_run.c "${sdk}/drivers/npu/"
 cp "${fw}"/tests/npu_common/npu_oracle.[ch] "${fw}"/tests/npu_common/npu_cases.[ch] "${sdk}/npu_selftest/"
+cp "${fw}/host/npu_job_gen.c" "${sdk}/npu_jobs/"   # host tool: make npu-jobs
 cp "${isp}/include/fx1_isp/fx1_isp_csr.h" "${isp}/driver/include/fx1_isp/fx1_isp_drv.h" "${sdk}/include/fx1_isp/"
 cp "${isp}/driver/src/fx1_isp_drv.c" "${sdk}/drivers/isp/"
 cp "${fw}"/tests/isp_stream/isp_common.c "${fw}"/tests/isp_stream/isp_common.h "${fw}"/tests/isp_stream/isp_fixture.h \
@@ -184,6 +188,14 @@ ethcheck="$(mktemp -d "${TMPDIR:-/tmp}/fx1_eth_check.XXXXXX")"
 make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${ethcheck}" eth > "${out}/.make.log" 2>&1 \
     || { cat "${out}/.make.log" >&2; rm -rf "${ethcheck}"; die "the SDK Makefile failed on the Ethernet example"; }
 rm -rf "${ethcheck}" "${out}/.make.log"
+# The NPU fixtures must come out of the shipped generator (host compiler) byte for
+# byte as the build's fixtures that are shipped (outputs not shipped: test/npu/ is).
+npucheck="$(mktemp -d "${TMPDIR:-/tmp}/fx1_npu_check.XXXXXX")"
+make -s -C "${sdk}" OUT="${npucheck}" npu-jobs > "${out}/.make.log" 2>&1 \
+    || { cat "${out}/.make.log" >&2; rm -rf "${npucheck}"; die "the SDK Makefile failed on the NPU job generator"; }
+diff -r "${npucheck}/npu_jobs" "${build_dir}/fw/fx1_soc/npu_jobs" -x .stamp > "${out}/.make.log" 2>&1 \
+    || { cat "${out}/.make.log" >&2; rm -rf "${npucheck}"; die "make npu-jobs differs from the build's NPU fixtures"; }
+rm -rf "${npucheck}" "${out}/.make.log"
 
 # ── test launchers and ISP samples ───────────────────────────────────────────
 log "launchers"
@@ -202,7 +214,48 @@ cp "${isp}/tools/csrw_codec.py" "${test}/"
 # ISP RAW sequence -> video (run_vp.sh isp-stream): the launcher and the session preparation
 # (Python standard library only; FFmpeg is the system's, not shipped).
 cp "${src}/platforms/fx1_soc/demo/isp_stream.py" "${src}/platforms/fx1_soc/demo/isp_stream_prep.py" "${test}/"
-chmod +x "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh"
+# NPU (plan FX1_NPU_V47 N5): the job launcher (Python standard library only), the
+# self-test console script, and every job fixture of the build (fx1_npu_jobs:
+# fw/fx1_soc/host/npu_job_gen.c, goldens from the firmware's C oracle).
+cp "${src}/platforms/fx1_soc/demo/npu_run.py" "${here}/test/cli_npu_selftest.txt" "${test}/"
+npu_jobs="${build_dir}/fw/fx1_soc/npu_jobs"
+[[ -f "${npu_jobs}/chain/fixture.json" ]] || die "no NPU fixtures in ${npu_jobs}: build target fx1_all (fx1_npu_jobs)"
+mkdir -p "${test}/npu"
+for jd in "${npu_jobs}"/*/; do
+    n="$(basename "${jd}")"
+    mkdir -p "${test}/npu/${n}"
+    cp "${jd}fixture.json" "${jd}job.bin" "${jd}window.bin" "${test}/npu/${n}/"
+    for g in "${jd}"golden_*.bin; do [[ -e "${g}" ]] && cp "${g}" "${test}/npu/${n}/"; done
+    python3 - "${test}/npu/${n}" <<'PYEOF' || die "NPU fixture ${n}: inconsistent"
+import hashlib, json, os, sys, zlib
+d = sys.argv[1]
+s = json.load(open(os.path.join(d, "fixture.json")))
+assert os.path.getsize(os.path.join(d, s["job_file"])) == s["job_bytes"], "job.bin size"
+assert os.path.getsize(os.path.join(d, s["window_file"])) == s["load_bytes"], "window.bin size"
+outs = [t for t in s["tensors"] if t["role"] == "OUTPUT"]
+for t in outs:
+    if t["golden"]:
+        g = open(os.path.join(d, t["golden"]), "rb").read()
+        assert len(g) == t["bytes"] and zlib.crc32(g) == t["crc32"], "golden %s: size or CRC-32" % t["golden"]
+xchecked = s["name"] in ("chain", "dfc", "mixed", "large", "long", "busy")
+neg = s["expect"]["status"] != "OK"
+lines = [s["description"],
+         "expected outcome  %s%s" % (s["expect"]["status"], "" if not neg else " (negative fixture: the firmware must refuse it as declared)"),
+         "operations        %s" % (" ".join(s["ops"]) or "-"),
+         "arena             %s, window 0x%08x (%d bytes, %d loaded), job 0x%08x, execution budget %d ms"
+         % (s["arena"], s["window_addr"], s["window_size"], s["load_bytes"], s["job_addr"], s["timeout_ms"]),
+         "outputs           %s" % (", ".join("%s (tensor %d, %d bytes)" % (t["name"], t["index"], t["bytes"]) for t in outs) or "-"),
+         "provenance        generated by npu_job_gen (sources/VP_FX1_V3.0/npu_jobs/npu_job_gen.c, make npu-jobs): synthetic data",
+         "                  from fixed seeds (no network, weights or images); goldens from the firmware's C oracle",
+         "                  (npu_selftest/npu_oracle.c), not from the model;%s" % (
+             " its rich / DFC operations cross-checked byte" if xchecked else " no NPU operation runs" if neg else ""),
+         "                  %s" % ("for byte with the drop's numpy reference before delivery" if xchecked
+                                  else "(firmware checks only)" if neg else "GEMM bank: C oracle, compared with the model before delivery"),
+         "run               ./run_vp.sh npu %s      (summary: sw/bootloader/build/VP_FX1_V3.0/npu/%s/summary.txt)" % (s["name"], s["name"])]
+open(os.path.join(d, "FIXTURE.txt"), "w").write("\n".join(lines) + "\n")
+PYEOF
+done
+chmod +x "${test}/run_vp.sh" "${test}/fx1_console.sh" "${test}/isp_pack.py" "${test}/csrw_to_bin.sh" "${test}/npu_run.py"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/fx1_package.XXXXXX")"
 trap 'rm -rf "${scratch}"' EXIT
@@ -378,6 +431,49 @@ PYEOF
     echo "                  comparison."
 } > "${seqd}/SEQUENCE.txt"
 
+# ── NPU gate: the shipped launcher on the shipped fixtures ────────────────────
+# The self-test and every fixture through run_vp.sh as a user runs them; their
+# outcomes, the banner (model, knobs) and the identity the firmware reads go
+# into the manifest. Outputs stay in the scratch directory.
+log "NPU: run_vp.sh npu-selftest, npu all"
+"${test}/run_vp.sh" npu-selftest > "${scratch}/npu_selftest.out" 2>&1 \
+    || { cat "${scratch}/npu_selftest.out" >&2; die "run_vp.sh npu-selftest failed"; }
+cp "${fwout}/npu/selftest.log" "${scratch}/npu_selftest.log"
+rm -rf "${fwout:?}/npu"
+"${test}/run_vp.sh" npu all --out "${scratch}/npu" > "${scratch}/npu_all.out" 2>&1 \
+    || { cat "${scratch}/npu_all.out" >&2; die "run_vp.sh npu all failed"; }
+python3 - "${scratch}" "${test}/npu" "${scratch}/npu.json" <<'PYEOF' || die "NPU gate summary"
+import hashlib, json, os, re, sys
+scratch, fixtures, out = sys.argv[1:4]
+log = open(os.path.join(scratch, "npu_selftest.log"), errors="replace").read().replace("\r", "")
+grab = lambda rx: (re.search(rx, log, re.M) or [None, None])[1]
+banner = grab(r"^\[fx1_soc\] npu: (at .*)$")
+cfg = re.search(r"profile=(\S+) host=(\S+) env=([^,\s]+)", banner or "")
+ident = re.search(r"VP_ID (0x[0-9a-f]+) ABI (0x[0-9a-f]+) model hash (0x[0-9a-f]+)", log)
+feat = re.search(r"npu: features (0x[0-9a-f]+) ([^,]+)", log)
+assert banner and cfg and ident and feat, "self-test log lacks the banner or npu info"
+res = {"banner": banner, "model_config": {"profile": cfg.group(1), "host": cfg.group(2), "env": cfg.group(3)},
+       "vp_id": ident.group(1), "vp_abi": ident.group(2), "vp_model_hash": ident.group(3),
+       "features": feat.group(1), "feature_names": feat.group(2).split(),
+       "selftest": [l.strip() for l in log.splitlines() if l.strip().startswith("npu selftest:")], "fixtures": []}
+assert any(l.endswith("PASS") for l in res["selftest"]), "self-test did not pass"
+for n in sorted(os.listdir(fixtures)):
+    d = os.path.join(fixtures, n)
+    spec = json.load(open(os.path.join(d, "fixture.json")))
+    summ = json.load(open(os.path.join(scratch, "npu", n, "summary.json")))
+    assert summ["outcome"] == "PASS", "fixture %s: %s" % (n, summ.get("reason"))
+    files = {f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
+             for f in sorted(os.listdir(d)) if f.endswith((".bin", ".json"))}
+    r = summ.get("result", {})
+    res["fixtures"].append({"name": n, "description": spec["description"], "expected": spec["expect"]["status"],
+                            "arena": spec["arena"], "ops": spec["ops"], "files_sha256": files,
+                            "package_run": {"outcome": summ["outcome"], "status": r.get("status"),
+                                            "outputs_matching": r.get("outputs_ok_fw"),
+                                            "model_exec_cycles": r.get("model_exec_cycles"),
+                                            "output_sha256": [o["sha256"] for o in summ.get("outputs", [])]}})
+json.dump(res, open(out, "w"), indent=2)
+PYEOF
+
 # ── documentation and licences ───────────────────────────────────────────────
 log "documentation and licences"
 cp "${here}/docs/README.md" "${here}/docs/MEMORY_MAP.md" "${doc}/"
@@ -386,13 +482,21 @@ mkdir -p "${doc}/camera"
 cp "${here}/docs/CAMERA_FW_GUIDE.md" "${doc}/camera/README.md"
 mkdir -p "${doc}/eth"
 cp "${here}/docs/ETHERNET_FW_GUIDE.md" "${doc}/eth/README.md"
+# NPU: the firmware guide (delivery, running, job format, driver, limits) as
+# npu/README.md, and the register-level ABI as npu/register_abi.md: the SDK
+# adaptation of the component README (same tables and headings, checked by
+# fx1_unit_npu_abi_doc_sync; SDK paths, no CDC-VP source references).
+mkdir -p "${doc}/npu"
+cp "${here}/docs/NPU_FW_GUIDE.md" "${doc}/npu/README.md"
+cp "${here}/docs/NPU_REGISTER_ABI.md" "${doc}/npu/register_abi.md"
 # DDR3 documents for driver developers. Links to documents that stay in the VP
 # source tree become plain text, so the package has no dead link.
 mkdir -p "${doc}/ddr3"
 cp "${here}/docs/DDR3_FW_GUIDE.md" "${doc}/ddr3/README.md"
 ddr3_docs="${src}/components/FX1_Components/ddr3/docs"
 cp "${ddr3_docs}/programming_guide.md" "${doc}/ddr3/programming_guide.md"
-python3 - "${doc}/ddr3" <<'PYEOF'
+for linkdir in "${doc}/ddr3" "${doc}/npu"; do
+python3 - "${linkdir}" <<'PYEOF'
 import os, re, sys
 d = sys.argv[1]
 names = set(os.listdir(d))
@@ -407,6 +511,7 @@ for f in names:
     if fixed != original:
         open(p, "w").write(fixed)
 PYEOF
+done
 cp "${src}/LICENSE" "${doc}/licenses/Apache-2.0.txt"
 cp "${src}/NOTICE" "${doc}/licenses/CDC-VP-NOTICE.txt"
 cp "${src}/THIRD_PARTY.md" "${doc}/licenses/THIRD_PARTY.md"
@@ -418,11 +523,22 @@ systemc_home="$(sed -n 's/^SYSTEMC_HOME:[A-Z]*=//p' "${build_dir}/CMakeCache.txt
 [[ -f "${systemc_home}/share/doc/systemc/LICENSE" ]] || die "no SystemC LICENSE under ${systemc_home}"
 cp "${systemc_home}/share/doc/systemc/LICENSE" "${doc}/licenses/SYSTEMC.Apache-2.0.txt"
 cp "${kernel}/LICENSE.md" "${doc}/licenses/FREERTOS-KERNEL.MIT.txt"
+# NPU: fx1_soc links the SAURIA v4.7 model drop (its SystemC port of the SAURIA
+# design). The upstream licence and provenance, and the drop's own notice
+# (which also lists drop data this package does not contain: README.md says what).
+cp "${src}/licenses/SAURIA.SHL-2.1" "${doc}/licenses/SAURIA.SHL-2.1.txt"
+cp "${src}/licenses/SAURIA.PROVENANCE.md" "${doc}/licenses/SAURIA.PROVENANCE.md"
+npu_root="$(sed -n 's/^FX1_NPU_MODEL_ROOT:[A-Z]*=//p' "${build_dir}/CMakeCache.txt")"
+[[ -f "${npu_root}/THIRD_PARTY_NOTICES.md" ]] || die "no THIRD_PARTY_NOTICES.md in the NPU model drop ${npu_root}"
+cp "${npu_root}/THIRD_PARTY_NOTICES.md" "${doc}/licenses/SAURIA-V4.7-DROP.THIRD_PARTY_NOTICES.md"
+# Beside it: which of the notice's items this delivery contains (the notice's
+# "Shipped" is the drop's own scope).
+cp "${here}/docs/SAURIA_DROP_SDK_SCOPE.md" "${doc}/licenses/SAURIA-V4.7-DROP.SDK_SCOPE.md"
 
 # ── manifest and checksums ───────────────────────────────────────────────────
 log "manifest and checksums"
 python3 "${here}/write_manifest.py" --out "${out}" --source "${src}" --build-dir "${build_dir}" \
-    --tooldir "${tooldir}" --samples "${sample_json}" --manifest "${doc}/BUILD_MANIFEST.json"
+    --tooldir "${tooldir}" --samples "${sample_json}" --npu "${scratch}/npu.json" --manifest "${doc}/BUILD_MANIFEST.json"
 # SHA256SUMS covers what the SDK repository tracks: not sw/bootloader/build/,
 # which it ignores and every user regenerates (its hashes are in the manifest).
 (cd "${out}" && find vp sw -type f ! -path "sw/bootloader/build/*" ! -name SHA256SUMS -print0 \

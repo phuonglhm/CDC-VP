@@ -14,8 +14,8 @@ the SDK repository (`fx1`: `vp/{bin,doc}/<ver>`,
 | `export_to_sdk.sh` | copies a checked package into the SDK repository; never commits |
 | `write_manifest.py` | `BUILD_MANIFEST.json` |
 | `sdk/` | the SDK firmware `Makefile` and README, shipped as is |
-| `test/` | `run_vp.sh` and the `isp run` replay, shipped as is |
-| `docs/` | the delivery's README and memory map |
+| `test/` | `run_vp.sh`, the `isp run` replay and the NPU self-test script, shipped as is |
+| `docs/` | the delivery's README, memory map and firmware guides (camera, Ethernet, DDR3, NPU) |
 
 ## What goes in
 
@@ -25,7 +25,8 @@ the SDK repository (`fx1`: `vp/{bin,doc}/<ver>`,
 | **Firmware sources** | the files the CDC-VP build compiles for `freertos_cli.elf`, copied, never rewritten, plus the FreeRTOS-Kernel V11.2.0 subset |
 | **Firmware outputs** | built by the shipped `sdk/Makefile` during packaging. That Makefile is location-independent (`-ffile-prefix-map`), so a user's rebuild gives the packaged ELF byte for byte with the same compiler |
 | **ISP samples** | `isp/<sample>/` holds the prepared job (`run_isp_demo.py --prepare-only --job-env`) and the golden NV12 SHA-256 from the stand-alone model (`fx1_isp_run_raw`), not from the VP |
-| **Docs and licences** | `docs/`, `LICENSE`, `NOTICE`, `THIRD_PARTY.md`, the VP++ MIT licence, the SoftFloat notice (extracted from a compiled source), the SystemC licence, the FreeRTOS MIT licence |
+| **NPU** | the driver, job format, `cmd_npu.c`, C oracle and fixture generator (`fw/fx1_soc/host/npu_job_gen.c`, `make npu-jobs`) as firmware sources; `demo/npu_run.py` and every fixture of `fx1_npu_jobs` (`test/npu/<name>/`, with `FIXTURE.txt`). Packaging checks that `make npu-jobs` from the shipped sources gives the build's fixtures byte for byte, then runs `run_vp.sh npu-selftest` and `run_vp.sh npu all` on the assembled tree; the outcomes go into the manifest's `npu` section with the model drop's manifest SHA-256, ABI, features and the model configuration (`env=none`) |
+| **Docs and licences** | `docs/` (`NPU_REGISTER_ABI.md`, the SDK adaptation of the NPU component README, ships as `npu/register_abi.md`: `fx1_unit_npu_abi_doc_sync` keeps its tables and headings equal to the component's), `LICENSE`, `NOTICE`, `THIRD_PARTY.md`, the VP++ MIT licence, the SoftFloat notice (extracted from a compiled source), the SystemC licence, the FreeRTOS MIT licence, the SAURIA licence and provenance (`licenses/SAURIA.*`), the model drop's `THIRD_PARTY_NOTICES.md` unchanged and beside it `SAURIA-V4.7-DROP.SDK_SCOPE.md` (`docs/SAURIA_DROP_SDK_SCOPE.md`: what of the notice the delivery contains) |
 
 **ISP samples:**
 
@@ -94,6 +95,10 @@ together with the commit:
   cross compiler; the manifest records which one was used.
 - **The package is x86-64 Linux only.** It is validated on AlmaLinux 9 and in
   the `almalinux:9` container.
+- **The package needs an NPU build** (`FX1_SOC_ENABLE_NPU=ON`, the default):
+  `package_sdk.sh` refuses a simulator without it. `licenses/SAURIA.PROVENANCE.md`
+  requires the rights owner's separate approval before an NPU-enabled binary is
+  published.
 
 ### Adaptive RAW jobs
 
