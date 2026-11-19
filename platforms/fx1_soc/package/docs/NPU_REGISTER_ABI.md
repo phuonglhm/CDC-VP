@@ -5,6 +5,10 @@ the firmware sees at `FX1_NPU_VP_BASE`, register by register, and how the model
 behind it accepts, runs, refuses and aborts work. The C header of this page is
 `sw/bootloader/sources/VP_FX1_V3.0/include/fx1_npu/fx1_npu_regs.h` (VP ABI 1.x).
 For running jobs and the driver's rules, start with [README.md](README.md).
+The complete model register catalogue is included in
+[model_registers_reference.md](model_registers_reference.md). Its introduction
+maps legacy addresses to FX1 and identifies the differences; the contract on
+this page governs FX1 behaviour.
 
 Provenance only (none of it is delivered as source): the model is the SAURIA
 v4.7 SystemC drop, compiled into `fx1_soc` through an FX1 integration layer;

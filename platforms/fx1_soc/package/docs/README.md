@@ -96,6 +96,14 @@ generator, where you add your own. Start with [npu/README.md](npu/README.md):
 job format, checks, result block, fixtures, the driver and the limits (not a
 network runtime; operations of VP ABI 1.0 only).
 
+Register documentation: [npu/register_abi.md](npu/register_abi.md) is the
+register ABI the firmware uses at FX1 (`0x1300_0000`, PLIC source 4), and the
+complete [model register catalogue](npu/model_registers_reference.md) is kept
+for reference. Start with the catalogue's FX1 mapping: the base address and IRQ
+in the model README are those of an older platform, not FX1's. `fx1_soc
+--version` names the NPU model of the delivered binary (manifest SHA-256 and
+VP ABI).
+
 ## Quick start
 
 Run everything from the SDK repository root.

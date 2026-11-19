@@ -489,6 +489,7 @@ cp "${here}/docs/ETHERNET_FW_GUIDE.md" "${doc}/eth/README.md"
 mkdir -p "${doc}/npu"
 cp "${here}/docs/NPU_FW_GUIDE.md" "${doc}/npu/README.md"
 cp "${here}/docs/NPU_REGISTER_ABI.md" "${doc}/npu/register_abi.md"
+cp "${here}/docs/NPU_MODEL_REGISTER_REFERENCE.md" "${doc}/npu/model_registers_reference.md"
 # DDR3 documents for driver developers. Links to documents that stay in the VP
 # source tree become plain text, so the package has no dead link.
 mkdir -p "${doc}/ddr3"
@@ -501,6 +502,9 @@ import os, re, sys
 d = sys.argv[1]
 names = set(os.listdir(d))
 for f in names:
+    # The archival model README is kept verbatim after its FX1 mapping preface.
+    if f == "model_registers_reference.md":
+        continue
     p = os.path.join(d, f)
     original = text = open(p).read()
     # A parenthesized reference to a document that is not shipped, e.g. "([x.md](x.md) L-14)", goes.

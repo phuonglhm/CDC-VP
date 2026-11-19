@@ -4,7 +4,9 @@ This guide is for firmware and software engineers who run work on the NPU of
 the FX1 VP. It covers what is delivered, how to run it, the job format the
 firmware executes, the bare-metal driver and the limits. The register-level ABI
 (every offset, bit and behaviour of the model wrapper) is in
-[register_abi.md](register_abi.md).
+[register_abi.md](register_abi.md). The complete model register catalogue is
+also delivered in [model_registers_reference.md](model_registers_reference.md),
+with the legacy-to-FX1 base/IRQ mapping and explicit FX1 differences at its top.
 
 Paths below are relative to the SDK repository root:
 `sw/bootloader/sources/VP_FX1_V3.0` is written `sources/`,

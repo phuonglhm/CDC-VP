@@ -66,7 +66,7 @@ required=(
     "${sdk}/drivers/npu/fx1_npu_build.c" "${sdk}/drivers/npu/fx1_npu_job.c" "${sdk}/drivers/npu/fx1_npu_job.h"
     "${sdk}/drivers/npu/fx1_npu_job_run.c" "${sdk}/app/cmd_npu.c" "${sdk}/npu_selftest/npu_oracle.c"
     "${sdk}/npu_selftest/npu_oracle.h" "${sdk}/npu_selftest/npu_cases.c" "${sdk}/npu_selftest/npu_cases.h"
-    "${sdk}/npu_jobs/npu_job_gen.c" "${test}/npu_run.py" "${test}/cli_npu_selftest.txt" "${doc}/npu/README.md" "${doc}/npu/register_abi.md"
+    "${sdk}/npu_jobs/npu_job_gen.c" "${test}/npu_run.py" "${test}/cli_npu_selftest.txt" "${doc}/npu/README.md" "${doc}/npu/register_abi.md" "${doc}/npu/model_registers_reference.md"
     "${doc}/licenses/SAURIA.SHL-2.1.txt" "${doc}/licenses/SAURIA.PROVENANCE.md"
     "${doc}/licenses/SAURIA-V4.7-DROP.THIRD_PARTY_NOTICES.md" "${doc}/licenses/SAURIA-V4.7-DROP.SDK_SCOPE.md"
     "${test}/npu/chain/fixture.json"
@@ -120,9 +120,11 @@ grep -q "SOLDERPAD HARDWARE LICENSE" "${lic}/SAURIA.SHL-2.1.txt" || bad "SAURIA.
 grep -q "Jordi Fornt Mas" "${lic}/SAURIA.PROVENANCE.md" || bad "SAURIA.PROVENANCE.md lacks the upstream rights notice"
 grep -q "Not delivered" "${lic}/SAURIA-V4.7-DROP.SDK_SCOPE.md" && grep -q "YOLOv8m" "${lic}/SAURIA-V4.7-DROP.SDK_SCOPE.md" \
     || bad "SAURIA-V4.7-DROP.SDK_SCOPE.md does not state what of the drop notice is not delivered"
+# The archival model_registers_reference.md intentionally retains model source
+# references, under an FX1 mapping preface; the operational guides must use SDK paths.
 # The NPU guides are for the SDK: no CDC-VP source tree reference (a relative
 # path such as fw/fx1_soc/... names a file the SDK does not have).
-npu_doc_refs="$(grep -nE 'fw/fx1_soc|components/(FX1_Components|npu_tlm)|platforms/fx1_soc' "${doc}"/npu/*.md || true)"
+npu_doc_refs="$(grep -nE 'fw/fx1_soc|components/(FX1_Components|npu_tlm)|platforms/fx1_soc' "${doc}/npu/README.md" "${doc}/npu/register_abi.md" || true)"
 [[ -z "${npu_doc_refs}" ]] && ok "NPU guides name SDK paths only" || bad "NPU guides name CDC-VP sources: ${npu_doc_refs}"
 ok "licence texts checked"
 # The D-PHY RX model in the camera build: its record must be there; its
