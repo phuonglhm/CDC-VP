@@ -484,6 +484,23 @@ static void fx_long(fixture* f)
     }
 }
 
+/* Long NPU execution for little hart work (plan N4 coexistence: ISP, SYS_DMA
+ * and Ethernet traffic while the NPU's DMA runs): MAX_POOL with a 31 x 31
+ * window, 8 chained, in the large arena. */
+static void fx_busy(fixture* f)
+{
+    begin(f, "busy", "8 x MAX_POOL 31 p15 s1 on [16][64][64], large arena (coexistence: long NPU work)",
+          FX1_NPU_JOB_ARENA_LARGE, 0x400000, 0x100000, 10000, 0x5EED0107u);
+    uint32_t prev = t8(f, "in", FX1_NPU_JOB_INPUT, 16, 64, 64);
+    rand8(f, prev, -128, 127);
+    static const char* const names[] = {"q1", "q2", "q3", "q4", "q5", "q6", "q7", "out"};
+    for (int k = 0; k < 8; ++k) {
+        const uint32_t o = t8(f, names[k], k == 7 ? FX1_NPU_JOB_OUTPUT : FX1_NPU_JOB_SCRATCH, 16, 64, 64);
+        pool(f, FX1_NPU_JOB_MAX_POOL, prev, o, 31, 15, 1, 0, 0);
+        prev = o;
+    }
+}
+
 /* Negative: a tensor past the window (the image CRC is right). */
 static void fx_bad_bounds(fixture* f)
 {
@@ -512,7 +529,7 @@ static const struct {
     const char* name;
     fx_fn fn;
 } fixtures[] = {{"chain", fx_chain}, {"gemm", fx_gemm},       {"dfc", fx_dfc},           {"mixed", fx_mixed},
-                {"large", fx_large}, {"long", fx_long},       {"bad_bounds", fx_bad_bounds}, {"bad_input", fx_bad_input}};
+                {"large", fx_large}, {"long", fx_long},       {"busy", fx_busy},       {"bad_bounds", fx_bad_bounds}, {"bad_input", fx_bad_input}};
 #define NFIX (sizeof fixtures / sizeof fixtures[0])
 
 /* ---- ref_program.py program directory ---------------------------------------------- */

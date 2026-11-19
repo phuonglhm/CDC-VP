@@ -87,6 +87,9 @@ struct fx1_soc_options {
     bool npu = fx1_soc_top_npu_default();
     // Host wall-time watchdog of the NPU model, seconds; 0 = off.
     unsigned npu_host_watchdog_s = 600;
+    // Negative control (plan N4): NPU_DMA bypasses its write guard, so its
+    // writes no longer wait for open AMO / SC brackets nor cancel reservations.
+    bool npu_unguarded_dma = false;
 };
 
 // FX1 SoC for FW/SW bring-up: two VP++ RV32IMAFC harts, FX1 bus, BootROM,

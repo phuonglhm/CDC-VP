@@ -233,6 +233,7 @@ static void run(run_t* xp, const void* image)
                 if (kind >= FX1_NPU_JOB_NEO_MAX_POOL) ++r->neo_instr;
                 else ++r->rich_instr;
             }
+            if (hooks && hooks->issued) hooks->issued(hooks->ctx, i);
             st = wait_done(&x, gemm);
         }
         if (st) {

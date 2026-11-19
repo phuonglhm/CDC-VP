@@ -446,6 +446,12 @@ fx1_smoke_npu_dfc
 fx1_smoke_npu_dfc_q10us
 fx1_smoke_npu_errors
 fx1_smoke_npu_errors_q10us
+fx1_smoke_npu_two_hart
+fx1_smoke_npu_two_hart_q10us
+fx1_smoke_npu_amo
+fx1_smoke_npu_sc
+fx1_smoke_npu_amo_unguarded
+fx1_smoke_npu_sc_unguarded
 fx1_unit_npu_neo_encoder
 fx1_unit_npu_driver_race_rich
 fx1_unit_npu_driver_race_rich_irq
@@ -456,7 +462,9 @@ fx1_unit_npu_driver_gemm_gate_irq
 fx1_unit_npu_driver_window
 fx1_unit_npu_driver_reinit
 fx1_unit_npu_driver_poll
+fx1_unit_npu_driver_lock
 # NPU N3: the job format (executor on the clone), the `npu` CLI commands
+fx1_unit_npu_map
 fx1_unit_npu_job_check
 fx1_unit_npu_job_chain
 fx1_unit_npu_job_gemm
@@ -464,6 +472,7 @@ fx1_unit_npu_job_dfc
 fx1_unit_npu_job_mixed
 fx1_unit_npu_job_large
 fx1_unit_npu_job_long
+fx1_unit_npu_job_busy
 fx1_unit_npu_job_bad_bounds
 fx1_unit_npu_job_bad_input
 fx1_unit_npu_job_abort
@@ -476,6 +485,9 @@ fx1_smoke_freertos_cli_npu
 fx1_smoke_freertos_cli_npu_absent
 fx1_smoke_freertos_cli_npu_job
 fx1_smoke_freertos_cli_npu_reset
+fx1_smoke_freertos_cli_npu_reset_exec
+fx1_smoke_freertos_cli_npu_coex
+fx1_smoke_freertos_cli_npu_repeat
 [components]
 bus_arbitration
 bus_behavior
@@ -509,6 +521,16 @@ fx1_npu_gate_ref_mp_high_fabric
 fx1_npu_gate_pad_make
 fx1_npu_gate_pad_low_direct
 fx1_npu_gate_pad_high_fabric
+fx1_npu_gate_ref_make
+fx1_npu_gate_ref_low_direct
+fx1_npu_gate_ref_high_fabric
+fx1_npu_gate_avgpool_make
+fx1_npu_gate_avgpool_low_direct
+fx1_npu_gate_avgpool_high_fabric
+fx1_npu_gate_nd_big_make
+fx1_npu_gate_nd_big_refused_fabric
+fx1_npu_gate_vit_heads_make
+fx1_npu_gate_vit_heads_refused_fabric
 fx1_npu_gate_neo_make
 fx1_npu_gate_neo_low_direct
 fx1_npu_gate_neo_high_fabric
@@ -522,12 +544,14 @@ fx1_regression_npu_job_xcheck_dfc
 fx1_regression_npu_job_xcheck_mixed
 fx1_regression_npu_job_xcheck_large
 fx1_regression_npu_job_xcheck_long
+fx1_regression_npu_job_xcheck_busy
 fx1_regression_npu_run_chain
 fx1_regression_npu_run_gemm
 fx1_regression_npu_run_dfc
 fx1_regression_npu_run_mixed
 fx1_regression_npu_run_large
 fx1_regression_npu_run_long
+fx1_regression_npu_run_busy
 fx1_regression_npu_run_bad_bounds
 fx1_regression_npu_run_bad_input
 fx1_regression_npu_run_launcher

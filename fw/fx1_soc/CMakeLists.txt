@@ -308,10 +308,28 @@ if(CDC_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu.h ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_oracle.h
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_cases.h ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_test.h
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_common/npu_neo_gemm_words.h)
-        foreach(_npu_t npu_gemm npu_rich npu_dfc npu_errors)
+        foreach(_npu_t npu_gemm npu_rich npu_dfc npu_errors npu_two_hart)
             # 1 s of simulated time: npu_errors needs about 0.52 s (hart-side oracles).
             fx1_smoke_test(${_npu_t} TIMEOUT_MS 1000 EXTRA_SOURCES ${_npu_fw_src} INCLUDES ${_npu_fw_inc} DEPENDS ${_npu_fw_dep})
         endforeach()
+        # N4: CPU atomics against NPU DMA writes on one granule (tests/npu_amo),
+        # AMO and LR/SC images; a pass needs an overlap (writes held / SC
+        # failures); negative controls with --npu-unguarded-dma.
+        foreach(_cell npu_amo:0 npu_sc:1)
+            string(REPLACE ":" ";" _cell "${_cell}")
+            list(GET _cell 0 _name)
+            list(GET _cell 1 _sc)
+            fx1_firmware(${_name} SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/npu_amo/main.c ${_npu_fw_src}
+                DEFINES NPU_AMO_SC=${_sc} INCLUDES ${_npu_fw_inc} DEPENDS ${_npu_fw_dep})
+        endforeach()
+        fx1_expect_test(npu_amo IMAGE npu_amo RC 0 TIMEOUT_MS 1000
+            REGEX "npu atomic: AMO against NPU writes: no NPU DMA write lost, every atomic kept.*device writes held [1-9][0-9]*.*RESULT PASS")
+        fx1_expect_test(npu_sc IMAGE npu_sc RC 0 TIMEOUT_MS 1000
+            REGEX "npu atomic: SC failed \\(NPU write between LR and SC\\) 0x0*[1-9a-f][0-9a-f]*.*every atomic kept.*cancelled by hart [0-9]+ by device [1-9][0-9]*.*RESULT PASS")
+        fx1_expect_test(npu_amo_unguarded IMAGE npu_amo RC 0 TIMEOUT_MS 1000 ARGS --npu-unguarded-dma
+            REGEX "UNGUARDED.*every atomic kept.*device writes held 0,.*RESULT PASS")
+        fx1_expect_test(npu_sc_unguarded IMAGE npu_sc RC 1 TIMEOUT_MS 1000 ARGS --npu-unguarded-dma
+            REGEX "UNGUARDED.*RESULT FAIL code=0x24")
         # Host: the firmware's neo_lite encoder against the drop's C++ encoder
         # (has/has_host_neo.h, read in place), word for word.
         add_executable(fx1_fw_npu_neo_encoder ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_neo_encoder.cpp
@@ -338,6 +356,12 @@ if(CDC_BUILD_TESTS)
             DEPENDS fx1_fw_npu_job_gen
             COMMENT "FX1 NPU job fixtures in ${FX1_NPU_JOBS_DIR}")
         add_custom_target(fx1_npu_jobs DEPENDS ${FX1_NPU_JOBS_DIR}/.stamp)
+        # N4: every NPU DDR region apart from every other owner's region.
+        add_executable(fx1_fw_npu_map ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_map.c)
+        target_include_directories(fx1_fw_npu_map PRIVATE ${FX1_FW_MAP_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/demo/isp_raw_frame)
+        target_compile_options(fx1_fw_npu_map PRIVATE -std=c11 -Wall -Wextra -Werror)
+        add_test(NAME fx1_unit_npu_map COMMAND fx1_fw_npu_map)
+        set_tests_properties(fx1_unit_npu_map PROPERTIES TIMEOUT 30 LABELS "fx1;fx1_unit;npu")
         # The firmware's job checks against corruptions of valid fixture images.
         add_executable(fx1_fw_npu_job_check ${CMAKE_CURRENT_SOURCE_DIR}/host/test_npu_job_check.c
                        ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_job.c ${CMAKE_CURRENT_SOURCE_DIR}/drivers/fx1_npu_build.c)
@@ -345,7 +369,7 @@ if(CDC_BUILD_TESTS)
         target_compile_options(fx1_fw_npu_job_check PRIVATE -std=c11 -Wall -Wextra -Werror)
         add_test(NAME fx1_unit_npu_job_check COMMAND fx1_fw_npu_job_check ${FX1_NPU_JOBS_DIR})
         set_tests_properties(fx1_unit_npu_job_check PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit;npu")
-        set(_npu_jobs chain gemm dfc mixed large long bad_bounds bad_input)
+        set(_npu_jobs chain gemm dfc mixed large long busy bad_bounds bad_input)
         # Host: the driver (drivers/fx1_npu.c as C) against the SystemC clone
         # through the clone's test bench, with completions released at chosen
         # MMIO accesses (review N2 R1-R3). host/npu_shim/fx1_fw.h stands in for
@@ -362,7 +386,7 @@ if(CDC_BUILD_TESTS)
                                $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-function>)
         target_link_libraries(fx1_fw_npu_driver_host PRIVATE cdc::components::fx1_npu cdc::components::bus_system
                               cdc::components::fx1_map cdc::components::fx1_exclusive_monitor SystemC::systemc)
-        foreach(_case race_rich race_rich_irq race_rich_fail race_rich_fail_irq gemm_gate gemm_gate_irq window reinit poll)
+        foreach(_case race_rich race_rich_irq race_rich_fail race_rich_fail_irq gemm_gate gemm_gate_irq window reinit poll lock)
             add_test(NAME fx1_unit_npu_driver_${_case} COMMAND fx1_fw_npu_driver_host ${_case})
             set_tests_properties(fx1_unit_npu_driver_${_case} PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_unit;npu")
         endforeach()
@@ -401,7 +425,7 @@ if(CDC_BUILD_TESTS)
                              ${CMAKE_CURRENT_BINARY_DIR}/npu_oracle_xcheck)
             set_tests_properties(fx1_regression_npu_oracle_xcheck PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_regression;npu")
             # N3: the rich / DFC part of each valid job fixture through ref_program.py.
-            foreach(_job chain dfc mixed large long)
+            foreach(_job chain dfc mixed large long busy)
                 add_test(NAME fx1_regression_npu_job_xcheck_${_job}
                          COMMAND ${FX1_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/host/npu_oracle_xcheck.py
                                  $<TARGET_FILE:fx1_fw_npu_job_gen> ${FX1_NPU_MODEL_ROOT}/tools/has/ref_program.py
@@ -779,6 +803,34 @@ if(CDC_BUILD_TESTS)
                  --uart0-rx-file ${_rtos_dir}/tests/cli_npu_reset.txt ${_npu_rx}
             REGEX "npu run: started.*npu: running, job long op [0-9]+/8, [0-9] ms.*npu wait: still running after 1 ms.*npu reset: job long stopped: ABORTED at op [0-7].*npu reset: recovery OK, soft reset OK, open OK.*npu reset: PASS.*npu: idle.*npu: last job long: ABORTED.*npu run: started.*npu run: long: OK, 8/8 ops.*outputs 1/1 match.*npu run: PASS.*poweroff: 0 failed.*RESULT PASS")
         set_tests_properties(fx1_smoke_freertos_cli_npu_reset PROPERTIES TIMEOUT 300)
+        # Review N4 (priority 2): `npu reset` while the NPU executes (after
+        # `npu wait start`, ACCEPTED 1..7: operations accepted, not all
+        # retired), under Ethernet load; the job stopped at an op after the
+        # first, recovered, then the job again passes against its golden.
+        fx1_expect_test(freertos_cli_npu_reset_exec IMAGE freertos_cli RC 0 TIMEOUT_MS 8000
+            ARGS --load 0x80650000:${FX1_NPU_JOBS_DIR}/busy/job.bin --load 0x8E400000:${FX1_NPU_JOBS_DIR}/busy/window.bin
+                 --uart0-rx-file ${_rtos_dir}/tests/cli_npu_reset_exec.txt ${_npu_rx}
+            REGEX "eth load: started.*npu run: started.*npu wait start: first operation issued \\(op 0\\).*npu: running, job busy op [0-7]/8.*ACCEPTED 0x0000000[1-7] .*npu reset: job busy stopped: ABORTED at op [0-7].*npu reset: recovery OK, soft reset OK, open OK.*npu reset: PASS.*npu: last job busy: ABORTED.*npu run: started.*npu run: busy: OK, 8/8 ops.*outputs 1/1 match.*npu run: PASS.*eth load: sent [1-9][0-9]*, received [1-9][0-9]*, payload errors 0.*eth load: PASS.*poweroff: 0 failed.*RESULT PASS")
+        set_tests_properties(fx1_smoke_freertos_cli_npu_reset_exec PROPERTIES TIMEOUT 600)
+        # N4 coexistence: the `busy` fixture (long NPU work, large arena) with
+        # Ethernet background traffic; ISP (legacy, profile) and SYS_DMA run
+        # right after the NPU's first operation was issued (`npu wait start`):
+        # ACCEPTED goes from 1..7 before the ISP fixture to 8 after it, so the
+        # NPU's operations ran while the ISP ran. Every IP
+        # against its own golden; UART, tick and console alive throughout.
+        fx1_expect_test(freertos_cli_npu_coex IMAGE freertos_cli RC 0 TIMEOUT_MS 8000
+            ARGS --load 0x80650000:${FX1_NPU_JOBS_DIR}/busy/job.bin --load 0x8E400000:${FX1_NPU_JOBS_DIR}/busy/window.bin
+                 --uart0-rx-file ${_rtos_dir}/tests/cli_npu_coex.txt ${_npu_rx}
+            REGEX "eth load: started.*npu run: started.*npu wait start: first operation issued \\(op 0\\).*ACCEPTED 0x0000000[1-7] .*isp 8-frame fixture: PASS.*ACCEPTED 0x00000008 .*dma copy: PASS.*isp 8-frame fixture \\(profile mode\\): PASS.*npu run: busy: OK, 8/8 ops \\(rich 8, neo 0, GEMM bank 0\\), accepted \\+8 retired \\+8, outputs 1/1 match.*npu run: PASS.*eth load: sent [1-9][0-9]*, received [1-9][0-9]*, payload errors 0.*eth load: PASS.*uptime [0-9]+ ms.*poweroff: 0 failed.*RESULT PASS")
+        set_tests_properties(fx1_smoke_freertos_cli_npu_coex PROPERTIES TIMEOUT 600)
+        # Review N4 R2: the same job twice with the console input queued: the
+        # second `npu wait start` waits for the second job's own first push
+        # (ACCEPTED beyond the first job's 5; at priority 2 the job may have
+        # gone on to a later op by then), never the first job's state.
+        fx1_expect_test(freertos_cli_npu_repeat IMAGE freertos_cli RC 0 TIMEOUT_MS 3000
+            ARGS --load 0x80650000:${FX1_NPU_JOBS_DIR}/chain/job.bin --load 0x80900000:${FX1_NPU_JOBS_DIR}/chain/window.bin
+                 --uart0-rx-file ${_rtos_dir}/tests/cli_npu_repeat.txt ${_npu_rx}
+            REGEX "npu run: chain: OK, 5/5 ops.*npu run: PASS.*npu run: started.*npu wait start: first operation issued \\(op [0-4]\\) after [0-9]+ ms.*ACCEPTED 0x0000000[6-9a].*npu run: chain: OK, 5/5 ops.*accepted \\+5 retired \\+5.*npu run: PASS.*poweroff: 0 failed.*RESULT PASS")
         if(FX1_PYTHON3)
             foreach(_job ${_npu_jobs})
                 add_test(NAME fx1_regression_npu_run_${_job}

@@ -272,7 +272,10 @@ GEMM-bank job by STATUS.DONE, and opens (`fx1_npu_init`) only an idle NPU
 (review N2). On top of it (plan N3), the job format `fw/fx1_soc/drivers/fx1_npu_job.h`
 (structured operations on tensors of one window; the firmware builds every
 instruction itself) and the FreeRTOS `npu` commands run host-loaded jobs:
-`platforms/fx1_soc/docs/NPU_JOB_GUIDE.md`.
+`platforms/fx1_soc/docs/NPU_JOB_GUIDE.md`. Between the harts (plan N4) the owner is the holder of a lock word
+(`FX1_NPU_LOCK_BASE`, `fx1_npu_claim` / `fx1_npu_init_shared` /
+`fx1_npu_release`); the platform's `--npu-unguarded-dma` removes the NPU's
+write guard (a negative control of the atomics tests).
 
 ## Access classes
 

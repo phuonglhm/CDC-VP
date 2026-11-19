@@ -1,0 +1,7 @@
+npu run
+npu wait
+npu run
+npu wait start
+npu status
+npu wait
+poweroff

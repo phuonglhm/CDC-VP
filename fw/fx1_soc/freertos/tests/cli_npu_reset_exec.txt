@@ -1,0 +1,11 @@
+eth start
+eth load start
+npu run
+npu wait start
+npu status
+npu reset
+npu status
+npu run
+npu wait
+eth load stop
+poweroff

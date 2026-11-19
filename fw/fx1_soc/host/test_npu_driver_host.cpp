@@ -619,7 +619,7 @@ void job_case(Bench& b, const std::string& dir)
     for (const auto& o : f.outs) b.mem->poke(o.addr, o.golden.data(), o.golden.size());
     JobCtl ctl;
     ctl.fx = &f;
-    const fx1_npu_job_hooks hooks{&ctl, job_wait, job_abort, job_progress};
+    const fx1_npu_job_hooks hooks{&ctl, job_wait, job_abort, job_progress, nullptr};
     fx1_npu_job_result r{};
     const unsigned a0 = accesses();
     fx1_npu_job_run(&npu, f.job.data(), &hooks, &r);
@@ -702,7 +702,7 @@ void job_stop_case(Bench& b, const std::string& dir, const std::string& how)
     check(npu_open(&npu, 0, 0) == FX1_NPU_OK, "init");
     f.preload(b);
     JobCtl ctl;
-    const fx1_npu_job_hooks hooks{&ctl, job_wait, job_abort, job_progress};
+    const fx1_npu_job_hooks hooks{&ctl, job_wait, job_abort, job_progress, nullptr};
     fx1_npu_job_result r{};
     std::uint32_t want = FX1_NPU_JOB_ABORTED;
     std::vector<std::uint8_t> saved = f.job;
@@ -748,6 +748,115 @@ void job_stop_case(Bench& b, const std::string& dir, const std::string& how)
     check(g_bus_errors == 0 || how == "job_dma_error", "no bus error from the CPU");
 }
 
+// ---- N4: the ownership lock between harts --------------------------------------------
+void lock_case(Bench& b)
+{
+    (void)b;
+    static volatile std::uint32_t lock = 0;
+    fx1_npu_t h0{}, h1{};
+    check(fx1_npu_claim(&lock, 0) == FX1_NPU_OK && lock == 1u, "hart 0 claims: OK, the word holds 1");
+    check(fx1_npu_claim(&lock, 0) == FX1_NPU_OK, "a second claim by the holder: OK");
+    check(fx1_npu_claim(&lock, 1) == FX1_NPU_E_BUSY && lock == 1u, "hart 1 claims: BUSY, the word unchanged");
+    unsigned a0 = accesses();
+    check(fx1_npu_init_shared(&h1, 0, 0, 0, now_ns, kHz, &lock, 1) == FX1_NPU_E_NOT_OWNER && h1.unavailable &&
+              accesses() == a0,
+          "hart 1 init_shared: NOT_OWNER, closed, no access");
+    check(fx1_npu_init_shared(&h0, 0, FX1_NPU_FEATURE_NATIVE_GEMM, 0, now_ns, kHz, &lock, 0) == FX1_NPU_OK,
+          "hart 0 init_shared: OK");
+    GemmJob g;
+    g.make(992);
+    check(fx1_npu_gemm_start(&h0, &g.g) == FX1_NPU_OK, "hart 0 starts a GEMM-bank job");
+    check(fx1_npu_release(&h0, 0, &lock, 0) == FX1_NPU_E_NOT_IDLE && lock == 1u, "release with the job outstanding: NOT_IDLE");
+    check(fx1_npu_release(&h1, 0, &lock, 1) == FX1_NPU_E_NOT_OWNER && lock == 1u, "release by hart 1: NOT_OWNER");
+    // An open context whose hart lost the lock (as if the word were taken):
+    // every call that accesses the NPU refuses before any access.
+    lock = 2u;
+    a0 = accesses();
+    fx1_npu_instr_t in{};
+    const fx1_npu_status_t r[] = {fx1_npu_gemm_poll(&h0),         fx1_npu_rich_submit(&h0, &in, 1000),
+                                  fx1_npu_set_window(&h0, kWin, 0x2000u), fx1_npu_recover(&h0, 1000),
+                                  fx1_npu_soft_reset(&h0, 1000),  fx1_npu_clear_errors(&h0),
+                                  fx1_npu_rich_poll(&h0)};
+    bool all = true;
+    for (auto x : r) all &= x == FX1_NPU_E_NOT_OWNER;
+    const std::uint32_t irq = fx1_npu_irq_ack(&h0);
+    fx1_npu_set_push_wait_ns(&h0, 5);
+    fx1_npu_native_write(&h0, FX1_NPU_BANK(FX1_NPU_VP_PUSH_WAIT_NS), 7);
+    check(all && irq == 0 && accesses() == a0, "lock not held: 7 calls NOT_OWNER, irq_ack / writes skipped, no access");
+    lock = 1u;
+    check(fx1_npu_gemm_wait(&h0, 20 * kMs) == FX1_NPU_OK && g.matches(), "lock back: the job completes, oracle");
+    check(fx1_npu_release(&h0, 0, &lock, 0) == FX1_NPU_OK && lock == 0u && h0.unavailable, "release: the word 0, context closed");
+    check(fx1_npu_gemm_start(&h0, &g.g) == FX1_NPU_E_UNAVAILABLE, "the closed context refuses work until a new init");
+    check(fx1_npu_claim(&lock, 1) == FX1_NPU_OK && lock == 2u, "hart 1 claims: OK");
+    check(fx1_npu_init_shared(&h1, 0, FX1_NPU_FEATURE_NATIVE_GEMM, 0, now_ns, kHz, &lock, 1) == FX1_NPU_OK, "hart 1 opens");
+    g.make(64);
+    check(fx1_npu_gemm_start(&h1, &g.g) == FX1_NPU_OK && fx1_npu_gemm_wait(&h1, 20 * kMs) == FX1_NPU_OK && g.matches(),
+          "hart 1's job equals the oracle");
+    check(fx1_npu_release(&h1, 0, &lock, 1) == FX1_NPU_OK && lock == 0u, "hart 1 releases");
+    // A failed init after a claim still lets the hart release.
+    check(fx1_npu_claim(&lock, 0) == FX1_NPU_OK, "hart 0 claims again");
+    fx1_npu_t bad{};
+    check(fx1_npu_init_shared(&bad, 0, 0x80000000u, 0, now_ns, kHz, &lock, 0) == FX1_NPU_E_FEATURE &&
+              fx1_npu_release(&bad, 0, &lock, 0) == FX1_NPU_OK && lock == 0u,
+          "init fails (FEATURE): the lock can still be released");
+    // The hardware is idle but a GEMM-bank completion has not been consumed:
+    // the release waits for the owner's poll (its result would be lost).
+    check(fx1_npu_claim(&lock, 0) == FX1_NPU_OK, "unconsumed: hart 0 claims");
+    {
+        fx1_npu_t c1{};
+        check(fx1_npu_init_shared(&c1, 0, FX1_NPU_FEATURE_NATIVE_GEMM, 0, now_ns, kHz, &lock, 0) == FX1_NPU_OK, "unconsumed: opens");
+        g.make(64);
+        check(fx1_npu_gemm_start(&c1, &g.g) == FX1_NPU_OK && wait_bank(*b.cpu0, STATUS_DONE, sc_time(20, SC_MS)),
+              "unconsumed: the job is done in hardware");
+        check(fx1_npu_release(&c1, 0, &lock, 0) == FX1_NPU_E_NOT_IDLE && lock == 1u,
+              "unconsumed: release refused until the completion is consumed");
+        check(fx1_npu_gemm_poll(&c1) == FX1_NPU_OK && g.matches() && fx1_npu_release(&c1, 0, &lock, 0) == FX1_NPU_OK,
+              "unconsumed: polled (oracle), then released");
+    }
+    // Review N4 R1: a closed context proves nothing about the DMA of its work.
+    // (a) init fails NOT_IDLE while the job's copy-back is held in flight.
+    check(fx1_npu_claim(&lock, 0) == FX1_NPU_OK, "R1a: hart 0 claims");
+    fx1_npu_t c0{};
+    check(fx1_npu_init_shared(&c0, 0, FX1_NPU_FEATURE_NATIVE_GEMM, 0, now_ns, kHz, &lock, 0) == FX1_NPU_OK, "R1a: opens");
+    g.make(992);
+    b.mem->hold_write = 1;
+    b.mem->writes_seen = 0;
+    check(fx1_npu_gemm_start(&c0, &g.g) == FX1_NPU_OK && wait_held(b), "R1a: GEMM runs, its copy-back held");
+    check(fx1_npu_init_shared(&c0, 0, 0, 0, now_ns, kHz, &lock, 0) == FX1_NPU_E_NOT_IDLE && c0.unavailable,
+          "R1a: init again: NOT_IDLE, context closed");
+    check(fx1_npu_release(&c0, 0, &lock, 0) == FX1_NPU_E_NOT_IDLE && lock == 1u, "R1a: release refused NOT_IDLE, lock kept");
+    check(fx1_npu_release(nullptr, 0, &lock, 0) == FX1_NPU_E_NOT_IDLE && lock == 1u, "R1a: also without a context");
+    check(fx1_npu_claim(&lock, 1) == FX1_NPU_E_BUSY, "R1a: hart 1 cannot take it");
+    release_if_held(b);
+    check(wait_bank(*b.cpu0, STATUS_DONE | STATUS_ERROR, sc_time(20, SC_MS)) && g.matches(), "R1a: the old job's copy-back lands");
+    {
+        const sc_time t0 = sc_time_stamp();
+        fx1_npu_status_t r = FX1_NPU_E_NOT_IDLE;
+        while ((r = fx1_npu_release(&c0, 0, &lock, 0)) == FX1_NPU_E_NOT_IDLE && sc_time_stamp() - t0 < sc_time(5, SC_MS))
+            wait(1, SC_US);
+        check(r == FX1_NPU_OK && lock == 0u, "R1a: once idle the release passes");
+    }
+    // (b) a recovery that fails while an aborted instruction still runs.
+    check(fx1_npu_claim(&lock, 0) == FX1_NPU_OK, "R1b: hart 0 claims");
+    check(fx1_npu_init_shared(&c0, 0, FX1_NPU_FEATURE_RICH_HAS, 0, now_ns, kHz, &lock, 0) == FX1_NPU_OK &&
+              fx1_npu_set_window(&c0, kWin, kWinSize) == FX1_NPU_OK,
+          "R1b: opens, window");
+    PoolJob p;
+    p.make(kWin, kWin + 0x40000u, 64, 32, 32, 5, 2);
+    check(fx1_npu_rich_submit(&c0, &p.i, kMs) == FX1_NPU_OK, "R1b: long rich job");
+    wait(2, SC_US);
+    check(fx1_npu_recover(&c0, 1) == FX1_NPU_E_UNAVAILABLE && c0.unavailable, "R1b: recovery with 1 ns: UNAVAILABLE");
+    check(fx1_npu_release(&c0, 0, &lock, 0) == FX1_NPU_E_NOT_IDLE && lock == 1u, "R1b: release refused while the engine runs");
+    {
+        const sc_time t0 = sc_time_stamp();
+        fx1_npu_status_t r = FX1_NPU_E_NOT_IDLE;
+        while ((r = fx1_npu_release(&c0, 0, &lock, 0)) == FX1_NPU_E_NOT_IDLE && sc_time_stamp() - t0 < sc_time(20, SC_MS))
+            wait(1, SC_US);
+        check(r == FX1_NPU_OK && lock == 0u, "R1b: once the engine is idle the release passes");
+    }
+    check(g_bus_errors == 0, "no bus error");
+}
+
 } // namespace
 
 int sc_main(int argc, char* argv[])
@@ -763,6 +872,7 @@ int sc_main(int argc, char* argv[])
         {"window", window},
         {"reinit", reinit},
         {"poll", poll},
+        {"lock", lock_case},
     };
     if ((c == "job" || c == "job_abort" || c == "job_timeout" || c == "job_dma_error" || c == "job_unsupported" ||
          c == "job_deadline0" || c == "job_deadline1") && argc > 2) {

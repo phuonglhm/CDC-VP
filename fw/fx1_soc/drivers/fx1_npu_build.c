@@ -295,6 +295,8 @@ const char* fx1_npu_status_name(fx1_npu_status_t s)
     case FX1_NPU_E_UNAVAILABLE: return "UNAVAILABLE";
     case FX1_NPU_E_NOT_IDLE: return "NOT_IDLE";
     case FX1_NPU_PENDING: return "PENDING";
+    case FX1_NPU_E_BUSY: return "BUSY";
+    case FX1_NPU_E_NOT_OWNER: return "NOT_OWNER";
     }
     return "?";
 }

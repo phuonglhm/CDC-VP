@@ -13,8 +13,11 @@
  * native configuration invalid (fx1_npu_t.native_config_valid); only a
  * GEMM-bank job programs it again (review N1, N1-I).
  *
- * Ownership: one owner (one hart, later one FreeRTOS task) calls the driver;
- * nothing here is reentrant. Single producer for the rich queue: the driver
+ * Ownership: one owner calls the driver; nothing here is reentrant. Between
+ * harts (plan N4) the owner is the holder of a lock word in shared memory
+ * (FX1_NPU_LOCK_BASE): fx1_npu_claim / fx1_npu_init_shared / fx1_npu_release.
+ * With a lock, every call that accesses the NPU first checks that its hart
+ * holds it (FX1_NPU_E_NOT_OWNER, no access); the read-only accessors do not. Single producer for the rich queue: the driver
  * checks VP_QUEUE_FREE before every push and never relies on the bounded push
  * wait, which is a VP recovery path (a timed-out push is a store access fault).
  *
@@ -76,6 +79,8 @@ typedef enum {
     FX1_NPU_E_UNAVAILABLE, /* closed: a recovery or an init failed; only init reopens */
     FX1_NPU_E_NOT_IDLE,    /* needs a quiet NPU (no outstanding job, engines idle) */
     FX1_NPU_PENDING,       /* poll: the job still runs (not an error, nothing to do) */
+    FX1_NPU_E_BUSY,        /* fx1_npu_claim: another hart holds the NPU */
+    FX1_NPU_E_NOT_OWNER,   /* this context's hart does not hold the lock: no access made */
 } fx1_npu_status_t;
 
 /* Error registers, read one after the other (not an atomic image). */
@@ -96,6 +101,8 @@ typedef struct {
     uint32_t rich_inflight;    /* rich instructions accepted, not consumed yet */
     uint32_t retired_mark;     /* RETIRED when the rich side was last consumed */
     int latched;               /* reported errors still latched in the NPU */
+    volatile uint32_t* lock;   /* shared ownership word (fx1_npu_init_shared), 0: none */
+    uint32_t hart;             /* this context's hart, with a lock */
     fx1_npu_err_t last;        /* snapshot of the last failure */
 } fx1_npu_t;
 
@@ -112,6 +119,24 @@ typedef struct {
  * Init never aborts: it does not prove a stuck engine recovered. */
 fx1_npu_status_t fx1_npu_init(fx1_npu_t* npu, uintptr_t base, uint32_t required, int irq, uint64_t (*now)(void),
                               uint32_t hz);
+/* ---- ownership between harts --------------------------------------------------- */
+/* Takes the lock word (0 -> hart + 1, LR/SC): FX1_NPU_OK (also when this hart
+ * holds it already), FX1_NPU_E_BUSY (another hart holds it). No NPU access. */
+fx1_npu_status_t fx1_npu_claim(volatile uint32_t* lock, uint32_t hart);
+/* fx1_npu_init for a hart that holds `lock` (FX1_NPU_E_NOT_OWNER, nothing
+ * accessed, otherwise); the context then checks the lock on every call. */
+fx1_npu_status_t fx1_npu_init_shared(fx1_npu_t* npu, uintptr_t base, uint32_t required, int irq, uint64_t (*now)(void),
+                                     uint32_t hz, volatile uint32_t* lock, uint32_t hart);
+/* Frees `lock` held by `hart` (FX1_NPU_E_NOT_OWNER otherwise), only once the
+ * NPU at `base` is idle: every engine idle, QUIESCENT, nothing queued, no
+ * copy-back (read at `base` whatever the context's state); else
+ * FX1_NPU_E_NOT_IDLE and the lock stays held. An open context `npu` on that
+ * lock must also have nothing outstanding, and is closed: another hart may
+ * change the NPU, so a later claim needs a new init. `npu` may be 0, or a
+ * context whose init or recovery failed (then only its closed flag and lock
+ * pointer are read). */
+fx1_npu_status_t fx1_npu_release(fx1_npu_t* npu, uintptr_t base, volatile uint32_t* lock, uint32_t hart);
+
 void fx1_npu_read_errors(const fx1_npu_t* npu, fx1_npu_err_t* e);
 /* Quiet NPU only (else FX1_NPU_E_NOT_IDLE, nothing written): VP_CMD.CLEAR_ERROR,
  * RICH_STATUS, STATUS / IRQ_STATUS W1C, neo DONE/ISTATUS. For latches set by

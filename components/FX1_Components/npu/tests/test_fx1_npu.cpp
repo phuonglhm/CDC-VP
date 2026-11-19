@@ -21,6 +21,9 @@
 //   fabric_maxpool, fabric_gemm, fabric_timeout_abort, fabric_s0_timeout_contrast
 // Gate replay (program from a drop generator, golden from ref_program.py):
 //   gate <dir> <golden.bin> <window base> <direct|fabric>
+//   gate_refused <dir> <window base> <direct|fabric>
+//     (plan N4) a program of instructions outside the FX1 ABI: all refused at
+//     accept, nothing accepted, retired, staged or written; a job after passes
 //   gate_neo <window program> <dir> <golden.bin> <window base> <direct|fabric>
 //   gate_neo_reset <window program> <dir> <golden.bin> <window base> <direct|fabric>
 //     (first a platform reset while the first doorbell's last copy-back
@@ -939,6 +942,24 @@ void case_dma_error(Bench& b)
     c.set_bank(VP_CMD, VP_CMD_CLEAR_ERROR);
     c.rich(MODEL_STATUS, 0);
     c.set_bank(STATUS, STATUS_ERROR | STATUS_DONE);
+    // A copy-back write error only (plan N4 mutation M6): the staging reads of
+    // the same range pass, the instruction runs, its copy-back fails; it must
+    // not count as retired (RETIRED is the drivers' success criterion).
+    b.mem->error_writes_only = true;
+    const std::uint64_t w0 = b.npu->stats().dma_write_bytes;
+    q.load(*b.mem, kLowWin);
+    q.program(c, kLowWin);
+    wait_rich_idle(c);
+    check((c.bank(VP_ERROR) & VP_ERROR_DMA) && (c.rich_rd(MODEL_STATUS) >> 16) == RICH_ERR_VP_DMA &&
+              c.bank(LAST_ERROR) == static_cast<std::uint32_t>(error_code::dma_write) && c.rich_rd(MODEL_RETIRED) == 0 &&
+              !(c.bank(STATUS) & STATUS_DONE),
+          "copy-back write error: VP_ERROR.DMA, DMA_WRITE, not retired, no DONE");
+    check(b.npu->stats().model_dispatches >= 1 && b.npu->stats().dma_write_bytes == w0,
+          "the instruction ran (dispatched) and nothing of it was counted as written");
+    c.set_bank(VP_CMD, VP_CMD_CLEAR_ERROR);
+    c.rich(MODEL_STATUS, 0);
+    c.set_bank(STATUS, STATUS_ERROR | STATUS_DONE);
+    b.mem->error_writes_only = false;
     b.mem->error_hi = 0;
     run_pool(b, kLowWin, 0x2000, 22, "job after the DMA errors");
 }
@@ -1228,6 +1249,58 @@ int case_gate(const std::string& dir, const std::string& golden_path, std::uint6
     }, sc_time(20, SC_SEC));
 }
 
+// Plan N4: a drop check program made only of instructions outside the FX1
+// ABI (ELEM_WISE slice / concat, FUSED_ATTN, ...): every push is refused at
+// accept time, nothing is accepted or retired, nothing reaches the window,
+// and a MAX_POOL job right after passes.
+int case_gate_refused(const std::string& dir, std::uint64_t win, const std::string& topo)
+{
+    std::vector<std::uint8_t> init;
+    std::vector<GateIns> prog;
+    if (!read_file(dir + "/dram_init.bin", init) || !parse_gate(dir, prog) || prog.empty()) {
+        std::printf("cannot read the program %s\n", dir.c_str());
+        return 2;
+    }
+    const std::uint32_t window = static_cast<std::uint32_t>((init.size() + 4095) & ~std::size_t(4095));
+    return run_bench(topo, fx1::npu::NpuOptions{}, [&](Bench& b) {
+        Cpu& c = *b.cpu0;
+        b.mem->poke(win, init.data(), init.size());
+        set_window(c, win, window);
+        enable(c);
+        b.mem->writes.clear();
+        std::printf("[gate] %s: %zu instructions outside the FX1 ABI, %s\n", dir.c_str(), prog.size(), topo.c_str());
+        unsigned codes_unsupported = 0;
+        for (const auto& ins : prog) {
+            for (const auto& w : ins.writes) {
+                const std::uint32_t v = is_address_register(w.addr) ? static_cast<std::uint32_t>(win + w.val) : w.val;
+                if (c.rich(w.addr, v) != tlm::TLM_OK_RESPONSE) check(false, "write " + hex(w.addr) + " faulted");
+            }
+            const std::uint32_t code = c.rich_rd(MODEL_STATUS) >> 16;
+            codes_unsupported += code == RICH_ERR_VP_UNSUPPORTED;
+            c.rich(MODEL_STATUS, 0);
+            c.set_bank(VP_CMD, VP_CMD_CLEAR_ERROR);
+            c.set_bank(STATUS, STATUS_ERROR | STATUS_DONE);
+        }
+        check(wait_rich_idle(c, sc_time(1, SC_SEC)), "rich side idle");
+        const auto st = b.npu->stats();
+        check(st.pushes_refused == prog.size() && st.pushes_accepted == 0 && c.rich_rd(MODEL_RETIRED) == 0 &&
+                  c.bank(VP_ACCEPTED) == 0,
+              "every push refused (" + std::to_string(st.pushes_refused) + "/" + std::to_string(prog.size()) +
+                  "), nothing accepted or retired");
+        check(codes_unsupported == prog.size(), "each refusal coded UNSUPPORTED (" + std::to_string(codes_unsupported) + ")");
+        check(b.mem->writes_in(win, win + window) == 0 && st.dma_read_bytes == 0,
+              "nothing read from or written to the window (no staging, no copy-back)");
+        Pool p;
+        p.make(31);
+        const std::uint64_t pwin = win + window;
+        p.load(*b.mem, pwin);
+        set_window(c, pwin, 0x2000);
+        p.program(c, pwin);
+        check(wait_rich_idle(c), "a MAX_POOL job afterwards");
+        p.verify(*b.mem, pwin, "the job after the refusals");
+    }, sc_time(5, SC_SEC));
+}
+
 } // namespace
 
 int sc_main(int argc, char* argv[])
@@ -1267,6 +1340,13 @@ int sc_main(int argc, char* argv[])
             return 2;
         }
         return case_gate(argv[3], argv[4], std::stoull(argv[5], nullptr, 0), argv[6], argv[2], name == "gate_neo_reset");
+    }
+    if (name == "gate_refused") {
+        if (argc != 5) {
+            std::fprintf(stderr, "usage: test_fx1_npu gate_refused <dir> <window base> <direct|fabric>\n");
+            return 2;
+        }
+        return case_gate_refused(argv[2], std::stoull(argv[3], nullptr, 0), argv[4]);
     }
     if (name == "gate") {
         if (argc != 6) {

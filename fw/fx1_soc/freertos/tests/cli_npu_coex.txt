@@ -1,0 +1,15 @@
+eth start
+eth load start
+npu run
+npu wait start
+npu status
+isp selftest
+npu status
+dma test 1000
+npu status
+isp selftest profile
+npu status
+npu wait
+eth load stop
+uptime
+poweroff

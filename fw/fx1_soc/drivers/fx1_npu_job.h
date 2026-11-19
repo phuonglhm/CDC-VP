@@ -185,6 +185,8 @@ typedef struct {
     int (*abort)(void* ctx);
     /* Called once per operation before it is issued (status, may be 0). */
     void (*progress)(void* ctx, uint32_t op_index);
+    /* Called once the operation was pushed (accepted) or started (may be 0). */
+    void (*issued)(void* ctx, uint32_t op_index);
 } fx1_npu_job_hooks;
 
 /* Runs a checked job image on an open context (quiet: nothing outstanding):

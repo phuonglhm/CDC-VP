@@ -353,7 +353,7 @@ static const command commands[] = {
     {"isp", cmd_isp, "isp selftest [profile]|run [legacy|auto]|stats|stream start|status|stop|wait [MS]|idle [MS]  fixture (legacy or profile mode); RAW job (profile mode by default) with optional adaptive WB/tone; statistics; RAW-sequence stream (fx1_soc --isp-stream-spool)"},
     {"dma", cmd_dma, "dma test [BYTES]     SYS_DMA M2M copy with IRQ, verified"},
     {"fpu", cmd_fpu, "fpu test             two tasks interleaving FP work (context switch check)"},
-    {"npu", cmd_npu, "npu info|status|selftest|run|wait [MS]|reset  NPU (SAURIA v4.7): identity; state; GEMM/rich/DFC against the C oracle; the host-loaded job (returns at once); its end and summary; stop + recover + soft reset"},
+    {"npu", cmd_npu, "npu info|status|selftest|run|wait [MS]|wait start [MS]|reset  NPU (SAURIA v4.7): identity; state; GEMM/rich/DFC against the C oracle; the host-loaded job (returns at once); its end and summary; stop + recover + soft reset"},
     {"eth", cmd_eth,
      "eth probe|status|stats [clear]|start|stop [DRAIN_US]|recover|selftest|mdio read P R|mdio write P R V|"
      "send N [LEN] [PATTERN]|dump rx|tx|cycle N|load start|stop|mdiopoll start|stop|wait MS"},

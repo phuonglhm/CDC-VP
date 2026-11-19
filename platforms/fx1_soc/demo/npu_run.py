@@ -299,7 +299,7 @@ def finish(out, s, rc):
         lines.append("  model exec cycles %d, MAC ops %d, GEMM-bank cycles %d, interrupts %d (stale %d)" %
                      (r["model_exec_cycles"], r["mac_ops"], r["gemm_bank_cycles"], r["interrupts"],
                       r["stale_interrupts"]))
-        lines.append("  NPU job %.1f us of simulated time (model time, not FX1 end-to-end throughput)" %
+        lines.append("  NPU job %.1f us of simulated time, first submit to last completion (incl. DMA and per-operation firmware work)" %
                      (r["npu_job_ns"] / 1000.0))
     for c in s.get("outputs", []):
         lines.append("  output %d %-10s %7d bytes, %d differ from the golden, CRC-32 %s (expected %s)" %

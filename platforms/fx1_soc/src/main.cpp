@@ -81,7 +81,7 @@ void usage()
                  "              [--uart0-rx-byte-us N]\n"
                  "              [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...]\n"
                  "              [--camera [--camera-raw FILE]] [--eth-peer loopback|partner|none]\n"
-                 "              [--eth-unguarded-dma] [--eth-wb-delay-us N] [--dump-isp-demosaic DIR]\n"
+                 "              [--eth-unguarded-dma] [--npu-unguarded-dma] [--eth-wb-delay-us N] [--dump-isp-demosaic DIR]\n"
                  "              [--isp-stream-spool DIR [--isp-stream-max-mib N] [--isp-stream-hold-us N]\n"
                  "              [--isp-stream-fault foreign-ack]]\n"
                  "              [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]\n"
@@ -122,6 +122,8 @@ void usage()
                  "                that echoes each frame to its sender; none: link down\n"
                  "  --eth-unguarded-dma  the Ethernet DMA bypasses its write guard (negative\n"
                  "                control only: its writes no longer cancel LR reservations)\n"
+                 "  --npu-unguarded-dma  the NPU DMA bypasses its write guard (negative control\n"
+                 "                only, as --eth-unguarded-dma)\n"
                  "  --eth-wb-delay-us  fault injection: every DES0 write-back of the Ethernet DMA\n"
                  "                is held N us (0..100000) after its completion is signalled, so\n"
                  "                firmware sees DONE with OWN still 1 (MAS 9.3; default 0: off)\n"
@@ -418,6 +420,7 @@ int sc_main(int argc, char* argv[])
             options.eth_peer = mode;
         }
         else if (arg == "--eth-unguarded-dma") options.eth_unguarded_dma = true;
+        else if (arg == "--npu-unguarded-dma") options.npu_unguarded_dma = true;
         else if (arg == "--eth-wb-delay-us") {
             unsigned long us = 0;
             if (!parse_uint(value(), 100000ul, us)) {

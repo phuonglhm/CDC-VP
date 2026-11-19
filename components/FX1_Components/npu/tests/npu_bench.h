@@ -70,6 +70,7 @@ struct TestMem : sc_module {
     sc_time latency{20, SC_NS};
     // Fault injection on NPU traffic (any initiator: the tests know who is the master).
     std::uint64_t error_lo = 0, error_hi = 0;   // [lo, hi): reads/writes answered with an error
+    bool error_writes_only = false;              // the error range hits writes only (a copy-back error)
     std::uint64_t stall_lo = 0, stall_hi = 0;   // reads in [lo, hi) wait for `release`
     sc_event release;
     bool released = false;
@@ -119,7 +120,7 @@ struct TestMem : sc_module {
             tx.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
             return;
         }
-        if (error_hi && a < error_hi && a + n > error_lo) {
+        if (error_hi && a < error_hi && a + n > error_lo && (tx.is_write() || !error_writes_only)) {
             tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
             return;
         }

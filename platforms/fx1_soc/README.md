@@ -70,7 +70,12 @@ NPU DRAM arenas (`fx1_memory_map.h`): `FX1_NPU_ARENA_SMALL` 0x8090_0000 + 4 MiB
 (inside FW_SHARED, between the chain and tpg4k record areas) and
 `FX1_NPU_ARENA_LARGE` 0x8E00_0000 + 32 MiB (below the test area). RICH windows of
 firmware NPU jobs; the map asserts keep them apart from the firmware image,
-stacks and each other.
+stacks and each other. In FW_SHARED +0x150000..+0x162000: the NPU job image
+(`FX1_NPU_JOB_BASE`, 64 KiB), result block (`FX1_NPU_RESULT_BASE`) and the
+ownership lock between the harts (`FX1_NPU_LOCK_BASE`, one word alone in its
+page; `fx1_npu_claim`). `fx1_unit_npu_map` prints the whole DDR map and checks
+every NPU region against every other owner (ISP demo incl. 2688 x 1520, ISP
+stream areas, slots and pool, camera paths, atomic tests).
 
 Ethernet DMA memory: the linker section `.eth_dma` (NOLOAD, 4 KiB aligned at
 both ends, inside the image region) holds the rings and buffers of
@@ -145,13 +150,15 @@ build-fx1/platforms/fx1_soc/fx1_soc --fw build-fx1/fw/fx1_soc/hello_2hart.elf \
     [--dump ADDR:LEN:FILE ...]   # e.g. --dump 0x88006000:3072:y.bin (DDR bytes after the run)
     [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...] \
     [--uart0-rx-byte-us N] [--camera [--camera-raw FILE]] [--eth-peer loopback|partner|none] \
-    [--eth-unguarded-dma] [--eth-wb-delay-us N]
+    [--eth-unguarded-dma] [--eth-wb-delay-us N] [--no-npu] [--npu-unguarded-dma] [--npu-host-watchdog-s N]
 ```
 
 `--eth-wb-delay-us N` (fault injection, Ethernet review F08/ER02) holds every
 DES0 write-back of the Ethernet DMA N us after its completion is signalled, so
 firmware sees DONE while the descriptor still reads OWN=1 (MAS 9.3);
-`--eth-unguarded-dma` is the write-guard negative control.
+`--eth-unguarded-dma` is the write-guard negative control; `--npu-unguarded-dma`
+is the same for the NPU's DMA (NPU N4: its writes then neither wait for an
+open AMO / SC bracket nor cancel LR reservations).
 
 **DDR3 boot modes.** With `--ddr-boot preinit` (default) the platform
 initializes the DDR3 controller, runs the ECC startup scrub (about 0.67 s of
@@ -443,6 +450,12 @@ Exit status:
 | `fx1_unit_npu_job_*` | NPU N3, host: every job fixture through the firmware's executor on the SystemC clone (declared outcome; OK: outputs equal the goldens; BAD_JOB: no NPU access at all); a job stopped by the abort hook, by its timeout and by a DMA read error, then run again and passing; the owner held past the deadline before op 0 / op 1: that op is never pushed |
 | `fx1_regression_npu_job_xcheck_*`, `fx1_regression_npu_run_*` | NPU N3: the rich / DFC operations of each fixture through the drop's `ref_program.py` (whole window equal to the C oracle); every fixture through the launcher `demo/npu_run.py` on `fx1_soc` with the FreeRTOS CLI (declared outcome, dumped outputs equal to the goldens); `fx1_regression_npu_run_launcher`: output directories that overlap the fixture or hold foreign files refused with every file kept, stale results removed, inherited model knobs (`HAS_*`, `SAURIA_CORE_RTL_*`, `NPU_*`) removed and the run equal to a clean one |
 | `fx1_smoke_npu_errors` (+ `_q10us`) | NPU N2: refusals (opcode, window, address, geometry) each followed by a passing job; busy: rich push and set_window refused by the driver while a GEMM-bank job is outstanding (no store fault), a push refused BUSY below the driver does not fail the job; driver timeout -> recovery (ABORT, QUIESCENT + engines idle), no late write; N1-I: ABORT of a GEMM-bank job and of a raw native START, the next GEMM-bank job matches; soft reset; a recovery that times out closes the context, init fails NOT_IDLE / FEATURE while closed and reopens once the engine is idle |
+| `fx1_smoke_npu_two_hart` (+ `_q10us`) | NPU N4: both harts claim the ownership lock at the same instant, 4 rounds: exactly one wins (BUSY for the other), the other's init / start / release are refused without an access, the holder's GEMM-bank job matches the oracle, then the lock is handed over and the other hart's job matches |
+| `fx1_smoke_npu_amo`, `fx1_smoke_npu_sc` (+ `_unguarded`) | NPU N4: amoadd / LR-SC loops on a free word of the granule that an NPU copy-back transaction writes: no NPU write lost, every atomic kept, canaries intact; the AMO image shows writes held by the guard, the SC image SC failures (reservations cancelled by the NPU write). With `--npu-unguarded-dma`: nothing held, no SC failure (FAIL 0x24) |
+| `fx1_smoke_freertos_cli_npu_coex` | NPU N4: Ethernet background traffic, the `busy` job (long NPU work, large arena), then right after its operations started (`npu wait start`) the ISP fixture (legacy, profile mode) and a SYS_DMA copy: each IP against its own golden, UART / tick / console alive |
+| `fx1_smoke_freertos_cli_npu_reset_exec` | NPU N4 review: Ethernet load, the `busy` job, `npu reset` while the NPU executes (after `npu wait start`): ABORTED, recovered, then the job again against its golden |
+| `fx1_unit_npu_map`, `fx1_unit_npu_driver_lock` | NPU N4, host: every NPU DDR region apart from every other owner's; the ownership lock on the clone (claim / BUSY, NOT_OWNER without access for an open context that lost the lock, release rules) |
+| `fx1_npu_gate_{ref,avgpool}_*`, `fx1_npu_gate_{nd_big,vit_heads}_*` | NPU N4: more of the drop's check programs through the clone against `ref_program.py` (GEMM_FUSED forms, AVG_POOL), and programs outside the FX1 ABI (ELEM_WISE slice / concat, FUSED_ATTN): every push refused, nothing staged or written, a job afterwards passes |
 | `fx1_npu_regs_header`, `fx1_unit_npu_neo_encoder`, `fx1_regression_npu_oracle_xcheck` | Host: the C register header against the model's C++ map (compile time); the driver's neo_lite encoder against the drop's C++ encoder, word for word; the driver's builders and the firmware C oracle against the drop's numpy reference (`ref_program.py`), byte for byte |
 | `fx1_unit_npu_driver_*` | Host: the reference driver (C) against the SystemC NPU clone, a completion or a failing copy-back released at every MMIO access of a refused push (polled and by interrupt: no lost completion, no false success); GEMM-bank job outstanding (calls NOT_IDLE without an access); set_window while busy; init after a failed recovery; PENDING / TIMEOUT semantics |
 

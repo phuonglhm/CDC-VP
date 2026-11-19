@@ -142,12 +142,16 @@ succeeded.
   LAST_ERROR, IRQ_STATUS, RICH_STATUS, VP_ERROR, VP_ERROR_INFO, VP_STATUS.
 - Operations done (rich, neo, GEMM bank), and the ACCEPTED and RETIRED deltas.
 - Model execution cycles, MAC operations, GEMM-bank cycles.
-- `ticks`: the NPU time of the job, in 50 ns `mtime` ticks.
+- `ticks`: simulated time from the first submit to the last completion, in
+  50 ns `mtime` ticks: the NPU's execution and DMA plus the firmware's work
+  between operations (one at a time) and its scheduling. Not the model's own
+  time (that is the execution cycles, 1.25 ns each).
 - Interrupts and stale interrupts.
 - Outputs compared and matching, the job CRC, the model hash, and the CRC
   found for each tensor.
 
-These counters are model time. They are not FX1 end-to-end throughput.
+None of these counters is FX1 end-to-end throughput (the firmware's checks and
+CRCs before the first submit are not in `ticks`).
 
 ## Fixtures (`fx1_npu_jobs`, built with `fx1_all`)
 
@@ -258,11 +262,29 @@ The window address of a fixture is in its `fixture.json` (`window_addr`).
 - **Hart speed:** the harts run from DDR (about 150 ns per instruction), so the
   firmware's CRCs over large tensors take simulated time (about 0.1 s for
   64 KiB).
-- **One job at a time, on hart 0.** Hart 1 does not run the FreeRTOS CLI.
+- **One job at a time, on hart 0.** Hart 1 does not run the FreeRTOS CLI. The
+  NPU task holds the ownership lock (`FX1_NPU_LOCK_BASE`) for the session; a
+  bare-metal hart uses `fx1_npu_claim` / `fx1_npu_init_shared` /
+  `fx1_npu_release` (`fw/fx1_soc/tests/npu_two_hart`). `fx1_npu_release(npu,
+  base, lock, hart)` reads the NPU at `base` and refuses (`FX1_NPU_E_NOT_IDLE`,
+  the lock kept) while anything is outstanding or an engine is busy, even when
+  the context is already closed (an `init` that found the NPU busy, an
+  UNAVAILABLE recovery): the lock never passes while DMA of the holder's work
+  runs (review N4).
+- **Operation coverage against the drop's own check programs** (host gates on
+  the clone, `ref_program.py` as the reference): GEMM_FUSED (3 x 3, 1 x 1
+  residual, without extension registers, padding), ELEM_WISE MAX_POOL /
+  AVG_POOL / ADD, the neo register file, the GEMM bank. Refused at accept time
+  (outside the FX1 ABI, nothing written): ELEM_WISE slice / concat, DMA_TENSOR,
+  FUSED_ATTN, LAYERNORM. The drop's full YOLOv8m program needs slice / concat
+  and host upsample steps, so it does not run on the FX1 NPU as delivered.
 - **`npu wait` without a limit** returns when the job ends: within its
   execution budget plus the firmware's CRC time. `npu wait MS` only stops
   waiting; the job goes on, and it is not a failure. A script must wait for, or
   check, the outcome before `poweroff`.
-- **The NPU task runs at priority 1, below the CLI.** Completion handling in
-  the task can wait behind CLI work; the interrupt handler itself is not
-  delayed by task priorities.
+- **The NPU task runs at priority 2, as the CLI** (time slicing, 1 kHz tick).
+  A job's checks and CRCs share the CPU with the console and other priority-2
+  tasks, so their time grows with CLI load; the interrupt handler itself is not
+  delayed by task priorities. Measured on the `busy` fixture: checks and CRCs
+  about 0.23 s, execution window about 32 ms, of which the model's own time is
+  about 20 ms (the rest: per-operation driver work, interrupts, scheduling).

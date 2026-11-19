@@ -145,8 +145,9 @@ The NPU (`FX1_NPU_VP_BASE` 0x1300_0000, PLIC source 4) through the reference
 driver `fw/fx1_soc/drivers/fx1_npu.h` and the job format
 `fw/fx1_soc/drivers/fx1_npu_job.h` (guide:
 `platforms/fx1_soc/docs/NPU_JOB_GUIDE.md`). One owner: the task `npu`
-(priority 1, below the CLI, so the console is not held while it checks or
-runs a job; completion handling in the task can wait behind CLI work) is the only caller of the driver; the commands post it one request. The
+(priority 2, as the CLI: time slicing shares the CPU between a job's checks
+and CRCs and the console, so neither waits for the other's CPU work to end;
+review N4) is the only caller of the driver; the commands post it one request. The
 interrupt handler acknowledges `IRQ_STATUS` and notifies the task, nothing
 else; a claim that finds `IRQ_STATUS` 0 is counted as stale. The task never
 sleeps until a DONE interrupt: it polls with a deadline and blocks at most one
@@ -163,6 +164,7 @@ and every `npu` command says so without a failure.
 | `npu selftest` | GEMM bank K=32, the rich chain (conv 3x3, conv 1x1 + residual, MAX_POOL, AVG_POOL, ADD) and the DFC cases (neo MAX_POOL, RESIDUAL) against the C oracle, in the small arena from +3 MiB; a check |
 | `npu run` | The job the host loaded at `FX1_NPU_JOB_BASE` (`fx1_soc --load`, `platforms/fx1_soc/demo/npu_run.py`): copied, checked (nothing reaches the NPU from an invalid job), its input CRCs, then its operations one at a time; the result block at `FX1_NPU_RESULT_BASE`. Returns at once |
 | `npu wait [MS]` | Until the job has ended (its execution budget plus the firmware's CRC time), then its summary (outcome, operations, ACCEPTED / RETIRED, outputs matching, model cycles, MAC operations, interrupts, NPU time) as a check (OK passes). With MS it returns after MS ms if the job still runs: not a failure, the job goes on, so a script must wait for (or check) the outcome before `poweroff` |
+| `npu wait start [MS]` | Until the job posted last has passed its checks and its first operation was accepted by the NPU (pushed or started), so what follows in a script runs while the NPU executes (MS: limit). The state is reset when `npu run` is accepted, so it never answers from an earlier job; not a check |
 | `npu reset` | Idle: recovery (ABORT, every engine idle) + soft reset + reopen; after an UNAVAILABLE recovery only the reopen, once the NPU is idle. While a job runs: the job is stopped first (ABORTED, recovered), then the same. A check; the command waits at most 2 s |
 
 ## Camera (CSI-2 M6b)
@@ -272,6 +274,8 @@ of 64×48, each CRC compared with the reference.
 | `fx1_smoke_freertos_cli_npu` (+ `_absent`) | `tests/cli_npu.txt`: hwcheck covers the NPU, `version` names it, `npu info/status/selftest/run/wait/reset` (no job loaded); with `--no-npu` every command reports the NPU absent, no failure |
 | `fx1_smoke_freertos_cli_npu_job` | The `chain` fixture loaded with `--load`: `npu run` twice (buffers reused), every output CRC as expected, ACCEPTED / RETIRED +5 each time |
 | `fx1_smoke_freertos_cli_npu_reset` | The `long` fixture: `npu status` while it runs, `npu wait 1` returns, `npu reset` stops it (ABORTED, recovered, soft reset), then the job again passes |
+| `fx1_smoke_freertos_cli_npu_reset_exec` | Ethernet load, the `busy` fixture: `npu reset` after `npu wait start`, while the NPU executes (ACCEPTED 1..7), stops it (ABORTED, recovered), then the job again passes |
+| `fx1_smoke_freertos_cli_npu_coex` | Ethernet load, the `busy` job, then (after `npu wait start`) ISP legacy + profile fixtures and a SYS_DMA copy while the NPU executes; every IP against its own golden |
 | `fx1_smoke_freertos_cli_bad_input` | `tests/cli_bad_input.txt`: out-of-range numbers, wrapping ranges and faulting register holes are reported, and the CLI keeps working through `poweroff` PASS |
 | `fx1_smoke_freertos_cli_hwcheck_fail` | An image built with `HWCHECK_INJECT_FAILURE` must halt the boot with `FAIL ISP` and code 0x50 |
 | `fx1_smoke_uart_rx_q*ns` | UART RX from the host, polled and interrupt-driven (bare metal) |

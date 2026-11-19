@@ -198,7 +198,7 @@ struct camera : sc_core::sc_module {
 // NPU (plan FX1_NPU_V47 N1): the SAURIA v4.7 clone; DMA through a write guard
 // like the other non-CPU writers (plan C7); RAM = the CPU DDR aperture.
 struct npu_block {
-    fx1::WriteGuard dma_guard;
+    std::unique_ptr<fx1::WriteGuard> dma_guard; // null with --npu-unguarded-dma (negative control)
     fx1::npu::Fx1Npu npu;
     static fx1::npu::NpuOptions options(unsigned watchdog_s)
     {
@@ -209,10 +209,12 @@ struct npu_block {
         o.host_watchdog_s = watchdog_s;
         return o;
     }
-    npu_block(fx1::ExclusiveMonitor& monitor, unsigned watchdog_s)
-        : dma_guard("npu_dma_guard", monitor, kMasterNpuDma), npu("npu", options(watchdog_s))
+    npu_block(fx1::ExclusiveMonitor& monitor, unsigned watchdog_s, bool guarded) : npu("npu", options(watchdog_s))
     {
-        npu.master_socket.bind(dma_guard.target);
+        if (guarded) {
+            dma_guard = std::make_unique<fx1::WriteGuard>("npu_dma_guard", monitor, kMasterNpuDma);
+            npu.master_socket.bind(dma_guard->target);
+        }
     }
 };
 #else
@@ -422,9 +424,10 @@ struct fx1_soc_top::impl : sc_core::sc_module {
 #ifdef FX1_SOC_HAS_NPU
             // 1 MiB aperture on SYSBUS_1 (FX1_NPU_VP_BASE), NPU_DMA through its
             // write guard, level IRQ on source 4, 20 ns power-on reset.
-            npu = std::make_unique<npu_block>(monitor, options.npu_host_watchdog_s);
+            npu = std::make_unique<npu_block>(monitor, options.npu_host_watchdog_s, !options.npu_unguarded_dma);
             fabric.target(kNpuTarget).bind(npu->npu.target_socket);
-            npu->dma_guard.out.bind(fabric.initiator("NPU_DMA"));
+            if (npu->dma_guard) npu->dma_guard->out.bind(fabric.initiator("NPU_DMA"));
+            else npu->npu.master_socket.bind(fabric.initiator("NPU_DMA")); /* --npu-unguarded-dma */
             npu->npu.reset_n(npu_rst_n);
 #else
             throw std::invalid_argument("fx1_soc: this build has no NPU (configure with -DFX1_SOC_ENABLE_NPU=ON)");
@@ -597,7 +600,7 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     std::uint64_t npu_writes_held() const
     {
 #ifdef FX1_SOC_HAS_NPU
-        if (npu) return npu->dma_guard.writes_held();
+        if (npu && npu->dma_guard) return npu->dma_guard->writes_held();
 #endif
         return 0;
     }
@@ -763,7 +766,8 @@ std::string fx1_soc_top::npu_banner() const
     if (impl_->npu) {
         std::ostringstream out;
         out << "at 0x" << std::hex << FX1_NPU_VP_BASE << std::dec << " (1 MiB, SYSBUS_1, IRQ " << FX1_IRQ_NPU
-            << ", DMA via NPU_DMA), " << impl_->npu->npu.banner() << ", host watchdog "
+            << ", DMA via NPU_DMA" << (impl_->npu->dma_guard ? "" : " UNGUARDED (negative control)") << "), "
+            << impl_->npu->npu.banner() << ", host watchdog "
             << impl_->options.npu_host_watchdog_s << " s";
         return out.str();
     }

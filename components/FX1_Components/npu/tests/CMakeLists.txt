@@ -41,7 +41,7 @@ else()
         target_include_directories(fx1_npu_${_tool} SYSTEM PRIVATE ${FX1_NPU_MODEL_ROOT} ${FX1_NPU_MODEL_ROOT}/driver)
         target_compile_features(fx1_npu_${_tool} PRIVATE cxx_std_17)
     endforeach()
-    foreach(_gate ref_mp pad neo)
+    foreach(_gate ref_mp pad neo ref avgpool)
         set(_dir ${CMAKE_CURRENT_BINARY_DIR}/gates/${_gate})
         set(_trace_args)
         if(_gate STREQUAL "neo")
@@ -57,6 +57,18 @@ else()
                  COMMAND test_fx1_npu gate ${_dir} ${_dir}/oracle_golden.bin 0x8E000000 fabric)
         set_tests_properties(fx1_npu_gate_${_gate}_low_direct fx1_npu_gate_${_gate}_high_fabric PROPERTIES
                              TIMEOUT 600 LABELS "fx1;fx1_regression;npu" FIXTURES_REQUIRED fx1_npu_gate_${_gate})
+    endforeach()
+    # Plan N4: drop check programs outside the FX1 ABI (ELEM_WISE slice /
+    # concat larger than SRAM-A, FUSED_ATTN): every push refused, nothing
+    # staged or written, a job afterwards passes.
+    foreach(_gate nd_big vit_heads)
+        set(_dir ${CMAKE_CURRENT_BINARY_DIR}/gates/${_gate})
+        add_test(NAME fx1_npu_gate_${_gate}_make COMMAND ${FX1_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/make_gate.py ${FX1_NPU_MODEL_ROOT} ${_gate} ${_dir})
+        set_tests_properties(fx1_npu_gate_${_gate}_make PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_regression;npu"
+                             FIXTURES_SETUP fx1_npu_gate_${_gate})
+        add_test(NAME fx1_npu_gate_${_gate}_refused_fabric COMMAND test_fx1_npu gate_refused ${_dir} 0x8E000000 fabric)
+        set_tests_properties(fx1_npu_gate_${_gate}_refused_fabric PROPERTIES TIMEOUT 300 LABELS "fx1;fx1_regression;npu"
+                             FIXTURES_REQUIRED fx1_npu_gate_${_gate})
     endforeach()
     # Plan N1 DFC dispatch: the neo gate through the 82-word register file and the doorbell.
     set(_dir ${CMAKE_CURRENT_BINARY_DIR}/gates/neo)

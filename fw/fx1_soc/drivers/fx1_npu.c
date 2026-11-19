@@ -31,7 +31,11 @@ static int expired(const fx1_npu_t* npu, uint64_t start, uint64_t ticks) { retur
 
 uint32_t fx1_npu_bank_read(const fx1_npu_t* npu, uint32_t local) { return bank(npu, local); }
 uint32_t fx1_npu_native_read(const fx1_npu_t* npu, uint32_t offset) { return rd(npu, offset); }
-void fx1_npu_native_write(const fx1_npu_t* npu, uint32_t offset, uint32_t value) { wr(npu, offset, value); }
+static int owned(const fx1_npu_t* npu);
+void fx1_npu_native_write(const fx1_npu_t* npu, uint32_t offset, uint32_t value)
+{
+    if (owned(npu)) wr(npu, offset, value);
+}
 uint32_t fx1_npu_retired(const fx1_npu_t* npu) { return rich(npu, FX1_NPU_M_RETIRED); }
 uint32_t fx1_npu_accepted(const fx1_npu_t* npu) { return bank(npu, FX1_NPU_VP_ACCEPTED); }
 
@@ -58,6 +62,13 @@ static int hw_idle(const fx1_npu_t* npu)
     if (bank(npu, FX1_NPU_STATUS) & FX1_NPU_STATUS_BUSY) return 0;
     return !rich_busy(npu);
 }
+/* This context's hart may access the NPU (no lock, or it holds the lock). */
+static int owned(const fx1_npu_t* npu) { return !npu->lock || *npu->lock == npu->hart + 1u; }
+#define OWNER_OR_RETURN(npu)                                                                                         \
+    do {                                                                                                             \
+        if (!owned(npu)) return FX1_NPU_E_NOT_OWNER;                                                                 \
+    } while (0)
+
 /* Quiet: idle, and no accepted job is waiting for its wait/poll. */
 static int quiet(const fx1_npu_t* npu) { return !npu->gemm_active && npu->rich_inflight == 0 && hw_idle(npu); }
 
@@ -112,14 +123,49 @@ static fx1_npu_status_t snapshot(fx1_npu_t* npu, fx1_npu_status_t s)
 fx1_npu_status_t fx1_npu_clear_errors(fx1_npu_t* npu)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!quiet(npu)) return FX1_NPU_E_NOT_IDLE;
     clear_latches(npu);
     npu->latched = 0;
     return FX1_NPU_OK;
 }
 
+fx1_npu_status_t fx1_npu_claim(volatile uint32_t* lock, uint32_t hart)
+{
+    if (!lock) return FX1_NPU_E_ARG;
+    uint32_t expected = 0;
+    if (__atomic_compare_exchange_n(lock, &expected, hart + 1u, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return FX1_NPU_OK;
+    return expected == hart + 1u ? FX1_NPU_OK : FX1_NPU_E_BUSY;
+}
+
+fx1_npu_status_t fx1_npu_release(fx1_npu_t* npu, uintptr_t base, volatile uint32_t* lock, uint32_t hart)
+{
+    if (!lock) return FX1_NPU_E_ARG;
+    if (*lock != hart + 1u) return FX1_NPU_E_NOT_OWNER;
+    /* The handover needs the device itself idle (review N4 R1): a context that
+     * is closed (a failed init or recovery) proves nothing about the DMA of the
+     * work it started. So the engines are read at `base` in every case (a probe
+     * context: only its base is used); an open context on this lock must also
+     * have nothing outstanding. */
+    fx1_npu_t t;
+    t.base = base;
+    if (!hw_idle(&t)) return FX1_NPU_E_NOT_IDLE;
+    if (npu && !npu->unavailable && npu->lock == lock) {
+        if (!quiet(npu)) return FX1_NPU_E_NOT_IDLE;
+        npu->unavailable = 1;
+    }
+    __atomic_store_n(lock, 0u, __ATOMIC_RELEASE);
+    return FX1_NPU_OK;
+}
+
 fx1_npu_status_t fx1_npu_init(fx1_npu_t* npu, uintptr_t base, uint32_t required, int irq, uint64_t (*now)(void),
                               uint32_t hz)
+{
+    return fx1_npu_init_shared(npu, base, required, irq, now, hz, 0, 0);
+}
+
+fx1_npu_status_t fx1_npu_init_shared(fx1_npu_t* npu, uintptr_t base, uint32_t required, int irq, uint64_t (*now)(void),
+                                     uint32_t hz, volatile uint32_t* lock, uint32_t hart)
 {
     if (!npu) return FX1_NPU_E_ARG;
     /* Closed until this init succeeds (review N2 R3). Nothing else of *npu is
@@ -127,6 +173,8 @@ fx1_npu_status_t fx1_npu_init(fx1_npu_t* npu, uintptr_t base, uint32_t required,
      * hold the diagnostics of the failure that made it unavailable. */
     npu->unavailable = 1;
     if (!now || !hz) return FX1_NPU_E_ARG;
+    /* The ownership check uses the arguments: *npu may never have been set. */
+    if (lock && *lock != hart + 1u) return FX1_NPU_E_NOT_OWNER;
     fx1_npu_t t; /* probe context: only t.base is read */
     t.base = base;
     if (bank(&t, FX1_NPU_VP_ID) != FX1_NPU_VP_ID_VALUE) return FX1_NPU_E_ABSENT;
@@ -140,6 +188,8 @@ fx1_npu_status_t fx1_npu_init(fx1_npu_t* npu, uintptr_t base, uint32_t required,
     npu->base = base;
     npu->now = now;
     npu->mtime_hz = hz;
+    npu->lock = lock;
+    npu->hart = hart;
     npu->abi = abi;
     npu->feature = feature;
     npu->model_hash = bank(npu, FX1_NPU_VP_MODEL_HASH);
@@ -162,12 +212,16 @@ fx1_npu_status_t fx1_npu_init(fx1_npu_t* npu, uintptr_t base, uint32_t required,
 
 uint32_t fx1_npu_irq_ack(fx1_npu_t* npu)
 {
+    if (!owned(npu)) return 0;
     const uint32_t v = bank(npu, FX1_NPU_IRQ_STATUS);
     if (v) set_bank(npu, FX1_NPU_IRQ_STATUS, v);
     return v;
 }
 
-void fx1_npu_set_push_wait_ns(fx1_npu_t* npu, uint32_t ns) { set_bank(npu, FX1_NPU_VP_PUSH_WAIT_NS, ns); }
+void fx1_npu_set_push_wait_ns(fx1_npu_t* npu, uint32_t ns)
+{
+    if (owned(npu)) set_bank(npu, FX1_NPU_VP_PUSH_WAIT_NS, ns);
+}
 
 static uint32_t ctrl_value(const fx1_npu_t* npu)
 {
@@ -178,6 +232,7 @@ static uint32_t ctrl_value(const fx1_npu_t* npu)
 fx1_npu_status_t fx1_npu_gemm_start(fx1_npu_t* npu, const fx1_npu_gemm_t* g)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!(npu->feature & FX1_NPU_FEATURE_NATIVE_GEMM)) return FX1_NPU_E_FEATURE;
     if (!g || !g->k) return FX1_NPU_E_ARG;
     /* The bank is locked (store access fault) while any work runs, and a start
@@ -204,6 +259,7 @@ fx1_npu_status_t fx1_npu_gemm_start(fx1_npu_t* npu, const fx1_npu_gemm_t* g)
 fx1_npu_status_t fx1_npu_gemm_poll(fx1_npu_t* npu)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!npu->gemm_active) return FX1_NPU_E_ARG;
     const uint32_t s = bank(npu, FX1_NPU_STATUS);
     if (s & FX1_NPU_STATUS_BUSY) return FX1_NPU_PENDING;
@@ -231,6 +287,7 @@ fx1_npu_status_t fx1_npu_gemm_wait(fx1_npu_t* npu, uint64_t timeout_ticks)
 fx1_npu_status_t fx1_npu_set_window(fx1_npu_t* npu, uint32_t base, uint32_t size)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!size || size > npu->window_max) return FX1_NPU_E_ARG;
     /* The configuration registers are locked while any work runs (review N2 R2). */
     if (!quiet(npu)) return FX1_NPU_E_NOT_IDLE;
@@ -266,6 +323,7 @@ static int in_window(const fx1_npu_t* npu, uint32_t a, uint32_t n)
 fx1_npu_status_t fx1_npu_rich_submit(fx1_npu_t* npu, const fx1_npu_instr_t* i, uint64_t timeout_ticks)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!i || i->n > FX1_NPU_INSTR_MAX_WRITES) return FX1_NPU_E_ARG;
     if (i->out_bytes && !in_window(npu, i->out, i->out_bytes)) return FX1_NPU_E_ARG;
     /* The NPU refuses a push while a GEMM-bank job runs, and an accepted push
@@ -282,6 +340,7 @@ fx1_npu_status_t fx1_npu_rich_submit(fx1_npu_t* npu, const fx1_npu_instr_t* i, u
 fx1_npu_status_t fx1_npu_neo_submit(fx1_npu_t* npu, const fx1_npu_neo_t* n, uint64_t timeout_ticks)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!(npu->feature & FX1_NPU_FEATURE_DFC_WINDOW)) return FX1_NPU_E_FEATURE;
     if (!n || (n->out_bytes && !in_window(npu, n->out, n->out_bytes))) return FX1_NPU_E_ARG;
     if (npu->gemm_active) return FX1_NPU_E_NOT_IDLE;
@@ -300,6 +359,7 @@ fx1_npu_status_t fx1_npu_neo_submit(fx1_npu_t* npu, const fx1_npu_neo_t* n, uint
 fx1_npu_status_t fx1_npu_rich_poll(fx1_npu_t* npu)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (rich_busy(npu)) return FX1_NPU_PENDING;
     /* Idle: RETIRED is final (it advances before the entry leaves the engine). */
     const uint32_t r = rich(npu, FX1_NPU_M_RETIRED), done = r - npu->retired_mark, want = npu->rich_inflight;
@@ -326,6 +386,7 @@ fx1_npu_status_t fx1_npu_rich_wait(fx1_npu_t* npu, uint64_t timeout_ticks)
 fx1_npu_status_t fx1_npu_recover(fx1_npu_t* npu, uint64_t timeout_ticks)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!(npu->feature & FX1_NPU_FEATURE_ABORT)) return FX1_NPU_E_FEATURE;
     set_bank(npu, FX1_NPU_VP_CMD, FX1_NPU_VP_CMD_ABORT);
     npu->native_config_valid = 0; /* the core may have been soft reset */
@@ -349,6 +410,7 @@ fx1_npu_status_t fx1_npu_recover(fx1_npu_t* npu, uint64_t timeout_ticks)
 fx1_npu_status_t fx1_npu_soft_reset(fx1_npu_t* npu, uint64_t timeout_ticks)
 {
     if (npu->unavailable) return FX1_NPU_E_UNAVAILABLE;
+    OWNER_OR_RETURN(npu);
     if (!quiet(npu)) return FX1_NPU_E_NOT_IDLE;
     const uint32_t irq = bank(npu, FX1_NPU_IRQ_ENABLE);
     set_bank(npu, FX1_NPU_CTRL, FX1_NPU_CTRL_ENABLE | FX1_NPU_CTRL_SOFT_RESET);

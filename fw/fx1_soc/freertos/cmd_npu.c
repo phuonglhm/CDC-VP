@@ -2,9 +2,9 @@
  * `npu` commands (plan FX1_NPU_V47 N3) on the reference driver
  * (drivers/fx1_npu.h) and the job format (drivers/fx1_npu_job.h).
  *
- * Ownership: the NPU task (priority 1, below the CLI task, so the console
- * answers while it checks a job) is the only caller of the driver (it is not
- * reentrant). Commands post one request (run, selftest, reset) and the task
+ * Ownership: the NPU task (priority 2, as the CLI task: time slicing shares
+ * the CPU between a job's checks and the console) is the only caller of the
+ * driver (it is not reentrant). Commands post one request (run, selftest, reset) and the task
  * runs it; `npu run` returns at once, the others wait for it with a limit.
  * `npu status` and `npu info` read the task's published state and NPU
  * registers that have no read side effect, so they answer while a job runs.
@@ -17,6 +17,10 @@
  * (review N2, N2-I), so nothing ever sleeps until DONE. A claim that finds
  * IRQ_STATUS 0 (the PLIC latched a request the driver cleared since, N2-B) is
  * counted as stale.
+ *
+ * Harts: hart 0 holds the NPU for the session through the ownership lock
+ * (FX1_NPU_LOCK_BASE, fx1_npu_claim); a context of another hart gets
+ * FX1_NPU_E_NOT_OWNER without any access.
  *
  * Presence: probed by the task (fault-tolerant read of VP_ID). Without an NPU
  * (fx1_soc --no-npu, or a platform built without it) every command says so
@@ -32,6 +36,8 @@
  *                            returns at once
  *   npu wait [MS]            until the job ended (MS: limit, then the job keeps
  *                            running), then its summary; a check (OK passes)
+ *   npu wait start [MS]      until the job's operations have started (past its
+ *                            checks); not a check
  *   npu reset                idle: recovery + soft reset (or a reopen after
  *                            UNAVAILABLE); while a job runs: the job is stopped
  *                            first (ABORTED, recovered); a check
@@ -50,6 +56,8 @@
 #include "rtos_app.h"
 #include "rtos_bsp.h"
 
+#define NPU_LOCK ((volatile uint32_t*)FX1_NPU_LOCK_BASE)
+
 enum { ST_PROBING = 0, ST_ABSENT, ST_IDLE, ST_RUNNING, ST_CLOSED };
 enum { REQ_NONE = 0, REQ_RUN, REQ_SELFTEST, REQ_RESET };
 static const char* const state_names[] = {"probing", "absent", "idle", "running", "closed (UNAVAILABLE)"};
@@ -59,6 +67,7 @@ static TaskHandle_t npu_task;
 static SemaphoreHandle_t req_done;
 static volatile int state, req, abort_req, reset_pending;
 static volatile uint32_t cur_op, irq_count, stale_count;
+static volatile int exec_started; /* the job is past its checks: its first op is being issued */
 static volatile uint64_t run_t0;
 static fx1_npu_status_t open_status;
 
@@ -105,7 +114,13 @@ static void hook_progress(void* c, uint32_t i)
     (void)c;
     cur_op = i;
 }
-static const fx1_npu_job_hooks hooks = {0, hook_wait, hook_abort, hook_progress};
+static void hook_issued(void* c, uint32_t i)
+{
+    (void)c;
+    cur_op = i;
+    exec_started = 1; /* the first op was pushed / started: the NPU has it */
+}
+static const fx1_npu_job_hooks hooks = {0, hook_wait, hook_abort, hook_progress, hook_issued};
 
 static uint64_t ms_ticks(uint32_t ms) { return (uint64_t)FX1_MTIME_HZ / 1000u * ms; }
 
@@ -131,8 +146,7 @@ static void do_run(void)
     last_name[sizeof last_name - 1] = 0;
     last_ops = h->n_ops <= FX1_NPU_JOB_MAX_OPS ? h->n_ops : 0;
     const uint32_t i0 = irq_count, s0 = stale_count;
-    cur_op = 0;
-    run_t0 = fx1_mtime();
+    /* cur_op, exec_started, run_t0: reset by post() with the request (review N4 R2) */
     fx1_npu_job_run(&npu, job_copy, &hooks, &last);
     last.irqs = irq_count - i0;
     last.stale_irqs = stale_count - s0;
@@ -241,12 +255,12 @@ static void do_reset(void)
     rs_res.ran = 1;
     rs_res.recover = rs_res.soft = rs_res.open = FX1_NPU_OK;
     if (npu.unavailable) {
-        rs_res.open = fx1_npu_init(&npu, FX1_NPU_VP_BASE, 0, 1, fx1_mtime, FX1_MTIME_HZ);
+        rs_res.open = fx1_npu_init_shared(&npu, FX1_NPU_VP_BASE, 0, 1, fx1_mtime, FX1_MTIME_HZ, NPU_LOCK, 0);
     } else {
         rs_res.recover = fx1_npu_recover(&npu, ms_ticks(20));
         if (rs_res.recover == FX1_NPU_OK) rs_res.soft = fx1_npu_soft_reset(&npu, ms_ticks(5));
         if (rs_res.recover == FX1_NPU_OK && rs_res.soft == FX1_NPU_OK)
-            rs_res.open = fx1_npu_init(&npu, FX1_NPU_VP_BASE, 0, 1, fx1_mtime, FX1_MTIME_HZ);
+            rs_res.open = fx1_npu_init_shared(&npu, FX1_NPU_VP_BASE, 0, 1, fx1_mtime, FX1_MTIME_HZ, NPU_LOCK, 0);
     }
     rs_res.vp_status = fx1_npu_bank_read(&npu, FX1_NPU_VP_STATUS);
 }
@@ -259,7 +273,9 @@ static void npu_task_fn(void* arg)
         state = ST_ABSENT;
         vTaskDelete(NULL);
     }
-    open_status = fx1_npu_init(&npu, FX1_NPU_VP_BASE, 0, 1, fx1_mtime, FX1_MTIME_HZ);
+    /* Hart 0 holds the NPU for the whole session (FX1_NPU_LOCK_BASE, plan N4). */
+    open_status = fx1_npu_claim(NPU_LOCK, 0);
+    if (open_status == FX1_NPU_OK) open_status = fx1_npu_init_shared(&npu, FX1_NPU_VP_BASE, 0, 1, fx1_mtime, FX1_MTIME_HZ, NPU_LOCK, 0);
     bsp_irq_register(FX1_IRQ_NPU, npu_isr);
     state = open_status == FX1_NPU_OK ? ST_IDLE : ST_CLOSED;
     for (;;) {
@@ -283,11 +299,13 @@ static void npu_task_fn(void* arg)
 
 void npu_service_init(void)
 {
+    *NPU_LOCK = 0; /* boot: nobody holds the NPU (hart 1 has parked) */
     req_done = xSemaphoreCreateBinary();
     configASSERT(req_done);
-    /* Priority 1, below the CLI (2): the job checks and CRCs run on the CPU
-     * for a while, and the console must keep answering meanwhile. */
-    configASSERT(xTaskCreate(npu_task_fn, "npu", 1024, NULL, 1, &npu_task) == pdPASS);
+    /* Priority 2, as the CLI (review N4): time slicing (1 kHz tick) shares the
+     * CPU between the job's checks / CRCs and the console, so neither waits
+     * for the other's CPU work to end. */
+    configASSERT(xTaskCreate(npu_task_fn, "npu", 1024, NULL, 2, &npu_task) == pdPASS);
 }
 
 /* ---- commands ---------------------------------------------------------------------- */
@@ -297,6 +315,13 @@ static int post(int r)
     const int ok = req == REQ_NONE && (state == ST_IDLE || state == ST_CLOSED);
     if (ok) {
         xSemaphoreTake(req_done, 0);
+        if (r == REQ_RUN) { /* the request's own progress, before anyone can read it (review N4 R2) */
+            cur_op = 0;
+            exec_started = 0;
+            run_t0 = fx1_mtime();
+            last_name[0] = 0;
+            last_ops = 0;
+        }
         req = r;
         if (r == REQ_RUN || r == REQ_SELFTEST) state = ST_RUNNING;
     }
@@ -309,7 +334,7 @@ static int done_within(uint32_t ms) { return xSemaphoreTake(req_done, pdMS_TO_TI
 
 static int absent(const char* what)
 {
-    /* The task (lower priority) probes once the CLI first blocks; wait for it. */
+    /* The task probes when it first runs (same priority as the CLI); wait for it. */
     for (unsigned k = 0; state == ST_PROBING && k < 100; ++k) vTaskDelay(1);
     if (state != ST_ABSENT && state != ST_PROBING) return 0;
     out(what);
@@ -376,7 +401,7 @@ static void summary(void)
     out_dec(r->stale_irqs);
     out("), simulated ");
     out_dec(ticks_us(r->ticks));
-    out_line(" us (NPU model time, not FX1 end-to-end throughput)");
+    out_line(" us from the first submit to the last completion (incl. DMA and per-operation firmware work)");
     switch (r->status) {
     case FX1_NPU_JOB_OK: break;
     case FX1_NPU_JOB_BAD_JOB:
@@ -474,13 +499,12 @@ static void cmd_status(void)
     out("npu: ");
     out(state_names[state]);
     if (state == ST_RUNNING && req == REQ_RUN) {
-        const volatile fx1_npu_job_header* h = (const volatile fx1_npu_job_header*)job_copy;
         out(", job ");
-        out(last_name);
+        out(last_name[0] ? last_name : "(being copied)");
         out(" op ");
         out_dec(cur_op);
         out("/");
-        out_dec(h->n_ops);
+        out_dec(last_ops);
         out(", ");
         out_dec(ticks_us(fx1_mtime() - run_t0) / 1000u);
         out(" ms");
@@ -522,9 +546,42 @@ static void cmd_run(void)
     out_line("npu run: started; `npu status`, `npu wait [MS]`, `npu reset`");
 }
 
+/* `npu wait start [MS]`: until the running job has passed its checks and its
+ * first operation was pushed / started (the NPU has it: what follows in a
+ * script runs while the NPU executes), or it ended; MS: limit. Not a check. */
+static void cmd_wait_start(int argc, char** argv)
+{
+    uint32_t ms = 0;
+    if (argc > 3 && !parse_u32(argv[3], &ms)) ms = 0;
+    const TickType_t t0 = xTaskGetTickCount();
+    while (state == ST_RUNNING && req == REQ_RUN && !exec_started) {
+        if (ms && xTaskGetTickCount() - t0 >= pdMS_TO_TICKS(ms)) {
+            out("npu wait start: the job is still being checked after ");
+            out_dec(ms);
+            out_line(" ms");
+            return;
+        }
+        vTaskDelay(1);
+    }
+    out("npu wait start: ");
+    if (state == ST_RUNNING && exec_started) {
+        out("first operation issued (op ");
+        out_dec(cur_op);
+        out(") after ");
+        out_dec(ticks_us(fx1_mtime() - run_t0) / 1000u);
+        out_line(" ms of checks");
+    } else {
+        out_line("no job running");
+    }
+}
+
 static void cmd_wait(int argc, char** argv)
 {
     if (absent("npu wait")) return;
+    if (argc > 2 && !strcmp(argv[2], "start")) {
+        cmd_wait_start(argc, argv);
+        return;
+    }
     uint32_t ms = 0;
     if (argc > 2 && !parse_u32(argv[2], &ms)) ms = 0;
     const TickType_t t0 = xTaskGetTickCount();
