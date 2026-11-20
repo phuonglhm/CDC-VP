@@ -18,9 +18,7 @@
 #include <systemc.h>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <random>
-#include <string>
 #include <vector>
 #include "has/gvu_top_bridge.h"
 #include "has/gvu_top_stream.h"
@@ -421,8 +419,8 @@ int sc_main(int argc, char **argv)
     check(bad == 0, "values equal to HAS_GVU_TOP=1 beat by beat");
     check(meta == 0, "address and mask carried");
     size_t lat_bad = 0;
-    for (const GvuTopStream::Trace &t : gs->trace) if (t.accept - t.push != 1 || t.out - t.accept != uint64_t(GvuTopStream::kDepth)) lat_bad++;
-    std::printf("[regs] packets off the timing push->latch 1, latch->result %d: %zu of %zu\n", GvuTopStream::kDepth, lat_bad, gs->trace.size());
+    for (const GvuTopStream::Trace &t : gs->trace) if (t.accept - t.push != 1 || t.out - t.accept != uint64_t(GvuTopStream::kDepth())) lat_bad++;
+    std::printf("[regs] packets off the timing push->latch 1, latch->result %d: %zu of %zu\n", GvuTopStream::kDepth(), lat_bad, gs->trace.size());
     check(lat_bad == 0, "latency E -> E+1 -> E+1+kDepth for every packet, bypassed ones too");
     unsigned want_writes = 0;
     for (const Layer &ly : g_layers) want_writes += ly.total_writes;

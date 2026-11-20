@@ -13,6 +13,7 @@ for top in tb_oracle_vrf; do
   nice -n 19 verilator --binary --timing -sv -Wno-fatal --top-module $top --Mdir "$W/$top" $SRC "$HERE/tb_oracle_g2.sv" > "$W/$top.build.log" 2>&1 \
     || { echo "BUILD FAIL $top (see $W/$top.build.log)"; rc=1; continue; }
   "$W/$top/V$top" +dir="$V" 2>&1 | tee "$W/$top.log" | grep -E "ORACLE|DETAIL|FIRST|Error|FATAL"
+  [ "${ORACLE_CLEAN:-0}" = 1 ] && rm -rf "$W/$top"
 done
 grep -h "ORACLE" "$W"/tb_oracle_vrf.log 2>/dev/null | grep -v "mismatches 0" && rc=1
 exit $rc

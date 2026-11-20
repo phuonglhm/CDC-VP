@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""[S4-ME] Build the TABLE FOR THE USER from a smoke run: which columns are MEASURED vs. FILLED-IN, a per-layer table to spot poorly tiled layers, and an UNCERTAIN section.
+"""Build the TABLE FOR THE USER from a smoke run: which columns are MEASURED vs. FILLED-IN, a per-layer table to spot poorly tiled layers, and an UNCERTAIN section.
 
 Reads: metrics_tiles.csv (MODE A, through the core port), <out>/nine_csv/{coverage.csv,parameters.json}, out/sensitivity.json,
      data/program.json + data/graph_ir.json, out/prep/layer_tiles.csv, (optional) out/tile_sweep_nox/sweep_by_conv.csv (MODE B prediction).

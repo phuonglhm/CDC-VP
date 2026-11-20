@@ -141,6 +141,11 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             }
         }
         bool peek_done() const { return main_state_ == MainState::FINISH; }
+        // True while main_state_ is PREWRITE_SHIFT (RTL psm_shift_fsm.sv:558-559: o_vertical_scan = i_transpose_mode only there).
+        // Read-only; callable before commit() (current state) or after it (next state).
+        bool peek_prewrite() const { return main_state_ == MainState::PREWRITE_SHIFT; }
+        // True while main_state_ is PREREAD_SHIFT (the preload of a context is shifted into the array; o_cscan_en = 1)
+        bool peek_preread() const { return main_state_ == MainState::PREREAD_SHIFT; }
 
         void reset()
         {

@@ -27,7 +27,6 @@ namespace has
 
     struct GvuRegsNeoKnobs
     {
-        static constexpr unsigned kCfgWrites = 14;     // neo_interface: GVU_CFG_REGS (13) counted down to 0
         static bool on() { static const bool v = [] { const char *e = std::getenv("HAS_GVU_REGS_NEO"); return e && std::atoi(e) != 0; }(); return v; }
         static unsigned write_lat() { static const unsigned v = [] { const char *e = std::getenv("HAS_GVU_NEO_WRITE_LAT"); const int l = e ? std::atoi(e) : 1; return static_cast<unsigned>(l < 1 ? 1 : l); }(); return v; }
         static unsigned cdc_lat() { static const unsigned v = [] { const char *e = std::getenv("HAS_GVU_NEO_CDC_LAT"); const int l = e ? std::atoi(e) : 4; return static_cast<unsigned>(l < 0 ? 0 : l); }(); return v; }

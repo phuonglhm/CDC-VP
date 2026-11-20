@@ -123,7 +123,7 @@ static void preload(GvuTop &dut, unsigned H, bool is_res = false)
 
 static void dump_luts(GvuTop &dut)
 {
-    const LutMem &m = dut.vlut().mem;
+    const LutUnitSel &m = dut.vlut();   // peek8 / peek16 of the table memory in use
     printf("    LUT_act  [0..15]:");
     for (unsigned i = 0; i < 16; i++) printf(" %u", m.peek8(LUT_ACT, i));
     printf("\n    LUT_exp  [0..15]:");
@@ -278,7 +278,7 @@ int main(int argc, char **argv)
             {
                 printf("---- leave %s after %llu cycles; SRAM row writes in stage: vbank0=%u vbank1=%u vbank2=%u sbank=%u; LUT wr_cnt=%u\n",
                        st_name(last_state), (unsigned long long)(cyc - state_enter), stage_writes[0], stage_writes[1], stage_writes[2],
-                       stage_writes[3], dut.vlut().mem.wr_cnt());
+                       stage_writes[3], dut.vlut().wr_cnt());
                 dump_vrf(dut);
                 if (last_state >= 1 && last_state <= 4) dump_luts(dut);
             }
@@ -306,8 +306,8 @@ int main(int argc, char **argv)
         const StreamVrf &v = dut.stream_vrf();
         printf("%5llu | %6llu | %-15s | %6u %7u | %3d %6d %7d %5d %6d %5d | %5u %2u | %5d %5d %5d %5d | %15d |%s\n",
                (unsigned long long)cyc, (unsigned long long)cyc * 10, st_name(st), sd, ed, o.o_psum_ready, o.o_softmax_lut_init_done,
-               o.o_softmax_pipe_done, o.o_layernorm_lut_init_done, o.o_layernorm_pipe_done, o.o_gemm_fused_pipe_done, dut.vlut().mem.lut_waddr(),
-               dut.vlut().mem.wr_cnt(), v.int64_1.valid, v.int32_1_3[0].valid, v.int32_1_3[1].valid, v.int32_1_3[2].valid,
+               o.o_softmax_pipe_done, o.o_layernorm_lut_init_done, o.o_layernorm_pipe_done, o.o_gemm_fused_pipe_done, dut.vlut().lut_waddr(),
+               dut.vlut().wr_cnt(), v.int64_1.valid, v.int32_1_3[0].valid, v.int32_1_3[1].valid, v.int32_1_3[2].valid,
                rd32(v.int32_1_3[1].data, 0), chg.c_str());
         for (auto &bc : changed) print_row(bc.first, bc.second, cur.rows[bc.first][bc.second], "        new ");
         prev = std::move(cur);

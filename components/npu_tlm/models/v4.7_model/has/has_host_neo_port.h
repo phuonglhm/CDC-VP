@@ -12,7 +12,7 @@
 // is REFUSED, never run by another path: one line on stderr, the sticky error of MmioCompat (STATUS bit 2), no instruction.
 //   HAS_HOST=neo          strict: only what neo_lite RTL revision 1 runs as given (today ADD as RESIDUAL, MAX_POOL)
 //   HAS_HOST=neo_patched  also accepts the hardware-gap codes listed in HAS_HOST_NEO_PATCHES (defaults in the code), each reported once on stderr; never a model-extension code
-// Not set (default): no window, no doorbell; HasNpuTop behaves exactly as before. Pure C++ (no SystemC).
+// Not set (default): as HAS_HOST=neo (the window and the doorbell are on); HAS_HOST set to any other value (for example v45) turns them off. Pure C++ (no SystemC).
 #ifndef HAS_HOST_NEO_PORT_H
 #define HAS_HOST_NEO_PORT_H
 
@@ -21,7 +21,6 @@
 #include <cstdlib>
 #include <set>
 #include <string>
-#include <vector>
 #include "has/has_host_neo.h"
 #include "has/has_mmio_compat.h"
 

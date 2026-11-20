@@ -1,5 +1,5 @@
 #!/bin/bash
-# [S2-ME] Bridge the two rollups: REAL-RUN OUTPUT (metrics_tiles.csv, MODE A through the core port) -> agg_bigrun (layer/network table, FSM) + sw_eval (9 CSV + parameters.json, A+B).
+# Bridge the two rollups: REAL-RUN OUTPUT (metrics_tiles.csv, MODE A through the core port) -> agg_bigrun (layer/network table, FSM) + sw_eval (9 CSV + parameters.json, A+B).
 #   bash tools/eval_sw/run_smoke_tables.sh <metrics_tiles.csv> [OUT_DIR]      (Windows Git-Bash or Linux; needs g++ and python3)
 # Tiles not measured in this smoke run are filled from the shape table (MODE B); coverage.csv states each layer's A / A+B / B; parameters.json records the measured fraction.
 # SAFETY GATE: busy = 0 on every tile (FSM histogram disabled) -> both scripts refuse (exit code 2) instead of producing an empty table.

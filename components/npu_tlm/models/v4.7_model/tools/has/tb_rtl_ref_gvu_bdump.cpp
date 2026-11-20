@@ -13,7 +13,6 @@
 //   lut32.txt      gvu_lut_unit with 32 lanes: inputs of every lane | handshake of lane 0 and the outputs of every lane
 //   lutload_v1.txt, lutload.txt, lutload_mem.txt   table load of gvu_top.sv: rows of vbank1, state and load signals per cycle, tables after it
 // build: g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_bdump.cpp -o tb_rtl_ref_gvu_bdump ; run: <binary> <out dir> [bytemask]
-#include <cinttypes>
 #include <cmath>
 #include <cstdio>
 #include <random>

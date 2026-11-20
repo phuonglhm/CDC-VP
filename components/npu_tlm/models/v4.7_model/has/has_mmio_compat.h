@@ -20,9 +20,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <cstring>
 #include <deque>
 #include "has/has_tile_iter.h"
+#include "has/neo_rev.h"
 
 namespace has
 {
@@ -122,7 +124,12 @@ namespace has
     };
 
     // HAS SRAM capacities (bytes / PSUM elements) used for the fallback tiling of old-style m/k/n instructions.
-    struct SramCaps { int a_bytes{80896}, b_bytes{82944}, c_elems{24576}; };
+    // HAS_NEO_REV >= 2: one buffer of RTL revision 2 (B 64 KiB, C 320 rows); A is the model's own array (see has/sram_limits.h, 80 896 B).
+    struct SramCaps
+    {
+        int a_bytes{80896}, b_bytes{82944}, c_elems{24576};
+        SramCaps() { if (neo_rev() >= NEO_REV_2) { b_bytes = 65536; c_elems = 10240; } }
+    };
 
     // float scale -> (S, s) with S in [2^30, 2^31) and value = S * 2^-s. Returns false when s would leave [0, 63].
     inline bool float_to_fixed(double v, uint32_t &S, int &s)
@@ -167,7 +174,7 @@ namespace has
     class MmioCompat
     {
     public:
-        explicit MmioCompat(size_t q_depth = 16, SramCaps caps = SramCaps()) : q_depth_(q_depth), caps_(caps)
+        explicit MmioCompat(size_t q_depth = 16, std::optional<SramCaps> caps = std::nullopt) : q_depth_(q_depth), caps_(caps)
         {
             if (const char *v = std::getenv("HAS_DMA_TENSOR")) dma_tensor = std::atoi(v) != 0;
             if (const char *v = std::getenv("HAS_DMA_ND")) dma_nd = std::atoi(v) != 0;
@@ -380,7 +387,8 @@ namespace has
                 g.cout = int(r_n_); g.oh = 1; g.ow = int(r_m_);
                 g.kh = g.kw = g.sy = g.sx = 1; g.pad_t = g.pad_l = g.pad_b = g.pad_r = 0;
                 g.h_t = 1;
-                if (!default_tiling(li.in_c, g.cout, g.ow, caps_, g.cout_t, g.w_t)) { error(Err::NO_TILING); return; }
+                if (!caps_) caps_.emplace();   // the revision default, read when first needed (after a run profile has set HAS_NEO_REV)
+                if (!default_tiling(li.in_c, g.cout, g.ow, *caps_, g.cout_t, g.w_t)) { error(Err::NO_TILING); return; }
                 li.default_tiling = true;
                 n_default_tiling++;
             }
@@ -761,7 +769,7 @@ namespace has
         static double valid(float v) { return (v > 0.00001f && v < 10000.0f) ? double(v) : 1.0; }
 
         size_t q_depth_;
-        SramCaps caps_;
+        std::optional<SramCaps> caps_;   // empty = SramCaps() of the revision, made at the first use
         std::deque<LayerInstr> q_;
         uint32_t retired_{0}, host_seq_{0};
         bool executing_{false}, sticky_err_{false};

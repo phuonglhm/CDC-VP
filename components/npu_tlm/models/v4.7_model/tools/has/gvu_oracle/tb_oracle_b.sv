@@ -23,6 +23,60 @@ module tb_b_lut;
     .o_8b_lookup_data(o8), .o_16b_lookup_data(o16), .o_e_shift(oes), .o_pipe_almost_done(o_ad));
   logic [31:0] f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, e_rdy, e_v, e_z, e_8, e_16, e_es, e_ad, e_done, e_wa, e_wc, t0, t1, t2, t3; logic [127:0] w;
   logic bad_now;
+
+  // table access: revision 1 keeps recip / rsqrt in one array, revision 2 (NEO_REV2) in even / odd banks
+  task automatic put_tab(input integer k, input logic [7:0] ta, input logic [7:0] te, input logic [15:0] tr, input logic [15:0] ts);
+    if (k < 256) begin u.i_lut_mem.lut_act_mem[k] = ta; u.i_lut_mem.lut_exp_mem[k] = te; end
+`ifdef NEO_REV2
+    if (k < 256) begin if (k[0]) u.i_lut_mem.lut_recip_odd_mem[k >> 1] = tr; else u.i_lut_mem.lut_recip_even_mem[k >> 1] = tr; end
+    if (k[0]) u.i_lut_mem.lut_rsqrt_odd_mem[k >> 1] = ts; else u.i_lut_mem.lut_rsqrt_even_mem[k >> 1] = ts;
+`else
+    if (k < 256) u.i_lut_mem.lut_recip_mem[k] = tr;
+    u.i_lut_mem.lut_rsqrt_mem[k] = ts;
+`endif
+  endtask
+  function automatic logic [15:0] g_recip(input integer k);
+`ifdef NEO_REV2
+    g_recip = k[0] ? u.i_lut_mem.lut_recip_odd_mem[k >> 1] : u.i_lut_mem.lut_recip_even_mem[k >> 1];
+`else
+    g_recip = u.i_lut_mem.lut_recip_mem[k];
+`endif
+  endfunction
+  function automatic logic [15:0] g_rsqrt(input integer k);
+`ifdef NEO_REV2
+    g_rsqrt = k[0] ? u.i_lut_mem.lut_rsqrt_odd_mem[k >> 1] : u.i_lut_mem.lut_rsqrt_even_mem[k >> 1];
+`else
+    g_rsqrt = u.i_lut_mem.lut_rsqrt_mem[k];
+`endif
+  endfunction
+  // write address register: revision 2 has none (the file column is not compared there)
+  function automatic logic [8:0] g_wa();
+`ifdef NEO_REV2
+    g_wa = 9'd0;
+`else
+    g_wa = u.i_lut_mem.lut_waddr_r;
+`endif
+  endfunction
+  // write counter of the file: 3 bits in revision 1 (the port truncates), WR_CNT_W = 6 bits in revision 2 (INIT_DW 128)
+  function automatic logic [5:0] g_wc_e(input logic [31:0] e);
+`ifdef NEO_REV2
+    g_wc_e = e[5:0];
+`else
+    g_wc_e = {3'b000, e[2:0]};
+`endif
+  endfunction
+  function automatic logic [8:0] g_wa_e(input logic [8:0] e);
+`ifdef NEO_REV2
+    g_wa_e = 9'd0;
+`else
+    g_wa_e = e;
+`endif
+  endfunction
+  typedef struct packed { logic [1:0] sel; logic md; logic cp; logic [4:0] bs; logic [4:0] w; logic [4:0] sh; logic [7:0] i8; logic [31:0] x; } req_t;
+  req_t cur;
+  integer sn, nreq, slat, cc;
+  integer cnt_c [0:2], lmn [0:2], lmx [0:2], nov [0:2], fo;
+  string sout;
   initial begin
     if (!$value$plusargs("dir=%s", dir)) dir = ".";
     wen = 0; v = 0; rdy = 1; comp = 0; rsel = LUT_RECIP; wsel = LUT_ACT; mode = LUT_PWL; base = 0; W = 16; sh = 8; i8 = '0; i32 = '0; wdata = '0;
@@ -30,8 +84,7 @@ module tb_b_lut;
     fd = $fopen({dir, "/lutb_tab.txt"}, "r");
     for (int k = 0; k < 512; k++) begin
       rc = $fscanf(fd, "%h %h %h %h\n", t0, t1, t2, t3);
-      if (k < 256) begin u.i_lut_mem.lut_act_mem[k] = t0[7:0]; u.i_lut_mem.lut_exp_mem[k] = t1[7:0]; u.i_lut_mem.lut_recip_mem[k] = t2[15:0]; end
-      u.i_lut_mem.lut_rsqrt_mem[k] = t3[15:0];
+      put_tab(k, t0[7:0], t1[7:0], t2[15:0], t3[15:0]);
     end
     $fclose(fd);
     fd = $fopen({dir, "/lutb.txt"}, "r"); n = 0; bad = 0; bad_hs = 0; bad_data = 0; bad_es = 0; bad_ad = 0;
@@ -53,14 +106,51 @@ module tb_b_lut;
     $fclose(fd);
     $display("ORACLE lut cycles %0d mismatches %0d", n, bad);
     $display("DETAIL lut handshake %0d data %0d e_shift %0d almost_done %0d", bad_hs, bad_data, bad_es, bad_ad);
+    // STREAM: every eighth accepted request of lutb.txt is replayed ALONE on the RTL (the request stream is taken from the
+    // file, no expected value is used) and the result is written to the file given by +sout=<file>: the request fields, the
+    // number of clock edges from the accepted request to the output valid (0 = combinational), the data and E_shift at the valid.
+    // The files of two RTL revisions are compared offline (tools/has/gvu_oracle/stream_compare.py): r1 is checked against the
+    // ported unit by "ORACLE lut", so a difference r1 -> r2 is a change of value of the newer RTL.
+    @(negedge clk); v = 0; rdy = 1; wen = 0; repeat (12) @(negedge clk);
+    for (int c = 0; c < 3; c++) begin cnt_c[c] = 0; lmn[c] = 99; lmx[c] = 0; nov[c] = 0; end
+    sn = 0; nreq = 0;
+    if (!$value$plusargs("sout=%s", sout)) sout = "";
+    fo = (sout != "") ? $fopen(sout, "w") : 0;
+    fd = $fopen({dir, "/lutb.txt"}, "r");
+    while (fd != 0 && !$feof(fd)) begin
+      rc = $fscanf(fd, "%h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h\n", f0, f1, f2, f9, f3, f4, f5, f6, f7, f8, e_rdy, e_v, e_z, e_8, e_16, e_es, e_ad); if (rc != 17) break;
+      if (f0[0] && e_rdy[0]) begin
+        nreq++;
+        if (nreq % 8 == 0) begin
+          cur.sel = f1[1:0]; cur.md = f2[0]; cur.cp = f9[0]; cur.bs = f3[4:0]; cur.w = f4[4:0]; cur.sh = f5[4:0]; cur.i8 = f6[7:0]; cur.x = f7;
+          cc = (cur.sel < 2) ? 0 : 1 + cur.md;
+          @(negedge clk); v = 1; rsel = lut_type_e'(cur.sel); mode = lut_index_type_e'(cur.md); comp = cur.cp; base = cur.bs; W = cur.w; sh = cur.sh; i8[0] = cur.i8; i32[0] = cur.x; rdy = 1;
+          #1; slat = 0;
+          if (o_v !== 1'b1) begin
+            @(negedge clk); v = 0; #1; slat = 1;
+            while (o_v !== 1'b1 && slat < 24) begin @(negedge clk); #1; slat++; end
+          end
+          sn++; cnt_c[cc]++;
+          if (o_v !== 1'b1) nov[cc]++;
+          else begin if (slat < lmn[cc]) lmn[cc] = slat; if (slat > lmx[cc]) lmx[cc] = slat; end
+          if (fo != 0) $fdisplay(fo, "%0d %0d %0d %0d %0d %0d %0d %02x %08x | %0d %0d %02x %04x %0d", cc, cur.sel, cur.md, cur.cp, cur.bs, cur.w, cur.sh, cur.i8, cur.x, (o_v === 1'b1) ? 1 : 0, slat, o8[0], o16[0], oes[0]);
+          if (v) begin @(negedge clk); v = 0; end
+          repeat (12) @(negedge clk);
+        end
+      end
+    end
+    $fclose(fd); if (fo != 0) $fclose(fo);
+    $display("STREAM lut accepted requests %0d replayed alone %0d (file %0s)", nreq, sn, sout);
+    $display("DETAIL stream lut replayed: direct %0d, index mode 0 %0d, index mode 1 %0d; no output valid within 24 cycles: %0d / %0d / %0d", cnt_c[0], cnt_c[1], cnt_c[2], nov[0], nov[1], nov[2]);
+    $display("LATENCY lut direct %0d..%0d index_mode_0 %0d..%0d index_mode_1 %0d..%0d", lmn[0], lmx[0], lmn[1], lmx[1], lmn[2], lmx[2]);
     @(negedge clk); v = 0;
     fd = $fopen({dir, "/lutb_wr.txt"}, "r"); nw = 0; bad_w = 0;
     while (fd != 0 && !$feof(fd)) begin
       rc = $fscanf(fd, "%h %h %h %h %h %h\n", f0, f1, w, e_done, e_wa, e_wc); if (rc != 6) break;
       @(negedge clk); wen = f0[0]; wsel = lut_type_e'(f1[1:0]); wdata = w;
       #1; nw++;
-      if (init_done !== e_done[0] || u.i_lut_mem.lut_waddr_r !== e_wa[8:0] || u.i_lut_mem.wr_cnt_r !== e_wc[2:0]) begin
-        bad_w++; if (bad_w <= 8) $display("FIRST lut write cycle %0d wen %0d wsel %0d: rtl done %0d addr %0d cnt %0d, file done %0d addr %0d cnt %0d", nw, f0[0], f1[1:0], init_done, u.i_lut_mem.lut_waddr_r, u.i_lut_mem.wr_cnt_r, e_done[0], e_wa[8:0], e_wc[2:0]);
+      if (init_done !== e_done[0] || g_wa() !== g_wa_e(e_wa[8:0]) || u.i_lut_mem.wr_cnt_r !== g_wc_e(e_wc)) begin
+        bad_w++; if (bad_w <= 8) $display("FIRST lut write cycle %0d wen %0d wsel %0d: rtl done %0d addr %0d cnt %0d, file done %0d addr %0d cnt %0d", nw, f0[0], f1[1:0], init_done, g_wa(), u.i_lut_mem.wr_cnt_r, e_done[0], e_wa[8:0], e_wc[2:0]);
       end
     end
     $fclose(fd);
@@ -68,8 +158,8 @@ module tb_b_lut;
     fd = $fopen({dir, "/lutb_mem.txt"}, "r"); bad_mem = 0;
     for (int k = 0; k < 512; k++) begin
       rc = $fscanf(fd, "%h %h %h %h\n", t0, t1, t2, t3);
-      if (k < 256 && (u.i_lut_mem.lut_act_mem[k] !== t0[7:0] || u.i_lut_mem.lut_exp_mem[k] !== t1[7:0] || u.i_lut_mem.lut_recip_mem[k] !== t2[15:0])) bad_mem++;
-      if (u.i_lut_mem.lut_rsqrt_mem[k] !== t3[15:0]) bad_mem++;
+      if (k < 256 && (u.i_lut_mem.lut_act_mem[k] !== t0[7:0] || u.i_lut_mem.lut_exp_mem[k] !== t1[7:0] || g_recip(k) !== t2[15:0])) bad_mem++;
+      if (g_rsqrt(k) !== t3[15:0]) bad_mem++;
     end
     $display("ORACLE lut_write cycles %0d mismatches %0d", nw, bad_w + bad_mem);
     $display("DETAIL lut_write init_done_or_counters %0d table_entries %0d", bad_w, bad_mem);
@@ -388,6 +478,32 @@ module tb_b_lut32;
     .o_8b_lookup_data(o8), .o_16b_lookup_data(o16), .o_e_shift(oes), .o_pipe_almost_done(o_ad));
   logic [31:0] f0, f1, f2, f3, f4, f5, e_rdy, e_v, e_ad, e_z, t0, t1, t2, t3; logic [255:0] x8, e8, ees; logic [1023:0] x32; logic [511:0] e16;
   logic hs_now, data_now;
+
+  // table access: revision 1 keeps recip / rsqrt in one array, revision 2 (NEO_REV2) in even / odd banks
+  task automatic put_tab(input integer k, input logic [7:0] ta, input logic [7:0] te, input logic [15:0] tr, input logic [15:0] ts);
+    if (k < 256) begin u.i_lut_mem.lut_act_mem[k] = ta; u.i_lut_mem.lut_exp_mem[k] = te; end
+`ifdef NEO_REV2
+    if (k < 256) begin if (k[0]) u.i_lut_mem.lut_recip_odd_mem[k >> 1] = tr; else u.i_lut_mem.lut_recip_even_mem[k >> 1] = tr; end
+    if (k[0]) u.i_lut_mem.lut_rsqrt_odd_mem[k >> 1] = ts; else u.i_lut_mem.lut_rsqrt_even_mem[k >> 1] = ts;
+`else
+    if (k < 256) u.i_lut_mem.lut_recip_mem[k] = tr;
+    u.i_lut_mem.lut_rsqrt_mem[k] = ts;
+`endif
+  endtask
+  function automatic logic [15:0] g_recip(input integer k);
+`ifdef NEO_REV2
+    g_recip = k[0] ? u.i_lut_mem.lut_recip_odd_mem[k >> 1] : u.i_lut_mem.lut_recip_even_mem[k >> 1];
+`else
+    g_recip = u.i_lut_mem.lut_recip_mem[k];
+`endif
+  endfunction
+  function automatic logic [15:0] g_rsqrt(input integer k);
+`ifdef NEO_REV2
+    g_rsqrt = k[0] ? u.i_lut_mem.lut_rsqrt_odd_mem[k >> 1] : u.i_lut_mem.lut_rsqrt_even_mem[k >> 1];
+`else
+    g_rsqrt = u.i_lut_mem.lut_rsqrt_mem[k];
+`endif
+  endfunction
   initial begin
     if (!$value$plusargs("dir=%s", dir)) dir = ".";
     v = 0; rdy = 1; comp = 0; rsel = LUT_RECIP; mode = LUT_PWL; base = 0; i8 = '0; i32 = '0;
@@ -395,8 +511,7 @@ module tb_b_lut32;
     fd = $fopen({dir, "/lutb_tab.txt"}, "r");
     for (int k = 0; k < 512; k++) begin
       rc = $fscanf(fd, "%h %h %h %h\n", t0, t1, t2, t3);
-      if (k < 256) begin u.i_lut_mem.lut_act_mem[k] = t0[7:0]; u.i_lut_mem.lut_exp_mem[k] = t1[7:0]; u.i_lut_mem.lut_recip_mem[k] = t2[15:0]; end
-      u.i_lut_mem.lut_rsqrt_mem[k] = t3[15:0];
+      put_tab(k, t0[7:0], t1[7:0], t2[15:0], t3[15:0]);
     end
     $fclose(fd);
     fd = $fopen({dir, "/lut32.txt"}, "r"); n = 0; bad = 0; bad_hs = 0; bad_data = 0;

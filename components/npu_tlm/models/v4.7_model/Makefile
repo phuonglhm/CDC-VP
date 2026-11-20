@@ -33,7 +33,7 @@ else
   GVU_CXXFLAGS := -std=c++17 -O3 -Wall -I.
 endif
 
-GVU_HDRS     := has/rtl_ref_gvu_top.h has/rtl_ref_gvu_vrf.h has/rtl_ref_gvu_fu.h has/rtl_ref_gvu_scratchpad.h has/rtl_ref_gvu_lut.h has/rtl_ref_gvu_vlsu.h has/rtl_ref_gvu_ctrl.h
+GVU_HDRS     := has/rtl_ref_gvu_top.h has/rtl_ref_gvu_vrf.h has/rtl_ref_gvu_fu.h has/rtl_ref_gvu_scratchpad.h has/rtl_ref_gvu_lut.h has/rtl_ref_gvu_vlsu.h has/rtl_ref_gvu_ctrl.h has/rtl_ref_gvu_lut_sel.h has/rtl_ref_gvu_lut_r2.h has/rtl_ref_gvu_fu_r2.h
 
 tb_gvu_top: tb_gvu_top.cpp $(GVU_HDRS)
 	$(CXX) $(GVU_CXXFLAGS) $< $(GVU_LINK) -o $@

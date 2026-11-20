@@ -68,6 +68,25 @@ namespace sauria_rtl
 
         PeConfig config;
 
+        // ---- Vertical result extraction of neo_lite sa_array.sv (HAS_TRANSPOSE_MODE; the port reads no environment) ----
+        // transpose_mode 0 (default): nothing below is evaluated -- the array behaves exactly as before.
+        //   1 = as the RTL delivers it: while vertical_scan_sig is high the PEs do not shift the scan chain (sa_array.sv:189) and
+        //       o_c_arr[c] = mac_sc_q of row vertical_row_q (sa_array.sv:103-131) -> the finished context stays in mac_sc_q and seeds the
+        //       context after next (B25).
+        //   >= 2 = mode 1 plus the B25 patch: mac_sc_q of every PE is cleared at the edge that samples the last row (a PE that
+        //       switches context at that edge keeps its swap).
+        // vertical_scan_sig is bound by the owner (NpuTop) only when transpose_mode != 0; it carries "transpose and PSM in PREWRITE",
+        // extended with the same tail cycle as the scan enable (see rtl_ref_psm_top.h).
+        unsigned transpose_mode{0};
+        const sc_signal<bool> *vertical_scan_sig{nullptr};
+        void set_transpose_mode(unsigned m, const sc_signal<bool> *vertical_scan)
+        {
+            static_assert(X_DIM == Y_DIM, "vertical scan: square array only (scan_cnt ends at Y-1 = X-1)");
+            transpose_mode = m;
+            vertical_scan_sig = m ? vertical_scan : nullptr;
+        }
+        uint32_t vertical_row_q{0};
+
 #ifndef FX1_NO_PERF
         // Optional, non-owning pointer to shared perf counters
         // left null in normal runs -> zero overhead, no behavior change
@@ -182,6 +201,7 @@ namespace sauria_rtl
                 if (sa_reset_applied_)
                     return;
                 sa_reset_applied_ = true;
+                vertical_row_q = 0;   // sa_array.sv: i_reg_clear clears the vertical row counter (0 and unused when transpose_mode == 0)
 
                 raw_cswitch_q = false;
                 cswitch_context_latched = 0;
@@ -297,7 +317,15 @@ namespace sauria_rtl
             sa_reset_applied_ = false;
 
             if (!i_pipeline_en.read())
+            {
+                // sa_array.sv: the row counter is cleared whenever the scan enable is low, also while the pipeline is stalled
+                if (transpose_mode != 0 && !i_cscan_en.read())
+                    vertical_row_q = 0;
                 return;
+            }
+            // vertical extraction active at this edge (false whenever transpose_mode == 0: the pointer is then null)
+            const bool vert = vertical_scan_sig != nullptr && vertical_scan_sig->read();
+            bool cs_rise_[Y_DIM][X_DIM];   // only written when transpose_mode >= 2 (B25 patch: a PE that swaps keeps its swap)
 
             act_vector_t<Y_DIM, T_ACT> act_in = i_act_arr.read();
             wei_vector_t<X_DIM, T_WEI> wei_in = i_wei_arr.read();
@@ -405,7 +433,10 @@ namespace sauria_rtl
                     // ---------------------------------------------------------
                     bool local_cswitch_rise = cs_bit && !local_cswitch_q[y][x];
                     local_cswitch_q[y][x] = cs_bit;
-                    bool pe_cscan_en = i_cscan_en.read() && !local_cswitch_rise;
+                    // vertical extraction: the scan chain does not shift (sa_array.sv:189 i_cscan_en && !i_transpose_mode)
+                    bool pe_cscan_en = i_cscan_en.read() && !local_cswitch_rise && !vert;
+                    if (transpose_mode >= 2)
+                        cs_rise_[y][x] = local_cswitch_rise;
                     // Step execution
                     if (FX1_DUMPS && is_std_array && i_context_id.read() == 0 && y == 0 && x == 3)
                     {
@@ -600,6 +631,41 @@ namespace sauria_rtl
             if (perf)
                 perf->exec_cycles++; // This clock did real comput work
 #endif
+
+            if (transpose_mode != 0)
+            {
+                // sa_array.sv:103-131. vertical_row_q is a register: the value presented in the NEXT cycle is the one computed here,
+                // like scan_out (written after the edge) for the horizontal chain.
+                const bool cscan_now = i_cscan_en.read();
+                if (vert && cscan_now)
+                {
+                    if (transpose_mode >= 3)
+                    {
+                        // The model's own way, not in the RTL: the row just sampled takes the preload row that the PSM presents on
+                        // i_c_arr (lane c = column c) in parallel, instead of the chain shifting the preload in. With no preload driven the lanes
+                        // are 0, so this also covers the B25 patch (nothing stays in mac_sc_q). A PE that swaps at this edge keeps its swap.
+                        const psum_vector_t<Y_DIM, T_PSUM> crow = i_c_arr.read();
+                        for (int x = 0; x < X_DIM; x++)
+                            if (!cs_rise_[vertical_row_q][x])
+                                grid[vertical_row_q][x].mac_sc_q = crow[x];
+                    }
+                    else if (transpose_mode >= 2 && vertical_row_q == static_cast<uint32_t>(Y_DIM - 1))
+                    {
+                        // B25 patch (the patch clears the shadow register at the last row): sc_clear = transpose && cscan_en && pipeline_en && row == Y-1;
+                        // lower priority than the context switch (the PE swap wins)
+                        for (int y = 0; y < Y_DIM; y++)
+                            for (int x = 0; x < X_DIM; x++)
+                                if (!cs_rise_[y][x])
+                                    grid[y][x].mac_sc_q = T_PSUM(0);
+                    }
+                    vertical_row_q = (vertical_row_q == static_cast<uint32_t>(Y_DIM - 1)) ? 0u : vertical_row_q + 1u;
+                }
+                else if (!vert || !cscan_now)
+                    vertical_row_q = 0;
+                if (vert)
+                    for (int c = 0; c < X_DIM; c++)
+                        scan_out[c] = grid[vertical_row_q][c].mac_sc_q;
+            }
 
             o_c_arr.write(scan_out);
 

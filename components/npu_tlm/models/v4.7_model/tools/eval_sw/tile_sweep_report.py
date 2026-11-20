@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the M7-ME report from `tile_sweep.py`'s results (two runs: with extrapolation X and --no-x). Read-only. MODE B PREDICTION.
+"""Render the tile-split sweep report from `tile_sweep.py`'s results (two runs: with extrapolation X and --no-x). Read-only. MODE B PREDICTION.
 
 usage: python tile_sweep_report.py --with-x out/tile_sweep --no-x out/tile_sweep_nox --shapes out/prep/shape_table.csv --graph-ir data/graph_ir.json --out out/tile_sweep/tile_sweep_report.md
 """
@@ -51,7 +51,7 @@ def main():
     model = tm.ShapeModel(a.shapes, a.graph_ir)
     O = []
     w = O.append
-    w("# M7-ME -- Per-layer tile-split sweep, scored by PREDICTED CYCLES (MODE B)\n")
+    w("# Per-layer tile-split sweep, scored by PREDICTED CYCLES (MODE B)\n")
     w("**Every number in this document is a PREDICTION from the calibrated model (MODE B), not a measurement.** Once a choice is made it must be verified with a real run. "
       "Unit is **cycles**, not converted to time (simulation time is not proportional to cycles -- Frontend: 2.2x cycles corresponded to 3.6x wall-clock time).\n")
     w("Scope: 83 core conv layers; excludes OBP, OBP config load, host ops, inter-layer DMA. Reference frame = **sequential cycle sum** (compute + DMA exposure, no prefetch), "
@@ -159,7 +159,7 @@ def main():
       "Using both weight banks (cfg b) brings X back to 32 and removes the stall; this is the single biggest lever for these three layers. See Section 6 for whether a single weight tile can actually span both banks on real hardware." % (100 * tot3 / base, fm(tot3), fm(base)))
     w("The multi-row-span option only adds value once cfg b is already applied AND the context mapping is CHANGED (currently one context = one row's worth of positions, `fe_tile_plan.py:74`) -- not checked against hardware.\n")
 
-    # ---- 6. S9-FE addendum: can a weight tile span bank 0 + bank 1? ----
+    # ---- 6. Addendum: can a weight tile span bank 0 + bank 1? ----
     w("## 6. Can a 110 KB weight tile span bank 0 + bank 1? -- NO on the evidence in this repo, and here is cfg b's marginal value on top of a+c\n")
     w("**Question asked**: cfg a + cfg c are being implemented now; cfg b (doubling the weight-bank capacity by giving up its ping-pong pairing) is on hold pending this answer.\n")
     w("**Answer: NO, not without new hardware** -- based on the SystemC reference model (no Verilog RTL or a written HAS chapter on SRAM-B addressing exists in this repo; if the hardware team has since added a decoder, this model would not show it):\n")

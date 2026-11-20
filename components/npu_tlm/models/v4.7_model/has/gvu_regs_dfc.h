@@ -134,7 +134,7 @@ namespace has
             inline std::vector<W> clear_done() { return {w(CONTROL, 1u << 2)}; }
             inline std::vector<W> pool_regs(unsigned mode, unsigned stride, unsigned num_w_tile, unsigned c, unsigned oh, unsigned c_move, unsigned h_move)
             {
-                const bool r1 = neo_rev_at_least(NEO_REV_1FB7978);
+                const bool r1 = neo_rev_at_least(NEO_REV_1);
                 return {w(POOLING_0, (mode & 3u) | (stride & 7u) << 2 | (num_w_tile & 0xFFu) << 8 | (c & 0xFFu) << (r1 ? 24 : 16) | (oh & 0xFFu) << (r1 ? 16 : 24)),
                         w(POOLING_1, (h_move & 0x3FFu) | (c_move & 0x3FFu) << 16)};
             }
@@ -188,7 +188,7 @@ namespace has
             // tile. Empty for neo_lite RTL revision 0 (its start = 0 write carries no bit the register file acts on, and the model does not issue it).
             inline std::vector<W> final_off()
             {
-                if (!neo_rev_at_least(NEO_REV_1FB7978)) return {};
+                if (!neo_rev_at_least(NEO_REV_1)) return {};
                 return {w(CONTROL, 1u << 3)};
             }
         }

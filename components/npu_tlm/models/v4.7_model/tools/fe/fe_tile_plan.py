@@ -5,7 +5,7 @@ Per conv, output tiles (H_t, W_t, Cout_t, Cin_t = Cin) are chosen so one tile fi
   B  weights                     kh * kw * Cin * Cout_t     <= BANK_B_BYTES   (int8)
   C  psums                       H_t * W_t * Cout_t         <= BANK_C_PSUMS   (int32 words)
   OBP lanes                      Cout_t                     <= OBP_LANES      (bias/scale/shift/LUT RAM)
-  skip (residual, if fused)      H_t * W_t * Cout_t         <= BANK_SKIP_BYTES (int8, scratch bank 5 -- S9-FE)
+  skip (residual, if fused)      H_t * W_t * Cout_t         <= BANK_SKIP_BYTES (int8, scratch bank 5)
 Cin is never split (Cin_t = Cin): every YOLOv8m conv fits without it, and it keeps the K-folding/preload
 path out of the first integration.
 
@@ -128,7 +128,7 @@ def _splits(total, step):
 
 
 def _predicted_total(model, job, cout, ho, wo, cout_t, ht, wt):
-    """S9-FE: total predicted cycles (busy+ld+st) to cover the WHOLE conv with this (cout_t, ht, wt)
+    """Total predicted cycles (busy+ld+st) to cover the WHOLE conv with this (cout_t, ht, wt)
     geometry -- summed over every chunk (remainder chunks included), matching
     tools/eval_sw/tile_sweep.py's eval_seq()/seq_total exactly (a single representative tile's cost is
     NOT comparable across candidates with different tile counts). Returns None if any chunk can't be
@@ -155,7 +155,7 @@ def plan_conv_core(o, has_skip, bank_a=BANK_A_BYTES, bank_b=BANK_B_BYTES, bank_c
     the PSM SRAM-C address depends on W_t*H_t and Cout_t only, and tiles with W_t*Cout_t = 1024/2048 at
     W_t*H_t*Cout_t = 24576 pass on sauria_model; the capacity rule below is the real one.
 
-    model: optional tools/eval_sw/tile_model.ShapeModel instance (S9-FE). When given, candidates are ranked
+    model: optional tools/eval_sw/tile_model.ShapeModel instance. When given, candidates are ranked
     by PREDICTED CYCLES (busy+ld+st, tile_model's calibrated cost) instead of minimum tile count, among
     candidates the model can predict (flag != 'N'). Candidates the model can't predict still fall back to
     the tile-count objective so the search never comes up empty. model=None keeps the old behavior exactly."""
@@ -168,7 +168,7 @@ def plan_conv_core(o, has_skip, bank_a=BANK_A_BYTES, bank_b=BANK_B_BYTES, bank_c
     # (W_t = 64 was verified on sauria_model); set max_wt=32 for the previous planner.
     wide = [SA_DIM * m for m in range(math.ceil(wo / SA_DIM), 1, -1) if SA_DIM * m <= max_wt]
     best = None        # tile-count objective (old default, always tracked as fallback)
-    best_cost = None   # S9-FE: predicted-cycles objective (busy+ld+st via tile_model), when model given
+    best_cost = None   # predicted-cycles objective (busy+ld+st via tile_model), when model given
     for cout_t in pows:
         if cout_t > lanes or kh * kw * cin * cout_t > bank_b:
             continue
@@ -189,7 +189,7 @@ def plan_conv_core(o, has_skip, bank_a=BANK_A_BYTES, bank_b=BANK_B_BYTES, bank_c
             if best is None or key > best[0]:
                 best = (key, cout_t, ht, wt, n)
             if model is not None:
-                # S9-FE: `ht` above is the MAX feasible row count (minimizes tile count, matches the old
+                # `ht` above is the MAX feasible row count (minimizes tile count, matches the old
                 # objective) -- but the cycle-optimal H_t is not always the max one (tile_sweep.py's own
                 # validated search varies H_t too, tools/eval_sw/tile_sweep.py candidates()/ht_for()).
                 # Mirror that candidate set here so this reproduces tile_sweep's measured numbers instead
@@ -292,7 +292,7 @@ def build_program(ir, mapping="core", model=None):
     """mapping='core': tiles aligned with the SAURIA core geometry (plan_conv_core, default);
     mapping='area': the first 6a planner (minimum tiles, any W_t).
 
-    model: optional tools/eval_sw/tile_model.ShapeModel (S9-FE) forwarded to plan_conv_core to rank tile
+    model: optional tools/eval_sw/tile_model.ShapeModel forwarded to plan_conv_core to rank tile
     candidates by predicted cycles instead of tile count. Ignored by mapping='area' (plan_conv doesn't
     take it -- unchanged on purpose, area mapping is the older/unused planner)."""
     planner = plan_conv_core if mapping == "core" else plan_conv

@@ -1,9 +1,9 @@
 # Compiler Guide: programs that run on the model, through the system wrapper and on the FPGA
 
-This guide is for the team that writes the compiler. It answers four questions: which layers the hardware (`neo_lite` RTL revision 1)
+This guide is for the team that writes the compiler. It answers four questions: which layers the hardware (`neo_lite` RTL revision 1; section 2.1 for RTL revision 2)
 runs as written, how to run a compiled program on the model so that the result says something about
 the hardware, what the compiler must change in a layer that the hardware cannot run as written, and how to check the
-output of a compiled program. RTL revision 0 and 1 are the two hardware RTL revisions the model follows; `HAS_NEO_REV` selects them.
+output of a compiled program. RTL revisions 0, 1 and 2 are the hardware RTL revisions the model follows; `HAS_NEO_REV` selects them; the options of RTL revision 2 are in sections 7.5, 7.6 and 11.
 
 Two ways to program the NPU exist side by side:
 
@@ -112,6 +112,25 @@ imitate them unless a run profile says so): words 0 to 11 of the register file c
 LUT initialisation reads the wrong vector-unit word (`P-H2`); FUSED_ATTN, LAYERNORM and AVGPOOL have no DFC path
 (`A-H3`); the sbank is never loaded (`A-H4`); dense max pool miscount (`P-POOLDENSE`).
 
+### 2.1 What changes in RTL revision 2
+
+`HAS_NEO_REV=2` makes the model and the tools follow RTL revision 2. Sections 3 and 4 describe revision 1; at revision 2 the per-layer check (`tools/has/hw_check_program.py <program> --rev 2`, `HAS_HW_CHECK=1`) adds code `B-SRAM` and no longer reports `A-H1`.
+
+| Item | RTL revision 2 | Source |
+|---|---|---|
+| Core SRAM per buffer | A 3,072 rows x 32 bytes (98,304 bytes), B 2,048 rows (65,536 bytes), C 320 rows x 32 partial sums (10,240) | RTL SOURCE |
+| Limits the model checks | A 80,896 bytes (the SRAM-A array of the model), B 65,536 bytes, C 10,240 partial sums; revisions 0 and 1: A 80,896, B 82,944, C 24,576 | model (`has/sram_limits.h`) |
+| Register file | 29 core words with index widths 18 / 17 / 15; DFC file of 82 words after a one-line correction of the RTL (the RTL as delivered computes 92 and 145) | MEASURED (elaboration of the RTL packages) |
+| Words 0 to 11 of the DFC file | writable (`A-H1` fixed) | RTL SOURCE |
+| Max pool, stride 2 or 4 with another window | counted correctly | MEASURED in an RTL simulation |
+| GEMM_FUSED stream depth of the vector unit | 17 cycles (11 before) | RTL SOURCE |
+| Vertical scan of the core | present, with the shadow-register defect (section 7.5) | MEASURED in an RTL simulation |
+| DMA tensor operations | copy, fill, 2-D pad, upsample, programmed by the CPU only (section 7.6) | RTL SOURCE; MEASURED in an RTL simulation |
+| CPU access to the blocks | SAURIA, GVU and DMA register files (section 11) | MEASURED in an RTL simulation |
+| Still open | `A-H3`, `A-H4`, `P-H2`, padding block not connected; the GEMM_FUSED sequence of the DFC unfinished (`KNOWN_LIMITATIONS.md`, section 8.7) | RTL SOURCE |
+
+Rules for a revision-2 program: plan it with `tools/fe/fe_emit_insts.py --sram rev2` (re-plans only the layers over a limit: YOLOv8m 40 layers, 7,299 to 8,623 tiles; ViT-B/16 needs no change); the re-plan ranks candidate tiles with the calibrated layer cost of `tools/metrics/pe_opt/dma_cost.py` and its parameter file `tools/metrics/out/pe_opt/dma_cost_params.json`, and stops when either is missing (without the parameters the tiles, and so the program, would differ); this package does not include the two files, so it cannot re-plan a revision-2 program by itself. `--r2-tile <layer>:<rows>x<columns>` re-plans one repaired layer with the given tile and leaves the rest of the program unchanged (used for the CPU path, where one tile may give at most 613 result packets: `CPU_DIRECT_GUIDE.md`, section 10). Check the program with `tools/has/hw_check_program.py <program> --rev 2` (no `B-SRAM` left); write the 82-word layout of the corrected word count.
+
 ## 3. Per-layer verdict
 
 ```bash
@@ -190,6 +209,7 @@ The same codes are used by `hw_check_program.py`, `HAS_HW_CHECK`, the register t
 | `B-POOLPAD` | max-pool window with padding (SPPF 5 x 5, pad 2) | pre-pad in DRAM | 3 of 3 max pools | — |
 | `B-POOLFIT` | a max-pool field out of range (stride, mode, or a stale `B_ADDR` from an earlier ADD) | write `B_ADDR = 0` before the pool; keep the fields in range | 3 of 3 | — |
 | `B-FIELD` | another field cannot be decoded back (for example the dilation of a one-element column) | write it another way | 0 | 0 |
+| `B-SRAM` | (RTL revision 2 only) a tile does not fit a core buffer of revision 2 | re-plan with `tools/fe/fe_emit_insts.py --sram rev2` | 40 of 83 with the plan of this package, 0 with `--sram rev2` | 0 of 50 |
 
 ### 4.2 Codes that wait for the hardware or the model (verdict `PATCH` or `NO`)
 
@@ -308,10 +328,16 @@ For the hardware today, a compiler maps concat and slice to addresses (program `
 The model has both as DMA operations of DRAM-to-DRAM tensors. The hardware RTL revision 1 has neither: its DMA is
 one-dimensional, so a layer program that uses them does not run on the hardware (the same as slice / concat, code
 `B-DMA`). They are on in the model (`HAS_DMA_RESHAPE`, default 1); with `HAS_DMA_RESHAPE=0` the push is refused with
-`UNSUPPORTED_MODE` and a line on stderr. The front end of this package does not emit them: the nearest-neighbour x2
-upsample of YOLOv8m stays a host step (`H upsample2x` lines of `mmio.txt`, run by the CPU between instructions;
-`SW_INTEGRATION_GUIDE.md`, section 10.2), and the question of how the hardware does it stays open
-(`SW_INTEGRATION_GUIDE.md`, section 7, H15).
+`UNSUPPORTED_MODE` and a line on stderr. The front end of this package writes the nearest-neighbour x2 upsample of YOLOv8m as a host step by
+default (`H upsample2x` lines of `mmio.txt`, run by the CPU between instructions; `SW_INTEGRATION_GUIDE.md`, section 10.2). With
+`--slice-concat dma_nd --upsample dma` it writes each upsample as one `DMA_TENSOR` instruction (`MODE_PACK` 2, `A_ADDR` source, `OUT_ADDR`
+destination, `IN_C/H/W` and `OUT_C/H/W`, so the factors come from rule (1) below), in the program `insts_<plan>_nd_up[_r2]`; the front end checks
+that the destination bytes of the golden image are the upsampled source bytes. MEASURED on YOLOv8m at RTL revision 2: 62,465 cycles for
+`[576,20,20]` and 166,465 cycles for `[384,40,40]`; the whole network passes 137 of 137 steps in 64,470,174 cycles (228,767 more than the program
+with host steps, whose host time is not counted). The hardware has no such instruction (code `B-DMA`); how the hardware does the upsample stays
+open (`SW_INTEGRATION_GUIDE.md`, section 7, H15). On the CPU path, the DMA tensor register file of RTL revision 2 can do it (section 7.6), but an
+NCHW tensor needs one-byte segments (11 system clocks each, MEASURED on the RTL): two descriptors per upsample (a horizontal x2 into the even
+output rows, then a copy of each even row onto the odd row below) take 4,743,859 core cycles on the model for the two upsamples of YOLOv8m (MEASURED, both regions exact; INFERRED for the RTL from 11 clocks per segment: about 4.55 million).
 
 Entry: `DMA_TENSOR` (push `0x16`) with `MODE_PACK` 2 = upsample, 3 = reshape. Use this entry. The model also accepts the same
 operations as ELEM_WISE (push `0x15`) modes 8 and 9; both entries carry `B-DMA` for the hardware RTL revision 1. No new register address; the instruction registers of `SW_INTEGRATION_GUIDE.md` are used:
@@ -363,6 +389,14 @@ YOLOv8m-shaped check, +0 on the reference check.
 The transpose of an output after the epilogue belongs to this model: `HAS_OUT_TRANSPOSE=1` with `TMAJ_C0`
 (`SW_INTEGRATION_GUIDE.md`, section 3.3; `HW_RTL_ALIGNMENT.md`, section 8). It is a proposal: the hardware has no
 working transpose (code `B-TMAJ`). Other matrix operations on the DMA are in section 7.2.
+
+### 7.5 Token-major output by the vertical scan (RTL revision 2, `transpose_mode`)
+
+Choose the vertical scan only when the token-major layout is needed, not for speed: a vertical write phase takes Y_used packets per context and a horizontal one X_used, so on the RTL a 32-channel x 8-position tile is faster vertical (406 against 502 cycles) and an 8-channel x 32-position tile is slower (518 against 422). The bit is core word 28 bit 16 (byte 0x810 of the core window, bit 25 in revisions 0 and 1). The index counters of the PSM do not know the mode, so the roles of five fields are exchanged (X = X_used, Y = Y_used, K = channels of the tile = TILE_COUT, NP = positions of the tile = tile width x tile height; 32 = the SRAM-C word count): CXLIM = X + 32 (one packet = the X channels of one position), CKSTEP = K (step between positions), CKLIM = Y x K (Y positions per context), TIL_CYLIM = NP x K and TIL_CYSTEP = Y x K (contexts advance Y positions); CXSTEP is unchanged. For a layer with several channel tiles two more fields change, TIL_CKLIM = K and TIL_CKSTEP = X. With these values the core writes the compact token-major image of the tile, element p x K + c (position p, channel c), also for tiles with X_used or Y_used below 32 (measured on the RTL as delivered; the model implements the rule in one helper). Rules: (1) do not program a non-zero preload in a vertical tile of the RTL as delivered: it is lost or misoriented, so add the bias after the scan; as the partial sum of an earlier Cin pass is a preload, a layer split into several Cin passes cannot use the vertical scan on the RTL as delivered either; (2) in the model, mode 3 (the proposal with a row-parallel preload) runs a token-major tile vertical for one Cin pass, or for several Cin passes only on a square 32 x 32 tile; a non-square token-major tile with several Cin passes is refused, so do not split Cin for such a tile, or run it with the horizontal scan and the corner turn; (3) on the RTL as delivered a tile of three or more contexts returns context k plus context k - 2 for k >= 3, so until the shadow register is cleared in the hardware keep the vertical scan to tiles of at most two contexts (a consequence of the measurement, not a separate measurement); the model knob 2 shows the corrected behaviour and 3 the preload-capable proposal.
+
+### 7.6 DMA tensor register file (RTL revision 2)
+
+The CPU, not the data flow controller, programs this register file between two layers. Registers are written at `block base + offset`; the offsets are the same on every platform and the base differs: on the FPGA the DMA block of neo_top is at `cfg_base + 0x30000` (the 82-word file is at `cfg_base + 0x0`), in the model it is the host window `0x40000A00` (the 82-word window is `0x40000800`). The tensor register file is the upper half of the block (address bit 7 set, base offset `0x80`): CTRL `+0x00`, OP `+0x04` (operation in bits 1:0 = 0 copy, 1 fill, 2 pad, 3 upsample; top pad rows 9:2; bottom pad rows 17:10; replication along the row 21:18; along the rows 25:22; fill byte 31:24), RADDR `+0x08`, WADDR `+0x0C`, CNT01 `+0x10` (n0 in 15:0, n1 in 31:16), CNT2 `+0x14`, GRP_BYTES `+0x18`, ROW_BYTES `+0x1C`, strides RS0 / WS0 / RS1 / WS1 / RS2 / WS2 `+0x20 .. +0x34`, PADL `+0x38`, PADR `+0x3C`, FULL `+0x40`, ID `+0x44` (`0x5ED00001`). Data addresses are DRAM addresses as the bus sees them (no offset is added by the DMA). Sequence of one operation: wait until CTRL bit 1 (busy) is clear, write the descriptor registers, write CTRL = 1, wait until CTRL bit 2 (done) is set, write CTRL = 2 (clear done). Do not rewrite a descriptor register while busy. Mapping: slice = copy with the source pitch and the destination pitch as strides; concat = one copy per input at its channel offset of the output; reshape that changes the layout (transpose) = copy of single elements with three strides; reshape that keeps the order = nothing; upsample by k = upsample with `rep0 = rep1 = k` and a group of the bytes of one channel vector (channel-last) or one element (NCHW, slow); pad = pad with the margins in bytes, fill for a separate region. Limits: counts 16 bit, pad rows 8 bit, replication 4 bit. `tools/fe/fe_emit_insts.py --slice-concat opgen [--opgen-platform model|fpga --cfg-base <addr> --dram-base <addr>]` writes the sequence (lines `P` poll and `K` check are the extra lines of `mmio.txt` that `tb_has_npu_top` understands) and prints the estimated cost of the descriptors; `tools/has/neo_regmap_check.py --rev 2` checks every offset, field and base of this paragraph against the RTL.
 
 ## 8. Worked example: the first YOLOv8m layer and a residual add
 
@@ -459,3 +493,7 @@ Detection boxes and classes of the two networks: `BUILD_AND_RUN.md`, section 7.
 - Proposed, not in the RTL yet: the DFC register file could grow from 82 to 112 words, with words 96 to 111 for DMA
   operations (108 and 109 for the transpose). The 82 words described here keep their positions.
 - Upsample and reshape emitted by the frontend: the reference frontend still writes the upsample as a host step (section 7.2).
+
+## 11. Programming the blocks from the CPU (RTL revision 2)
+
+Besides handing a job of 82 words to the data flow controller, firmware can program the SAURIA, GVU and DMA blocks directly through their register files (a whole compiled network can be turned into such a program, `CPU_DIRECT_GUIDE.md`, section 10); the DFC path stays the default and the two must not overlap in time (the configuration port arbitrates between the CPU and the DFC with no select bit). The register offsets inside each block are the RTL offsets; the block base is `cfg_base + 0x10000 / 0x20000 / 0x30000` on the FPGA and `0x11000 / 0x12000 / 0x13000` on the virtual platform (enable the model mode with `HAS_CPU_DIRECT=1` and `HAS_NEO_REV=2`). Every wait is polling: the DMA interrupt status (`+0x0C`, bit 1 writer done), the SAURIA interrupt status (`+0x0C`, bit 0 done, with the global and done interrupt enables set), the GVU CONTROL register (bit 1 done). Local memories are double-buffered and the DMA reaches the half the unit does not use: after a SAURIA run write the memory switch (CONTROL bit 16) before reading SRAM C, after a GVU run write CONTROL = `0xC` (clear done, force buffer swap) before reading the output bank, which is vbank2 for max pool, RESIDUAL and GEMM_FUSED (vbank0 for Softmax). From the second SAURIA run on, write a soft reset (CONTROL = `0x0080_0000`) before the START: the RTL stalls without it. For GEMM_FUSED the output scales and shifts go to the sbank in the order of the result packets (at most 614 per enable of the unit) and the last core call of a layer runs one context; on RTL revision 2 as delivered GEMM_FUSED by the CPU does not give a correct result (`CPU_DIRECT_GUIDE.md`, section 8). The SAURIA configuration words are words 40..68 of the DFC job image. On the virtual platform the DMA works on the model's own DRAM; copy system RAM into it before a DMA reads and back after a DMA writes with the SYNC block at `0x14000` (needs the wrapper change `tools/has/wrapper/npu_tlm_cpu_direct_sync.patch`). The complete address map, the memory addresses seen by the DMA and the register sequences of a DMA command, a SAURIA run, a max pool, a RESIDUAL, a Softmax and a GEMM_FUSED layer, and the rules for firmware that also runs on the FPGA are in `CPU_DIRECT_GUIDE.md`; `tools/has/cpu_direct/mk_cpu_*.py` write example programs in the `mmio.txt` format of `tb_has_npu_top` (lines `W` write, `P` poll, `K` check).

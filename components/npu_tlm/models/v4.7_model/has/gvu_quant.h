@@ -145,7 +145,6 @@ namespace has
             if (const char *v = std::getenv("HAS_SCRATCH_BYTES")) k.scratch_bytes = static_cast<uint32_t>(std::atol(v));
             get("HAS_SP_BANKED", k.sp_banked);
             get("HAS_ELEM_DMA_LAT", k.elem_dma_lat);
-            if (const char *v = std::getenv("HAS_GVU_LAT")) if (std::atoi(v)) k.gvu_latencies();
             if (const char *v = std::getenv("HAS_SP_V0")) k.sp_v0 = static_cast<uint32_t>(std::atol(v));
             if (const char *v = std::getenv("HAS_SP_V1")) k.sp_v1 = static_cast<uint32_t>(std::atol(v));
             if (const char *v = std::getenv("HAS_SP_V2")) k.sp_v2 = static_cast<uint32_t>(std::atol(v));

@@ -16,11 +16,15 @@ F=$R/FUs
 SRC="$R/gvu_pkg.sv $R/pipeline_reg.sv $F/clz.sv $F/gvu_full_adder.sv $F/gvu_adder32_lane.sv $F/gvu_adder64_lane.sv $F/gvu_vcmp32.sv
      $F/gvu_vector_clamp.sv $F/gvu_vector_shift.sv $F/gvu_vroundshift.sv $F/gvu_vroundshift64.sv $F/gvu_vroundshift72.sv
      $F/gvu_vmul32x32.sv $F/gvu_vmul48x40.sv"
+# RTL revision 2 and later: the multipliers use gvu_mul_block_cpa.sv; NEO_REV2 selects the revision-2 parts of the harness
+DEF=""
+[ -f "$F/gvu_mul_block_cpa.sv" ] && { SRC="$SRC $F/gvu_mul_block_cpa.sv"; DEF="+define+NEO_REV2"; }
 rc=0
 for top in ${TOPS:-tb_oracle_comb tb_oracle_roundshift tb_oracle_mula tb_oracle_mulb}; do
-  nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module $top --Mdir "$W/$top" $SRC "$HERE/tb_oracle_fu.sv" > "$W/$top.build.log" 2>&1 \
+  nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module $top --Mdir "$W/$top" $DEF $SRC "$HERE/tb_oracle_fu.sv" > "$W/$top.build.log" 2>&1 \
     || { echo "BUILD FAIL $top (see $W/$top.build.log)"; rc=1; continue; }
-  "$W/$top/V$top" +dir="$V" 2>&1 | tee "$W/$top.log" | grep -E "ORACLE|KNOWN|DETAIL|LATENCY|Error|FATAL"
+  "$W/$top/V$top" +dir="$V" 2>&1 | tee "$W/$top.log" | grep -E "ORACLE|KNOWN|VALUE|DETAIL|LATENCY|Error|FATAL"
+  [ "${ORACLE_CLEAN:-0}" = 1 ] && rm -rf "$W/$top"
 done
 grep -h "ORACLE" "$W"/*.log 2>/dev/null | grep -v "mismatches 0" && rc=1
 exit $rc

@@ -48,15 +48,20 @@
 #include "has/gvu_sp_map.h"
 #include "has/has_mmio_compat.h"
 #include "has/has_host_neo_port.h"
+#include "has/has_opgen.h"
+#include "has/has_cpu_direct.h"
+#include <filesystem>
 #include "has/has_tile_iter.h"
 #include "has/has_pad_gen.h"
 #include "has/has_dma.h"
 #include "has/dma_dfc_1d.h"
 #include "has/dfc_core_dma.h"
 #include "has/gvu_out_transpose.h"
+#include "has/has_vert_cfg.h"
 #include "has/gvu_rce_params.h"
 #include "has/has_profile_neo.h"
 #include "has/hw_capability.h"
+#include "has/sram_limits.h"
 #ifdef FE_METRICS
 #include "instrumentation/rtl_ref_perf_counters.h"
 #endif
@@ -165,6 +170,9 @@ namespace has
         {
             uint64_t instr{0}, gemm{0}, elem{0}, tiles{0}, core_deadlocks{0}, framing_errors{0}, wide_weight_rejected{0};
             uint64_t stage_overflow{0};   // tiles larger than a staging area (they do not fit the SRAMs either); also a framing error
+            // HAS_NEO_REV >= 2 (has/sram_limits.h): layers refused because their tile exceeds one SRAM buffer of the revision (also framing
+            // errors); a SRAM-C write above the row limit of the revision that the check at the start of the layer did not catch
+            uint64_t sram_rejected{0}, sram_over_a{0}, sram_over_b{0}, sram_over_c{0}, sramc_over_r2{0};
             uint64_t dma_cycles{0}, obp_cycles{0}, cfg_cycles{0}, elem_cycles{0}, vectors{0}, macs{0}, core_passes{0};
             uint64_t weight_loads{0}, weight_reuse_flips{0};
             uint64_t attn{0}, ln{0}, rce_rows{0}, rce_cycles{0}, rce_ovf16{0}, rce_param_errors{0};   // FUSED_ATTN / LAYERNORM
@@ -183,7 +191,9 @@ namespace has
             uint64_t dma_upsample{0}, dma_reshape{0};                            // DMA upsample / reshape instructions executed
         } st;
         MmioCompat mmio;
-        NeoPort neo;   // HAS_HOST=neo: the register file of neo_lite in the host port (has/has_host_neo_port.h); off by default
+        opgen::Port opg;   // HAS_DMA_OPGEN=1: the tensor-operation register file of the DMA (has/has_opgen.h); off by default
+        cpu_direct::Port cpu;   // HAS_CPU_DIRECT=1: the CPU programs the SAURIA / GVU / DMA blocks directly (has/has_cpu_direct.h); off by default
+        NeoPort neo;   // the register file of neo_lite in the host port (has/has_host_neo_port.h); on by default, HAS_HOST=v45 turns it off
         Knobs knobs;
         int core_max_cycles{2000000}, stall_cycles{5000};
         bool prefetch_a{true};
@@ -236,6 +246,7 @@ namespace has
 
         const ObpT &obp_block() const { return *obp_; }
         const HasElemwise &elem_block() const { return *ew_; }
+        const GvuTopStream *gvu_stream() const { return gvs_; }   // null unless HAS_GVU_TOP=3
 
 
         // DRAM image: the DFC appends its private staging area (deviation D3) after `program_bytes`.
@@ -248,6 +259,9 @@ namespace has
             stage_out_ = stage_pre_ + kStageCBytes;
             dram->resize(size_t(stage_out_) + kStageCBytes, 0);
             dma_->set_dram(dram);
+            // HAS_CPU_DIRECT: the tensor register file of the DMA takes the system bus addresses of the CPU (DRAM offset = address - the DRAM base of the
+            // CPU path), as the one-dimensional DMA does; offsets below the base still address the DRAM vector directly
+            if (cpu.wanted()) { cpu.set_dram(dram); opg.set_dram_base(cpu.dram_base()); }
         }
         uint32_t staging_base() const { return stage_a_; }
         // Place the private staging area at a fixed DRAM offset instead of after the image given to set_dram(). Used when
@@ -279,6 +293,7 @@ namespace has
             if (const char *v = std::getenv("HAS_DMA_ND")) dma_nd = std::atoi(v) != 0;
             if (const char *v = std::getenv("HAS_DMA_ND_MERGE")) dma_nd_merge = std::atoi(v) != 0;
             if (const char *v = std::getenv("HAS_OUT_TRANSPOSE")) out_transpose = std::atoi(v) != 0;
+            if (const char *v = std::getenv("HAS_TRANSPOSE_MODE")) transpose_mode = unsigned(std::max(0, std::min(3, std::atoi(v))));
             if (const char *v = std::getenv("HAS_TRACE_DMA_TENSOR")) trace_dma_tensor = std::atoi(v) != 0;
             if (const char *v = std::getenv("HAS_BUS_STRICT")) bus_strict = std::atoi(v) != 0;
             if (const char *v = std::getenv("HAS_BUS_STRICT_LUT")) bus_strict_lut = std::atoi(v) != 0;
@@ -327,6 +342,12 @@ namespace has
             core_->i_threshold(core_threshold_); core_->i_select(core_select_); core_->i_total_contexts(core_total_contexts_);
             port_.core = core_;
             if (GvuTopBridge::level() == 3) build_stream();
+            if (cpu.wanted()) cpu.set_local([this](cpu_direct::Mem m, uint32_t off, uint8_t *p, uint32_t n, bool w) { return cpu_local(m, off, p, n, w); });
+            if (cpu.wanted()) { const char *e = std::getenv("HAS_CPU_DIRECT_SELFCHECK"); cpu_selfcheck_ = e && std::atoi(e) != 0; }
+            if (cpu.wanted()) { if (const char *e = std::getenv("HAS_CPU_DIRECT_DUMP")) cpu_dump_dir_ = e; }
+            net_open();
+            if (cpu.wanted() && gvs_ && gvs_->regs_on())
+                cpu.set_gvu([this](uint32_t o, uint32_t v) { gvs_->cpu_write(o, v); }, [this](uint32_t o) { return gvs_->cpu_read(o); });
 
             SC_METHOD(host_port);
             sensitive << i_clk.pos();
@@ -394,8 +415,58 @@ namespace has
             };
             core_->set_sramc_write_hook([this](uint32_t addr, psum_vector_t<W32, int32_t> &v, const sramc_mask_t<W32> &m)
             {
+                if (cpu_stream_run_) { cpu_hwrite(addr, v, m); return; }   // HAS_CPU_DIRECT: a run the CPU started with the output stream enabled
                 if (!inl_active_) return;   // S1: earlier Cin passes keep the int32 psum for the next pass
-                const bool strm = gvs_ != nullptr;
+                if (inl_vert_) inline_vwrite(addr, v, m);   // HAS_TRANSPOSE_MODE 3: the write of a vertical tile (position row, lanes = channels)
+                else inline_hwrite(addr, v, m);
+            });
+        }
+        bool obp_inline() const { return obp_inline_; }
+        // HAS_CPU_DIRECT, a core run of the CPU with psum_stream_en and cin_tile_last: every write of the PSM to SRAM-C is a packet of the stream
+        // (psm_top.sv:304-354), raw psum, one per output channel of the write (the RTL pushes one per write; they are the same for a write inside one
+        // channel). Channel x = element / positions per channel; oc_last on the last channel of the tile (psm_idxcnt.sv:176: k_idx + ckstep >= cklim, so
+        // channels = cklim / ckstep and positions = ckstep); oc_tile_last on the packet that holds the last element of the invocation when the oc_tile_last
+        // bit of the words is set (the per-context flag of PsmStreamTap overrides it the same way). Nothing else of the write changes.
+        void cpu_hwrite(uint32_t addr, psum_vector_t<W32, int32_t> &v, const sramc_mask_t<W32> &m)
+        {
+            const uint32_t e0 = (addr % 1536u) * W32;
+            uint32_t k = 0;
+            while (k < uint32_t(W32))
+            {
+                if (!m[k]) { k++; continue; }
+                const uint32_t x = (e0 + k) / inl_npos_;
+                uint32_t j = k, mask = 0, ql = k;
+                for (; j < uint32_t(W32); j++)
+                {
+                    if (!m[j]) continue;
+                    if ((e0 + j) / inl_npos_ != x) break;
+                    mask |= 1u << j; ql = j;
+                }
+                if (x >= inl_nch_) inline_out_of_tile++;
+                else
+                {
+                    StreamPacket p;
+                    for (int l = 0; l < W32; l++) p.data[size_t(l)] = ((mask >> l) & 1u) ? v[size_t(l)] : 0;
+                    p.mask = mask; p.addr = addr; p.ch = x; p.S = 1; p.s = 0; p.bypass = false; p.model = psum_vector_t<W32, int32_t>(0);
+                    p.oc_last = (x + 1 == inl_nch_);
+                    p.call_last = (x + 1 == inl_nch_) && (e0 + ql + 1 == inl_nch_ * inl_npos_);
+                    p.oc_tile_last = cpu_tile_last_ && p.call_last;
+                    tap_->push(p);
+                }
+                k = j;
+            }
+        }
+        // A write with no lane enabled (the PSM issues one at the row after the last context of a tile that fills the buffer) changes nothing: it is
+        // not a write above the SRAM-C limit of the revision.
+        static bool sramc_any_lane(const sramc_mask_t<W32> &m) { for (uint32_t q = 0; q < uint32_t(W32); q++) if (m[q]) return true; return false; }
+        // The write of the PSM of a HORIZONTAL tile (row = channel, lanes = positions) into the epilogue / the clocked stream: the body of the
+        // write hook, unchanged (it was the lambda of set_obp_inline).
+        void inline_hwrite(uint32_t addr, psum_vector_t<W32, int32_t> &v, const sramc_mask_t<W32> &m)
+        {
+            const bool strm = gvs_ != nullptr;
+                // HAS_NEO_REV >= 2: a row above the SRAM-C buffer of the revision means the layer check missed a tile (the array of the model is
+                // wider, so nothing wraps): counted, one framing error
+                if (neo_rev() >= NEO_REV_2 && addr >= uint32_t(sram_limits_rev(NEO_REV_2).c_rows) && sramc_any_lane(m) && st.sramc_over_r2++ == 0) st.framing_errors++;
                 const uint32_t e0 = (addr % 1536u) * W32;
                 psum_vector_t<W32, int32_t> out = v;
                 uint32_t k = 0;
@@ -429,9 +500,54 @@ namespace has
                     k = j;
                 }
                 v = out;
-            });
         }
-        bool obp_inline() const { return obp_inline_; }
+        // HAS_TRANSPOSE_MODE 3, clocked path. The core writes the compact token-major image (e = p * K + c, one write = one position row, lanes =
+        // channels; has/has_vert_cfg.h). The epilogue runs LANE BY LANE, each lane with the parameters of its channel (the bias of a non-square
+        // tile, preload 0 in the core, is added here): without the clocked stream the result goes back in place at once; with the stream ONE
+        // packet per write goes to the unit, as the RTL does for a vertical scan (psm_top.sv: write_oc_last = |mask), carrying the lane-wise
+        // model result as a bypassed beat (GvuTop takes no beat with a parameter per lane; its flags still reach it, the result comes back after
+        // the stream depth, written in place by result_sink, and the write-back reads the vertical layout, writeback_tmaj). Arithmetic = the
+        // epilogue model, which equals GvuTop beat by beat on the horizontal path (differ 0); the stream traffic is one packet per write, so the
+        // FIFO of the tap does not overflow.
+        void inline_vwrite(uint32_t addr, psum_vector_t<W32, int32_t> &v, const sramc_mask_t<W32> &m)
+        {
+            const bool strm = gvs_ != nullptr;
+            if (neo_rev() >= NEO_REV_2 && addr >= uint32_t(sram_limits_rev(NEO_REV_2).c_rows) && sramc_any_lane(m) && st.sramc_over_r2++ == 0) st.framing_errors++;
+            const uint32_t K = inl_nch_, npos = inl_npos_, e0 = (addr % 1536u) * W32;
+            psum_vector_t<W32, int32_t> out = v, data(0), model(0);
+            uint32_t mask = 0, last_e = 0;
+            const auto sink = obp_->stream_sink;   // the lane-wise calls below must not push packets of their own
+            if (strm) obp_->stream_sink = nullptr;
+            for (uint32_t l = 0; l < uint32_t(W32); l++)
+            {
+                if (!m[l]) continue;
+                const uint32_t e = e0 + l, c = e % K, p = e / K;
+                if (p >= npos) { inline_out_of_tile++; continue; }
+                const int32_t val = v[l] + (inl_vlane_bias_ ? inl_bias_[c] : 0);
+                psum_vector_t<W32, int32_t> vv = v;
+                vv[l] = val;
+                sramc_mask_t<W32> ml(false);
+                ml[l] = true;
+                const auto r = obp_->apply_inline(vv, c, ml);
+                out[l] = r[l];
+                data[l] = val;
+                model[l] = r[l];
+                mask |= 1u << l;
+                last_e = e;
+                st.vectors++;
+            }
+            if (strm) obp_->stream_sink = sink;
+            if (strm && mask)
+            {
+                StreamPacket q;
+                q.data = data; q.mask = mask; q.addr = addr; q.ch = vpk_++; q.S = 1; q.s = 0; q.bypass = true; q.model = model;
+                q.oc_last = true;                                   // RTL: vertical packets carry the final output channel
+                q.oc_tile_last = inl_oc_tile_last_;
+                q.call_last = last_e + 1 == K * npos;               // the write that holds the last element of the tile
+                tap_->push(q);
+            }
+            if (!strm) v = out;
+        }
         // Options of a profile (call before sc_start; the knobs part comes from profile_knobs() at construction).
         void apply_profile(Profile p, uint32_t dram_latency = 0)
         {
@@ -465,6 +581,17 @@ namespace has
         uint32_t halo_copy_bpc{32};
         uint64_t halo_layers{0}, halo_tiles{0}, halo_bytes{0};
         uint64_t tmaj_tiles{0}, tmaj_tail_cycles{0}, tmaj_straddle{0};   // HAS_OUT_TRANSPOSE: tiles written token-major, corner-turn tails
+        // HAS_TRANSPOSE_MODE (default 0 = off: nothing below runs, behaviour byte-identical). The core extracts the result of a token-major
+        // 32 x 32 tile vertically, the way the hardware does (rtl_ref_npu_top.h set_transpose_mode): 1 = as the RTL is delivered (includes the
+        // lost-shadow bug of the vertical scan: a finished context seeds a later one), 2 and 3 = with that bug patched (3 will also change the
+        // vector unit, a later step). The bit that asks for it is the core field of the revision (neo::transpose_bit); it is kept as model state
+        // in core_extra_img_ (the core words the DFC writes per tile), never written to a core CSR. Serial write-back path only: the clocked
+        // stream path (HAS_GVU_TOP >= 3) does not take the vertical scan yet and counts the tiles it skips.
+        unsigned transpose_mode{0};
+        uint64_t transpose_tiles{0}, transpose_fallback_tiles{0}, transpose_skipped_tiles{0};
+        std::vector<uint32_t> core_extra_img_ = std::vector<uint32_t>(neo::N_CORE, 0u);
+        bool run_core_vert_{false};   // set by the GEMM tile loop for the next run_core call only
+        bool cfg_vertical_{false};    // core_apply_cfg: PSM index counters with the roles of the vertical scan (has/has_vert_cfg.h)
         uint64_t inline_out_of_tile{0};
         const DmaStats &dma_stats() const { return dma_->st; }
         const GvuLsu &lsu() const { return ew_->lsu; }
@@ -501,6 +628,11 @@ namespace has
         GvuTopStream *gvs_{nullptr};
         bool gvu_clk_{false};   // HAS_GVU_ELEM_CLK: the vector-unit operations of the DFC run as jobs on the clock of GvuTopStream
         bool inl_oc_tile_last_{false};
+        // HAS_TRANSPOSE_MODE 3 on the clocked path (see inline_vwrite): this call is a vertical tile
+        bool inl_vert_{false}, inl_vlane_bias_{false};
+        uint32_t inl_yu_{1};
+        uint64_t vpk_{0};
+        std::vector<int32_t> inl_bias_;
         uint8_t stream_lut_[256];
         bool stream_zp_fits_{true};    // the zero point of the layer fits the 8 bits of the RTL register (stream_begin)
         bool regs_on_{false};          // HAS_GVU_REGS=1: the DFC drives GvuTop through the register file (has/gvu_regs_dfc.h)
@@ -510,16 +642,431 @@ namespace has
         // ================================================================ host port
         void host_port()
         {
-            if (!i_rstn.read()) { mmio.soft_reset(); neo.soft_reset(); o_irq.write(false); o_done.write(false); return; }
-            if (i_host_wren.read() && i_host_wmask.read()[0] && !neo.handle_write(mmio, i_host_addr.read(), static_cast<uint32_t>(i_host_wdata.read()[0])))
+            if (!i_rstn.read()) { mmio.soft_reset(); neo.soft_reset(); opg.soft_reset(); cpu.soft_reset(); o_irq.write(false); o_done.write(false); return; }
+            if (cpu.on() && host_port_cpu()) return;   // HAS_CPU_DIRECT: the pages of the SAURIA / GVU / DMA blocks
+            if (i_host_wren.read() && i_host_wmask.read()[0] && opg.owns(i_host_addr.read()))
+                opg.write(i_host_addr.read(), static_cast<uint32_t>(i_host_wdata.read()[0]), mmio.busy());
+            else if (i_host_wren.read() && i_host_wmask.read()[0] && !neo.handle_write(mmio, i_host_addr.read(), static_cast<uint32_t>(i_host_wdata.read()[0])))
                 mmio.write(i_host_addr.read(), static_cast<uint32_t>(i_host_wdata.read()[0]));
             sauria::host_data_t r;
-            if (i_host_rden.read() && neo.owns(i_host_addr.read())) r[0] = static_cast<double>(neo.read(mmio, i_host_addr.read()));
+            if (i_host_rden.read() && opg.owns(i_host_addr.read())) r[0] = static_cast<double>(opg.read(i_host_addr.read()));
+            else if (i_host_rden.read() && neo.owns(i_host_addr.read())) r[0] = static_cast<double>(neo.read(mmio, i_host_addr.read()));
             else if (i_host_rden.read() && mmio.owns(i_host_addr.read())) r[0] = static_cast<double>(mmio.read(i_host_addr.read()));
             o_host_rdata.write(r);
-            o_irq.write(mmio.irq());
+            o_irq.write(mmio.irq() || cpu.irq(!mmio.busy()));
             o_done.write(mmio.irq());
             o_deadlock.write(st.core_deadlocks != 0);
+        }
+        // HAS_CPU_DIRECT: an access to a page of has/has_cpu_direct.h (true = handled here). The tensor-operation part of the DMA page goes to
+        // the register file of has/has_opgen.h at its model address. The interrupt lines of the blocks reach o_irq while the DFC is idle.
+        bool host_port_cpu()
+        {
+            uint32_t a = i_host_addr.read();
+            if (cpu_direct::Port::is_opgen_page(a)) { if (!opg.on()) return false; a = cpu_direct::Port::opgen_alias(a); }
+            else if (!cpu.owns(a)) return false;
+            const bool w = i_host_wren.read() && i_host_wmask.read()[0], r = i_host_rden.read();
+            const uint32_t v = static_cast<uint32_t>(i_host_wdata.read()[0]);
+            sauria::host_data_t d;
+            if (opg.owns(a) && !cpu.owns(a)) { if (w) opg.write(a, v, mmio.busy()); if (r) d[0] = static_cast<double>(opg.read(a)); }
+            else { if (w) cpu.write(a, v, mmio.busy()); if (r) d[0] = static_cast<double>(cpu.read(a)); }
+            o_host_rdata.write(d);
+            o_irq.write(mmio.irq() || cpu.irq(!mmio.busy()));
+            o_done.write(mmio.irq());
+            o_deadlock.write(st.core_deadlocks != 0);
+            return true;
+        }
+        // HAS_CPU_DIRECT_SELFCHECK=1 (with HAS_CPU_DIRECT): every configuration the DFC gives the core is packed into the 29 words of the
+        // RTL (per-row offsets y * stride) and decoded by the path of the SAURIA block; any field that differs is counted (observation only).
+        bool cpu_selfcheck_{false};
+        // The 29 packed words of config_regs.sv for a configuration (per-row offsets y * stride on the active rows, as libsauria_cfg packs them).
+        static std::vector<uint32_t> cpu_words(const uint64_t *f, uint64_t rows, uint32_t stride)
+        {
+            using namespace sauria;
+            const CfgWidths cw = cpu_direct::core_widths();
+            std::vector<uint64_t> per_row(cw.Y, 0);
+            for (uint32_t y = 0; y < cw.Y; y++) if ((rows >> y) & 1u) per_row[y] = uint64_t(y) * stride;
+            std::vector<uint32_t> w;
+            cfg_encode(f, 0, cw, w, per_row.data());
+            w.resize(cpu_direct::N_CORE_WORDS, 0u);
+            return w;
+        }
+        // HAS_CPU_DIRECT_DUMP=<dir> (with HAS_CPU_DIRECT): the first core run of the sequential schedule without feeder padding is written out
+        // (SRAM A / B / C contents before the start, the 29 words, SRAM C after done, the core cycles) for a CPU replay test. Observation only.
+        std::string cpu_dump_dir_;
+        bool cpu_dumped_{false};
+        // HAS_CPU_DIRECT_DUMP=<dir>, GEMM_FUSED layers of the data flow controller on the clocked stream: <dir>/gemm_L<k>/ holds, for the layer, the table of the
+        // activation (lut.bin), layer.txt (zero point, activation, geometry of every core call), the Out_Scale / Out_Shift of the beats as the sbank image the CPU
+        // loads (sbank.bin), the packets of the stream (packets.txt) and the result beats (beats.txt); for every core call i the SRAM A / B / C contents the core
+        // starts from (call<i>_a.bin, _b.bin, _c.bin: the whole buffer of the revision) and its 29 packed words with the stream metadata bits (call<i>_words.txt).
+        // Observation only: nothing of the run changes.
+        bool gdump_on_{false}, gdump_unfit_{false};
+        std::string gdump_path_, gdump_text_;
+        unsigned gdump_layer_{0}, gdump_calls_{0};
+        std::FILE *gdump_pkt_{nullptr};
+        uint64_t gdump_f_[sauria::F_CFG_COUNT]{};
+        uint64_t gdump_rows_{0};
+        uint32_t gdump_stride_{1};
+        static void gdump_put(const std::string &path, const void *d, size_t n)
+        {
+            std::FILE *fp = std::fopen(path.c_str(), "wb");
+            if (fp) { if (n) std::fwrite(d, 1, n, fp); std::fclose(fp); }
+        }
+        // HAS_CPU_DIRECT_NET=1 (with HAS_CPU_DIRECT and HAS_CPU_DIRECT_DUMP=<dir>): the whole program the data flow controller runs, as one
+        // time-ordered trace <dir>/net.txt for tools/has/cpu_direct/mk_cpu_net.py (it replaces the per-layer gemm_L<k> dump). Lines:
+        //   I <seq> <opcode> <mode>                 an instruction is popped;  D <seq>  it is finished
+        //   G k=v ...                               a GEMM_FUSED layer (addresses, shapes, kernel, parameters)
+        //   C k=v ...  then  w <29 hex words>       a core call: tile, Cin part, flags, bytes and FNV-1a hashes of the SRAM A / B / C halves the core reads
+        //   P <word> <mask> <ch> <oc_last> <oc_tile_last> <call_last>   a packet of the PSM stream (PsmStreamTap trace)
+        //   E k=v ...                               an ELEM_WISE instruction;  r ... / g <off> <val>  a run of the vector unit and its register writes
+        //   Z <29 hex words>                        the words of a one-packet core call (1 channel, 32 positions) that closes an enable of the unit
+        // Observation only: nothing of the run changes.
+        std::FILE *net_fp_{nullptr};
+        uint32_t net_part_{0}, net_cin_t_{0};
+        long net_step_{0};
+        bool net_z_{false};
+        uint64_t net_f_[sauria::F_CFG_COUNT]{};
+        uint64_t net_rows_{0};
+        uint32_t net_stride_{1};
+        static uint64_t net_fnv(const uint8_t *p, size_t n)
+        {
+            uint64_t h = 1469598103934665603ull;
+            for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ull; }
+            return h;
+        }
+        void net_open()
+        {
+            const char *e = std::getenv("HAS_CPU_DIRECT_NET");
+            if (cpu_dump_dir_.empty() || !e || std::atoi(e) == 0) return;
+            std::filesystem::create_directories(cpu_dump_dir_);
+            net_fp_ = std::fopen((cpu_dump_dir_ + "/net.txt").c_str(), "w");
+            if (!net_fp_) return;
+            std::fprintf(net_fp_, "# net trace v1 of the data flow controller (HAS_CPU_DIRECT_NET)\n");
+            if (gvs_) gvs_->set_net(net_fp_);
+        }
+        void net_words(const std::vector<uint32_t> &w, const char *tag)
+        {
+            std::fprintf(net_fp_, "%s", tag);
+            for (uint32_t x : w) std::fprintf(net_fp_, " %08x", x);
+            std::fprintf(net_fp_, "\n");
+        }
+        void net_instr(const LayerInstr &li) { if (net_fp_) std::fprintf(net_fp_, "I %u %u %d\n", li.host_seq, unsigned(li.opcode), li.mode); }
+        void net_done(const LayerInstr &li) { if (net_fp_) { std::fprintf(net_fp_, "D %u\n", li.host_seq); std::fflush(net_fp_); } }
+        void net_gemm(const LayerInstr &li, uint32_t K)
+        {
+            if (!net_fp_) return;
+            if (!net_z_)   // the closing call, packed for the revision in use (read at the first layer, after a run profile has set it)
+            {
+                net_z_ = true;
+                sauria::SauriaLayerDesc d{};
+                d.B_w = 1; d.B_h = 1; d.d = 1; d.s = 1; d.c_til = 32; d.k_til = 1; d.h_til = 1; d.w_til = 32; d.X_used = 1; d.Y_used = 32; d.preload_en = 1;
+                uint64_t f[sauria::F_CFG_COUNT];
+                sauria::sauria_compute_core_fields(d, *sauria::sauria_find_target("int8_32x32"), f);
+                std::vector<uint32_t> w = cpu_words(f, 0xFFFFFFFFull, 1);
+                for (unsigned b : {cpu_direct::BIT_STREAM_EN, cpu_direct::BIT_CIN_LAST, cpu_direct::BIT_OC_TILE_LAST}) w[b / 32u] |= 1u << (b % 32u);
+                net_words(w, "Z");
+                std::fprintf(net_fp_, "B %u %u %u\n", cpu_direct::BIT_STREAM_EN, cpu_direct::BIT_CIN_LAST, cpu_direct::BIT_OC_TILE_LAST);
+            }
+            const LayerGeom &g = li.geom;
+            std::fprintf(net_fp_, "G seq=%u in=%u in_c=%d in_h=%d in_w=%d out=%u cout=%d oh=%d ow=%d w=%u bias=%u act=%d lut=%u zp=%d pad=%d kh=%d kw=%d sy=%d sx=%d "
+                                  "dil=%d pt=%d pl=%d per_channel=%d scale=%u shift=%u bS=%u bs=%d cin_t=%d K=%u cout_t=%d h_t=%d w_t=%d tmaj=%d stream=%d zpfit=%d "
+                                  "overlap=%d inline=%d feeder_pad=%d dma_nd=%d\n",
+                         li.host_seq, li.in_addr, li.in_c, li.in_h, li.in_w, li.out_addr, g.cout, g.oh, g.ow, li.w_addr, li.bias_addr, li.act, li.lut_addr, li.zp_out,
+                         pad_val_of(li), g.kh, g.kw, g.sy, g.sx, g.dil, g.pad_t, g.pad_l, li.per_channel ? 1 : 0, li.scale_addr, li.shift_addr, li.bcast_S, li.bcast_s,
+                         li.cin_t, K, g.cout_t, g.h_t, g.w_t, li.tmaj_c0, stream_on() ? 1 : 0, GvuTopBridge::zp_fits(li.zp_out) ? 1 : 0, overlap_ ? 1 : 0, obp_inline_ ? 1 : 0,
+                         feeder_pad ? 1 : 0, dma_nd ? 1 : 0);
+        }
+        // before the start of a core call (the select bits have flipped: the NPU halves hold what the call reads)
+        void net_call(uint32_t cin, const TileGeom &t, const LayerGeom &g, const PadTile &pd)
+        {
+            if (!net_fp_) return;
+            const SramLimits lim = sram_limits_rev(NEO_REV_2);
+            const uint32_t ah = uint32_t(t.iy1 - t.iy0), aw = uint32_t(t.ix1 - t.ix0);
+            const uint32_t nA = std::min<uint32_t>(cin * ah * aw, uint32_t(lim.a_bytes));
+            const uint32_t nB = std::min<uint32_t>(uint32_t(t.x_used) * cin * uint32_t(g.kh) * uint32_t(g.kw), uint32_t(lim.b_bytes));
+            const uint32_t nC = std::min<uint32_t>(stage_words(tile_words(t)) * 128u, uint32_t(lim.c_psums) * 4u);
+            std::vector<uint8_t> a(nA), b(nB), c(nC);
+            if (nA) core_->read_sram_backdoor(2, 0, a.data(), nA);
+            if (nB) core_->read_sram_backdoor(0, 0, b.data(), nB);
+            if (nC) core_->read_sram_backdoor(4, 0, c.data(), nC);
+            std::fprintf(net_fp_, "C s=%ld part=%u cin_t=%u c0=%d c1=%d xu=%d yu=%d oy0=%d oy1=%d ox0=%d ox1=%d iy0=%d iy1=%d ix0=%d ix1=%d cin_last=%d call_last=%d "
+                                  "pad=%d vert=%d nA=%u nB=%u nC=%u hA=%016llx hB=%016llx hC=%016llx\n",
+                         net_step_, net_part_, cin, t.c0, t.c1, t.x_used, t.y_used, t.oy0, t.oy1, t.ox0, t.ox1, t.iy0, t.iy1, t.ix0, t.ix1, inl_active_ ? 1 : 0,
+                         inl_call_last_ ? 1 : 0, pd.on ? 1 : 0, inl_vert_ ? 1 : 0, nA, nB, nC, (unsigned long long)net_fnv(a.data(), nA),
+                         (unsigned long long)net_fnv(b.data(), nB), (unsigned long long)net_fnv(c.data(), nC));
+            std::vector<uint32_t> w = cpu_words(net_f_, net_rows_, net_stride_);
+            auto setbit = [&w](unsigned bit) { w[bit / 32u] |= 1u << (bit % 32u); };
+            setbit(cpu_direct::BIT_STREAM_EN);
+            if (inl_active_) setbit(cpu_direct::BIT_CIN_LAST);
+            if (inl_call_last_) setbit(cpu_direct::BIT_OC_TILE_LAST);
+            net_words(w, "w");
+        }
+        void net_elem(const LayerInstr &li)
+        {
+            if (!net_fp_) return;
+            std::fprintf(net_fp_, "E seq=%u mode=%d a=%u b=%u out=%u n=%u c=%d h=%d w=%d k=%d s=%d p=%d axis=%d zpA=%d zpB=%d zpO=%d SA=%u SB=%u SO=%u sA=%d sB=%d sO=%d\n",
+                         li.host_seq, li.mode, li.a_addr, li.b_addr, li.out_addr, li.n, li.c, li.h, li.w, li.pool_k, li.pool_s, li.pool_p, li.pool_mode,
+                         li.add.zpA, li.add.zpB, li.add.zpO, li.add.SA, li.add.SB, li.add.SO, li.add.sA, li.add.sB, li.add.sO);
+        }
+        void gdump_open(const LayerInstr &li)
+        {
+            gdump_on_ = false;
+            if (net_fp_) return;   // HAS_CPU_DIRECT_NET: the whole-program trace instead
+            if (cpu_dump_dir_.empty() || !stream_on() || !regs_on_) return;
+            gdump_path_ = cpu_dump_dir_ + "/gemm_L" + std::to_string(gdump_layer_++);
+            std::filesystem::create_directories(gdump_path_);
+            gdump_on_ = true; gdump_unfit_ = !stream_zp_fits_; gdump_calls_ = 0;
+            gdump_text_ = "layer_zp " + std::to_string(li.zp_out) + "\nlayer_act " + std::to_string(li.act != 0 ? 1 : 0) + "\nround_mode " +
+                          std::to_string(int(knobs.round_mode)) + "\nreq_narrow " + std::to_string(int(knobs.req_narrow)) + "\n";
+            if (li.act != 0) gdump_put(gdump_path_ + "/lut.bin", stream_lut_, 256);
+            gdump_pkt_ = std::fopen((gdump_path_ + "/packets.txt").c_str(), "w");
+            tap_->set_trace(gdump_pkt_);
+            gvs_->rec_begin();
+        }
+        // before the start of core call i of the layer (the select bits have flipped: the NPU half holds what the call reads)
+        void gdump_call(const PadTile &pd)
+        {
+            if (!gdump_on_) return;
+            const unsigned i = gdump_calls_++;
+            char nm[64];
+            const SramLimits lim = sram_limits_rev(NEO_REV_2);
+            std::vector<uint8_t> a(size_t(lim.a_bytes)), b(size_t(lim.b_bytes)), c(size_t(lim.c_psums) * 4);
+            core_->read_sram_backdoor(2, 0, a.data(), uint32_t(a.size()));
+            core_->read_sram_backdoor(0, 0, b.data(), uint32_t(b.size()));
+            core_->read_sram_backdoor(4, 0, c.data(), uint32_t(c.size()));
+            std::snprintf(nm, sizeof nm, "/call%03u_a.bin", i); gdump_put(gdump_path_ + nm, a.data(), a.size());
+            std::snprintf(nm, sizeof nm, "/call%03u_b.bin", i); gdump_put(gdump_path_ + nm, b.data(), b.size());
+            std::snprintf(nm, sizeof nm, "/call%03u_c.bin", i); gdump_put(gdump_path_ + nm, c.data(), c.size());
+            std::vector<uint32_t> w = cpu_words(gdump_f_, gdump_rows_, gdump_stride_);
+            auto setbit = [&w](unsigned bit) { w[bit / 32u] |= 1u << (bit % 32u); };
+            setbit(cpu_direct::BIT_STREAM_EN);
+            if (inl_active_) setbit(cpu_direct::BIT_CIN_LAST);
+            if (inl_call_last_) setbit(cpu_direct::BIT_OC_TILE_LAST);
+            std::snprintf(nm, sizeof nm, "/call%03u_words.txt", i);
+            if (std::FILE *fp = std::fopen((gdump_path_ + nm).c_str(), "w")) { for (uint32_t x : w) std::fprintf(fp, "word 0x%08x\n", x); std::fclose(fp); }
+            const uint64_t ckstep = gdump_f_[sauria::F_CFG_CKSTEP], cklim = gdump_f_[sauria::F_CFG_CKLIM];
+            gdump_text_ += "call " + std::to_string(i) + " ncontexts " + std::to_string(gdump_f_[sauria::F_CFG_NCONTEXTS]) + " nch " +
+                           std::to_string(ckstep ? cklim / ckstep : 0) + " npos " + std::to_string(ckstep) + " cin_last " + std::to_string(inl_active_ ? 1 : 0) +
+                           " oc_tile_last " + std::to_string(inl_call_last_ ? 1 : 0) + " pad " + std::to_string(pd.on ? 1 : 0) + " vert " + std::to_string(inl_vert_ ? 1 : 0) + "\n";
+            if (pd.on || inl_vert_) gdump_unfit_ = true;
+        }
+        void gdump_close()
+        {
+            if (!gdump_on_) return;
+            gdump_on_ = false;
+            tap_->set_trace(nullptr);
+            if (gdump_pkt_) { std::fclose(gdump_pkt_); gdump_pkt_ = nullptr; }
+            const std::vector<int32_t> &sc = gvs_->rec_scale();
+            const std::vector<uint8_t> &sh = gvs_->rec_shift();
+            std::vector<uint8_t> sb(2456 + sh.size() + 4, 0);
+            for (size_t k = 0; k < sc.size() && k * 4 + 4 <= 2456; k++) { const uint32_t v = uint32_t(sc[k]); for (int q = 0; q < 4; q++) sb[k * 4 + size_t(q)] = uint8_t(v >> (8 * q)); }
+            for (size_t k = 0; k < sh.size(); k++) sb[2456 + k] = sh[k];
+            gdump_put(gdump_path_ + "/sbank.bin", sb.data(), sb.size());
+            if (std::FILE *fp = std::fopen((gdump_path_ + "/beats.txt").c_str(), "w")) { for (const std::string &t : gvs_->rec_beats()) std::fprintf(fp, "%s\n", t.c_str()); std::fclose(fp); }
+            gdump_text_ += "beats " + std::to_string(gvs_->rec_beats().size()) + "\nscale_entries " + std::to_string(sc.size()) + "\nbypassed " +
+                           std::to_string(gvs_->rec_bypass()) + "\nunfit " + std::to_string(gdump_unfit_ ? 1 : 0) + "\ncalls " + std::to_string(gdump_calls_) + "\n";
+            gdump_put(gdump_path_ + "/layer.txt", gdump_text_.data(), gdump_text_.size());
+            gvs_->rec_end();
+        }
+        void cpu_dump(const std::vector<int8_t> &a, const std::vector<int8_t> &b, const std::vector<int32_t> &pre, const std::vector<int32_t> &c,
+                      const uint64_t *f, uint64_t rows, uint32_t stride, int cycles, bool ok)
+        {
+            cpu_dumped_ = true;
+            auto put = [&](const char *n, const void *d, size_t bytes)
+            {
+                FILE *fp = std::fopen((cpu_dump_dir_ + "/" + n).c_str(), "wb");
+                if (fp) { std::fwrite(d, 1, bytes, fp); std::fclose(fp); }
+            };
+            put("sram_a.bin", a.data(), a.size());
+            put("sram_b.bin", b.data(), b.size());
+            put("sram_c_pre.bin", pre.data(), pre.size() * 4);
+            put("sram_c_out.bin", c.data(), c.size() * 4);
+            FILE *fp = std::fopen((cpu_dump_dir_ + "/core.txt").c_str(), "w");
+            if (!fp) return;
+            for (uint32_t w : cpu_words(f, rows, stride)) std::fprintf(fp, "word 0x%08x\n", w);
+            std::fprintf(fp, "cycles %d\nok %d\n", cycles, ok ? 1 : 0);
+            std::fclose(fp);
+        }
+        void cpu_selfcheck(const uint64_t *f, uint64_t rows, uint32_t stride)
+        {
+            using namespace sauria;
+            const CfgWidths cw = cpu_direct::core_widths();
+            std::vector<uint32_t> w = cpu_words(f, rows, stride);
+            uint64_t g[F_CFG_COUNT];
+            uint32_t s2 = 0;
+            const char *why = nullptr;
+            bool bad = !cpu_direct::decode_core(w, cw, g, s2, why);
+            int first = -1;
+            // a value wider than its register of the RTL revision is a limit of the register file, not of the decoder: counted apart
+            uint64_t fm[F_CFG_COUNT];
+            for (int i = 0; i < F_CFG_COUNT; i++) fm[i] = f[i];
+            bool wide = false;
+            for (int i = 0; i < SAURIA_CFG_LAYOUT_N; i++)
+            {
+                const CfgFieldSpec &sp = SAURIA_CFG_LAYOUT[i];
+                if (sp.special != SP_NONE) continue;
+                const uint32_t wd = cfg_resolve_width(sp.wkind, cw);
+                const uint64_t m = wd >= 64 ? ~0ull : ((1ull << wd) - 1);
+                if (fm[sp.field] & ~m) { wide = true; fm[sp.field] &= m; }
+            }
+            if (wide) cpu.count_wide();
+            if (!bad)
+            {
+                for (int i = 0; i < F_CFG_COUNT; i++)
+                    if (i != F_CFG_PER_ROW_OFF && i != F_CFG_ROWS_ACTIVE && g[i] != fm[i]) { bad = true; if (first < 0) first = i; }
+                const uint64_t ym = cw.Y >= 64 ? ~0ull : ((1ull << cw.Y) - 1);
+                if ((g[F_CFG_ROWS_ACTIVE] & ym) != (rows & ym)) { bad = true; if (first < 0) first = F_CFG_ROWS_ACTIVE; }
+                if ((rows & ym) > 1 && s2 != stride) { bad = true; if (first < 0) first = F_CFG_PER_ROW_OFF; }
+            }
+            if (bad && cpu.stats().selfcheck_bad < 5)
+                std::fprintf(stderr, "[cpu-direct] self-check: decoded core configuration differs (field %d%s%s)\n", first, why ? ", " : "", why ? why : "");
+            cpu.count_selfcheck(bad);
+        }
+        // HAS_CPU_DIRECT: the SAURIA block. A start edge of the CPU runs the core on the 29 words taken at the edge: the select bits flip
+        // unless kept (config_regs.sv:333-358), the words are decoded (config_regs.sv field layout, sauria_cfg_layout.h), the core is
+        // configured and started with the steps of core_begin(); done sets the done flag and the interrupt status. True = this clock is used.
+        bool cpu_core_run_{false}, cpu_core_reported_{false};
+        uint64_t cpu_core_cyc_{0}, cpu_core_stalls_{0};
+        // A run of the CPU with psum_stream_en: the write hook turns the PSM writes into stream packets (cpu_hwrite); the geometry of the stream state of the
+        // data flow controller is borrowed for the run and given back at its end.
+        bool cpu_stream_run_{false}, cpu_tile_last_{false}, cpu_inl_saved_{false}, cpu_stream_reported_{false}, cpu_stream_seen_{false};
+        bool cpu_save_active_{true}, cpu_save_vert_{false};
+        uint32_t cpu_save_nch_{1}, cpu_save_npos_{1};
+        std::FILE *cpu_pkt_trace_{nullptr};
+        sc_signal<bool> *cs_pipe_{nullptr}, *cs_act_{nullptr}, *cs_wei_{nullptr};
+        bool cs_looked_up_{false};
+        void cpu_stream_begin(bool stream_packets, uint32_t nch, uint32_t npos, bool tile_last, uint32_t ncontexts)
+        {
+            cpu_save_active_ = inl_active_; cpu_save_vert_ = inl_vert_; cpu_save_nch_ = inl_nch_; cpu_save_npos_ = inl_npos_;
+            cpu_inl_saved_ = true;
+            inl_vert_ = false;
+            if (!stream_packets) { inl_active_ = false; return; }   // an earlier Cin pass: no packets, the int32 psum stays in SRAM-C
+            inl_active_ = true; inl_nch_ = nch; inl_npos_ = npos;
+            if (!cpu_stream_seen_) tap_->flush();   // packets of the stale geometry (earlier runs of the CPU without the stream) are not part of this run
+            cpu_stream_seen_ = true;
+            cpu_stream_run_ = true; cpu_tile_last_ = tile_last;
+            if (tap_->f1_on()) tap_->begin_call(ncontexts, tile_last);
+            if (!cpu_dump_dir_.empty() && !gdump_on_)
+            {
+                if (!cpu_pkt_trace_) cpu_pkt_trace_ = std::fopen((cpu_dump_dir_ + "/cpu_packets.txt").c_str(), "w");
+                tap_->set_trace(cpu_pkt_trace_);
+            }
+        }
+        void cpu_stream_end()
+        {
+            if (cpu_stream_run_ && tap_ && tap_->f1_on()) tap_->end_call();
+            if (cpu_stream_run_ && cpu_pkt_trace_) { std::fflush(cpu_pkt_trace_); tap_->set_trace(nullptr); }
+            cpu_stream_run_ = false;
+            if (cpu_inl_saved_) { inl_active_ = cpu_save_active_; inl_vert_ = cpu_save_vert_; inl_nch_ = cpu_save_nch_; inl_npos_ = cpu_save_npos_; cpu_inl_saved_ = false; }
+        }
+        // status / cycle counter / stall counter the SAURIA block reads back (config_regs.sv:473-479, 391-416): the deadlock flags are one flag in the
+        // model (all three bits), the FSM state fields are not exposed by the core (0), the counters run from the START to the done of the core.
+        void cpu_counters()
+        {
+            if (!cs_looked_up_)
+            {
+                const std::string c = std::string(core_->name()) + ".";
+                cs_pipe_ = dynamic_cast<sc_signal<bool> *>(sc_find_object((c + "s_pipeline_en").c_str()));
+                cs_act_ = dynamic_cast<sc_signal<bool> *>(sc_find_object((c + "s_act_pop_en").c_str()));
+                cs_wei_ = dynamic_cast<sc_signal<bool> *>(sc_find_object((c + "s_wei_pop_en").c_str()));
+                cs_looked_up_ = true;
+            }
+            if (cs_pipe_ && cs_act_ && cs_wei_ && !(cs_pipe_->read() && cs_act_->read() && cs_wei_->read())) cpu_core_stalls_++;
+            cpu.set_sauria_counters(core_deadlock_.read() ? 7u : 0u, uint32_t(cpu_core_cyc_), uint32_t(cpu_core_stalls_));
+        }
+        // CONTROL bit 23: the FSMs of the core, the feeders and the stream FIFO are reset (config_regs.sv:984, context_fsm.sv:130, psm_top.sv:312-324).
+        void cpu_soft_reset()
+        {
+            const bool was = cpu_core_run_;
+            if (was) { core_rstn_.write(false); core_start_.write(false); core_busy_close(); }
+            cpu_core_run_ = false;
+            cpu_stream_end();
+            if (tap_) tap_->flush();
+            cpu.sauria_soft_reset_done(was);
+        }
+        bool cpu_sauria_step()
+        {
+            using namespace sauria;
+            if (tap_ && gvs_) cpu.set_stream_idle(!cpu_stream_seen_ || gvs_->drained(*tap_));   // before the first stream run of the CPU the tap holds packets of the stale geometry of the data flow controller, which nothing reads
+            if (cpu_core_run_)
+            {
+                if (cpu.soft_pending())
+                {
+                    cpu_direct::Port::SauriaReq sq;
+                    cpu.take_sauria(sq);
+                    cpu_soft_reset();
+                    return true;
+                }
+                cpu_core_cyc_++;
+                cpu_counters();
+                const bool done = core_done_.read(), lost = cpu_core_cyc_ >= uint64_t(core_max_cycles);
+                if (!done && !lost) return true;
+                core_busy_close();
+                cpu_core_run_ = false;
+                cpu_stream_end();
+                cpu.sauria_done(done, cpu_core_cyc_);
+                if (!done) std::fprintf(stderr, "[cpu-direct] SAURIA run started by the CPU did not report done in %d cycles\n", core_max_cycles);
+                return false;
+            }
+            cpu_direct::Port::SauriaReq q;
+            if (!cpu.take_sauria(q)) return false;
+            if (q.soft) cpu_soft_reset();
+            if (!q.start && !q.sw) return true;
+            flip(!q.keep[0], !q.keep[1], !q.keep[2]);
+            if (!q.start) return true;
+            uint64_t f[F_CFG_COUNT];
+            uint32_t stride = 1;
+            const char *why = nullptr;
+            if (!cpu_direct::decode_core(q.words, cpu_direct::core_widths(), f, stride, why))
+            {
+                if (!cpu_core_reported_) std::fprintf(stderr, "[cpu-direct] SAURIA start refused: %s\n", why);
+                cpu_core_reported_ = true;
+                cpu.sauria_done(false, 0);
+                return true;
+            }
+            if (q.stream_en && (!stream_on() || !tap_ || f[F_CFG_CKSTEP] == 0 || f[F_CFG_CKLIM] < f[F_CFG_CKSTEP]))
+            {
+                if (!cpu_stream_reported_)
+                    std::fprintf(stderr, "[cpu-direct] SAURIA start refused: the output stream needs the vector unit on the clock of the core (HAS_GVU_TOP=3) and a profile "
+                                         "with the epilogue on the PSM write path, and a channel / position geometry in the words\n");
+                cpu_stream_reported_ = true;
+                cpu.sauria_done(false, 0);
+                return true;
+            }
+            const SauriaTarget *tg = sauria_find_target("int8_32x32");
+            core_rstn_.write(false); core_start_.write(false); core_host_wren_.write(false); core_host_rden_.write(false);
+            core_threshold_.write(0.5f); core_mvm_k_.write(1); core_total_contexts_.write(1);
+            wait(5);
+            core_rstn_.write(true);
+            wait(2);
+            core_wr(CFG_PROFILE_ADDR, uint32_t(PROFILE_V1_SAURIA));
+            const uint64_t ym = tg->Y >= 64 ? ~0ull : ((1ull << tg->Y) - 1);
+            core_apply_fields(f, f[F_CFG_ROWS_ACTIVE] & ym, stride, *tg);
+            core_total_contexts_.write(uint32_t(f[F_CFG_NCONTEXTS]));
+            core_mvm_k_.write(f[F_CFG_INCNTLIM] ? 1 : 0);
+            if (q.stream_en)
+                cpu_stream_begin(q.cin_last, uint32_t(f[F_CFG_CKLIM] / f[F_CFG_CKSTEP]), uint32_t(f[F_CFG_CKSTEP]), q.oc_tile_last, uint32_t(f[F_CFG_NCONTEXTS]));
+            wait();
+            core_start_.write(true);
+            core_busy_open();
+            wait(2);
+            core_start_.write(false);
+            cpu_core_run_ = true;
+            cpu_core_cyc_ = 0; cpu_core_stalls_ = 0;
+            cpu.set_sauria_counters(0u, 0u, 0u);
+            return true;
+        }
+        // HAS_CPU_DIRECT: the one-dimensional DMA reaches the local memories on the side the accelerators do not use.
+        bool cpu_local(cpu_direct::Mem m, uint32_t off, uint8_t *p, uint32_t n, bool w)
+        {
+            using namespace cpu_direct;
+            if (m == M_SRAMA || m == M_SRAMB || m == M_SRAMC)
+            {
+                const int bank = m == M_SRAMA ? 2 : m == M_SRAMB ? 0 : 4;   // sram/rtl_ref_sram_top.h: 0 / 1 B, 2 / 3 A, 4 C; the host half follows the select bit
+                if (w) core_->write_sram_host_side(bank, off, p, n); else core_->read_sram_host_side(bank, off, p, n);
+                return true;
+            }
+            if (!gvs_) return false;   // the scratchpad is modelled by GvuTop only (HAS_GVU_TOP=3)
+            return gvs_->dma_access(m == M_VBANK0 ? 0u : m == M_VBANK1 ? 1u : m == M_VBANK2 ? 2u : 3u, off, p, n, w);
         }
 
         // HAS_BUS_STRICT, count only: results of the vector unit written back into SRAM-C (poke_sramc) in a clock step in which the PSM
@@ -597,6 +1144,12 @@ namespace has
             {
                 wait();
                 if (!i_rstn.read()) continue;
+                if (opg.on()) { opg.set_dram(dram_); if (opg.step()) continue; }   // a DMA tensor operation holds the data flow controller while it runs
+                if (cpu.on())   // HAS_CPU_DIRECT: a SAURIA run and a one-dimensional DMA command of the CPU (both may be in flight)
+                {
+                    const bool core_used = cpu_sauria_step(), dma_used = cpu.step();
+                    if (core_used || dma_used) continue;
+                }
                 LayerInstr li;
                 if (!mmio.pop(li)) continue;
                 if (HwCheck::on()) HwCheck::instr(li);   // HAS_HW_CHECK=1: what the hardware (neo_lite) can run (has/hw_capability.h)
@@ -604,6 +1157,7 @@ namespace has
                 if (dram_ && dram_->size() < size_t(stage_out_) + kStageCBytes) dram_->resize(size_t(stage_out_) + kStageCBytes, 0);
                 const uint64_t c0 = cycles_now();
                 const uint64_t tiles0 = st.tiles;
+                net_instr(li);
                 if (li.opcode == 0x12) exec_gemm(li);
                 else if (li.opcode == 0x15) exec_elem(li);
                 else if (li.opcode == 0x13) exec_attn(li);
@@ -621,6 +1175,7 @@ namespace has
                                 (li.mode == 0 ? "ELEM_ADD" : li.mode == 5 ? "ELEM_AVG" : li.mode == 6 ? "ELEM_SLICE" :
                                  li.mode == 7 ? "ELEM_CONCAT" : li.mode == 8 ? "ELEM_UPSAMPLE" : li.mode == 9 ? "ELEM_RESHAPE" : "ELEM_MAX"),
                                 (unsigned long long)(st.tiles - tiles0), (unsigned long long)(cycles_now() - c0));
+                net_done(li);
                 mmio.retire(li);
             }
         }
@@ -768,6 +1323,7 @@ namespace has
         uint32_t stream_packets_of(uint32_t addr, const sramc_mask_t<W32> &m) const
         {
             if (!obp_inline_ || !inl_active_) return 0;
+            if (inl_vert_) return 0;   // vertical tile: the packets of a context go out together, see inline_vwrite
             const uint32_t e0 = (addr % 1536u) * W32;
             uint32_t n = 0, k = 0;
             while (k < uint32_t(W32))
@@ -811,6 +1367,8 @@ namespace has
         {
             if (!stream_on()) return;
             stream_zp_fits_ = GvuTopBridge::zp_fits(li.zp_out);
+            gdump_open(li);
+            if (net_fp_ && tap_) tap_->set_trace(net_fp_);
             if (regs_on_)
             {
                 // the layer configuration and the start are register writes; the DFC waits until the last one has been answered
@@ -826,18 +1384,40 @@ namespace has
         void stream_end()
         {
             if (!stream_on()) return;
-            if (regs_on_) { gvs_->end_layer_regs(); return; }     // the unit has left GEMM_FUSED by itself; clear the done flag
+            if (net_fp_ && tap_) tap_->set_trace(nullptr);
+            if (regs_on_) { gvs_->end_layer_regs(); gdump_close(); return; }     // the unit has left GEMM_FUSED by itself; clear the done flag
             gvs_->end_layer();
             int g = 0;
             while (!gvs_->layer_closed() && g++ < 1000) wait();
         }
 
         // ---- GEMM_FUSED: one layer ----
+        // HAS_NEO_REV >= 2: the layer's tile does not fit one SRAM buffer of the revision (has/sram_limits.h): the layer is not run, as for a
+        // weight block wider than SRAM-B; one line names the tile, the use and the limit (the first 20).
+        void sram_reject(const LayerInstr &li, const SramVerdict &sv)
+        {
+            st.sram_rejected++;
+            if (sv.mask & 1u) st.sram_over_a++;
+            if (sv.mask & 2u) st.sram_over_b++;
+            if (sv.mask & 4u) st.sram_over_c++;
+            st.framing_errors++;
+            if (st.sram_rejected <= 20)
+                std::printf("[sram] i=%u op=GEMM_FUSED RTL revision 2: tile %dx%dx%d (cout_t x h_t x w_t, cin_t %d) over %s: A %lld / %d B, B %lld / %d B, C %lld / %d psums\n",
+                            li.host_seq ? li.host_seq - 1 : 0u, li.geom.cout_t, li.geom.h_t, li.geom.w_t, li.cin_t > 0 ? li.cin_t : li.in_c, sv.over_str().c_str(),
+                            (long long)sv.use.a, sv.lim.a_bytes, (long long)sv.use.b, sv.lim.b_bytes, (long long)sv.use.c, sv.lim.c_psums);
+        }
+
         void exec_gemm(const LayerInstr &li)
         {
             st.gemm++;
+            if (neo_rev() >= NEO_REV_2)
+            {
+                const SramVerdict sv = layer_sram_verdict(li, neo_rev(), kSramaBytes);
+                if (sv.over()) { sram_reject(li, sv); return; }
+            }
             const LayerGeom &g = li.geom;
             const uint32_t cin = uint32_t(li.in_c), K = cin * uint32_t(g.kh) * uint32_t(g.kw);
+            net_gemm(li, K);
             st.real_macs += uint64_t(g.cout) * uint64_t(g.oh) * uint64_t(g.ow) * K;
             // Layer parameters (CH3 in the HW, spec §4.3): LUT, zero point. Scale/shift go per tile (channel range).
             const uint64_t t0 = cycles_now();
@@ -942,6 +1522,12 @@ namespace has
 #ifdef FE_METRICS
                 const sauria_rtl::PerfCounters m0 = perf_;
 #endif
+                if (transpose_mode != 0 && tile_wants_vertical(li, tl))
+                {
+                    // any tile: the PSM index counters get the exchanged roles (has/has_vert_cfg.h), so x_used / y_used < 32 work too
+                    if (nch <= uint32_t(W32) && yu <= uint32_t(W32)) run_core_vert_ = true;
+                    else transpose_fallback_tiles++;
+                }
                 const bool ok = run_core(a, cin, w, nch, uint32_t(g.kh), uint32_t(g.kw), pre, ht, wt, uint32_t(g.sy), nch, yu, acc, &pd,
                                          uint32_t(g.dil));
 #ifdef FE_METRICS
@@ -1072,11 +1658,16 @@ namespace has
             const uint32_t nch = uint32_t(t.x_used), npos = uint32_t(t.oy1 - t.oy0) * uint32_t(t.ox1 - t.ox0);
             const uint32_t words = stage_words(tile_words(t));
             std::memset(&(*dram_)[stage_pre_], 0, size_t(words) * 128);
+            const bool vt = inline_vertical(li, t);   // vertical tile: preload in the vertical layout (e = p * nch + c); non-square: none (bias by lane)
             for (uint32_t x = 0; x < nch; x++)
             {
+                if (vt && !(nch == uint32_t(W32) && uint32_t(t.y_used) == uint32_t(W32))) break;
                 const uint32_t b = (int(t.c0) + int(x) < li.geom.cout) ? dram_u32(li.bias_addr + 4 * (uint32_t(t.c0) + x)) : 0u;
                 for (uint32_t p = 0; p < npos; p++)
-                    if (uint64_t(x) * npos + p < uint64_t(words) * W32) std::memcpy(&(*dram_)[stage_pre_ + 4 * (x * npos + p)], &b, 4);
+                {
+                    const uint64_t e = vt ? uint64_t(p) * nch + x : uint64_t(x) * npos + p;
+                    if (e < uint64_t(words) * W32) std::memcpy(&(*dram_)[stage_pre_ + 4 * e], &b, 4);
+                }
             }
             // c_bias_bcast (proposal): CH3 moves only the bias vector (4 B per channel); the descriptor
             // replicates it over the tile's positions in SRAM-C. Data is unchanged; only bus bytes/cycles.
@@ -1103,8 +1694,16 @@ namespace has
             desc.B_w = uint32_t(g.kw); desc.B_h = uint32_t(g.kh); desc.d = uint32_t(g.dil); desc.s = uint32_t(g.sy);
             desc.c_til = cin; desc.k_til = uint32_t(t.x_used); desc.h_til = uint32_t(t.oy1 - t.oy0); desc.w_til = uint32_t(t.ox1 - t.ox0);
             desc.X_used = uint32_t(t.x_used); desc.Y_used = uint32_t(t.y_used); desc.preload_en = 1;
+            cfg_vertical_ = inl_vert_;
             core_apply_cfg(desc, *tg, &pd);
+            cfg_vertical_ = false;
             core_apply_pad(&pd);
+            if (transpose_mode != 0)
+            {
+                neo::set_transpose_bit(core_extra_img_, neo_rev(), inl_vert_);
+                core_->set_transpose_mode(neo::get_transpose_bit(core_extra_img_, neo_rev()) ? 3u : 0u);
+                if (inl_vert_) transpose_tiles++;
+            }
             uint64_t f[F_CFG_COUNT];
             sauria_compute_core_fields(desc, *tg, f);
             core_total_contexts_.write(uint32_t(f[F_CFG_NCONTEXTS]));
@@ -1112,6 +1711,8 @@ namespace has
             // FX1_A3_INCNTLIM_ZERO_RTL, otherwise it reads 0 as 1 like before
             core_mvm_k_.write(f[F_CFG_INCNTLIM] ? 1 : 0);
             if (tap_ && tap_->f1_on()) tap_->begin_call(uint32_t(f[F_CFG_NCONTEXTS]), inl_call_last_);   // per-context flag: the invocation starts
+            gdump_call(pd);
+            net_call(cin, t, g, pd);
             wait();
             core_start_.write(true);
             core_busy_open();
@@ -1219,6 +1820,10 @@ namespace has
             inl_nch_ = nch;
             inl_oc_tile_last_ = int(t.c0) + int(t.x_used) >= li.geom.cout;
             inl_npos_ = uint32_t(t.oy1 - t.oy0) * uint32_t(t.ox1 - t.ox0);
+            inl_yu_ = uint32_t(t.y_used);
+            inl_bias_.assign(nch, 0);
+            for (uint32_t x = 0; x < nch; x++)
+                if (int(t.c0) + int(x) < li.geom.cout) inl_bias_[x] = int32_t(dram_u32(li.bias_addr + 4 * (uint32_t(t.c0) + x)));
         }
         // CH2 from the C host half, then the int8 scatter/concat into the destination tensor via HasDma 4-D descriptor.
         void writeback(const LayerInstr &li, const TileGeom &t)
@@ -1230,7 +1835,7 @@ namespace has
             const uint32_t real_nel = std::max(1u, real_c * ht * real_w);
             // the overflow of this tile was counted when its preload was staged (prefetch_c)
             const uint32_t swords = std::min(tile_words(t), kStageCBytes / 128u);
-            if (tmaj_tile(li, t)) { writeback_tmaj(li, t, nch, ht, wt, swords, desc3d ? real_nel : 0, false); return; }
+            if (tmaj_tile(li, t)) { writeback_tmaj(li, t, nch, ht, wt, swords, desc3d ? real_nel : 0, false, inline_vertical(li, t)); return; }
             if (dma_nd)
             {
                 // HAS_DMA_ND: the scatter is done by HasDma at the end of the write, with a 4-D descriptor
@@ -1276,6 +1881,42 @@ namespace has
                 }
         }
 
+        // HAS_TRANSPOSE_MODE: does the DFC set the core's transpose bit for this tile? Token-major tiles (the rule of tmaj_tile, without
+        // the HAS_OUT_TRANSPOSE knob and without counting).
+        bool tile_wants_vertical(const LayerInstr &li, const TileGeom &t) const
+        {
+            if (transpose_mode == 0 || li.opcode != 0x12 || li.tmaj_c0 < 0) return false;
+            if (t.c0 < li.tmaj_c0 && t.c1 > li.tmaj_c0) return false;
+            return t.c0 >= li.tmaj_c0;
+        }
+        // HAS_TRANSPOSE_MODE 3: the preload of a vertical tile is in the vertical layout (SRAM-C row = position, lane = channel). A bias preload
+        // is constant over the positions of a channel (horizontal layout pre[x * npos + p] = bias[x]); then every word of the vertical layout is
+        // the bias vector (lane c = bias[c]). Anything else cannot be converted here (the tile stays horizontal).
+        static bool pre_channel_const(const std::vector<int32_t> &pre, uint32_t nch, uint32_t npos)
+        {
+            if (pre.size() < size_t(nch) * npos) return false;
+            for (uint32_t x = 0; x < nch; x++)
+                for (uint32_t p = 1; p < npos; p++)
+                    if (pre[size_t(x) * npos + p] != pre[size_t(x) * npos]) return false;
+            return true;
+        }
+        static std::vector<int32_t> pre_vertical_layout(const std::vector<int32_t> &pre, uint32_t nch, uint32_t npos)
+        {
+            std::vector<int32_t> v(pre.size(), 0);
+            for (size_t w = 0; w + 32 <= v.size(); w += 32)
+                for (uint32_t c = 0; c < nch && c < 32; c++) v[w + c] = pre[size_t(c) * npos];
+            return v;
+        }
+        // HAS_TRANSPOSE_MODE 3 on the clocked path: a token-major tile runs vertical when the preload can be honoured: one Cin pass, or a square
+        // 32 x 32 tile (the psum of the earlier pass is row-loaded as the preload of the next, in the vertical layout). A non-square tile with
+        // several Cin passes would need the psum preload at a non-square shape (measured on the RTL and on the model: the preload does not enter at a non-square shape): refused, loudly.
+        bool inline_vertical(const LayerInstr &li, const TileGeom &t) const
+        {
+            if (transpose_mode < 3 || !tile_wants_vertical(li, t) || !obp_inline_ || !out_transpose) return false;
+            if (t.x_used > W32 || t.y_used > W32) return false;
+            const uint32_t cin = uint32_t(li.in_c), cin_t = (li.cin_t > 0 && li.cin_t < li.in_c) ? uint32_t(li.cin_t) : cin;
+            return cin / cin_t == 1 || (t.x_used == W32 && t.y_used == W32);
+        }
         // HAS_OUT_TRANSPOSE: a tile is token-major when GEMM_FUSED wrote X_TMAJ_C0 and the tile starts at or above it. A tile across
         // X_TMAJ_C0 (the compiler did not align it to the channel tile) is counted (tmaj_straddle) and written [C][H][W].
         bool tmaj_tile(const LayerInstr &li, const TileGeom &t)
@@ -1289,11 +1930,12 @@ namespace has
         // bytes) and stores position p of channel c of the layer at out + c0*OH*OW + p*(OUT_C - c0) + (c - c0), c0 = X_TMAJ_C0.
         // serial: the CH2 wait of the serial schedule (wait_dma_excl_ch1), else the one of the overlapped schedule.
         void writeback_tmaj(const LayerInstr &li, const TileGeom &t, uint32_t nch, uint32_t ht, uint32_t wt, uint32_t swords,
-                            uint32_t timed, bool serial)
+                            uint32_t timed, bool serial, bool vert = false)
         {
             const LayerGeom &g = li.geom;
             const uint32_t npos = ht * wt, c0 = uint32_t(li.tmaj_c0), rowc = uint32_t(g.cout) - c0;
-            const uint32_t tail = GvuOutTranspose<W32>::tail_edges(npos, uint32_t(t.y_used));
+            // vert: the tile was written by the vertical scan (token-major in SRAM-C, e = p * nch + x): no corner-turn tail, the slots are read as they are
+            const uint32_t tail = vert ? 0u : GvuOutTranspose<W32>::tail_edges(npos, uint32_t(t.y_used));
             wait(clk_period_ * double(tail));
             tmaj_tiles++;
             tmaj_tail_cycles += tail;
@@ -1302,6 +1944,21 @@ namespace has
             if (serial) { st.dma_cycles++; wait_dma_excl_ch1(); }
             else while (dma_->is_write_active()) { wait(); st.dma_cycles++; }
             std::vector<int8_t> cm(size_t(nch) * npos, 0);
+            std::vector<int8_t> tm;
+            if (vert)
+            {
+                tm.assign(size_t(nch) * npos, 0);
+                for (uint32_t p = 0; p < npos; p++)
+                    for (uint32_t x = 0; x < nch; x++)
+                    {
+                        if (uint64_t(p) * nch + x >= uint64_t(swords) * W32) continue;
+                        int32_t val;
+                        std::memcpy(&val, &(*dram_)[stage_out_ + 4 * (p * nch + x)], 4);
+                        tm[size_t(p) * nch + x] = static_cast<int8_t>(val);
+                    }
+            }
+            else
+            {
             for (uint32_t x = 0; x < nch; x++)
                 for (uint32_t p = 0; p < npos; p++)
                 {
@@ -1310,7 +1967,8 @@ namespace has
                     std::memcpy(&val, &(*dram_)[stage_out_ + 4 * (x * npos + p)], 4);
                     cm[size_t(x) * npos + p] = static_cast<int8_t>(val);
                 }
-            const std::vector<int8_t> tm = GvuOutTranspose<W32>::run(cm, nch, npos, uint32_t(t.y_used));
+            tm = GvuOutTranspose<W32>::run(cm, nch, npos, uint32_t(t.y_used));
+            }
             for (uint32_t p = 0; p < npos; p++)
                 for (uint32_t x = 0; x < nch; x++)
                 {
@@ -1364,6 +2022,27 @@ namespace has
 #endif
                 if (obp_inline_) { if (first) inline_params(li, cur); inl_active_ = last; }
                 inl_call_last_ = last && (i + 1 == n);       // oc_tile_last only in the last call of the layer
+                inl_vert_ = false;
+                if (transpose_mode != 0 && tile_wants_vertical(li, cur))
+                {
+                    if (inline_vertical(li, cur))
+                    {
+                        inl_vert_ = true;
+                        inl_vlane_bias_ = !(cur.x_used == W32 && cur.y_used == W32);   // the core runs with preload 0 on a non-square tile
+                    }
+                    else
+                    {
+                        // never silent: counted as a framing error (RESULT FAIL) and said once. Not supported on this path: modes 1 / 2 (the RTL
+                        // preload cannot be used with the exchanged counter roles), an epilogue that is not inline, a non-square tile with
+                        // several Cin passes.
+                        transpose_skipped_tiles++;
+                        st.framing_errors++;
+                        if (transpose_skipped_tiles == 1)
+                            std::fprintf(stderr, "[has_npu_top] ERROR: HAS_TRANSPOSE_MODE=%u: a token-major tile cannot run vertical on the clocked path "
+                                                 "(needs mode 3, the inline epilogue, and one Cin pass or a 32 x 32 tile); it runs horizontal and is counted as a framing error\n", transpose_mode);
+                    }
+                }
+                net_part_ = part; net_step_ = s;
                 core_begin(cin_t, cur, g, pad_tile(li, cur));
                 // ---- overlapped with core(i, part)
                 TileGeom nxt{};
@@ -1601,6 +2280,7 @@ namespace has
             using namespace sauria;
             uint64_t f[F_CFG_COUNT];
             sauria_compute_core_fields(desc, target, f);
+            if (cfg_vertical_) vertical_psm_fields(f, desc);
             if (pd && pd->on)
             {
                 // feeder padding: SRAM-A holds the real part only, so rows and channels step with the real width / height
@@ -1612,17 +2292,28 @@ namespace has
                 f[F_CFG_TIL_YLIM] = pd->til_ylim(desc.s, desc.h_til);
                 f[F_CFG_TIL_YSTEP] = pd->til_ystep(desc.s);
             }
+            const uint64_t rows = desc.Y_used >= 32 ? 0xFFFFFFFFull : ((1ull << desc.Y_used) - 1);
+            if (cpu_selfcheck_) cpu_selfcheck(f, rows, desc.s);
+            if (gdump_on_) { std::memcpy(gdump_f_, f, sizeof f); gdump_rows_ = rows; gdump_stride_ = uint32_t(desc.s); }
+            if (net_fp_) { std::memcpy(net_f_, f, sizeof f); net_rows_ = rows; net_stride_ = uint32_t(desc.s); }
+            core_apply_fields(f, rows, desc.s, target);
+        }
+        // The configuration registers of the core from the fields (one field per register of rtl_ref_config_regs.h); rows = active-row mask,
+        // stride = the ifmap row step of the feeder (ACT.STRIDE).
+        void core_apply_fields(const uint64_t *f, uint64_t rows, uint32_t stride, const sauria::SauriaTarget &target)
+        {
+            using namespace sauria;
             core_wr(CFG_CON_OFFSET + 0x00, uint32_t(f[F_CFG_INCNTLIM]));
             core_wr(CFG_CON_OFFSET + 0x04, uint32_t(f[F_CFG_ACT_REPS]));
             core_wr(CFG_CON_OFFSET + 0x08, uint32_t(f[F_CFG_WEI_REPS]));
-            core_wr_bytes(CFG_ACT_OFFSET + 0x00, desc.Y_used >= 32 ? 0xFFFFFFFFull : ((1ull << desc.Y_used) - 1), 4, 8);
+            core_wr_bytes(CFG_ACT_OFFSET + 0x00, rows, 4, 8);
             core_wr(CFG_ACT_OFFSET + 0x04, uint32_t(f[F_CFG_INCNTLIM]) + 1);
             core_wr(CFG_ACT_OFFSET + 0x08, uint32_t(target.Y));
             core_wr(CFG_ACT_OFFSET + 0x0C, uint32_t(f[F_CFG_XLIM]));
             core_wr(CFG_ACT_OFFSET + 0x10, uint32_t(target.Y));
             core_wr(CFG_ACT_OFFSET + 0x28, uint32_t(f[F_CFG_DIL_PAT] & 0xFFFFFFFFu));
             core_wr(CFG_ACT_OFFSET + 0x40, uint32_t(f[F_CFG_DIL_PAT] >> 32));
-            core_wr(CFG_ACT_OFFSET + 0x44, uint32_t(desc.s));
+            core_wr(CFG_ACT_OFFSET + 0x44, stride);
             core_wr(CFG_ACT_OFFSET + 0x14, uint32_t(f[F_CFG_XLIM]));
             core_wr(CFG_ACT_OFFSET + 0x18, uint32_t(f[F_CFG_XSTEP]));
             core_wr(CFG_ACT_OFFSET + 0x1C, uint32_t(f[F_CFG_YLIM]));
@@ -1664,6 +2355,8 @@ namespace has
                       uint32_t y_used, std::vector<int64_t> &acc, const PadTile *pd = nullptr, uint32_t dil = 1)
         {
             using namespace sauria;
+            const bool vert = run_core_vert_;   // HAS_TRANSPOSE_MODE: this tile runs the vertical scan (set by the tile loop for this call only)
+            run_core_vert_ = false;
             const SauriaTarget *t = sauria_find_target("int8_32x32");
             const uint32_t nel = nch * ht * wt;
             // 1. reset, select 000 (host side = buffer 0)
@@ -1675,7 +2368,23 @@ namespace has
             core_wr(CFG_PROFILE_ADDR, uint32_t(PROFILE_V1_SAURIA));
             // 2. SRAM A / C(preload) / B through the backdoor (deviation D2)
             core_->load_sram_backdoor(2, 0, reinterpret_cast<const uint8_t *>(a.data()), uint32_t(a.size()));
-            core_->load_sram_backdoor(4, 0, reinterpret_cast<const uint8_t *>(pre.data()), uint32_t(pre.size() * sizeof(int32_t)));
+            // Preload of a vertical tile. Mode 1 / 2 (the RTL): the image stays as it is; the RTL cannot use it with the exchanged counter roles
+            // (measured). Mode 3: a square tile with a bias preload (constant per channel) row-loads it in the vertical
+            // layout; any other tile runs with preload 0 and the preload is added by lane after the read (below), like the vector unit
+            // adds the bias per lane.
+            const bool vsq = vert && transpose_mode >= 3 && nch == uint32_t(W32) && y_used == uint32_t(W32) && pre_channel_const(pre, nch, ht * wt);
+            const bool vlane = vert && transpose_mode >= 3 && !vsq;
+            if (vsq)
+            {
+                const std::vector<int32_t> pre_v = pre_vertical_layout(pre, nch, ht * wt);
+                core_->load_sram_backdoor(4, 0, reinterpret_cast<const uint8_t *>(pre_v.data()), uint32_t(pre_v.size() * sizeof(int32_t)));
+            }
+            else if (vlane)
+            {
+                const std::vector<int32_t> zero(pre.size(), 0);
+                core_->load_sram_backdoor(4, 0, reinterpret_cast<const uint8_t *>(zero.data()), uint32_t(zero.size() * sizeof(int32_t)));
+            }
+            else core_->load_sram_backdoor(4, 0, reinterpret_cast<const uint8_t *>(pre.data()), uint32_t(pre.size() * sizeof(int32_t)));
             core_->load_sram_backdoor(0, 0, reinterpret_cast<const uint8_t *>(wgt_sauria.data()), uint32_t(wgt_sauria.size()));
             // 3. swap to the NPU side
             core_select_.write(sc_bv<3>("111"));
@@ -1685,13 +2394,21 @@ namespace has
             desc.B_w = kw; desc.B_h = kh; desc.d = dil; desc.s = sy;
             desc.c_til = cin; desc.k_til = nch; desc.h_til = ht; desc.w_til = wt;
             desc.X_used = x_used; desc.Y_used = y_used; desc.preload_en = 1;
+            cfg_vertical_ = vert;
             core_apply_cfg(desc, *t, pd);
+            cfg_vertical_ = false;
             core_apply_pad(pd);
             {
                 uint64_t f[F_CFG_COUNT];
                 sauria_compute_core_fields(desc, *t, f);
                 core_total_contexts_.write(uint32_t(f[F_CFG_NCONTEXTS]));
                 core_mvm_k_.write(f[F_CFG_INCNTLIM] ? 1 : 0);   // see core_begin
+            }
+            // HAS_TRANSPOSE_MODE: the core image word of this tile (model state, see transpose_mode); the core takes the mode as a parameter
+            if (transpose_mode != 0)
+            {
+                neo::set_transpose_bit(core_extra_img_, neo_rev(), vert);
+                core_->set_transpose_mode(neo::get_transpose_bit(core_extra_img_, neo_rev()) ? (transpose_mode == 1 ? 1u : transpose_mode == 2 ? 2u : 3u) : 0u);
             }
             wait();
             // 7. start pulse (2 cycles)
@@ -1720,7 +2437,29 @@ namespace has
             // 9. read SRAM-C while select is still 111 (NPU-side buffer holds the result)
             std::vector<int32_t> cbuf(nel, 0);
             core_->read_sram_backdoor(4, 0, reinterpret_cast<uint8_t *>(cbuf.data()), uint32_t(cbuf.size() * sizeof(int32_t)));
+            if (vert)
+            {
+                // exchanged counter roles: the image is the compact token-major tile, element e = p * nch + c (position p, channel c); bring
+                // it back to [channel][position] for the rest of the serial path (stand-in until the vector unit reads lanes)
+                const uint32_t npos = ht * wt;
+                std::vector<int32_t> hv(cbuf.size(), 0);
+                for (uint32_t c = 0; c < nch; c++)
+                    for (uint32_t p = 0; p < npos; p++) hv[size_t(c) * npos + p] = cbuf[size_t(p) * nch + c];
+                if (vlane)   // the preload (bias) added by lane after the read
+                    for (size_t e = 0; e < hv.size() && e < pre.size(); e++) hv[e] += pre[e];
+                cbuf.swap(hv);
+                transpose_tiles++;
+            }
             for (uint32_t e = 0; e < nel; e++) acc[e] = int64_t(cbuf[e]);
+            if (!cpu_dump_dir_.empty() && !cpu_dumped_ && !(pd && pd->on))
+            {
+                uint64_t f[F_CFG_COUNT];
+                SauriaLayerDesc dd{};
+                dd.B_w = kw; dd.B_h = kh; dd.d = dil; dd.s = sy; dd.c_til = cin; dd.k_til = nch; dd.h_til = ht; dd.w_til = wt;
+                dd.X_used = x_used; dd.Y_used = y_used; dd.preload_en = 1;
+                sauria_compute_core_fields(dd, *t, f);
+                cpu_dump(a, wgt_sauria, pre, cbuf, f, y_used >= 32 ? 0xFFFFFFFFull : ((1ull << y_used) - 1), sy, cyc, got_done && !got_stuck);
+            }
             core_select_.write(sc_bv<3>("000"));
             wait(2);
             core_rstn_.write(false);   // keep the idle core in reset (simulation speed, S4)
@@ -1899,7 +2638,7 @@ namespace has
                     }
                     uint64_t gc = 0;
                     // the phase adds its stream tail and, through the register file, the writes that start it (gc minus the beats)
-                    if (gvs_->requant_rows(acc, out, Mr, TSr, Zr, knobs.round_mode, knobs.req_narrow, &gc)) fa_tail += GvuTopStream::kDepth + 1 + gvs_->last_reg_cycles();
+                    if (gvs_->requant_rows(acc, out, Mr, TSr, Zr, knobs.round_mode, knobs.req_narrow, &gc)) fa_tail += GvuTopStream::kDepth() + 1 + gvs_->last_reg_cycles();
                     else fa_all = false;
                 };
                 if (li.mask_addr) for (const auto &row : M) for (int v : row) stream_stats().fa_masked += v == -128;
@@ -2025,8 +2764,13 @@ namespace has
             Mat64 r(npos, std::vector<int64_t>(nout, 0));
             const bool inl = inl_active_;
             inl_active_ = false;
-            uint32_t wmax = std::min<uint32_t>(uint32_t(kSramaBytes) / cin, 1536u * uint32_t(W32) / 32u) / 32u * 32u;
-            if (wmax == 0 || cin * 32u > uint32_t(kSrambBytes)) { st.framing_errors++; inl_active_ = inl; return r; }
+            // HAS_NEO_REV >= 2: positions per pass and the weight block follow the buffer of the revision (has/sram_limits.h); below 2 the arrays of
+            // the model as before
+            const unsigned rv = neo_rev();
+            const uint32_t wmax = rv >= NEO_REV_2 ? core_dot_wmax(cin, rv, kSramaBytes)
+                                                  : std::min<uint32_t>(uint32_t(kSramaBytes) / cin, 1536u * uint32_t(W32) / 32u) / 32u * 32u;
+            const uint32_t b_cap = rv >= NEO_REV_2 ? uint32_t(sram_limits_rev(rv, kSramaBytes).b_bytes) : uint32_t(kSrambBytes);
+            if (wmax == 0 || cin * 32u > b_cap) { st.framing_errors++; inl_active_ = inl; return r; }
             for (uint32_t p0 = 0; p0 < npos; p0 += wmax)
             {
                 const uint32_t np = std::min(wmax, npos - p0), wt = (np + 31) / 32 * 32;
@@ -2338,6 +3082,7 @@ namespace has
         void exec_elem(const LayerInstr &li)
         {
             st.elem++;
+            net_elem(li);
             const uint64_t t0 = cycles_now();
             uint8_t *d = dram_->data();
             if (li.mode == 0)

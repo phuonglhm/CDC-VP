@@ -21,6 +21,8 @@
 #include "has/rtl_ref_gvu_scratchpad.h"
 #include "has/rtl_ref_gvu_vrf.h"
 #include "has/rtl_ref_gvu_lut.h"
+#include "has/rtl_ref_gvu_lut_sel.h"
+#include "has/rtl_ref_gvu_fu_r2.h"
 #include "has/rtl_ref_gvu_vlsu.h"
 #include "has/gvu_agu_nd_vlsu.h"
 #include "has/rtl_ref_gvu_vlsu_pool_dense.h"
@@ -41,10 +43,19 @@
 namespace rtl_ref_gvu
 {
     static constexpr int GEMM_STREAM_DEPTH_MAS = 9;
-    static constexpr int GEMM_STREAM_DEPTH_MAX = 16;
+    static constexpr int GEMM_STREAM_DEPTH_MAX = 17;   // 16 before RTL revision 2: revision 2 adds 6 stages to the depth of 11
     static constexpr int GEMM_STREAM_DEPTH = GVU_GEMM_STREAM_DEPTH;
     static_assert(GEMM_STREAM_DEPTH >= GEMM_STREAM_DEPTH_MAS && GEMM_STREAM_DEPTH <= GEMM_STREAM_DEPTH_MAX,
                   "GVU_GEMM_STREAM_DEPTH out of range");
+    // RTL revision 2 (neo_lite, HAS_NEO_REV = 2): the GEMM_FUSED path is 6 stages deeper than before (multiplier 32x32 4 -> 6,
+    // Round-Shift 1 -> 2, LUT 3 stages behind the request: 11 -> 17 in the RTL comment of the pipeline controller; INFERRED from
+    // that comment, to be fixed by a simulation of the whole unit). The depth of a unit is the base depth plus this delta.
+    static constexpr int GEMM_STREAM_DEPTH_REV2_DELTA = 6;
+    inline int gemm_stream_depth_for_rev(int base, unsigned neo_rev)
+    {
+        const int d = base + (neo_rev >= 2 ? GEMM_STREAM_DEPTH_REV2_DELTA : 0);
+        return d < GEMM_STREAM_DEPTH_MAS ? GEMM_STREAM_DEPTH_MAS : (d > GEMM_STREAM_DEPTH_MAX ? GEMM_STREAM_DEPTH_MAX : d);
+    }
 
     // ---- GVU Top Parameters matching gvu_top.sv -------------------------------------------------------------
     struct GvuTopParams
@@ -197,6 +208,8 @@ namespace rtl_ref_gvu
             // Level reset of the activation table flag (RTL i_lut_act_reset, gvu_pipe_controller.sv:698): while high the flag is cleared,
             // the next run from IDLE loads the table. Unlike i_gemm_lut_reload it acts in any state.
             bool     i_lut_act_reset{false};
+            // The same reset of the other three table flags (gvu_pipe_controller.sv:793-795); only the CPU writes them (register 2 bits 1..3)
+            bool     i_lut_exp_reset{false}, i_lut_recip_reset{false}, i_lut_rsqrt_reset{false};
             uint32_t i_psum_addr{0};
             uint32_t i_psum_mask{0xFFFFFFFFu};
             int32_t  i_psum_scale{1};
@@ -296,16 +309,18 @@ namespace rtl_ref_gvu
 
         explicit GvuTop(const GvuTopParams &p = GvuTopParams())
             : P_(p),
-              mul_n_(kStreamMul + std::min(std::max(p.gemm_stream_depth, GEMM_STREAM_DEPTH_MAS), GEMM_STREAM_DEPTH_MAX) - GEMM_STREAM_DEPTH_MAS),
+              mul_n_(kStreamMul + gemm_stream_depth_for_rev(p.gemm_stream_depth, static_cast<unsigned>(p.neo_rev)) - GEMM_STREAM_DEPTH_MAS),
               scratchpad_(p.sp_params),
               vlsu_(p.sp_params, p.neo_rev),
               stream_vrf_(),
-              vlut_(p.lut_params),
+              vlut_(p.lut_params, p.neo_rev),
               vcmp_(p.fu_params),
               sm_v_(static_cast<size_t>(mul_n_), 0),
               sm_d_(static_cast<size_t>(mul_n_))
         {
             exp_e_shift_buf_.fill({});
+            // Softmax stage 3, RTL revision 2 and later: the delay of the path behind the LUT that the model computes in one cycle (see st3_delay_len())
+            softmax_st3_dly_.assign(static_cast<size_t>(st3_delay_len(p.neo_rev)), St3Beat{});
             vbank0_rd_delay_.fill(false);
             vbank1_rd_delay_.fill(false);
             vbank2_rd_delay_.fill(false);
@@ -325,8 +340,8 @@ namespace rtl_ref_gvu
         const GvuScratchpad &scratchpad() const { return scratchpad_; }
         StreamVrf &stream_vrf() { return stream_vrf_; }
         const StreamVrf &stream_vrf() const { return stream_vrf_; }
-        LutUnit &vlut() { return vlut_; }
-        const LutUnit &vlut() const { return vlut_; }
+        LutUnitSel &vlut() { return vlut_; }
+        const LutUnitSel &vlut() const { return vlut_; }
         GvuVlsu &vlsu() { return vlsu_.frozen(); }
         const GvuVlsu &vlsu() const { return vlsu_.frozen(); }
         control_fsm_t state() const { return pipe_ctrl_fsm_; }
@@ -384,6 +399,7 @@ namespace rtl_ref_gvu
                 ln_final_var_ = 0;
                 ln_final_w_ = 1;
                 exp_e_shift_buf_.fill({});
+                st3_dly_clear();
                 vbank0_rd_delay_.fill(false);
                 vbank1_rd_delay_.fill(false);
                 vbank2_rd_delay_.fill(false);
@@ -394,6 +410,7 @@ namespace rtl_ref_gvu
                 stream_clear();
                 vlsu_.reset_pooling();
                 avg_clear();
+                if (vlut_.uses_r2()) vlut_.tick(w.lut_in, false);   // revision 2: the stages of the LUT unit are reset with the unit (as the RTL does); revisions 0 / 1 as before
                 return o;
             }
 
@@ -403,6 +420,7 @@ namespace rtl_ref_gvu
 
             // Submodule clock edge updates
             vlut_.tick(w.lut_in, i_rstn);
+            st3_dly_push(w);
 
             scratchpad_.tick(w.sp_in);
             vlsu_.bind(in.i_agu_nd_ctrl, in.i_agu_src, in.i_agu_dst, w.agu_nd_sel);
@@ -568,7 +586,35 @@ namespace rtl_ref_gvu
         GvuScratchpad scratchpad_;
         GvuVlsuNeoPool vlsu_;  // the frozen GvuVlsu, plus AGU_ND when bound, plus the dense max pool write of revision 1 (neo_rev 1)
         StreamVrf stream_vrf_;
-        LutUnit vlut_;
+        LutUnitSel vlut_;   // the LUT unit of the revision of the RTL (has/rtl_ref_gvu_lut_sel.h)
+
+        // ---- SOFTMAX_ST3, RTL revision 2 and later: delay of the path behind the LUT ---------------------------------------------------------
+        // The RTL chains the stream registers vint16[2] -> Mul#1 (16x16) -> vint32[1] -> RoundShift#0 (72) -> vint32[3] -> Mul#0 (32x32_16x8) ->
+        // vint64[1] -> RoundShift#1 (64) -> vint16[4] -> Adder#2 -> vint16[5] (= softmax_st3_requant_valid). This model computes the four units in the
+        // cycle of the LUT answer, loads the four registers in parallel and feeds vint16[4] one cycle after the answer (vbank2_rd_delay_[1]).
+        // The delay line below puts back what is missing between the model and the RTL: four chained registers plus the latency of the four units
+        // (revision 2: 2 + 2 + 6 + 2), less the one cycle that vbank2_rd_delay_[1] already gives: 15. It is placed in front of vint16[4] (valid and
+        // data), so end_d_cnt_ (counts vint16[5] valid), the vbank0 write, softmax_token_last and the exit of SOFTMAX_ST3 follow the delayed valid.
+        // Revisions 0 and 1: length 0 = the path as before (the same gap exists there, not corrected: a RTL measurement of revision 1 is missing).
+        // The line shifts every cycle (no stall in ST3: every ready is 1) and is cleared outside SOFTMAX_ST3 and by reset.
+        // INFERRED from the RTL structure and checked against the RTL revision 2 trace (tb_top_softmax_cycles): ST3 of 8 tokens 36 cycles.
+        struct St3Beat { bool valid{false}; std::array<uint16_t, GVU_LANES> data{}; };
+        std::vector<St3Beat> softmax_st3_dly_;
+        size_t softmax_st3_head_{0};
+        static int st3_delay_len(int neo_rev)
+        {
+            if (neo_rev < 2) return 0;
+            constexpr int kChainRegs = 4, kModelFeedsLate = 1;
+            return kChainRegs + mula_latency_r2(MA_16X16) + lat_vroundshift_rev(2) + mulb_latency_r2(MB_32X32_16X8) + lat_vroundshift_rev(2) - kModelFeedsLate;
+        }
+        void st3_dly_clear() { for (St3Beat &b : softmax_st3_dly_) b = St3Beat{}; softmax_st3_head_ = 0; }
+        template <typename W> void st3_dly_push(const W &w)
+        {
+            if (softmax_st3_dly_.empty()) return;
+            if (pipe_ctrl_fsm_ != SOFTMAX_ST3) { st3_dly_clear(); return; }
+            softmax_st3_dly_[softmax_st3_head_] = St3Beat{w.st3_in_valid, w.st3_in_data};
+            softmax_st3_head_ = (softmax_st3_head_ + 1) % softmax_st3_dly_.size();
+        }
         Vcmp32 vcmp_;
 
         // Controller FSM state & flags
@@ -691,6 +737,8 @@ namespace rtl_ref_gvu
             bool is_lut_exp_init_nxt{false}, is_lut_recip_init_nxt{false}, is_lut_rsqrt_init_nxt{false}, is_lut_act_init_nxt{false};
             bool softmax_token_last{false};
             bool softmax_st1_last_rd{false};
+            bool st3_in_valid{false};                              // SOFTMAX_ST3: the beat of the cycle at the input of the delay line before vint16[4]
+            std::array<uint16_t, GVU_LANES> st3_in_data{};
             bool softmax_st1_pipe_en{false}, softmax_st2_pipe_en{false}, softmax_st3_pipe_en{false};
             bool softmax_st1_cmp_first{false}, softmax_st1_cmp_last{false};
             bool layernorm_token_last{false};
@@ -1407,13 +1455,18 @@ namespace rtl_ref_gvu
                         w.vrf_in.vint64[1].data[8 * l + b] = static_cast<uint8_t>(p64 >> (8 * b));
                 }
 
-                w.vrf_in.vint16[4].valid = vbank2_rd_delay_[1];
+                // the beat of this cycle: valid of the controller delay, data of RoundShift#1; revision 2 and later: through the delay line (see st3_delay_len)
+                w.st3_in_valid = vbank2_rd_delay_[1];
+                for (int l = 0; l < GVU_LANES; l++) w.st3_in_data[l] = static_cast<uint16_t>(w.roundshift1_out[l] & 0xFFFFu);
+                const bool st3_dly = !softmax_st3_dly_.empty();
+                w.vrf_in.vint16[4].valid = st3_dly ? softmax_st3_dly_[softmax_st3_head_].valid : w.st3_in_valid;
                 w.vrf_in.vint16[4].ready = true;
                 w.vrf_in.vint16[4].data.resize(2 * GVU_LANES);
                 for (int l = 0; l < GVU_LANES; l++)
                 {
-                    w.vrf_in.vint16[4].data[2 * l] = static_cast<uint8_t>(w.roundshift1_out[l] & 0xFFu);
-                    w.vrf_in.vint16[4].data[2 * l + 1] = static_cast<uint8_t>(w.roundshift1_out[l] >> 8);
+                    const uint16_t d16 = st3_dly ? softmax_st3_dly_[softmax_st3_head_].data[static_cast<size_t>(l)] : w.st3_in_data[static_cast<size_t>(l)];
+                    w.vrf_in.vint16[4].data[2 * l] = static_cast<uint8_t>(d16 & 0xFFu);
+                    w.vrf_in.vint16[4].data[2 * l + 1] = static_cast<uint8_t>(d16 >> 8);
                 }
 
                 w.vrf_in.vint16[5].valid = w.vrf_out.vint16[4].o_valid;
@@ -1662,7 +1715,7 @@ namespace rtl_ref_gvu
                 for (int l = 0; l < GVU_LANES; l++)
                 {
                     const uint8_t byte_out = in.i_gemm_skip_act ? static_cast<uint8_t>(w.clamp_out[l] & 0xFFu)
-                                                                : w.lut_out.o_8b_lookup_data[l];
+                                                                : vlut_.gemm_byte(w.lut_in, w.lut_out, l);
                     w.sp_in.i_vbank0_wdata[l] = byte_out;
                 }
 
@@ -1747,28 +1800,28 @@ namespace rtl_ref_gvu
                     w.fsm_nxt = IDLE;
                 break;
             case LUT_ACT_INIT:
-                if (vlut_.mem.o_init_done(LUT_ACT))
+                if (vlut_.o_init_done(LUT_ACT, w.lut_in.i_lut_wen))
                 {
                     w.is_lut_act_init_nxt = true;
                     w.fsm_nxt = GEMM_FUSED_ST1;
                 }
                 break;
             case LUT_RECIP_INIT:
-                if (vlut_.mem.o_init_done(LUT_RECIP))
+                if (vlut_.o_init_done(LUT_RECIP, w.lut_in.i_lut_wen))
                 {
                     w.is_lut_recip_init_nxt = true;
                     w.fsm_nxt = !is_lut_exp_init_ ? LUT_EXP_INIT : SOFTMAX_ST1;
                 }
                 break;
             case LUT_EXP_INIT:
-                if (vlut_.mem.o_init_done(LUT_EXP))
+                if (vlut_.o_init_done(LUT_EXP, w.lut_in.i_lut_wen))
                 {
                     w.is_lut_exp_init_nxt = true;
                     w.fsm_nxt = SOFTMAX_ST1;
                 }
                 break;
             case LUT_RSQRT_INIT:
-                if (vlut_.mem.o_init_done(LUT_RSQRT))
+                if (vlut_.o_init_done(LUT_RSQRT, w.lut_in.i_lut_wen))
                 {
                     w.is_lut_rsqrt_init_nxt = true;
                     w.fsm_nxt = LAYERNORM_ST1;
@@ -1825,6 +1878,9 @@ namespace rtl_ref_gvu
 
             // RTL gvu_pipe_controller.sv:698: the reset wins over the init-done update above
             if (in.i_lut_act_reset) w.is_lut_act_init_nxt = false;
+            if (in.i_lut_exp_reset) w.is_lut_exp_init_nxt = false;
+            if (in.i_lut_recip_reset) w.is_lut_recip_init_nxt = false;
+            if (in.i_lut_rsqrt_reset) w.is_lut_rsqrt_init_nxt = false;
 
             w.vlsu_in.i_agu_addr_reset = (w.fsm_nxt != pipe_ctrl_fsm_);
             // AGU_ND: with vbank0 bound, A is read with the source descriptor in RESIDUAL_ST1 and the result written with the destination
@@ -1863,7 +1919,7 @@ namespace rtl_ref_gvu
             for (int l = 0; l < GVU_LANES; l++)
             {
                 const uint8_t byte_out = in.i_gemm_skip_act ? static_cast<uint8_t>(w.clamp_out[l] & 0xFFu)
-                                                            : w.lut_out.o_8b_lookup_data[l];
+                                                            : vlut_.gemm_byte(w.lut_in, w.lut_out, l);
                 o.o_gemm_fused_data[l] = static_cast<int8_t>(byte_out);
             }
             o.o_residual_pipe_done = (pipe_ctrl_fsm_ == RESIDUAL_ST2) && (tile_cnt_ == max_tiles - 1) && w.residual_st2_done;

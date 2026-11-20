@@ -20,10 +20,16 @@ Reference kinds:
 Verdicts: PASS, FAIL, NOT RUN (log missing), OPEN (a known difference to the delivered RTL that the model does not follow,
 described in the note).
 
-usage: python3 tools/has/verify_flows.py <regression output dir> [--out <dir>]
+Flows CPU_* (the CPU programs the blocks directly, HAS_CPU_DIRECT=1): the steps of CPU_DIRECT_GUIDE.md section 4, read from the
+CPU-direct logs of regress_gvu.sh or of tools/has/cpu_direct/run_cpu_direct.sh; their RTL references are the stored runs of
+tools/has/cpu_direct/rtl_cpu_runs.txt, tied to this tree by the MD5 of the program.
+
+usage: python3 tools/has/verify_flows.py <regression output dir> [--out <dir>] [--only <flow name prefix>]
 The regression output dir is the first argument given to regress_gvu.sh. Default output: <regression dir>/flows.
+--only CPU_ writes the CPU-direct flows only (the output dir of run_cpu_direct.sh has no logs of the other flows).
 Exit code 0 when no step fails and every step is checked at the step or end to end.
 """
+import hashlib
 import os
 import re
 import sys
@@ -674,6 +680,240 @@ flow("DMA_SLICE_CONCAT", "Slice / concat by the 4-D DMA flow", [
     ]),
 ])
 
+# --------------------------------------------------------------------------------------------------------------------
+# CPU-direct flows (HAS_CPU_DIRECT=1, RTL revision 2): the CPU programs the SAURIA, GVU and DMA blocks through their register files,
+# the DFC stays idle. Steps = the sequences of CPU_DIRECT_GUIDE.md section 4. The testbench replays the program of the CPU (mmio.txt:
+# W write, P poll, K compare a DRAM region with the golden). cpu_flows.log is written by cpu_flows_log() below: the cycles of the CPU
+# run against the DFC run of the same work, and whether the program of this tree is the one that was run on the RTL
+# (tools/has/cpu_direct/rtl_cpu_runs.txt, stored results of the neo_top bench).
+# --------------------------------------------------------------------------------------------------------------------
+REG = r"region 0x(?P<a>[0-9a-f]+) (?P<n>\d+) B -> bad=(?P<b>\d+)"
+RES = r"\[tb_fe_core_net\] RESULT: (?P<v>PASS|FAIL) \(steps \d+, tensors (?P<t>\d+), elements (?P<e>\d+), bad tensors (?P<bt>\d+), bad elements (?P<be>\d+)"
+CPUW = r"HAS_CPU_DIRECT: register writes (?P<w>\d+), reads (?P<r>\d+), bad accesses (?P<b>\d+), writes during a DFC instruction (?P<o>\d+); 1-D DMA commands (?P<c>\d+) \(write-zero (?P<z>\d+)\), bytes (?P<by>\d+), cycles (?P<cy>\d+), not executed (?P<x>\d+)"
+SAU = r"HAS_CPU_DIRECT SAURIA: starts (?P<s>\d+) \(ignored (?P<i>\d+), failed (?P<f>\d+)\), cycles (?P<c>\d+), writes while running (?P<wr>\d+), soft resets (?P<sr>\d+); self-check \d+ configurations, decode differs (?P<d>\d+), value wider than its register (?P<wd>\d+)"
+
+
+def rtl(test, build, what):
+    """R check: the program of this tree is the one run on the RTL in <build>, and its result there."""
+    return C("cpu_flows.log", r"^%s: model program (?P<m>[0-9a-f]+) = the program run on the RTL, build %s: C1 RESULT (?P<v>PASS|FAIL) bad (?P<b>\d+) "
+             r"regions (?P<r>\d+) writes (?P<w>\d+) polls (?P<p>\d+).* \| (?P<t>.*)$" % (test, build), "v == 'PASS' and int(b) == 0", what, "R",
+             "neo_top of neo_lite RTL revision 2 in Verilator with the same CPU program (build %s, tools/has/cpu_direct/rtl_cpu_runs.txt)" % build,
+             "MD5 of the program of this tree equal to the program run on the RTL; the bench compares the DRAM regions with the golden of the model",
+             "program {m} = the RTL program; RTL: {v}, {b} bytes wrong in {r} regions, {w} writes, {p} polls; {t}")
+
+
+flow("CPU_DMA", "CPU_DIRECT_GUIDE.md section 4: one-dimensional DMA command; DMA tensor register file", [
+    (1, "The CPU writes the read address (+0x10), the write address (+0x20) and the byte count (+0x30) of the one-dimensional DMA "
+        "(block at 0x13000). The bus address selects the memory: SRAM A / B / C of SAURIA, vbank0 / 1 / 2 and the sbank of the GVU "
+        "scratchpad, otherwise DRAM.", [
+        C("cpu_dma.gen.log", r"commands (?P<c>\d+) bytes_moved (?P<b>\d+) bad_commands (?P<x>\d+)", "int(c) == 19 and int(x) == 1",
+          "the test program: a copy into every local memory and back, unaligned addresses, write-zero, the earlier register address, one "
+          "command that points outside every memory", "S", "mk_cpu_dma.py: plan of the commands and their expected bytes in Python",
+          "count", "{c} commands, {b} bytes, {x} command outside every memory"),
+        C("cpu_dma.log", CPUW, "int(b) == 0 and int(c) == 19 and int(x) == 1",
+          "accesses of the CPU decoded by the model: register writes and reads, accesses outside the blocks, commands started and refused",
+          "S", "address map of neo_top (CPU_DIRECT_GUIDE.md section 2) and the plan of the program",
+          "count", "{w} writes, {r} reads, {b} outside the blocks; {c} commands, {by} bytes, {cy} cycles, {x} not executed"),
+        N("cpu_dma.err", r"DMA command not executed", "True",
+          "the command whose address is outside every memory", "S", "dma_top.sv: such an address selects no memory",
+          "the model must refuse it and say so", "refused, one message"),
+    ]),
+    (2, "CONTROL = 0x3 starts the reader and the writer (0x102 writes zeros without reading); the bytes move.", [
+        C("cpu_dma.log", REG, "int(b) == 0",
+          "every destination region after the copy (into the local memory and back out to DRAM)", "S",
+          "golden of mk_cpu_dma.py: the source block copied to its destination", "byte by byte",
+          "0x{a}: {n} B, {b} wrong", every=True),
+        rtl("cpu_dma", "wc", "the same program on the RTL"),
+    ]),
+    (3, "The CPU polls the interrupt status (+0x0C) until the writer-done bit is set, then writes 0x3 to clear it; the address "
+        "registers are not changed while a command runs.", [
+        C("cpu_dma.log", RES, "v == 'PASS' and int(be) == 0",
+          "every poll of the program returned (the run reached its end) and every region checked after it was right", "S",
+          "golden of mk_cpu_dma.py", "end of the run", "{t} regions, {e} bytes, {be} wrong", scope="end"),
+    ]),
+    (4, "Tensor operations: the CPU writes the DMA tensor register file (0x13080..0x130C4: copy with loops, fill, 2-D pad, upsample) and "
+        "starts it; the sequencer splits the work into bus segments.", [
+        C("opgen_seq.log", r"RESULT: (?P<n>\d+) groups with a mismatch", "int(n) == 0",
+          "11 groups of cases: bytes written, bus segments and register reads", "S",
+          "tools/has/opgen_sim/opgen_cases.py: independent loops in Python (the RTL runs behind them are in HW_RTL_ALIGNMENT.md section 15.1)",
+          "byte by byte, segment by segment", "{n} groups with a mismatch"),
+        C("opgen_e2e.log", REG, "int(b) == 0",
+          "one COPY instruction and 7 descriptors through the host port, every region", "S",
+          "golden of make_opgen_e2e.py (independent loops)", "byte by byte", "0x{a}: {n} B, {b} wrong", every=True),
+    ]),
+])
+
+flow("CPU_SAURIA_RUN", "CPU_DIRECT_GUIDE.md section 4: SAURIA run", [
+    (1, "The CPU loads the input (SRAM A), the weights (SRAM B) and the partial sums (SRAM C) by one-dimensional DMA.", [
+        C("cpu_core.gen.log", r"words (?P<w>\d+) a (?P<a>\d+) b (?P<b>\d+) pre (?P<p>\d+) out (?P<o>\d+) dfc_core_cycles (?P<c>\d+)", "int(w) == 29",
+          "the tile: SRAM contents the DFC loaded for the first core run of the reference program, written out (HAS_CPU_DIRECT_DUMP)",
+          "M", "the DFC run of the same tile", "the CPU program loads the same bytes",
+          "SRAM A {a} B, B {b} B, C preload {p} B, result {o} B, {w} configuration words"),
+        C("cpu_core.log", CPUW, "int(c) == 4 and int(x) == 0 and int(b) == 0",
+          "DMA commands of the CPU run", "S", "the sequence of CPU_DIRECT_GUIDE.md section 4", "count",
+          "{c} commands, {by} bytes, {x} refused, {b} accesses outside the blocks"),
+    ]),
+    (2, "The CPU writes the 29 packed configuration words of config_regs.sv (regions CON / ACT / WEI / OUT at +0x200 / +0x400 / +0x600 / "
+        "+0x800 of the SAURIA block, 0x11000).", [
+        C("cpu_core.log", SAU, "int(d) == 0 and int(wd) == 0",
+          "the words decoded field by field into the configuration of the core", "S",
+          "field layout of config_regs.sv revision 2 (tools/has/neo_regmap_check.py --rev 2: 602 checks, 0 differences)",
+          "every field; a value wider than its register is counted", "{d} fields differ, {wd} values wider than their register"),
+        rtl("cpu_core", "wc_hold", "the same 29 words and the whole run on the RTL"),
+    ]),
+    (3, "The CPU writes 1 to the global and done interrupt enables; from the second run on it writes CONTROL = 0x0080_0000 (soft reset) and "
+        "polls CONTROL until bit 3 (ready).", [
+        C("cpu_core_soft.log", SAU, "int(s) == 2 and int(sr) == 1 and int(f) == 0",
+          "a soft reset right after a START, then the run again on the same memory halves", "S",
+          "config_regs.sv / psm_top.sv: the soft reset returns the core state machines to idle (CPU_DIRECT_GUIDE.md section 8)",
+          "count, and the result region (next check)", "{s} starts, {sr} soft reset, {f} failed"),
+        C("cpu_core_soft.log", REG, "int(b) == 0", "result of the second run", "M",
+          "SRAM C of the DFC run of the same tile", "byte by byte", "0x{a}: {n} B, {b} wrong"),
+        N("cpu_gemm_nosoft.log", r"SAURIA: (?P<n>\d+) START\(s\) without a soft reset", "int(n) == 2",
+          "a program of three core runs with the soft resets removed (the hardware stalls on such a START)", "S",
+          "rule of CPU_DIRECT_GUIDE.md section 8 (the RTL stalls; measured on the RTL bench)",
+          "the model must count every such START", "{n} STARTs without a soft reset counted"),
+    ]),
+    (4, "The CPU writes CONTROL = 0x1 (START; the SRAM halves flip unless a keep bit is written in the same write).", [
+        C("cpu_core.log", SAU, "int(s) == 1 and int(i) == 0 and int(f) == 0 and int(wr) == 0",
+          "START accepted and run", "S", "config_regs.sv: start edge while the core is ready", "count",
+          "{s} start, {i} ignored, {f} failed, {wr} writes while running, {c} core cycles"),
+        C("cpu_flows.log", r"^cpu_core: core cycles CPU (?P<c>\d+), DFC (?P<d>\d+) (?P<e>equal|DIFFERENT)", "e == 'equal'",
+          "core cycles of the CPU run against the DFC run of the same tile", "M", "the DFC run", "equal",
+          "CPU {c}, DFC {d}: {e}"),
+    ]),
+    (5, "The CPU polls the interrupt status until bit 0 (done) and writes 1 to clear it; the status registers read back the cycle count, "
+        "the stall count and the version.", [
+        C("cpu_core_st.log", r"SAURIA status: reads (?P<r>\d+), last status (?P<s>\S+) cycles (?P<c>\d+) stalls (?P<t>\d+) version (?P<v>\S+)",
+          "v == '0x00772020'", "status registers read by the CPU after the run", "S",
+          "config_regs.sv: version word (array 32 x 32, 8-bit operands), cycle and stall counters", "value",
+          "{r} reads, cycles {c}, stalls {t}, version {v}"),
+    ]),
+    (6, "The CPU writes CONTROL = 0x10000 (memory switch: the result half returns to the DMA side) and copies SRAM C out by DMA.", [
+        C("cpu_core.log", REG, "int(b) == 0", "SRAM C after the run, copied to DRAM", "M",
+          "SRAM C of the DFC run of the same tile", "byte by byte", "0x{a}: {n} B, {b} wrong"),
+        C("cpu_dump_core.log", RES, "v == 'PASS' and int(be) == 0",
+          "the DFC run the tile was taken from (whole reference program)", "S",
+          "tools/has/ref_program.py, an independent interpreter of the instruction stream", "byte by byte",
+          "{t} tensors, {e} bytes, {be} wrong"),
+        rtl("cpu_core", "wc", "the same program on the RTL without the vector-unit correction"),
+    ]),
+])
+
+flow("CPU_GEMM_FUSED", "CPU_DIRECT_GUIDE.md section 4: GEMM_FUSED (core results streamed into the vector unit)", [
+    (1, "Before the enable (the scratchpad halves flip at the enable): DMA the 256-byte activation table to vbank1, the Out_Scale words to "
+        "the sbank from byte 0 and the Out_Shift bytes from byte 2456 (0x0018_0998); entry k belongs to the k-th result packet.", [
+        C("cpu_gemm_3t.log", r"GEMM: runs (?P<n>\d+), result rows into vbank2 (?P<r>\d+), scale / shift reads beyond the sbank (?P<b>\d+)",
+          "int(b) == 0", "reads of Out_Scale / Out_Shift by the packets of the layer", "S",
+          "sbank layout of CPU_DIRECT_GUIDE.md section 4 (614 entries)", "count of reads outside the loaded entries",
+          "{b} reads beyond the sbank"),
+    ]),
+    (2, "GVU registers: GEMM_FUSED (offset 0x0C: zero point, skip activation), OPCODE (0x04) = 2, CONTROL = 1 last.", [
+        C("cpu_gemm_3t.log", CPUW, "int(b) == 0 and int(o) == 0",
+          "register accesses of the CPU: none outside the blocks, none while a DFC instruction runs", "S",
+          "address map of neo_top (CPU_DIRECT_GUIDE.md section 2)", "count", "{w} writes, {b} outside the blocks, {o} during a DFC instruction"),
+    ]),
+    (3, "Each core call as a SAURIA run with the stream bits of the output region (psum_stream_en = 1, cin_tile_last = 1, oc_tile_last = 1 "
+        "only in the last call of the layer); a soft reset before every START after the first.", [
+        C("cpu_gemm_3t.log", SAU, "int(s) == 3 and int(sr) == 2 and int(f) == 0",
+          "three core calls of one context", "S", "sequence of CPU_DIRECT_GUIDE.md section 4", "count",
+          "{s} starts, {sr} soft resets, {f} failed"),
+        C("cpu_gemm_mc.log", REG, "int(b) == 0", "the layer with two contexts per core call (flag of the last context)", "M",
+          "result rows of the DFC run of the same layer", "byte by byte", "0x{a}: {n} B, {b} wrong"),
+        N("cpu_gemm_nosoft.log", r"SAURIA: (?P<n>\d+) START\(s\) without a soft reset", "int(n) == 2",
+          "the same layer with the soft resets removed", "S", "rule of CPU_DIRECT_GUIDE.md section 8",
+          "the model must count both STARTs", "{n} STARTs without a soft reset counted"),
+    ]),
+    (4, "Every write of the partial-sum manager is one packet into the vector unit: requant, zero point, clamp, activation table, one row of "
+        "vbank2 per packet.", [
+        C("cpu_gemm_3t.log", r"GEMM: runs (?P<n>\d+), result rows into vbank2 (?P<r>\d+)", "int(n) == 1 and int(r) == 96",
+          "packets of the three calls written into vbank2", "M", "the 96 beats of the DFC run of the same layer", "count",
+          "{n} enable, {r} rows"),
+    ], ["The requant chain itself is checked against the RTL and the specification in flow GEMM_FUSED, steps 4 to 6."]),
+    (5, "After the last call: poll GVU CONTROL until bit 1 (done), write CONTROL = 0xC, copy vbank2 out by DMA (row r = 32 int8 lanes).", [
+        C("cpu_gemm_3t.log", REG, "int(b) == 0", "the 96 result rows copied to DRAM", "M",
+          "result rows of the DFC run of the same layer (written out with HAS_CPU_DIRECT_DUMP)", "byte by byte", "0x{a}: {n} B, {b} wrong"),
+        rtl("cpu_gemm_3t", "wc_hold", "the same program on the RTL with the correction that holds the vbank2 write address"),
+        C("cpu_flows.log", r"^cpu_gemm_3t: model program (?P<m>[0-9a-f]+) = the program run on the RTL, build wc_hold_off: C1 RESULT (?P<v>PASS|FAIL) bad (?P<b>\d+)",
+          "v == 'FAIL' and int(b) == 2658", "the same program on the vector unit as delivered", "R",
+          "neo_top revision 2 as delivered (rtl_cpu_runs.txt, build wc_hold_off)", "result of the stored run",
+          "{b} of 3072 bytes wrong: the known RTL difference of the note"),
+    ], ["Known RTL difference: in the RTL as delivered the vbank2 write address of the vector unit does not advance between packets when "
+        "the CPU drives GEMM_FUSED, so every packet overwrites row 0 (CPU_DIRECT_GUIDE.md section 8); a correction that holds the address "
+        "between accesses is proposed to the hardware team. The model follows the specification."]),
+])
+
+flow("CPU_GVU", "CPU_DIRECT_GUIDE.md section 4: GVU max pool / residual", [
+    (1, "The CPU loads the operands by DMA: the input rows into vbank0 (max pool); A into vbank0 and B into vbank1 (RESIDUAL).", [
+        C("cpu_pool.log", CPUW, "int(x) == 0 and int(b) == 0", "DMA commands of the max pool run", "S",
+          "sequence of CPU_DIRECT_GUIDE.md section 4", "count", "{c} commands, {by} bytes, {x} refused"),
+        C("cpu_res.log", CPUW, "int(x) == 0 and int(b) == 0", "DMA commands of the RESIDUAL run", "S",
+          "sequence of CPU_DIRECT_GUIDE.md section 4", "count", "{c} commands, {by} bytes, {x} refused"),
+    ]),
+    (2, "The CPU writes the GVU registers, the enable bit of CONTROL last. Only the 14 registers of gvu_config_regs.sv exist: writes "
+        "above them are dropped.", [
+        C("cpu_pool.log", r"unit edges driven by the CPU registers (?P<e>\d+), writes dropped (?P<d>\d+)", "int(d) == 11",
+          "max pool: the register values the DFC wrote, replayed by the CPU", "S",
+          "gvu_config_regs.sv: 14 registers (the 11 writes above them are proposal registers of the model)", "count",
+          "{d} writes above the 14 registers dropped"),
+        C("cpu_res.log", r"unit edges driven by the CPU registers (?P<e>\d+), writes dropped (?P<d>\d+)", "int(d) == 0",
+          "RESIDUAL registers (scales, shift, bias, zero point)", "S", "gvu_config_regs.sv", "count", "{d} writes dropped"),
+    ]),
+    (3, "The unit runs from the enable to done.", [
+        C("cpu_flows.log", r"^cpu_pool: unit cycles CPU (?P<c>\d+), DFC (?P<d>\d+) (?P<e>equal|DIFFERENT)", "e == 'equal'",
+          "max pool: cycles from the enable to done", "M", "the DFC run of the same max pool", "equal", "CPU {c}, DFC {d}: {e}"),
+        rtl("cpu_pool", "wc_hold", "the same max pool program on the RTL (enable to done)"),
+        C("cpu_res.log", r"unit edges driven by the CPU registers (?P<e>\d+)", "int(e) == 80",
+          "RESIDUAL: cycles from the enable to done", "R", "RTL measured on the neo_top bench: 16 + N = 80 for 64 rows (next check)",
+          "count", "{e} cycles"),
+        rtl("cpu_res", "wc_hold", "the same RESIDUAL program on the RTL"),
+    ]),
+    (4, "The CPU polls CONTROL until bit 1 (done) and writes CONTROL = 0xC (clear done, force the buffer swap: the output buffer goes to "
+        "the DMA side).", [
+        C("cpu_pool.log", RES, "v == 'PASS' and int(be) == 0", "every poll returned and the run reached its end", "M",
+          "vbank2 of the DFC run", "end of the run", "{t} regions, {e} bytes, {be} wrong", scope="end"),
+    ]),
+    (5, "The CPU copies the result out of vbank2 by DMA.", [
+        C("cpu_pool.log", RES, "v == 'PASS' and int(be) == 0", "192 output rows of the max pool", "M",
+          "vbank2 of the DFC run of the same max pool", "byte by byte", "{t} rows, {e} bytes, {be} wrong"),
+        C("cpu_dump_pool.log", RES, "v == 'PASS' and int(be) == 0", "the DFC run the max pool was taken from (whole program)", "S",
+          "tools/has/ref_program.py", "byte by byte", "{t} tensors, {e} bytes, {be} wrong"),
+        C("cpu_res.log", REG, "int(b) == 0", "RESIDUAL add, 64 rows", "S",
+          "formula of gvu_top.sv computed in Python by mk_cpu_res.py", "byte by byte", "0x{a}: {n} B, {b} wrong"),
+        C("cpu_res_sub.log", REG, "int(b) == 0", "RESIDUAL subtract, 64 rows", "S",
+          "formula of gvu_top.sv computed in Python by mk_cpu_res.py", "byte by byte", "0x{a}: {n} B, {b} wrong"),
+    ]),
+])
+
+flow("CPU_CHAIN", "CPU_DIRECT_GUIDE.md section 4: several layers through DRAM (firmware of a network)", [
+    (1, "Layer 0: GEMM_FUSED by the CPU (two core calls); the result rows of vbank2 go to DRAM (out0).", [
+        C("cpu_chain.log", r"region 0x90e00 (?P<n>\d+) B -> bad=(?P<b>\d+)", "int(b) == 0", "out0", "M",
+          "result of the DFC run of layer 0 (mk_cpu_chain.py gate, written out)", "byte by byte", "{n} B, {b} wrong"),
+    ]),
+    (2, "Before layer 1: reset of the activation table (write 1 to bit 0 of GVU offset 0x08) and the sbank of layer 1.", [
+        C("cpu_chain.log", r"region 0x91600 (?P<n>\d+) B -> bad=(?P<b>\d+)", "int(b) == 0", "out1 with the table of layer 1", "M",
+          "result of the DFC run of layer 1", "byte by byte", "{n} B, {b} wrong"),
+        N("cpu_chain_nr.log", RES, "v == 'FAIL' and int(bt) == 2 and int(be) == 4096",
+          "the same program without the table reset", "M", "results of the DFC runs",
+          "layer 1 keeps the table of layer 0: out1 and the RESIDUAL must differ, out0 not",
+          "{bt} of {t} regions wrong, {be} of {e} bytes: caught"),
+    ]),
+    (3, "Layer 1 reads out0 from DRAM as the CPU wrote it; a soft reset before every START after the first.", [
+        C("cpu_chain.log", SAU, "int(s) == 4 and int(sr) == 3 and int(f) == 0", "core runs of the two layers", "S",
+          "sequence of CPU_DIRECT_GUIDE.md section 4", "count", "{s} starts, {sr} soft resets, {f} failed"),
+        C("cpu_chain.log", r"GEMM: runs (?P<n>\d+), result rows into vbank2 (?P<r>\d+), scale / shift reads beyond the sbank (?P<b>\d+)",
+          "int(n) == 2 and int(r) == 128 and int(b) == 0", "two enables of the unit", "M", "64 + 64 beats of the DFC runs", "count",
+          "{n} enables, {r} rows, {b} reads beyond the sbank"),
+    ]),
+    (4, "RESIDUAL out0 + out1 by the CPU, result to DRAM.", [
+        C("cpu_chain.log", r"region 0x91e00 (?P<n>\d+) B -> bad=(?P<b>\d+)", "int(b) == 0", "the RESIDUAL result", "S",
+          "formula of gvu_top.sv in Python on out0 and out1", "byte by byte", "{n} B, {b} wrong"),
+    ]),
+], [
+    C("cpu_chain.log", RES, "v == 'PASS' and int(be) == 0", "the whole chain", "M", "DFC runs and the RESIDUAL formula",
+      "byte by byte", "{t} regions, {e} bytes, {be} wrong", scope="end"),
+])
+
 
 # --------------------------------------------------------------------------------------------------------------------
 def run_check(c, logdir):
@@ -745,6 +985,44 @@ def dma_copy_cycles(logdir):
         out.write("COPY cycles: instructions %d, equal to the formula %d\n" % (len(rows), eq))
 
 
+def cpu_flows_log(logdir):
+    """Inputs of the CPU_* flows that need two sources: the cycles of a CPU run against the DFC run of the same work, and, for every stored
+    RTL run of tools/has/cpu_direct/rtl_cpu_runs.txt, whether the program of this tree (<logdir>/<test>/mmio.txt) is the program that
+    was run on the RTL. Writes cpu_flows.log; nothing when no CPU-direct log is present."""
+    if not os.path.isfile(os.path.join(logdir, "cpu_core.log")):
+        return
+
+    def grab(name, rx):
+        p = os.path.join(logdir, name)
+        if not os.path.isfile(p):
+            return None
+        with open(p, encoding="utf-8", errors="replace") as f:
+            m = re.search(rx, f.read())
+        return m.group(1) if m else None
+
+    out = []
+    for test, cpu_log, cpu_rx, gen_rx, what in (
+            ("cpu_core", "cpu_core.log", r"SAURIA: starts \d+ \(ignored \d+, failed \d+\), cycles (\d+)", r"dfc_core_cycles (\d+)", "core cycles"),
+            ("cpu_pool", "cpu_pool.log", r"unit edges driven by the CPU registers (\d+)", r"dfc_unit_cycles (\d+)", "unit cycles")):
+        c, d = grab(cpu_log, cpu_rx), grab(test + ".gen.log", gen_rx)
+        out.append("%s: %s CPU %s, DFC %s %s" % (test, what, c, d, "equal" if c is not None and c == d else "DIFFERENT"))
+    store = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cpu_direct", "rtl_cpu_runs.txt")
+    if os.path.isfile(store):
+        with open(store, encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"run (\S+) (\S+) mmio ([0-9a-f]{32}) rtl_prog ([0-9a-f]{32}) \| (.*?) \| (.*)$", line.strip())
+                if not m:
+                    continue
+                test, build, want, _, result, timeline = m.groups()
+                p = os.path.join(logdir, test, "mmio.txt")
+                have = hashlib.md5(open(p, "rb").read()).hexdigest() if os.path.isfile(p) else None
+                rel = "=" if have == want else "DIFFERS FROM"
+                out.append("%s: model program %s %s the program run on the RTL, build %s: %s | %s"
+                           % (test, (have or "missing")[:12], rel, build, result, timeline))
+    with open(os.path.join(logdir, "cpu_flows.log"), "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+
+
 def block(fh, flow_name, step_no, text, checks, notes, whole=False):
     fh.write("[%s] [step %s] %s\n" % (flow_name, step_no, text))
     verdicts, scopes = [], []
@@ -790,10 +1068,14 @@ def main():
     out = os.path.join(LOGDIR, "flows")
     if "--out" in sys.argv:
         out = os.path.abspath(sys.argv[sys.argv.index("--out") + 1])
+    only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else ""
     os.makedirs(out, exist_ok=True)
     dma_copy_cycles(LOGDIR)
+    cpu_flows_log(LOGDIR)
     rows, bad = [], 0
     for name, page, steps, whole in FLOWS:
+        if not name.startswith(only):
+            continue
         p = os.path.join(out, name + ".log")
         with open(p, "w", encoding="utf-8") as fh:
             fh.write("Flow %s (drawing page \"%s\"), checks read from %s\n" % (name, page, LOGDIR))

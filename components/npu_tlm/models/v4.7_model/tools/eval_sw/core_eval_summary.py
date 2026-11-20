@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""[S8-ME part A] Build the "CORE EVALUATION SUMMARY" (Section 0) from files sw_eval already produced. Reads only; runs nothing.
+"""Build the "CORE EVALUATION SUMMARY" (Section 0) from files sw_eval already produced. Reads only; runs nothing.
 
 Reads, from <nine>: parameters.json, project_metrics.csv (network row), summary.csv (network row), coverage.csv.
 Optionally, from the same directory as the source metrics CSV (--run-log / --detections, auto-detected if omitted):

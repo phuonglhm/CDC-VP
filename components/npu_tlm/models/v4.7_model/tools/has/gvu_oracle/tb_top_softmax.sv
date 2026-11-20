@@ -29,6 +29,21 @@ module tb_top_softmax;
   logic [1023:0] row; logic [255:0] row8;
   logic seen_done;
   assign st = u.gvu_pipe_ctrl_state;
+  // revision 2 of the RTL: no write address register, the reciprocal table in even / odd banks
+  function automatic logic [8:0] g_wa();
+`ifdef NEO_REV2
+    g_wa = 9'd0;
+`else
+    g_wa = u.i_gvu_vlut.i_lut_mem.lut_waddr_r;
+`endif
+  endfunction
+  function automatic logic [15:0] g_recip(input integer k);
+`ifdef NEO_REV2
+    g_recip = k[0] ? u.i_gvu_vlut.i_lut_mem.lut_recip_odd_mem[k >> 1] : u.i_gvu_vlut.i_lut_mem.lut_recip_even_mem[k >> 1];
+`else
+    g_recip = u.i_gvu_vlut.i_lut_mem.lut_recip_mem[k];
+`endif
+  endfunction
   initial begin
     if (!$value$plusargs("len=%d", len)) len = 8;
     if (!$value$plusargs("max=%d", maxc)) maxc = 4000;
@@ -58,7 +73,7 @@ module tb_top_softmax;
       end
       if (u.pipe_ctrl_lut_init_wr) begin
         n_wr++;
-        $display("TOP cycle %0d: table write %0d, table %0d, write address %0d, write counter %0d, done flag %0d, low data word %h", cyc, n_wr, u.pipe_ctrl_lut_init_sel, u.i_gvu_vlut.i_lut_mem.lut_waddr_r, u.i_gvu_vlut.i_lut_mem.wr_cnt_r, u.pipe_ctrl_lut_init_done, u.pipe_ctrl_lut_init_data[15:0]);
+        $display("TOP cycle %0d: table write %0d, table %0d, write address %0d, write counter %0d, done flag %0d, low data word %h", cyc, n_wr, u.pipe_ctrl_lut_init_sel, g_wa(), u.i_gvu_vlut.i_lut_mem.wr_cnt_r, u.pipe_ctrl_lut_init_done, u.pipe_ctrl_lut_init_data[15:0]);
       end
       if (u.vbank0_en) begin if (u.vbank0_wen) n_wr0++; else n_rd0++; end
       if (u.vbank1_en_0 | u.vbank1_en_1 | u.vbank1_en_2) begin if (u.vbank1_wen_0 | u.vbank1_wen_1 | u.vbank1_wen_2) n_wr1++; else n_rd1++; end
@@ -70,8 +85,8 @@ module tb_top_softmax;
     $display("TOP end at cycle %0d: state %0d, pipe_done seen %0d, lut_init_done output %0d; vbank0 rd %0d wr %0d, vbank1 rd %0d wr %0d, vbank2 rd %0d wr %0d", cyc, st, seen_done, lut_done, n_rd0, n_wr0, n_rd1, n_wr1, n_rd2, n_wr2);
     ok_recip = 0; ok_exp = 0; nz_recip = 0; nz_exp = 0;
     for (int k = 0; k < 256; k++) begin
-      if (u.i_gvu_vlut.i_lut_mem.lut_recip_mem[k] === 16'(16'h4000 + k)) ok_recip++;
-      if (u.i_gvu_vlut.i_lut_mem.lut_recip_mem[k] !== 16'd0) nz_recip++;
+      if (g_recip(k) === 16'(16'h4000 + k)) ok_recip++;
+      if (g_recip(k) !== 16'd0) nz_recip++;
       if (u.i_gvu_vlut.i_lut_mem.lut_exp_mem[k] === 8'(255 - k)) ok_exp++;
       if (u.i_gvu_vlut.i_lut_mem.lut_exp_mem[k] !== 8'd0) nz_exp++;
     end

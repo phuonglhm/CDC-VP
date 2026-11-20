@@ -5,7 +5,7 @@
 // Called from an SC_THREAD of the testbench; it consumes simulated cycles with wait(). Data flow per chunk:
 //   DMA in -> Scratchpad -> pipeline stage(s) (1 vector of 32 per cycle + fixed latency) -> Scratchpad -> DMA out.
 // Stage latencies are counted from the dashed pipeline cuts of the drawing (ESTIMATE until the MAS). DMA in/out cost is an
-// ESTIMATE too (bytes / AXI_BYTES_PER_CYCLE + DMA_LATENCY): the drawings do not say who moves operands into the
+// ESTIMATE too (bytes / AXI_BYTES_PER_CYCLE + Knobs::elem_dma_lat): the drawings do not say who moves operands into the
 // Scratchpad (open question). Compute and DMA are serial here unless the banked scratchpad (Knobs::sp_banked) pipelines them.
 #ifndef HAS_ELEMWISE_H
 #define HAS_ELEMWISE_H
@@ -22,6 +22,7 @@
 #include "has/gvu_lsu.h"
 #include "has/gvu_rtl_elem.h"
 #include "has/gvu_top_bridge.h"
+#include "has/neo_rev.h"
 
 namespace has
 {
@@ -62,11 +63,7 @@ namespace has
     {
     public:
         static constexpr int W = 32;
-        static constexpr int LAT_ADD1 = 6;  // read, pipeline reg, sub zp, dequant (mul, round-shift), add / write
-        static constexpr int LAT_ADD2 = 5;  // read, pipeline reg, requant (mul, round-shift, zp/clamp), write
-        static constexpr int LAT_MAX = 3;   // read, pipeline reg, comparator
         static constexpr int AXI_BYTES_PER_CYCLE = 16; // 128-bit AXI (HAS §8.1)
-        static constexpr int DMA_LATENCY = 20;          // ESTIMATE per transfer; default of Knobs::elem_dma_lat (used)
 
         HasElemwise(const Knobs &k) : k_(k), sp_(k.sp_banked ? k.sp_v0 + k.sp_v1 + k.sp_v2 : k.scratch_bytes) {}
 
@@ -129,7 +126,8 @@ namespace has
                 {
                     for (uint32_t i = 0; i < m; i++)
                         sp_.put<int8_t>(offA + i, static_cast<int8_t>(rtl_ref_gvu::residual_hw_lane(A[base + i], B[base + i], hwp)));
-                    const uint64_t pc = rtl_ref_gvu::residual_hw_cycles(m);
+                    // from revision 2 of the RTL the operation takes 16 + vectors edges from the enable to done (3 more than the fixed latency)
+                    const uint64_t pc = rtl_ref_gvu::residual_hw_cycles(m) + (neo_rev() >= 2 ? 3 : 0);
                     cyc1 = pc - pc / 2; cyc2 = pc / 2;
                     hw_ok = true;
                 }

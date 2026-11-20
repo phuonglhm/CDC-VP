@@ -40,6 +40,7 @@
 //
 // Environment (read at construction):
 //   SAURIA_CORE_RTL_PROFILE  recommended (default) | proposals | legacy   -- HasNpuTop run profile
+//   HAS_PROFILE              neo | neo_as_rtl: with the default profile, the hardware profile of has/has_profile_neo.h (as tools/has/tb_has_npu_top)
 //   SAURIA_CORE_RTL_C_BCAST  1: bias preload by broadcast descriptor (timing only; reproduces the ViT-B/16 reference cycles)
 //   SAURIA_CORE_RTL_TRACE    1: one line per executed HasNpuTop instruction on stdout
 //   SAURIA_CORE_RTL_WARN     0: no warnings. Default: one line on stderr when HasNpuTop refuses an instruction at the push
@@ -169,9 +170,13 @@ namespace sauria
             native->i_select(i_select);
             native->i_total_contexts(i_total_contexts);
 
-            const has::Profile prof = env_profile();
-            rtl = new has::HasNpuTop("rtl", has::profile_knobs(prof, has::Knobs::from_env(prof != has::Profile::Legacy)));   // HAS_* knobs, e.g. HAS_SP_PRESET
+            // HAS_PROFILE=neo|neo_as_rtl selects a neo profile as for a HasNpuTop built with its default argument: the variables of the profile go
+            // into the environment before any part reads its knob. HAS_PROFILE not set: unchanged.
+            const has::Profile prof = has::resolve_profile(env_profile());
+            rtl = new has::HasNpuTop("rtl", has::profile_is_neo(prof) ? has::profile_knobs(prof)
+                                                                      : has::profile_knobs(prof, has::Knobs::from_env(prof != has::Profile::Legacy)));   // HAS_* knobs, e.g. HAS_SP_PRESET
             rtl->apply_profile(prof);
+            if (has::profile_is_neo(prof)) has::verify_env_profile(stderr);
             rtl->c_bias_bcast = rtl->c_bias_bcast || env_flag("SAURIA_CORE_RTL_C_BCAST");
             rtl->trace = env_flag("SAURIA_CORE_RTL_TRACE");
             if (const char *v = std::getenv("SAURIA_CORE_RTL_WARN")) warn_ = v[0] != '0';
@@ -223,7 +228,7 @@ namespace sauria
         // Must be called before set_dram().
         void set_staging_base(uint32_t b) { staging_base_ = b; }
         uint32_t staging_base() const { return staging_base_; }
-        void set_dram_base(uint32_t b) { dram_base_ = b; }
+        void set_dram_base(uint32_t b) { dram_base_ = b; rtl->cpu.set_dram_base(b); }
         uint32_t dram_base() const { return dram_base_; }
 
         size_t has_pending() const { return rtl->mmio.queued() + (rtl->mmio.executing() ? 1 : 0); }
@@ -253,6 +258,12 @@ namespace sauria
             const uint32_t i = (a - has::NeoPort::BASE - 0x10u) / 4u;
             return a >= has::NeoPort::BASE + 0x10u && (a - has::NeoPort::BASE) % 4u == 0 && (i == 18 || i == 19 || i == 20 || (i >= 34 && i <= 37));
         }
+        // Words of the DMA tensor register file that hold DRAM addresses: RADDR and WADDR.
+        static bool opg_is_address_word(uint32_t a)
+        {
+            const uint32_t o = a - has::opgen::Port::BASE;
+            return o == neo::addr::OPGEN_BASE + neo::addr::OG_RADDR || o == neo::addr::OPGEN_BASE + neo::addr::OG_WADDR;
+        }
         static bool is_ext(uint32_t a) { return a >= EXT_LO && a < EXT_END; }
         static bool is_param(uint32_t a) { return a >= PARAM_LO && a <= PARAM_HI; }
         static bool is_rtl_status(uint32_t a) { return a == STATUS || a == RETIRED; }
@@ -264,17 +275,23 @@ namespace sauria
             // DMA_TENSOR (0x16) has no extension register and no native counterpart: HasNpuTop when it accepts the opcode
             // HAS_HOST=neo: the window of the neo_lite register file and the doorbell (push of opcode 0x17) belong to HasNpuTop too
             const bool neo_win = rtl->neo.owns(a);
+            const bool opg_win = rtl->opg.owns(a);   // HAS_DMA_OPGEN: window of the DMA register files
+            // HAS_CPU_DIRECT: the pages of the SAURIA / GVU / DMA blocks (has/has_cpu_direct.h); the tensor-operation part of the DMA page only with HAS_DMA_OPGEN.
+            // The one-dimensional DMA keeps bus addresses (a DRAM address is told from a local memory by its value), so they are not converted here.
+            const bool cpu_opg = rtl->cpu.on() && rtl->opg.on() && has::cpu_direct::Port::is_opgen_page(a);
+            const bool cpu_win = rtl->cpu.owns(a) || cpu_opg;
             const bool neo_bell = rtl->neo.on() && a == PUSH_A && w && (static_cast<uint32_t>(i_host_wdata.read()[0]) & 0xFFu) == has::NeoPort::BELL;
             const bool to_rtl_push = a == PUSH_A && (ext_seen_.read() || neo_bell || (rtl->mmio.dma_tensor && w && (static_cast<uint32_t>(i_host_wdata.read()[0]) & 0xFFu) == 0x16u));
-            const bool rtl_only = is_ext(a) || is_rtl_status(a) || to_rtl_push || neo_win;
+            const bool rtl_only = is_ext(a) || is_rtl_status(a) || to_rtl_push || neo_win || opg_win || cpu_win;
             n_addr_.write(a);
             n_wren_.write(w && !rtl_only);
             n_rden_.write(r && !rtl_only);
             h_addr_.write(a);
             h_wren_.write(w && (rtl_only || is_param(a)));
-            h_rden_.write(r && (is_rtl_status(a) || neo_win));
+            h_rden_.write(r && (is_rtl_status(a) || neo_win || opg_win || cpu_win));
             host_data_t d = i_host_wdata.read();
-            if (w && (ext_is_address(a) || (neo_win && neo_is_address_word(a))))
+            if (w && (ext_is_address(a) || (neo_win && neo_is_address_word(a)) || (opg_win && opg_is_address_word(a)) ||
+                      (cpu_opg && opg_is_address_word(has::cpu_direct::Port::opgen_alias(a)))))
             {
                 const uint32_t v = static_cast<uint32_t>(d[0]);
                 if (v >= dram_base_) d[0] = static_cast<double>(v - dram_base_);
@@ -283,7 +300,9 @@ namespace sauria
         }
         void read_mux()
         {
-            o_host_rdata.write((is_rtl_status(i_host_addr.read()) || rtl->neo.owns(i_host_addr.read())) ? h_rdata_.read() : n_rdata_.read());
+            const uint32_t ra = i_host_addr.read();
+            const bool cpu_rd = rtl->cpu.owns(ra) || (rtl->cpu.on() && rtl->opg.on() && has::cpu_direct::Port::is_opgen_page(ra));
+            o_host_rdata.write((is_rtl_status(ra) || rtl->neo.owns(ra) || rtl->opg.owns(ra) || cpu_rd) ? h_rdata_.read() : n_rdata_.read());
         }
         void on_clock()
         {

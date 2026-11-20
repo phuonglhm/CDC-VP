@@ -1,0 +1,24 @@
+# RTL runs of the CPU-direct programs of this directory: stored results (the RTL tree and its simulation are not part of this tree).
+# Read by tools/has/verify_flows.py (flows CPU_*): for every run it computes the MD5 of the model program <test>/mmio.txt that this tree
+# generates and says whether it is the program that was run on the RTL.
+#
+# Bench: tb_neo_top_cpu.sv around neo_top of neo_lite RTL revision 2, Verilator 5.052. The CPU writes the configuration port of neo_top
+# (AXI-Lite: SAURIA, GVU and DMA blocks at the FPGA offsets), the data flow controller stays idle; at the end the bench compares the DRAM
+# regions of the program ("K" lines) with the golden image of the model and prints "C1 RESULT". The model program is converted to the bench
+# format (block addresses of the FPGA, DRAM base of the bench) without changing any value or the order of the accesses.
+#
+# Builds:
+#   wc           neo_lite revision 2 with the corrected core word count (29 words; the RTL as delivered rounds to 92), two-port DRAM model
+#                in the bench.
+#   wc_hold      wc + a correction of the vector unit that holds the vbank2 write address between accesses in GEMM_FUSED (proposed to the
+#                hardware team, enabled at run time); with the correction off the binary behaves as wc.
+#   wc_hold_off  the wc_hold binary with the correction off: the vector unit as delivered.
+#
+# run <test> <build> mmio <MD5 of the model program> rtl_prog <MD5 of the converted program> | <C1 RESULT line> | <timeline in core cycles>
+run cpu_dma wc mmio 4a4920c279baaefc984d69343e036496 rtl_prog f7eac6e59ff9b995e4ea6770046f99a0 | C1 RESULT PASS bad 0 regions 10 writes 91 polls 18 sys_cycles 33360 core_cycles 8006 | 10 of the 11 regions of the model program (the region of the earlier register address 0x40000A00 has no block on neo_top)
+run cpu_core wc_hold mmio eeafdf6edf1c4acdcf6cf7b0a3db22ae rtl_prog 72a5dcff8945eacb3fd751218c2b95cd | C1 RESULT PASS bad 0 regions 1 writes 55 polls 5 sys_cycles 45729 core_cycles 10975 | SAURIA interrupt at core cycle 10350 (9311 core cycles from the START write)
+run cpu_core wc mmio eeafdf6edf1c4acdcf6cf7b0a3db22ae rtl_prog 72a5dcff8945eacb3fd751218c2b95cd | C1 RESULT PASS bad 0 regions 1 writes 55 polls 5 sys_cycles 45729 core_cycles 10975 | the same as wc_hold
+run cpu_pool wc_hold mmio 7cd557362da41b835b2d7003dda1df16 rtl_prog f8224d88bee441bb10e2ff464168f5a9 | C1 RESULT PASS bad 0 regions 192 writes 27 polls 3 sys_cycles 30171 core_cycles 7241 | GVU enable at 647, done at 6815: 6168 core cycles
+run cpu_res wc_hold mmio c5cacabf7f16f7fdb72ecaad488634c0 rtl_prog 6c83bd43e321100fa51e8468abf5800a | C1 RESULT PASS bad 0 regions 1 writes 24 polls 4 sys_cycles 2542 core_cycles 610 | GVU enable at 358, done at 438: 80 core cycles
+run cpu_gemm_3t wc_hold mmio a017897927389779cd0de53b14900706 rtl_prog b1d3b139e4d3153e2d1d4707d665e4d1 | C1 RESULT PASS bad 0 regions 1 writes 167 polls 22 sys_cycles 157813 core_cycles 37875 | GVU enable at 241; SAURIA interrupts at 12689, 25156, 37623; GVU done at 37638
+run cpu_gemm_3t wc_hold_off mmio a017897927389779cd0de53b14900706 rtl_prog b1d3b139e4d3153e2d1d4707d665e4d1 | C1 RESULT FAIL bad 2658 regions 1 writes 167 polls 22 sys_cycles 157813 core_cycles 37875 | the vbank2 write address of the vector unit does not advance between packets: every packet overwrites row 0

@@ -9,7 +9,10 @@ command -v verilator > /dev/null || { echo "verilator not found (version 5 or la
 mkdir -p "$W"
 SRC="$R/gvu_pkg.sv $R/pipeline_reg.sv $(ls $R/FUs/*.sv | tr '\n' ' ') $(ls $R/stream_switch/*.sv | tr '\n' ' ') $(ls $R/scratchpad/*.sv | tr '\n' ' ')
      $(ls $R/vlsu/*.sv | tr '\n' ' ') $R/gvu_pipe_controller.sv $R/gvu_top.sv $HERE/shift_reg_standin.sv $HERE/spill_register_standin.sv $HERE/fifo_v3_standin.sv"
-nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module tb_top_softmax --Mdir "$W/tb_top_softmax" $SRC "$HERE/tb_top_softmax.sv" > "$W/build.log" 2>&1
+DEF=""; [ -f "$R/FUs/gvu_mul_block_cpa.sv" ] && DEF="+define+NEO_REV2"
+# RTL revision 1 and later: the Scratchpad refers to the package of the address map (neo_addr_pkg.sv, two levels above the vector unit directory)
+[ -f "$R/../../neo_addr_pkg.sv" ] && SRC="$R/../../neo_addr_pkg.sv $SRC"
+nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module tb_top_softmax $DEF --Mdir "$W/tb_top_softmax" $SRC "$HERE/tb_top_softmax.sv" > "$W/build.log" 2>&1
 rc=$?
 echo "build rc=$rc; errors $(grep -c '^%Error' "$W/build.log"); warnings by kind:"
 grep -o '^%Warning-[A-Z]*' "$W/build.log" | sort | uniq -c | sort -rn

@@ -28,7 +28,6 @@ namespace has
         void set_lat(unsigned lat) { lat_ = lat < 1 ? 1 : lat; }   // lat < kApply only with HAS_GVU_REGS_NEO (measured: 1 write per edge)
         unsigned lat() const { return lat_; }
         void set_chain_lat(unsigned c) { chain_ = c; }
-        unsigned chain_lat() const { return chain_; }
 
         bool busy() const { return active_; }
         uint64_t writes() const { return writes_; }

@@ -12,8 +12,6 @@
 // build: g++ -std=c++17 -O2 -Wall -I. tools/has/tb_gvu_top_replay.cpp -o tb_gvu_top_replay
 // usage: tb_gvu_top_replay <dump file>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <deque>
 #include <vector>
 #include "has/rtl_ref_gvu_top.h"

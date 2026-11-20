@@ -1,5 +1,5 @@
 // libneo_cfg -- C++ encoder of the configuration register file of neo_lite (df_controller_top.sv), driver side, no SystemC.
-// Layout: NEO_REGISTER_FILE.md (neo_lite RTL revision 1). The CPU writes N_REGS words at byte 0x10 + 4 * i of the controller window, then the
+// Layout: NEO_REGISTER_FILE.md (neo_lite RTL revision 1; revision 2 changes only the core field widths, target_rev). The CPU writes N_REGS words at byte 0x10 + 4 * i of the controller window, then the
 // interrupt enable (0x08) and START (0x00). The 40 DFC words and the 29 core words reuse driver/libsauria_cfg.h (SAURIA bit layout) unchanged;
 // the core's four new output-region bits (transpose, psum stream, cin / oc tile last) are 0 here: the DFC writes the last two per tile.
 // Only the words the hardware has are produced here. What the model keeps beyond them travels in has/has_host_neo.h (the "ext" lines).
@@ -46,15 +46,20 @@ namespace neo
     };
 
     inline const sauria::SauriaTarget &target() { static const sauria::SauriaTarget *t = sauria::sauria_find_target("int8_32x32"); return *t; }
+    // The target of one RTL revision: revision 0 and 1 = target(); revision 2 = the same geometry with the index widths of
+    // addr::rev2 (larger SRAM A, smaller SRAM C). Defined after namespace addr.
+    inline const sauria::SauriaTarget &target_rev(unsigned rev);
 
     // One GEMM_FUSED layer on a uniform tile grid: the DFC words 0..20 and 38 (libsauria_cfg a[0..21]) + the 29 core words.
     // `desc` is the SAURIA layer descriptor (C_w / C_h / C_c / A_c = full tensor, *_til = tile). dram = {A, B, C} byte addresses.
     // sbank = start of the per-channel requant block (word 34); zp / skip_act fill GEMM_FUSED_REG; the GVU opcode cell is set as the DFC would.
     // loop_order >= 0 replaces the order libsauria_cfg picks by data reuse (0: x, y, c, k; 1: c, k, space; 2: k, space with c_lim = 0); -1 keeps it.
-    inline Image encode_gemm(const sauria::SauriaLayerDesc &desc, const uint32_t dram[3], uint32_t sbank, int zp, bool skip_act, int loop_order = -1)
+    // rev = the RTL revision whose core field widths are used (target_rev); 0 and 1 give the same words.
+    inline Image encode_gemm(const sauria::SauriaLayerDesc &desc, const uint32_t dram[3], uint32_t sbank, int zp, bool skip_act, int loop_order = -1,
+                             unsigned rev = 1)
     {
         Image im;
-        const std::vector<uint32_t> a = sauria::sauria_encode_controller_args(desc, target(), dram);   // 22 + 29 words
+        const std::vector<uint32_t> a = sauria::sauria_encode_controller_args(desc, target_rev(rev), dram);   // 22 + 29 words
         for (unsigned i = 0; i < 21; i++) im.reg[i] = a[i];
         im.reg[CTRL_BITS] = loop_order >= 0 ? sauria::set_bits(a[21], 17, 16, static_cast<uint32_t>(loop_order)) : a[21];
         for (unsigned i = 0; i < N_CORE; i++) im.reg[IDX_CORE + i] = a[22 + i];
@@ -139,6 +144,45 @@ namespace neo
         constexpr uint32_t BUS_VBANK2 = GVU_DMA_OFFSET + VBANK2_OFFSET;
         // END rtl_constants
 
+        // BEGIN rtl_dma
+        // RTL revision 2 only (ReDMA of neo_lite). The CPU reaches the DMA through the block DMA_OFFSET of the configuration window (block_of below).
+        // Inside the block two register files share the AXI4-Lite port, told apart by address bit OPGEN_SEL_BIT (redma_top.sv, redma_lite_demux.sv):
+        // bit clear = conf_regs.sv, the one-run descriptor (decodes address bits [CR_ADDR_BITS-1:0]); bit set = redma_opgen_top.sv, the tensor-operation
+        // descriptor (decodes address bits [OG_ADDR_HI:OG_ADDR_LO], so the register offsets below are inside the block at OPGEN_BASE + offset).
+        // A tensor operation and a one-run descriptor share the engines: the CPU starts one only when the other is idle. The data flow controller
+        // writes conf_regs only (CR_*), never the tensor register file.
+        constexpr uint32_t CR_CONTROL = 0x00u, CR_INTR_EN = 0x04u, CR_INTR_STATUS = 0x0Cu, CR_RADDR = 0x10u, CR_WADDR = 0x20u, CR_BTT = 0x30u;
+        constexpr uint32_t CR_ADDR_BITS = 6u, CR_ID = 0x2Du, CR_BAD_READ = 0x3BADADD2u, CR_BAD_RESP = 2u;
+        constexpr uint32_t OPGEN_SEL_BIT = 7u, OPGEN_BASE = 1u << OPGEN_SEL_BIT;
+        constexpr uint32_t TENSOR_OPS = 1u;
+        // The two platforms: the offsets above are inside the DMA block of neo_top (cfg_base + DMA_OFFSET on the FPGA); the host port of the model has windows
+        // of its own for the controller window (the 82-word file) and for the DMA block. Tools write register addresses as base + offset with these bases.
+        constexpr uint32_t HOST_CTRL_WINDOW = 0x40000800u, HOST_DMA_WINDOW = 0x40000A00u;
+        constexpr uint32_t OG_CTRL = 0x00u, OG_OP = 0x04u, OG_RADDR = 0x08u, OG_WADDR = 0x0Cu, OG_CNT01 = 0x10u, OG_CNT2 = 0x14u, OG_GRPB = 0x18u, OG_ROWB = 0x1Cu;
+        constexpr uint32_t OG_RS0 = 0x20u, OG_WS0 = 0x24u, OG_RS1 = 0x28u, OG_WS1 = 0x2Cu, OG_RS2 = 0x30u, OG_WS2 = 0x34u;
+        constexpr uint32_t OG_PADL = 0x38u, OG_PADR = 0x3Cu, OG_FULL = 0x40u, OG_ID = 0x44u, OG_ID_VALUE = 0x5ED00001u;
+        constexpr uint32_t OG_ADDR_HI = 6u, OG_ADDR_LO = 2u, OG_CNT_W = 16u, OG_PAD_W = 8u, OG_REP_W = 4u;
+        constexpr uint32_t DMA_RADDR_OFFSET = 0u, DMA_WADDR_OFFSET = 0u, DMA_MAX_ARLEN = 255u, DMA_MAX_AWLEN = 255u, DMA_RFIFO_LEN = 2u, DMA_WFIFO_LEN = 2u;
+        constexpr uint32_t DMA_SYNC_AW_W = 0u, DMA_MAX_OUTSTANDING_READS = 8u, DMA_MAX_OUTSTANDING_WRITES = 8u, DATA_ELM_BITS = 8u;
+        struct DmaField { const char *reg; const char *name; unsigned hi; unsigned lo; };
+        // register, name the RTL gives the bits (rd_ = as read back), [hi:lo]. Registers: CONTROL, INTR_EN, INTR_STATUS of conf_regs; CTRL, OP, ... of the tensor file.
+        static const DmaField DMA_FIELDS[] = {
+            {"CONTROL", "reader_start", 0, 0}, {"CONTROL", "writer_start", 1, 1}, {"CONTROL", "write_zero", 8, 8},
+            {"CONTROL", "rd_write_zero", 8, 8}, {"CONTROL", "rd_id", 31, 24},
+            {"INTR_EN", "reader_intr_en", 0, 0}, {"INTR_EN", "writer_intr_en", 1, 1},
+            {"INTR_EN", "rd_reader_intr_en", 0, 0}, {"INTR_EN", "rd_writer_intr_en", 1, 1},
+            {"INTR_STATUS", "reader_intr_reg", 0, 0}, {"INTR_STATUS", "writer_intr_reg", 1, 1},
+            {"INTR_STATUS", "rd_reader_intr_reg", 0, 0}, {"INTR_STATUS", "rd_writer_intr_reg", 1, 1},
+            {"CTRL", "start", 0, 0}, {"CTRL", "clear_done", 1, 1}, {"CTRL", "rd_busy", 1, 1}, {"CTRL", "rd_done", 2, 2},
+            {"OP", "op", 1, 0}, {"OP", "pad_t", 9, 2}, {"OP", "pad_b", 17, 10}, {"OP", "rep0", 21, 18}, {"OP", "rep1", 25, 22}, {"OP", "fill", 31, 24},
+            {"RADDR", "raddr", 31, 0}, {"WADDR", "waddr", 31, 0},
+            {"CNT01", "n0", 15, 0}, {"CNT01", "n1", 31, 16}, {"CNT2", "n2", 15, 0},
+            {"GRPB", "grp_bytes", 31, 0}, {"ROWB", "row_bytes", 31, 0},
+            {"RS0", "rs0", 31, 0}, {"WS0", "ws0", 31, 0}, {"RS1", "rs1", 31, 0}, {"WS1", "ws1", 31, 0}, {"RS2", "rs2", 31, 0}, {"WS2", "ws2", 31, 0},
+            {"PADL", "padl_bytes", 31, 0}, {"PADR", "padr_bytes", 31, 0}, {"FULL", "full_bytes", 31, 0},
+        };
+        // END rtl_dma
+
         // BEGIN rtl_core_extra
         // The core image (words IDX_CORE.. of the file) in bit positions from its first word. The packed fields are those of sauria_cfg_layout.h;
         // config_regs.sv has six bits more, all 0 here: the SRAM sleep / power-gate bits after THRES, and four output-region bits after PRELOAD_EN.
@@ -162,6 +206,38 @@ namespace neo
             {CORE_BIT_OUT_EXTRA + 3, 1, "oc_tile_last"},
         };
         // END rtl_core_extra
+
+        // RTL revision 2 (int8_32x32): SRAM A 3072, B 2048, C 320 rows per buffer, so the index widths are 18 / 17 / 15 and the core
+        // fields after INCNTLIM move; the local memories are selected with a narrower mask. Everything else above is unchanged.
+        // tools/has/neo_regmap_check.py --rev 2 reads these two blocks in place of the ones above.
+        namespace rev2
+        {
+            // BEGIN rtl_constants_rev2
+            constexpr uint32_t SAURIA_MEM_ADDR_MASK = 0x000C0000u;
+            // END rtl_constants_rev2
+
+            // BEGIN rtl_core_extra_rev2
+            constexpr unsigned CORE_IDX_A = 18;
+            constexpr unsigned CORE_IDX_W = 17;
+            constexpr unsigned CORE_IDX_O = 15;
+            constexpr unsigned CORE_WORDS_CON = 2;
+            constexpr unsigned CORE_WORDS_ACT = 17;
+            constexpr unsigned CORE_WORDS_WEI = 5;
+            constexpr unsigned CORE_WORDS_OUT = 5;
+            constexpr unsigned CORE_BIT_CON_EXTRA = CORE_IDX_A + 2 * CORE_IDX_O + 2;
+            constexpr unsigned CORE_BIT_OUT = 32 * (CORE_WORDS_CON + CORE_WORDS_ACT + CORE_WORDS_WEI);
+            constexpr unsigned CORE_BIT_OUT_EXTRA = CORE_BIT_OUT + 9 * CORE_IDX_O + 8 + 1;
+            static const CoreExtra CORE_EXTRA[] = {
+                {CORE_BIT_CON_EXTRA, 1, "sram_deepsleep"},
+                {CORE_BIT_CON_EXTRA + 1, 1, "sram_powergate"},
+                {CORE_BIT_OUT_EXTRA, 1, "transpose_mode"},
+                {CORE_BIT_OUT_EXTRA + 1, 1, "psum_stream_en"},
+                {CORE_BIT_OUT_EXTRA + 2, 1, "cin_tile_last"},
+                {CORE_BIT_OUT_EXTRA + 3, 1, "oc_tile_last"},
+            };
+            // END rtl_core_extra_rev2
+            static_assert(CORE_WORDS_CON + CORE_WORDS_ACT + CORE_WORDS_WEI + CORE_WORDS_OUT == N_CORE, "revision 2 keeps 29 core words");
+        }
 
         // ---- address generation. cfg_base = where the configuration window sits in the SoC map; dram_base = where the DRAM sits.
         enum Block : unsigned { BLK_CONTROLLER = 0, BLK_SAURIA = 1, BLK_GVU = 2, BLK_DMA = 3 };
@@ -214,6 +290,27 @@ namespace neo
         static_assert(gvu_reg_addr(0) == 0x20000u && gvu_reg_addr(1) == 0x20004u && gvu_reg_addr(13) == 0x20034u && gvu_word_addr(0) == 0x20004u, "GVU registers");
         static_assert(bus_addr(MEM_SRAMB, 0x10) == 0x40010u && bus_addr(MEM_VBANK1, 0) == 0x120000u && bus_addr(MEM_SBANK, 0) == 0x180000u, "DMA bus");
     } // namespace addr
+
+    // transpose_mode: the bit of the core image (the N_CORE words from IDX_CORE) that makes the array extract the result vertically (neo_lite
+    // core field transpose_mode, config_regs.sv, output region after PRELOAD_EN). Word and bit follow from the field widths of the revision:
+    // revision 2 (addr::rev2) = word 28 bit 16 (byte 0x810 of the core window), revision 0 / 1 = word 28 bit 25.
+    struct CoreBit { unsigned word, bit; };
+    inline CoreBit transpose_bit(unsigned rev)
+    {
+        const unsigned b = rev >= 2 ? addr::rev2::CORE_BIT_OUT_EXTRA : addr::CORE_BIT_OUT_EXTRA;
+        return CoreBit{b / 32u, b % 32u};
+    }
+    inline void set_transpose_bit(std::vector<uint32_t> &core, unsigned rev, bool on)
+    {
+        const CoreBit p = transpose_bit(rev);
+        if (core.size() <= p.word) core.resize(p.word + 1, 0u);
+        core[p.word] = on ? (core[p.word] | (1u << p.bit)) : (core[p.word] & ~(1u << p.bit));
+    }
+    inline bool get_transpose_bit(const std::vector<uint32_t> &core, unsigned rev)
+    {
+        const CoreBit p = transpose_bit(rev);
+        return p.word < core.size() && ((core[p.word] >> p.bit) & 1u) != 0u;
+    }
 
     // Fields of the configuration words. FS_FILE: word of the 82-word file; FS_GVUREG: GVU register number (0 = control, 1..13);
     // FS_CTLWIN: word of the controller window (0 control, 2 interrupt enable, 3 interrupt status clear). [hi:lo] inside the word.
@@ -340,6 +437,19 @@ namespace neo
     };
     // END rtl_fields
     constexpr unsigned N_FIELDS = sizeof(FIELDS) / sizeof(FIELDS[0]);
+
+    inline const sauria::SauriaTarget &target_rev(unsigned rev)
+    {
+        static const sauria::SauriaTarget r2 = [] {
+            sauria::SauriaTarget t = target();
+            t.name = "int8_32x32_rev2";
+            t.idx_a = static_cast<int>(addr::rev2::CORE_IDX_A);
+            t.idx_w = static_cast<int>(addr::rev2::CORE_IDX_W);
+            t.idx_o = static_cast<int>(addr::rev2::CORE_IDX_O);
+            return t;
+        }();
+        return rev >= 2 ? r2 : target();
+    }
 }
 
 #endif // LIBNEO_CFG_H

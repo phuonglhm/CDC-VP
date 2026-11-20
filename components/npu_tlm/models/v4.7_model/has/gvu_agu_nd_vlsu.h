@@ -51,11 +51,6 @@ namespace rtl_ref_gvu
         const GvuAguNd &nd(unsigned port) const { return nd_[port]; }
         GvuVlsu &frozen() { return vlsu_; }
         const GvuVlsu &frozen() const { return vlsu_; }
-        GvuAguNd::Out nd_out(const In &i, unsigned port) const
-        {
-            const AguNdDesc *d = desc(i, port);
-            return d ? nd_[port].eval(nd_in(i, port, *d)) : GvuAguNd::Out{};
-        }
 
     private:
         GvuVlsu vlsu_;

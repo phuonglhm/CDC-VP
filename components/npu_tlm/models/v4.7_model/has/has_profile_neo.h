@@ -21,7 +21,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <string>
 
 #include "has/neo_rev.h"
 #include "has/dma_dfc_1d.h"

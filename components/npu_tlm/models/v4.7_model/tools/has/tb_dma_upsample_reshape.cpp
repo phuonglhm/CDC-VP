@@ -14,7 +14,6 @@
 #define HAS_DMA_PURE_CPP
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>

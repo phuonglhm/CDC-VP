@@ -100,12 +100,38 @@ def read_program(path):
     return steps
 
 # ---- reason codes: those of the host-side tool (COMPILER_GUIDE.md, support matrix); order and severity as in has/hw_capability.h ----
+REV = 1   # RTL revision the rules follow (--rev)
+# B-SRAM (revision 2 only): one SRAM buffer of the revision; the model's own SRAM-A array (79 KiB) caps A (has/sram_limits.h)
+SRAM_REV2 = {"A": min(98304, 79 * 1024), "B": 65536, "C": 10240, "C_ROWS": 320}
+
+
+def sram_over(in_c, cin_t, cout, oh, ow, kh, kw, s, dil, cout_t_raw, cout_t_used, h_t, w_t, y_reg, pad_tail):
+    """Tile 0 of a GEMM_FUSED against SRAM_REV2: the largest tile of the layer (has/sram_limits.h layer_sram_verdict). Arguments as the
+    normalised ones of check(): h_t, w_t clamped to the tensor, cout_t_used = x_used of tile 0."""
+    ox1 = w_t
+    if pad_tail:
+        y = y_reg if 0 < y_reg <= 32 else 32
+        ox1 = -(-w_t // y) * y
+    ekh, ekw = (kh - 1) * dil + 1, (kw - 1) * dil + 1
+    a = cin_t * ((h_t - 1) * s + ekh) * ((ox1 - 1) * s + ekw)
+    b = min(cout_t_raw, cout) * cin_t * kh * kw
+    c = cout_t_used * h_t * ox1
+    return a > SRAM_REV2["A"] or b > SRAM_REV2["B"] or c > SRAM_REV2["C"]
+
+
+def attn_sram_over(head_dim, seq_len):
+    """FUSED_ATTN (revision 2): a product of core_dot does not fit (Q.K^T cin = head_dim, A.V cin = seq_len)."""
+    for cin in (max(head_dim, 0), max(seq_len, 0)):
+        wmax = 0 if cin == 0 else min(SRAM_REV2["A"] // cin, SRAM_REV2["C_ROWS"]) // 32 * 32
+        if wmax == 0 or cin * 32 > SRAM_REV2["B"]:
+            return True
+    return False
 CODES = ["A-H1", "A-H3", "A-H4",
          "B-ACTLUT", "B-REQ3", "B-FSCALE", "B-PAD", "B-INDIM", "B-EDGE", "B-PADTAIL", "B-CINORD", "B-HALO", "B-STRIDE", "B-TMAJ",
          "B-ADDMAP", "B-ADDTILE", "B-POOLPAD", "B-POOLFIT", "B-POOLK", "B-AVG", "B-FA", "B-LN", "B-DMA", "B-FIELD",
-         "P-SPLIT", "P-H2", "P-POOLDENSE"]
+         "P-SPLIT", "P-H2", "P-POOLDENSE", "B-SRAM"]
 # A = RTL fault / gap, T = removed by the compiler, N = removed only by the hardware or the model, I = note only
-SEVERITY = "AAA" "NN" "TTTTT" "NN" "T" "N" "TT" "TT" "N" "NNNN" "T" "III"
+SEVERITY = "AAA" "NN" "TTTTT" "NN" "T" "N" "TT" "TT" "N" "NNNN" "T" "III" "T"
 assert len(CODES) == len(SEVERITY)
 C = {n: i for i, n in enumerate(CODES)}
 NOT_CHECKED = "[hw-check] not checked: contiguity of the tile in DRAM"
@@ -204,7 +230,8 @@ def check(st):
     codes = set()
     if op == 0x12:
         has_skip = r["has_skip"] != 0
-        codes.add(C["A-H1"])
+        if REV < 2:   # RTL revision 2 writes words 0..11
+            codes.add(C["A-H1"])
         kh, kw, s = r["kh"], r["kw"], r["stride"]
         pad_val, dil = 0, 1
         if "IN_C" in e:
@@ -248,6 +275,10 @@ def check(st):
             Cw, Ch = cdiv(ow, w_t) * w_t, cdiv(oh, h_t) * h_t
             if in_w != (Cw - 1) * s + 1 + (kw - 1) * dil or in_h != (Ch - 1) * s + 1 + (kh - 1) * dil:
                 codes.add(C["B-INDIM"])
+        if REV >= 2 and cout_t > 0 and h_t > 0 and w_t > 0 and cout > 0 and oh > 0 and ow > 0:
+            if sram_over(in_c, cin_t, cout, oh, ow, kh, kw, s, dil, s32(e.get("TILE_COUT", cout_t)) if "IN_C" in e else cout_t, cout_t,
+                         h_t, w_t, s32(e.get("Y_USED", 0)), pad_tail):
+                codes.add(C["B-SRAM"])
         if any(p != 0 for p in pads) or pad_val != 0:
             codes.add(C["B-PAD"])
         if flags != 0:
@@ -312,6 +343,8 @@ def check(st):
         return [("DMA_TENSOR", codes)]
     if op == 0x13:
         codes.update((C["A-H3"], C["B-FA"], C["P-H2"]))
+        if REV >= 2 and attn_sram_over(r["r458"], r["len"]):
+            codes.add(C["B-SRAM"])
         return [("FUSED_ATTN", codes)]
     if op == 0x14:
         codes.update((C["A-H3"], C["B-LN"]))
@@ -329,7 +362,10 @@ def main():
     ap.add_argument("path", help="program directory or mmio.txt")
     ap.add_argument("--csv")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--rev", type=int, default=1, help="RTL revision (1 or 2; 2: words 0..11 can be written, no A-H1)")
     a = ap.parse_args()
+    global REV
+    REV = 2 if a.rev >= 2 else 1
     path = a.path
     if os.path.isdir(path):
         path = os.path.join(path, "mmio.txt")
@@ -350,7 +386,7 @@ def main():
             for c in ordered:
                 per_code[c] += 1
             if not a.quiet:
-                print("[hw-check] i=%d op=%s HW revision 1: %s%s" % (st.index, op, v, (" " + ",".join(CODES[c] for c in ordered)) if ordered else ""))
+                print("[hw-check] i=%d op=%s HW revision %d: %s%s" % (st.index, op, REV, v, (" " + ",".join(CODES[c] for c in ordered)) if ordered else ""))
     n = sum(counts.values())
     print("[hw-check] summary: %d instructions, OK %d, TRANSFORM %d, PATCH %d, NO %d" % (n, counts["OK"], counts["TRANSFORM"], counts["PATCH"], counts["NO"]))
     for c in range(len(CODES)):

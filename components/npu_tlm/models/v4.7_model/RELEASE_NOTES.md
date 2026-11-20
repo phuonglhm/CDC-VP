@@ -17,6 +17,58 @@ lists the extracted data and the build outputs.
 
 ## 2. What this release contains
 
+- **A whole network on the CPU path.** With `HAS_CPU_DIRECT_NET=1` the run on the data flow controller writes a trace of the whole
+  program, and `tools/has/cpu_direct/mk_cpu_net.py` turns it into a CPU program that follows the rules for firmware that also runs on
+  the FPGA (`docs/CPU_DIRECT_GUIDE.md`, sections 8 and 10). YOLOv8m at revision 2: 9,199 core calls, 5,285 enables of the vector unit,
+  2,869,025 register writes and 215,213 polls; the trace check finds the hashes of all 9,199 core calls; CPU run PASS, 137 of 137 tensors exact,
+  98,464,826 cycles.
+- **Planner option `--r2-tile`.** `tools/fe/fe_emit_insts.py --sram rev2 --r2-tile <layer>:<rows>x<columns>` re-plans one layer with a
+  given tile; the CPU program of YOLOv8m uses `dark2.conv:9x31` so that no tile gives more than 613 result packets. `--sram rev2` now
+  stops when the layer-cost calibration is missing instead of writing a different program (`docs/KNOWN_LIMITATIONS.md`, O46).
+- **Upsample by the DMA in the front end.** `--slice-concat dma_nd --upsample dma` writes each nearest-neighbour upsample as one
+  `DMA_TENSOR` instruction (mode 2); YOLOv8m at revision 2 passes 137 of 137 steps in 64,470,174 cycles (`docs/COMPILER_GUIDE.md`,
+  section 7.2).
+- **ADD on RESIDUAL for every round mode** (`HAS_GVU_ADD_EXACT`, default 0): an ADD whose sum needs no rounding maps onto the RESIDUAL
+  registers of the hardware also when the round mode is not floor or half up.
+- **Checks of the CPU-direct path alone**: `bash tools/has/cpu_direct/run_cpu_direct.sh <output dir>` runs every CPU-direct program,
+  writes a numbered table, the flows `CPU_*` and one evidence sheet per test (`docs/FLOW_VERIFICATION.md`, section 7).
+- Regression: `tools/has/regress_gvu.sh` 287 items, 287 of 287 pass (286 in one full run; the remaining item, the check that
+  the front end refuses `--upsample dma` alone, failed there only because the script did not set `FE_WORK`; with the script
+  corrected it passes). All new options are off by default; with them off, values and cycles equal the previous release.
+
+### Previous release
+
+- **Hardware RTL revision 2.** `HAS_NEO_REV=2` makes the `neo_lite` options follow RTL revision 2: core index widths 18 / 17 / 15
+  (the `transpose_mode` bit moves to word 28, bit 16), the vector unit of revision 2 (multiplier and round-shift latencies, the
+  three-stage lookup-table queue, GEMM_FUSED stream depth 17, the Softmax stage-3 delay, max pool), the core SRAM sizes of revision 2
+  checked per layer (code `B-SRAM`). `tools/has/neo_regmap_check.py --rev 2`: 602 checks, 0 differences. The word count of the RTL as
+  delivered (92 core words, 145 DFC words) is a rounding defect of the RTL; the model keeps 29 / 82 (`docs/HW_RTL_ALIGNMENT.md`,
+  section 15; `docs/KNOWN_LIMITATIONS.md`, section 8).
+- **Planner for revision 2.** `tools/fe/fe_emit_insts.py --sram rev2` plans every layer inside the SRAM of revision 2 (YOLOv8m: 40
+  layers re-tiled, 7,299 to 8,623 tiles; ViT-B/16 unchanged). Whole networks at revision 2: YOLOv8m PASS 135 / 135, 64,241,407 cycles; ViT-B/16 PASS 244 / 244, 41,287,582 cycles.
+- **DMA tensor operations of revision 2** (`HAS_DMA_OPGEN=1`): the register file of the ReDMA sequencer (copy with up to three
+  strided loops, fill, 2-D padding, upsample), reached by the CPU; 0 bytes and 0 segments differ from an RTL simulation on 11 groups of
+  cases (`docs/COMPILER_GUIDE.md`, section 7.5).
+- **Vertical scan of the systolic array** (`HAS_TRANSPOSE_MODE` 0 to 3): mode 1 as the RTL, mode 2 with a one-line correction, mode 3
+  the proposal of the model (row-parallel preload, lane-wise epilogue) (`docs/COMPILER_GUIDE.md`, section 7.6).
+- **CPU-direct programming** (`HAS_CPU_DIRECT=1`): firmware programs the SAURIA, GVU and DMA blocks without the DFC, at the RTL
+  offsets; one-dimensional DMA, SAURIA runs (status, cycle and stall counters, soft reset), max pool, RESIDUAL with bias, Softmax and GEMM_FUSED with the requantization parameters in the sbank; the rules for firmware that also runs on the FPGA are in section 8 of the guide (a soft reset before every START after the first; one context in the last call of a GEMM_FUSED layer; GEMM_FUSED by the CPU does not give a correct result on revision 2 as delivered); checked against a simulation of `neo_top` revision 2 (`docs/CPU_DIRECT_GUIDE.md`). A chain of layers through DRAM, as firmware for a whole network runs it (two GEMM_FUSED layers, the second on the result the CPU wrote for the first, then RESIDUAL of both), is exact on the model; the example generator is `tools/has/cpu_direct/mk_cpu_chain.py`, and section 9 of the guide shows how to run a firmware program on the model. The table-reset bits of the vector unit act as on the RTL when the CPU writes them.
+- **Fix: `HAS_PROFILE` on the virtual platform.** The model root `core_rtl/` did not read `HAS_PROFILE`, so through a system wrapper
+  `HAS_PROFILE=neo` or `neo_as_rtl` had no effect (only single `HAS_*` variables did); it now applies the profile as
+  `tools/has/tb_has_npu_top` does and prints its variables on stderr. Without `HAS_PROFILE` nothing changes.
+- **RESIDUAL through the DFC follows revision 2** (`HAS_GVU_ADD_RTL`, on by default from revision 2): the bias of the RTL, the result in vbank2,
+  16 + N cycles per run; the values of the networks are unchanged.
+- **Code clean-up**: unused functions, constants, includes, four unused variables and one-off scripts removed; values and cycles unchanged.
+- **FPS at the hardware clock target of 600 MHz** in `docs/PERFORMANCE_REPORT.md`, section 5.12.
+- Regression: `tools/has/regress_gvu.sh` 282 items, 282 of 282 pass. All new options are off by default; with them
+  off, values and cycles equal the previous release.
+
+### Earlier releases
+
+The items below describe earlier releases; their numbers and defaults belong to those releases (the defaults of this release are listed above).
+
+Release with RTL revision 1 support:
+
 - **Hardware RTL revision 1.** `HAS_NEO_REV=1` makes the `neo_lite` options follow RTL revision 1 instead of
   RTL revision 0: register 12 order of the vector unit, forced buffer swap and the final CONTROL write of every command, dense
   max-pool layout, pool feeder; output tiles that are not contiguous in DRAM re-open a DFC command (7,292 of 7,299
@@ -44,9 +96,6 @@ lists the extracted data and the build outputs.
 - **Documents for compiler teams**: `docs/COMPILER_GUIDE.md`, `docs/NEO_REGISTER_FILE.md`; updated
   `SW_INTEGRATION_GUIDE.md` (section 11), `INTERFACE_SPEC.md` (section 7), `TILING_GUIDE.md`, `FRONTEND_GUIDE.md` (section 13).
 - Regression: `tools/has/regress_gvu.sh` 242 items, 242 of 242 pass.
-### Earlier releases
-
-The items below describe earlier releases; their numbers and defaults belong to those releases (the defaults of this release are listed above).
 
 - **Alignment with the `neo_lite` hardware RTL (RTL revision 0), options off by default when they were added** (in this release `HAS_OUT_TRANSPOSE` and `HAS_DMA_ND_MERGE` are on). Seven options follow the new
   hardware repository or propose what it lacks:
@@ -398,8 +447,9 @@ cycles are those of the default of an earlier release (`docs/GVU_OPS_ON_GVUTOP.m
 
 ## 4. How this release was checked
 
-The package check of this release passed 104 of 104 items; the table below sums them up. The paragraph after it lists
-what was checked for the previous releases.
+The package check of this release passed 112 of 112 items, the same items as the previous release; the table below sums
+them up. The paragraphs after it list
+what else was checked for this release and what was checked for the previous releases.
 
 On Ubuntu 22.04 with g++ 11 and SystemC 2.3.3, from a fresh copy of the repository tree only (data extracted with
 `tools/unpack_data.sh`):
@@ -425,6 +475,16 @@ On Ubuntu 22.04 with g++ 11 and SystemC 2.3.3, from a fresh copy of the reposito
 | System TLM wrapper with the model root `core_rtl/` (wrapper built unchanged; with the DRAM-window change: whole YOLOv8m and ViT-B/16 programs) | PASS: 0 mismatches, per-instruction cycles equal to the reference runs |
 | Current wrapper revision (the DRAM-window registers are part of it, no patch needed), built unchanged against the model root `core_rtl/`: its own unit test | PASS |
 | Firmware engine `tools/has/wrapper/fw/` (`docs/VERIFICATION_REPORT.md`, V24 and V29): transformer check through the wrapper on the host, in the default configuration, with the vector-unit knobs at 0 and with `HAS_SPEC=v47ref`; host steps and output CRCs of whole YOLOv8m and ViT-B/16 on the golden images; negative control; example compiled for RV32 | PASS: 263,808, 285,205 and 250,885 cycles. Not run on a CPU model inside a full platform |
+| `HAS_PROFILE=neo_as_rtl` through the system wrapper (model root `core_rtl/`) | PASS: the 26 variables of the profile set, 0 knobs read before it |
+| RTL revision 2 and CPU-direct programming: register map of revision 2; two FUSED_ATTN heads of ViT-B/16 at revision 2; RESIDUAL through the DFC at revision 2; CPU-direct DMA to every local memory, RESIDUAL, GEMM_FUSED in three core calls, and the chain of two GEMM_FUSED layers through DRAM with RESIDUAL | PASS: 602 checks, 0 differences; 2 of 2, 63,399 cycles; 6 cases; 11 regions; 64 rows, 80 unit cycles; 3,072 and 6,144 bytes exact |
+
+Also checked for this release: `tools/has/regress_gvu.sh` 287 items (section 2); the whole YOLOv8m at revision 2 on the CPU
+path, programmed from the trace of the data flow controller run (`docs/CPU_DIRECT_GUIDE.md`, section 10: PASS, 137 of 137
+tensors exact, 98,464,826 cycles); the current wrapper revision with the proposed SYNC change
+(`tools/has/wrapper/npu_tlm_cpu_direct_sync.patch` as shipped, applied without offset) and the model root `core_rtl/` of the package
+runs the CPU-direct programs of the package's generators (DMA, one SAURIA run, three runs, RESIDUAL, GEMM_FUSED in three core calls,
+the chain of two layers with SYNC per DMA and with one SYNC of the whole DRAM) with 0 bytes different in the system RAM; without the
+change the chain does not reach the system RAM (control).
 
 Checked for the previous releases in addition (`docs/VERIFICATION_REPORT.md`, V30 to V39): both networks rerun through `HasNpuTop` in
 the default configuration with the binary built from this tree -- YOLOv8m PASS, 62,666,123 cycles, PE utilization
@@ -523,7 +583,7 @@ run on one core.
   register file. The clock-domain crossing of the RTL top, the ping-pong buffer switch and port contention on SRAM C are not
   modelled (counted only). A strided slice as one-dimensional commands costs one command per byte. The corner turn is a
   proposal; the vertical scan of the RTL is not modelled. The configuration closest to the RTL still runs LayerNorm on the
-  model (`docs/KNOWN_LIMITATIONS.md`, O35 to O38). New in this release: a GEMM_FUSED layer is always refused through the register-file window (`A-H1`, `A-H4`, `B-REQ3`); the absolute base address of `neo_top` on the FPGA is not decided; upsample and reshape do not exist in the hardware (O39, O44, O45).
+  model (`docs/KNOWN_LIMITATIONS.md`, O35 to O38). From the previous releases: a GEMM_FUSED layer is always refused through the register-file window (`A-H1`, `A-H4`, `B-REQ3`); the absolute base address of `neo_top` on the FPGA is not decided; upsample and reshape do not exist in the hardware (O39, O44, O45). New in this release: the revision-2 programs cannot be re-planned or regenerated from this package (O46); the CPU path and the vector unit of the RTL round and narrow as the RTL does, which gives the same bytes as the default arithmetic for YOLOv8m and was not measured for ViT-B/16 (Q6).
 - The latency of one register write (`HAS_GVU_REG_LAT`, 4 cycles) is an estimate; the residual-add registers (Reg 9..15)
   and AGU_ND (Reg 16..24) are proposals that the hardware RTL does not have yet (`docs/GVU_DFC_REFERENCE_FLOW.md`).
 

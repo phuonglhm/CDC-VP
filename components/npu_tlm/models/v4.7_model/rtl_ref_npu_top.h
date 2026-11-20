@@ -202,6 +202,16 @@ namespace sauria_rtl
         }
 #endif
 
+        // Vertical (transpose) result extraction in the systolic array, the way the HW does it (neo_lite r2: PSM
+        // o_vertical_scan -> SA i_transpose_mode). mode 0 = off (the default: nothing is wired, no signal is added to the old
+        // path, behaviour byte-identical); 1 = as delivered RTL (includes bug B25: a finished context stays in the PE shadow
+        // register and seeds a later one); 2 = 1 + the B25 patch (the patch clears the shadow register at the last row). The mode is a parameter of the
+        // block, never read from the environment. Call before the first START. Only X_DIM == Y_DIM is supported.
+        void set_transpose_mode(unsigned mode)
+        {
+            array_inst->set_transpose_mode(mode, mode ? &s_vertical_scan : nullptr);
+            psm_inst->set_vertical_scan_out(mode ? &s_vertical_scan : nullptr, mode >= 3);
+        }
         uint32_t get_psm_active_context_id() const { return psm_inst->get_active_context_id(); }
         uint32_t get_psm_recorded_write_count() const { return psm_inst->get_recorded_write_count(); }
         uint64_t get_psm_recorded_mask(uint32_t idx) const
@@ -1350,6 +1360,7 @@ namespace sauria_rtl
         sc_signal<bool> s_psm_finalwrite{"s_psm_finalwrite"};
         sc_signal<bool> s_psm_shift_done{"s_psm_shift_done"};
         sc_signal<bool> s_cscan_en{"s_cscan_en"};
+        sc_signal<bool> s_vertical_scan{"s_vertical_scan"}; // PSM -> SA vertical-scan flag, only wired when transpose_mode >= 1
 
         sc_signal<uint32_t> s_cxlim{"s_cxlim"};
         sc_signal<uint32_t> s_cxstep{"s_cxstep"};

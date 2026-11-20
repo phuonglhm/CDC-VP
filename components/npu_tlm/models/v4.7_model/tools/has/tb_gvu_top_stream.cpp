@@ -16,7 +16,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <random>
-#include <string>
 #include <vector>
 #include "has/gvu_top_bridge.h"
 #include "has/gvu_top_stream.h"
@@ -361,9 +360,9 @@ int sc_main(int argc, char **argv)
     {
         const GvuTopStream::Trace &t = gs->trace[k];
         const uint64_t want = (k + 8 >= gs->trace.size()) ? 8 : 1;
-        if (t.accept - t.push != want || t.out - t.accept != uint64_t(GvuTopStream::kDepth)) lat_bad++;
+        if (t.accept - t.push != want || t.out - t.accept != uint64_t(GvuTopStream::kDepth())) lat_bad++;
     }
-    std::printf("[stream] packets off the expected timing (push->latch 1, or 8 for the 8 held ones; latch->result %d): %zu of %zu\n", GvuTopStream::kDepth, lat_bad, gs->trace.size());
+    std::printf("[stream] packets off the expected timing (push->latch 1, or 8 for the 8 held ones; latch->result %d): %zu of %zu\n", GvuTopStream::kDepth(), lat_bad, gs->trace.size());
     check(lat_bad == 0, "latency E -> E+1 -> E+1+kDepth for every packet");
     for (size_t k = 0; k < std::min<size_t>(gs->trace.size(), 3); k++)
         std::printf("  packet %zu: in the FIFO at edge %llu, latched by GvuTop at edge %llu, result written back at edge %llu "

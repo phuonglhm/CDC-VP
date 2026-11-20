@@ -13,11 +13,17 @@ F=$R/FUs; S=$R/stream_switch; P=$R/scratchpad
 SRC="$R/gvu_pkg.sv $R/pipeline_reg.sv $F/clz.sv $F/gvu_lut_mem.sv $F/gvu_lut_lookup_lane.sv $F/gvu_lut_unit.sv $F/gvu_vcmp32.sv $F/gvu_vmul48x40.sv
      $S/vstream_reg_int32.sv $S/vstream_reg_int64_type0.sv $S/vstream_reg_int64_type1.sv $S/stream_vrf.sv
      $P/sram_single_port.sv $P/sram_dual_port.sv $P/gvu_scratchpad.sv $R/vlsu/gvu_vlsu.sv $R/vlsu/gvu_pooling_feeder.sv $HERE/fifo_v3_standin.sv $HERE/shift_reg_standin.sv"
+# RTL revision 2 and later: the multipliers use gvu_mul_block_cpa.sv; NEO_REV2 selects the revision-2 parts of the harness
+DEF=""
+[ -f "$F/gvu_mul_block_cpa.sv" ] && { SRC="$SRC $F/gvu_mul_block_cpa.sv"; DEF="+define+NEO_REV2"; }
+# ORACLE_EXTRA=1: also the package of the address map (the Scratchpad needs it), for tb_b_spad
+[ "${ORACLE_EXTRA:-0}" = 1 ] && [ -f "$R/../../neo_addr_pkg.sv" ] && SRC="$R/../../neo_addr_pkg.sv $SRC"
 rc=0
 for top in ${TOPS:-tb_b_lut tb_b_lut32 tb_b_cmp0 tb_b_cmp1 tb_b_mulb tb_b_svrf tb_b_spad tb_b_vlsu}; do
-  nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module $top --Mdir "$W/$top" $SRC "$HERE/tb_oracle_b.sv" > "$W/$top.build.log" 2>&1 \
+  nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module $top --Mdir "$W/$top" $DEF $SRC "$HERE/tb_oracle_b.sv" > "$W/$top.build.log" 2>&1 \
     || { echo "BUILD FAIL $top (see $W/$top.build.log)"; grep -E "^%Error" -A3 "$W/$top.build.log" | head -20; rc=1; continue; }
-  "$W/$top/V$top" +dir="$V" 2>&1 | tee "$W/$top.log" | grep -E "ORACLE|DETAIL|LATENCY|DIRECTED|FIRST|Error|FATAL" | cut -c1-400
+  "$W/$top/V$top" +dir="$V" +sout="$W/stream_$top.txt" 2>&1 | tee "$W/$top.log" | grep -E "ORACLE|STREAM|DETAIL|LATENCY|DIRECTED|FIRST|Error|FATAL" | cut -c1-400
+  [ "${ORACLE_CLEAN:-0}" = 1 ] && rm -rf "$W/$top"
 done
 grep -h "ORACLE" "$W"/tb_b_*.log 2>/dev/null | grep -v "mismatches 0" && rc=1
 exit $rc

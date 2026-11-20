@@ -46,7 +46,7 @@ def main():
     graph_ir_path = os.path.join(fc.FE_WORK, "step2", "graph_ir.json")
     model = tm.ShapeModel(shape_csv, graph_ir_path) if os.path.exists(shape_csv) else None
     if model is None:
-        print("[step6a] WARN: %s not found -- falling back to tile-count objective (S9-FE model disabled)" % shape_csv)
+        print("[step6a] WARN: %s not found -- falling back to tile-count objective (tile cost model disabled)" % shape_csv)
     program = tp.build_program(ir, model=model)
     program["config"] = args.config
     convs = [s for s in program["steps"] if s["kind"] == "conv"]

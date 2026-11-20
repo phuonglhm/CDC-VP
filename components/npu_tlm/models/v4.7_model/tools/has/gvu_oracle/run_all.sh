@@ -26,7 +26,7 @@ tail -1 "$W/bin/tb_rtl_ref_gvu_fu.log"
   bash "$HERE/run_verilator_directed.sh" "$R" "$W/sim_dir"
   bash "$HERE/run_verilator_top.sh" "$R" "$W/sim_top" "8" "$W/vec"
 } > "$W/run.log" 2>&1
-grep -hE "^(ORACLE|KNOWN|LATENCY|DIRECTED|TOP end)" "$W/run.log" | sort -u > "$W/summary.txt"
+grep -hE "^(ORACLE|KNOWN|VALUE|STREAM|LATENCY|DIRECTED|TOP end)" "$W/run.log" | sort -u > "$W/summary.txt"
 cat "$W/summary.txt"
 n=$(grep -c "^ORACLE" "$W/summary.txt"); bad=$(grep "^ORACLE" "$W/summary.txt" | grep -vc "mismatches 0$")
 fail=$(grep -c "BUILD FAIL" "$W/run.log")

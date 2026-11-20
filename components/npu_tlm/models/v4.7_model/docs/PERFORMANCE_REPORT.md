@@ -7,7 +7,7 @@ the NPU and which describe the testbench. Labels as in `VERIFICATION_REPORT.md`:
 - **DERIVED**: computed from measured numbers by the stated formula.
 - **ESTIMATED**: produced by a formula or assumption, not by a run.
 
-Clock frequency for all time and throughput figures: 0.8 GHz (assumption of the HAS).
+Clock frequency for all time and throughput figures: 0.8 GHz (assumption of the HAS); section 5.12 gives the frame rates at 600 MHz, the timing target of the hardware RTL.
 
 ## 1. Read this first
 
@@ -553,6 +553,20 @@ the proposals of the model to 0.
   +132 million cycles for YOLOv8m and +129 million for ViT-B/16 with channel-major tensors (`COMPILER_GUIDE.md`, section 7.3).
 - ViT-B/16 with profile `neo` is not a hardware number: LayerNorm and the attention requant run on the functional model, and
   the hardware has neither.
+
+### 5.12 Frame rate at 600 MHz, and RTL revision 2
+
+The hardware RTL is constrained for 600 MHz in both clock domains (its timing target). At that clock the measured cycle counts of this release give the frame rates below (DERIVED, frame rate = clock / total cycles).
+
+| Run | Total cycles | Frame rate at 0.8 GHz | Frame rate at 600 MHz |
+|---|---:|---:|---:|
+| YOLOv8m `insts_pe3_nd`, default | 63,902,513 | 12.52 FPS | 9.39 FPS |
+| YOLOv8m `insts_pe3`, epilogue depth 9 | 62,422,935 | 12.82 FPS | 9.61 FPS |
+| YOLOv8m `insts_pe3`, profile `neo` (RTL revision 1; sum of seven windows) | 65,371,733 | 12.24 FPS | 9.18 FPS |
+| ViT-B/16, default | 41,244,621 | 19.40 FPS | 14.55 FPS |
+
+- The cycle counts do not depend on the clock in the model: it counts core cycles with one clock (the clock-domain crossing of the RTL is one fixed latency), so these rates assume that the DMA and the controller keep pace at the lower clock.
+- RTL revision 2 (`HAS_NEO_REV=2`) has not been run on a whole network. Expected effects: the revision-2 plan of YOLOv8m about +243,000 cycles (+0.4 %, ESTIMATE of the planner's cost model; ViT-B/16 needs no re-plan); the Softmax delay of revision 2 about +0.04 % on ViT-B/16 (DERIVED); a GEMM_FUSED stream +6 cycles (MEASURED on the unit bench). With the programs of this package revision 2 refuses 40 layers of YOLOv8m (`KNOWN_LIMITATIONS.md`, section 8.4).
 
 ## 6. Estimated components
 

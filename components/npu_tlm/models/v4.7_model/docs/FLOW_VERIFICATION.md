@@ -89,7 +89,7 @@ five of the flows: 67 rows. MEASURED (`bash tools/has/regress_gvu.sh`, default c
 | MOVE | 5 | descriptor packing; MOVE against its definition every cycle (D); N rows in N + 3 cycles | every step PASS; MOVE is a proposal in `has/gvu_agu_nd_move.h`, not on the instruction path |
 | DMA_SLICE_CONCAT | 5 | knob off refuses modes 6 / 7; 4-D descriptors of `tb_has_dma`; 256 KB tensors; 27-instruction program against `ref_program.py` (S); tile gather / scatter | every step PASS (option `HAS_DMA_ND`, on by default) |
 
-Summary of the run: 67 of 67 rows PASS; 1 step end to end only; 3 steps PASS with a known RTL difference.
+Summary of the run: 67 of 67 rows PASS; 1 step end to end only; 3 steps PASS with a known RTL difference. With the CPU-direct flows of section 7 the same run writes 92 rows (92 of 92 PASS; 3 steps end to end only; 4 steps PASS with a known RTL difference).
 
 ## 5. What a PASS does not cover
 
@@ -106,3 +106,42 @@ Summary of the run: 67 of 67 rows PASS; 1 step end to end only; 3 steps PASS wit
 A flow is a list of steps in `tools/has/verify_flows.py`; each step lists `C(...)` checks (and `N(...)` negative
 checks) with the log name, a regular expression for the line, a condition on its named groups, the reference kind and
 the texts printed in the log. A bench that should be read by the tool prints one summary line per measured quantity.
+
+## 7. Flows of the CPU-direct path
+
+The CPU can program the SAURIA, GVU and DMA blocks itself, without the DFC (`HAS_CPU_DIRECT=1`, RTL revision 2,
+`CPU_DIRECT_GUIDE.md`). Five flows of `verify_flows.py` cover it; their steps are the sequences of `CPU_DIRECT_GUIDE.md`,
+section 4. Every check follows one method:
+
+1. the DFC of the model runs a small piece of work (a core tile, a max pool, a GEMM_FUSED layer, two layers in a row);
+   its result is the golden, and what it gave the hardware (SRAM contents, the 29 core words, the GVU registers) is
+   written out (`HAS_CPU_DIRECT_DUMP`);
+2. a generator of `tools/has/cpu_direct/` turns that into the register accesses a CPU must make (`mmio.txt`: W write,
+   P poll, K compare a DRAM region with the golden);
+3. the testbench replays the program as the CPU while the DFC stays idle;
+4. every DRAM region is compared byte by byte with the golden, and the counts of the log (STARTs, soft resets, DMA
+   commands, cycles) with the expected values.
+
+Reference kinds as in section 2. A golden taken from the DFC run is M; the same step then also has an S check (the DFC
+run against `tools/has/ref_program.py`, or the formula of the RTL written in Python) and, where the program was run on
+the RTL, an R check. The R checks read `tools/has/cpu_direct/rtl_cpu_runs.txt`, the stored results of the `neo_top`
+bench of RTL revision 2 driven by the CPU (Verilator); the tool computes the MD5 of the program this tree generates and
+the check passes only when it is the program that was run on the RTL.
+
+Running: `bash tools/has/cpu_direct/run_cpu_direct.sh <output dir>` runs the CPU-direct checks alone (a table of 26
+checks) and then `python3 tools/has/verify_flows.py <output dir> --only CPU_`; `regress_gvu.sh` runs the same checks and
+writes these flows with the others. Output: `<output dir>/flows/CPU_*.log` and `SUMMARY.md`.
+
+| Flow | Steps | Main checks and references | Result |
+|---|---|---|---|
+| CPU_DMA | 4 | one-dimensional DMA into every local memory and back, unaligned, write-zero (S); a command outside every memory refused (negative); the same program on the RTL (R); DMA tensor register file, 11 groups and 7 descriptors (S) | every step PASS; step 3 end to end only |
+| CPU_SAURIA_RUN | 6 | the 29 words decoded field by field (S); one core run: SRAM C exact and core cycles equal to the DFC run (M), the DFC run against `ref_program.py` (S), the same program on the RTL (R); soft reset and a second run; START without a soft reset counted (negative); status registers and version | every step PASS |
+| CPU_GEMM_FUSED | 5 | sbank reads; three core calls with the stream bits, soft resets; one and two contexts per call; 96 result rows exact (M); the same program on the RTL with the correction that holds the vbank2 write address (R) | every step PASS; step 5 OPEN: on the RTL as delivered every packet overwrites row 0 (2,658 of 3,072 bytes wrong); a correction is proposed to the hardware team |
+| CPU_GVU | 5 | max pool: the DFC register values replayed, 11 writes above the 14 registers dropped, unit cycles equal to the DFC run (M) and to the RTL (R); RESIDUAL add and subtract against the RTL formula (S), 80 cycles as on the RTL (R) | every step PASS; step 4 end to end only |
+| CPU_CHAIN | 4 + whole | layer 0 to DRAM, layer 1 from DRAM with its own activation table, RESIDUAL of both (S); negative check without the table reset: 2 of 3 regions, 4,096 bytes wrong | every step PASS |
+
+Summary: 25 of 25 rows PASS; 2 steps end to end only; 1 step PASS with a known RTL difference.
+
+What these flows do not cover: the CPU is the testbench replaying the register accesses, not a RISC-V core running
+firmware; the time of a one-dimensional DMA command is the cost model of the model; the programs are single operations
+and a chain of two layers (a whole network driven by the CPU is reported in `VERIFICATION_REPORT.md` when it is run).

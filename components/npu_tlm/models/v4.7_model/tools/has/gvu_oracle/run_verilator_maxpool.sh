@@ -13,6 +13,8 @@ mkdir -p "$W"
 SRC="$R/gvu_pkg.sv $R/pipeline_reg.sv $(ls $R/FUs/*.sv | tr '\n' ' ') $(ls $R/stream_switch/*.sv | tr '\n' ' ') $(ls $R/scratchpad/*.sv | tr '\n' ' ')
      $(ls $R/vlsu/*.sv | tr '\n' ' ') $R/gvu_pipe_controller.sv $R/gvu_top.sv
      $HERE/shift_reg_standin.sv $HERE/spill_register_standin.sv $HERE/fifo_v3_standin.sv"
+# RTL revision 1 and later: the Scratchpad refers to the package of the address map (neo_addr_pkg.sv, two levels above the vector unit directory)
+[ -f "$R/../../neo_addr_pkg.sv" ] && SRC="$R/../../neo_addr_pkg.sv $SRC"
 nice -n 19 verilator --binary --timing -sv -Wno-fatal -Wno-ENUMVALUE --top-module tb_oracle_maxpool --Mdir "$W/tb_oracle_maxpool" $SRC "$HERE/tb_oracle_maxpool.sv" > "$W/build.log" 2>&1
 rc=$?
 echo "build rc=$rc; errors $(grep -c '^%Error' "$W/build.log")"

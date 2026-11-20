@@ -31,9 +31,11 @@
 //   P-SPLIT    HAS_SKIP: GEMM_FUSED then ADD (a RESIDUAL)
 //   P-H2       lut_init reads the wrong cell (neo_interface.sv:225-227): activation tables and Softmax (A-fault of the RTL, not in the host-side table)
 //   P-POOLDENSE MAXPOOL stride 2 / 4 with window != stride: wrong write counter of the dense layout (MEASURED)
+//   B-SRAM     (RTL revision 2 only) the tile of a GEMM_FUSED exceeds one SRAM buffer (A 98 304 B, B 65 536 B, C 10 240 psums; has/sram_limits.h), or a
+//              FUSED_ATTN product does not fit core_dot; the compiler removes it by re-tiling (TRANSFORM). Never set at revision 1
 // Not checked: contiguity of the tile in DRAM.
 // The same rules, on the register values of a program, are in tools/has/hw_check_program.py; the two print the same lines.
-// With HAS_HW_CHECK=1, HasNpuTop prints one line per instruction it runs ("[hw-check] i=<n> op=<name> HW revision 1: <verdict> <codes>") and
+// With HAS_HW_CHECK=1, HasNpuTop prints one line per instruction it runs ("[hw-check] i=<n> op=<name> HW revision <1 or 2>: <verdict> <codes>") and
 // a summary table at exit. The knob changes nothing else.
 #ifndef HAS_HW_CAPABILITY_H
 #define HAS_HW_CAPABILITY_H
@@ -46,6 +48,8 @@
 
 #include "has/has_mmio_compat.h"
 #include "has/rtl_ref_gvu_residual_hw.h"
+#include "has/neo_rev.h"
+#include "has/sram_limits.h"
 
 namespace has
 {
@@ -55,6 +59,7 @@ namespace has
         HW_B_ACTLUT, HW_B_REQ3, HW_B_FSCALE, HW_B_PAD, HW_B_INDIM, HW_B_EDGE, HW_B_PADTAIL, HW_B_CINORD, HW_B_HALO, HW_B_STRIDE, HW_B_TMAJ,
         HW_B_ADDMAP, HW_B_ADDTILE, HW_B_POOLPAD, HW_B_POOLFIT, HW_B_POOLK, HW_B_AVG, HW_B_FA, HW_B_LN, HW_B_DMA, HW_B_FIELD,
         HW_P_SPLIT, HW_P_H2, HW_P_POOLDENSE,
+        HW_B_SRAM,   // last, so that the order and the bits of the other codes stay as they were
         HW_N_CODES
     };
     inline const char *hw_code_name(int c)
@@ -62,14 +67,14 @@ namespace has
         static const char *n[HW_N_CODES] = {"A-H1", "A-H3", "A-H4",
                                             "B-ACTLUT", "B-REQ3", "B-FSCALE", "B-PAD", "B-INDIM", "B-EDGE", "B-PADTAIL", "B-CINORD", "B-HALO", "B-STRIDE", "B-TMAJ",
                                             "B-ADDMAP", "B-ADDTILE", "B-POOLPAD", "B-POOLFIT", "B-POOLK", "B-AVG", "B-FA", "B-LN", "B-DMA", "B-FIELD",
-                                            "P-SPLIT", "P-H2", "P-POOLDENSE"};
+                                            "P-SPLIT", "P-H2", "P-POOLDENSE", "B-SRAM"};
         return n[c];
     }
     // severity per code: 'A' RTL fault / gap, 'T' removed by the compiler, 'N' removed only by the hardware or the model, 'I' note only
     inline char hw_code_severity(int c)
     {
         //                                     A-H1 A-H3 A-H4 ACTLUT REQ3 FSCALE PAD INDIM EDGE PADTAIL CINORD HALO STRIDE TMAJ ADDMAP ADDTILE POOLPAD POOLFIT POOLK AVG FA LN DMA FIELD SPLIT H2 POOLDENSE
-        static const char s[HW_N_CODES + 1] = "AAA" "NN" "TTTTT" "NN" "T" "N" "TT" "TT" "N" "NNNN" "T" "III";
+        static const char s[HW_N_CODES + 1] = "AAA" "NN" "TTTTT" "NN" "T" "N" "TT" "TT" "N" "NNNN" "T" "III" "T";
         return s[c];
     }
 
@@ -151,7 +156,7 @@ namespace has
         case 0x12:
         {
             const LayerGeom &g = li.geom;
-            set(HW_A_H1);
+            if (neo_rev() < 2) set(HW_A_H1);   // fixed in RTL revision 2 (words 0..11 can be written)
             if (li.per_channel) set(HW_A_H4);
             if (!li.last_of_host) set(HW_P_SPLIT);
             // normalized as the host-side tool does: tile sizes clamped to the tensor (the channel tile not for PAD_TAIL)
@@ -171,6 +176,7 @@ namespace has
             if (li.tmaj_c0 >= 0) set(HW_B_TMAJ);
             if (li.act != 0 || li.lut_addr != 0) set(HW_B_ACTLUT);
             if (li.act == 2 || li.act == 3) set(HW_P_H2);
+            if (neo_rev() >= NEO_REV_2 && layer_sram_verdict(li, neo_rev()).over()) set(HW_B_SRAM);
             if (li.bias_addr != 0 || li.shift_addr != 0) set(HW_B_REQ3);
             if (!li.per_channel && (li.bcast_S != 1u || li.bcast_s != 0)) set(HW_B_FSCALE);
             break;
@@ -194,7 +200,10 @@ namespace has
             else if (li.mode >= 6 && li.mode <= 9) set(HW_B_DMA);   // slice, concat, upsample, reshape
             break;
         case 0x16: set(HW_B_DMA); break;
-        case 0x13: set(HW_A_H3); set(HW_B_FA); set(HW_P_H2); break;
+        case 0x13:
+            set(HW_A_H3); set(HW_B_FA); set(HW_P_H2);
+            if (neo_rev() >= NEO_REV_2 && !attn_sram_ok(li, neo_rev())) set(HW_B_SRAM);
+            break;
         case 0x14: set(HW_A_H3); set(HW_B_LN); break;
         default: break;
         }
@@ -210,7 +219,7 @@ namespace has
         {
             HwCheck &h = inst();
             const HwVerdict v = hw_check(li);
-            std::printf("[hw-check] i=%u op=%s HW revision 1: %s%s%s\n", li.host_seq ? li.host_seq - 1 : 0u, hw_op_name(li), v.verdict(), v.codes ? " " : "", v.codes_str().c_str());
+            std::printf("[hw-check] i=%u op=%s HW revision %u: %s%s%s\n", li.host_seq ? li.host_seq - 1 : 0u, hw_op_name(li), neo_rev() >= 2 ? 2u : 1u, v.verdict(), v.codes ? " " : "", v.codes_str().c_str());
             h.count(v);
         }
 

@@ -5,7 +5,6 @@
 // The LUT unit, the comparator, the stream registers, the Scratchpad and the load / store unit are dumped by
 // tools/has/tb_rtl_ref_gvu_bdump.cpp.
 // build: g++ -std=c++17 -O2 -Wall -I. tools/has/tb_rtl_ref_gvu_g2dump.cpp -o tb_rtl_ref_gvu_g2dump ; run: <binary> <out dir>
-#include <cinttypes>
 #include <cstdio>
 #include <random>
 #include <string>

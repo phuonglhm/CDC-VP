@@ -58,7 +58,7 @@ DEFAULT_KNOBS = {"round": "half_up", "smx_sub": "unsigned", "tab_fmt": "q14s", "
                  "zero_in": "sat", "P": 15, "exp_fmt": "u8", "pwl_form": "seg", "tab_depth": "seg257"}
 QUESTION = {"round": "H1", "smx_sub": "H4", "tab_fmt": "R2", "interp_round": "R3", "zero_in": "R4", "P": "R5",
             "exp_fmt": "R6", "pwl_form": "R1 (PWL: meaning of Base / W)",
-            "tab_depth": "Q-M7 (MAS table depth 256 / 512; RTL clamps the address of the second point)"}
+            "tab_depth": "open (MAS table depth 256 / 512; RTL clamps the address of the second point)"}
 LS_FINE = 4  # fine bits of the MAS log-scale index
 
 

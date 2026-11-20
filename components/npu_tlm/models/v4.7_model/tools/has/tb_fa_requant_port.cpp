@@ -8,8 +8,6 @@
 // build: g++ -std=c++17 -O2 -Wall -I. tools/has/tb_fa_requant_port.cpp -o tb_fa_requant_port
 // usage: tb_fa_requant_port <vector file>...
 #include <cstdio>
-#include <cstdlib>
-#include <string>
 #include <vector>
 #include "has/rtl_ref_gvu_top.h"
 

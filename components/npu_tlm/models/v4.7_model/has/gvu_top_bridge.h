@@ -51,7 +51,8 @@ namespace has
     public:
         // stream depth of GEMM_FUSED in GvuTop: the one shared value rtl_ref_gvu::GEMM_STREAM_DEPTH (default 9, the register
         // cuts of the MAS; -DGVU_GEMM_STREAM_DEPTH=11 for the depth the hardware RTL measures)
-        static constexpr int kDepth = rtl_ref_gvu::GEMM_STREAM_DEPTH;
+        // revision 2 of the RTL (HAS_NEO_REV = 2): 6 stages more (rtl_ref_gvu::gemm_stream_depth_for_rev); revisions 0 / 1: the constant
+        static int kDepth() { return rtl_ref_gvu::gemm_stream_depth_for_rev(rtl_ref_gvu::GEMM_STREAM_DEPTH, has::neo_rev()); }   // read at run time (after a run profile)
 
         static bool on() { return inst().level_ > 0; }
         // HAS_GVU_TOP=3 (has/gvu_top_stream.h): residual add and max pool run on the unit of the clocked connection instead of
@@ -113,9 +114,9 @@ namespace has
             i.i_psum_valid = false;
             R::GvuTop::Out o;
             int n = 0;
-            do { o = b.top_.tick(i, true); n++; } while (!o.o_gemm_fused_valid && n < 4 * kDepth);
+            do { o = b.top_.tick(i, true); n++; } while (!o.o_gemm_fused_valid && n < 4 * kDepth());
             if (!o.o_gemm_fused_valid) { st.no_out++; st.not_expr++; return false; }
-            if (n != kDepth) st.lat_other++;
+            if (n != kDepth()) st.lat_other++;
             if (o.o_gemm_fused_mask != mask || o.o_gemm_fused_addr != addr) st.meta_bad++;
             for (size_t l = 0; l < size_t(R::GVU_LANES); l++)
             {
@@ -383,7 +384,7 @@ namespace has
             namespace R = rtl_ref_gvu;
             if (top_.state() == R::IDLE) return;
             gin_.i_psum_valid = false; gin_.i_gemm_stream_stop = true;
-            for (int k = 0; k < 4 * kDepth && top_.state() != R::IDLE; k++) top_.tick(gin_, true);
+            for (int k = 0; k < 4 * kDepth() && top_.state() != R::IDLE; k++) top_.tick(gin_, true);
             gin_.i_pipeline_en = false; gin_.i_gemm_stream_stop = false;
             top_.tick(gin_, true);
             stops_++;
@@ -427,7 +428,7 @@ namespace has
             const GvuTopBridge &b = inst();
             static const char *fn[3] = {"GEMM epilogue", "residual add", "max pool"};
             std::printf("[gvu-top] vector unit on GvuTop (HAS_GVU_TOP=%d), stream depth %d, table load %d cycles + DMA: operation | calls | "
-                        "not expressible | lanes | differ from the model | GvuTop cycles | model cycles | first difference\n", b.level_, kDepth, b.init_cycles_);
+                        "not expressible | lanes | differ from the model | GvuTop cycles | model cycles | first difference\n", b.level_, kDepth(), b.init_cycles_);
             for (int i = 0; i < 3; i++)
             {
                 const Stat &s = b.st_[i];

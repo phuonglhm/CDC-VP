@@ -304,9 +304,15 @@ Options (the default is in the second column; the third column says what 1 gives
 | `HAS_GVU_FA_OVERLAP` | 0 | the attention requant runs on `GvuTop` during the next pass of the core (proposal P-FA5); values unchanged (`docs/HW_RTL_ALIGNMENT.md`, section 11) |
 | `HAS_DMA_RESHAPE` | 1 | upsample and reshape as DMA operations (`DMA_TENSOR` modes 2 / 3); 0 refuses them with `UNSUPPORTED_MODE` (`docs/COMPILER_GUIDE.md`, section 7.2) |
 | `HAS_DMA_RESHAPE_T` | 0 | 1: the transpose flag of a reshape (`X_FLAGS` bit 0) is accepted (an experiment); 0 refuses it |
-| `HAS_NEO_REV` | 0 | which revision of the `neo_lite` RTL the options above follow: 0 = RTL revision 0, 1 = RTL revision 1 (`docs/HW_RTL_ALIGNMENT.md`, section 14) |
+| `HAS_NEO_REV` | 0 | which revision of the `neo_lite` RTL the options above follow: 0 = RTL revision 0, 1 = RTL revision 1 (`docs/HW_RTL_ALIGNMENT.md`, section 14), 2 = RTL revision 2 (section 15) |
 | `HAS_DMA_DFC1D_RESTART`, `HAS_DMA_DFC1D_REPORT` | 0, 0 | with `HAS_NEO_REV=1`: extra cycles per re-opened DFC command (not measured); 1 = counters of the one-dimensional commands on stderr at exit |
 | `HAS_DFC_CORE_DMA` | 0 | with `HAS_NEO_REV=1`: core operand loads charged as one-dimensional DFC commands (`docs/HW_RTL_ALIGNMENT.md`, section 14.3) |
+| `HAS_DMA_OPGEN`, `HAS_OPGEN_FLOOR` | 0, 0 | with `HAS_NEO_REV=2`: the DMA tensor register file programmed by the CPU (`docs/HW_RTL_ALIGNMENT.md`, section 15.1); 1 = keep a descriptor at no less than one core cycle per beat |
+| `HAS_TRANSPOSE_MODE` | 0 | with `HAS_NEO_REV=2`: vertical scan of the systolic array for token-major tiles, 1 = RTL as delivered, 2 = with the shadow-register fix, 3 = proposal of the model (`docs/HW_RTL_ALIGNMENT.md`, section 15.2) |
+| `HAS_CPU_DIRECT` | 0 | with `HAS_NEO_REV=2`: the CPU programs the SAURIA, GVU and DMA blocks at `0x11000` / `0x12000` / `0x13000` (`docs/CPU_DIRECT_GUIDE.md`) |
+| `HAS_CPU_DIRECT_NET` | 0 | with `HAS_CPU_DIRECT=1` and `HAS_CPU_DIRECT_DUMP=<dir>`: the run on the data flow controller writes a trace of the whole program (`<dir>/net.txt`, `<dir>/ret.txt`) from which `tools/has/cpu_direct/mk_cpu_net.py` writes the same network as a CPU program; observation only, the results do not change (`docs/CPU_DIRECT_GUIDE.md`, section 10) |
+| `HAS_GVU_ADD_EXACT` | 0 | an element-wise ADD whose sum needs no rounding after the common power of two is taken out maps onto RESIDUAL for every round mode (the hardware has no round field); only ADDs refused before are affected, round modes 0 and 1 map as before |
+| `HAS_GVU_ADD_RTL` | 1 | acts only with `HAS_NEO_REV=2`: RESIDUAL through the DFC with the bias, vbank2 and 16 + N timing of RTL revision 2; 0 gives the earlier formula for comparison |
 | `HAS_PROFILE` (or `--profile neo` / `--profile neo_as_rtl`) | unset | run profiles with only what the hardware RTL revision 1 has; a variable set by the user wins over the profile (`docs/COMPILER_GUIDE.md`, section 5) |
 | `HAS_HW_CHECK` | 0 | one line per instruction: would the hardware run it as written, with reason codes (`docs/COMPILER_GUIDE.md`, section 3) |
 | `HAS_HOST`, `HAS_HOST_NEO_PATCHES`, `HAS_HOST_NEO_QUIET` | `neo` when unset (`v45` or any other value: window off), `A-H1,A-H4`, 0 | front end for the 82-word register file of the `neo_lite` DFC (`docs/NEO_REGISTER_FILE.md`, section 6) |
@@ -350,10 +356,10 @@ and `python3 tools/has/make_rce_gate.py <vector dir> <table dir> <out dir>` rege
 
 Regression of the vector-unit blocks and of the instruction path (transformer check, window D, AVG_POOL, padding,
 short contexts, dilation, `GvuTop`, `DMA_TENSOR`; the script sets the nine vector-unit knobs to 0 itself and each item sets the knobs it
-checks): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 242 items
+checks): `bash tools/has/regress_gvu.sh <output dir>` from the repository root, 287 items
 (including the four operations on `GvuTop`, their negative controls, the `DMA_TENSOR` group, the `HAS_DMA_ND` group, the
 verification by instruction flow, the options of `docs/HW_RTL_ALIGNMENT.md` each on the reference check program with their unit tests,
-the RTL revision 1 group, the run profiles and the hardware check, and the register-file front end); a second argument `--unit-only` runs the unit tests only. The last line is
+the RTL revision 1 group, the run profiles and the hardware check, and the register-file front end); a second argument `--unit-only` runs the unit tests only. Items whose input is missing (the revision-2 programs, which the data package does not hold, `docs/KNOWN_LIMITATIONS.md` O46; the vector sets of a hardware RTL drop) are skipped without a FAIL, so a fresh package tree counts fewer items. The last line is
 `RESULT: <n> passed, <m> failed`. The last item runs `python3 tools/has/verify_flows.py <output dir>`, which writes
 `<output dir>/flows/<FLOW>.log` and `<output dir>/flows/SUMMARY.md`: every step of the ten flows of the vector unit and the
 DMA with its checks, references and measured results (`docs/FLOW_VERIFICATION.md`); it can be run again on the logs alone. The script was written for the development tree and reads the programs and vectors

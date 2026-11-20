@@ -38,6 +38,12 @@ RTL = {
     "gcfg": "rtl/src/neo_core/gvu/gvu_config_regs.sv",
     "gpkg": "rtl/src/neo_core/gvu/gvu_pkg.sv",
     "svh": "rtl/param_config/%s.svh" % PARAM_CONFIG,
+    # revision 2: the ReDMA register files and the configuration window of neo_top
+    "conf": "rtl/src/dma/conf_regs.sv",
+    "ogtop": "rtl/src/dma/redma_opgen_top.sv",
+    "rtop": "rtl/src/dma/redma_top.sv",
+    "dtop": "rtl/src/dma/dma_top.sv",
+    "ntop": "rtl/src/neo_top.sv",
 }
 SPACES = ("file", "gvureg", "ctlwin")
 
@@ -87,6 +93,9 @@ class Rtl:
         self.enum = {}       # (set, name) -> (value, src)
         self.field = {}      # (space, word, hi, lo, name) -> src
         self.core = {}       # (bit, width, name) -> src
+        self.dconst = {}     # DMA register files (revision 2): name -> (value, src)
+        self.dfield = {}     # (register, name, hi, lo) -> src
+        self.dorder = None   # (blocks of the configuration demux of neo_top.sv in the order it tests them, src)
         self.errors = []     # extractor out of date
 
 
@@ -333,13 +342,185 @@ def extract(read):
                 prev, pend = end, None
         if prev != env["TOTAL_BITS_" + reg]:
             R.errors.append("config_regs.sv: the %s fields end at bit %d, TOTAL_BITS is %d" % (reg, prev, env["TOTAL_BITS_" + reg]))
+    extract_dma(read, R)
     return R
+
+
+def extract_dma(read, R):
+    """DMA of neo_lite revision 2: conf_regs (one-run descriptor), redma_opgen_top (tensor-operation descriptor), the address bit that
+    selects between them, the DMA parameters of sauria_pkg and the order of the blocks of the configuration window. Silent when the
+    commit has no opgen (revision 0 / 1): the DMA checks run only with --rev 2."""
+    try:
+        og = read(RTL["ogtop"])
+    except SystemExit:
+        return
+
+    def src(key, i):
+        return "%s:%d" % (RTL[key], i)
+
+    def const(name, val, key, i):
+        R.dconst[name] = (val, src(key, i))
+
+    def fld(reg, name, hi, lo, key, i):
+        R.dfield[(reg, name, hi, lo)] = src(key, i)
+
+    # ---- conf_regs.sv: offsets of the one-run descriptor, bits of CONTROL / interrupt registers
+    cf = read(RTL["conf"])
+    cur, label = None, None
+    for i, l in enumerate(cf, 1):
+        t = strip_comment(l)
+        m = re.search(r"begin\s*:\s*(\w+)", t)
+        if m:
+            label = m.group(1)
+        m = re.search(r"waddr == \(6'h([0-9A-Fa-f]+) \+ \(i/32\)\*4\)", t)
+        if m and label in ("RSTART_ADDR_WRITE", "WSTART_ADDR_WRITE", "BTT_WRITE"):
+            nm = {"RSTART_ADDR_WRITE": "CR_RADDR", "WSTART_ADDR_WRITE": "CR_WADDR", "BTT_WRITE": "CR_BTT"}[label]
+            if nm not in R.dconst:
+                const(nm, int(m.group(1), 16), "conf", i)
+        m = re.search(r"(?:if|else if)\s*\((?:\w+ > \d+ && )?waddr == 6'h([0-9A-Fa-f]+)\)", t)
+        if m:
+            cur = int(m.group(1), 16)
+            continue
+        if cur is None:
+            continue
+        for tgt, reg, nm in (("reader_start", "CONTROL", "CR_CONTROL"), ("writer_start", "CONTROL", "CR_CONTROL"), ("write_zero", "CONTROL", "CR_CONTROL"),
+                             ("reader_intr_en", "INTR_EN", "CR_INTR_EN"), ("writer_intr_en", "INTR_EN", "CR_INTR_EN")):
+            mm = re.match(r"\s*%s <= .*io_control_w_wdata\[(\d+)\]" % tgt, t)
+            if mm:
+                const(nm, cur, "conf", i)
+                fld(reg, tgt, int(mm.group(1)), int(mm.group(1)), "conf", i)
+        mm = re.match(r"\s*if \(io_control_w_wdata\[(\d+)\] & bit_wstrb\[\1\]\) begin", t)
+        if mm and i < len(cf):
+            m2 = re.match(r"\s*(reader|writer)_intr_reg <= 1'b0;", strip_comment(cf[i]))
+            if m2:
+                const("CR_INTR_STATUS", cur, "conf", i)
+                fld("INTR_STATUS", m2.group(1) + "_intr_reg", int(mm.group(1)), int(mm.group(1)), "conf", i)
+    for i, l in enumerate(cf, 1):
+        t = strip_comment(l)
+        m = re.match(r"\s*rdata <= \{8'h([0-9A-Fa-f]+), (\d+)'d0, write_zero, (\d+)'d0\};", t)
+        if m:
+            const("CR_ID", int(m.group(1), 16), "conf", i)
+            lo = int(m.group(3))
+            fld("CONTROL", "rd_write_zero", lo, lo, "conf", i)
+            fld("CONTROL", "rd_id", 31, 24, "conf", i)
+        m = re.match(r"\s*rdata <= \{30'd0, writer_intr_(en|reg), reader_intr_(en|reg)\};", t)
+        if m:
+            reg = "INTR_EN" if m.group(1) == "en" else "INTR_STATUS"
+            fld(reg, "rd_writer_intr_" + m.group(1), 1, 1, "conf", i)
+            fld(reg, "rd_reader_intr_" + m.group(2), 0, 0, "conf", i)
+        m = re.match(r"\s*rdata <= 32'h([0-9A-Fa-f]+);", t)
+        if m:
+            const("CR_BAD_READ", int(m.group(1), 16), "conf", i)
+        m = re.match(r"\s*(?:b|r)resp <= 2'b(\d+);", t)
+        if m and m.group(1) != "00":
+            const("CR_BAD_RESP", int(m.group(1), 2), "conf", i)
+        m = re.match(r"\s*raddr <= io_control_ar_araddr\[(\d+):0\];", t)
+        if m:
+            const("CR_ADDR_BITS", int(m.group(1)) + 1, "conf", i)
+    for need in ("CR_CONTROL", "CR_INTR_EN", "CR_INTR_STATUS", "CR_RADDR", "CR_WADDR", "CR_BTT", "CR_ID", "CR_BAD_READ", "CR_BAD_RESP", "CR_ADDR_BITS"):
+        if need not in R.dconst:
+            R.errors.append("conf_regs.sv: %s not found" % need)
+
+    # ---- redma_opgen_top.sv: register offsets (word index x 4), fields, ID, CTRL bits
+    env = {"CNT_W": 16, "LEN_W": 32, "ADDR_W": 32}
+    var2reg = {}
+    for i, l in enumerate(og, 1):
+        t = strip_comment(l)
+        m = re.match(r"\s*localparam \[4:0\] R_(\w+)\s*=\s*5'h([0-9A-Fa-f]+);", t)
+        if m:
+            const("OG_" + m.group(1), 4 * int(m.group(2), 16), "ogtop", i)
+        m = re.match(r"\s*localparam \[31:0\] ID_VALUE\s*=\s*32'h([0-9A-Fa-f_]+);", t)
+        if m:
+            const("OG_ID_VALUE", int(m.group(1).replace("_", ""), 16), "ogtop", i)
+        m = re.match(r"\s*R_(\w+):\s+(r_\w+)\s+<= upd\(", t)
+        if m:
+            var2reg[m.group(2)] = m.group(1)
+        m = re.match(r"\s*\.(PAD_W|REP_W)\s*\((\d+)\)", t)
+        if m:
+            env[m.group(1)] = int(m.group(2))
+            const("OG_" + m.group(1), int(m.group(2)), "ogtop", i)
+        m = re.match(r"\s*parameter CNT_W\s*=\s*(\d+)", t)
+        if m:
+            const("OG_CNT_W", int(m.group(1)), "ogtop", i)
+            env["CNT_W"] = int(m.group(1))
+    for i, l in enumerate(og, 1):
+        t = strip_comment(l)
+        m = re.match(r"\s*\.d_(\w+)\s*\((r_\w+)\[([^\]]+)\]\)", t)
+        if m and m.group(2) in var2reg:
+            sl = m.group(3)
+            mm = re.fullmatch(r"\s*(\d+)\s*\+:\s*(\w+)\s*", sl)
+            if mm:
+                lo = int(mm.group(1))
+                hi = lo + ev(mm.group(2), env) - 1
+            else:
+                mm = re.fullmatch(r"\s*([\w\-\+ ]+?)\s*:\s*([\w\-\+ ]+?)\s*", sl)
+                hi, lo = ev(mm.group(1), env), ev(mm.group(2), env)
+            fld(var2reg[m.group(2)], m.group(1), hi, lo, "ogtop", i)
+        m = re.match(r"\s*if \(io_control_w_wdata\[(\d+)\]\) begin", t)
+        if m and i < len(og) and "start_pend <= 1'b1" in og[i]:
+            fld("CTRL", "start", int(m.group(1)), int(m.group(1)), "ogtop", i)
+        m = re.match(r"\s*if \(io_control_w_wdata\[(\d+)\]\) done_q <= 1'b0;", t)
+        if m:
+            fld("CTRL", "clear_done", int(m.group(1)), int(m.group(1)), "ogtop", i)
+        m = re.match(r"\s*R_CTRL:\s+rdata_q <= \{(\d+)'d0, done_q, o_busy, (\d+)'b0\};", t)
+        if m:
+            lo = int(m.group(2))
+            fld("CTRL", "rd_busy", lo, lo, "ogtop", i)
+            fld("CTRL", "rd_done", lo + 1, lo + 1, "ogtop", i)
+        m = re.match(r"\s*waddr_q <= io_control_aw_awaddr\[(\d+):(\d+)\];", t)
+        if m:
+            const("OG_ADDR_HI", int(m.group(1)), "ogtop", i)
+            const("OG_ADDR_LO", int(m.group(2)), "ogtop", i)
+    for need in ("OG_CTRL", "OG_OP", "OG_ID", "OG_ID_VALUE", "OG_PAD_W", "OG_REP_W", "OG_CNT_W", "OG_ADDR_HI", "OG_ADDR_LO"):
+        if need not in R.dconst:
+            R.errors.append("redma_opgen_top.sv: %s not found" % need)
+
+    # ---- redma_top.sv: the bit that selects the register file, the enable; dma_top.sv must not override them
+    for i, l in enumerate(read(RTL["rtop"]), 1):
+        t = strip_comment(l)
+        m = re.match(r"\s*parameter OPGEN_SEL_BIT\s*=\s*(\d+)", t)
+        if m:
+            const("OPGEN_SEL_BIT", int(m.group(1)), "rtop", i)
+        m = re.match(r"\s*parameter bit TENSOR_OPS\s*=\s*1'b(\d)", t)
+        if m:
+            const("TENSOR_OPS", int(m.group(1)), "rtop", i)
+    for need in ("OPGEN_SEL_BIT", "TENSOR_OPS"):
+        if need not in R.dconst:
+            R.errors.append("redma_top.sv: %s not found" % need)
+    for i, l in enumerate(read(RTL["dtop"]), 1):
+        if re.search(r"TENSOR_OPS|OPGEN_SEL_BIT", strip_comment(l)):
+            R.errors.append("dma_top.sv:%d overrides a ReDMA tensor parameter (the extractor assumes the defaults of redma_top.sv)" % i)
+
+    # ---- sauria_pkg.sv: the parameters of the DMA
+    for i, l in enumerate(read(RTL["spkg"]), 1):
+        m = re.match(r"\s*parameter\s+(DMA_(?:MAX_ARLEN|MAX_AWLEN|RFIFO_LEN|WFIFO_LEN|RADDR_OFFSET|WADDR_OFFSET|SYNC_AW_W|MAX_OUTSTANDING_READS|MAX_OUTSTANDING_WRITES)|DATA_ELM_BITS)\s*=\s*(\d+)\s*;", strip_comment(l))
+        if m:
+            const(m.group(1), int(m.group(2)), "spkg", i)
+    for need in ("DMA_RADDR_OFFSET", "DMA_WADDR_OFFSET", "DMA_MAX_ARLEN", "DMA_MAX_AWLEN", "DMA_RFIFO_LEN", "DMA_WFIFO_LEN", "DMA_SYNC_AW_W",
+                 "DMA_MAX_OUTSTANDING_READS", "DMA_MAX_OUTSTANDING_WRITES", "DATA_ELM_BITS"):
+        if need not in R.dconst:
+            R.errors.append("sauria_pkg.sv: %s not found" % need)
+
+    # ---- neo_top.sv: the blocks of the configuration window in the order the demux tests them (write and read side alike)
+    seen = {"aw": [], "ar": []}
+    first = {}
+    for i, l in enumerate(read(RTL["ntop"]), 1):
+        m = re.search(r"io_cfg_port\.(aw|ar)_addr & neo_addr_pkg::AXI_(\w+)_ADDR_MASK\)\s*==\s*neo_addr_pkg::(\w+)_OFFSET", strip_comment(l))
+        if m:
+            seen[m.group(1)].append(m.group(2))
+            first.setdefault(m.group(1), i)
+            if m.group(2) != m.group(3):
+                R.errors.append("neo_top.sv:%d: mask AXI_%s_ADDR_MASK is compared with %s_OFFSET" % (i, m.group(2), m.group(3)))
+    if seen["aw"] and seen["aw"] == seen["ar"]:
+        R.dorder = (",".join(seen["aw"]), src("ntop", first["aw"]))
+    else:
+        R.errors.append("neo_top.sv: write and read side of the configuration demux do not test the blocks in the same order (%s / %s)" % (seen["aw"], seen["ar"]))
 
 
 # ---------------------------------------------------------------- the frozen table
 def write_table(R, path):
     out = ["# Register map of the neo_lite RTL, revision 1, for %s, extracted from the RTL by neo_regmap_check.py --emit-table." % PARAM_CONFIG,
-           "# const NAME VALUE SRC | enum SET NAME VALUE SRC | field SPACE WORD HI LO NAME SRC | core BIT WIDTH NAME SRC",
+           "# const NAME VALUE SRC | enum SET NAME VALUE SRC | field SPACE WORD HI LO NAME SRC | core BIT WIDTH NAME SRC | (revision 2) dconst NAME VALUE SRC | dfield REG NAME HI LO SRC | dorder BLOCKS SRC",
            "# SRC = RTL file:line at that commit. SPACE: file = word of the 82-word file, gvureg = GVU register number, ctlwin = word of the controller window.",
            "commit %s" % COMMIT, "param_config %s" % PARAM_CONFIG]
     for k in sorted(R.const):
@@ -350,6 +531,12 @@ def write_table(R, path):
         out.append("field %s %d %d %d %s %s" % (k[0], k[1], k[2], k[3], k[4], R.field[k]))
     for k in sorted(R.core):
         out.append("core %d %d %s %s" % (k[0], k[1], k[2], R.core[k]))
+    for k in sorted(R.dconst):
+        out.append("dconst %s %s %s" % (k, hx(R.dconst[k][0]), R.dconst[k][1]))
+    for k in sorted(R.dfield, key=lambda x: (x[0], -x[2], x[1])):
+        out.append("dfield %s %s %d %d %s" % (k[0], k[1], k[2], k[3], R.dfield[k]))
+    if R.dorder:
+        out.append("dorder %s %s" % R.dorder)
     with open(path, "w", newline="\n") as f:
         f.write("\n".join(out) + "\n")
 
@@ -369,6 +556,12 @@ def read_table(path):
                 R.field[(p[1], int(p[2]), int(p[3]), int(p[4]), p[5])] = p[6]
             elif p[0] == "core":
                 R.core[(int(p[1]), int(p[2]), p[3])] = p[4]
+            elif p[0] == "dconst":
+                R.dconst[p[1]] = (int(p[2], 16), p[3])
+            elif p[0] == "dfield":
+                R.dfield[(p[1], p[2], int(p[3]), int(p[4]))] = p[5]
+            elif p[0] == "dorder":
+                R.dorder = (p[1], p[2])
             elif p[0] in ("commit", "param_config"):
                 continue
             else:
@@ -455,7 +648,7 @@ pin(L, r"set_bits\(a\[21\], 17, 16", "file", 38, 17, 16)
 S = "driver/libsauria_cfg.h"
 
 
-def check_model(R, tree, rep):
+def check_model(R, tree, rep, rev=1):
     lib = tree.text("driver/libneo_cfg.h")
 
     # ---- constants in namespace neo::addr
@@ -465,6 +658,12 @@ def check_model(R, tree, rep):
         v = ev(m.group(2), env)
         env[m.group(1)] = v
         hdr[m.group(1)] = (v, first + body[:m.start()].count("\n"))
+    if rev >= 2:   # revision 2: the constants of namespace addr::rev2 replace the ones of the same name
+        body2, first2 = block(lib, "rtl_constants_rev2")
+        for m in re.finditer(r"constexpr\s+uint32_t\s+(\w+)\s*=\s*([^;]+);", body2):
+            if m.group(1) not in hdr:
+                raise SystemExit("libneo_cfg.h: %s in rtl_constants_rev2 has no revision 1 constant" % m.group(1))
+            hdr[m.group(1)] = (ev(m.group(2), env), first2 + body2[:m.start()].count("\n"))
     for name, (v, src) in sorted(R.const.items()):
         if name in ("N_CTRL_REGS", "GVU_NUM_REGS", "GVU_CFG_REGS", "N_DFC", "N_CORE", "N_GVU", "N_REGS", "IDX_CORE", "IDX_GVU", "REG_BASE") or name.startswith("TOTAL_REGS_") or name.endswith("_IDX_W"):
             continue   # compared below, outside namespace addr
@@ -592,11 +791,22 @@ def check_model(R, tree, rep):
         cursor += width
         if m.group(3) == "true" and cursor % 32:
             cursor = (cursor // 32 + 1) * 32
-    body, first = block(lib, "rtl_core_extra")
+    body, first = block(lib, "rtl_core_extra_rev2" if rev >= 2 else "rtl_core_extra")
     env2 = {}
     for m in re.finditer(r"constexpr\s+unsigned\s+(\w+)\s*=\s*([^;]+);", body):
         env2[m.group(1)] = ev(m.group(2), env2)
     hdr_idx = {k: env2[k] for k in ("CORE_IDX_A", "CORE_IDX_W", "CORE_IDX_O") if k in env2}
+    if rev >= 2:   # neo::target_rev(2) takes its index widths from addr::rev2; the packed layout follows them
+        idx_a, idx_w, idx_o = hdr_idx["CORE_IDX_A"], hdr_idx["CORE_IDX_W"], hdr_idx["CORE_IDX_O"]
+        wk.update({"ACT_IDX": idx_a, "WEI_IDX": idx_w, "OUT_IDX": idx_o})
+        cursor = 0
+        mod = {}
+        for m in re.finditer(r"\{F_CFG_(\w+),\s*WK_(\w+),\s*(true|false),\s*SP_(\w+)\}", lay):
+            width = wk[m.group(2)] * (Y if m.group(4) == "SKIP_PER_ROW" else 1)
+            mod[(cursor, width, m.group(1).lower())] = "sauria_cfg_layout.h:%d" % (lay[:m.start()].count("\n") + 1)
+            cursor += width
+            if m.group(3) == "true" and cursor % 32:
+                cursor = (cursor // 32 + 1) * 32
     for k in ("CON", "ACT", "WEI", "OUT"):
         v, src = R.const["TOTAL_REGS_" + k]
         if env2.get("CORE_WORDS_" + k) != v:
@@ -648,7 +858,149 @@ def check_model(R, tree, rep):
             rep.mismatch("uses", "%s:%d sets [%d:%d] of word %d; the RTL has no such field" % (S, txt[:m.start()].count("\n") + 1, hi, lo, w))
         else:
             rep.ok()
+    if rev >= 2:
+        check_dma(R, tree, rep, lib)
     return
+
+
+
+def check_dma(R, tree, rep, lib):
+    """Revision 2: the DMA register files and the CPU window to them (libneo_cfg.h, block rtl_dma) against the RTL."""
+    if not R.dconst:
+        rep.mismatch("dma", "the RTL source has no DMA records (revision 2 needs the opgen register file)")
+        return
+    body, first = block(lib, "rtl_dma")
+    body = re.sub(r"//[^\n]*", "", body)   # comments out, line numbers kept
+    env, hdr = {}, {}
+    # constants may be listed several to a line: "constexpr uint32_t A = 1u, B = 2u;"
+    for m in re.finditer(r"constexpr\s+uint32_t\s+([^;]+);", body):
+        line = first + body[:m.start()].count("\n")
+        for part in m.group(1).split(","):
+            mm = re.match(r"\s*(\w+)\s*=\s*(.+?)\s*$", part)
+            v = ev(mm.group(2), env)
+            env[mm.group(1)] = v
+            hdr[mm.group(1)] = (v, line)
+    # derived on the model side only: the base of the tensor register file inside the DMA block
+    derived = {"OPGEN_BASE", "HOST_CTRL_WINDOW", "HOST_DMA_WINDOW"}
+    for name, (v, src) in sorted(R.dconst.items()):
+        if name not in hdr:
+            rep.mismatch("dma", "%s = %s missing in libneo_cfg.h (rtl_dma)" % (name, hx(v)), src)
+        elif hdr[name][0] != v:
+            rep.mismatch("dma", "%s: libneo_cfg.h:%d has %s, RTL has %s" % (name, hdr[name][1], hx(hdr[name][0]), hx(v)), src)
+        else:
+            rep.ok()
+    for name, (v, line) in hdr.items():
+        if name not in R.dconst and name not in derived:
+            rep.mismatch("dma", "libneo_cfg.h:%d defines %s that the RTL does not have" % (line, name))
+    if "OPGEN_BASE" not in hdr or "OPGEN_SEL_BIT" not in hdr or hdr["OPGEN_BASE"][0] != (1 << hdr["OPGEN_SEL_BIT"][0]):
+        rep.mismatch("dma", "OPGEN_BASE must be 1 << OPGEN_SEL_BIT (the demux of redma_top.sv selects the tensor register file with that address bit)")
+    else:
+        rep.ok()
+    # the tensor register file lives above the legacy decode: bit OPGEN_SEL_BIT is outside the six bits conf_regs decodes and inside the window (address bits [6:2])
+    if "OPGEN_SEL_BIT" in hdr and "CR_ADDR_BITS" in hdr and "OG_ADDR_HI" in hdr:
+        if hdr["OPGEN_SEL_BIT"][0] >= hdr["CR_ADDR_BITS"][0] and hdr["OPGEN_SEL_BIT"][0] > hdr["OG_ADDR_HI"][0]:
+            rep.ok()
+        else:
+            rep.mismatch("dma", "OPGEN_SEL_BIT %d must be at or above the %d address bits of conf_regs and above the %d..%d bits of the tensor register file"
+                         % (hdr["OPGEN_SEL_BIT"][0], hdr["CR_ADDR_BITS"][0], hdr["OG_ADDR_HI"][0], hdr["OG_ADDR_LO"][0]))
+    # every register offset lies inside the decoded range of its register file
+    for name, (v, src) in R.dconst.items():
+        if name.startswith("OG_") and name not in ("OG_ID_VALUE", "OG_PAD_W", "OG_REP_W", "OG_CNT_W", "OG_ADDR_HI", "OG_ADDR_LO"):
+            if v >= (1 << (R.dconst["OG_ADDR_HI"][0] + 1)) or v % 4:
+                rep.mismatch("dma", "%s = %s is outside the word range the tensor register file decodes" % (name, hx(v)), src)
+            else:
+                rep.ok()
+
+    # ---- fields
+    fm = re.search(r"static const DmaField DMA_FIELDS\[\]\s*=\s*\{(.*?)\};", body, re.S)
+    if not fm:
+        rep.mismatch("dma", "libneo_cfg.h: DMA_FIELDS not found in rtl_dma")
+        return
+    hf = {}
+    for m in re.finditer(r"\{\s*\"(\w+)\"\s*,\s*\"(\w+)\"\s*,\s*(\d+)\s*,\s*(\d+)\s*\}", fm.group(1)):
+        hf[(m.group(1), m.group(2), int(m.group(3)), int(m.group(4)))] = first + body[:fm.start(1) + m.start()].count("\n")
+    only_rtl = sorted(set(R.dfield) - set(hf))
+    only_hdr = sorted(set(hf) - set(R.dfield))
+    paired = set()
+    for k in only_rtl:
+        twin = [h for h in only_hdr if h[0] == k[0] and h[1] == k[1]]
+        if twin:
+            paired.add(twin[0])
+            rep.mismatch("dma", "register %s field %s: libneo_cfg.h:%d has [%d:%d], RTL has [%d:%d]" % (k[0], k[1], hf[twin[0]], twin[0][2], twin[0][3], k[2], k[3]), R.dfield[k])
+        else:
+            rep.mismatch("dma", "register %s field %s [%d:%d] missing in DMA_FIELDS" % (k[0], k[1], k[2], k[3]), R.dfield[k])
+    for k in only_hdr:
+        if k not in paired:
+            rep.mismatch("dma", "libneo_cfg.h:%d: register %s field %s [%d:%d] is not in the RTL" % ((hf[k],) + k))
+    rep.ok(len(set(hf) & set(R.dfield)))
+    # the register a field names must exist in the offsets above
+    for (reg, name, hi, lo) in hf:
+        nm = ("CR_" if reg in ("CONTROL", "INTR_EN", "INTR_STATUS") else "OG_") + reg
+        if nm not in R.dconst:
+            rep.mismatch("dma", "libneo_cfg.h:%d: field %s.%s names a register with no offset (%s)" % (hf[(reg, name, hi, lo)], reg, name, nm))
+        else:
+            rep.ok()
+
+    # ---- the bases of the two platforms, pinned in every file that spells them
+    def text_of(rel, what):
+        try:
+            return tree.text(rel)
+        except SystemExit:
+            rep.mismatch("dma", "%s not found (it pins %s)" % (rel, what))
+            return None
+
+    def pin(rel, rx, want, what):
+        txt = text_of(rel, what)
+        if txt is None:
+            return
+        m = re.search(rx, txt)
+        if not m:
+            rep.mismatch("dma", "%s: the pattern for %s is gone (%s)" % (rel, what, rx))
+        elif int(m.group(1), 0) != want:
+            rep.mismatch("dma", "%s: %s is %s, libneo_cfg.h has %s" % (rel, what, m.group(1), hx(want)))
+        else:
+            rep.ok()
+
+    if "HOST_CTRL_WINDOW" in hdr and "HOST_DMA_WINDOW" in hdr:
+        pin("has/has_host_neo_port.h", r"BASE = (0x[0-9A-Fa-f]+)u, SIZE", hdr["HOST_CTRL_WINDOW"][0], "the host window of the controller window")
+        pin("has/has_opgen.h", r"BASE = (0x[0-9A-Fa-f]+)u, SIZE", hdr["HOST_DMA_WINDOW"][0], "the host window of the DMA block")
+        fe = text_of("tools/fe/fe_emit_insts.py", "the base tables of the compiler")
+        if fe is not None:
+            def table(name):
+                m = re.search(r"^%s = \{\"model\": (0x[0-9A-Fa-f]+), \"fpga\": (0x[0-9A-Fa-f]+)\}" % name, fe, re.M)
+                return (int(m.group(1), 16), int(m.group(2), 16)) if m else None
+            for name, hw, rtl_off in (("OPGEN_WINDOW", "HOST_DMA_WINDOW", "DMA_OFFSET"), ("CTRL_WINDOW", "HOST_CTRL_WINDOW", "CONTROLLER_OFFSET")):
+                tb = table(name)
+                if tb is None:
+                    rep.mismatch("dma", "fe_emit_insts.py: table %s not found" % name)
+                elif tb[0] != hdr[hw][0] or tb[1] != R.const[rtl_off][0]:
+                    rep.mismatch("dma", "fe_emit_insts.py %s model %s fpga %s; expected %s (%s) and %s (RTL %s)" % (name, hx(tb[0]), hx(tb[1]), hx(hdr[hw][0]), hw, hx(R.const[rtl_off][0]), rtl_off), R.const[rtl_off][1])
+                else:
+                    rep.ok(2)
+            m = re.search(r"^OPGEN_BASE = (0x[0-9A-Fa-f]+)", fe, re.M)
+            if not m or int(m.group(1), 16) != 1 << R.dconst["OPGEN_SEL_BIT"][0]:
+                rep.mismatch("dma", "fe_emit_insts.py: OPGEN_BASE is not 1 << OPGEN_SEL_BIT")
+            else:
+                rep.ok()
+            m = re.search(r"^OG = \{(.*?)\}", fe, re.M | re.S)
+            og = {k: int(v, 16) for k, v in re.findall(r"\"(\w+)\": (0x[0-9A-Fa-f]+)", m.group(1))} if m else {}
+            want = {k[3:]: v[0] for k, v in R.dconst.items() if k.startswith("OG_") and k not in ("OG_ID_VALUE", "OG_PAD_W", "OG_REP_W", "OG_CNT_W", "OG_ADDR_HI", "OG_ADDR_LO")}
+            for k in sorted(set(want) | set(og)):
+                if og.get(k) != want.get(k):
+                    rep.mismatch("dma", "fe_emit_insts.py OG[%s] = %s, RTL %s" % (k, hx(og[k]) if k in og else None, hx(want[k]) if k in want else None))
+                else:
+                    rep.ok()
+
+    # ---- the order in which neo_top tests the blocks of the configuration window
+    m = re.search(r"static const Block order\[\]\s*=\s*\{([^}]*)\};", lib)
+    if not m or R.dorder is None:
+        rep.mismatch("dma", "block order of neo_top.sv or of libneo_cfg.h block_of not found")
+    else:
+        mo = ",".join(x.strip().replace("BLK_", "") for x in m.group(1).split(","))
+        if mo != R.dorder[0]:
+            rep.mismatch("dma", "block_of tests the blocks as %s, neo_top.sv as %s" % (mo, R.dorder[0]), R.dorder[1])
+        else:
+            rep.ok()
 
 
 def main():
@@ -656,9 +1008,14 @@ def main():
     ap.add_argument("--rtl", help="neo_lite git repository (read with git show)")
     ap.add_argument("--table", help="frozen table instead of the RTL tree")
     ap.add_argument("--emit-table", help="with --rtl: write the extracted table")
-    ap.add_argument("--commit", default=COMMIT)
+    ap.add_argument("--commit", default=None, help="git revision to read (default: the revision 1 commit above; required with --rev 2)")
+    ap.add_argument("--rev", type=int, default=1, help="RTL revision whose model constants are compared (1 or 2; 2 reads the *_rev2 blocks)")
     ap.add_argument("--root", action="append", help="directory holding the model sources (searched in the order given; default: this tree)")
     a = ap.parse_args()
+    if a.commit is None:
+        if a.rev >= 2 and a.rtl:
+            ap.error("--rev 2 needs --commit (the revision 2 commit of the RTL)")
+        a.commit = COMMIT
     if bool(a.rtl) == bool(a.table):
         ap.error("exactly one of --rtl and --table")
     here = os.path.dirname(os.path.abspath(__file__))
@@ -677,7 +1034,8 @@ def main():
     rep = Report()
     for e in R.errors:
         rep.mismatch("extract", e)
-    check_model(R, Tree(roots), rep)
+    check_model(R, Tree(roots), rep, a.rev)
+    print("model constants: RTL revision %d" % a.rev)
     n_dfc, n_core, n_gvu = R.const["N_DFC"][0], R.const["N_CORE"][0], R.const["N_GVU"][0]
     covered = {k[1] for k in R.field if k[0] == "file"}
     for (bit, width, _name) in R.core:

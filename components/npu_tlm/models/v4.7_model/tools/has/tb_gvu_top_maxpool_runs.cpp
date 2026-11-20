@@ -13,7 +13,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <string>
 #include <vector>
 #include "has/rtl_ref_gvu_top.h"
 #include "has/neo_rev.h"

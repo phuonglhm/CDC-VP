@@ -14,11 +14,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <numeric>
-#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 #include "driver/libneo_cfg.h"
+#include "has/neo_rev.h"
 #include "has/has_mmio_compat.h"
 #include "has/rtl_ref_gvu_residual_hw.h"
 
@@ -112,7 +112,7 @@ namespace has
 
             inline sauria::CfgWidths widths()
             {
-                const sauria::SauriaTarget &t = neo::target();
+                const sauria::SauriaTarget &t = neo::target_rev(has::neo_rev());
                 sauria::CfgWidths w; w.idx_a = t.idx_a; w.idx_w = t.idx_w; w.idx_o = t.idx_o; w.X = t.X; w.Y = t.Y; return w;
             }
 
@@ -263,8 +263,8 @@ namespace has
                 d.C_w = nx * g.w_t; d.C_h = ny * g.h_t; d.C_c = nk * g.cout_t; d.A_c = nc * l.cin_t;
                 const uint32_t dram[3] = {l.in_addr, l.w_addr, l.out_addr};
                 const int lo = nc > 1 ? 1 : (g.order == 1 ? 2 : 0);   // HW_RTL_ALIGNMENT.md, section 14.5: model order 0 / 1 = hardware loop_order 0 / 2; Cin split = 1
-                im = neo::encode_gemm(d, dram, l.per_channel ? l.scale_addr : 0u, l.zp_out, l.act == 0, lo);
-                p.issues.push_back("A-H1");
+                im = neo::encode_gemm(d, dram, l.per_channel ? l.scale_addr : 0u, l.zp_out, l.act == 0, lo, has::neo_rev());
+                if (has::neo_rev() < 2) p.issues.push_back("A-H1");   // RTL revision 2 writes words 0..11
                 if (l.per_channel) p.issues.push_back("A-H4");
                 if (nc > 1) p.issues.push_back("B-CINORD");
             }

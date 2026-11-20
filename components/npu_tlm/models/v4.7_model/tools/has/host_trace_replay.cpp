@@ -13,7 +13,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <sstream>
 #include <string>
 #include "has/has_host_trace.h"
 

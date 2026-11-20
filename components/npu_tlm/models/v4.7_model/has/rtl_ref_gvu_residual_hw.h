@@ -43,13 +43,24 @@ namespace rtl_ref_gvu
     {
         static bool on() { static const bool v = [] { const char *e = std::getenv("HAS_GVU_RESIDUAL_HW"); return e && std::atoi(e) != 0; }(); return v; }
         static bool logical() { static const bool v = [] { const char *e = std::getenv("HAS_GVU_RESIDUAL_HW_SHIFT_LOGICAL"); return e && std::atoi(e) != 0; }(); return v; }
+        // HAS_GVU_ADD_EXACT=1 (default 0): an add whose sum is always a multiple of 2^sh after the reductions (common power of two of sa, sb and the
+        // zero-point term taken out of the shift) needs no rounding, so it maps for every round mode (the RTL has no round field; the bias carries the
+        // rounding). Only adds refused today are affected: with round mode 0 or 1 the mapping is unchanged.
+        static bool exact_on() { static const bool v = [] { const char *e = std::getenv("HAS_GVU_ADD_EXACT"); return e && std::atoi(e) != 0; }(); return v; }
+        // Reduces an add of round mode other than FLOOR / HALF_UP to shift 0 when it is exact; false when a rounding is left.
+        static bool exact_reduce(int64_t &sa, int64_t &sb, int64_t &zterm, int &sh)
+        {
+            while (sh > 0 && (sa & 1) == 0 && (sb & 1) == 0 && (zterm & 1) == 0) { sa >>= 1; sb >>= 1; zterm >>= 1; sh--; }
+            return sh == 0;
+        }
 
         // Parameters of the model's ADD (HAS_IFACE ELEM_WISE ADD: Requant((A - zpA) * SA + (B - zpB) * SB, SO, sO, zpO)) as registers of the hardware.
         // Expressible when there is no per-operand shift, the zero point is subtracted first, the rounding is floor or half-up (the bias carries the half),
         // and the scales cannot saturate the model's int32 intermediate. round_mode: 0 FLOOR, 1 HALF_UP (has/gvu_quant.h).
         static bool map(int zpA, int zpB, int zpO, int64_t SA, int64_t SB, int64_t SO, int sA, int sB, int sO, int round_mode, bool sub_before, ResidualHwParams *out)
         {
-            if (!sub_before || (round_mode != 0 && round_mode != 1) || sO < 0 || sO > 63 || sA < 0 || sB < 0) return false;
+            const bool rm_ok = round_mode == 0 || round_mode == 1;
+            if (!sub_before || (!rm_ok && !exact_on()) || sO < 0 || sO > 63 || sA < 0 || sB < 0) return false;
             if (SA < 0 || SB < 0 || SO < 0 || SO > 0x7FFFFFFF || SA > 0x7FFFFFFF || SB > 0x7FFFFFFF) return false;
             // exact reductions: (x - zp) * S >> s == (x - zp) * (S >> s) when S is a multiple of 2^s; X * SO >> sO == X * (SO >> t) >> (sO - t) for SO = 2^t * q, t <= sO (rounding included)
             if (sA > 0 && sA < 31 && (SA & ((static_cast<int64_t>(1) << sA) - 1)) == 0) { SA >>= sA; sA = 0; }
@@ -62,6 +73,16 @@ namespace rtl_ref_gvu
             if (sa > 0x7FFFFFFF || sb > 0x7FFFFFFF) return false;
             if (SO > 0 && (SA > 0x7FFFFFFF / SO || SB > 0x7FFFFFFF / SO)) return false;
             ResidualHwParams p;
+            if (!rm_ok)   // HAS_GVU_ADD_EXACT=1 only (checked above)
+            {
+                int64_t ea = sa, eb = sb, ez = (static_cast<int64_t>(zpA) * SA + static_cast<int64_t>(zpB) * SB) * SO;
+                int esh = sO;
+                if (!exact_reduce(ea, eb, ez, esh)) return false;
+                p.sa = static_cast<int32_t>(ea); p.sb = static_cast<int32_t>(eb); p.bias = -ez;
+                p.sh = 0; p.z = zpO; p.sub = false; p.logical_shift = logical();
+                *out = p;
+                return true;
+            }
             p.sa = static_cast<int32_t>(sa); p.sb = static_cast<int32_t>(sb);
             p.bias = ((round_mode == 1 && sO > 0) ? (static_cast<int64_t>(1) << (sO - 1)) : 0) - (static_cast<int64_t>(zpA) * SA + static_cast<int64_t>(zpB) * SB) * SO;
             p.sh = sO; p.z = zpO; p.sub = false; p.logical_shift = logical();

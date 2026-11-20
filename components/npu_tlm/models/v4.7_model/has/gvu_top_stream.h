@@ -27,6 +27,10 @@
 
 #include <systemc.h>
 #include <algorithm>
+#include <cstring>
+#include <cstdio>
+#include <deque>
+#include <string>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -43,6 +47,7 @@
 #include "has/rtl_ref_gvu_config_regs.h"
 #include "has/rtl_ref_gvu_residual_hw.h"
 #include "has/rtl_ref_gvu_top.h"
+#include "has/has_cpu_direct.h"
 
 namespace has
 {
@@ -93,6 +98,8 @@ namespace has
         uint64_t regs_layers{0}, regs_exit_flags{0}, regs_exit_fallback{0}, regs_exit_timeout{0}, regs_writes{0}, regs_seqs{0}, regs_busy_edges{0};
         uint64_t regs_pool_runs{0}, regs_pool_call_style{0}, regs_flag_bypass{0}, regs_lut_toggles{0};
         uint64_t regs_add_runs{0}, regs_add_cfg_mismatch{0}, regs_add_b_buf1{0};
+        // Residual add of revision 2 (the formula of gvu_top.sv with the bias, result in vbank2): runs, and runs of an add that cannot be written as that formula (two-stage unit)
+        uint64_t regs_add_rtl_runs{0}, regs_add_not_rtl_runs{0};
         // The per-context oc_tile_last flag in the tap (psm_top.sv stream_ctx_q): calls that pushed packets, calls whose oc_last packets differ from i_ncontexts, packets with oc_tile_last
         uint64_t f1_calls{0}, f1_ctx_mismatch{0}, f1_tile_last_packets{0}, f1_flag_bad{0};
         // HAS_GVU_STALL (see HasNpuTop): 1 = the core stops on o_stream_stall; 2 = test only, the stall is computed but not applied
@@ -154,6 +161,7 @@ namespace has
                 call_packets_++;
                 if (p.oc_tile_last) stream_stats().f1_tile_last_packets++;
             }
+            if (trace_) std::fprintf(trace_, "P %u %08x %u %d %d %d\n", p.addr, p.mask, p.ch, p.oc_last ? 1 : 0, p.oc_tile_last ? 1 : 0, p.call_last ? 1 : 0);
             pending_.push_back(p);
             stream_stats().pushed++;
             if (p.bypass) stream_stats().bypassed++;
@@ -184,6 +192,10 @@ namespace has
             return fifo_.size() - pop + n <= size_t(kFifoDepth);
         }
         size_t depth() const { return fifo_.size(); }
+        // HAS_CPU_DIRECT_DUMP: one line per packet pushed ("P word-address lane-mask channel oc_last oc_tile_last call_last"), observation only.
+        void set_trace(std::FILE *f) { trace_ = f; }
+        // Soft reset of the core (HAS_CPU_DIRECT): the packets in the FIFO and not yet committed are dropped (psm_top.sv i_soft_reset flushes the FIFO).
+        void flush() { pending_.clear(); fifo_.clear(); fifo_edge_.clear(); }
         uint64_t edge() const { return edge_; }
 
     private:
@@ -193,6 +205,7 @@ namespace has
         bool ready_s_{false}, rstn_s_{false};
         uint64_t edge_{0};
         bool f1_on_{false}, call_tile_last_{false};
+        std::FILE *trace_{nullptr};
         uint32_t call_nctx_{1}, call_ctx_{0}, call_packets_{0}, call_flags_{0};
         bool call_last_flag_{false};
 
@@ -260,7 +273,8 @@ namespace has
     {
     public:
         // stages behind the latch of a beat (first result at tick kDepth + 1): the shared rtl_ref_gvu::GEMM_STREAM_DEPTH
-        static constexpr int kDepth = rtl_ref_gvu::GEMM_STREAM_DEPTH;
+        // revision 2 of the RTL (HAS_NEO_REV = 2): 6 stages more (rtl_ref_gvu::gemm_stream_depth_for_rev); revisions 0 / 1: the constant
+        static int kDepth() { return rtl_ref_gvu::gemm_stream_depth_for_rev(rtl_ref_gvu::GEMM_STREAM_DEPTH, has::neo_rev()); }   // read at run time (after a run profile)
         // the RTL controller leaves GEMM_FUSED_OBP this many beats after oc_tile_last & oc_last (a fixed delay of its last-read
         // flag in gvu_pipe_controller.sv), whatever the depth of the model's pipeline; used by the observer only
         static constexpr int kRtlExitDelay = 9;
@@ -613,6 +627,7 @@ namespace has
             if (rows == 0 || rows > 32 || !softmax_fits(L, S, shift, zp) || smx_recip_.size() < 256 || smx_exp_.size() < 256) { st.smx_not_expr++; return false; }
             leave_for_job();
             reset_unit();
+            smx_dump_tab_.clear(); smx_dump_in_.clear();
             for (unsigned i = 0; i < 4; ++i)
             {
                 R::SpBytes w(128, 0);
@@ -622,12 +637,14 @@ namespace has
                     w[2 * j] = static_cast<uint8_t>(v); w[2 * j + 1] = static_cast<uint8_t>(v >> 8);
                 }
                 top_.scratchpad().sram(1, 1).poke(i, w);
+                smx_dump_tab_.insert(smx_dump_tab_.end(), w.begin(), w.end());
             }
             for (unsigned i = 0; i < 2; ++i)
             {
                 R::SpBytes w(128, 0);
                 for (unsigned j = 0; j < 128; ++j) w[j] = static_cast<uint8_t>(smx_exp_[i * 128 + j]);
                 top_.scratchpad().sram(1, 1).poke(4 + i, w);
+                smx_dump_tab_.insert(smx_dump_tab_.end(), w.begin(), w.end());
             }
             if (!smx_tables_) { st.smx_lut_loads++; smx_tables_ = true; }
             for (int p = 0; p < L; ++p)
@@ -635,6 +652,7 @@ namespace has
                 R::SpBytes w(32, 0);
                 for (unsigned j = 0; j < rows; ++j) w[j] = static_cast<uint8_t>(static_cast<int8_t>((*x[j])[static_cast<size_t>(p)]));
                 top_.scratchpad().sram(0, 0).poke(static_cast<unsigned>(p), w);
+                smx_dump_in_.insert(smx_dump_in_.end(), w.begin(), w.end());
             }
             R::GvuTop::In in;
             in.i_attn_z = static_cast<int8_t>(zp);
@@ -681,6 +699,18 @@ namespace has
             for (int k = 0; k < 16 && top_.state() != R::IDLE; k++) top_.tick(in, true);
             st.smx_lshift += top_.softmax_lshift() - ls0;
             if (!done || top_.state() != R::IDLE) { st.smx_not_expr++; reset_unit(); return false; }
+            if (!pool_dump_dir_.empty() && smx_dump_n_ < 4)   // HAS_CPU_DIRECT_DUMP: the group for a CPU replay (observation only)
+            {
+                char nm[32]; std::snprintf(nm, sizeof nm, "smx%u_", smx_dump_n_++);
+                auto put = [&](const char *suffix, const void *d, size_t n) { std::FILE *fp = std::fopen((pool_dump_dir_ + "/" + nm + suffix).c_str(), "wb"); if (fp) { std::fwrite(d, 1, n, fp); std::fclose(fp); } };
+                put("tables.bin", smx_dump_tab_.data(), smx_dump_tab_.size());
+                put("in.bin", smx_dump_in_.data(), smx_dump_in_.size());
+                std::vector<uint8_t> o;
+                for (int p = 0; p < L; ++p) { const R::SpBytes w = top_.scratchpad().sram(0, 0).word(static_cast<unsigned>(p)); o.insert(o.end(), w.begin(), w.end()); }
+                put("out.bin", o.data(), o.size());
+                char t[160]; std::snprintf(t, sizeof t, "len %d\nscale %lld\nshift %d\nzp %d\n", L, static_cast<long long>(S), shift, zp);
+                put("params.txt", t, std::strlen(t));
+            }
             for (int p = 0; p < L; ++p)
             {
                 const R::SpBytes w = top_.scratchpad().sram(0, 0).word(static_cast<unsigned>(p));
@@ -867,7 +897,6 @@ namespace has
             fj_.acc = acc; fj_.out = out; fj_.M = M; fj_.TS = TS; fj_.Z = Z; fj_.rm = round_mode; fj_.narrow = req_narrow;
             request_gjob([this] { return fa_begin(); }, [this] { return fa_step(); });
         }
-        uint64_t requant_job_reg_cycles() const { return fj_.reg_cyc; }
         void start_layernorm(const std::vector<std::vector<std::vector<int>>> &x, const std::vector<std::vector<std::vector<int> *>> &y, const has::LnParams &p,
                              const has::LutIndirect &lut, int round_mode, uint64_t model_cycles)
         {
@@ -911,6 +940,68 @@ namespace has
         uint64_t job_cycles() const { return last_job_cyc_; }
 
         const rtl_ref_gvu::GvuTop &unit() const { return top_; }
+        // HAS_CPU_DIRECT (has/has_cpu_direct.h): byte access of the one-dimensional DMA to the scratchpad buffer the unit does not use
+        // (gvu_scratchpad.sv: the buffer not selected by the buffer-select flop; with fixed buffers, buffer 0 as the unit), byte-linear inside a
+        // bank. bank: 0 vbank0, 1 vbank1, 2 vbank2, 3 sbank. false = the range passes the end of the bank.
+        // HAS_CPU_DIRECT: the CPU writes the register file (gvu_config_regs.sv: 14 registers, waddr = addr[5:2]; 0x38..0x3F do not exist and
+        // are dropped as in the RTL). Writes queue behind the register write port of the unit and go out as one sequence when the port is idle
+        // and no instruction of the DFC uses the unit; from the first write the unit runs from its register file (raw mode: an enable edge
+        // starts the operation the registers describe on the scratchpad contents, as the RTL does). Reads return the register file.
+        void cpu_write(uint32_t off, uint32_t v)
+        {
+            if (!regs_on_ || off >= 0x38u || (off & 3u)) { cpu_dropped_++; return; }
+            cpu_raw_ = true;
+            cpu_q_.push_back(GvuRegMaster::W{off, v, 0xF});
+        }
+        uint32_t cpu_read(uint32_t off) const { return (regs_on_ && off < 0x38u && !(off & 3u)) ? regs_.reg(off / 4u) : 0u; }
+        uint64_t cpu_ticks() const { return cpu_ticks_; }
+        uint64_t cpu_dropped() const { return cpu_dropped_; }
+        // HAS_CPU_DIRECT, GEMM_FUSED run by the CPU: the unit takes the beats of the PSM stream, reads the Out_Scale of beat k from the sbank word k and the
+        // Out_Shift from the sbank byte SBANK_SHIFT_INT8_BASE + k (k counts the beats since the unit entered GEMM_FUSED_OBP, gvu_pipe_controller.sv:552-568),
+        // writes the int8 row of every result into vbank2 (row i at word i / 4, byte 32 * (i % 4); all 32 lanes as the RTL does), and leaves when the beat
+        // with oc_last and oc_tile_last has gone through the pipeline.
+        bool cpu_gemm_active() const { return cpu_gemm_; }
+        // HAS_CPU_DIRECT_NET (HasNpuTop::net_open): the runs of ADD / MAX_POOL by registers go into the whole-program trace (observation only).
+        void set_net(std::FILE *f) { net_fp_ = f; }
+        std::FILE *net_fp_{nullptr};
+        void net_seq(const char *head, const std::vector<GvuRegMaster::W> &seq) const
+        {
+            if (!net_fp_) return;
+            std::fprintf(net_fp_, "%s\n", head);
+            for (const GvuRegMaster::W &x : seq) std::fprintf(net_fp_, "g %02x %08x\n", x.byte_addr, x.data);
+        }
+        uint64_t cpu_gemm_beats() const { return cpu_wr_; }
+        uint64_t cpu_gemm_runs() const { return cpu_gemm_runs_; }
+        uint64_t cpu_gemm_beats_total() const { return cpu_wr_total_; }
+        uint64_t cpu_gemm_sbank_over() const { return cpu_sb_over_; }
+        // Observation for the dump of HAS_CPU_DIRECT_DUMP (the epilogue beats of a GEMM_FUSED layer run by the DFC): the Out_Scale / Out_Shift the unit
+        // takes per beat, in beat order, and the result lines of the beats.
+        void rec_begin() { rec_on_ = true; rec_scale_.clear(); rec_shift_.clear(); rec_beats_.clear(); rec_bypass_ = 0; }
+        void rec_end() { rec_on_ = false; }
+        const std::vector<int32_t> &rec_scale() const { return rec_scale_; }
+        const std::vector<uint8_t> &rec_shift() const { return rec_shift_; }
+        const std::vector<std::string> &rec_beats() const { return rec_beats_; }
+        uint64_t rec_bypass() const { return rec_bypass_; }
+        bool dma_access(unsigned bank, uint32_t off, uint8_t *p, uint32_t n, bool write)
+        {
+            namespace R = rtl_ref_gvu;
+            const R::ScratchpadParams &sp = top_.scratchpad().params();
+            const uint32_t size = bank == 3 ? sp.sbank_bytes() : sp.vbank_bytes(static_cast<int>(bank));
+            const uint32_t wb = bank == 3 ? 4u : bank == 0 ? static_cast<uint32_t>(sp.NUM_LANE) : 4u * static_cast<uint32_t>(sp.NUM_LANE);
+            if (bank > 3 || static_cast<uint64_t>(off) + n > size) return false;
+            const unsigned flop = bank == 3 ? 0u : bank + 1u;   // GvuRegFile::buf: 0 sbank, 1 vbank0, 2 vbank1, 3 vbank2
+            const unsigned buf = (neo_on_ && GvuRegsNeoKnobs::pp_on() && !regs_.buf(flop)) ? 1u : 0u;
+            R::SpSram &m = top_.scratchpad().sram(static_cast<int>(bank), static_cast<int>(buf));
+            for (uint32_t i = 0; i < n;)
+            {
+                const uint32_t w = (off + i) / wb, b0 = (off + i) % wb, k = std::min(wb - b0, n - i);
+                R::SpBytes word = m.word(w);
+                if (write) { std::memcpy(word.data() + b0, p + i, k); m.poke(w, word); }
+                else std::memcpy(p + i, word.data() + b0, k);
+                i += k;
+            }
+            return true;
+        }
         static void report()
         {
             const StreamStats &s = stream_stats();
@@ -1009,6 +1100,9 @@ namespace has
                             "runs with B in the vbank1 buffer 1 %llu\n",
                             (unsigned long long)s.regs_add_runs, (unsigned long long)s.regs_add_cfg_mismatch, s.regs_add_cfg_mismatch ? " <== FAIL" : "",
                             (unsigned long long)s.regs_add_b_buf1);
+            if (s.regs_add_rtl_runs || s.regs_add_not_rtl_runs)
+                std::printf("[gvu-stream] residual add of revision 2 (gvu_top.sv formula, bias in Reg 10 / 11, result in vbank2, 16 + N edges): runs %llu, runs of an add that is not that formula (two-stage unit) %llu\n",
+                            (unsigned long long)s.regs_add_rtl_runs, (unsigned long long)s.regs_add_not_rtl_runs);
             if (s.f1_calls)
                 std::printf("[gvu-stream] exit rule in the tap: calls with packets %llu, calls whose oc_last packets != contexts %llu (a rule that counts oc_last packets against the contexts would misfire there), packets with oc_tile_last %llu, calls with the flag not on the one last packet %llu%s\n",
                             (unsigned long long)s.f1_calls, (unsigned long long)s.f1_ctx_mismatch, (unsigned long long)s.f1_tile_last_packets, (unsigned long long)s.f1_flag_bad,
@@ -1036,6 +1130,138 @@ namespace has
             return p;
         }
         rtl_ref_gvu::GvuTop top_{unit_params()};
+        std::deque<GvuRegMaster::W> cpu_q_;   // HAS_CPU_DIRECT: register writes of the CPU waiting for the write port
+        bool cpu_raw_{false};
+        uint64_t cpu_ticks_{0}, cpu_dropped_{0};
+        bool cpu_gemm_{false};                       // the CPU started a GEMM_FUSED run (see cpu_gemm_active)
+        uint64_t cpu_agu_{0}, cpu_wr_{0}, cpu_sb_over_{0}, cpu_vb_over_{0}, cpu_gemm_runs_{0}, cpu_wr_total_{0};
+        bool rec_on_{false};
+        std::vector<int32_t> rec_scale_;
+        std::vector<uint8_t> rec_shift_;
+        std::vector<std::string> rec_beats_;
+        uint64_t rec_bypass_{0};
+        static constexpr uint32_t kSbankShiftBase = 768u * 4u / 5u * 4u;   // SBANK_SHIFT_INT8_BASE of gvu_pkg.sv (SBANK_DEPTH 768)
+        unsigned sbuf() const { return (neo_on_ && GvuRegsNeoKnobs::pp_on() && regs_.buf(0)) ? 1u : 0u; }   // sbank buffer the unit sees
+        // Out_Scale of beat k / Out_Shift of beat k from the sbank the unit sees; beyond the bank 0 (counted: the layer needs more beats than the bank holds)
+        int32_t cpu_sb_scale(uint64_t k)
+        {
+            const rtl_ref_gvu::ScratchpadParams &sp = top_.scratchpad().params();
+            if ((k + 1) * 4u > sp.sbank_bytes()) { cpu_sb_over_++; return 0; }
+            const rtl_ref_gvu::SpBytes w = top_.scratchpad().sram(3, static_cast<int>(sbuf())).word(static_cast<unsigned>(k));
+            return static_cast<int32_t>(static_cast<uint32_t>(w[0]) | static_cast<uint32_t>(w[1]) << 8 | static_cast<uint32_t>(w[2]) << 16 | static_cast<uint32_t>(w[3]) << 24);
+        }
+        uint8_t cpu_sb_shift(uint64_t k)
+        {
+            const rtl_ref_gvu::ScratchpadParams &sp = top_.scratchpad().params();
+            const uint64_t b = kSbankShiftBase + k;
+            if (b >= sp.sbank_bytes()) { cpu_sb_over_++; return 0; }
+            const rtl_ref_gvu::SpBytes w = top_.scratchpad().sram(3, static_cast<int>(sbuf())).word(static_cast<unsigned>(b / 4u));
+            return w[b % 4u];
+        }
+        // The int8 row of a result into the vbank2 buffer the unit sees (word r / 4, byte 32 * (r % 4)).
+        void cpu_vbank2_put(const psum_vector_t<32, int32_t> &v)
+        {
+            const rtl_ref_gvu::ScratchpadParams &sp = top_.scratchpad().params();
+            const uint64_t r = cpu_wr_++, w = r >> 2;
+            cpu_wr_total_++;
+            if ((w + 1) * 128u > sp.vbank_bytes(2)) { cpu_vb_over_++; return; }
+            rtl_ref_gvu::SpSram &m = top_.scratchpad().sram(2, static_cast<int>(ob(2)));
+            rtl_ref_gvu::SpBytes word = m.word(static_cast<unsigned>(w));
+            for (unsigned l = 0; l < 32u; l++) word[(r & 3u) * 32u + l] = static_cast<uint8_t>(static_cast<int8_t>(v[l]));
+            m.poke(static_cast<unsigned>(w), word);
+        }
+        void cpu_gemm_begin()
+        {
+            namespace R = rtl_ref_gvu;
+            gin_ = R::GvuTop::In();
+            gin_.i_gemm_round = R::RND_NEAR_AWAY; gin_.i_gemm_narrow = R::NARROW_WRAP;   // gvu_pipe_controller.sv:365-368 (Round0 / Round1)
+            gin_.i_gemm_stream = true; gin_.i_gemm_stream_stop = false; gin_.i_gemm_exit_flags = true;
+            running_ = true; stopping_ = false; pipe_done_gemm_ = false;
+            cpu_gemm_ = true; cpu_agu_ = 0; cpu_wr_ = 0; rtl_agu_ = 0; rtl_window_ = 0; cpu_gemm_runs_++;
+            stream_stats().layers++;
+        }
+        // HAS_CPU_DIRECT_DUMP (with HAS_CPU_DIRECT): the first max pool run by registers of the DFC is written out (the register writes it
+        // issues, the vbank0 input rows, the vbank2 output rows) for a CPU replay test. Observation only.
+        std::string pool_dump_dir_ = [] { const char *e = std::getenv("HAS_CPU_DIRECT_DUMP"); return (e && cpu_direct::env_wanted()) ? std::string(e) : std::string(); }();
+        bool pool_dumped_{false}, pool_dump_open_{false};
+        unsigned smx_dump_n_{0};
+        std::vector<uint8_t> smx_dump_tab_, smx_dump_in_;
+        unsigned pool_dump_rows_out_{0};
+        void pool_dump_put(const char *n, const rtl_ref_gvu::SpSram &m, unsigned rows, unsigned wb)
+        {
+            FILE *fp = std::fopen((pool_dump_dir_ + "/" + n).c_str(), "wb");
+            if (!fp) return;
+            for (unsigned r = 0; r < rows; r++) { const rtl_ref_gvu::SpBytes x = m.word(r); std::fwrite(x.data(), 1, wb, fp); }
+            std::fclose(fp);
+        }
+        // RESIDUAL of the raw mode: the unit of the model computes the earlier two-stage residual add, so the operation the CPU programs
+        // (gvu_config_regs.sv Reg 7..11) runs on has/rtl_ref_gvu_residual_hw.h (the formula of gvu_top.sv, matched to the vectors of the
+        // hardware team): N = Reg 7 [15:0] rows, A row r from vbank0 (v32int8), B row r from vbank1 port 2 (four rows per word), the result
+        // row r into vbank2 (port 1, word r >> 2, bytes (r & 3) * 32: byte-linear on the DMA side; gvu_top.sv revision 2, where the DFC
+        // also sends it from, neo_dma_controller.sv DMA_SEND_VBANK2), in the buffers the unit holds; A is not overwritten.
+        // Timing from the enable edge to done (the enable edge counted): revision 2 = 16 + N (measured on the neo_top RTL bench, 80 for
+        // N = 64, the same count that gives 6 168 for the max pool on both); earlier revisions keep 13 + N + 1 (constant measured on revision 0).
+        uint64_t cpu_res_left_{0};
+        uint64_t cpu_residual()
+        {
+            namespace R = rtl_ref_gvu;
+            const uint32_t r7 = regs_.reg(7);
+            R::ResidualHwParams p;
+            const unsigned n = r7 & 0xFFFFu;
+            p.z = static_cast<int8_t>((r7 >> 16) & 0xFFu); p.sh = static_cast<int>((r7 >> 24) & 0x3Fu); p.sub = ((r7 >> 30) & 1u) != 0;
+            p.sa = static_cast<int32_t>(regs_.reg(8)); p.sb = static_cast<int32_t>(regs_.reg(9));
+            p.bias = static_cast<int64_t>((static_cast<uint64_t>(regs_.reg(11)) << 32) | regs_.reg(10));
+            p.logical_shift = false;
+            const bool pp = neo_on_ && GvuRegsNeoKnobs::pp_on();
+            const int a = pp && regs_.buf(1) ? 1 : 0, b = pp && regs_.buf(2) ? 1 : 0, c = pp && regs_.buf(3) ? 1 : 0;
+            R::SpSram &va = top_.scratchpad().sram(0, a), &vb = top_.scratchpad().sram(1, b), &vc = top_.scratchpad().sram(2, c);
+            for (unsigned r = 0; r < n && r < 800u; r++)
+            {
+                const R::SpBytes x = va.word(r);
+                const R::SpBytes y = vb.word(r >> 2);
+                R::SpBytes o = vc.word(r >> 2);
+                for (unsigned l = 0; l < 32u; l++)
+                    o[(r & 3u) * 32u + l] = static_cast<uint8_t>(static_cast<int8_t>(R::residual_hw_lane(static_cast<int8_t>(x[l]), static_cast<int8_t>(y[(r & 3u) * 32u + l]), p)));
+                vc.poke(r >> 2, o);
+            }
+            constexpr uint64_t REV2_ENABLE_TO_DONE_FIXED = 16;   // enable edge to done = 16 + N on revision 2; the enable edge is counted by the caller
+            return has::neo_rev() >= 2 ? REV2_ENABLE_TO_DONE_FIXED - 1 + n : R::RESIDUAL_HW_FIXED_LATENCY + n;
+        }
+        // One edge of the unit driven by the register file only (raw mode of HAS_CPU_DIRECT).
+        void cpu_raw_edge(const GvuRegMaster::Step &ms)
+        {
+            namespace R = rtl_ref_gvu;
+            R::GvuTop::In in;
+            regs_to_in(in);
+            const R::control_fsm_t sb = top_.state();
+            if (cpu_res_left_ > 0)
+            {
+                cpu_ticks_++;
+                R::GvuTop::Out o;
+                o.o_residual_pipe_done = --cpu_res_left_ == 0;
+                regs_post(o, sb, true, ms, in);
+                return;
+            }
+            if (in.i_pipeline_en && in.i_gvu_op == R::GVU_OP_GEMM_FUSED && sb == R::IDLE)
+            {
+                cpu_gemm_begin();   // the unit enters GEMM_FUSED (table load, then the stream state) from the next edge on, as a layer of the DFC does
+                regs_post(R::GvuTop::Out(), sb, false, ms, in);
+                return;
+            }
+            if (in.i_pipeline_en && in.i_gvu_op == R::GVU_OP_RESIDUAL && sb == R::IDLE)
+            {
+                cpu_res_left_ = cpu_residual();
+                cpu_ticks_++;
+                regs_post(R::GvuTop::Out(), sb, false, ms, in);
+                return;
+            }
+            // a table reset written while the unit is idle still needs its edge (the register file holds it for one edge only, and the RTL clock runs)
+            const bool lut_rst = in.i_lut_act_reset || in.i_lut_exp_reset || in.i_lut_recip_reset || in.i_lut_rsqrt_reset;
+            const bool run = in.i_pipeline_en || sb != R::IDLE || lut_rst;
+            R::GvuTop::Out o;
+            if (run) { o = top_.tick(in, true); cpu_ticks_++; }
+            regs_post(o, sb, run, ms, in);
+        }
         rtl_ref_gvu::GvuTop::In gin_;
         bool running_{false}, stopping_{false}, table_loaded_{false}, ready_q_{false};
         uint64_t edge_{0};
@@ -1101,6 +1327,7 @@ namespace has
             in.i_pipeline_en = r.pipe_en;
             in.i_gvu_op = static_cast<rtl_ref_gvu::GvuOpcode>(r.op);
             in.i_lut_act_reset = r.lut_act_reset;
+            in.i_lut_exp_reset = r.lut_exp_reset; in.i_lut_recip_reset = r.lut_recip_reset; in.i_lut_rsqrt_reset = r.lut_rsqrt_reset;
             in.i_sbank_buf_sel = r.sbank_buf_sel; in.i_vbank0_buf_sel = r.vbank0_buf_sel; in.i_vbank1_buf_sel = r.vbank1_buf_sel; in.i_vbank2_buf_sel = r.vbank2_buf_sel;
             in.i_gemm_skip_act = r.gemm_fused_skip_act;
             in.i_gemm_zp16 = r.gemm_fused_z;                       // 8 bits sign-extended into the 16-bit adder (gvu_top.sv:705)
@@ -1155,6 +1382,7 @@ namespace has
                 if (in.i_gvu_op == R::GVU_OP_GEMM_FUSED) done = o.o_gemm_fused_pipe_done;
                 else if (in.i_gvu_op == R::GVU_OP_MAXPOOL) done = o.o_maxpool_pipe_done;
                 else if (in.i_gvu_op == R::GVU_OP_RESIDUAL || in.i_gvu_op == R::GVU_OP_ELEMWISE) done = o.o_residual_pipe_done;
+                else if (cpu_raw_ && in.i_gvu_op == R::GVU_OP_SOFTMAX) done = o.o_softmax_pipe_done;   // HAS_CPU_DIRECT: the CPU runs the softmax by registers
             }
             // the previous map toggles the vbank1 buffer bit when the table load ends; the map of neo_lite has no such wire (its LUT reset is a pulse that ends on the next edge)
             const bool pulse = !neo_on_ && ticked && st_before == R::LUT_ACT_INIT && top_.state() != R::LUT_ACT_INIT;
@@ -1241,6 +1469,85 @@ namespace has
                     const size_t e = (r0 + r) * 32 + l;
                     if (e >= n) break;
                     const int8_t h = static_cast<int8_t>(orow[l]);
+                    st.add_lanes++;
+                    if (h != out[e]) st.add_differ++;
+                    out[e] = h;
+                }
+            }
+        }
+        // ---- residual add of revision 2 by registers: the formula of gvu_top.sv (rtl_ref_gvu_residual_hw.h) on the scratchpad contents, as the CPU path does it
+        // (cpu_residual()): A row r in vbank0, B row r in vbank1 (four rows per word), the result row r in vbank2 (port 1, word r >> 2, byte (r & 3) * 32), 16 + N edges.
+        // HAS_GVU_ADD_RTL=0 keeps the two-stage unit also on revision 2 (comparison only).
+        static bool add_rtl_on()
+        {
+            static const bool v = [] { const char *e = std::getenv("HAS_GVU_ADD_RTL"); return !e || std::atoi(e) != 0; }();
+            return has::neo_rev() >= 2 && v;
+        }
+        // The descriptor of the add (zero points, scales, shifts, round) as the registers of the RTL: out = clamp8(clamp[-256, 255]((a sa + b sb + bias) >> sh) + z).
+        // Same reductions as ResidualHw::map (a shift of an operand only when its scale is a multiple of 2^shift, the power of two of the output scale moved into
+        // the shift, round FLOOR or HALF_UP with the half in the bias) but limited by the fields of the RTL (sa, sb int32; sh 0..63; z int8; bias int64), not by
+        // the int32 intermediate of the two-stage unit: the scales of the hardware test (sa = 2^30) map.
+        static bool rtl_add_map(const AddCfg &a, rtl_ref_gvu::ResidualHwParams &out)
+        {
+            int64_t SA = a.SA, SB = a.SB, SO = a.SO;
+            int sA = a.sA, sB = a.sB, sO = a.sO;
+            const bool rm_ok = a.round_mode == 0 || a.round_mode == 1;   // other modes only with HAS_GVU_ADD_EXACT=1 and an exact add (ResidualHw::exact_on)
+            if ((!rm_ok && !rtl_ref_gvu::ResidualHw::exact_on()) || sA < 0 || sB < 0 || sO < 0 || sO > 63) return false;
+            if (!fit(a.zpA, 8) || !fit(a.zpB, 8) || !fit(a.zpO, 8) || SO < 0 || SO > 0x7FFFFFFF || !fit(SA, 32) || !fit(SB, 32)) return false;
+            if (sA > 0 && sA < 31 && (SA & ((static_cast<int64_t>(1) << sA) - 1)) == 0) { SA >>= sA; sA = 0; }
+            if (sB > 0 && sB < 31 && (SB & ((static_cast<int64_t>(1) << sB) - 1)) == 0) { SB >>= sB; sB = 0; }
+            if (sA != 0 || sB != 0) return false;
+            if (SO > 0) { int t = 0; while (t < sO && (SO & (static_cast<int64_t>(1) << t)) == 0) t++; SO >>= t; sO -= t; }
+            const int64_t sa = SA * SO, sb = SB * SO;
+            if (!fit(sa, 32) || !fit(sb, 32)) return false;
+            rtl_ref_gvu::ResidualHwParams p;
+            if (!rm_ok)
+            {
+                int64_t ea = sa, eb = sb, ez = static_cast<int64_t>(a.zpA) * sa + static_cast<int64_t>(a.zpB) * sb;
+                int esh = sO;
+                if (!rtl_ref_gvu::ResidualHw::exact_reduce(ea, eb, ez, esh)) return false;
+                p.sa = static_cast<int32_t>(ea); p.sb = static_cast<int32_t>(eb); p.bias = -ez;
+                p.sh = 0; p.z = a.zpO; p.sub = false; p.logical_shift = false;
+                out = p;
+                return true;
+            }
+            p.sa = static_cast<int32_t>(sa); p.sb = static_cast<int32_t>(sb);
+            p.bias = ((a.round_mode == 1 && sO > 0) ? (static_cast<int64_t>(1) << (sO - 1)) : 0) - (static_cast<int64_t>(a.zpA) * sa + static_cast<int64_t>(a.zpB) * sb);
+            p.sh = sO; p.z = a.zpO; p.sub = false; p.logical_shift = false;
+            out = p;
+            return true;
+        }
+        // The operands of a run of `rows` rows from row r0, as the DMA puts them into the buffers (byte-linear): A row r at vbank0 word r, B at vbank1 word r >> 2 byte (r & 3) * 32.
+        void add_load_hw(const int8_t *A, const int8_t *B, size_t n, size_t r0, size_t rows, unsigned b_buf, unsigned a_buf)
+        {
+            namespace R = rtl_ref_gvu;
+            std::vector<R::SpBytes> v1((rows + 3) / 4, R::SpBytes(128, 0));
+            for (size_t r = 0; r < rows; r++)
+            {
+                R::SpBytes ra(32, 0);
+                for (size_t l = 0; l < 32; l++)
+                {
+                    const size_t e = (r0 + r) * 32 + l;
+                    if (e >= n) break;
+                    ra[l] = static_cast<uint8_t>(A[e]);
+                    v1[r / 4][32 * (r % 4) + l] = static_cast<uint8_t>(B[e]);
+                }
+                top_.scratchpad().sram(0, a_buf).poke(static_cast<unsigned>(r), ra);
+            }
+            for (size_t k = 0; k < v1.size(); k++) top_.scratchpad().sram(1, b_buf).poke(static_cast<unsigned>(k), v1[k]);
+        }
+        // The result of a finished run of revision 2 from vbank2 (the place the DMA sends from): compared with the model result in out, the unit's written into out.
+        void add_read_hw(int8_t *out, size_t n, size_t r0, size_t rows, unsigned obuf)
+        {
+            StreamStats &st = stream_stats();
+            for (size_t r = 0; r < rows; r++)
+            {
+                const rtl_ref_gvu::SpBytes w = top_.scratchpad().sram(2, obuf).word(static_cast<unsigned>(r >> 2));
+                for (size_t l = 0; l < 32; l++)
+                {
+                    const size_t e = (r0 + r) * 32 + l;
+                    if (e >= n) break;
+                    const int8_t h = static_cast<int8_t>(w[(r & 3u) * 32u + l]);
                     st.add_lanes++;
                     if (h != out[e]) st.add_differ++;
                     out[e] = h;
@@ -1791,6 +2098,10 @@ namespace has
             int c0{0}, nc{0};
             unsigned pb0{0}, pb2{0}, abuf{0}, bbuf{0};   // HAS_GVU_REGS_NEO: the buffers of the run (pool: vbank0 / vbank2; add: vbank0 A + result / vbank1 B)
             rtl_ref_gvu::GvuTop::In in;          // inputs of the current run
+            bool rtl{false};                     // residual add by registers on revision 2: the formula of gvu_top.sv (cpu_residual), not the two-stage unit
+            rtl_ref_gvu::ResidualHwParams hwp;   // its parameters (the registers 7..11 that the sequence writes)
+            uint64_t res_left{0};                // edges of the run still to count after the enable edge
+            unsigned cbuf{0};                    // vbank2 buffer that holds the result of the run
             uint64_t c{0}, guard{0}, cyc{0}, model_cycles{0};
             sc_core::sc_time req;
         };
@@ -1848,9 +2159,31 @@ namespace has
             j.in = pool_load(j.a.data(), j.q, j.c0, j.nc, j.pb0);
             j.guard = pool_guard(j.q, j.nc);
             j.c = 0; j.wait_edges = 0; j.phase = Job::WRITE;
-            master_.request(finish(with_agu_nd(j.in, sq_pool(static_cast<unsigned>(j.q.kk - 2), static_cast<unsigned>(j.q.s), static_cast<unsigned>(j.q.Wt),
+            const std::vector<GvuRegMaster::W> seq = finish(with_agu_nd(j.in, sq_pool(static_cast<unsigned>(j.q.kk - 2), static_cast<unsigned>(j.q.s), static_cast<unsigned>(j.q.Wt),
                                                    static_cast<unsigned>(j.nc), static_cast<unsigned>(j.q.Ho), static_cast<unsigned>(j.q.Wt * j.q.Hp),
-                                                   static_cast<unsigned>(j.q.Wt * j.q.s)))), now.value());
+                                                   static_cast<unsigned>(j.q.Wt * j.q.s))));
+            if (!pool_dump_dir_.empty() && !pool_dumped_ && j.c0 == 0)
+            {
+                pool_dump_open_ = true;
+                pool_dump_put("vbank0_in.bin", top_.scratchpad().sram(0, static_cast<int>(j.pb0)), static_cast<unsigned>(j.nc * j.q.Hp * j.q.Wt), 32u);
+                const rtl_ref_gvu::PoolLayout lay = rtl_ref_gvu::pool_layout(has::neo_rev(), j.q.s, j.q.Wt, j.q.OL);
+                pool_dump_rows_out_ = static_cast<unsigned>(j.nc * j.q.Ho) * lay.words_per_row;
+                if (FILE *fp = std::fopen((pool_dump_dir_ + "/pool.txt").c_str(), "w"))
+                {
+                    for (const GvuRegMaster::W &x : seq) std::fprintf(fp, "write 0x%02x 0x%08x\n", x.byte_addr, x.data);
+                    std::fprintf(fp, "rows_in %d\nrows_out %u\nkk %d s %d c %d H %d W %d Ho %d Wo %d\n", j.nc * j.q.Hp * j.q.Wt, pool_dump_rows_out_,
+                                 j.q.kk, j.q.s, j.nc, j.q.H, j.q.W, j.q.Ho, j.q.Wo);
+                    std::fclose(fp);
+                }
+            }
+            if (net_fp_)
+            {
+                char h[160];
+                std::snprintf(h, sizeof h, "r pool c0=%d nc=%d g=%d H=%d W=%d kk=%d s=%d p=%d Hp=%d Wt=%d Ho=%d Wo=%d OL=%d cmax=%d", j.c0, j.nc, j.q.g, j.q.H, j.q.W,
+                              j.q.kk, j.q.s, j.q.p, j.q.Hp, j.q.Wt, j.q.Ho, j.q.Wo, j.q.OL, j.q.cmax);
+                net_seq(h, seq);
+            }
+            master_.request(seq, now.value());
             reg_idle_ = false;
             stream_stats().regs_seqs++;
         }
@@ -1895,6 +2228,13 @@ namespace has
                     j.cyc += j.c; st.mp_runs++; st.regs_pool_runs++;
                     pp_check(0, j.pb0); pp_check(2, j.pb2);
                     pool_read(j.res, j.q, j.c0, j.nc, j.pb2);
+                    if (pool_dump_open_)
+                    {
+                        pool_dump_open_ = false; pool_dumped_ = true;
+                        // vbank2 words hold four 32-lane rows
+                        pool_dump_put("vbank2_out.bin", top_.scratchpad().sram(2, static_cast<int>(j.pb2)), (pool_dump_rows_out_ + 3u) / 4u, 128u);
+                        if (FILE *fp = std::fopen((pool_dump_dir_ + "/pool.txt").c_str(), "a")) { std::fprintf(fp, "cycles %llu\n", (unsigned long long)j.c); std::fclose(fp); }
+                    }
                     j.phase = Job::CLEAR_WAIT;
                 }
                 else if (j.c >= j.guard) { fail(); return; }
@@ -1927,6 +2267,36 @@ namespace has
             if (b1) stream_stats().regs_add_b_buf1++;
             j.abuf = ib(0); j.bbuf = b1 ? 1u : 0u;
             if (neo_on_) pp_note(j.abuf);
+            if (j.rtl)
+            {
+                // revision 2: the registers of the RTL only (Reg 7..11, 14 writes per command as for every command); the operands as the DMA puts them
+                // there, the result in the vbank2 buffer the run is loaded for
+                j.cbuf = ib(2);
+                add_load_hw(j.a.data(), j.b.data(), j.n, j.r0, j.rows, j.bbuf, j.abuf);
+                j.in = rtl_ref_gvu::GvuTop::In();
+                j.guard = 4 * j.rows + 400;
+                j.c = 0; j.wait_edges = 0; j.res_left = 0; j.phase = Job::WRITE;
+                namespace N = gvu_regs_dfc::neo;
+                std::vector<RW> s;
+                s.push_back(N::w(N::RESIDUAL_0, (static_cast<uint32_t>(j.rows) & 0xFFFFu) | (static_cast<uint32_t>(j.hwp.z) & 0xFFu) << 16 | (static_cast<uint32_t>(j.hwp.sh) & 0x3Fu) << 24));
+                s.push_back(N::w(N::RESIDUAL_1, static_cast<uint32_t>(j.hwp.sa)));
+                s.push_back(N::w(N::RESIDUAL_2, static_cast<uint32_t>(j.hwp.sb)));
+                s.push_back(N::w(N::RESIDUAL_3, static_cast<uint32_t>(static_cast<uint64_t>(j.hwp.bias))));
+                s.push_back(N::w(N::RESIDUAL_4, static_cast<uint32_t>(static_cast<uint64_t>(j.hwp.bias) >> 32)));
+                const std::vector<GvuRegMaster::W> seq = finish(N::start(s, gvu_regs_dfc::OP_RESIDUAL));
+                if (net_fp_)
+                {
+                    char h[96];
+                    std::snprintf(h, sizeof h, "r add r0=%zu rows=%zu n=%zu", j.r0, j.rows, j.n);
+                    net_seq(h, seq);
+                }
+                master_.request(seq, now.value());
+                j.prev_rows = static_cast<unsigned>(j.rows); j.prev_mask = 0;
+                reg_idle_ = false;
+                stream_stats().regs_seqs++;
+                return;
+            }
+            if (net_fp_) std::fprintf(net_fp_, "r addx r0=%zu rows=%zu n=%zu\n", j.r0, j.rows, j.n);   // not the formula of the RTL: no CPU program
             j.in = add_load(j.a.data(), j.b.data(), j.n, j.r0, j.rows, j.rows_total, j.cfg, j.bbuf, j.abuf);
             j.guard = 4 * j.rows + 400;
             j.c = 0; j.wait_edges = 0; j.phase = Job::WRITE;
@@ -1965,16 +2335,36 @@ namespace has
                 if (j.req != prev) st.elem_start_late++;
                 leave_for_job();
                 j.state = Job::ACTIVE; j.r0 = 0; j.c0 = 0; j.cyc = 0; j.prev_rows = 0; j.prev_mask = 0;
+                // revision 2: an add that is the formula of the RTL runs as the RTL does (registers 7..11, vbank2, 16 + N); any other stays on the two-stage unit
+                j.rtl = neo_on_ && add_rtl_on() && rtl_add_map(j.cfg, j.hwp);
+                if (neo_on_ && add_rtl_on() && !j.rtl) stream_stats().regs_add_not_rtl_runs += (j.rows_total + kAddRows - 1) / kAddRows;
                 job_begin_run_regs_add(now);
                 return;                                  // the sequence counts from the first edge after this one
             }
             R::GvuTop::In in = j.in;
             regs_to_in(in);
-            const bool run = in.i_pipeline_en;
+            bool run = in.i_pipeline_en;
             const R::control_fsm_t sb = top_.state();
             R::GvuTop::Out o;
             bool done = false;
-            if (run)
+            if (j.rtl)
+            {
+                // the unit is not ticked: the operation of the register file is computed when the enable edge is seen (cpu_residual: Reg 7..11 and the buffers
+                // the flops select), the done pulse comes 16 + N edges after the enable edge, the enable edge counted
+                if (j.res_left > 0)
+                {
+                    o.o_residual_pipe_done = --j.res_left == 0;
+                    done = o.o_residual_pipe_done;
+                    j.c++; st.elem_ticks++; run = true;
+                }
+                else if (run && in.i_gvu_op == R::GVU_OP_RESIDUAL && sb == R::IDLE)
+                {
+                    j.res_left = cpu_residual();
+                    j.c++; st.elem_ticks++;
+                }
+                else run = false;
+            }
+            else if (run)
             {
                 if (j.phase == Job::WRITE)
                 {
@@ -2009,7 +2399,8 @@ namespace has
                     if (top_.state() != R::IDLE) { fail(); return; }
                     j.cyc += j.c; st.regs_add_runs++;
                     pp_check(0, j.abuf); pp_check(1, j.bbuf);
-                    add_read(j.out, j.n, j.r0, j.rows, j.abuf);
+                    if (j.rtl) { pp_check(2, j.cbuf); st.regs_add_rtl_runs++; add_read_hw(j.out, j.n, j.r0, j.rows, j.cbuf); }
+                    else add_read(j.out, j.n, j.r0, j.rows, j.abuf);
                     j.phase = Job::CLEAR_WAIT;
                 }
                 else if (j.c >= j.guard) { fail(); return; }
@@ -2105,7 +2496,7 @@ namespace has
                 R::GvuTop::In empty;
                 top_.tick(empty, false);
                 gin_ = R::GvuTop::In();
-                running_ = stopping_ = false; table_loaded_ = false;
+                running_ = stopping_ = false; table_loaded_ = false; cpu_gemm_ = false;
                 meta_.clear(); model_q_.clear(); bypass_q_.clear(); in_flight_ = 0;
                 ready_q_ = false;
                 o_psum_ready.write(false);
@@ -2115,6 +2506,13 @@ namespace has
             }
             // HAS_GVU_REGS: one edge of the register write port of the DFC
             GvuRegMaster::Step ms;
+            if (cpu_raw_ && !cpu_q_.empty() && !master_.busy() && !(job_.state == Job::PENDING || job_.state == Job::ACTIVE) && !gjob_busy())
+            {
+                std::vector<GvuRegMaster::W> seq(cpu_q_.begin(), cpu_q_.end());
+                cpu_q_.clear();
+                master_.request(seq, prev.value());   // requested at the edge before: its writes count from this edge
+                reg_idle_ = false;
+            }
             if (regs_on_)
             {
                 ms = master_.edge(now.value());
@@ -2134,6 +2532,13 @@ namespace has
                 if (regs_on_ && job_.kind == Job::MAXPOOL) job_step_pool_regs(now, prev, ms);
                 else if (regs_on_ && add_regs_ && job_.kind == Job::ADD) job_step_add_regs(now, prev, ms);
                 else job_step(now, prev);
+                ready_q_ = false;
+                o_psum_ready.write(false);
+                return;
+            }
+            if (cpu_raw_ && !running_)   // HAS_CPU_DIRECT: the CPU drives the unit through its register file
+            {
+                cpu_raw_edge(ms);
                 ready_q_ = false;
                 o_psum_ready.write(false);
                 return;
@@ -2160,6 +2565,7 @@ namespace has
                 if (i_side_bypass.read())
                 {
                     bypass_beat = true;
+                    if (rec_on_) rec_bypass_++;
                     // with the register file the beat still travels through the unit (empty lane mask) so that the flags oc_last / oc_tile_last
                     // reach it; its result is the model's, written by bypass_q_
                     if (regs_on_) { in.i_psum_valid = true; in.i_psum_mask = 0; in.i_psum_addr = m.addr; m.bypass = true; }
@@ -2168,7 +2574,9 @@ namespace has
                 {
                     in.i_psum_valid = true;
                     for (size_t l = 0; l < size_t(R::GVU_LANES); l++) in.i_psum_vec[l] = d[l];
-                    in.i_psum_scale = static_cast<int32_t>(i_side_scale.read()); in.i_psum_shift = static_cast<uint8_t>(i_side_shift.read());
+                    if (cpu_gemm_) { in.i_psum_scale = cpu_sb_scale(cpu_agu_); in.i_psum_shift = cpu_sb_shift(cpu_agu_); cpu_agu_++; }
+                    else { in.i_psum_scale = static_cast<int32_t>(i_side_scale.read()); in.i_psum_shift = static_cast<uint8_t>(i_side_shift.read()); }
+                    if (rec_on_) { rec_scale_.push_back(in.i_psum_scale); rec_shift_.push_back(in.i_psum_shift); }
                     in.i_psum_mask = m.mask; in.i_psum_addr = m.addr;
                 }
                 if (regs_on_ && in.i_psum_valid)
@@ -2192,7 +2600,7 @@ namespace has
             // the call-style connection never ticks outside the beats. Without this a whole network costs one GvuTop tick per cycle.
             const bool quiet = regs_on_
                 ? (!in.i_psum_valid && in_flight_ == 0 && !gin_.i_gemm_stream_stop &&
-                   ((top_.state() == R::IDLE && !in.i_pipeline_en && !in.i_lut_act_reset) ||
+                   ((top_.state() == R::IDLE && !in.i_pipeline_en && !in.i_lut_act_reset && !in.i_lut_exp_reset && !in.i_lut_recip_reset && !in.i_lut_rsqrt_reset) ||
                     (top_.state() == R::GEMM_FUSED_ST1 && in.i_pipeline_en)))
                 : (!in.i_psum_valid && in_flight_ == 0 &&
                    ((!running_ && top_.state() == R::IDLE) ||
@@ -2202,7 +2610,7 @@ namespace has
             if (regs_on_) regs_post(o, st_before, !quiet, ms, in);
             if (in.i_gemm_lut_reload && top_.state() == R::LUT_ACT_INIT) gin_.i_gemm_lut_reload = false;
             if (in.i_psum_valid) { meta_.push_back(m); model_q_.push_back(model); in_flight_++; }
-            if (bypass_beat) bypass_q_.push_back(Held{edge_ + kDepth, m.addr, m.mask, model, m.ch, m.push, m.accept});
+            if (bypass_beat) bypass_q_.push_back(Held{edge_ + kDepth(), m.addr, m.mask, model, m.ch, m.push, m.accept});
             if (o.o_gemm_fused_valid && in_flight_)
             {
                 const Meta mt = meta_.front(); meta_.pop_front();
@@ -2219,10 +2627,16 @@ namespace has
                     if (!((mt.mask >> l) & 1u)) continue;
                     const int h = o.o_gemm_fused_data[l];
                     st.lanes++;
-                    if (h != md[l]) st.miss("ch=%u addr=%u lane=%zu model=%d GvuTop=%d", mt.ch, mt.addr, l, int(md[l]), h);
+                    if (!cpu_gemm_ && h != md[l]) st.miss("ch=%u addr=%u lane=%zu model=%d GvuTop=%d", mt.ch, mt.addr, l, int(md[l]), h);
                     r[l] = h;
                 }
-                emit(mt.addr, mt.mask, mt.ch, r);
+                if (cpu_gemm_)
+                {
+                    psum_vector_t<32, int32_t> rf;
+                    for (size_t l = 0; l < size_t(R::GVU_LANES); l++) rf[l] = o.o_gemm_fused_data[l];
+                    cpu_vbank2_put(rf);
+                }
+                else emit(mt.addr, mt.mask, mt.ch, r);
                 if (tracing) trace.push_back(Trace{mt.push, mt.accept, edge_, mt.addr});
                 }
             }
@@ -2232,12 +2646,26 @@ namespace has
                 emit(h.addr, h.mask, h.ch, h.data);
                 if (tracing) trace.push_back(Trace{h.push, h.accept, edge_, h.addr});
             }
+            // HAS_CPU_DIRECT: the run the CPU started is over (the unit left GEMM_FUSED by the flags and reported pipe_done): back to the raw mode
+            if (cpu_gemm_ && pipe_done_gemm_ && top_.state() == R::IDLE && in_flight_ == 0)
+            {
+                cpu_gemm_ = false; running_ = false; stopping_ = false;
+                gin_ = R::GvuTop::In();
+            }
             // o_psum_ready for the next cycle: the state after this edge
             ready_q_ = ready_for_beats() && !(edge_ >= hold_from && edge_ < hold_until);
             o_psum_ready.write(ready_q_);
         }
         void emit(uint32_t addr, uint32_t mask, uint32_t ch, const psum_vector_t<32, int32_t> &v)
         {
+            if (rec_on_)
+            {
+                char b[16];
+                std::string t = "B " + std::to_string(ch) + " ";
+                std::snprintf(b, sizeof b, "%08x", mask); t += b;
+                for (int l = 0; l < 32; l++) { std::snprintf(b, sizeof b, " %02x", ((mask >> l) & 1u) ? unsigned(static_cast<uint8_t>(static_cast<int8_t>(v[size_t(l)]))) : 0u); t += b; }
+                rec_beats_.push_back(t);
+            }
             if (result_sink) result_sink(addr, mask, v);
             if (dump)
             {

@@ -757,6 +757,38 @@ for byte for each step that was added). Details: `HW_RTL_ALIGNMENT.md`, section 
 | Regression | `bash tools/has/regress_gvu.sh`, 242 items | 242 of 242 | MEASURED |
 | Whole network, profile `neo` | YOLOv8m `insts_pe3` | PASS 98 / 98, 0 elements different, 65,371,733 cycles; hardware check OK 12, TRANSFORM 3, PATCH 0, NO 83 | MEASURED (sum of seven windows started from the golden memory image; a continuous run is about 18,000 cycles lower) |
 
+### 6.27 Hardware RTL revision 2 (V50)
+
+Every option of RTL revision 2 is off by default and needs `HAS_NEO_REV=2`; with the options off, values and cycles equal V49 (MEASURED: 10 check programs, both builds, identical byte for byte at each step that was added). Details: `HW_RTL_ALIGNMENT.md`, section 15; limits: `KNOWN_LIMITATIONS.md`, section 8; compiler and firmware rules: `COMPILER_GUIDE.md`, sections 2.1, 7.5, 7.6 and 11; `CPU_DIRECT_GUIDE.md`.
+
+| Check | Content | Result | Label |
+|---|---|---|---|
+| Register map, revisions 1 and 2 | `tools/has/neo_regmap_check.py --rev 2` and `--rev 1` (offsets, fields, bases, DMA register files) | 602 and 432 checks, 0 differences | MEASURED |
+| Word count of the RTL as delivered | elaboration of the RTL packages of revision 2 | 92 core words and a DFC file of 145 words; 29 and 82 with a one-line correction of the rounding | MEASURED |
+| Core SRAM of revision 2 | `tools/has/tb_has_sram_check.cpp` at revisions 0, 1, 2; planner `--sram rev2` on YOLOv8m and ViT-B/16 | layers over a limit refused with `B-SRAM`; YOLOv8m 40 layers re-tiled, 7,299 to 8,623 tiles, 0 tiles over a limit; ViT-B/16 unchanged | MEASURED |
+| Vector unit of revision 2 | multipliers, round-shift, lookup table, Softmax stages, max pool against an RTL simulation of the blocks | 0 differences; latencies 6 of 6; lookup table over 300,000 cycles; Softmax stage times equal at every milestone; max pool 10 of 10 | MEASURED |
+| Vector unit, revisions 0 and 1 unchanged | four modes of the `GvuTop` bench, 51 runs against the functional model | byte-identical to the earlier port | MEASURED |
+| DMA tensor register file | 11 groups of cases against an RTL simulation of the sequencer; 12 held-out descriptors | 0 bytes and 0 segments differ; cycles -0.1 % to +1.6 % (one group +4.0 %); 12 of 12 held-out predicted | MEASURED |
+| Vertical scan | modes 1 to 3 against the RTL bench and the model; mode 3 against mode 0 on the check programs | mode 1 reproduces the RTL (contexts 3 and 4 differ in 1,023 and 1,021 of 1,024 elements, as the RTL); mode 2 exact; mode 3 equal to mode 0 byte for byte on 5 programs | MEASURED |
+| CPU-direct programming | the sequences of `CPU_DIRECT_GUIDE.md` on a Verilator simulation of `neo_top` revision 2 with the CPU writing the configuration port, and on the model with the same programs | one-dimensional DMA exact in every region; one SAURIA run exact, 9,311 RTL / 9,345 model cycles; max pool exact, 6,168 / 6,168; RESIDUAL add and subtract with bias exact, 80 / 80 | MEASURED |
+| GEMM_FUSED through the DFC of `neo_top` revision 2 | Verilator simulation, a convolution of 128 tiles | does not complete (127 tiles, then the DFC and the DMA wait for each other); with trial changes of the model team the layer completes, 126 of 128 tiles exact | MEASURED |
+| CPU-direct GEMM_FUSED and Softmax on the model | four GEMM_FUSED programs (1 and 3 core calls, 2 and 8 contexts) and two Softmax programs replayed by the CPU against the DFC path of the model | 0 bytes differ; GEMM_FUSED packets equal one by one | MEASURED |
+| CPU-direct SAURIA status and soft reset | status, cycle and stall counters, version; a soft reset between two runs | as the RTL source; the second run exact | MEASURED |
+| CPU-direct sequences on the RTL, several runs | three SAURIA runs in a row on the RTL simulation | exact with a soft reset before each START (9,311 cycles per run); without it the second run stalls | MEASURED |
+| CPU-direct on the RTL as delivered | the programs above on revision 2 with its core word count of 92 | same results and cycles as with the corrected count | MEASURED |
+| CPU-direct Softmax on the RTL | rows of 32 and 64 elements | exact; 142 and 238 cycles, equal to the model | MEASURED |
+| CPU-direct GEMM_FUSED on the RTL | 3 core calls, 96 packets | the unit computes every packet correctly, but the write address of vbank2 does not advance, so the result is wrong (`CPU_DIRECT_GUIDE.md`, section 8); with the address held between accesses (proposed correction of the RTL) 0 bytes differ | MEASURED |
+| SYNC of the virtual platform | the proposed wrapper change built on a copy of the wrapper; DMA, one-run and three-run programs; with the change as shipped and the model root `core_rtl/` of the package also RESIDUAL, GEMM_FUSED and the chain of two layers (`HAS_PROFILE=neo_as_rtl`) | expected bytes in the system RAM with the change, not without it | MEASURED |
+| RESIDUAL through the DFC at revision 2 | 6 cases and the RESIDUAL case of the hardware testbench, `HAS_NEO_REV=2` | 0 differences; 16 + N cycles per run; with `HAS_GVU_ADD_RTL=0` the hardware case differs (control) | MEASURED |
+| Code clean-up | unused functions, constants, includes and four unused variables removed | 10 check programs, two builds, logs identical byte for byte | MEASURED |
+| CPU-direct chain on the model | two GEMM_FUSED layers, the second reading the result that the CPU wrote to DRAM for the first, each with its own table, sbank and calls, then RESIDUAL of both; the same program without the table reset as a control | 6,144 bytes exact against the DFC path of the model, 4 STARTs, 3 soft resets; the control differs in layer 1 and the RESIDUAL | MEASURED |
+| ViT-B/16 at revision 2, two attention steps | FUSED_ATTN heads 0 and 1 of block 0, `HAS_NEO_REV=2`, every other option at its default | 2 of 2 exact, 63,399 cycles | MEASURED |
+| Regression | `bash tools/has/regress_gvu.sh`, 287 items | 287 of 287 (286 in one full run; the remaining item, the check that the front end refuses `--upsample dma` alone, failed there only because the script did not set `FE_WORK`; with the script corrected it passes) | MEASURED |
+| Whole network, revision 2 | YOLOv8m `insts_pe3_nd_r2` (planned with `--sram rev2`) and ViT-B/16 with `HAS_NEO_REV=2` | YOLOv8m PASS 135 / 135, 64,241,407 cycles; ViT-B/16 PASS 244 / 244, 41,287,582 cycles | MEASURED |
+| Upsample by the DMA, whole network, revision 2 | YOLOv8m `insts_pe3_nd_up_r2` (`--slice-concat dma_nd --upsample dma --sram rev2`): the two upsamples as `DMA_TENSOR` mode 2 | PASS 137 / 137, 64,470,174 cycles (62,465 and 166,465 for the two upsamples) | MEASURED |
+| Element-wise ADD on RESIDUAL for every round mode | `HAS_GVU_ADD_EXACT=1`, profile `neo_as_rtl` with the register map of the RTL, one ADD of YOLOv8m at revision 2 | the same bytes as with the option off; the ADD runs on RESIDUAL (3,936 cycles) instead of being refused as not expressible (7,578); option off identical to the earlier build byte for byte | MEASURED |
+| Whole network on the CPU path, revision 2 | YOLOv8m `insts_pe3_nd_r2` with `--r2-tile dark2.conv:9x31`: trace of the DFC run, program of `mk_cpu_net.py` (9,199 core calls, 5,285 enables, 2,869,025 register writes, 215,213 polls), run with `HAS_CPU_DIRECT=1` | trace check: 9,199 of 9,199 core calls with the hashes of the trace; CPU run PASS, 137 of 137 tensors exact, 98,464,826 cycles | MEASURED |
+
 ## 7. HAS blocks, unit level (V10)
 
 All vector files were generated by independent Python implementations written from the interface
@@ -838,13 +870,16 @@ count the host register writes before the first instruction. `tb_has_npu_top` it
 |---|---|---|
 | Delivery acceptance run | All 98 instructions of YOLOv8m through `HasNpuTop`, overlapped, HAS DMA, compared with the golden | Done: PASS (V12, section 6.4) |
 | Transformer pipelines | SOFTMAX, LAYERNORM and FUSED_ATTN bit-exact, then ViT-B/16 through the network flow | Done: V17, V18. Open points of the drawings stay knobs until hardware answers (`KNOWN_LIMITATIONS.md`, section 7.1) |
-| Regression with the new items | `bash tools/has/regress_gvu.sh`, 242 items (adds the items of V40 to V45 and V47 to V49) | Done: 242 of 242 (MEASURED) |
-| Verification by instruction flow | Every step of the ten flows of the vector unit and the DMA with its references (V45) | Done: 67 of 67 steps PASS (MEASURED) |
+| Regression with the new items | `bash tools/has/regress_gvu.sh`, 287 items (adds the items of V40 to V45 and V47 to V50, the upsample by the DMA, the ADD on RESIDUAL and the CPU-direct flows) | Done: 287 of 287 (286 in one full run; the remaining item, the check that the front end refuses `--upsample dma` alone, failed there only because the script did not set `FE_WORK`; with the script corrected it passes; MEASURED) |
+| Verification by instruction flow | Every step of the ten flows of the vector unit and the DMA and of the five flows of the CPU-direct path with its references (V45; `FLOW_VERIFICATION.md`, section 7) | Done: 92 of 92 steps PASS; 3 steps end to end only, 4 steps PASS with a known RTL difference (MEASURED) |
 | Whole networks with the options of V40 to V42 | YOLOv8m with the COPY program, ViT-B/16 with Softmax, attention requant and LayerNorm on `GvuTop` (call style, a configuration that no longer exists) | Done: PASS, 63,902,431 and 40,782,987 cycles (sections 6.18, 6.19) |
 | Whole networks in the default of V43 (epilogue depth 9) | ViT-B/16 and YOLOv8m `insts_pe3` with no variable set | Done: ViT-B/16 PASS, 41,244,030 cycles (section 6.20); YOLOv8m PASS 98 / 98, 62,422,935 cycles; both rerun with the binary of the tree of that time, equal cycle for cycle (MEASURED) |
 | Whole networks in the defaults of V46 | YOLOv8m `insts_pe3_nd` and ViT-B/16 with no variable set (DMA options on, epilogue depth 11) | Done: YOLOv8m PASS 135 / 135, 64,135,381 cycles with `HAS_DMA_ND_MERGE=0`, 63,902,513 with the merge on (the default of this release, section 6.25); ViT-B/16 PASS 244 / 244, 41,244,621 cycles (section 6.23, MEASURED) |
 | Options that follow the `neo_lite` RTL, transpose after the epilogue | The checks of V47, all options off by default | Done: ViT-B/16 with V token-major PASS 244 / 244, 41,245,003 cycles; closest to the RTL PASS 244 / 244, 41,608,570 cycles (section 6.24, MEASURED). The six options of sections 2 to 7 of `HW_RTL_ALIGNMENT.md` on whole networks: section 6.25 |
-| Package check | Build and checks of the package of this release from a fresh copy (`RELEASE_NOTES.md`, section 4) | Done: 104 of 104 items (MEASURED) |
+| Hardware RTL revision 2 and the CPU-direct path | The checks of V50, all options off by default | Done: section 6.27 (MEASURED) |
+| Whole networks at revision 2 | YOLOv8m `insts_pe3_nd_r2` and ViT-B/16 with `HAS_NEO_REV=2` | Done: YOLOv8m PASS 135 / 135, 64,241,407 cycles; ViT-B/16 PASS 244 / 244, 41,287,582 cycles (MEASURED) |
+| Whole network on the CPU path at revision 2 | YOLOv8m from the trace of the DFC run (section 6.27) | Done: PASS, 137 of 137 tensors exact, 98,464,826 cycles (MEASURED) |
+| Package check | Build and checks of the package of this release from a fresh copy (`RELEASE_NOTES.md`, section 4) | Done: 112 of 112 items (MEASURED) |
 | Accuracy | mAP evaluation on a dataset | Not planned in this package. Integer against floating point on 112 images (YOLOv8m) and 5 images (ViT-B/16), four and two images through the model (section 6.7) |
 
 ## 10. Reproducing the checks

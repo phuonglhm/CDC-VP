@@ -106,11 +106,19 @@ module tb_oracle_comb;
   end
 endmodule
 
-// Round-shift, IN_W = 64 and 72, S2_PIPE = 0: one beat per cycle, the result is read one cycle after the beat.
+// Round-shift, IN_W = 64 and 72: one beat at a time. ORACLE / KNOWN keep their meaning (value and valid one cycle after the
+// beat, the latency of the port); VALUE compares the value at the cycle the RTL output valid comes (up to 16 cycles), LATENCY
+// prints the number of clock edges from the accepted beat to the output valid (minimum and maximum seen).
 module tb_oracle_roundshift;
   import gvu_pkg::*;
   string dir;
-  integer fd, n, bad, rc, kn, kbad;
+  integer fd, n, bad, rc, kn, kbad, kbadv, badv, lat, lmin, lmax;
+  logic ok1, okv;
+`ifdef NEO_REV2
+  localparam int EXP_LAT = 2;   // RTL revision 2: S2_PIPE = 1
+`else
+  localparam int EXP_LAT = 1;
+`endif
   logic clk = 0, rst_n = 0;
   always #5 clk = ~clk;
   logic v64, v72; logic [5:0] s64; logic [6:0] s72; round_mode_e rm; narrow_mode_e nm; narrow_w_e nw;
@@ -125,26 +133,40 @@ module tb_oracle_roundshift;
     v64 = 0; v72 = 0; repeat (3) @(negedge clk); rst_n = 1;
     // Beats with a negative input and a shift other than 0 are counted apart ("KNOWN" lines): an RTL revision that takes
     // the lane out of a packed array shifts it logically there. Both counts are 0 on an RTL that shifts arithmetically.
-    fd = $fopen({dir, "/rs64.txt"}, "r"); n = 0; bad = 0; kn = 0; kbad = 0;
+    fd = $fopen({dir, "/rs64.txt"}, "r"); n = 0; bad = 0; kn = 0; kbad = 0; badv = 0; kbadv = 0; lmin = 99; lmax = 0;
     while (fd != 0 && !$feof(fd)) begin
       rc = $fscanf(fd, "%h %h %h %h %h %h %h\n", a0, a1, a2, a3, dat, e_data, e_ovf); if (rc != 7) break;
       @(negedge clk); s64 = a0[5:0]; rm = round_mode_e'(a1[2:0]); nm = narrow_mode_e'(a2[0]); nw = narrow_w_e'(a3[1:0]); d64[0] = dat[63:0]; v64 = 1;
-      @(negedge clk); v64 = 0;
-      if (dat[63] && a0[5:0] != 0) begin kn++; if (ov64 !== 1'b1 || o64[0] !== e_data || f64[0] !== e_ovf[0]) kbad++; end
-      else begin n++; if (ov64 !== 1'b1 || o64[0] !== e_data || f64[0] !== e_ovf[0]) bad++; end
+      @(negedge clk); v64 = 0; lat = 1;
+      while (ov64 !== 1'b1 && lat < 16) begin @(negedge clk); lat++; end
+      okv = !(ov64 !== 1'b1 || o64[0] !== e_data || f64[0] !== e_ovf[0]);
+      ok1 = okv && lat == EXP_LAT;   // ORACLE: value and valid at the latency of the revision
+      if (lat < lmin) lmin = lat; if (lat > lmax) lmax = lat;
+      if (dat[63] && a0[5:0] != 0) begin kn++; if (!ok1) kbad++; if (!okv) kbadv++; end
+      else begin n++; if (!ok1) bad++; if (!okv) badv++; end
     end
     $display("ORACLE roundshift64 vectors %0d mismatches %0d", n, bad);
     $display("KNOWN roundshift64 negative input with a shift: vectors %0d differ %0d", kn, kbad);
-    fd = $fopen({dir, "/rs72.txt"}, "r"); n = 0; bad = 0; kn = 0; kbad = 0;
+    $display("VALUE roundshift64 vectors %0d mismatches %0d at the cycle of the output valid", n, badv);
+    $display("VALUE roundshift64 negative input with a shift: vectors %0d differ %0d at the cycle of the output valid", kn, kbadv);
+    $display("LATENCY roundshift64 %0d..%0d", lmin, lmax);
+    fd = $fopen({dir, "/rs72.txt"}, "r"); n = 0; bad = 0; kn = 0; kbad = 0; badv = 0; kbadv = 0; lmin = 99; lmax = 0;
     while (fd != 0 && !$feof(fd)) begin
       rc = $fscanf(fd, "%h %h %h %h %h %h %h\n", a0, a1, a2, a3, dat, e_data, e_ovf); if (rc != 7) break;
       @(negedge clk); s72 = a0[6:0]; rm = round_mode_e'(a1[2:0]); nm = narrow_mode_e'(a2[0]); nw = narrow_w_e'(a3[1:0]); d72[0] = dat; v72 = 1;
-      @(negedge clk); v72 = 0;
-      if (dat[71] && a0[6:0] != 0) begin kn++; if (ov72 !== 1'b1 || o72[0] !== e_data || f72[0] !== e_ovf[0]) kbad++; end
-      else begin n++; if (ov72 !== 1'b1 || o72[0] !== e_data || f72[0] !== e_ovf[0]) bad++; end
+      @(negedge clk); v72 = 0; lat = 1;
+      while (ov72 !== 1'b1 && lat < 16) begin @(negedge clk); lat++; end
+      okv = !(ov72 !== 1'b1 || o72[0] !== e_data || f72[0] !== e_ovf[0]);
+      ok1 = okv && lat == EXP_LAT;   // ORACLE: value and valid at the latency of the revision
+      if (lat < lmin) lmin = lat; if (lat > lmax) lmax = lat;
+      if (dat[71] && a0[6:0] != 0) begin kn++; if (!ok1) kbad++; if (!okv) kbadv++; end
+      else begin n++; if (!ok1) bad++; if (!okv) badv++; end
     end
     $display("KNOWN roundshift72 negative input with a shift: vectors %0d differ %0d", kn, kbad);
     $display("ORACLE roundshift72 vectors %0d mismatches %0d", n, bad);
+    $display("VALUE roundshift72 vectors %0d mismatches %0d at the cycle of the output valid", n, badv);
+    $display("VALUE roundshift72 negative input with a shift: vectors %0d differ %0d at the cycle of the output valid", kn, kbadv);
+    $display("LATENCY roundshift72 %0d..%0d", lmin, lmax);
     $finish;
   end
 endmodule

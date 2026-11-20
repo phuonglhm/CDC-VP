@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -58,8 +59,8 @@ namespace
 
     struct Event
     {
-        char kind;             // 'W' register write, 'H' host step
-        uint32_t addr{0}, val{0};
+        char kind;             // 'W' register write, 'H' host step, 'P' poll a register, 'K' check a DRAM region (HAS_DMA_OPGEN programs)
+        uint32_t addr{0}, val{0}, mask{0};   // P: poll addr until (read & mask) == val; K: check val bytes at addr against the golden DRAM
         std::string text;      // H line
         int instr{-1};         // for the push write: instruction index
     };
@@ -195,6 +196,13 @@ SC_MODULE(TbHasNpuTop)
                 if (line.rfind("# [", 0) == 0) { label = line.substr(2); continue; }
                 if (line.empty() || line[0] == '#') continue;
                 if (line[0] == 'H') { Event e; e.kind = 'H'; e.text = line; ev.push_back(e); continue; }
+                if (line[0] == 'P' || line[0] == 'K')   // P <addr> <mask> <value> (hex); K <addr hex> <bytes>
+                {
+                    Event e; e.kind = line[0];
+                    std::istringstream ps(line.substr(1));
+                    if (e.kind == 'P') ps >> std::hex >> e.addr >> e.mask >> e.val; else { ps >> std::hex >> e.addr >> std::dec >> e.val; }
+                    ev.push_back(e); continue;
+                }
                 std::istringstream is(line);
                 std::string tag;
                 Event e;
@@ -307,6 +315,14 @@ SC_MODULE(TbHasNpuTop)
 
         // ---------------- replay
         uint64_t pushed = 0, checked = 0, bad_tensors = 0, bad_elems = 0, elems = 0, host_steps = 0, mmio_errors = 0, refused = 0;
+        // HAS_CPU_DIRECT_NET=1 with HAS_CPU_DIRECT_DUMP=<dir>: <dir>/ret.txt lists, in order, the output region of every retired instruction and the host
+        // steps (input of tools/has/cpu_direct/mk_cpu_net.py, with the trace net.txt of the model); observation only
+        std::FILE *ret_fp = nullptr;
+        {
+            const char *nd = std::getenv("HAS_CPU_DIRECT_DUMP"), *nn = std::getenv("HAS_CPU_DIRECT_NET");
+            if (nd && nn && std::atoi(nn) != 0) ret_fp = std::fopen((std::string(nd) + "/ret.txt").c_str(), "w");
+            if (ret_fp) std::fprintf(ret_fp, "F %d %d %zu\n", first, last, program_bytes);
+        }
         std::vector<int> pushed_idx;
         const uint64_t t0 = now_cycles();
         auto check_retired = [&](bool block_all)
@@ -326,6 +342,7 @@ SC_MODULE(TbHasNpuTop)
                                 (unsigned long long)dut->st.tiles, (unsigned long long)dut->st.tiles,
                                 (unsigned long long)(now_cycles()), in.label.c_str());
                     std::fflush(stdout);
+                    if (ret_fp) { std::fprintf(ret_fp, "R %d %u %llu %s\n", pushed_idx[checked], in.out_addr, (unsigned long long)in.out_bytes, in.label.c_str()); std::fflush(ret_fp); }
                     checked++;
                 }
                 if (!block_all || checked == pushed) return;
@@ -338,7 +355,31 @@ SC_MODULE(TbHasNpuTop)
         {
             if (e.kind == 'H')
             {
-                if (cur < first || cur >= last) continue;
+                if (n_ins > 0 && (cur < first || cur >= last)) continue;   // a program without instructions (CPU-direct) runs its host steps
+                if (e.text.rfind("H add2 ", 0) == 0)
+                {
+                    // ELEM_WISE ADD done by the CPU (CPU-direct programs): out[i] = requant(sat32(dequant(A[i]) + dequant(B[i]))), the formula and knobs of
+                    // HasElemwise::add, for an add whose parameters the RESIDUAL registers of the RTL cannot express
+                    std::map<std::string, long long> kvp;
+                    std::istringstream is(e.text.substr(7));
+                    std::string tok;
+                    while (is >> tok) { const size_t q = tok.find('='); if (q != std::string::npos) kvp[tok.substr(0, q)] = std::stoll(tok.substr(q + 1), nullptr, 0); }
+                    const Knobs &kn = dut->knobs;
+                    const int64_t SA = decode_scale(uint32_t(kvp["SA"]), kn.scale_fmt), SB = decode_scale(uint32_t(kvp["SB"]), kn.scale_fmt),
+                                  SO = decode_scale(uint32_t(kvp["SO"]), kn.scale_fmt);
+                    const uint32_t ia = uint32_t(kvp["a"]), ib = uint32_t(kvp["b"]), io = uint32_t(kvp["out"]), n = uint32_t(kvp["n"]);
+                    for (uint32_t i = 0; i < n; i++)
+                    {
+                        const int32_t da = dequant(int8_t(dram[ia + i]), int(kvp["zpA"]), SA, int(kvp["sA"]), kn);
+                        const int32_t db = dequant(int8_t(dram[ib + i]), int(kvp["zpB"]), SB, int(kvp["sB"]), kn);
+                        dram[io + i] = uint8_t(requant(add_sat32(da, db), SO, int(kvp["sO"]), int(kvp["zpO"]), kn));
+                    }
+                    const uint64_t bad = compare(io, n);
+                    host_steps++; elems += n;
+                    if (bad) { bad_tensors++; bad_elems += bad; }
+                    std::printf("[HOST] add2 out=0x%x n=%u -> bad=%llu %s\n", io, n, (unsigned long long)bad, bad ? "FAIL" : "PASS");
+                    continue;
+                }
                 // host step: everything pushed so far must have finished (RAW on its input)
                 check_retired(true);
                 const HostOp o = parse_h(e.text);
@@ -348,10 +389,26 @@ SC_MODULE(TbHasNpuTop)
                         for (uint32_t x = 0; x < 2 * o.w; x++)
                             dram[o.out + (c * 2 * o.h + y) * 2 * o.w + x] = dram[o.in + (c * o.h + y / 2) * o.w + x / 2];
                 const uint64_t n = uint64_t(o.c) * 4 * o.h * o.w, bad = compare(o.out, n);
+                if (ret_fp) { std::fprintf(ret_fp, "H %llu %s\n", (unsigned long long)checked, e.text.c_str()); std::fflush(ret_fp); }
                 host_steps++;
                 elems += n;
                 if (bad) { bad_tensors++; bad_elems += bad; }
                 std::printf("[HOST] %s -> bad=%llu %s\n", e.text.c_str(), (unsigned long long)bad, bad ? "FAIL" : "PASS");
+                continue;
+            }
+            if (e.kind == 'P')   // host polls a register (the descriptor registers of the DMA may only be rewritten when it is idle)
+            {
+                if (cur < first || cur > last) continue;
+                while ((mmio_read(e.addr) & e.mask) != e.val) wait(16);
+                continue;
+            }
+            if (e.kind == 'K')   // region written by a DMA descriptor: compare with the golden DRAM
+            {
+                if (cur < first || cur > last) continue;
+                const uint64_t bad = compare(e.addr, e.val);
+                host_steps++; elems += e.val;
+                if (bad) { bad_tensors++; bad_elems += bad; }
+                std::printf("[OPGEN] region 0x%x %u B -> bad=%llu %s\n", e.addr, e.val, (unsigned long long)bad, bad ? "FAIL" : "PASS");
                 continue;
             }
             if (e.instr >= 0)   // the push of instruction e.instr
@@ -403,6 +460,7 @@ SC_MODULE(TbHasNpuTop)
                 continue;
             }
             if (cur > last) continue;
+            if (e.addr == 0x40000A80u && (e.val & 1u)) check_retired(true);   // START of a DMA descriptor: its source tensors must be written
             mmio_write(e.addr, e.val);   // gather register (skipped instructions too: rebuild sticky state)
         }
         check_retired(true);
@@ -460,6 +518,10 @@ SC_MODULE(TbHasNpuTop)
         if (dut->out_transpose)
             std::printf("[tb_has_npu_top] HAS_OUT_TRANSPOSE: token-major tiles %llu, corner-turn tail cycles %llu, tiles across X_TMAJ_C0 %llu\n",
                         (unsigned long long)dut->tmaj_tiles, (unsigned long long)dut->tmaj_tail_cycles, (unsigned long long)dut->tmaj_straddle);
+        if (dut->transpose_mode)
+            std::printf("[tb_has_npu_top] HAS_TRANSPOSE_MODE %u: vertical tiles %llu, fallback (not a full 32 x 32 tile) %llu, skipped (clocked path) %llu\n",
+                        dut->transpose_mode, (unsigned long long)dut->transpose_tiles, (unsigned long long)dut->transpose_fallback_tiles,
+                        (unsigned long long)dut->transpose_skipped_tiles);
         std::printf("[tb_has_net] HasElemwise: add %llu calls / %llu elems, max %llu calls / %llu elems, cycles %llu, req clamp8 %llu\n",
                     (unsigned long long)es.add_calls, (unsigned long long)es.add_elems, (unsigned long long)es.max_calls,
                     (unsigned long long)es.max_elems, (unsigned long long)st.elem_cycles, (unsigned long long)es.qc_req.clamp8);
@@ -467,6 +529,33 @@ SC_MODULE(TbHasNpuTop)
                     (unsigned long long)es.cyc_dma, (unsigned long long)es.cyc_compute, (unsigned long long)es.cyc_overlap_saved);
         if (refused)
             std::printf("[tb_has_npu_top] %llu instruction(s) refused at the push (not run, not checked)\n", (unsigned long long)refused);
+        if (dut->cpu.on())   // HAS_CPU_DIRECT only: the default log is unchanged
+        {
+            const auto &cs = dut->cpu.stats();
+            std::printf("[tb_has_npu_top] HAS_CPU_DIRECT: register writes %llu, reads %llu, bad accesses %llu, writes during a DFC instruction %llu; "
+                        "1-D DMA commands %llu (write-zero %llu), bytes %llu, cycles %llu, not executed %llu; SYNC commands %llu\n",
+                        (unsigned long long)cs.writes, (unsigned long long)cs.reads, (unsigned long long)cs.bad_access, (unsigned long long)cs.dfc_overlap,
+                        (unsigned long long)cs.dma_cmds, (unsigned long long)cs.dma_zero_cmds, (unsigned long long)cs.dma_bytes,
+                        (unsigned long long)cs.dma_cycles, (unsigned long long)cs.dma_bad, (unsigned long long)cs.sync_cmds);
+            std::printf("[tb_has_npu_top] HAS_CPU_DIRECT SAURIA: starts %llu (ignored %llu, failed %llu), cycles %llu, writes while running %llu, soft resets %llu; "
+                        "self-check %llu configurations, decode differs %llu, value wider than its register %llu\n",
+                        (unsigned long long)cs.sauria_starts, (unsigned long long)cs.sauria_start_ignored, (unsigned long long)cs.sauria_failed,
+                        (unsigned long long)cs.sauria_cycles, (unsigned long long)cs.sauria_write_busy, (unsigned long long)cs.sauria_soft_reset,
+                        (unsigned long long)cs.selfcheck_calls, (unsigned long long)cs.selfcheck_bad, (unsigned long long)cs.selfcheck_wide);
+            if (const GvuTopStream *g = dut->gvu_stream())
+                std::printf("[tb_has_npu_top] HAS_CPU_DIRECT GVU: unit edges driven by the CPU registers %llu, writes dropped %llu\n",
+                            (unsigned long long)g->cpu_ticks(), (unsigned long long)g->cpu_dropped());
+            if (cs.start_without_soft_reset)   // only a program that starts the core again without the soft reset the hardware needs
+                std::printf("[tb_has_npu_top] HAS_CPU_DIRECT SAURIA: %llu START(s) without a soft reset since the previous run (the hardware does not run them)\n",
+                            (unsigned long long)cs.start_without_soft_reset);
+            if (cs.status_reads)   // only a program that reads 0x10 .. 0x1C of the SAURIA block
+                std::printf("[tb_has_npu_top] HAS_CPU_DIRECT SAURIA status: reads %llu, last status 0x%x cycles %u stalls %u version 0x%08x\n",
+                            (unsigned long long)cs.status_reads, cs.last_status, cs.last_cycles, cs.last_stalls, cs.last_version);
+            if (const GvuTopStream *g = dut->gvu_stream())
+                if (g->cpu_gemm_runs())   // only a program that starts GEMM_FUSED through the registers
+                    std::printf("[tb_has_npu_top] HAS_CPU_DIRECT GEMM: runs %llu, result rows into vbank2 %llu, scale / shift reads beyond the sbank %llu\n",
+                                (unsigned long long)g->cpu_gemm_runs(), (unsigned long long)g->cpu_gemm_beats_total(), (unsigned long long)g->cpu_gemm_sbank_over());
+        }
         const bool pass = bad_tensors == 0 && mmio_errors == 0 && dut->mmio.n_errors == 0 && st.core_deadlocks == 0 &&
                           st.framing_errors == 0 && checked == uint64_t(count) && ob.cfg_errors == 0 && ob.vectors_in == ob.vectors_out;
         std::printf("[tb_fe_core_net] RESULT: %s (steps %d, tensors %llu, elements %llu, bad tensors %llu, bad elements %llu, "

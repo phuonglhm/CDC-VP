@@ -6,7 +6,6 @@
 // kAvgTailDepth cycles, mask, address, back-to-back beats with gaps.
 // build: g++ -std=c++17 -O2 -I. tools/has/tb_gvu_avgpool_pipe.cpp -o tb_gvu_avgpool_pipe
 #include <cstdio>
-#include <cstdlib>
 #include <random>
 #include "has/rtl_ref_gvu_avgpool_pipe.h"
 

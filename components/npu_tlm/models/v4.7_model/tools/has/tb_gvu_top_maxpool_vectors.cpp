@@ -11,10 +11,7 @@
 //     tile : multi W-tile mode (C=3, H=80, W=80, K=5x5, stride=1 -> 3x76x76 = 17,328 elements, default)
 //     vec  : single W-tile mode (C=40, H=20, W=20, K=3x3, stride=1 -> 40x18x18 = 12,960 elements)
 
-#if 0 // C++ path only: ScGvuTop has no pooling ports yet
-#include <systemc.h>
-#define GVU_TB_USE_SYSTEMC 1
-#elif defined(SYSTEMC_INCLUDED) || defined(SC_MODULE) || defined(HAVE_SYSTEMC)
+#if defined(SYSTEMC_INCLUDED) || defined(SC_MODULE) || defined(HAVE_SYSTEMC)
 #include <systemc.h>
 #define GVU_TB_USE_SYSTEMC 1
 #else

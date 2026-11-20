@@ -11,7 +11,6 @@
 #ifndef HAS_LAYERNORM_H
 #define HAS_LAYERNORM_H
 
-#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include "has/gvu_lut.h"

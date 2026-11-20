@@ -110,7 +110,7 @@ namespace has
         // Tail behind the last write of a core pass: the depth of the cycle-level pipeline with HAS_GVU_TOP (GvuTop, stream
         // mode) or HAS_OBP_RTL, else LAT.
         // HAS_GVU_TOP=3: no fixed tail; the DFC waits until the stream is empty instead.
-        int inline_latency() const { return stream_sink ? 0 : GvuTopBridge::on() ? GvuTopBridge::kDepth : RtlObp::on() ? RtlObp::kLatency : lat; }
+        int inline_latency() const { return stream_sink ? 0 : GvuTopBridge::on() ? GvuTopBridge::kDepth() : RtlObp::on() ? RtlObp::kLatency : lat; }
         // HAS_GVU_TOP=2: the layer's table set without host-bus cycles (the instruction path charges the cycles of the
         // Scratchpad path instead, GvuTopBridge::table_cycles()). The same table as 32 copies over the host port.
         void load_lut(const uint8_t *table)

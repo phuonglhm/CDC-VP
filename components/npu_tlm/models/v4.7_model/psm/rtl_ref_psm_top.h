@@ -150,6 +150,11 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
         bool peek_done_now() const { return psm_fsm_.peek_done(); }
         // Debug hooks: FSM state / ctx_cnt pass-through (read-only, no effect on behaviour).
         int dbg_fsm_state() const { return psm_fsm_.dbg_main_state(); }
+        // Hands the PSM the signal that carries the RTL o_vertical_scan to the array (transpose_mode >= 1). With no
+        // signal set (nullptr, the default) the PSM behaves exactly as before: nothing is written, no state is added to the old path.
+        // preload_rows = true (transpose_mode 3): the flag is also high in PREREAD_SHIFT, so that the preload of the first contexts is loaded by
+        // rows like the later ones (otherwise the two kinds of load would mix).
+        void set_vertical_scan_out(sc_signal<bool> *s, bool preload_rows = false) { vscan_out_ = s; vscan_preload_rows_ = preload_rows; }
         uint32_t dbg_fsm_ctx_cnt() const { return psm_fsm_.dbg_ctx_cnt(); }
 #endif   // `psm_fsm_` only exists under FX1_A3_PSM_SHIFT_FSM
 #ifdef FX1_A3_PSM_SEAM_ORDER
@@ -244,6 +249,11 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
         // copy of cscan_en advanced on PERMITTED beats, the same domain as the gather stage (cap_eff). Only read
         // under FX1_A3_CSCAN_ARR_BEAT.
         bool cscan_beat_{false};
+        // Vertical-scan flag for the array (see set_vertical_scan_out); vscan_beat_ = PREWRITE_SHIFT seen on the last
+        // permitted beat, the same domain as cscan_beat_.
+        sc_signal<bool> *vscan_out_{nullptr};
+        bool vscan_preload_rows_{false};
+        bool vscan_beat_{false};
 #ifdef FX1_A3_CARR_GAP_HOLD
         // last REAL value driven on `o_c_arr`, HELD during gate-closed gaps (the array reads one delta late and would
         // latch 0 if 0 were driven).
@@ -514,6 +524,7 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
                 cscan_en_prev_ = false;
                 cscan_sent_prev_ = false;
                 cscan_beat_ = false;
+                vscan_beat_ = false;
 #ifdef FX1_A3_CSCAN_CAP_PIPE
                 cscan_cap_ = false;
 #endif
@@ -594,6 +605,8 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
             set_shift_done_(false);
             o_finalwrite.write(false);
             o_cscan_en.write(false);
+            if (vscan_out_ != nullptr)
+                vscan_out_->write(false);
 
 #ifdef FX1_A3_PSM_SHIFT_FSM
             // -----------------------------------------------------------------
@@ -632,6 +645,8 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
 #endif
 
                 auto fsm_out = psm_fsm_.compute_outputs(fsm_in);
+                // this cycle is a PREWRITE_SHIFT cycle (before commit), or a PREREAD_SHIFT cycle when the preload goes in by rows
+                const bool vs_cur_ = psm_fsm_.peek_prewrite() || (vscan_preload_rows_ && psm_fsm_.peek_preread());
 #ifdef FX1_A3_PSM_TAPE
                 // Debug hook (default off): one line EVERY cycle (unfiltered), std instance only; joins fsm_tape.csv on tsim.
                 if (std::string(this->name()).find("NpuTop_std") !=
@@ -1388,6 +1403,20 @@ using namespace sauria; // A1 port: shared vector/mask types stay in ::sauria, c
 #else
                 o_cscan_en.write(fsm_out.cscan_en || cscan_en_prev_);
 #endif
+                if (vscan_out_ != nullptr)
+                {
+                    // RTL o_vertical_scan is high only in PREWRITE_SHIFT. The array must see it one edge BEFORE its first
+                    // scan edge (row 0 is presented before the first active edge), so it also covers the state the FSM has
+                    // just entered (peek after commit) and, like the array-facing o_cscan_en, advances in the permitted-beat domain
+                    // and keeps the same one-cycle tail when o_cscan_en has one (not with FX1_A3_CSCAN_BEAT_NOOR, the default).
+                    const bool vs_beat_next = pipe_en_now_ ? vs_cur_ : vscan_beat_;
+                    bool vs = psm_fsm_.peek_prewrite() || (vscan_preload_rows_ && psm_fsm_.peek_preread()) || vs_beat_next;
+#ifndef FX1_A3_CSCAN_BEAT_NOOR
+                    vs = vs || vscan_beat_;
+#endif
+                    vscan_out_->write(vs);
+                    vscan_beat_ = vs_beat_next;
+                }
                 cscan_sent_prev_ = (fsm_out.cscan_en || cscan_en_prev_);
 #ifdef FX1_A3_CSCAN_PREV_BEAT
                 // the compensation advances in the PERMITTED-BEAT domain, like every consumer of it (the array's scan

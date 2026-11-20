@@ -1,0 +1,57 @@
+--- a/components/npu_tlm/src/npu_tlm.cpp
++++ b/components/npu_tlm/src/npu_tlm.cpp
+@@ -1121,6 +1121,44 @@
+         return true;
+     }
+ 
++    // CPU-direct mode of the model (registers 0x11000..0x14FFF, written through unchanged): the one-dimensional DMA of the model reads and
++    // writes the model's DRAM vector (rich_dram), which this wrapper otherwise fills only when a rich instruction is pushed. Firmware writes
++    // SYNC_ADDR (0x14000, system RAM address), SYNC_SIZE (0x14004, bytes) and SYNC_CMD (0x14008): 1 copies system RAM into the model before
++    // a DMA reads it, 2 copies the model back to system RAM after a DMA wrote it. The write also reaches the model (it only stores it).
++    static constexpr std::uint32_t kCpuSyncAddr = 0x0001'4000u;
++    static constexpr std::uint32_t kCpuSyncSize = 0x0001'4004u;
++    static constexpr std::uint32_t kCpuSyncCmd = 0x0001'4008u;
++    std::uint32_t cpu_sync_addr = 0;
++    std::uint32_t cpu_sync_size = 0;
++
++    bool cpu_direct_sync(std::uint32_t model_address, std::uint32_t value)
++    {
++        if (model_address == kCpuSyncAddr) {
++            cpu_sync_addr = value;
++        } else if (model_address == kCpuSyncSize) {
++            cpu_sync_size = value;
++        } else if (model_address == kCpuSyncCmd && value == 1u) {
++            error_code error = error_code::none;
++            return cpu_sync_size == 0u || stage_rich_range(cpu_sync_addr, cpu_sync_size, error);
++        } else if (model_address == kCpuSyncCmd && value == 2u) {
++            if (cpu_sync_size == 0u) {
++                return true;
++            }
++            if (!physical_ram_range(cpu_sync_addr, cpu_sync_size)) {
++                return false;
++            }
++            const std::uint64_t offset = cpu_sync_addr - static_cast<std::uint32_t>(kRamBase);
++            const std::uint64_t end = offset + cpu_sync_size;
++            if (end > rich_dram.size()) {
++                return false;
++            }
++            std::vector<std::uint8_t> data(rich_dram.begin() + static_cast<std::ptrdiff_t>(offset),
++                                           rich_dram.begin() + static_cast<std::ptrdiff_t>(end));
++            return dma_write(cpu_sync_addr, data);
++        }
++        return true;
++    }
++
+     bool prepare_rich_job(std::uint32_t opcode, rich_job& job,
+                           error_code& error)
+     {
+@@ -1380,6 +1418,9 @@
+         }
+ 
+         update_native_sideband(model_address, value);
++        if (!cpu_direct_sync(model_address, value)) {
++            return tlm::TLM_GENERIC_ERROR_RESPONSE;
++        }
+         if (native_start) {
+             buffer_select.write(sc_dt::sc_bv<3>("111"));
+             total_contexts.write(native_total_contexts);
