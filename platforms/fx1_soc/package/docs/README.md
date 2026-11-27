@@ -193,6 +193,22 @@ sw/bootloader/test/VP_FX1_V3.0/run_vp.sh isp d65 interactive 5000
 # then type: isp run, isp stats, poweroff
 ```
 
+With the camera (`--camera`: CSI-2 RX, D-PHY and the sensor model), the same
+console drives the camera CLI, on the memory path (default) or the direct
+CSI-2 → ISP path:
+
+```bash
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh interactive 5000 --camera
+# Terminal 2: fx1_console.sh 5000, then type:
+#   camera probe, camera path direct, camera start, camera capture 2,
+#   camera status, camera stop, poweroff
+```
+
+`--camera-raw FILE` (implies `--camera`) gives the sensor its frames from FILE
+(16-bit LE samples, W x H per frame at the mode set by `camera mode`). Each
+frame passes through the detailed D-PHY model, so a capture takes host
+seconds; see [camera/README.md](camera/README.md) for the commands.
+
 Use `fx1_console.sh` rather than plain `nc` or `telnet`. The firmware echoes
 like a real UART console and ends lines with CR LF. A terminal in line mode
 echoes locally as well, so every command would appear twice.

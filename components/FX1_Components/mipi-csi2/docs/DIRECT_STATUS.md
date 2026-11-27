@@ -1230,3 +1230,37 @@ files) verified unchanged after the run. Evidence
   (their RAW / profiles / config are not available here). Note for that
   gate: `fx1_isp_dev` gained a field (`direct`, at the end): applications
   must be rebuilt with the new header.
+
+## D5 — release package, tuning gate, export (2026-11-27, D4 closed; D5 accepted 2026-11-27)
+
+Source: CDC-VP `4894ee3e` (clean, committed by the user): `b3f3f50b` = the D4
+hand-over (89 files, verified against its manifest), under it `f38d3f4b` (NPU
+model drop update by another author: model manifest `56d28439` ->
+`922d2a1f`), over it the packaging-gate commit below. Evidence
+`plan/evidence/direct_d5_20261127/`.
+
+| Item | Result |
+|---|---|
+| Full CI on `b3f3f50b` (fresh `d5-ci`): the tree with the NPU commit had not been through CI | PASS: smoke 527, components 6, regression 80, isp 41, npu_off; manifest 612. The later commit touches only `platforms/fx1_soc/package/` files no CI test uses |
+| Packaging gate gap: `run_packaging_regression.sh` ran neither camera CLI session; the launchers printed no verdict (user: add it to the gate) | `run_vp.sh camera-cli` / `camera-direct-cli` log the session, print the key lines and `CAMERA CLI PASS/FAIL` (= the firmware's verdict = exit status, as `eth-cli`); gate step 5c2: memory session 6 frames = golden and no direct frame; direct session 6 direct (`raw n/a`) + 2 memory frames = golden and a clean `direct ok` status; a direct session fed a flat RAW file (every sample 0x123) must FAIL (2 GOLDEN MISMATCH, exit 1). Commit `4894ee3e` |
+| Gate on the release commit (`FX1_DEMO_RAW` = outdoor1, `JOBS=8`) | PASS, 64 ok / 0 FAIL, 1725 s (also on `b3f3f50b` + the patch before the commit: 64 / 0, 1673 s) |
+| Release build + `fx1_soc_package`, `check_package.sh` | PASS; revision `4894ee3e` clean, binary = package revision, 242 files, samples d65 + outdoor1 (internal), 9 NPU fixtures; the known note (D-PHY RX model provenance pending) kept. Every artefact and every SHA256SUMS entry equal to the gate's package of the same commit (manifest: `generated_utc` only) |
+| Tuning compatibility against the V3.0 of the SDK repository (`fx1` `8aafae0`, CDC-VP `36ad26a4` clean; the user chose it as the baseline) | NV12 / Y / UV, demosaic RGB16, `isp stats`, AUTO decisions, result block (except `frame_ticks`), stream frames (sha256, frame_id, tag, slot, profile_id) equal for d65 / outdoor1 fixed and auto and `isp-stream-sample`; camera memory path (`camera-cli`) capture lines equal. Differences: timing only (`frame_ticks` one 1 ms poll tick less, timestamps ~0.6 ms): the firmware image changed. No golden, profile, job or expected frame changed |
+| Export `export_to_sdk.sh --replace` into `fx1` (user: export, no commit) | done; rollback archive of the five V3.0 paths taken before (also the git-ignored `build/`); 15 tracked files changed, 4 new (ISP_INGRESS driver + headers, `cli_camera_direct.txt`); nothing committed in the SDK repository |
+| Destination smoke (in `fx1`, empty environment) | check_package PASS; version, smoke, isp d65 / d65 auto / outdoor1, npu-selftest, camera-cli, camera-direct-cli (6 direct frames + memory = golden), isp-stream-sample (6 / 6): all PASS; the SDK repository's git status unchanged by the runs |
+
+Found:
+- The package README's release command lacked `FX1_BUILD_MIPI_CSI2=ON`:
+  `package_sdk.sh` refused the build ("the simulator has no camera"; a safe
+  failure, no package made). The README now gives the gate's configuration
+  (not committed yet; the released package is not affected).
+- ABI (known, D3 Q1/Q2/Q4): `fx1_camera_cfg.path`, new `fx1_camera_frame` /
+  `fx1_camera` fields, `fx1_isp_dev.direct`: applications built against the
+  V3.0 headers must be rebuilt (source compatible: a zero cfg = memory path).
+- The package now carries the updated NPU model drop (`922d2a1f`):
+  `licenses/SAURIA.PROVENANCE.md` still requires the rights owner's approval
+  before an NPU-enabled binary is published.
+
+Not done: the SDK repository commit and its root README row (the user's); the
+optional container check (`run_docker_check.sh`); the CSI→ISP bandwidth
+measurement plan (separate proposal).

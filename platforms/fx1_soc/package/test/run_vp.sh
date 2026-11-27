@@ -20,6 +20,11 @@ Usage:
   ./run_vp.sh smoke                    # default: scripted CLI session, exit status = verdict
   ./run_vp.sh run [VP arguments]       # boot and print the console (default --timeout-ms 2000)
   ./run_vp.sh interactive [port]       # CLI over TCP; connect with ./fx1_console.sh [port]
+  ./run_vp.sh interactive [port] --camera [--camera-raw FILE]
+                                       # the same with the CSI-2 camera (fx1_soc --camera): camera probe,
+                                       # camera path memory|direct, camera start/capture/stop in the CLI;
+                                       # --camera-raw (implies --camera): the sensor's frames from FILE,
+                                       # 16-bit LE samples, W x H per frame at the mode the CLI sets
   ./run_vp.sh isp [SAMPLE] auto        # FW-selected WB/tone; one probe + >=2 render frames
   ./run_vp.sh isp [SAMPLE]             # RAW frame through `isp run`, NV12 + PNG, golden check
   ./run_vp.sh isp [SAMPLE] interactive [port]   # same job, console in this terminal: isp run, poweroff
@@ -305,12 +310,29 @@ case "${mode}" in
         exec "${vp}" --fw "${fw}" "$@"
         ;;
     interactive)
+        # interactive [port] [--camera] [--camera-raw FILE], in any order.
         need_fw
-        port="${1:-5000}"
+        port=5000 camera=() camera_raw=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --camera) camera=(--camera); shift ;;
+                --camera-raw) [[ $# -ge 2 ]] || die "--camera-raw needs a FILE"; camera_raw="$2"; shift 2 ;;
+                --camera-raw=*) camera_raw="${1#--camera-raw=}"; shift ;;
+                *[!0-9]*|"") die "interactive: unknown argument '$1' (interactive [port] [--camera] [--camera-raw FILE])" ;;
+                *) [[ "$1" -ge 1 && "$1" -le 65535 ]] || die "interactive: port $1 is not 1..65535"; port="$1"; shift ;;
+            esac
+        done
+        if [[ -n "${camera_raw}" ]]; then
+            [[ -f "${camera_raw}" ]] || die "--camera-raw: no such file: ${camera_raw}"
+            camera=(--camera --camera-raw "${camera_raw}")
+        fi
         listening "${port}" && die "TCP port ${port} is already in use (another fx1_soc running?)"
         echo "VP waits for the UART console on 127.0.0.1:${port}"
+        if [[ ${#camera[@]} -gt 0 ]]; then
+            echo "Camera: ${camera[*]} (CLI: camera probe, camera path memory|direct, camera start, camera capture N, camera stop)"
+        fi
         echo "Open another terminal: ${here}/fx1_console.sh ${port}   (end with 'poweroff')"
-        exec "${vp}" --fw "${fw}" --uart0-socket "${port}" --uart0-wait --timeout-ms 0 --realtime
+        exec "${vp}" --fw "${fw}" --uart0-socket "${port}" --uart0-wait --timeout-ms 0 --realtime "${camera[@]+"${camera[@]}"}"
         ;;
     npu-selftest)
         need_fw

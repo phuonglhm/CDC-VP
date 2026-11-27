@@ -65,9 +65,13 @@ cd CDC-VP && git status --short                          # must be empty
 FX1_DEMO_RAW=<outdoor1 RAW> platforms/fx1_soc/package/run_packaging_regression.sh
 
 # 2. the release build and package (Release, FX1 only)
+#    the configuration of the gate (step 1 of run_packaging_regression.sh); without
+#    FX1_BUILD_MIPI_CSI2=ON package_sdk.sh refuses the simulator ("has no camera")
 cmake -S . -B build-rel -G Ninja -DCMAKE_BUILD_TYPE=Release -DCDC_BUILD_FX1_SOC=ON \
+      -DFX1_SOC_BUILD_FIRMWARE=ON -DCDC_BUILD_TESTS=ON -DFX1_BUILD_MIPI_CSI2=ON \
       -DCDC_BUILD_MINI_TLM=OFF -DCDC_BUILD_CPU_EVAL=OFF -DCDC_BUILD_CUSTOM_SOC=OFF -DCDC_BUILD_NOC_SOC=OFF \
-      -DCDC_BUILD_TPU_V3_SOC=OFF -DCDC_BUILD_RISCV_VPP_COMPILER_VP=OFF -DFX1_DEMO_RAW=<outdoor1 RAW>
+      -DCDC_BUILD_TPU_V3_SOC=OFF -DCDC_BUILD_RISCV_VPP_COMPILER_VP=OFF \
+      -DSYSTEMC_HOME=/opt/systemc-2.3.4 -DFX1_DEMO_RAW=<outdoor1 RAW>
 cmake --build build-rel --target fx1_soc_package -j1      # -> out/VP_FX1_V3.0
 
 # 3. optional: a clean AlmaLinux 9 container, with the firmware rebuilt inside

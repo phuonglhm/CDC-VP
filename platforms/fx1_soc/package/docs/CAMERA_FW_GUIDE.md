@@ -152,8 +152,10 @@ zero-copy) and `camera_isp_raw10` (2 lanes, staged), eight frames each through
 the camera manager; every NV12 must equal the stand-alone ISP model's for its
 sensor frame number (`camera_isp_golden.h`).
 
-The FreeRTOS CLI (`run_vp.sh camera-cli`, or interactively with `--camera`;
-`help` prints the usage) has:
+The FreeRTOS CLI (`run_vp.sh camera-cli`, or interactively:
+`run_vp.sh interactive 5000 --camera`, then `fx1_console.sh 5000` in a second
+terminal; `--camera-raw FILE` feeds the sensor from a file; `help` prints the
+usage) has:
 
 | Command | Does |
 |---|---|

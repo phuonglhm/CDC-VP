@@ -36,7 +36,10 @@
 #      camera -> ISP: camera_isp_raw12); the scripted camera CLI sessions
 #      (run_vp.sh camera-cli on the memory path, camera-direct-cli on the
 #      direct CSI-2 -> ISP path, each frame against the golden; a direct
-#      session fed a flat RAW file must FAIL), and the Ethernet example on every line
+#      session fed a flat RAW file must FAIL); the camera console flow
+#      (run_vp.sh interactive PORT --camera + fx1_console.sh: two direct-path
+#      frames = golden; without --camera no camera; --camera-raw reaches the
+#      VP; bad arguments refused), and the Ethernet example on every line
 #      peer and the scripted Ethernet CLI session pass; `make npu-jobs` (host
 #      compiler) gives the shipped NPU fixtures byte for byte, and one of them
 #      runs from the generated directory; a second run keeps a user note and a
@@ -494,6 +497,80 @@ n_bad="$(cam_count "${cdir}/run.log" " direct out [0-3] 64x32 raw n/a crc 0x[0-9
 [[ ${rc} -ne 0 && ${n_bad} -ge 1 ]] && grep -a -q "RESULT FAIL" "${cdir}/run.log" \
     && pass "direct CLI from a flat RAW file: FAIL as required (exit ${rc}, ${n_bad} golden mismatch(es))" \
     || { tail -n 30 "${cdir}/run.log"; bad "direct CLI from a flat RAW file was not refused (exit ${rc}, ${n_bad} mismatches)"; }
+# The console flow with the camera (run_vp.sh interactive PORT --camera), with
+# the client that needs nothing installed (bash /dev/tcp): on the direct path
+# two frames must equal the golden and the direct counters stay clean; the same
+# console without --camera must find no camera; --camera-raw must reach the VP;
+# bad arguments are refused before a VP starts. Each command waits for the
+# CLI's answer to the previous one (a capture takes host seconds: detailed D-PHY).
+cam_open() {   # cam_open STEM [interactive arguments after the port]
+    local stem="$1"; shift
+    cam_port=$((20000 + RANDOM % 20000))
+    cam_log="${tmp}/${stem}_console.log" cam_vplog="${tmp}/${stem}_vp.log"
+    rm -f "${tmp}/${stem}.in"; mkfifo "${tmp}/${stem}.in"
+    run "${test}/run_vp.sh" interactive "${cam_port}" "$@" > "${cam_vplog}" 2>&1 &
+    cam_vp=$!
+    for _ in $(seq 50); do grep -q "waits for the UART console" "${cam_vplog}" 2>/dev/null && break; sleep 0.2; done
+    sleep 1
+    # Read-write open: never blocks, and a client that ends early gives no SIGPIPE here.
+    exec {cam_fd}<> "${tmp}/${stem}.in"
+    timeout 900 env -i PATH=/usr/bin:/bin FX1_CONSOLE_CLIENT=bash "${test}/fx1_console.sh" "${cam_port}" \
+        < "${tmp}/${stem}.in" > "${cam_log}" 2>&1 &
+    cam_client=$!
+}
+cam_wait() {   # cam_wait REGEX SECONDS: the console log has a line matching REGEX
+    local i
+    for ((i = 0; i < $2 * 5; i++)); do
+        tr -d '\r' 2>/dev/null < "${cam_log}" | grep -a -q -E "$1" && return 0
+        sleep 0.2
+    done
+    return 1
+}
+cam_say() { printf '%s\r' "$1" >&"${cam_fd}"; cam_wait "$2" "$3"; }   # cam_say COMMAND REGEX SECONDS
+cam_close() {  # poweroff; the VP must end by itself; sets cam_rc (VP exit status)
+    printf 'poweroff\r' >&"${cam_fd}"
+    for _ in $(seq 300); do kill -0 "${cam_vp}" 2>/dev/null || break; sleep 0.2; done
+    kill "${cam_vp}" 2>/dev/null && bad "an interactive camera VP did not end with poweroff (stopped)"
+    wait "${cam_vp}"; cam_rc=$?
+    exec {cam_fd}>&-
+    wait "${cam_client}" 2>/dev/null || true
+}
+prompt='root@fx1:~# '
+cam_open cam_ia --camera
+cam_wait "${prompt}" 120 \
+    && cam_say "camera probe" "camera probe: PASS" 60 \
+    && cam_say "camera path direct" "golden yes, path direct" 30 \
+    && cam_say "camera start" "camera start: (PASS|FAIL)" 120 \
+    && cam_say "camera capture 2" "camera capture: (PASS|FAIL)" 600 \
+    && cam_say "camera status" "^  direct ok " 60 \
+    && cam_say "camera stop" "^camera stop: " 60
+cam_close
+n_dir="$(cam_count "${cam_log}" "^  capture [0-9]+ FRAME_ID [0-9]+ epoch [0-9]+ isp frame [1-9][0-9]* direct out [0-3] 64x32 raw n/a${golden_crc}")"
+n_ok="$(cam_count "${cam_log}" "^  direct ok [1-9][0-9]*, reset 0, csi_dropped 0, csi_missing_fe 0, invalid 0, isp_failed 0")"
+[[ ${cam_rc} -eq 0 && ${n_dir} -eq 2 && ${n_ok} -eq 1 ]] && grep -q "^Camera: --camera " "${cam_vplog}" \
+    && tr -d '\r' < "${cam_log}" | grep -a -q "^camera stop: OK" \
+    && tr -d '\r' < "${cam_log}" | grep -a -q "^poweroff: 0 failed check(s)" \
+    && pass "interactive --camera: console on the direct path, 2 frames = golden, direct counters clean, poweroff (bash client)" \
+    || { tr -d '\r' < "${cam_log}" | tail -n 25; cat "${cam_vplog}"; bad "interactive --camera flow (VP exit ${cam_rc}, ${n_dir} golden direct frames, status ${n_ok})"; }
+cam_open cam_ia_none
+cam_wait "${prompt}" 120 && cam_say "camera probe" "^camera: absent" 60
+cam_close
+[[ ${cam_rc} -eq 0 ]] && ! grep -q "^Camera:" "${cam_vplog}" \
+    && tr -d '\r' < "${cam_log}" | grep -a -q "^camera: absent (no CSI-2 RX: fx1_soc runs without --camera)" \
+    && pass "interactive without --camera: camera probe finds no camera" \
+    || { tr -d '\r' < "${cam_log}" | tail -n 10; bad "interactive without --camera (VP exit ${cam_rc})"; }
+cam_open cam_ia_raw --camera-raw "${cdir}/flat.raw"
+cam_wait "${prompt}" 120 && cam_say "camera probe" "camera probe: (PASS|FAIL)" 60
+cam_close
+[[ ${cam_rc} -eq 0 ]] && grep -a -q "^\[fx1_soc\] camera: .*frames from ${cdir}/flat.raw" "${cam_vplog}" \
+    && tr -d '\r' < "${cam_log}" | grep -a -q "camera probe: PASS" \
+    && pass "interactive --camera-raw FILE: the VP's sensor takes its frames from FILE (implies --camera)" \
+    || { cat "${cam_vplog}"; bad "interactive --camera-raw (VP exit ${cam_rc})"; }
+run "${test}/run_vp.sh" interactive 5000 --camera-raw "${cdir}/no_such.raw" > "${tmp}/cam_ia_bad1.log" 2>&1; rc1=$?
+run "${test}/run_vp.sh" interactive --cam > "${tmp}/cam_ia_bad2.log" 2>&1; rc2=$?
+[[ ${rc1} -eq 2 && ${rc2} -eq 2 ]] && grep -q "no such file" "${tmp}/cam_ia_bad1.log" && grep -q "unknown argument '--cam'" "${tmp}/cam_ia_bad2.log" \
+    && pass "interactive: a missing --camera-raw file and an unknown argument are refused (exit 2)" \
+    || bad "interactive argument refusal (exit ${rc1} / ${rc2})"
 rm -f "${pkg}/sw/bootloader/build/${version}/camera-cli.log" "${pkg}/sw/bootloader/build/${version}/camera-direct-cli.log"
 
 step "5d. Ethernet example, built from the shipped sources, on every line peer; scripted eth CLI session"
