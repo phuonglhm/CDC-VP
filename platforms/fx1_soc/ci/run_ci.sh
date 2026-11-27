@@ -21,7 +21,12 @@
 #                 the FX1 bus tests and the UART models FX1 uses (by name)
 #   5. regression ctest -L fx1_regression (skipped with --smoke-only); needs
 #                 python3 with numpy (fx1_regression_isp_fixture_check, the NPU gates)
-#   6. npu_off    the same tree configured with FX1_SOC_ENABLE_NPU=OFF (host
+#   6. isp        the ISP component's own suite (skipped with --smoke-only): a
+#                 stand-alone ISP build (<build-dir>-isp; its tests are built
+#                 only when the ISP is the top-level project) and every ctest
+#                 test of it, including the VP direct CSI->ISP ingress tests;
+#                 needs python3 with numpy (reference and tool tests)
+#   7. npu_off    the same tree configured with FX1_SOC_ENABLE_NPU=OFF (host
 #                 only, <build-dir>-npu-off): fx1_soc builds, --version reports
 #                 "NPU not built", and hello_2hart (from stage 3) passes on it
 #
@@ -167,6 +172,22 @@ else
     log "stage regression: skipped (--smoke-only)"
 fi
 
+# The ISP component suite (unit, integration, reference, tools), built
+# stand-alone. The direct CSI->ISP ingress tests (D1) must be among them.
+isp_suite() {
+    local isp="${BUILD}-isp"
+    cmake -S "${ROOT}/components/FX1_Components/isp" -B "${isp}" -G Ninja -DCMAKE_BUILD_TYPE=Release || return 1
+    cmake --build "${isp}" -j "${JOBS}" || return 1
+    ctest --test-dir "${isp}" -N -R '^fx1_isp[.]integration[.](ingress_tlm|direct_e2e_tlm|direct_raw10_tlm)$' \
+        | grep -q "Total Tests: 3" || { echo "the direct ingress tests are not registered"; return 1; }
+    ctest --test-dir "${isp}" --no-tests=error -j "${JOBS}" --output-on-failure --output-junit "${ART}/junit-isp.xml"
+}
+if [ ${SMOKE_ONLY} -eq 0 ]; then
+    stage isp isp_suite
+else
+    log "stage isp: skipped (--smoke-only)"
+fi
+
 # NPU OFF: a separate host-only build of fx1_soc without the NPU component.
 npu_off() {
     local off="${BUILD}-npu-off" elf="${BUILD}/fw/fx1_soc/hello_2hart.elf"
@@ -186,7 +207,7 @@ stage npu_off npu_off
 cp -f "${BUILD}"/Testing/Temporary/LastTest*.log "${ART}/" 2>/dev/null
 mkdir -p "${ART}/uart"
 cp -f "${BUILD}"/fw/fx1_soc/*.uart.log "${ART}/uart/" 2>/dev/null
-for name in smoke components regression; do # failed tests, from each stage's own log
+for name in smoke components regression isp; do # failed tests, from each stage's own log
     [ -f "${ART}/${name}.log" ] || continue
     failed="$(sed -n '/The following tests FAILED:/,$p' "${ART}/${name}.log" | grep -E '^[[:space:]]+[0-9]+ - ')"
     [ -n "${failed}" ] && { log "failed in ${name}:"; echo "${failed}" | tee -a "${SUMMARY}"; }

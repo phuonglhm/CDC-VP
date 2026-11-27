@@ -27,7 +27,10 @@
 #include <icsl_eth/eth_phy_tlm.h>
 #include "eth_line_peer.h"
 #include "eth_wb_delay.h"
+#include "csi_dma_fault.h"
+#include "csi_isp_direct.h"
 #include "isp_dma_fault.h"
+#include "traffic_counter.h"
 #include "isp_stream_bridge.h"
 #include <riscv_vp_plusplus_wrapper.h>
 #include <uart.h>
@@ -90,6 +93,8 @@ constexpr unsigned kSensorI2cAddr = 0x10;
 
 // Bus target names (bus::BusConfig::fx1()) and the platform-only finisher.
 constexpr const char* kSimCtrlTarget = "SIM_CTRL";
+// VP-only ISP_INGRESS (direct CSI->ISP, contract §6): always mapped with the ISP.
+constexpr const char* kIspIngressTarget = "ISP_INGRESS";
 const char* const kHartPort[FX1_NUM_HARTS] = {"CPU1", "CPU2"};
 
 // Level-sensitive interrupt line -> cpu_base::set_irq(cause, level).
@@ -146,6 +151,8 @@ bus::BusConfig make_bus_config(bool camera, bool npu)
             target.enabled = true;  // instantiated below (G3, G4, DDR3 subtask 5, CSI-2 M5, Ethernet M2)
     cfg.targets.push_back({kSimCtrlTarget, FX1_SIM_CTRL_BASE, FX1_APB_SLOT_SIZE,
                            bus::TargetPath::Peribus0Apb, true});
+    cfg.targets.push_back({kIspIngressTarget, FX1_ISP_INGRESS_BASE, FX1_APB_SLOT_SIZE,
+                           bus::TargetPath::Peribus1Apb, true});
     // NPU_VP is a leaf of its own on SYSBUS_1 (review N1, N1-B): a push that
     // waits for a queue slot holds only the NPU port, not the SYSBUS_0 link to
     // CLINT, PLIC and UART.
@@ -167,30 +174,47 @@ i2c_config make_i2c_config()
 // camera, a CCS register model on I2C0 driving the D-PHY transmit BFM
 // (components/FX1_Components/mipi-csi2). The DMA writes through a write guard
 // like the other non-CPU writers (plan C7).
+// --csi-dma-fault (D2b): a fault shim before the guard. The DMA socket is
+// bound by the platform: its first hop is the MIPI_DMA traffic counter when
+// there is one (D2b review F1: issued traffic, injected errors included).
 struct camera : sc_core::sc_module {
     fx1::WriteGuard dma_guard;
     fx1::csi2::DphyRxWrapper phy;
     fx1::csi2::Csi2RxController ctl;
     fx1::csi2::bfm::DphyTxBfm tx;
     fx1::csi2::CcsSensor sensor;
+    std::unique_ptr<CsiDmaFault> dma_fault;  // --csi-dma-fault only
 
-    static fx1::csi2::CcsSensorConfig sensor_config(const std::string& raw_file)
+    static fx1::csi2::CcsSensorConfig sensor_config(const fx1_soc_options& o)
     {
         fx1::csi2::CcsSensorConfig c;
         c.i2c_addr = kSensorI2cAddr;
-        c.raw_file = raw_file;
+        c.raw_file = o.camera_raw;
         c.continuous_clock = false;  // P16: clock lane in LP-11 between frames (host cost of the PHY)
+        for (const auto& f : o.camera_faults)
+            c.faults.push_back({f.frame,
+                                f.no_fe ? fx1::csi2::CcsSensorFault::Kind::no_fe : fx1::csi2::CcsSensorFault::Kind::crc,
+                                f.line});
         return c;
     }
-    camera(sc_core::sc_module_name name, fx1::ExclusiveMonitor& monitor, const std::string& raw_file)
+    camera(sc_core::sc_module_name name, fx1::ExclusiveMonitor& monitor, const fx1_soc_options& o)
         : sc_module(name)
         , dma_guard("mipi_dma_guard", monitor, kMasterMipiDma)
         , phy("dphy_rx")
         , ctl("csi2_rx", phy)
         , tx("sensor_tx", phy.clkp, phy.clkn, phy.dp, phy.dn)
-        , sensor("sensor", tx, sensor_config(raw_file))
+        , sensor("sensor", tx, sensor_config(o))
     {
-        ctl.dma_socket.bind(dma_guard.target);
+        if (o.csi_dma_fault_nth) {
+            dma_fault = std::make_unique<CsiDmaFault>("csi_dma_fault", o.csi_dma_fault_nth);
+            dma_fault->out.bind(dma_guard.target);
+        }
+    }
+    // Where the DMA's writes go after the traffic counter: the fault shim or the guard.
+    tlm::tlm_target_socket<32>& dma_next()
+    {
+        if (dma_fault) return dma_fault->target;
+        return dma_guard.target;
     }
 };
 #endif
@@ -269,7 +293,10 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     sc_core::sc_signal<bool> eth_rmii_rst_n{"eth_rmii_rst_n"};
 #ifdef FX1_SOC_HAS_CAMERA
     std::unique_ptr<camera> cam;  // --camera only
+    std::unique_ptr<CsiIspDirect> csi_isp;  // --camera: the CSI stream and observer to the ISP ingress
 #endif
+    // --traffic-report only: counters on the camera / ISP DMA masters.
+    std::unique_ptr<TrafficCounter> traffic_mipi_dma, traffic_isp_idma, traffic_isp_odma;
     std::unique_ptr<IspStreamBridge> isp_stream;  // --isp-stream-spool only
     std::unique_ptr<IspDmaFault> isp_dma_fault;   // --isp-dma-fault only
     std::unique_ptr<npu_block> npu;               // null with --no-npu or without FX1_SOC_HAS_NPU
@@ -351,6 +378,26 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         sys_dma.tx_clear(dma_tx_clear);
         // ISP: CSR on PERIBUS_1 (local offsets), two DMA masters, level IRQ.
         fabric.target("ISP_CSR").bind(isp.csr_socket);
+        // VP-only ISP_INGRESS at 0x1105_0000 (direct CSI->ISP): always mapped;
+        // CAPABILITY.BOUND only with --camera (the CSI stream bound below).
+        fabric.target(kIspIngressTarget).bind(isp.ingress_csr_socket);
+        if (!opts.traffic_report.empty()) {
+            traffic_isp_idma = std::make_unique<TrafficCounter>("traffic_isp_idma");
+            traffic_isp_odma = std::make_unique<TrafficCounter>("traffic_isp_odma");
+            if (opts.camera) traffic_mipi_dma = std::make_unique<TrafficCounter>("traffic_mipi_dma");
+            for (const auto& w : opts.traffic_windows) {
+                TrafficCounter* c = w.master == "MIPI_DMA" ? traffic_mipi_dma.get()
+                                    : w.master == "ISP_IDMA" ? traffic_isp_idma.get()
+                                                             : traffic_isp_odma.get();
+                if (c) c->add_window(w.lo, w.hi);
+            }
+        }
+        if (traffic_isp_idma) traffic_isp_idma->out.bind(fabric.initiator("ISP_IDMA"));
+        // The ISP IDMA's next hop: the traffic counter (--traffic-report) or the fabric.
+        auto bind_idma = [&](tlm::tlm_initiator_socket<>& s) {
+            if (traffic_isp_idma) s.bind(traffic_isp_idma->target);
+            else s.bind(fabric.initiator("ISP_IDMA"));
+        };
         // --isp-dma-fault puts its module in front of one master; without it the
         // sockets are bound as they always were.
         if (opts.isp_dma_fault_kind) {
@@ -362,9 +409,9 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         }
         if (isp_dma_fault && isp_dma_fault->idma()) {
             isp.idma_socket.bind(isp_dma_fault->target);
-            isp_dma_fault->out.bind(fabric.initiator("ISP_IDMA"));
+            bind_idma(isp_dma_fault->out);
         } else {
-            isp.idma_socket.bind(fabric.initiator("ISP_IDMA"));
+            bind_idma(isp.idma_socket);
         }
         if (isp_dma_fault && !isp_dma_fault->idma()) {
             isp.odma_socket.bind(isp_dma_fault->target);
@@ -372,7 +419,12 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         } else {
             isp.odma_socket.bind(isp_odma_guard.target); // IDMA only reads
         }
-        isp_odma_guard.out.bind(fabric.initiator("ISP_ODMA"));
+        if (traffic_isp_odma) {
+            isp_odma_guard.out.bind(traffic_isp_odma->target);
+            traffic_isp_odma->out.bind(fabric.initiator("ISP_ODMA"));
+        } else {
+            isp_odma_guard.out.bind(fabric.initiator("ISP_ODMA"));
+        }
         isp.rst_n(isp_rst_n);
         if (opts.isp_demosaic) isp.debug_set_demosaic_observer(opts.isp_demosaic);
         fabric.target("I2C0").bind(i2c_guard.target);
@@ -411,9 +463,22 @@ struct fx1_soc_top::impl : sc_core::sc_module {
             // CSR on PERIBUS_1 (local offsets), DMA as MIPI_DMA, csi2_irq on
             // PLIC source 7, sensor control on I2C0. Without --camera MIPI_CSR
             // stays disabled (DECERR) and source 7 undriven.
-            cam = std::make_unique<camera>("camera", monitor, options.camera_raw);
+            cam = std::make_unique<camera>("camera", monitor, options);
             fabric.target("MIPI_CSR").bind(cam->ctl.csr_socket);
+            // MIPI_DMA: CSI DMA socket -> [traffic counter] -> [fault shim] -> write guard -> fabric.
+            if (traffic_mipi_dma) {
+                cam->ctl.dma_socket.bind(traffic_mipi_dma->target);
+                traffic_mipi_dma->out.bind(cam->dma_next());
+            } else {
+                cam->ctl.dma_socket.bind(cam->dma_next());
+            }
             cam->dma_guard.out.bind(fabric.initiator("MIPI_DMA"));
+            // Direct CSI->ISP (D2): the CSI stream master and capture observer feed
+            // the ISP's stream ingress; SOURCE = memory (reset) discards it (P21).
+            csi_isp = std::make_unique<CsiIspDirect>(isp.ingress());
+            cam->ctl.set_stream_sink(csi_isp.get());
+            cam->ctl.set_capture_observer(csi_isp.get());
+            isp.ingress().set_bound(true);
             cam->ctl.resetn(csi_rst_n);
             i2c0.attach(kSensorI2cAddr, &cam->sensor);
 #else
@@ -543,6 +608,14 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         csi_rst_n.write(true);
         eth_rst_n.write(true);
         eth_rmii_rst_n.write(true);
+#ifdef FX1_SOC_HAS_CAMERA
+        // --camera-frame-id-preset (D2b test hook): after the reset release
+        // (resetn clears the counter), long before firmware can start a capture.
+        if (cam && options.camera_frame_id_preset >= 0) {
+            wait(sc_core::sc_time(kResetPulseNs, sc_core::SC_NS));
+            cam->ctl.debug_set_frame_id_counter(static_cast<std::uint16_t>(options.camera_frame_id_preset));
+        }
+#endif
     }
 
     // Receives the PT_LOAD segments of the firmware ELF (cdc::cpu::load_elf
@@ -717,9 +790,43 @@ std::string fx1_soc_top::isp_stream_report() const
 {
     return impl_->isp_stream ? impl_->isp_stream->report() : std::string();
 }
+std::string fx1_soc_top::traffic_report() const
+{
+    std::ostringstream o;
+    if (impl_->traffic_mipi_dma) o << impl_->traffic_mipi_dma->report("MIPI_DMA") << '\n';
+    if (impl_->traffic_isp_idma) o << impl_->traffic_isp_idma->report("ISP_IDMA") << '\n';
+    if (impl_->traffic_isp_odma) o << impl_->traffic_isp_odma->report("ISP_ODMA") << '\n';
+    return o.str();
+}
+
 std::string fx1_soc_top::isp_dma_fault_report() const
 {
     return impl_->isp_dma_fault ? impl_->isp_dma_fault->report() : std::string();
+}
+std::string fx1_soc_top::camera_fault_report() const
+{
+    std::ostringstream o;
+#ifdef FX1_SOC_HAS_CAMERA
+    const auto& opt = impl_->options;
+    if (!impl_->cam) return {};
+    const char* sep = "";
+    if (!opt.camera_faults.empty()) {
+        o << "sensor faults " << impl_->cam->sensor.faults_fired() << " of " << opt.camera_faults.size() << " fired (";
+        for (std::size_t i = 0; i < opt.camera_faults.size(); ++i) {
+            const auto& f = opt.camera_faults[i];
+            o << (i ? " " : "") << f.frame << ':' << (f.no_fe ? "no-fe" : "crc");
+            if (!f.no_fe) o << ':' << f.line;
+        }
+        o << ')';
+        sep = "; ";
+    }
+    if (opt.camera_frame_id_preset >= 0) {
+        o << sep << "FRAME_ID counter preset " << opt.camera_frame_id_preset;
+        sep = "; ";
+    }
+    if (impl_->cam->dma_fault) o << sep << "csi dma " << impl_->cam->dma_fault->report();
+#endif
+    return o.str();
 }
 std::vector<std::string> fx1_soc_top::isp_stream_errors() const
 {

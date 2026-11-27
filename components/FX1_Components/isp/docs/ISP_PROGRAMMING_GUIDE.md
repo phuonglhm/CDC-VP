@@ -521,6 +521,7 @@ stays programmed) and `TUNE_ERROR`; they feed `error_irq`.
 | `fx1_isp_profile_mode`, `fx1_isp_profile_begin`, `fx1_isp_profile_confirm_tables`, `fx1_isp_profile_seal`, `fx1_isp_profile_apply`, `fx1_isp_profile_cancel`, `fx1_isp_profile_unseal`, `fx1_isp_profile_state` | 9.3 |
 | `fx1_isp_aec_acquire`, `fx1_isp_aec_result`, `fx1_isp_aec_read_global/zones/hist`, `fx1_isp_aec_release`, `fx1_isp_aec_drops`, `fx1_isp_af_acquire`, `fx1_isp_af_read`, `fx1_isp_af_release`, `fx1_isp_af_drops` | 5 |
 | `fx1_isp_read_aec_global`, `fx1_isp_read_awb_global`, `fx1_isp_read_af` (compatibility readers) | 5 |
+| `fx1_isp_start_direct`, `fx1_isp_direct_arm`, `fx1_isp_direct_find` (VP direct input) | 9.4 |
 
 ### 9.1 Discovery (V107-10)
 
@@ -657,6 +658,38 @@ How it was verified (CTest `fx1_isp.integration.driver_tlm`):
   - the retry of the global readers, which needs a publication racing the
     read;
   - writing an unchanged LSC mesh size.
+
+### 9.4 Direct input from the VP stream ingress (plan DIRECT_CSI_ISP D3)
+
+VP-only, not part of the ISP v1.07 specification: on the FX1 VP the CSI-2 RX
+AXI4-Stream can feed the pipeline through the stream ingress (VP block
+`ISP_INGRESS` at 0x1105_0000, `fx1_isp_ingress_drv.h`; contract
+`components/FX1_Components/mipi-csi2/docs/DIRECT_CSI_ISP_CONTRACT.md`).
+The ingress requires `DMA_CTRL.IDMA_EN` = 0.
+
+- `fx1_isp_start_direct(dev, bufs)`: as `fx1_isp_start` (pipeline, interrupt
+  sources, ODMA addresses / strides, CH0 geometry check), but the IDMA stays
+  off: `bufs->in` and `in_stride` are not used and not written, there is no
+  input slot. The ODMA is enabled at once; no output is armed.
+- `fx1_isp_direct_arm(dev, k)`: output slot k back to the ODMA (`ODMA_BUF_DONE`
+  W1C, then `ODMA_BUF_FREE` W1S); `EBUSY` while a recovery has not settled.
+- `fx1_isp_direct_find(dev, tag, &k)`: the slot with DONE and `BUF_TAG` =
+  `tag` (an ingress context entry's TAG): the publish gate matches a READY
+  context entry with outcome OK to its output this way.
+- The memory-path calls (`fx1_isp_input_ready`, `fx1_isp_queue_frame*`,
+  `fx1_isp_next_done*`, `fx1_isp_next_lost`) refuse a direct stream
+  (`ESTATE`, `input_ready` 0); `fx1_isp_stop`, `fx1_isp_irq`,
+  `fx1_isp_recover_ex` and statistics work as for the memory path. A
+  DMA-scope recovery (ODMA AXI error) clears every armed output: arm them
+  again once it has settled. `fx1_isp_stop` returns to CONFIG; the next start
+  chooses the path again.
+- Input depth: `fx1_isp_set_input_format` (RAW10 native = 1) before the
+  profile, as for the memory path.
+
+The FX1 camera manager (`fw/fx1_soc/drivers/fx1_camera.h`, `cfg.path =
+FX1_CAMERA_PATH_DIRECT`) is the reference user. Test:
+`fx1_isp.integration.direct_driver_tlm` (states and refusals), the frame path
+on fx1_soc (`fx1_*_camera_mgr_direct_*`).
 
 ## 10. Limits of this guide
 

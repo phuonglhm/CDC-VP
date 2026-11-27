@@ -84,6 +84,39 @@ The application's trap handler calls `fx1_camera_csi_isr()` for source 7 and
   `fx1_camera_start` that failed (for example the sensor's stream-on write)
   leaves the manager configured, possibly with the CSI-2 DMA started.
 
+### Direct path (`cfg.path = FX1_CAMERA_PATH_DIRECT`)
+
+VP-only: the CSI-2 RX AXI4-Stream feeds the ISP through its stream ingress
+(VP block `ISP_INGRESS` at 0x1105_0000, driver
+`include/fx1_isp/fx1_isp_ingress_drv.h`); the CSI-2 RX DMA and the ISP IDMA
+stay off, no RAW is written to or read from DDR. The default is the memory
+path above; the path is chosen at `configure` (state 0: stop before
+switching).
+
+- The CSI-2 stream path runs in RAW16; RAW10 is native in the ISP
+  (`COMMON_INPUT_FORMAT` depth 10), no shift, no staging. `csi_side`,
+  `staging` and `capture_hook` are not used.
+- A frame is published only when its ingress context entry is READY with
+  outcome OK and the output carrying the entry's TAG is DONE. The frame
+  carries the 64-bit capture sequence (`capture_seq`, `capture` = its low 32
+  bits), CSI-2 FRAME_ID, epoch, FS timestamp and ISP frame ID; `csi_side` is
+  `FX1_CAMERA_NO_SIDE`, `zero_copy` and `isp_in` are 0 (no RAW side). Any
+  other outcome (CSI dropped, missing FE, invalid stream, reset, ISP failed)
+  is counted in `stats.direct_failed[outcome]`; its output goes back unread.
+- While the application holds every output the ingress drops new frames at
+  their SOF (no output credit, TREADY stays 1: the sensor is never paused).
+- An ODMA error: the frame ends ISP_FAILED, the ISP recovers by itself, the
+  manager arms the outputs again.
+- Stop: sensor standby (as above, ESENSOR / state 3 included), the ingress
+  back to SOURCE memory, ISP stop, the CSI-2 stream path off, context entries
+  left counted in `stop_cancelled`. A capture the sensor left without FE
+  just before it stopped has no terminal: stop ends it with one CSI-2 soft
+  reset (`stats.stop_csi_resets`; the frame is not published). Until the
+  ingress is drained and back to SOURCE memory, stop returns
+  `FX1_CAMERA_EBUSY` with the state unchanged: call it again. Until then
+  only stop proceeds: start, the TPG frame and capture are refused, nothing
+  is published or armed. State 0 / 3 means the pipeline is stopped.
+
 ## The sensor model
 
 A VP model, not a commercial sensor: a subset of the MIPI CCS registers
@@ -127,13 +160,16 @@ The FreeRTOS CLI (`run_vp.sh camera-cli`, or interactively with `--camera`;
 | `camera probe` | CSI-2 RX identity, sensor `model_id`; `camera: absent` without `--camera` |
 | `camera mode [W H BITS LANES]` | set or show the mode (default 64 32 12 4, up to 3840x2160) |
 | `camera source [sensor\|tpg]` | sensor through the D-PHY, or the CSI-2 RX test pattern generator (fast at any size) |
-| `camera start` / `camera stop [US]` | start (takes the ISP: `isp selftest`/`isp run` are refused meanwhile); stop within US (default 24000) + 200 µs, `OK` / `ESENSOR` / `ETIMEOUT` |
-| `camera capture N [crc]` | N frames: metadata, RAW spot check, NV12 CRC against the golden (NV12 up to 1 MiB, or with `crc`: a 4K CRC takes about ten minutes of host time); without the CRC, TPG 4K is spot-checked on 32 Y and 32 UV bytes of the golden |
+| `camera path [memory\|direct]` | memory (CSI-2 DMA → RAW sides → ISP IDMA, default) or direct (CSI-2 AXI4-Stream → ISP stream ingress, no RAW in DDR); while idle; capture lines then show the capture's epoch and ISP frame, `direct`, `raw n/a`; `camera status` adds the context outcomes and the ingress drops |
+| `camera start` / `camera stop [US]` | start (takes the ISP: `isp selftest`/`isp run` are refused meanwhile); stop within US (default 24000) + 200 µs, `OK` / `ESENSOR` / `ETIMEOUT` / `EBUSY` (stop again) |
+| `camera capture N [crc]` | N frames: metadata, RAW spot check, NV12 CRC against the golden (NV12 up to 1 MiB, or with `crc`: a 4K CRC takes about ten minutes of host time); without the CRC, TPG 4K is spot-checked on 32 Y and 32 UV bytes of the golden; refused while a stop is pending (`camera stop` again) |
 | `camera status`, `camera recover` | counters and state; stop + sensor software reset + configure + start |
 
 Golden: sensor 64x32 RAW12 / RAW10 frames 1..32 since the last sensor reset,
 TPG 640x480 and 3840x2160 RAW12. The script `test/VP_FX1_V3.0/cli_camera.txt`
-probes, captures 64x32 RAW12 and RAW10 frames against the golden and stops.
+probes, captures 64x32 RAW12 and RAW10 frames against the golden and stops;
+`test/VP_FX1_V3.0/cli_camera_direct.txt` (`run_vp.sh camera-direct-cli`) does
+the same on the direct path, then captures on the memory path again.
 
 `camera_slverr` relies on its timing: the fault time is chosen inside frame
 2 for this image (see the comment at the top of `camera/slverr.c`); a changed

@@ -4,6 +4,11 @@
  *   camera probe                    CSI-2 RX identity, sensor model_id over I2C0
  *   camera mode [W H BITS LANES]    set (default 64 32 12 4) or show the mode
  *   camera source [sensor|tpg]      set or show the source (TPG: no D-PHY)
+ *   camera path [memory|direct]     set or show the path (plan DIRECT_CSI_ISP D3):
+ *                                   memory: CSI-2 RX DMA -> RAW sides -> ISP IDMA
+ *                                   (default); direct: CSI-2 AXI4-Stream -> ISP
+ *                                   stream ingress (VP block ISP_INGRESS), no
+ *                                   RAW in memory; independent of the source
  *   camera start                    configure (profile basic) and start
  *   camera capture N [crc]          N frames: metadata, NV12 CRC, golden match
  *   camera status                   state, counters, drops, sensor frame_count
@@ -32,6 +37,14 @@
  * positions are poisoned before configure and in every frame of that mode
  * before its release, CRC or not, so a slot the ISP did not write cannot pass
  * with an earlier frame's data (M6b review F2, re-review).
+ *
+ * Direct path: a frame is published only with its ingress context entry OK
+ * (publish gate); capture lines show the 64-bit capture sequence, the epoch
+ * and "direct" instead of the side / zero-copy fields, and "raw n/a" (no RAW
+ * in memory: the RAW spot check does not apply; the NV12 golden still does,
+ * frames in order by golden number). `camera status` adds the context
+ * outcomes and the ingress drops; drops of a direct capture are the
+ * ingress's (no output credit) besides the CSI-2 RX's.
  *
  * Failures counted for poweroff: probe and capture checks, start and recover
  * failures. stop prints its result (OK / ESENSOR / ETIMEOUT) without counting:
@@ -72,7 +85,8 @@ static fx1_camera cam;
 static struct {
     uint32_t w, h, bits, lanes;
     int tpg;
-} mode = {64u, 32u, 12u, 4u, 0};  /* 32 lines: the ISP v1.07 minimum active size */
+    int path;                     /* FX1_CAMERA_PATH_* */
+} mode = {64u, 32u, 12u, 4u, 0, FX1_CAMERA_PATH_MEMORY};  /* 32 lines: the ISP v1.07 minimum active size */
 static fx1_camera_cfg cfg;
 static int probed;                /* probe done, CSI-2 RX present */
 static int csi_ready;             /* the CSI-2 driver instance is valid (its ISR may run) */
@@ -269,7 +283,9 @@ static void print_mode(void)
     out(", source ");
     out(mode.tpg ? "tpg" : "sensor");
     out(", golden ");
-    out_line(golden_case() ? "yes" : "no");
+    out(golden_case() ? "yes" : "no");
+    out(", path ");
+    out_line(mode.path == FX1_CAMERA_PATH_DIRECT ? "direct" : "memory");
 }
 
 static int need_idle(const char* cmd)
@@ -352,9 +368,23 @@ static int set_source(int argc, char** argv)
     return 0;
 }
 
+static int set_path(int argc, char** argv)
+{
+    if (argc == 3 && (!strcmp(argv[2], "memory") || !strcmp(argv[2], "direct"))) {
+        if (!need_idle("camera path")) return 0;
+        mode.path = !strcmp(argv[2], "direct") ? FX1_CAMERA_PATH_DIRECT : FX1_CAMERA_PATH_MEMORY;
+    } else if (argc != 2) {
+        out_line("camera path: memory|direct");
+        return 0;
+    }
+    print_mode();
+    return 0;
+}
+
 static void build_cfg(void)
 {
     memset(&cfg, 0, sizeof cfg);
+    cfg.path = mode.path;
     cfg.width = mode.w;
     cfg.height = mode.h;
     cfg.bits = mode.bits;
@@ -471,6 +501,10 @@ static int capture(int argc, char** argv)
         out_line("camera capture: not running (camera start)");
         return 0;
     }
+    if (cam.isp_stop_pending || cam.stop_cleanup_pending) { /* the manager refuses too (re-review D3 R1) */
+        out_line("camera capture: stop pending (camera stop again)");
+        return 0;
+    }
     const int gold = golden_case();
     const uint32_t bytes = mode.w * mode.h * 3u / 2u;
     const int do_crc = force_crc || bytes <= CAM_CRC_LIMIT;
@@ -484,7 +518,7 @@ static int capture(int argc, char** argv)
         r->rc = wait_frame(&r->f, timeout);
         if (r->rc != FX1_CAMERA_OK) break;
         const uint32_t slot = r->f.capture & 7u;
-        r->raw_known = raw_seen[slot].capture == r->f.capture;
+        r->raw_known = r->f.path != FX1_CAMERA_PATH_DIRECT && raw_seen[slot].capture == r->f.capture;
         r->raw_frame = raw_seen[slot].frame;
         r->raw_bad = raw_seen[slot].bad;
         if (!do_crc && spot_mode()) {
@@ -509,22 +543,33 @@ static int capture(int argc, char** argv)
     uint32_t prev = 0;
     for (uint32_t k = 0; k < got; ++k) {
         const cap_rec* r = &recs[k];
+        const int direct = r->f.path == FX1_CAMERA_PATH_DIRECT;
         out("  capture ");
         out_dec(r->f.capture);
         out(" FRAME_ID ");
         out_dec(r->f.csi_frame_id);
-        out(" side ");
-        out_dec(r->f.csi_side);
-        out(" isp seq ");
-        out_dec(r->f.isp_seq);
-        out(r->f.zero_copy ? " zero-copy" : " staged");
+        if (direct) {
+            out(" epoch ");
+            out_dec(r->f.epoch);
+            out(" isp frame ");
+            out_dec(r->f.isp_frame);
+            out(" direct");
+        } else {
+            out(" side ");
+            out_dec(r->f.csi_side);
+            out(" isp seq ");
+            out_dec(r->f.isp_seq);
+            out(r->f.zero_copy ? " zero-copy" : " staged");
+        }
         out(" out ");
         out_dec(r->f.isp_output);
         out(" ");
         out_dec(r->f.width);
         out("x");
         out_dec(r->f.height);
-        if (!r->raw_known) {
+        if (direct) {
+            out(" raw n/a");
+        } else if (!r->raw_known) {
             out(" raw ?");
             ok = 0;
         } else {
@@ -552,9 +597,9 @@ static int capture(int argc, char** argv)
             out_hex(r->crc);
             /* "no golden" for a pattern frame beyond the table; a frame whose
              * RAW is not the pattern is compared anyway (and fails). */
-            if (!gold || (!tpg_golden(gold) && r->raw_known && !r->raw_bad && r->raw_frame > CAM_ISP_FRAMES)) {
+            if (!gold || (!tpg_golden(gold) && !direct && r->raw_known && !r->raw_bad && r->raw_frame > CAM_ISP_FRAMES)) {
                 out(" no golden");
-            } else if (r->number && (tpg_golden(gold) || r->number == r->raw_frame)) {
+            } else if (r->number && (tpg_golden(gold) || direct || r->number == r->raw_frame)) {
                 out(tpg_golden(gold) ? " = golden" : " = golden frame ");
                 if (!tpg_golden(gold)) out_dec(r->number);
                 if (!tpg_golden(gold) && r->number <= prev) ok = 0; /* frames in order */
@@ -619,6 +664,31 @@ static void status(void)
     out_dec(s->stop_cancelled);
     out(", sensor errors ");
     out_dec(s->sensor_errors);
+    if (cam.ing_ready) {
+        static const char* const names[FX1_CAMERA_OUTCOMES] = {"?", "ok", "reset", "csi_dropped", "csi_missing_fe",
+                                                               "invalid", "isp_failed"};
+        fx1_isp_ingress_counters k;
+        fx1_isp_ingress_read_counters(&cam.ing, &k);
+        out_line("");
+        out("  direct ok ");
+        out_dec(s->direct_ok);
+        for (unsigned o = 2; o < FX1_CAMERA_OUTCOMES; ++o) {
+            out(", ");
+            out(names[o]);
+            out(" ");
+            out_dec(s->direct_failed[o]);
+        }
+        out(", ingress admitted ");
+        out_dec(k.frames_admitted);
+        out(" no credit ");
+        out_dec(k.drop_no_credit);
+        out(" no stream ");
+        out_dec(k.drop_no_stream);
+        out(" invalid ");
+        out_dec(k.frames_invalid);
+        out(", stop csi resets ");
+        out_dec(s->stop_csi_resets);
+    }
     if (probed) {
         out(", drops ");
         out_dec(fx1_read32(FX1_MIPI_CSR_BASE + FX1_CSI2_FRAME_DROP_COUNT));
@@ -657,7 +727,9 @@ static int stop(int argc, char** argv)
     out(" us, state ");
     out_line(state_name(cam.state));
     if (rc == FX1_CAMERA_ESENSOR) out_line("  the sensor did not confirm standby: camera stop again once I2C answers");
-    if (rc == FX1_CAMERA_EBUSY) out_line("  the ISP is still draining its reset: camera stop again (buffers kept)");
+    if (rc == FX1_CAMERA_EBUSY)
+        out_line(cam.stop_cleanup_pending ? "  the ingress has not drained yet: camera stop again"
+                                          : "  the ISP is still draining its reset: camera stop again (buffers kept)");
     return 0;
 }
 
@@ -696,6 +768,7 @@ int cmd_camera(int argc, char** argv)
     if (!strcmp(argv[1], "probe") && argc == 2) probe();
     else if (!strcmp(argv[1], "mode")) return set_mode(argc, argv);
     else if (!strcmp(argv[1], "source")) return set_source(argc, argv);
+    else if (!strcmp(argv[1], "path")) return set_path(argc, argv);
     else if (!strcmp(argv[1], "start") && argc == 2) start();
     else if (!strcmp(argv[1], "capture")) return capture(argc, argv);
     else if (!strcmp(argv[1], "status") && argc == 2) status();

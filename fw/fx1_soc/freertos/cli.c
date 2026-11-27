@@ -359,7 +359,7 @@ static const command commands[] = {
      "send N [LEN] [PATTERN]|dump rx|tx|cycle N|load start|stop|mdiopoll start|stop|wait MS"},
 #ifdef FX1_FW_HAS_CAMERA
     {"camera", cmd_camera,
-     "camera probe|mode [W H BITS LANES]|source [sensor|tpg]|start|capture N [crc]|status|stop [US]|recover"},
+     "camera probe|mode [W H BITS LANES]|source [sensor|tpg]|path [memory|direct]|start|capture N [crc]|status|stop [US]|recover"},
 #endif
     {"selftest", cmd_selftest, "selftest             hwcheck + fpu + dma + isp + eth + npu"},
     {"poweroff", cmd_poweroff, "poweroff             end the simulation: PASS if no check failed"},

@@ -22,9 +22,16 @@
 //     raw_mode_change  a mode change while streaming that the file does not
 //                 fit stops at the frame end; the fitting mode resumes
 //     raw_load_errors  empty and odd-length RAW files refused at construction
+//     faults      VP fault injection (CcsSensorConfig::faults, D2b): frame 2
+//                 with an inverted payload CRC on line 1, frame 3 without its
+//                 FE; the receiver counts one CRC error and one dropped frame
+//                 (frame 2), frame 3 is closed by the FS of frame 4 and
+//                 delivered whole (the CSI counts a missing FE delivered),
+//                 frames 1, 3 and 4 exact in DDR; FE 3 absent on the link
 //
 // Oracle: CcsSensor::pattern() (the formula firmware reproduces) or the file,
 // the layout of spec_decisions M02 for the DDR image.
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -94,6 +101,8 @@ CcsSensorConfig sensor_cfg(const std::string& which) {
     c.pixel_rate_hz = 200e6;
     c.raw_file = g_raw_path;  // empty: built-in pattern
     c.continuous_clock = which != "stream_noncontinuous";
+    if (which == "faults")
+        c.faults = {{2, CcsSensorFault::Kind::crc, 1}, {3, CcsSensorFault::Kind::no_fe, 0}};
     return c;
 }
 
@@ -416,6 +425,84 @@ struct Tb : sc_core::sc_module {
         for (unsigned t = 0; t < 4000 && !sensor.in_frame(); ++t) wait(100, SC_NS);
     }
 
+    // Waits for the next CSI interrupt; returns its pending bits (0 on timeout).
+    uint32_t wait_irq(unsigned max_us = 400) {
+        uint32_t pending = 0;
+        for (unsigned t = 0; t < max_us * 10 && !pending; ++t) {
+            if (irq.read()) pending = fx1_csi2_irq_handle(&dev);
+            if (!pending) wait(100, SC_NS);
+        }
+        return pending;
+    }
+    // The side in `state` (or -1); exact against frame f when `exact` is given.
+    int side_in(fx1_csi2_buf_state state) {
+        for (unsigned side = 0; side < 2; ++side) {
+            fx1_csi2_buf_info bi{};
+            fx1_csi2_get_buffer(&dev, side, &bi);
+            if (bi.state == state) return int(side);
+        }
+        return -1;
+    }
+    bool side_exact(unsigned side, unsigned w, unsigned h, unsigned f, unsigned bits) {
+        const uint32_t base = side ? 0x80100000u : 0x80000000u;
+        bool exact = true;
+        for (unsigned y = 0; y < h; ++y) {
+            const auto line = ddr.read(base + y * 2 * w, 2 * w);
+            for (unsigned x = 0; x < w; ++x)
+                exact &= uint16_t(line[2 * x] | line[2 * x + 1] << 8) == CcsSensor::pattern(f, x, y, bits);
+        }
+        return exact;
+    }
+
+    void faults() {
+        const unsigned w = 64, h = 4, bits = 10;
+        csi_up(4, w);
+        std::vector<std::pair<uint8_t, uint16_t>> marks;
+        sensor.packet_observer = [&](uint8_t dt, uint16_t field) {
+            if (dt == bfm::DT_FS || dt == bfm::DT_FE) marks.emplace_back(dt, field);
+        };
+        CHECK(reg16(0x034C, w));
+        CHECK(reg16(0x034E, h));
+        CHECK(reg16(0x0342, 4000));
+        CHECK(reg16(0x0340, h + 4));
+        CHECK(reg_write(0x0100, {1}));
+        // Frame 1: whole.
+        CHECK(take_frame(w, h, bits, [&](unsigned x, unsigned y) { return CcsSensor::pattern(1, x, y, bits); }));
+        // Frame 2: CRC error on line 1 -> Control FSM drop (released with error, counted dropped).
+        uint32_t p = wait_irq();
+        uint32_t seen = p;
+        for (unsigned k = 0; k < 3 && !(seen & (1u << IRQ_FRAME_DROPPED)); ++k) seen |= p = wait_irq();
+        CHECK(seen & (1u << IRQ_FRAME_DROPPED));  // the CRC error itself: CRC_ERROR_COUNT below
+        CHECK_EQ(seen & (1u << IRQ_BUF_DONE_OK), 0u);
+        const int err = side_in(FX1_CSI2_BUF_SW_OWNED_ERROR);
+        CHECK(err >= 0);
+        if (err >= 0) CHECK(fx1_csi2_buffer_release(&dev, unsigned(err)) == FX1_CSI2_OK);
+        // Frame 3 (no FE): closed by the FS of frame 4, delivered whole.
+        p = wait_irq();
+        CHECK(p & (1u << IRQ_BUF_DONE_OK));
+        CHECK_EQ(p & ((1u << IRQ_BUF_DONE_ERR) | (1u << IRQ_FRAME_DROPPED)), 0u);
+        const int s3 = side_in(FX1_CSI2_BUF_SW_OWNED_VALID);
+        CHECK(s3 >= 0 && side_exact(unsigned(s3), w, h, 3, bits));
+        if (s3 >= 0) CHECK(fx1_csi2_buffer_release(&dev, unsigned(s3)) == FX1_CSI2_OK);
+        // Frame 4: whole.
+        CHECK(take_frame(w, h, bits, [&](unsigned x, unsigned y) { return CcsSensor::pattern(4, x, y, bits); }));
+        CHECK(reg_write(0x0100, {0}));
+        for (unsigned t = 0; t < 4000 && sensor.streaming(); ++t) wait(100, SC_NS);
+        fx1_csi2_status st{};
+        CHECK(fx1_csi2_get_status(&dev, &st) == FX1_CSI2_OK);
+        CHECK_EQ(st.crc_error_count, 1u);
+        CHECK_EQ(st.frame_drop_count, 1u);
+        CHECK_EQ(sensor.faults_fired(), 2u);
+        std::printf("  frames %u dropped %u crc %u, faults fired %u\n", st.frame_count, st.frame_drop_count,
+                    st.crc_error_count, sensor.faults_fired());
+        const std::vector<std::pair<uint8_t, uint16_t>> head = {
+            {bfm::DT_FS, 1}, {bfm::DT_FE, 1}, {bfm::DT_FS, 2}, {bfm::DT_FE, 2}, {bfm::DT_FS, 3}, {bfm::DT_FS, 4},
+            {bfm::DT_FE, 4}};
+        CHECK(marks.size() >= head.size() && std::equal(head.begin(), head.end(), marks.begin()));
+        for (const auto& [dt, n] : marks) std::printf("  %s %u\n", dt == bfm::DT_FS ? "FS" : "FE", n);
+        CHECK(fx1_csi2_dma_stop(&dev, 100) == FX1_CSI2_OK);
+    }
+
     void restart_before_fe() {
         const unsigned w = 64, h = 8;
         csi_up(4, w);
@@ -516,6 +603,7 @@ struct Tb : sc_core::sc_module {
             {"stream_noncontinuous", [this] { stream(4, 10); }},
             {"controls", [this] { controls(); }},
             {"raw_file", [this] { raw_file(); }},
+            {"faults", [this] { faults(); }},
         };
         const auto it = cases.find(which);
         if (it == cases.end()) {

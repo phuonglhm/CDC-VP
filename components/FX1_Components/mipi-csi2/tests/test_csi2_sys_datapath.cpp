@@ -1587,6 +1587,209 @@ void pipe_quiescent() {
     CHECK(h.dp.quiescent(h.cfg));
 }
 
+// ---------------------------------------------------- VP capture observer
+// Direct CSI->ISP D2a review F1 / F2: capture_stream_end(seq) is final (no beat
+// of the capture, abort beat included, is handshaked after it) and per
+// capture; the observer's pending bookkeeping stays bounded under a prolonged
+// stall while the sensor keeps sending frames.
+struct ObsRec : CaptureObserver, AxisSink {
+    struct Ev {
+        char kind;  // S start, E end, X stream_end, B beat handshaked, R reset
+        uint64_t seq;
+        bool abort;
+        CaptureOutcome out;
+    };
+    std::vector<Ev> ev;
+    std::function<bool(uint64_t)> ready = [](uint64_t) { return true; };
+    const SysDatapath* dp = nullptr;
+    uint64_t cyc = 0;
+    std::size_t max_wait = 0;
+    void capture_start(uint64_t seq, uint16_t, uint64_t, uint32_t) override { ev.push_back({'S', seq, false, {}}); }
+    void capture_end(uint64_t seq, CaptureOutcome o) override { ev.push_back({'E', seq, false, o}); }
+    void capture_stream_end(uint64_t seq) override { ev.push_back({'X', seq, false, {}}); }
+    void source_reset(uint32_t) override { ev.push_back({'R', 0, false, {}}); }
+    bool axis_cycle(bool valid, const AxisBeat& b) override {
+        if (dp) max_wait = std::max(max_wait, dp->stream_wait_size());
+        const bool r = ready(cyc++);
+        if (valid && r) ev.push_back({'B', b.vp_capture_seq, b.tkeep == 0 && b.tlast && (b.tuser & 2u) != 0, {}});
+        return r;
+    }
+    unsigned count(char k, uint64_t seq) const {
+        unsigned n = 0;
+        for (const Ev& e : ev) n += e.kind == k && e.seq == seq;
+        return n;
+    }
+    std::vector<uint64_t> aborts() const {
+        std::vector<uint64_t> v;
+        for (const Ev& e : ev)
+            if (e.kind == 'B' && e.abort) v.push_back(e.seq);
+        return v;
+    }
+    CaptureOutcome outcome(uint64_t seq) const {
+        for (const Ev& e : ev)
+            if (e.kind == 'E' && e.seq == seq) return e.out;
+        return CaptureOutcome::Ok;
+    }
+    // The rules of every session, once drained: each ended capture has exactly
+    // one boundary, after its end; no beat of a capture after its boundary;
+    // the pending bookkeeping within its bound and empty.
+    void check_final() const {
+        std::map<uint64_t, unsigned> state;  // 1 started, 2 ended, 3 boundary
+        for (const Ev& e : ev) {
+            unsigned& st = state[e.seq];
+            switch (e.kind) {
+            case 'S': CHECK_EQ(st, 0u); st = 1; break;
+            case 'E': CHECK_EQ(st, 1u); st = 2; break;
+            case 'X': CHECK(e.seq != 0); CHECK_EQ(st, 2u); st = 3; break;
+            case 'B':
+                if (e.seq != 0 && st == 3)
+                    std::fprintf(stderr, "beat of seq %llu (abort %d) after its stream boundary\n",
+                                 (unsigned long long)e.seq, e.abort ? 1 : 0);
+                CHECK(e.seq == 0 || st != 3);
+                break;
+            default: break;
+            }
+        }
+        for (const auto& [seq, st] : state)
+            if (seq != 0) CHECK_EQ(st, 3u);
+        CHECK(dp != nullptr && dp->stream_wait_size() == 0);
+        CHECK(dp != nullptr && max_wait <= dp->stream_wait_bound());
+    }
+};
+
+// One RAW12 line on a RAW16 stream: 64 pixels = 16 beats.
+struct ObsBench {
+    Harness h;
+    ObsRec rec;
+    ObsBench() {
+        h.cfg.fb.stream_raw16 = true;
+        h.dp.set_axis_sink(&rec);
+        h.dp.set_capture_observer(&rec);
+        rec.dp = &h.dp;
+    }
+    void line(unsigned y) { h.burst(bfm::long_packet(0, bfm::DT_RAW12, pack(px_line(64, false, y), false))); }
+    void stop() {
+        h.cfg.core_enable = false;
+        h.dp.core_disable();
+    }
+};
+
+// A sparse TREADY: one cycle in four (keeps beats in the master and the
+// Format Bridge while the next ones arrive).
+bool sparse(uint64_t c) { return c % 4 == 0; }
+
+// Core disabled between two lines of an open capture (the reviewer's case:
+// every beat of line 0 has left, Control FSM is on its way to the abort):
+// the boundary comes after the abort beat, which carries the capture.
+void obs_stop_between_lines() {
+    for (const bool stall : {false, true}) {
+        ObsBench b;
+        if (stall) b.rec.ready = sparse;
+        b.h.burst(bfm::short_packet(0, bfm::DT_FS, 1));
+        b.line(0);
+        CHECK(b.h.settle());
+        CHECK_EQ(b.rec.count('X', 1), 0u);
+        b.stop();
+        CHECK(b.h.settle());
+        CHECK(b.rec.aborts() == std::vector<uint64_t>{1});
+        CHECK(b.rec.outcome(1) == CaptureOutcome::Dropped);
+        CHECK_EQ(b.rec.count('X', 1), 1u);
+        CHECK(b.rec.ev.back().kind == 'X');  // after the abort beat
+        b.rec.check_final();
+    }
+}
+
+// Core disabled inside a line: part of it has left the master, the rest is
+// in the Line Buffer / Format Bridge / master and is flushed or drained.
+void obs_stop_midline() {
+    for (const bool stall : {false, true}) {
+        ObsBench b;
+        if (stall) b.rec.ready = sparse;
+        b.h.burst(bfm::short_packet(0, bfm::DT_FS, 1));
+        b.line(0);
+        b.line(1);
+        unsigned n = 0;
+        while (!b.h.dp.axis_master().line_open() && n++ < 100000) b.h.step();
+        b.h.run(3);
+        CHECK(b.h.dp.axis_master().line_open());
+        b.stop();
+        // The words of line 1 still on their way stay in the receive FIFO while
+        // the core is disabled (not quiescent, as before): run them in, drain.
+        while (!b.h.pending.empty()) b.h.step();
+        b.h.run(20000);
+        CHECK(b.h.dp.control_fsm().state() == ControlFsm::State::Idle);
+        CHECK(b.h.dp.axis_master().state() == AxisMaster::State::Passthrough && !b.h.dp.axis_master().tvalid());
+        CHECK(b.rec.aborts() == std::vector<uint64_t>{1});
+        CHECK(b.rec.outcome(1) == CaptureOutcome::Dropped);
+        CHECK(b.rec.ev.back().kind == 'X' && b.rec.ev.back().seq == 1);
+        b.rec.check_final();
+    }
+}
+
+// Capture 1 complete with its boundary; capture 2 opened by its FS, no beat
+// yet; core disabled. The abort terminates capture 2's (empty) stream: it
+// must not carry capture 1 after capture 1's boundary (it carries 0).
+void obs_stop_after_fs() {
+    for (const bool stall : {false, true}) {
+        ObsBench b;
+        if (stall) b.rec.ready = sparse;
+        b.h.burst(bfm::short_packet(0, bfm::DT_FS, 1));
+        b.line(0);
+        b.line(1);
+        b.h.burst(bfm::short_packet(0, bfm::DT_FE, 1));
+        CHECK(b.h.settle());
+        CHECK_EQ(b.rec.count('X', 1), 1u);
+        CHECK(b.rec.outcome(1) == CaptureOutcome::Ok);
+        b.h.burst(bfm::short_packet(0, bfm::DT_FS, 2));
+        b.h.run(3000);  // capture 2 open: not quiescent
+        CHECK_EQ(b.rec.count('S', 2), 1u);
+        b.stop();
+        CHECK(b.h.settle());
+        CHECK(b.rec.aborts() == std::vector<uint64_t>{0});
+        CHECK(b.rec.outcome(2) == CaptureOutcome::Dropped);
+        CHECK_EQ(b.rec.count('X', 2), 1u);
+        b.rec.check_final();
+    }
+}
+
+// TREADY held low while the sensor keeps sending 256 frames: the line buffer
+// fills with the first captures, then they are dropped and the master waits
+// to inject its abort. Every capture that has no beat left (and is not the one
+// the abort carries) gets its boundary at once; the bookkeeping holds only
+// the captures resident in the stream path, so it does not grow with the
+// number of frames sent during the stall.
+void obs_pending_bound() {
+    ObsBench b;
+    bool open = false;
+    b.rec.ready = [&open](uint64_t) { return open; };
+    const unsigned frames = 256;
+    std::size_t max_at_64 = 0;
+    for (unsigned i = 0; i < frames; ++i) {
+        if (i == 64) max_at_64 = b.rec.max_wait;
+        b.h.burst(bfm::short_packet(0, bfm::DT_FS, static_cast<uint16_t>(i % 0xFFFF + 1)));
+        for (unsigned y = 0; y < 4; ++y) b.line(y);
+        b.h.burst(bfm::short_packet(0, bfm::DT_FE, static_cast<uint16_t>(i % 0xFFFF + 1)));
+        b.h.run(2000);
+    }
+    unsigned ends = 0, bounds = 0;
+    for (const auto& e : b.rec.ev) {
+        ends += e.kind == 'E';
+        bounds += e.kind == 'X';
+    }
+    std::printf("stall: %u frames, %u ended, %u boundaries, pending %zu (max %zu, bound %zu)\n", frames, ends, bounds,
+                b.h.dp.stream_wait_size(), b.rec.max_wait, b.h.dp.stream_wait_bound());
+    CHECK_EQ(ends, frames);
+    CHECK(b.rec.max_wait <= b.h.dp.stream_wait_bound());
+    CHECK_EQ(b.rec.max_wait, max_at_64);  // no growth after the line buffer was flushed
+    CHECK(b.h.dp.stream_wait_size() <= 1);  // only the capture the pending abort carries
+    CHECK(ends - bounds <= 1);
+    // The latest capture has no beat in the path: its boundary is out.
+    CHECK_EQ(b.rec.count('X', frames), 1u);
+    open = true;
+    CHECK(b.h.settle());
+    b.rec.check_final();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1617,6 +1820,10 @@ int main(int argc, char** argv) {
         {"mux_unit", mux_unit},
         {"pipe_quiescent", pipe_quiescent},
         {"pipe_bench", pipe_bench},
+        {"obs_stop_between_lines", obs_stop_between_lines},
+        {"obs_stop_midline", obs_stop_midline},
+        {"obs_stop_after_fs", obs_stop_after_fs},
+        {"obs_pending_bound", obs_pending_bound},
     };
     const auto it = cases.find(which);
     if (it == cases.end()) {

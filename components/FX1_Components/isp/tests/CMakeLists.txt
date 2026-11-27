@@ -104,12 +104,44 @@ add_test(NAME fx1_isp.integration.driver_tlm
 add_test(NAME fx1_isp.integration.driver_tlm_fast_csr
          COMMAND fx1_isp_test_driver_tlm ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors --fast-csr)
 
+# Direct-input driver API (plan DIRECT_CSI_ISP D3): start_direct / arm / find, states and refusals.
+add_executable(fx1_isp_test_direct_driver_tlm integration/test_direct_driver_tlm.cpp)
+target_include_directories(fx1_isp_test_direct_driver_tlm PRIVATE common)
+target_link_libraries(fx1_isp_test_direct_driver_tlm PRIVATE fx1_isp_drv fx1_isp_tlm SystemC::systemc)
+target_compile_options(fx1_isp_test_direct_driver_tlm PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.integration.direct_driver_tlm COMMAND fx1_isp_test_direct_driver_tlm)
+
 add_executable(fx1_isp_test_cont_tlm integration/test_cont_tlm.cpp)
 target_include_directories(fx1_isp_test_cont_tlm PRIVATE common)
 target_link_libraries(fx1_isp_test_cont_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
 target_compile_options(fx1_isp_test_cont_tlm PRIVATE ${FX1_ISP_WARNINGS})
 add_test(NAME fx1_isp.integration.cont_tlm
          COMMAND fx1_isp_test_cont_tlm ${CMAKE_CURRENT_SOURCE_DIR}/data/sequences/cont_100)
+
+# VP-only direct CSI->ISP stream ingress (ISP_INGRESS, D1;
+# components/FX1_Components/mipi-csi2/docs/DIRECT_CSI_ISP_CONTRACT.md).
+add_executable(fx1_isp_test_direct_e2e_tlm integration/test_direct_e2e_tlm.cpp)
+target_include_directories(fx1_isp_test_direct_e2e_tlm PRIVATE common)
+target_link_libraries(fx1_isp_test_direct_e2e_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
+target_compile_options(fx1_isp_test_direct_e2e_tlm PRIVATE ${FX1_ISP_WARNINGS})
+add_executable(fx1_isp_test_ingress_tlm integration/test_ingress_tlm.cpp)
+target_include_directories(fx1_isp_test_ingress_tlm PRIVATE common)
+target_link_libraries(fx1_isp_test_ingress_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
+target_compile_options(fx1_isp_test_ingress_tlm PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.integration.ingress_tlm COMMAND fx1_isp_test_ingress_tlm)
+add_executable(fx1_isp_test_ingress_lifecycle_tlm integration/test_ingress_lifecycle_tlm.cpp)
+target_include_directories(fx1_isp_test_ingress_lifecycle_tlm PRIVATE common)
+target_link_libraries(fx1_isp_test_ingress_lifecycle_tlm PRIVATE fx1_isp_drv fx1_isp_tlm SystemC::systemc)
+target_compile_options(fx1_isp_test_ingress_lifecycle_tlm PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.integration.ingress_lifecycle_tlm COMMAND fx1_isp_test_ingress_lifecycle_tlm)
+add_test(NAME fx1_isp.integration.direct_e2e_tlm
+         COMMAND fx1_isp_test_direct_e2e_tlm ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors)
+add_executable(fx1_isp_test_direct_raw10_tlm integration/test_direct_raw10_tlm.cpp)
+target_include_directories(fx1_isp_test_direct_raw10_tlm PRIVATE common)
+target_link_libraries(fx1_isp_test_direct_raw10_tlm PRIVATE fx1_isp_tlm SystemC::systemc)
+target_compile_options(fx1_isp_test_direct_raw10_tlm PRIVATE ${FX1_ISP_WARNINGS})
+add_test(NAME fx1_isp.integration.direct_raw10_tlm
+         COMMAND fx1_isp_test_direct_raw10_tlm ${CMAKE_CURRENT_SOURCE_DIR}/data/vectors)
 
 # The installed package works for a consumer project (find_package(fx1_isp)).
 if(FX1_ISP_INSTALL)

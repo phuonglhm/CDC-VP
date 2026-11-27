@@ -11,6 +11,7 @@ Namespace: `cdc::components::fx1_isp`. CMake target:
 | `csr_socket` | `simple_target_socket<fx1_isp_tlm>` (32-bit) | `s_axil` | Offsets are relative to the ISP base; the platform router strips the base |
 | `idma_socket` | `simple_initiator_socket<fx1_isp_tlm>` (32-bit) | `m_axi_m0` read master | One `b_transport` read per AXI burst |
 | `odma_socket` | `simple_initiator_socket<fx1_isp_tlm>` (32-bit) | `m_axi_m1` write master | One `b_transport` write per AXI burst, luma and chroma planes |
+| `ingress_csr_socket` | `simple_target_socket_optional<fx1_isp_tlm>` (32-bit) | none (VP-only) | `ISP_INGRESS` registers of the direct CSI-2 → ISP path ([§7](#7-vp-only-direct-stream-ingress-direct-csi-2--isp)); may stay unbound |
 | `rst_n` | `sc_in<bool>` | `i_rst_n` | Active low |
 | `irq` | `sc_out<bool>` | `o_irq` | Level; bind to one interrupt-controller input |
 
@@ -279,3 +280,69 @@ Vector directory format: `input.bin`, `profile.csrw`, optional `frames.csrw`
 `expected_uv.bin`, `meta.txt`, and `expected_stats.txt`. The last one holds
 `<REG> <value>` expected reads in order, with `SET <REG> <value>` lines for
 readout selectors.
+
+## 7. VP-only direct stream ingress (direct CSI-2 → ISP)
+
+**Not part of the FTEL ISP v1.07** (a memory-to-memory core with no
+sensor-facing port). The VP gives the ISP's internal IDMA → Input Formatter
+boundary (MAS v1.07 Table 6-15; `in_fifo` in the model) a second pixel source:
+the CSI-2 RX AXI4-Stream master (CSI-2 RX MAS v1.4 Table 6-67, RAW16 stream).
+Contract, decisions and tests: `components/FX1_Components/mipi-csi2/docs/`
+`DIRECT_CSI_ISP_CONTRACT.md` (P19–P29) and `DIRECT_STATUS.md`.
+
+| Item | Where |
+|---|---|
+| Stream input | `fx1_isp_tlm::ingress()` → `stream_ingress` ([fx1_isp_ingress.h](../include/fx1_isp/fx1_isp_ingress.h)): `axis_cycle(tvalid, beat)` → TREADY, never waits; `capture_start(seq, frame_id, ts, epoch)`, `capture_end(seq, outcome)`, `capture_stream_end(seq)` (stream boundary), `source_reset(epoch)`, `set_bound()`. The ISP does not depend on the CSI-2 RX component: the platform adapts the CSI's `AxisSink` and capture observer to it |
+| Registers | `ingress_csr_socket`, [fx1_isp_ingress_regs.h](../include/fx1_isp/fx1_isp_ingress_regs.h): ID `'ISPI'`, CAPABILITY, CTRL (SOURCE memory/direct, EXPECTED_TID), STATUS, counters, the head of the READY context entries and POP |
+| Driver | `fx1_isp_drv`: [fx1_isp_ingress_drv.h](../driver/include/fx1_isp/fx1_isp_ingress_drv.h) (`fx1_isp_ingress_init`, `_set_source`, `_ctx_peek` / `_ctx_pop`, `_read_counters`) |
+| Implementation | `src/engine/ingress.{h,cpp}`: front end in the caller's process (handshake, validation, admission at the accepted SOF, context table); drain `SC_THREAD` (`ingress_thread`) that assembles lines and pushes them into `in_fifo` |
+
+Behaviour (contract §6–§10):
+- SOURCE resets to memory. In memory mode the ingress answers TREADY = 1 and
+  discards every beat: the IDMA path is unchanged. The switch to direct needs
+  the ISP idle and drained and `DMA_CTRL.IDMA_EN = 0`; in direct the IDMA
+  neither arms nor reports, whatever `IDMA_EN` (no IDMA read, `IDMA_*` counter
+  or interrupt).
+- Buffering: 16-beat FIFO (TREADY = not full), one line of assembly, then the
+  ISP's 2-line `in_fifo`; back-pressure is real. Beats are moved into the
+  assembly as they arrive; the FIFO fills only while a complete line waits
+  for `in_fifo`.
+- Admission at the accepted SOF beat: the capture holds a context entry, the
+  ISP's common `admission_state()` (with the credits the ingress already
+  holds), ISP_EN, ODMA_EN, and the buffer each enabled channel will take is
+  FREE (counting admitted frames whose ODMA has not finished). Otherwise the
+  whole frame is dropped with TREADY 1 (counted). From that SOF the frame is
+  an admitted context: `COMMON_STATUS.BUSY` and the IDLE condition include
+  the ingress's credits (`ingress_reserved`), so IDLE-class writes are refused
+  before its first line reaches the pipeline. A TID other than EXPECTED_TID
+  is discarded first, null abort beats included.
+- Geometry and depth from `COMMON_FRAME_WIDTH/HEIGHT`, `COMMON_INPUT_FORMAT`
+  at the SOF; RAW10 is passed native (the pipeline normalizes once).
+  Validation of every line (length, KEEP, depth, TUSER[1], capture sequence),
+  the null abort beat, missing / extra lines; an invalid frame is abandoned
+  with the existing abort marker, the next frame is processed normally.
+- Lines carry `tag` = the ingress TAG (→ ODMA `BUF_TAG`) and `ts` = the CSI
+  FRAME_ID (→ `BUF_TS`, as the memory path's firmware does, P29); the ISP's
+  BUF_DONE / FRAME_DONE semantics are unchanged.
+- Context: 8 entries reserved at `capture_start`, bound to the accepted SOF by
+  the 64-bit capture sequence; READY in admission order when the CSI outcome,
+  the stream outcome, the ISP retirement and the capture's stream boundary
+  (`capture_stream_end`, a newer capture's beat, a reset) are all known; data
+  beyond HEIGHT of the same capture is checked until the boundary. The entry
+  also reports the ISP frame ID (`CTX_ISP_FRAME`), the ID of the frame's
+  statistics, so firmware can drop statistics of a capture that is not OK.
+- Resets: a CSI reset (`source_reset`) and ISP soft / common resets and
+  error recoveries cancel the admitted entries the ISP has not retired; they
+  become READY (RESET, or ISP_FAILED for an error recovery) only when the ISP
+  has retired them or is drained (reset released, no AXI transaction
+  outstanding). Frames already retired are not affected. `i_rst_n` returns
+  the block to its reset values. Resets: ISP
+  resets cancel admitted entries until the ISP is drained (no admitted frame,
+  no AXI transaction outstanding); `i_rst_n` resets the block.
+
+Tests (ISP stand-alone build): `fx1_isp.integration.ingress_tlm` (handshake,
+geometry, admission, source select, validation; datapath stub),
+`fx1_isp.integration.direct_e2e_tlm` (every committed vector through the
+ingress against the Python reference), `fx1_isp.integration.direct_raw10_tlm`
+(RAW10 native ≡ memory path RAW12 `<< 2`), `fx1_isp.integration.ingress_lifecycle_tlm` (context full / no POP, capture sequence, TAG wrap, CSI reset, soft reset, error recovery, `i_rst_n`, the C driver).
+

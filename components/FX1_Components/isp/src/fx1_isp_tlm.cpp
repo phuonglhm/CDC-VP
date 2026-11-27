@@ -6,6 +6,8 @@
 
 #include "control/control_unit.h"
 #include "engine/engines.h"
+#include "engine/ingress.h"
+#include "fx1_isp/fx1_isp_ingress.h"
 #include "fx1_isp/fx1_isp_csr.h"
 
 namespace cdc::components::fx1_isp {
@@ -25,8 +27,19 @@ struct fx1_isp_tlm::impl {
          idma(ctx, top.idma_socket, in_fifo),
          pipeline(ctx, in_fifo, outputs()),
          odma{odma_engine(ctx, top.odma_socket, 0, outputs()[0]), odma_engine(ctx, top.odma_socket, 1, outputs()[1]),
-              odma_engine(ctx, top.odma_socket, 2, outputs()[2])} {
+              odma_engine(ctx, top.odma_socket, 2, outputs()[2])},
+         ingress(ctx, in_fifo) {
       ctx.fifos = {&in_fifo, &y_fifo, &uv_fifo, &ch1_y_fifo, &ch1_uv_fifo, &ch2_fifo};
+      ctx.direct_retired = [this](std::uint32_t tag, bool ok) { ingress.isp_retired(tag, ok); };
+      ctx.direct_odma_end = [this](unsigned ch, std::uint32_t tag) { ingress.odma_end(ch, tag); };
+      // A recovery for an error (AXI read / write, malformed frame) fails the
+      // frames it aborts; a software soft / common reset or i_rst_n resets them.
+      ctx.ingress_reset = [this] {
+         const unsigned cause = control.soft_reset_hook_cause();
+         ingress.isp_reset(cause == control_unit::rc_read || cause == control_unit::rc_write ||
+                           cause == control_unit::rc_malformed);
+      };
+      ctx.direct_accepted = [this](std::uint32_t tag, std::uint32_t id) { ingress.isp_accepted(tag, id); };
    }
    // CH0/CH1 NV12 planes, CH2 one RGB888 plane (MAS v1.07 §6.25.3.8).
    std::array<channel_fifos, num_channels> outputs() {
@@ -43,6 +56,7 @@ struct fx1_isp_tlm::impl {
    idma_engine idma;
    pipeline_engine pipeline;
    std::array<odma_engine, num_channels> odma;  // one engine per channel, sharing odma_socket
+   ingress_engine ingress;                      // VP-only direct CSI->ISP stream input
 };
 
 fx1_isp_tlm::fx1_isp_tlm(sc_core::sc_module_name name, const fx1_isp_params &params)
@@ -50,6 +64,7 @@ fx1_isp_tlm::fx1_isp_tlm(sc_core::sc_module_name name, const fx1_isp_params &par
       csr_socket("csr_socket"),
       idma_socket("idma_socket"),
       odma_socket("odma_socket"),
+      ingress_csr_socket("ingress_csr_socket"),
       rst_n("rst_n"),
       irq("irq"),
       params_(params) {
@@ -79,11 +94,17 @@ fx1_isp_tlm::fx1_isp_tlm(sc_core::sc_module_name name, const fx1_isp_params &par
       return impl_->ctx.axi_outstanding == 0 ? cycle : control_unit::never;
    });
    // IDLE condition (MAS v1.07 §9.9.3): no admitted context, no AXI transaction outstanding.
-   ctl.set_quiescence_probe(
-       [this] { return impl_->ctx.frames_in_flight == 0 && impl_->ctx.axi_outstanding == 0; });
+   // VP direct path: a frame the stream ingress has admitted is an admitted
+   // context from its accepted SOF beat, before its first line reaches the
+   // pipeline (D1a review F1): IDLE-class writes are refused meanwhile.
+   ctl.set_quiescence_probe([this] {
+      return impl_->ctx.frames_in_flight == 0 && impl_->ctx.ingress_reserved == 0 && impl_->ctx.axi_outstanding == 0;
+   });
 
    csr_socket.register_b_transport(this, &fx1_isp_tlm::b_transport);
    csr_socket.register_transport_dbg(this, &fx1_isp_tlm::transport_dbg);
+   ingress_csr_socket.register_b_transport(this, &fx1_isp_tlm::ingress_b_transport);
+   ingress_csr_socket.register_transport_dbg(this, &fx1_isp_tlm::ingress_transport_dbg);
 
    SC_METHOD(reset_method);
    sensitive << rst_n;
@@ -94,6 +115,7 @@ fx1_isp_tlm::fx1_isp_tlm(sc_core::sc_module_name name, const fx1_isp_params &par
    SC_THREAD(odma_thread);
    SC_THREAD(odma_ch1_thread);
    SC_THREAD(odma_ch2_thread);
+   SC_THREAD(ingress_thread);
 }
 
 void fx1_isp_tlm::idma_thread() { impl_->idma.run(); }
@@ -101,6 +123,9 @@ void fx1_isp_tlm::pipeline_thread() { impl_->pipeline.run(); }
 void fx1_isp_tlm::odma_thread() { impl_->odma[0].run(); }
 void fx1_isp_tlm::odma_ch1_thread() { impl_->odma[1].run(); }
 void fx1_isp_tlm::odma_ch2_thread() { impl_->odma[2].run(); }
+void fx1_isp_tlm::ingress_thread() { impl_->ingress.run(); }
+
+stream_ingress &fx1_isp_tlm::ingress() { return impl_->ingress; }
 
 fx1_isp_tlm::~fx1_isp_tlm() = default;
 
@@ -119,6 +144,7 @@ void fx1_isp_tlm::reset_method() {
       ++impl_->ctx.hard_reset_gen;  // responses of earlier transactions have no effect
       impl_->control.external_reset();
       impl_->ctx.reset_engines();  // frame in flight discarded, engines to idle
+      impl_->ingress.hard_reset();  // ISP_INGRESS to its reset values
    } else if (in_reset_) {
       impl_->control.release_reset(cycle_at());  // FRAME_COUNTER starts from zero
    }
@@ -246,6 +272,65 @@ void fx1_isp_tlm::b_transport(tlm::tlm_generic_payload &trans, sc_time &delay) {
    trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 
+// VP-only ISP_INGRESS registers: 32-bit aligned accesses only.
+void fx1_isp_tlm::ingress_b_transport(tlm::tlm_generic_payload &trans, sc_time &delay) {
+   const tlm::tlm_command cmd = trans.get_command();
+   const sc_dt::uint64 addr = trans.get_address();
+   if (cmd != tlm::TLM_READ_COMMAND && cmd != tlm::TLM_WRITE_COMMAND) {
+      trans.set_response_status(cmd == tlm::TLM_IGNORE_COMMAND ? tlm::TLM_OK_RESPONSE
+                                                               : tlm::TLM_COMMAND_ERROR_RESPONSE);
+      return;
+   }
+   if (addr >= 0x10000u) {
+      trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
+      return;
+   }
+   if (trans.get_data_length() != 4 || (addr & 3u) || trans.get_streaming_width() < 4 ||
+       trans.get_data_ptr() == nullptr) {
+      trans.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
+      return;
+   }
+   if (delay != sc_core::SC_ZERO_TIME &&
+       sc_core::sc_get_current_process_handle().proc_kind() == sc_core::SC_THREAD_PROC_) {
+      wait(delay);
+      delay = sc_core::SC_ZERO_TIME;
+   }
+   unsigned char *data = trans.get_data_ptr();
+   const std::uint32_t off = static_cast<std::uint32_t>(addr);
+   if (cmd == tlm::TLM_READ_COMMAND) {
+      const std::uint32_t v = impl_->ingress.csr_read(off);
+      for (unsigned i = 0; i < 4; ++i) {
+         data[i] = static_cast<unsigned char>(v >> (8u * i));
+      }
+   } else {
+      std::uint32_t v = 0;
+      for (unsigned i = 0; i < 4; ++i) {
+         v |= static_cast<std::uint32_t>(data[i]) << (8u * i);
+      }
+      if (!in_reset_) {
+         impl_->ingress.csr_write(off, v);
+      }
+      impl_->ctx.kick.notify(sc_core::SC_ZERO_TIME);
+      state_changed(sc_core::SC_ZERO_TIME);
+   }
+   delay += params_.csr_latency;
+   trans.set_dmi_allowed(false);
+   trans.set_response_status(tlm::TLM_OK_RESPONSE);
+}
+
+unsigned int fx1_isp_tlm::ingress_transport_dbg(tlm::tlm_generic_payload &trans) {
+   const sc_dt::uint64 addr = trans.get_address();
+   if (trans.get_command() != tlm::TLM_READ_COMMAND || trans.get_data_length() != 4 || (addr & 3u) ||
+       addr >= 0x10000u || trans.get_data_ptr() == nullptr) {
+      return 0;
+   }
+   const std::uint32_t v = impl_->ingress.csr_peek(static_cast<std::uint32_t>(addr));
+   for (unsigned i = 0; i < 4; ++i) {
+      trans.get_data_ptr()[i] = static_cast<unsigned char>(v >> (8u * i));
+   }
+   return 4;
+}
+
 unsigned int fx1_isp_tlm::transport_dbg(tlm::tlm_generic_payload &trans) {
    // Side-effect-free read access for debuggers; writes are not supported.
    beat b;
@@ -269,6 +354,7 @@ std::uint32_t fx1_isp_tlm::debug_idma_head() const { return impl_->ctx.idma_head
 std::uint32_t fx1_isp_tlm::debug_odma_head(unsigned ch) const { return impl_->ctx.odma_head.at(ch); }
 
 void fx1_isp_tlm::debug_set_frame_counter(std::uint32_t value) { impl_->control.debug_set_frame_counter(value); }
+void fx1_isp_tlm::debug_set_ingress_tag(std::uint32_t value) { impl_->ingress.debug_set_tag(value); }
 
 void fx1_isp_tlm::debug_hw_set(std::uint32_t offset, std::uint32_t mask) {
    impl_->control.hw_set(offset, mask, cycle_at());

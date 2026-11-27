@@ -139,6 +139,9 @@ cp "${fw}"/tests/npu_common/npu_oracle.[ch] "${fw}"/tests/npu_common/npu_cases.[
 cp "${fw}/host/npu_job_gen.c" "${sdk}/npu_jobs/"   # host tool: make npu-jobs
 cp "${isp}/include/fx1_isp/fx1_isp_csr.h" "${isp}/driver/include/fx1_isp/fx1_isp_drv.h" "${sdk}/include/fx1_isp/"
 cp "${isp}/driver/src/fx1_isp_drv.c" "${sdk}/drivers/isp/"
+# Direct CSI-2 -> ISP (plan DIRECT_CSI_ISP D3): the VP ISP_INGRESS driver, used by the camera manager.
+cp "${isp}/driver/include/fx1_isp/fx1_isp_ingress_drv.h" "${isp}/include/fx1_isp/fx1_isp_ingress_regs.h" "${sdk}/include/fx1_isp/"
+cp "${isp}/driver/src/fx1_isp_ingress.c" "${sdk}/drivers/isp/"
 cp "${fw}"/tests/isp_stream/isp_common.c "${fw}"/tests/isp_stream/isp_common.h "${fw}"/tests/isp_stream/isp_fixture.h \
    "${sdk}/isp_selftest/"
 cp "${fw}/demo/isp_raw_frame/isp_demo_job.h" "${fw}/demo/isp_raw_frame/isp_demo_setup.h" "${sdk}/demo/"
@@ -200,7 +203,7 @@ rm -rf "${npucheck}" "${out}/.make.log"
 # ── test launchers and ISP samples ───────────────────────────────────────────
 log "launchers"
 cp "${here}/test/run_vp.sh" "${here}/test/isp_run.txt" "${test}/"
-cp "${fw}/freertos/tests/cli_smoke.txt" "${fw}/freertos/tests/cli_camera.txt" "${test}/"
+cp "${fw}/freertos/tests/cli_smoke.txt" "${fw}/freertos/tests/cli_camera.txt" "${fw}/freertos/tests/cli_camera_direct.txt" "${test}/"
 cp "${fw}/freertos/tests/cli_eth.txt" "${fw}/freertos/tests/cli_eth_load.txt" "${test}/"
 cp "${src}/platforms/fx1_soc/tools/fx1_console.sh" "${test}/"
 cp "${src}/platforms/fx1_soc/demo/isp_pack.py" "${test}/"

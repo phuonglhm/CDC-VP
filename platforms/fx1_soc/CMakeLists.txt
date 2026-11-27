@@ -183,6 +183,164 @@ if(TARGET eth_vp_support)
     endif()
 endif()
 
+# Direct CSI->ISP D2a review F3: TrafficCounter counts at issue, returns and
+# outstanding; the host checker of the camera_direct tests must refuse a report
+# with RAW traffic issued but not returned (pending), and one in the old format.
+add_executable(test_fx1_traffic_counter tests/test_traffic_counter.cpp)
+target_compile_options(test_fx1_traffic_counter PRIVATE -Wall -Wextra)
+target_link_libraries(test_fx1_traffic_counter PRIVATE SystemC::systemc)
+if(CDC_BUILD_TESTS)
+    set(_tc_dir ${CMAKE_CURRENT_BINARY_DIR}/traffic_counter)
+    file(MAKE_DIRECTORY ${_tc_dir})
+    add_test(NAME fx1_unit_traffic_counter COMMAND test_fx1_traffic_counter ${_tc_dir})
+    set_tests_properties(fx1_unit_traffic_counter PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit"
+        PASS_REGULAR_EXPRESSION "PASS \\(0 failures\\)" FIXTURES_SETUP fx1_traffic_reports)
+    find_program(FX1_PYTHON3 python3)
+    if(FX1_PYTHON3)
+        file(WRITE ${_tc_dir}/old_format.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_errors=0 writes=0 write_bytes=0 write_errors=0\n"
+            "ISP_IDMA reads=0 read_bytes=0 read_errors=0 writes=0 write_bytes=0 write_errors=0\n"
+            "ISP_ODMA reads=0 read_bytes=0 read_errors=0 writes=1 write_bytes=8 write_errors=0 write_lo=0x88000000 write_hi=0x88000007\n")
+        set(_chk ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/fw/fx1_soc/tests/camera_direct/check_direct_traffic.py
+            --odma-lo 0x88000000 --odma-hi 0x8803ffff)
+        foreach(_c "pending|1|MIPI_DMA: 1 transactions outstanding.*ISP_IDMA: 1 transactions outstanding.*MIPI_DMA: 0 reads, 1 writes issued.*ISP_IDMA: 1 reads, 0 writes issued"
+                   "done|1|MIPI_DMA: 0 reads, 1 writes issued.*ISP_IDMA: 1 reads.*ISP_ODMA: 1 write errors"
+                   "old_format|1|report without read_done"
+                   "clean|0|direct traffic: MIPI_DMA 0 writes, ISP_IDMA 0 reads, ISP_ODMA 1 writes")
+            string(REPLACE "|" ";" _c "${_c}")
+            list(GET _c 0 _n)
+            list(GET _c 1 _rc)
+            list(GET _c 2 _re)
+            string(REPLACE ";" "\\;" _cmd "${_chk};${_tc_dir}/${_n}.txt")
+            add_test(NAME fx1_unit_traffic_checker_${_n}
+                     COMMAND ${CMAKE_COMMAND} "-DCMD=${_cmd}" -DRC=${_rc} "-DREGEX=${_re}"
+                             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/expect_rc.cmake)
+            set_tests_properties(fx1_unit_traffic_checker_${_n} PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit")
+            if(NOT _n STREQUAL "old_format")
+                set_tests_properties(fx1_unit_traffic_checker_${_n} PROPERTIES FIXTURES_REQUIRED fx1_traffic_reports)
+            endif()
+        endforeach()
+        # D2b + review F1/F2: direct + RAW dump mode (--mipi-window per side,
+        # --mipi-errors). Reports from test_fx1_csi_dma_traffic (product counter
+        # and fault shim): fault (counter before the shim), lost (the refused
+        # topology, shim first), clean, gap (write between the sides), cross
+        # (burst past the end of a side); hand-written: IDMA read, no MIPI
+        # write, a counter without windows.
+        set(_cd_dir ${_tc_dir}/csi_dma)
+        file(MAKE_DIRECTORY ${_cd_dir})
+        set(_ok_isp "ISP_IDMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=0 write_bytes=0 write_done=0 write_errors=0 outstanding=0\n"
+                    "ISP_ODMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=1 write_bytes=8 write_done=1 write_errors=0 write_lo=0x88000000 write_hi=0x88000007 outstanding=0\n")
+        set(_win " windows=0x81000000-0x81000fff,0x81010000-0x81010fff outside=0")
+        file(WRITE ${_cd_dir}/idma.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=2 write_bytes=16 write_done=2 write_errors=0 write_lo=0x81000000 write_hi=0x81010007 outstanding=0${_win}\n"
+            "ISP_IDMA reads=1 read_bytes=8 read_done=1 read_errors=0 read_lo=0x81000000 read_hi=0x81000007 writes=0 write_bytes=0 write_done=0 write_errors=0 outstanding=0\n"
+            "ISP_ODMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=1 write_bytes=8 write_done=1 write_errors=0 write_lo=0x88000000 write_hi=0x88000007 outstanding=0\n")
+        file(WRITE ${_cd_dir}/none.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=0 write_bytes=0 write_done=0 write_errors=0 outstanding=0${_win}\n"
+            ${_ok_isp})
+        file(WRITE ${_cd_dir}/seen_mismatch.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=3 write_bytes=24 write_done=3 write_errors=1 write_lo=0x81000000 write_hi=0x81010007 outstanding=0${_win}\n"
+            ${_ok_isp}
+            "[fx1_soc] camera fault (injection): csi dma write-error:2, 4 MIPI_DMA write(s) seen, fired at #2 address 0x81000080 at 0 ns (error response)\n")
+        # One envelope over both sides and the gap: outside 0 proves nothing (review F2).
+        file(WRITE ${_cd_dir}/wrong_windows.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=3 write_bytes=24 write_done=3 write_errors=0 write_lo=0x81000000 write_hi=0x81010007 outstanding=0 windows=0x81000000-0x81010fff outside=0\n"
+            ${_ok_isp})
+        file(WRITE ${_cd_dir}/no_windows.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=2 write_bytes=16 write_done=2 write_errors=0 write_lo=0x81000000 write_hi=0x81010007 outstanding=0\n"
+            ${_ok_isp})
+        add_executable(test_fx1_csi_dma_traffic tests/test_csi_dma_traffic.cpp)
+        target_compile_options(test_fx1_csi_dma_traffic PRIVATE -Wall -Wextra)
+        target_link_libraries(test_fx1_csi_dma_traffic PRIVATE SystemC::systemc)
+        add_test(NAME fx1_unit_csi_dma_traffic COMMAND test_fx1_csi_dma_traffic ${_cd_dir})
+        set_tests_properties(fx1_unit_csi_dma_traffic PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit"
+            PASS_REGULAR_EXPRESSION "PASS \\(0 failures\\)" FIXTURES_SETUP fx1_csi_dma_reports)
+        set(_chk_dump ${_chk} --mipi-window 0x81000000:0x81000fff --mipi-window 0x81010000:0x81010fff)
+        # name|report|E1 = --mipi-errors 1|exit status|output pattern
+        foreach(_c "dump_fault|fault|E1|0|direct traffic: MIPI_DMA 3 writes"
+                   "dump_fault_unexpected|fault||1|MIPI_DMA: 1 write errors, expected 0"
+                   "dump_lost|lost|E1|1|MIPI_DMA: 0 write errors, expected 1.*the fault shim saw 3 writes, the counter 2"
+                   "dump_not_fired|clean|E1|1|an injected error is expected but the console has no csi dma fault report"
+                   "dump_clean|clean||0|direct traffic: MIPI_DMA 3 writes, ISP_IDMA 0 reads"
+                   "dump_gap|gap||1|MIPI_DMA: 1 transactions not wholly inside one RAW side window"
+                   "dump_cross|cross||1|MIPI_DMA: 1 transactions not wholly inside one RAW side window"
+                   "dump_seen_mismatch|seen_mismatch|E1|1|MIPI_DMA: the fault shim saw 4 writes, the counter 3"
+                   "dump_wrong_windows|wrong_windows||1|MIPI_DMA: counter windows 0x81000000-0x81010fff are not 0x81000000-0x81000fff,0x81010000-0x81010fff"
+                   "dump_no_windows|no_windows||1|MIPI_DMA: counter windows none are not"
+                   "dump_idma|idma||1|ISP_IDMA: 1 reads, 0 writes issued"
+                   "dump_none|none||1|MIPI_DMA: no write \\(RAW dump expected\\)")
+            string(REPLACE "|" ";" _c "${_c}")
+            list(GET _c 0 _n)
+            list(GET _c 1 _f)
+            list(GET _c 2 _e)
+            list(GET _c 3 _rc)
+            list(GET _c 4 _re)
+            set(_args ${_chk_dump})
+            if(_e STREQUAL "E1")
+                list(APPEND _args --mipi-errors 1)
+            endif()
+            string(REPLACE ";" "\;" _cmd "${_args};${_cd_dir}/${_f}.txt")
+            add_test(NAME fx1_unit_traffic_checker_${_n}
+                     COMMAND ${CMAKE_COMMAND} "-DCMD=${_cmd}" -DRC=${_rc} "-DREGEX=${_re}"
+                             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/expect_rc.cmake)
+            set_tests_properties(fx1_unit_traffic_checker_${_n} PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit")
+            if(_f STREQUAL "fault" OR _f STREQUAL "lost" OR _f STREQUAL "clean" OR _f STREQUAL "gap" OR _f STREQUAL "cross")
+                set_tests_properties(fx1_unit_traffic_checker_${_n} PROPERTIES FIXTURES_REQUIRED fx1_csi_dma_reports)
+            endif()
+        endforeach()
+        # Review D4 F1: RAW sentinel (raw_sentinel.py; a 64 KiB region at
+        # 0x81000000 here). Inputs from `raw_sentinel.py fixtures`, one dump per
+        # test named after it (each check removes the dump it read: a shared one
+        # made the second test fail in any order, re-review D4 R1): clean, a CPU
+        # write (the reviewer's probe), zeros, a write inside side 0 (direct
+        # only / RAW dump), one inside plus one byte past side 0, a short dump,
+        # none. The fixture recreates them for every run.
+        set(_rs_py ${CMAKE_SOURCE_DIR}/fw/fx1_soc/tests/camera_direct/raw_sentinel.py)
+        set(_rs_dir ${_tc_dir}/raw_sentinel)
+        file(MAKE_DIRECTORY ${_rs_dir})
+        file(WRITE ${_rs_dir}/direct.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=0 write_bytes=0 write_done=0 write_errors=0 outstanding=0\n"
+            ${_ok_isp})
+        file(WRITE ${_rs_dir}/dump.txt
+            "MIPI_DMA reads=0 read_bytes=0 read_done=0 read_errors=0 writes=2 write_bytes=16 write_done=2 write_errors=0 write_lo=0x81000000 write_hi=0x81010007 outstanding=0${_win}\n"
+            ${_ok_isp})
+        add_test(NAME fx1_unit_raw_sentinel_fixtures COMMAND ${FX1_PYTHON3} ${_rs_py} fixtures ${_rs_dir})
+        set_tests_properties(fx1_unit_raw_sentinel_fixtures PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit"
+            FIXTURES_SETUP fx1_raw_sentinel_inputs)
+        add_test(NAME fx1_unit_raw_sentinel_selftest COMMAND ${FX1_PYTHON3} ${_rs_py} selftest ${_rs_dir}/selftest)
+        set_tests_properties(fx1_unit_raw_sentinel_selftest PROPERTIES TIMEOUT 120 LABELS "fx1;fx1_unit"
+            PASS_REGULAR_EXPRESSION "raw_sentinel selftest: PASS \\(0 failures\\)")
+        set(_rs_args --raw-base 0x81000000 --raw-size 0x10000 --raw-pattern ${_rs_dir}/pattern.bin)
+        # name (= its dump)|console (direct / dump: + side windows)|exit status|output pattern
+        foreach(_c "clean|direct|0|RAW sentinel: 0x81000000\\+0x10000 unchanged outside the windows"
+                   "cpu_write|direct|1|RAW sentinel: 4 bytes changed outside the allowed windows: 0x81008000-0x81008003"
+                   "zeros|direct|1|RAW sentinel: 64 bytes changed outside the allowed windows: 0x81002000-0x8100203f"
+                   "side_direct|direct|1|RAW sentinel: 255 bytes changed outside the allowed windows: 0x81000100-"
+                   "side_dump|dump|0|unchanged outside the windows. 255 bytes changed inside 2 window"
+                   "side_past_end|dump|1|RAW sentinel: 1 bytes changed outside the allowed windows: 0x81001000-0x81001000"
+                   "short|direct|1|RAW sentinel: dump is 65504 bytes, expected 65536"
+                   "missing|direct|1|RAW sentinel: no dump")
+            string(REPLACE "|" ";" _c "${_c}")
+            list(GET _c 0 _n)
+            list(GET _c 1 _con)
+            list(GET _c 2 _rc)
+            list(GET _c 3 _re)
+            set(_d ${_n})
+            set(_args ${_chk})
+            if(_con STREQUAL "dump")
+                list(APPEND _args --mipi-window 0x81000000:0x81000fff --mipi-window 0x81010000:0x81010fff)
+            endif()
+            list(APPEND _args ${_rs_args} --raw-dump ${_rs_dir}/${_d}.bin)
+            string(REPLACE ";" "\;" _cmd "${_args};${_rs_dir}/${_con}.txt")
+            add_test(NAME fx1_unit_traffic_checker_raw_${_n}
+                     COMMAND ${CMAKE_COMMAND} "-DCMD=${_cmd}" -DRC=${_rc} "-DREGEX=${_re}"
+                             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/expect_rc.cmake)
+            set_tests_properties(fx1_unit_traffic_checker_raw_${_n} PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit"
+                FIXTURES_REQUIRED fx1_raw_sentinel_inputs)
+        endforeach()
+    endif()
+endif()
+
 # ── CI aggregate (plan P5) ─────────────────────────────────────────────────────
 # `fx1_all` builds everything the FX1 tests need (simulator, harnesses, FX1
 # component and VP++ backend targets, firmware images) and nothing else of the

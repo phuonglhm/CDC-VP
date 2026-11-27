@@ -28,6 +28,9 @@ struct PxBeat {
     // VP sideband (M18): frame id of the capture the beat belongs to, 0 = none.
     // Set at the Line Buffer write port; not part of the MAS buses, not compared.
     uint16_t tag = 0;
+    // VP sideband (direct CSI->ISP, observer only): 64-bit capture sequence of
+    // the capture (0 = none), set with `tag`; not compared.
+    uint64_t seq = 0;
     bool operator==(const PxBeat& o) const {
         return px == o.px && count == o.count && sof == o.sof && sol == o.sol && eol == o.eol &&
                err_wc_align == o.err_wc_align && vc == o.vc && raw10 == o.raw10;
@@ -141,6 +144,8 @@ public:
     // this cycle. Returns linebuf_overflow (a write refused this cycle).
     bool clock(const PxBeat* wr, bool fb_ready);
     unsigned max_fill() const { return max_fill_; }  // diagnostic
+    // VP observer: an entry not yet consumed belongs to capture `seq`.
+    bool holds(uint64_t seq) const;
 
 private:
     unsigned depth_, wm_;

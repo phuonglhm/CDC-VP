@@ -5,10 +5,13 @@
 //           [--dump ADDR:LEN:FILE ...] [--uart0-socket PORT [--uart0-wait]]
 //           [--uart0-rx-file FILE [--uart0-rx-delay-us N]]
 //           [--ddr-boot preinit|firmware] [--ddr3-ecc on|off]
-//           [--ddr3-fault T_US:KIND[:ARG] ...] [--camera [--camera-raw FILE]]
+//           [--ddr3-fault T_US:KIND[:ARG] ...] [--camera [--camera-raw FILE]
+//           [--camera-fault FRAME:crc[:LINE]|FRAME:no-fe ...] [--camera-frame-id-preset N]
+//           [--csi-dma-fault write-error:N]]
 //           [--dump-isp-demosaic DIR] [--isp-stream-spool DIR [--isp-stream-max-mib N]
 //           [--isp-stream-hold-us N] [--isp-stream-fault foreign-ack]]
 //           [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]
+//           [--traffic-report FILE [--traffic-window MASTER:LO:HI ...]]
 //           [--no-npu] [--npu-host-watchdog-s N]
 //
 // Time resolution is 1 fs (the detailed D-PHY model of the camera needs it;
@@ -29,10 +32,12 @@
 // --isp-stream-spool: Ctrl+C once forwards a stop request to the firmware (it drains
 // and stops; the run ends with the firmware's verdict), twice is a hard stop.
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -85,11 +90,14 @@ void usage()
                  "              [--uart0-socket PORT [--uart0-wait]] [--uart0-rx-file FILE [--uart0-rx-delay-us N]]\n"
                  "              [--uart0-rx-byte-us N]\n"
                  "              [--ddr-boot preinit|firmware] [--ddr3-ecc on|off] [--ddr3-fault T_US:KIND[:ARG] ...]\n"
-                 "              [--camera [--camera-raw FILE]] [--eth-peer loopback|partner|none]\n"
+                 "              [--camera [--camera-raw FILE] [--camera-fault FRAME:crc[:LINE]|FRAME:no-fe ...]\n"
+                 "                        [--camera-frame-id-preset N] [--csi-dma-fault write-error:N]]\n"
+                 "              [--eth-peer loopback|partner|none]\n"
                  "              [--eth-unguarded-dma] [--npu-unguarded-dma] [--eth-wb-delay-us N] [--dump-isp-demosaic DIR]\n"
                  "              [--isp-stream-spool DIR [--isp-stream-max-mib N] [--isp-stream-hold-us N]\n"
                  "              [--isp-stream-fault foreign-ack]]\n"
                  "              [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]\n"
+                 "              [--traffic-report FILE [--traffic-window MASTER:LO:HI ...]]\n"
                  "              [--no-npu] [--npu-host-watchdog-s N]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
@@ -122,6 +130,15 @@ void usage()
                  "                without it MIPI_CSR answers DECERR and source 7 stays low\n"
                  "  --camera-raw  frames for the sensor: 16-bit little-endian samples, W x H\n"
                  "                per frame at the mode firmware sets (default: built-in pattern)\n"
+                 "  --camera-fault  VP-only fault injection on the sensor link (with --camera; not a\n"
+                 "                SoC model), by the frame it hits (1-based, frames the sensor starts):\n"
+                 "                FRAME:crc[:LINE]  the payload CRC of line LINE (default 0) is sent\n"
+                 "                inverted; FRAME:no-fe  the frame's Frame End is not sent; may be repeated\n"
+                 "  --camera-frame-id-preset  VP-only test hook (with --camera): the CSI-2 RX FRAME_ID\n"
+                 "                counter (14 bits) is set to N (0..16383) after the power-on reset; the\n"
+                 "                first capture gets N + 1 (0 is skipped at the wrap)\n"
+                 "  --csi-dma-fault  VP-only fault injection (with --camera): write-error:N  the N-th\n"
+                 "                CSI-2 RX RAW DMA write (counted from boot) gets a bus error (SLVERR)\n"
                  "  --eth-peer    line side of the Ethernet PHY (MAC CSR 0x1103_0000, PLIC source 6):\n"
                  "                loopback (default): frames come back to the MAC; partner: a station\n"
                  "                that echoes each frame to its sender; none: link down\n"
@@ -151,6 +168,13 @@ void usage()
                  "                as a slow host (default 0: off)\n"
                  "  --isp-stream-fault  fault injection: foreign-ack: the first ACK is written into a\n"
                  "                record whose session the bridge altered (the firmware must refuse it)\n"
+                 "  --traffic-report  VP-only: count the transactions of MIPI_DMA (with --camera),\n"
+                 "                ISP_IDMA and ISP_ODMA (reads, writes and bytes when issued, address\n"
+                 "                range, returned, errors, outstanding)\n"
+                 "                and write them to FILE after the run (absent unless given)\n"
+                 "  --traffic-window  with --traffic-report: MASTER:LO:HI (MIPI_DMA, ISP_IDMA or\n"
+                 "                ISP_ODMA; inclusive byte range), may be repeated: a transaction of\n"
+                 "                that master not wholly inside one window is counted outside=N\n"
                  "  --isp-dma-fault  VP-only fault injection (absent unless given; not a SoC model)\n"
                  "                on one ISP DMA master, counted from boot:\n"
                  "                idma-error:N  the N-th IDMA read gets a bus error (DMA_ERR.AXI_RD)\n"
@@ -331,6 +355,9 @@ int sc_main(int argc, char* argv[])
             }
             loads.push_back(request);
         }
+        else if (arg == "--traffic-report") {
+            options.traffic_report = value();
+        }
         else if (arg == "--dump") {
             dump_request request;
             if (!parse_dump(value(), request)) {
@@ -373,6 +400,62 @@ int sc_main(int argc, char* argv[])
         else if (arg == "--no-exclusive-monitor") options.exclusive_monitor = false;
         else if (arg == "--camera") options.camera = true;
         else if (arg == "--camera-raw") options.camera_raw = value();
+        else if (arg == "--camera-fault") {
+            const std::string spec = value();
+            const std::size_t c1 = spec.find(':');
+            const std::string kind = c1 == std::string::npos ? std::string() : spec.substr(c1 + 1, spec.find(':', c1 + 1) - c1 - 1);
+            const std::size_t c2 = c1 == std::string::npos ? std::string::npos : spec.find(':', c1 + 1);
+            unsigned long frame = 0, line = 0;
+            cdc::platforms::fx1_soc::fx1_soc_options::camera_fault f;
+            if (c1 == std::string::npos || !parse_uint(spec.substr(0, c1), 1000000ul, frame) || frame == 0 ||
+                (kind != "crc" && kind != "no-fe") ||
+                (c2 != std::string::npos && (kind != "crc" || !parse_uint(spec.substr(c2 + 1), 65535ul, line)))) {
+                usage();
+                return 4;
+            }
+            f.frame = static_cast<unsigned>(frame);
+            f.no_fe = kind == "no-fe";
+            f.line = static_cast<unsigned>(line);
+            options.camera_faults.push_back(f);
+        }
+        else if (arg == "--camera-frame-id-preset") {
+            unsigned long n = 0;
+            if (!parse_uint(value(), 16383ul, n)) {
+                usage();
+                return 4;
+            }
+            options.camera_frame_id_preset = static_cast<int>(n);
+        }
+        else if (arg == "--traffic-window") {
+            const std::string spec = value();
+            const std::size_t c1 = spec.find(':');
+            const std::size_t c2 = c1 == std::string::npos ? c1 : spec.find(':', c1 + 1);
+            unsigned long lo = 0, hi = 0;
+            cdc::platforms::fx1_soc::fx1_soc_options::traffic_window w;
+            if (c2 == std::string::npos) {
+                usage();
+                return 4;
+            }
+            w.master = spec.substr(0, c1);
+            if ((w.master != "MIPI_DMA" && w.master != "ISP_IDMA" && w.master != "ISP_ODMA") ||
+                !parse_uint(spec.substr(c1 + 1, c2 - c1 - 1), 0xFFFFFFFFul, lo) ||
+                !parse_uint(spec.substr(c2 + 1), 0xFFFFFFFFul, hi) || hi < lo) {
+                usage();
+                return 4;
+            }
+            w.lo = lo;
+            w.hi = hi;
+            options.traffic_windows.push_back(w);
+        }
+        else if (arg == "--csi-dma-fault") {
+            const std::string spec = value();
+            unsigned long nth = 0;
+            if (spec.rfind("write-error:", 0) != 0 || !parse_uint(spec.substr(12), 4000000000ul, nth) || nth == 0) {
+                usage();
+                return 4;
+            }
+            options.csi_dma_fault_nth = nth;
+        }
         else if (arg == "--dump-isp-demosaic") demosaic_dir = value();
         else if (arg == "--isp-stream-spool") options.isp_stream_spool = value();
         else if (arg == "--isp-stream-max-mib") {
@@ -448,7 +531,13 @@ int sc_main(int argc, char* argv[])
             return 4;
         }
     }
-    if (options.firmware.empty() || (!options.camera_raw.empty() && !options.camera) ||
+    if (options.firmware.empty() ||
+        ((!options.camera_raw.empty() || !options.camera_faults.empty() || options.camera_frame_id_preset >= 0 ||
+          options.csi_dma_fault_nth) &&
+         !options.camera) ||
+        (!options.traffic_windows.empty() && options.traffic_report.empty()) ||
+        std::any_of(options.traffic_windows.begin(), options.traffic_windows.end(),
+                    [&](const auto& w) { return w.master == "MIPI_DMA" && !options.camera; }) ||
         ((options.isp_stream_max_bytes || options.isp_stream_hold_us || options.isp_stream_foreign_ack) &&
          options.isp_stream_spool.empty())) {
         usage();
@@ -507,6 +596,11 @@ int sc_main(int argc, char* argv[])
             std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_start).count();
 
         for (const auto& d : dumps) top.dump_ddr(d.address, d.length, d.path);
+        if (!options.traffic_report.empty()) {
+            std::ofstream tr(options.traffic_report);
+            tr << top.traffic_report();
+            std::cout << "[fx1_soc] traffic:\n" << top.traffic_report();
+        }
 
         std::uint64_t instret = 0;
         std::cout << "\n[fx1_soc] simulated " << sc_core::sc_time_stamp();
@@ -529,6 +623,8 @@ int sc_main(int argc, char* argv[])
         }
         if (options.isp_dma_fault_kind)
             std::cout << "[fx1_soc] isp dma fault (injection): " << top.isp_dma_fault_report() << '\n';
+        if (!top.camera_fault_report().empty())
+            std::cout << "[fx1_soc] camera fault (injection): " << top.camera_fault_report() << '\n';
         bool demosaic_ok = true;
         if (demosaic) {
             demosaic->finish();  // frames without an end: incomplete

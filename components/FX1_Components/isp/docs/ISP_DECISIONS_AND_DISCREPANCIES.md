@@ -1270,3 +1270,34 @@ changed: the names are profile syntax only.
 **Trade-off:** the names are not in the CSR, the header or the register
 documentation; driver code and register dumps still say `EE_LUT_WDATA`. A
 tool outside the SDK that reads `.csrw` text needs the same rule.
+
+## 19. VP-only direct stream ingress, direct CSI-2 → ISP (D1, user decisions 2026-11-20)
+
+The plan `DIRECT_CSI_ISP_IMPLEMENTATION_PLAN_20261118.md` adds a direct
+CSI-2 RX → ISP path. ISP MAS v1.07 is memory-to-memory and has no pixel-source
+CSR, so the source select and the per-capture context are a VP-only register
+block, `ISP_INGRESS` (`fx1_isp_ingress_regs.h`, fx1_soc 0x1105_0000), with
+the stream input `fx1_isp_tlm::ingress()` (MODEL_INTERFACE §7). Contract and
+decisions P19–P29: `components/FX1_Components/mipi-csi2/docs/DIRECT_CSI_ISP_CONTRACT.md`.
+
+**Decisions (user):** the ingress lives in the ISP model (`fx1_isp_tlm`), with
+its own optional CSR socket and no dependency on the CSI-2 RX component; the
+switch to direct requires `IDMA_EN = 0` and an idle, drained ISP, and in
+direct the IDMA does nothing; `BUF_TS` of a direct frame is the CSI FRAME_ID,
+as the memory path's camera firmware writes it (P29).
+
+**Changes to the ISP model outside the ingress:** lines carry a `direct`
+flag; a direct frame's retirement and the end of each of its ODMA channels
+are reported to the ingress (TAG); `ingress_reserved` holds the context
+credits of frames the ingress admitted that the pipeline has not accepted
+yet, and count in the IDLE condition (quiescence probe) and in
+`COMMON_STATUS.BUSY` (D1a review F1); the IDMA is gated while the source is
+direct; ISP resets clear the ingress. With SOURCE = memory nothing of this is active: the existing tests
+are unchanged (36/36).
+
+**Finding (RAW10):** `COMMON_INPUT_FORMAT` is an input-domain word, refused
+in profile mode (§9.9.6), so a RAW10 sensor's depth must be set before the
+profile is applied. The pipeline values of RAW10 native and of RAW12 `<< 2`
+are identical (51 vectors, `direct_raw10_tlm`); only `TUNE_AEC_RESULT_META.`
+`NATIVE_DEPTH` reports the configured depth, by design.
+

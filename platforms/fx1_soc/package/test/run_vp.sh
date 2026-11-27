@@ -64,6 +64,7 @@ Usage:
   ./run_vp.sh camera [NAME...]         # camera examples (fx1_soc --camera; minutes each: detailed D-PHY)
   ./run_vp.sh camera-isp [NAME...]     # camera -> ISP examples (camera manager; NV12 = ISP model golden)
   ./run_vp.sh camera-cli               # FreeRTOS CLI with --camera, scripted camera session (cli_camera.txt)
+  ./run_vp.sh camera-direct-cli        # the same on the direct path (CSI-2 stream -> ISP, cli_camera_direct.txt)
   ./run_vp.sh eth [PEER...]            # bare-metal Ethernet example on each line peer (default: loopback partner none)
   ./run_vp.sh eth-cli [PEER]           # FreeRTOS CLI, scripted eth session (cli_eth.txt), PEER default loopback
   ./run_vp.sh eth-load                 # FreeRTOS CLI, Ethernet traffic with SYS_DMA and the ISP (cli_eth_load.txt)
@@ -258,6 +259,12 @@ case "${mode}" in
         # The FreeRTOS CLI with the camera: probe, 64x32 RAW12 and RAW10 captures
         # checked against the golden, status, stop (cli_camera.txt).
         "${vp}" --fw "${build}/freertos_cli.elf" --camera --timeout-ms 3000 --uart0-rx-file "${here}/cli_camera.txt" \
+            --uart0-rx-delay-us 60000 --uart0-rx-byte-us 87
+        ;;
+    camera-direct-cli)
+        # Direct CSI-2 -> ISP (VP ISP_INGRESS): `camera path direct`, 64x32 RAW12 and
+        # RAW10 against the golden, back to the memory path (cli_camera_direct.txt).
+        "${vp}" --fw "${build}/freertos_cli.elf" --camera --timeout-ms 5000 --uart0-rx-file "${here}/cli_camera_direct.txt" \
             --uart0-rx-delay-us 60000 --uart0-rx-byte-us 87
         ;;
     smoke)

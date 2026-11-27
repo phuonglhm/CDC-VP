@@ -160,9 +160,15 @@ void Csi2RxController::clear_datapath_status() {
     lane_sot_err_ = lane_sot_sync_err_ = 0;
 }
 
+void Csi2RxController::observe_reset() {
+    sys_.set_epoch(epoch_);
+    if (obs_) obs_->source_reset(epoch_);  // VP observer: TVALID dropped without TLAST
+}
+
 void Csi2RxController::start_reset(bool full) {
     ++epoch_;
     sys_.reset(full);  // sys_clk domain (the frame_id counter survives soft_reset)
+    observe_reset();
     sys_wake_ev_.notify(sc_core::SC_ZERO_TIME);
     if (full) {
         lm_.reset();  // asynchronous reset path, no byte clock needed
@@ -216,6 +222,7 @@ void Csi2RxController::resetn_method() {
             reset_registers();
             lm_.reset();
             sys_.reset(true);
+            observe_reset();
             bc_reset_pending_ = false;
             // Writes already issued cannot be recalled (M13): a capture in
             // flight turns into a reset drain that outlives the reset pin

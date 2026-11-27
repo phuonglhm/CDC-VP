@@ -67,6 +67,7 @@ void FrameContext::close_channel(unsigned vc, bool sync) {
     const bool ev_rx = !cfg_.active_sel;
     const bool height_mismatch = g.line_count != g.exp_h;
     const bool abort = !c.orphan && slot_[c.slot].dropped;  // ctx_abort
+    if (sync && !c.orphan) slot_[c.slot].sync_closed = true;  // VP observer: MISSING_FE
     if (ev_rx && !c.orphan && !abort && !sync && (g.width_mismatch || height_mismatch)) out_.err_resolution[vc] = true;
     if (ev_rx && !c.orphan && !abort) {
         FrameInfo& p = pub_[vc];
@@ -118,6 +119,7 @@ void FrameContext::frame_start(unsigned vc, uint16_t frame_number) {
             s.frame_id = frame_id_cnt_;
             s.timestamp = now_ns_;
             s.record_id = cfg_.record_id;
+            s.seq = ++seq_cnt_;
             out_.capture_start[free_slot] = true;
             last_alloc_ = static_cast<unsigned>(free_slot);
             any_alloc_ = true;
@@ -196,12 +198,18 @@ const FcCycleOut& FrameContext::end_cycle() {
         if (sl.open && !sl.wait_lag && !attached_active(s)) {
             out_.capture_end[s] = true;
             out_.capture_dropped[s] = sl.dropped;
+            out_.capture_missing_fe[s] = sl.sync_closed;
             out_.capture_done = !sl.dropped;
             sl.open = false;
             break;
         }
     }
     return out_;
+}
+
+uint64_t FrameContext::cur_capture_seq(unsigned vc) const {
+    const Channel& c = ch_[vc & 1];
+    return c.orphan ? 0 : slot_[c.slot].seq;
 }
 
 uint16_t FrameContext::cur_frame_id(unsigned vc) const {

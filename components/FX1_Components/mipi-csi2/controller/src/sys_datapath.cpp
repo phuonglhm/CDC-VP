@@ -18,6 +18,7 @@ void SysDatapath::reset(bool full) {
     ctl_.reset();
     dma_.reset(full);
     ledger_.clear();
+    stream_wait_.clear();
     discard_ = 3;
     stop_hold_ = false;
     lb_full_q_ = lb_ovf_q_ = false;
@@ -49,6 +50,10 @@ void SysDatapath::resolve_ledger() {
             if (dropped) sys_ev_->sys_frame_dropped();
             else sys_ev_->sys_capture_done();
         }
+        if (obs_)
+            obs_->capture_end(e.seq, dropped ? CaptureOutcome::Dropped
+                                     : e.missing_fe ? CaptureOutcome::MissingFe
+                                                    : CaptureOutcome::Ok);
         ledger_.pop_front();
     }
 }
@@ -228,7 +233,10 @@ void SysDatapath::cycle(const SysConfig& cfg, uint64_t now_ps, uint64_t now_ns) 
     else fb_ovf = fb_.clock(cfg.fb, lb_take ? &lb_head : nullptr, fbs_take, fbd_valid && fbd_ready);
     bool lb_ovf = false;
     // M18: the entry carries the frame id of its capture (after this cycle's frame events).
-    if (wr_valid) wr.tag = fc_.cur_frame_id(wr.vc & 1u);
+    if (wr_valid) {
+        wr.tag = fc_.cur_frame_id(wr.vc & 1u);
+        wr.seq = fc_.cur_capture_seq(wr.vc & 1u);  // VP observer sideband
+    }
     if (co.lb_flush) lb_.reset();
     else lb_ovf = lb_.clock(wr_valid ? &wr : nullptr, fb_ready);
     b2p_.clock(bp_valid_ ? &bp_ : nullptr);
@@ -261,13 +269,16 @@ void SysDatapath::cycle(const SysConfig& cfg, uint64_t now_ps, uint64_t now_ns) 
                 if (e.id == id && !e.ended) {
                     e.ended = true;
                     e.ctl_dropped = fo.capture_dropped[s];
+                    e.missing_fe = fo.capture_missing_fe[s];
                 }
+            if (obs_) stream_wait_.push_back(fc_.slot_seq(s));
             dma_.capture_end(id);
         }
     for (unsigned s = 0; s < 2; ++s)
         if (fo.capture_start[s]) {
             LedgerEntry e;
             e.id = fc_.slot_frame_id(s);
+            e.seq = fc_.slot_seq(s);
             e.dma = dma_.capture_start(e.id, cfg.dma, core_en, active_sel);
             ledger_.push_back(e);
         }
@@ -275,7 +286,11 @@ void SysDatapath::cycle(const SysConfig& cfg, uint64_t now_ps, uint64_t now_ns) 
     if (sys_ev_)
         for (unsigned s = 0; s < 2; ++s)  // TIMESTAMP (C30) before any outcome of this cycle
             if (fo.capture_start[s]) sys_ev_->sys_capture_start(fc_.slot_frame_id(s), fc_.slot_timestamp(s));
+    if (obs_)
+        for (unsigned s = 0; s < 2; ++s)
+            if (fo.capture_start[s]) obs_->capture_start(fc_.slot_seq(s), fc_.slot_frame_id(s), fc_.slot_timestamp(s), epoch_);
     resolve_ledger();
+    observe_stream_ends();
     // The stop has completed once every capture has ended (as dropped), the
     // drop sequence has brought Control FSM to ST_IDLE and the stream master
     // has finished the abort it requested (its last abort beat accepted, or
@@ -301,8 +316,34 @@ void SysDatapath::cycle(const SysConfig& cfg, uint64_t now_ps, uint64_t now_ns) 
     }
 }
 
+// VP observer: an ended capture can still put a beat on the stream while one
+// of its beats is in the Line Buffer, the Format Bridge stream side or the
+// master registers, or while a drop / stop sequence is on its way to an abort
+// beat that would carry it (the master's last accepted beat; D2a review F1).
+bool SysDatapath::stream_resident(uint64_t seq) const {
+    if (lb_.holds(seq) || fb_.stream_holds(seq) || axis_.holds(seq)) return true;
+    const bool abort_ahead = ctl_.abort_pending() || axis_.state() != AxisMaster::State::Passthrough;
+    return abort_ahead && axis_.last_seq() == seq;
+}
+
+// Its stream boundary once it is not resident; per capture, not behind an older
+// capture still held (D2a review F2): what stays is resident, hence bounded.
+// After the boundary the master no longer attributes an abort to it.
+void SysDatapath::observe_stream_ends() {
+    for (auto it = stream_wait_.begin(); it != stream_wait_.end();) {
+        const uint64_t seq = *it;
+        if (stream_resident(seq)) {
+            ++it;
+            continue;
+        }
+        it = stream_wait_.erase(it);
+        axis_.release_seq(seq);
+        obs_->capture_stream_end(seq);
+    }
+}
+
 bool SysDatapath::quiescent(const SysConfig& cfg) const {
-    if (stop_hold_ || !dma_.quiescent()) return false;
+    if (stop_hold_ || !dma_.quiescent() || !stream_wait_.empty()) return false;
     return cdc_.empty() && !cdc_marker_pending_ && b2p_.quiescent() && tpg_.quiescent(cfg.tpg, cfg.core_enable) &&
            mux_.quiescent(cfg.tpg.enable, lb_.empty()) && lb_.empty() && fb_.quiescent() && axis_.quiescent() &&
            fc_.quiescent() && ctl_.quiescent(cfg.core_enable, cfg.fb.axis_enable) && !lb_full_q_ && !lb_ovf_q_;

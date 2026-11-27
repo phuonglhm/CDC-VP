@@ -290,6 +290,7 @@ int fx1_isp_init(fx1_isp_dev *dev, const fx1_isp_hal *hal) {
     dev->state = FX1_ISP_STATE_CONFIG;
     dev->out_width = dev->out_height = 0;
     dev->dma_ctrl = 0;
+    dev->direct = 0;
     dev->started = 0;
     dev->next_seq = 0;
     dev->gtm_en = 0;
@@ -322,6 +323,7 @@ int fx1_isp_stop(fx1_isp_dev *dev) {
     }
     WR(dev, FX1_ISP_COMMON_CTRL_OFFSET, 0);  /* CONFIG state: pipeline disabled */
     dev->started = 0;
+    dev->direct = 0;
     dev->state = FX1_ISP_STATE_CONFIG;
     return dropped;
 }
@@ -1382,7 +1384,13 @@ void fx1_isp_aec_configure(fx1_isp_dev *dev, const fx1_isp_aec_cfg *c, int enabl
     WR(dev, FX1_ISP_AEC_CTRL_OFFSET, (enable ? FX1_ISP_AEC_CTRL_EN_MASK : 0u) | FX1_ISP_AEC_CTRL_COMMIT_MASK);
 }
 
-int fx1_isp_start(fx1_isp_dev *dev, const fx1_isp_buffers *b) {
+static int start_common(fx1_isp_dev *dev, const fx1_isp_buffers *b, int direct);
+
+int fx1_isp_start(fx1_isp_dev *dev, const fx1_isp_buffers *b) { return start_common(dev, b, 0); }
+
+int fx1_isp_start_direct(fx1_isp_dev *dev, const fx1_isp_buffers *b) { return start_common(dev, b, 1); }
+
+static int start_common(fx1_isp_dev *dev, const fx1_isp_buffers *b, int direct) {
     unsigned k;
     if (!initialised(dev)) {
         return FX1_ISP_ESTATE;
@@ -1396,7 +1404,7 @@ int fx1_isp_start(fx1_isp_dev *dev, const fx1_isp_buffers *b) {
         return FX1_ISP_EINVAL;
     }
     const uint32_t width = RD(dev, FX1_ISP_COMMON_FRAME_WIDTH_OFFSET) & FX1_ISP_COMMON_FRAME_WIDTH_H_ACTIVE_MASK;
-    if (b->in_stride < 2u * width) {
+    if (!direct && b->in_stride < 2u * width) {
         return FX1_ISP_EINVAL;
     }
     /* HAS §9.1: the pipeline is enabled before the DMA (DEC-20: with ISP_EN = 0
@@ -1440,23 +1448,68 @@ int fx1_isp_start(fx1_isp_dev *dev, const fx1_isp_buffers *b) {
                                            FX1_ISP_DMA_IRQ_EN_IRQ_EN_ODMA_OVERFLOW_BIT |
                                            FX1_ISP_DMA_IRQ_EN_IRQ_EN_IDMA_DONE_BIT |
                                            FX1_ISP_DMA_IRQ_EN_IRQ_EN_CFG_ERROR_BIT);
-    WR(dev, FX1_ISP_IDMA_STRIDE_OFFSET, b->in_stride);
+    if (!direct) {
+        WR(dev, FX1_ISP_IDMA_STRIDE_OFFSET, b->in_stride);
+    }
     WR(dev, FX1_ISP_ODMA_Y_STRIDE_OFFSET, b->y_stride);
     WR(dev, FX1_ISP_ODMA_UV_STRIDE_OFFSET, b->uv_stride);
     for (k = 0; k < FX1_ISP_NUM_BUFFERS; ++k) {
-        write_addr(dev, FX1_ISP_IDMA_BUF_ADDR_L0_OFFSET + 8u * k, b->in[k]);
+        if (!direct) {
+            write_addr(dev, FX1_ISP_IDMA_BUF_ADDR_L0_OFFSET + 8u * k, b->in[k]);
+        }
         write_addr(dev, FX1_ISP_ODMA_Y_ADDR_L0_OFFSET + 16u * k, b->y[k]);
         write_addr(dev, FX1_ISP_ODMA_UV_ADDR_L0_OFFSET + 16u * k, b->uv[k]);
     }
     /* The engines are enabled with the first queued frame, so a stream does
      * not begin with an underrun report (M4-R5). */
-    dev->dma_ctrl = ((b->max_burst_beats - 1u) << FX1_ISP_DMA_CTRL_MAX_BURST_M1_SHIFT) | FX1_ISP_DMA_CTRL_IDMA_EN_MASK |
-                    FX1_ISP_DMA_CTRL_ODMA_EN_MASK;
+    dev->dma_ctrl = ((b->max_burst_beats - 1u) << FX1_ISP_DMA_CTRL_MAX_BURST_M1_SHIFT) |
+                    (direct ? 0u : FX1_ISP_DMA_CTRL_IDMA_EN_MASK) | FX1_ISP_DMA_CTRL_ODMA_EN_MASK;
     dev->started = 0;
     restart_rotation(dev);
     dev->next_read = 0; /* a slot read before the start is the restarted rotation's */
+    dev->direct = direct;
     dev->state = FX1_ISP_STATE_STREAMING;
+    if (direct) {
+        /* No queued frame enables the engines: the ODMA waits for an armed slot,
+         * the ingress (IDMA_EN = 0 is required for SOURCE = direct) feeds the pipeline. */
+        WR(dev, FX1_ISP_DMA_CTRL_OFFSET, dev->dma_ctrl);
+        dev->started = 1;
+    }
     return FX1_ISP_OK;
+}
+
+int fx1_isp_direct_arm(fx1_isp_dev *dev, unsigned index) {
+    if (!streaming(dev) || !dev->direct) {
+        return FX1_ISP_ESTATE;
+    }
+    if (index >= FX1_ISP_NUM_BUFFERS) {
+        return FX1_ISP_EINVAL;
+    }
+    /* A running recovery ignores W1S / W1C writes and clears FREE at its end. */
+    if (settle_recovery(dev) != FX1_ISP_OK) {
+        return FX1_ISP_EBUSY;
+    }
+    WR(dev, FX1_ISP_ODMA_BUF_DONE_OFFSET, 1u << index);
+    WR(dev, FX1_ISP_ODMA_BUF_FREE_OFFSET, 1u << index);
+    return FX1_ISP_OK;
+}
+
+int fx1_isp_direct_find(fx1_isp_dev *dev, uint32_t tag, unsigned *index) {
+    unsigned k;
+    if (!streaming(dev) || !dev->direct) {
+        return FX1_ISP_ESTATE;
+    }
+    if (!index) {
+        return FX1_ISP_EINVAL;
+    }
+    const uint32_t done = RD(dev, FX1_ISP_ODMA_BUF_DONE_OFFSET);
+    for (k = 0; k < FX1_ISP_NUM_BUFFERS; ++k) {
+        if ((done & (1u << k)) && RD(dev, FX1_ISP_ODMA_BUF_TAG0_OFFSET + 4u * k) == tag) {
+            *index = k;
+            return FX1_ISP_OK;
+        }
+    }
+    return FX1_ISP_ENODATA;
 }
 
 unsigned fx1_isp_next_input(fx1_isp_dev *dev) {
@@ -1466,7 +1519,7 @@ unsigned fx1_isp_next_input(fx1_isp_dev *dev) {
 }
 
 int fx1_isp_input_ready(fx1_isp_dev *dev) {
-    if (!streaming(dev)) {
+    if (!streaming(dev) || dev->direct) {
         return 0;
     }
     /* Not while a recovery runs: its final retirement clears VALID / FREE. */
@@ -1491,7 +1544,7 @@ int fx1_isp_queue_frame_meta(fx1_isp_dev *dev, uint32_t tag, uint32_t ts, uint32
 }
 
 static int queue_frame(fx1_isp_dev *dev, uint32_t *seq, const uint32_t *meta) {
-    if (!streaming(dev)) {
+    if (!streaming(dev) || dev->direct) {
         return FX1_ISP_ESTATE;
     }
     /* Never re-arm a VALID input or a held output, nor during a recovery. A
@@ -1579,8 +1632,11 @@ int fx1_isp_next_done_ex(fx1_isp_dev *dev, unsigned *index, uint32_t *seq) {
 }
 
 int fx1_isp_next_done_meta(fx1_isp_dev *dev, unsigned *index, uint32_t *seq, fx1_isp_frame_meta *meta) {
-    if (!streaming(dev) || !index) {
-        return streaming(dev) ? FX1_ISP_EINVAL : FX1_ISP_ESTATE;
+    if (!streaming(dev) || dev->direct) {
+        return FX1_ISP_ESTATE;
+    }
+    if (!index) {
+        return FX1_ISP_EINVAL;
     }
     /* Nothing is collected while a recovery runs or is not settled: its
      * command block would drop the acknowledgement (review V107-7..10 R2). */
@@ -1682,7 +1738,7 @@ int fx1_isp_recovery_report(fx1_isp_dev *dev, fx1_isp_abort_report *out) {
 
 int fx1_isp_next_lost(fx1_isp_dev *dev, uint32_t *seq, unsigned *input) {
     unsigned i;
-    if (!streaming(dev)) {
+    if (!streaming(dev) || dev->direct) {
         return FX1_ISP_ESTATE;
     }
     (void)settle_recovery(dev);

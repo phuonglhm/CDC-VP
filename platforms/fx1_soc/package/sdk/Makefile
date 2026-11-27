@@ -72,7 +72,7 @@ SOURCES := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c \
                                     cmd_isp.c cmd_isp_stream.c cmd_camera.c cmd_eth.c cmd_npu.c probe.S) \
            $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/portable/MemMang/heap_4.c \
            $(KERNEL)/portable/GCC/RISC-V/port.c $(KERNEL)/portable/GCC/RISC-V/portASM.S \
-           $(HERE)/isp_selftest/isp_common.c $(HERE)/drivers/isp/fx1_isp_drv.c \
+           $(HERE)/isp_selftest/isp_common.c $(HERE)/drivers/isp/fx1_isp_drv.c $(HERE)/drivers/isp/fx1_isp_ingress.c \
            $(addprefix $(HERE)/drivers/camera/,fx1_camera.c fx1_isp_hal_mmio.c fx1_i2c.c fx1_ccs_sensor.c \
                                                fx1_csi2_hal_mmio.c) \
            $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/eth/fx1_eth.c $(HERE)/drivers/eth/eth_drv.c \
@@ -170,7 +170,7 @@ CAMELFS   := $(addprefix $(CAMOUT)/,camera_raw10.elf camera_raw12.elf camera_rec
 CISPCOMMON := $(HERE)/bsp/crt0.S $(HERE)/bsp/fx1_fw.c $(HERE)/camera_isp/cam_isp.c \
               $(addprefix $(HERE)/drivers/camera/,fx1_camera.c fx1_isp_hal_mmio.c fx1_i2c.c fx1_ccs_sensor.c \
                                                   fx1_csi2_hal_mmio.c) \
-              $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/isp/fx1_isp_drv.c
+              $(HERE)/drivers/csi2/fx1_csi2_drv.c $(HERE)/drivers/isp/fx1_isp_drv.c $(HERE)/drivers/isp/fx1_isp_ingress.c
 CISPHDRS   := $(CAMHDRS) $(wildcard $(HERE)/camera_isp/*.h)
 
 # ── Ethernet example (plan M5): the MAC through the bus, DDR3, PLIC source 6

@@ -56,6 +56,21 @@ struct fx1_soc_options {
     // little-endian samples for the sensor; empty for its built-in pattern.
     bool camera = false;
     std::string camera_raw;
+    // VP-only camera fault injection (plan DIRECT_CSI_ISP D2b; --camera only, not
+    // a SoC model): --camera-fault FRAME:crc[:LINE] | FRAME:no-fe, the sensor's
+    // CcsSensorFault list (may be repeated); --camera-frame-id-preset N: the
+    // CSI-2 RX's 14-bit FRAME_ID counter is set to N (test hook) once the
+    // power-on reset is released, the first capture gets N + 1 (-1: off);
+    // --csi-dma-fault write-error:N: the N-th CSI RAW DMA write is answered with
+    // a bus error (csi_dma_fault.h; 0: off).
+    struct camera_fault {
+        unsigned frame = 0;  // 1-based, frames the sensor starts
+        bool no_fe = false;  // false: crc on `line`
+        unsigned line = 0;
+    };
+    std::vector<camera_fault> camera_faults;
+    int camera_frame_id_preset = -1;
+    std::uint64_t csi_dma_fault_nth = 0;
     // Ethernet MAC (always present): what the PHY's line side meets,
     // "loopback" (default), "partner" (echo station) or "none" (link down).
     std::string eth_peer = "loopback";
@@ -79,6 +94,18 @@ struct fx1_soc_options {
     // (kind 1 idma-error, 3 idma-stall) or ODMA write (kind 2 odma-error) is answered by
     // the VP. 0: off, and the ISP's DMA sockets are bound to the fabric directly.
     unsigned isp_dma_fault_kind = 0;
+    // --traffic-report FILE (traffic_counter.h): VP-only counters on MIPI_DMA,
+    // ISP_IDMA and ISP_ODMA, written to FILE after the run; empty: off (the
+    // sockets are bound to the fabric directly).
+    std::string traffic_report;
+    // --traffic-window MASTER:LO:HI (with --traffic-report, may be repeated):
+    // inclusive byte windows of that master's counter; a transaction not wholly
+    // inside one of them is counted `outside` (traffic_counter.h).
+    struct traffic_window {
+        std::string master;  // MIPI_DMA, ISP_IDMA or ISP_ODMA
+        std::uint64_t lo = 0, hi = 0;
+    };
+    std::vector<traffic_window> traffic_windows;
     std::uint64_t isp_dma_fault_nth = 0;
     std::uint64_t isp_dma_fault_hold_us = 1000000;  // idma-stall:N:US
     // SAURIA v4.7 NPU (components/FX1_Components/npu) at FX1_NPU_VP_BASE, IRQ
@@ -142,6 +169,11 @@ public:
     std::string isp_stream_report() const;
     // --isp-dma-fault: what it saw and whether it fired; empty when off.
     std::string isp_dma_fault_report() const;
+    // --camera-fault / --camera-frame-id-preset / --csi-dma-fault: what was
+    // injected (one line); empty when none of them is given.
+    std::string camera_fault_report() const;
+    // --traffic-report: one line per counted master (key=value); empty when off.
+    std::string traffic_report() const;
     std::vector<std::string> isp_stream_errors() const;
     // NPU: built into this binary; present in this run; one-line banner (model,
     // knobs, queue) and end-of-run counters ("absent" without it).

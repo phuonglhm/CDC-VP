@@ -6,6 +6,9 @@
 //   csr_socket   AXI4-Lite register port, offsets relative to the ISP base
 //   idma_socket  m_axi_m0 read master (input RAW frames)
 //   odma_socket  m_axi_m1 write master (NV12 luma and chroma)
+//   ingress_csr_socket  VP-only ISP_INGRESS registers (fx1_isp_ingress_regs.h),
+//                optional; with ingress() the direct CSI-2 -> ISP stream input
+//                (fx1_isp_ingress.h). Not part of the FTEL ISP v1.07.
 //   rst_n        i_rst_n, active low
 //   irq          o_irq, level, OR of the enabled status bits
 //
@@ -26,6 +29,7 @@
 namespace cdc::components::fx1_isp {
 
 class demosaic_observer;  // fx1_isp/fx1_isp_debug.h
+class stream_ingress;     // fx1_isp/fx1_isp_ingress.h
 struct frame_output_info;
 
 struct fx1_isp_params {
@@ -51,6 +55,8 @@ public:
    tlm_utils::simple_target_socket<fx1_isp_tlm> csr_socket;
    tlm_utils::simple_initiator_socket<fx1_isp_tlm> idma_socket;
    tlm_utils::simple_initiator_socket<fx1_isp_tlm> odma_socket;
+   // VP-only (direct CSI->ISP path): ISP_INGRESS register block, may stay unbound.
+   tlm_utils::simple_target_socket_optional<fx1_isp_tlm> ingress_csr_socket;
    sc_core::sc_in<bool> rst_n;
    sc_core::sc_out<bool> irq;
 
@@ -59,6 +65,9 @@ public:
    ~fx1_isp_tlm() override;
 
    const fx1_isp_params &params() const { return params_; }
+
+   // VP-only stream input of the direct CSI->ISP path (fx1_isp_ingress.h).
+   stream_ingress &ingress();
 
    // Current core-clock cycle for a given local-time offset.
    std::uint64_t cycle_at(const sc_core::sc_time &offset = sc_core::SC_ZERO_TIME) const;
@@ -80,6 +89,9 @@ public:
    // Sets the statistics frame counter (FRAME_ID source, not software visible)
    // so a fixture can test its 32-bit wrap without 2^32 frames.
    void debug_set_frame_counter(std::uint32_t value);
+   // Sets the last TAG the stream ingress assigned (VP-only, not software
+   // visible) so a fixture can test its 32-bit wrap (TAG 0 is never assigned).
+   void debug_set_ingress_tag(std::uint32_t value);
    // VP-only post-Demosaic tap (fx1_isp/fx1_isp_debug.h); null: off (default).
    // Set before the simulation starts; the observer must outlive it. Throws
    // std::logic_error after start of simulation, or with test_datapath_stub
@@ -92,6 +104,9 @@ public:
 
 private:
    void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
+   void ingress_b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);
+   unsigned int ingress_transport_dbg(tlm::tlm_generic_payload &trans);
+   void ingress_thread();
    unsigned int transport_dbg(tlm::tlm_generic_payload &trans);
    void reset_method();
    void irq_method();

@@ -55,6 +55,8 @@ struct engine_context {
    struct frame_consumers {
       unsigned pending = 0;
       bool ok = true;
+      bool direct = false;     // VP direct path: from the stream ingress
+      std::uint32_t tag = 0;   // its ingress TAG (= BUF_TAG)
    };
    std::map<std::uint64_t, frame_consumers> consumers;
    unsigned odma_busy = 0;         // output channels writing a frame (DMA_STAT.ODMA_BUSY)
@@ -64,6 +66,19 @@ struct engine_context {
    // reset completes its lifetime but has no effect (review V107-7..10 R9).
    std::uint64_t hard_reset_gen = 0;
    sc_core::sc_event retired;      // a frame retired: admission may resume
+   // ---- VP direct CSI->ISP path (contract DIRECT_CSI_ISP_CONTRACT.md) ----
+   // SOURCE = direct in effect: the IDMA neither arms nor reports (ISP_INGRESS).
+   bool direct_source = false;
+   // Frames the stream ingress admitted whose SOF line the pipeline has not
+   // accepted yet: they hold a context credit (admission at the ingress SOF).
+   unsigned ingress_reserved = 0;
+   // A direct frame retired (`ok`: every output DONE) / its ODMA of channel
+   // `ch` finished with it (DONE, rotation advanced; or abandoned, buffer FREE again).
+   std::function<void(std::uint32_t tag, bool ok)> direct_retired;
+   std::function<void(unsigned ch, std::uint32_t tag)> direct_odma_end;
+   std::function<void()> ingress_reset;  // ISP reset: the ingress clears and cancels
+   // A direct frame's SOF line accepted by the pipeline: its ISP frame ID.
+   std::function<void(std::uint32_t tag, std::uint32_t isp_frame)> direct_accepted;
    std::vector<line_fifo *> fifos;  // cleared on every reset
    // VP-only post-Demosaic observer (fx1_isp_debug.h), null when off. It is
    // told how each frame of `consumers` ends; it has no effect on the model.
@@ -123,7 +138,9 @@ struct engine_context {
    void accept_frame();
    void retire_frame(bool completed = false);
    // Frame f has `outputs` output consumers besides the pipeline.
-   void frame_begin(std::uint64_t f, unsigned outputs) { consumers[f] = frame_consumers{outputs + 1u, outputs > 0}; }
+   void frame_begin(std::uint64_t f, unsigned outputs, bool direct = false, std::uint32_t tag = 0) {
+      consumers[f] = frame_consumers{outputs + 1u, outputs > 0, direct, tag};
+   }
    // One consumer of frame f is done; `ok`: it completed (an output: DONE published).
    void consumer_done(std::uint64_t f, bool ok);
    void reset_engines();  // called on i_rst_n assertion and on soft reset
@@ -141,6 +158,7 @@ struct line {
    std::uint32_t ts = 0;     // valid on every line (MAS Table 160)
    std::uint32_t ingress = 0;  // ingress frame ID and profile ID of the frame (MAS §9.9.9)
    std::uint32_t profile = 0;
+   bool direct = false;        // VP: produced by the stream ingress, not the IDMA
    std::vector<std::uint16_t> samples;  // input lines
    std::vector<std::uint8_t> bytes;     // output lines
 };
@@ -271,6 +289,8 @@ private:
    bool busy_ = false;
    bool overflow_ = false;
    std::uint64_t frame_ = 0;  // pipeline frame number of the frame being written
+   bool direct_ = false;      // VP: that frame came from the stream ingress, with
+   std::uint32_t tag_ = 0;    // this ingress TAG
    bool retry_next_edge_ = false;  // the head buffer was freed on this edge
 };
 

@@ -280,6 +280,8 @@ public:
    // TUNE_ERROR.PENDING and an error joins it. True when accepted.
    bool recovery_request(reset_scope scope, unsigned cause, std::uint64_t cycle);
    bool recovery_busy(std::uint64_t cycle) const;
+   // While the soft-reset hook runs: the recovery cause (rc_*); 0 otherwise.
+   unsigned soft_reset_hook_cause() const { return hook_cause_; }
    // The drain probe returns `never` while an accepted AXI transaction has no
    // response yet; the engines then report the edge on which the last one
    // completed (MAS v1.07 §9.9.8: the pulse follows the drain).
@@ -407,6 +409,7 @@ private:
    std::uint64_t time_base_epoch_ = settled;     // release of i_rst_n; settled while asserted
    std::map<std::uint32_t, block_hook> block_hooks_;
    soft_reset_hook soft_reset_hook_;
+   unsigned hook_cause_ = 0;
    std::vector<command_record> commands_;
 
    std::array<resizer_ctrl, num_channels> rz_;  // advanced at accesses and SOFs; observations advance a copy

@@ -183,7 +183,7 @@ if(FX1_MIPI_CSI2_BUILD_TESTS)
   foreach(case b2p_raw10 b2p_raw12 b2p_wc_align lb_fwft fb_formats axis_skid axis_abort tpg_pattern tpg_timing
                pipe_frame_raw10 pipe_frame_raw12 pipe_crc_drop pipe_lb_full pipe_lb_overflow pipe_cdc pipe_wc_align
                pipe_tpg fc_checks ctl_core_disable ctl_unit ctl_core_pulse pipe_zero_wc mux_unit pipe_quiescent
-               pipe_bench)
+               pipe_bench obs_stop_between_lines obs_stop_midline obs_stop_after_fs obs_pending_bound)
     add_test(NAME fx1_csi2_sys_${case} COMMAND test_fx1_csi2_sys_datapath ${case})
     set_tests_properties(fx1_csi2_sys_${case} PROPERTIES TIMEOUT 60 LABELS "fx1_csi2;fx1_csi2_unit")
   endforeach()
@@ -199,7 +199,7 @@ if(FX1_MIPI_CSI2_BUILD_TESTS)
   add_executable(test_fx1_csi2_sensor tests/test_csi2_sensor.cpp)
   target_include_directories(test_fx1_csi2_sensor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_link_libraries(test_fx1_csi2_sensor PRIVATE fx1_csi2_controller fx1_csi2_drv fx1_csi2_sensor)
-  foreach(case stream raw12_2lane stream_noncontinuous controls raw_file reset_mid_frame restart_before_fe raw_short raw_partial raw_mode_change raw_load_errors)
+  foreach(case stream raw12_2lane stream_noncontinuous controls raw_file reset_mid_frame restart_before_fe raw_short raw_partial raw_mode_change raw_load_errors faults)
     add_test(NAME fx1_csi2_sensor_${case} COMMAND test_fx1_csi2_sensor ${case} ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(fx1_csi2_sensor_${case} PROPERTIES TIMEOUT 600 LABELS "fx1_csi2;fx1_phy_slow")
   endforeach()
@@ -231,6 +231,42 @@ if(FX1_MIPI_CSI2_BUILD_TESTS)
     add_test(NAME fx1_csi2_rxphy_${case} COMMAND test_fx1_csi2_rx_phy ${case})
     set_tests_properties(fx1_csi2_rxphy_${case} PROPERTIES TIMEOUT 600 LABELS "fx1_csi2;fx1_phy_slow")
   endforeach()
+  # Direct CSI->ISP D2.1: CSI-2 RX -> AXI4-Stream source demo for the ISP owner
+  # (examples/axis_source_demo/README.md). TPG sessions use no PHY traffic;
+  # VP-only capture observer and stream sideband (direct CSI->ISP D2a): TPG
+  # sessions are quick (fx1_csi2_unit), the sensor sessions go through the
+  # detailed D-PHY (fx1_phy_slow).
+  add_executable(test_fx1_csi2_capture_observer tests/test_csi2_capture_observer.cpp)
+  target_link_libraries(test_fx1_csi2_capture_observer PRIVATE fx1_csi2_controller fx1_csi2_dphy_bfm)
+  foreach(s tpg tpg_stall wrap stop_line stop_line_stall stop_midline_stall)
+    add_test(NAME fx1_csi2_observer_${s} COMMAND test_fx1_csi2_capture_observer ${s})
+    set_tests_properties(fx1_csi2_observer_${s} PROPERTIES TIMEOUT 120 LABELS "fx1_csi2;fx1_csi2_unit")
+  endforeach()
+  foreach(s bfm_missing_fe bfm_crc)
+    add_test(NAME fx1_csi2_observer_${s} COMMAND test_fx1_csi2_capture_observer ${s})
+    set_tests_properties(fx1_csi2_observer_${s} PROPERTIES TIMEOUT 600 LABELS "fx1_csi2;fx1_phy_slow")
+  endforeach()
+  # the sensor sessions go through the detailed D-PHY (fx1_phy_slow).
+  add_executable(fx1_csi2_axis_source_demo examples/axis_source_demo/axis_source_demo.cpp)
+  target_link_libraries(fx1_csi2_axis_source_demo PRIVATE fx1_csi2_controller fx1_csi2_dphy_bfm)
+  target_compile_definitions(fx1_csi2_axis_source_demo PRIVATE
+    AXIS_DEMO_EXPECTED_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/axis_source_demo/expected")
+  file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/axis_source_demo)
+  foreach(s tpg_raw12 tpg_raw10 tpg_stall tpg_abort)
+    add_test(NAME fx1_csi2_axisdemo_${s} COMMAND fx1_csi2_axis_source_demo ${s} ${CMAKE_CURRENT_BINARY_DIR}/axis_source_demo)
+    set_tests_properties(fx1_csi2_axisdemo_${s} PROPERTIES TIMEOUT 600 LABELS "fx1_csi2")
+  endforeach()
+  foreach(s bfm_tail bfm_crc bfm_crc_last bfm_wc)
+    add_test(NAME fx1_csi2_axisdemo_${s} COMMAND fx1_csi2_axis_source_demo ${s} ${CMAKE_CURRENT_BINARY_DIR}/axis_source_demo)
+    set_tests_properties(fx1_csi2_axisdemo_${s} PROPERTIES TIMEOUT 900 LABELS "fx1_csi2;fx1_phy_slow")
+  endforeach()
+  find_program(_csi2_python3 python3)
+  if(_csi2_python3)
+    add_test(NAME fx1_csi2_axisdemo_expected_check
+             COMMAND ${_csi2_python3} -B ${CMAKE_CURRENT_SOURCE_DIR}/examples/axis_source_demo/gen_expected.py
+                     --check ${CMAKE_CURRENT_SOURCE_DIR}/examples/axis_source_demo/expected)
+    set_tests_properties(fx1_csi2_axisdemo_expected_check PROPERTIES TIMEOUT 60 LABELS "fx1_csi2")
+  endif()
   # Throughput benchmark: label fx1_bench, outside every fx1_csi2* label (ctest -L is a regex).
   add_test(NAME fx1_csi2_rxphy_bench_640x480 COMMAND test_fx1_csi2_rx_phy bench_640x480)
   set_tests_properties(fx1_csi2_rxphy_bench_640x480 PROPERTIES TIMEOUT 3600 LABELS "fx1_bench")
@@ -291,6 +327,6 @@ if(FX1_MIPI_CSI2_BUILD_TESTS)
   add_custom_target(fx1_csi2_unit_tests)
   add_dependencies(fx1_csi2_unit_tests test_fx1_csi2_packet test_fx1_dphy_startup test_fx1_csi2_lane_packet
                    test_fx1_csi2_sys_datapath test_fx1_csi2_dma test_fx1_csi2_dma_ctrl test_fx1_csi2_controller
-                   test_fx1_csi2_driver_timeout test_fx1_csi2_driver)
+                   test_fx1_csi2_driver_timeout test_fx1_csi2_driver test_fx1_csi2_capture_observer)
 endif()
 add_dependencies(fx1_mipi_csi2_all ${_csi2_all_deps})

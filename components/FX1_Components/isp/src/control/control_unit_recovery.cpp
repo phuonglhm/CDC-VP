@@ -68,7 +68,9 @@ bool control_unit::recovery_request(reset_scope scope, unsigned cause, std::uint
    // The engines stop at once (no later address for aborted work); the
    // drain ends when the transactions already issued have their responses.
    if (soft_reset_hook_) {
+      hook_cause_ = cause;
       soft_reset_hook_(cycle);
+      hook_cause_ = 0;
    }
    const std::uint64_t drained = drain_probe_ ? drain_probe_(cycle) : cycle;
    rec_.pulse = drained == never ? never : std::max(cycle, drained);

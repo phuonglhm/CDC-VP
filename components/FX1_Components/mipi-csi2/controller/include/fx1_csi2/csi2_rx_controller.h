@@ -121,6 +121,15 @@ public:
     // AXI4-Stream output towards the ISP; without a sink the path is always
     // ready and its beats are discarded. The DMA writes through dma_socket (M4).
     void set_stream_sink(AxisSink* s) { sys_.set_axis_sink(s); }
+    // VP-only read-only capture observer (direct CSI->ISP, sys_datapath.h).
+    // Set before the simulation starts; it changes no CSR, IRQ or timing.
+    void set_capture_observer(CaptureObserver* o) {
+        obs_ = o;
+        sys_.set_capture_observer(o);
+        sys_.set_epoch(epoch_);
+    }
+    // TEST ONLY: presets the 14-bit FRAME_ID counter (next capture: v + 1).
+    void debug_set_frame_id_counter(uint16_t v) { sys_.debug_set_frame_id_counter(v); }
     const LaneManagement& lane_management() const { return lm_; }
     const PacketAnalyzer& packet_analyzer() const { return sys_.packet_analyzer(); }
     const SysDatapath& sys_datapath() const { return sys_; }
@@ -245,6 +254,8 @@ private:
 
     LaneManagement lm_;
     SysDatapath sys_;
+    CaptureObserver* obs_ = nullptr;
+    void observe_reset();  // epoch to the datapath, source_reset to the observer
     SysConfig sys_cfg_;
     Glue glue_{*this};
     SysGlue sys_glue_{*this};

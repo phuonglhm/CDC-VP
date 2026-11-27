@@ -4,6 +4,7 @@
 // sys_clk edge; unit tests drive it directly with merged words.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 
@@ -23,6 +24,29 @@ class AxisSink {
 public:
     virtual ~AxisSink() = default;
     virtual bool axis_cycle(bool tvalid, const AxisBeat& beat) = 0;
+};
+
+// VP-only read-only observer of the captures (direct CSI->ISP path; contract
+// mipi-csi2/docs/DIRECT_CSI_ISP_CONTRACT.md §9, P25). It changes no CSR, IRQ,
+// counter, timing or behaviour. `seq` is the 64-bit capture sequence the
+// stream beats carry (AxisBeat::vp_capture_seq); `frame_id` the CSI FRAME_ID.
+enum class CaptureOutcome { Ok, Dropped, MissingFe };
+class CaptureObserver {
+public:
+    virtual ~CaptureObserver() = default;
+    // At the capture's Frame Start (sensor FS / TPG frame), before its SOF beat.
+    virtual void capture_start(uint64_t seq, uint16_t frame_id, uint64_t timestamp_ns, uint32_t epoch) = 0;
+    // From the capture ledger, in Frame Start order (Ok: delivered with its FE;
+    // MissingFe: closed by the next FS; Dropped: Control FSM or DMA drop).
+    virtual void capture_end(uint64_t seq, CaptureOutcome outcome) = 0;
+    // The capture has ended, no beat of it remains in the stream path (Line
+    // Buffer, Format Bridge stream side, master registers) and no abort beat
+    // can still carry it: its last beat (or abort) has left the master or was
+    // discarded. Per capture: it may come before that of an older capture
+    // whose beats are still held (D2a review F2).
+    virtual void capture_stream_end(uint64_t seq) = 0;
+    // resetn / soft_reset / full_reset: open captures end with no other event.
+    virtual void source_reset(uint32_t epoch) = 0;
 };
 
 // Events of the sys_clk domain towards the register file (Interrupt & Error
@@ -69,6 +93,9 @@ public:
     void set_pa_events(PaEvents* e) { pa_ev_ = e; }
     void set_sys_events(SysEvents* e) { sys_ev_ = e; }
     void set_axis_sink(AxisSink* s) { axis_sink_ = s; }
+    void set_capture_observer(CaptureObserver* o) { obs_ = o; }
+    void set_epoch(uint32_t e) { epoch_ = e; }  // epoch reported with capture_start
+    void debug_set_frame_id_counter(uint16_t v) { fc_.debug_set_frame_id_counter(v); }  // TEST ONLY
 
     // rxbyteclkhs side: one word written at time t_ps. A full FIFO loses words (C25).
     void cdc_push(const MergedWord& w, uint64_t t_ps);
@@ -96,6 +123,10 @@ public:
     const LineBuffer& line_buffer() const { return lb_; }
     const FormatBridge& format_bridge() const { return fb_; }
     const AxisMaster& axis_master() const { return axis_; }
+    // VP observer bookkeeping: ended captures awaiting their stream boundary,
+    // and its bound (each one keeps a beat of the path, one more for the abort).
+    std::size_t stream_wait_size() const { return stream_wait_.size(); }
+    std::size_t stream_wait_bound() const { return p_.line_buffer_depth + p_.stream_fifo_depth + 4; }
     const TpgMux& tpg_mux() const { return mux_; }
     const TestPatternGenerator& tpg() const { return tpg_; }
     DmaEngine& dma() { return dma_; }
@@ -129,6 +160,15 @@ private:
     PaEvents* pa_ev_ = nullptr;
     SysEvents* sys_ev_ = nullptr;
     AxisSink* axis_sink_ = nullptr;
+    CaptureObserver* obs_ = nullptr;
+    uint32_t epoch_ = 0;
+    // Ended captures not yet reported by capture_stream_end: only those still
+    // resident in the stream path (a beat in the Line Buffer, Format Bridge
+    // stream side or master registers, or the one a pending abort carries), so
+    // at most stream_wait_bound() entries (D2a review F2).
+    std::deque<uint64_t> stream_wait_;
+    bool stream_resident(uint64_t seq) const;
+    void observe_stream_ends();
 
     std::deque<CdcEntry> cdc_;
     bool cdc_dropping_ = false, cdc_marker_pending_ = false;
@@ -147,6 +187,8 @@ private:
     DmaEngine dma_;
     struct LedgerEntry {
         uint16_t id = 0;
+        uint64_t seq = 0;          // VP observer
+        bool missing_fe = false;   // VP observer: closed by the next FS
         bool dma = false;  // the DMA path took part (dma_enable at capture start)
         DmaOutcome out = DmaOutcome::None;
         bool ended = false, ctl_dropped = false;

@@ -8,6 +8,12 @@
  * CAM_TPG_REC, and check_tpg4k.py compares the dumped NV12 against the golden
  * of the stand-alone ISP model (cam_isp_crc_tpg4k). A CRC of 12 MB on the
  * simulated CPU would cost more host time than the whole frame.
+ *
+ * CAM_DIRECT=1 (plan DIRECT_CSI_ISP D3.3): the same frames on the manager's
+ * direct path (CSI-2 AXI4-Stream -> ISP_INGRESS, no RAW side, no IDMA): the
+ * metadata of a direct frame (csi_side FX1_CAMERA_NO_SIDE, zero_copy 0,
+ * isp_in 0), no RAW spot check (no RAW in memory), the same record for the
+ * host (check_tpg4k.py --direct also requires the direct-only traffic).
  */
 #include "cam_isp.h"
 #include "fx1_csi2/fx1_csi2_regs.h"
@@ -23,6 +29,9 @@
 #define TPG_UV(i) (TPG_Y(i) + 0xC00000u)
 #define CAM_TPG_REC (FX1_FW_SHARED_BASE + 0x800000u) /* magic, frames, then per frame: output, y, uv, capture */
 #define TPG_WAIT_US 400000u
+#ifndef CAM_DIRECT
+#define CAM_DIRECT 0
+#endif
 
 /* C35: band = min(7, x / (W' >> 3)), W' = W & ~3; RGGB; RAW12 0xFFF / 0. */
 static uint32_t bar(uint32_t x, uint32_t y)
@@ -34,7 +43,7 @@ static uint32_t bar(uint32_t x, uint32_t y)
     return on ? 0x0FFFu : 0u;
 }
 
-static void spot_check_raw(uint32_t side, uint32_t code)
+__attribute__((unused)) static void spot_check_raw(uint32_t side, uint32_t code)
 {
     static const uint32_t rows[4] = {0u, 1u, H - 2u, H - 1u};
     uint32_t bad = 0;
@@ -60,9 +69,13 @@ int main(void)
     c.height = H;
     c.bits = 12;
     c.tpg = 1;
+#if CAM_DIRECT
+    c.path = FX1_CAMERA_PATH_DIRECT; /* no RAW side */
+#else
     c.csi_side[0] = TPG_SIDE(0);
     c.csi_side[1] = TPG_SIDE(1);
     c.csi_side_size = SIDE_SIZE;
+#endif
     for (unsigned i = 0; i < FX1_ISP_NUM_BUFFERS; ++i) {
         c.y[i] = TPG_Y(i);
         c.uv[i] = TPG_UV(i);
@@ -83,11 +96,19 @@ int main(void)
         if (rc) fx1_log_hex("  dequeue rc", (uint32_t)rc);
         fx1_check(rc == FX1_CAMERA_OK, 0x101 + (k << 4), "tpg4k: frame through CSI-2 and the ISP");
         fx1_log_hex("  frame us", (uint32_t)((fx1_mtime() - t0) / (FX1_MTIME_HZ / 1000000u)));
+#if CAM_DIRECT
+        fx1_check(f.width == W && f.height == H && f.capture == k + 1u && f.capture_seq == k + 1u &&
+                      f.path == FX1_CAMERA_PATH_DIRECT && f.csi_side == FX1_CAMERA_NO_SIDE && f.isp_output == k &&
+                      f.y == TPG_Y(k) && f.uv == TPG_UV(k) && f.isp_frame != 0,
+                  0x102 + (k << 4), "tpg4k: geometry and direct metadata");
+        fx1_check(!f.zero_copy && !f.isp_in, 0x103 + (k << 4), "tpg4k: no RAW side, no IDMA input");
+#else
         fx1_check(f.width == W && f.height == H && f.capture == k + 1u && f.csi_side == k && f.isp_seq == k &&
                       f.isp_output == k && f.y == TPG_Y(k) && f.uv == TPG_UV(k),
                   0x102 + (k << 4), "tpg4k: geometry and metadata");
         fx1_check(f.zero_copy && f.isp_in == TPG_SIDE(k), 0x103 + (k << 4), "tpg4k: zero-copy from the CSI-2 side");
         spot_check_raw(f.isp_in, 0x104 + (k << 4));
+#endif
         fx1_write32(CAM_TPG_REC + 8u + 16u * k, f.isp_output);
         fx1_write32(CAM_TPG_REC + 12u + 16u * k, f.y);
         fx1_write32(CAM_TPG_REC + 16u + 16u * k, f.uv);
@@ -95,9 +116,17 @@ int main(void)
         fx1_check(fx1_camera_release(&g_cam, &f) == FX1_CAMERA_OK, 0x105 + (k << 4), "tpg4k: released");
     }
     const fx1_camera_stats* s = &g_cam.stats;
+#if CAM_DIRECT
+    unsigned failed = 0;
+    for (unsigned o = 0; o < FX1_CAMERA_OUTCOMES; ++o) failed += s->direct_failed[o];
+    fx1_check(s->direct_ok == FRAMES && failed == 0 && s->isp_errors == 0 &&
+                  fx1_read32(FX1_MIPI_CSR_BASE + FX1_CSI2_FRAME_DROP_COUNT) == 0,
+              0x200, "tpg4k: no error, no drop (direct)");
+#else
     fx1_check(s->csi_ok == FRAMES && s->csi_err == 0 && s->isp_done == FRAMES && s->isp_errors == 0 && s->isp_lost == 0 &&
                   fx1_read32(FX1_MIPI_CSR_BASE + FX1_CSI2_FRAME_DROP_COUNT) == 0,
               0x200, "tpg4k: no error, no drop");
+#endif
     fx1_check(fx1_camera_stop(&g_cam, TPG_WAIT_US) == FX1_CAMERA_OK, 0x201, "tpg4k: stop");
     fx1_write32(CAM_TPG_REC, 0x4B475054u); /* 'TPGK' */
     fx1_write32(CAM_TPG_REC + 4u, FRAMES);

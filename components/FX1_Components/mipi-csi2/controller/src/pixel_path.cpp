@@ -271,6 +271,14 @@ void TpgMux::clock(const In& in) {
 
 LineBuffer::LineBuffer(unsigned depth, unsigned watermark) : depth_(depth), wm_(watermark), mem_(depth) {}
 
+bool LineBuffer::holds(uint64_t seq) const {
+    // The fill_ entries not yet consumed are the last fill_ written (the output
+    // stage holds copies of them).
+    for (unsigned k = 0; k < fill_; ++k)
+        if (mem_[(wr_ + depth_ - fill_ + k) % depth_].seq == seq) return true;
+    return false;
+}
+
 void LineBuffer::reset() {
     wr_ = rd_ = fill_ = 0;
     inflight_ = false;

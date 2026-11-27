@@ -23,8 +23,16 @@ CcsSensor::CcsSensor(sc_core::sc_module_name name, bfm::DphyTxBfm& tx, CcsSensor
         for (size_t i = 0; i < raw_.size(); ++i)
             raw_[i] = static_cast<uint16_t>(uint8_t(bytes[2 * i]) | uint8_t(bytes[2 * i + 1]) << 8);
     }
+    for (const auto& f : cfg_.faults)
+        if (f.frame == 0) SC_REPORT_FATAL("fx1/csi2/sensor", "fault frame numbers start at 1");
     reset_registers();
     SC_THREAD(stream_thread);
+}
+
+const CcsSensorFault* CcsSensor::fault_for(unsigned frame, CcsSensorFault::Kind k, unsigned line) const {
+    for (const auto& f : cfg_.faults)
+        if (f.frame == frame && f.kind == k && (k != CcsSensorFault::Kind::crc || f.line == line)) return &f;
+    return nullptr;
 }
 
 void CcsSensor::reset_registers() {
@@ -189,16 +197,26 @@ void CcsSensor::stream_thread() {
             const uint16_t fn = fnum_;
             const uint64_t epoch = reset_epoch_;
             const uint8_t dt = m.bits == 10 ? bfm::DT_RAW10 : bfm::DT_RAW12;
+            const unsigned index = ++started_;  // fault index (VP only)
             in_frame_ = true;
             send_packet(bfm::short_packet(0, bfm::DT_FS, fn), m.lanes);
             for (unsigned y = 0; y < m.height; ++y) {
                 const sc_core::sc_time tl = sc_core::sc_time_stamp();
                 const auto px = line_pixels(m, fn, y);
-                send_packet(bfm::long_packet(0, dt, m.bits == 10 ? bfm::pack_raw10(px) : bfm::pack_raw12(px)), m.lanes);
+                auto pkt = bfm::long_packet(0, dt, m.bits == 10 ? bfm::pack_raw10(px) : bfm::pack_raw12(px));
+                if (fault_for(index, CcsSensorFault::Kind::crc, y)) {
+                    pkt[pkt.size() - 2] = static_cast<uint8_t>(~pkt[pkt.size() - 2]);  // payload CRC, LSB first
+                    pkt[pkt.size() - 1] = static_cast<uint8_t>(~pkt[pkt.size() - 1]);
+                    ++faults_fired_;
+                }
+                send_packet(pkt, m.lanes);
                 const sc_core::sc_time next = tl + line_t;
                 if (next > sc_core::sc_time_stamp()) wait(next - sc_core::sc_time_stamp());
             }
-            send_packet(bfm::short_packet(0, bfm::DT_FE, fn), m.lanes);
+            if (fault_for(index, CcsSensorFault::Kind::no_fe, 0))
+                ++faults_fired_;
+            else
+                send_packet(bfm::short_packet(0, bfm::DT_FE, fn), m.lanes);
             in_frame_ = false;
             if (epoch == reset_epoch_) ++frames_;  // not counted after a software_reset during the frame
             if (!cfg_.continuous_clock) {  // non-continuous clock between frames (P16)

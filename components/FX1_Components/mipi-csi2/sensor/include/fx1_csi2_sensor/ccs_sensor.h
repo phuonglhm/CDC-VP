@@ -42,6 +42,15 @@
 // RAW file (M5a review F3): 16-bit little-endian samples. An empty file or an
 // odd number of bytes is refused when the sensor is built (SC_REPORT_ERROR).
 // With a file configured, frames come only from it, never from the pattern.
+//
+// Fault injection (VP only, plan DIRECT_CSI_ISP D2b; fx1_soc --camera-fault):
+// CcsSensorConfig::faults lists link faults by the frame they hit, counted
+// from 1 over every frame the sensor starts after construction (software_reset
+// and standby do not restart the count). crc: the payload CRC of line `line`
+// of that frame is sent inverted (header, ECC and data unchanged); no_fe: the
+// frame's Frame End packet is not sent (the frame keeps its timing, the next
+// FS closes it at the receiver). Nothing else changes; without faults the
+// sensor behaves as before. faults_fired() counts the faults applied.
 #pragma once
 
 #include <cstdint>
@@ -56,6 +65,13 @@
 
 namespace fx1::csi2 {
 
+struct CcsSensorFault {
+    enum class Kind { crc, no_fe };
+    unsigned frame = 0;  // 1-based, frames started since construction
+    Kind kind = Kind::crc;
+    unsigned line = 0;   // crc: the line whose CRC is corrupted (0-based)
+};
+
 struct CcsSensorConfig {
     uint8_t i2c_addr = 0x10;       // 7-bit
     unsigned max_lanes = 4;        // lanes wired to the receiver
@@ -67,6 +83,7 @@ struct CcsSensorConfig {
     // of host time per simulated ms while the clock runs, so long vertical
     // blanking is cheap only with false.
     bool continuous_clock = true;
+    std::vector<CcsSensorFault> faults;  // VP-only fault injection (see above); empty: none
 };
 
 class CcsSensor : public sc_core::sc_module, public i2c_device {
@@ -94,6 +111,8 @@ public:
     // Between the Frame Start and the Frame End packets of a frame.
     bool in_frame() const { return in_frame_; }
     unsigned error_count() const { return errors_; }
+    // Faults of CcsSensorConfig::faults applied so far.
+    unsigned faults_fired() const { return faults_fired_; }
     // Debug/test tap: called for every packet sent, with the data type and
     // 16-bit field decoded from the header bytes put on the link (frame number
     // of FS/FE, word count of a long packet).
@@ -127,6 +146,9 @@ private:
     uint64_t reset_epoch_ = 0;     // software_reset count: a frame started before one is not counted
     bool streaming_ = false, in_frame_ = false, stop_req_ = false;
     unsigned errors_ = 0;
+    unsigned started_ = 0;       // frames started since construction (fault index)
+    unsigned faults_fired_ = 0;
+    const CcsSensorFault* fault_for(unsigned frame, CcsSensorFault::Kind k, unsigned line) const;
     sc_core::sc_event reg_ev_;
     std::vector<uint16_t> raw_;
 };

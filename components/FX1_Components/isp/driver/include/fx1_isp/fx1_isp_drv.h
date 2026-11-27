@@ -149,6 +149,7 @@ typedef struct fx1_isp_dev {
     uint32_t next_seq;
     uint32_t out_width, out_height;
     uint32_t dma_ctrl;    /* DMA_CTRL value written at start */
+    int direct;           /* started with fx1_isp_start_direct (pixels from ISP_INGRESS, no IDMA) */
     int started;
     /* AEC and AF ownership (MAS v1.07 §9.8): the leases taken by
      * fx1_isp_aec_acquire / fx1_isp_af_acquire, and the newest results the
@@ -450,6 +451,26 @@ void fx1_isp_aec_configure(fx1_isp_dev *dev, const fx1_isp_aec_cfg *cfg, int ena
  * Returns FX1_ISP_EINVAL when the CH0 geometry is not VALID (MAS v1.07 §8.3:
  * no frame is admitted). The output geometry (RESIZER_OUT_W/H) is valid from here. */
 int fx1_isp_start(fx1_isp_dev *dev, const fx1_isp_buffers *bufs);
+/* ---- Direct input (VP ISP_INGRESS, plan DIRECT_CSI_ISP D3) -------------------
+ * The pixels come from the stream ingress (fx1_isp_ingress_drv.h), not from
+ * the IDMA. fx1_isp_start_direct: as fx1_isp_start (pipeline, interrupt
+ * sources, ODMA addresses and strides, geometry checks), but the IDMA stays
+ * disabled (bufs->in and in_stride are not used: no input slot exists) and the
+ * ODMA is enabled at once. No output is armed: the caller arms each slot it
+ * owns with fx1_isp_direct_arm and matches a completed output to its ingress
+ * context entry by BUF_TAG (fx1_isp_direct_find; the publish gate, contract
+ * §9.2). fx1_isp_stop, fx1_isp_irq, fx1_isp_recover_ex and the statistics
+ * calls work as for the memory path; the input/queue/done/lost calls return
+ * FX1_ISP_ESTATE (0 for fx1_isp_input_ready). A DMA-scope recovery (ODMA AXI
+ * error) clears every armed output: arm them again once it has settled. */
+int fx1_isp_start_direct(fx1_isp_dev *dev, const fx1_isp_buffers *bufs);
+/* Output slot `index` back to the ODMA: DONE acknowledged (W1C), FREE set
+ * (W1S). FX1_ISP_ESTATE unless streaming direct, FX1_ISP_EINVAL for a bad index,
+ * FX1_ISP_EBUSY while a recovery has not settled (try again). */
+int fx1_isp_direct_arm(fx1_isp_dev *dev, unsigned index);
+/* The output slot with DONE set and BUF_TAG = tag: FX1_ISP_OK and *index, or
+ * FX1_ISP_ENODATA if no completed output carries that tag. */
+int fx1_isp_direct_find(fx1_isp_dev *dev, uint32_t tag, unsigned *index);
 /* Hands the next input and output buffers to the hardware (one frame).
  * First check fx1_isp_input_ready(), then fill the input at fx1_isp_next_input().
  * Returns FX1_ISP_EBUSY if all four frames are in flight, the hardware still

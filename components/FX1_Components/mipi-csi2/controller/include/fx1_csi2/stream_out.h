@@ -17,6 +17,7 @@ struct OutBeat {
     bool sof = false, sol = false, eol = false, err = false;
     uint8_t vc = 0;
     uint16_t tag = 0;  // VP sideband (M18), carried like vc_tag; not compared
+    uint64_t seq = 0;  // VP sideband: capture sequence (direct CSI->ISP); not compared
     bool operator==(const OutBeat& o) const {
         return data == o.data && keep == o.keep && sof == o.sof && sol == o.sol && eol == o.eol && err == o.err &&
                vc == o.vc;
@@ -48,6 +49,8 @@ public:
     bool quiescent() const;
     // No beat on the DMA side: FIFO empty and no line-end flush pending.
     bool dma_side_empty() const { return dfifo_.empty() && !rep_.flush_req() && !r16_.flush_req(); }
+    // VP observer: a stream-side beat (FIFO or a formatter residual) of capture `seq`.
+    bool stream_holds(uint64_t seq) const;
 
 private:
     // One accumulate-and-drain formatter (bypass re-packer or RAW16).
@@ -58,13 +61,14 @@ private:
         bool flush_req() const { return eol_pend && cnt != 0; }
         // Returns true and fills `beat` when this formatter emits a beat this cycle.
         bool step(const uint8_t* bytes, unsigned n, bool in_sof, bool in_sol, bool in_eol, bool err_hold, uint8_t vc,
-                  uint16_t tag, OutBeat& beat);
+                  uint16_t tag, uint64_t seq, OutBeat& beat);
     };
     unsigned sdepth_, ddepth_;
     Formatter rep_, r16_;
     bool dt_hold_raw10_ = false, err_hold_ = false;
     uint8_t vc_hold_ = 0;
     uint16_t tag_hold_ = 0;
+    uint64_t seq_hold_ = 0;
     std::deque<OutBeat> sfifo_, dfifo_;
 };
 
@@ -75,6 +79,11 @@ struct AxisBeat {
     bool tlast = false;
     uint8_t tuser = 0;
     uint8_t tid = 0;
+    // VP sideband (direct CSI->ISP), not Table 6-67 signals and not compared:
+    // the capture sequence and CSI FRAME_ID of the beat (0: none). The null
+    // abort beat carries those of the last beat the master accepted.
+    uint64_t vp_capture_seq = 0;
+    uint16_t vp_frame_id = 0;
     bool operator==(const AxisBeat& o) const {
         return tdata == o.tdata && tkeep == o.tkeep && tlast == o.tlast && tuser == o.tuser && tid == o.tid;
     }
@@ -95,6 +104,20 @@ public:
     State state() const { return st_; }
     bool line_open() const { return line_open_; }
     bool quiescent() const { return st_ == State::Passthrough && !out_valid_ && !skid_valid_ && abort_mask_ == 0; }
+    // VP observer: the output or skid register holds a beat of capture `seq`.
+    bool holds(uint64_t seq) const {
+        return (out_valid_ && out_.vp_capture_seq == seq) || (skid_valid_ && skid_.vp_capture_seq == seq);
+    }
+    // VP observer: the capture an abort beat would carry (the last beat
+    // accepted), and its release once that capture's stream boundary has been
+    // reported: a later abort then carries 0, "no capture" (D2a review F1).
+    uint64_t last_seq() const { return last_seq_; }
+    void release_seq(uint64_t seq) {
+        if (last_seq_ == seq) {
+            last_seq_ = 0;
+            last_tag_ = 0;
+        }
+    }
 
 private:
     State st_ = State::Passthrough;
@@ -102,6 +125,8 @@ private:
     AxisBeat out_, skid_;
     bool line_open_ = false;
     uint8_t line_tid_ = 0, abort_mask_ = 0;
+    uint64_t last_seq_ = 0;  // VP sideband of the last beat accepted (abort beats)
+    uint16_t last_tag_ = 0;
     std::array<bool, 2> pass_{true, true};
     bool abort_done_ = false;
 };

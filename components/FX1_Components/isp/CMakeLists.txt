@@ -65,6 +65,7 @@ set_target_properties(fx1_isp_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(fx1_isp_tlm STATIC
     src/fx1_isp_tlm.cpp
     src/engine/engines.cpp
+    src/engine/ingress.cpp
     src/debug/demosaic_dump.cpp)
 add_library(cdc::components::fx1_isp_tlm ALIAS fx1_isp_tlm)
 target_include_directories(fx1_isp_tlm
@@ -77,7 +78,7 @@ target_compile_options(fx1_isp_tlm PRIVATE ${FX1_ISP_WARNINGS})
 
 # ---- Reference driver (C99, no SystemC): docs/ISP_PROGRAMMING_GUIDE.md ------------
 enable_language(C)
-add_library(fx1_isp_drv STATIC driver/src/fx1_isp_drv.c)
+add_library(fx1_isp_drv STATIC driver/src/fx1_isp_drv.c driver/src/fx1_isp_ingress.c)
 add_library(cdc::components::fx1_isp_drv ALIAS fx1_isp_drv)
 target_include_directories(fx1_isp_drv
     PUBLIC
@@ -111,7 +112,8 @@ if(FX1_ISP_INSTALL)
     endif()
     install(TARGETS fx1_isp_run_raw RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES include/fx1_isp/fx1_isp_tlm.h include/fx1_isp/fx1_isp_debug.h include/fx1_isp/fx1_isp_csr.h
-                  driver/include/fx1_isp/fx1_isp_drv.h
+                  include/fx1_isp/fx1_isp_ingress.h include/fx1_isp/fx1_isp_ingress_regs.h
+                  driver/include/fx1_isp/fx1_isp_drv.h driver/include/fx1_isp/fx1_isp_ingress_drv.h
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/fx1_isp)
     install(FILES README.md docs/ISP_PROGRAMMING_GUIDE.md docs/ISP_MODEL_INTERFACE.md docs/ISP_CSR_CONTRACT.md
                   docs/ISP_DECISIONS_AND_DISCREPANCIES.md docs/ISP_REQUIREMENTS_MATRIX.md

@@ -37,6 +37,9 @@ struct FrameInfo {
 // Pulses and events of one sys_clk cycle.
 struct FcCycleOut {
     std::array<bool, 2> capture_start{}, capture_end{}, capture_dropped{};  // per slot
+    // VP observer: the capture ending was closed by the next Frame Start
+    // (Frame End lost, ctx_sync_close); the CSI still counts it delivered.
+    std::array<bool, 2> capture_missing_fe{};
     bool ev_fs = false;
     uint8_t ev_vc = 0;
     bool capture_done = false;               // a capture ended and was not dropped
@@ -70,6 +73,13 @@ public:
     const FrameInfo& published(unsigned vc) const { return pub_[vc & 1]; }
     uint64_t slot_timestamp(unsigned s) const { return slot_[s & 1].timestamp; }
     uint16_t slot_frame_id(unsigned s) const { return slot_[s & 1].frame_id; }
+    // VP observer (direct CSI->ISP): 64-bit capture sequence, from 1 and +1 at
+    // every capture start, never reset by resetn / soft_reset / full_reset.
+    uint64_t slot_seq(unsigned s) const { return slot_[s & 1].seq; }
+    uint64_t cur_capture_seq(unsigned vc) const;
+    // TEST ONLY: presets the FRAME_ID counter (the next capture gets v + 1) so
+    // a fixture can cross its 14-bit wrap without 16383 captures.
+    void debug_set_frame_id_counter(uint16_t v) { frame_id_cnt_ = static_cast<uint16_t>(v & 0x3FFF); }
     bool orphan(unsigned vc) const { return ch_[vc & 1].orphan; }
     bool channel_active(unsigned vc) const { return ch_[vc & 1].active; }
     bool slot_open(unsigned s) const { return slot_[s & 1].open; }
@@ -87,6 +97,8 @@ private:
         uint16_t frame_id = 0;
         uint64_t timestamp = 0;
         uint32_t record_id = 0;
+        uint64_t seq = 0;          // VP observer
+        bool sync_closed = false;  // VP observer: closed by the next FS
     };
     struct Geometry {
         uint16_t byte_acc = 0, byte_count_last = 0, line_count = 0;
@@ -114,6 +126,7 @@ private:
     unsigned last_alloc_ = 0;
     bool any_alloc_ = false;
     uint16_t frame_id_cnt_ = 0;
+    uint64_t seq_cnt_ = 0;  // VP observer: survives every reset
     bool prev_active_sel_ = false;
     FcCycleOut out_;
 };
@@ -154,6 +167,9 @@ public:
     State state() const { return st_; }
     uint8_t discard() const { return discard_; }
     bool quiescent(bool core_enable, bool axis_enable) const;
+    // VP observer (read only): a drop / stop sequence that ends in a stream
+    // abort request is in progress (HOLD, FLUSH, or a stream stop latched).
+    bool abort_pending() const { return st_ == State::Hold || st_ == State::Flush || stream_stop_q_; }
 
 private:
     State st_ = State::Idle;

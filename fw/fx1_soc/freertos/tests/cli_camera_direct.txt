@@ -1,0 +1,19 @@
+camera probe
+camera path direct
+camera mode 64 32 12 4
+camera start
+camera path memory
+isp selftest
+camera capture 4
+camera status
+camera stop
+camera mode 64 32 10 2
+camera start
+camera capture 2
+camera stop
+camera path memory
+camera mode 64 32 12 4
+camera start
+camera capture 2
+camera stop
+poweroff

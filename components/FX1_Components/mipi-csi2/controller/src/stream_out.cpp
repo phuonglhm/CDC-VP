@@ -12,6 +12,7 @@ void FormatBridge::reset() {
     dt_hold_raw10_ = err_hold_ = false;
     vc_hold_ = 0;
     tag_hold_ = 0;
+    seq_hold_ = 0;
     sfifo_.clear();
     dfifo_.clear();
 }
@@ -26,8 +27,15 @@ bool FormatBridge::quiescent() const {
     return sfifo_.empty() && dfifo_.empty() && !rep_.flush_req() && !r16_.flush_req();
 }
 
+bool FormatBridge::stream_holds(uint64_t seq) const {
+    for (const OutBeat& b : sfifo_)
+        if (b.seq == seq) return true;
+    // A residual of the line in progress belongs to the held line's capture.
+    return (rep_.cnt != 0 || r16_.cnt != 0) && seq_hold_ == seq;
+}
+
 bool FormatBridge::Formatter::step(const uint8_t* bytes, unsigned n, bool in_sof, bool in_sol, bool in_eol,
-                                   bool err_hold, uint8_t vc, uint16_t tag, OutBeat& beat) {
+                                   bool err_hold, uint8_t vc, uint16_t tag, uint64_t seq, OutBeat& beat) {
     if (flush_req()) {
         // Line-end flush, the cycle after the input beat that ended the line
         // (fb_ready is low, so there is no intake on this cycle).
@@ -40,6 +48,7 @@ bool FormatBridge::Formatter::step(const uint8_t* bytes, unsigned n, bool in_sof
         beat.err = err_hold;
         beat.vc = vc;
         beat.tag = tag;
+        beat.seq = seq;
         buf = {};
         cnt = 0;
         sof_pend = sol_pend = eol_pend = false;
@@ -64,6 +73,7 @@ bool FormatBridge::Formatter::step(const uint8_t* bytes, unsigned n, bool in_sof
     beat.err = err_hold && beat.eol;
     beat.vc = vc;
     beat.tag = tag;
+    beat.seq = seq;
     for (unsigned i = 8; i < total; ++i) buf[i - 8] = buf[i];
     for (unsigned i = total - 8; i < buf.size(); ++i) buf[i] = 0;
     cnt = total - 8;
@@ -78,10 +88,12 @@ bool FormatBridge::clock(const FbConfig& cfg, const PxBeat* take, bool stream_po
     bool raw10 = dt_hold_raw10_, err = err_hold_;
     uint8_t vc = vc_hold_;
     uint16_t tag = tag_hold_;
+    uint64_t seq = seq_hold_;
     if (take && take->sol) {
         raw10 = take->raw10;
         vc = take->vc;
         tag = take->tag;
+        seq = take->seq;
         err = false;
     }
     if (take && take->eol) err = take->err_wc_align;
@@ -112,12 +124,13 @@ bool FormatBridge::clock(const FbConfig& cfg, const PxBeat* take, bool stream_po
     }
     const bool in_sof = take && take->sof, in_sol = take && take->sol, in_eol = take && take->eol;
     OutBeat rep_beat, r16_beat;
-    const bool rep_valid = rep_.step(rep_bytes, rep_n, in_sof, in_sol, in_eol, err, vc, tag, rep_beat);
-    const bool r16_valid = r16_.step(r16_bytes, r16_n, in_sof, in_sol, in_eol, err, vc, tag, r16_beat);
+    const bool rep_valid = rep_.step(rep_bytes, rep_n, in_sof, in_sol, in_eol, err, vc, tag, seq, rep_beat);
+    const bool r16_valid = r16_.step(r16_bytes, r16_n, in_sof, in_sol, in_eol, err, vc, tag, seq, r16_beat);
     if (take) {
         dt_hold_raw10_ = raw10;
         vc_hold_ = vc;
         tag_hold_ = tag;
+        seq_hold_ = seq;
         err_hold_ = err;
     }
 
@@ -147,6 +160,8 @@ void AxisMaster::reset() {
     line_tid_ = abort_mask_ = 0;
     pass_ = {true, true};
     abort_done_ = false;
+    last_seq_ = 0;
+    last_tag_ = 0;
 }
 
 bool AxisMaster::clock(bool tready, bool fbs_valid, const OutBeat& fbs, bool abort_req, uint8_t abort_mask,
@@ -173,7 +188,8 @@ bool AxisMaster::clock(bool tready, bool fbs_valid, const OutBeat& fbs, bool abo
     const bool hs = s_out && tready;
     const bool abort_hs = st_ == State::Inject && tready;
     bool accepted = false;
-    AxisBeat in{fbs.data, fbs.keep, fbs.eol, static_cast<uint8_t>((fbs.sof ? 1 : 0) | (fbs.err ? 2 : 0)), tid};
+    AxisBeat in{fbs.data, fbs.keep, fbs.eol, static_cast<uint8_t>((fbs.sof ? 1 : 0) | (fbs.err ? 2 : 0)), tid,
+                fbs.seq, fbs.tag};
     if (st_ != State::Inject) {
         if (hs) out_valid_ = false;
         if (skid_valid_ && !out_valid_) {
@@ -183,6 +199,8 @@ bool AxisMaster::clock(bool tready, bool fbs_valid, const OutBeat& fbs, bool abo
         }
         if (st_ == State::Passthrough && taken && in_valid) {  // sink mode discards every beat taken
             accepted = true;
+            last_seq_ = in.vp_capture_seq;
+            last_tag_ = in.vp_frame_id;
             if (!out_valid_) {
                 out_ = in;
                 out_valid_ = true;
@@ -201,7 +219,7 @@ bool AxisMaster::clock(bool tready, bool fbs_valid, const OutBeat& fbs, bool abo
     const uint8_t inj_tid = line_open_next ? line_tid_ : ((mask_next & 1) ? 0 : 1);
     const bool drained = !s_skid && (!s_out || tready);
     auto load_abort = [&] {
-        out_ = AxisBeat{0, 0, true, 2, inj_tid};  // null transfer: TKEEP 0, TLAST, TUSER[1]
+        out_ = AxisBeat{0, 0, true, 2, inj_tid, last_seq_, last_tag_};  // null transfer: TKEEP 0, TLAST, TUSER[1]
         out_valid_ = true;
     };
     switch (st_) {

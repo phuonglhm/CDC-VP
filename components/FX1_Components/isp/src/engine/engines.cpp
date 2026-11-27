@@ -102,7 +102,7 @@ void engine_context::retire_frame(bool completed) {
       set(FX1_ISP_COMMON_IRQ_STATUS_OFFSET, FX1_ISP_COMMON_IRQ_STATUS_FRAME_DONE_IRQ_MASK);
       set(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_FRAME_DONE_MASK);
    }
-   if (--frames_in_flight == 0) {
+   if (--frames_in_flight == 0 && ingress_reserved == 0) {  // VP: or a frame the ingress admitted
       clear(FX1_ISP_COMMON_STATUS_OFFSET, FX1_ISP_COMMON_STATUS_BUSY_MASK);
    }
    retired.notify(sc_core::SC_ZERO_TIME);
@@ -116,8 +116,13 @@ void engine_context::consumer_done(std::uint64_t f, bool ok) {
    it->second.ok = it->second.ok && ok;
    if (--it->second.pending == 0) {
       const bool completed = it->second.ok;
+      const bool direct = it->second.direct;
+      const std::uint32_t tag = it->second.tag;
       consumers.erase(it);
       retire_frame(completed);
+      if (direct && direct_retired) {
+         direct_retired(tag, completed);
+      }
       if (demosaic) {
          demosaic->frame_end(f, completed ? demosaic_frame_end::completed : demosaic_frame_end::failed);
       }
@@ -161,6 +166,10 @@ void engine_context::reset_engines() {
    odma_overflowing = 0;
    for (line_fifo *f : fifos) {
       f->clear();
+   }
+   ingress_reserved = 0;
+   if (ingress_reset) {
+      ingress_reset();
    }
    reset_ev.notify(sc_core::SC_ZERO_TIME);
    kick.notify(sc_core::SC_ZERO_TIME);
@@ -270,7 +279,10 @@ void idma_engine::wait_for_buffer(std::uint64_t e) {
    for (;;) {
       ctx_.wait_out_of_reset(e);
       const std::uint32_t ctrl = ctx_.reg(FX1_ISP_DMA_CTRL_OFFSET);
-      const bool enabled = (ctrl & FX1_ISP_DMA_CTRL_IDMA_EN_MASK) != 0;
+      // VP direct path: the IDMA issues nothing and reports nothing while the
+      // stream ingress is the source (ISP_INGRESS.CTRL.SOURCE; the switch to
+      // direct requires IDMA_EN = 0, so this gates only a later IDMA_EN write).
+      const bool enabled = (ctrl & FX1_ISP_DMA_CTRL_IDMA_EN_MASK) != 0 && !ctx_.direct_source;
       const unsigned head = ctx_.idma_head;
       const bool valid = (ctx_.request(FX1_ISP_IDMA_BUF_VALID_OFFSET) >> head) & 1u;
       const bool valid_next_edge = !valid && ((ctx_.reg(FX1_ISP_IDMA_BUF_VALID_OFFSET) >> head) & 1u);
@@ -445,6 +457,13 @@ void pipeline_engine::frame(std::uint64_t e) {
    ctx_.ctl.accepted_sof(ctx_.cycle());
    ctx_.ctl.blocks_busy(true);  // DEC-38
    ctx_.accept_frame();
+   if (l.direct) {  // its credit, held since the ingress admitted it, is now in frames_in_flight
+      sc_assert(ctx_.ingress_reserved > 0);
+      --ctx_.ingress_reserved;
+      if (ctx_.direct_accepted) {
+         ctx_.direct_accepted(l.tag, ctx_.ctl.frame_id());  // the ID its statistics and outputs carry
+      }
+   }
    if (ctx_.params.test_datapath_stub) {
       stub_frame(l, ++frames_, e);
    } else {
@@ -479,6 +498,7 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
             o.height = p.height;
             o.tag = l.tag;  // the frame's metadata follows it to the output (MAS Table 160)
             o.ts = l.ts;
+            o.direct = l.direct;
             o.ingress = ingress;
             o.profile = profile;
             o.bytes = std::move(bytes);
@@ -491,7 +511,7 @@ void pipeline_engine::isp_frame(line &l, std::uint64_t f, std::uint64_t e) {
          sinks[c].uv = make(true);
       }
    }
-   ctx_.frame_begin(f, outputs);
+   ctx_.frame_begin(f, outputs, l.direct, l.tag);
    if (ctx_.frame_output) {
       frame_output_info fo;
       fo.epoch = ctx_.epoch;
@@ -595,7 +615,7 @@ void pipeline_engine::observe_frame(const pipe::pipeline_config &cfg, const line
 
 void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
    // The datapath stub (DMA tests) drives CH0 only.
-   ctx_.frame_begin(f, 1);
+   ctx_.frame_begin(f, 1, l.direct, l.tag);
    const std::uint32_t pattern = ctx_.reg(FX1_ISP_COMMON_BAYER_OFFSET) & FX1_ISP_COMMON_BAYER_PATTERN_MASK;
    const std::uint32_t depth = ctx_.reg(FX1_ISP_COMMON_INPUT_FORMAT_OFFSET) & FX1_ISP_COMMON_INPUT_FORMAT_DEPTH_MASK;
    const geometry active = control_unit::derive_active(l.width, l.height, pattern);
@@ -632,6 +652,7 @@ void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
          yl.height = out.height;
          yl.tag = l.tag;
          yl.ts = l.ts;
+         yl.direct = l.direct;
          yl.ingress = ingress;
          yl.profile = profile;
          yl.bytes.resize(out.width);
@@ -647,6 +668,7 @@ void pipeline_engine::stub_frame(line &l, std::uint64_t f, std::uint64_t e) {
             ul.height = out.height;
             ul.tag = l.tag;
             ul.ts = l.ts;
+            ul.direct = l.direct;
             ul.ingress = ingress;
             ul.profile = profile;
             ul.bytes.assign(out.width, stub::chroma_value);
@@ -815,6 +837,8 @@ bool odma_engine::claim(const line &first, std::uint64_t e) {
    max_beats_ = max_beats(ctrl);
    ctx_.clear(r_.free, bit);  // the frame takes the head buffer (MAS Table 6-158)
    busy_ = true;
+   direct_ = first.direct;
+   tag_ = first.tag;
    if (ctx_.odma_busy++ == 0) {
       ctx_.set(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_ODMA_BUSY_MASK);
    }
@@ -874,6 +898,10 @@ void odma_engine::sink_frame(bool y_done, bool uv_done, std::uint64_t e) {
 
 void odma_engine::end_frame(bool ok) {
    busy_ = false;
+   if (direct_ && ctx_.direct_odma_end) {
+      ctx_.direct_odma_end(ch_, tag_);
+   }
+   direct_ = false;
    if (--ctx_.odma_busy == 0) {
       ctx_.clear(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_ODMA_BUSY_MASK);
    }
