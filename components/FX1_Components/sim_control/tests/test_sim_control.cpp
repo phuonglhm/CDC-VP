@@ -3,6 +3,7 @@
 #include <tlm_utils/simple_initiator_socket.h>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 unsigned checks = 0, failures = 0;
@@ -42,6 +43,9 @@ struct Tb : sc_core::sc_module {
         expect(write(0, 0x1234) == tlm::TLM_GENERIC_ERROR_RESPONSE, "unknown value rejected");
         expect(write(FX1_SIM_CTRL_DOORBELL_OFF, 1) == tlm::TLM_GENERIC_ERROR_RESPONSE,
                "doorbell offset rejected unless enabled");
+        expect(write(FX1_SIM_CTRL_BW_MARK_OFF, FX1_SIM_CTRL_BW_START | (1u << FX1_SIM_CTRL_BW_COUNT_SHIFT)) ==
+                   tlm::TLM_GENERIC_ERROR_RESPONSE,
+               "bw marker offset rejected unless enabled");
         expect(ctl.result() == fx1::SimControl::Result::running, "rejected writes leave it running");
         expect(write(0, value) == tlm::TLM_OK_RESPONSE, "verdict accepted");
         wait(sc_core::sc_time(1, sc_core::SC_US));
@@ -144,6 +148,90 @@ struct DoorbellTb : sc_core::sc_module {
         done = true;
     }
 };
+// Bandwidth window marker (offset FX1_SIM_CTRL_BW_MARK_OFF), enabled by the platform.
+struct BwTb : sc_core::sc_module {
+    tlm_utils::simple_initiator_socket<BwTb> port{"port"};
+    fx1::SimControl ctl{"ctl", false};
+    std::vector<fx1::SimControl::BwMark> marks;
+    bool done = false;
+    SC_HAS_PROCESS(BwTb);
+    explicit BwTb(sc_core::sc_module_name n) : sc_module(n) {
+        port.bind(ctl.socket);
+        ctl.enable_bw_marker([this](const fx1::SimControl::BwMark& m) { marks.push_back(m); });
+        SC_THREAD(run);
+    }
+    // One access with an incoming local-time offset `in`; returns the response,
+    // the read value in `v` and the annotated delay in `out`.
+    tlm::tlm_response_status access(bool write, std::uint32_t& v, sc_core::sc_time in, sc_core::sc_time& out,
+                                    unsigned length = 4) {
+        unsigned char d[4];
+        for (unsigned i = 0; i < 4; ++i) d[i] = static_cast<unsigned char>(v >> (8 * i));
+        tlm::tlm_generic_payload tx;
+        tx.set_command(write ? tlm::TLM_WRITE_COMMAND : tlm::TLM_READ_COMMAND);
+        tx.set_address(FX1_SIM_CTRL_BW_MARK_OFF);
+        tx.set_data_ptr(d);
+        tx.set_data_length(length);
+        tx.set_streaming_width(length);
+        out = in;
+        port->b_transport(tx, out);
+        v = d[0] | (d[1] << 8) | (d[2] << 16) | (std::uint32_t(d[3]) << 24);
+        return tx.get_response_status();
+    }
+    bool w(std::uint32_t value, sc_core::sc_time in = sc_core::SC_ZERO_TIME) {
+        sc_core::sc_time out;
+        return access(true, value, in, out) == tlm::TLM_OK_RESPONSE;
+    }
+    std::uint32_t r() {
+        std::uint32_t v = 0xFFFFFFFFu;
+        sc_core::sc_time out;
+        expect(access(false, v, sc_core::SC_ZERO_TIME, out) == tlm::TLM_OK_RESPONSE, "marker read accepted");
+        return v;
+    }
+    void run() {
+        using fx1::SimControl;
+        const std::uint32_t count = 1u << FX1_SIM_CTRL_BW_COUNT_SHIFT;
+        wait(sc_core::sc_time(2, sc_core::SC_US));
+        expect(r() == 0, "marker reads idle");
+        // START batch of 4 with a 30 ns local offset: effective at now + 30 ns,
+        // this device's 10 ns latency added to the annotated delay.
+        std::uint32_t v = FX1_SIM_CTRL_BW_START | FX1_SIM_CTRL_BW_MODE_BATCH | 4u * count;
+        sc_core::sc_time out;
+        expect(access(true, v, sc_core::sc_time(30, sc_core::SC_NS), out) == tlm::TLM_OK_RESPONSE,
+               "batch START accepted");
+        expect(out == sc_core::sc_time(40, sc_core::SC_NS), "marker access annotates latency on the incoming delay");
+        expect(marks.size() == 1 && marks[0].kind == SimControl::BwMarkKind::start && marks[0].window == 1 &&
+                   marks[0].value == v && marks[0].when == sc_core::sc_time(2030, sc_core::SC_NS),
+               "START mark: window 1, value, effective time = now + incoming delay");
+        expect(r() == 1 && ctl.bw_window_open(), "marker reads open");
+        expect(!w(FX1_SIM_CTRL_BW_START | FX1_SIM_CTRL_BW_MODE_STEADY), "START while open rejected");
+        expect(!w(FX1_SIM_CTRL_BW_STOP | count), "STOP with a count rejected");
+        expect(!w(FX1_SIM_CTRL_BW_STOP | FX1_SIM_CTRL_BW_MODE_STEADY), "STOP with a mode rejected");
+        expect(marks.size() == 4 && marks[1].kind == SimControl::BwMarkKind::error && marks[1].window == 0 &&
+                   marks[3].kind == SimControl::BwMarkKind::error,
+               "rejected writes reported as error marks");
+        expect(r() == 1, "rejected writes leave the window open");
+        wait(sc_core::sc_time(1, sc_core::SC_US));
+        expect(w(FX1_SIM_CTRL_BW_STOP), "STOP accepted");
+        expect(marks.back().kind == SimControl::BwMarkKind::stop && marks.back().window == 1 &&
+                   marks.back().when == sc_core::sc_time(3, sc_core::SC_US),
+               "STOP mark closes window 1");
+        expect(!w(FX1_SIM_CTRL_BW_STOP), "STOP while idle rejected");
+        expect(!w(FX1_SIM_CTRL_BW_START | FX1_SIM_CTRL_BW_MODE_BATCH), "batch START without a count rejected");
+        expect(!w(FX1_SIM_CTRL_BW_START | FX1_SIM_CTRL_BW_MODE_STEADY | count), "steady START with a count rejected");
+        expect(!w(FX1_SIM_CTRL_BW_START | 0x20u | count), "unknown mode rejected");
+        expect(!w(0x3u), "unknown op rejected");
+        expect(!w(0u), "zero rejected");
+        expect(r() == 0, "still idle after rejected writes");
+        expect(w(FX1_SIM_CTRL_BW_START | FX1_SIM_CTRL_BW_MODE_STEADY), "steady START accepted");
+        expect(marks.back().kind == SimControl::BwMarkKind::start && marks.back().window == 2, "second window is 2");
+        v = 0;
+        expect(access(true, v, sc_core::SC_ZERO_TIME, out, 2) == tlm::TLM_GENERIC_ERROR_RESPONSE,
+               "16-bit marker access rejected");
+        expect(w(FX1_SIM_CTRL_BW_STOP), "second STOP accepted");
+        expect(ctl.result() == SimControl::Result::running, "marker writes are not verdicts");
+        done = true;
+    }
+};
 } // namespace
 
 int sc_main(int, char**) {
@@ -151,6 +239,7 @@ int sc_main(int, char**) {
     Tb fail("fail", (0xBEEFu << 16) | FX1_SIM_CTRL_FAIL);
     IrqTb irq("irq");
     DoorbellTb bell("bell");
+    BwTb bw("bw");
     sc_core::sc_start(sc_core::sc_time(1, sc_core::SC_MS));
     // Both write at the same time stamp; sc_stop() takes effect after the
     // current delta, so both verdicts are recorded.
@@ -162,6 +251,7 @@ int sc_main(int, char**) {
     expect(!pass.after_stop && !fail.after_stop, "nothing ran after the stop");
     expect(irq.done, "irq line test completed");
     expect(bell.done, "doorbell test completed");
+    expect(bw.done, "bw marker test completed");
     std::cout << "fx1_sim_control: " << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

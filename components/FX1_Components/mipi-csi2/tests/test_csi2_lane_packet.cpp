@@ -737,6 +737,124 @@ void pa_order() {
 }
 }  // namespace
 
+// VP-only RxPayloadObserver (bandwidth measurement): payload bytes counted as
+// parsed, before the forward decision; expected values are the packets' own WC.
+struct RxRecorder : RxPayloadObserver {
+    std::map<RxPacketClass, unsigned> headers, bytes;
+    unsigned forwarded = 0, not_forwarded = 0, ends = 0, truncated = 0, crc_bad = 0, unclassified = 0, fs = 0,
+             fe = 0;
+    RxPacketClass cur = RxPacketClass::Image;
+    bool open = false;
+    void rx_long_header(RxPacketClass c, unsigned, uint8_t, uint16_t, bool fwd) override {
+        CHECK(!open);  // every reported packet ends before the next one
+        ++headers[c];
+        cur = c;
+        open = true;
+        ++(fwd ? forwarded : not_forwarded);
+    }
+    void rx_payload_bytes(unsigned n) override {
+        CHECK(open && n >= 1 && n <= 4);
+        bytes[cur] += n;
+    }
+    void rx_packet_end(bool trunc, bool crc_ok) override {
+        CHECK(open);
+        open = false;
+        ++ends;
+        truncated += trunc;
+        crc_bad += !trunc && !crc_ok;
+    }
+    void rx_unclassified() override { ++unclassified; }
+    void rx_frame_start(unsigned, uint16_t) override { ++fs; }
+    void rx_frame_end(unsigned, uint16_t) override { ++fe; }
+    unsigned b(RxPacketClass c) const {
+        auto it = bytes.find(c);
+        return it == bytes.end() ? 0 : it->second;
+    }
+};
+
+void pa_rx_observer() {
+    const Bytes l12 = seq_bytes(12, 5), l10 = seq_bytes(15, 6);
+    // A frame of RAW12 and RAW10 lines: every payload byte, forwarded, CRC good.
+    {
+        PacketAnalyzer pa;
+        PaRecorder r;
+        RxRecorder o;
+        pa.set_rx_observer(&o);
+        feed(pa, fs(), r, {}, 6);
+        for (int i = 0; i < 3; ++i) feed(pa, bfm::long_packet(0, bfm::DT_RAW12, l12), r, {}, 7);
+        feed(pa, bfm::long_packet(0, bfm::DT_RAW10, l10), r, {}, 7);
+        feed(pa, fe(), r, {}, 6);
+        CHECK(o.b(RxPacketClass::Image) == 3 * 12 + 15 && o.forwarded == 4 && o.not_forwarded == 0);
+        CHECK(o.ends == 4 && o.truncated == 0 && o.crc_bad == 0 && o.fs == 1 && o.fe == 1 && !o.open);
+        CHECK(r.payload().size() == 3 * 12 + 15);  // the datapath saw the same bytes
+    }
+    // No frame open: not forwarded (FrameSync error, no beat), its bytes still received.
+    {
+        PacketAnalyzer pa;
+        PaRecorder r;
+        RxRecorder o;
+        pa.set_rx_observer(&o);
+        feed(pa, bfm::long_packet(0, bfm::DT_RAW12, l12), r);
+        CHECK(r.beats.empty() && r.err(PaError::FrameSync) == 1);
+        CHECK(o.b(RxPacketClass::Image) == 12 && o.not_forwarded == 1 && o.forwarded == 0 && o.ends == 1);
+    }
+    // CRC error: all bytes received, end with crc bad; truncated burst: the bytes that came.
+    {
+        PacketAnalyzer pa;
+        PaRecorder r;
+        RxRecorder o;
+        pa.set_rx_observer(&o);
+        Bytes bad = bfm::long_packet(0, bfm::DT_RAW10, l10);
+        bad[4 + 3] ^= 0x01;
+        Bytes cut = bfm::long_packet(0, bfm::DT_RAW10, l10);
+        cut.resize(4 + 9);
+        feed(pa, fs(), r);
+        feed(pa, bad, r);
+        feed(pa, cut, r);
+        feed(pa, fe(), r);
+        CHECK(r.err(PaError::Crc) == 1 && r.err(PaError::Wc) == 1);
+        CHECK(o.b(RxPacketClass::Image) == 15 + 9 && o.ends == 2 && o.crc_bad == 1 && o.truncated == 1);
+    }
+    // Uncorrectable header: unclassified, nothing counted as payload.
+    {
+        PacketAnalyzer pa;
+        PaRecorder r;
+        RxRecorder o;
+        pa.set_rx_observer(&o);
+        Bytes p = bfm::long_packet(0, bfm::DT_RAW12, l12);
+        p[0] ^= 0x03;
+        feed(pa, fs(), r);
+        feed(pa, p, r);
+        CHECK(r.err(PaError::Ecc2) == 1 && o.unclassified == 1 && o.bytes.empty() && o.headers.empty());
+    }
+    // Unsupported channel: dropped without error, its bytes received and classified.
+    {
+        PacketAnalyzer pa;
+        PaRecorder r;
+        RxRecorder o;
+        pa.set_rx_observer(&o);
+        feed(pa, bfm::long_packet(1, bfm::DT_RAW12, l12), r);
+        CHECK(r.vc_unsup == 1 && r.beats.empty() && o.b(RxPacketClass::UnsupportedVc) == 12 && o.ends == 1);
+    }
+    // The observer changes nothing: same events with and without it.
+    {
+        Bytes bad = bfm::long_packet(0, bfm::DT_RAW10, l10);
+        bad[4 + 3] ^= 0x01;
+        const std::vector<Bytes> stream = {fs(), bfm::long_packet(0, bfm::DT_RAW12, l12), bad,
+                                           bfm::long_packet(1, bfm::DT_RAW12, l12), fe()};
+        PacketAnalyzer a, b2;
+        PaRecorder ra, rb;
+        RxRecorder o;
+        b2.set_rx_observer(&o);
+        for (const auto& x : stream) {
+            feed(a, x, ra, {}, 3);
+            feed(b2, x, rb, {}, 3);
+        }
+        CHECK(ra.payload() == rb.payload() && ra.errors == rb.errors && ra.done == rb.done && ra.fs == rb.fs &&
+              ra.fe == rb.fe && ra.beats.size() == rb.beats.size() && ra.vc_unsup == rb.vc_unsup);
+    }
+}
+
 int main(int argc, char** argv) {
     const std::string which = argc > 1 ? argv[1] : "lm_merge";
     const std::map<std::string, std::function<void()>> cases = {
@@ -745,6 +863,7 @@ int main(int argc, char** argv) {
         {"pa_lines", pa_lines},   {"pa_ecc", pa_ecc},                 {"pa_payload_errors", pa_payload_errors},
         {"pa_routing", pa_routing}, {"pa_frames", pa_frames},
         {"pa_short_header", pa_short_header}, {"pa_missing_footer", pa_missing_footer}, {"pa_order", pa_order},
+        {"pa_rx_observer", pa_rx_observer},
     };
     const auto it = cases.find(which);
     if (it == cases.end()) {

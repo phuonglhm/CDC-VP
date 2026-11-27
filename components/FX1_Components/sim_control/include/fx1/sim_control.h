@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_target_socket.h>
@@ -19,6 +20,13 @@ namespace fx1 {
 // notifies doorbell_event(); a read returns FX1_SIM_CTRL_DOORBELL_ATTACHED
 // while a host consumer is attached (fx1_soc --isp-stream-spool), else 0.
 // The firmware's records are the source of truth: rings may coalesce.
+// Optional VP-only bandwidth window marker, offset 0xC (FX1_SIM_CTRL_BW_MARK_OFF),
+// present once enable_bw_marker() was called (fx1_soc --bw-marker / --bw-report):
+// START / STOP with a mode and a capture count, validated here (an invalid or
+// out-of-order write answers SLVERR and is reported as an error mark), so the
+// firmware sees the same responses whether or not a recorder listens. A mark
+// takes effect at sc_time_stamp() + the incoming delay (before this device's
+// access latency is added).
 // Any other value, offset or size is a slave error. The platform turns the
 // result into the simulator exit status.
 class SimControl : public sc_core::sc_module {
@@ -44,6 +52,22 @@ public:
         attached_ = attached;
     }
     bool doorbell_enabled() const noexcept { return doorbell_; }
+
+    // Bandwidth window marker (elaboration time). `sink` (may be empty) gets
+    // every write: start / stop with the window number (1, 2, ...), or error.
+    enum class BwMarkKind { start, stop, error };
+    struct BwMark {
+        BwMarkKind kind;
+        std::uint32_t value;   // the word written
+        std::uint32_t window;  // start / stop: the window; error: 0
+        sc_core::sc_time when; // effective time of the write
+    };
+    void enable_bw_marker(std::function<void(const BwMark&)> sink = {}) {
+        bw_marker_ = true;
+        bw_sink_ = std::move(sink);
+    }
+    bool bw_marker_enabled() const noexcept { return bw_marker_; }
+    bool bw_window_open() const noexcept { return bw_open_; }
     const sc_core::sc_event& doorbell_event() const noexcept { return doorbell_event_; }
     std::uint64_t doorbells() const noexcept { return doorbells_; }
 
@@ -63,5 +87,9 @@ private:
     bool doorbell_ = false, attached_ = false;
     std::uint64_t doorbells_ = 0;
     sc_core::sc_event doorbell_event_;
+    bool bw_marker_ = false, bw_open_ = false;
+    std::uint32_t bw_window_ = 0;
+    std::function<void(const BwMark&)> bw_sink_;
+    bool bw_mark(std::uint32_t value, const sc_core::sc_time& when);
 };
 } // namespace fx1

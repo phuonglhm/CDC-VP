@@ -49,7 +49,7 @@ from fx1_isp_ref import regs as regs_mod  # noqa: E402
 import make_profile  # noqa: E402
 
 OUT = os.path.join(HERE, "camera_isp_golden.h")
-CAM_W, CAM_H, CAM_FRAMES = 64, 32, 32  # 32 lines: the v1.07 minimum active size (MAS §6.6.3.4)
+CAM_W, CAM_H, CAM_FRAMES = 64, 32, 64  # 64 frames (plan CSI_ISP_BW2: a 2 + 32 steady run fits); 32 lines: the v1.07 minimum active size (MAS §6.6.3.4)
 TPG_W, TPG_H = 3840, 2160
 TPG640_W, TPG640_H = 640, 480
 

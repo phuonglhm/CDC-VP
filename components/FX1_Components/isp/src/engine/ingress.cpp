@@ -87,6 +87,9 @@ void ingress_engine::not_admitted(int slot, unsigned reason, std::uint64_t seq, 
                 ((std::uint32_t{frame_id} << FX1_ISP_INGRESS_LAST_DROP_FRAME_ID_SHIFT) &
                  FX1_ISP_INGRESS_LAST_DROP_FRAME_ID_MASK);
    last_drop_seq_ = seq;
+   if (ctx_.output_obs) {
+      ctx_.output_obs->ingress_not_admitted(seq, reason);
+   }
    if (slot < 0) {
       return;
    }
@@ -279,6 +282,9 @@ void ingress_engine::sof(const ingress_beat &b) {
    }
    e.tag = tag_seq_;
    e.outputs = outputs;
+   if (ctx_.output_obs) {
+      ctx_.output_obs->ingress_admitted(e.seq, e.epoch, e.frame_id, e.tag);
+   }
    admitted_.push_back(slot);
    ++ctx_.ingress_reserved;
    // An admitted context from the accepted SOF beat (§9.9.3 IDLE, review F1).

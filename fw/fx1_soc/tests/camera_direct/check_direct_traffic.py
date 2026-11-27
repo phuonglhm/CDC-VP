@@ -6,8 +6,14 @@ master, key=value; reads / writes are counted when ISSUED, *_done when they
 returned) and requires the direct-only traffic of the contract:
   MIPI_DMA  no read, no write issued (the CSI RAW DMA stays off: no RAW in DDR)
   ISP_IDMA  no read, no write issued (the ISP takes its pixels from the stream)
-  ISP_ODMA  writes issued > 0, all returned, no error, no read, every byte
-            inside [--odma-lo, --odma-hi]
+  ISP_ODMA  writes issued > 0, all returned, no read, every byte inside
+            [--odma-lo, --odma-hi]; write errors exactly --odma-errors
+            (default 0). The counter is the master's first hop, before the
+            ISP fault shim and the write guard (review BW1 F2): an injected
+            ODMA error is issued traffic with an error. With the shim (console
+            "[fx1_soc] isp dma fault (injection): odma-error:N, R ODMA write(s)
+            seen, fired at #N ..."): R = the counter's issued writes, fired
+            exactly when --odma-errors is 1
   every master: outstanding = 0 (a report taken with a transaction still in
             flight proves nothing; D2a review F3)
 
@@ -32,7 +38,8 @@ except inside the --mipi-window sides of a RAW dump. The dump is removed.
   check_direct_traffic.py --odma-lo 0x88000000 --odma-hi 0x881fffff
       [--mipi-window 0x81000000:0x81000fff --mipi-window 0x81010000:0x81010fff
        [--mipi-errors 1]]
-      [--raw-base 0x81000000 --raw-size 0x7000000 --raw-pattern P --raw-dump D] CONSOLE
+      [--raw-base 0x81000000 --raw-size 0x7000000 --raw-pattern P --raw-dump D]
+      [--odma-errors 1] CONSOLE
 Exit 0 pass, 1 fail.
 """
 import argparse
@@ -45,7 +52,7 @@ import raw_sentinel  # noqa: E402
 
 
 def parse(path):
-    masters, shim = {}, None
+    masters, shim, ishim = {}, None, None
     for line in open(path, errors="replace"):
         m = re.match(r"^(MIPI_DMA|ISP_IDMA|ISP_ODMA) (.*)$", line.strip())
         if m:
@@ -60,7 +67,12 @@ def parse(path):
         if f:
             shim = {"nth": int(f.group(1)), "seen": int(f.group(2)),
                     "addr": int(f.group(3), 0) if f.group(3) else None}
-    return masters, shim
+        g = re.search(r"isp dma fault \(injection\): odma-error:(\d+), (\d+) ODMA write\(s\) seen, "
+                      r"(?:fired at #\d+ address (0x[0-9a-f]+)|not reached)", line)
+        if g:
+            ishim = {"nth": int(g.group(1)), "seen": int(g.group(2)),
+                     "addr": int(g.group(3), 0) if g.group(3) else None}
+    return masters, shim, ishim
 
 
 def window(v):
@@ -76,6 +88,7 @@ def main():
     ap.add_argument("--odma-hi", type=lambda v: int(v, 0), required=True)
     ap.add_argument("--mipi-window", type=window, action="append", default=[])
     ap.add_argument("--mipi-errors", type=int, default=0)
+    ap.add_argument("--odma-errors", type=int, default=0)
     ap.add_argument("--raw-base", type=lambda v: int(v, 0))
     ap.add_argument("--raw-size", type=lambda v: int(v, 0))
     ap.add_argument("--raw-pattern")
@@ -92,7 +105,7 @@ def main():
     if a.raw_dump is not None:  # first: the dump is removed whatever the traffic verdict
         raw_bad, raw_summary = raw_sentinel.check(a.raw_base, a.raw_size, a.raw_pattern, a.raw_dump,
                                                   sorted(a.mipi_window))
-    t, shim = parse(a.console)
+    t, shim, ishim = parse(a.console)
     bad = []
     for name in ("MIPI_DMA", "ISP_IDMA", "ISP_ODMA"):
         if name not in t:
@@ -150,8 +163,17 @@ def main():
         bad.append("ISP_ODMA: no write (no NV12 output)")
     if odma["write_done"] != odma["writes"]:
         bad.append(f"ISP_ODMA: {odma['writes']} writes issued, {odma['write_done']} returned")
-    if odma["write_errors"] or odma["reads"]:
-        bad.append(f"ISP_ODMA: {odma['write_errors']} write errors, {odma['reads']} reads")
+    if odma["write_errors"] != a.odma_errors or odma["reads"]:
+        bad.append(f"ISP_ODMA: {odma['write_errors']} write errors (expected {a.odma_errors}), {odma['reads']} reads")
+    if a.odma_errors and ishim is None:
+        bad.append("ISP_ODMA: an injected error is expected but the console has no isp dma fault report")
+    if ishim is not None:
+        if ishim["seen"] != odma["writes"]:
+            bad.append(f"ISP_ODMA: the fault shim saw {ishim['seen']} writes, the counter {odma['writes']} "
+                       f"(issued writes lost before the counter)")
+        if (ishim["addr"] is not None) != (a.odma_errors == 1):
+            bad.append(f"ISP_ODMA: fault {'fired' if ishim['addr'] is not None else 'not reached'}, "
+                       f"{a.odma_errors} injected error(s) expected")
     if odma["writes"] and (odma["write_lo"] < a.odma_lo or odma["write_hi"] > a.odma_hi):
         bad.append(f"ISP_ODMA: writes 0x{odma['write_lo']:x}..0x{odma['write_hi']:x} outside "
                    f"0x{a.odma_lo:x}..0x{a.odma_hi:x}")

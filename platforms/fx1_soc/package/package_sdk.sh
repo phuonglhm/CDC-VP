@@ -164,6 +164,8 @@ cp "${fw}"/tests/camera/*.[ch] "${sdk}/camera/"
 cp "${fw}"/drivers/fx1_camera.[ch] "${fw}"/drivers/fx1_isp_hal_mmio.[ch] "${sdk}/drivers/camera/"
 cp "${fw}"/tests/camera_isp/cam_isp.[ch] "${fw}"/tests/camera_isp/stream.c "${fw}"/tests/camera_isp/camera_isp_golden.h \
    "${sdk}/camera_isp/"
+# Bandwidth benchmark (plan CSI_ISP_BW): make camera-bw, run_vp.sh camera-bw.
+cp "${fw}/tests/camera_bw/bw.c" "${sdk}/camera_isp/"
 k="${sdk}/third_party/FreeRTOS-Kernel"
 mkdir -p "${k}/include" "${k}/portable/MemMang" "${k}/portable/GCC/RISC-V"
 cp "${kernel}/LICENSE.md" "${kernel}/tasks.c" "${kernel}/queue.c" "${kernel}/list.c" "${k}/"
@@ -183,7 +185,7 @@ make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${d3check}" ddr3 > "${out}/.make.l
 rm -rf "${d3check}" "${out}/.make.log"
 # The camera examples must build from the shipped sources too (outputs not shipped).
 camcheck="$(mktemp -d "${TMPDIR:-/tmp}/fx1_camera_check.XXXXXX")"
-make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${camcheck}" camera > "${out}/.make.log" 2>&1 \
+make -s -C "${sdk}" TOOLDIR="${tooldir}" OUT="${camcheck}" camera camera-bw > "${out}/.make.log" 2>&1 \
     || { cat "${out}/.make.log" >&2; rm -rf "${camcheck}"; die "the SDK Makefile failed on the camera examples"; }
 rm -rf "${camcheck}" "${out}/.make.log"
 # The Ethernet example must build from the shipped sources too (outputs not shipped).
@@ -206,6 +208,8 @@ cp "${here}/test/run_vp.sh" "${here}/test/isp_run.txt" "${test}/"
 cp "${fw}/freertos/tests/cli_smoke.txt" "${fw}/freertos/tests/cli_camera.txt" "${fw}/freertos/tests/cli_camera_direct.txt" "${test}/"
 cp "${fw}/freertos/tests/cli_eth.txt" "${fw}/freertos/tests/cli_eth_load.txt" "${test}/"
 cp "${src}/platforms/fx1_soc/tools/fx1_console.sh" "${test}/"
+# Bandwidth report and its checker (run_vp.sh camera-bw; schema in camera/README.md).
+cp "${src}/platforms/fx1_soc/tools/bw_report.py" "${src}/platforms/fx1_soc/tools/check_bw_report.py" "${test}/"
 cp "${src}/platforms/fx1_soc/demo/isp_pack.py" "${test}/"
 cp "${here}/test/isp_auto.py" "${here}/test/csrw_to_bin.sh" "${test}/"
 # VP-only post-Demosaic capture (run_vp.sh isp ... --dump-demosaic): selection

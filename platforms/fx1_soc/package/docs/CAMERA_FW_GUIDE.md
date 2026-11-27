@@ -167,7 +167,7 @@ usage) has:
 | `camera capture N [crc]` | N frames: metadata, RAW spot check, NV12 CRC against the golden (NV12 up to 1 MiB, or with `crc`: a 4K CRC takes about ten minutes of host time); without the CRC, TPG 4K is spot-checked on 32 Y and 32 UV bytes of the golden; refused while a stop is pending (`camera stop` again) |
 | `camera status`, `camera recover` | counters and state; stop + sensor software reset + configure + start |
 
-Golden: sensor 64x32 RAW12 / RAW10 frames 1..32 since the last sensor reset,
+Golden: sensor 64x32 RAW12 / RAW10 frames 1..64 since the last sensor reset,
 TPG 640x480 and 3840x2160 RAW12. The script `test/VP_FX1_V3.0/cli_camera.txt`
 probes, captures 64x32 RAW12 and RAW10 frames against the golden and stops;
 `test/VP_FX1_V3.0/cli_camera_direct.txt` (`run_vp.sh camera-direct-cli`) does
@@ -179,6 +179,47 @@ firmware's verdict, also the exit status); the full session is in
 `camera_slverr` relies on its timing: the fault time is chosen inside frame
 2 for this image (see the comment at the top of `camera/slverr.c`); a changed
 image needs a new time.
+
+## Bandwidth benchmark (`make camera-bw`, `run_vp.sh camera-bw`)
+
+This benchmark measures the direct path on the VP:
+sensor → detailed D-PHY → CSI-2 RX → AXI4-Stream → ISP → ODMA → DDR (NV12).
+
+The run setup:
+- 64x32 frames; RAW12 on 4 lanes, RAW10 on 2 lanes.
+- The sensor runs from its own timing: line_length 2000 × frame_length 3333 pixel clocks at 200 MHz, i.e. 30.003 FPS requested. The firmware never triggers a frame.
+- `camera_isp/bw.c` runs bare metal through the camera manager. Inside the measurement window it only dequeues and releases each frame: no CRC, no printing.
+- The window is marked by a VP-only register, SIM_CTRL `0xC`. The simulator observes the run with `--bw-report`.
+
+The report reads its numbers from that event log. The NV12 check uses the VP's backdoor dump of each output, compared with the golden.
+
+```bash
+make -C sw/bootloader/sources/VP_FX1_V3.0 camera-bw
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh camera-bw raw12 batch          # about 5 min of host time
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh camera-bw all both --out /tmp/bw # all four: about 1.5 h
+sw/bootloader/test/VP_FX1_V3.0/run_vp.sh camera-bw --report /tmp/bw --frames # print again, no run
+```
+
+There are two kinds of window:
+- **batch**: the first 4 captures after START. The report gives bytes per frame at each boundary and the latency of each capture, with the drain of the set included. It is not a rate.
+- **steady**: after 2 warm-up frames, the fixed interval [START, STOP) over 32 frames. The report gives MB/s at each boundary, the input and output FPS, AXIS occupancy and stalls, DDR peaks in 100 µs and 1 ms buckets, the outstanding transactions at the window edges, and the latency. The drain after STOP is not counted.
+
+Reading the report:
+- `MEASURED` numbers come from the simulation. `ESTIMATED` numbers come from the geometry and the configured timing. `N/A` means not observed: CPU, DMI and SYS_DMA traffic, and packet or PHY overhead.
+- Rates use simulated time, never host time.
+- The DDR table covers the camera DMA masters only (MIPI_DMA, ISP_IDMA, ISP_ODMA). It is not the platform's total DDR traffic.
+- The link-payload rows are the same data on different links. Do not add them up.
+- The report ends with a `VERDICT`. `PASS` means a nominal benchmark result, under all of these conditions:
+  - the simulator and the firmware both passed;
+  - the RAW bits (from the received data type) and the geometry (from the outputs) agree with the selected format, and with the firmware's own configuration lines in the UART log;
+  - a batch has all N captures after START, and every one is good;
+  - every capture of a steady window is good;
+  - the window counters are present, belong to this window, and equal the captures' bytes;
+  - every measured per-frame volume equals its estimate.
+
+  Otherwise the table is still printed, titled `FAILED RUN OR INCONSISTENT DATA`, each reason is listed, and `run_vp.sh` ends with `CAMERA BW FAIL` and a non-zero exit status. Lanes and profile are configured values and are shown as unverified.
+
+These are numbers of the VP timing model at a small test size: about 0.09 MB/s of NV12 at 64x32 and 30 FPS. They check the measurement. They are not silicon figures and not a production camera load. The event log's schema and the checker are described in `bw_report.py` and `check_bw_report.py`, next to `run_vp.sh`.
 
 ## Cost
 

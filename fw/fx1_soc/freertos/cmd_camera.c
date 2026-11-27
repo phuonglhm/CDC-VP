@@ -26,7 +26,7 @@
  *
  * Verification: NV12 CRC-32 against the golden of the stand-alone ISP model
  * (fw/fx1_soc/tests/camera_isp/camera_isp_golden.h) where one exists: sensor
- * 64x32 RAW12 / RAW10 frames 1..32 (any lane count), TPG 640x480 and
+ * 64x32 RAW12 / RAW10 frames 1..64 (any lane count), TPG 640x480 and
  * 3840x2160 RAW12. The CRC is computed for NV12 up to 1 MiB, or always with
  * `crc`: the simulated CPU runs about 0.3 MIPS from DDR, so a 12 MiB CRC at 4K
  * takes about ten minutes of host time (the bare-metal tpg4k regression checks
@@ -155,7 +155,7 @@ static uint32_t frame_us(void)
     return (uint32_t)((uint64_t)ns * frame_length() / 1000u);
 }
 
-/* 12 / 10: sensor 64x32 tables (frames 1..32); 4: TPG 4K, 6: TPG 640x480
+/* 12 / 10: sensor 64x32 tables (frames 1..64); 4: TPG 4K, 6: TPG 640x480
  * (one image each); 0: no golden. */
 static int golden_case(void)
 {

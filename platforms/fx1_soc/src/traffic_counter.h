@@ -14,6 +14,15 @@
 // `outside` (a write into the gap between two windows, or a burst running past
 // the end of one, is caught; global lo / hi cannot tell those apart). The
 // report then lists the windows and the count.
+//
+// Bandwidth events (fx1_soc --bw-report, plan CSI_ISP_BW): with an event sink
+// set, every read / write gets an ID and two events, its issue and its
+// response, each at its effective time: issue = sc_time_stamp() + the incoming
+// local delay; response = sc_time_stamp() + the delay left when b_transport
+// returns (what the target annotated and did not wait out). Command, address,
+// length and byte-enable use are snapshot before forwarding. A response may
+// therefore carry a time later than events reported after it: consumers order
+// by time, not by report order. The counts above keep their meaning.
 #pragma once
 
 #include <cstdint>
@@ -29,6 +38,22 @@
 #include <tlm_utils/simple_target_socket.h>
 
 namespace cdc::platforms::fx1_soc {
+
+class DmaEventSink {
+public:
+    virtual ~DmaEventSink() = default;
+    struct issue {
+        unsigned master;        // as set_event_sink() named it
+        std::uint64_t id;       // per counter, 1, 2, ...
+        bool write;
+        std::uint64_t address;
+        std::uint64_t bytes;    // data length
+        bool byte_enable;       // a byte-enable array was attached
+        sc_core::sc_time when;  // effective issue time
+    };
+    virtual void dma_issue(const issue& i) = 0;
+    virtual void dma_response(unsigned master, std::uint64_t id, const sc_core::sc_time& when, bool ok) = 0;
+};
 
 class TrafficCounter : public sc_core::sc_module {
 public:
@@ -52,6 +77,12 @@ public:
     // Inclusive byte range [lo, hi]; set before the simulation starts.
     void add_window(std::uint64_t lo, std::uint64_t hi) { windows_.emplace_back(lo, hi); }
     std::uint64_t outside() const { return outside_; }
+    // Bandwidth events (see above); set before the simulation starts.
+    void set_event_sink(DmaEventSink* sink, unsigned master)
+    {
+        sink_ = sink;
+        master_ = master;
+    }
 
     // "<master> reads=N read_bytes=N read_done=N read_errors=N [read_lo= read_hi=]
     //  writes=... outstanding=N [windows=LO-HI,... outside=N]" (one line,
@@ -98,15 +129,25 @@ private:
             for (const auto& w : windows_) inside |= n && a >= w.first && a + n - 1 <= w.second;
             if (!inside) ++outside_;
         }
+        std::uint64_t id = 0;
+        if (sink_) {
+            id = ++ids_;
+            sink_->dma_issue({master_, id, t.is_write(), a, n, t.get_byte_enable_ptr() != nullptr,
+                              sc_core::sc_time_stamp() + d});
+        }
         out->b_transport(t, d);
         ++c.done;
         if (!t.is_response_ok()) ++c.errors;
+        if (sink_) sink_->dma_response(master_, id, sc_core::sc_time_stamp() + d, t.is_response_ok());
     }
     unsigned transport_dbg(tlm::tlm_generic_payload& t) { return out->transport_dbg(t); }
 
     counts rd_, wr_;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> windows_;
     std::uint64_t outside_ = 0;
+    DmaEventSink* sink_ = nullptr;
+    unsigned master_ = 0;
+    std::uint64_t ids_ = 0;
 };
 
 }  // namespace cdc::platforms::fx1_soc

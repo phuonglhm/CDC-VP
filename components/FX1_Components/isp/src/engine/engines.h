@@ -84,6 +84,7 @@ struct engine_context {
    // told how each frame of `consumers` ends; it has no effect on the model.
    demosaic_observer *demosaic = nullptr;
    frame_output_hook frame_output;  // VP-only output colorimetry per SOF (ISP-UPD-005), empty when off
+   output_observer *output_obs = nullptr;  // VP-only bandwidth observer (fx1_isp_debug.h), null when off
 
    std::uint64_t cycle() const {
       return static_cast<std::uint64_t>(sc_core::sc_time_stamp() / params.core_period);
@@ -291,6 +292,8 @@ private:
    std::uint64_t frame_ = 0;  // pipeline frame number of the frame being written
    bool direct_ = false;      // VP: that frame came from the stream ingress, with
    std::uint32_t tag_ = 0;    // this ingress TAG
+   output_record rec_{};      // VP-only bandwidth observer: the frame being written
+   void report(output_end how);  // to ctx_.output_obs, once per frame
    bool retry_next_edge_ = false;  // the head buffer was freed on this edge
 };
 

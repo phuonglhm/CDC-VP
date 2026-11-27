@@ -61,6 +61,17 @@ void SimControl::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& del
         tx.set_response_status(tlm::TLM_OK_RESPONSE);
         return;
     }
+    if (tx.get_address() == FX1_SIM_CTRL_BW_MARK_OFF && bw_marker_) {
+        bool ok = true;
+        if (tx.is_write()) {
+            ok = bw_mark(load32(tx.get_data_ptr()), sc_core::sc_time_stamp() + delay);
+        } else {
+            store32(tx.get_data_ptr(), bw_open_ ? 1u : 0u);
+        }
+        delay += latency_;
+        tx.set_response_status(ok ? tlm::TLM_OK_RESPONSE : tlm::TLM_GENERIC_ERROR_RESPONSE);
+        return;
+    }
     if (tx.get_address() != FX1_SIM_CTRL_FINISH_OFF) {
         tx.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
         return;
@@ -88,6 +99,30 @@ void SimControl::b_transport(tlm::tlm_generic_payload& tx, sc_core::sc_time& del
                   << finish_time_ << std::endl;
     }
     if (stop_on_finish_) sc_core::sc_stop();
+}
+
+bool SimControl::bw_mark(std::uint32_t value, const sc_core::sc_time& when) {
+    const std::uint32_t op = value & 0xFu, mode = value & 0xF0u, count = value >> FX1_SIM_CTRL_BW_COUNT_SHIFT;
+    bool ok = false;
+    if (op == FX1_SIM_CTRL_BW_START && !bw_open_) {
+        ok = mode == FX1_SIM_CTRL_BW_MODE_BATCH ? count >= 1 : mode == FX1_SIM_CTRL_BW_MODE_STEADY && count == 0;
+    } else if (op == FX1_SIM_CTRL_BW_STOP && bw_open_) {
+        ok = mode == 0 && count == 0;
+    }
+    BwMark m{BwMarkKind::error, value, 0, when};
+    if (ok) {
+        if (op == FX1_SIM_CTRL_BW_START) {
+            bw_open_ = true;
+            m.kind = BwMarkKind::start;
+            m.window = ++bw_window_;
+        } else {
+            bw_open_ = false;
+            m.kind = BwMarkKind::stop;
+            m.window = bw_window_;
+        }
+    }
+    if (bw_sink_) bw_sink_(m);
+    return ok;
 }
 
 unsigned SimControl::transport_dbg(tlm::tlm_generic_payload& tx) {

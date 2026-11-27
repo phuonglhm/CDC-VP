@@ -189,6 +189,25 @@ $(ETHOUT)/eth_wiring.elf: $(ETHSRCS) $(wildcard $(HERE)/drivers/eth/*.h $(HERE)/
 .PHONY: camera
 camera: $(CAMELFS)
 
+# Bandwidth benchmark (plan CSI_ISP_BW, camera_isp/bw.c): sensor -> D-PHY ->
+# CSI-2 RX -> AXI4-Stream -> ISP -> ODMA, direct path, 64x32 at 30 FPS
+# (line_length 2000 x frame_length 3333 at 200 MHz); a batch of 4 captures and
+# 2 warm-up + 32 steady-state frames, RAW12 4 lanes and RAW10 2 lanes. They
+# write the VP-only window marker: run them through `run_vp.sh camera-bw`.
+BWOUT  := $(OUT)/camera_bw
+BWELFS := $(addprefix $(BWOUT)/,camera_bw_raw12_batch.elf camera_bw_raw12_steady.elf \
+                                camera_bw_raw10_batch.elf camera_bw_raw10_steady.elf)
+.PHONY: camera-bw
+camera-bw: $(BWELFS)
+$(BWOUT)/camera_bw_raw%_batch.elf: $(HERE)/camera_isp/bw.c $(CISPCOMMON) $(CISPHDRS) $(LDS)
+	@mkdir -p $(BWOUT)
+	cd $(BWOUT) && $(CC) $(CAMCFLAGS) -I$(HERE)/camera_isp -DCAM_BITS=$* -DBW_STEADY=0 -DBW_N=4u -DBW_WARMUP=0u \
+	    $(LDFLAGS) -T $(LDS) $< $(CISPCOMMON) -lgcc -o $(notdir $@)
+$(BWOUT)/camera_bw_raw%_steady.elf: $(HERE)/camera_isp/bw.c $(CISPCOMMON) $(CISPHDRS) $(LDS)
+	@mkdir -p $(BWOUT)
+	cd $(BWOUT) && $(CC) $(CAMCFLAGS) -I$(HERE)/camera_isp -DCAM_BITS=$* -DBW_STEADY=1 -DBW_N=32u -DBW_WARMUP=2u \
+	    $(LDFLAGS) -T $(LDS) $< $(CISPCOMMON) -lgcc -o $(notdir $@)
+
 # cam_image(<elf>, <sources>, <extra flags>)
 define cam_image
 	@mkdir -p $(CAMOUT)

@@ -70,6 +70,14 @@ Usage:
   ./run_vp.sh camera-isp [NAME...]     # camera -> ISP examples (camera manager; NV12 = ISP model golden)
   ./run_vp.sh camera-cli               # FreeRTOS CLI with --camera, scripted camera session (cli_camera.txt)
   ./run_vp.sh camera-direct-cli        # the same on the direct path (CSI-2 stream -> ISP, cli_camera_direct.txt)
+  ./run_vp.sh camera-bw [raw12|raw10|all] [batch|steady|both] [--out DIR] [--frames]
+                                       # bandwidth benchmark (fx1_soc --bw-report): sensor -> D-PHY -> CSI-2 RX
+                                       # -> AXI4-Stream -> ISP -> ODMA, direct, 64x32 at 30 FPS; prints the
+                                       # console report (simulated MB/s, FPS, latency, peak; NV12 = golden).
+                                       # Host time: batch about 5 min, steady (2 + 32 frames) about 40 min,
+                                       # per format. Build first: make -C sw/bootloader/sources/VP_FX1_V3.0 camera-bw
+  ./run_vp.sh camera-bw --report DIR [raw12|raw10|all] [batch|steady|both] [--frames]
+                                       # the report again from DIR (a previous --out), nothing simulated
   ./run_vp.sh eth [PEER...]            # bare-metal Ethernet example on each line peer (default: loopback partner none)
   ./run_vp.sh eth-cli [PEER]           # FreeRTOS CLI, scripted eth session (cli_eth.txt), PEER default loopback
   ./run_vp.sh eth-load                 # FreeRTOS CLI, Ethernet traffic with SYS_DMA and the ISP (cli_eth_load.txt)
@@ -259,6 +267,67 @@ case "${mode}" in
             echo "ETH CLI FAIL, exit ${rc} (log ${log})"
         fi
         exit ${rc}
+        ;;
+    camera-bw)
+        # Bandwidth benchmark (plan CSI_ISP_BW): the camera_bw images through
+        # fx1_soc --bw-report, then bw_report.py on each report (with the NV12
+        # dump checked against the golden). --report DIR: no run, report only.
+        command -v python3 >/dev/null 2>&1 || die "python3 is needed for the report (dnf install -y python3)"
+        formats=(raw12 raw10) kinds=(batch steady) out="" from="" frames=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                raw12|raw10) formats=("$1"); shift ;;
+                all) formats=(raw12 raw10); shift ;;
+                batch|steady) kinds=("$1"); shift ;;
+                both) kinds=(batch steady); shift ;;
+                --out) out="${2:?--out DIR}"; shift 2 ;;
+                --report) from="${2:?--report DIR}"; shift 2 ;;
+                --frames) frames=(--frames); shift ;;
+                *) die "camera-bw: unknown argument '$1' (camera-bw [raw12|raw10|all] [batch|steady|both] [--out DIR | --report DIR] [--frames])" ;;
+            esac
+        done
+        golden="${root}/sw/bootloader/sources/${version}/camera_isp/camera_isp_golden.h"
+        [[ -f "${golden}" ]] || die "missing ${golden} (the golden of the NV12 check)"
+        dir="${from:-${out:-${build}/camera_bw/run}}"
+        overall=0
+        for f in "${formats[@]}"; do
+            bits="${f#raw}"
+            lanes=4; [[ "${bits}" == 10 ]] && lanes=2
+            for k in "${kinds[@]}"; do
+                d="${dir}/${f}_${k}"
+                if [[ -z "${from}" ]]; then
+                    img="${build}/camera_bw/camera_bw_${f}_${k}.elf"
+                    [[ -f "${img}" ]] || die "missing ${img}; build with: make -C sw/bootloader/sources/${version} camera-bw"
+                    [[ ! -e "${d}" ]] || die "${d} exists (give a new --out DIR; nothing is removed)"
+                    mkdir -p "${d}"
+                    tmo=2000; [[ "${k}" == steady ]] && tmo=4000
+                    echo "VP_FX1_V3.0 camera-bw ${f} ${k}: running (log ${d}/console.log)"
+                    set +e
+                    "${vp}" --fw "${img}" --camera --timeout-ms "${tmo}" --bw-report "${d}/bw.jsonl" \
+                        --bw-dump-nv12 "${d}/nv12" --uart-log "${d}/uart.log" > "${d}/console.log" 2>&1
+                    rc=$?
+                    set -e
+                    if [[ ${rc} -ne 0 ]]; then
+                        echo "camera-bw ${f} ${k}: the run failed, exit ${rc} (log ${d}/console.log)"
+                        overall=1
+                        continue
+                    fi
+                fi
+                [[ -f "${d}/bw.jsonl" ]] || { echo "camera-bw ${f} ${k}: no report in ${d}"; overall=1; continue; }
+                echo
+                set +e
+                # The firmware's UART log: its verdict and configuration are checked too.
+                python3 "${here}/bw_report.py" "${d}/bw.jsonl" --dump-dir "${d}/nv12" --golden "${golden}" \
+                    --uart-log "${d}/uart.log" \
+                    --workload "bits=${bits}" --workload "lanes=${lanes}" --workload llp=2000 --workload fll=3333 \
+                    --workload w=64 --workload h=32 "${frames[@]+"${frames[@]}"}"
+                rc=$?
+                set -e
+                [[ ${rc} -eq 0 ]] || overall=1
+            done
+        done
+        [[ ${overall} -eq 0 ]] && echo "CAMERA BW PASS (reports in ${dir})" || echo "CAMERA BW FAIL (reports in ${dir})"
+        exit ${overall}
         ;;
     camera-cli|camera-direct-cli)
         # camera-cli: the FreeRTOS CLI with the camera: probe, 64x32 RAW12 and

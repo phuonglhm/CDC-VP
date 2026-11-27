@@ -120,6 +120,19 @@
  * returns ATTACHED (bit 0) when a bridge is attached, bits 31..1 zero. */
 #define FX1_SIM_CTRL_DOORBELL_OFF FX1_U32(0x8)
 #define FX1_SIM_CTRL_DOORBELL_ATTACHED FX1_U32(0x1)
+/* VP-only bandwidth-measurement window marker (fx1_soc --bw-marker or
+ * --bw-report; plan CSI_ISP_BW). A 32-bit write: [3:0] op (START / STOP),
+ * [7:4] mode (START only: batch or steady), [31:8] count (batch START: the
+ * captures in the set, >= 1; otherwise 0). START while a window is open, STOP
+ * while none is, any other op or mode, or a wrong count answers SLVERR and
+ * changes nothing. A read returns 1 while a window is open, else 0. Without
+ * those options the offset answers SLVERR, as before. */
+#define FX1_SIM_CTRL_BW_MARK_OFF     FX1_U32(0xC)
+#define FX1_SIM_CTRL_BW_START        FX1_U32(0x1)
+#define FX1_SIM_CTRL_BW_STOP         FX1_U32(0x2)
+#define FX1_SIM_CTRL_BW_MODE_BATCH   FX1_U32(0x00)
+#define FX1_SIM_CTRL_BW_MODE_STEADY  FX1_U32(0x10)
+#define FX1_SIM_CTRL_BW_COUNT_SHIFT  8u
 
 /* ---- Default firmware DDR layout ------------------------------------------- */
 #define FX1_FW_IMAGE_BASE       FX1_U32(0x80000000) /* code + data, one ELF           */

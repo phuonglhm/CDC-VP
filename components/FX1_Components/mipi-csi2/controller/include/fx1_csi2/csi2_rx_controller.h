@@ -128,6 +128,10 @@ public:
         sys_.set_capture_observer(o);
         sys_.set_epoch(epoch_);
     }
+    // VP-only read-only view of the parsed long-packet payload, before every
+    // forward / discard gate (packet_analyzer.h; bandwidth measurement). Set
+    // before the simulation starts; it changes no CSR, IRQ or timing.
+    void set_rx_payload_observer(RxPayloadObserver* o) { sys_.set_rx_payload_observer(o); }
     // TEST ONLY: presets the 14-bit FRAME_ID counter (next capture: v + 1).
     void debug_set_frame_id_counter(uint16_t v) { sys_.debug_set_frame_id_counter(v); }
     const LaneManagement& lane_management() const { return lm_; }

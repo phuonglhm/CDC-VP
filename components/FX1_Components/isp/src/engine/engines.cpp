@@ -120,6 +120,9 @@ void engine_context::consumer_done(std::uint64_t f, bool ok) {
       const std::uint32_t tag = it->second.tag;
       consumers.erase(it);
       retire_frame(completed);
+      if (output_obs) {
+         output_obs->frame_retired(direct, direct ? tag : 0u, completed);
+      }
       if (direct && direct_retired) {
          direct_retired(tag, completed);
       }
@@ -720,6 +723,7 @@ void odma_engine::run() {
             const std::uint32_t bit = 1u << head;
             const std::uint32_t fh = yl.height;
             const std::uint32_t tag = yl.tag, ts = yl.ts, ingress = yl.ingress, profile = yl.profile;
+            rec_.frame_id = ingress;
             const std::uint32_t sof_ts = ctx_.ctl.frame_counter(ctx_.cycle());
             std::uint32_t eof_ts = 0;
             bool y_end = false;
@@ -762,6 +766,7 @@ void odma_engine::run() {
                // Terminal: memory_access latched the sticky error and requested
                // the automatic DMA-scope recovery (MAS v1.07 §9.9.8); no DONE,
                // no metadata (DEC-19 superseded).
+               report(output_end::failed);  // before the recovery unwinds this frame
                ctx_.check(e);  // aborted by the recovery
             } else if (aborted) {
                // Frame abandoned upstream: it is processed as if it had never
@@ -771,6 +776,7 @@ void odma_engine::run() {
                ctx_.set(r_.free, bit);
             }
             if (failed || aborted) {
+               report(aborted && !failed ? output_end::aborted : output_end::failed);
                sink_frame(y_end, uv_end, e);
                end_frame(false);
                continue;
@@ -790,9 +796,13 @@ void odma_engine::run() {
             ctx_.write(r_.count, 0xFFFFFFFFu, ctx_.reg(r_.count) + 1u);
             ctx_.set(FX1_ISP_DMA_IRQ_STAT_OFFSET, dma_irq_odma_done);
             ctx_.set(FX1_ISP_OUTPUT_IRQ_STATUS_OFFSET, 1u << (FX1_ISP_OUTPUT_IRQ_STATUS_DONE_SHIFT + ch_));
+            report(output_end::done);
             end_frame(true);
          }
       } catch (const reset_abort &) {
+         if (busy_) {
+            report(output_end::failed);  // a frame being written, abandoned by a reset or a recovery
+         }
       }
    }
 }
@@ -839,10 +849,33 @@ bool odma_engine::claim(const line &first, std::uint64_t e) {
    busy_ = true;
    direct_ = first.direct;
    tag_ = first.tag;
+   if (ctx_.output_obs) {
+      rec_ = output_record{};
+      rec_.channel = ch_;
+      rec_.slot = head;
+      rec_.direct = first.direct;
+      rec_.tag = first.direct ? first.tag : 0u;
+      rec_.rgb = s.rgb;
+      rec_.y_base = s.y_base;
+      rec_.uv_base = s.uv_base;
+      rec_.y_stride = s.y_stride;
+      rec_.uv_stride = s.uv_stride;
+      rec_.width = s.width;
+      rec_.height = s.height;
+   }
    if (ctx_.odma_busy++ == 0) {
       ctx_.set(FX1_ISP_DMA_STAT_OFFSET, FX1_ISP_DMA_STAT_ODMA_BUSY_MASK);
    }
    return true;
+}
+
+void odma_engine::report(output_end how) {
+   if (!ctx_.output_obs || rec_.reported) {
+      return;
+   }
+   rec_.reported = true;
+   rec_.done = sc_core::sc_time_stamp();
+   ctx_.output_obs->output_ended(how, rec_);
 }
 
 void odma_engine::set_overflow(bool level) {
@@ -869,7 +902,27 @@ bool odma_engine::write_line(std::uint64_t base, std::uint32_t stride, std::uint
    std::uint32_t off = 0;
    for (const dma::burst &b :
         dma::split_line(addr, static_cast<std::uint32_t>(data.size()), max_beats_, ctx_.params.axi_data_bytes)) {
-      if (!memory_access(socket_, tlm::TLM_WRITE_COMMAND, b.addr, data.data() + off, b.bytes, ctx_, e)) {
+      if (ctx_.output_obs) {
+         if (!rec_.wrote) {
+            rec_.first_write_issue = sc_core::sc_time_stamp();  // memory_access issues with zero local delay
+            rec_.wrote = true;
+         }
+         ++rec_.writes;
+         rec_.write_bytes += b.bytes;
+      }
+      bool ok = false;
+      try {
+         ok = memory_access(socket_, tlm::TLM_WRITE_COMMAND, b.addr, data.data() + off, b.bytes, ctx_, e);
+      } catch (const reset_abort &) {
+         if (ctx_.output_obs) {
+            rec_.last_write_response = sc_core::sc_time_stamp();  // the response came before the unwind
+         }
+         throw;
+      }
+      if (ctx_.output_obs) {
+         rec_.last_write_response = sc_core::sc_time_stamp();  // it waited the response delay out
+      }
+      if (!ok) {
          return false;
       }
       off += b.bytes;

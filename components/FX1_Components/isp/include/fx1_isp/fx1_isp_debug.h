@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include <systemc>
+
 namespace cdc::components::fx1_isp {
 
 // Identity and SOF configuration of a frame entering the image pipeline.
@@ -83,6 +85,43 @@ struct frame_output_info {
    bool csc_full_range = false;            // Y/C 0..255 (true) or 16..235/16..240
 };
 using frame_output_hook = std::function<void(const frame_output_info &)>;
+
+// VP-only output observer (bandwidth measurement, plan CSI_ISP_BW): when the
+// stream ingress admits a capture, and when an ODMA channel ends a frame. It
+// has no effect on the model and must not call wait(). Times are simulation
+// time: the ODMA waits out every response delay, so `last_write_response` is
+// when the last write of the frame completed; `done` is when DONE was
+// published (after that response, same or later time).
+struct output_record {
+   unsigned channel = 0, slot = 0;            // ODMA channel, buffer index of the rotation
+   bool direct = false;                       // from the stream ingress
+   std::uint32_t tag = 0;                     // ingress TAG (direct), else 0
+   std::uint32_t frame_id = 0;                // ingress FRAME_ID (TUNE_CHn_BUFm_FRAME)
+   bool rgb = false;                          // CH2 RGB888: one plane
+   std::uint64_t y_base = 0, uv_base = 0;     // plane bases as the claim captured them
+   std::uint32_t y_stride = 0, uv_stride = 0, width = 0, height = 0;
+   std::uint64_t writes = 0, write_bytes = 0; // write transactions issued for this frame
+   bool wrote = false;                        // at least one write issued
+   bool reported = false;                     // internal: output_ended() was called
+   sc_core::sc_time first_write_issue, last_write_response, done;
+};
+enum class output_end { done, failed, aborted };
+class output_observer {
+public:
+   virtual ~output_observer() = default;
+   // The SOF beat of capture `seq` (CSI epoch, FRAME_ID) was admitted with `tag`.
+   virtual void ingress_admitted(std::uint64_t seq, std::uint32_t epoch, std::uint16_t frame_id,
+                                 std::uint32_t tag) = 0;
+   // A capture was not admitted (DROP_REASON_* of fx1_isp_ingress_regs.h).
+   virtual void ingress_not_admitted(std::uint64_t seq, unsigned reason) = 0;
+   // An ODMA channel ended a frame: DONE published, AXI error (failed), or
+   // abandoned upstream (aborted). For failed / aborted, `done` is the end time.
+   virtual void output_ended(output_end how, const output_record &r) = 0;
+   // A frame retired from the ISP (every enabled output ended); ok: all DONE.
+   // A frame abandoned by a reset or a DMA recovery does not retire: its
+   // failed output (if any) is the last event about it.
+   virtual void frame_retired(bool direct, std::uint32_t tag, bool ok) = 0;
+};
 
 // Writer used by fx1_isp_run_raw and fx1_soc. Each frame streams into
 // temporary files (<base>.rgb16.part / .png.part); a completed frame is

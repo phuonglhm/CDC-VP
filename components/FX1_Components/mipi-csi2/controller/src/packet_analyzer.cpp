@@ -5,6 +5,8 @@
 namespace fx1::csi2 {
 
 void PacketAnalyzer::reset() {
+    if (rx_obs_ && rx_open_) rx_obs_->rx_packet_end(true, false);
+    rx_open_ = false;
     st_ = St::Idle;
     clear_contexts();
 }
@@ -18,6 +20,8 @@ void PacketAnalyzer::push(const MergedWord& w, const PaConfig& cfg, PaEvents& ev
         for (auto& c : ctx_)
             if (c.frame_active) c.pkt_err_in_frame = true;
         ev.pa_error(PaError::LaneAbort, -1, 0);
+        if (rx_obs_ && rx_open_) rx_obs_->rx_packet_end(true, false);
+        rx_open_ = false;
         st_ = St::Idle;
         return;
     }
@@ -45,6 +49,7 @@ void PacketAnalyzer::header(const MergedWord& w, const PaConfig& cfg, PaEvents& 
         for (auto& c : ctx_)
             if (c.frame_active) c.pkt_err_in_frame = true;
         ev.pa_error(PaError::Wc, -1, 0);
+        if (rx_obs_) rx_obs_->rx_unclassified();
         st_ = w.eob ? St::Idle : St::Discard;
         return;
     }
@@ -53,6 +58,7 @@ void PacketAnalyzer::header(const MergedWord& w, const PaConfig& cfg, PaEvents& 
     const HeaderCheck hc = check_header(h);
     if (hc.result == EccResult::Uncorrectable) {
         ev.pa_error(PaError::Ecc2, -1, 0);
+        if (rx_obs_) rx_obs_->rx_unclassified();
         st_ = w.eob ? St::Idle : St::Discard;  // packet length unknown
         return;
     }
@@ -73,6 +79,7 @@ void PacketAnalyzer::header(const MergedWord& w, const PaConfig& cfg, PaEvents& 
             if (c.frame_active) ev.pa_error(PaError::FrameSync, vc_, c.line_count);
             c = Context{};
             c.frame_active = true;
+            if (rx_obs_) rx_obs_->rx_frame_start(vc_, f2);
             ev.pa_frame_start(vc_, f2);
         } else if (dt_ == 0x01) {  // Frame End
             if (!c.frame_active) {
@@ -80,6 +87,7 @@ void PacketAnalyzer::header(const MergedWord& w, const PaConfig& cfg, PaEvents& 
             } else {
                 if (c.pkt_err_in_frame) ev.pa_error(PaError::FrameLevel, vc_, c.line_count);
                 c.frame_active = false;
+                if (rx_obs_) rx_obs_->rx_frame_end(vc_, f2);
                 ev.pa_frame_end(vc_, f2);
             }
         } else if (dt_ >= 0x08) {
@@ -119,6 +127,15 @@ void PacketAnalyzer::header(const MergedWord& w, const PaConfig& cfg, PaEvents& 
     // not consume it.
     // The line count of the channel advances with that beat too (C38).
     sof_pending_ = image_ && forward_ && !c.first_image_seen;
+    if (rx_obs_) {
+        const RxPacketClass cls = !supported_ ? RxPacketClass::UnsupportedVc
+                                  : embedded_ ? RxPacketClass::Embedded
+                                  : image_    ? RxPacketClass::Image
+                                  : (dt_ == 0x10 || dt_ == 0x11) ? RxPacketClass::NullBlank
+                                                                 : RxPacketClass::UnsupportedDt;
+        rx_obs_->rx_long_header(cls, vc_, dt_, f2, forward_);
+        rx_open_ = true;
+    }
     st_ = St::Payload;
     if (w.eob) truncated(ev);  // burst ended on the header word: payload and/or footer missing (C22)
 }
@@ -131,6 +148,8 @@ void PacketAnalyzer::truncated(PaEvents& ev) {
         ev.pa_error(PaError::Wc, vc_, c.line_count);
         if (c.frame_active) c.pkt_err_in_frame = true;
     }
+    if (rx_obs_ && rx_open_) rx_obs_->rx_packet_end(true, false);
+    rx_open_ = false;
     finish(ev);
 }
 
@@ -154,6 +173,7 @@ void PacketAnalyzer::payload(const MergedWord& w, unsigned first_byte, PaEvents&
             }
         }
     }
+    if (nb > 0 && rx_obs_) rx_obs_->rx_payload_bytes(nb);  // before the forward decision
     if (nb > 0 && forward_) {
         b.byte_en = static_cast<uint8_t>((1u << nb) - 1);
         b.sol = first_beat_;
@@ -175,6 +195,8 @@ void PacketAnalyzer::payload(const MergedWord& w, unsigned first_byte, PaEvents&
             ev.pa_error(PaError::Crc, vc_, c.line_count);
             if (c.frame_active) c.pkt_err_in_frame = true;
         }
+        if (rx_obs_ && rx_open_) rx_obs_->rx_packet_end(false, !crc_bad);
+        rx_open_ = false;
         finish(ev);
         return;
     }

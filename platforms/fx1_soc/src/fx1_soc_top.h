@@ -106,6 +106,16 @@ struct fx1_soc_options {
         std::uint64_t lo = 0, hi = 0;
     };
     std::vector<traffic_window> traffic_windows;
+    // VP-only bandwidth measurement (plan CSI_ISP_BW1, bw_recorder.h):
+    // --bw-report FILE: the JSONL event log (marker, CSI payload, AXIS, DMA,
+    // ISP outputs), with the window marker; --bw-marker: the marker register
+    // alone (no recorder: the on/off control of the same stimulus);
+    // --bw-dump-nv12 DIR (with --bw-report): each DONE output's NV12, by backdoor.
+    // bw_header: JSON fields the caller adds to the report header.
+    std::string bw_report;
+    bool bw_marker = false;
+    std::string bw_dump_nv12;
+    std::vector<std::pair<std::string, std::string>> bw_header;
     std::uint64_t isp_dma_fault_nth = 0;
     std::uint64_t isp_dma_fault_hold_us = 1000000;  // idma-stall:N:US
     // SAURIA v4.7 NPU (components/FX1_Components/npu) at FX1_NPU_VP_BASE, IRQ
@@ -154,6 +164,9 @@ public:
     std::string ddr3_report() const;
     // One line describing the camera (empty without --camera).
     std::string camera_banner() const;
+    // --bw-report: write the footer (reason: pass / fail / timeout) and flush.
+    // Returns false when the report or an NV12 dump failed. No-op without it.
+    bool bw_finish(const std::string& reason);
     // This binary contains the camera (configured with FX1_BUILD_MIPI_CSI2).
     static bool camera_built() noexcept;
     // One line of exclusive-monitor counters ("off" without a monitor).

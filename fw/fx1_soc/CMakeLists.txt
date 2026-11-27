@@ -534,6 +534,24 @@ if(CDC_BUILD_TESTS)
             INCLUDES ${_cisp_includes} DEPENDS ${_cisp_depends})
         fx1_firmware(camera_direct_tpg4k SOURCES ${_cisp}/tpg4k.c ${_cisp_sources} DEFINES CAM_DIRECT=1
             INCLUDES ${_cisp_includes} DEPENDS ${_cisp_depends})
+        # Bandwidth benchmark (plan CSI_ISP_BW2, tests/camera_bw/bw.c): direct
+        # sensor path, 30 FPS (LLP 2000 x FLL 3333 at 200 MHz), batch 4 and
+        # warm-up 2 + steady 32 per format, plus a short pilot. Run with
+        # --bw-report (or --bw-marker): the window marker is VP-only.
+        function(fx1_camera_bw_image name)
+            cmake_parse_arguments(W "" "BITS;STEADY;N;WARMUP;FLL" "" ${ARGN})
+            if(NOT W_FLL)
+                set(W_FLL 3333)
+            endif()
+            fx1_firmware(${name} SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_bw/bw.c ${_cisp_sources}
+                DEFINES CAM_BITS=${W_BITS} BW_STEADY=${W_STEADY} BW_N=${W_N}u BW_WARMUP=${W_WARMUP}u BW_FLL=${W_FLL}u
+                INCLUDES ${_cisp_includes} DEPENDS ${_cisp_depends})
+        endfunction()
+        foreach(_bits 12 10)
+            fx1_camera_bw_image(camera_bw_raw${_bits}_batch BITS ${_bits} STEADY 0 N 4 WARMUP 0)
+            fx1_camera_bw_image(camera_bw_raw${_bits}_steady BITS ${_bits} STEADY 1 N 32 WARMUP 2)
+        endforeach()
+        fx1_camera_bw_image(camera_bw_pilot BITS 12 STEADY 1 N 2 WARMUP 1)
         # M5b review F1/F2: driver budgets and abort recovery, polling and IRQ mode.
         fx1_firmware(camera_i2c_timeout SOURCES ${_cam}/i2c_timeout.c ${_drv}/fx1_i2c.c ${_drv}/fx1_ccs_sensor.c
             INCLUDES ${_drv} DEPENDS ${_drv}/fx1_i2c.h ${_drv}/fx1_ccs_sensor.h)
@@ -565,7 +583,7 @@ if(CDC_BUILD_TESTS)
             add_custom_target(fx1_raw_sentinel ALL DEPENDS ${_raw_pattern})
         endif()
         function(fx1_camera_direct_test name)
-            cmake_parse_arguments(C "" "TIMEOUT_MS;LABEL;ODMA_HI;SOURCE;MIPI_ERRORS" "DEFINES;ARGS;MIPI_WINDOWS" ${ARGN})
+            cmake_parse_arguments(C "" "TIMEOUT_MS;LABEL;ODMA_HI;SOURCE;MIPI_ERRORS;ODMA_ERRORS" "DEFINES;ARGS;MIPI_WINDOWS" ${ARGN})
             if(NOT C_SOURCE)
                 set(C_SOURCE ${_cdir}/direct.c)
             endif()
@@ -585,6 +603,9 @@ if(CDC_BUILD_TESTS)
                 endforeach()
                 if(C_MIPI_ERRORS)
                     list(APPEND _check --mipi-errors ${C_MIPI_ERRORS})
+                endif()
+                if(C_ODMA_ERRORS)
+                    list(APPEND _check --odma-errors ${C_ODMA_ERRORS})
                 endif()
                 set(_raw_dump ${CMAKE_CURRENT_BINARY_DIR}/${name}.raw_sentinel.bin)
                 list(APPEND _check --raw-base ${_raw_base} --raw-size ${_raw_size} --raw-pattern ${_raw_pattern}
@@ -633,8 +654,9 @@ if(CDC_BUILD_TESTS)
         fx1_camera_direct_test(camera_mgr_direct_held_outputs ${_mgr} DEFINES CAM_CASE=32 TIMEOUT_MS 250 LABEL fx1_regression)
         fx1_camera_direct_test(camera_mgr_direct_tpg640 SOURCE ${_cdir}/manager.c ODMA_HI 0x881fffff DEFINES CAM_CASE=33
             TIMEOUT_MS 1000)
+        # The traffic counter is ODMA's first hop (review BW1 F2): the injected error is counted.
         fx1_camera_direct_test(camera_mgr_direct_odma_err ${_mgr} DEFINES CAM_CASE=34 TIMEOUT_MS 200 LABEL fx1_regression
-            ARGS --isp-dma-fault odma-error:106)
+            ODMA_ERRORS 1 ARGS --isp-dma-fault odma-error:106)
         fx1_camera_direct_test(camera_mgr_direct_sensor_stop ${_mgr} DEFINES CAM_CASE=35 TIMEOUT_MS 250 LABEL fx1_regression)
         fx1_camera_direct_test(camera_mgr_direct_sensor_faults ${_mgr} DEFINES CAM_CASE=36 TIMEOUT_MS 200 LABEL fx1_regression
             ARGS --camera-fault 3:crc:10 --camera-fault 5:no-fe)
@@ -644,7 +666,7 @@ if(CDC_BUILD_TESTS)
         fx1_camera_direct_test(camera_mgr_direct_stop_no_fe ${_mgr} DEFINES CAM_CASE=39 TIMEOUT_MS 250 LABEL fx1_regression
             ARGS --camera-fault 1:no-fe --camera-fault 5:no-fe)
         fx1_camera_direct_test(camera_mgr_direct_odma_err_held ${_mgr} DEFINES CAM_CASE=40 TIMEOUT_MS 250 LABEL fx1_regression
-            ARGS --isp-dma-fault odma-error:106)
+            ODMA_ERRORS 1 ARGS --isp-dma-fault odma-error:106)
         # Re-review D3 R1: stop pending (test-only ingress HAL fault), TPG 640 as camera_mgr_direct_tpg640.
         fx1_camera_direct_test(camera_mgr_direct_stop_pending SOURCE ${_cdir}/manager.c ODMA_HI 0x881fffff
             DEFINES CAM_CASE=41 TIMEOUT_MS 1000 LABEL fx1_regression)
@@ -1061,6 +1083,67 @@ if(CDC_BUILD_TESTS)
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_direct.txt ${_cam_rx}
             REGEX "camera probe: PASS.*64x32 RAW12, 4 lane\\(s\\), source sensor, golden yes, path direct.*camera start: PASS.*camera path: camera is running \\(camera stop first\\).*isp selftest: the ISP is in use by the camera.*capture [0-9]+ FRAME_ID [0-9]+ epoch [0-9]+ isp frame [1-9][0-9]* direct out [0-3] 64x32 raw n/a crc 0x[0-9a-f]+ = golden frame [0-9]+.*4/4 frames, drops 0.*camera capture: PASS.*direct ok [4-9][0-9]*, reset 0, csi_dropped 0, csi_missing_fe 0, invalid 0, isp_failed 0.*camera stop: OK.*64x32 RAW10, 2 lane\\(s\\), source sensor, golden yes, path direct.*direct out [0-3] 64x32 raw n/a crc 0x[0-9a-f]+ = golden frame.*2/2 frames.*camera capture: PASS.*camera stop: OK.*path memory.*zero-copy out [0-3] 64x32 raw frame [0-9]+ raw ok crc 0x[0-9a-f]+ = golden frame.*2/2 frames.*camera capture: PASS.*camera stop: OK.*poweroff: 0 failed.*RESULT PASS")
         set_tests_properties(fx1_regression_freertos_cli_camera_direct PROPERTIES TIMEOUT 1800)
+        # Bandwidth measurement BW1 (plan CSI_ISP_BW): the same short direct
+        # session (RAW12 4 lanes, then RAW10 2 lanes) with --bw-report and the
+        # NV12 dump, checked by check_bw_report.py (completeness, DMA pairing,
+        # no RAW in DDR, per-capture volumes from the geometry, output times
+        # against the DMA log, dumps = the firmware's CRC), and without any
+        # observer: UART log and verdict time must be identical (on / off).
+        if(FX1_PYTHON3)
+            set(_bw_out ${CMAKE_CURRENT_BINARY_DIR}/bw_direct)
+            set(_bw_chk ${FX1_PYTHON3} ${CMAKE_SOURCE_DIR}/platforms/fx1_soc/tools/check_bw_report.py)
+            add_test(NAME fx1_regression_freertos_cli_camera_direct_bw_clean
+                     COMMAND ${CMAKE_COMMAND} -E rm -rf ${_bw_out}/nv12 ${_bw_out}/bw.jsonl)
+            set_tests_properties(fx1_regression_freertos_cli_camera_direct_bw_clean PROPERTIES
+                FIXTURES_SETUP fx1_bw_direct_clean LABELS "fx1;fx1_regression")
+            fx1_expect_test(freertos_cli_camera_direct_bw IMAGE freertos_cli RC 0 TIMEOUT_MS 5000 LABEL fx1_regression
+                ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_direct_bw.txt ${_cam_rx}
+                     --bw-report ${_bw_out}/bw.jsonl --bw-dump-nv12 ${_bw_out}/nv12
+                REGEX "64x32 RAW12, 4 lane\\(s\\), source sensor, golden yes, path direct.*2/2 frames, drops 0.*camera capture: PASS.*64x32 RAW10, 2 lane\\(s\\), source sensor, golden yes, path direct.*2/2 frames, drops 0.*camera capture: PASS.*poweroff: 0 failed.*bw report: .*RESULT PASS"
+                CHECK ${_bw_chk} check ${_bw_out}/bw.jsonl --dump-dir ${_bw_out}/nv12
+                      --uart-log ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli_camera_direct_bw.uart.log --direct-only --min-good 4)
+            set_tests_properties(fx1_regression_freertos_cli_camera_direct_bw PROPERTIES TIMEOUT 1800
+                FIXTURES_REQUIRED fx1_bw_direct_clean FIXTURES_SETUP fx1_bw_direct_runs)
+            fx1_expect_test(freertos_cli_camera_direct_bw_off IMAGE freertos_cli RC 0 TIMEOUT_MS 5000 LABEL fx1_regression
+                ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_direct_bw.txt ${_cam_rx}
+                REGEX "camera capture: PASS.*camera capture: PASS.*poweroff: 0 failed.*RESULT PASS"
+                CHECK ${CMAKE_COMMAND} -E true)
+            set_tests_properties(fx1_regression_freertos_cli_camera_direct_bw_off PROPERTIES TIMEOUT 1800
+                FIXTURES_SETUP fx1_bw_direct_runs)
+            add_test(NAME fx1_regression_freertos_cli_camera_direct_bw_same_run
+                     COMMAND ${_bw_chk} same-run
+                             ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli_camera_direct_bw.uart.log
+                             ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli_camera_direct_bw_off.uart.log
+                             ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli_camera_direct_bw.uart.log.console
+                             ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli_camera_direct_bw_off.uart.log.console)
+            set_tests_properties(fx1_regression_freertos_cli_camera_direct_bw_same_run PROPERTIES TIMEOUT 60
+                FIXTURES_REQUIRED fx1_bw_direct_runs LABELS "fx1;fx1_regression"
+                PASS_REGULAR_EXPRESSION "same-run PASS")
+            # Review BW1 F3: the checker must reject wrong DMA bytes / status, a
+            # write past its plane, short AXIS bytes, a changed NV12 byte, a
+            # missing response or footer, on copies of the report above.
+            add_test(NAME fx1_regression_freertos_cli_camera_direct_bw_checker_selftest
+                     COMMAND ${_bw_chk} selftest ${_bw_out}/bw.jsonl --dump-dir ${_bw_out}/nv12
+                             --uart-log ${CMAKE_CURRENT_BINARY_DIR}/freertos_cli_camera_direct_bw.uart.log
+                             --direct-only --min-good 4)
+            set_tests_properties(fx1_regression_freertos_cli_camera_direct_bw_checker_selftest PROPERTIES TIMEOUT 120
+                FIXTURES_REQUIRED fx1_bw_direct_runs LABELS "fx1;fx1_regression"
+                PASS_REGULAR_EXPRESSION "selftest PASS")
+            # Review BW1 F2: the counters are the ISP DMA masters' first hop. An
+            # injected ODMA write error is in the report as an issued write with an
+            # error response, at the shim's address and issue time, and the shim saw
+            # exactly the report's writes; an IDMA read held 100 us keeps its issue time.
+            fx1_expect_test(camera_mgr_direct_odma_err_bw IMAGE camera_mgr_direct_odma_err RC 0 TIMEOUT_MS 200
+                LABEL fx1_regression REGEX "RESULT PASS"
+                ARGS --camera --isp-dma-fault odma-error:106 --bw-report ${_bw_out}/odma_err.jsonl
+                CHECK ${_bw_chk} check ${_bw_out}/odma_err.jsonl --expect-dma-errors ISP_ODMA:1 --direct-only --min-good 4)
+            set_tests_properties(fx1_regression_camera_mgr_direct_odma_err_bw PROPERTIES TIMEOUT 1800)
+            fx1_expect_test(camera_isp_idma_stall_bw IMAGE camera_isp_raw12 RC 0 TIMEOUT_MS 80
+                LABEL fx1_regression REGEX "idma-stall:10:100, [0-9]+ IDMA read\\(s\\) seen, fired at #10.*RESULT PASS"
+                ARGS --camera --isp-dma-fault idma-stall:10:100 --bw-report ${_bw_out}/idma_stall.jsonl
+                CHECK ${_bw_chk} check ${_bw_out}/idma_stall.jsonl --expect-stall ISP_IDMA:10:100 --min-good 0)
+            set_tests_properties(fx1_regression_camera_isp_idma_stall_bw PROPERTIES TIMEOUT 1800)
+        endif()
         fx1_expect_test(freertos_cli_camera_direct_tpg IMAGE freertos_cli RC 0 TIMEOUT_MS 5000 LABEL fx1_regression
             ARGS --camera --uart0-rx-file ${_rtos_dir}/tests/cli_camera_direct_tpg.txt ${_cam_rx}
             REGEX "camera probe: PASS.*640x480 RAW12, source tpg, golden yes, path direct.*camera start: PASS.*direct out [0-3] 640x480 raw n/a crc 0x[0-9a-f]+ = golden.*direct out [0-3] 640x480 raw n/a crc 0x[0-9a-f]+ = golden.*2/2 frames, drops 0.*camera capture: PASS.*direct ok [2-9], reset 0, csi_dropped 0, csi_missing_fe 0, invalid 0, isp_failed 0.*camera stop: OK.*poweroff: 0 failed.*RESULT PASS")

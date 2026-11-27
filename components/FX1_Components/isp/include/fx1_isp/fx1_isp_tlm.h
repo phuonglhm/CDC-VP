@@ -29,6 +29,7 @@
 namespace cdc::components::fx1_isp {
 
 class demosaic_observer;  // fx1_isp/fx1_isp_debug.h
+class output_observer;    // fx1_isp/fx1_isp_debug.h
 class stream_ingress;     // fx1_isp/fx1_isp_ingress.h
 struct frame_output_info;
 
@@ -101,6 +102,9 @@ public:
    // ISP-UPD-005); an empty function: off (default). Same timing rule as the
    // Demosaic observer (std::logic_error after start of simulation).
    void debug_set_frame_output_hook(std::function<void(const frame_output_info &)> hook);
+   // VP-only output observer (fx1_isp_debug.h, bandwidth measurement); null:
+   // off (default). Same timing rule (std::logic_error after start of simulation).
+   void debug_set_output_observer(output_observer *observer);
 
 private:
    void b_transport(tlm::tlm_generic_payload &trans, sc_core::sc_time &delay);

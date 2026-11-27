@@ -173,7 +173,7 @@ if(FX1_MIPI_CSI2_BUILD_TESTS)
   add_executable(test_fx1_csi2_lane_packet tests/test_csi2_lane_packet.cpp)
   target_link_libraries(test_fx1_csi2_lane_packet PRIVATE fx1_csi2_rx_core fx1_csi2_bfm)
   foreach(case lm_merge lm_abort lm_lanes lm_reset_states pa_lines pa_ecc pa_payload_errors pa_routing pa_frames
-               pa_short_header pa_missing_footer pa_order)
+               pa_short_header pa_missing_footer pa_order pa_rx_observer)
     add_test(NAME fx1_csi2_rx_${case} COMMAND test_fx1_csi2_lane_packet ${case})
     set_tests_properties(fx1_csi2_rx_${case} PROPERTIES TIMEOUT 60 LABELS "fx1_csi2;fx1_csi2_unit")
   endforeach()

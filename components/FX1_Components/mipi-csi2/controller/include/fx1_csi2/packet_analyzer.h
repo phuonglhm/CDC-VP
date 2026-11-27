@@ -43,6 +43,35 @@ public:
     virtual void pa_vc_unsupported() = 0;
 };
 
+// VP-only read-only view of what the Packet Analyzer parses (bandwidth
+// measurement, plan CSI_ISP_BW): every long-packet payload byte as it is
+// received, before the forward decision of this analyzer and before any
+// discard gate downstream, so a capture dropped in mid-frame still shows the
+// bytes that arrived. Header and CRC footer bytes are not payload. Changes no
+// event, state or timing; default: none.
+enum class RxPacketClass {
+    Image,          // RAW10 / RAW12 (DT 0x2B / 0x2C), channel supported
+    Embedded,       // metadata DT with capture enabled
+    NullBlank,      // DT 0x10 / 0x11
+    UnsupportedDt,  // other long DT on a supported channel
+    UnsupportedVc,  // channel not supported: dropped without error
+};
+class RxPayloadObserver {
+public:
+    virtual ~RxPayloadObserver() = default;
+    // A long-packet header passed ECC: class, channel, DT, word count, and
+    // whether its payload is forwarded (a frame of the channel is open).
+    virtual void rx_long_header(RxPacketClass cls, unsigned vc, uint8_t dt, uint16_t wc, bool forwarded) = 0;
+    virtual void rx_payload_bytes(unsigned n) = 0;  // payload bytes of that packet, as parsed
+    // The packet ended: CRC footer checked (crc_ok) or burst ended early (truncated).
+    virtual void rx_packet_end(bool truncated, bool crc_ok) = 0;
+    // A header that could not be decoded (truncated or ECC uncorrectable):
+    // its channel, type and length are unknown, its payload is not counted.
+    virtual void rx_unclassified() = 0;
+    virtual void rx_frame_start(unsigned vc, uint16_t frame_number) = 0;  // FS of a supported channel
+    virtual void rx_frame_end(unsigned vc, uint16_t frame_number) = 0;    // FE closing an open frame
+};
+
 struct PaConfig {
     uint8_t metadata_dt = 0x12;
     bool metadata_capture_en = false;
@@ -60,6 +89,7 @@ public:
         uint16_t line_count = 0;
     };
     const Context& context(unsigned vc) const { return ctx_[vc & 1]; }
+    void set_rx_observer(RxPayloadObserver* o) { rx_obs_ = o; }  // VP-only, see RxPayloadObserver
 
 private:
     enum class St { Idle, Payload, Discard };
@@ -78,6 +108,8 @@ private:
     unsigned footer_n_ = 0;
     bool supported_ = false, forward_ = false, image_ = false, embedded_ = false, first_beat_ = false;
     bool sof_pending_ = false;
+    RxPayloadObserver* rx_obs_ = nullptr;
+    bool rx_open_ = false;  // a long packet reported to rx_obs_ has not ended yet
 };
 
 }  // namespace fx1::csi2

@@ -186,6 +186,27 @@ endif()
 # Direct CSI->ISP D2a review F3: TrafficCounter counts at issue, returns and
 # outstanding; the host checker of the camera_direct tests must refuse a report
 # with RAW traffic issued but not returned (pending), and one in the old format.
+# Bandwidth measurement BW1: the recorder's per-capture / per-window totals.
+add_executable(test_fx1_bw_recorder tests/test_bw_recorder.cpp)
+target_compile_options(test_fx1_bw_recorder PRIVATE -Wall -Wextra)
+target_link_libraries(test_fx1_bw_recorder PRIVATE SystemC::systemc cdc::components::fx1_sim_control
+    cdc::components::fx1_map fx1_isp_tlm)
+if(CDC_BUILD_TESTS)
+    set(_bw_dir ${CMAKE_CURRENT_BINARY_DIR}/bw_recorder)
+    file(MAKE_DIRECTORY ${_bw_dir})
+    add_test(NAME fx1_unit_bw_recorder COMMAND test_fx1_bw_recorder ${_bw_dir})
+    set_tests_properties(fx1_unit_bw_recorder PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit"
+        PASS_REGULAR_EXPRESSION "PASS \\(0 failures\\)")
+endif()
+# Bandwidth measurement BW1: DMA events with IDs and effective issue / response times.
+add_executable(test_fx1_bw_dma_events tests/test_bw_dma_events.cpp)
+target_compile_options(test_fx1_bw_dma_events PRIVATE -Wall -Wextra)
+target_link_libraries(test_fx1_bw_dma_events PRIVATE SystemC::systemc)
+if(CDC_BUILD_TESTS)
+    add_test(NAME fx1_unit_bw_dma_events COMMAND test_fx1_bw_dma_events)
+    set_tests_properties(fx1_unit_bw_dma_events PROPERTIES TIMEOUT 60 LABELS "fx1;fx1_unit"
+        PASS_REGULAR_EXPRESSION "PASS \\(0 failures\\)")
+endif()
 add_executable(test_fx1_traffic_counter tests/test_traffic_counter.cpp)
 target_compile_options(test_fx1_traffic_counter PRIVATE -Wall -Wextra)
 target_link_libraries(test_fx1_traffic_counter PRIVATE SystemC::systemc)

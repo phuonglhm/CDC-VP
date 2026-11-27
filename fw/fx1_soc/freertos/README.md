@@ -185,7 +185,7 @@ DDR → ISP → NV12 path through the camera manager
 | `camera recover` | Stop, sensor software reset (frame numbers from 1), configure, start; on an error it prints the step and leaves a valid state, no automatic retry |
 
 Golden (`fw/fx1_soc/tests/camera_isp/camera_isp_golden.h`): sensor 64x32
-RAW12 and RAW10, frame numbers 1..32 since the last sensor reset, any lane
+RAW12 and RAW10, frame numbers 1..64 since the last sensor reset, any lane
 count; TPG 640x480 and 3840x2160 RAW12. Other modes print `no golden`.
 
 The camera and the `isp` commands share the ISP: `camera start` is refused

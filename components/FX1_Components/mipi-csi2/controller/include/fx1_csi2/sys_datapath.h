@@ -118,6 +118,7 @@ public:
 
     // Observation.
     const PacketAnalyzer& packet_analyzer() const { return pa_; }
+    void set_rx_payload_observer(RxPayloadObserver* o) { pa_.set_rx_observer(o); }
     const FrameContext& frame_context() const { return fc_; }
     const ControlFsm& control_fsm() const { return ctl_; }
     const LineBuffer& line_buffer() const { return lb_; }

@@ -31,6 +31,7 @@
 #include "csi_isp_direct.h"
 #include "isp_dma_fault.h"
 #include "traffic_counter.h"
+#include "bw_recorder.h"
 #include "isp_stream_bridge.h"
 #include <riscv_vp_plusplus_wrapper.h>
 #include <uart.h>
@@ -295,8 +296,12 @@ struct fx1_soc_top::impl : sc_core::sc_module {
     std::unique_ptr<camera> cam;  // --camera only
     std::unique_ptr<CsiIspDirect> csi_isp;  // --camera: the CSI stream and observer to the ISP ingress
 #endif
-    // --traffic-report only: counters on the camera / ISP DMA masters.
+    // --traffic-report or --bw-report: counters on the camera / ISP DMA masters.
     std::unique_ptr<TrafficCounter> traffic_mipi_dma, traffic_isp_idma, traffic_isp_odma;
+    std::unique_ptr<BwRecorder> bw;  // --bw-report only
+#ifdef FX1_SOC_HAS_CAMERA
+    std::unique_ptr<CsiRxToBw> bw_rx;  // --bw-report with --camera
+#endif
     std::unique_ptr<IspStreamBridge> isp_stream;  // --isp-stream-spool only
     std::unique_ptr<IspDmaFault> isp_dma_fault;   // --isp-dma-fault only
     std::unique_ptr<npu_block> npu;               // null with --no-npu or without FX1_SOC_HAS_NPU
@@ -381,7 +386,20 @@ struct fx1_soc_top::impl : sc_core::sc_module {
         // VP-only ISP_INGRESS at 0x1105_0000 (direct CSI->ISP): always mapped;
         // CAPABILITY.BOUND only with --camera (the CSI stream bound below).
         fabric.target(kIspIngressTarget).bind(isp.ingress_csr_socket);
-        if (!opts.traffic_report.empty()) {
+        // VP-only bandwidth recorder (--bw-report): it only listens (bw_recorder.h).
+        if (!opts.bw_report.empty()) {
+            bw = std::make_unique<BwRecorder>(opts.bw_report, opts.bw_dump_nv12,
+                                              [this](std::uint64_t a, std::uint8_t* d, std::size_t n) {
+                                                  if (a < FX1_DDR_BASE || a + n > FX1_DDR_BASE + FX1_DDR_SIZE)
+                                                      throw std::out_of_range("outside DDR");
+                                                  ddr3.dump(a, d, n);
+                                              });
+        }
+        // Window marker (SIM_CTRL 0xC): with the recorder, or alone (--bw-marker) as
+        // the control run of the same stimulus without any observer.
+        if (bw) sim.enable_bw_marker([this](const fx1::SimControl::BwMark& m) { bw->mark(m); });
+        else if (opts.bw_marker) sim.enable_bw_marker();
+        if (!opts.traffic_report.empty() || bw) {
             traffic_isp_idma = std::make_unique<TrafficCounter>("traffic_isp_idma");
             traffic_isp_odma = std::make_unique<TrafficCounter>("traffic_isp_odma");
             if (opts.camera) traffic_mipi_dma = std::make_unique<TrafficCounter>("traffic_mipi_dma");
@@ -391,13 +409,12 @@ struct fx1_soc_top::impl : sc_core::sc_module {
                                                              : traffic_isp_odma.get();
                 if (c) c->add_window(w.lo, w.hi);
             }
+            if (bw) {
+                if (traffic_mipi_dma) traffic_mipi_dma->set_event_sink(bw.get(), 0);
+                traffic_isp_idma->set_event_sink(bw.get(), 1);
+                traffic_isp_odma->set_event_sink(bw.get(), 2);
+            }
         }
-        if (traffic_isp_idma) traffic_isp_idma->out.bind(fabric.initiator("ISP_IDMA"));
-        // The ISP IDMA's next hop: the traffic counter (--traffic-report) or the fabric.
-        auto bind_idma = [&](tlm::tlm_initiator_socket<>& s) {
-            if (traffic_isp_idma) s.bind(traffic_isp_idma->target);
-            else s.bind(fabric.initiator("ISP_IDMA"));
-        };
         // --isp-dma-fault puts its module in front of one master; without it the
         // sockets are bound as they always were.
         if (opts.isp_dma_fault_kind) {
@@ -407,26 +424,36 @@ struct fx1_soc_top::impl : sc_core::sc_module {
             isp_dma_fault = std::make_unique<IspDmaFault>("isp_dma_fault", kind, opts.isp_dma_fault_nth,
                                                           opts.isp_dma_fault_hold_us);
         }
+        // The traffic counters are the first hop of each ISP DMA master, as for
+        // MIPI_DMA (review BW1 F2): they see every transaction the master issues
+        // at its issue time, including one the fault shim answers with an error
+        // or holds, and one the write guard delays.
+        //   IDMA: ISP -> [counter] -> [fault shim] -> fabric
+        //   ODMA: ISP -> [counter] -> [fault shim] -> write guard -> fabric
+        tlm::tlm_initiator_socket<>* idma_next = &isp.idma_socket;
+        if (traffic_isp_idma) {
+            idma_next->bind(traffic_isp_idma->target);
+            idma_next = &traffic_isp_idma->out;
+        }
         if (isp_dma_fault && isp_dma_fault->idma()) {
-            isp.idma_socket.bind(isp_dma_fault->target);
-            bind_idma(isp_dma_fault->out);
-        } else {
-            bind_idma(isp.idma_socket);
+            idma_next->bind(isp_dma_fault->target);
+            idma_next = &isp_dma_fault->out;
+        }
+        idma_next->bind(fabric.initiator("ISP_IDMA"));
+        tlm::tlm_initiator_socket<>* odma_next = &isp.odma_socket;
+        if (traffic_isp_odma) {
+            odma_next->bind(traffic_isp_odma->target);
+            odma_next = &traffic_isp_odma->out;
         }
         if (isp_dma_fault && !isp_dma_fault->idma()) {
-            isp.odma_socket.bind(isp_dma_fault->target);
-            isp_dma_fault->out.bind(isp_odma_guard.target);
-        } else {
-            isp.odma_socket.bind(isp_odma_guard.target); // IDMA only reads
+            odma_next->bind(isp_dma_fault->target);
+            odma_next = &isp_dma_fault->out;
         }
-        if (traffic_isp_odma) {
-            isp_odma_guard.out.bind(traffic_isp_odma->target);
-            traffic_isp_odma->out.bind(fabric.initiator("ISP_ODMA"));
-        } else {
-            isp_odma_guard.out.bind(fabric.initiator("ISP_ODMA"));
-        }
+        odma_next->bind(isp_odma_guard.target);
+        isp_odma_guard.out.bind(fabric.initiator("ISP_ODMA"));
         isp.rst_n(isp_rst_n);
         if (opts.isp_demosaic) isp.debug_set_demosaic_observer(opts.isp_demosaic);
+        if (bw) isp.debug_set_output_observer(bw.get());
         fabric.target("I2C0").bind(i2c_guard.target);
         i2c_guard.out.bind(i2c0.socket);
         fabric.target("ETH_CSR").bind(eth_csr_guard.target);
@@ -478,6 +505,11 @@ struct fx1_soc_top::impl : sc_core::sc_module {
             csi_isp = std::make_unique<CsiIspDirect>(isp.ingress());
             cam->ctl.set_stream_sink(csi_isp.get());
             cam->ctl.set_capture_observer(csi_isp.get());
+            if (bw) {
+                csi_isp->set_bw(bw.get());
+                bw_rx = std::make_unique<CsiRxToBw>(*bw);
+                cam->ctl.set_rx_payload_observer(bw_rx.get());
+            }
             isp.ingress().set_bound(true);
             cam->ctl.resetn(csi_rst_n);
             i2c0.attach(kSensorI2cAddr, &cam->sensor);
@@ -699,6 +731,25 @@ fx1_soc_top::fx1_soc_top(sc_core::sc_module_name name, const fx1_soc_options& op
     : sc_module(name)
     , impl_(std::make_unique<impl>("impl", options))
 {
+    if (impl_->bw) {
+        auto& i = *impl_;
+        std::vector<std::pair<std::string, std::string>> f = options.bw_header;
+        f.emplace_back("isp_core_period_ticks", std::to_string(i.isp.params().core_period.value()));
+        f.emplace_back("isp_axi_data_bytes", std::to_string(i.isp.params().axi_data_bytes));
+#ifdef FX1_SOC_HAS_CAMERA
+        if (i.cam) {
+            f.emplace_back("csi_sys_clk_period_ticks",
+                           std::to_string(fx1::csi2::Csi2ControllerConfig{}.sys_clk_period.value()));
+            f.emplace_back("axis_data_bytes", "8");
+        }
+#endif
+        f.emplace_back("camera", options.camera ? "1" : "0");
+        f.emplace_back("quantum_ticks", std::to_string(tlm::tlm_global_quantum::instance().get().value()));
+        f.emplace_back("dma_masters", "[\"MIPI_DMA\",\"ISP_IDMA\",\"ISP_ODMA\"]");
+        f.emplace_back("not_observed", "[\"CPU\",\"CPU_DMI\",\"SYS_DMA\",\"ETH_DMA\",\"NPU_DMA\"]");
+        f.emplace_back("nv12_dump", options.bw_dump_nv12.empty() ? "0" : "1");
+        i.bw->header(f);
+    }
 }
 
 fx1_soc_top::~fx1_soc_top() = default;
@@ -831,6 +882,13 @@ std::string fx1_soc_top::camera_fault_report() const
 std::vector<std::string> fx1_soc_top::isp_stream_errors() const
 {
     return impl_->isp_stream ? impl_->isp_stream->errors() : std::vector<std::string>();
+}
+
+bool fx1_soc_top::bw_finish(const std::string& reason)
+{
+    if (!impl_->bw) return true;
+    impl_->bw->finish(reason);
+    return impl_->bw->ok();
 }
 
 std::string fx1_soc_top::camera_banner() const

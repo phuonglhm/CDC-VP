@@ -12,6 +12,7 @@
 //           [--isp-stream-hold-us N] [--isp-stream-fault foreign-ack]]
 //           [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]
 //           [--traffic-report FILE [--traffic-window MASTER:LO:HI ...]]
+//           [--bw-report FILE [--bw-dump-nv12 DIR] | --bw-marker]
 //           [--no-npu] [--npu-host-watchdog-s N]
 //
 // Time resolution is 1 fs (the detailed D-PHY model of the camera needs it;
@@ -53,6 +54,7 @@
 #include "fx1_soc_build_info.h"
 #include "fx1_soc_top.h"
 #include "isp_stream_bridge.h"
+#include "bw_recorder.h"
 
 namespace {
 
@@ -98,6 +100,7 @@ void usage()
                  "              [--isp-stream-fault foreign-ack]]\n"
                  "              [--isp-dma-fault idma-error:N|odma-error:N|idma-stall:N[:US]]\n"
                  "              [--traffic-report FILE [--traffic-window MASTER:LO:HI ...]]\n"
+                 "              [--bw-report FILE [--bw-dump-nv12 DIR] | --bw-marker]\n"
                  "              [--no-npu] [--npu-host-watchdog-s N]\n"
                  "  --version           print the build identity (package, CDC-VP revision) and exit\n"
                  "  --uart0-socket      UART console over TCP on 127.0.0.1:PORT (connect with nc)\n"
@@ -175,6 +178,15 @@ void usage()
                  "  --traffic-window  with --traffic-report: MASTER:LO:HI (MIPI_DMA, ISP_IDMA or\n"
                  "                ISP_ODMA; inclusive byte range), may be repeated: a transaction of\n"
                  "                that master not wholly inside one window is counted outside=N\n"
+                 "  --bw-report   VP-only bandwidth measurement (plan CSI_ISP_BW): a JSONL event log\n"
+                 "                in FILE (window marks, CSI received payload, AXI4-Stream totals,\n"
+                 "                MIPI_DMA / ISP_IDMA / ISP_ODMA transactions with issue and response\n"
+                 "                times, ISP outputs); also enables the window marker at SIM_CTRL 0xC.\n"
+                 "                Only listens: no payload, TREADY or timing changes\n"
+                 "  --bw-marker   the window marker register alone, no recorder (control run of the\n"
+                 "                same firmware without observers)\n"
+                 "  --bw-dump-nv12  with --bw-report: each DONE NV12 output into DIR (new or empty),\n"
+                 "                read by backdoor (no bus traffic), named in the report\n"
                  "  --isp-dma-fault  VP-only fault injection (absent unless given; not a SoC model)\n"
                  "                on one ISP DMA master, counted from boot:\n"
                  "                idma-error:N  the N-th IDMA read gets a bus error (DMA_ERR.AXI_RD)\n"
@@ -358,6 +370,9 @@ int sc_main(int argc, char* argv[])
         else if (arg == "--traffic-report") {
             options.traffic_report = value();
         }
+        else if (arg == "--bw-report") options.bw_report = value();
+        else if (arg == "--bw-marker") options.bw_marker = true;
+        else if (arg == "--bw-dump-nv12") options.bw_dump_nv12 = value();
         else if (arg == "--dump") {
             dump_request request;
             if (!parse_dump(value(), request)) {
@@ -539,7 +554,9 @@ int sc_main(int argc, char* argv[])
         std::any_of(options.traffic_windows.begin(), options.traffic_windows.end(),
                     [&](const auto& w) { return w.master == "MIPI_DMA" && !options.camera; }) ||
         ((options.isp_stream_max_bytes || options.isp_stream_hold_us || options.isp_stream_foreign_ack) &&
-         options.isp_stream_spool.empty())) {
+         options.isp_stream_spool.empty()) ||
+        (!options.bw_dump_nv12.empty() && options.bw_report.empty()) ||
+        (options.bw_marker && !options.bw_report.empty())) {
         usage();
         return 4;
     }
@@ -558,6 +575,38 @@ int sc_main(int argc, char* argv[])
             return 4;
         }
         options.isp_demosaic = demosaic.get();
+    }
+
+    // VP-only bandwidth NV12 dump: a new or empty directory, checked before the run.
+    if (!options.bw_dump_nv12.empty()) {
+        std::error_code ec;
+        const std::filesystem::path dir(options.bw_dump_nv12);
+        if (std::filesystem::exists(dir, ec) &&
+            (!std::filesystem::is_directory(dir, ec) || !std::filesystem::is_empty(dir, ec))) {
+            std::cerr << "fx1_soc: --bw-dump-nv12: " << options.bw_dump_nv12
+                      << " is not empty (nothing is removed: give a new or empty directory)\n";
+            return 4;
+        }
+        std::filesystem::create_directories(dir, ec);
+        if (ec) {
+            std::cerr << "fx1_soc: --bw-dump-nv12: cannot create " << options.bw_dump_nv12 << '\n';
+            return 4;
+        }
+    }
+    if (!options.bw_report.empty()) {
+        using cdc::platforms::fx1_soc::BwRecorder;
+        std::string cmd = "[";
+        for (int i = 0; i < argc; ++i) cmd += (i ? "," : "") + BwRecorder::q(argv[i]);
+        cmd += "]";
+        options.bw_header = {
+            {"package", BwRecorder::q(fx1_soc_build::package)},
+            {"revision", BwRecorder::q(fx1_soc_build::git_revision)},
+            {"revision_state", BwRecorder::q(fx1_soc_build::git_state)},
+            {"build_type", BwRecorder::q(fx1_soc_build::build_type)},
+            {"systemc", BwRecorder::q(sc_core::sc_release())},
+            {"timeout_ms", std::to_string(timeout_ms)},
+            {"command", cmd},
+        };
     }
 
     // VP-only ISP stream spool: the directory is checked before the run.
@@ -596,6 +645,15 @@ int sc_main(int argc, char* argv[])
             std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_start).count();
 
         for (const auto& d : dumps) top.dump_ddr(d.address, d.length, d.path);
+        bool bw_ok = true;
+        if (!options.bw_report.empty()) {
+            const char* reason = top.outcome() == fx1_soc_top::result::pass   ? "pass"
+                                 : top.outcome() == fx1_soc_top::result::fail ? "fail"
+                                                                              : "timeout";
+            bw_ok = top.bw_finish(reason);
+            std::cout << "[fx1_soc] bw report: " << options.bw_report << (bw_ok ? "" : " (REPORT OR DUMP ERROR)")
+                      << '\n';
+        }
         if (!options.traffic_report.empty()) {
             std::ofstream tr(options.traffic_report);
             tr << top.traffic_report();
@@ -640,7 +698,7 @@ int sc_main(int argc, char* argv[])
         switch (top.outcome()) {
         case fx1_soc_top::result::pass:
             std::cout << "[fx1_soc] RESULT PASS\n";
-            return !demosaic_ok ? 5 : stream_ok ? 0 : 6;
+            return !demosaic_ok ? 5 : !stream_ok ? 6 : bw_ok ? 0 : 7;
         case fx1_soc_top::result::fail:
             std::cout << "[fx1_soc] RESULT FAIL code=0x" << std::hex << top.fail_code() << std::dec
                       << '\n';
