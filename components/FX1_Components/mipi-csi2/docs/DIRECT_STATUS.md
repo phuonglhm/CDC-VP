@@ -1264,3 +1264,13 @@ Found:
 Not done: the SDK repository commit and its root README row (the user's); the
 optional container check (`run_docker_check.sh`); the CSI→ISP bandwidth
 measurement plan (separate proposal).
+
+### ISP-owner information at the release revision (2026-11-27)
+
+The CSI→AXI4-Stream information of plan §3.1 (`AXIS_STREAM_FOR_ISP_OWNER.md` +
+data, delivered with D0) checked on the release revision `2137d7a6`: harness
+`fx1_csi2_axis_source_demo` built from the clean tree, 9/9
+`fx1_csi2_axisdemo_*` PASS, all 16 trace / accepted-beat files byte-identical
+to the D0 delivery, the document identical to the repository copy. Bundle with
+a `REVISION.txt`: `plan/evidence/isp_owner_release_2137d7a6_20261127/`.
+**Sent to the ISP owner 2026-11-27 by the user.**
