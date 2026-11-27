@@ -169,7 +169,10 @@ Golden: sensor 64x32 RAW12 / RAW10 frames 1..32 since the last sensor reset,
 TPG 640x480 and 3840x2160 RAW12. The script `test/VP_FX1_V3.0/cli_camera.txt`
 probes, captures 64x32 RAW12 and RAW10 frames against the golden and stops;
 `test/VP_FX1_V3.0/cli_camera_direct.txt` (`run_vp.sh camera-direct-cli`) does
-the same on the direct path, then captures on the memory path again.
+the same on the direct path, then captures on the memory path again. Both
+print the session's key lines and `CAMERA CLI PASS` / `CAMERA CLI FAIL` (the
+firmware's verdict, also the exit status); the full session is in
+`build/VP_FX1_V3.0/camera-cli.log` / `camera-direct-cli.log`.
 
 `camera_slverr` relies on its timing: the fault time is chosen inside frame
 2 for this image (see the comment at the top of `camera/slverr.c`); a changed

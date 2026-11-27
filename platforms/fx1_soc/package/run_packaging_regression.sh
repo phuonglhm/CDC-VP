@@ -33,7 +33,10 @@
 #   5. the firmware rebuilt from the shipped sources with the shipped Makefile
 #      must equal the packaged ELF byte for byte, and pass smoke again; the
 #      DDR3 and camera examples built from them pass (camera: raw10, i2c_irq;
-#      camera -> ISP: camera_isp_raw12), and the Ethernet example on every line
+#      camera -> ISP: camera_isp_raw12); the scripted camera CLI sessions
+#      (run_vp.sh camera-cli on the memory path, camera-direct-cli on the
+#      direct CSI-2 -> ISP path, each frame against the golden; a direct
+#      session fed a flat RAW file must FAIL), and the Ethernet example on every line
 #      peer and the scripted Ethernet CLI session pass; `make npu-jobs` (host
 #      compiler) gives the shipped NPU fixtures byte for byte, and one of them
 #      runs from the generated directory; a second run keeps a user note and a
@@ -454,6 +457,44 @@ else
     cat "${tmp}/make_camera.log"
     bad "make camera with the shipped Makefile failed"
 fi
+
+step "5c2. camera CLI sessions, memory and direct path (plan DIRECT_CSI_ISP D5); a wrong frame must FAIL"
+# The scripted sessions as shipped. The exit status is the firmware's verdict
+# (every frame against the golden); the counts also make sure the direct
+# session really ran on the direct path (6 direct frames: no RAW in DDR, then
+# 2 zero-copy frames back on the memory path) and the memory one on memory.
+cam_count() { tr -d '\r' < "$1" | grep -a -c -E "$2" || true; }
+golden_crc=' crc 0x[0-9a-f]+ = golden frame [0-9]+$'
+run "${test}/run_vp.sh" camera-cli > "${tmp}/camera_cli.log" 2>&1; rc=$?
+log="${pkg}/sw/bootloader/build/${version}/camera-cli.log"
+n_mem="$(cam_count "${log}" "^  capture [0-9]+ FRAME_ID [0-9]+ side [01] .*raw ok${golden_crc}")"
+n_dir="$(cam_count "${log}" " direct out ")"
+[[ ${rc} -eq 0 && ${n_mem} -eq 6 && ${n_dir} -eq 0 ]] && grep -q "CAMERA CLI PASS" "${tmp}/camera_cli.log" \
+    && pass "run_vp.sh camera-cli: PASS, 6 memory-path frames = golden" \
+    || { cat "${tmp}/camera_cli.log"; bad "run_vp.sh camera-cli (exit ${rc}, ${n_mem} golden memory frames, ${n_dir} direct)"; }
+run "${test}/run_vp.sh" camera-direct-cli > "${tmp}/camera_direct_cli.log" 2>&1; rc=$?
+log="${pkg}/sw/bootloader/build/${version}/camera-direct-cli.log"
+n_dir="$(cam_count "${log}" "^  capture [0-9]+ FRAME_ID [0-9]+ epoch [0-9]+ isp frame [1-9][0-9]* direct out [0-3] 64x32 raw n/a${golden_crc}")"
+n_mem="$(cam_count "${log}" "^  capture [0-9]+ FRAME_ID [0-9]+ side [01] .* zero-copy .*raw ok${golden_crc}")"
+n_ok="$(cam_count "${log}" "^  direct ok [1-9][0-9]*, reset 0, csi_dropped 0, csi_missing_fe 0, invalid 0, isp_failed 0")"
+[[ ${rc} -eq 0 && ${n_dir} -eq 6 && ${n_mem} -eq 2 && ${n_ok} -eq 1 ]] && grep -q "CAMERA CLI PASS" "${tmp}/camera_direct_cli.log" \
+    && pass "run_vp.sh camera-direct-cli: PASS, 6 direct frames + 2 memory-path frames = golden" \
+    || { cat "${tmp}/camera_direct_cli.log"; bad "run_vp.sh camera-direct-cli (exit ${rc}, ${n_dir} direct / ${n_mem} memory golden frames, status ${n_ok})"; }
+# Negative: the direct path fed from a RAW file (64x32 RAW12, every sample
+# 0x123) instead of the sensor pattern: the NV12 must miss the golden and the
+# session FAIL (the verdict is not a rubber stamp).
+cdir="${tmp}/camera_neg"; mkdir -p "${cdir}"
+printf 'camera probe\ncamera path direct\ncamera mode 64 32 12 4\ncamera start\ncamera capture 2\ncamera stop\npoweroff\n' \
+    > "${cdir}/cli_direct_bad.txt"
+/usr/bin/python3 -c 'import sys; open(sys.argv[1], "wb").write(bytes([0x23, 0x01]) * (64 * 32))' "${cdir}/flat.raw"
+run "${pkg}/vp/bin/${version}/fx1_soc" --fw "${pkg}/sw/bootloader/build/${version}/freertos_cli.elf" --camera \
+    --camera-raw "${cdir}/flat.raw" --timeout-ms 3000 --uart0-rx-file "${cdir}/cli_direct_bad.txt" \
+    --uart0-rx-delay-us 60000 --uart0-rx-byte-us 87 > "${cdir}/run.log" 2>&1; rc=$?
+n_bad="$(cam_count "${cdir}/run.log" " direct out [0-3] 64x32 raw n/a crc 0x[0-9a-f]+ GOLDEN MISMATCH")"
+[[ ${rc} -ne 0 && ${n_bad} -ge 1 ]] && grep -a -q "RESULT FAIL" "${cdir}/run.log" \
+    && pass "direct CLI from a flat RAW file: FAIL as required (exit ${rc}, ${n_bad} golden mismatch(es))" \
+    || { tail -n 30 "${cdir}/run.log"; bad "direct CLI from a flat RAW file was not refused (exit ${rc}, ${n_bad} mismatches)"; }
+rm -f "${pkg}/sw/bootloader/build/${version}/camera-cli.log" "${pkg}/sw/bootloader/build/${version}/camera-direct-cli.log"
 
 step "5d. Ethernet example, built from the shipped sources, on every line peer; scripted eth CLI session"
 if run make -s -C "${pkg}/sw/bootloader/sources/${version}" TOOLDIR="${tooldir}" eth > "${tmp}/make_eth.log" 2>&1; then

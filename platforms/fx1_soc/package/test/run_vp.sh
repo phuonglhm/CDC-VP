@@ -255,17 +255,32 @@ case "${mode}" in
         fi
         exit ${rc}
         ;;
-    camera-cli)
-        # The FreeRTOS CLI with the camera: probe, 64x32 RAW12 and RAW10 captures
-        # checked against the golden, status, stop (cli_camera.txt).
-        "${vp}" --fw "${build}/freertos_cli.elf" --camera --timeout-ms 3000 --uart0-rx-file "${here}/cli_camera.txt" \
-            --uart0-rx-delay-us 60000 --uart0-rx-byte-us 87
-        ;;
-    camera-direct-cli)
-        # Direct CSI-2 -> ISP (VP ISP_INGRESS): `camera path direct`, 64x32 RAW12 and
-        # RAW10 against the golden, back to the memory path (cli_camera_direct.txt).
-        "${vp}" --fw "${build}/freertos_cli.elf" --camera --timeout-ms 5000 --uart0-rx-file "${here}/cli_camera_direct.txt" \
-            --uart0-rx-delay-us 60000 --uart0-rx-byte-us 87
+    camera-cli|camera-direct-cli)
+        # camera-cli: the FreeRTOS CLI with the camera: probe, 64x32 RAW12 and
+        # RAW10 captures checked against the golden, status, stop (cli_camera.txt).
+        # camera-direct-cli: direct CSI-2 -> ISP (VP ISP_INGRESS): `camera path
+        # direct`, 64x32 RAW12 and RAW10 against the golden, back to the memory
+        # path (cli_camera_direct.txt). The firmware checks every frame and ends
+        # with RESULT PASS / FAIL, which is the exit status; the full session is
+        # in the log.
+        need_fw
+        mkdir -p "${build}"
+        script="${here}/cli_camera.txt" tmo=3000 log="${build}/${mode}.log"
+        [[ "${mode}" == camera-direct-cli ]] && script="${here}/cli_camera_direct.txt" tmo=5000
+        echo "VP_FX1_V3.0 ${mode}: scripted CLI session (${script}), --camera"
+        set +e
+        "${vp}" --fw "${fw}" --camera --timeout-ms "${tmo}" --uart0-rx-file "${script}" "${rx_pacing[@]}" \
+            > "${log}" 2>&1
+        rc=$?
+        set -e
+        grep -a -E "^camera (mode|stop|path)|  camera .*: (PASS|FAIL)|^  capture |^  direct ok|GOLDEN MISMATCH|poweroff:|RESULT" \
+            "${log}" | tr -d '\r' || true
+        if [[ ${rc} -eq 0 ]]; then
+            echo "CAMERA CLI PASS (log ${log})"
+        else
+            echo "CAMERA CLI FAIL, exit ${rc} (log ${log})"
+        fi
+        exit ${rc}
         ;;
     smoke)
         need_fw
